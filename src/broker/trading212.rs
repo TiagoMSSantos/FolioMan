@@ -211,6 +211,22 @@ mod tests {
         assert!(extract_instruments(&json!({ "not": "array" })).is_err());
     }
 
+    /// (#359) A cache inside its 7 days is served as-is: no key read, no request. `screen` calls this
+    /// on every run and the endpoint allows ~1 request per 50s. Only the fresh side is pinned; the
+    /// other side of the boundary is the live fetch.
+    #[tokio::test]
+    async fn instruments_cached_serves_a_fresh_cache() {
+        let today = chrono::Utc::now().date_naive();
+        let cache = json!({ "date": today.to_string(), "rows": [
+            { "ticker": "AAPL_US_EQ", "isin": "US0378331005", "currency": "USD" }
+        ] });
+        std::fs::write(crate::config::data_path(".t212_instruments.json"), cache.to_string()).expect("seed cache");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let rows = instruments_cached(&client).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].ticker.as_str(), rows[0].isin.as_str()), ("AAPL_US_EQ", "US0378331005"));
+    }
+
     #[test]
     fn renders_cash_and_holdings() {
         let cash = json!({ "free": 100.5, "invested": 200.0, "total": 300.5 });

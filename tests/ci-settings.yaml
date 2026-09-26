@@ -6488,6 +6488,66 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#359) ROUND 128: A MUTATION CENSUS OF THE BROKERS AND THE SMALL COMMANDS, THE CLI SUITE IN THE
+  # KILLING SET. 23 SURVIVORS KILLED, 4 EQUIVALENT, 22 GAPS. A LOOPBACK HARNESS REACHES `alert`.
+  #
+  # Asked ("can we improve something in FolioMan?"): census code no slice had ever graded. This is the
+  # small half: `src/broker/{trading212,binance,tr}.rs` and `src/commands/{trade,alert,check,mod,perf}.rs`.
+  # `tr.rs` and the command entry points are reached from `tests/cli.rs` only, so this census ran with
+  # the (#357) `tests` input set to `--lib --test backtest_fixture --test cli`. The per-push gate still
+  # leaves cli out; these kills hold only in a census run by hand.
+  #
+  # THE CENSUS (run 36235606579 on e292611, ~7m over 16 shards): files `src/broker/trading212.rs
+  # src/broker/binance.rs src/broker/tr.rs src/commands/trade.rs src/commands/alert.rs
+  # src/commands/check.rs src/commands/mod.rs src/commands/perf.rs`, regex `.`, exclude empty, tests
+  # `--lib --test backtest_fixture --test cli`. 210 in scope: 157 caught, 49 missed, 0 timeout, 4
+  # unviable. trade.rs and commands/mod.rs left no survivor.
+  #
+  # THE RULE, as in (#340): KILL what a test reaches; EQUIVALENT when no input tells it apart; GAP when
+  # only a live broker socket can. Line numbers below are e292611's.
+  # - 23 KILLED.
+  #   alert.rs 11, in `run` and `persist_entry_state`, which no test reached: offline every quote is an
+  #   err stub and no push is delivered. `run_stubbed` (tests/cli.rs) runs the binary ONLINE against a
+  #   loopback server, with HTTP_PROXY/HTTPS_PROXY/ALL_PROXY pointed at it and NO_PROXY stripped, so a
+  #   request to any host lands there and https dies at TLS after its CONNECT. Verified by logging a real
+  #   `alert` run: 5 chart GETs and 2 pushes served, the one https call a CONNECT to the stub. Two cases.
+  #   A 100 -> 51.2 chart records a delivered dip next to a name the run never read and persists
+  #   DRAWDOWN: 55 `run` -> (), 49 `persist_entry_state` -> (), 61:54, 65:24, 65:48, 68:37, 84:16, 107:53,
+  #   107:73. A chart that does not parse leaves a seeded ledger and a seeded DRAWDOWN untouched, because a
+  #   stub reads 0.0 and 0.0 is no recovery: 65:33, 107:62.
+  #   tr.rs 3, `order` 19:5 x2 and 19:60: confirmed with "yes" but without TR_ACCEPT_UNOFFICIAL, the order
+  #   fails naming the switch, before the phone/PIN read or any request.
+  #   trading212.rs 6: `cash_free` 76:5 x3 (screen with no key prints no "Broker cash" line; a stubbed
+  #   `Ok(x)` prints one), `instruments_cached` 130:5 and 138:104 `==`/`>` (a same-day cache is served with
+  #   no key read and no request).
+  #   binance.rs 1: `render_balances` 95:17 `+` -> `-` (a balance held entirely in open orders).
+  #   check.rs 1: `holdings_lines` 23:36 `>` -> `>=` (exactly five holdings print no "+0").
+  #   perf.rs 1: `run` 23:41 `delete !` (inflation on, no HICP series: no "inflation-adjusted" header).
+  #   6 doubtful kills were hand-mutated one at a time (whole-body swaps as cargo-mutants writes them);
+  #   all red.
+  # - 4 EQUIVALENT: `Ok(vec![])` for `trading212::{owned_tickers, owned_positions}` and
+  #   `binance::{owned_assets, owned_amounts}`. Every caller reads them as `if let Ok(v)` and walks `v`, so
+  #   an empty Ok is the Err arm.
+  # - 22 GAPS, live broker socket only.
+  #   5 after `send()` to a hardcoded https host: `trading212::get` 8:5 and 19:8,
+  #   `binance::account_balances` 31:8, `tr::order` 34:8 and 55:8.
+  #   12 in `owned_positions` / `owned_amounts` (6 non-empty `Ok`s each): `size` prints the allocation gap
+  #   only past a non-empty growth book, and neither offline nor a one-body stub builds one.
+  #   4 in `owned_tickers` / `owned_assets` (the `"xyzzy"` and `""` rows): the overlay marks only a RANKED
+  #   name matching a held one, and no ranked name matches offline.
+  #   1 `instruments_cached` 138:104 `<` -> `<=`: the other side of the 7-day boundary is the live fetch.
+  #
+  # PROOF RULE: a census re-run on this commit with the same four inputs must list 210 in scope (tests
+  # only; nothing mutable moved) and exactly the 4 equivalents and 22 gaps above as missed.
+  #
+  # FOUND, NOT FIXED: `fetch::push` has no `offline()` guard, so FOLIOMAN_OFFLINE=1 does not stop an ntfy
+  # POST. Nothing reaches it offline today (no quote prices, so no dip pushes); noted, not changed here.
+  #
+  # WHAT SHIPS. Tests, and one cli harness (`run_stubbed`, `stub_server`, and `isolated_cmd` split out of
+  # `run_isolated`). No production line changed.
+  #
+  # REVERT: drop the (#359) tests and asserts and the harness; fold `isolated_cmd` back into `run_isolated`.
+  #
   # (#344) ROUND 127: A MUTATION CENSUS OF THE REST OF PICKS AND CORE. 167 SURVIVORS KILLED, 5 REMOVED
   # WITH THE CODE THEY LIVED IN, 6 GAPS, 17 EQUIVALENT. ONE FIXTURE BUG FOUND.
   #

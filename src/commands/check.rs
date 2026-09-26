@@ -173,7 +173,7 @@ mod tests {
 
     /// (round 58) holdings line semantics: top-5 with weights then "+N", top-10 total suffix,
     /// weightless holdings print name-only and no total, unknown/empty funds print nothing,
-    /// input order kept.
+    /// input order kept. (#359) FIVE.DE holds exactly five: nothing is cut, so no "+0".
     #[test]
     fn holdings_lines_semantics() {
         let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
@@ -182,11 +182,13 @@ mod tests {
             (0..10).map(|i| (format!("H{i}"), 0.10 - i as f64 * 0.01)).collect(), // 10%..1% = 55%
         );
         h.insert("NOW.DE".into(), vec![("AAA".into(), 0.0), ("BBB".into(), 0.0)]);
+        h.insert("FIVE.DE".into(), (0..5).map(|i| (format!("F{i}"), 0.10)).collect());
         h.insert("EMPTY.DE".into(), vec![]);
-        let order = vec!["SEMI.DE".to_string(), "NOW.DE".to_string(), "EMPTY.DE".to_string(), "GONE.DE".to_string()];
+        let order = vec!["SEMI.DE".to_string(), "NOW.DE".to_string(), "EMPTY.DE".to_string(), "GONE.DE".to_string(), "FIVE.DE".to_string()];
         assert_eq!(holdings_lines(&h, &order), vec![
             "  SEMI.DE: H0 10.0%, H1 9.0%, H2 8.0%, H3 7.0%, H4 6.0% +5 (top-10 = 55% of fund)".to_string(),
             "  NOW.DE: AAA, BBB".to_string(),
+            "  FIVE.DE: F0 10.0%, F1 10.0%, F2 10.0%, F3 10.0%, F4 10.0% (top-10 = 50% of fund)".to_string(),
         ]);
     }
 }

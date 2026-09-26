@@ -11,10 +11,15 @@
 //!   real command bodies, under `FOLIOMAN_OFFLINE=1` so no socket is opened, and in a data root of
 //!   their own so nothing they write touches the working tree.
 //!
+//! - **`run_stubbed`** — (#359) `run_isolated` ONLINE against a loopback stub, for the two things
+//!   offline cannot reach: a PRICED quote and a DELIVERED push.
+//!
 //! SCOPE NOTE, so nobody reads more safety into this file than it carries: the mutation gate grades
 //! `--lib --test backtest_fixture`. `tests/cli.rs` is NOT in that killing suite, so a case here raises
-//! coverage and pins observable behaviour, but earns no mutation protection. Logic worth grading
-//! belongs in a `--lib` test.
+//! coverage and pins observable behaviour, but earns no mutation protection ON PUSH. (#357) A census
+//! dispatched with `tests: --lib --test backtest_fixture --test cli` does grade against it, and the
+//! (#359) slice (brokers + small commands) is receipted that way — by hand, not per push. Logic worth
+//! grading on every push still belongs in a `--lib` test.
 
 use std::io::Write;
 use std::path::Path;
@@ -70,6 +75,52 @@ fn run(args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
 /// `FOLIOMAN_OFFLINE=1` — no socket may be opened. These cases assert what a command computes from
 /// disk; a fetch reaching the network would make them slow, flaky and dependent on a live market.
 fn run_isolated(name: &str, overlay: &str, files: &[(&str, &str)], args: &[&str]) -> (i32, String, String) {
+    let mut cmd = isolated_cmd(name, overlay, files);
+    cmd.env("FOLIOMAN_OFFLINE", "1");
+    cmd.args(args);
+    finish(&mut cmd, stdin_none())
+}
+
+/// (#359) `run_isolated`, but ONLINE against a loopback stub instead of offline. One local server
+/// answers `body` to every request, and all three proxy variables point at it with `NO_PROXY`
+/// stripped, so a request to ANY host lands there: plain http is served, https dies at the TLS
+/// handshake after its CONNECT. Nothing leaves the machine. The overlay moves `yahoo_chart` and
+/// `ntfy` to plain http (the host is never resolved; the proxy takes it), so charts and pushes get
+/// `body` and every other call fails the way a dead network does.
+fn run_stubbed(name: &str, body: &'static str, files: &[(&str, &str)], args: &[&str]) -> (i32, String, String) {
+    let proxy = format!("http://{}", stub_server(body));
+    let overlay = "urls:\n  yahoo_chart: \"http://stub.invalid/{ticker}?range={range}\"\n  ntfy: \"http://stub.invalid/{topic}\"\n";
+    let mut cmd = isolated_cmd(name, overlay, files);
+    for k in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
+        cmd.env(k, &proxy);
+    }
+    for k in ["NO_PROXY", "no_proxy", "FOLIOMAN_OFFLINE"] {
+        cmd.env_remove(k);
+    }
+    cmd.args(args);
+    finish(&mut cmd, stdin_none())
+}
+
+/// Serves `body` to every connection on an ephemeral loopback port for the rest of the test process.
+/// The lib suite's `fetch::tests::stub_server` in miniature, `Connection: close` included and for the
+/// same reason (see there).
+fn stub_server(body: &'static str) -> std::net::SocketAddr {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+    std::thread::spawn(move || {
+        for sock in listener.incoming() {
+            let Ok(mut sock) = sock else { continue };
+            let _ = std::io::Read::read(&mut sock, &mut [0u8; 4096]); // drain the request line+headers
+            let resp = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            let _ = sock.write_all(resp.as_bytes());
+        }
+    });
+    addr
+}
+
+/// The data root, config overlay and credential scrub both runners share; the caller picks online or
+/// offline.
+fn isolated_cmd(name: &str, overlay: &str, files: &[(&str, &str)]) -> Command {
     let root = isolated_root(name);
     let _ = std::fs::remove_dir_all(&root); // a stale root from a previous run must not grade this one
     std::fs::create_dir_all(root.join("config")).expect("mkdir data root");
@@ -79,13 +130,11 @@ fn run_isolated(name: &str, overlay: &str, files: &[(&str, &str)], args: &[&str]
     }
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_folioman"));
     cmd.env("FOLIOMAN_CONFIG", root.join("config/settings.yaml"));
-    cmd.env("FOLIOMAN_OFFLINE", "1");
     strip_broker_creds(&mut cmd);
     // FMP_API_KEY changes report's empty-data wording, so a machine that exports one would read a
     // different string than CI. Removed here, which also makes the keyless branch the asserted one.
     cmd.env_remove("FMP_API_KEY");
-    cmd.args(args);
-    finish(&mut cmd, stdin_none())
+    cmd
 }
 
 /// Where `run_isolated` puts a case's data root. Exposed so a test can assert on what the command
@@ -188,6 +237,16 @@ fn sim_without_deploy_base_exit_0() {
     assert!(stdout.contains("monthly_deploy_eur"), "knob gate missing: {stdout}");
 }
 
+/// (#359) Trade Republic's unofficial login stays opt-in. Confirmed with "yes" but without
+/// `TR_ACCEPT_UNOFFICIAL=1` (stripped, like every credential here), the order fails naming the switch,
+/// before the phone and PIN are read or a login request is made.
+#[test]
+fn trade_tr_without_opt_in_fails_naming_the_switch() {
+    let (code, _, stderr) = run(&["trade", "tr", "buy", "IE00B4L5Y983", "1"], Some("yes\n"));
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("ORDER FAILED") && stderr.contains("TR_ACCEPT_UNOFFICIAL"), "{stderr}");
+}
+
 #[test]
 fn trade_abort_at_confirm_no_order() {
     // valid args reach the fat-finger gate; typing anything but "yes" aborts BEFORE any broker call.
@@ -285,6 +344,9 @@ fn perf_prints_a_block_per_ticker_offline() {
     for horizon in ["1D", "1W", "1M", "1Y", "5Y"] {
         assert!(stdout.contains(horizon), "{horizon} row missing: {stdout}");
     }
+    // (#359) The fixture has `inflation_adjust` on, but offline there is no HICP series, so every %
+    // stayed nominal: the "real EUR terms" header may only claim what the numbers under it are.
+    assert!(!stdout.contains("inflation-adjusted"), "empty HICP must leave the label off: {stdout}");
 }
 
 /// `check` renders its table and then the ranked sections. With no priced name every gate rejects, and
@@ -319,6 +381,9 @@ fn screen_ranks_and_journals_offline() {
     for section in ["max stocks", "max ETFs", "max crypto"] {
         assert!(stdout.contains(section), "{section} section missing: {stdout}");
     }
+    // (#359) No Trading212 key (stripped), so no cash figure: the line stays silent rather than print a
+    // balance nobody fetched.
+    assert!(!stdout.contains("Broker cash"), "cash line without a key: {stdout}");
     assert!(
         isolated_root("screen-offline").join(".screen_snapshots.jsonl").is_file(),
         "screen must journal its ranking — and into the DATA ROOT, not the repo: {stdout}"
@@ -350,4 +415,35 @@ fn report_equity_without_statements_exit_1() {
     let (code, stdout, _) = run_isolated("report-offline", "{}\n", &[], &["report", "AAA"]);
     assert_eq!(code, 1, "zero tables for an equity must exit 1: {stdout}");
     assert!(stdout.contains("no statements"), "empty-data line missing: {stdout}");
+}
+
+/// (#359) A chart that fell 100 -> 51.2: 48.8% under its high, so over the fixture's `drop_pct` 5 and
+/// past the 15% DRAWDOWN line. Every bar-to-bar step is 0.8x, inside the splice trim's (0.5, 2.0).
+const DIP_CHART: &str = r#"{"chart":{"result":[{"timestamp":[1577836800,1577923200,1578009600,1578096000],"indicators":{"quote":[{"close":[100,80,64,51.2],"volume":[1000,1000,1000,1000]}]},"meta":{"currency":"EUR"}}]}}"#;
+
+/// (#359) Both pings DELIVERED. ZZDIP enters the dedup ledger NEXT TO BBB, a name this run never read,
+/// which stays: an args-scoped `alert` must not wipe the cron's state for everything else. The entry
+/// state is persisted because its push was delivered, and no "NOT delivered" warning prints for a push
+/// that was.
+#[test]
+fn alert_records_a_delivered_dip_and_entry_state() {
+    let (code, _, stderr) = run_stubbed("alert-dip", DIP_CHART, &[(".alert_dips", "BBB\n")], &["alert", "ZZDIP"]);
+    assert_eq!(code, 0, "{stderr}");
+    let root = isolated_root("alert-dip");
+    assert_eq!(std::fs::read_to_string(root.join(".alert_dips")).expect("dip ledger"), "BBB\nZZDIP\n");
+    assert_eq!(std::fs::read_to_string(root.join(".alert_state")).expect("entry state"), "DRAWDOWN");
+    assert!(!stderr.contains("NOT delivered"), "{stderr}");
+}
+
+/// (#359) The same run when no chart parses: every quote is an err stub reading a 0.0 drop and 0.0 off
+/// the high, and neither may count as a recovery. ZZDIP stays in the ledger and the stored DRAWDOWN
+/// stays put; a real 0.0 would have cleared the one, and flipped the other to NEAR-HIGH and pushed it.
+#[test]
+fn alert_does_not_read_a_stub_quote_as_a_recovery() {
+    let seeded = [(".alert_dips", "ZZDIP\n"), (".alert_state", "DRAWDOWN")];
+    let (code, _, stderr) = run_stubbed("alert-stub", "{}", &seeded, &["alert", "ZZDIP"]);
+    assert_eq!(code, 0, "{stderr}");
+    let root = isolated_root("alert-stub");
+    assert_eq!(std::fs::read_to_string(root.join(".alert_dips")).expect("dip ledger"), "ZZDIP\n");
+    assert_eq!(std::fs::read_to_string(root.join(".alert_state")).expect("entry state"), "DRAWDOWN");
 }

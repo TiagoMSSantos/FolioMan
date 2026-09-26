@@ -212,10 +212,14 @@ mod tests {
     /// Rendering: stable/fiat lands under `cash` and everything else under `holdings`, dust and
     /// zero rows drop, and an unparsable amount SKIPS the row rather than printing it as 0 — "free 0"
     /// against a real balance is the reading this must never produce.
+    ///
+    /// (#359) ADA is held entirely in open orders: `free` 0, `locked` 3. It is still held, so the
+    /// dust test must read the SUM — `free - locked` would drop it as -3.
     #[test]
     fn render_balances_splits_cash_from_holdings() {
         let out = render_balances(&[
             json!({ "asset": "BTC", "free": "0.5", "locked": "0.25" }),
+            json!({ "asset": "ADA", "free": "0", "locked": "3" }),
             json!({ "asset": "USDT", "free": "1000", "locked": "0" }),
             json!({ "asset": "ETH", "free": "0", "locked": "0" }),
             json!({ "asset": "SOL", "free": "oops", "locked": "0" }),
@@ -224,6 +228,7 @@ mod tests {
         assert!(cash.contains("USDT"), "{out}");
         assert!(!cash.contains("BTC"), "{out}");
         assert!(holdings.contains("BTC"), "{out}");
+        assert!(holdings.contains("ADA"), "a balance locked in open orders is still held: {out}");
         assert!(!out.contains("ETH"), "zero balance is dust: {out}");
         assert!(!out.contains("SOL"), "unparsable row must skip, not render 0: {out}");
     }
