@@ -4963,7 +4963,8 @@ pub(crate) mod tests {
         const MONTH: usize = 2_629_800; // 365.25d / 12, the interval the long fetch asks for
         const HOUR: usize = 3_600;
         let chart = |cur: &str, bars: usize, step: usize| {
-            let ts: Vec<String> = (0..bars).map(|i| (1_000_000 + i * step).to_string()).collect();
+            // (#358) a real epoch (2020-09): from near zero, `last + first` read as `last - first`
+            let ts: Vec<String> = (0..bars).map(|i| (1_600_000_000 + i * step).to_string()).collect();
             RawValue::from_string(format!(
                 r#"{{"chart":{{"result":[{{"meta":{{"currency":"{cur}"}},"timestamp":[{}]}}]}}}}"#,
                 ts.join(",")
@@ -5412,6 +5413,7 @@ pub(crate) mod tests {
             "xtrackers msci world ucits etf 1c".into(),
             "gold bullion securities".into(),
             "lyxor core stoxx europe 600 dr ucits etf acc".into(),
+            "ishares core ftse 100 ucits etf gbp (dist)".into(),
         ]);
         let _ = BF_META_NAMES.set(vec![
             (
@@ -5426,6 +5428,9 @@ pub(crate) mod tests {
             // (#358) a share class and nothing else: still "BF answered". The VanEck row carries a
             // benchmark too, so either `||` of the fact test could go and it would not notice.
             ("lyxor core stoxx europe 600 dr ucits etf acc".into(), BfMeta { use_of: Some("Acc"), ..Default::default() }),
+            // (#358) and a benchmark alone. The mutant edits the TEXT, so the second `||` turned `&&`
+            // reads `use_of || (repl && bench)`: only a row with no share class can tell.
+            ("ishares core ftse 100 ucits etf gbp (dist)".into(), BfMeta { bench: Some("ftse 100".into()), ..Default::default() }),
         ]);
         let miss = |name: &str| bf_meta_miss("X.DE", name);
         // BF answered (share class parsed) but shipped no replicationMethod — upstream omission
@@ -5440,6 +5445,7 @@ pub(crate) mod tests {
         // ambiguity, NOT NotOnBf, which would misreport recoverable data as absent
         assert!(miss("gold") == BfMetaMiss::AmbiguousName);
         assert!(miss("Lyxor Core STOXX Europe 600 DR UCITS ETF") == BfMetaMiss::NoReplField);
+        assert!(miss("iShares Core FTSE 100 UCITS ETF") == BfMetaMiss::NoReplField);
         assert!(miss("gold bulli") == BfMetaMiss::EmptyKeyData, "exactly at the floor is long enough");
 
         let etf = |t: &str, n: &str| {
@@ -6542,6 +6548,20 @@ pub(crate) mod tests {
             f("2024-10-01", "2024-12-30", 0.3), // a year earlier, but 90 days long
         ]}});
         assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()), Some(1.0));
+    }
+
+    /// (#358) Only a period ending AFTER the latest 10-K is new: a Q4 that ends ON the fiscal year end
+    /// is already inside the annual, and rolling it in would count that quarter twice.
+    #[test]
+    fn ttm_eps_ignores_a_quarter_that_ends_on_the_fiscal_year_end() {
+        use serde_json::json;
+        let f = |start: &str, end: &str, val: f64| json!({"start": start, "end": end, "val": val, "filed": "2026-02-01", "form": "10-K"});
+        let j = json!({"units": {"USD/shares": [
+            f("2025-01-01", "2025-12-31", 4.0), // FY
+            f("2025-10-01", "2025-12-31", 1.5), // its own Q4
+            f("2024-10-01", "2024-12-31", 1.0), // a year-earlier Q4 of the same length
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()), Some(4.0));
     }
 
     /// (#358) `fetch_ratios` off a seeded `ratios` cache: P/E as served, ROE a fraction x100. A P/E of

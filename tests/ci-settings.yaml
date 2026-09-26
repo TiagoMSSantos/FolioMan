@@ -6488,8 +6488,9 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
-  # (#358) ROUND 129: A MUTATION CENSUS OF src/fetch.rs, THE `*_live` SWAPS EXCLUDED. 273 SURVIVORS
-  # KILLED, 6 EQUIVALENT, 52 GAPS. A ROUTED LOOPBACK STUB REACHES THE CALLS THAT ASK TWICE.
+  # (#358) ROUND 129: A MUTATION CENSUS OF src/fetch.rs, THE `*_live` SWAPS EXCLUDED. 275 SURVIVORS
+  # KILLED, 6 EQUIVALENT, 54 GAPS. A ROUTED LOOPBACK STUB REACHES THE CALLS THAT ASK TWICE, AND A FLAKY
+  # GOLDEN WAS HIDING SURVIVORS.
   #
   # Asked ("can we improve something in FolioMan?"): census code no slice had ever graded. This is the
   # big half. `src/fetch.rs` held 3317 mutants and no census had touched it, on the reading that a file
@@ -6499,7 +6500,8 @@ buy_heuristic:
   # THE CENSUS (run 36235601509 on e292611, ~18m over 16 shards): files `src/fetch.rs`, regex `.`,
   # exclude `replace [a-z_]*_live ->`, tests the default `--lib --test backtest_fixture`. 1284 in scope:
   # 908 caught, 331 missed, 1 timeout (`fetch_concurrency -> 0`: a zero-wide `buffer_unordered` never
-  # finishes), 44 unviable.
+  # finishes), 44 unviable. 335 had really survived: the first proof run (below) found 4 more, which
+  # this run counted caught only because a backtest golden flaked on them (FOUND, NOT FIXED).
   # THE EXCLUSION, PRICED: 2033 mutants, all return swaps of the five `*_live` seams, 1960 of them from
   # `fund_composition_live`'s 4-wide tuple. Each seam is one JSON fetch into pure `parse_*` helpers that
   # are graded on their own; offline its swaps survive by construction.
@@ -6521,34 +6523,39 @@ buy_heuristic:
   #   drawdown, 1M momentum), a young listing recorded as a skip, a zero close a month back, and a x100
   #   seam whose head and dividend the census config's splice trim cuts. A same-currency proxy donor
   #   lends bars but no volume. Pence scale on a cache hit and on an inverted fetch; a zero split drops.
-  #   Fundamentals 83: `fetch_ratios` 20, `fetch_ratios_sec` 20, `fetch_stats` 8, `enrich_income_stmt` 8,
+  #   Fundamentals 84: `fetch_ratios` 20, `fetch_ratios_sec` 20, `fetch_stats` 8, `enrich_income_stmt` 8,
   #   `parse_sec_instance` 8, `fetch_fundamentals_report` 5, `fetch_fundamentals_history` 4,
-  #   `parse_sec_facts` 3, `fetch_insider_history` 3, and 1 each in `fetch_fundamentals_ranked`,
-  #   `sec_ttm_eps`, `ttm_eps_from_concept`, `sec_cik`. All off seeded caches: the SEC P/E divides the
+  #   `parse_sec_facts` 3, `fetch_insider_history` 3, `ttm_eps_from_concept` 2, and 1 each in
+  #   `fetch_fundamentals_ranked`, `sec_ttm_eps`, `sec_cik`. All off seeded caches: the SEC P/E divides the
   #   close by the TTM roll, zero denominators give no ratio, the instance falls back to the closest
-  #   product and then the biggest class, a prior YTD of another length is refused, a fetched concept is
+  #   product and then the biggest class, a prior YTD of another length is refused, a Q4 that ends ON the
+  #   fiscal year end is not rolled in on top of the annual that holds it, a fetched concept is
   #   rolled and banked, the CIK map is read without a refetch, and an empty insider history is never
   #   banked.
-  #   The rest 49: `bf_aum` 4, `fetch_regulatory_etf_isins` 4, `LIVE_FUND_TTL` 4, `yh_ter_exact` 3,
+  #   The rest 50: `bf_aum` 4, `fetch_regulatory_etf_isins` 4, `LIVE_FUND_TTL` 4, `yh_ter_exact` 3,
   #   `yh_aum_exact` 3, `bf_aum_exact` 3, `long_skip_load` 3, `bf_meta_miss` 3, `bf_meta_miss_report` 3,
   #   `long_cache_save` 2, `fetch_euronext_lisbon` 2, `push` 2, `cached_fund_json` 2, and 1 each in
   #   `client`, `client_long`, `throttle`, `is_stale`, `MACRO_TTL`, `long_skip_save`, `bf_by_name`,
-  #   `parse_yahoo_fund_facts`, `write_fund_facts_cache`, `fetch_xetra_etfs`, `fetch_universe`.
+  #   `parse_yahoo_fund_facts`, `write_fund_facts_cache`, `fetch_xetra_etfs`, `fetch_universe`,
+  #   `eu_chart_ok`.
   #   Both clients send the browser user agent (`Client::default()` sends none). A stale FIRDS cache is
   #   seeded in reverse order and must come back sorted, and exactly 7 days old is stale. With one
   #   registry answering (a zipped FULINS, hence `routed_stub_bytes`) the ISINs merge over the last-good
   #   copy; with both, they replace it. The two savers `quotes` ends with bank this run's skip and
-  #   series. A share class alone is "BF answered", and a 10-byte name is long enough. The miss report
-  #   caps its samples, leaves an at-cap list unmarked and skips empty buckets. A `.SG`-only search answer
-  #   is no resolution. A venue that answers with a changed list replaces its own store entry. A 2xx push
-  #   is delivered and a 404 is not. The week-long fund TTL still serves a three-day-old copy, and the
-  #   day-long macro TTL a two-hour-old one.
+  #   series. A share class alone is "BF answered", so is a benchmark alone, and a 10-byte name is long
+  #   enough. An EU chart's span is measured from a real epoch (from 1970, `last + first` passed too).
+  #   The miss report caps its samples, leaves an at-cap list unmarked and skips empty buckets. A
+  #   `.SG`-only search answer is no resolution. A venue that answers with a changed list replaces its
+  #   own store entry. A 2xx push is delivered and a 404 is not. The week-long fund TTL still serves a
+  #   three-day-old copy, and the day-long macro TTL a two-hour-old one.
   #   WARM-ROOT KILLS: the three `long_skip_load` swaps and `long_cache_save` 2748:23 die only on a warm
   #   scratch root. A census shard's baseline run warms it: the skip list it banked must survive with its
   #   original dates, and `||` skips the write only when every banked series is fresh. On a cold root
   #   nothing was loaded, so nothing can be lost.
-  #   75 kills were hand-mutated one at a time, all red; a gap and an equivalent ran beside them as
-  #   controls and stayed green.
+  #   78 kills were hand-mutated one at a time, all red; a gap and an equivalent ran beside them as
+  #   controls and stayed green. One of the 78 was first built wrong: `bf_meta_miss` 3573:47 hand-made
+  #   as `(a || b) && c`. cargo-mutants edits the TEXT, and `a || b && c` re-parses as `a || (b && c)`,
+  #   which the share-class-only row cannot see. The proof run caught it; build hand mutants textually.
   # - 6 EQUIVALENT.
   #   `fx_cache` 41:5 -> `Default::default()`: the same empty shared map.
   #   `chart_json` 195:20 and `fetch_euronext_lisbon` 4156:20 `==` -> `!=`: the 400ms sleep moves from
@@ -6558,9 +6565,9 @@ buy_heuristic:
   #   `ttm_eps_from_concept` 1091:24 `<` -> `<=`: a 350-day span is taken by the annual branch first.
   #   `macro_cache_fresh` 8028:54 `<` -> `<=`: an age equal to the TTL to the nanosecond.
   # - 52 GAPS.
-  #   8 behind an env key (setting one here races every env read in the binary): `fetch_us_inflation`
-  #   8084:60 (BLS_API_KEY); `cached_fund_json` 918:60, 919:53, 924:70, 924:73 and
-  #   `fetch_fundamentals_history` 1309, 1310, 1315 (FMP_API_KEY).
+  #   10 behind an env key (setting one here races every env read in the binary): `fetch_us_inflation`
+  #   8084:60 and the keyed arm's `now - 19` 8120:55 x2 (BLS_API_KEY); `cached_fund_json` 918:60,
+  #   919:53, 924:70, 924:73 and `fetch_fundamentals_history` 1309, 1310, 1315 (FMP_API_KEY).
   #   16 behind a hardcoded host that takes no `Urls`: `quote_summary_json` 3357-3360 x6 and
   #   `yahoo_fund_facts_fill` 3091/3092 x3 (the Yahoo crumb on query2.finance.yahoo.com),
   #   `yahoo_top_holdings` 3478 (once the crumb fails, both arms return the same cache hits),
@@ -6575,8 +6582,22 @@ buy_heuristic:
   #   1 `fetch_universe` 4759:49: the speculative split joins the regulatory cache and the venue store,
   #   and two tests own those two files separately.
   #
+  # FOUND, NOT FIXED: the backtest goldens change ON FROZEN DATA inside a census shard. Run 36235601509:
+  # 31 mutants failed only `backtest_*_report_is_pinned` with every lib test green, 25 of them in shards
+  # 4 and 5 (e.g. `1y hold edge +8.4 n=167` read `+9.2 n=161`). 9 recur in both runs and read as real (the
+  # fixture reads through `offline`, `long_cache_load`, `quote_one`); the rest are not, and include lines
+  # no test can reach (the keyed BLS arm, the Yahoo crumb). The fixture runs offline on `tests/fixture`
+  # alone and nothing on the backtest path reads a clock, so the cause is open. The effect is one-sided:
+  # a flake counts a survivor CAUGHT, so it can hide one from a census but never red the gate.
+  #
   # PROOF RULE: a census re-run on this commit with the same inputs must list 1284 in scope (tests only;
-  # nothing mutable moved) and exactly the 6 equivalents and 52 gaps above as missed.
+  # nothing mutable moved) and the 6 equivalents and 54 gaps above as missed. A receipted entry the list
+  # lacks is read in its shard log: caught by a golden alone with every lib test green is the flake,
+  # not a kill.
+  # PROOF, FIRST ATTEMPT, DID NOT HOLD: run 36242103696 on dd325e4 listed 1284: 1177 caught, 62 missed,
+  # 1 timeout, 44 unviable. It found the 4 flake-hidden survivors (2 killed above, 2 keyed-arm gaps), one
+  # kill that never was (3573:47, above), and one gap the flake caught (`yahoo_fund_facts_fill` 3091:26,
+  # golden-only in its log).
   #
   # WHAT SHIPS. Tests and the harness they need: `routed_stub` (route by the request line, 404 otherwise,
   # every request recorded), `routed_stub_bytes` behind it, `recording_stub`, `chart_body`. No
