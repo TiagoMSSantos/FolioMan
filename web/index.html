@@ -284,8 +284,11 @@ function chooser(max) {
 
 function render(data) {
   const when = new Date(data.generated);
+  // (#394) "generated" read as the data's own date; it is when CI fetched and ranked, and each price is
+  // whatever its market last quoted then (a weekend run carries Friday's close for stocks and ETFs).
   document.getElementById("generated").textContent =
-    "generated " + when.toISOString().replace("T", " ").replace(".000Z", "Z");
+    "fetched & ranked " + when.toISOString().replace("T", " ").replace(".000Z", "Z") +
+    " — prices are each market's latest quote at that time";
   const ageHours = (Date.now() - when.getTime()) / 3.6e6;
   if (ageHours > STALE_HOURS) {
     const banner = document.getElementById("stale");
