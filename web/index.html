@@ -50,6 +50,12 @@
   th, td { padding: .4rem .6rem; text-align: right; }
   th { background: var(--head-bg); color: var(--muted); font-weight: 600; position: sticky; top: 0; }
   td { border-top: 1px solid var(--rule); }
+  /* (#393) Each header is a button, so sorting is keyboard- and screen-reader-reachable for free;
+     `aria-sort` is both the state and the arrow. */
+  th button { all: unset; cursor: pointer; }
+  th button:focus-visible { outline: 1px solid var(--fg); }
+  th[aria-sort="ascending"] button::after { content: " ▲"; }
+  th[aria-sort="descending"] button::after { content: " ▼"; }
   /* the first three columns are labels, not numbers */
   th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
   /* (#249) …but the inflation table has ONE label column. Scoped override, not a change to the rule
@@ -196,14 +202,19 @@ function table(rows, empty = "(none pass the gates)") {
   for (const [header] of rows[0]) {
     const th = document.createElement("th");
     th.scope = "col";
-    th.textContent = header;
+    const b = document.createElement("button");
+    b.textContent = header;
+    if (!header) b.ariaLabel = "owned"; // CORE's flag column prints no header, but a button needs a name
+    b.onclick = () => sortBy(th);
+    th.appendChild(b);
     head.appendChild(th);
   }
   const body = t.createTBody();
-  for (const row of rows) {
+  rows.forEach((row, i) => {
     const tr = body.insertRow();
+    tr.dataset.rank = i; // (#393) the ranked order, which a sort reorders but apply() still cuts on
     for (const [, cell] of row) tr.insertCell().textContent = cell;
-  }
+  });
   box.appendChild(t);
   return box;
 }
@@ -213,10 +224,43 @@ function table(rows, empty = "(none pass the gates)") {
 // (#249) SCOPED TO THE THREE LANES, and that is load-bearing: a bare `tbody` selector also matches
 // the inflation table, so `?top=1` would publish the USA row and hide the EU one — the deflator, on
 // the view most likely to be bookmarked.
+// (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
 function apply(n) {
   for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody")) {
-    [...body.rows].forEach((tr, i) => { tr.hidden = i >= n; });
+    for (const tr of body.rows) tr.hidden = +tr.dataset.rank >= n;
   }
+}
+
+// (#393) A cell's sort key. The cells are the terminal's preformatted strings, so a cell is a NUMBER
+// only when the whole of it is one, with its sign, €, thousands commas, K/M/B and trailing marks
+// (`≈+9.9%`, `€1,234.56`, `€1.2B`, `9.9~`, `18.0†`, `9#!xH`); a ticker like `2B7A.DE` stays text.
+// null is a missing cell, which sorts last in either direction.
+const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMB]?)[%~†#!xH]*$/;
+function key(cell) {
+  if (cell === "" || cell === "n/a" || cell === "—") return null;
+  const m = NUM.exec(cell);
+  return m ? +(m[1] + m[2].replaceAll(",", "")) * ({ K: 1e3, M: 1e6, B: 1e9 }[m[3]] || 1) : cell;
+}
+console.assert(
+  key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
+    key("€1.2B") === 1.2e9 && key("9#!xH") === 9 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null,
+  "sort key misreads a cell shape",
+);
+
+// First click ascending, then it flips. Numbers before text, missing last, ties in rank order.
+function sortBy(th) {
+  const dir = th.ariaSort === "ascending" ? -1 : 1;
+  for (const h of th.parentElement.cells) h.removeAttribute("aria-sort");
+  th.ariaSort = dir > 0 ? "ascending" : "descending";
+  const body = th.closest("table").tBodies[0];
+  const rows = [...body.rows].map((tr) => [key(tr.cells[th.cellIndex].textContent), tr]);
+  rows.sort(([a, x], [b, y]) => {
+    if (a === null || b === null) return (a === null) - (b === null) || x.dataset.rank - y.dataset.rank;
+    const c = typeof a !== typeof b ? (typeof a === "number" ? -1 : 1)
+      : typeof a === "number" ? a - b : a.localeCompare(b);
+    return dir * c || x.dataset.rank - y.dataset.rank;
+  });
+  body.append(...rows.map(([, tr]) => tr));
 }
 
 // (#143) `?top=N` rather than localStorage: a bare URL always opens at the default, and a reader who
