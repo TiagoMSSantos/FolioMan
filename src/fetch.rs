@@ -1381,9 +1381,9 @@ fn sec_cache_ttl(ticker: &str) -> StdDuration {
 /// files, because a ticker SEC cannot resolve to a CIK has no cache to expire in the first place.
 fn evict_stale_sec_caches(ticker: &str) {
     let ttl = sec_cache_ttl(ticker);
-    // NOT `_inst4`: it caches a per-filing XBRL instance that can run to 13.5MB, its content is fixed
-    // once the filing exists, and it is only read when `_facts12`'s newest row has no EPS — so expiring it
-    // would buy nothing and cost the largest fetch in this file.
+    // NOT `_inst4`: it caches a per-filing XBRL instance that can run to 13.5MB and is only read when
+    // `_facts12`'s newest row has no EPS. (#385) It goes stale when the NEXT 10-K lands, not on a clock,
+    // and `fetch_sec_instance_eps` refetches it then; a TTL here would re-download the same filing.
     evict_if_stale(&sec_cache_path(&format!("{ticker}_facts12")), ttl);
     evict_if_stale(&sec_cache_path(&format!("{ticker}_ttmeps3")), ttl);
 }
@@ -2275,16 +2275,29 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 /// 46,563 (Class A) — see `parse_sec_instance`. Bump it again on any change to what that parser picks.
 /// (#377) `inst2` -> `inst3` retires the `[]` a spent budget wrote for every US name that needs this.
 /// (#383) `inst3` -> `inst4` retires ARES's and SUN's `[]`, written before the per-unit EPS tag.
+/// (#385) A file older than `newest_filed` (the newest `_facts12` row's filing date) is a miss: it holds
+/// the 10-K that was newest when it was written, so the filer's next 10-K never reached it and that
+/// year's row stayed EPS-less for good. One refetch per new 10-K, since the rewrite moves the mtime past it.
 ///
 /// The instance read is the EXTRACTED one beside the inline-XBRL 10-K: same folder, primary document
 /// name with ".htm" swapped for "_htm.xml". That URL is hardcoded like the `yahoo_crumb` endpoints —
 /// lift it into `Urls` only if a test needs to stub it. `#[mutants::skip]`: network-bound, and no offline
 /// test reaches it; its parser, `parse_sec_instance`, is the tested half.
 #[mutants::skip]
-async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
+async fn fetch_sec_instance_eps(
+    client: &Client,
+    urls: &Urls,
+    ticker: &str,
+    newest_filed: NaiveDate,
+) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
     use std::sync::atomic::Ordering;
     let cache = sec_cache_path(&format!("{ticker}_inst4"));
-    if let Some(c) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, f64, Option<f64>)>>(&s).ok()) {
+    let written = std::fs::metadata(&cache).and_then(|m| m.modified()).map(|t| DateTime::<chrono::Utc>::from(t).date_naive());
+    if let Some(c) = std::fs::read_to_string(&cache)
+        .ok()
+        .filter(|_| written.is_ok_and(|d| d >= newest_filed))
+        .and_then(|s| serde_json::from_str::<Vec<(String, f64, Option<f64>)>>(&s).ok())
+    {
         return c
             .into_iter()
             .filter_map(|(d, e, s)| NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok().map(|d| (d, (e, s))))
@@ -2345,8 +2358,8 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
 /// "all rows" read those old years as "EPS present" and never looked. Only EPS-less rows are filled.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     let mut rows = fetch_sec_facts_rows(client, urls, ticker).await?;
-    if rows.last().is_some_and(|r| r.eps.is_none()) {
-        let inst = fetch_sec_instance_eps(client, urls, ticker).await;
+    if let Some(newest) = rows.last().filter(|r| r.eps.is_none()).map(|r| r.filed) {
+        let inst = fetch_sec_instance_eps(client, urls, ticker, newest).await;
         for r in rows.iter_mut().filter(|r| r.eps.is_none()) {
             if let Some(&(eps, shares)) = inst.get(&r.period_end) {
                 r.eps = Some(eps);
@@ -6036,9 +6049,9 @@ pub(crate) mod tests {
         };
         let facts = aged("_facts12", 60);
         let ttmeps = aged("_ttmeps3", 60);
-        // `_inst4` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB whose
-        // content is fixed once the filing exists. Expiring it would buy nothing and cost the largest
-        // fetch in this file — so an eviction that swept "every SEC file" would be a real regression.
+        // `_inst4` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB, and (#385)
+        // `fetch_sec_instance_eps` refetches it when the next 10-K lands. A clock here would re-download
+        // the largest fetch in this file for nothing, so "evict every SEC file" is a real regression.
         let inst = aged("_inst4", 60);
         evict_stale_sec_caches("SECEVICT");
         assert!(!facts.exists(), "60 days is past every staggered TTL — the newest fiscal year must refresh");
@@ -6578,6 +6591,23 @@ pub(crate) mod tests {
         assert_eq!(rows[0].eps, Some(1.06), "an EPS the facts already hold is not overwritten");
         assert_eq!(rows[1].eps, Some(2.42));
         assert_eq!(rows[1].prior_eps, Some(2.04));
+    }
+
+    /// (#385) An instance written before the newest row's 10-K was filed predates that filing, so it is
+    /// not served. The ticker is absent from the CIK map: no socket, nothing written, the row stays None.
+    #[tokio::test]
+    async fn instance_cache_older_than_the_newest_filing_is_not_served() {
+        seed_cik_map();
+        std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
+        std::fs::write(sec_cache_path("STALEINST_facts12"), r#"[{"filed": "2026-02-25", "period_end": "2025-12-31"}]"#)
+            .expect("seed facts");
+        let inst = sec_cache_path("STALEINST_inst4");
+        std::fs::write(&inst, r#"[["2025-12-31", 2.42, null]]"#).expect("seed inst");
+        let jan = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        std::fs::OpenOptions::new().write(true).open(&inst).expect("reopen").set_modified(jan.into()).expect("backdate mtime");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let rows = fetch_fundamentals_sec(&client, &stub_urls("http://127.0.0.1:1/"), "STALEINST").await.expect("rows");
+        assert_eq!(rows[0].eps, None, "a pre-filing instance must not stand in for the new 10-K");
     }
 
     /// (#358) The three zero-denominator guards in `parse_sec_facts`. A zero revenue has no margin,
