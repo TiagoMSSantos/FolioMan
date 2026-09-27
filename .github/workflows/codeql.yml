@@ -82,10 +82,8 @@ jobs:
         with:
           category: "/language:${{ matrix.language }}"
 
-  # Actions housekeeping, MIRRORING ci.yml's cleanup-runs job rather than pages.yml's. Both exist and
-  # they differ deliberately: pages.yml sweeps `--status success` only, keeping red runs because a
-  # failed publish's log is the only record of why the morning's page went stale. This one takes
-  # ci.yml's harder line — each scan supersedes the history, so sweep everything finished.
+  # Actions housekeeping, MIRRORING ci.yml's cleanup-runs job (and, since (#399), pages.yml's, which
+  # used to keep its red runs): each scan supersedes the history, so sweep everything finished.
   #
   # Main-only by the `if`: a PR run's ref is the merge ref (refs/pull/…), so PR runs neither trigger
   # the sweep nor lose their own history while iterating. Scheduled runs DO sweep — a cron fires on

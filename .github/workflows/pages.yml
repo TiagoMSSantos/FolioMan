@@ -314,27 +314,29 @@ jobs:
           echo "could not push the journal line for $day"
           exit 1
 
-  # Actions housekeeping: a Pages run is superseded the moment the next one deploys, so delete this
-  # workflow's older SUCCESSFUL runs (their logs go with them). Mirrors ci.yml's cleanup-runs job,
-  # with one deliberate difference: `--status success`, NOT `completed`.
-  # A red run is the only record of why a morning failed to publish — the bare `HttpError: Not Found`
-  # that cost run 32059047479 a full 15-minute fetch to diagnose was read out of exactly such a log —
-  # so failed and cancelled runs are KEPT here, deliberately, however long they accumulate.
+  # Actions housekeeping: a Pages run is superseded the moment the next one starts, so delete this
+  # workflow's older COMPLETED runs, failed and cancelled ones included (their logs go with them).
+  # Mirrors ci.yml's cleanup-runs job.
   #
-  # `--status success` cannot match the run doing the sweeping — it is still `in_progress` when the
+  # (#399) This used to sweep `--status success` only and KEEP every red run, because a red log is the
+  # only record of why a publish failed (run 32059047479's bare `HttpError: Not Found` was read out of
+  # one). Kept forever, though, a red run outlived its cause: 36318617516 — a re-run that #398 fixed —
+  # sat in the Actions tab under newer green runs. Now a red log lives until the NEXT run starts (the
+  # cron, ~5-20 min): read it before then, or re-run the failed run to keep it on screen.
+  #
+  # CANCELLED in its own pass, as ci.yml does, whose note says `completed` misses them (a superseded
+  # pending run here is cancelled by `concurrency: pages`). If `completed` does cover them, the second
+  # pass simply finds nothing.
+  #
+  # `--status completed` cannot match the run doing the sweeping — it is still `in_progress` when the
   # filter is applied — so "previous" needs no keep-the-newest bookkeeping. Per-id `|| true` so one
   # undeletable run never reddens the page. No `if:` guard is needed either, unlike ci.yml's copy:
   # that one runs on `pull_request` too and must exclude merge refs, while this workflow triggers
   # only on `push: branches: [main]`, the cron and dispatch.
   #
-  # (#132) NO `needs:`, SO THIS RACES THE DEPLOY — CHOSEN, NOT OVERLOOKED. It used to carry
-  # `needs: publish` and that line was documented here as a safety: history was swept only after a new
-  # good deploy existed, never while this run might still fail. Running in parallel gives that up. The
-  # failure case is now real: a publish that dies at the fetch or at `deploy-pages` no longer stops the
-  # sweep, so a red morning can leave NO successful run in the history to diff against — only the red
-  # one. That was accepted deliberately, for parity with ci.yml's unguarded cleanup and because the
-  # log this job exists to protect is the FAILED one, which `--status success` never matches.
-  # A `tail -n +2` on the id list would buy the old safety back for one pipe if that trade ever bites.
+  # (#132) NO `needs:`, SO THIS RACES THE DEPLOY — CHOSEN, NOT OVERLOOKED. A publish that dies at the
+  # fetch or at `deploy-pages` does not stop the sweep, so a red run can leave no earlier run in the
+  # history to diff against — only itself, until the next run sweeps it too.
   #
   # Deleting a run does NOT delete its Pages deployment or take the site down. The live page is served
   # from Pages storage, not from the run's artifact: deployment 5949614221 is still listed under the
@@ -350,6 +352,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow pages.yml --status success --limit 200 --json databaseId -q '.[].databaseId'); do
-            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          for status in completed cancelled; do
+            for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow pages.yml --status "$status" --limit 200 --json databaseId -q '.[].databaseId'); do
+              gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+            done
           done
