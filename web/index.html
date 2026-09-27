@@ -91,6 +91,18 @@
   #glossary dt { color: var(--fg); font-weight: 600; margin-top: .5rem; }
   #glossary dt.group { margin-top: 1.25rem; text-decoration: underline; }
   #glossary dd { margin: 0 0 0 1.5rem; }
+  /* (#401) A ticker links to its Yahoo quote; `new` marks a name that joined its table since the
+     previous day's last deploy. `::after`, so the mark stays out of textContent and the sort key. */
+  td a { color: inherit; text-decoration-color: var(--rule); }
+  td.new::after {
+    content: "new";
+    margin-left: .4rem;
+    padding: 0 .25rem;
+    border-radius: 3px;
+    font-size: .7rem;
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+  }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -98,6 +110,7 @@
 <main>
   <h1>FolioMan — top picks per class</h1>
   <p class="sub" id="generated">loading…</p>
+  <p class="sub" id="since" hidden></p>
   <p class="stale" id="stale" hidden></p>
   <p class="stale" id="degraded" hidden></p>
   <!-- (#143) One control for all three lanes. Its options are built from the payload, never
@@ -181,6 +194,8 @@
     Rank flags: <code>*</code> pinned · <code>#</code> scored on live fundamentals · <code>!</code>
     late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·
     <code>~</code> bridged history · <code>H</code> hold-suitable core · <code>o</code> already held.
+    Each ticker links to its Yahoo Finance quote; <code>new</code> marks a name that joined its table
+    since the previous day's last run.
   </p>
   <!-- (#400) Built from the payload's `help`, Rust's one copy of each column's meaning (the same text
        as each header's hover title), and listing only the headers these tables show. -->
@@ -198,7 +213,7 @@
 const LANES = ["stocks", "etfs", "crypto"];
 const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
 
-function table(rows, empty = "(none pass the gates)", help = {}) {
+function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set()) {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
     p.className = "empty";
@@ -226,7 +241,21 @@ function table(rows, empty = "(none pass the gates)", help = {}) {
     tr.dataset.rank = i; // (#393) the ranked order, which a sort reorders but apply() still cuts on
     // (#397) a pinned row (`*` in its RANK cell) shows at every N: an uploaded watchlist always shows
     if (row.some(([h, c]) => h === "RANK" && c.includes("*"))) tr.dataset.pin = "";
-    for (const [, cell] of row) tr.insertCell().textContent = cell;
+    for (const [h, cell] of row) {
+      const td = tr.insertCell();
+      if (h !== "TICKER") {
+        td.textContent = cell;
+        continue;
+      }
+      // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo.
+      td.append(Object.assign(document.createElement("a"), {
+        href: "https://finance.yahoo.com/quote/" + encodeURIComponent(cell),
+        target: "_blank",
+        rel: "noopener",
+        textContent: cell,
+      }));
+      if (fresh.has(cell)) td.className = "new";
+    }
   });
   box.appendChild(t);
   return box;
@@ -297,13 +326,16 @@ function chooser(max, dflt) {
   apply(+sel.value);
 }
 
-function render(data) {
+const stamp = (t) => new Date(t).toISOString().replace("T", " ").replace(".000Z", "Z");
+
+// (#401) `prev` is yesterday's last deploy (prev.json), or nothing: an upload passes none, because an
+// uploaded ranking against CI's yesterday would compare two different rankings.
+function render(data, prev) {
   const when = new Date(data.generated);
   // (#394) "generated" read as the data's own date; it is when CI fetched and ranked, and each price is
   // whatever its market last quoted then (a weekend run carries Friday's close for stocks and ETFs).
   document.getElementById("generated").textContent =
-    "fetched & ranked " + when.toISOString().replace("T", " ").replace(".000Z", "Z") +
-    " — prices are each market's latest quote at that time";
+    "fetched & ranked " + stamp(data.generated) + " — prices are each market's latest quote at that time";
   const ageHours = (Date.now() - when.getTime()) / 3.6e6;
   if (ageHours > STALE_HOURS) {
     const banner = document.getElementById("stale");
@@ -321,8 +353,19 @@ function render(data) {
   }
   // (#400) A payload written before `help` existed has no key, and renders untitled.
   const help = data.help || {};
+  // (#401) The tickers now in a table that its prev copy lacked. No prev, or a prev from before that
+  // table existed, marks nothing; an empty prev table marks every row, since they all joined.
+  const tickers = (rows) => new Set((rows || []).flatMap((row) => row.filter(([h]) => h === "TICKER").map(([, c]) => c)));
+  let marked = 0;
+  const fresh = (part) => {
+    if (!Array.isArray(prev?.[part])) return new Set();
+    const was = tickers(prev[part]);
+    const now = new Set([...tickers(data[part])].filter((t) => !was.has(t)));
+    marked += now.size;
+    return now;
+  };
   for (const lane of LANES) {
-    document.getElementById(lane).replaceChildren(table(data[lane], undefined, help.lanes));
+    document.getElementById(lane).replaceChildren(table(data[lane], undefined, help.lanes, fresh(lane)));
   }
   // A run whose inflation feeds all failed publishes an empty list; say that, rather than borrowing
   // the lanes' "(none pass the gates)", which would read as a gate verdict on a macro series.
@@ -333,7 +376,10 @@ function render(data) {
   // suitability filter, not the growth gates, so "(none pass the gates)" would name the wrong test.
   document
     .getElementById("core")
-    .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core));
+    .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
+  const since = document.getElementById("since");
+  since.hidden = !prev;
+  since.textContent = prev ? "new = joined its table since " + stamp(prev.generated) + " (" + marked + " marked)" : "";
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   const sizes = LANES.map((lane) => (data[lane] || []).length);
@@ -363,10 +409,15 @@ function glossary(data, help) {
   box.hidden = !dl.children.length;
 }
 
+// (#401) prev.json is best effort: missing, unreadable or undated is no marks, never an error.
 function load() {
+  const prev = fetch("prev.json", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((p) => (Date.parse(p?.generated) ? p : null))
+    .catch(() => null);
   fetch("data.json", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
-    .then(render)
+    .then(async (data) => render(data, await prev))
     .catch((e) => {
       document.getElementById("generated").textContent = "could not load data.json (" + e.message + ")";
     });

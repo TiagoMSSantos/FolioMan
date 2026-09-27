@@ -186,6 +186,20 @@ jobs:
           cp web/index.html _site/index.html
           cp .screen_web.json _site/data.json
           cp .screen_universe.json _site/universe.json
+          # (#401) The page marks names that joined a table since YESTERDAY's last deploy. The live
+          # data.json is the previous deploy: on the first deploy of a new UTC day it becomes prev.json,
+          # and every later deploy that day carries the live prev.json forward. The query string sidesteps
+          # the Pages CDN's 10-minute cache, which could hand back the prev.json from BEFORE the day's
+          # roll and carry that forward all day. Best effort: no prev.json = no marks, never a red run.
+          site="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+          get() { curl -sfL --max-time 30 "$site/$1?run=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" -o "$2" && jq -e .generated "$2" >/dev/null 2>&1; }
+          if get data.json live.json; then
+            if [ "$(jq -r '.generated[:10]' live.json)" != "$(jq -r '.generated[:10]' _site/data.json)" ] \
+               || ! get prev.json _site/prev.json; then
+              mv live.json _site/prev.json
+            fi
+          fi
+          rm -f live.json
 
       # (#392) The page's engine: `picks::render` compiled to wasm, which re-ranks universe.json under
       # a reader's uploaded settings.yaml in their own browser. Rebuilt only when its source moves; the
