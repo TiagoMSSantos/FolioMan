@@ -1118,7 +1118,7 @@ fn anchored_path(name: &str) -> PathBuf {
 /// Deep-merge `over` INTO `base`: for two mappings, recurse key-by-key (so a partial `buy_heuristic:`
 /// override only replaces the knobs it names); a null overlay value overrides NOTHING; for anything
 /// else, `over` wins outright.
-fn merge_yaml(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
+pub(crate) fn merge_yaml(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
     match (base, over) {
         (serde_yaml::Value::Mapping(b), serde_yaml::Value::Mapping(o)) => {
             for (k, v) in o {
@@ -1162,7 +1162,11 @@ fn ci_base_yaml(overlay: &Path) -> serde_yaml::Value {
 /// secrets (`ntfy_topic`), the watchlist, CI-specific values it must override (`universe_size`), and any
 /// knob under test — instead of duplicating the whole `buy_heuristic`. `None` if the overlay is
 /// absent/invalid (soft callers fall back to defaults; `load` turns `None` into a panic).
-fn merged_config() -> Option<serde_yaml::Value> {
+pub(crate) fn merged_config() -> Option<serde_yaml::Value> {
+    #[cfg(target_family = "wasm")]
+    if let Some(v) = INSTALLED.get() {
+        return Some(v.clone());
+    }
     let overlay_path = settings_path();
     let text = std::fs::read_to_string(&overlay_path).ok()?;
     let overlay: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
@@ -1171,11 +1175,24 @@ fn merged_config() -> Option<serde_yaml::Value> {
     Some(merged)
 }
 
+/// (#391) The page engine's config. A browser has no filesystem, so `web::screen` installs the merged
+/// base + upload here and [`merged_config`] serves it to every process-once accessor below. Those cache
+/// their first read for the life of the instance, so the page runs each upload in a FRESH instance.
+#[cfg(target_family = "wasm")]
+static INSTALLED: std::sync::OnceLock<serde_yaml::Value> = std::sync::OnceLock::new();
+
+/// (#391) See [`INSTALLED`]. Refuses a second config: this instance's accessors already cached the first.
+#[cfg(target_family = "wasm")]
+#[mutants::skip] // wasm-only, so no native test can run it; the Pages workflow's node smoke calls it
+pub(crate) fn install(merged: serde_yaml::Value) -> Result<(), String> {
+    INSTALLED.set(merged).map_err(|_| "this engine instance already ranked once; start a fresh one".to_string())
+}
+
 /// The tuned gates ARE the product. `BuyHeuristic` derives `Default`, so an absent/null/empty
 /// `buy_heuristic` deserializes CLEAN into the code defaults — `growth_min_cagr` 8.0, the PEG/maxdd/
 /// vol caps all 0.0 = off — and ranks a plausible-looking table off an unconfigured heuristic. That
 /// is not a degraded result, it is a wrong one, so `load` refuses rather than warns.
-fn gates_configured(merged: &serde_yaml::Value) -> bool {
+pub(crate) fn gates_configured(merged: &serde_yaml::Value) -> bool {
     merged.get("buy_heuristic").and_then(|v| v.as_mapping()).is_some_and(|m| !m.is_empty())
 }
 

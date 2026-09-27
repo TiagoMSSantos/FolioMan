@@ -206,7 +206,7 @@ pub fn is_eu_market(market: &str) -> bool {
 /// an 8-year CAGR with 10-year range/R²/drawdown and only half meant what its header said.
 /// Deliberately NOT the whole set: `above_ma_pct` (200wk ≈ 3.8y) and `volatility_pct` (~1y) already
 /// sit inside 8 years and cannot move, so re-slicing them would be dead code.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Stats8 {
     pub range_pct: f64,
     pub trend_r2: f64,
@@ -214,7 +214,8 @@ pub struct Stats8 {
     pub underwater_yrs: Option<f64>,
 }
 
-#[derive(Debug, Clone)]
+// (#391) serde: the page engine re-ranks the published pool (`web::Universe`) in the browser.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Quote {
     pub ticker: String,
     pub price: String,   // "€123.45", "123.45 USD?" (FX unknown), "err", "no data"
@@ -308,8 +309,10 @@ pub struct Quote {
     pub aum_eur: Option<f64>,          // (AUM) fund size from the Börse Frankfurt universe payload, EUR-approximate (BF mixes fund currencies; ±FX is immaterial vs the order-of-magnitude gate). ETFs/ETPs only; None = not a fund / not in BF / backtest -> gate inert
     pub ter_fallback: Option<f64>,     // Yahoo quoteSummary TER (%) for funds with NO BF facts (venue/regulatory-only rows). Read ONLY via ter_shown() for display + H/CORE — kept out of expense_ratio because ter_damp SCORES that field (a merged run moved live ranks; scoring lane closed)
     pub aum_fallback: Option<f64>,     // Yahoo quoteSummary totalAssets for the same funds, quote-currency ≈ EUR. Read ONLY via aum_shown() for display + H/CORE — the closure-risk AUM gate stays on BF aum_eur
-    pub use_of_profits: Option<&'static str>, // (USE) share class from the same BF row: "Acc"/"Dist". DISPLAY-ONLY — never scored: the price-only CAGR already prices the Dist payout drag (payouts leave the NAV), so Acc twins win by construction
-    pub replication: Option<&'static str>,    // (REPL) replication method, same BF row: "Swap"/"Full"/"Opt"/"Hybr"/"Samp". DISPLAY-ONLY counterparty-structure legibility (swap-based US-index funds also legally dodge dividend withholding — why they track so well)
+    #[serde(deserialize_with = "leak_str")]
+    pub use_of_profits: Interned, // (USE) share class from the same BF row: "Acc"/"Dist". DISPLAY-ONLY — never scored: the price-only CAGR already prices the Dist payout drag (payouts leave the NAV), so Acc twins win by construction
+    #[serde(deserialize_with = "leak_str")]
+    pub replication: Interned,    // (REPL) replication method, same BF row: "Swap"/"Full"/"Opt"/"Hybr"/"Samp". DISPLAY-ONLY counterparty-structure legibility (swap-based US-index funds also legally dodge dividend withholding — why they track so well)
     pub benchmark: Option<String>,     // BF benchmark-index name, lowercased at capture (BF normalizes it: same-index funds share the literal string, hedged classes differ). Used ONLY for history_proxy twin HINTS — never scored, never a match key beyond exact `==`
     pub domicile: Option<String>,      // (DOM) fund legal domicile from the ISIN prefix ("IE"/"LU"/"DE"…). DISPLAY + CORE-shortlist ordering (IE first: 15% US-dividend withholding treaty vs LU's 30% ≈ +0.2%/yr on a US/world fund) — never scored; None for stocks/crypto, watchlist-only runs and backtest
     pub rev_yoy: Option<f64>,          // newest COMPLETE-fiscal-year revenue growth (%) vs the prior FY, from the same income-statement pipeline `report` prints. DISPLAY-ONLY (stocks) — the fund-factor family measured null for ranking; enriched only for the displayed top rows, None otherwise/backtest
@@ -318,6 +321,17 @@ pub struct Quote {
     pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy
     pub splits: Vec<(NaiveDate, f64)>, // (#82) (effective date, ratio) from the chart's events.splits; a 4:1 split is 4.0, ascending. NOT SCORED and never will be — it exists so `track` and `sim`, which replay prices journaled BEFORE a split against a series retro-adjusted AFTER one, can restate the old price into today's share definition. Empty for stubs and for `backtest_quote`, which walks one internally consistent series and has nothing to restate
+}
+
+/// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
+/// field as a borrow of the input and would then demand input that lives forever.
+pub type Interned = Option<&'static str>;
+
+/// (#391) Reads `use_of_profits`/`replication` back as the `&'static str` the fetch side interns.
+/// shortcut: leaks one short string per quote read. The only reader is the page engine, which reads
+/// one pool per instance; intern against a fixed list if a long-lived process ever reads these.
+fn leak_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<&'static str>, D::Error> {
+    Ok(<Option<String> as serde::Deserialize>::deserialize(d)?.map(|s| &*Box::leak(s.into_boxed_str())))
 }
 
 impl Quote {
@@ -3696,7 +3710,7 @@ pub fn fund_as_of(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
 /// lane scores each STANDALONE against the forward return. All Option: None when the as-of history is
 /// too short to span the lookback, or the source field is premium-gated (roic/debt never populate on
 /// the free tier). Growth in %/yr, margins in %, trend/accel in points.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct FundFactors {
     pub rev_cagr: Option<f64>,     // revenue CAGR over the lookback (proven top-line compounding)
     pub rev_accel: Option<f64>,    // last-1y revenue growth minus that long CAGR (top-line accelerating)

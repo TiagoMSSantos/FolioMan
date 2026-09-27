@@ -1978,6 +1978,16 @@ pub async fn run(args: Vec<String>) {
     // on every run rather than behind a flag — it is one small file, and a knob nobody sets is a knob
     // not worth having. The Pages workflow copies it next to `web/index.html` and deploys.
     let web_out = crate::config::data_path(".screen_web.json");
+    // (#391) and the pool it was ranked from, so the page can re-rank it under an uploaded settings.yaml
+    // without a single fetch. Written HERE, after every settings-driven stamp above, which is exactly
+    // the state `web::screen` re-derives from; see that fn for the two stamps it replays.
+    let _ = std::fs::write(
+        crate::config::data_path(".screen_universe.json"),
+        crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded),
+    );
+    let write_web = |json: String| {
+        let _ = std::fs::write(&web_out, json);
+    };
     let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, RenderCtx {
         nupl,
         sectors: &settings.sectors,
@@ -1987,7 +1997,7 @@ pub async fn run(args: Vec<String>) {
         explain: explain.as_deref(),
         show_hold_core: true,
         fund_pe: &fund_pe,
-        web_out: Some(&web_out),
+        web_out: Some(&write_web),
         web_inflation: &infl_rows,
         web_degraded: &degraded,
     });

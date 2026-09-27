@@ -40,6 +40,8 @@ config/settings.yaml
 # the Pages payload (screen's three #1 rows). Written every run; the site's copy is built on the
 # runner and uploaded as an artifact, so a committed one would only ever be someone's stale local run.
 .screen_web.json
+# (#391) and the pool it was ranked from, which the page re-ranks under an uploaded settings.yaml
+.screen_universe.json
 
 # alert run-to-run market entry state (flip-ping dedup)
 .alert_state

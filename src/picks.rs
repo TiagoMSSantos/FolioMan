@@ -375,7 +375,7 @@ pub(crate) fn turnover_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
 /// acts exactly like a fetched one, so a value that can cut a fund from the table has to say how old it
 /// is. `None` = fetched this run. The fetch side refuses to serve anything past
 /// `FUND_CACHE_MAX_AGE_DAYS`, so a marked cell is stale but never unboundedly so.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FundPe {
     pub pe: f64,
     pub from: Option<String>,
@@ -5153,11 +5153,12 @@ pub struct RenderCtx<'a> {
     pub fund_pe: &'a FundPeMap, // (#37 funds) look-through equity-book P/E per fund ticker,
     // already un-inverted by `parse_fund_pe`. Feeds the ETF PEG trim in `lane_split` and the printed
     // cell. EMPTY is the honest default (`check`, offline tests): no P/E anywhere -> nothing trimmed.
-    /// (#79) Where to drop the [`WebTop`] payload the Pages site publishes, or None to write nothing —
+    /// (#79) Where to hand the [`WebTop`] payload the Pages site publishes, or None to build nothing —
     /// `check` and the offline tests have no page to feed. A field on the ctx rather than a fourth
     /// element on `render`'s return tuple: widening that tuple arms a return-replacement mutant for
-    /// every caller-visible shape, and this is a side effect, not a result.
-    pub web_out: Option<&'a std::path::Path>,
+    /// every caller-visible shape, and this is a side effect, not a result. (#391) A sink, not a path:
+    /// `screen` writes the file, while the page engine (`web::screen`, no filesystem) keeps the string.
+    pub web_out: Option<&'a dyn Fn(String)>,
     /// (#249) The inflation rows to publish alongside them, or `&[]` for a caller with no page.
     /// Built by the caller and not here: `screen` fetches the series long before `render` runs, and
     /// re-deriving them at the payload write would be a second definition of the same table.
@@ -5235,11 +5236,11 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // read it. Same gate that decides whether the block prints decides whether the page carries it.
     let cores = if ctx.show_hold_core { hold_core_list(quotes) } else { Vec::new() };
     let core_rows = hold_core_web_rows(&cores, ctx.owned);
-    if let Some(path) = ctx.web_out {
+    if let Some(sink) = ctx.web_out {
         let mut top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation, &core_rows);
         top.degraded = ctx.web_degraded.to_vec();
         if let Ok(json) = serde_json::to_string_pretty(&top) {
-            let _ = std::fs::write(path, json);
+            sink(json);
         }
     }
     print_lane(picks, n, w, "growth candidates", growth, ctx.sectors, ctx.sector_of, tuning, &pinned_set, ctx.owned, ctx.fund_pe);
@@ -8408,6 +8409,9 @@ mod tests {
         // `render` that touches disk on the page's behalf.
         let web = crate::config::data_path(".screen_web_smoke.json");
         let _ = std::fs::remove_file(&web);
+        let sink = |json: String| {
+            let _ = std::fs::write(&web, json); // (#391) `screen`'s own sink
+        };
         // (#249) the inflation table rides the same write; a real row, so "the key is there" cannot
         // pass on an empty vec the page would render as "(inflation feeds unavailable)".
         let infl = crate::commands::inflation_web_rows(
@@ -8419,7 +8423,7 @@ mod tests {
         let (_text, tickers) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: Some(0.9), sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: None, show_hold_core: true, fund_pe: &HashMap::new(),
-            web_out: Some(&web), web_inflation: &infl, web_degraded: &degraded,
+            web_out: Some(&sink), web_inflation: &infl, web_degraded: &degraded,
         });
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
@@ -8457,7 +8461,7 @@ mod tests {
         let (_no_core, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: None, show_hold_core: false, fund_pe: &HashMap::new(),
-            web_out: Some(&web), web_inflation: &infl, web_degraded: &[],
+            web_out: Some(&sink), web_inflation: &infl, web_degraded: &[],
         });
         let payload: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&web).expect("payload")).expect("valid JSON");
