@@ -86,6 +86,11 @@
     border-radius: 4px;
     padding: .15rem .3rem;
   }
+  /* (#400) The column glossary: collapsed, one line until asked for. */
+  #glossary summary { cursor: pointer; }
+  #glossary dt { color: var(--fg); font-weight: 600; margin-top: .5rem; }
+  #glossary dt.group { margin-top: 1.25rem; text-decoration: underline; }
+  #glossary dd { margin: 0 0 0 1.5rem; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -133,19 +138,18 @@
   </p>
 
   <!-- (#249) The footer table `screen` prints below its three rankings, published because its
-       cumulative columns are the SAME 2Y/5Y/8Y/20Y the tables above carry — a row reads straight
-       across. Portugal is printed in the terminal and deliberately not here: the columns above are
-       deflated by EU HICP and nothing else, so EU is the deflator that was applied and USA is context
-       for dollar-earning names. A third basket that deflates nothing on this page is a number with no
-       use but to be misapplied. -->
+       cumulative columns cover the spans the tables above carry (2Y/5Y/20Y) and longer ones — a row
+       reads straight across. (#366) All three regions, as the terminal prints them. (#400) This note used to
+       say the columns above were real and the EU row already subtracted; CI prints them NOMINAL
+       (`score_on_nominal`), so the note now states whichever unit the payload's own help names. -->
   <h2>Inflation</h2>
   <div id="inflation"></div>
   <p class="note" id="real">
-    <strong>These are the numbers already subtracted.</strong> The <code>2Y/5Y/8Y/20Y</code> columns in
-    the three tables above are <em>real</em> returns — the run deflates every ≥1Y horizon by EU HICP
-    before it prints. The EU row here is that deflator, shown so you can see its size:
-    <strong>do not subtract it again.</strong> The USA row is context for dollar-earning names and is
-    never applied to a column. Shorter horizons (1D/1W/1M) are nominal.
+    Consumer-price inflation over the same spans: USA, the EU (HICP) and Portugal. This run printed
+    the ≥1Y columns above as <strong id="unit">(unit not stated)</strong>. A <em>nominal</em> column
+    still holds inflation — in today's money it is (1 + column) ÷ (1 + row) − 1. A <em>real</em>
+    column had the EU row taken out before it printed — do not subtract it again. 1D/1W/1M are always
+    nominal.
   </p>
 
   <p class="note">
@@ -178,6 +182,12 @@
     late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·
     <code>~</code> bridged history · <code>H</code> hold-suitable core · <code>o</code> already held.
   </p>
+  <!-- (#400) Built from the payload's `help`, Rust's one copy of each column's meaning (the same text
+       as each header's hover title), and listing only the headers these tables show. -->
+  <details class="note" id="glossary" hidden>
+    <summary>What the columns mean</summary>
+    <dl></dl>
+  </details>
 </main>
 
 <script>
@@ -188,7 +198,7 @@
 const LANES = ["stocks", "etfs", "crypto"];
 const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
 
-function table(rows, empty = "(none pass the gates)") {
+function table(rows, empty = "(none pass the gates)", help = {}) {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
     p.className = "empty";
@@ -204,6 +214,7 @@ function table(rows, empty = "(none pass the gates)") {
     th.scope = "col";
     const b = document.createElement("button");
     b.textContent = header;
+    b.title = help[header] || ""; // (#400) hover text; the glossary below the tables lists the same
     if (!header) b.ariaLabel = "owned"; // CORE's flag column prints no header, but a button needs a name
     b.onclick = () => sortBy(th);
     th.appendChild(b);
@@ -308,23 +319,48 @@ function render(data) {
     d.textContent = "Degraded run: " + data.degraded.join("; ") + ".";
     d.hidden = false;
   }
+  // (#400) A payload written before `help` existed has no key, and renders untitled.
+  const help = data.help || {};
   for (const lane of LANES) {
-    document.getElementById(lane).replaceChildren(table(data[lane]));
+    document.getElementById(lane).replaceChildren(table(data[lane], undefined, help.lanes));
   }
   // A run whose inflation feeds all failed publishes an empty list; say that, rather than borrowing
   // the lanes' "(none pass the gates)", which would read as a gate verdict on a macro series.
   document
     .getElementById("inflation")
-    .replaceChildren(table(data.inflation, "(inflation feeds unavailable)"));
+    .replaceChildren(table(data.inflation, "(inflation feeds unavailable)", help.inflation));
   // (#250) Same reason the inflation table gets its own empty string: these funds pass their own
   // suitability filter, not the growth gates, so "(none pass the gates)" would name the wrong test.
   document
     .getElementById("core")
-    .replaceChildren(table(data.core, "(no CORE fund qualified)"));
+    .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core));
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   const sizes = LANES.map((lane) => (data[lane] || []).length);
   chooser(Math.max(1, ...sizes), Math.min(...sizes.filter(Boolean)));
+  glossary(data, help);
+}
+
+// (#400) The unit the ≥1Y columns were printed in is the head of their help ("Nominal — …"), and the
+// glossary is every shown header's help, lanes first (their headers in first-seen order), then CORE,
+// then Inflation.
+function glossary(data, help) {
+  document.getElementById("unit").textContent = help.lanes?.["2Y"]?.split(" — ")[0] || "(unit not stated)";
+  const dl = document.createElement("dl");
+  const tag = (name, text, cls) => Object.assign(document.createElement(name), { textContent: text, className: cls || "" });
+  for (const [name, part, tables] of [
+    ["Stocks, ETFs, Crypto", "lanes", LANES.map((lane) => data[lane])],
+    ["CORE", "core", [data.core]],
+    ["Inflation", "inflation", [data.inflation]],
+  ]) {
+    const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];
+    const known = heads.filter((h) => help[part]?.[h]);
+    if (known.length) dl.append(tag("dt", name, "group"));
+    for (const h of known) dl.append(tag("dt", h || "(unnamed first column)"), tag("dd", help[part][h]));
+  }
+  const box = document.getElementById("glossary");
+  box.querySelector("dl").replaceWith(dl);
+  box.hidden = !dl.children.length;
 }
 
 function load() {

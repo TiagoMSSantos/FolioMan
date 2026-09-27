@@ -230,8 +230,15 @@ pub struct Quote {
     // the signal, exactly as `capped_cagr`'s absence is (`picks::life_leg_cagr`): the live fetch fills
     // this only when `inflation_adjust.score_on_nominal` is on, and `backtest_quote` never fills it, so
     // `picks::perf_pct` falls through to `perf` and the shipped lane stays byte-identical. Filled, it is
-    // what every gate and score term reads, while `perf` above keeps feeding the REAL % columns.
+    // what every gate, score term AND printed % column reads (`col_cell` goes through `perf_pct` too).
     pub perf_nominal: Vec<Option<(String, f64)>>,
+    // (#400) true = the >=1Y % legs `perf_pct` prints are deflated: a series was in hand and
+    // `score_on_nominal` was off. One run-wide fact stamped per quote so it rides universe.json into the
+    // page engine, whose `perf_pct` prints CI's legs whatever an uploaded config says. The page's
+    // glossary names the unit from it. `default` = nominal, which is what a stub, a backtest and an
+    // older snapshot all print.
+    #[serde(default)]
+    pub legs_real: bool,
     pub name: String,    // human-readable instrument name (falls back to ticker)
     pub trend: String,   // "↑ 2w" / "↓ 5d": current direction + how long it has held
     pub at_ath: bool,    // at/near all-time high (within tol of max seen)
@@ -350,6 +357,7 @@ impl Quote {
             news_block: String::new(),
             perf: Vec::new(),
             perf_nominal: Vec::new(), // (#88) empty = "score on `perf`", the default and the backtest's only state
+            legs_real: false,         // (#400) nothing deflated a stub's legs
             name: name.to_string(),
             trend: String::new(),
             at_ath: false,

@@ -3309,69 +3309,82 @@ fn turnover_cell(o: Option<f64>) -> String {
     }
 }
 
-/// One screen/picks table column: its `settings.yaml` key, header text, min width, and right-align
-/// (numbers right, text left). `width 0` -> use the data-sized value from `Widths` (name/ticker/market/
-/// price/score). Toggle/reorder columns via `widths.columns` (see [`active_columns`]).
+/// One screen/picks table column: its `settings.yaml` key, header text, min width, right-align
+/// (numbers right, text left) and (#400) `help`, the reader-facing line the page shows on hover and in
+/// its glossary. `width 0` -> use the data-sized value from `Widths` (name/ticker/market/price/score).
+/// Toggle/reorder columns via `widths.columns` (see [`active_columns`]). A % leg's `help` carries no unit:
+/// `web_help` prefixes nominal or real from what the run actually printed.
 struct ColSpec {
     key: &'static str,
     hdr: &'static str,
     width: usize,
     right: bool,
+    help: &'static str,
 }
 
 /// Every available column, canonical order. `widths.columns` picks a subset/order by key; the analytics
 /// columns past the price/perf block (vol/maxdd/r2/abv-ma/pe/roe/div) are OFF unless listed. All are
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
-    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false }, // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
-    ColSpec { key: "name", hdr: "NAME", width: 0, right: false },
-    ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false },
-    ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
-    ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true },
+    // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held" },
+    ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin" },
+    ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
+    ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
+    ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true, help: "Last close, converted to euros" },
     // (#395) market value € = `shares_out` × price_eur: a stock's newest complete-FY diluted weighted-average
     // shares (so up to ~1y old and a few % off after buybacks; a split after the last 10-K reads 1/N until
     // the next filing), a coin's circulating supply. n/a where no report was fetched (e.g. an upload re-rank
     // surfacing a stock CI never displayed). Funds show AUM instead.
-    ColSpec { key: "mcap", hdr: "MCAP", width: 7, right: true },
-    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // whole-life %/yr since listing (display; ranking uses the fixed-horizon ladder — see `leg`)
-    ColSpec { key: "leg", hdr: "LEG", width: 8, right: true }, // the CAPPED long-leg %/yr the growth rank actually scores on
-    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true }, // whole-life %/yr WITH the dividend sum added (lower-bound total return; ≈ CAGR for Acc/non-payers)
-    ColSpec { key: "1h", hdr: "1H", width: 7, right: true },
-    ColSpec { key: "6h", hdr: "6H", width: 7, right: true },
-    ColSpec { key: "12h", hdr: "12H", width: 7, right: true },
-    ColSpec { key: "1d", hdr: "1D", width: 8, right: true },
-    ColSpec { key: "1w", hdr: "1W", width: 8, right: true },
-    ColSpec { key: "1m", hdr: "1M", width: 8, right: true },
-    ColSpec { key: "1y", hdr: "1Y", width: 8, right: true },
-    ColSpec { key: "2y", hdr: "2Y", width: 8, right: true },
-    ColSpec { key: "5y", hdr: "5Y", width: 8, right: true },
-    ColSpec { key: "8y", hdr: "8Y", width: 8, right: true },
-    ColSpec { key: "10y", hdr: "10Y", width: 8, right: true },
-    ColSpec { key: "20y", hdr: "20Y", width: 8, right: true },
-    ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true },       // real listing age in years — how much record backs the CAGR headline
-    ColSpec { key: "vol", hdr: "VOL", width: 7, right: true },       // daily-return stdev (risk)
-    ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true },   // worst peak-to-trough drop ever (pain)
-    ColSpec { key: "r2", hdr: "R2", width: 6, right: true },         // log-trend steadiness 0..1 (smoothness)
-    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true }, // % above the 200wk SMA (overextension)
-    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true },        // trailing P/E (FMP key only)
-    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true },       // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't exactly equal the TTM-based P/E cell ÷ CAGR
-    ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true },     // (#45) CRYPTO's valuation cell — market cap / realized cap, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is a P/B analogue. <1 = the market sits below its own aggregate cost basis
-    ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true },     // trailing return on equity — or on ASSETS where equity is not a credible denominator, negative or collapsed (`core::quality_return`), hence the slash: one column, two denominators, no per-row flag
-    ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
-    ColSpec { key: "ter", hdr: "TER", width: 6, right: true },       // ETF annual expense ratio % — the one cost that compounds against a decades hold (FMP key, ETFs only)
-    ColSpec { key: "aum", hdr: "AUM", width: 6, right: true },       // ETF fund size (BF etp_search, EUR-approximate) — sub-scale funds get liquidated/merged mid-hold
-    ColSpec { key: "use", hdr: "USE", width: 4, right: false },      // ETF share class: Acc(umulating)/Dist(ributing) — Dist pays out (taxed yearly); Acc compounds tax-deferred
-    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false },    // ETF replication: Swap/Full/Opt(imised)/Hybr(id)/Samp(le) — counterparty structure over a decades hold
-    ColSpec { key: "dom", hdr: "DOM", width: 4, right: false },      // ETF legal domicile (ISIN prefix): IE gets the 15% US-dividend withholding treaty, LU eats 30% — ≈ +0.2%/yr on a US/world fund over a decades hold
-    ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true }, // newest complete-FY revenue growth vs prior FY (stocks only; report pipeline) — "still growing?"
-    ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true }, // newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
-    ColSpec { key: "net", hdr: "NET%", width: 6, right: true },      // newest complete-FY net margin level (stocks only) — profitability quality
-    ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true }, // newest complete-FY net share-count change, sign-flipped (stocks only): + = buying back (tax-deferred capital return), − = diluting
-    ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
-    ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
-    ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
-    ColSpec { key: "score", hdr: "SCORE", width: 0, right: true },
-    ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true }, // DIAGNOSTIC: the same score with the long-CAGR window (and the trust leg) pinned to 8Y — "how does this name look on an 8-year view?". Never ranked on, and scored WITHOUT the 8Y CAGR admission floor so every row carries a comparable number
+    ColSpec { key: "mcap", hdr: "MCAP", width: 7, right: true, help: "Whole market value in euros: shares × price. Stocks use the newest full-year diluted share count (up to a year old), coins their circulating supply. Funds show AUM instead" },
+    // display only; ranking uses the fixed-horizon ladder — see `leg`
+    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG" },
+    ColSpec { key: "leg", hdr: "LEG", width: 8, right: true, help: "The long-run %/yr the growth rank actually scores: the 20Y window, else 8Y, else 5Y, whichever the record allows, after the score's cap" },
+    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "CAGR with the dividends paid added back: a lower bound on total return. Equals CAGR for accumulating funds and non-payers" },
+    ColSpec { key: "1h", hdr: "1H", width: 7, right: true, help: "Price change over the last hourly bar" },
+    ColSpec { key: "6h", hdr: "6H", width: 7, right: true, help: "Price change over the last 6 hourly bars" },
+    ColSpec { key: "12h", hdr: "12H", width: 7, right: true, help: "Price change over the last 12 hourly bars" },
+    ColSpec { key: "1d", hdr: "1D", width: 8, right: true, help: "price change over the last trading day" },
+    ColSpec { key: "1w", hdr: "1W", width: 8, right: true, help: "price change over the last week" },
+    ColSpec { key: "1m", hdr: "1M", width: 8, right: true, help: "price change over the last month" },
+    ColSpec { key: "1y", hdr: "1Y", width: 8, right: true, help: "total price change over the last year" },
+    ColSpec { key: "2y", hdr: "2Y", width: 8, right: true, help: "total price change over the last 2 years, not per year" },
+    ColSpec { key: "5y", hdr: "5Y", width: 8, right: true, help: "total price change over the last 5 years, not per year" },
+    ColSpec { key: "8y", hdr: "8Y", width: 8, right: true, help: "total price change over the last 8 years, not per year" },
+    ColSpec { key: "10y", hdr: "10Y", width: 8, right: true, help: "total price change over the last 10 years, not per year" },
+    ColSpec { key: "20y", hdr: "20Y", width: 8, right: true, help: "total price change over the last 20 years, not per year" },
+    ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true, help: "Years of price history since listing: how much record backs CAGR and LEG" },
+    ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: standard deviation of daily returns over the last 252 sessions (a daily figure, not annualized)" },
+    ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart" },
+    ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
+    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average" },
+    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ earnings per share, from SEC filings first, FMP as fallback" },
+    // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
+    // exactly equal the TTM-based P/E cell ÷ CAGR
+    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual earnings per share ÷ the long-run growth %/yr. Below 1 = growth priced cheap. Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
+    // (#45) CRYPTO's valuation cell, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that
+    // column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is
+    // a P/B analogue
+    ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true, help: "Crypto only: market cap ÷ realized cap (CoinMetrics), each coin valued at the price it last moved. Below 1 = the market sits under its holders' average cost" },
+    // one column, two denominators (`core::quality_return`), no per-row flag
+    ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity, or on assets where equity is negative or under 1/20th of assets (heavy buyback filers)" },
+    ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
+    ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold" },
+    ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold" },
+    ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class: Acc reinvests income (tax deferred), Dist pays it out (taxed yearly)" },
+    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index: Full (holds every name), Opt (optimised) or Samp (sampled subset), Swap (a counterparty pays the index), Hybr (hybrid)" },
+    ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's legal home, from its ISIN: IE loses 15% of US dividends to tax by treaty, LU 30% (≈ +0.2%/yr to IE on a US or world fund)" },
+    ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before" },
+    ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
+    ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
+    ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares" },
+    ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
+    ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
+    ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions" },
+    ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
+    // DIAGNOSTIC: the long-CAGR window (and the trust leg) pinned to 8Y. Never ranked on, and scored WITHOUT
+    // the 8Y CAGR admission floor so every row carries a comparable number
+    ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true, help: "The same score on an 8-year window, for comparison; never ranked on. † = under 8 years of record, so it is the full-history score" },
 ];
 
 /// Canonical default layout when `widths.columns` is empty: the historical table PLUS `cagr` and
@@ -4323,6 +4336,10 @@ pub struct WebTop {
     /// (#378) the feeds this run went without (`screen`'s DEGRADED line). Empty on a healthy run and
     /// off the page's own path; the site shows a banner only when it is not.
     pub degraded: Vec<String>,
+    /// (#400) the column glossary, `{lanes, core, inflation}` -> header -> text ([`web_help`]). A
+    /// `BTreeMap` for the page's parity check: serde_json has no `preserve_order` here, so a map's key
+    /// order must not depend on how it was built.
+    pub help: BTreeMap<&'static str, BTreeMap<String, String>>,
 }
 
 /// (#79) Build the page payload from the SAME ranked picks [`print_lane`] is about to print: same
@@ -4366,7 +4383,56 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
         inflation: inflation.to_vec(),
         core: core.to_vec(),
         degraded: Vec::new(), // `render` fills it from its ctx
+        help: BTreeMap::new(),  // and this from its quotes
     }
+}
+
+/// (#400) The page's column glossary, keyed per table because one header can mean two things: 2Y is a
+/// price return in a lane and a CPI rise in the inflation table. `real` = the printed >=1Y legs are
+/// deflated (`Quote::legs_real`); the <1Y legs never are (`core::horizon_changes`). The inflation
+/// headers come from its own rows, so the dynamic span (27Y) needs no case of its own.
+pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTreeMap<&'static str, BTreeMap<String, String>> {
+    let unit = if real { "Real (EU HICP-deflated)" } else { "Nominal" };
+    let lanes: BTreeMap<String, String> = COLUMNS
+        .iter()
+        .map(|c| {
+            let text = match c.key {
+                "1d" | "1w" | "1m" => format!("Nominal — {}", c.help),
+                "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => format!(
+                    "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return",
+                    c.help
+                ),
+                _ => c.help.to_string(),
+            };
+            (c.hdr.to_string(), text)
+        })
+        .collect();
+    let core = HOLD_CORE_COLS
+        .iter()
+        .map(|h| {
+            let text = match *h {
+                "" => "o = you already hold it; blank here, as the page reads no broker account".to_string(),
+                "NAME" => "Fund's full name".to_string(),
+                _ => lanes[*h].clone(),
+            };
+            (h.to_string(), text)
+        })
+        .collect();
+    let inflation = inflation
+        .first()
+        .into_iter()
+        .flatten()
+        .map(|(h, _)| {
+            let text = match h.as_str() {
+                "REGION" => "Whose consumer prices: USA, the EU (HICP, what a Real column is deflated by) or Portugal".to_string(),
+                "LATEST" => "Newest yearly inflation rate; for a year still running, the latest month's rate vs a year earlier".to_string(),
+                "AS OF" => "Year of that newest rate; ⚠ marks a stale or missing feed".to_string(),
+                span => format!("Total price rise over the last {} yearly rates, compounded", span.trim_end_matches('Y')),
+            };
+            (h.clone(), text)
+        })
+        .collect();
+    BTreeMap::from([("lanes", lanes), ("core", core), ("inflation", inflation)])
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -5250,6 +5316,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     if let Some(sink) = ctx.web_out {
         let mut top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation, &core_rows);
         top.degraded = ctx.web_degraded.to_vec();
+        top.help = web_help(quotes.iter().any(|q| q.legs_real), &top.inflation);
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             sink(json);
         }
@@ -6438,6 +6505,7 @@ mod tests {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
             perf_nominal: Vec::new(), // (#88) empty = score on `perf`, which is what every fixture here means
+            legs_real: false,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, close_native: None, quote_currency: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
@@ -8406,6 +8474,7 @@ mod tests {
         // Bitcoin base (btc_1y Some) + one alt -> the crypto lane + crypto_adjust/btc_relative tilt run.
         let mut btc = Quote::stub("BTC-USD", "€60000", "", "Bitcoin");
         btc.perf = legs(&[("1Y", 40.0)]);
+        btc.legs_real = true; // (#400) a run-wide fact, so ANY quote carrying it names the page's unit
         let mut eth = Quote::stub("ETH-USD", "€3000", "", "Ethereum");
         eth.perf = legs(&[("1Y", 55.0)]);
 
@@ -8414,7 +8483,7 @@ mod tests {
         // measures the empty lane it was written for, and this row can only arrive via the CORE seam.
         // (#344) plus a pinned name whose quote FAILED: pinned, but not usable, so no sentinel either
         let dead = Quote::stub("MSFT", "err", "", "Microsoft");
-        let quotes = vec![pin, btc, eth, core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), dead];
+        let mut quotes = vec![pin, btc, eth, core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), dead];
         let pinned = vec!["AAPL".to_string(), "MSFT".to_string()];
         let owned = Owned { stocks: ["aapl".to_string()].into(), ..Default::default() };
 
@@ -8467,7 +8536,12 @@ mod tests {
         assert_eq!(cores[0][0][1], "", "the broker overlay holds no fund here, and nothing else may fill that cell");
         // (#378) …and the DEGRADED line, verbatim, so the page names the feed this run went without
         assert_eq!(payload["degraded"], serde_json::json!(["EU HICP feed down (inflation adjustment off)"]));
+        // (#400) …and the glossary, whose >=1Y unit is the quotes' own stamp
+        assert!(payload["help"]["lanes"]["2Y"].as_str().is_some_and(|t| t.starts_with("Real")), "{}", payload["help"]);
+        assert_eq!(payload["help"]["core"]["NAME"], "Fund's full name");
+        assert!(payload["help"]["inflation"]["AS OF"].is_string());
         let _ = std::fs::remove_file(&web);
+        quotes.iter_mut().for_each(|q| q.legs_real = false);
 
         // (#250) the CORE block is caller-gated, and the page follows that gate: a lane that prints no
         // block publishes no table. Without this the `check` path and the stock/crypto-only screen
@@ -8482,6 +8556,7 @@ mod tests {
         assert!(payload["core"].as_array().expect("the key stays, so the page prints its own empty line").is_empty());
         assert!(payload["degraded"].as_array().expect("the key stays on a healthy run").is_empty());
         assert!(!payload["stocks"].as_array().expect("stocks lane").is_empty(), "only the CORE table is gated off");
+        assert!(payload["help"]["lanes"]["2Y"].as_str().is_some_and(|t| t.starts_with("Nominal")), "no quote was deflated");
         let _ = std::fs::remove_file(&web);
 
         // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch, and
@@ -9101,6 +9176,42 @@ mod tests {
             0,
             0,
         )
+    }
+
+    /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and
+    /// the inflation table's, whose span header is dynamic. The >=1Y legs name the unit `real` says was
+    /// printed; the <1Y legs are nominal either way.
+    #[test]
+    fn web_help_covers_every_header_and_names_the_unit() {
+        let series: BTreeMap<i32, f64> = (1999..=2025).map(|y| (y, 2.0)).collect();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).expect("a real date");
+        let infl = crate::commands::inflation_web_rows(&[("USA", series.clone()), ("EU", series)], today);
+        let (nominal, real) = (web_help(false, &infl), web_help(true, &infl));
+        for c in COLUMNS {
+            assert!(!nominal["lanes"][c.hdr].is_empty(), "{}", c.hdr);
+        }
+        assert_eq!(nominal["lanes"].len(), COLUMNS.len(), "one entry per header, none shared");
+        for h in HOLD_CORE_COLS {
+            assert!(!nominal["core"][h].is_empty(), "{h:?}");
+        }
+        assert_eq!(nominal["core"]["CAGR"], nominal["lanes"]["CAGR"], "a shared header keeps the lane's text");
+        assert_ne!(nominal["core"]["NAME"], nominal["lanes"]["NAME"], "CORE prints the raw name");
+        assert!(!nominal["lanes"].values().any(|t| *t == nominal["core"][""]), "the flag column has its own line");
+        let heads: Vec<&str> = infl[0].iter().map(|(h, _)| h.as_str()).collect();
+        assert_eq!(nominal["inflation"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads.iter().copied().collect());
+        for (h, t) in &nominal["inflation"] {
+            let span = h.strip_suffix('Y');
+            assert_eq!(t.starts_with("Total price rise"), span.is_some(), "{h}: {t}");
+            assert!(span.is_none_or(|n| t.contains(&format!(" {n} "))), "{h}: {t}");
+        }
+        for leg in ["1Y", "2Y", "5Y", "8Y", "10Y", "20Y"] {
+            assert!(nominal["lanes"][leg].starts_with("Nominal — "), "{leg}");
+            assert!(real["lanes"][leg].starts_with("Real (EU HICP-deflated) — "), "{leg}");
+        }
+        for leg in ["1D", "1W", "1M"] {
+            assert!(real["lanes"][leg].starts_with("Nominal — "), "{leg} is never deflated");
+        }
+        assert!(web_help(false, &[])["inflation"].is_empty(), "no feed, no rows, no entries");
     }
 
     /// (#250) The cells the page publishes ARE the cells the terminal prints — one definition, two

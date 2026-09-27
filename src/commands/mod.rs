@@ -223,8 +223,9 @@ fn infl_years(eu: Option<usize>) -> Vec<usize> {
 /// arithmetic in the reader's head.
 ///
 /// (#366) ALL THREE REGIONS, as the footer prints them. (#249) had dropped Portugal because the page's
-/// growth columns are deflated by EU HICP alone — that still holds: the EU row is the deflator that
-/// was applied, USA and Portugal are context, and none of them is applied to a row by the reader.
+/// growth columns are deflated by EU HICP alone — when they are deflated at all: CI's `score_on_nominal`
+/// prints them nominal (#400), and the page's glossary says which. The EU row is the deflator a real
+/// column carries, USA and Portugal are context, and none of them is applied to a row by the reader.
 ///
 /// Rows are `(header, cell)` pairs — the SAME shape the three lanes use — so `web/index.html` renders
 /// this with the table builder it already has and no cell is formatted in two places.

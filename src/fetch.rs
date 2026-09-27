@@ -713,10 +713,14 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // (#3l) same merged series, same free-accessor knob as `core::backtest_quote` -> train==serve.
     let capped_cagr =
         core::capped_life_cagr(&long_dates, &long_closes, crate::config::life_cagr_max_years());
-    // Same series and the same `infl` the perf legs get, so this stands in for a missing long rung in
-    // the SAME units the neighbouring cells are printed in (real, not nominal, whenever the legs are).
+    // (#400) The deflator the PRINTED legs carry: `picks::perf_pct` prints `perf_nominal` whenever
+    // `score_on_nominal` fills it, so the columns are real only with the knob off and a series in hand.
+    let print_infl = infl.filter(|m| !score_on_nominal && !m.is_empty());
+    // Same series as the perf legs, deflated only when the printed legs are, so this stands in for a
+    // missing long rung in the SAME units its neighbouring cells are printed in. It used to take
+    // `infl` itself, which printed a real `≈` cell among (#315)'s nominal ones.
     // Display-only — `picks::perf_fill` is its only reader.
-    let life_return_pct = core::life_return(&long_dates, &long_closes, infl);
+    let life_return_pct = core::life_return(&long_dates, &long_closes, print_infl);
     // (#41) 36 trailing month-over-month returns for the growth_corr_cap redundancy skip. Built from the
     // DAILY `chart`, not the merged long series: the merge is monthly-head + daily-tail, so its cadence
     // changes mid-series, and only the tail covers the recent 36 months this needs anyway.
@@ -797,6 +801,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         } else {
             Vec::new()
         },
+        legs_real: print_infl.is_some(),
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
@@ -9003,6 +9008,18 @@ pub(crate) mod tests {
         assert_eq!(q.mom_pct, Some(25.0), "2.0 a month back, 2.5 now");
         assert!(q.perf_nominal.is_empty() && !q.perf.is_empty(), "no nominal twin unless the score asks for it");
         assert!(!LONG_SKIP_NEW.lock().unwrap().contains(&tk("8Y")), "a monthly head that contributed is not a skip");
+        // (#400) the `≈` stand-in takes the unit the printed legs carry, and `legs_real` names it: an empty
+        // series deflates nothing, a real one deflates only with the nominal knob off.
+        assert!(!q.legs_real, "an empty series deflated nothing");
+        assert_eq!(q.life_return_pct, core::life_return(&dates, &closes, None));
+        let hicp: BTreeMap<i32, f64> = (2010..=2025).map(|y| (y, 2.0)).collect();
+        let real = quote_one(&client, &urls, &fx, &tk("8Y"), 30, 0, false, false, &w, Some(&hicp), false).await;
+        assert!(real.legs_real, "a series in hand and the knob off: the printed legs are deflated");
+        assert_eq!(real.life_return_pct, core::life_return(&dates, &closes, Some(&hicp)));
+        assert_ne!(real.life_return_pct, q.life_return_pct, "the fixture must tell the two units apart");
+        let nominal = quote_one(&client, &urls, &fx, &tk("8Y"), 30, 0, false, false, &w, Some(&hicp), true).await;
+        assert!(!nominal.legs_real, "score_on_nominal prints `perf_nominal`, never deflated");
+        assert_eq!(nominal.life_return_pct, q.life_return_pct, "so its `≈` cell is nominal too");
 
         let q = quote_one(&client, &urls, &fx, &tk("YOUNG"), 30, 0, false, false, &w, None, false).await;
         let (dates, closes) = ([ago(400), ago(200), last], [1.0, 1.2, 1.1]);

@@ -153,9 +153,10 @@ pub struct InflationAdjust {
     // `horizon_changes` writes into `Quote.perf`, and `Quote.perf` is what `picks::perf_pct` hands to
     // every gate and score term, so turning it on silently re-denominates the whole growth lane while
     // the backtest that fitted its thresholds stays nominal (`backtest_quote` passes `infl: None`).
-    // true = the score reads a nominal copy (`Quote.perf_nominal`) and the % columns keep the real one,
-    // i.e. `enabled` finally means only what it says. false = today's behaviour and the DEFAULT, because
-    // the shipped lane must not move until this is deliberately turned on.
+    // true = the score reads a nominal copy (`Quote.perf_nominal`), and so do the % columns, which print
+    // through the same `perf_pct` (#400: they were documented here as keeping the real one; they never
+    // did). false = today's behaviour and the DEFAULT, because the shipped lane must not move until this
+    // is deliberately turned on.
     pub score_on_nominal: bool,
 }
 
