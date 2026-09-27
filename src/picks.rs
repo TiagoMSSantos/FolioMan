@@ -3704,8 +3704,13 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
 /// as `BASE_MARKET_EQ` (`AAPL_US_EQ`), Yahoo as `BASE.EXCHANGE` (`IITU.L`); comparing the lowercased
 /// bases joins the two worlds. Honest caveat: a same-base listing on another exchange also matches —
 /// acceptable for a display flag (same strategy, different venue), never fed into a score.
+/// (#387) A European listing has no `_MARKET` part: T212 appends ONE lowercase venue letter to the base
+/// (`VUAGl_EQ`, l = LSE), which read as base `vuagl`, so no held EU-venue ETF ever matched its Yahoo row
+/// (no `o` mark, "held but not sized" in `size`). The letter drops only after an uppercase base, so an
+/// already-lowercased base passes through whole.
 pub fn t212_base(ticker: &str) -> String {
-    ticker.split('_').next().unwrap_or(ticker).to_lowercase()
+    let b = ticker.split('_').next().unwrap_or(ticker);
+    b.strip_suffix(|c: char| c.is_ascii_lowercase()).filter(|s| s.chars().any(|c| c.is_ascii_uppercase())).unwrap_or(b).to_lowercase()
 }
 pub fn yahoo_base(ticker: &str) -> String {
     ticker.split('.').next().unwrap_or(ticker).to_lowercase()
@@ -5703,6 +5708,9 @@ mod tests {
     fn owned_overlay_base_mapping() {
         assert_eq!(t212_base("AAPL_US_EQ"), "aapl");
         assert_eq!(t212_base("IITU_GB_EQ"), "iitu");
+        // (#387) the venue letter of a European listing is not part of the base
+        assert_eq!(t212_base("VUAGl_EQ"), yahoo_base("VUAG.L"));
+        assert_eq!(t212_base("IITUx_EQ"), "iitu");
         assert_eq!(yahoo_base("AAPL"), "aapl");
         assert_eq!(yahoo_base("IITU.L"), "iitu");
         assert_eq!(yahoo_base("VVSM.DE"), "vvsm");
