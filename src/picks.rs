@@ -3298,9 +3298,10 @@ fn upside_to_high(drawdown: f64) -> f64 {
     drawdown * 100.0 / (100.0 - drawdown)
 }
 
-/// Compact EUR turnover for the table: €1.2B / €340M / €5K / n/a.
+/// Compact EUR amount for the table: €3.7T / €1.2B / €340M / €5K / n/a.
 fn turnover_cell(o: Option<f64>) -> String {
     match o {
+        Some(v) if v >= 1e12 => format!("€{:.1}T", v / 1e12), // (#395) MCAP reaches trillions: €3.7T, not €3661.0B
         Some(v) if v >= 1e9 => format!("€{:.1}B", v / 1e9),
         Some(v) if v >= 1e6 => format!("€{:.0}M", v / 1e6),
         Some(v) => format!("€{:.0}K", v / 1e3),
@@ -3327,6 +3328,11 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
     ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true },
+    // (#395) market value € = `shares_out` × price_eur: a stock's newest complete-FY diluted weighted-average
+    // shares (so up to ~1y old and a few % off after buybacks; a split after the last 10-K reads 1/N until
+    // the next filing), a coin's circulating supply. n/a where no report was fetched (e.g. an upload re-rank
+    // surfacing a stock CI never displayed). Funds show AUM instead.
+    ColSpec { key: "mcap", hdr: "MCAP", width: 7, right: true },
     ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // whole-life %/yr since listing (display; ranking uses the fixed-horizon ladder — see `leg`)
     ColSpec { key: "leg", hdr: "LEG", width: 8, right: true }, // the CAPPED long-leg %/yr the growth rank actually scores on
     ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true }, // whole-life %/yr WITH the dividend sum added (lower-bound total return; ≈ CAGR for Acc/non-payers)
@@ -3667,6 +3673,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // mid-hold. "—" for stocks/crypto (not funds); "n/a" for an ETF BF's payload didn't cover.
         "aum" if etf_only_na => "—".to_string(),
         "aum" => turnover_cell(quote.aum_shown()),
+        "mcap" => turnover_cell(quote.shares_out.zip(quote.price_eur).map(|(n, p)| n * p)),
         // ETF share class + replication tokens (BF keyData). Display-only — the price-only CAGR already
         // prices the Dist payout drag, so these inform the BUY (which listing), never the ranking.
         "use" if etf_only_na => "—".to_string(),
@@ -4095,7 +4102,7 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 // builds the same three tables and a page that hides a different column set is a page that quietly
 // stops being the terminal's row.
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv"];
-const HIDE_ETF: &[&str] = &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv"];
+const HIDE_ETF: &[&str] = &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap"];
 const HIDE_CRYPTO: &[&str] =
     &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"];
 
@@ -6476,6 +6483,7 @@ mod tests {
             eps_yoy: None,
             net_margin_fy: None,
             buyback_yoy: None,
+            shares_out: None,
             annual_brief: None,
         }
     };
@@ -8058,7 +8066,9 @@ mod tests {
     swingc.ticker = "GT-USD".into();
     assert!(!gate_failures(&swingc, &ct).unwrap().iter().any(|(g, _, _)| *g == "1Y+"));
 
-    // turnover_cell compaction across every magnitude arm (B/M/K) + the unknown fallback
+    // turnover_cell compaction across every magnitude arm (T/B/M/K) + the unknown fallback
+    assert_eq!(turnover_cell(Some(3.66e12)), "€3.7T"); // (#395) an Alphabet-sized MCAP
+    assert_eq!(turnover_cell(Some(1e12)), "€1.0T");
     assert_eq!(turnover_cell(Some(1.2e9)), "€1.2B");
     assert_eq!(turnover_cell(Some(340e6)), "€340M");
     assert_eq!(turnover_cell(Some(5e3)), "€5K");
@@ -8795,7 +8805,7 @@ mod tests {
         // against the default the three hide lists are very nearly no-ops and this test would pass
         // with all three swapped. Every column named here is on exactly one lane's hide list.
         let w = Widths {
-            columns: ["rank", "name", "ticker", "pe", "peg", "div", "ter", "aum", "mvrv", "score", "score8y"]
+            columns: ["rank", "name", "ticker", "pe", "peg", "div", "ter", "aum", "mvrv", "mcap", "score", "score8y"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
@@ -8858,6 +8868,8 @@ mod tests {
         assert!(has(&top.stocks[0], "P/E") && !has(&top.stocks[0], "TER") && !has(&top.stocks[0], "MVRV"));
         assert!(has(&top.etfs[0], "TER") && has(&top.etfs[0], "PEG") && !has(&top.etfs[0], "P/E") && !has(&top.etfs[0], "MVRV"));
         assert!(has(&top.crypto[0], "MVRV") && !has(&top.crypto[0], "P/E") && !has(&top.crypto[0], "TER") && !has(&top.crypto[0], "DIV"));
+        // (#395) a company or coin prints its market value; a fund's size is its AUM column instead
+        assert!(has(&top.stocks[0], "MCAP") && has(&top.crypto[0], "MCAP") && !has(&top.etfs[0], "MCAP"));
 
         // 3. the rank cell is the RANK CELL, flags and all — not a bare "1". The fund is `#`-enriched
         // here (instrument_type ETF alone doesn't do it; `fund_factor`/TER would), so assert the shape
@@ -9465,6 +9477,12 @@ mod tests {
         assert_eq!(cc("upside", &q, 0.0, None, ""), format!("+{:.1}%", upside_to_high(12.5)));
         q.avg_turnover_eur = Some(3.4e9);
         assert_eq!(cc("turnover", &q, 0.0, None, ""), "€3.4B");
+        // (#395) shares × EUR price, n/a when either half is missing
+        assert_eq!(cc("mcap", &q, 0.0, None, ""), "n/a");
+        q.shares_out = Some(12.23e9);
+        assert_eq!(cc("mcap", &q, 0.0, None, ""), "n/a", "no EUR price, no value");
+        q.price_eur = Some(299.35);
+        assert_eq!(cc("mcap", &q, 0.0, None, ""), "€3.7T");
         q.volatility_pct = Some(1.3);
         assert_eq!(cc("vol", &q, 0.0, None, ""), "1.3%");
         q.max_drawdown_pct = 42.0;

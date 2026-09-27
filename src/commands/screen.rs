@@ -1805,8 +1805,16 @@ pub async fn run(args: Vec<String>) {
     // unstamped quote would rank as though the ceiling did not exist.
     let mvrv = fetch::fetch_mvrv(&client, &settings.urls, &universe).await;
     let mvrv_hits = quotes.iter().filter(|q| mvrv.contains_key(&q.ticker)).count();
+    // (#395) the coins' MCAP share count, one more bulk request; display-only. Only coins are keyed, so
+    // the stocks' `enrich_income_stmt` stamp above survives. Keyed off the QUOTES' tickers, not
+    // `universe`: a coin Yahoo has no -EUR pair for was refetched as -USD (GT-EUR -> GT-USD).
+    let quoted: Vec<String> = quotes.iter().map(|q| q.ticker.clone()).collect();
+    let supply = fetch::fetch_coin_supply(&client, &settings.urls, &quoted).await;
     for quote in &mut quotes {
         quote.mvrv = mvrv.get(&quote.ticker).copied();
+        if let Some(s) = supply.get(&quote.ticker) {
+            quote.shares_out = Some(*s);
+        }
     }
     // Coverage is thin BY DESIGN of the source, so state it rather than letting a column of n/a imply
     // a broken fetch: the coins without a value pass the ceiling untested, which is the house

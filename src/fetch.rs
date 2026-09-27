@@ -861,6 +861,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         eps_yoy: None,
         net_margin_fy: None,
         buyback_yoy: None,
+        shares_out: None, // (#395) enrich_income_stmt for stocks, screen's CoinGecko stamp for coins
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -1505,6 +1506,8 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
             if let Some(snap) = core::income_snapshot(&annual) {
                 (q.rev_yoy, q.eps_yoy, q.net_margin_fy, q.buyback_yoy) = snap;
             }
+            // (#395) the MCAP cell's share count, off the same year — no extra request
+            q.shares_out = core::newest_fy_idx(&annual).and_then(|i| annual[i].shares);
             // (B) same rollup, kept this time: the multi-year trajectory line for screen's
             // fundamentals footer. Zero extra requests — this was fetched and discarded before.
             q.annual_brief = core::annual_brief(&annual).map(|b| format!("{b}  [{source}]"));
@@ -2583,6 +2586,35 @@ pub async fn fetch_mvrv(client: &Client, urls: &Urls, tickers: &[String]) -> Has
     for (id, ticker) in &want {
         if let Some(m) = by_id.get(id.as_str()) {
             out.insert(ticker.clone(), *m);
+        }
+    }
+    out
+}
+
+/// (#395) Circulating supply per crypto ticker ("BTC-EUR" -> ~19.9M), for the MCAP cell, which
+/// multiplies it by the row's own € price. ONE request: the CoinGecko market-cap-ranked list the crypto
+/// lane is built from, at its 250-row page maximum so an explicit `screen ETH-EUR` finds its coin too.
+/// The first row per symbol wins — the list is cap-descending, and that is the coin the universe took
+/// the symbol from. A zero or missing supply is skipped rather than printed as a €0 cap. Empty map on
+/// any failure: the column reads n/a and nothing is gated on it.
+pub async fn fetch_coin_supply(client: &Client, urls: &Urls, tickers: &[String]) -> HashMap<String, f64> {
+    let mut out = HashMap::new();
+    let coins: Vec<&String> = tickers.iter().filter(|t| crate::picks::is_currency_quoted(t)).collect();
+    if coins.is_empty() {
+        return out; // no crypto lane, no request
+    }
+    let Some(body) = get_json(client, &urls.coingecko_markets.replace("{n}", "250")).await else { return out };
+    let mut supply: HashMap<String, f64> = HashMap::new();
+    for c in body.as_array().into_iter().flatten() {
+        let sym = c.get("symbol").and_then(Value::as_str);
+        let s = c.get("circulating_supply").and_then(Value::as_f64).filter(|s| *s > 0.0);
+        if let (Some(sym), Some(s)) = (sym, s) {
+            supply.entry(sym.to_uppercase()).or_insert(s);
+        }
+    }
+    for t in coins {
+        if let Some(s) = supply.get(&crate::picks::underlying(t).to_uppercase()) {
+            out.insert(t.clone(), *s);
         }
     }
     out
@@ -5292,6 +5324,24 @@ pub(crate) mod tests {
         assert_eq!(kept, ["bare", "edge"]);
     }
 
+    /// (#395) One CoinGecko list -> supply per coin ticker. The second `btc` is a smaller coin reusing
+    /// the symbol and must not overwrite the first; a zero and a null supply are skipped; `AAPL` is
+    /// not currency-quoted and never matched.
+    #[tokio::test]
+    async fn fetch_coin_supply_maps_each_coin_back_to_its_ticker() {
+        let body = serde_json::json!([
+            {"symbol": "btc", "circulating_supply": 19_900_000.0},
+            {"symbol": "gt", "circulating_supply": 80_000_000.0},
+            {"symbol": "btc", "circulating_supply": 5.0},
+            {"symbol": "eth", "circulating_supply": 0.0},
+            {"symbol": "sol", "circulating_supply": null}
+        ]);
+        let (url, client) = stub_server(Box::leak(body.to_string().into_boxed_str()));
+        let tickers: Vec<String> = ["BTC-EUR", "GT-USD", "ETH-EUR", "SOL-EUR", "AAPL"].map(String::from).into();
+        let got = fetch_coin_supply(&client, &stub_urls(&url), &tickers).await;
+        assert_eq!(got, HashMap::from([("BTC-EUR".to_string(), 19_900_000.0), ("GT-USD".to_string(), 80_000_000.0)]));
+    }
+
     /// (#358) The whole CoinMetrics round trip. The stub serves one reply to every connection, so one
     /// body answers both requests: `data[0]` carries the catalog's `frequencies` AND the timeseries
     /// row. `btc` is in the 1d catalog and dated today, so `BTC-EUR` gets its value back; `AAPL` is
@@ -6860,7 +6910,7 @@ pub(crate) mod tests {
         pin_throttle();
         seed_cik_map();
         std::fs::create_dir_all(crate::config::data_path(".fmp_cache")).expect("scratch .fmp_cache");
-        let rows = r#"[{"filingDate":"2025-02-01","date":"2024-12-31","revenue":1000.0,"netIncome":100.0,"eps":2.0},{"filingDate":"2026-02-01","date":"2025-12-31","revenue":1200.0,"netIncome":150.0,"eps":3.0}]"#;
+        let rows = r#"[{"filingDate":"2025-02-01","date":"2024-12-31","revenue":1000.0,"netIncome":100.0,"eps":2.0},{"filingDate":"2026-02-01","date":"2025-12-31","revenue":1200.0,"netIncome":150.0,"eps":3.0,"weightedAverageShsOutDil":50.0}]"#;
         let tickers = ["ZZINC", "ZZINCOFF", "ZZINCETF"];
         for t in tickers {
             let p = fund_cache_path(t);
@@ -6884,6 +6934,7 @@ pub(crate) mod tests {
         let brief = quotes[0].annual_brief.as_deref();
         assert!(brief.is_some_and(|b| b.ends_with("  [FMP]")), "two FMP years make a brief: {brief:?}");
         assert_eq!(quotes[1].annual_brief, None, "not a target");
+        assert_eq!((quotes[0].shares_out, quotes[1].shares_out), (Some(50.0), None), "(#395) MCAP's count is the newest FY's");
         assert_eq!(quotes[2].annual_brief, None, "a fund has no income statement");
     }
 

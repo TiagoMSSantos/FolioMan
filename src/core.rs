@@ -319,6 +319,7 @@ pub struct Quote {
     pub eps_yoy: Option<f64>,          // newest complete-FY EPS growth (%) vs the prior FY. DISPLAY-ONLY, same scoping as rev_yoy
     pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
     pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
+    pub shares_out: Option<f64>,       // (#395) units outstanding, for the MCAP cell (× price_eur): a stock's newest complete-FY diluted weighted-average share count (same rollup and scoping as rev_yoy), a coin's CoinGecko circulating supply. DISPLAY-ONLY; None for funds, which show AUM instead
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy
     pub splits: Vec<(NaiveDate, f64)>, // (#82) (effective date, ratio) from the chart's events.splits; a 4:1 split is 4.0, ascending. NOT SCORED and never will be — it exists so `track` and `sim`, which replay prices journaled BEFORE a split against a series retro-adjusted AFTER one, can restate the old price into today's share definition. Empty for stubs and for `backtest_quote`, which walks one internally consistent series and has nothing to restate
 }
@@ -406,6 +407,7 @@ impl Quote {
             net_margin_fy: None,
             annual_brief: None,
             buyback_yoy: None,
+            shares_out: None,
             splits: Vec::new(),
         }
     }
@@ -4339,6 +4341,12 @@ pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
         .collect()
 }
 
+/// (#395) The newest COMPLETE fiscal year's index — see [`income_snapshot`] for what "complete" means.
+/// Shared so the MCAP share count reads the very year the snapshot's columns describe.
+pub fn newest_fy_idx(annual: &[AnnualReport]) -> Option<usize> {
+    annual.iter().position(|a| a.quarters == 1 || a.quarters >= 4)
+}
+
 /// The screen table's income-statement snapshot: (rev_yoy %, eps_yoy %, net_margin %, buyback %) of the
 /// newest COMPLETE fiscal year, each vs the next-older year — the same math the `report` rows print, so
 /// the two views can't disagree. "Complete" mirrors report's `*` mark: 1 quarter = an annual filing (SEC
@@ -5880,6 +5888,9 @@ mod tests {
         // SEC-style annual filing (quarters == 1) counts as complete
         let sec = vec![a(2023, 600.0, Some(6.0), 1), a(2022, 500.0, Some(6.0), 1)];
         assert!((income_snapshot(&sec).unwrap().0.unwrap() - 20.0).abs() < 1e-9);
+        // (#395) `newest_fy_idx` lands on the row the snapshot reads: partial years skipped, 4q or a 1-row filing kept
+        assert_eq!(newest_fy_idx(&rows), Some(1));
+        assert_eq!(newest_fy_idx(&[a(2024, 1.0, None, 2), a(2023, 1.0, None, 3), a(2022, 1.0, None, 1)]), Some(2));
         // buyback: shares shrank 100->95 -> −(−5%) = +5% (buying back); split-size jump -> None
         let buy = vec![s(2023, 600.0, Some(6.0), Some(95.0), 1), s(2022, 500.0, Some(6.0), Some(100.0), 1)];
         assert!((income_snapshot(&buy).unwrap().3.unwrap() - 5.0).abs() < 1e-9);
