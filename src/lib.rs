@@ -18,9 +18,27 @@
     clippy::items_after_test_module
 )]
 
+// (#390) The page engine (web/engine) compiles this crate for wasm32: only the pure ranking modules
+// go in, everything that fetches, trades or runs a command stays native.
+#[cfg(not(target_family = "wasm"))]
 pub mod broker;
+#[cfg(not(target_family = "wasm"))]
 pub mod commands;
+// (#390) The wasm build's stand-in for the three `commands` paths `picks` still calls by name. Each helper
+// now lives in `core`/`picks`; natively `commands` re-exports it from there, so both builds link one
+// definition.
+#[cfg(target_family = "wasm")]
+pub mod commands {
+    pub use crate::picks::truncate;
+    pub mod backtest {
+        pub(crate) use crate::core::{next_rand, percentile};
+    }
+    pub mod size {
+        pub(crate) use crate::picks::equal_weights;
+    }
+}
 pub mod config;
 pub mod core;
+#[cfg(not(target_family = "wasm"))]
 pub mod fetch;
 pub mod picks;

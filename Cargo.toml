@@ -9,9 +9,6 @@ name = "folioman"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "cookies"] }
-futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }  # `raw_value` = the long-history cache holds byte spans, not parsed trees (see `long_cache_load`)
 serde_yaml = "0.9"   # archived upstream but stable; swap for serde_norway if it ever breaks
@@ -19,13 +16,25 @@ regex = "1"
 # `serde` is here for ONE cache: `.sp500_history.json` stores NaiveDate spans directly rather than
 # round-tripping them through strings by hand. No new crate — serde is already a dependency.
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+mutants = "0.0.4"   # no-op attribute shim: `#[mutants::skip]` marks the handful of functions cargo-mutants CANNOT grade (see src/broker/*.rs). Compiles to nothing, pulls in nothing
+
+# (#390) Everything that talks to the network, a broker or the OS thread pool. The page engine
+# (web/engine, wasm32) links only `config`/`core`/`picks`/`web`, which use none of these; lib.rs
+# leaves `broker`/`commands`/`fetch` out of that build. Native builds see the same set as before.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "cookies"] }
+futures = "0.3"
 hmac = "0.12"        # Binance order signing (HMAC-SHA256)
 sha2 = "0.10"
 md-5 = "0.10"        # Börse Frankfurt API request signing (MD5 trace/security headers)
 hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }  # FIRDS FULINS_C weekly zips (ESMA/FCA ETF universe)
 rayon = "1"          # CPU parallelism for the backtest walk + sweeps; tokio's pool is for I/O and `buffer_unordered` is one task on one thread
-mutants = "0.0.4"   # no-op attribute shim: `#[mutants::skip]` marks the handful of functions cargo-mutants CANNOT grade (see src/broker/*.rs). Compiles to nothing, pulls in nothing
+
+# (#390) `Utc::now` reads the JS clock in the browser; without it std's clock panics on wasm32.
+[target.'cfg(target_family = "wasm")'.dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std", "wasmbind"] }
 
 # No `unsafe` in this crate and none wanted. Declared here rather than as `#![forbid(unsafe_code)]`
 # in lib.rs because `src/main.rs` is a separate crate root that an inner attribute in the library
