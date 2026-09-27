@@ -90,11 +90,20 @@ async fn get_text(client: &Client, url: &str) -> Option<String> {
 }
 
 async fn post_json(client: &Client, url: &str, body: &Value) -> Option<Value> {
+    post_json_with(client, url, body, &[]).await
+}
+
+/// [`post_json`] with request headers: (#397) OpenFIGI's key rides `X-OPENFIGI-APIKEY`.
+async fn post_json_with(client: &Client, url: &str, body: &Value, headers: &[(&str, &str)]) -> Option<Value> {
     if offline() {
         return None;
     }
     throttle().await;
-    client.post(url).json(body).send().await.ok()?.json::<Value>().await.ok()
+    let mut req = client.post(url).json(body);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    req.send().await.ok()?.json::<Value>().await.ok()
 }
 
 /// Global outbound-request pacer. The concurrency cap bounds how many requests are *in flight*, but
@@ -4655,10 +4664,12 @@ const EU_MIN_YEARS: f64 = 5.0;
 /// years is what "five years" has to mean.
 const EU_MIN_BARS: usize = 60;
 
-/// One OpenFIGI POST: `jobs` in, one `data` array (or None) out per job, order preserved.
-async fn figi_batch(client: &Client, url: &str, jobs: Vec<Value>) -> Vec<Option<Value>> {
+/// One OpenFIGI POST: `jobs` in, one `data` array (or None) out per job, order preserved. `key` =
+/// (#397) the API key, which lifts the job cap to [`FIGI_KEYED_BATCH`].
+async fn figi_batch(client: &Client, url: &str, key: Option<&str>, jobs: Vec<Value>) -> Vec<Option<Value>> {
     let n = jobs.len();
-    let Some(v) = post_json(client, url, &Value::Array(jobs)).await else {
+    let headers: Vec<(&str, &str)> = key.map(|k| ("X-OPENFIGI-APIKEY", k)).into_iter().collect();
+    let Some(v) = post_json_with(client, url, &Value::Array(jobs), &headers).await else {
         return vec![None; n]; // transport error -> every job in this batch simply stays unresolved
     };
     let arr = v.as_array().cloned().unwrap_or_default();
@@ -4701,7 +4712,7 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
             .iter()
             .map(|t| serde_json::json!({"idType": "TICKER", "idValue": t, "exchCode": "US"}))
             .collect();
-        for (sym, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, jobs).await) {
+        for (sym, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
             match data.as_ref().and_then(|d| d.get(0)).and_then(|r| r.get("shareClassFIGI")).and_then(Value::as_str) {
                 Some(f) => share_figis.push((sym.clone(), f.to_string())),
                 None => {
@@ -4721,7 +4732,7 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
             .iter()
             .map(|(_, f)| serde_json::json!({"idType": "ID_BB_GLOBAL_SHARE_CLASS_LEVEL", "idValue": f}))
             .collect();
-        for ((sym, _), data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, jobs).await) {
+        for ((sym, _), data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
             match data.as_ref().and_then(figi_eu_symbol) {
                 Some(eu) => candidates.push((sym.clone(), eu)),
                 None => {
@@ -4740,6 +4751,108 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         let _ = std::fs::write(crate::config::data_path(EU_LISTING_CACHE_PATH), json);
     }
     cache
+}
+
+/// (#397) ISIN -> that fund's Yahoo symbol on every venue OpenFIGI lists (VUAA's ISIN -> `VUAA.DE`,
+/// `VUAA.L`, `VUAA.MI`, `VUAG.L`). The page reads it to show a pinned listing the pool does not carry
+/// as the pool's line of the same fund: the ISIN bridge keeps ONE listing per fund, because Yahoo's
+/// ISIN search answers with one. Hits only, forever; a miss is asked again next run.
+pub(crate) const LISTING_CACHE_PATH: &str = ".listing_cache.json";
+
+/// OpenFIGI's KEYED job cap and pace: 100 jobs a request, 25 requests per 6s. Keyless it is
+/// [`FIGI_BATCH`] at 25 a minute, which priced the ~4.5k-fund pool at a 19-minute cold fill; that is
+/// why [`fetch_listing_aliases`] asks nothing without a key.
+const FIGI_KEYED_BATCH: usize = 100;
+const FIGI_KEYED_PACE_MS: u64 = 240;
+
+/// Bloomberg exchange code -> Yahoo suffix, for the venues an EU broker lists funds on. `GR` is the
+/// German composite line, which is where OpenFIGI files an ETF's Xetra mnemonic (the probed funds carry
+/// no `GY` row at all); every German venue shares that mnemonic, so both read `.DE`.
+const FIGI_YAHOO_SUFFIX: [(&str, &str); 10] = [
+    ("GR", ".DE"),
+    ("GY", ".DE"),
+    ("LN", ".L"),
+    ("FP", ".PA"),
+    ("NA", ".AS"),
+    ("IM", ".MI"),
+    ("SW", ".SW"),
+    ("SM", ".MC"),
+    ("BB", ".BR"),
+    ("ID", ".IR"),
+];
+
+/// (#397) One OpenFIGI ISIN answer as Yahoo symbols, sorted and deduped. Any code outside
+/// [`FIGI_YAHOO_SUFFIX`] is dropped, which also drops the currency-suffixed multilateral lines
+/// (`VUAAUSD` on `EO`/`XE`/…) Yahoo has no symbol for.
+fn figi_yahoo_listings(data: &Value) -> Vec<String> {
+    let mut out: Vec<String> = data
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let code = r.get("exchCode")?.as_str()?;
+            let (_, suffix) = FIGI_YAHOO_SUFFIX.iter().find(|(c, _)| *c == code)?;
+            Some(format!("{}{suffix}", r.get("ticker")?.as_str()?))
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// (#397) Every OTHER listing of each pool fund -> that fund's pool ticker. A listing that is itself a
+/// pool row is never aliased (a pin on it already names a row), and the first fund to claim a listing
+/// keeps it.
+fn listing_aliases(
+    pool: &[String],
+    isin_of: &HashMap<String, String>,
+    listings: &HashMap<String, Vec<String>>,
+) -> HashMap<String, String> {
+    let rows: HashSet<&str> = pool.iter().map(String::as_str).collect();
+    let mut out = HashMap::new();
+    for t in pool {
+        for l in isin_of.get(t).and_then(|i| listings.get(i)).into_iter().flatten() {
+            if !rows.contains(l.as_str()) {
+                out.entry(l.clone()).or_insert_with(|| t.clone());
+            }
+        }
+    }
+    out
+}
+
+/// (#397) The page's listing -> pool-ticker map over `etfs` (see [`listing_aliases`]); `isin_of` is
+/// the ISIN bridge's symbol -> ISIN. Only ISINs [`LISTING_CACHE_PATH`] has never answered go to
+/// OpenFIGI, and only with a `key`: keyless it serves the cache and asks nothing, so a local `screen`
+/// never pays for a map only the page reads.
+pub async fn fetch_listing_aliases(
+    client: &Client,
+    urls: &Urls,
+    key: Option<&str>,
+    isin_of: &HashMap<String, String>,
+    etfs: &[String],
+) -> HashMap<String, String> {
+    let path = crate::config::data_path(LISTING_CACHE_PATH);
+    let mut cache: HashMap<String, Vec<String>> =
+        std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    if let Some(key) = key {
+        let todo: Vec<&String> = etfs.iter().filter_map(|t| isin_of.get(t)).filter(|i| !cache.contains_key(*i)).collect();
+        eprintln!("fetch: resolving listings for {} funds (keyed OpenFIGI, cached forever after)", todo.len());
+        let mut pace = 0; // carried, not branched on the index: see `resolve_eu_listings`
+        for chunk in todo.chunks(FIGI_KEYED_BATCH) {
+            tokio::time::sleep(StdDuration::from_millis(pace)).await;
+            pace = FIGI_KEYED_PACE_MS;
+            let jobs = chunk.iter().map(|i| serde_json::json!({"idType": "ID_ISIN", "idValue": i})).collect();
+            for (isin, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, Some(key), jobs).await) {
+                if let Some(d) = data {
+                    cache.insert((*isin).clone(), figi_yahoo_listings(&d));
+                }
+            }
+        }
+        if let Ok(json) = serde_json::to_string(&cache) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+    listing_aliases(etfs, isin_of, &cache)
 }
 
 /// (EU listing) Rewrite one constituent pond onto its EU twins, carrying each row's GICS sector across
@@ -7473,7 +7586,7 @@ pub(crate) mod tests {
             json!({"idType": "TICKER", "idValue": "NOSUCH", "exchCode": "US"}),
             json!({"idType": "TICKER", "idValue": "MSFT", "exchCode": "US"}),
         ];
-        let out = figi_batch(&client, &url, jobs).await;
+        let out = figi_batch(&client, &url, None, jobs).await;
         assert_eq!(out.len(), 3, "one slot per job, always");
         assert_eq!(out[0].as_ref().expect("GOOGL data")[0]["shareClassFIGI"], "BBG009S39JY5");
         assert!(out[1].is_none(), "a warning row carries no data");
@@ -7487,7 +7600,7 @@ pub(crate) mod tests {
         pin_throttle();
         // port 1 is privileged and unbound: refused instantly, no timeout to wait out
         let client = Client::builder().no_proxy().build().expect("test client");
-        let out = figi_batch(&client, "http://127.0.0.1:1/", vec![serde_json::json!({}); 3]).await;
+        let out = figi_batch(&client, "http://127.0.0.1:1/", None, vec![serde_json::json!({}); 3]).await;
         assert_eq!(out.len(), 3);
         assert!(out.iter().all(Option::is_none));
     }
@@ -7522,6 +7635,84 @@ pub(crate) mod tests {
         assert_eq!(on_disk["TSLA"], "", "the miss is persisted, so it is never asked again");
         assert_eq!(on_disk["GOOGL"], "ABEA.DE");
         // Safe to delete again: `seed_cik_map` no longer reads this file, it sets `EU_TO_US` directly.
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (#397) The venue table on the shapes OpenFIGI served for the Vanguard and Amundi S&P 500
+    /// ISINs: German composite and London lines become `.DE`/`.L`, the currency-suffixed multilateral
+    /// rows and venues outside the table are dropped, and a `warning` answer lists nothing.
+    #[test]
+    fn figi_yahoo_listings_maps_the_venues_and_drops_the_rest() {
+        use serde_json::json;
+        let vuaa = json!([
+            {"ticker": "VUAA", "exchCode": "LN"},
+            {"ticker": "VUAG", "exchCode": "LN"},
+            {"ticker": "VUAAUSD", "exchCode": "EO"},
+            {"ticker": "VUAA", "exchCode": "GR"},
+            {"ticker": "VUAA", "exchCode": "GF"},
+            {"ticker": "VUAA", "exchCode": "IM"},
+            {"ticker": "VUAA", "exchCode": "GR"},
+        ]);
+        assert_eq!(figi_yahoo_listings(&vuaa), ["VUAA.DE", "VUAA.L", "VUAA.MI", "VUAG.L"]);
+        let aum5 = json!([
+            {"ticker": "500", "exchCode": "FP"},
+            {"ticker": "AUM5", "exchCode": "GR"},
+            {"ticker": "A500", "exchCode": "IM"},
+        ]);
+        assert_eq!(figi_yahoo_listings(&aum5), ["500.PA", "A500.MI", "AUM5.DE"]);
+        assert!(figi_yahoo_listings(&json!({"warning": "No identifier found."})).is_empty());
+    }
+
+    /// (#397) Every other venue of a pool fund points at its pool row; a pool row is never an alias,
+    /// the first fund in pool order keeps a contested listing, and a fund with no ISIN adds nothing.
+    #[test]
+    fn listing_aliases_point_other_venues_at_the_pool_row() {
+        let s = |v: &[&str]| v.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let pool = s(&["VUAA.L", "SPYL.L", "SPYL.AS", "NOISIN.L"]);
+        let isin_of: HashMap<String, String> =
+            [("VUAA.L", "IE_V"), ("SPYL.L", "IE_S"), ("SPYL.AS", "IE_S2")].map(|(t, i)| (t.to_string(), i.to_string())).into();
+        let listings: HashMap<String, Vec<String>> = [
+            ("IE_V".to_string(), s(&["VUAA.DE", "VUAA.L", "VUAG.L"])),
+            ("IE_S".to_string(), s(&["SPYL.AS", "SPYL.DE", "SPYL.L"])),
+            ("IE_S2".to_string(), s(&["SPYL.DE", "SPYL.MI"])),
+        ]
+        .into();
+        let got = listing_aliases(&pool, &isin_of, &listings);
+        let want: HashMap<String, String> =
+            [("VUAA.DE", "VUAA.L"), ("VUAG.L", "VUAA.L"), ("SPYL.DE", "SPYL.L"), ("SPYL.MI", "SPYL.AS")]
+                .map(|(l, t)| (l.to_string(), t.to_string()))
+                .into();
+        assert_eq!(got, want, "SPYL.AS is a pool row, so it is never an alias of SPYL.L");
+    }
+
+    /// (#397) `.listing_cache.json`, both branches in ONE test because it owns that file in the shared
+    /// scratch root. Keyless serves the cache and sends nothing; keyed sends only the ISIN the cache
+    /// lacks, with the key, and keeps the answer beside the cached one.
+    #[tokio::test]
+    async fn fetch_listing_aliases_asks_only_with_a_key_and_only_for_new_isins() {
+        pin_throttle();
+        let path = crate::config::data_path(LISTING_CACHE_PATH);
+        let isin_of: HashMap<String, String> =
+            [("VUAA.L", "IE_V"), ("SPYL.L", "IE_S")].map(|(t, i)| (t.to_string(), i.to_string())).into();
+        let etfs = ["VUAA.L".to_string(), "SPYL.L".to_string()];
+        std::fs::write(&path, r#"{"IE_V":["VUAA.DE","VUAA.L"]}"#).expect("seed cache");
+        let (url, client, asked) = recording_stub(r#"[{"data":[{"ticker":"SPYL","exchCode":"GR"}]}]"#);
+        let urls = stub_urls(&url);
+
+        // 1. no key: the cached fund aliases, the uncached one is never asked about
+        let got = fetch_listing_aliases(&client, &urls, None, &isin_of, &etfs).await;
+        assert_eq!(got, HashMap::from([("VUAA.DE".to_string(), "VUAA.L".to_string())]));
+        assert!(asked.try_recv().is_err(), "no key, no request");
+
+        // 2. a key: exactly the new ISIN goes out, carrying the key, and is remembered
+        let got = fetch_listing_aliases(&client, &urls, Some("k3y"), &isin_of, &etfs).await;
+        assert_eq!((got["VUAA.DE"].as_str(), got["SPYL.DE"].as_str()), ("VUAA.L", "SPYL.L"));
+        let req = asked.recv().expect("one request").to_lowercase();
+        assert!(req.contains("x-openfigi-apikey: k3y"), "{req}");
+        assert!(req.contains("ie_s") && !req.contains("ie_v"), "only the uncached ISIN is asked: {req}");
+        let on_disk: HashMap<String, Vec<String>> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
+        assert_eq!((on_disk["IE_S"].as_slice(), on_disk["IE_V"].as_slice()), (&["SPYL.DE".to_string()][..], &["VUAA.DE".to_string(), "VUAA.L".to_string()][..]));
         let _ = std::fs::remove_file(&path);
     }
 

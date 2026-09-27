@@ -74,6 +74,8 @@ config/settings.yaml
 .isin_cache.json
 # US symbol -> Xetra twin (OpenFIGI); empty value = resolved to "no usable twin", never re-asked
 .eu_listing_cache.json
+# ETF ISIN -> its listing on every venue (OpenFIGI, keyed); the page's pin twins
+.listing_cache.json
 # last-good venue ISIN lists (fallback across venue outages)
 .venue_isins.json
 # weekly ESMA+FCA FIRDS ETF-ISIN scan (regulatory universe source)

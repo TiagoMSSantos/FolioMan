@@ -1989,9 +1989,23 @@ pub async fn run(args: Vec<String>) {
     // (#391) and the pool it was ranked from, so the page can re-rank it under an uploaded settings.yaml
     // without a single fetch. Written HERE, after every settings-driven stamp above, which is exactly
     // the state `web::screen` re-derives from; see that fn for the two stamps it replays.
+    // (#397) plus each ETF's other venues, so an uploaded pin on one still finds its pool row. OpenFIGI
+    // is asked only with a key, which only the Pages job holds; a local run serves what is cached.
+    let isin_of: std::collections::HashMap<String, String> =
+        std::fs::read_to_string(config::data_path(fetch::ISIN_CACHE_PATH))
+            .ok()
+            .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(isin, sym)| (sym, isin))
+            .collect();
+    let etfs: Vec<String> =
+        quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF")).map(|q| q.ticker.clone()).collect();
+    let figi_key = std::env::var("OPENFIGI_API_KEY").ok().filter(|k| !k.is_empty());
+    let aliases = fetch::fetch_listing_aliases(&client, &settings.urls, figi_key.as_deref(), &isin_of, &etfs).await;
     let _ = std::fs::write(
         crate::config::data_path(".screen_universe.json"),
-        crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded),
+        crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded, &aliases),
     );
     let write_web = |json: String| {
         let _ = std::fs::write(&web_out, json);

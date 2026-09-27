@@ -213,6 +213,8 @@ function table(rows, empty = "(none pass the gates)") {
   rows.forEach((row, i) => {
     const tr = body.insertRow();
     tr.dataset.rank = i; // (#393) the ranked order, which a sort reorders but apply() still cuts on
+    // (#397) a pinned row (`*` in its RANK cell) shows at every N: an uploaded watchlist always shows
+    if (row.some(([h, c]) => h === "RANK" && c.includes("*"))) tr.dataset.pin = "";
     for (const [, cell] of row) tr.insertCell().textContent = cell;
   });
   box.appendChild(t);
@@ -227,7 +229,7 @@ function table(rows, empty = "(none pass the gates)") {
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
 function apply(n) {
   for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody")) {
-    for (const tr of body.rows) tr.hidden = +tr.dataset.rank >= n;
+    for (const tr of body.rows) tr.hidden = !("pin" in tr.dataset) && +tr.dataset.rank >= n;
   }
 }
 
@@ -355,6 +357,14 @@ function say(text, reset) {
   }
   mine.hidden = false;
 }
+// (#397) The engine's `pins`: which uploaded pins show as the pool's listing of the same fund, and
+// which the pool does not hold at all. Absent when every pin is a pool row.
+function pinNote(p) {
+  if (!p) return "";
+  const twins = p.twins.map(([pin, row]) => pin + " is shown as " + row).join(", ");
+  return (twins ? " " + twins + " (the same fund, on the pool's listing)." : "") +
+    (p.missing.length ? " Not in CI's pool, so not shown: " + p.missing.join(", ") + "." : "");
+}
 upload.onchange = async () => {
   const file = upload.files[0];
   if (!file) return;
@@ -364,10 +374,12 @@ upload.onchange = async () => {
   w.onmessage = ({ data }) => {
     w.terminate();
     if (data.err) return say("Could not rank with " + file.name + ": " + data.err, true);
-    render(JSON.parse(data.ok));
+    const out = JSON.parse(data.ok);
+    render(out);
     say(
       "Ranked with your " + file.name + ", in this browser: the file was never uploaded. What " +
-        "screen decided while fetching stays CI's: the universe, the dip/high windows, inflation, stale_days.",
+        "screen decided while fetching stays CI's: the universe, the dip/high windows, inflation, stale_days." +
+        pinNote(out.pins),
       true,
     );
   };

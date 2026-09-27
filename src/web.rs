@@ -5,7 +5,8 @@
 //! `config::load` overlays a private settings.yaml onto tests/ci-settings.yaml.
 //!
 //! What an upload CANNOT move is everything `screen` decided at fetch time: the universe and its urls,
-//! the dip/high and anchor windows, inflation, `stale_days`, names outside the pool, which ETFs carry a
+//! the dip/high and anchor windows, inflation, `stale_days`, names outside the pool (bar another
+//! venue's line of a pool fund, which (#397) shows as the pool's line), which ETFs carry a
 //! look-through P/E, and the fund tilt's price-dependent values (`peg_yield`, `earnings_yield`).
 
 use crate::config::{self, Settings};
@@ -29,6 +30,10 @@ pub struct Universe {
     pub nupl: Option<f64>,
     pub inflation: Vec<Vec<(String, String)>>,
     pub degraded: Vec<String>,
+    /// (#397) Another venue's listing -> the pool's line of the same fund (`VUAA.DE` -> `VUAA.L`), so a
+    /// pin the pool does not carry still shows. Empty when `screen` ran without an OpenFIGI key.
+    #[serde(default)]
+    pub aliases: HashMap<String, String>,
 }
 
 /// The `.screen_universe.json` body. `base` is the merged config `screen` ran on (None = no config,
@@ -41,6 +46,7 @@ pub fn snapshot(
     nupl: Option<f64>,
     inflation: &[Vec<(String, String)>],
     degraded: &[String],
+    aliases: &HashMap<String, String>,
 ) -> String {
     let u = Universe {
         generated: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -51,6 +57,7 @@ pub fn snapshot(
         nupl,
         inflation: inflation.to_vec(),
         degraded: degraded.to_vec(),
+        aliases: aliases.clone(),
     };
     serde_json::to_string(&u).unwrap_or_default()
 }
@@ -69,6 +76,20 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     #[cfg(target_family = "wasm")]
     config::install(merged)?;
     let bh = &s.buy_heuristic;
+    // (#397) The uploaded pins as rows the pool can show: a pin the pool holds stays, one it does not
+    // becomes the pool's line of the same fund (`twins`), and anything else is `missing`. Inline, not a
+    // helper: a three-Vec return is ~54 mutants for the gate to run.
+    let (mut pins, mut twins, mut missing) = (Vec::new(), Vec::new(), Vec::new());
+    for t in &s.tickers {
+        if u.quotes.iter().any(|q| &q.ticker == t) {
+            pins.push(t.clone());
+        } else if let Some(twin) = u.aliases.get(t) {
+            pins.push(twin.clone());
+            twins.push((t.clone(), twin.clone()));
+        } else {
+            missing.push(t.clone());
+        }
+    }
     let mut quotes = u.quotes;
     // The two settings-driven stamps `screen` applies between its fetch and its render, replayed in its
     // order. 1: the fund tilt, which `screen` fetches only when its weight is on.
@@ -94,7 +115,7 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
         nupl: u.nupl,
         sectors: &s.sectors,
         sector_of: &HashMap::new(), // the terminal lane's only reader; the payload never sees it
-        pinned: &s.tickers,
+        pinned: &pins,
         owned: &Owned::default(), // the page knows no holdings
         explain: None,
         show_hold_core: true,
@@ -106,6 +127,10 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     let mut top: serde_json::Value =
         out.into_inner().and_then(|j| serde_json::from_str(&j).ok()).ok_or("render built no payload")?;
     top["generated"] = u.generated.into();
+    // only when there is something to say, so a pool that holds every pin stays byte-equal to `screen`
+    if !(twins.is_empty() && missing.is_empty()) {
+        top["pins"] = serde_json::json!({ "twins": twins, "missing": missing });
+    }
     Ok(top.to_string())
 }
 
@@ -143,7 +168,8 @@ mod tests {
     fn universe(quotes: &[Quote]) -> String {
         let infl = vec![vec![("REGION".to_string(), "EU".to_string())]];
         let degraded = ["MVRV feed down".to_string()];
-        snapshot(serde_yaml::from_str(CI).ok(), quotes, None, &FundPeMap::new(), Some(0.3), &infl, &degraded)
+        let aliases = HashMap::from([("VWCE.L".to_string(), "VWCE.DE".to_string())]);
+        snapshot(serde_yaml::from_str(CI).ok(), quotes, None, &FundPeMap::new(), Some(0.3), &infl, &degraded, &aliases)
     }
 
     /// What `screen` itself would have published for this pool, pinned set and cut.
@@ -189,6 +215,20 @@ mod tests {
         assert_eq!(engine("", &q), direct(&q, &[], 25), "an empty upload IS CI's config");
         // a bare `buy_heuristic:` names no knob, so it moves nothing (the null-safe merge arm)
         assert_eq!(engine("buy_heuristic:\n", &q), engine("", &q));
+    }
+
+    /// (#397) A pin the pool lacks shows as the pool's line of the same fund: the engine ranks exactly
+    /// what `screen` would with the twin pinned, and names which pin became which row and which pin it
+    /// could not place at all.
+    #[test]
+    fn a_pin_on_another_venue_shows_as_its_pool_twin() {
+        let q = pool();
+        let pinned = ["AAPL".to_string(), "VWCE.DE".to_string()];
+        let mut got = engine("tickers: [AAPL, VWCE.L, NOPE]\n", &q);
+        assert_eq!(got["pins"], serde_json::json!({"twins": [["VWCE.L", "VWCE.DE"]], "missing": ["NOPE"]}));
+        got.as_object_mut().expect("payload").remove("pins");
+        assert_eq!(got, direct(&q, &pinned, 25));
+        assert_ne!(got, direct(&q, &pinned[..1], 25), "not vacuous: pinning the twin moves the payload");
     }
 
     /// The fund tilt follows the UPLOAD's weight: re-selected from `fund` while it is on, and `fund`

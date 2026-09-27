@@ -4342,9 +4342,13 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
         // page would publish every row that cleared the gates rather than the table the terminal
         // prints. `n` is `top_picks`, the number that already means "how many rows to show", which is
         // why this needed no knob of its own.
+        // (#397) Plus every PINNED row below the cut, with its real rank: `print_picks`' `below_cut`,
+        // so an uploaded watchlist shows whatever it ranked.
+        let below_cut = lane.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str()));
         lane.iter()
-            .take(n)
             .enumerate()
+            .take(n)
+            .chain(below_cut)
             .map(|(i, (quote, score))| {
                 let alt = growth_score(&as_8y_window(quote), &tuning_8y(tuning));
                 // The row's own index, so ranks read 1, 2, 3… — and the flags (`*` pinned, `!`
@@ -8851,7 +8855,7 @@ mod tests {
         picks.push((&coin, 3.0));
 
         let n = 5;
-        let top = web_top(picks, n, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[], &[]);
+        let top = web_top(picks.clone(), n, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[], &[]);
         let cell = |row: &[(String, String)], hdr: &str| {
             row.iter().find(|(h, _)| h == hdr).map(|(_, c)| c.trim().to_string())
         };
@@ -8911,6 +8915,15 @@ mod tests {
         let empty = web_top(vec![], 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[], &[]);
         assert!(empty.stocks.is_empty() && empty.etfs.is_empty() && empty.crypto.is_empty());
         assert!(empty.generated.ends_with('Z'), "still stamped, so the page can call it stale");
+
+        // 9. (#397) a PINNED row below the cut still publishes, after the top n and with its real rank,
+        // the way `print_picks` prints it; the unpinned row between stays cut.
+        let pin: HashSet<&str> = HashSet::from(["EX5"]);
+        let top = web_top(picks, n, &w, &[], &tuning, &pin, &owned, &HashMap::new(), &[], &[]);
+        let tickers: Vec<String> = top.stocks.iter().filter_map(|r| cell(r, "TICKER")).collect();
+        assert_eq!(tickers, ["AAA", "EX0", "EX1", "EX2", "EX3", "EX5"]);
+        let rank = cell(&top.stocks[n], "RANK").expect("rank cell");
+        assert_eq!(rank.trim_end_matches(|c| "#!cx~Ho".contains(c)), "7*", "its own rank, starred");
     }
 
     /// (QA) `--explain TICKER` for a name that did NOT rank must name WHICH of the four things
