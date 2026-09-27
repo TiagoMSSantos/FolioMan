@@ -1539,12 +1539,16 @@ fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
 // still reached sec.gov whenever the local `.sec_cache` missed — which is precisely the case a frozen
 // -data pin hits on a machine that has never run live, so the pin's hermeticity depended on the
 // developer's cache being warm.
+// (#386) A non-2xx is no answer: a 404 on a missing instance or a 403 rate-limit page was read as SEC's
+// body, parsed to nothing, and `fetch_sec_instance_eps` cached that `[]` with no TTL. shortcut: a filing
+// that truly has no `_htm.xml` now retries each run (2 fetches, inside `SEC_FETCH_BUDGET`); cache a 404
+// per accession if the budget ever runs short.
 async fn sec_get_text(client: &Client, url: &str, ua: &str) -> Option<String> {
     if offline() {
         return None;
     }
     throttle().await;
-    client.get(url).header("User-Agent", ua).send().await.ok()?.text().await.ok()
+    client.get(url).header("User-Agent", ua).send().await.ok()?.error_for_status().ok()?.text().await.ok()
 }
 async fn sec_get_json(client: &Client, url: &str, ua: &str) -> Option<Value> {
     if offline() {
@@ -7294,6 +7298,13 @@ pub(crate) mod tests {
         let (url, client) = stub_server("<ownershipDocument/>");
         let got = sec_get_text(&client, &url, "folioman-test").await;
         assert_eq!(got.as_deref(), Some("<ownershipDocument/>"));
+    }
+
+    /// (#386) An error page is not SEC's answer: `routed_stub` with no routes answers 404 to everything.
+    #[tokio::test]
+    async fn sec_get_text_refuses_a_404() {
+        let (url, client, _) = routed_stub(vec![]);
+        assert!(sec_get_text(&client, &url, "folioman-test").await.is_none());
     }
 
     /// `sec_get_json` parses it — every CIK, submissions and companyfacts read is this call.
