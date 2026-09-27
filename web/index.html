@@ -103,6 +103,7 @@
     background: var(--warn-bg);
     color: var(--warn-fg);
   }
+  pre.why { white-space: pre-wrap; font-size: .75rem; margin: .5rem 0 0; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -125,6 +126,12 @@
     <label>rank with your settings.yaml <input type="file" id="upload" accept=".yaml,.yml"></label>
   </p>
   <p class="stale" id="mine" hidden></p>
+  <!-- (#403) The terminal's `screen --explain`, on the ranking the tables show. -->
+  <form class="topn" id="why-box" hidden>
+    <label>why isn't <input id="why" placeholder="ticker or name" size="16"> in the tables?</label>
+    <button>explain</button>
+  </form>
+  <pre class="why" id="why-out" hidden></pre>
 
   <h2>Stocks</h2>
   <div id="stocks"></div>
@@ -240,7 +247,8 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
     const tr = body.insertRow();
     tr.dataset.rank = i; // (#393) the ranked order, which a sort reorders but apply() still cuts on
     // (#397) a pinned row (`*` in its RANK cell) shows at every N: an uploaded watchlist always shows
-    if (row.some(([h, c]) => h === "RANK" && c.includes("*"))) tr.dataset.pin = "";
+    // (#403) so does a `b` row: the book buys it though a display trim cut it from the table
+    if (row.some(([h, c]) => h === "RANK" && /[*b]/.test(c))) tr.dataset.pin = "";
     for (const [h, cell] of row) {
       const td = tr.insertCell();
       if (h !== "TICKER") {
@@ -277,7 +285,7 @@ function apply(n) {
 // only when the whole of it is one, with its sign, €, thousands commas, K/M/B/T and trailing marks
 // (`≈+9.9%`, `€1,234.56`, `€1.2B`, `9.9~`, `18.0†`, `9#!xH`); a ticker like `2B7A.DE` stays text.
 // null is a missing cell, which sorts last in either direction.
-const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†#!xH]*$/;
+const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†#!xHb]*$/;
 function key(cell) {
   if (cell === "" || cell === "n/a" || cell === "—") return null;
   const m = NUM.exec(cell);
@@ -285,7 +293,7 @@ function key(cell) {
 }
 console.assert(
   key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
-    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null,
+    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null,
   "sort key misreads a cell shape",
 );
 
@@ -428,6 +436,7 @@ load();
 // A fresh worker per upload, because the engine reads its config once per instance.
 const upload = document.getElementById("upload");
 const mine = document.getElementById("mine");
+let current = ""; // (#403) the overlay the tables show, which the why box asks about
 function say(text, reset) {
   mine.textContent = text;
   if (reset) {
@@ -437,6 +446,7 @@ function say(text, reset) {
     a.onclick = (e) => {
       e.preventDefault();
       upload.value = "";
+      current = "";
       mine.hidden = true;
       load();
     };
@@ -462,6 +472,7 @@ upload.onchange = async () => {
     w.terminate();
     if (data.err) return say("Could not rank with " + file.name + ": " + data.err, true);
     const out = JSON.parse(data.ok);
+    current = overlay;
     render(out);
     say(
       "Ranked with your " + file.name + ", in this browser: the file was never uploaded. What " +
@@ -474,10 +485,28 @@ upload.onchange = async () => {
     w.terminate();
     say("The engine failed to start (" + e.message + ").", true);
   };
-  w.postMessage(overlay);
+  w.postMessage({ overlay });
+};
+// (#403) "Why isn't X in?". A fresh worker per question, like an upload: the engine reads its config
+// once per instance.
+const whyOut = document.getElementById("why-out");
+document.getElementById("why-box").onsubmit = (e) => {
+  e.preventDefault();
+  whyOut.textContent = "…";
+  whyOut.hidden = false;
+  const w = new Worker("engine/worker.js", { type: "module" });
+  w.onmessage = ({ data }) => {
+    w.terminate();
+    whyOut.textContent = data.err ? "Could not explain: " + data.err : data.ok;
+  };
+  w.onerror = (e) => {
+    w.terminate();
+    whyOut.textContent = "The engine failed to start (" + e.message + ").";
+  };
+  w.postMessage({ overlay: current, why: document.getElementById("why").value });
 };
 fetch("engine/folioman_engine_bg.wasm", { method: "HEAD" })
-  .then((r) => { document.getElementById("upload-box").hidden = !r.ok; })
+  .then((r) => { for (const id of ["upload-box", "why-box"]) document.getElementById(id).hidden = !r.ok; })
   .catch(() => {});
 </script>
 </body>

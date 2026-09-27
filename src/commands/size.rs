@@ -9,7 +9,6 @@
 //! broad-market default for it (CORE #1, off the last `screen` run) instead of leaving it in cash.
 //! NOT advice.
 
-use crate::picks::{crypto_adjust, growth_score, nupl_factor, perf_pct, size_weights};
 use crate::{config, fetch};
 
 /// (#260) Which ticker list `size` sizes, and the line to print about it. `None` = a hard stop the
@@ -65,30 +64,6 @@ pub(crate) fn size_source(
     }
 }
 
-/// (#262) Indices of the first row per ISSUER, in rank order — every later row carrying a name already
-/// seen is dropped. The caller's list MUST already be sorted best-first, because that is what decides
-/// which listing of a twin pair survives.
-///
-/// WHY THIS EXISTS. `max_name_pct` reads "max 4.0%/name" and was applied per TICKER, so a company with
-/// two European listings drew the cap twice: on 2026-09-07 ABEC.DE and ABEA.DE both sized 4.0% and the
-/// printed book ran 8% Alphabet under a 4% cap, with nothing on the page saying so. The hold lane has
-/// collapsed twins since `picks::hold_core_list` (`cores.retain(|q| seen.insert(q.name.as_str()))`);
-/// the sizer never got the same treatment. Applied BEFORE `size_weights`, so a dropped row never draws
-/// a share of its class budget — it is not a row that got capped to zero, it is not a row.
-///
-/// The key is `name.to_lowercase()`, matching `screen`'s fund dedup rather than `hold_core_list`'s raw
-/// string. The two already disagree; this takes the safer of the pair rather than silently unifying
-/// them, which would move the hold lane on a sizing round.
-///
-/// AN EMPTY NAME IS ALWAYS KEPT. Twins cannot be proven without a name, and merging every unnamed quote
-/// into one row would be a data-quality bug wearing a risk control's clothes — non-negotiable #5,
-/// missing data passes.
-pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
-    let mut seen = std::collections::HashSet::new();
-    (0..names.len())
-        .filter(|&i| names[i].is_empty() || seen.insert(names[i].to_lowercase()))
-        .collect()
-}
 
 /// (#287) The vetted 20-year holds the stranded budget does NOT reach, as one printable line.
 ///
@@ -227,87 +202,10 @@ pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Opt
     ))
 }
 
-/// (#286) THE EXECUTED BOOK: which candidates `size` actually funds, and at what weight. Every line
-/// of it was lifted VERBATIM out of `run`, and the lift is the point. `run` is `#[mutants::skip]` —
-/// it is wiring, and the attribute below says so in its own words — so the scoring, the crypto
-/// adjust, the issuer dedup and the weighting have all sat where the mutation gate cannot reach
-/// them. Here the gate grades them.
-///
-/// The second reason is `screen`, and it is the reason this round exists. `track` grades the ranked
-/// top-10 EQUAL-WEIGHT, which is not the book anyone is told to buy: gate failures are dropped, one
-/// row survives per issuer, and what is left is weighted by score / volatility inside a class budget
-/// and then capped. Journalling that needs ONE spelling of it (non-negotiable #4), not a copy in
-/// `screen` drifting against the original here. `size --picks` sizes the ranked list off
-/// `.screen_state.json`, so a screen run calling this on its own `ranked_now` quotes computes the
-/// same rows the user sees minutes later.
-///
-/// `nupl` comes IN and `cfactor`/`btc_1y` are derived HERE, rather than each caller deriving them:
-/// two callers re-deriving a scoring input is exactly how the `cagr` column drifted off the score it
-/// was printing (see `long_leg_fixed`'s doc for that case, which cost a round to find).
-///
-/// Returns `(quote, score, weight %, cap reason)` in sized order — best score first, one row per
-/// issuer. EMPTY means nothing passed the growth gate; the caller says so in its own words, because
-/// `size` and `screen` owe the user different sentences about it. No fetch, no I/O, no state read.
-pub(crate) fn sized_book<'a>(
-    quotes: &[&'a crate::core::Quote],
-    tuning: &config::BuyHeuristic,
-    sz: &config::Sizing,
-    nupl: Option<f64>,
-    funds: &std::collections::HashMap<String, (&'static str, f64)>,
-) -> Vec<(&'a crate::core::Quote, f64, f64, Option<&'static str>)> {
-    // (Item 17) the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` apply at render
-    // time, so crypto sizes rank the way the picks tables showed them, not on the raw price-only
-    // score. Equities pass through `crypto_adjust` unchanged.
-    let cfactor = nupl_factor(nupl, tuning);
-    let btc_1y = quotes.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
-    // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
-    let mut scored: Vec<_> = quotes
-        .iter()
-        .filter_map(|q| growth_score(q, tuning).map(|s| (*q, crypto_adjust(q, s, tuning, cfactor, btc_1y))))
-        .collect();
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1)); // best score first; total_cmp: a NaN score must not panic the sort
-    // (#262) ... then one row per ISSUER, best-scoring listing wins. See `first_per_issuer` for why.
-    let keep = first_per_issuer(&scored.iter().map(|(q, _)| q.name.as_str()).collect::<Vec<_>>());
-    let scored: Vec<_> = keep.into_iter().map(|i| scored[i]).collect();
-    // (Item 6) pass the asset class as the cluster key so a correlated block (all crypto) is one risk
-    // bucket, not N independent bets.
-    // (P5) `asset_class` rather than the raw `instrument_type` string: that field is Yahoo's free text,
-    // so "EQUITY" and "" split the stock class into two buckets that each drew a full share. The sector
-    // rides along for the sector cap: (#293) a stock's GICS line at its whole weight, a fund's top
-    // look-through sector at its share (`funds`, empty in the backtest), a coin none. A fund's own
-    // `sector` label is never read.
-    //
-    // An empty `scored` needs no guard: `size_weights` finds no class carrying weight and returns an
-    // empty vec by its own divide-by-zero rule, so the zip below yields nothing. A branch here would
-    // be a second statement of that rule, and the one in `size_weights` is the one with the test.
-    let weights = size_weights(
-        &scored
-            .iter()
-            .map(|(q, s)| {
-                let class = crate::picks::asset_class(q);
-                let sector = match class {
-                    2 => q.sector.as_deref().map(|sec| (sec, 1.0)),
-                    1 => funds.get(&q.ticker).copied(),
-                    _ => None,
-                };
-                (*s, q.volatility_pct, class, sector)
-            })
-            .collect::<Vec<_>>(),
-        sz,
-    );
-    let book: Vec<_> = scored.into_iter().zip(weights).map(|((q, s), (w, cap))| (q, s, w, cap)).collect();
-    if !sz.equal_weight_book {
-        return book;
-    }
-    // (#313) the graded equal-weight book, opt-in: coins keep the crypto-budget weight struck above, the
-    // first `book_names` (#317) other names split the rest equally, uncapped like the backtest's top-10 lane.
-    let coin = |q: &crate::core::Quote| crate::picks::asset_class(q) == 0;
-    let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
-    book.into_iter().zip(eq).filter_map(|((q, s, _, cap), w)| w.map(|w| (q, s, w, if coin(q) { cap } else { None }))).collect()
-}
 
-// (#389) moved to `picks`, whose top-N cut is the other caller, so the page engine links it.
-pub(crate) use crate::picks::{equal_weights, HEAD};
+// (#389) moved to `picks`, whose top-N cut is the other caller, so the page engine links it. (#403) `sized_book`
+// and its issuer dedup followed, so the page prints the same BUY % this module sizes.
+pub(crate) use crate::picks::{equal_weights, sized_book, HEAD};
 
 /// (#293) Yahoo's fund sector names (`fetch::pretty_sector`) against the GICS spelling the constituents
 /// CSV gives a stock, so a fund and a stock in the same sector meet under one cap.
@@ -656,6 +554,7 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::picks::first_per_issuer;
 
     /// A Quote that clears `picks::growth_score`'s whole gate stack, built from `core::Quote::stub`
     /// plus only the fields those gates actually read. It is NOT a copy of picks.rs's `buy_heuristic`

@@ -3327,7 +3327,7 @@ struct ColSpec {
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
-    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held" },
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut" },
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin" },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
@@ -4351,8 +4351,19 @@ pub struct WebTop {
 /// would only make the browser re-collapse it.
 #[allow(clippy::too_many_arguments)]
 pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap, inflation: &[Vec<(String, String)>], core: &[Vec<(String, String)>]) -> WebTop {
+    // (#403) The book `render` returns (coins ride free of `n`), captured before `lane_split` consumes
+    // `picks`, because the page's BUY% funds every name in it. One past its table's cut shows at its real
+    // rank like a pin; one a display trim dropped from its lane rides at the lane's end. Both are flagged
+    // `b`: the page's copy of the terminal's (#284) "those N in full" tables.
+    let keep = equal_weights(&picks.iter().map(|(q, _)| (asset_class(q) == 0, 0.0)).collect::<Vec<_>>(), n, 1.0);
+    let book: Vec<(&Quote, f64)> = picks.iter().zip(keep).filter_map(|(p, k)| k.map(|_| *p)).collect();
+    let bought = |q: &Quote| book.iter().any(|(b, _)| b.ticker == q.ticker);
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
-    let top = |lane: &[(&Quote, f64)], w: &Widths, hide: &[&str]| -> Vec<Vec<(String, String)>> {
+    let laned: Vec<&str> = [&stock, &etf, &crypto].into_iter().flatten().map(|(q, _)| q.ticker.as_str()).collect();
+    let (coin_hid, equity_hid): (Vec<_>, Vec<_>) =
+        unshown_ranked(&book, &laned).into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
+    let (etf_hid, stock_hid): (Vec<_>, Vec<_>) = equity_hid.into_iter().partition(|(q, _)| quote_is_etf(q));
+    let top = |lane: &[(&Quote, f64)], hid: &[(&Quote, f64)], w: &Widths, hide: &[&str]| -> Vec<Vec<(String, String)>> {
         let cols = lane_columns(w, hide);
         // (#143) `take(n)` is LOAD-BEARING, not belt-and-braces: `lane_split` does not cut to `n` —
         // it returns the whole filtered lane and `print_lane` applies the cut — so without this the
@@ -4361,25 +4372,25 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
         // why this needed no knob of its own.
         // (#397) Plus every PINNED row below the cut, with its real rank: `print_picks`' `below_cut`,
         // so an uploaded watchlist shows whatever it ranked.
-        let below_cut = lane.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str()));
-        lane.iter()
-            .enumerate()
-            .take(n)
-            .chain(below_cut)
-            .map(|(i, (quote, score))| {
+        let pin = |q: &Quote| pinned.contains(q.ticker.as_str());
+        let below_cut = lane.iter().enumerate().skip(n).filter(|(_, (quote, _))| pin(quote) || bought(quote));
+        let shown = lane.iter().enumerate().take(n).chain(below_cut).map(|(i, row)| (i, row, if i < n || pin(row.0) { "" } else { "b" }));
+        shown
+            .chain(hid.iter().enumerate().map(|(k, row)| (lane.len() + k, row, "b"))) // after every row, pins included
+            .map(|(i, (quote, score), flag)| {
                 let alt = growth_score(&as_8y_window(quote), &tuning_8y(tuning));
                 // The row's own index, so ranks read 1, 2, 3… — and the flags (`*` pinned, `!`
                 // braked, `H` hold-core…) still ride the cell, so the page shows the same "1H" the
                 // terminal does. This was a hardcoded 0 while a lane was one row.
-                row_cells(&cols, quote, *score, alt, &rank_mark(i, quote, pinned, owned, tuning), tuning, fund_pe)
+                row_cells(&cols, quote, *score, alt, &(rank_mark(i, quote, pinned, owned, tuning) + flag), tuning, fund_pe)
             })
             .collect()
     };
     WebTop {
         generated: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        stocks: top(&stock, w, HIDE_STOCK),
-        etfs: top(&etf, &etf_widths(w), HIDE_ETF),
-        crypto: top(&crypto, w, HIDE_CRYPTO),
+        stocks: top(&stock, &stock_hid, w, HIDE_STOCK),
+        etfs: top(&etf, &etf_hid, &etf_widths(w), HIDE_ETF),
+        crypto: top(&crypto, &coin_hid, w, HIDE_CRYPTO),
         inflation: inflation.to_vec(),
         core: core.to_vec(),
         degraded: Vec::new(), // `render` fills it from its ctx
@@ -4433,6 +4444,42 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         })
         .collect();
     BTreeMap::from([("lanes", lanes), ("core", core), ("inflation", inflation)])
+}
+
+/// (#403) The BUY NOW book as `(ticker, % of gross)`: [`sized_book`] over the rows `render` returned (its
+/// top-n slice, coins riding free), in book order. ONE spelling for `screen`'s journal and buy list and the
+/// page engine's BUY% column (non-negotiable #4), so the page cannot size another book than the terminal.
+pub(crate) fn buy_book(
+    ranked: &[String],
+    quotes: &[Quote],
+    tuning: &BuyHeuristic,
+    sz: &crate::config::Sizing,
+    nupl: Option<f64>,
+    funds: &HashMap<String, (&'static str, f64)>,
+) -> Vec<(String, f64)> {
+    let rows: Vec<&Quote> = ranked.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect();
+    sized_book(&rows, tuning, sz, nupl, funds).iter().map(|&(q, _, w, _)| (q.ticker.clone(), w)).collect()
+}
+
+/// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
+/// the column is there.
+const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list across stocks and ETFs by score, its first five names weighted `sizing.head_weight` (2 on CI) against 1 for each later one, coins at their crypto budget. Blank = the book does not fund this row. NOT advice";
+
+/// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
+/// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
+/// wrote it, by both of its builders (`screen`, `web::screen`), because the book is sized off the slice
+/// `render` returns. CORE is untouched: the equal-weight book funds no tracker. A lane the payload lacks
+/// stays absent.
+pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
+    for lane in ["stocks", "etfs", "crypto"] {
+        for row in payload.get_mut(lane).and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
+            let Some(cells) = row.as_array_mut() else { continue };
+            let Some(at) = cells.iter().position(|c| c[0] == "TICKER") else { continue };
+            let w = sized.iter().find(|(t, _)| cells[at][1] == t.as_str()).map(|(_, w)| format!("{w:.1}%")).unwrap_or_default();
+            cells.insert(at + 1, serde_json::json!(["BUY%", w]));
+        }
+    }
+    payload["help"]["lanes"]["BUY%"] = BUY_HELP.into();
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -5675,6 +5722,110 @@ pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize, head: f64) -> Vec
 /// rank-slice boundary (rank 1 / 2-5 / 6-10), where on the point-in-time pool ranks 1-5 out-earned 6-10 at
 /// every horizon. shortcut: a const, not a knob — one boundary was graded; make it a knob when a second is.
 pub(crate) const HEAD: usize = 5;
+
+/// (#262) Indices of the first row per ISSUER, in rank order — every later row carrying a name already
+/// seen is dropped. The caller's list MUST already be sorted best-first, because that is what decides
+/// which listing of a twin pair survives.
+///
+/// WHY THIS EXISTS. `max_name_pct` reads "max 4.0%/name" and was applied per TICKER, so a company with
+/// two European listings drew the cap twice: on 2026-09-07 ABEC.DE and ABEA.DE both sized 4.0% and the
+/// printed book ran 8% Alphabet under a 4% cap, with nothing on the page saying so. The hold lane has
+/// collapsed twins since `picks::hold_core_list` (`cores.retain(|q| seen.insert(q.name.as_str()))`);
+/// the sizer never got the same treatment. Applied BEFORE `size_weights`, so a dropped row never draws
+/// a share of its class budget — it is not a row that got capped to zero, it is not a row.
+///
+/// The key is `name.to_lowercase()`, matching `screen`'s fund dedup rather than `hold_core_list`'s raw
+/// string. The two already disagree; this takes the safer of the pair rather than silently unifying
+/// them, which would move the hold lane on a sizing round.
+///
+/// AN EMPTY NAME IS ALWAYS KEPT. Twins cannot be proven without a name, and merging every unnamed quote
+/// into one row would be a data-quality bug wearing a risk control's clothes — non-negotiable #5,
+/// missing data passes.
+pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
+    let mut seen = std::collections::HashSet::new();
+    (0..names.len())
+        .filter(|&i| names[i].is_empty() || seen.insert(names[i].to_lowercase()))
+        .collect()
+}
+
+/// (#286) THE EXECUTED BOOK: which candidates `size` actually funds, and at what weight. Every line
+/// of it was lifted VERBATIM out of `run`, and the lift is the point. `run` is `#[mutants::skip]` —
+/// it is wiring, and the attribute below says so in its own words — so the scoring, the crypto
+/// adjust, the issuer dedup and the weighting have all sat where the mutation gate cannot reach
+/// them. Here the gate grades them.
+///
+/// The second reason is `screen`, and it is the reason this round exists. `track` grades the ranked
+/// top-10 EQUAL-WEIGHT, which is not the book anyone is told to buy: gate failures are dropped, one
+/// row survives per issuer, and what is left is weighted by score / volatility inside a class budget
+/// and then capped. Journalling that needs ONE spelling of it (non-negotiable #4), not a copy in
+/// `screen` drifting against the original here. `size --picks` sizes the ranked list off
+/// `.screen_state.json`, so a screen run calling this on its own `ranked_now` quotes computes the
+/// same rows the user sees minutes later.
+///
+/// `nupl` comes IN and `cfactor`/`btc_1y` are derived HERE, rather than each caller deriving them:
+/// two callers re-deriving a scoring input is exactly how the `cagr` column drifted off the score it
+/// was printing (see `long_leg_fixed`'s doc for that case, which cost a round to find).
+///
+/// Returns `(quote, score, weight %, cap reason)` in sized order — best score first, one row per
+/// issuer. EMPTY means nothing passed the growth gate; the caller says so in its own words, because
+/// `size` and `screen` owe the user different sentences about it. No fetch, no I/O, no state read.
+pub(crate) fn sized_book<'a>(
+    quotes: &[&'a crate::core::Quote],
+    tuning: &BuyHeuristic,
+    sz: &crate::config::Sizing,
+    nupl: Option<f64>,
+    funds: &std::collections::HashMap<String, (&'static str, f64)>,
+) -> Vec<(&'a crate::core::Quote, f64, f64, Option<&'static str>)> {
+    // (Item 17) the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` apply at render
+    // time, so crypto sizes rank the way the picks tables showed them, not on the raw price-only
+    // score. Equities pass through `crypto_adjust` unchanged.
+    let cfactor = nupl_factor(nupl, tuning);
+    let btc_1y = quotes.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
+    // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
+    let mut scored: Vec<_> = quotes
+        .iter()
+        .filter_map(|q| growth_score(q, tuning).map(|s| (*q, crypto_adjust(q, s, tuning, cfactor, btc_1y))))
+        .collect();
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1)); // best score first; total_cmp: a NaN score must not panic the sort
+    // (#262) ... then one row per ISSUER, best-scoring listing wins. See `first_per_issuer` for why.
+    let keep = first_per_issuer(&scored.iter().map(|(q, _)| q.name.as_str()).collect::<Vec<_>>());
+    let scored: Vec<_> = keep.into_iter().map(|i| scored[i]).collect();
+    // (Item 6) pass the asset class as the cluster key so a correlated block (all crypto) is one risk
+    // bucket, not N independent bets.
+    // (P5) `asset_class` rather than the raw `instrument_type` string: that field is Yahoo's free text,
+    // so "EQUITY" and "" split the stock class into two buckets that each drew a full share. The sector
+    // rides along for the sector cap: (#293) a stock's GICS line at its whole weight, a fund's top
+    // look-through sector at its share (`funds`, empty in the backtest), a coin none. A fund's own
+    // `sector` label is never read.
+    //
+    // An empty `scored` needs no guard: `size_weights` finds no class carrying weight and returns an
+    // empty vec by its own divide-by-zero rule, so the zip below yields nothing. A branch here would
+    // be a second statement of that rule, and the one in `size_weights` is the one with the test.
+    let weights = size_weights(
+        &scored
+            .iter()
+            .map(|(q, s)| {
+                let class = crate::picks::asset_class(q);
+                let sector = match class {
+                    2 => q.sector.as_deref().map(|sec| (sec, 1.0)),
+                    1 => funds.get(&q.ticker).copied(),
+                    _ => None,
+                };
+                (*s, q.volatility_pct, class, sector)
+            })
+            .collect::<Vec<_>>(),
+        sz,
+    );
+    let book: Vec<_> = scored.into_iter().zip(weights).map(|((q, s), (w, cap))| (q, s, w, cap)).collect();
+    if !sz.equal_weight_book {
+        return book;
+    }
+    // (#313) the graded equal-weight book, opt-in: coins keep the crypto-budget weight struck above, the
+    // first `book_names` (#317) other names split the rest equally, uncapped like the backtest's top-10 lane.
+    let coin = |q: &crate::core::Quote| crate::picks::asset_class(q) == 0;
+    let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
+    book.into_iter().zip(eq).filter_map(|((q, s, _, cap), w)| w.map(|w| (q, s, w, if coin(q) { cap } else { None }))).collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -9001,6 +9152,33 @@ mod tests {
         assert_eq!(rank.trim_end_matches(|c| "#!cx~Ho".contains(c)), "7*", "its own rank, starred");
     }
 
+    /// (#403) A name the book funds but a display trim cut from its table rides at the END of its lane,
+    /// flagged `b`, so the page's BUY% column adds up; a trimmed name OUTSIDE the book stays cut. Coins
+    /// ride free of `n` in the book, so a coin past the crypto table's cut is bought and rides too.
+    #[test]
+    fn web_top_appends_the_bought_rows_a_trim_cut() {
+        let tuning = BuyHeuristic::default();
+        let w = Widths { columns: ["rank", "ticker", "score"].iter().map(|s| s.to_string()).collect(), ..Widths::default() };
+        let q = |t: &str| {
+            let mut q = Quote::stub(t, "€100.00", "", t);
+            q.instrument_type = if t.contains('-') { "CRYPTOCURRENCY" } else { "EQUITY" }.into();
+            q
+        };
+        let (a, t1, t2, t3, c1, c2) = (q("AAA"), q("TR1"), q("TR2"), q("TR3"), q("BTC-EUR"), q("ETH-EUR"));
+        // `growth_min_score` 5.0 trims TR1..3 from the stock table; the book is the first 3 non-coins
+        let picks = vec![(&a, 9.0), (&t1, 4.0), (&c1, 3.0), (&t2, 4.0), (&t3, 4.0), (&c2, 2.0)];
+        let (none, owned) = (HashSet::new(), Owned::default());
+        let lane = |rows: &[Vec<(String, String)>]| -> Vec<String> {
+            rows.iter().map(|r| r.iter().filter(|(h, _)| h == "RANK" || h == "TICKER").map(|(_, c)| c.trim()).collect::<Vec<_>>().join(" ")).collect()
+        };
+        let top = web_top(picks.clone(), 3, &w, &[], &tuning, &none, &owned, &HashMap::new(), &[], &[]);
+        assert_eq!(lane(&top.stocks), ["1 AAA", "2b TR1", "3b TR2"], "TR3 is 4th, outside the book");
+        assert_eq!(lane(&top.crypto), ["1 BTC-EUR", "2 ETH-EUR"], "both coins fit the table: nothing rides");
+        let top = web_top(picks, 1, &w, &[], &tuning, &none, &owned, &HashMap::new(), &[], &[]);
+        assert_eq!(lane(&top.stocks), ["1 AAA"], "a book of one: the trimmed names are not bought");
+        assert_eq!(lane(&top.crypto), ["1 BTC-EUR", "2b ETH-EUR"], "past the cut but bought: its own rank");
+    }
+
     /// (QA) `--explain TICKER` for a name that did NOT rank must name WHICH of the four things
     /// happened. All four printed ONE string before ("fails a growth gate, isn't EU-buyable, or wasn't
     /// scanned") — the same non-answer whichever applied, which is how a name failing 2+ gates ended up
@@ -9176,6 +9354,27 @@ mod tests {
             0,
             0,
         )
+    }
+
+    /// (#403) BUY% lands right after TICKER on every lane row, a funded row carries its weight to one
+    /// decimal (the terminal's BUY NOW spelling), an unfunded pin reads "", and CORE plus an absent lane
+    /// are left alone. The help entry rides with the column.
+    #[test]
+    fn stamp_buy_puts_the_book_weight_after_the_ticker() {
+        let mut p = serde_json::json!({
+            "stocks": [[["RANK", "1"], ["TICKER", "AAA"], ["SCORE", "9.0"]], [["RANK", "2*"], ["TICKER", "PIN"]]],
+            "crypto": [[["TICKER", "BTC-EUR"]]],
+            "core": [[["TICKER", "VWCE.DE"]]],
+            "help": {"lanes": {"SCORE": "x"}},
+        });
+        stamp_buy(&mut p, &[("AAA".to_string(), 7.04), ("BTC-EUR".to_string(), 2.46)]);
+        assert_eq!(p["stocks"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAA"], ["BUY%", "7.0%"], ["SCORE", "9.0"]]));
+        assert_eq!(p["stocks"][1], serde_json::json!([["RANK", "2*"], ["TICKER", "PIN"], ["BUY%", ""]]));
+        assert_eq!(p["crypto"][0], serde_json::json!([["TICKER", "BTC-EUR"], ["BUY%", "2.5%"]]));
+        assert_eq!(p["core"], serde_json::json!([[["TICKER", "VWCE.DE"]]]), "CORE is not the book");
+        assert!(p.get("etfs").is_none(), "an absent lane stays absent");
+        assert_eq!(p["help"]["lanes"]["BUY%"], BUY_HELP);
+        assert_eq!(p["help"]["lanes"]["SCORE"], "x", "the other entries stay");
     }
 
     /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and

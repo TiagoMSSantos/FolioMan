@@ -65,16 +65,7 @@ pub fn snapshot(
 /// Rank `universe` (a [`snapshot`]) under `overlay` (the uploaded settings.yaml text, "" = CI's own
 /// config) and return the page payload `render` builds, the same shape as data.json.
 pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
-    let u: Universe = serde_json::from_str(universe).map_err(|e| format!("universe.json: {e}"))?;
-    let mut merged: serde_yaml::Value = serde_yaml::from_str(&u.base).map_err(|e| format!("CI config: {e}"))?;
-    let over: serde_yaml::Value = serde_yaml::from_str(overlay).map_err(|e| format!("settings.yaml: {e}"))?;
-    config::merge_yaml(&mut merged, over);
-    if !config::gates_configured(&merged) {
-        return Err("settings.yaml: no buy_heuristic knobs left after the merge".to_string());
-    }
-    let s: Settings = serde_yaml::from_value(merged.clone()).map_err(|e| format!("settings.yaml: {e}"))?;
-    #[cfg(target_family = "wasm")]
-    config::install(merged)?;
+    let (s, u) = load(overlay, universe)?;
     let bh = &s.buy_heuristic;
     // (#397) The uploaded pins as rows the pool can show: a pin the pool holds stays, one it does not
     // becomes the pool's line of the same fund (`twins`), and anything else is `missing`. Inline, not a
@@ -90,28 +81,9 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
             missing.push(t.clone());
         }
     }
-    let mut quotes = u.quotes;
-    // The two settings-driven stamps `screen` applies between its fetch and its render, replayed in its
-    // order. 1: the fund tilt, which `screen` fetches only when its weight is on.
-    for q in &mut quotes {
-        if bh.growth_fund_weight > 0.0 {
-            if let Some(f) = &q.fund {
-                q.fund_factor = core::select_fund_factor(f, &bh.growth_fund_factor);
-            }
-        } else {
-            q.fund = None;
-            q.fund_factor = None;
-        }
-    }
-    // 2: the (#328) sector door, floored at the index's CAGR under THESE knobs.
-    let floors = match u.spx.as_ref().and_then(|b| picks::long_cagr_pct(b, bh)) {
-        Some(bc) => picks::sector_floors(&quotes.iter().collect::<Vec<_>>(), bh, picks::SECTOR_DOOR_K, bc),
-        None => Default::default(),
-    };
-    picks::stamp_sector_floors(&mut quotes, &floors);
     let out = RefCell::new(None);
     let sink = |json: String| *out.borrow_mut() = Some(json);
-    picks::render(&quotes, s.top_picks, bh, &s.widths, RenderCtx {
+    let (_, ranked) = picks::render(&u.quotes, s.top_picks, bh, &s.widths, RenderCtx {
         nupl: u.nupl,
         sectors: &s.sectors,
         sector_of: &HashMap::new(), // the terminal lane's only reader; the payload never sees it
@@ -126,12 +98,98 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     });
     let mut top: serde_json::Value =
         out.into_inner().and_then(|j| serde_json::from_str(&j).ok()).ok_or("render built no payload")?;
+    // (#403) The equal-weight book never reads the fund look-through, so an empty map replays `screen`'s
+    // BUY NOW exactly. The vol-target book caps fund sectors by holdings the page does not carry, so an
+    // upload that turns it on gets no BUY% column rather than a wrong one.
+    if s.sizing.equal_weight_book {
+        picks::stamp_buy(&mut top, &picks::buy_book(&ranked, &u.quotes, bh, &s.sizing, u.nupl, &HashMap::new()));
+    }
     top["generated"] = u.generated.into();
     // only when there is something to say, so a pool that holds every pin stays byte-equal to `screen`
     if !(twins.is_empty() && missing.is_empty()) {
         top["pins"] = serde_json::json!({ "twins": twins, "missing": missing });
     }
     Ok(top.to_string())
+}
+
+/// (#403) The page's "why isn't X in?": `screen --explain` on the re-ranked pool. `query` is a ticker,
+/// another venue's line of a pool fund, or part of a name, because the pool keeps ONE listing per
+/// company and it is often a European one (NVIDIA is NVD.DE), so a bare US ticker would read "not scanned".
+pub fn explain(overlay: &str, universe: &str, query: &str) -> Result<String, String> {
+    let (s, u) = load(overlay, universe)?;
+    let q = query.trim();
+    let low = q.to_lowercase();
+    // a name that STARTS with the query first: "nvidia" is NVIDIA Corporation, not a 3x short ETP on it
+    let mut named: Vec<&Quote> = u.quotes.iter().filter(|x| !low.is_empty() && x.name.to_lowercase().contains(&low)).collect();
+    named.sort_by_key(|x| !x.name.to_lowercase().starts_with(&low));
+    let hit = u
+        .quotes
+        .iter()
+        .find(|x| x.ticker.eq_ignore_ascii_case(q))
+        .map(|x| x.ticker.clone())
+        .or_else(|| u.aliases.iter().find(|(k, _)| k.eq_ignore_ascii_case(q)).map(|(_, v)| v.clone()));
+    let by_name = hit.is_none();
+    let Some(t) = hit.or_else(|| named.first().map(|x| x.ticker.clone())) else {
+        return Ok(format!(
+            "No pool row matches \"{q}\". The pool keeps one listing per company, often a European one (NVIDIA is NVD.DE): try the company name."
+        ));
+    };
+    let (text, _) = picks::render(&u.quotes, s.top_picks, &s.buy_heuristic, &s.widths, RenderCtx {
+        nupl: u.nupl,
+        sectors: &s.sectors,
+        sector_of: &HashMap::new(),
+        pinned: &[],
+        owned: &Owned::default(),
+        explain: Some(&t),
+        show_hold_core: false,
+        fund_pe: &u.fund_pe,
+        web_out: None,
+        web_inflation: &[],
+        web_degraded: &[],
+    });
+    let mut out = text.unwrap_or_default().trim().trim_start_matches("--explain: ").to_string();
+    if by_name {
+        out = format!("Matched by name: {} ({t})\n\n{out}", named[0].name);
+    }
+    let also: Vec<&str> = named.iter().map(|x| x.ticker.as_str()).filter(|x| *x != t).take(5).collect();
+    if !also.is_empty() {
+        out.push_str(&format!("\n\nAlso matching \"{q}\": {}", also.join(", ")));
+    }
+    Ok(out)
+}
+
+/// The upload merged onto CI's config, and the pool with the two settings-driven stamps `screen` applies
+/// between its fetch and its render.
+fn load(overlay: &str, universe: &str) -> Result<(Settings, Universe), String> {
+    let mut u: Universe = serde_json::from_str(universe).map_err(|e| format!("universe.json: {e}"))?;
+    let mut merged: serde_yaml::Value = serde_yaml::from_str(&u.base).map_err(|e| format!("CI config: {e}"))?;
+    let over: serde_yaml::Value = serde_yaml::from_str(overlay).map_err(|e| format!("settings.yaml: {e}"))?;
+    config::merge_yaml(&mut merged, over);
+    if !config::gates_configured(&merged) {
+        return Err("settings.yaml: no buy_heuristic knobs left after the merge".to_string());
+    }
+    let s: Settings = serde_yaml::from_value(merged.clone()).map_err(|e| format!("settings.yaml: {e}"))?;
+    #[cfg(target_family = "wasm")]
+    config::install(merged)?;
+    let bh = &s.buy_heuristic;
+    // Replayed in `screen`'s order. 1: the fund tilt, which `screen` fetches only when its weight is on.
+    for q in &mut u.quotes {
+        if bh.growth_fund_weight > 0.0 {
+            if let Some(f) = &q.fund {
+                q.fund_factor = core::select_fund_factor(f, &bh.growth_fund_factor);
+            }
+        } else {
+            q.fund = None;
+            q.fund_factor = None;
+        }
+    }
+    // 2: the (#328) sector door, floored at the index's CAGR under THESE knobs.
+    let floors = match u.spx.as_ref().and_then(|b| picks::long_cagr_pct(b, bh)) {
+        Some(bc) => picks::sector_floors(&u.quotes.iter().collect::<Vec<_>>(), bh, picks::SECTOR_DOOR_K, bc),
+        None => Default::default(),
+    };
+    picks::stamp_sector_floors(&mut u.quotes, &floors);
+    Ok((s, u))
 }
 
 #[cfg(test)]
@@ -162,7 +220,38 @@ mod tests {
         core.domicile = Some("IE".to_string());
         core.life_cagr = Some(9.0);
         core.age_years = Some(12.0);
-        vec![pin, core, Quote::stub("MSFT", "err", "", "Microsoft")]
+        vec![pin, core, Quote::stub("MSFT", "err", "", "Microsoft"), winner()]
+    }
+
+    fn winner() -> Quote {
+        let mut q = Quote::stub("NVD.DE", "€100.00", "", "NVIDIA Corp");
+        q.instrument_type = "EQUITY".into();
+        q.avg_turnover_eur = Some(1e9);
+        q.range_pct = 90.0;
+        let legs = [("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 400.0), ("20Y", 4000.0)];
+        q.perf = core::HORIZONS.iter().map(|(h, _)| legs.iter().find(|(l, _)| l == h).map(|&(_, v)| ("x".to_string(), v))).collect();
+        q.age_years = Some(30.0);
+        q.volatility_pct = Some(1.0);
+        q.downside_dev_pct = Some(0.7);
+        q.max_daily_1m = Some(3.0);
+        q.mom_pct = Some(2.0);
+        q.pe_ratio = Some(20.0);
+        q.roe = Some(18.0);
+        q.trend_cagr = Some(15.0);
+        q.life_cagr = Some(22.0);
+        q.capped_cagr = Some(22.0);
+        q.life_return_pct = Some(900.0);
+        q.tr_cagr = Some(19.0);
+        q.roll5y_pos_pct = Some(100.0);
+        q.roll10y_pos_pct = Some(100.0);
+        q.worst_5y_pct = Some(5.0);
+        q.worst_10y_pct = Some(25.0);
+        q.underwater_yrs = Some(1.0);
+        q.price_eur = Some(100.0);
+        q.trend_r2 = 0.95;
+        q.max_drawdown_pct = 20.0;
+        q.stats_8y = Some(core::Stats8 { range_pct: 92.0, trend_r2: 0.95, max_drawdown_pct: 20.0, underwater_yrs: Some(1.0) });
+        q
     }
 
     fn universe(quotes: &[Quote]) -> String {
@@ -177,7 +266,7 @@ mod tests {
         let s: Settings = serde_yaml::from_str(CI).expect("the CI config parses");
         let out = RefCell::new(String::new());
         let sink = |json: String| *out.borrow_mut() = json;
-        picks::render(quotes, n, &s.buy_heuristic, &s.widths, RenderCtx {
+        let (_, ranked) = picks::render(quotes, n, &s.buy_heuristic, &s.widths, RenderCtx {
             nupl: Some(0.3),
             sectors: &s.sectors,
             sector_of: &HashMap::new(),
@@ -191,6 +280,8 @@ mod tests {
             web_degraded: &["MVRV feed down".to_string()],
         });
         let mut v: serde_json::Value = serde_json::from_str(&out.into_inner()).expect("render built the payload");
+        // (#403) the BUY% `screen` stamps from its own sized book, with its real look-through map
+        picks::stamp_buy(&mut v, &picks::buy_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new()));
         v["generated"] = serde_json::Value::Null;
         v
     }
@@ -249,6 +340,49 @@ mod tests {
         let off = "tickers: [AAPL]\nbuy_heuristic:\n  growth_fund_weight: 0\n";
         assert_ne!(engine(off, &picked), engine("tickers: [AAPL]\n", &picked), "not vacuous: 0 moves the row");
         assert_eq!(engine(off, &q), engine(off, &bare), "weight off: `fund` is dropped with its factor");
+    }
+
+    /// One row's cell by header, "" when the row or the column is absent.
+    fn cell(v: &serde_json::Value, lane: &str, ticker: &str, col: &str) -> String {
+        let rows = v[lane].as_array().into_iter().flatten().filter_map(|r| r.as_array());
+        let row = rows.into_iter().find(|r| r.iter().any(|c| c[0] == "TICKER" && c[1] == ticker));
+        let hit = row.and_then(|r| r.iter().find(|c| c[0] == col).and_then(|c| c[1].as_str()));
+        hit.unwrap_or_default().to_string()
+    }
+
+    /// (#403) The page's BUY% is `screen`'s BUY NOW: the one gate-clearing name takes the whole book,
+    /// the pinned row that fails a gate is on the table but unfunded. An upload that turns on the
+    /// vol-target book loses the column, because its fund sector cap reads holdings the page lacks.
+    #[test]
+    fn buy_share_is_the_sized_book_and_leaves_with_it() {
+        let q = pool();
+        let got = engine("tickers: [AAPL]\n", &q);
+        assert_eq!(cell(&got, "stocks", "NVD.DE", "BUY%"), "100.0%");
+        assert_eq!(cell(&got, "stocks", "AAPL", "RANK"), "2*#", "not vacuous: the pinned row is on the table");
+        assert_eq!(cell(&got, "stocks", "AAPL", "BUY%"), "", "a gated pin is not funded");
+        let vol = engine("sizing:\n  equal_weight_book: false\n", &q);
+        assert_eq!(cell(&vol, "stocks", "NVD.DE", "TICKER"), "NVD.DE");
+        assert!(vol["stocks"][0].as_array().is_some_and(|r| r.iter().all(|c| c[0] != "BUY%")), "no column, not a blank one");
+    }
+
+    /// (#403) "Why isn't X in?" answers from the ticker, another venue's line, or part of the name, and
+    /// says plainly when nothing matches rather than claiming the name was never scanned.
+    #[test]
+    fn explain_finds_the_row_by_ticker_alias_or_name() {
+        let u = universe(&pool());
+        let why = |x: &str| explain("", &u, x).expect("explains");
+        assert!(why("aapl").starts_with("AAPL is scanned but fails 1 growth gate:\n  AAPL       history:"), "{}", why("aapl"));
+        assert_eq!(why("Apple"), format!("Matched by name: Apple Inc. (AAPL)\n\n{}", why("aapl")), "by name, and says so");
+        assert!(why("n").starts_with("Matched by name: NVIDIA Corp (NVD.DE)"), "a name STARTING with it first");
+        assert!(why("n").ends_with("Also matching \"n\": AAPL, VWCE.DE"), "the rest in pool order: {}", why("n"));
+        assert!(why("vwce.l").starts_with("VWCE.DE isn't assessable"), "by alias: {}", why("vwce.l"));
+        assert!(why("msft").starts_with("MSFT isn't assessable"));
+        assert!(why(" nvidia ").contains("\n\n─── how the #1 SCORE was computed — NVIDIA Corp (NVD.DE), score 6.70"));
+        assert!(!why("nvidia").contains("Also matching"), "the hit itself is not an also");
+        assert!(why("i").ends_with("\n\nAlso matching \"i\": VWCE.DE, MSFT, NVD.DE"), "{}", why("i"));
+        assert!(why("NOPE").starts_with("No pool row matches \"NOPE\". The pool keeps one listing per company"));
+        assert!(why("").starts_with("No pool row matches \"\""), "an empty box matches no name");
+        assert!(explain("tickers: [", &u, "aapl").is_err_and(|e| e.starts_with("settings.yaml:")));
     }
 
     /// An upload that is not a usable config is an error the page prints, never a quiet default rank.

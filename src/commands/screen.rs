@@ -2007,9 +2007,9 @@ pub async fn run(args: Vec<String>) {
         crate::config::data_path(".screen_universe.json"),
         crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded, &aliases),
     );
-    let write_web = |json: String| {
-        let _ = std::fs::write(&web_out, json);
-    };
+    // (#403) captured, not written: the page's BUY% column is stamped onto it once `sized_now` exists
+    let web_json = std::cell::RefCell::new(None);
+    let write_web = |json: String| *web_json.borrow_mut() = Some(json);
     let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, RenderCtx {
         nupl,
         sectors: &settings.sectors,
@@ -2029,16 +2029,21 @@ pub async fn run(args: Vec<String>) {
     // same-day rerun adds nothing); a failed append warns inside and never fails the screen.
     // (#295) the executed book is bound here, not built inline below, so the buy list printed after the
     // state write shows the same rows this journals. The field's comment says why it is `sized_book`.
-    let sized_now: Vec<(String, f64)> = crate::commands::size::sized_book(
-        &ranked_now.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect::<Vec<_>>(),
+    let sized_now = crate::picks::buy_book(
+        &ranked_now,
+        &quotes,
         &settings.buy_heuristic,
         &settings.sizing,
         nupl,
         &crate::commands::size::fund_sectors(&mix), // (#293) the same look-through `size` caps by
-    )
-    .iter()
-    .map(|&(q, _, w, _)| (q.ticker.clone(), w))
-    .collect();
+    );
+    // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
+    if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
+        crate::picks::stamp_buy(&mut top, &sized_now);
+        if let Ok(json) = serde_json::to_string_pretty(&top) {
+            let _ = std::fs::write(&web_out, json);
+        }
+    }
     // (#324) built here, not at the print below, so the journal records the rows the block prints
     let notches = notch_cohorts(&quotes, &settings.tickers, &settings.buy_heuristic);
     // (#335) last month's graded line, read BEFORE today's append: `exit` and (#337) `carry` diff against it
