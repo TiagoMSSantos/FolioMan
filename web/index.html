@@ -267,12 +267,14 @@ function sortBy(th) {
 // wants ten rows every morning bookmarks the URL that gives them. Clamped and truncated because the
 // query string is user input — `?top=abc`, `?top=0`, `?top=3.7` and `?top=999` must all land on an
 // option that exists, or `sel.value` silently becomes "" and apply(0) blanks every table.
-function chooser(max) {
+// (#396) The default is the shortest NON-empty lane (stocks 5, ETFs 17, crypto 3 -> 3), so every table
+// fills the same N rows; an empty lane is skipped, and all-empty makes it Infinity, which clamps to 1.
+function chooser(max, dflt) {
   const box = document.getElementById("topn-box");
   const sel = document.getElementById("topn");
   sel.replaceChildren(); // (#392) an upload renders again, with its own row counts
   for (let i = 1; i <= max; i++) sel.add(new Option(i));
-  const want = Math.trunc(+new URLSearchParams(location.search).get("top")) || 1;
+  const want = Math.trunc(+new URLSearchParams(location.search).get("top")) || dflt;
   sel.value = Math.min(Math.max(want, 1), max);
   sel.onchange = () => {
     apply(+sel.value);
@@ -319,7 +321,8 @@ function render(data) {
     .replaceChildren(table(data.core, "(no CORE fund qualified)"));
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
-  chooser(Math.max(1, ...LANES.map((lane) => (data[lane] || []).length)));
+  const sizes = LANES.map((lane) => (data[lane] || []).length);
+  chooser(Math.max(1, ...sizes), Math.min(...sizes.filter(Boolean)));
 }
 
 function load() {
