@@ -6,7 +6,6 @@
 //! Acronyms (CAGR, ROE, P/E, NUPL, SMA, Sharpe, Calmar, …): see the Glossary in README.md.
 //! **NOT advice** — a transparent ranking of the table, never an auto-buy.
 
-use crate::commands::truncate;
 use crate::config::{BuyHeuristic, Widths};
 use crate::core::{self, Quote, HORIZONS};
 use std::borrow::Cow;
@@ -5564,6 +5563,39 @@ fn turnover_note(now: &[String], n: usize, path: &std::path::Path) -> Option<Str
         if moved == 1 { "" } else { "s" }
     ))
 }
+
+/// First `n` chars (Python str slicing is by char, like Rust here).
+pub fn truncate(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+/// (#314) THE (#313) SPLIT, lifted so `sim` replays the knob's book off a journaled `sized` with the same
+/// arithmetic `sized_book` funds. Rows are `(is_coin, weight %)` in book order: a coin keeps its weight, the
+/// first `book` other rows split what is left, and every later row is dropped (`None`). (#317) `book` is
+/// `Sizing::book_cut`. (#322) The split is in shares: each of the first [`HEAD`] names takes `head`
+/// (`Sizing::head_share`), every later one 1. At `head` 1.0 every share is 1 and the sum of n ones is exactly n,
+/// so the flat book is the same float it was before the tilt existed.
+pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize, head: f64) -> Vec<Option<f64>> {
+    let coins: f64 = rows.iter().filter(|r| r.0).map(|r| r.1).sum();
+    let n = rows.iter().filter(|r| !r.0).count().min(book);
+    let share = |rank: usize| if rank <= HEAD { head } else { 1.0 };
+    let shares: f64 = (1..=n).map(share).sum();
+    let mut seen = 0;
+    rows.iter()
+        .map(|&(coin, w)| {
+            if coin {
+                return Some(w);
+            }
+            seen += 1;
+            (seen <= book).then(|| (100.0 - coins) * share(seen) / shares)
+        })
+        .collect()
+}
+
+/// (#322) How many names at the top of the equal-weight book take `Sizing::head_weight`: the backtest's own
+/// rank-slice boundary (rank 1 / 2-5 / 6-10), where on the point-in-time pool ranks 1-5 out-earned 6-10 at
+/// every horizon. shortcut: a const, not a knob — one boundary was graded; make it a knob when a second is.
+pub(crate) const HEAD: usize = 5;
 
 #[cfg(test)]
 mod tests {

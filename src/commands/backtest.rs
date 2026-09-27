@@ -3328,19 +3328,13 @@ fn ship_verdict(cleared: &BookRow, union: &BookRow) -> &'static str {
     if guard_holds(&cleared.st, &union.st, union.bar) { "pass" } else { "FAIL" }
 }
 
+// (#389) both moved to `core` so the page engine (wasm, no `commands`) links them; callers unchanged.
+pub(crate) use crate::core::{next_rand, percentile};
+
 /// (#329) Draws behind the placebo band, and its seed. BOTH FIXED BEFORE THE FIRST RUN and not to be
 /// retuned afterwards: a bar chosen once its numbers are visible decides nothing.
 const PLACEBO_DRAWS: usize = 200;
 const PLACEBO_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
-
-/// (#329) xorshift64. The repo carries no random-number dependency, and the band has to read the same
-/// at any thread count for the goldens to be stable, so three lines beat pulling in a crate.
-pub(crate) fn next_rand(state: &mut u64) -> u64 {
-    *state ^= *state << 13;
-    *state ^= *state >> 7;
-    *state ^= *state << 17;
-    *state
-}
 
 /// (#329) THE MATCHED-n BAR, and the reason it had to exist. (#324)'s guard reads `union.2 >= cleared.2
 /// - 0.1` off the UNION book, but a cohort of `n` names only carries weight `w = n/(cleared+n)` in that
@@ -4968,17 +4962,6 @@ type Knob = (String, Box<dyn Fn(&mut BuyHeuristic) + Sync>);
 /// Terse constructor so the knob tables below stay one line per knob.
 fn knob(name: impl Into<String>, f: impl Fn(&mut BuyHeuristic) + Sync + 'static) -> Knob {
     (name.into(), Box::new(f))
-}
-
-/// (Item 5) p-th percentile of an already-sorted slice (nearest-rank). NaN on empty.
-/// (#107) `pub(crate)` so `picks::rank_robustness` reads its quartiles off THIS definition rather
-/// than growing a second nearest-rank rule that rounds the other way on an even sample.
-pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() {
-        return f64::NAN;
-    }
-    let idx = ((p / 100.0) * (sorted.len() - 1) as f64).round() as usize;
-    sorted[idx.min(sorted.len() - 1)]
 }
 
 /// (#119) How many whole blocks the record must hold before a block bootstrap's width means anything.

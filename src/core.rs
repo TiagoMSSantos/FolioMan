@@ -4863,6 +4863,26 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
     (last >= hi * (1.0 - tol), last <= lo * (1.0 + tol))
 }
 
+/// (#329) xorshift64. The repo carries no random-number dependency, and the band has to read the same
+/// at any thread count for the goldens to be stable, so three lines beat pulling in a crate.
+pub(crate) fn next_rand(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
+/// (Item 5) p-th percentile of an already-sorted slice (nearest-rank). NaN on empty.
+/// (#107) `pub(crate)` so `picks::rank_robustness` reads its quartiles off THIS definition rather
+/// than growing a second nearest-rank rule that rounds the other way on an even sample.
+pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let idx = ((p / 100.0) * (sorted.len() - 1) as f64).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

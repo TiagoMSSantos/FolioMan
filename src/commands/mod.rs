@@ -13,10 +13,8 @@ pub mod size;
 pub mod track;
 pub mod trade;
 
-/// First `n` chars (Python str slicing is by char, like Rust here).
-pub fn truncate(s: &str, n: usize) -> String {
-    s.chars().take(n).collect()
-}
+// (#389) lives in `picks` so the page engine (wasm, no `commands`) links it; this path still works.
+pub use crate::picks::truncate;
 
 /// Signed-less percent or "n/a" (footer cells).
 pub fn pct(x: Option<f64>) -> String {
