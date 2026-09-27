@@ -1,0 +1,22 @@
+# (#392) The page's engine: `folioman::web::screen` compiled to wasm. pages.yml builds it into
+# `_site/engine`; the page loads it only when a reader uploads a settings.yaml.
+[package]
+name = "folioman-engine"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+folioman = { path = "../.." }
+# = the CLI pages.yml installs: wasm-bindgen refuses a module built by any other version
+wasm-bindgen = "=0.2.125"
+
+[profile.release]
+opt-level = "s"
+
+# its own root, so the repo's cargo commands never see it and it never joins folioman's lock
+[workspace]

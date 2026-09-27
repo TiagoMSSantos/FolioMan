@@ -172,6 +172,41 @@ jobs:
           mkdir -p _site
           cp web/index.html _site/index.html
           cp .screen_web.json _site/data.json
+          cp .screen_universe.json _site/universe.json
+
+      # (#392) The page's engine: `picks::render` compiled to wasm, which re-ranks universe.json under
+      # a reader's uploaded settings.yaml in their own browser. Rebuilt only when its source moves; the
+      # cron runs restore it. EVERY step is continue-on-error: a wasm break costs the upload control
+      # (the page hides it when engine/ is missing), never the deploy. ci.yml's `wasm` job is what
+      # reds the push that broke it.
+      - name: Restore the page engine
+        id: engine
+        continue-on-error: true
+        uses: actions/cache@v6
+        with:
+          path: engine-dist
+          key: folioman-engine-${{ hashFiles('src/**', 'web/engine/**', 'Cargo.toml') }}
+
+      # Built aside and moved in whole, so a failed build never leaves a half engine for the cache
+      # to save under this key.
+      - name: Build the page engine
+        if: steps.engine.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install --locked wasm-bindgen-cli --version 0.2.125   # = web/engine's pin; a no-op once installed
+          cargo build --locked --release --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml
+          wasm-bindgen --target web --out-dir engine-tmp web/engine/target/wasm32-unknown-unknown/release/folioman_engine.wasm
+          cp web/engine/worker.js engine-tmp/
+          mv engine-tmp engine-dist
+
+      # The parity pin: with no upload the engine must reprint data.json's rows from universe.json.
+      # A drift ships the page WITHOUT the engine rather than one that ranks differently from `screen`.
+      - name: Publish the page engine
+        continue-on-error: true
+        run: |
+          cp -r engine-dist _site/engine
+          node web/engine/smoke.mjs _site || { rm -rf _site/engine; exit 1; }
 
       - uses: actions/upload-pages-artifact@v5
         with:

@@ -95,6 +95,12 @@
   <p class="topn" id="topn-box" hidden>
     <label>show top <select id="topn"></select> rows per table</label>
   </p>
+  <!-- (#392) Re-rank this run's pool under your own settings.yaml, in this tab: engine/ is the same
+       Rust ranking compiled to wasm. Shown only when the deploy shipped it. -->
+  <p class="topn" id="upload-box" hidden>
+    <label>rank with your settings.yaml <input type="file" id="upload" accept=".yaml,.yml"></label>
+  </p>
+  <p class="stale" id="mine" hidden></p>
 
   <h2>Stocks</h2>
   <div id="stocks"></div>
@@ -220,6 +226,7 @@ function apply(n) {
 function chooser(max) {
   const box = document.getElementById("topn-box");
   const sel = document.getElementById("topn");
+  sel.replaceChildren(); // (#392) an upload renders again, with its own row counts
   for (let i = 1; i <= max; i++) sel.add(new Option(i));
   const want = Math.trunc(+new URLSearchParams(location.search).get("top")) || 1;
   sel.value = Math.min(Math.max(want, 1), max);
@@ -268,12 +275,61 @@ function render(data) {
   chooser(Math.max(1, ...LANES.map((lane) => (data[lane] || []).length)));
 }
 
-fetch("data.json", { cache: "no-store" })
-  .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
-  .then(render)
-  .catch((e) => {
-    document.getElementById("generated").textContent = "could not load data.json (" + e.message + ")";
-  });
+function load() {
+  fetch("data.json", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+    .then(render)
+    .catch((e) => {
+      document.getElementById("generated").textContent = "could not load data.json (" + e.message + ")";
+    });
+}
+load();
+
+// (#392) The upload. The file is read here and handed to engine/worker.js; it never leaves the tab.
+// A fresh worker per upload, because the engine reads its config once per instance.
+const upload = document.getElementById("upload");
+const mine = document.getElementById("mine");
+function say(text, reset) {
+  mine.textContent = text;
+  if (reset) {
+    const a = document.createElement("a");
+    a.href = "#";
+    a.textContent = "back to CI's ranking";
+    a.onclick = (e) => {
+      e.preventDefault();
+      upload.value = "";
+      mine.hidden = true;
+      load();
+    };
+    mine.append(" ", a);
+  }
+  mine.hidden = false;
+}
+upload.onchange = async () => {
+  const file = upload.files[0];
+  if (!file) return;
+  say("ranking with " + file.name + "…");
+  const overlay = await file.text();
+  const w = new Worker("engine/worker.js", { type: "module" });
+  w.onmessage = ({ data }) => {
+    w.terminate();
+    if (data.err) return say("Could not rank with " + file.name + ": " + data.err, true);
+    render(JSON.parse(data.ok));
+    say(
+      "Ranked with your " + file.name + ", in this browser: the file was never uploaded. What " +
+        "screen decided while fetching stays CI's: the universe, the dip/high windows, inflation, stale_days.",
+      true,
+    );
+  };
+  w.onerror = (e) => {
+    w.terminate();
+    say("The engine failed to start (" + e.message + ").", true);
+  };
+  w.postMessage(overlay);
+};
+fetch("engine/folioman_engine_bg.wasm", { method: "HEAD" })
+  .then((r) => { document.getElementById("upload-box").hidden = !r.ok; })
+  .catch(() => {});
 </script>
 </body>
 </html>

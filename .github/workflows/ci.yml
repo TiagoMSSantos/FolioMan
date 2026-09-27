@@ -105,9 +105,10 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   # (#390) The page's engine builds this crate for wasm32 (only config/core/picks go in). Pages
-  # builds it every 5 minutes but must never block the site on it, so a break has to show HERE, on
-  # the push that caused it: a `commands`/`fetch` import creeping into picks, or a dependency that
-  # does not compile for the browser.
+  # builds it when the source moves but must never block the site on it, so a break has to show HERE,
+  # on the push that caused it: a `commands`/`fetch` import creeping into picks, or a dependency that
+  # does not compile for the browser. (#392) Checks web/engine, the crate Pages builds, into ./target,
+  # the only directory rust-cache keeps.
   wasm:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -117,7 +118,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: folioman-wasm   # (#353) its own key and its only writer: wasm artifacts serve no other job
-      - run: cargo check --locked --lib --target wasm32-unknown-unknown
+      - run: cargo check --locked --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
 
   # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
   # sit on a dependency with a known CVE. Audits the COMMITTED Cargo.lock — the exact resolution
