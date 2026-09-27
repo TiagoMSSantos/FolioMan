@@ -1,0 +1,41 @@
+// (#402) Renovate, self-hosted by .github/workflows/renovate.yml, for the pins Dependabot cannot see.
+// Dependabot (.github/dependabot.yml) keeps every `uses:` pin and the root Cargo.toml/Cargo.lock;
+// Renovate stays off both, because two bots on one file open the same bump twice. What is left here:
+//
+// - web/engine/Cargo.lock: the page engine's own lock, which never joins folioman's (#392).
+// - the wasm-bindgen PAIR: `wasm-bindgen = "=0.2.125"` in web/engine/Cargo.toml and pages.yml's
+//   `cargo install --locked wasm-bindgen-cli --version 0.2.125`. The CLI refuses a module built by any
+//   other version, so both must move in ONE PR, and they do with no rule here: both crates' source is
+//   the wasm-bindgen repo, so config:recommended's monorepo group already joins them. CI only
+//   `cargo check`s the engine; the CLI and smoke.mjs run in pages.yml after the merge, where a break
+//   costs the upload control, never the deploy.
+// - cargo-mutants@X.Y.Z in ci.yml and mutation-census.yml (x2): one depName, so one PR. (#354) Merge
+//   it only after a census dispatch re-proves the gate on the new version.
+//
+// Nothing automerges: every PR here waits for a human.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended"],
+  enabledManagers: ["cargo", "custom.regex"],
+  includePaths: ["web/engine/**", ".github/workflows/**"],
+  // The workflow's monthly cron IS the schedule. lockFileMaintenance's own default ("before 4am on
+  // monday") would skip nearly every run on the 1st, which is how a config reads as enabled and never
+  // opens a PR.
+  lockFileMaintenance: { enabled: true, schedule: ["at any time"] },
+  // config:recommended caps new PRs at 2 an hour, which on one run a month defers the rest a month.
+  prHourlyLimit: 0,
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      matchStrings: [
+        "tool: (?<depName>cargo-mutants)@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "cargo install --locked (?<depName>wasm-bindgen-cli) --version (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+      ],
+      datasourceTemplate: "crate",
+      // Both pins install EXACTLY that version. The crate datasource's own `cargo` versioning reads a
+      // bare 0.2.125 as the range ^0.2.125, finds 0.2.129 inside it and proposes nothing, ever.
+      versioningTemplate: "semver",
+    },
+  ],
+}

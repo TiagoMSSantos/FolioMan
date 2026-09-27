@@ -691,7 +691,9 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId -q '.[].databaseId'); do
+          # (#402) Completed PR runs are spared: a PR's checks are its review verdict, and the daily
+          # journal push fired this sweep before anyone had read them. Prune a merged PR's runs by hand.
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId,event -q '.[] | select(.event != "pull_request") | .databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
           for wf in ci.yml mutation-census.yml; do

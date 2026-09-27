@@ -1,0 +1,41 @@
+name: Renovate
+
+# (#402) Self-hosted Renovate for the pins Dependabot cannot see; what it covers, and why nothing
+# else, is in .github/renovate.json5.
+#
+# THE TOKEN IS A FINE-GRAINED PAT (secret RENOVATE_TOKEN), NOT `github.token`, for two reasons. A PR
+# opened with GITHUB_TOKEN triggers no workflow, so CI would never run on a single bump. And every
+# bump here edits .github/workflows/*, which GitHub refuses without the Workflows permission.
+# Scoped to this repository only:
+#   Contents, Pull requests, Issues (the Dependency Dashboard), Workflows, Commit statuses: read/write
+#   Dependabot alerts: read (Renovate opens a fix PR for an alert outside the monthly cadence)
+# It expires: when this job starts failing at authentication, mint a new one and
+# `gh secret set RENOVATE_TOKEN`.
+#
+# Monthly, like Dependabot. Dispatch it by hand to act on a ticked dashboard box or to rebase a PR
+# (`gh workflow run renovate.yml`). No `pull_request` trigger, ever: the PAT must not run beside
+# code a PR brought in.
+on:
+  schedule:
+    - cron: "23 5 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Renovate's own version follows this pin (the action's `renovate-version` default), so
+      # Dependabot's monthly actions bump moves both.
+      - uses: renovatebot/github-action@f3a31a786096ba6b40d0f0ffe11a494ef73bfa7c # v46.3.4
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+        env:
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: "false"

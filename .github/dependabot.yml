@@ -1,6 +1,6 @@
 # (#354) Keeps the SHA-pinned third-party actions (and actions/*'s major tags) current: one grouped
 # PR a month, so a bump is one review instead of one per action. cargo-mutants' explicit version in
-# ci.yml and mutation-census.yml is NOT touched by this; it is bumped by hand.
+# ci.yml and mutation-census.yml is NOT touched by this; (#402) Renovate proposes it.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -13,8 +13,12 @@ updates:
   # (#375) Cargo.lock only: semver-compatible bumps inside Cargo.toml's ranges, one grouped PR a
   # month, so it always compiles and needs no API work. Most direct deps are 0.x, where Dependabot
   # files a breaking 0.12 -> 0.13 as "minor", so a minor+patch group would still let API breaks in;
-  # crossing a range stays a hand edit. CI runs on the PR. Replaces the dead renovate.json, whose
+  # crossing a range stays a hand edit. CI runs on the PR. Replaced the dead renovate.json, whose
   # lockFileMaintenance never ran (Renovate was never installed on the repo).
+  #
+  # (#402) Renovate now runs self-hosted (.github/workflows/renovate.yml) for what this file cannot
+  # see: web/engine's Cargo.lock, the wasm-bindgen crate+CLI pair and cargo-mutants. It stays off
+  # every ecosystem here, so the two never open the same bump.
   - package-ecosystem: cargo
     directory: /
     schedule:
