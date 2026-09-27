@@ -30,19 +30,13 @@ pub async fn summary(client: &Client) -> Result<String, String> {
     render_summary(&cash, &port)
 }
 
-/// (round 110) Owned tickers in Trading212 form (e.g. `AAPL_US_EQ`) for the screen's held-position
-/// overlay. Same endpoint `summary` reads; rows without a ticker string are skipped (a display
-/// overlay must never fail the screen over one malformed row).
-pub async fn owned_tickers(client: &Client) -> Result<Vec<String>, String> {
-    let key = env_var("TRADING212_API_KEY")?;
-    let port = get(client, &key, "equity/portfolio").await?;
-    extract_tickers(&port)
-}
-
-/// (round 114) Held positions (ticker, quantity) for the size command's allocation-gap section.
-/// Same endpoint `summary` reads; rows missing either field are skipped (the gap table must never
-/// invent a position), a non-array response is API drift.
-pub async fn owned_positions(client: &Client) -> Result<Vec<(String, f64)>, String> {
+/// (round 114) Held positions (ticker, quantity, P/L) for the size command's allocation-gap section and
+/// the screen's owned overlay (round 110, in Trading212 form, e.g. `AAPL_US_EQ`). Same endpoint `summary`
+/// reads; rows missing ticker or quantity are skipped (the gap table must never invent a position, and a
+/// display overlay must never fail the screen over one malformed row), a non-array response is API drift.
+/// (#388) `ppl` is the unrealised P/L in account currency, the gain a fund switch would realise; a row
+/// without it keeps its place and simply gets no switch line.
+pub async fn owned_positions(client: &Client) -> Result<Vec<(String, f64, Option<f64>)>, String> {
     let key = env_var("TRADING212_API_KEY")?;
     let port = get(client, &key, "equity/portfolio").await?;
     extract_positions(&port)
@@ -60,12 +54,12 @@ fn signed_qty(side: &str, qty: f64) -> f64 {
 }
 
 /// Pure extraction, offline-testable (like `render_summary`).
-fn extract_positions(port: &Value) -> Result<Vec<(String, f64)>, String> {
+fn extract_positions(port: &Value) -> Result<Vec<(String, f64, Option<f64>)>, String> {
     Ok(port
         .as_array()
         .ok_or_else(|| "trading212: portfolio response is not an array (API drift?)".to_string())?
         .iter()
-        .filter_map(|h| Some((h.get("ticker")?.as_str()?.to_string(), h.get("quantity")?.as_f64()?)))
+        .filter_map(|h| Some((h.get("ticker")?.as_str()?.to_string(), h.get("quantity")?.as_f64()?, h.get("ppl").and_then(Value::as_f64))))
         .collect())
 }
 
@@ -85,15 +79,6 @@ fn parse_free(cash: &Value) -> Result<f64, String> {
         .ok_or_else(|| "trading212: no `free` in the cash response (API drift?)".to_string())
 }
 
-/// Pure extraction, split from the fetch so drift handling is testable offline (like `render_summary`).
-fn extract_tickers(port: &Value) -> Result<Vec<String>, String> {
-    Ok(port
-        .as_array()
-        .ok_or_else(|| "trading212: portfolio response is not an array (API drift?)".to_string())?
-        .iter()
-        .filter_map(|h| h.get("ticker").and_then(|v| v.as_str()).map(str::to_string))
-        .collect())
-}
 
 /// (round 117) One tradable instrument from the metadata endpoint — the minimum the order-glue
 /// symbol resolver needs: exact T212 ticker form + ISIN + listing currency.
@@ -262,29 +247,21 @@ mod tests {
         assert!(err.contains("not an array"), "{err}");
     }
 
-    /// (round 114) position extraction: (ticker, qty) pairs collected, rows missing either field
-    /// skipped, non-array = drift error.
+    /// (round 114) position extraction: (ticker, qty, (#388) ppl) collected, rows missing ticker or qty
+    /// skipped, a missing ppl kept as None, non-array = drift error.
     #[test]
     fn extract_positions_collects_and_skips() {
         let port = json!([
-            { "ticker": "AAPL_US_EQ", "quantity": 2.5 },
+            { "ticker": "AAPL_US_EQ", "quantity": 2.5, "ppl": -1.25 },
             { "quantity": 1.0 },
-            { "ticker": "NOQTY_US_EQ" }
+            { "ticker": "NOQTY_US_EQ" },
+            { "ticker": "VUAGl_EQ", "quantity": 3.0 }
         ]);
-        assert_eq!(extract_positions(&port).unwrap(), vec![("AAPL_US_EQ".to_string(), 2.5)]);
+        assert_eq!(
+            extract_positions(&port).unwrap(),
+            vec![("AAPL_US_EQ".to_string(), 2.5, Some(-1.25)), ("VUAGl_EQ".to_string(), 3.0, None)]
+        );
         assert!(extract_positions(&json!({ "positions": [] })).unwrap_err().contains("not an array"));
-    }
-
-    /// (round 110) ticker extraction: strings collected, malformed rows skipped, non-array = drift error.
-    #[test]
-    fn extract_tickers_collects_and_skips() {
-        let port = json!([
-            { "ticker": "AAPL_US_EQ", "quantity": 2.0 },
-            { "quantity": 1.0 },
-            { "ticker": "IITU_GB_EQ" }
-        ]);
-        assert_eq!(extract_tickers(&port).unwrap(), vec!["AAPL_US_EQ", "IITU_GB_EQ"]);
-        assert!(extract_tickers(&json!({ "positions": [] })).unwrap_err().contains("not an array"));
     }
 
     #[test]

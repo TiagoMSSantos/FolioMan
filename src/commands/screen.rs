@@ -1826,11 +1826,13 @@ pub async fn run(args: Vec<String>) {
     // t212_raw keeps the broker's exact ticker forms (`AAPL_US_EQ`) — the order-glue footer needs
     // them verbatim, while the overlay below collapses them to comparable bases.
     let mut t212_raw: Vec<String> = Vec::new();
+    let mut t212_held: Vec<(String, f64, Option<f64>)> = Vec::new(); // (#388) + qty and P/L, for the switches
     let owned = {
         let mut o = crate::picks::Owned::default();
-        if let Ok(v) = crate::broker::trading212::owned_tickers(&client).await {
-            t212_raw = v.clone();
-            o.stocks = v.iter().map(|t| crate::picks::t212_base(t)).collect();
+        if let Ok(v) = crate::broker::trading212::owned_positions(&client).await {
+            t212_raw = v.iter().map(|(t, ..)| t.clone()).collect();
+            o.stocks = t212_raw.iter().map(|t| crate::picks::t212_base(t)).collect();
+            t212_held = v;
         }
         if let Ok(v) = crate::broker::binance::owned_assets(&client).await {
             o.crypto = v.iter().map(|a| a.to_lowercase()).collect();
@@ -2793,10 +2795,12 @@ pub async fn run(args: Vec<String>) {
         // key) only when some stock/ETF row can't already be resolved from held positions — a
         // fully-held book or a keyless run costs zero extra HTTP. The ISIN map (inverted from the
         // ETF universe's ISIN→Yahoo cache) gives the resolver its exact-match path.
-        let need_instruments = book.iter().any(|(t, _)| {
-            !crate::picks::is_currency_quoted(t)
-                && !t212_raw.iter().any(|r| crate::picks::t212_base(r) == crate::picks::yahoo_base(t))
-        });
+        // (#388) …or when anything is held: the list is also how a held fund finds its quote (by ISIN).
+        let need_instruments = !t212_held.is_empty()
+            || book.iter().any(|(t, _)| {
+                !crate::picks::is_currency_quoted(t)
+                    && !t212_raw.iter().any(|r| crate::picks::t212_base(r) == crate::picks::yahoo_base(t))
+            });
         let instruments = if need_instruments {
             crate::broker::trading212::instruments_cached(&client).await
         } else {
@@ -2839,6 +2843,22 @@ pub async fn run(args: Vec<String>) {
                 "screen: order symbols — owned {n_owned} | isin {n_isin} | base {n_base} | placeholder {n_ph} | binance {n_binance} | instruments {}",
                 instruments.len()
             );
+        }
+        // (#388) fund switches: each held T212 position finds its quote by ISIN, else by base.
+        let held: Vec<(&str, f64, f64, &Quote)> = t212_held
+            .iter()
+            .filter_map(|(sym, qty, ppl)| {
+                let isin = instruments.iter().find(|i| &i.ticker == sym).map(|i| &i.isin);
+                let q = quotes
+                    .iter()
+                    .find(|q| isin.is_some() && isin_of.get(&q.ticker) == isin)
+                    .or_else(|| quotes.iter().find(|q| crate::picks::t212_base(sym) == crate::picks::yahoo_base(&q.ticker)))?;
+                Some((sym.as_str(), *qty, (*ppl)?, q))
+            })
+            .collect();
+        let buy_sym = |t: &str| resolve_t212(t, &t212_raw, &instruments, &isin_of).map(|(s, _)| s);
+        if let Some(sw) = switch_lines(&held, &quotes, &buy_sym, settings.buy_heuristic.capital_gains_tax_pct) {
+            println!("{sw}");
         }
     }
 
@@ -3485,6 +3505,62 @@ fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>, f64)],
     Some(out)
 }
 
+/// (#388) The return both legs of a fund switch grow at, gross of TER. shortcut: one number for every
+/// fund; a per-fund trailing CAGR would make a fee decision read momentum (and ~15% S&P years would
+/// price nearly every switch out). Higher = fewer switches.
+const SWITCH_R: f64 = 0.07;
+/// (#388) The horizon a switch is judged at: the 20-year hold this tool is built around.
+const SWITCH_YEARS: i32 = 20;
+
+/// (#388) Fund switches: for each held T212 fund, the cheapest `hold_suitable` fund tracking the SAME
+/// benchmark index (the exact BF string, never the GEO fallback, which is too coarse to call a twin),
+/// printed only when selling now and rebuying it beats holding after tax ([`core::switch_edge`]).
+/// Rows = (held T212 symbol, qty, `ppl` €, held quote); `buy_sym` resolves the twin's T212 symbol.
+/// The cheapest can be the held fund itself or an equal TER, and then the edge is at most 0 and nothing
+/// prints. Flat `capital_gains_tax_pct` (`cgt_hold_schedule` ships empty and is not applied here).
+/// Display-only: each command still walks `trade`'s own real-money 'yes'.
+fn switch_lines(
+    held: &[(&str, f64, f64, &Quote)],
+    quotes: &[Quote],
+    buy_sym: &dyn Fn(&str) -> Option<String>,
+    tax_pct: f64,
+) -> Option<String> {
+    let mut out = String::new();
+    for (sym, qty, gain, h) in held {
+        let (Some(bench), Some(ter), Some(px)) = (h.benchmark.as_deref(), h.ter_shown(), h.price_eur) else {
+            continue;
+        };
+        let Some((tw, tw_ter)) = quotes
+            .iter()
+            .filter(|q| q.benchmark.as_deref() == Some(bench) && core::hold_suitable(q))
+            .filter_map(|q| Some((q, q.ter_shown()?)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+        else {
+            continue;
+        };
+        let value = qty * px;
+        let edge = core::switch_edge(value, *gain, ter, tw_ter, tax_pct / 100.0, SWITCH_R, SWITCH_YEARS);
+        if edge > 0.0 {
+            let tax = tax_pct / 100.0 * gain.max(0.0);
+            let buy = buy_sym(&tw.ticker).unwrap_or_else(|| "<T212_SYMBOL>".to_string());
+            let qty_cell = tw.price_eur.map_or("<QTY>".to_string(), |p| format!("{:.4}", (value - tax) / p));
+            out.push_str(&format!(
+                "\n  {} -> {}  TER {ter:.2}->{tw_ter:.2}  gain €{gain:.0} tax €{tax:.0}  +€{edge:.0} after tax at {SWITCH_YEARS}y\n  \
+                 folioman trade trading212 sell {sym} {qty}\n  folioman trade trading212 buy {buy} {qty_cell}",
+                h.ticker, tw.ticker
+            ));
+        }
+    }
+    (!out.is_empty()).then(|| {
+        format!(
+            "\nFund switches — a held fund's same-index twin is cheaper, and selling now ({tax_pct:.0}% CGT on the gain) then\n\
+             rebuying beats holding after tax at {SWITCH_YEARS}y, {:.0}%/yr gross. Review each; every command asks its own\n\
+             real-money 'yes'. NOT advice.{out}",
+            SWITCH_R * 100.0
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3633,6 +3709,54 @@ mod tests {
     /// itself, priced or not, tagged only when strictly under Binance's minimum; missing deploy,
     /// missing or zero price, or missing symbol degrade to placeholders (never a guessed number), and
     /// the unheld footnote only prints when earned.
+    /// (#388) Switch lines: the cheapest SUITABLE same-index fund wins (a cheaper Dist class and a cheaper
+    /// other-index fund are both passed over), a positive edge prints the reason and both commands, a
+    /// fund that is already its own cheapest twin (edge exactly 0) and a big-gain holding stay silent.
+    #[test]
+    fn switch_lines_semantics() {
+        let fund = |t: &str, name: &str, bench: &str, ter: f64, px: f64| {
+            let mut q = Quote::stub(t, "", "", name);
+            q.instrument_type = "ETF".into();
+            q.expense_ratio = Some(ter);
+            q.replication = Some("Full");
+            q.use_of_profits = Some("Acc");
+            q.aum_eur = Some(5e9);
+            q.domicile = Some("IE".to_string());
+            q.benchmark = Some(bench.to_string());
+            q.price_eur = Some(px);
+            q
+        };
+        let world = "msci world";
+        let held = fund("IWDA.AS", "iShares Core MSCI World UCITS ETF USD (Acc)", world, 0.20, 100.0);
+        let twin = fund("SWRD.AS", "SPDR MSCI World UCITS ETF Acc", world, 0.07, 50.0);
+        let dearer = fund("XDWD.DE", "Xtrackers MSCI World UCITS ETF 1C", world, 0.12, 90.0);
+        let mut dist = fund("VWRL.AS", "Vanguard MSCI World UCITS ETF Dist", world, 0.05, 90.0);
+        dist.use_of_profits = Some("Dist");
+        let spx = fund("CSP1.AS", "iShares Core S&P 500 UCITS ETF USD (Acc)", "s&p 500", 0.03, 10.0);
+        let vusa = fund("VUSA.AS", "Vanguard S&P 500 UCITS ETF USD Acc", "s&p 500", 0.07, 100.0);
+        assert!(core::hold_suitable(&twin) && core::hold_suitable(&spx) && !core::hold_suitable(&dist), "fixture");
+        let quotes = vec![held.clone(), dearer, dist, twin.clone(), spx, vusa.clone()];
+        let sym = |t: &str| (t == "SWRD.AS").then(|| "SWRDa_EQ".to_string());
+        let rows = [
+            ("IWDAa_EQ", 12.0, 20.0, &held),
+            ("SWRDa_EQ", 5.0, 0.0, &twin),   // already the cheapest: edge exactly 0
+            ("IWDAa_EQ", 12.0, 900.0, &held), // gain too big for a 0.13 cut
+            ("VUSAa_EQ", 1.0, 0.0, &vusa),
+        ];
+        let out = switch_lines(&rows, &quotes, &sym, 28.0).unwrap();
+        assert!(out.contains("(28% CGT on the gain)") && out.contains("at 20y, 7%/yr gross"), "{out}");
+        assert!(out.contains(
+            "\n  IWDA.AS -> SWRD.AS  TER 0.20->0.07  gain €20 tax €6  +€68 after tax at 20y\n  \
+             folioman trade trading212 sell IWDAa_EQ 12\n  folioman trade trading212 buy SWRDa_EQ 23.8880"
+        ), "{out}");
+        assert!(out.ends_with(
+            "\n  VUSA.AS -> CSP1.AS  TER 0.07->0.03  gain €0 tax €0  +€2 after tax at 20y\n  \
+             folioman trade trading212 sell VUSAa_EQ 1\n  folioman trade trading212 buy <T212_SYMBOL> 10.0000"
+        ), "{out}");
+        assert_eq!(out.matches(" -> ").count(), 2, "{out}");
+        assert!(switch_lines(&rows[1..3], &quotes, &sym, 28.0).is_none());
+    }
+
     #[test]
     fn order_glue_semantics() {
         assert!(order_glue(&[], Some(1000.0)).is_none());

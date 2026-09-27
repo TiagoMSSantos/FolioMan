@@ -598,7 +598,7 @@ pub async fn run(args: Vec<String>) {
     // SOL-lettered stock (round 111 rule). Display-only, NOT advice.
     let mut held: Vec<(String, String, f64)> = Vec::new();
     if let Ok(v) = crate::broker::trading212::owned_positions(&client).await {
-        for (t, q) in v {
+        for (t, q, _) in v {
             held.push((format!("s:{}", crate::picks::t212_base(&t)), t, q));
         }
     }

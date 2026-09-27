@@ -2794,6 +2794,20 @@ pub fn net_ter(ter: Option<f64>, tier: u8, replication: Option<&str>, credit: f6
     }
 }
 
+/// (#388) The after-tax € a fund SWITCH adds over holding, `years` out. Switch: sell `value` now, pay
+/// `tax` on a positive `gain` only (a realised loss is not credited, the after-tax footer's own rule),
+/// rebuy the rest at `ter_to`, and pay tax on that new position's gain at the end. Hold: compound at
+/// `ter_from` on the old basis (`value - gain`) and pay the deferred tax at the end. Both legs grow at `r`
+/// gross less their TER (in %). Tax paid now is not lost, only its growth is, so the sign sits close to
+/// `value × ΔTER` against `r × tax × gain` a year, and a loss position forfeits its future shield.
+pub fn switch_edge(value: f64, gain: f64, ter_from: f64, ter_to: f64, tax: f64, r: f64, years: i32) -> f64 {
+    let grow = |ter: f64| (1.0 + r - ter / 100.0).powi(years);
+    let hold = value * grow(ter_from);
+    let cash = value - tax * gain.max(0.0);
+    let switched = cash * grow(ter_to);
+    (switched - tax * (switched - cash).max(0.0)) - (hold - tax * (hold - (value - gain)).max(0.0))
+}
+
 /// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
 /// NARROW token disqualifies it. The single place the two public fns above agree.
 fn geo_tier(n: &str) -> Option<u8> {
@@ -8704,4 +8718,21 @@ fn serie_e_hurdle() {
     let h = serie_e_multiple(8.0);
     // strictly beats: the window AT the hurdle is not a win, one under it never counts
     assert_eq!(beats_serie_e(&[h, h + 1e-9, h + 1.0, h + 2.0, 1.0], 8.0), 3);
+}
+
+/// (#388) `switch_edge` against a Python replay of the same two legs. A big gain on a small TER cut
+/// loses; a small gain on a big cut wins; a loss position forfeits its shield; zero gain at the SAME
+/// TER is exactly nothing, which is what keeps a held fund from being told to switch into itself.
+#[test]
+fn switch_edge_prices_the_tax_paid_early() {
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    let e = switch_edge(10000.0, 3000.0, 0.20, 0.12, 0.28, 0.07, 20);
+    assert!(close(e, -1278.6977140548115), "{e}");
+    let e = switch_edge(10000.0, 500.0, 0.20, 0.06, 0.28, 0.07, 20);
+    assert!(close(e, 427.54883860674454), "{e}");
+    let e = switch_edge(10000.0, -2000.0, 0.20, 0.12, 0.28, 0.07, 20);
+    assert!(close(e, -155.0516287026694), "{e}");
+    let e = switch_edge(10000.0, 0.0, 0.20, 0.07, 0.28, 0.07, 20);
+    assert!(close(e, 660.9815153910313), "{e}");
+    assert_eq!(switch_edge(10000.0, 0.0, 0.20, 0.20, 0.28, 0.07, 20), 0.0);
 }
