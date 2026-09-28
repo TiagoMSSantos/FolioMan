@@ -3782,6 +3782,11 @@ pub struct FundFactors {
     // asks what it cost to buy. Correlated with `rev_accel` by construction, so the two must be read
     // together rather than summed.
     pub asset_growth: Option<f64>,
+    // (#405) GROSS PROFITABILITY (Novy-Marx 2013): gross profit ÷ total assets, %, off the same as-of row.
+    // `gross_margin` above divides the SAME gross profit by revenue instead, and reads backwards in the
+    // (#165) table; the asset denominator is the one the paper says pays alongside value. Measured by the
+    // AUC table, weighted nowhere. None when any leg is missing or assets are not positive, never 0.
+    pub gp_assets: Option<f64>,
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4004,6 +4009,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         margin_stability,
         accrual_gap,
         asset_growth,
+        gp_assets: now.and_then(|r| Some(r.gross_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -4523,6 +4529,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "margin_stability" => f.margin_stability,         // (round 109) cyclical detector: −std(net_margin)
         "accrual_gap" => f.accrual_gap,                   // (P2) −(earnings − cash earnings)/|earnings|: how cash-backed the profit is
         "asset_growth" => f.asset_growth,                 // (P3) −CAGR of total assets: how fast the balance sheet is being expanded
+        "gp_assets" => f.gp_assets,                       // (#405) gross profit ÷ total assets (Novy-Marx): measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -5316,6 +5323,7 @@ mod tests {
             margin_stability: Some(15.0),
             accrual_gap: Some(23.0),
             asset_growth: Some(24.0),
+            gp_assets: Some(25.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -5336,6 +5344,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "margin_stability"), Some(15.0)); // (round 109)
         assert_eq!(select_fund_factor(&f, "accrual_gap"), Some(23.0)); // (P2) a FOURTH distinct field — not an alias of fcf_margin, which measures the level rather than the gap to earnings
         assert_eq!(select_fund_factor(&f, "asset_growth"), Some(24.0)); // (P3) the balance-sheet twin of rev_cagr, and NOT rev_cagr — a filer can grow assets while revenue stalls
+        assert_eq!(select_fund_factor(&f, "gp_assets"), Some(25.0)); // (#405) NOT gross_margin: same numerator, the other denominator
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -5870,6 +5879,26 @@ mod tests {
         assert_eq!(fund_factors(&[r(2019, Some(0.0), 500.0), r(2024, Some(2000.0), 500.0)], cutoff, 5).asset_growth, None);
         // and the look-ahead guard: with no row old enough to anchor the lookback there is no growth
         assert_eq!(fund_factors(&[r(2024, Some(2000.0), 500.0)], cutoff, 5).asset_growth, None);
+    }
+
+    /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of
+    /// revenue against 200 of assets is 20%. A missing leg or a non-positive asset base is None, never 0.
+    #[test]
+    fn gp_assets_is_gross_profit_over_assets() {
+        let r = |gm: Option<f64>, assets: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            gross_margin: gm,
+            assets,
+            revenue: Some(100.0),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        assert_eq!(fund_factors(&[r(Some(40.0), Some(200.0))], cutoff, 5).gp_assets, Some(20.0));
+        assert_eq!(fund_factors(&[r(None, Some(200.0))], cutoff, 5).gp_assets, None);
+        assert_eq!(fund_factors(&[r(Some(40.0), None)], cutoff, 5).gp_assets, None);
+        assert_eq!(fund_factors(&[r(Some(40.0), Some(0.0))], cutoff, 5).gp_assets, None);
+        assert_eq!(fund_factors(&[r(Some(40.0), Some(-5.0))], cutoff, 5).gp_assets, None);
     }
 
     /// `income_snapshot`: picks the newest COMPLETE year (1 = annual filing, 4+ = full quarterly year;

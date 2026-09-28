@@ -4771,6 +4771,35 @@ buy_heuristic:
                                  #   with units.
                                  #   REVERT RULE: none — this receipt records a measurement, not a value. The column itself
                                  #   reverts with `print_held_loser_factors: false`, exactly as (#159) already says.
+                                 # ── (#405) MEASURED 2026-09-28 — GROSS PROFITABILITY (Novy-Marx 2013), THE ONE LITERATURE FACTOR NEVER ASKED ──
+                                 #   WHAT: `gp_assets` = gross profit ÷ total assets, %, off the as-of row (`gross_margin` · revenue ÷ assets,
+                                 #   None on a missing leg or assets <= 0). Registered in `FUND_FACTORS` (24 -> 25: every Šidák band tightens
+                                 #   once more) and the held-book-by-FACTOR list. Weighted nowhere, gates nothing.
+                                 #   WHY THIS ONE: a web sweep of the long-hold literature (52w-high proximity, net issuance, QMJ quality,
+                                 #   Bessembinder's winners, low vol) found every other idea already graded in this table. GP/A was the
+                                 #   exception, and `gross_margin` (the SAME numerator over revenue) cannot stand in for it: Novy-Marx's
+                                 #   point is that the ASSET denominator is what pays, alongside value.
+                                 #   BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10
+                                 #   at BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. Prior: weak (gross_margin 0.26/0.34).
+                                 #   RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after.
+                                 #   12y: windows scored 2772. 8y: 6180. The control reproduced (#165): gross_margin gap -8.74 to the
+                                 #   decimal at 12y, peg_yield AUC 0.91/0.71 against 0.91/0.70.
+                                 #                       12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #     gp_assets           0.28   35/7        0.41   71/16    SAME   backwards
+                                 #     gross_margin        0.25   35/7        0.34   71/16    SAME   backwards (same run)
+                                 #   VERDICT: DEAD. |d| 0.22 at 12y, 0.09 at 8y: under the bar at 8y. And the side it holds is the WRONG
+                                 #   one — the held book's losers carry MORE gross profit per unit of assets, the backwards quality family
+                                 #   (#159)/(#165) already measured. Swapping revenue for assets as the denominator softens that at 8y
+                                 #   (0.34 -> 0.41) and turns nothing around.
+                                 #   It fills exactly gross_margin's rows at both horizons, so the assets leg cost no coverage; and its
+                                 #   held-book row prints gross_margin's byte for byte (book +14.1%/yr n=43 at 12y, +13.7%/yr n=89 at 8y)
+                                 #   because a median gated pool of 6-7 names holds the same SET whatever the order. That row is vacuous;
+                                 #   the AUC is the reading.
+                                 #   NOT MEASURED: Novy-Marx's premium is a long-short cross-section over the whole market. This ruler
+                                 #   asks the narrower question the book can act on — among names that already cleared every gate, does
+                                 #   the factor split what then won from what lost — and the answer is no. Still open, and needing a new
+                                 #   SEC tag (a `_facts` bump): R&D intensity (Chan-Lakonishok-Sougiannis 2001).
+                                 #   REVERT RULE: none — a measurement, not a value. Drop the name from `FUND_FACTORS` to restore 24.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

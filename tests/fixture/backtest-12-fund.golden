@@ -83,8 +83,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     net_cash_rev          winners n=6    med      2.18   losers n=11   med    -82.76   gap     84.94   AUC  0.95
     margin_stability      winners n=6    med     -2.46   losers n=11   med    -59.01   gap     56.54   AUC  0.86
     accrual_gap           winners n=6    med      0.11   losers n=11   med     -0.00   gap      0.11   AUC  0.50
+    gp_assets             winners n=6    med     56.06   losers n=3    med     49.07   gap      6.98   AUC  0.89
     composite             winners n=3    med     44.20   losers n=9    med     23.78   gap     20.42   AUC  1.00
-    (19 of 24 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (20 of 25 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -287,6 +288,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   margin_stability TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
   accrual_gap    TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
   asset_growth   TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
+  gp_assets      TEST edge +263.3 (w 0.249)  OOS +0.36 | -0.04
   composite      TEST edge -28.4 (w 0.249)  OOS +0.13 | -0.07
   -> WINNER: gross_margin. Set `growth_fund_factor: gross_margin` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm.
   -> validated growth_fund_weight for gross_margin: 0.249 (at growth_fund_cap 300)
@@ -398,6 +400,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   net_cash_rev   book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
   margin_stability book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
   accrual_gap    book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
+  gp_assets      book +4.1%/yr  excess -7.7  win 14%  worst -17.0  OOS -1.3/-12.5   (n=9)
   no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
   (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.
    every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,

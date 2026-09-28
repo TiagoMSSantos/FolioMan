@@ -65,7 +65,7 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
       -> exactly-2-gate winners hold 9.6% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:48% 2:10% 3:13% 4:5% 5:5% 6:14% 7:5%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     no factor fills both sides — no as-of fundamentals, or the book never lost money
-    (0 of 24 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (0 of 25 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)

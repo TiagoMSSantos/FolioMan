@@ -2346,7 +2346,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 24] = [
+const FUND_FACTORS: [&str; 25] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2373,6 +2373,7 @@ const FUND_FACTORS: [&str; 24] = [
     "roe", "quality", "roic", "ebitda_yield",
     "fcf_margin", "interest_cover", "net_cash_rev", "margin_stability",
     "accrual_gap", "asset_growth",
+    "gp_assets",            // (#405) Novy-Marx gross profitability; 24 -> 25 tightens every band again
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4243,6 +4244,8 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         // expansion without ever asking what was spent to buy it. Correlated with rev_accel by
         // construction — a head-to-head against it is the point, not an independent reading.
         ("asset_growth", |f| f.asset_growth),
+        // (#405) gross profit ÷ total assets — gross_margin's numerator on the asset base (Novy-Marx).
+        ("gp_assets", |f| f.gp_assets),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
