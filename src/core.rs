@@ -3817,6 +3817,12 @@ pub struct FundFactors {
     // (#408) O'Shaughnessy value composite: mean same-date percentile (0-100) of earnings, EBITDA, FCF
     // and sales yields, ≥2 legs present. Needs the whole date's cohort, so only the backtest stamps it.
     pub value_composite: Option<f64>,
+    // (#409) SIZE AND BOOK-TO-MARKET, the last two literature factors the cached rows can build.
+    // Book equity is exact: `roe` and `net_margin` divide the SAME net-income tag, so eq = nm·rev/roe.
+    pub book_ttm: Option<f64>,       // (#409) as-of book equity level, reporting currency; None unless finite
+    pub book_yield: Option<f64>,     // (#409) book ÷ market cap, % (high = cheap). PROBE-ONLY, None live
+    pub mcap: Option<f64>,           // (#409) as-of market cap, TRADING currency. Backtest fills
+    pub small_pct: Option<f64>,      // (#409) same-date percentile of mcap, 0-100, high = SMALL. Backtest stamps
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4062,6 +4068,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         fcf_ev_yield: None,
         sales_ev_yield: None,
         value_composite: None,
+        // (#409) roe 0 (or a missing leg) is no book: the division reads inf/NaN and drops out
+        book_ttm: now.and_then(|r| Some(r.net_margin? * r.revenue? / r.roe?)).filter(|b| b.is_finite()),
+        book_yield: None,
+        mcap: None,
+        small_pct: None,
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -4301,6 +4312,7 @@ pub fn pe_from_earnings_yield(ey: Option<f64>) -> Option<f64> {
 /// leg simply drops for that name. Tighten to require net_debt only if the probe shows an edge worth it.
 /// (#408) Nothing here is EBITDA-specific: any positive level over EV. FCF/EV and sales/EV reuse it.
 /// shortcut: a negative FCF is None, so cash burners leave the FCF row instead of ranking last.
+/// (#409) net_debt None makes EV = market cap, so `book_yield` is book ÷ mcap; negative book is None.
 pub fn ev_ebitda_yield(ebitda: Option<f64>, shares: Option<f64>, net_debt: Option<f64>, price: f64) -> Option<f64> {
     match (ebitda, shares) {
         (Some(e), Some(sh)) if e > 0.0 && sh > 0.0 && price > 0.0 => {
@@ -4589,6 +4601,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "fcf_ev_yield" => f.fcf_ev_yield,                 // (#408) FCF ÷ EV: measured, unweighted
         "sales_ev_yield" => f.sales_ev_yield,             // (#408) revenue ÷ EV: measured, unweighted
         "value_composite" => f.value_composite,           // (#408) same-date percentile mean of 4 yields
+        "book_yield" => f.book_yield,                     // (#409) book ÷ market cap: measured, unweighted
+        "small_pct" => f.small_pct,                       // (#409) same-date size percentile, high = small
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -5390,6 +5404,10 @@ mod tests {
             fcf_ev_yield: Some(28.0),
             sales_ev_yield: Some(29.0),
             value_composite: Some(30.0),
+            book_ttm: Some(80.0),
+            book_yield: Some(31.0),
+            mcap: Some(90.0),
+            small_pct: Some(32.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -5416,6 +5434,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "fcf_ev_yield"), Some(28.0)); // (#408)
         assert_eq!(select_fund_factor(&f, "sales_ev_yield"), Some(29.0));
         assert_eq!(select_fund_factor(&f, "value_composite"), Some(30.0));
+        assert_eq!(select_fund_factor(&f, "book_yield"), Some(31.0)); // (#409)
+        assert_eq!(select_fund_factor(&f, "small_pct"), Some(32.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -6014,6 +6034,32 @@ mod tests {
         // FCF 20 over EV 2·40 + 20 = 100 -> 20%; a negative FCF drops out, never ranks last
         assert_eq!(ev_ebitda_yield(f.fcf_ttm, Some(2.0), Some(20.0), 40.0), Some(20.0));
         assert_eq!(ev_ebitda_yield(Some(-20.0), Some(2.0), Some(20.0), 40.0), None);
+    }
+
+    /// (#409) book equity from the two ratios sharing net income: a 10% net margin on 200 of revenue
+    /// at a 20% ROE is 100 of book. ROE 0 is no book; a negative ROE on a profit is negative book, and
+    /// `ev_ebitda_yield` with no net debt (EV = market cap) refuses it.
+    #[test]
+    fn book_level_comes_from_net_margin_over_roe() {
+        let r = |roe: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            net_margin: Some(10.0),
+            revenue: Some(200.0),
+            roe,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let f = fund_factors(&[r(Some(20.0))], cutoff, 5);
+        assert_eq!(f.book_ttm, Some(100.0));
+        assert_eq!((f.book_yield, f.mcap, f.small_pct), (None, None, None));
+        assert_eq!(fund_factors(&[r(Some(0.0))], cutoff, 5).book_ttm, None);
+        assert_eq!(fund_factors(&[r(None)], cutoff, 5).book_ttm, None);
+        let neg = fund_factors(&[r(Some(-20.0))], cutoff, 5).book_ttm;
+        assert_eq!(neg, Some(-100.0));
+        assert_eq!(ev_ebitda_yield(neg, Some(2.0), None, 25.0), None);
+        // book 100 over market cap 2·25 = 50 -> 200%
+        assert_eq!(ev_ebitda_yield(f.book_ttm, Some(2.0), None, 25.0), Some(200.0));
     }
 
     /// (#407) `rev_stability`: revenue 100, 100, 150, 300 grows 0, 50, 100 -> sd 50 -> -50. A 2y gap

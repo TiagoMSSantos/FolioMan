@@ -4859,6 +4859,33 @@ buy_heuristic:
                                  #   BANKED FOR THE ~2027-09 REOPEN: fcf_ev_yield is peg_yield's peer on AUC, not its replacement; the
                                  #   composite buys nothing over the shipped single factor on this ruler. Nothing moves.
                                  #   REVERT RULE: none — measurements, not values. Drop the three names from `FUND_FACTORS` to restore 27.
+                                 # ── (#409) MEASURED 2026-09-28 — SIZE AND BOOK-TO-MARKET, THE LAST TWO FACTORS THE CACHED ROWS CAN BUILD ──
+                                 #   WHAT: `book_yield` = book equity ÷ market cap, % (Fama-French HML; O'Shaughnessy's P/B), through the same
+                                 #   `ev_ebitda_yield` with no net debt so EV is the cap. Book is exact from cached rows: `roe` and `net_margin`
+                                 #   divide the same net-income tag, so equity = net_margin · revenue ÷ roe; negative book is None. `small_pct`
+                                 #   = 100 − the same-cutoff percentile of market cap (shares · as-of close, TRADING currency), high = SMALL
+                                 #   (Banz 1981). Both in `FUND_FACTORS` (30 -> 32) and the held-book list. Weighted nowhere, gate nothing.
+                                 #   WHY: a fourth sweep found every other unmapped idea needs new SEC tags (R&D ÷ market value, net payout
+                                 #   yield, Piotroski, CHS/Altman distress: a `_facts13` bump) or is contemporaneous (Bessembinder's income
+                                 #   growth explains multi-decade returns over the SAME window). Size had never been graded on stocks.
+                                 #   BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at
+                                 #   BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. Priors: book_yield on the right side but
+                                 #   the weakest value member (O'Shaughnessy); small_pct near 0.5 or backwards (a large-cap pool in the
+                                 #   mega-cap era). Growth admission and weights stay closed until track ~2027-09 either way.
+                                 #   RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after. 12y: windows scored
+                                 #   2772. 8y: 6180. The control reproduced (#408): peg_yield 0.91/0.71, value_composite 0.92/0.68.
+                                 #                       12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #     book_yield          0.92   59/7        0.72  109/20    SAME   right side (cheap won)
+                                 #     small_pct           0.70   59/7        0.67  111/20    SAME   right side (small won)
+                                 #   VERDICT: BOTH CANDIDATE, recorded only. book_yield is the value family again, level with peg_yield on AUC
+                                 #   and under it on the held book (+17.3%/yr n=134 vs +18.2%/yr n=141 at 8y; the 12y rows are the same 67
+                                 #   names, vacuous). small_pct is the first non-value axis to clear the bar, with two caveats that keep it a
+                                 #   record: each cutoff ranks only ~6-8 stocks (both horizons' medians sit on the 6/7 and 3/5 steps), and in
+                                 #   a pool where cheap won, small is plausibly cheap by another name; this table cannot split the two. Its
+                                 #   8y held-book row (+17.3%/yr n=136) also trails peg_yield. Nothing moves.
+                                 #   BANKED FOR THE ~2027-09 REOPEN: a size tilt is worth a forward look only if it survives a value control
+                                 #   (small_pct within value terciles), which needs a wider per-cutoff cohort than this pool holds.
+                                 #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 30.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

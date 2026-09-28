@@ -1394,6 +1394,12 @@ pub async fn run(args: Vec<String>) {
                             // (#408) the same EV, over FCF and over revenue
                             f.fcf_ev_yield = px.and_then(|p| core::ev_ebitda_yield(f.fcf_ttm, f.shares_ttm, f.net_debt, p));
                             f.sales_ev_yield = px.and_then(|p| core::ev_ebitda_yield(f.revenue_ttm, f.shares_ttm, f.net_debt, p));
+                            // (#409) book over market cap (no net debt -> EV is the cap), and the cap itself.
+                            // shortcut: the cap is in TRADING currency (USD for the US-listed pool) so names
+                            // rank on one unit; an ADR whose ratio isn't 1 mis-ranks by that ratio. A
+                            // filer-currency cap is worse: a JPY filer would read ~150x bigger.
+                            f.book_yield = px.and_then(|p| core::ev_ebitda_yield(f.book_ttm, f.shares_ttm, None, p));
+                            f.mcap = f.shares_ttm.map(|sh| sh * closes[i]).filter(|m| *m > 0.0);
                             // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
                             // (growth_fund_factor "peg_yield"), and the live enrich converts the same way —
                             // so train and serve compute the identical ratio instead of differing by an FX rate.
@@ -1445,7 +1451,7 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     samples.sort_by_key(|s| s.date); // chronological -> the OOS split is early-vs-late in time
-    stamp_value_composite(&mut samples); // (#408) needs the whole date's cohort, so after the sort
+    stamp_cohort_ranks(&mut samples); // (#408)/(#409) need the whole date's cohort, so after the sort
 
     let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR" } else { "^GSPC" };
     let bench = if monthly {
@@ -2350,7 +2356,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 30] = [
+const FUND_FACTORS: [&str; 32] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2380,6 +2386,7 @@ const FUND_FACTORS: [&str; 30] = [
     "gp_assets",            // (#405) Novy-Marx gross profitability; 24 -> 25 tightens every band again
     "cf_assets", "rev_stability", // (#407) Ball et al. cash profitability, Mohanram G5; 25 -> 27
     "fcf_ev_yield", "sales_ev_yield", "value_composite", // (#408) O'Shaughnessy value family; 27 -> 30
+    "book_yield", "small_pct", // (#409) Fama-French HML and size; 30 -> 32
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -3476,10 +3483,13 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// present legs' percentiles. A percentile is the count of strictly lower values over n−1, times 100,
 /// so ties share the lower rank and the result never depends on input order (bit-identical at any
 /// thread count). A leg with fewer than 2 names at a date ranks nothing; a name needs ≥2 ranked legs.
+/// (#409) Market cap ranks the same way as a fifth column, alone, into `small_pct` = 100 − its
+/// percentile, so the smallest name at a cutoff reads 100. It never enters the composite.
 /// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
-fn stamp_value_composite(samples: &mut [Sample]) {
-    let legs: [fn(&core::FundFactors) -> Option<f64>; 4] =
-        [|f| f.earnings_yield, |f| f.ebitda_yield, |f| f.fcf_ev_yield, |f| f.sales_ev_yield];
+fn stamp_cohort_ranks(samples: &mut [Sample]) {
+    let legs: [fn(&core::FundFactors) -> Option<f64>; 5] =
+        [|f| f.earnings_yield, |f| f.ebitda_yield, |f| f.fcf_ev_yield, |f| f.sales_ev_yield, |f| f.mcap];
+    let rank = |col: &[f64], v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
     for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
         let cols: Vec<Vec<f64>> = legs
             .iter()
@@ -3491,13 +3501,14 @@ fn stamp_value_composite(samples: &mut [Sample]) {
             .collect();
         for s in day.iter_mut() {
             let Some(f) = s.fund.as_mut() else { continue };
-            let pcts: Vec<f64> = legs
+            let ranked: Vec<Option<f64>> = legs
                 .iter()
                 .zip(&cols)
-                .filter(|(_, col)| col.len() >= 2)
-                .filter_map(|(leg, col)| leg(f).map(|v| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0))
+                .map(|(leg, col)| if col.len() >= 2 { leg(f).map(|v| rank(col, v)) } else { None })
                 .collect();
+            let pcts: Vec<f64> = ranked[..4].iter().flatten().copied().collect();
             f.value_composite = (pcts.len() >= 2).then(|| pcts.iter().sum::<f64>() / pcts.len() as f64);
+            f.small_pct = ranked[4].map(|p| 100.0 - p);
         }
     }
 }
@@ -4290,6 +4301,9 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("fcf_ev_yield", |f| f.fcf_ev_yield),
         ("sales_ev_yield", |f| f.sales_ev_yield),
         ("value_composite", |f| f.value_composite),
+        // (#409) book ÷ market cap, and the same-date size percentile (high = small).
+        ("book_yield", |f| f.book_yield),
+        ("small_pct", |f| f.small_pct),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
@@ -6450,30 +6464,48 @@ mod tests {
 
     /// (#408) X ranks top of 3 on earnings (2/2 -> 100) and bottom of 2 on EBITDA (0/1 -> 0); FCF and
     /// sales hold one name each, so they rank nothing -> X is 50. Y: 50 and 100 -> 75. Z has one leg and
-    /// W is alone at its date: both None. A reordered date stamps the same numbers.
+    /// W is alone at its date: both None. A reordered date stamps the same numbers. (#409) Caps X 300,
+    /// Y 100, Z 200 rank 100/0/50, so `small_pct` is 0/100/50; W's lone cap ranks nothing -> None.
     #[test]
-    fn stamp_value_composite_averages_same_date_percentiles() {
+    fn stamp_cohort_ranks_averages_same_date_percentiles() {
         use crate::core::FundFactors;
-        let row = |d: u32, t: &str, ey: Option<f64>, eb: Option<f64>, fcf: Option<f64>, sales: Option<f64>| Sample {
+        let row = |d: u32, t: &str, ey: Option<f64>, eb: Option<f64>, fcf: Option<f64>, sales: Option<f64>, mcap: f64| Sample {
             date: ymd(2010, 1, d),
             realized: 0.0,
             relative: 0.0,
             quote: Arc::new(Quote::stub(t, "1", "", t)),
-            fund: Some(FundFactors { earnings_yield: ey, ebitda_yield: eb, fcf_ev_yield: fcf, sales_ev_yield: sales, ..Default::default() }),
+            fund: Some(FundFactors {
+                earnings_yield: ey,
+                ebitda_yield: eb,
+                fcf_ev_yield: fcf,
+                sales_ev_yield: sales,
+                mcap: Some(mcap),
+                ..Default::default()
+            }),
             trail: Vec::new(),
         };
-        let x = || row(1, "X", Some(10.0), Some(20.0), Some(5.0), Some(100.0));
-        let y = || row(1, "Y", Some(5.0), Some(30.0), None, None);
-        let z = || row(1, "Z", Some(1.0), None, None, None);
-        let w = || row(2, "W", Some(9.0), Some(9.0), None, None);
+        let x = || row(1, "X", Some(10.0), Some(20.0), Some(5.0), Some(100.0), 300.0);
+        let y = || row(1, "Y", Some(5.0), Some(30.0), None, None, 100.0);
+        let z = || row(1, "Z", Some(1.0), None, None, None, 200.0);
+        let w = || row(2, "W", Some(9.0), Some(9.0), None, None, 50.0);
         let stamped = |mut v: Vec<Sample>| {
-            stamp_value_composite(&mut v);
-            let mut out: Vec<(String, Option<f64>)> =
-                v.iter().map(|s| (s.quote.ticker.clone(), s.fund.as_ref().unwrap().value_composite)).collect();
+            stamp_cohort_ranks(&mut v);
+            let mut out: Vec<(String, Option<f64>, Option<f64>)> = v
+                .iter()
+                .map(|s| {
+                    let f = s.fund.as_ref().unwrap();
+                    (s.quote.ticker.clone(), f.value_composite, f.small_pct)
+                })
+                .collect();
             out.sort_by(|a, b| a.0.cmp(&b.0));
             out
         };
-        let want = vec![("W".into(), None), ("X".into(), Some(50.0)), ("Y".into(), Some(75.0)), ("Z".into(), None)];
+        let want = vec![
+            ("W".into(), None, None),
+            ("X".into(), Some(50.0), Some(0.0)),
+            ("Y".into(), Some(75.0), Some(100.0)),
+            ("Z".into(), None, Some(50.0)),
+        ];
         assert_eq!(stamped(vec![x(), y(), z(), w()]), want);
         assert_eq!(stamped(vec![z(), x(), y(), w()]), want);
     }
