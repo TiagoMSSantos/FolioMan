@@ -4951,6 +4951,42 @@ buy_heuristic:
                                  #   `_facts14` AFTER THIS ROUND: distress is off (dead in replication). What stays needs SG&A (organization
                                  #   capital, intangible-adjusted value) or current assets/liabilities (a full F-score); neither prior is strong.
                                  #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 34.
+                                 #── (#412) MEASURED 2026-09-28 — BENEISH M-SCORE, SBC BURDEN AND GOODWILL, OFF A `_facts14` REFETCH ──
+                                 #  WHAT: SEC rows gain eight ratios, `_facts13` -> `_facts14` (an added Option field loads as None from the old file,
+                                 #  so the filename forces the refetch; a miss serves the `_facts13` rows meanwhile). New tags: receivables, current
+                                 #  assets and liabilities, net PP&E, SG&A, stock-based comp, goodwill; pre-capex operating cash was already parsed.
+                                 #  `mscore` = −`core::beneish_m` (Beneish 1999 8-variable M, as-of row vs the row a year back), NEGATED so high =
+                                 #  clean; SGI and TATA required, any other index leg missing or on a zero base reads 1.0 (a practitioner
+                                 #  convention, not sourced to BLN). `sbc` = −SBC ÷ revenue, %. `goodwill` = −goodwill ÷ assets, %. `FUND_FACTORS`
+                                 #  36 -> 39 and the held-book list. Weighted nowhere, gate nothing.
+                                 #  WHY: a seventh sweep. Beneish-Lee-Nichols (FAJ 2013): the M-score predicts returns out of sample, high M low,
+                                 #  through its forecast of accruals. SBC is the dilution GAAP earnings understate. Goodwill ÷ assets flags the
+                                 #  serial acquirer. All three were the strongest ideas left that need only new SEC tags.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at
+                                 #  BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. Priors: mscore ambiguous — SGI (0.892 ×
+                                 #  sales growth) carries most of the variance and this pool reads growth/quality backwards (gp_assets 0.28/0.41),
+                                 #  while its TATA leg is the dead accrual_gap (0.54/0.45); expect near or below 0.5. sbc > 0.5 by the literature,
+                                 #  but high-SBC tech won 2014-26, so expect < 0.5 here. goodwill > 0.5 (acquirers lag), weak. Growth admission
+                                 #  and weights stay closed until track ~2027-09.
+                                 #  CENSUS (693 filers, newest `_facts14` row): ocf 100%, sbc 92%, goodwill 85%, lev 84%, soft assets 82%, D&A rate
+                                 #  76%, receivables 73%, SG&A 54% (MSFT splits S&M from G&A). Banks carry no current assets/liabilities, so their
+                                 #  AQI/LVGI legs neutral-fill, and a bank's operating cash swings (JPM −81% of revenue) make its TATA noise. The
+                                 #  first warm-up run hit an SEC 429 after 208 filers; ~10 min later one run fetched the other 485.
+                                 #  RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after (cmp). 12y: windows
+                                 #  scored 2772. 8y: 6180. The control reproduced (#411): peg_yield 0.91/0.71, rnd_yield 0.97/0.86, noa 0.72/0.55.
+                                 #                      12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #    mscore              0.74   48/7        0.69  108/22    SAME   right side (clean won) at both, clear of the bar
+                                 #    sbc                 0.53   59/7        0.40  122/21    FLIP   flat at 12y, high SBC won at 8y
+                                 #    goodwill            0.57   56/7        0.58  111/22    SAME   right side, under the bar at both
+                                 #  VERDICT: mscore CANDIDATE, recorded only; sbc and goodwill DEAD, recorded. The prior was wrong: low-M firms won
+                                 #  at both horizons, as BLN report. It does not beat the shipped value factor on the held book (12y +16.4%/yr
+                                 #  n=56 vs peg_yield +16.9% n=67; 8y +16.8% n=137 vs +18.2% n=141) or on the held-out TEST edge (12y +153.8 vs
+                                 #  +243.0; 8y -48.3 vs +17.1). UNMEASURED: how much of it is cheapness. The SGI leg ranks slow growers clean, and
+                                 #  slow growers are cheap in this pool. Re-ask with a value-neutral split or at the ~2027-09 reopen, beside
+                                 #  rnd_yield.
+                                 #  REVERT RULE: none — measurements, not values. Drop the three names from `FUND_FACTORS` to restore 36; the new
+                                 #  `_facts14` tags cost nothing to keep. The `_facts13` bridge in `fetch_sec_facts_rows` goes once every runner's
+                                 #  `.sec_cache` is warm.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

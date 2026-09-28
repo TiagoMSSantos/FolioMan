@@ -444,7 +444,7 @@ fn backtest_pit_report_is_pinned() {
 
 /// (#364) The fundamental lane, the ONLY pin on the shipped `growth_fund_weight` tilt. Every other
 /// golden runs without `fund`, so each sample's fund factor is None and the tilt adds nothing: their
-/// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts13` rows, so the as-of join,
+/// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts14` rows, so the as-of join,
 /// the factor pick and the tilted growth score all reach the book, and the factor tables, the held-out
 /// factor sweep and the two-style book print. No CI job ran any of them before: backtest-gate runs
 /// `12 universe`, without `fund`.
@@ -572,7 +572,7 @@ fn regen_backtest_fixture() {
     let copied = out
         .keys()
         .filter(|t| {
-            let f = format!("{t}_facts13.json");
+            let f = format!("{t}_facts14.json");
             std::fs::copy(repo().join(".sec_cache").join(&f), sec.join(&f)).is_ok()
         })
         .count();

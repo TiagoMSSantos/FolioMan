@@ -3704,6 +3704,19 @@ pub struct FundRow {
     // dividends + buybacks − share issuance, so NEGATIVE = a net issuer, and that sign is kept.
     pub rnd_margin: Option<f64>,
     pub payout_margin: Option<f64>,
+    // (#412) %, SEC-computed, None on FMP. The Beneish M-score's inputs, each the ratio one of its index
+    // legs compares year over year: receivables, SG&A, SBC and operating cash flow (before capex) over
+    // revenue; goodwill over assets; `soft_assets` = 100 − (current assets + net PP&E) over assets (AQI);
+    // `dep_rate` = D&A over (D&A + net PP&E) (DEPI); `lev` = (current liabilities + long-term debt) over
+    // assets (LVGI).
+    pub rec_margin: Option<f64>,
+    pub sga_margin: Option<f64>,
+    pub sbc_margin: Option<f64>,
+    pub ocf_margin: Option<f64>,
+    pub gw_assets: Option<f64>,
+    pub soft_assets: Option<f64>,
+    pub dep_rate: Option<f64>,
+    pub lev: Option<f64>,
     // (FX) the currency these MONEY lines are REPORTED in, straight off the XBRL unit key ("EUR" for a
     // 20-F filer like ASML, "USD" for a 10-K filer). None = unknown/FMP-sourced -> callers must assume
     // nothing. The margins/ROE above are ratios and cancel it, but anything joined to a PRICE
@@ -3817,6 +3830,13 @@ pub struct FundFactors {
     // operating income (COGS + SG&A + R&D + D&A, Compustat's XSGA scope). A risk premium, so the prior is
     // high = higher return. None on a missing leg or assets <= 0. Measured by the AUC table, weighted nowhere.
     pub op_leverage: Option<f64>,
+    // (#412) Beneish-Lee-Nichols (FAJ 2013): a high M-score (`beneish_m`, as-of row vs a year earlier)
+    // predicts low returns. NEGATED so high = clean. `sbc` = −stock-based comp ÷ revenue, %, the dilution
+    // GAAP earnings understate; `goodwill` = −goodwill ÷ assets, %, the serial-acquirer flag. All three are
+    // measured by the AUC table and weighted nowhere.
+    pub mscore: Option<f64>,
+    pub sbc: Option<f64>,
+    pub goodwill: Option<f64>,
     // (#407) SALES-GROWTH STABILITY (Mohanram 2005, G-score signal G5): −sample std of year-over-year
     // revenue growth, points, over the last `yrs`+1 as-of rows. Only row pairs ~1y apart count, so a
     // skipped fiscal year never reads as a doubled rate and quarterly (FMP) rows read None. ≥3 growth
@@ -3888,6 +3908,33 @@ fn composite_factor(f: &FundFactors) -> Option<f64> {
     let vals: Vec<f64> =
         [f.rev_cagr, f.rev_accel, f.gross_margin, f.op_margin, f.margin_trend, f.eps_growth].into_iter().flatten().collect();
     (vals.len() >= 2).then(|| vals.iter().sum::<f64>() / vals.len() as f64)
+}
+
+/// (#412) The Beneish (1999) 8-variable M-score of `now` against the prior fiscal year `prev`; higher =
+/// more likely an earnings manipulator. SGI and TATA are required. Any other index leg with a missing
+/// input, a zero base or a non-finite ratio reads 1.0 (no change year over year). shortcut: neutral fill
+/// is a practitioner convention I couldn't source to BLN; strict all-8 is the upgrade if this ever
+/// ships. `prev` must be an EARLIER fiscal year: a stale as-of pair is one row twice and would read no
+/// change on every leg.
+pub fn beneish_m(now: &FundRow, prev: &FundRow) -> Option<f64> {
+    if prev.period_end >= now.period_end {
+        return None;
+    }
+    let idx = |a: Option<f64>, b: Option<f64>| {
+        a.zip(b).filter(|&(_, b)| b != 0.0).map(|(a, b)| a / b).filter(|v| v.is_finite()).unwrap_or(1.0)
+    };
+    let sgi = now.revenue? / prev.revenue.filter(|&r| r > 0.0)?;
+    let tata = (now.net_margin? - now.ocf_margin?) * now.revenue? / 100.0 / now.assets.filter(|&a| a > 0.0)?;
+    Some(
+        -4.84 + 0.92 * idx(now.rec_margin, prev.rec_margin)
+            + 0.528 * idx(prev.gross_margin, now.gross_margin)
+            + 0.404 * idx(now.soft_assets, prev.soft_assets)
+            + 0.892 * sgi
+            + 0.115 * idx(prev.dep_rate, now.dep_rate)
+            - 0.172 * idx(now.sga_margin, prev.sga_margin)
+            + 4.679 * tata
+            - 0.327 * idx(now.lev, prev.lev),
+    )
 }
 
 /// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. Every
@@ -4085,6 +4132,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         // (#411) roe 0 or assets 0 reads inf/NaN and drops out, as `book_ttm` below does
         noa: now.and_then(|r| Some(-(r.net_debt? + r.net_margin? * r.revenue? / r.roe?) * 100.0 / r.assets?)).filter(|v| v.is_finite()),
         op_leverage: now.and_then(|r| Some(r.revenue? * (100.0 - r.op_margin?) / r.assets.filter(|a| *a > 0.0)?)),
+        mscore: now.zip(yr_ago).and_then(|(n, p)| beneish_m(n, p)).map(|m| -m),
+        sbc: now.and_then(|r| r.sbc_margin).map(|s| -s),
+        goodwill: now.and_then(|r| r.gw_assets).map(|g| -g),
         rev_stability,
         // (#408) levels only; the yields and the composite are the backtest's to fill (price, cohort)
         fcf_ttm: now.and_then(|r| Some(r.fcf_margin? * r.revenue? / 100.0)),
@@ -4636,6 +4686,9 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "cf_assets" => f.cf_assets,                       // (#407) free cash flow ÷ total assets (Ball et al.): measured, unweighted
         "noa" => f.noa,                                   // (#411) −(net debt + book) ÷ total assets (HHTZ): measured, unweighted
         "op_leverage" => f.op_leverage,                   // (#411) operating costs ÷ total assets (Novy-Marx): measured, unweighted
+        "mscore" => f.mscore,                             // (#412) Beneish M-score, negated: measured, unweighted
+        "sbc" => f.sbc,                                   // (#412) −stock-based comp ÷ revenue: measured, unweighted
+        "goodwill" => f.goodwill,                         // (#412) −goodwill ÷ assets: measured, unweighted
         "rev_stability" => f.rev_stability,               // (#407) −std of YoY revenue growth (Mohanram G5): measured, unweighted
         "fcf_ev_yield" => f.fcf_ev_yield,                 // (#408) FCF ÷ EV: measured, unweighted
         "sales_ev_yield" => f.sales_ev_yield,             // (#408) revenue ÷ EV: measured, unweighted
@@ -5441,6 +5494,9 @@ mod tests {
             cf_assets: Some(26.0),
             noa: Some(35.0),
             op_leverage: Some(36.0),
+            mscore: Some(37.0),
+            sbc: Some(38.0),
+            goodwill: Some(39.0),
             rev_stability: Some(27.0),
             fcf_ttm: Some(60.0),
             revenue_ttm: Some(70.0),
@@ -5487,6 +5543,9 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "payout_yield"), Some(34.0));
         assert_eq!(select_fund_factor(&f, "noa"), Some(35.0)); // (#411) NOT asset_growth: the level of the balance sheet, not its growth
         assert_eq!(select_fund_factor(&f, "op_leverage"), Some(36.0));
+        assert_eq!(select_fund_factor(&f, "mscore"), Some(37.0)); // (#412)
+        assert_eq!(select_fund_factor(&f, "sbc"), Some(38.0));
+        assert_eq!(select_fund_factor(&f, "goodwill"), Some(39.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -6092,6 +6151,56 @@ mod tests {
         assert_eq!((flat.noa, flat.op_leverage), (None, None));
         let bare = fund_factors(&[r(Some(20.0), Some(10.0), None)], cutoff, 5);
         assert_eq!((bare.noa, bare.op_leverage), (None, None));
+    }
+
+    /// (#412) Every leg distinct and != 1, so any operator swap moves the total. The legs: DSRI 15/10 = 1.5,
+    /// GMI 50/40 = 1.25, AQI 36/20 = 1.8, SGI 1200/1000 = 1.2, DEPI 28/20 = 1.4, SGAI 12/16 = 0.75,
+    /// TATA (10 − 6)% × 1200 / 2000 = 0.024, LVGI 22/20 = 1.1.
+    #[test]
+    fn beneish_m_legs_and_neutral_fill() {
+        let now = FundRow {
+            filed: NaiveDate::from_ymd_opt(2025, 2, 15).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2024, 12, 31).unwrap(),
+            revenue: Some(1200.0),
+            gross_margin: Some(40.0),
+            net_margin: Some(10.0),
+            ocf_margin: Some(6.0),
+            assets: Some(2000.0),
+            rec_margin: Some(15.0),
+            soft_assets: Some(36.0),
+            dep_rate: Some(20.0),
+            sga_margin: Some(12.0),
+            lev: Some(22.0),
+            sbc_margin: Some(3.0),
+            gw_assets: Some(40.0),
+            ..Default::default()
+        };
+        let prev = FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 15).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            revenue: Some(1000.0),
+            gross_margin: Some(50.0),
+            rec_margin: Some(10.0),
+            soft_assets: Some(20.0),
+            dep_rate: Some(28.0),
+            sga_margin: Some(16.0),
+            lev: Some(20.0),
+            ..Default::default()
+        };
+        let near = |got: Option<f64>, want: f64| assert!((got.unwrap() - want).abs() < 1e-9, "{got:?} vs {want}");
+        near(beneish_m(&now, &prev), -1.217804);
+        // a missing leg reads 1.0: DSRI 1.5 -> 1 drops 0.92 × 0.5; a zero base does the same to LVGI 1.1
+        near(beneish_m(&now, &FundRow { rec_margin: None, ..prev.clone() }), -1.677804);
+        near(beneish_m(&now, &FundRow { lev: Some(0.0), ..prev.clone() }), -1.185104);
+        // SGI and TATA are required, and `prev` must be an earlier fiscal year
+        assert_eq!(beneish_m(&now, &FundRow { revenue: Some(0.0), ..prev.clone() }), None);
+        assert_eq!(beneish_m(&FundRow { ocf_margin: None, ..now.clone() }, &prev), None);
+        assert_eq!(beneish_m(&FundRow { assets: Some(0.0), ..now.clone() }, &prev), None);
+        assert_eq!(beneish_m(&now, &FundRow { period_end: now.period_end, ..prev.clone() }), None);
+        // fund_factors negates all three so high = clean, pairing the as-of row with the one a year back
+        let f = fund_factors(&[prev.clone(), now.clone()], NaiveDate::from_ymd_opt(2025, 6, 30).unwrap(), 1);
+        near(f.mscore, 1.217804);
+        assert_eq!((f.sbc, f.goodwill), (Some(-3.0), Some(-40.0)));
     }
 
     /// (#408) the as-of levels the backtest prices into FCF/EV and sales/EV: a 10% FCF margin on 200 of
