@@ -4649,18 +4649,38 @@ fn figi_eu_symbol(data: &Value) -> Option<String> {
 /// is the DEPTH (first timestamp to last) and `EU_MIN_BARS` the DENSITY (enough observations to score
 /// on, whatever the granularity). Keeping the count makes this strictly a TIGHTENING: nothing that
 /// failed yesterday can pass today, so no live row swaps venue that was not already swapping.
-fn eu_chart_ok(raw: &RawValue) -> bool {
+///
+/// (#406) AND ONLY THE BARS THE QUOTE PATH KEEPS COUNT. `max_weekly_rate` and `max_flat_years` are the
+/// splice and plateau trims `parse_chart` and the merged-series pass apply; the caller hands in the
+/// same config values. Yahoo pads 30 of CI's Xetra twins (RGO.DE Regeneron, PCG.DE PG&E, VNX.DE NXP…)
+/// with one placeholder close repeated from 2021-01 to 2025-11-06, so the raw span read 18 years while
+/// the plateau trim left the quote 0.9 of one, and the history gate refused a name its US line ranks.
+fn eu_chart_ok(raw: &RawValue, max_weekly_rate: f64, max_flat_years: f64) -> bool {
     let Ok(v) = serde_json::from_str::<Value>(raw.get()) else {
         return false;
     };
     let eur = v.pointer("/chart/result/0/meta/currency").and_then(Value::as_str) == Some("EUR");
     let ts = v.pointer("/chart/result/0/timestamp").and_then(Value::as_array);
-    let bars = ts.map_or(0, Vec::len);
+    let cl = v.pointer("/chart/result/0/indicators/quote/0/close").and_then(Value::as_array);
+    let bars: Vec<(i64, NaiveDate, f64)> = ts.zip(cl).map_or_else(Vec::new, |(t, c)| {
+        t.iter()
+            .zip(c)
+            .filter_map(|(t, c)| {
+                let secs = t.as_i64()?;
+                Some((secs, DateTime::from_timestamp(secs, 0)?.date_naive(), c.as_f64()?))
+            })
+            .collect()
+    });
+    let (dates, closes): (Vec<NaiveDate>, Vec<f64>) = bars.iter().map(|b| (b.1, b.2)).unzip();
+    let start = core::splice_trim_start(&dates, &closes, max_weekly_rate)
+        .max(core::flat_trim_start(&dates, &closes, max_flat_years));
+    let kept = &bars[start..];
     // seconds, so 365.25 days — the same year `commands::backtest::walk_params` counts in
-    let span_years = ts
-        .and_then(|t| Some((t.last()?.as_i64()? - t.first()?.as_i64()?) as f64 / 31_557_600.0))
-        .unwrap_or(0.0);
-    eur && bars >= EU_MIN_BARS && span_years >= EU_MIN_YEARS
+    let span_years = match (kept.first(), kept.last()) {
+        (Some(a), Some(b)) => (b.0 - a.0) as f64 / 31_557_600.0,
+        _ => 0.0,
+    };
+    eur && kept.len() >= EU_MIN_BARS && span_years >= EU_MIN_YEARS
 }
 
 /// (EU listing) Shortest EU record worth swapping to, as CALENDAR YEARS between the first and last bar.
@@ -4767,7 +4787,9 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
     // known twin (~266 on CI) now passes through here on every run.
     let checked: Vec<(String, String, Option<bool>)> = stream::iter(candidates)
         .map(|(sym, eu)| async move {
-            let ok = chart_json_long(client, urls, &eu).await.map(|raw| eu_chart_ok(&raw));
+            let ok = chart_json_long(client, urls, &eu).await.map(|raw| {
+                eu_chart_ok(&raw, crate::config::splice_max_weekly_rate(), crate::config::flat_run_max_years())
+            });
             (sym, eu, ok)
         })
         .buffer_unordered(fetch_concurrency())
@@ -5198,29 +5220,50 @@ pub(crate) mod tests {
         // which is the whole point: Yahoo serves the long chart at whatever interval it kept.
         const MONTH: usize = 2_629_800; // 365.25d / 12, the interval the long fetch asks for
         const HOUR: usize = 3_600;
-        let chart = |cur: &str, bars: usize, step: usize| {
+        // `close(i)` prices bar i; a steady +1/bar series trips neither trim.
+        let priced = |cur: &str, bars: usize, step: usize, close: &dyn Fn(usize) -> f64| {
             // (#358) a real epoch (2020-09): from near zero, `last + first` read as `last - first`
             let ts: Vec<String> = (0..bars).map(|i| (1_600_000_000 + i * step).to_string()).collect();
+            let cl: Vec<String> = (0..bars).map(|i| close(i).to_string()).collect();
             RawValue::from_string(format!(
-                r#"{{"chart":{{"result":[{{"meta":{{"currency":"{cur}"}},"timestamp":[{}]}}]}}}}"#,
-                ts.join(",")
+                r#"{{"chart":{{"result":[{{"meta":{{"currency":"{cur}"}},"timestamp":[{}],"indicators":{{"quote":[{{"close":[{}]}}]}}}}]}}}}"#,
+                ts.join(","),
+                cl.join(",")
             ))
             .unwrap()
         };
-        assert!(eu_chart_ok(&chart("EUR", 61, MONTH))); // 61 monthly bars = 60 months = the floor exactly
-        assert!(!eu_chart_ok(&chart("EUR", 60, MONTH))); // 60 of them span 59 months — five years minus one
-        assert!(!eu_chart_ok(&chart("EUR", 30, MONTH))); // deep enough per bar, not enough of them
+        let chart = |cur: &str, bars: usize, step: usize| priced(cur, bars, step, &|i| 100.0 + i as f64);
+        // CI's two trims (2.0 weekly rate, 2.0 plateau years) on every case, so the floors are read the
+        // way the quote path will read the series.
+        let ok = |raw: &RawValue| eu_chart_ok(raw, 2.0, 2.0);
+        assert!(ok(&chart("EUR", 61, MONTH))); // 61 monthly bars = 60 months = the floor exactly
+        assert!(!ok(&chart("EUR", 60, MONTH))); // 60 of them span 59 months — five years minus one
+        assert!(!ok(&chart("EUR", 30, MONTH))); // deep enough per bar, not enough of them
         // (#118) THE CASE THAT MOTIVATED THE SPAN: `WIC.DE` served 453 HOURLY bars — 7.5x the bar floor,
         // two months of history — and passed the check built to reject exactly this.
-        assert!(!eu_chart_ok(&chart("EUR", 453, HOUR)));
-        assert!(!eu_chart_ok(&chart("USD", 300, MONTH))); // the trap: right ticker, wrong denomination
-        assert!(!eu_chart_ok(&chart("GBp", 300, MONTH))); // London's pence lines are not EUR either
+        assert!(!ok(&chart("EUR", 453, HOUR)));
+        assert!(!ok(&chart("USD", 300, MONTH))); // the trap: right ticker, wrong denomination
+        assert!(!ok(&chart("GBp", 300, MONTH))); // London's pence lines are not EUR either
         // A single bar has no span to measure, and neither does an empty array.
-        assert!(!eu_chart_ok(&chart("EUR", 1, MONTH)));
-        assert!(!eu_chart_ok(&chart("EUR", 0, MONTH)));
+        assert!(!ok(&chart("EUR", 1, MONTH)));
+        assert!(!ok(&chart("EUR", 0, MONTH)));
         // Yahoo's own "no such symbol" answer, and a body that is not JSON at all.
-        assert!(!eu_chart_ok(&RawValue::from_string(r#"{"chart":{"result":null,"error":{"code":"Not Found"}}}"#.into()).unwrap()));
-        assert!(!eu_chart_ok(&RawValue::from_string("null".into()).unwrap()));
+        assert!(!ok(&RawValue::from_string(r#"{"chart":{"result":null,"error":{"code":"Not Found"}}}"#.into()).unwrap()));
+        assert!(!ok(&RawValue::from_string("null".into()).unwrap()));
+        // A timeline with no closes has no bars the quote path could keep.
+        assert!(!ok(&RawValue::from_string(r#"{"chart":{"result":[{"meta":{"currency":"EUR"},"timestamp":[1600000000]}]}}"#.into()).unwrap()));
+
+        // (#406) RGO.DE's shape: 120 monthly bars, the first 100 one repeated placeholder. Ten years
+        // raw, twenty months kept — refused. With the plateau trim off the same payload passes, so it
+        // is the trim, not the floors, that refuses it.
+        let padded = priced("EUR", 120, MONTH, &|i| if i < 100 { 32.0 } else { 100.0 + i as f64 });
+        assert!(!ok(&padded));
+        assert!(eu_chart_ok(&padded, 2.0, 0.0));
+        // The splice twin: a ~200x step at bar 100 keeps only what follows it. Monthly bars spread a
+        // step over ~4.3 weeks, so it has to clear 2^4.3 (~20x) to read as one at a 2.0 weekly rate.
+        let stepped = priced("EUR", 120, MONTH, &|i| if i < 100 { 1.0 + i as f64 / 100.0 } else { 300.0 + i as f64 });
+        assert!(!ok(&stepped));
+        assert!(eu_chart_ok(&stepped, 0.0, 2.0));
     }
 
     /// (#76) Substitution keeps the pond the same size and the sector attached. Losing the sector is the
@@ -7672,7 +7715,7 @@ pub(crate) mod tests {
         // shape) falls back to its US line and the demotion is persisted; a twin whose chart still clears
         // keeps its swap. Phases 1 and 2 are the other half: a chart that never answered (the dead port)
         // left GOOGL's swap alone.
-        let month = |i: i32| (NaiveDate::from_ymd_opt(2020 + i / 12, 1 + (i % 12) as u32, 1).expect("date"), 1.0);
+        let month = |i: i32| (NaiveDate::from_ymd_opt(2020 + i / 12, 1 + (i % 12) as u32, 1).expect("date"), 1.0 + f64::from(i) / 100.0);
         let (long, cut): (Vec<_>, Vec<_>) = ((0..72).map(month).collect(), (76..80).map(month).collect());
         let (base, client, _) =
             routed_stub(vec![("KEPT.DE", chart_body(&long, &[], "EUR")), ("CUT.DE", chart_body(&cut, &[], "EUR"))]);
