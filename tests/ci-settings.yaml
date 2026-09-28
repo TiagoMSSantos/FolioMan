@@ -4828,6 +4828,37 @@ buy_heuristic:
                                  #   not because it picks worse — the (#405) vacuous-set caveat applies. A later round may re-ask it ONLY on a
                                  #   new horizon or a longer forward record, never on this pair re-cut.
                                  #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 25.
+                                 # ── (#408) MEASURED 2026-09-28 — THE VALUE FAMILY'S MISSING MEMBERS AND O'SHAUGHNESSY'S COMPOSITE ──
+                                 #   WHAT: `fcf_ev_yield` = free cash flow ÷ EV and `sales_ev_yield` = revenue ÷ EV, %, through the same
+                                 #   `ev_ebitda_yield` EV (shares · as-of close + net debt) as `ebitda_yield`; negative FCF is None. `value_composite`
+                                 #   = mean same-cutoff percentile (0-100) of the earnings, EBITDA, FCF and sales yields, >= 2 legs ranked, a leg
+                                 #   ranking nothing at a cutoff holding < 2 names (What Works on Wall Street's VC2 shape). All three in
+                                 #   `FUND_FACTORS` (27 -> 30) and the held-book list. Weighted nowhere, gate nothing.
+                                 #   WHY: value is the only family that reads the right way on this ruler (earnings_yield 0.90, ebitda_yield 0.92,
+                                 #   peg_yield 0.91 at 12y), and the literature's two other value ratios (O'Shaughnessy and Man Group's FCF/EV;
+                                 #   LSV 1994 sales/price) were never measured. O'Shaughnessy reports the composite beating each part in 82% of
+                                 #   rolling 10y windows. Intangible-adjusted value and operating leverage need SEC tags the rows lack; later.
+                                 #   BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at
+                                 #   BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. SECONDARY, informational, no verdict:
+                                 #   does value_composite beat peg_yield's 8y 0.71? Priors: strong for both yields (family members), the
+                                 #   composite near the family. Growth admission and weights stay closed until track ~2027-09 either way.
+                                 #   RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after. 12y: windows scored
+                                 #   2772. 8y: 6180. The control reproduced (#407): gross_margin 0.25/0.34, peg_yield 0.91/0.71.
+                                 #                       12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #     fcf_ev_yield        0.94   56/7        0.71  101/20    SAME   right side (cheap won)
+                                 #     sales_ev_yield      0.90   58/7        0.67  110/20    SAME   right side
+                                 #     value_composite     0.92   58/7        0.68  110/20    SAME   right side
+                                 #     (family control)    earnings_yield 0.90/0.70, ebitda_yield 0.92/0.70, peg_yield 0.91/0.71
+                                 #   VERDICT: ALL THREE CANDIDATE, recorded only. Each clears |d| >= 0.10 on the same side at both horizons,
+                                 #   as the prior said; they are the family, not news. 12y has 7 losers, so one loser moves a row ~0.02 and
+                                 #   0.94 vs 0.92 is no ranking. SECONDARY: NO — value_composite 0.68 at 8y sits inside the family, under
+                                 #   peg_yield 0.71; the composite averages its parts here, it does not beat the best (O'Shaughnessy's 82% is
+                                 #   a 10y-rolling-window claim on a far wider pond). Held-book rows agree: peg_yield +16.9/+18.2%/yr
+                                 #   (n=67/141) vs fcf_ev_yield +15.2/+15.5 (n=64/125, win 78% at 8y), sales_ev_yield and the composite
+                                 #   +16.2/+16.6-16.7 (n=66/135). TEST-edge rows flip sign between 12y and 8y for all three: no reading.
+                                 #   BANKED FOR THE ~2027-09 REOPEN: fcf_ev_yield is peg_yield's peer on AUC, not its replacement; the
+                                 #   composite buys nothing over the shipped single factor on this ruler. Nothing moves.
+                                 #   REVERT RULE: none — measurements, not values. Drop the three names from `FUND_FACTORS` to restore 27.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

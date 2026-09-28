@@ -1391,6 +1391,9 @@ pub async fn run(args: Vec<String>) {
                             // (EV/EBITDA) same close, same currency discipline: EV = shares·px + net_debt,
                             // all as-of. Still PROBE-ONLY — never the live score's weighed factor.
                             f.ebitda_yield = px.and_then(|p| core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, p));
+                            // (#408) the same EV, over FCF and over revenue
+                            f.fcf_ev_yield = px.and_then(|p| core::ev_ebitda_yield(f.fcf_ttm, f.shares_ttm, f.net_debt, p));
+                            f.sales_ev_yield = px.and_then(|p| core::ev_ebitda_yield(f.revenue_ttm, f.shares_ttm, f.net_debt, p));
                             // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
                             // (growth_fund_factor "peg_yield"), and the live enrich converts the same way —
                             // so train and serve compute the identical ratio instead of differing by an FX rate.
@@ -1442,6 +1445,7 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     samples.sort_by_key(|s| s.date); // chronological -> the OOS split is early-vs-late in time
+    stamp_value_composite(&mut samples); // (#408) needs the whole date's cohort, so after the sort
 
     let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR" } else { "^GSPC" };
     let bench = if monthly {
@@ -2346,7 +2350,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 27] = [
+const FUND_FACTORS: [&str; 30] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2375,6 +2379,7 @@ const FUND_FACTORS: [&str; 27] = [
     "accrual_gap", "asset_growth",
     "gp_assets",            // (#405) Novy-Marx gross profitability; 24 -> 25 tightens every band again
     "cf_assets", "rev_stability", // (#407) Ball et al. cash profitability, Mohanram G5; 25 -> 27
+    "fcf_ev_yield", "sales_ev_yield", "value_composite", // (#408) O'Shaughnessy value family; 27 -> 30
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -3466,6 +3471,37 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
     cagr.is_finite().then_some(cagr)
 }
 
+/// (#408) O'Shaughnessy's value composite: for each cutoff, rank every name on each value yield
+/// (earnings, EBITDA, FCF and sales over price/EV) against that cutoff's cohort, then average the
+/// present legs' percentiles. A percentile is the count of strictly lower values over n−1, times 100,
+/// so ties share the lower rank and the result never depends on input order (bit-identical at any
+/// thread count). A leg with fewer than 2 names at a date ranks nothing; a name needs ≥2 ranked legs.
+/// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
+fn stamp_value_composite(samples: &mut [Sample]) {
+    let legs: [fn(&core::FundFactors) -> Option<f64>; 4] =
+        [|f| f.earnings_yield, |f| f.ebitda_yield, |f| f.fcf_ev_yield, |f| f.sales_ev_yield];
+    for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
+        let cols: Vec<Vec<f64>> = legs
+            .iter()
+            .map(|leg| {
+                let mut v: Vec<f64> = day.iter().filter_map(|s| s.fund.as_ref().and_then(*leg)).collect();
+                v.sort_by(f64::total_cmp);
+                v
+            })
+            .collect();
+        for s in day.iter_mut() {
+            let Some(f) = s.fund.as_mut() else { continue };
+            let pcts: Vec<f64> = legs
+                .iter()
+                .zip(&cols)
+                .filter(|(_, col)| col.len() >= 2)
+                .filter_map(|(leg, col)| leg(f).map(|v| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0))
+                .collect();
+            f.value_composite = (pcts.len() >= 2).then(|| pcts.iter().sum::<f64>() / pcts.len() as f64);
+        }
+    }
+}
+
 /// (#328) Stamp every sample's point-in-time sector floor. THE ONLY PLACE the PIT rule is decided, and
 /// the reason the door needs no threading: once each `Quote` carries its own floor, all ~20
 /// `growth_score` call sites in this file honour the door without being touched — the wide edit that
@@ -4250,6 +4286,10 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         // (#407) FCF ÷ total assets (Ball et al.) and −std of YoY revenue growth (Mohanram G5).
         ("cf_assets", |f| f.cf_assets),
         ("rev_stability", |f| f.rev_stability),
+        // (#408) FCF ÷ EV, revenue ÷ EV, and the same-date percentile mean of the four value yields.
+        ("fcf_ev_yield", |f| f.fcf_ev_yield),
+        ("sales_ev_yield", |f| f.sales_ev_yield),
+        ("value_composite", |f| f.value_composite),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
@@ -6406,6 +6446,36 @@ mod tests {
         assert_eq!(weight_swap_gaps(&samples, swap_scorer, &base, &notched, 2), (4, vec![20.0, -2.0]));
         assert_eq!(weight_swap_gaps(&samples, swap_scorer, &base, &base, 2), (4, vec![]), "an unmoved weight swaps nobody");
         assert_eq!(weight_swap_gaps(&samples, swap_scorer, &base, &notched, 10), (4, vec![]), "a basket holding the whole pool swaps nobody");
+    }
+
+    /// (#408) X ranks top of 3 on earnings (2/2 -> 100) and bottom of 2 on EBITDA (0/1 -> 0); FCF and
+    /// sales hold one name each, so they rank nothing -> X is 50. Y: 50 and 100 -> 75. Z has one leg and
+    /// W is alone at its date: both None. A reordered date stamps the same numbers.
+    #[test]
+    fn stamp_value_composite_averages_same_date_percentiles() {
+        use crate::core::FundFactors;
+        let row = |d: u32, t: &str, ey: Option<f64>, eb: Option<f64>, fcf: Option<f64>, sales: Option<f64>| Sample {
+            date: ymd(2010, 1, d),
+            realized: 0.0,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: Some(FundFactors { earnings_yield: ey, ebitda_yield: eb, fcf_ev_yield: fcf, sales_ev_yield: sales, ..Default::default() }),
+            trail: Vec::new(),
+        };
+        let x = || row(1, "X", Some(10.0), Some(20.0), Some(5.0), Some(100.0));
+        let y = || row(1, "Y", Some(5.0), Some(30.0), None, None);
+        let z = || row(1, "Z", Some(1.0), None, None, None);
+        let w = || row(2, "W", Some(9.0), Some(9.0), None, None);
+        let stamped = |mut v: Vec<Sample>| {
+            stamp_value_composite(&mut v);
+            let mut out: Vec<(String, Option<f64>)> =
+                v.iter().map(|s| (s.quote.ticker.clone(), s.fund.as_ref().unwrap().value_composite)).collect();
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            out
+        };
+        let want = vec![("W".into(), None), ("X".into(), Some(50.0)), ("Y".into(), Some(75.0)), ("Z".into(), None)];
+        assert_eq!(stamped(vec![x(), y(), z(), w()]), want);
+        assert_eq!(stamped(vec![z(), x(), y(), w()]), want);
     }
 
     /// (#328) A stock at one cutoff with a chosen 5Y leg and GICS label — the only inputs the sector

@@ -3807,6 +3807,16 @@ pub struct FundFactors {
     // skipped fiscal year never reads as a doubled rate and quarterly (FMP) rows read None. ≥3 growth
     // values or None. The growth-stock screen's own stability term, which `margin_stability` is not.
     pub rev_stability: Option<f64>,
+    // (#408) VALUE FAMILY, the two members the table never measured (O'Shaughnessy's FCF/EV and
+    // sales/EV; LSV 1994 sales/price). Levels come off the as-of row like `ebitda_ttm`; the yields and
+    // the composite need a price, so `fund_factors` leaves them None and the backtest fills them.
+    pub fcf_ttm: Option<f64>,        // (#408) as-of FCF level = fcf_margin · revenue ÷ 100, reporting currency
+    pub revenue_ttm: Option<f64>,    // (#408) as-of revenue level, reporting currency
+    pub fcf_ev_yield: Option<f64>,   // (#408) FCF ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew)
+    pub sales_ev_yield: Option<f64>, // (#408) revenue ÷ EV, % (high = cheap). PROBE-ONLY, None live
+    // (#408) O'Shaughnessy value composite: mean same-date percentile (0-100) of earnings, EBITDA, FCF
+    // and sales yields, ≥2 legs present. Needs the whole date's cohort, so only the backtest stamps it.
+    pub value_composite: Option<f64>,
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4046,6 +4056,12 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         gp_assets: now.and_then(|r| Some(r.gross_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         cf_assets: now.and_then(|r| Some(r.fcf_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         rev_stability,
+        // (#408) levels only; the yields and the composite are the backtest's to fill (price, cohort)
+        fcf_ttm: now.and_then(|r| Some(r.fcf_margin? * r.revenue? / 100.0)),
+        revenue_ttm: now.and_then(|r| r.revenue),
+        fcf_ev_yield: None,
+        sales_ev_yield: None,
+        value_composite: None,
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -4283,6 +4299,8 @@ pub fn pe_from_earnings_yield(ey: Option<f64>) -> Option<f64> {
 /// it None-outs rather than fabricating a signal), shares are positive, and EV ends up positive.
 /// shortcut: net_debt None (rare — cash is the SEC anchor) degrades EV to market-cap only; the leverage
 /// leg simply drops for that name. Tighten to require net_debt only if the probe shows an edge worth it.
+/// (#408) Nothing here is EBITDA-specific: any positive level over EV. FCF/EV and sales/EV reuse it.
+/// shortcut: a negative FCF is None, so cash burners leave the FCF row instead of ranking last.
 pub fn ev_ebitda_yield(ebitda: Option<f64>, shares: Option<f64>, net_debt: Option<f64>, price: f64) -> Option<f64> {
     match (ebitda, shares) {
         (Some(e), Some(sh)) if e > 0.0 && sh > 0.0 && price > 0.0 => {
@@ -4568,6 +4586,9 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "gp_assets" => f.gp_assets,                       // (#405) gross profit ÷ total assets (Novy-Marx): measured, unweighted
         "cf_assets" => f.cf_assets,                       // (#407) free cash flow ÷ total assets (Ball et al.): measured, unweighted
         "rev_stability" => f.rev_stability,               // (#407) −std of YoY revenue growth (Mohanram G5): measured, unweighted
+        "fcf_ev_yield" => f.fcf_ev_yield,                 // (#408) FCF ÷ EV: measured, unweighted
+        "sales_ev_yield" => f.sales_ev_yield,             // (#408) revenue ÷ EV: measured, unweighted
+        "value_composite" => f.value_composite,           // (#408) same-date percentile mean of 4 yields
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -5364,6 +5385,11 @@ mod tests {
             gp_assets: Some(25.0),
             cf_assets: Some(26.0),
             rev_stability: Some(27.0),
+            fcf_ttm: Some(60.0),
+            revenue_ttm: Some(70.0),
+            fcf_ev_yield: Some(28.0),
+            sales_ev_yield: Some(29.0),
+            value_composite: Some(30.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -5387,6 +5413,9 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "gp_assets"), Some(25.0)); // (#405) NOT gross_margin: same numerator, the other denominator
         assert_eq!(select_fund_factor(&f, "cf_assets"), Some(26.0)); // (#407) NOT fcf_margin: same numerator, the asset denominator
         assert_eq!(select_fund_factor(&f, "rev_stability"), Some(27.0)); // (#407) NOT margin_stability: growth dispersion, not margin
+        assert_eq!(select_fund_factor(&f, "fcf_ev_yield"), Some(28.0)); // (#408)
+        assert_eq!(select_fund_factor(&f, "sales_ev_yield"), Some(29.0));
+        assert_eq!(select_fund_factor(&f, "value_composite"), Some(30.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -5963,6 +5992,28 @@ mod tests {
         assert_eq!(fund_factors(&[r(None, Some(50.0))], cutoff, 5).cf_assets, None);
         assert_eq!(fund_factors(&[r(Some(10.0), None)], cutoff, 5).cf_assets, None);
         assert_eq!(fund_factors(&[r(Some(10.0), Some(0.0))], cutoff, 5).cf_assets, None);
+    }
+
+    /// (#408) the as-of levels the backtest prices into FCF/EV and sales/EV: a 10% FCF margin on 200 of
+    /// revenue is 20 of FCF. A missing leg is None; the yields stay None until the backtest fills them.
+    #[test]
+    fn fcf_and_revenue_levels_come_off_the_as_of_row() {
+        let r = |fcf: Option<f64>, rev: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            fcf_margin: fcf,
+            revenue: rev,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let f = fund_factors(&[r(Some(10.0), Some(200.0))], cutoff, 5);
+        assert_eq!((f.fcf_ttm, f.revenue_ttm), (Some(20.0), Some(200.0)));
+        assert_eq!((f.fcf_ev_yield, f.sales_ev_yield, f.value_composite), (None, None, None));
+        assert_eq!(fund_factors(&[r(None, Some(200.0))], cutoff, 5).fcf_ttm, None);
+        assert_eq!(fund_factors(&[r(Some(10.0), None)], cutoff, 5).fcf_ttm, None);
+        // FCF 20 over EV 2·40 + 20 = 100 -> 20%; a negative FCF drops out, never ranks last
+        assert_eq!(ev_ebitda_yield(f.fcf_ttm, Some(2.0), Some(20.0), 40.0), Some(20.0));
+        assert_eq!(ev_ebitda_yield(Some(-20.0), Some(2.0), Some(20.0), 40.0), None);
     }
 
     /// (#407) `rev_stability`: revenue 100, 100, 150, 300 grows 0, 50, 100 -> sd 50 -> -50. A 2y gap

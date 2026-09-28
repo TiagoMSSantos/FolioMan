@@ -86,8 +86,11 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     gp_assets             winners n=6    med     56.06   losers n=3    med     49.07   gap      6.98   AUC  0.89
     cf_assets             winners n=6    med     14.24   losers n=11   med      5.03   gap      9.22   AUC  0.83
     rev_stability         winners n=4    med    -11.00   losers n=5    med     -9.65   gap     -1.35   AUC  0.55
+    fcf_ev_yield          winners n=6    med      9.61   losers n=11   med      4.23   gap      5.38   AUC  0.83
+    sales_ev_yield        winners n=6    med     61.79   losers n=11   med     23.50   gap     38.29   AUC  0.64
+    value_composite       winners n=6    med     25.00   losers n=11   med     33.33   gap     -8.33   AUC  0.43
     composite             winners n=3    med     44.20   losers n=9    med     23.78   gap     20.42   AUC  1.00
-    (22 of 27 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (25 of 30 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -293,6 +296,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   gp_assets      TEST edge +263.3 (w 0.249)  OOS +0.36 | -0.04
   cf_assets      TEST edge +239.1 (w 0.249)  OOS +0.37 | -0.07
   rev_stability  TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
+  fcf_ev_yield   TEST edge +227.4 (w 0.249)  OOS +0.31 | -0.07
+  sales_ev_yield TEST edge +207.7 (w 0.193)  OOS +0.37 | -0.04
+  value_composite TEST edge +227.4 (w 0.193)  OOS +0.38 | +0.00
   composite      TEST edge -28.4 (w 0.249)  OOS +0.13 | -0.07
   -> WINNER: gross_margin. Set `growth_fund_factor: gross_margin` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm.
   -> validated growth_fund_weight for gross_margin: 0.249 (at growth_fund_cap 300)
@@ -407,6 +413,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   gp_assets      book +4.1%/yr  excess -7.7  win 14%  worst -17.0  OOS -1.3/-12.5   (n=9)
   cf_assets      book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
   rev_stability  book +0.9%/yr  excess -11.1  win 0%  worst -17.9  OOS -5.5/-16.7   (n=9)
+  fcf_ev_yield   book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
+  sales_ev_yield book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
+  value_composite book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
   no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
   (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.
    every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,
