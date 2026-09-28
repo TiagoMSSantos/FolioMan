@@ -2360,7 +2360,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 34] = [
+const FUND_FACTORS: [&str; 36] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2392,6 +2392,7 @@ const FUND_FACTORS: [&str; 34] = [
     "fcf_ev_yield", "sales_ev_yield", "value_composite", // (#408) O'Shaughnessy value family; 27 -> 30
     "book_yield", "small_pct", // (#409) Fama-French HML and size; 30 -> 32
     "rnd_yield", "payout_yield", // (#410) R&D/ME (Chan-Lakonishok-Sougiannis), net payout (BMRR); 32 -> 34
+    "noa", "op_leverage", // (#411) net operating assets (HHTZ, negated), operating leverage (Novy-Marx); 34 -> 36
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4312,6 +4313,9 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         // (#410) R&D ÷ market cap, and net payout ÷ market cap (sign kept: a net issuer is negative).
         ("rnd_yield", |f| f.rnd_yield),
         ("payout_yield", |f| f.payout_yield),
+        // (#411) −(net debt + book) ÷ assets (lean = high), and operating costs ÷ assets.
+        ("noa", |f| f.noa),
+        ("op_leverage", |f| f.op_leverage),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();

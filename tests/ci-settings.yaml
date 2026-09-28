@@ -4922,6 +4922,35 @@ buy_heuristic:
                                  #   cohort is wide enough to hold more than a handful of losers.
                                  #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 32; the tags
                                  #   stay (the `_facts12` bridge in `fetch_sec_facts_rows` goes once every runner's `.sec_cache` is warm).
+                                 # ── (#411) MEASURED 2026-09-28 — NET OPERATING ASSETS AND OPERATING LEVERAGE, OFF THE ROW ALREADY CACHED ──
+                                 #   WHAT: two `fund_factors` levels off the as-of `_facts13` row, no refetch, no price. `noa` = −(net debt + book)
+                                 #   ÷ total assets, % (book = `book_ttm`'s derivation; missing debt reads 0, so a debt-free filer is −(book − cash)),
+                                 #   NEGATED so high = lean. `op_leverage` = (revenue − operating income) ÷ total assets, %. `FUND_FACTORS` 34 -> 36
+                                 #   and the held-book list. Weighted nowhere, gate nothing.
+                                 #   WHY: a sixth sweep. NOA (Hirshleifer-Hou-Teoh-Zhang 2004) is a robust 3y+ negative predictor: operating assets
+                                 #   bloated past cash are accounting profit that ran ahead of cash. Operating leverage (Novy-Marx 2011) is a risk
+                                 #   premium. PRUNED BY THE SAME SEARCH: distress (CHS failure probability, O-score, Z-score) is insignificant in the
+                                 #   Hou-Xue-Zhang replication, so it leaves the `_facts14` list; the Piotroski F-score decayed in US large caps
+                                 #   after publication and was not built.
+                                 #   BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at
+                                 #   BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. Priors: noa on the right side (> 0.5), but
+                                 #   its cousins read accrual_gap 0.54/0.45 (dead) and asset_growth 8y 0.69 in the (#410) runs; op_leverage > 0.5
+                                 #   by theory AND by this pool's backwards-reading quality rows (gp_assets 0.28/0.41): high costs per asset is a
+                                 #   low margin, and a low margin is cheap here. Growth admission and weights stay closed until track ~2027-09.
+                                 #   RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after (cmp). 12y: windows
+                                 #   scored 2772. 8y: 6180. The control reproduced (#410): peg_yield 0.91/0.71, rnd_yield 0.97/0.86. Coverage is
+                                 #   the pool's own: noa 59/7 and 122/22 (peg_yield 59/7, 115/21), op_leverage 56/7 and 114/22.
+                                 #                       12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #     noa                 0.72   59/7        0.55  122/22    SAME   right side (lean won), 8y under the bar
+                                 #     op_leverage         0.48   56/7        0.46  114/22    SAME   flat at both
+                                 #   VERDICT: BOTH DEAD, recorded. noa is the (#407) rev_stability near miss mirrored: the right side at both,
+                                 #   clear at 12y, 0.05 at 8y. Its held book matches peg_yield's (12y +16.9%/yr n=67 both; 8y +18.0% n=151 vs
+                                 #   +18.2% n=141) and its held-out TEST edge trails (12y +63.3 vs +243.0; 8y -52.5 vs +17.1). op_leverage reads
+                                 #   flat: neither the risk-premium prior nor the cheap-margin prior shows. Nothing moves. Re-ask noa only on a
+                                 #   new horizon or a longer record.
+                                 #   `_facts14` AFTER THIS ROUND: distress is off (dead in replication). What stays needs SG&A (organization
+                                 #   capital, intangible-adjusted value) or current assets/liabilities (a full F-score); neither prior is strong.
+                                 #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 34.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

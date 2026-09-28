@@ -3806,6 +3806,17 @@ pub struct FundFactors {
     // with R&D added back; the rows carry neither operating cash flow nor R&D alone, so this is the
     // post-capex cut. Measured by the AUC table, weighted nowhere. None on a missing leg or assets <= 0.
     pub cf_assets: Option<f64>,
+    // (#411) NET OPERATING ASSETS (Hirshleifer-Hou-Teoh-Zhang 2004): (net debt + book equity) ÷ total assets,
+    // %, NEGATED so high = lean, the `asset_growth` orientation. Operating assets bloated past cash is accounting
+    // profit that ran ahead of cash, and the paper finds it predicts low returns for 3+ years. Book is
+    // `book_ttm`'s own derivation; fetch reads missing debt as 0, so a debt-free filer is −(book − cash), not
+    // None. shortcut: current assets, not the paper's lagged base; lag it if this ever ships. None on a
+    // missing leg or a non-finite result (roe 0, assets 0). Measured by the AUC table, weighted nowhere.
+    pub noa: Option<f64>,
+    // (#411) OPERATING LEVERAGE (Novy-Marx 2011): operating costs ÷ total assets, %, costs = revenue −
+    // operating income (COGS + SG&A + R&D + D&A, Compustat's XSGA scope). A risk premium, so the prior is
+    // high = higher return. None on a missing leg or assets <= 0. Measured by the AUC table, weighted nowhere.
+    pub op_leverage: Option<f64>,
     // (#407) SALES-GROWTH STABILITY (Mohanram 2005, G-score signal G5): −sample std of year-over-year
     // revenue growth, points, over the last `yrs`+1 as-of rows. Only row pairs ~1y apart count, so a
     // skipped fiscal year never reads as a doubled rate and quarterly (FMP) rows read None. ≥3 growth
@@ -4071,6 +4082,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         asset_growth,
         gp_assets: now.and_then(|r| Some(r.gross_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         cf_assets: now.and_then(|r| Some(r.fcf_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
+        // (#411) roe 0 or assets 0 reads inf/NaN and drops out, as `book_ttm` below does
+        noa: now.and_then(|r| Some(-(r.net_debt? + r.net_margin? * r.revenue? / r.roe?) * 100.0 / r.assets?)).filter(|v| v.is_finite()),
+        op_leverage: now.and_then(|r| Some(r.revenue? * (100.0 - r.op_margin?) / r.assets.filter(|a| *a > 0.0)?)),
         rev_stability,
         // (#408) levels only; the yields and the composite are the backtest's to fill (price, cohort)
         fcf_ttm: now.and_then(|r| Some(r.fcf_margin? * r.revenue? / 100.0)),
@@ -4620,6 +4634,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "asset_growth" => f.asset_growth,                 // (P3) −CAGR of total assets: how fast the balance sheet is being expanded
         "gp_assets" => f.gp_assets,                       // (#405) gross profit ÷ total assets (Novy-Marx): measured, unweighted
         "cf_assets" => f.cf_assets,                       // (#407) free cash flow ÷ total assets (Ball et al.): measured, unweighted
+        "noa" => f.noa,                                   // (#411) −(net debt + book) ÷ total assets (HHTZ): measured, unweighted
+        "op_leverage" => f.op_leverage,                   // (#411) operating costs ÷ total assets (Novy-Marx): measured, unweighted
         "rev_stability" => f.rev_stability,               // (#407) −std of YoY revenue growth (Mohanram G5): measured, unweighted
         "fcf_ev_yield" => f.fcf_ev_yield,                 // (#408) FCF ÷ EV: measured, unweighted
         "sales_ev_yield" => f.sales_ev_yield,             // (#408) revenue ÷ EV: measured, unweighted
@@ -5423,6 +5439,8 @@ mod tests {
             asset_growth: Some(24.0),
             gp_assets: Some(25.0),
             cf_assets: Some(26.0),
+            noa: Some(35.0),
+            op_leverage: Some(36.0),
             rev_stability: Some(27.0),
             fcf_ttm: Some(60.0),
             revenue_ttm: Some(70.0),
@@ -5467,6 +5485,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "small_pct"), Some(32.0));
         assert_eq!(select_fund_factor(&f, "rnd_yield"), Some(33.0)); // (#410)
         assert_eq!(select_fund_factor(&f, "payout_yield"), Some(34.0));
+        assert_eq!(select_fund_factor(&f, "noa"), Some(35.0)); // (#411) NOT asset_growth: the level of the balance sheet, not its growth
+        assert_eq!(select_fund_factor(&f, "op_leverage"), Some(36.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -6043,6 +6063,35 @@ mod tests {
         assert_eq!(fund_factors(&[r(None, Some(50.0))], cutoff, 5).cf_assets, None);
         assert_eq!(fund_factors(&[r(Some(10.0), None)], cutoff, 5).cf_assets, None);
         assert_eq!(fund_factors(&[r(Some(10.0), Some(0.0))], cutoff, 5).cf_assets, None);
+    }
+
+    /// (#411) NOA and operating leverage off the as-of row: 20 of net debt plus 100 of book (a 10% net margin
+    /// on 100 of revenue at a 10% ROE) over 200 of assets is 60%, negated to −60; costs of 80 (a 20% operating
+    /// margin) over the same 200 are 40%. A missing leg, roe 0 or assets 0 is None, never 0.
+    #[test]
+    fn noa_and_op_leverage_off_the_as_of_row() {
+        let r = |nd: Option<f64>, roe: Option<f64>, assets: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            net_debt: nd,
+            net_margin: Some(10.0),
+            roe,
+            op_margin: Some(20.0),
+            assets,
+            revenue: Some(100.0),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let f = fund_factors(&[r(Some(20.0), Some(10.0), Some(200.0))], cutoff, 5);
+        assert_eq!((f.noa, f.op_leverage), (Some(-60.0), Some(40.0)));
+        assert_eq!(fund_factors(&[r(Some(-20.0), Some(10.0), Some(200.0))], cutoff, 5).noa, Some(-40.0)); // net cash is leaner
+        assert_eq!(fund_factors(&[r(None, Some(10.0), Some(200.0))], cutoff, 5).noa, None);
+        assert_eq!(fund_factors(&[r(Some(20.0), None, Some(200.0))], cutoff, 5).noa, None);
+        assert_eq!(fund_factors(&[r(Some(20.0), Some(0.0), Some(200.0))], cutoff, 5).noa, None);
+        let flat = fund_factors(&[r(Some(20.0), Some(10.0), Some(0.0))], cutoff, 5);
+        assert_eq!((flat.noa, flat.op_leverage), (None, None));
+        let bare = fund_factors(&[r(Some(20.0), Some(10.0), None)], cutoff, 5);
+        assert_eq!((bare.noa, bare.op_leverage), (None, None));
     }
 
     /// (#408) the as-of levels the backtest prices into FCF/EV and sales/EV: a 10% FCF margin on 200 of
