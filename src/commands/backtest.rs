@@ -1400,6 +1400,10 @@ pub async fn run(args: Vec<String>) {
                             // filer-currency cap is worse: a JPY filer would read ~150x bigger.
                             f.book_yield = px.and_then(|p| core::ev_ebitda_yield(f.book_ttm, f.shares_ttm, None, p));
                             f.mcap = f.shares_ttm.map(|sh| sh * closes[i]).filter(|m| *m > 0.0);
+                            // (#410) R&D over the cap, positive-only like book (CLS's R&D-firm universe),
+                            // and net payout over the cap with its sign, so a net issuer ranks last.
+                            f.rnd_yield = px.and_then(|p| core::ev_ebitda_yield(f.rnd_ttm, f.shares_ttm, None, p));
+                            f.payout_yield = px.and_then(|p| core::cap_yield(f.payout_ttm, f.shares_ttm, p));
                             // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
                             // (growth_fund_factor "peg_yield"), and the live enrich converts the same way —
                             // so train and serve compute the identical ratio instead of differing by an FX rate.
@@ -2356,7 +2360,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 32] = [
+const FUND_FACTORS: [&str; 34] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2387,6 +2391,7 @@ const FUND_FACTORS: [&str; 32] = [
     "cf_assets", "rev_stability", // (#407) Ball et al. cash profitability, Mohanram G5; 25 -> 27
     "fcf_ev_yield", "sales_ev_yield", "value_composite", // (#408) O'Shaughnessy value family; 27 -> 30
     "book_yield", "small_pct", // (#409) Fama-French HML and size; 30 -> 32
+    "rnd_yield", "payout_yield", // (#410) R&D/ME (Chan-Lakonishok-Sougiannis), net payout (BMRR); 32 -> 34
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4304,6 +4309,9 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         // (#409) book ÷ market cap, and the same-date size percentile (high = small).
         ("book_yield", |f| f.book_yield),
         ("small_pct", |f| f.small_pct),
+        // (#410) R&D ÷ market cap, and net payout ÷ market cap (sign kept: a net issuer is negative).
+        ("rnd_yield", |f| f.rnd_yield),
+        ("payout_yield", |f| f.payout_yield),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();

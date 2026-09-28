@@ -4886,6 +4886,42 @@ buy_heuristic:
                                  #   BANKED FOR THE ~2027-09 REOPEN: a size tilt is worth a forward look only if it survives a value control
                                  #   (small_pct within value terciles), which needs a wider per-cutoff cohort than this pool holds.
                                  #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 30.
+                                 # ── (#410) MEASURED 2026-09-28 — R&D ÷ MARKET CAP AND NET PAYOUT YIELD, THE FIRST FACTORS FROM NEW SEC TAGS ──
+                                 #   WHAT: SEC rows gain two lines, `_facts12` -> `_facts13` (an added Option field loads as None from an old file, so
+                                 #   the filename forces the refetch; a miss serves the `_facts12` rows meanwhile). `rnd_margin` = R&D ÷ revenue;
+                                 #   `payout_margin` = (dividends + buybacks − share issuance) ÷ revenue, None only when all three legs are absent,
+                                 #   NEGATIVE for a net issuer. `rnd_yield` = R&D ÷ market cap through `ev_ebitda_yield` (positive-only, like book);
+                                 #   `payout_yield` = net payout ÷ market cap through the new `cap_yield`, sign kept. `FUND_FACTORS` 32 -> 34 and the
+                                 #   held-book list. Weighted nowhere, gate nothing.
+                                 #   WHY: a fifth sweep found the cache exhausted ((#409)); the live literature left is R&D intensity
+                                 #   (Chan-Lakonishok-Sougiannis 2001, persisting in recent six-decade work; the founder-CEO edge runs through R&D)
+                                 #   and net payout (Boudoukh-Michaely-Richardson-Roberts 2007: beats dividend yield; issuance carries the signal).
+                                 #   Edmans' best-employer list and founder flags need hand data and were not built.
+                                 #   BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at
+                                 #   BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. Priors: rnd_yield on the right side (CLS);
+                                 #   payout_yield on the right side and partly the value family again (a yield over the cap). Growth admission
+                                 #   and weights stay closed until track ~2027-09 either way.
+                                 #   RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after, after two warm-up runs
+                                 #   refilled `.sec_cache` (693 filers: 582 on the first 600-budget pass, the rest on the second; windows held at
+                                 #   2772 through both, the bridge working). 12y: windows scored 2772. 8y: 6180. The control reproduced (#409):
+                                 #   peg_yield 0.91/0.71, value_composite 0.92/0.68, book_yield 0.92/0.72. COVERAGE, newest row per filer: R&D 42%
+                                 #   (292/693, the filers that file a line at all), net payout 93% (645), 38 of them net issuers.
+                                 #   TAG ORDER, FOUND BY THE CENSUS: JNJ files only acquired in-process R&D under the bare tag (FY2025 0.11B vs
+                                 #   14.7B organic), so its R&D read 0.1% of revenue; the excluding-acquired tag is listed first (a same-day tie
+                                 #   keeps the first tag) and the census re-run from an empty `_facts13` before the graded runs. JNJ now 15.6%.
+                                 #                       12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #     rnd_yield           0.97   25/4        0.86   52/9     SAME   right side (R&D-rich won)
+                                 #     payout_yield        0.65   55/7        0.61  103/18    SAME   right side (payers won)
+                                 #   VERDICT: BOTH CANDIDATE, recorded only. rnd_yield posts the highest 8y AUC in the table (peg_yield 0.71) but
+                                 #   on the thinnest cohort: 4 and 9 losers, R&D filers only. It trails peg_yield on the held book at both
+                                 #   horizons (12y +15.9%/yr n=29 vs +16.9% n=67; 8y +16.4% n=62 vs +18.2% n=141) and its 8y held-out TEST edge
+                                 #   is negative (-20.2 vs peg_yield +17.1). payout_yield clears the bar by 0.01 at 8y, trails on the held book
+                                 #   (+16.5%/+17.0%), and its 8y TEST edge is -77.2. Nothing moves.
+                                 #   BANKED FOR THE ~2027-09 REOPEN: R&D intensity is the strongest separator this pool has shown outside the
+                                 #   value family, which makes it the first candidate for a forward shadow, but only once the per-cutoff R&D
+                                 #   cohort is wide enough to hold more than a handful of losers.
+                                 #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 32; the tags
+                                 #   stay (the `_facts12` bridge in `fetch_sec_facts_rows` goes once every runner's `.sec_cache` is warm).
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

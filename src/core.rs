@@ -3700,6 +3700,10 @@ pub struct FundRow {
     // exactly like earnings_yield — so no live currency skew).
     pub ebitda: Option<f64>,
     pub net_debt: Option<f64>,
+    // (#410) R&D and NET PAYOUT as % of revenue, like `fcf_margin`. SEC-computed, None on FMP. Payout is
+    // dividends + buybacks − share issuance, so NEGATIVE = a net issuer, and that sign is kept.
+    pub rnd_margin: Option<f64>,
+    pub payout_margin: Option<f64>,
     // (FX) the currency these MONEY lines are REPORTED in, straight off the XBRL unit key ("EUR" for a
     // 20-F filer like ASML, "USD" for a 10-K filer). None = unknown/FMP-sourced -> callers must assume
     // nothing. The margins/ROE above are ratios and cancel it, but anything joined to a PRICE
@@ -3823,6 +3827,12 @@ pub struct FundFactors {
     pub book_yield: Option<f64>,     // (#409) book ÷ market cap, % (high = cheap). PROBE-ONLY, None live
     pub mcap: Option<f64>,           // (#409) as-of market cap, TRADING currency. Backtest fills
     pub small_pct: Option<f64>,      // (#409) same-date percentile of mcap, 0-100, high = SMALL. Backtest stamps
+    // (#410) R&D ÷ market cap (Chan-Lakonishok-Sougiannis 2001) and net payout yield (Boudoukh et al.
+    // 2007). Levels off the as-of row like `fcf_ttm`; the yields need a price, so the backtest fills them.
+    pub rnd_ttm: Option<f64>,        // (#410) as-of R&D level, reporting currency
+    pub payout_ttm: Option<f64>,     // (#410) as-of net payout level, reporting currency; negative = net issuer
+    pub rnd_yield: Option<f64>,      // (#410) R&D ÷ market cap, % (high = R&D-rich). PROBE-ONLY, None live
+    pub payout_yield: Option<f64>,   // (#410) net payout ÷ market cap, %, sign kept. PROBE-ONLY, None live
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4073,6 +4083,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         book_yield: None,
         mcap: None,
         small_pct: None,
+        // (#410) levels only, like (#408)
+        rnd_ttm: now.and_then(|r| Some(r.rnd_margin? * r.revenue? / 100.0)),
+        payout_ttm: now.and_then(|r| Some(r.payout_margin? * r.revenue? / 100.0)),
+        rnd_yield: None,
+        payout_yield: None,
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -4321,6 +4336,14 @@ pub fn ev_ebitda_yield(ebitda: Option<f64>, shares: Option<f64>, net_debt: Optio
         }
         _ => None,
     }
+}
+
+/// (#410) A level over market cap, in %, SIGN KEPT: `ev_ebitda_yield` without its positive-level guard
+/// or its net-debt leg. Net payout needs the sign, because a net issuer is the factor's bottom, not a
+/// missing value. None only when a leg is missing or the cap is not positive.
+pub fn cap_yield(level: Option<f64>, shares: Option<f64>, price: f64) -> Option<f64> {
+    let (l, cap) = (level?, shares? * price);
+    (cap > 0.0).then_some(l / cap * 100.0)
 }
 
 /// (PEG probe) 1/PEG as a higher-is-better "yield" so it slots into the same sweep as earnings_yield:
@@ -4603,6 +4626,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "value_composite" => f.value_composite,           // (#408) same-date percentile mean of 4 yields
         "book_yield" => f.book_yield,                     // (#409) book ÷ market cap: measured, unweighted
         "small_pct" => f.small_pct,                       // (#409) same-date size percentile, high = small
+        "rnd_yield" => f.rnd_yield,                       // (#410) R&D ÷ market cap: measured, unweighted
+        "payout_yield" => f.payout_yield,                 // (#410) net payout ÷ market cap, sign kept
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -5408,6 +5433,10 @@ mod tests {
             book_yield: Some(31.0),
             mcap: Some(90.0),
             small_pct: Some(32.0),
+            rnd_ttm: Some(100.0),
+            payout_ttm: Some(110.0),
+            rnd_yield: Some(33.0),
+            payout_yield: Some(34.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -5436,6 +5465,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "value_composite"), Some(30.0));
         assert_eq!(select_fund_factor(&f, "book_yield"), Some(31.0)); // (#409)
         assert_eq!(select_fund_factor(&f, "small_pct"), Some(32.0));
+        assert_eq!(select_fund_factor(&f, "rnd_yield"), Some(33.0)); // (#410)
+        assert_eq!(select_fund_factor(&f, "payout_yield"), Some(34.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -6060,6 +6091,34 @@ mod tests {
         assert_eq!(ev_ebitda_yield(neg, Some(2.0), None, 25.0), None);
         // book 100 over market cap 2·25 = 50 -> 200%
         assert_eq!(ev_ebitda_yield(f.book_ttm, Some(2.0), None, 25.0), Some(200.0));
+    }
+
+    /// (#410) R&D and net payout levels come off the as-of row like `fcf_ttm`: 5% and −2% of 200 are
+    /// 10 and −4. `cap_yield` keeps the sign `ev_ebitda_yield` refuses, so a net issuer ranks last.
+    #[test]
+    fn rnd_and_payout_levels_and_signed_cap_yield() {
+        let r = |rnd: Option<f64>, pay: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            revenue: Some(200.0),
+            rnd_margin: rnd,
+            payout_margin: pay,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let f = fund_factors(&[r(Some(5.0), Some(-2.0))], cutoff, 5);
+        assert_eq!((f.rnd_ttm, f.payout_ttm), (Some(10.0), Some(-4.0)));
+        assert_eq!((f.rnd_yield, f.payout_yield), (None, None));
+        let none = fund_factors(&[r(None, None)], cutoff, 5);
+        assert_eq!((none.rnd_ttm, none.payout_ttm), (None, None));
+        // −10 over a cap of 2·25 = 50 -> −20%
+        assert_eq!(cap_yield(Some(-10.0), Some(2.0), 25.0), Some(-20.0));
+        assert_eq!(cap_yield(Some(10.0), Some(2.0), 25.0), Some(20.0));
+        assert_eq!(cap_yield(Some(0.0), Some(2.0), 25.0), Some(0.0));
+        assert_eq!(cap_yield(Some(10.0), Some(0.0), 25.0), None);
+        assert_eq!(cap_yield(Some(10.0), Some(2.0), 0.0), None);
+        assert_eq!(cap_yield(None, Some(2.0), 25.0), None);
+        assert_eq!(cap_yield(Some(10.0), None, 25.0), None);
     }
 
     /// (#407) `rev_stability`: revenue 100, 100, 150, 300 grows 0, 50, 100 -> sd 50 -> -50. A 2y gap

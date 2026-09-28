@@ -1372,7 +1372,7 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 /// day it was screened — for as long as the box lives. The file is a bare float with no version field,
 /// so the only fix that ever reached an existing box was bumping the `3` in its name by hand, and the
 /// comment on `sec_ttm_eps` records two generations of wrong values shipped exactly that way.
-/// `{ticker}_facts12` holds ANNUAL rows and is genuinely append-only, but "append-only" is not
+/// `{ticker}_facts13` holds ANNUAL rows and is genuinely append-only, but "append-only" is not
 /// "complete": each filer's newest fiscal year appears once a year and never reached a warm cache.
 ///
 /// 30 DAYS, NOT THE 7 THE FMP PATH USES, and the difference is the budget. `SEC_FETCH_BUDGET` is 600
@@ -1396,16 +1396,16 @@ fn sec_cache_ttl(ticker: &str) -> StdDuration {
 }
 
 /// (#84) LIVE-path only, exactly like [`evict_if_stale`]'s other callers, and for the same reason: the
-/// backtest scores as-of historical quarters that cannot go stale, and it reaches `_facts12` through
+/// backtest scores as-of historical quarters that cannot go stale, and it reaches `_facts13` through
 /// `fetch_fundamentals_ranked`. Evicting from there would make every cutoff refetch data it does not
 /// use. One call site — `fetch_ratios_sec`, which `quote_one` runs for every live equity — covers both
 /// files, because a ticker SEC cannot resolve to a CIK has no cache to expire in the first place.
 fn evict_stale_sec_caches(ticker: &str) {
     let ttl = sec_cache_ttl(ticker);
     // NOT `_inst4`: it caches a per-filing XBRL instance that can run to 13.5MB and is only read when
-    // `_facts12`'s newest row has no EPS. (#385) It goes stale when the NEXT 10-K lands, not on a clock,
+    // `_facts13`'s newest row has no EPS. (#385) It goes stale when the NEXT 10-K lands, not on a clock,
     // and `fetch_sec_instance_eps` refetches it then; a TTL here would re-download the same filing.
-    evict_if_stale(&sec_cache_path(&format!("{ticker}_facts12")), ttl);
+    evict_if_stale(&sec_cache_path(&format!("{ticker}_facts13")), ttl);
     evict_if_stale(&sec_cache_path(&format!("{ticker}_ttmeps3")), ttl);
 }
 
@@ -1768,6 +1768,8 @@ struct SecCacheRow {
     assets: Option<f64>,      // (P3) roa's denominator, kept rather than discarded — the asset-growth base
     prior_eps: Option<f64>,   // the prior FY's EPS as THIS row's filing stated it (the YoY denominator)
     prior_shares: Option<f64>, // likewise for the share count
+    rnd_margin: Option<f64>,    // (#410) R&D ÷ revenue, %
+    payout_margin: Option<f64>, // (#410) net payout ÷ revenue, %; negative = net issuer
 }
 
 /// ANNUAL report forms. `10-K` = US domestic; `20-F` = foreign private issuer (ASML, ARM, BABA); `40-F`
@@ -1831,6 +1833,11 @@ struct FactTags {
     debt_nc: &'static [&'static str],
     debt_cur: &'static [&'static str],
     cash: &'static [&'static str],
+    // (#410) duration lines: R&D, and net payout's three legs (dividends, buybacks, share issuance)
+    rnd: &'static [&'static str],
+    div: &'static [&'static str],
+    rep: &'static [&'static str],
+    iss: &'static [&'static str],
 }
 
 // ExcludingAssessedTax listed before Including: when a filer reports both for a period (values differ by
@@ -1886,6 +1893,14 @@ const US_GAAP_TAGS: FactTags = FactTags {
     debt_nc: &["LongTermDebtNoncurrent", "LongTermDebt"],
     debt_cur: &["LongTermDebtCurrent", "DebtCurrent"],
     cash: &["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+    // (#410) Excluding-acquired FIRST: a same-day tie keeps the first tag, and JNJ files only its acquired
+    // in-process R&D under the bare tag (FY2025 0.11B vs 14.7B organic), which read as 0.1% of revenue.
+    // Organic R&D is also the right CLS numerator; a one-off acquired IPR&D charge is not intensity.
+    rnd: &["ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost", "ResearchAndDevelopmentExpense",
+           "ResearchAndDevelopmentExpenseSoftwareExcludingAcquiredInProcessCost"],
+    div: &["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],
+    rep: &["PaymentsForRepurchaseOfCommonStock"],
+    iss: &["ProceedsFromIssuanceOfCommonStock", "ProceedsFromIssuanceOrSaleOfEquity"],
 };
 
 // IFRS. `ProfitLoss`/`Equity`/`CashFlowsFromUsedInOperatingActivities`/`CashAndCashEquivalents` were
@@ -1910,6 +1925,11 @@ const IFRS_TAGS: FactTags = FactTags {
     debt_nc: &["LongtermBorrowings", "Borrowings"],
     debt_cur: &["CurrentPortionOfLongtermBorrowings", "ShorttermBorrowings"],
     cash: &["CashAndCashEquivalents"],
+    rnd: &["ResearchAndDevelopmentExpense"],
+    div: &["DividendsPaidClassifiedAsFinancingActivities",
+           "DividendsPaidToEquityHoldersOfParentClassifiedAsFinancingActivities", "DividendsPaid"],
+    rep: &["PaymentsToAcquireOrRedeemEntitysShares"],
+    iss: &["ProceedsFromIssuingShares"],
 };
 
 /// (FX) The currency the filer REPORTS in, read off the XBRL unit key instead of assumed. A 20-F filer
@@ -2101,6 +2121,11 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     let debt_nc = collect_instant(tags.debt_nc, &money);
     let debt_cur = collect_instant(tags.debt_cur, &money);
     let cash = collect_instant(tags.cash, &money);
+    // (#410) R&D and net payout, duration lines. XBRL states payments and proceeds as positive values.
+    let rnd = collect(tags.rnd, &money);
+    let div = collect(tags.div, &money);
+    let rep = collect(tags.rep, &money);
+    let iss = collect(tags.iss, &money);
     rev.into_iter()
         .map(|(end, (filed, revenue, _))| {
             type Collected = std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)>;
@@ -2152,6 +2177,12 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 // (FX) every money line above is in THIS currency. The margins/ROE are ratios and cancel
                 // it; anything later joined to a price must convert first or land in the Item 16 trap.
                 currency: Some(money.clone()),
+                // (#410) payout needs ONE of its three legs: none at all is an unknown payer (None),
+                // not a non-payer; any present leg reads the absent ones as 0. Sign kept.
+                rnd_margin: margin(at(&rnd)),
+                payout_margin: [at(&div), at(&rep), at(&iss)].iter().any(Option::is_some).then(|| {
+                    at(&div).unwrap_or(0.0) + at(&rep).unwrap_or(0.0) - at(&iss).unwrap_or(0.0)
+                }).and_then(|p| margin(Some(p))),
                 ..Default::default()
             }
         })
@@ -2302,7 +2333,7 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 /// 46,563 (Class A) — see `parse_sec_instance`. Bump it again on any change to what that parser picks.
 /// (#377) `inst2` -> `inst3` retires the `[]` a spent budget wrote for every US name that needs this.
 /// (#383) `inst3` -> `inst4` retires ARES's and SUN's `[]`, written before the per-unit EPS tag.
-/// (#385) A file older than `newest_filed` (the newest `_facts12` row's filing date) is a miss: it holds
+/// (#385) A file older than `newest_filed` (the newest `_facts13` row's filing date) is a miss: it holds
 /// the 10-K that was newest when it was written, so the filer's next 10-K never reached it and that
 /// year's row stayed EPS-less for good. One refetch per new 10-K, since the rewrite moves the mtime past it.
 ///
@@ -2416,6 +2447,55 @@ const SEC_PREDECESSOR_CIK: &[(&str, &str)] = &[("0002115436", "0000034088")];
 /// `evict_stale_sec_caches` expires this file after ~30 staggered days for live callers only.
 /// Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+    // (#410) shortcut: warm-up bridge. The facts13 rename misses every filer at once and the budget
+    // covers fewer than the universe, so a miss serves the facts12 rows (R&D/payout None, not re-cached)
+    // instead of n/a. Delete this and the facts12 files once .sec_cache is warm.
+    match fetch_sec_facts_fresh(client, urls, ticker).await {
+        Some(rows) => Some(rows),
+        None => sec_cache_rows(&sec_cache_path(&format!("{ticker}_facts12"))).filter(|r| !r.is_empty()),
+    }
+}
+
+/// A cached `.sec_cache` rows file -> `FundRow`s. None when the file is absent or no longer deserialises;
+/// an unparseable DATE drops its row rather than defaulting to 1970. Shared by the facts13 read and the
+/// (#410) facts12 bridge.
+fn sec_cache_rows(path: &std::path::Path) -> Option<Vec<core::FundRow>> {
+    let cached: Vec<SecCacheRow> = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    Some(
+        cached
+            .into_iter()
+            .filter_map(|c| {
+                Some(core::FundRow {
+                    filed: NaiveDate::parse_from_str(&c.filed, "%Y-%m-%d").ok()?,
+                    period_end: NaiveDate::parse_from_str(&c.period_end, "%Y-%m-%d").ok()?,
+                    revenue: c.revenue,
+                    gross_margin: c.gross_margin,
+                    op_margin: c.op_margin,
+                    net_margin: c.net_margin,
+                    eps: c.eps,
+                    shares: c.shares,
+                    prior_eps: c.prior_eps,
+                    prior_shares: c.prior_shares,
+                    roe: c.roe,
+                    roa: c.roa,
+                    assets: c.assets,
+                    fcf_margin: c.fcf_margin,
+                    interest_cover: c.interest_cover,
+                    net_cash_rev: c.net_cash_rev,
+                    ebitda: c.ebitda,
+                    net_debt: c.net_debt,
+                    rnd_margin: c.rnd_margin,
+                    payout_margin: c.payout_margin,
+                    currency: c.currency,
+                    ..Default::default()
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The facts13 fetch proper, behind the (#410) bridge in `fetch_sec_facts_rows`.
+async fn fetch_sec_facts_fresh(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
     // "_facts9": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
     // the round-107 survival levels; facts5 added the EV/EBITDA levels; facts6 fixes the misspelled
@@ -2439,37 +2519,13 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
     // facts11 file therefore holds the WRONG NUMBER for every amended period, is perfectly
     // deserializable, and would keep serving it forever; the filename is again the only thing that
     // forces the refetch.
+    // (#410) facts13 adds R&D and net payout (dividends, buybacks, issuance). An added Option field
+    // loads as None from a facts12 file, the facts11 trap again, so the filename forces the refetch;
+    // `fetch_sec_facts_rows` serves facts12 as a bridge while the budget works through the universe.
     // Old *_facts{3,4,5,6,7,8,9,10,11}.json files are orphaned (few KB each); refetch amortizes over
     // runs under SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts12"));
-    if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
-        let rows: Vec<core::FundRow> = cached
-            .into_iter()
-            .filter_map(|c| {
-                Some(core::FundRow {
-                    filed: NaiveDate::parse_from_str(&c.filed, "%Y-%m-%d").ok()?,
-                    period_end: NaiveDate::parse_from_str(&c.period_end, "%Y-%m-%d").ok()?,
-                    revenue: c.revenue,
-                    gross_margin: c.gross_margin,
-                    op_margin: c.op_margin,
-                    net_margin: c.net_margin,
-                    eps: c.eps,
-                    shares: c.shares,
-                    prior_eps: c.prior_eps,
-                    prior_shares: c.prior_shares,
-                    roe: c.roe,
-                    roa: c.roa,
-                    assets: c.assets,
-                    fcf_margin: c.fcf_margin,
-                    interest_cover: c.interest_cover,
-                    net_cash_rev: c.net_cash_rev,
-                    ebitda: c.ebitda,
-                    net_debt: c.net_debt,
-                    currency: c.currency,
-                    ..Default::default()
-                })
-            })
-            .collect();
+    let cache = sec_cache_path(&format!("{ticker}_facts13"));
+    if let Some(rows) = sec_cache_rows(&cache) {
         return (!rows.is_empty()).then_some(rows); // cache hit -> no network, no budget spend
     }
     let cik = sec_cik(client, urls, ticker).await?; // non-US / unknown -> None
@@ -2508,6 +2564,8 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
                 assets: r.assets,
                 prior_eps: r.prior_eps,
                 prior_shares: r.prior_shares,
+                rnd_margin: r.rnd_margin,
+                payout_margin: r.payout_margin,
             })
             .collect();
         if let Some(dir) = cache.parent() {
@@ -6290,7 +6348,7 @@ pub(crate) mod tests {
                 .expect("backdate mtime");
             p
         };
-        let facts = aged("_facts12", 60);
+        let facts = aged("_facts13", 60);
         let ttmeps = aged("_ttmeps3", 60);
         // `_inst4` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB, and (#385)
         // `fetch_sec_instance_eps` refetches it when the next 10-K lands. A clock here would re-download
@@ -6301,7 +6359,7 @@ pub(crate) mod tests {
         assert!(!ttmeps.exists(), "a TTM roll 60 days old has missed a quarter by construction");
         assert!(inst.exists(), "the instance cache has no staleness to fix and is the most expensive refetch");
 
-        let fresh_facts = aged("_facts12", 5);
+        let fresh_facts = aged("_facts13", 5);
         let fresh_ttmeps = aged("_ttmeps3", 5);
         evict_stale_sec_caches("SECEVICT");
         assert!(fresh_facts.exists(), "5 days is inside every TTL — evicting here refetches the world each run");
@@ -6822,7 +6880,7 @@ pub(crate) mod tests {
         seed_cik_map();
         std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
         std::fs::write(
-            sec_cache_path("NEWESTGAP_facts12"),
+            sec_cache_path("NEWESTGAP_facts13"),
             r#"[{"filed": "2020-02-01", "period_end": "2019-12-31", "eps": 1.06},
                 {"filed": "2026-02-25", "period_end": "2025-12-31", "revenue": 100.0}]"#,
         )
@@ -6842,7 +6900,7 @@ pub(crate) mod tests {
     async fn instance_cache_older_than_the_newest_filing_is_not_served() {
         seed_cik_map();
         std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
-        std::fs::write(sec_cache_path("STALEINST_facts12"), r#"[{"filed": "2026-02-25", "period_end": "2025-12-31"}]"#)
+        std::fs::write(sec_cache_path("STALEINST_facts13"), r#"[{"filed": "2026-02-25", "period_end": "2025-12-31"}]"#)
             .expect("seed facts");
         let inst = sec_cache_path("STALEINST_inst4");
         std::fs::write(&inst, r#"[["2025-12-31", 2.42, null]]"#).expect("seed inst");
@@ -6851,6 +6909,67 @@ pub(crate) mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
         let rows = fetch_fundamentals_sec(&client, &stub_urls("http://127.0.0.1:1/"), "STALEINST").await.expect("rows");
         assert_eq!(rows[0].eps, None, "a pre-filing instance must not stand in for the new 10-K");
+    }
+
+    /// (#410) R&D and net payout as % of revenue. On 1000 of revenue, 80 of R&D is 8%, and dividends 30
+    /// + buybacks 50 − issuance 20 = 60 is 6%. A lone dividend or buyback is the whole payout, a lone
+    /// issuance is a NEGATIVE payout (kept), and no leg at all is an unknown payer, not a zero.
+    #[test]
+    fn sec_facts_rnd_and_net_payout_margins() {
+        use serde_json::json;
+        let line = |val: f64| {
+            json!({"units": {"USD": [{"start": "2025-01-01", "end": "2025-12-31", "val": val, "form": "10-K", "filed": "2026-02-01"}]}})
+        };
+        let full = parse_sec_facts(&json!({"facts": {"us-gaap": {
+            "Revenues": line(1000.0),
+            "ResearchAndDevelopmentExpense": line(80.0),
+            "PaymentsOfDividendsCommonStock": line(30.0),
+            "PaymentsForRepurchaseOfCommonStock": line(50.0),
+            "ProceedsFromIssuanceOfCommonStock": line(20.0),
+        }}}));
+        assert_eq!((full[0].rnd_margin, full[0].payout_margin), (Some(8.0), Some(6.0)));
+        let one = |tag: &str, val: f64| {
+            parse_sec_facts(&json!({"facts": {"us-gaap": {"Revenues": line(1000.0), tag: line(val)}}}))[0].payout_margin
+        };
+        assert_eq!(one("PaymentsOfDividends", 30.0), Some(3.0));
+        assert_eq!(one("PaymentsForRepurchaseOfCommonStock", 50.0), Some(5.0));
+        assert_eq!(one("ProceedsFromIssuanceOfCommonStock", 20.0), Some(-2.0));
+        // JNJ's shape: the bare tag holds only acquired IPR&D, the organic total sits under the other
+        let jnj = parse_sec_facts(&json!({"facts": {"us-gaap": {
+            "Revenues": line(1000.0),
+            "ResearchAndDevelopmentExpense": line(5.0),
+            "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost": line(150.0),
+        }}}));
+        assert_eq!(jnj[0].rnd_margin, Some(15.0));
+        let bare = parse_sec_facts(&json!({"facts": {"us-gaap": {"Revenues": line(1000.0)}}}));
+        assert_eq!((bare[0].rnd_margin, bare[0].payout_margin), (None, None));
+        let ifrs = parse_sec_facts(&json!({"facts": {"ifrs-full": {
+            "Revenue": line(1000.0),
+            "ResearchAndDevelopmentExpense": line(80.0),
+            "DividendsPaidClassifiedAsFinancingActivities": line(30.0),
+            "PaymentsToAcquireOrRedeemEntitysShares": line(50.0),
+            "ProceedsFromIssuingShares": line(20.0),
+        }}}));
+        assert_eq!((ifrs[0].rnd_margin, ifrs[0].payout_margin), (Some(8.0), Some(6.0)));
+    }
+
+    /// (#410) The facts13 rename misses every filer at once, so a miss serves the facts12 file (the OLD
+    /// shape, no R&D/payout keys) and never re-caches it under facts13. BRIDGE has no CIK, so it takes
+    /// the same no-socket path to `None` an over-budget filer does. An empty facts12 is no rows.
+    #[tokio::test]
+    async fn sec_facts_rows_bridge_to_the_facts12_file() {
+        pin_throttle();
+        seed_cik_map();
+        let _ = std::fs::remove_file(sec_cache_path("BRIDGE_facts13"));
+        std::fs::write(sec_cache_path("BRIDGE_facts12"), r#"[{"filed": "2021-11-01", "period_end": "2021-09-30", "revenue": 1000.0}]"#)
+            .expect("seed");
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let got = fetch_sec_facts_rows(&client, &urls, "BRIDGE").await.expect("bridged rows");
+        assert_eq!((got[0].revenue, got[0].rnd_margin, got[0].payout_margin), (Some(1000.0), None, None));
+        assert!(!sec_cache_path("BRIDGE_facts13").exists(), "a bridged read must not pin old rows under the new name");
+        std::fs::write(sec_cache_path("BRIDGE_facts12"), "[]").expect("seed");
+        assert!(fetch_sec_facts_rows(&client, &urls, "BRIDGE").await.is_none());
     }
 
     /// (#358) The three zero-denominator guards in `parse_sec_facts`. A zero revenue has no margin,
@@ -7047,7 +7166,7 @@ pub(crate) mod tests {
     async fn fetch_fundamentals_ranked_reads_the_configured_source() {
         pin_throttle();
         seed_cik_map();
-        let p = sec_cache_path("ZZRANKED_facts12");
+        let p = sec_cache_path("ZZRANKED_facts13");
         std::fs::write(&p, r#"[{"filed":"2026-02-01","period_end":"2025-12-31","eps":3.0}]"#).expect("seed sec cache");
         let urls = stub_urls("http://127.0.0.1:1/");
         let client = Client::builder().no_proxy().build().expect("test client");
@@ -8015,8 +8134,10 @@ pub(crate) mod tests {
             assets: Some(3000.0), // (P3) roa's own denominator: 150 net income ÷ 3000 = the 5.0 above
             prior_eps: Some(2.0),
             prior_shares: Some(52.0),
+            rnd_margin: Some(8.0),
+            payout_margin: Some(-6.0), // (#410) a net issuer: the sign must survive the round trip
         };
-        let cache = sec_cache_path("CACHED_facts12");
+        let cache = sec_cache_path("CACHED_facts13");
         let write = |rows: &[SecCacheRow]| {
             std::fs::write(&cache, serde_json::to_string(rows).expect("serialise")).expect("seed");
         };
@@ -8053,10 +8174,14 @@ pub(crate) mod tests {
         assert_eq!(got[0].ebitda, Some(280.0));
         assert_eq!(got[0].currency.as_deref(), Some("USD"), "(FX) money lines are meaningless without it");
         assert_eq!(got[0].net_debt, Some(-100.0), "a NEGATIVE net debt is net cash, not a missing value");
+        assert_eq!((got[0].rnd_margin, got[0].payout_margin), (Some(8.0), Some(-6.0))); // (#410)
 
         // 2. every cached row unparseable -> None, NOT an empty Vec. `Some(vec![])` reads downstream
         //    as "SEC has no fundamentals for this filer" and pins the gap; None refetches.
         write(&[row("not-a-date", "2022-09-30")]);
+        // (#410) the scratch root outlives the run, and a CACHED_facts12 from before the rename would
+        // answer through the bridge: remove it so this phase still reads the facts13 file alone.
+        let _ = std::fs::remove_file(sec_cache_path("CACHED_facts12"));
         assert!(fetch_sec_facts_rows(&client, &urls, "CACHED").await.is_none());
 
         // 3. no cache + a ticker absent from the CIK map -> None before any request. This is the
@@ -8070,7 +8195,7 @@ pub(crate) mod tests {
         //    The remove is load-bearing: the scratch root OUTLIVES the run, so on every rerun after
         //    the first this phase would take the phase-1 cache path, never open the socket, and pass
         //    without testing anything. A test that only works once is a test that works never.
-        let _ = std::fs::remove_file(sec_cache_path("AAPL_facts12"));
+        let _ = std::fs::remove_file(sec_cache_path("AAPL_facts13"));
         let (base, client) = stub_server(
             r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"}
@@ -8080,7 +8205,7 @@ pub(crate) mod tests {
         let got = fetch_sec_facts_rows(&client, &live, "AAPL").await.expect("parsed rows");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].revenue, Some(1000.0));
-        let written = std::fs::read_to_string(sec_cache_path("AAPL_facts12")).expect("cache written");
+        let written = std::fs::read_to_string(sec_cache_path("AAPL_facts13")).expect("cache written");
         assert!(written.contains("2021-09-30"), "the parse must be cached, not just returned: {written}");
     }
 
@@ -8088,7 +8213,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn sec_facts_rows_fall_back_to_the_predecessor_cik() {
         seed_cik_map();
-        let _ = std::fs::remove_file(sec_cache_path("XOM_facts12"));
+        let _ = std::fs::remove_file(sec_cache_path("XOM_facts13"));
         let (base, client, asked) = routed_stub(vec![
             ("CIK0002115436", r#"{"facts": {"dei": {}}}"#),
             ("CIK0000034088", r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
@@ -8100,7 +8225,7 @@ pub(crate) mod tests {
         let got = fetch_sec_facts_rows(&client, &urls, "XOM").await.expect("predecessor rows");
         assert_eq!(got[0].revenue, Some(100.0));
         assert_eq!(asked.try_iter().count(), 2, "holdco first, then the predecessor");
-        let written = std::fs::read_to_string(sec_cache_path("XOM_facts12")).expect("cache written");
+        let written = std::fs::read_to_string(sec_cache_path("XOM_facts13")).expect("cache written");
         assert!(written.contains("2025-12-31"), "{written}");
     }
 
@@ -8508,11 +8633,13 @@ pub(crate) mod tests {
             assets: Some(3000.0),
             prior_eps: Some(2.0),
             prior_shares: Some(52.0),
+            rnd_margin: None,
+            payout_margin: None,
         }])
         .expect("serialise sec rows");
         for t in ["AAA", "BBB"] {
             std::fs::write(fmp.join(format!("{t}.json")), &rows).expect("seed fmp cache");
-            std::fs::write(sec.join(format!("{t}_facts12.json")), &sec_rows).expect("seed sec cache");
+            std::fs::write(sec.join(format!("{t}_facts13.json")), &sec_rows).expect("seed sec cache");
             // The SEC roll-forward TTM sidecar, deliberately DISAGREEING with the 4.0 above. It is
             // consulted only when the selected factor is `earnings_yield`, and the default is
             // `rev_accel` — so 9.0 must never reach `eps_ttm` below. Inverting that gate would let
@@ -8592,7 +8719,7 @@ pub(crate) mod tests {
         // `insider_net_buys_90d`. The default is not, so this long-stale file must go untouched:
         // inverting that gate makes every run evict the SEC cache for every name, which is invisible
         // in the output and just refetches the world. `.sec_cache/<ticker>.json` is the insider
-        // sidecar — `fetch_fundamentals_ranked` reads `<ticker>_facts12.json`, a different file.
+        // sidecar — `fetch_fundamentals_ranked` reads `<ticker>_facts13.json`, a different file.
         std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
         let insider = sec_cache_path("TTLSTALE");
         std::fs::write(&insider, "[]").expect("seed insider sidecar");
