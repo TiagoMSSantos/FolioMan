@@ -243,6 +243,12 @@ pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Opti
             return Some(Cow::Borrowed(v));
         }
     }
+    // (#404) This run already fetched it: `resolve_eu_listings` re-checks every Xetra twin's chart before
+    // the quote path asks for the same one, and without this each kept twin cost a second request.
+    // shortcut: a linear scan, ~13M short compares on a cold 5k-ticker backtest; a HashMap if that shows.
+    if let Some((_, v)) = LONG_CACHE_NEW.lock().unwrap().iter().find(|(t, _)| t == ticker) {
+        return Some(Cow::Owned(v.clone()));
+    }
     let url = urls
         .yahoo_chart
         .replace("{ticker}", ticker)
@@ -4683,7 +4689,8 @@ async fn figi_batch(client: &Client, url: &str, key: Option<&str>, jobs: Vec<Val
 
 /// (EU listing) Resolve each US symbol to its Xetra twin, two OpenFIGI hops and one chart check:
 /// `TICKER`+`exchCode: US` -> `shareClassFIGI` -> every listing of that share class -> the `GY` row.
-/// Cached forever (see [`EU_LISTING_CACHE_PATH`]), so the ~4 minutes this costs is paid once.
+/// The OpenFIGI answers are cached forever (see [`EU_LISTING_CACHE_PATH`]), so the ~4 minutes they cost
+/// is paid once. (#404) The chart check is NOT: every known twin is re-checked on every run.
 ///
 /// Serial and paced rather than fanned out: OpenFIGI allows 25 requests/minute keyless, which is two
 /// orders of magnitude below what `fetch_concurrency()` would throw at it.
@@ -4693,10 +4700,20 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
     let todo: Vec<String> = syms.iter().filter(|s| !cache.contains_key(*s)).cloned().collect();
-    if todo.is_empty() {
-        return cache;
-    }
-    eprintln!("fetch: resolving EU listings for {} new symbols (~{}s, cached forever after)", todo.len(), todo.len().div_ceil(FIGI_BATCH) * 2 * FIGI_PACE_MS as usize / 1000);
+    // (#404) Every KNOWN twin goes back through the chart check below, not just the new ones. Yahoo
+    // restarted some Xetra series in 2026 (1170.DE Arista and 49V.DE Vertiv now start 2026-08-20), and a
+    // twin checked once and cached forever kept 84 established US names on a months-old chart that the
+    // history gate refuses, while the backtest graded them on their full US series. A demoted twin is
+    // stored as a miss like any other, so `EU_LISTING_CACHE_PATH`'s ceiling applies: delete the file
+    // once those series regrow past five years (~2031).
+    let mut candidates: Vec<(String, String)> =
+        syms.iter().filter_map(|s| cache.get(s).filter(|e| !e.is_empty()).map(|e| (s.clone(), e.clone()))).collect();
+    eprintln!(
+        "fetch: resolving EU listings for {} new symbols (~{}s, cached forever after), re-checking {} known twins",
+        todo.len(),
+        todo.len().div_ceil(FIGI_BATCH) * 2 * FIGI_PACE_MS as usize / 1000,
+        candidates.len()
+    );
     let mut share_figis: Vec<(String, String)> = Vec::new();
     // Pace BETWEEN requests, never before the first one of a hop: the leading sleep bought nothing and
     // cost 2.5s on every run, including the single-batch case where no pacing is needed at all.
@@ -4726,7 +4743,6 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
             }
         }
     }
-    let mut candidates: Vec<(String, String)> = Vec::new();
     for chunk in share_figis.chunks(FIGI_BATCH) {
         // hop 2 always follows hop 1's last request, so this one paces from its very first batch —
         // hence a leading sleep here where hop 1 skips its first. ONE sleep per chunk, not two: a
@@ -4746,11 +4762,23 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
             }
         }
     }
-    // Chart check LAST, and through the same disk-cached call the quote path uses — an accepted twin
-    // costs nothing extra because this warms the very entry that fetch is about to want.
-    for (sym, eu) in candidates {
-        let ok = matches!(chart_json_long(client, urls, &eu).await, Some(raw) if eu_chart_ok(&raw));
-        cache.insert(sym, if ok { eu } else { String::new() });
+    // Chart check LAST, and through the same call the quote path uses: a twin that clears costs nothing
+    // extra, because `chart_json_long` serves the quote path this run's fetch. Fanned out, since every
+    // known twin (~266 on CI) now passes through here on every run.
+    let checked: Vec<(String, String, Option<bool>)> = stream::iter(candidates)
+        .map(|(sym, eu)| async move {
+            let ok = chart_json_long(client, urls, &eu).await.map(|raw| eu_chart_ok(&raw));
+            (sym, eu, ok)
+        })
+        .buffer_unordered(fetch_concurrency())
+        .collect()
+        .await;
+    for (sym, eu, ok) in checked {
+        // (#404) A chart that never ANSWERED proves nothing, so a Yahoo blip must not undo a swap: a known
+        // twin keeps it, and a new one stays unasked for another run. Only an answer that fails demotes.
+        if let Some(ok) = ok {
+            cache.insert(sym, if ok { eu } else { String::new() });
+        }
     }
     if let Ok(json) = serde_json::to_string(&cache) {
         let _ = std::fs::write(crate::config::data_path(EU_LISTING_CACHE_PATH), json);
@@ -7639,8 +7667,48 @@ pub(crate) mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
         assert_eq!(on_disk["TSLA"], "", "the miss is persisted, so it is never asked again");
         assert_eq!(on_disk["GOOGL"], "ABEA.DE");
+
+        // 3. (#404) every KNOWN twin is re-checked. A restarted Xetra series (four months, the 1170.DE
+        // shape) falls back to its US line and the demotion is persisted; a twin whose chart still clears
+        // keeps its swap. Phases 1 and 2 are the other half: a chart that never answered (the dead port)
+        // left GOOGL's swap alone.
+        let month = |i: i32| (NaiveDate::from_ymd_opt(2020 + i / 12, 1 + (i % 12) as u32, 1).expect("date"), 1.0);
+        let (long, cut): (Vec<_>, Vec<_>) = ((0..72).map(month).collect(), (76..80).map(month).collect());
+        let (base, client, _) =
+            routed_stub(vec![("KEPT.DE", chart_body(&long, &[], "EUR")), ("CUT.DE", chart_body(&cut, &[], "EUR"))]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        std::fs::write(&path, r#"{"KEPTUS":"KEPT.DE","CUTUS":"CUT.DE"}"#).expect("seed cache");
+        let got = resolve_eu_listings(&client, &urls, &["KEPTUS".to_string(), "CUTUS".to_string()]).await;
+        assert_eq!(got["KEPTUS"], "KEPT.DE", "a twin whose chart still clears keeps its swap");
+        assert_eq!(got["CUTUS"], "", "a restarted Xetra series falls back to the US line");
+        let on_disk: HashMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
+        assert_eq!((on_disk["KEPTUS"].as_str(), on_disk["CUTUS"].as_str()), ("KEPT.DE", ""), "the demotion is persisted");
         // Safe to delete again: `seed_cik_map` no longer reads this file, it sets `EU_TO_US` directly.
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// (#404) A ticker this run already fetched is served from memory. The Xetra re-check fetches every
+    /// twin's chart before the quote path asks for the same one; without the reuse each kept twin cost two
+    /// requests. The reused payload must be that ticker's OWN, not whichever fetch came last.
+    ///
+    /// The tickers are new every run: another test's `long_cache_save` persists this run's fetches into
+    /// the scratch root, and a name the disk cache already holds would be served without any request.
+    #[tokio::test]
+    async fn chart_json_long_serves_a_repeat_ask_from_this_runs_fetch() {
+        let d = NaiveDate::from_ymd_opt(2026, 1, 1).expect("date");
+        let run = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("clock").as_nanos();
+        let [ta, tb]: [&'static str; 2] = ["A", "B"].map(|k| &*Box::leak(format!("REUSE{k}{run}.DE").into_boxed_str()));
+        let (base, client, asked) =
+            routed_stub(vec![(ta, chart_body(&[(d, 1.0)], &[], "EUR")), (tb, chart_body(&[(d, 2.0)], &[], "EUR"))]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        let a = chart_json_long(&client, &urls, ta).await.expect("fetched").get().to_string();
+        let b = chart_json_long(&client, &urls, tb).await.expect("fetched").get().to_string();
+        assert_ne!(a, b, "two tickers, two payloads");
+        assert_eq!(chart_json_long(&client, &urls, ta).await.expect("reused").get(), a);
+        assert_eq!(asked.try_iter().count(), 2, "the repeat ask cost no request");
     }
 
     /// (#397) The venue table on the shapes OpenFIGI served for the Vanguard and Amundi S&P 500
