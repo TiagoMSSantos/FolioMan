@@ -4800,6 +4800,34 @@ buy_heuristic:
                                  #   the factor split what then won from what lost — and the answer is no. Still open, and needing a new
                                  #   SEC tag (a `_facts` bump): R&D intensity (Chan-Lakonishok-Sougiannis 2001).
                                  #   REVERT RULE: none — a measurement, not a value. Drop the name from `FUND_FACTORS` to restore 24.
+                                 # ── (#407) MEASURED 2026-09-28 — CASH PROFITABILITY AND SALES-GROWTH STABILITY, THE LAST TWO BUILDABLE ──
+                                 #   WHAT: `cf_assets` = free cash flow ÷ total assets, % (`fcf_margin` · revenue ÷ assets; Ball-Gerakos-
+                                 #   Linnainmaa-Nikolaev 2016, post-capex because the rows carry no operating cash flow alone). `rev_stability` =
+                                 #   −sample std of YoY revenue growth over the last `yrs`+1 rows, pairs 300-430 days apart only, >= 3 values
+                                 #   (Mohanram 2005 G-score signal G5 — the growth-stock screen, and this book is growth stocks). Both in
+                                 #   `FUND_FACTORS` (25 -> 27) and the held-book list. Weighted nowhere, gate nothing.
+                                 #   WHY THESE TWO: a second web sweep mapped MAX/lottery and frog-in-the-pan (blocked: no daily lane, #127),
+                                 #   insider buying (Item 4, graded), 12-1 and residual momentum (mom121 refused; residual is a 1-month effect
+                                 #   against a 20y hold), industry momentum (#95: only today's GICS label exists), PEAD (decayed, 60-day
+                                 #   horizon), Piotroski/NOA (value-stock screens needing current-ratio/equity tags). These two were the only
+                                 #   untested literature factors the as-of rows can already build.
+                                 #   BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at
+                                 #   BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. Priors: weak for both — gp_assets 0.28/
+                                 #   0.41 and fcf_margin flat for the first, margin_stability dead for the second.
+                                 #   RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after. 12y: windows scored
+                                 #   2772. 8y: 6180. The control reproduced (#405): gross_margin 0.25/0.34, peg_yield 0.91/0.71.
+                                 #                       12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #     cf_assets           0.42   59/7        0.44  122/22    SAME   backwards
+                                 #     rev_stability       0.58   48/7        0.75  111/22    SAME   right side (stable growers won)
+                                 #   VERDICT: BOTH DEAD. cf_assets is under the bar at both horizons, on the backwards side the quality family
+                                 #   (#159)/(#165)/(#405) already holds: the held book's losers carry MORE free cash per unit of assets. Cash
+                                 #   backing does not rescue profitability on this ruler.
+                                 #   rev_stability is the NEAR MISS, and it stays DEAD because the bar was written first: the same side at
+                                 #   both horizons, |d| 0.25 at 8y, but 0.08 at 12y (48/7 names; one loser moves it). Its held-book row
+                                 #   (+16.4%/yr n=56 at 12y, +17.3%/yr n=140 at 8y) trails the n=67/151 rows because it covers fewer names,
+                                 #   not because it picks worse — the (#405) vacuous-set caveat applies. A later round may re-ask it ONLY on a
+                                 #   new horizon or a longer forward record, never on this pair re-cut.
+                                 #   REVERT RULE: none — measurements, not values. Drop both names from `FUND_FACTORS` to restore 25.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

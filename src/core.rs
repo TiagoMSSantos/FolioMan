@@ -3708,6 +3708,16 @@ pub struct FundRow {
     pub currency: Option<String>,
 }
 
+/// Negated sample standard deviation, the stability factors' shared arithmetic. ≥3 values or None:
+/// two points are a line, not a dispersion.
+fn neg_sample_std(vals: &[f64]) -> Option<f64> {
+    (vals.len() >= 3).then(|| {
+        let n = vals.len() as f64;
+        let mean = vals.iter().sum::<f64>() / n;
+        -(vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+    })
+}
+
 /// As-of (point-in-time) join: the latest statement that was already FILED on or before `cutoff`.
 /// THE look-ahead guard for the fundamentals backtest — at a given cutoff a strategy could only have
 /// seen filings public by then. `None` if nothing was filed yet. O(n), order-independent (FMP returns
@@ -3787,6 +3797,16 @@ pub struct FundFactors {
     // (#165) table; the asset denominator is the one the paper says pays alongside value. Measured by the
     // AUC table, weighted nowhere. None when any leg is missing or assets are not positive, never 0.
     pub gp_assets: Option<f64>,
+    // (#407) CASH-BASED PROFITABILITY (Ball-Gerakos-Linnainmaa-Nikolaev 2016), proxied: free cash flow ÷
+    // total assets, %, off the as-of row (`fcf_margin` · revenue ÷ assets). The paper's measure is pre-capex
+    // with R&D added back; the rows carry neither operating cash flow nor R&D alone, so this is the
+    // post-capex cut. Measured by the AUC table, weighted nowhere. None on a missing leg or assets <= 0.
+    pub cf_assets: Option<f64>,
+    // (#407) SALES-GROWTH STABILITY (Mohanram 2005, G-score signal G5): −sample std of year-over-year
+    // revenue growth, points, over the last `yrs`+1 as-of rows. Only row pairs ~1y apart count, so a
+    // skipped fiscal year never reads as a doubled rate and quarterly (FMP) rows read None. ≥3 growth
+    // values or None. The growth-stock screen's own stability term, which `margin_stability` is not.
+    pub rev_stability: Option<f64>,
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -3930,11 +3950,25 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             rows.iter().filter(|r| r.filed <= cutoff).filter_map(|r| r.net_margin.map(|m| (r.period_end, m))).collect();
         ms.sort_by_key(|(e, _)| *e);
         let vals: Vec<f64> = ms.iter().rev().take(yrs as usize + 1).map(|(_, m)| *m).collect();
-        (vals.len() >= 3).then(|| {
-            let n = vals.len() as f64;
-            let mean = vals.iter().sum::<f64>() / n;
-            -(vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
-        })
+        neg_sample_std(&vals)
+    };
+    // (#407) revenue-growth stability: the same recipe on YoY revenue growth. The last `yrs`+1 as-of rows,
+    // oldest-first; a pair counts only when its period ends sit 300-430 days apart. The growth is the RATIO
+    // in points, not ratio − 1: a shift never moves a std, so the − 1 would be arithmetic nothing can see.
+    let rev_stability = {
+        let mut rs: Vec<(NaiveDate, f64)> = rows
+            .iter()
+            .filter(|r| r.filed <= cutoff)
+            .filter_map(|r| r.revenue.filter(|v| *v > 0.0).map(|v| (r.period_end, v)))
+            .collect();
+        rs.sort_by_key(|(e, _)| *e);
+        let recent = &rs[rs.len().saturating_sub(yrs as usize + 1)..];
+        let growth: Vec<f64> = recent
+            .windows(2)
+            .filter(|w| (300..=430).contains(&(w[1].0 - w[0].0).num_days()))
+            .map(|w| w[1].1 / w[0].1 * 100.0)
+            .collect();
+        neg_sample_std(&growth)
     };
     // (P2) accrual gap = −(eps − fcf_ps) / max(|eps|, floor). A filer earning 3.00 a share on 3.00 of
     // per-share free cash flow scores 0; one earning 3.00 on 0.50 of cash scores −0.83.
@@ -4010,6 +4044,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         accrual_gap,
         asset_growth,
         gp_assets: now.and_then(|r| Some(r.gross_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
+        cf_assets: now.and_then(|r| Some(r.fcf_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
+        rev_stability,
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -4530,6 +4566,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "accrual_gap" => f.accrual_gap,                   // (P2) −(earnings − cash earnings)/|earnings|: how cash-backed the profit is
         "asset_growth" => f.asset_growth,                 // (P3) −CAGR of total assets: how fast the balance sheet is being expanded
         "gp_assets" => f.gp_assets,                       // (#405) gross profit ÷ total assets (Novy-Marx): measured, unweighted
+        "cf_assets" => f.cf_assets,                       // (#407) free cash flow ÷ total assets (Ball et al.): measured, unweighted
+        "rev_stability" => f.rev_stability,               // (#407) −std of YoY revenue growth (Mohanram G5): measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -5324,6 +5362,8 @@ mod tests {
             accrual_gap: Some(23.0),
             asset_growth: Some(24.0),
             gp_assets: Some(25.0),
+            cf_assets: Some(26.0),
+            rev_stability: Some(27.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -5345,6 +5385,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "accrual_gap"), Some(23.0)); // (P2) a FOURTH distinct field — not an alias of fcf_margin, which measures the level rather than the gap to earnings
         assert_eq!(select_fund_factor(&f, "asset_growth"), Some(24.0)); // (P3) the balance-sheet twin of rev_cagr, and NOT rev_cagr — a filer can grow assets while revenue stalls
         assert_eq!(select_fund_factor(&f, "gp_assets"), Some(25.0)); // (#405) NOT gross_margin: same numerator, the other denominator
+        assert_eq!(select_fund_factor(&f, "cf_assets"), Some(26.0)); // (#407) NOT fcf_margin: same numerator, the asset denominator
+        assert_eq!(select_fund_factor(&f, "rev_stability"), Some(27.0)); // (#407) NOT margin_stability: growth dispersion, not margin
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -5796,6 +5838,8 @@ mod tests {
         let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
         let f = fund_factors(&rows, cutoff, 5);
         assert!((f.margin_stability.unwrap() + 10.0).abs() < 1e-9);
+        // `yrs` 2 takes exactly the 3 rows it needs: the window is yrs + 1, never yrs − 1 or yrs
+        assert!((fund_factors(&rows, cutoff, 2).margin_stability.unwrap() + 10.0).abs() < 1e-9);
         // only 2 net_margin values -> None
         assert_eq!(fund_factors(&rows[..2], cutoff, 5).margin_stability, None);
         // as-of guard: cutoff before the 2024 filing leaves 2 rows -> None, no look-ahead
@@ -5899,6 +5943,49 @@ mod tests {
         assert_eq!(fund_factors(&[r(Some(40.0), None)], cutoff, 5).gp_assets, None);
         assert_eq!(fund_factors(&[r(Some(40.0), Some(0.0))], cutoff, 5).gp_assets, None);
         assert_eq!(fund_factors(&[r(Some(40.0), Some(-5.0))], cutoff, 5).gp_assets, None);
+    }
+
+    /// (#407) `cf_assets` is free cash flow over total assets on the as-of row: a 10% FCF margin on 100
+    /// of revenue against 50 of assets is 20%. A missing leg or a non-positive asset base is None, never 0.
+    #[test]
+    fn cf_assets_is_free_cash_flow_over_assets() {
+        let r = |fcf: Option<f64>, assets: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            fcf_margin: fcf,
+            assets,
+            revenue: Some(100.0),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        assert_eq!(fund_factors(&[r(Some(10.0), Some(50.0))], cutoff, 5).cf_assets, Some(20.0));
+        assert_eq!(fund_factors(&[r(Some(-10.0), Some(50.0))], cutoff, 5).cf_assets, Some(-20.0));
+        assert_eq!(fund_factors(&[r(None, Some(50.0))], cutoff, 5).cf_assets, None);
+        assert_eq!(fund_factors(&[r(Some(10.0), None)], cutoff, 5).cf_assets, None);
+        assert_eq!(fund_factors(&[r(Some(10.0), Some(0.0))], cutoff, 5).cf_assets, None);
+    }
+
+    /// (#407) `rev_stability`: revenue 100, 100, 150, 300 grows 0, 50, 100 -> sd 50 -> -50. A 2y gap
+    /// (2019 -> 2021) is not a YoY pair and drops out; a zero revenue is no base; fewer than 3 growth
+    /// values, a `yrs` window too short to hold 3, and rows filed after the cutoff are all None.
+    #[test]
+    fn rev_stability_is_negated_growth_dispersion() {
+        let r = |y: i32, rev: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(rev),
+            ..Default::default()
+        };
+        let rows = [r(2016, 100.0), r(2017, 100.0), r(2018, 150.0), r(2019, 300.0), r(2021, 600.0)];
+        let cutoff = NaiveDate::from_ymd_opt(2022, 6, 1).unwrap();
+        assert_eq!(fund_factors(&rows, cutoff, 5).rev_stability, Some(-50.0));
+        assert_eq!(fund_factors(&rows[..3], cutoff, 5).rev_stability, None); // 2 growth values
+        assert_eq!(fund_factors(&rows, cutoff, 3).rev_stability, None); // last 4 rows: 50, 100, then the gap
+        assert_eq!(fund_factors(&rows[..4], cutoff, 3).rev_stability, Some(-50.0)); // exactly 3 values fits yrs 3
+        let before = NaiveDate::from_ymd_opt(2019, 6, 1).unwrap(); // 2016-2018 filed: 2 growth values
+        assert_eq!(fund_factors(&rows, before, 5).rev_stability, None);
+        let zero = [r(2016, 0.0), r(2017, 100.0), r(2018, 100.0), r(2019, 150.0), r(2020, 300.0)];
+        assert_eq!(fund_factors(&zero, cutoff, 5).rev_stability, Some(-50.0)); // the 0 row is skipped, not divided by
     }
 
     /// `income_snapshot`: picks the newest COMPLETE year (1 = annual filing, 4+ = full quarterly year;
