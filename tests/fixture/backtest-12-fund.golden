@@ -94,7 +94,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     noa                   winners n=6    med    -64.50   losers n=11   med    -83.26   gap     18.76   AUC  0.97
     op_leverage           winners n=3    med     36.73   losers n=11   med     20.80   gap     15.93   AUC  0.94
     composite             winners n=3    med     44.20   losers n=9    med     23.78   gap     20.42   AUC  1.00
-    (29 of 41 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (29 of 44 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -314,6 +314,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   goodwill       TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
   org_cap        TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
   int_yield      TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
+  lynch_yield    TEST edge +108.6 (w 0.249)  OOS +0.48 | -0.14
+  sgr_yield      TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
+  exp_neg        TEST edge +239.1 (w 0.249)  OOS +0.48 | -0.14
   composite      TEST edge -28.4 (w 0.249)  OOS +0.13 | -0.07
   -> WINNER: gross_margin. Set `growth_fund_factor: gross_margin` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm.
   -> validated growth_fund_weight for gross_margin: 0.249 (at growth_fund_cap 300)
@@ -435,7 +438,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   small_pct      book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
   noa            book +0.7%/yr  excess -10.9  win 12%  worst -18.5  OOS -7.4/-14.5   (n=17)
   op_leverage    book -2.8%/yr  excess -14.3  win 0%  worst -18.5  OOS -12.1/-16.6   (n=14)
-  no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
+  lynch_yield    book -4.0%/yr  excess -15.8  win 0%  worst -17.0  OOS -17.0/-15.2   (n=3)
+  exp_neg        book -4.0%/yr  excess -15.8  win 0%  worst -17.0  OOS -17.0/-15.2   (n=3)
+  no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
   (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.
    every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,
    which is DERIVED (EBIT ÷ equity+net debt), not the premium `FundRow::roic` that never populates.)

@@ -98,7 +98,7 @@ pub struct Snapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peg: Vec<(String, f64, f64)>,
     /// (#415) THE FACTOR SHADOW: `(ticker, factor, value)` for every name in `peg` that carries one of
-    /// the [`FACTORS`] — the backtest CANDIDATEs (#410)/(#412)/(#413) that nothing graded forward. The
+    /// the [`FACTORS`] — the backtest CANDIDATEs (#410)/(#412)/(#413)/(#416) that nothing graded forward. The
     /// factor is a tag, not a column, so the next CANDIDATE is one more const entry and no schema
     /// change. Only present, finite values are written. No price, for the reason `peg` has none.
     /// Same serde contract as `peg`.
@@ -781,12 +781,15 @@ const PEG_HEADER: &str =
     "  DATE            AGE    N  LADDER CHEAP  LADDER RICH    PIN CHEAP     PIN RICH   PIN-LADDER";
 
 /// (#415) The factors the shadow journals, each with its verdict label (a `&'static str` because
-/// [`Pairs`] borrows its labels). High is the good end for all three: two are yields, and `mscore` is
-/// the Beneish M-score NEGATED, so its top half is the half LEAST like a manipulator.
-pub(crate) const FACTORS: [(&str, &str); 3] = [
+/// [`Pairs`] borrows its labels). High is the good end for all five: four are yields, and `mscore` is
+/// the Beneish M-score NEGATED, so its top half is the half LEAST like a manipulator. (#416) added the
+/// two PEG-family CANDIDATEs, the same earnings yield over EPS growth and over ROE · retention.
+pub(crate) const FACTORS: [(&str, &str); 5] = [
     ("rnd_yield", "rnd_yield top minus peg cheap"),
     ("int_yield", "int_yield top minus peg cheap"),
     ("mscore", "mscore top minus peg cheap"),
+    ("lynch_yield", "lynch_yield top minus peg cheap"),
+    ("sgr_yield", "sgr_yield top minus peg cheap"),
 ];
 
 /// (#415) The `fac` journal for one run: every [`FACTORS`] value the (#332) cohort's names carry, read
@@ -823,7 +826,7 @@ fn fac_rows<'a>(snap: &'a Snapshot, factor: &str, by_factor: bool) -> Rows<'a> {
     ranked.iter().map(|(t, _)| (*t, journal_px(snap, t), 1.0)).collect()
 }
 
-/// (#415) The FACTOR SHADOW: the forward half of the three backtest CANDIDATEs. Each factor ranks the
+/// (#415) The FACTOR SHADOW: the forward half of the backtest CANDIDATEs. Each factor ranks the
 /// same names peg_yield ranks, and its top half is held against peg's cheap half over the same window,
 /// so the market leg cancels. It asks the one question a `growth_fund_extra` reopen would need
 /// answered out of sample: does sorting on F pick better names than the shipped sort? Top halves only,
@@ -854,12 +857,13 @@ fn fac_section(
     }
     format!(
         "\n  Factor shadow — the (#332) PEG cohort ranked by each measured-but-unshipped backtest CANDIDATE\n  \
-         ((#410) rnd_yield, (#413) int_yield, (#412) mscore), its top half held against peg_yield's cheap half\n  \
-         on the SAME names. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\
+         ((#410) rnd_yield, (#413) int_yield, (#412) mscore, (#416) lynch_yield and sgr_yield), its top half held\n  \
+         against peg_yield's cheap half on the SAME names. EUR seat, price-only. NOT advice.\n  \
+         Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
          BACKTEST re-grade on `universe fund pit` — never a direct ship — when {REOPEN_LINES}+ monthly lines AND\n  \
-         {REOPEN_LINES}+ chained links each read mean AND median above 0. Three rows read at once, so one can\n  \
+         {REOPEN_LINES}+ chained links each read mean AND median above 0. Five rows read at once, so one can\n  \
          clear by chance; the backtest re-grade is the guard against that."
     )
 }
@@ -1895,7 +1899,13 @@ mod tests {
             q.fund = f;
             q
         };
-        let full = crate::core::FundFactors { rnd_yield: Some(1.0), int_yield: Some(f64::NAN), mscore: Some(-2.0), ..Default::default() };
+        let full = crate::core::FundFactors {
+            rnd_yield: Some(1.0),
+            int_yield: Some(f64::NAN),
+            mscore: Some(-2.0),
+            sgr_yield: Some(3.0), // (#416)
+            ..Default::default()
+        };
         let quotes = [
             with("C", Some(crate::core::FundFactors { rnd_yield: Some(7.0), ..Default::default() })),
             with("A", Some(full)),
@@ -1904,7 +1914,11 @@ mod tests {
         let peg: Vec<(String, f64, f64)> = ["A", "B", "Z"].map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
         assert_eq!(
             fac_journal(&peg, &quotes),
-            vec![("A".to_string(), "rnd_yield".to_string(), 1.0), ("A".to_string(), "mscore".to_string(), -2.0)]
+            vec![
+                ("A".to_string(), "rnd_yield".to_string(), 1.0),
+                ("A".to_string(), "mscore".to_string(), -2.0),
+                ("A".to_string(), "sgr_yield".to_string(), 3.0),
+            ]
         );
     }
 

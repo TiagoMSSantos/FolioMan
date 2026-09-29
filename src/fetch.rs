@@ -1503,6 +1503,10 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // needs no price: `fund_factors` already fills it.
         ff.rnd_yield = price.and_then(|p| core::ev_ebitda_yield(ff.rnd_ttm, ff.shares_ttm, None, p));
         ff.int_yield = price.and_then(|p| core::ev_ebitda_yield(ff.int_book_ttm, ff.shares_ttm, None, p));
+        // (#416) the two PEG-family CANDIDATEs, the same yield over EPS growth and over ROE · retention,
+        // again exactly as backtest.rs stamps them. `exp_neg` read DEAD, so it stays backtest-only.
+        ff.lynch_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, ff.eps_growth, p));
+        ff.sgr_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, core::sgr_pct(&ff), p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
         // (G+) carry the whole struct so `growth_fund_extra`'s named terms resolve here too. Set AFTER
         // the price-dependent fields above, or the extra terms would read a half-built earnings_yield.

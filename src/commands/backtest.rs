@@ -1416,6 +1416,14 @@ pub async fn run(args: Vec<String>) {
                             // this cutoff, so every arm of that switch is reconstructable as-of and
                             // train==serve still holds. Keep this in lockstep with fetch.rs's enrich.
                             f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, picks::peg_cagr_pct(&quote, tuning), p));
+                            // (#416) the same yield over three other growth terms: the chained EPS CAGR
+                            // (Lynch), ROE · retention (sustainable growth), and the earnings-yield CAGR,
+                            // EPS against price over the SAME 5y (FUND_LOOKBACK_YRS), high = de-rated.
+                            // shortcut: the 5Y leg is in trading currency and the EPS in the filer's, so an
+                            // ADR's FX drift leaks into exp_neg; the pool is US filers bar a handful.
+                            f.lynch_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, f.eps_growth, p));
+                            f.sgr_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, core::sgr_pct(f), p));
+                            f.exp_neg = core::ey_cagr(f.eps_growth, picks::perf_pct(&quote, "5Y").map(|c| core::cagr(c, 5.0)));
                         }
                         // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                         // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -2362,7 +2370,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 41] = [
+const FUND_FACTORS: [&str; 44] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2397,6 +2405,7 @@ const FUND_FACTORS: [&str; 41] = [
     "noa", "op_leverage", // (#411) net operating assets (HHTZ, negated), operating leverage (Novy-Marx); 34 -> 36
     "mscore", "sbc", "goodwill", // (#412) Beneish M, SBC ÷ revenue, goodwill ÷ assets, all negated; 36 -> 39
     "org_cap", "int_yield", // (#413) Eisfeldt-Papanikolaou org capital ÷ assets, EKP intangible value; 39 -> 41
+    "lynch_yield", "sgr_yield", "exp_neg", // (#416) PEG over EPS growth, over ROE·retention, and de-rating; 41 -> 44
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4325,6 +4334,10 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("goodwill", |f| f.goodwill),
         ("org_cap", |f| f.org_cap),
         ("int_yield", |f| f.int_yield),
+        // (#416) the PEG family: peg_yield's scale (~0-500) for the first two, %/yr for the third.
+        ("lynch_yield", |f| f.lynch_yield),
+        ("sgr_yield", |f| f.sgr_yield),
+        ("exp_neg", |f| f.exp_neg),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();

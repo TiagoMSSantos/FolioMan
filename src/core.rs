@@ -3872,6 +3872,12 @@ pub struct FundFactors {
     pub payout_ttm: Option<f64>,     // (#410) as-of net payout level, reporting currency; negative = net issuer
     pub rnd_yield: Option<f64>,      // (#410) R&D ÷ market cap, % (high = R&D-rich). PROBE-ONLY, None live
     pub payout_yield: Option<f64>,   // (#410) net payout ÷ market cap, %, sign kept. PROBE-ONLY, None live
+    // (#416) THE PEG GROWTH TERM, MEASURED THREE OTHER WAYS. The shipped `peg_yield` multiplies by a PRICE
+    // CAGR, so a re-rating counts as growth. All three need a price, so the backtest fills them; the
+    // live enrich stamps the two CANDIDATEs for the (#415) shadow only, weighted nowhere.
+    pub lynch_yield: Option<f64>,    // (#416) earnings_yield · chained EPS CAGR (Lynch's PEG). Shadow only
+    pub sgr_yield: Option<f64>,      // (#416) earnings_yield · `sgr_pct` (sustainable growth). Shadow only
+    pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4200,6 +4206,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         payout_ttm: now.and_then(|r| Some(r.payout_margin? * r.revenue? / 100.0)),
         rnd_yield: None,
         payout_yield: None,
+        lynch_yield: None, // (#416) all three need a price
+        sgr_yield: None,
+        exp_neg: None,
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -4485,6 +4494,27 @@ pub fn peg_yield_from_pe(pe: f64, cagr: Option<f64>) -> Option<f64> {
     peg_yield((pe > 0.0).then(|| 100.0 / pe), cagr, 100.0)
 }
 
+/// (#416) Sustainable growth = ROE · retention, %/yr: what a firm can compound out of its own earnings.
+/// Retention is NET-PAYOUT retention, 1 − (dividends + buybacks − issuance) ÷ net income, clamped to
+/// [0, 1]: a name returning more than it earns retains nothing, a net issuer retains everything.
+/// shortcut: the rows carry net payout, not dividends alone, so buybacks count as payout (Boudoukh's
+/// total-payout reading). None on a missing leg or a non-positive net income (no ratio to take).
+pub fn sgr_pct(f: &FundFactors) -> Option<f64> {
+    let ni = f.net_margin? * f.revenue_ttm? / 100.0;
+    if ni <= 0.0 {
+        return None;
+    }
+    Some(f.roe? * (1.0 - f.payout_ttm? / ni).clamp(0.0, 1.0))
+}
+
+/// (#416) Earnings-yield CAGR, %/yr, from an EPS CAGR and a price CAGR over one window:
+/// (1 + g_eps) ÷ (1 + g_price) − 1. Positive = earnings outgrew price, the multiple CONTRACTED: the
+/// negated "intangible return" Daniel-Titman (JF 2006) find reverses. None on a missing leg.
+pub fn ey_cagr(eps_cagr: Option<f64>, price_cagr: Option<f64>) -> Option<f64> {
+    let q = (1.0 + eps_cagr? / 100.0) / (1.0 + price_cagr? / 100.0);
+    q.is_finite().then_some((q - 1.0) * 100.0)
+}
+
 /// One fiscal year of an income statement, rolled up from the quarterly `FundRow`s — the `report`
 /// command's display row. Margins are %, revenue/eps in native units. `quarters` < 4 = an incomplete
 /// fiscal year (most-recent partial, or a non-December fiscal-year-end straddling the calendar split);
@@ -4747,6 +4777,9 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "small_pct" => f.small_pct,                       // (#409) same-date size percentile, high = small
         "rnd_yield" => f.rnd_yield,                       // (#410) R&D ÷ market cap: measured, unweighted
         "payout_yield" => f.payout_yield,                 // (#410) net payout ÷ market cap, sign kept
+        "lynch_yield" => f.lynch_yield,                   // (#416) earnings_yield · EPS CAGR: measured, unweighted
+        "sgr_yield" => f.sgr_yield,                       // (#416) earnings_yield · ROE · retention: measured, unweighted
+        "exp_neg" => f.exp_neg,                           // (#416) earnings-yield CAGR (multiple contraction): measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -5508,6 +5541,29 @@ mod tests {
         assert_eq!(crate::config::BuyHeuristic::default().endpoint_smooth_days, 1);
     }
 
+    /// (#416) the two growth readings the backtest prices through `peg_yield`.
+    #[test]
+    fn sgr_and_ey_cagr_read_the_growth_term() {
+        let near = |a: Option<f64>, b: f64| assert!((a.unwrap() - b).abs() < 1e-9, "{a:?} vs {b}");
+        let f = |pay: f64, nm: f64| FundFactors {
+            roe: Some(20.0),
+            net_margin: Some(nm),
+            revenue_ttm: Some(1000.0),
+            payout_ttm: Some(pay),
+            ..Default::default()
+        };
+        near(sgr_pct(&f(40.0, 10.0)), 12.0); // net income 100, retains 60% of a 20% ROE
+        near(sgr_pct(&f(150.0, 10.0)), 0.0); // pays out more than it earns: retains nothing
+        near(sgr_pct(&f(-50.0, 10.0)), 20.0); // net issuer: retains everything, never more
+        assert_eq!(sgr_pct(&f(40.0, 0.0)), None); // no net income, no ratio
+        assert_eq!(sgr_pct(&f(40.0, -5.0)), None);
+        assert_eq!(sgr_pct(&FundFactors { payout_ttm: None, ..f(40.0, 10.0) }), None);
+        near(ey_cagr(Some(21.0), Some(10.0)), 10.0); // 1.21 / 1.10 = 1.10: the multiple fell 10%/yr
+        near(ey_cagr(Some(5.0), Some(5.0)), 0.0);
+        assert_eq!(ey_cagr(None, Some(5.0)), None);
+        assert_eq!(ey_cagr(Some(5.0), None), None);
+    }
+
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None
     /// (neutral) so a typo'd config can never panic the score. Pure, no network.
     #[test]
@@ -5564,6 +5620,9 @@ mod tests {
             payout_ttm: Some(110.0),
             rnd_yield: Some(33.0),
             payout_yield: Some(34.0),
+            lynch_yield: Some(42.0),
+            sgr_yield: Some(43.0),
+            exp_neg: Some(44.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -5601,6 +5660,9 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "goodwill"), Some(39.0));
         assert_eq!(select_fund_factor(&f, "org_cap"), Some(40.0)); // (#413)
         assert_eq!(select_fund_factor(&f, "int_yield"), Some(41.0));
+        assert_eq!(select_fund_factor(&f, "lynch_yield"), Some(42.0)); // (#416)
+        assert_eq!(select_fund_factor(&f, "sgr_yield"), Some(43.0));
+        assert_eq!(select_fund_factor(&f, "exp_neg"), Some(44.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS

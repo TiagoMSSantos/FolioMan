@@ -5100,6 +5100,42 @@ buy_heuristic:
                                  #  signal reopens a BACKTEST re-grade of that factor as a `growth_fund_extra` term on `universe fund pit`, never a
                                  #  direct ship. Earliest: ~2027-10.
                                  #  REVERT RULE: delete the `fac` field and section; older lines read back without it.
+                                 #── (#416) MEASURED 2026-09-29 — THE PEG GROWTH TERM THREE OTHER WAYS: LYNCH/SGR CANDIDATE, DE-RATING DEAD ──
+                                 #  WHAT: the shipped peg_yield is earnings_yield · a PRICE CAGR (`picks::peg_cagr_pct`, the longest 5y+ leg), so a
+                                 #  re-rating counts as growth. Three FUND_FACTORS rows price the same yield over other growth terms, as-of, same close
+                                 #  and currency: lynch_yield = earnings_yield · the chained 5y EPS CAGR (Lynch's PEG); sgr_yield = earnings_yield ·
+                                 #  `core::sgr_pct` = ROE · net-payout retention, 1 − net payout ÷ net income clamped to [0, 1] (the rows carry net
+                                 #  payout, not dividends, so buybacks count as payout); exp_neg = `core::ey_cagr` = (1 + EPS CAGR) ÷ (1 + 5Y price
+                                 #  CAGR) − 1, high = the multiple contracted. All off cached rows, no refetch. FUND_FACTORS 41 -> 44, so every Šidák
+                                 #  band tightens again.
+                                 #  WHY: an eleventh sweep. Chan-Karceski-Lakonishok 2003 (JF 58(2), SSRN 313984): long-term earnings growth does not
+                                 #  persist beyond chance. Daniel-Titman 2006 (JF 61(4), doi 10.1111/j.1540-6261.2006.00884.x), revisited by
+                                 #  Gerakos-Linnainmaa 2016 (SSRN 2358513): future returns load NEGATIVELY on the part of the past return fundamentals
+                                 #  do not explain. Robeco 2025 (SSRN 5159811): earnings growth sustains, multiple expansion reverses. So: should the
+                                 #  growth term be earnings, not price?
+                                 #  RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after (cmp). 12y: windows scored
+                                 #  2815 (= #413). 8y: 6237 (#413 read 6216, pond drift). The control reproduced: peg_yield 0.91/0.71, earnings_yield
+                                 #  0.91/0.70, book_yield 0.92/0.72, rnd_yield 0.97/0.85, mscore 0.75/0.69, int_yield 0.89/0.76.
+                                 #    AUC          12y (w/l)     8y (w/l)       8y held book
+                                 #    lynch_yield  0.92 (13/4)   0.65 (64/12)   +13.5%/yr n=74    CANDIDATE by the letter; 12y is n=17
+                                 #    sgr_yield    0.88 (45/8)   0.61 (80/16)   +18.0%/yr n=97    CANDIDATE, barely clears 0.10 at 8y
+                                 #    exp_neg      0.57 (15/4)   0.45 (68/12)   +15.3%/yr n=78    DEAD, opposite sides of 0.5
+                                 #    peg_yield    0.91 (60/8)   0.71 (118/21)  +18.2%/yr n=141   the shipped tilt, for scale
+                                 #  READ: the bare eps_growth row reads 0.20/0.35, i.e. winners had grown EPS SLOWER: CKL's no-persistence, with past
+                                 #  growth already in the price. Each PEG-family row's edge is its earnings-yield leg. Neither CANDIDATE beats
+                                 #  earnings_yield alone at 8y, and the price CAGR (peg) only ties it. Daniel-Titman's reversal does not show on this
+                                 #  pool. No growth term beats the shipped one. The 8y held-out TEST edge is negative for both (lynch −127.9, sgr −33.6),
+                                 #  as for book, rnd, int and mscore; only peg reads positive (+2.8).
+                                 #  SHADOW: the round pre-registered that a CANDIDATE joins the (#415) FACTOR SHADOW, so `track::FACTORS` goes 3 -> 5
+                                 #  and `fetch::enrich_fund_factor` stamps lynch_yield and sgr_yield live exactly as backtest.rs stamps them. exp_neg
+                                 #  stays backtest-only. LIVE COVERAGE (2026-09-29 cohort, 26 stocks, via `check`): lynch_yield 20 (5AP.DE, CVNA, MPC,
+                                 #  P, TRGP, VRT none), sgr_yield 18 (12DA.DE, 5AP.DE, CF, FTNT, MPC, ORLY, P, TRGP none). Five rows now read at once,
+                                 #  so the (#415) chance-clear caveat widens; the bar and the backtest re-grade guard are unchanged.
+                                 #  DROPPED BY THE SAME SWEEP: cash-flow duration (Weber 2018, NBER w22520; Gonçalves 2021, JFE 141(3), ScienceDirect
+                                 #  S0304405X2100146X): a 15y AR forecast build, and it subsumes value, which the pool already reads. Long-horizon fund
+                                 #  ownership (Lan-Moneta-Wermers): needs 13F holdings the repo does not fetch. Asset growth: graded as asset_growth,
+                                 #  and absent in big stocks (Fama-French, "Dissecting anomalies" 2008).
+                                 #  REVERT RULE: drop the three rows and the two FACTORS entries; journal lines already written read back.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
