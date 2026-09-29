@@ -4987,6 +4987,57 @@ buy_heuristic:
                                  #  REVERT RULE: none — measurements, not values. Drop the three names from `FUND_FACTORS` to restore 36; the new
                                  #  `_facts14` tags cost nothing to keep. The `_facts13` bridge in `fetch_sec_facts_rows` goes once every runner's
                                  #  `.sec_cache` is warm.
+                                 #── (#413) MEASURED 2026-09-29 — ORGANIZATION CAPITAL AND INTANGIBLE VALUE, OFF A `_facts15` SG&A FALLBACK ──
+                                 #  WHAT: `_facts14` -> `_facts15`, no new field: `sga_margin` falls back to selling and marketing + general and
+                                 #  administrative when a filer never tags the SG&A sum (US: SellingAndMarketing, Marketing or
+                                 #  MarketingAndAdvertising + GeneralAndAdministrative; IFRS: SellingExpense or DistributionCosts +
+                                 #  AdministrativeExpense), BOTH halves or None. AdvertisingExpense stays out: it is a note inside S&M and would
+                                 #  double count. A miss serves the `_facts14` rows meanwhile. `core::capital_stock` is the perpetual-inventory
+                                 #  stock of a yearly flow, K0 = oldest ÷ (0.1 + δ) then K = (1 − δ)K + f, over the contiguous run of yearly rows
+                                 #  ending at the as-of row. `org_cap` = that stock of SG&A at δ 0.15 ÷ total assets, % (Eisfeldt-Papanikolaou
+                                 #  2013, the OpenAP OrgCap recursion). `int_yield` = (book − goodwill + that stock of SG&A + R&D at δ 0.20) ÷
+                                 #  market cap (Eisfeldt-Kim-Papanikolaou 2022), positive-only like book. XBRL SG&A excludes R&D while the
+                                 #  paper's Compustat XSGA includes it, so R&D is added; missing R&D and goodwill read 0. Flows are nominal and
+                                 #  the sort is not industry-neutral. `FUND_FACTORS` 39 -> 41 and the held-book list. Weighted nowhere, gate nothing.
+                                 #  WHY: an eighth sweep. Intangible capital was the one well-evidenced family never graded: EP 2013 report
+                                 #  +4.7%/yr risk-adjusted for high organization capital; EKP 2022's intangible-adjusted HML beats HML by
+                                 #  2.11%/yr in every sub-period. Here it is the broad-coverage cousin of rnd_yield (0.97/0.86, R&D filers only).
+                                 #  DROPPED BY THE SAME SWEEP, not built: external financing (Bradshaw-Richardson-Sloan; subsumed by accruals,
+                                 #  dead here), tax-to-book (Lev-Nissim; weak after 1993), customer satisfaction (ACSI; Jacobson-Mizik find it does
+                                 #  not replicate), q5 expected growth and ΔROE (their inputs cf_assets, margin_trend and eps_yoy are dead here),
+                                 #  abnormal capex (the investment family, overlaps asset_growth), dividend streaks (practitioner evidence only),
+                                 #  Stambaugh-Yuan mispricing (its legs are graded one by one already), innovation efficiency (Hirshleifer-Hsu-Li;
+                                 #  needs patent data). Piotroski's quality-within-value is what this table already is: it reads INSIDE the book.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at
+                                 #  BOTH -> CANDIDATE, recorded only; anything else -> DEAD, recorded. Priors: org_cap < 0.5, against the
+                                 #  literature: this pool reads profitability backwards (gross_margin 0.25/0.34, gp_assets 0.28/0.41) and
+                                 #  SG&A-heavy firms are the high-margin brand and software names. int_yield > 0.5, likely CANDIDATE: the value
+                                 #  family (book_yield 0.92/0.72) with rnd_yield's tilt; the question is whether it beats peg_yield's 0.71 at 8y.
+                                 #  mscore, whose SGAI leg widens to tech, moves by < 0.03. Growth admission and weights stay closed until track
+                                 #  ~2027-09.
+                                 #  CENSUS (693 filers, `_facts14` vs `_facts15`, the same 10965 rows): names with SG&A 394 -> 489 (+95, none
+                                 #  lost); MSFT, GOOGL, META, V, MA, ORCL, CRM, ADBE and AMZN carry it now. Warm-up: 582 filers on the first
+                                 #  600-budget pass, the other 111 on the second, no 429.
+                                 #  RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after (cmp). 12y: windows
+                                 #  scored 2815, growth 253. 8y: 6216, growth 357. POND DRIFT, not this change: `sga_margin` feeds only the
+                                 #  mscore SGAI leg and the two new factors (no score, gate or window count), yet the on-sale lane moved from
+                                 #  (#412)'s 2772/6180 and the 12y held cohort from 59/7 to 60/8, stable across today's three 12y runs. The control
+                                 #  still reproduced to two places: peg_yield 0.91/0.71, book_yield 0.92/0.72, rnd_yield 0.97/0.86; mscore
+                                 #  0.75/0.68 (was 0.74/0.69, the prior held), noa 0.74/0.55.
+                                 #                      12y AUC  n w/l     8y AUC  n w/l     dir
+                                 #    org_cap             0.33   60/8        0.52  121/22    FLIP   high org capital lost at 12y, flat at 8y
+                                 #    int_yield           0.89   60/8        0.76  108/20    SAME   right side (intangible-cheap won)
+                                 #  VERDICT: int_yield CANDIDATE, recorded only; org_cap DEAD, recorded. org_cap read as the prior said at 12y,
+                                 #  backwards like gp_assets, and flat at 8y. int_yield posts the value family's best 8y AUC (peg_yield 0.71,
+                                 #  book_yield 0.72) at full coverage, but its held book is book_yield's with a tilt: 8y +17.5%/yr n=131 vs
+                                 #  peg_yield +18.2% n=141 (worst −11.0, book_yield's), and the 12y rows are the same 67 names, vacuous. Its
+                                 #  held-out TEST edge leads at 12y (+556.6 vs +251.7) and is negative at 8y (−72.3 vs +18.4), as book_yield's
+                                 #  is (−86.3). Nothing moves.
+                                 #  BANKED FOR THE ~2027-09 REOPEN: if a value swap is weighed, int_yield vs peg_yield on the forward record is the
+                                 #  pairing to grade; the 8y TEST edge is the doubt to settle.
+                                 #  REVERT RULE: none — measurements, not values. Drop the two names from `FUND_FACTORS` to restore 39; the
+                                 #  S&M + G&A fallback costs nothing to keep. The `_facts14` bridge in `fetch_sec_facts_rows` goes once every
+                                 #  runner's `.sec_cache` is warm.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

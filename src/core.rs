@@ -3837,6 +3837,14 @@ pub struct FundFactors {
     pub mscore: Option<f64>,
     pub sbc: Option<f64>,
     pub goodwill: Option<f64>,
+    // (#413) intangible capital, SG&A (and R&D) accumulated by `capital_stock`. `org_cap` = organization
+    // capital (δ 0.15 over SG&A) ÷ assets, % (Eisfeldt-Papanikolaou, JF 2013). `int_book_ttm` = book −
+    // goodwill + the intangible stock (δ 0.20 over SG&A + R&D), reporting currency, the numerator the
+    // backtest prices into `int_yield` (Eisfeldt-Kim-Papanikolaou, CFR 2022). PROBE-ONLY: measured by the
+    // AUC table, weighted nowhere, and `int_yield` is None live.
+    pub org_cap: Option<f64>,
+    pub int_book_ttm: Option<f64>,
+    pub int_yield: Option<f64>,
     // (#407) SALES-GROWTH STABILITY (Mohanram 2005, G-score signal G5): −sample std of year-over-year
     // revenue growth, points, over the last `yrs`+1 as-of rows. Only row pairs ~1y apart count, so a
     // skipped fiscal year never reads as a doubled rate and quarterly (FMP) rows read None. ≥3 growth
@@ -3935,6 +3943,30 @@ pub fn beneish_m(now: &FundRow, prev: &FundRow) -> Option<f64> {
             + 4.679 * tata
             - 0.327 * idx(now.lev, prev.lev),
     )
+}
+
+/// (#413) Perpetual-inventory capital stock, the OpenAP `OrgCap` recursion: K = oldest flow ÷ (g + δ)
+/// with g = 0.1, then K = (1 − δ)·K + flow for each newer year. The run walks back from the as-of row
+/// and stops at the first year with no flow or not ~1y from the next (the `rev_stability` window), so a
+/// tag gap re-seeds instead of carrying a stale stock across a missing year. Only rows filed by `cutoff`
+/// count. None when the as-of row itself has no flow.
+/// shortcut: nominal flows (no CPI deflator) and no industry-neutral sort, since the AUC table reads within
+/// the held book. Deflate before this ever ships as a weight.
+pub fn capital_stock(rows: &[FundRow], cutoff: NaiveDate, delta: f64, flow: impl Fn(&FundRow) -> Option<f64>) -> Option<f64> {
+    let now = fund_as_of(rows, cutoff)?;
+    let mut hist: Vec<&FundRow> = rows.iter().filter(|r| r.filed <= cutoff && r.period_end <= now.period_end).collect();
+    hist.sort_by_key(|r| r.period_end);
+    let (mut run, mut prev) = (Vec::new(), None::<NaiveDate>); // run is newest first
+    for r in hist.iter().rev() {
+        let yearly = prev.is_none_or(|p| (300..=430).contains(&(p - r.period_end).num_days()));
+        match flow(r).filter(|_| yearly) {
+            Some(f) => run.push(f),
+            None => break,
+        }
+        prev = Some(r.period_end);
+    }
+    let (&oldest, newer) = run.split_last()?;
+    Some(newer.iter().rev().fold(oldest / (0.1 + delta), |k, f| (1.0 - delta) * k + f))
 }
 
 /// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. Every
@@ -4135,6 +4167,22 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         mscore: now.zip(yr_ago).and_then(|(n, p)| beneish_m(n, p)).map(|m| -m),
         sbc: now.and_then(|r| r.sbc_margin).map(|s| -s),
         goodwill: now.and_then(|r| r.gw_assets).map(|g| -g),
+        // (#413) a missing goodwill tag reads 0, and so does missing R&D in the EKP flow: XBRL SG&A
+        // excludes R&D, while Compustat's XSGA, the paper's flow, includes it
+        org_cap: capital_stock(rows, cutoff, 0.15, |r| Some(r.sga_margin? * r.revenue? / 100.0))
+            .zip(now.and_then(|r| r.assets.filter(|a| *a > 0.0)))
+            .map(|(k, a)| k / a * 100.0),
+        int_book_ttm: now
+            .and_then(|r| {
+                let book = r.net_margin? * r.revenue? / r.roe?;
+                let gw = r.gw_assets.zip(r.assets).map_or(0.0, |(g, a)| g * a / 100.0);
+                let int = capital_stock(rows, cutoff, 0.20, |x| {
+                    Some((x.sga_margin? + x.rnd_margin.unwrap_or(0.0)) * x.revenue? / 100.0)
+                })?;
+                Some(book - gw + int)
+            })
+            .filter(|b| b.is_finite()),
+        int_yield: None,
         rev_stability,
         // (#408) levels only; the yields and the composite are the backtest's to fill (price, cohort)
         fcf_ttm: now.and_then(|r| Some(r.fcf_margin? * r.revenue? / 100.0)),
@@ -4689,6 +4737,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "mscore" => f.mscore,                             // (#412) Beneish M-score, negated: measured, unweighted
         "sbc" => f.sbc,                                   // (#412) −stock-based comp ÷ revenue: measured, unweighted
         "goodwill" => f.goodwill,                         // (#412) −goodwill ÷ assets: measured, unweighted
+        "org_cap" => f.org_cap,                           // (#413) organization capital ÷ assets: measured, unweighted
+        "int_yield" => f.int_yield,                       // (#413) intangible-adjusted book ÷ market cap: measured, unweighted
         "rev_stability" => f.rev_stability,               // (#407) −std of YoY revenue growth (Mohanram G5): measured, unweighted
         "fcf_ev_yield" => f.fcf_ev_yield,                 // (#408) FCF ÷ EV: measured, unweighted
         "sales_ev_yield" => f.sales_ev_yield,             // (#408) revenue ÷ EV: measured, unweighted
@@ -5497,6 +5547,9 @@ mod tests {
             mscore: Some(37.0),
             sbc: Some(38.0),
             goodwill: Some(39.0),
+            org_cap: Some(40.0),
+            int_book_ttm: Some(81.0),
+            int_yield: Some(41.0),
             rev_stability: Some(27.0),
             fcf_ttm: Some(60.0),
             revenue_ttm: Some(70.0),
@@ -5546,6 +5599,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "mscore"), Some(37.0)); // (#412)
         assert_eq!(select_fund_factor(&f, "sbc"), Some(38.0));
         assert_eq!(select_fund_factor(&f, "goodwill"), Some(39.0));
+        assert_eq!(select_fund_factor(&f, "org_cap"), Some(40.0)); // (#413)
+        assert_eq!(select_fund_factor(&f, "int_yield"), Some(41.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -6201,6 +6256,49 @@ mod tests {
         let f = fund_factors(&[prev.clone(), now.clone()], NaiveDate::from_ymd_opt(2025, 6, 30).unwrap(), 1);
         near(f.mscore, 1.217804);
         assert_eq!((f.sbc, f.goodwill), (Some(-3.0), Some(-40.0)));
+    }
+
+    /// (#413) SG&A 100/110/121 on revenue 1000, one fiscal year apart, at δ 0.15: 100 ÷ 0.25 = 400, then
+    /// 0.85·400 + 110 = 450, then 0.85·450 + 121 = 503.5. A gap (no flow, or a skipped year) re-seeds from
+    /// the newer run: 121 ÷ 0.25 = 484. EKP at δ 0.2 adds R&D 50 to the newest flow: 1000/3 -> 1130/3
+    /// -> 1417/3, and book 500 (10% on 1000 at ROE 20) − goodwill 503.5 + 1417/3 is `int_book_ttm`.
+    #[test]
+    fn capital_stock_perpetual_inventory() {
+        let row = |y: i32, sga: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 15).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(1000.0),
+            sga_margin: sga,
+            ..Default::default()
+        };
+        let rows = [row(2021, Some(10.0)), row(2022, Some(11.0)), row(2023, Some(12.1))];
+        let last = rows[2].filed;
+        let k = |rows: &[FundRow], cutoff| capital_stock(rows, cutoff, 0.15, |r| Some(r.sga_margin? * r.revenue? / 100.0));
+        let near = |got: Option<f64>, want: f64| assert!((got.unwrap() - want).abs() < 1e-9, "{got:?} vs {want}");
+        near(k(&rows, last), 503.5); // filed ON the cutoff counts
+        near(k(&rows, last - Duration::days(1)), 450.0); // the 2023 row is not filed yet
+        near(k(&[rows[0].clone(), row(2022, None), rows[2].clone()], last), 484.0);
+        near(k(&[rows[0].clone(), rows[2].clone()], last), 484.0); // 2022 missing: two years apart
+        assert_eq!(k(&[rows[0].clone(), rows[1].clone(), row(2023, None)], last), None);
+        // an old year restated after the cutoff stays out, though its period precedes the as-of row
+        let late = FundRow { filed: NaiveDate::from_ymd_opt(2030, 1, 1).unwrap(), ..row(2020, Some(10.0)) };
+        near(k(&[late, rows[0].clone(), rows[1].clone(), rows[2].clone()], last), 503.5);
+        let now = FundRow {
+            net_margin: Some(10.0),
+            roe: Some(20.0),
+            assets: Some(5035.0),
+            gw_assets: Some(10.0),
+            rnd_margin: Some(5.0),
+            ..rows[2].clone()
+        };
+        let f = fund_factors(&[rows[0].clone(), rows[1].clone(), now.clone()], last, 1);
+        near(f.org_cap, 10.0); // 503.5 of 5035
+        near(f.int_book_ttm, 500.0 - 503.5 + 1417.0 / 3.0);
+        assert_eq!(f.int_yield, None); // the backtest prices it
+        let flat = FundRow { assets: Some(0.0), ..now.clone() };
+        assert_eq!(fund_factors(&[rows[0].clone(), rows[1].clone(), flat], last, 1).org_cap, None);
+        let no_gw = fund_factors(&[rows[0].clone(), rows[1].clone(), FundRow { gw_assets: None, ..now }], last, 1);
+        near(no_gw.int_book_ttm, 500.0 + 1417.0 / 3.0);
     }
 
     /// (#408) the as-of levels the backtest prices into FCF/EV and sales/EV: a 10% FCF margin on 200 of

@@ -1404,6 +1404,8 @@ pub async fn run(args: Vec<String>) {
                             // and net payout over the cap with its sign, so a net issuer ranks last.
                             f.rnd_yield = px.and_then(|p| core::ev_ebitda_yield(f.rnd_ttm, f.shares_ttm, None, p));
                             f.payout_yield = px.and_then(|p| core::cap_yield(f.payout_ttm, f.shares_ttm, p));
+                            // (#413) intangible-adjusted book over the cap, positive-only like book
+                            f.int_yield = px.and_then(|p| core::ev_ebitda_yield(f.int_book_ttm, f.shares_ttm, None, p));
                             // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
                             // (growth_fund_factor "peg_yield"), and the live enrich converts the same way —
                             // so train and serve compute the identical ratio instead of differing by an FX rate.
@@ -2360,7 +2362,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 39] = [
+const FUND_FACTORS: [&str; 41] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2394,6 +2396,7 @@ const FUND_FACTORS: [&str; 39] = [
     "rnd_yield", "payout_yield", // (#410) R&D/ME (Chan-Lakonishok-Sougiannis), net payout (BMRR); 32 -> 34
     "noa", "op_leverage", // (#411) net operating assets (HHTZ, negated), operating leverage (Novy-Marx); 34 -> 36
     "mscore", "sbc", "goodwill", // (#412) Beneish M, SBC ÷ revenue, goodwill ÷ assets, all negated; 36 -> 39
+    "org_cap", "int_yield", // (#413) Eisfeldt-Papanikolaou org capital ÷ assets, EKP intangible value; 39 -> 41
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4320,6 +4323,8 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("mscore", |f| f.mscore),
         ("sbc", |f| f.sbc),
         ("goodwill", |f| f.goodwill),
+        ("org_cap", |f| f.org_cap),
+        ("int_yield", |f| f.int_yield),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
