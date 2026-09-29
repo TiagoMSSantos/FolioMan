@@ -97,6 +97,13 @@ pub struct Snapshot {
     /// already on disk, and every older line reads back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peg: Vec<(String, f64, f64)>,
+    /// (#415) THE FACTOR SHADOW: `(ticker, factor, value)` for every name in `peg` that carries one of
+    /// the [`FACTORS`] — the backtest CANDIDATEs (#410)/(#412)/(#413) that nothing graded forward. The
+    /// factor is a tag, not a column, so the next CANDIDATE is one more const entry and no schema
+    /// change. Only present, finite values are written. No price, for the reason `peg` has none.
+    /// Same serde contract as `peg`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fac: Vec<(String, String, f64)>,
     /// (#334) THE WEIGHT SWAP SHADOW: `(ticker, close EUR, weight notch, entrant?)` for every name one of
     /// `picks::weight_notches` would move across the top-[`BOOK`] edge that day — entrants in the notched
     /// order, then the names they displace. An equal-weight book feels a ranking weight only through those
@@ -773,6 +780,90 @@ fn peg_section(
 const PEG_HEADER: &str =
     "  DATE            AGE    N  LADDER CHEAP  LADDER RICH    PIN CHEAP     PIN RICH   PIN-LADDER";
 
+/// (#415) The factors the shadow journals, each with its verdict label (a `&'static str` because
+/// [`Pairs`] borrows its labels). High is the good end for all three: two are yields, and `mscore` is
+/// the Beneish M-score NEGATED, so its top half is the half LEAST like a manipulator.
+pub(crate) const FACTORS: [(&str, &str); 3] = [
+    ("rnd_yield", "rnd_yield top minus peg cheap"),
+    ("int_yield", "int_yield top minus peg cheap"),
+    ("mscore", "mscore top minus peg cheap"),
+];
+
+/// (#415) The `fac` journal for one run: every [`FACTORS`] value the (#332) cohort's names carry, read
+/// through `select_fund_factor` so it is the same number the backtest graded. A non-finite value is
+/// dropped here, not written: JSON has no NaN, and one would poison the line it sits on.
+pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quote]) -> Vec<(String, String, f64)> {
+    let mut out = Vec::new();
+    for (t, ..) in peg {
+        let Some(f) = quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.fund.as_ref()) else { continue };
+        for (k, _) in FACTORS {
+            if let Some(v) = crate::core::select_fund_factor(f, k).filter(|v| v.is_finite()) {
+                out.push((t.clone(), k.to_string(), v));
+            }
+        }
+    }
+    out
+}
+
+/// (#415) One side of one factor's swap: the `peg` cohort names that ALSO journal `factor`, ranked by
+/// that factor (`by_factor`) or by the served peg_yield, top half, equal-weight. Both sides rank the
+/// IDENTICAL name set, so which names carry the factor is common-mode and cancels. Ties break on ticker
+/// and an odd count leaves the median name out, as in [`peg_rows`].
+fn fac_rows<'a>(snap: &'a Snapshot, factor: &str, by_factor: bool) -> Rows<'a> {
+    let mut ranked: Vec<(&str, f64)> = snap
+        .peg
+        .iter()
+        .filter_map(|(t, peg, _)| {
+            let v = snap.fac.iter().find(|(ft, f, _)| ft == t && f == factor)?.2;
+            Some((t.as_str(), if by_factor { v } else { *peg }))
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    ranked.truncate(ranked.len() / 2);
+    ranked.iter().map(|(t, _)| (*t, journal_px(snap, t), 1.0)).collect()
+}
+
+/// (#415) The FACTOR SHADOW: the forward half of the three backtest CANDIDATEs. Each factor ranks the
+/// same names peg_yield ranks, and its top half is held against peg's cheap half over the same window,
+/// so the market leg cancels. It asks the one question a `growth_fund_extra` reopen would need
+/// answered out of sample: does sorting on F pick better names than the shipped sort? Top halves only,
+/// for the reason (#332) states: the book is never long the other half.
+fn fac_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let journalled = snaps.iter().filter(|s| !s.fac.is_empty()).count();
+    let total = snaps.len();
+    let verdict = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| FACTORS.iter().map(|(f, label)| (*label, fac_rows(s, f, false), fac_rows(s, f, true))).collect(),
+        30,
+        None,
+    );
+    if verdict.is_empty() {
+        return format!(
+            "\n  Factor shadow: nothing gradeable yet. A month's first line needs a day of age and a priced name\n  \
+             in both top halves, and only {journalled} of {total} journalled run(s) carry factor values. The\n  \
+             record starts the run AFTER one is journalled and cannot be backdated."
+        );
+    }
+    format!(
+        "\n  Factor shadow — the (#332) PEG cohort ranked by each measured-but-unshipped backtest CANDIDATE\n  \
+         ((#410) rnd_yield, (#413) int_yield, (#412) mscore), its top half held against peg_yield's cheap half\n  \
+         on the SAME names. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\
+         {verdict}\n\n  \
+         Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
+         BACKTEST re-grade on `universe fund pit` — never a direct ship — when {REOPEN_LINES}+ monthly lines AND\n  \
+         {REOPEN_LINES}+ chained links each read mean AND median above 0. Three rows read at once, so one can\n  \
+         clear by chance; the backtest re-grade is the guard against that."
+    )
+}
+
 /// (#334) One side of one weight notch's swap, as [`grade`] wants it: equal-weight, priced from the
 /// close the swap row journalled itself.
 fn swap_rows<'a>(snap: &'a Snapshot, notch: &str, entrant: bool) -> Vec<(&'a str, Option<f64>, f64)> {
@@ -1320,6 +1411,7 @@ pub async fn run(args: Vec<String>) {
     // (#324) and what each one-notch loosening would have added, read against that same bought book
     println!("{}", near_section(&snaps, today, &px_now, spx_now));
     println!("{}", peg_section(&snaps, today, &px_now, spx_now));
+    println!("{}", fac_section(&snaps, today, &px_now, spx_now)); // (#415)
     println!("{}", swap_section(&snaps, today, &px_now, spx_now)); // (#334)
     println!("{}", ladder_section(&snaps, today, &px_now, spx_now)); // (#335)
     println!("{}", exit_section(&snaps, today, &px_now, spx_now));
@@ -1352,7 +1444,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(),
         }
     }
 
@@ -1379,6 +1471,12 @@ mod tests {
     /// PEG re-priced on the pinned window)`.
     fn with_peg(mut s: Snapshot, peg: &[(&str, f64, f64)]) -> Snapshot {
         s.peg = peg.iter().map(|(t, l, p)| (t.to_string(), *l, *p)).collect();
+        s
+    }
+
+    /// (#415) The same snapshot with a journalled factor shadow: `(ticker, factor, value)`.
+    fn with_fac(mut s: Snapshot, fac: &[(&str, &str, f64)]) -> Snapshot {
+        s.fac = fac.iter().map(|(t, f, v)| (t.to_string(), f.to_string(), *v)).collect();
         s
     }
 
@@ -1750,6 +1848,88 @@ mod tests {
         let out = peg_section(&[bare, later], today, &px, Some(100.0));
         assert!(out.contains("+50.0%") && out.contains("no month's first line grades yet"), "{out}");
         assert!(!out.contains("line(s)"), "{out}");
+    }
+
+    /// (#415) Each factor ranks ONLY the cohort names that carry it, on both sides. The mscore rows sit
+    /// FIRST in the journal on purpose: a lookup that matched ticker OR factor would read them for
+    /// rnd_yield and reorder everything. X leads the peg sort but has no rnd_yield, so it must be in
+    /// neither rnd_yield half — let it into one and the name sets differ.
+    #[test]
+    fn fac_rows_rank_one_name_set_two_ways() {
+        let px: Vec<(&str, Option<f64>)> = ["A", "B", "C", "D", "E", "X"].map(|t| (t, Some(100.0))).to_vec();
+        let peg = [("A", 90.0, 0.0), ("B", 70.0, 0.0), ("C", 50.0, 0.0), ("D", 30.0, 0.0), ("E", 10.0, 0.0), ("X", 99.0, 0.0)];
+        let fac = [
+            ("A", "mscore", -9.0),
+            ("B", "mscore", 9.0),
+            ("X", "mscore", 0.0),
+            ("A", "rnd_yield", 1.0),
+            ("B", "rnd_yield", 2.0),
+            ("C", "rnd_yield", 3.0),
+            ("D", "rnd_yield", 4.0),
+            ("E", "rnd_yield", 5.0),
+        ];
+        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &px), &peg), &fac);
+        let names = |f, by| fac_rows(&s, f, by).iter().map(|(t, ..)| *t).collect::<Vec<_>>();
+        assert_eq!(names("rnd_yield", false), vec!["A", "B"], "peg's cheap half of A-E, X excluded");
+        assert_eq!(names("rnd_yield", true), vec!["E", "D"], "rnd_yield reverses peg; C, the median, in neither");
+        assert_eq!(names("mscore", false), vec!["X"], "3 names -> 1, peg's top of A/B/X");
+        assert_eq!(names("mscore", true), vec!["B"]);
+        assert!(names("int_yield", true).is_empty(), "a factor nobody carries grades nothing");
+        assert_eq!(fac_rows(&s, "rnd_yield", true)[0].1, Some(100.0), "priced off the line's own journal");
+
+        // ties break on ticker, whatever order the journal wrote them in
+        let tied = with_fac(
+            with_peg(snap("2026-01-01", Some(100.0), &[("Y", Some(1.0)), ("Z", Some(1.0))]), &[("Z", 1.0, 0.0), ("Y", 1.0, 0.0)]),
+            &[("Z", "rnd_yield", 5.0), ("Y", "rnd_yield", 5.0)],
+        );
+        assert_eq!(fac_rows(&tied, "rnd_yield", true).iter().map(|(t, ..)| *t).collect::<Vec<_>>(), vec!["Y"]);
+    }
+
+    /// (#415) The journal reads the cohort's own quotes: a name outside `peg`, a name with no quote or
+    /// no fundamentals, a missing value and a NaN all write nothing, and the rest write one tagged row
+    /// per factor, in [`FACTORS`] order.
+    #[test]
+    fn fac_journal_writes_present_finite_cohort_values_only() {
+        let with = |t: &str, f: Option<crate::core::FundFactors>| {
+            let mut q = crate::core::Quote::stub(t, "€1.00", "", t);
+            q.fund = f;
+            q
+        };
+        let full = crate::core::FundFactors { rnd_yield: Some(1.0), int_yield: Some(f64::NAN), mscore: Some(-2.0), ..Default::default() };
+        let quotes = [
+            with("C", Some(crate::core::FundFactors { rnd_yield: Some(7.0), ..Default::default() })),
+            with("A", Some(full)),
+            with("B", None),
+        ];
+        let peg: Vec<(String, f64, f64)> = ["A", "B", "Z"].map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
+        assert_eq!(
+            fac_journal(&peg, &quotes),
+            vec![("A".to_string(), "rnd_yield".to_string(), 1.0), ("A".to_string(), "mscore".to_string(), -2.0)]
+        );
+    }
+
+    /// (#415) The section grades each factor's top half against peg's on one window, prints only the
+    /// factors a line carries, and says so plainly when nothing grades.
+    #[test]
+    fn fac_section_grades_factor_top_against_peg_cheap() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let bare = snap("2026-01-01", Some(100.0), &[("A", Some(100.0))]);
+        let px = |t: &str| Some(if t == "D" { 200.0 } else { 100.0 });
+        let empty = fac_section(std::slice::from_ref(&bare), today, &px, Some(100.0));
+        assert!(empty.contains("nothing gradeable yet") && empty.contains("0 of 1"), "{empty}");
+        assert!(!empty.contains("pp"), "{empty}");
+
+        let rows: Vec<(&str, Option<f64>)> = ["A", "B", "C", "D"].map(|t| (t, Some(100.0))).to_vec();
+        let peg = [("A", 90.0, 0.0), ("B", 70.0, 0.0), ("C", 30.0, 0.0), ("D", 10.0, 0.0)];
+        let fac = [("A", "rnd_yield", 1.0), ("B", "rnd_yield", 2.0), ("C", "rnd_yield", 3.0), ("D", "rnd_yield", 4.0)];
+        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &fac);
+        let out = fac_section(std::slice::from_ref(&s), today, &px, Some(100.0));
+        let row = out.lines().find(|l| l.trim_start().starts_with("rnd_yield top minus peg cheap")).unwrap_or_default();
+        // rnd_yield holds D, C (+50%); peg holds A, B (0%)
+        assert!(row.contains(" 1 line(s)") && row.matches("+50.0pp").count() == 2, "{row}");
+        assert!(row.contains("needs 12 lines"), "{row}");
+        assert!(!out.contains("int_yield top minus") && !out.contains("mscore top minus"), "{out}");
+        assert!(out.contains("Journalled on 1 of 1 run(s)") && out.contains("never a direct ship"), "{out}");
     }
 
     /// (#285) The MOMENTUM-lane grade: `snap.rows` cut at [`BOOK`], which is what every assertion

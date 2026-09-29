@@ -5072,6 +5072,34 @@ buy_heuristic:
                                  #  >= 10 bp/yr over the trailing 5 years. Re-check off `https://www.trackingdifferences.com/ETF/ISIN/{ISIN}`: the
                                  #  per-year TD sits in the `tdChart` block (`categories:[years]` … `name:'TD (%)'` … `data:[…]`).
                                  #  REVERT RULE: none — a measurement, not a value.
+                                 #── (#415) BUILT 2026-09-29 — FACTOR FORWARD SHADOW: RND/INT/MSCORE VS PEG, JOURNAL ONLY, NO SCORE MOVES ──
+                                 #  WHAT: every `screen` line now journals `fac` = (ticker, factor, value) for the (#332) PEG cohort (ranked book +
+                                 #  notch names) and three factors: (#410) rnd_yield, (#413) int_yield, (#412) mscore (negated, so high = good for all
+                                 #  three). `track` prints a FACTOR SHADOW: per factor, the cohort names carrying it are ranked twice, by the factor and
+                                 #  by the served peg_yield, and the two TOP halves are held equal-weight over the same window (standalone swap, the
+                                 #  `peg_section` shape). Same names both sides, so coverage bias is common-mode. `fetch::enrich_fund_factor` now stamps
+                                 #  rnd_yield and int_yield live, exactly as backtest.rs stamps them as-of (`ev_ebitda_yield(ttm, shares_ttm, None,
+                                 #  px)`); before this a live `growth_fund_factor: rnd_yield` read a silent None. No gate, weight, score or pick moves:
+                                 #  neither factor is selected or a `growth_fund_extra` term.
+                                 #  WHY: a tenth sweep. The literature adds no new factor worth a backtest. JKP 2023 (153 factors, 13 themes, about 2/3
+                                 #  replicate out of sample): every theme is mapped here. Chen 2026 (arXiv 2607.06502): in large caps after 2005 the
+                                 #  median anomaly earns 7 bp/mo and the survivors are cash-OP (cf_assets DEAD), gross profitability (gp_assets DEAD
+                                 #  0.28/0.41), net equity financing (payout_yield 0.65/0.61) and R&D-adjusted OP (ungraded, below). What IS open is
+                                 #  three CANDIDATEs with no forward record, and Dong et al. (SSRN 4417278) find 24-month anomaly alphas stable across
+                                 #  periods, so a forward record is worth banking while growth weights stay closed to ~2027-09.
+                                 #  DROPPED BY THE SAME SWEEP: R&D-adjusted operating profitability (Ball et al. 2015, "Deflating profitability"),
+                                 #  op_rd = (gross_margin − sga_margin)·revenue/assets from rows already cached, is the next BACKTEST lead, not a shadow
+                                 #  entry, because it is ungraded and the pool reads profitability backwards (cf_assets, gp_assets DEAD); country CAPE
+                                 #  (Keimling 2016, R² 0.48 over 10-15y) needs country P/E history the repo does not keep; sin/ESG tilts (Blitz-Fabozzi
+                                 #  2017: sin alpha is RMW+CMA); long-term reversal (inside HML, Fama-French 1996).
+                                 #  LIVE COVERAGE (2026-09-29 PEG cohort, 42 names = 26 stocks + 16 ETFs, via `check`): mscore 26/26 stocks, int_yield
+                                 #  24/26 (MNST, TRGP none), rnd_yield 19/26 (CF, CVNA, EME, MNST, MPC, ORLY, TRGP file no R&D); no ETF carries any.
+                                 #  So each line ranks ~19-26 names and each top half holds ~9-13.
+                                 #  BAR, PRE-REGISTERED BEFORE THE FIRST LINE: a factor's row reads REOPEN SIGNAL only when 12+ monthly lines AND 12+
+                                 #  chained links (#338) each read mean AND median above 0. Three rows read at once, so one can clear by chance: a
+                                 #  signal reopens a BACKTEST re-grade of that factor as a `growth_fund_extra` term on `universe fund pit`, never a
+                                 #  direct ship. Earliest: ~2027-10.
+                                 #  REVERT RULE: delete the `fac` field and section; older lines read back without it.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
