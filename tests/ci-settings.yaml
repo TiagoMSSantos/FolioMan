@@ -5038,6 +5038,40 @@ buy_heuristic:
                                  #  REVERT RULE: none — measurements, not values. Drop the two names from `FUND_FACTORS` to restore 39; the
                                  #  S&M + G&A fallback costs nothing to keep. The `_facts14` bridge in `fetch_sec_facts_rows` goes once every
                                  #  runner's `.sec_cache` is warm.
+                                 #── (#414) MEASURED 2026-09-29 — REALIZED TRACKING DIFFERENCE AGAINST TER, RECORD ONLY, NO CODE ──
+                                 #  WHAT: tracking difference (TD) = index return − fund return, %/yr, negative = the fund beat its index. It folds
+                                 #  TER, securities lending, withholding-treaty effects and swap fees into one realized number. Source:
+                                 #  trackingdifferences.com (independent, issuer KIID figures), 15 index pages plus the per-ISIN pages of the CORE
+                                 #  ISINs, fetched once at 2 s spacing. Nothing is fetched at runtime and no code changed.
+                                 #  WHY: a ninth sweep. The stock-factor literature is exhausted as of (#413) and growth admission is closed, so the
+                                 #  sweep read the CORE lane. TD is the one new axis there: `picks::hold_core_cmp` sorts twins on headline TER
+                                 #  (`core::net_ter`), which is what the fund charges, not what it costs.
+                                 #  DROPPED BY THE SAME SWEEP, not built: index turnover cost (Petajisto 2011: S&P 500 21-28 bp/yr, Russell 2000
+                                 #  38-77) is a family choice, not a twin sort; closure risk (AUM < $50M, issuer size, fund age) — AUM is already
+                                 #  the last sort key; securities lending is inside TD; TD off Yahoo adjclose is listing and FX noise: one fund on
+                                 #  two listings (SXR8.DE vs CSPX.L) differs by 147 bp/yr over 3y and FX timing adds ±100 bp, and the one clean
+                                 #  same-currency same-venue pair (SPXS swap +24/+9/+22 bp against a physical fund) is what (#233) already prices.
+                                 #  BAR, WRITTEN BEFORE THE PICK GRADE: build only if picking each index's lowest-trailing-TD class beats picking
+                                 #  its lowest-TER class by >= 10 bp/yr of forward TD at BOTH splits AND a TD sort flips >= 1 head on today's CORE.
+                                 #  PERSISTENCE (15 indices, hedged classes out, >= 3 years each side; pooled within-index Spearman against
+                                 #  forward TD 2022-25):   split           classes   trailing TD   TER
+                                 #                         train 2016-21        78          0.76   0.63
+                                 #                         train 2016-20        77          0.75   0.59
+                                 #  PICK (9 indices with >= 2 classes; TER ties broken on train TD, which flatters TER): the TD pick saves +1.1
+                                 #  bp/yr of forward TD at the 2022 split (3 wins, 4 ties, 2 losses) and +5.8 bp/yr at 2021 (5/3/1). MSCI EM is a
+                                 #  loss: SPDR (0.00) led on train TD, while UBS Core EM (−0.22) improved after it. A TER cut resets a fund's TD.
+                                 #  CORE CENSUS (today's 99 page rows): 69 map to an ISIN, 33 carry >= 3 years of 2021-25 TD (new funds carry none:
+                                 #  WEBN, I500, EDEE). Two families show >= 2 rows with TD: MSCI World, head MXWO.L −0.12 ahead of UETW.DE +0.02;
+                                 #  MSCI Japan, JPJY.PA +0.14 = DBXJ.DE +0.14. Heads a TD sort would flip: ZERO.
+                                 #  WIDEST GAP ON THE INDEX PAGES: MSCI World, UBS Core (TER 0.06, 10y TD +0.03) trails HSBC (0.15, −0.23), so TER
+                                 #  picks the worst physical tracker there. But UBS read −0.2 in 2024 and 2025, level with HSBC: the gap is history.
+                                 #  VERDICT: REFUSED for build, recorded. TD out-predicts TER on rank (0.76 vs 0.63), but the argmin gain is +1 to
+                                 #  +6 bp/yr with losses, where a TER cut resets TD, and zero heads move today. The big realized gap (US swap vs
+                                 #  physical, ~20-40 bp) is already captured by swap admission and (#233).
+                                 #  REOPEN WHEN: a displayed CORE family holds >= 2 funds with >= 3 years of TD and its TER head trails a twin by
+                                 #  >= 10 bp/yr over the trailing 5 years. Re-check off `https://www.trackingdifferences.com/ETF/ISIN/{ISIN}`: the
+                                 #  per-year TD sits in the `tdChart` block (`categories:[years]` … `name:'TD (%)'` … `data:[…]`).
+                                 #  REVERT RULE: none — a measurement, not a value.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
