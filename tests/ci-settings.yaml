@@ -5136,6 +5136,50 @@ buy_heuristic:
                                  #  ownership (Lan-Moneta-Wermers): needs 13F holdings the repo does not fetch. Asset growth: graded as asset_growth,
                                  #  and absent in big stocks (Fama-French, "Dissecting anomalies" 2008).
                                  #  REVERT RULE: drop the three rows and the two FACTORS entries; journal lines already written read back.
+                                 #── (#417) MEASURED 2026-09-30 — OP_RD BACKWARDS, INVESTMENT DISCIPLINE DEAD, SWEEP 12 FINDS NOTHING NEW TO BUILD ──
+                                 #  WHAT: two FUND_FACTORS rows off cached rows, no price, no refetch. op_rd = (gross margin − SG&A margin) · revenue ÷
+                                 #  assets (Ball-Gerakos-Linnainmaa-Nikolaev 2015, JFE 117(2), SSRN 2414543; XBRL SG&A already excludes R&D, which is
+                                 #  their XSGA − XRD). discipline = 1y EBITDA growth − 1y asset growth, both through `fund_factors`' `grow` guard, so a
+                                 #  non-positive base is None (Yartseva 2025, "The Alchemy of Multibagger Stocks", CAFÉ WP 33, open-access.bcu.ac.uk/
+                                 #  16180: aggressive investment pays only when asset growth <= EBITDA growth; Bessembinder's decade winners grow
+                                 #  profit faster than their fast-growing assets). 1y, not `yrs`: the end-to-end reach reads n=0 at 12y (asset_growth,
+                                 #  rev_cagr). FUND_FACTORS 44 -> 46.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at both ->
+                                 #  CANDIDATE, anything else -> DEAD. A CANDIDATE was to join the (#415) shadow.
+                                 #  RUNS: `backtest {12,8} universe fund pit`, control on this file, caches restored after. 12y: windows scored 2815
+                                 #  (= #416). 8y: 6243 (#416 read 6237, pond drift). The control reproduced: peg_yield 0.91/0.71, earnings_yield
+                                 #  0.91/0.70, rnd_yield 0.97/0.85, gp_assets 0.30/0.41, asset_growth 8y 0.70.
+                                 #    AUC          12y (w/l)     8y (w/l)       8y held book
+                                 #    op_rd        0.30 (36/8)   0.35 (72/16)   +13.7%/yr n=89    clears the bar BACKWARDS: the profitable half lost
+                                 #    discipline   0.48 (39/8)   0.51 (92/21)   +16.0%/yr n=115   DEAD, a coin flip at both horizons
+                                 #    peg_yield    0.91 (60/8)   0.71 (118/21)  +18.2%/yr n=141   the shipped tilt, for scale
+                                 #  VERDICT: op_rd is the backwards profitability family again (gross_margin 0.25/0.34, gp_assets 0.28/0.41, recorded
+                                 #  "holds (backwards)" and never shadowed). Adding R&D back does not turn it around. Its held-book row prints
+                                 #  gp_assets' byte for byte at both horizons (+14.0%/yr n=43 at 12y): a 6-7 name gated pool holds the same SET
+                                 #  whatever the order, so the AUC is the reading. Buying the least profitable half would contradict the theory and
+                                 #  most likely proxies the cheapness peg already holds, so it is RECORDED, NOT SHADOWED (the user's call). discipline
+                                 #  is DEAD. The 8y held-out TEST edge is negative for both (op_rd −116.7, discipline −82.6).
+                                 #  SWEEP 12, EVERYTHING ELSE MAPPED OR DEAD, no build:
+                                 #  - Yartseva 2025 again: the 464 names were chosen for having gone 10x (2009-2024), so it explains returns WITHIN
+                                 #    winners. Its strongest predictors, FCF/P and B/M, are the graded value family (#408)/(#409). Its "buy near the
+                                 #    12-month low" entry is the (#48) inverted proximity arm, measured worse than neutral at every horizon.
+                                 #  - Bessembinder, Extreme Stock Market Performers III/IV (SSRN 3657611/3657612): asset growth, cash accumulation and
+                                 #    profit growth are CONTEMPORANEOUS with a decade's wealth. The ex-ante hints are graded here already: youth
+                                 #    (#49), prior-decade drawdown (#223) and R&D (rnd_yield, #410).
+                                 #  - Ben-David, Franzoni, Kim, Moussawi 2023 (RFS 36(3), NBER w28369): specialized/thematic ETFs lose ~6%/yr of alpha
+                                 #    over their first five years, launched on overvalued holdings; after year five the loss is "substantially reduced"
+                                 #    and insignificant. The shipped growth_min_leg_years 5.0 floor keeps them off the growth table, and LEVERAGED_
+                                 #    MARKERS already excludes leveraged/inverse ETPs.
+                                 #  - Huang-Song-Xiang, The Smart Beta Mirage (SSRN 3622753): an index's backfilled pre-listing record is +2.77%/yr,
+                                 #    and −0.44%/yr after listing. Not applicable: the lane scores a listing's own quotes, and the history proxy borrows
+                                 #    only from a traded twin already in the pool.
+                                 #  - Avramov-Kaplanski-Subrahmanyam 2021 (RFE 39(2), SSRN 3111334): moving-average distance, 21d over 200d, needs a
+                                 #    daily lane at the ship horizons (#127) and is a monthly signal.
+                                 #  - Frankel-Lee residual-income V/P (arXiv 2506.00206): value family, which carries no new axis.
+                                 #  - Keloharju-Linnainmaa-Nyberg 2021 (JFE 141(3), SSRN 3341239): long-run expected returns barely vary across firms,
+                                 #    so read every factor edge as transitory.
+                                 #  - Liu-Tsyvinski crypto factors: 1-4 week horizons. The crypto lane already carries its MVRV ceiling (#45).
+                                 #  REVERT RULE: drop the two rows; nothing reads them.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

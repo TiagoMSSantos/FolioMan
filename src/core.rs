@@ -3878,6 +3878,10 @@ pub struct FundFactors {
     pub lynch_yield: Option<f64>,    // (#416) earnings_yield · chained EPS CAGR (Lynch's PEG). Shadow only
     pub sgr_yield: Option<f64>,      // (#416) earnings_yield · `sgr_pct` (sustainable growth). Shadow only
     pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
+    // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
+    // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
+    pub op_rd: Option<f64>,          // (#417) (gross profit − SG&A) ÷ assets, %; XBRL SG&A already excludes R&D
+    pub discipline: Option<f64>,     // (#417) 1y EBITDA growth − 1y asset growth, pts; high = profit outgrew assets
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4209,6 +4213,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         lynch_yield: None, // (#416) all three need a price
         sgr_yield: None,
         exp_neg: None,
+        op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
+        // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
+        discipline: grow(now.and_then(|r| r.ebitda), yr_ago.and_then(|r| r.ebitda))
+            .zip(grow(now.and_then(|r| r.assets), yr_ago.and_then(|r| r.assets)))
+            .map(|(e, a)| e - a),
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -4780,6 +4789,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "lynch_yield" => f.lynch_yield,                   // (#416) earnings_yield · EPS CAGR: measured, unweighted
         "sgr_yield" => f.sgr_yield,                       // (#416) earnings_yield · ROE · retention: measured, unweighted
         "exp_neg" => f.exp_neg,                           // (#416) earnings-yield CAGR (multiple contraction): measured, unweighted
+        "op_rd" => f.op_rd,                               // (#417) Ball 2015 R&D-adjusted OP ÷ assets: measured, unweighted
+        "discipline" => f.discipline,                     // (#417) EBITDA growth minus asset growth: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -5564,6 +5575,31 @@ mod tests {
         assert_eq!(ey_cagr(Some(5.0), None), None);
     }
 
+    /// (#417) `op_rd` adds R&D back by never subtracting it (XBRL SG&A excludes it), and `discipline`
+    /// is two `grow` rates apart, so a non-positive EBITDA or asset base is None, never a ratio.
+    #[test]
+    fn op_rd_and_discipline_read_the_rows() {
+        let r = |y: i32, assets: f64, ebitda: f64, sga: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y - 1, 12, 31).unwrap(),
+            revenue: Some(1000.0),
+            gross_margin: Some(50.0),
+            sga_margin: sga,
+            assets: Some(assets),
+            ebitda: Some(ebitda),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let f = fund_factors(&[r(2023, 1600.0, 200.0, Some(20.0)), r(2024, 2000.0, 300.0, Some(20.0))], cutoff, 5);
+        assert_eq!(f.op_rd, Some(15.0)); // (50 − 20)% of 1000 over 2000
+        assert_eq!(f.discipline, Some(25.0)); // EBITDA +50%, assets +25%
+        let f = fund_factors(&[r(2023, 1000.0, 200.0, None), r(2024, 2000.0, 300.0, None)], cutoff, 5);
+        assert_eq!(f.discipline, Some(-50.0)); // assets doubled on +50% EBITDA: undisciplined
+        assert_eq!(f.op_rd, None); // no SG&A, no ratio
+        assert_eq!(fund_factors(&[r(2023, 1600.0, -5.0, None), r(2024, 2000.0, 300.0, None)], cutoff, 5).discipline, None);
+        assert_eq!(fund_factors(&[r(2024, 0.0, 300.0, Some(20.0))], cutoff, 5).op_rd, None);
+    }
+
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None
     /// (neutral) so a typo'd config can never panic the score. Pure, no network.
     #[test]
@@ -5623,6 +5659,8 @@ mod tests {
             lynch_yield: Some(42.0),
             sgr_yield: Some(43.0),
             exp_neg: Some(44.0),
+            op_rd: Some(45.0),
+            discipline: Some(46.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -5663,6 +5701,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "lynch_yield"), Some(42.0)); // (#416)
         assert_eq!(select_fund_factor(&f, "sgr_yield"), Some(43.0));
         assert_eq!(select_fund_factor(&f, "exp_neg"), Some(44.0));
+        assert_eq!(select_fund_factor(&f, "op_rd"), Some(45.0)); // (#417)
+        assert_eq!(select_fund_factor(&f, "discipline"), Some(46.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS

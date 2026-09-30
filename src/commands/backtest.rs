@@ -2370,7 +2370,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 44] = [
+const FUND_FACTORS: [&str; 46] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2406,6 +2406,7 @@ const FUND_FACTORS: [&str; 44] = [
     "mscore", "sbc", "goodwill", // (#412) Beneish M, SBC ÷ revenue, goodwill ÷ assets, all negated; 36 -> 39
     "org_cap", "int_yield", // (#413) Eisfeldt-Papanikolaou org capital ÷ assets, EKP intangible value; 39 -> 41
     "lynch_yield", "sgr_yield", "exp_neg", // (#416) PEG over EPS growth, over ROE·retention, and de-rating; 41 -> 44
+    "op_rd", "discipline", // (#417) Ball et al. R&D-adjusted OP ÷ assets, EBITDA growth minus asset growth; 44 -> 46
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4338,6 +4339,8 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("lynch_yield", |f| f.lynch_yield),
         ("sgr_yield", |f| f.sgr_yield),
         ("exp_neg", |f| f.exp_neg),
+        ("op_rd", |f| f.op_rd), // (#417)
+        ("discipline", |f| f.discipline),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
