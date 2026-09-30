@@ -5248,6 +5248,35 @@ buy_heuristic:
                                  #  (margin_stability 0.47/0.46, (#407) rev_stability). Exchange tokens (FTT 2022; BNB survived): the risk is the issuer's
                                  #  solvency, which no price series shows. Recorded only.
                                  #  REVERT RULE: restore the two tag lists and the unwrap_or(0) debt legs; key back to facts15.
+                                 #── (#420) MEASURED 2026-09-30 — EBIT IS PRETAX + INTEREST WHERE NO OPERATING-INCOME TAG; INTEREST UNDER THE 2023 NONOPERATING TAG ──
+                                 #  WHAT: fetch.rs US-GAAP `intexp` appends InterestExpenseNonoperating (last, so a tie keeps the old names). A filer with no
+                                 #  OperatingIncomeLoss for a period reads EBIT = pretax income (continuing ops, before tax) + the interest it netted out,
+                                 #  folded into the op line itself so op_margin, interest_cover and EBITDA read one EBIT. Never for a filer carrying a bank or
+                                 #  insurer line (InterestExpenseDeposits, NoninterestExpense, PolicyholderBenefitsAndClaimsIncurredNet,
+                                 #  InterestAndDividendIncomeOperating, PremiumsEarnedNet): its interest is its cost of goods. IFRS unchanged (unmeasured).
+                                 #  Cache key _facts16 -> _facts17 (the warm-up bridge reads _facts16); the 47 fixture files are renamed, rows frozen.
+                                 #  BUG: 160 of the pool's SEC filers never tag operating income (KLAC, LLY), so roic_return had no EBIT and the roic extra
+                                 #  read the 17.3 neutral fill for them. Separately the 2023 taxonomy split interest into operating and nonoperating and
+                                 #  most filers moved to the second: interest_cover covered 25.8% of the live pool's equities (eps_ttm 93.6, net_debt 90.7).
+                                 #  MEASURED: of the 160, 74 now read an EBIT and 84 stay None (63 carry a bank/insurer line, the rest file no pretax line).
+                                 #  PARITY: a Python port of (pretax + interest) / revenue matches the newest _facts17 row to 1e-9 on all 74; the 2 misses
+                                 #  are the port's (ASC files a 20-F, XOM's holdco CIK is read through its predecessor per (#382)).
+                                 #  MEASURED LIVE: the 48 affected quotes re-derived and universe.json re-ranked through the page engine. The book keeps the
+                                 #  same 27 names; KLA.DE 3.3% -> 6.6%, ANX.PA 6.6% -> 3.3%; LLY's score 13.9 -> 17.8.
+                                 #  MEASURED BACKTEST {12,8} universe fund pit (the (#419) protocol: control before the edit, arm after warm-up, dotfiles
+                                 #  restored before every run, same order, fund-facts fallback header equal). Windows scored equal (2815/253, 6243/363).
+                                 #  EVERY book row top-1..top-50 is IDENTICAL at both horizons (bar was 0.3 pts/yr). Growth edge 12y +137.7 unchanged, 8y
+                                 #  +88.4 -> +87.9; tuning adds 8y +59.0 -> +58.5. The as-of op_margin probe widens n 1171 -> 1299 (12y), ebitda_yield
+                                 #  937 -> 1050. Ablating growth_fund_weight at 8y now costs 10.0 pts (was 5.7): the fund term reads more real rows.
+                                 #  ACCEPTED: REITs (O, PSA, MAA) fall from the 17.3 fill to a real 3-11; unmarked financials read high (BX 41, ARES 34,
+                                 #  HOOD 43) and TJX, ADP sit at the 40 cap. None is in the book; the cap already clamps the class.
+                                 #  WHY: Compustat's EBIT is pretax income plus interest expense; the FASB 2023 US-GAAP taxonomy added
+                                 #  InterestExpenseNonoperating/InterestExpenseOperating.
+                                 #  SWEEP 15 DROPPED: wrapper dedupe (supply-bound, see pool-supply rows); exchange tokens (sweep 14); Bessembinder and the
+                                 #  long-horizon skew papers (mapped); an ETF AUM floor (growth_min_aum_etf exists). Recorded only.
+                                 #  NEXT: ASU 2024-03 (expense disaggregation, annual periods after 2026-12-15) moves income-statement tags again; the (#421)
+                                 #  web/universe-contracts.jq coverage floors are the tripwire.
+                                 #  REVERT RULE: drop the pretax/fin tag lists and the fold into `op`, drop InterestExpenseNonoperating; key back to facts16.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
