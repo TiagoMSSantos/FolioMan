@@ -3296,9 +3296,12 @@ fn ranked<'a>(
     // nothing about NaN, so a single NaN score or turnover took the whole screen down with it. Ordering
     // is unchanged on every finite input — the only difference is -0.0 sorting below +0.0 instead of
     // tying — which is why the goldens stay bit-identical across this swap.
+    // (#421) then the ticker: `dedup_currency_twins` hands the rows over in HashMap order, random per
+    // run, so an exact tie on both keys ranked, and kept a same-name twin, by chance.
     picks.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
             .then(b.0.avg_turnover_eur.unwrap_or(0.0).total_cmp(&a.0.avg_turnover_eur.unwrap_or(0.0)))
+            .then_with(|| a.0.ticker.cmp(&b.0.ticker))
     });
     // (B) collapse dual-class share twins (GOOG/GOOGL, BRK.A/BRK.B): same company = identical Yahoo
     // name; after the best-first sort, keep the first (higher-scoring/more-liquid) leg, drop the rest.

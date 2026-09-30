@@ -456,7 +456,7 @@ fn backtest_edge_holds() {
             return;
         }
     }
-    // (#347) the universe snapshot the three horizons share; see its use below `grade_horizon`.
+    // (#347) the universe snapshot the legs share; see its use below `grade_horizon`.
     const UNIVERSE: &str = concat!(env!("CARGO_TARGET_TMPDIR"), "/backtest-gate-universe.json");
     // pull the first signed number that follows `marker` in `hay` (e.g. "edge +117.1" -> 117.1).
     fn num_after(hay: &str, marker: &str) -> Option<f64> {
@@ -478,9 +478,11 @@ fn backtest_edge_holds() {
     /// and a block the gate greps for simply isn't there — is a report change that silently disarms
     /// half the gate, so under the force flag (i.e. CI) it panics instead of printing a note nobody
     /// reads. A laptop still skips green on all of them.
-    fn grade_horizon(years: i64, forced: bool) -> bool {
+    fn grade_horizon(years: i64, fund: bool, forced: bool) -> bool {
+        let leg = if fund { format!("{years}y fund") } else { format!("{years}y") };
         let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
             .args(["backtest", &years.to_string(), "universe"])
+            .args(fund.then_some("fund"))
             .env("FOLIOMAN_UNIVERSE_SNAPSHOT", UNIVERSE)
             // pin the child to the committed fixture. Without it a local run scores with the gitignored
             // config/settings.yaml overlay and the gate grades a PER-MACHINE tuning — green on your knobs
@@ -490,13 +492,13 @@ fn backtest_edge_holds() {
         {
             Ok(o) => o,
             Err(e) => {
-                eprintln!("backtest-gate {years}y SKIPPED — could not spawn binary: {e}");
+                eprintln!("backtest-gate {leg} SKIPPED — could not spawn binary: {e}");
                 return false;
             }
         };
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
-            eprintln!("backtest-gate {years}y SKIPPED — nonzero exit {}; stderr tail: {}", out.status, err.lines().last().unwrap_or(""));
+            eprintln!("backtest-gate {leg} SKIPPED — nonzero exit {}; stderr tail: {}", out.status, err.lines().last().unwrap_or(""));
             return false; // a mid-fetch crash is environmental here; lint/unit/build jobs catch real code breakage offline
         }
         // search stdout AND stderr — robust to whichever stream the report/diagnostics land on.
@@ -506,11 +508,11 @@ fn backtest_edge_holds() {
         match num_after(&stdout, markers::TICKERS) {
             Some(n) if n >= 500.0 => {}
             Some(n) => {
-                eprintln!("backtest-gate {years}y SKIPPED — only {n} tickers resolved (throttled/unavailable)");
+                eprintln!("backtest-gate {leg} SKIPPED — only {n} tickers resolved (throttled/unavailable)");
                 return false;
             }
             None => {
-                eprintln!("backtest-gate {years}y SKIPPED — no ticker count in output (run didn't complete)");
+                eprintln!("backtest-gate {leg} SKIPPED — no ticker count in output (run didn't complete)");
                 return false;
             }
         }
@@ -519,7 +521,7 @@ fn backtest_edge_holds() {
         let growth = match stdout.split(markers::GROWTH_SECTION).nth(1) {
             Some(g) => g,
             None => {
-                eprintln!("backtest-gate {years}y SKIPPED — no GROWTH section (run didn't complete)");
+                eprintln!("backtest-gate {leg} SKIPPED — no GROWTH section (run didn't complete)");
                 return false;
             }
         };
@@ -538,7 +540,7 @@ fn backtest_edge_holds() {
             Some(n) if n >= MIN_SCORED => {}
             other => {
                 eprintln!(
-                    "backtest-gate {years}y SKIPPED — GROWTH lane scored {} windows (<{MIN_SCORED:.0}). The \
+                    "backtest-gate {leg} SKIPPED — GROWTH lane scored {} windows (<{MIN_SCORED:.0}). The \
                      universe list resolved but hardly anything gated in: thin data, not a verdict",
                     other.map_or_else(|| "no".to_string(), |n| format!("{n:.0}"))
                 );
@@ -551,7 +553,7 @@ fn backtest_edge_holds() {
         let edge = num_after(growth, markers::LANE_EDGE).expect("a completed GROWTH run prints its headline edge");
         assert!(
             edge > 0.0,
-            "{years}y: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117 at 12y) — a \
+            "{leg}: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117 at 12y) — a \
              scoring-code change or a default-tuning edit broke the walk-forward edge; fix it before merging"
         );
         // (SHIP RULE v2) the metric the screen footer actually quotes. The lane edge above grades the
@@ -565,11 +567,11 @@ fn backtest_edge_holds() {
             Some(x) => {
                 assert!(
                     x > 0.0,
-                    "{years}y: the TOP-10 held book went NEGATIVE vs the index ({x:+.1} pts/yr) — SHIP RULE v2 \
+                    "{leg}: the TOP-10 held book went NEGATIVE vs the index ({x:+.1} pts/yr) — SHIP RULE v2 \
                      grades this basket and the screen footer quotes it, so this is a real collapse, not a lane \
                      statistic. Lane edge was still {edge:+.1}, which is why edge alone is not enough."
                 );
-                eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts, top-10 excess {x:+.1} pts/yr");
+                eprintln!("backtest-gate {leg} OK — GROWTH edge {edge:+.1} pts, top-10 excess {x:+.1} pts/yr");
             }
             // A run CAN complete the GROWTH lane and print no held-book block — too few gated picks
             // with a ^GSPC window. That is exactly what the health gate above now filters out, and it
@@ -579,11 +581,11 @@ fn backtest_edge_holds() {
             // `tests/backtest_fixture.rs` pins this string offline so a rename reds there first; this
             // is the backstop for the case that pin is bypassed.
             None if forced => panic!(
-                "{years}y: GROWTH completed (edge {edge:+.1}) but NO `top-10 ` held-book row parsed. Under \
+                "{leg}: GROWTH completed (edge {edge:+.1}) but NO `top-10 ` held-book row parsed. Under \
                  FOLIOMAN_BACKTEST_GATE this is a report-format regression, not a thin sample: the top-10 \
                  excess assert — the metric SHIP RULE v2 grades and the screen footer quotes — was skipped"
             ),
-            None => eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts (no top-10 held-book row parsed)"),
+            None => eprintln!("backtest-gate {leg} OK — GROWTH edge {edge:+.1} pts (no top-10 held-book row parsed)"),
         }
         // (#57) null model: the shipped tuning vs the SAME code with the tuning off. Assertable where
         // the raw edge is not — both arms score the same samples over the same window, so market drift
@@ -593,39 +595,40 @@ fn backtest_edge_holds() {
             Some(lift) => {
                 assert!(
                     lift > 0.0,
-                    "{years}y: the shipped tuning adds only {lift:+.1} pts over BuyHeuristic::default() — no \
+                    "{leg}: the shipped tuning adds only {lift:+.1} pts over BuyHeuristic::default() — no \
                      tuning at all ranks as well or better. Lane edge {edge:+.1} still passes the collapse \
                      check, which is exactly why this A/B exists. Re-tune, or revert the knob change."
                 );
-                eprintln!("backtest-gate {years}y null-model lift {lift:+.1} pts");
+                eprintln!("backtest-gate {leg} null-model lift {lift:+.1} pts");
             }
             None if forced => panic!(
-                "{years}y: GROWTH completed but printed no `tuning adds` line — the null-model A/B was skipped"
+                "{leg}: GROWTH completed but printed no `tuning adds` line — the null-model A/B was skipped"
             ),
-            None => eprintln!("backtest-gate {years}y — no null-model line parsed"),
+            None => eprintln!("backtest-gate {leg} — no null-model line parsed"),
         }
         // (#315) the buy lane's promise graded forward: the share of start dates whose top-10 book beat Série E's best
         // case (4.5%/yr) over the same years. A RATCHET, not a promise — at 20y the near-high entries lose to it. Each
         // floor is the ship-day reading minus 10 pts (~2 windows at 20y) for run-to-run noise. Raise a floor when a
         // round lifts its reading; never lower one to get green.
         // Ship day 2026-09-15 on CI's own args: 20y 100% of 37 windows, 12y 100% of 52, 8y 90% of 60.
+        // (#421) the 8y fund leg reads 90% of 60 too (2026-09-30, local), so it shares the 8y floor.
         const SERIE_E_FLOOR: [(i64, f64); 3] = [(20, 90.0), (12, 90.0), (8, 80.0)];
         let floor = SERIE_E_FLOOR.iter().find(|f| f.0 == years).map_or(0.0, |f| f.1);
         match num_after(growth, markers::SERIE_E) {
             Some(share) => {
                 assert!(
                     share >= floor,
-                    "{years}y: only {share:.0}% of start dates' top-10 book beat Série E's best case, under the ratchet \
+                    "{leg}: only {share:.0}% of start dates' top-10 book beat Série E's best case, under the ratchet \
                      floor {floor:.0}% — the book now loses to a savings certificate more often. Fix the change, or \
                      measure and justify a new floor in the (#315) receipt"
                 );
-                eprintln!("backtest-gate {years}y Série E share {share:.0}% (floor {floor:.0}%)");
+                eprintln!("backtest-gate {leg} Série E share {share:.0}% (floor {floor:.0}%)");
             }
             None if forced => panic!(
-                "{years}y: GROWTH completed but printed no `{}` row — the Série E ratchet was skipped",
+                "{leg}: GROWTH completed but printed no `{}` row — the Série E ratchet was skipped",
                 markers::SERIE_E
             ),
-            None => eprintln!("backtest-gate {years}y — no Série E row parsed"),
+            None => eprintln!("backtest-gate {leg} — no Série E row parsed"),
         }
         // (#316) the book BUY NOW buys, graded the way it is bought: monthly, held 20y, after tax. Two ratchets on the
         // SIZED DCA rows, which print at 20y only: never-sell over the same € into the index (pts/yr), and the share of
@@ -670,14 +673,14 @@ fn backtest_edge_holds() {
             (Some(early), Some(late)) => {
                 assert!(
                     !(early < 0.0 && late < 0.0),
-                    "{years}y: both out-of-sample halves negative (early {early:+.2}, late {late:+.2}) — edge is in-sample only"
+                    "{leg}: both out-of-sample halves negative (early {early:+.2}, late {late:+.2}) — edge is in-sample only"
                 );
-                eprintln!("backtest-gate {years}y OOS early {early:+.2} / late {late:+.2}");
+                eprintln!("backtest-gate {leg} OOS early {early:+.2} / late {late:+.2}");
             }
             // same reasoning as the top-10 arm: the split is unconditional once >=4 windows scored, so
             // in CI a missing rho is a renamed line disarming the generalization check, not thin data.
             _ if forced => panic!(
-                "{years}y: GROWTH completed but printed no `early rho`/`late rho` — the out-of-sample check was skipped"
+                "{leg}: GROWTH completed but printed no `early rho`/`late rho` — the out-of-sample check was skipped"
             ),
             _ => {}
         }
@@ -692,11 +695,49 @@ fn backtest_edge_holds() {
                 if let (Some(n), Some(mean)) = (num_after(line, markers::COHORT_N), num_after(line, markers::PEER_RELATIVE)) {
                     if n >= 30.0 && mean > 20.0 {
                         eprintln!(
-                            "backtest-gate WARNING {years}y — `{gate}` excluded cohort now averages {mean:+.1} pts fwd (n={n:.0}); \
+                            "backtest-gate WARNING {leg} — `{gate}` excluded cohort now averages {mean:+.1} pts fwd (n={n:.0}); \
                              the gate may be discarding winners in this regime — re-probe its threshold before trusting it"
                         );
                     }
                 }
+            }
+        }
+        // (#421) THE FUND LEG. `fund` joins each cutoff to the SEC rows filed by then and tilts the growth score toward
+        // the shipped `peg_yield`; the three legs above run price-only and never read them. A tag drift (#419 debt,
+        // #420 op income) or a parse regression thins that join while every price row stays green, so two ratchets
+        // read the join itself. Floors = the 2026-09-30 local reading (10945 / 21883 cutoffs = 50.0%, peg_yield
+        // n=3282) minus 10 pts and x0.7. Raise a floor when a round lifts its reading; never lower one to get green.
+        if fund {
+            const FUND_COVERED_FLOOR: f64 = 40.0;
+            const FUND_PEG_N_FLOOR: f64 = 2300.0;
+            let sec = stdout.split(markers::FUND_SECTION).nth(1).unwrap_or("");
+            let covered = sec.lines().find(|l| l.contains(markers::FUND_COVERED));
+            let share = covered.and_then(|l| Some(num_after(l, markers::FUND_COVERED)? * 100.0 / num_after(l, "/")?));
+            let peg = sec.lines().find(|l| l.trim_start().starts_with(markers::FUND_PEG)).and_then(|l| num_after(l, markers::FUND_PEG));
+            match (share, peg) {
+                (Some(share), Some(n)) => {
+                    assert!(
+                        share >= FUND_COVERED_FLOOR,
+                        "{leg}: only {share:.1}% of cutoffs carry as-of fundamentals, under the floor {FUND_COVERED_FLOOR:.0}% — \
+                         the SEC join thinned (a tag drift or a parse regression). Fix it, or measure and justify a new \
+                         floor in the (#421) receipt"
+                    );
+                    assert!(
+                        n >= FUND_PEG_N_FLOOR,
+                        "{leg}: the peg_yield cohort is n={n:.0}, under the floor {FUND_PEG_N_FLOOR:.0} — the shipped fund \
+                         tilt reads fewer names. Fix it, or measure and justify a new floor in the (#421) receipt"
+                    );
+                    eprintln!(
+                        "backtest-gate {leg} as-of fundamentals {share:.1}% (floor {FUND_COVERED_FLOOR:.0}%), peg_yield \
+                         n={n:.0} (floor {FUND_PEG_N_FLOOR:.0})"
+                    );
+                }
+                _ if forced => panic!(
+                    "{leg}: completed but no `{}` / `{}` row parsed — the fund ratchets were skipped",
+                    markers::FUND_COVERED,
+                    markers::FUND_PEG
+                ),
+                _ => eprintln!("backtest-gate {leg} — no fund rows parsed"),
             }
         }
         true
@@ -716,11 +757,15 @@ fn backtest_edge_holds() {
     // ~167s cold) to walk it for ~5s. `UNIVERSE` makes the first horizon's fetch the other two's list.
     // Removed up front so no earlier run's list is ever graded, and after any skipped horizon so a
     // throttled fetch is refetched by the next horizon instead of inherited by it.
+    //
+    // (#421) A fourth leg, `8 universe fund`: the only one that reads the SEC join. 8y, not 12: twice the
+    // cutoffs and still the MONTHLY path. No `pit`: its constituent list is a different universe, and the
+    // snapshot above is the pre-`pit` one. ~3.7 min locally with warm caches.
     let _ = std::fs::remove_file(UNIVERSE);
-    let graded = [20, 12, 8]
+    let graded = [(20, false), (12, false), (8, false), (8, true)]
         .into_iter()
-        .filter(|y| {
-            let ok = grade_horizon(*y, forced);
+        .filter(|&(y, fund)| {
+            let ok = grade_horizon(y, fund, forced);
             if !ok {
                 let _ = std::fs::remove_file(UNIVERSE);
             }
@@ -728,19 +773,19 @@ fn backtest_edge_holds() {
         })
         .count();
     if graded == 0 {
-        // (#57) CI reaches here only if all three horizons skipped, and under the force flag every
+        // (#57) CI reaches here only if every leg skipped, and under the force flag every
         // environmental skip has already been ruled out except a genuine outage. Printing a note and
         // exiting 0 is the failure this file's own header blames for network-smoke silently rotting
         // twice: a month of throttling and the nightly gate stops gating with a green check mark.
         assert!(
             !forced,
-            "backtest-gate: all 3 horizons skipped under FOLIOMAN_BACKTEST_GATE — NOTHING was gated. The \
+            "backtest-gate: all 4 legs skipped under FOLIOMAN_BACKTEST_GATE — NOTHING was gated. The \
              force flag exists so CI cannot skip; reaching here means the run itself is broken or the \
              data is unusable (spawn failure, nonzero exit, <500 tickers, or a GROWTH lane too thin to \
              score). Read the per-horizon SKIPPED lines above — they say which."
         );
         eprintln!("backtest-gate SKIPPED — every horizon skipped (throttle/cold cache); NOTHING was gated this run");
     } else {
-        eprintln!("backtest-gate DONE — {graded}/3 horizons graded on SHIP RULE v2 (lane edge + top-10 held book + OOS)");
+        eprintln!("backtest-gate DONE — {graded}/4 legs graded on SHIP RULE v2 (lane edge + top-10 held book + OOS)");
     }
 }

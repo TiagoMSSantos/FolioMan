@@ -365,6 +365,33 @@ mod tests {
         assert!(vol["stocks"][0].as_array().is_some_and(|r| r.iter().all(|c| c[0] != "BUY%")), "no column, not a blank one");
     }
 
+    /// (#421) The page ranks the pool as a SET: reversed, or with a row every gate refuses appended, the
+    /// payload is byte-equal. A tie is where order leaks, so the pool carries one: five identical
+    /// winners, which rank by ticker. Before the tie-break they came out in HashMap order, a random
+    /// one of 120 per call.
+    #[test]
+    fn the_payload_is_a_function_of_the_pool_as_a_set() {
+        let mut q = pool();
+        for (t, name) in [("NVD5.DE", "Epsilon"), ("NVD3.DE", "Gamma"), ("NVD2.DE", "Beta"), ("NVD4.DE", "Delta")] {
+            let mut twin = winner();
+            (twin.ticker, twin.name) = (t.into(), format!("{name} Corp"));
+            q.push(twin);
+        }
+        let tickers = |v: &serde_json::Value| -> Vec<String> {
+            let rows = v["stocks"].as_array().into_iter().flatten().filter_map(|r| r.as_array());
+            rows.filter_map(|r| r.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).map(String::from)).collect()
+        };
+        let want = engine("", &q);
+        assert_eq!(tickers(&want), ["NVD.DE", "NVD2.DE", "NVD3.DE", "NVD4.DE", "NVD5.DE"], "an exact tie ranks by ticker");
+        let mut rev = q.clone();
+        rev.reverse();
+        assert_eq!(engine("", &rev), want, "the pool reversed");
+        let mut junk = pool().remove(0);
+        (junk.ticker, junk.name) = ("JUNK".into(), "Junk Corp".into());
+        q.push(junk);
+        assert_eq!(engine("", &q), want, "an unpinned row every gate refuses");
+    }
+
     /// (#403) "Why isn't X in?" answers from the ticker, another venue's line, or part of the name, and
     /// says plainly when nothing matches rather than claiming the name was never scanned.
     #[test]

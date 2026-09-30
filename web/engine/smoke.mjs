@@ -1,18 +1,23 @@
 // (#392) The deploy's parity pin: the engine re-ranking universe.json with no upload must print the
 // rows `screen` printed into data.json. Usage: node web/engine/smoke.mjs _site
+// (#421) and it must rank the pool as a set: a second instance on the quotes reversed prints the same.
 import fs from "node:fs";
 import path from "node:path";
 
 const site = path.resolve(process.argv[2]);
 // --target web emits an ES module under a .js name; the copy gives node an unambiguous .mjs
-const glue = path.join(site, "engine", "smoke-glue.mjs");
-fs.copyFileSync(path.join(site, "engine", "folioman_engine.js"), glue);
+// the engine ranks once per instance, so the order leg gets its own module copy
+const glues = ["smoke-glue.mjs", "smoke-glue-rev.mjs"].map((f) => path.join(site, "engine", f));
+glues.forEach((g) => fs.copyFileSync(path.join(site, "engine", "folioman_engine.js"), g));
 try {
-  const { initSync, screen } = await import(glue);
-  initSync({ module: fs.readFileSync(path.join(site, "engine", "folioman_engine_bg.wasm")) });
+  const wasm = fs.readFileSync(path.join(site, "engine", "folioman_engine_bg.wasm"));
+  const { initSync, screen } = await import(glues[0]);
+  initSync({ module: wasm });
   const want = JSON.parse(fs.readFileSync(path.join(site, "data.json"), "utf8"));
+  const universe = fs.readFileSync(path.join(site, "universe.json"), "utf8");
   const t0 = Date.now();
-  const got = JSON.parse(screen("", fs.readFileSync(path.join(site, "universe.json"), "utf8")));
+  const raw = screen("", universe);
+  const got = JSON.parse(raw);
   // `generated` aside: the universe is stamped when it is written, the payload a moment later
   const drift = Object.keys(want).filter((k) => k !== "generated" && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
   if (drift.length) {
@@ -21,6 +26,15 @@ try {
   }
   const n = (k) => (want[k] || []).length;
   console.log(`engine parity in ${Date.now() - t0}ms: stocks ${n("stocks")} etfs ${n("etfs")} crypto ${n("crypto")} core ${n("core")}`);
+  const rev = await import(glues[1]);
+  rev.initSync({ module: wasm });
+  const u = JSON.parse(universe);
+  u.quotes.reverse();
+  if (rev.screen("", JSON.stringify(u)) !== raw) {
+    console.error("the engine's rank depends on pool order");
+    process.exit(1);
+  }
+  console.log(`order-free over ${u.quotes.length} quotes`);
 } finally {
-  fs.rmSync(glue);
+  glues.forEach((g) => fs.rmSync(g, { force: true }));
 }

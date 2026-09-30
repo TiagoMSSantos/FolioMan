@@ -89,6 +89,14 @@ jobs:
             if echo "$bad" | jq -e -f web/payload-contracts.jq > /dev/null; then echo "contract passed a broken payload: $bad"; exit 1; fi
           done
           echo '{"stocks":[[["TICKER","A"],["BUY%","100%"],["NAME","Infrastructure"]]]}' | jq -e -f web/payload-contracts.jq > /dev/null
+      # (#421) The same proof for web/universe-contracts.jq: 200 equities carrying every field pass; the same
+      # pool with roic gone, and a pool of 50, must fail.
+      - name: Universe contract rejects thin pools
+        run: |
+          pool() { jq -n --argjson n "$1" --argjson roic "$2" '{quotes: [range($n) | {instrument_type: "EQUITY", fund: {eps_ttm: 1, net_debt: 1, peg_yield: 1, roic: $roic}}]}'; }
+          pool 200 1 | jq -e -f web/universe-contracts.jq > /dev/null
+          if pool 200 null | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no roic"; exit 1; fi
+          if pool 50 1 | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a 50-equity pool"; exit 1; fi
 
   build:
     runs-on: ubuntu-latest

@@ -131,6 +131,13 @@ pub mod markers {
     /// [`super::GATE_MARKERS`]: that list is pinned against the 12y golden, and these print at 20y only.
     pub const SIZED_DCA: &str = "SIZED   never-sell";
     pub const SERIE_E_DCA: &str = "SIZED   beat Série E best case:";
+    /// (#421) The fund leg's two ratchets: the share of cutoffs the as-of SEC join reached, and the cohort of the
+    /// shipped tilt factor. They print under `fund` only, so they are not in [`super::GATE_MARKERS`];
+    /// `fund_markers_are_in_the_fund_golden` pins them. FUND_PEG is the `{:<14} n=` probe row, so the winners
+    /// table's `peg_yield` row never matches it.
+    pub const FUND_SECTION: &str = "── FUNDAMENTAL (as-of";
+    pub const FUND_COVERED: &str = "cutoffs with as-of fundamentals:";
+    pub const FUND_PEG: &str = "peg_yield      n=";
     /// The three shipped hard gates the re-probe WARN sweeps, by their GATE SWEEP row labels.
     pub const ABLATED_GATES: &[&str] =
         &["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"];

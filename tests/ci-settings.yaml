@@ -5277,6 +5277,26 @@ buy_heuristic:
                                  #  NEXT: ASU 2024-03 (expense disaggregation, annual periods after 2026-12-15) moves income-statement tags again; the (#421)
                                  #  web/universe-contracts.jq coverage floors are the tripwire.
                                  #  REVERT RULE: drop the pretax/fin tag lists and the fold into `op`, drop InterestExpenseNonoperating; key back to facts16.
+                                 #── (#421) MEASURED 2026-09-30 — FOUR REGRESSION FAMILIES IN CI; AN EXACT RANK TIE FELL IN HASHMAP ORDER ──
+                                 #  WHAT: (a) track.rs `the_tracked_journal_is_well_formed` reads the committed journal: every line parses, dates strictly
+                                 #  increase, rows hold no ticker twice, `sized` is drawn from `rows` and sums to (0, 100.5]. (b) web.rs
+                                 #  `the_payload_is_a_function_of_the_pool_as_a_set` (reversed pool and a refused junk row leave the payload byte-equal) and
+                                 #  a second engine instance in web/engine/smoke.mjs ranking universe.json with its quotes reversed. (c) backtest-gate's
+                                 #  fourth leg `8 universe fund`, ratcheting the as-of SEC join, plus the offline fund pool-order pin and marker pin. (d)
+                                 #  web/universe-contracts.jq: Pages refuses to deploy a pool whose equities' eps_ttm / net_debt / peg_yield / roic shares
+                                 #  fall under 83 / 80 / 65 / 62%, or with under 100 equities.
+                                 #  BUG FOUND BY (b): picks.rs `ranked` broke a score tie on turnover, then on input order, but `dedup_currency_twins`
+                                 #  hands the rows over in HashMap order, random per call. A five-way exact tie came out in a random order (red 3 of 3
+                                 #  runs without the fix), and the (B) same-name dedup kept whichever listing came first. Now a final ticker tie-break.
+                                 #  The live pool has no exact tie today: the pre-fix engine ranked its 5275 quotes reversed byte-equal.
+                                 #  MEASURED: journal 10 lines, all invariants hold. Fund leg locally (warm caches): 10945 / 21883 cutoffs = 50.0% carry
+                                 #  as-of fundamentals, peg_yield n=3282; growth edge +54.3, top-10 excess +6.8, Série E 90% of 60 (shares the 8y floor 80),
+                                 #  tuning adds +43.7, OOS +0.21/+0.14. Floors 40% and n 2300. Four legs 240s locally. Coverage live: eps_ttm 93.6,
+                                 #  net_debt 90.7, peg_yield 75.5, roic 72.6 of 547 equities (roic rises once #420's rows reach Pages).
+                                 #  FINDING, NOT ACTED ON: the fund leg's GATE SWEEP warns that `growth_max_above_ma ->off` excluded names average +22.0
+                                 #  pts forward (n=144); the plain 8y leg does not warn. Admission is closed until track ~2027-09: re-read it then.
+                                 #  DROPPED: a one-thread fund pin (#341 twin): 20s serial against ~6s, paid by every mutant; `12` and `12 tune` pin it.
+                                 #  REVERT RULE: drop the four tests, the fund leg and the Pages step; the tie-break stays (it only orders exact ties).
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

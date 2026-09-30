@@ -181,6 +181,9 @@ jobs:
           # (#418) and never over a broken one: BUY% not summing to 100, a ticker twice, a NaN cell.
           jq -e -f web/payload-contracts.jq .screen_web.json > /dev/null \
             || { echo "payload breaks a contract (BUY% sum / duplicate ticker / NaN) — not deploying over a good page"; exit 1; }
+          # (#421) nor over a pool whose fundamentals thinned: a SEC tag drift ranks hundreds of names on the fill.
+          jq -e -f web/universe-contracts.jq .screen_universe.json > /dev/null \
+            || { echo "fund coverage under a web/universe-contracts.jq floor — not deploying over a good page"; exit 1; }
           jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) rows"' .screen_web.json
 
       - name: Assemble the site

@@ -2894,4 +2894,28 @@ mod tests {
         assert!(linked * 10 >= draws * 8, "only {linked} of {draws} journals chained a link: the sweep is vacuous");
         assert!(no_spx > 0 && side_priced > 0, "no_spx {no_spx}, side_priced {side_priced}: a branch went unswept");
     }
+
+    /// (#421) The tracked journal (#333) is the one artefact no rerun can rebuild, and CI appends to it
+    /// daily. `read_snapshots` counts a corrupt line and moves on, so a bad merge, a hand edit or a
+    /// writer bug would drop evidence without failing anything. Every line parses, dates only move
+    /// forward, and each executed book is drawn from its ranked rows with weights summing to at most 100%.
+    #[test]
+    fn the_tracked_journal_is_well_formed() {
+        let path = format!("{}/{SNAPSHOT_FILE}", env!("CARGO_MANIFEST_DIR"));
+        let raw = std::fs::read_to_string(&path).expect("the journal is tracked since (#333)");
+        let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert!(lines.len() >= 10, "{} lines: it held 10 on 2026-09-30 and only grows", lines.len());
+        let mut last = None;
+        for (i, l) in lines.iter().enumerate() {
+            let s: Snapshot = serde_json::from_str(l).unwrap_or_else(|e| panic!("line {}: {e}", i + 1));
+            let d = chrono::NaiveDate::parse_from_str(&s.date, "%Y-%m-%d").unwrap_or_else(|e| panic!("line {}: {e}", i + 1));
+            assert!(last < Some(d), "line {} ({d}) does not follow {last:?}: one line a day, in order", i + 1);
+            last = Some(d);
+            let rows: std::collections::HashSet<&str> = s.rows.iter().map(|(t, _)| t.as_str()).collect();
+            assert!(!rows.is_empty() && rows.len() == s.rows.len(), "{d}: no ranked rows, or a ticker twice");
+            assert!(s.sized.iter().all(|(t, _)| rows.contains(t.as_str())), "{d}: a sized name is not a ranked row");
+            let sum: f64 = s.sized.iter().map(|(_, w)| w).sum();
+            assert!(s.sized.is_empty() || (sum > 0.0 && sum <= 100.5), "{d}: sized weights sum to {sum}");
+        }
+    }
 }

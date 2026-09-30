@@ -446,11 +446,19 @@ fn backtest_pit_report_is_pinned() {
 /// golden runs without `fund`, so each sample's fund factor is None and the tilt adds nothing: their
 /// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts17` rows, so the as-of join,
 /// the factor pick and the tilted growth score all reach the book, and the factor tables, the held-out
-/// factor sweep and the two-style book print. No CI job ran any of them before: backtest-gate runs
-/// `12 universe`, without `fund`.
+/// factor sweep and the two-style book print. (#421) backtest-gate runs `8 universe fund` live too;
+/// these pins are its offline half.
 #[test]
 fn backtest_fund_report_is_pinned() {
     pin(&["12", "fund"], "backtest-12-fund.golden");
+}
+
+/// (#421) The pool-order invariant (#342) for the fund lane: the as-of join and the tilted score read the
+/// same stable sort, so a Z-A pool must print the A-Z fund golden. No one-thread twin: the fund sweep
+/// runs 20s serial against ~6s here, and every mutant in the gate would pay it.
+#[test]
+fn backtest_fund_report_ignores_pool_order() {
+    pin_at(&fixture_copy("reversed-12-fund", true), &["12", "fund"], "backtest-12-fund.golden", None);
 }
 
 /// THE MARKER CONTRACT, as an assertion rather than a claim.
@@ -499,6 +507,18 @@ fn dca_markers_are_in_the_20y_golden() {
     let golden = std::fs::read_to_string(fixture_dir().join("backtest-20.golden")).expect("read backtest-20.golden");
     for m in [SIZED_DCA, SERIE_E_DCA] {
         assert!(golden.contains(m), "tests/network.rs ratchets `{m}` at 20y and backtest-20.golden no longer carries it");
+    }
+}
+
+/// (#421) The fund twin: `tests/network.rs` ratchets the fund leg's coverage and peg_yield cohort, and panics
+/// under the gate when either row is missing; this reds offline first on a rename.
+#[test]
+fn fund_markers_are_in_the_fund_golden() {
+    use folioman::commands::backtest::markers::{FUND_COVERED, FUND_PEG, FUND_SECTION};
+    let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read backtest-12-fund.golden");
+    let sec = golden.split(FUND_SECTION).nth(1).expect("backtest-12-fund.golden carries the FUNDAMENTAL section");
+    for m in [FUND_COVERED, FUND_PEG] {
+        assert!(sec.contains(m), "tests/network.rs ratchets `{m}` on the fund leg and the golden's section no longer carries it");
     }
 }
 
