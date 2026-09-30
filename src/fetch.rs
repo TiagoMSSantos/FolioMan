@@ -142,15 +142,24 @@ pub fn fetch_stats() -> (u64, u64, u64) {
 /// `fetch_stats`, where an unpaced call is invisible by construction.
 pub async fn throttle() {
     HTTP_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let (gate, interval) = THROTTLE.get_or_init(|| {
-        let rps = crate::config::load().fetch_requests_per_second;
-        let interval = if rps > 0.0 {
-            StdDuration::from_secs_f64(1.0 / rps)
-        } else {
-            StdDuration::ZERO
-        };
-        (Mutex::new(Instant::now()), interval)
-    });
+    pace(THROTTLE.get_or_init(|| {
+        (Mutex::new(Instant::now()), interval_for(crate::config::load().fetch_requests_per_second))
+    }))
+    .await;
+}
+
+/// Launch spacing for a req/s rate; 0 (or below) = no pacing.
+fn interval_for(rps: f64) -> StdDuration {
+    if rps > 0.0 {
+        StdDuration::from_secs_f64(1.0 / rps)
+    } else {
+        StdDuration::ZERO
+    }
+}
+
+/// Claim `gate`'s next free slot, then sleep until it. Shared by `throttle` and (#423) the SEC gate.
+async fn pace(gate: &(Mutex<Instant>, StdDuration)) {
+    let (gate, interval) = gate;
     if interval.is_zero() {
         return;
     }
@@ -1577,18 +1586,54 @@ fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
 // that truly has no `_htm.xml` now retries each run (2 fetches, inside `SEC_FETCH_BUDGET`); cache a 404
 // per accession if the budget ever runs short.
 async fn sec_get_text(client: &Client, url: &str, ua: &str) -> Option<String> {
-    if offline() {
-        return None;
-    }
-    throttle().await;
-    client.get(url).header("User-Agent", ua).send().await.ok()?.error_for_status().ok()?.text().await.ok()
+    sec_send(client, url, ua).await?.error_for_status().ok()?.text().await.ok()
 }
 async fn sec_get_json(client: &Client, url: &str, ua: &str) -> Option<Value> {
+    sec_send(client, url, ua).await?.json::<Value>().await.ok()
+}
+
+// (#423) SEC's own launch gate, paced UNDER `throttle`. SEC refuses an IP over 10 req/s for ~10 min,
+// and the global pacer runs at whatever `fetch_requests_per_second` says — 60 on CI. A refused
+// companyfacts GET falls back to the bridged cache or to no rows at all, so an over-rate run read as a
+// SEC parse regression: backtest-gate's fund leg went 51.0% -> 38.2% on an identical restored cache.
+static SEC_THROTTLE: std::sync::OnceLock<(Mutex<Instant>, StdDuration)> = std::sync::OnceLock::new();
+static SEC_SENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SEC_REFUSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// (#423) (sent, refused) SEC requests so far this run, so a throttle is told apart from a parser
+/// that stopped finding rows.
+pub fn sec_stats() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (SEC_SENT.load(Relaxed), SEC_REFUSED.load(Relaxed))
+}
+
+/// (#423) A throttle or an outage, not an answer: 403 (SEC's rate-limit page), 429, 5xx. A 404 is
+/// SEC saying the filing does not exist — structural, so never counted.
+fn sec_refused(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::FORBIDDEN
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+async fn sec_send(client: &Client, url: &str, ua: &str) -> Option<reqwest::Response> {
     if offline() {
         return None;
     }
+    pace(SEC_THROTTLE.get_or_init(|| {
+        (Mutex::new(Instant::now()), interval_for(crate::config::load().sec_requests_per_second))
+    }))
+    .await;
     throttle().await;
-    client.get(url).header("User-Agent", ua).send().await.ok()?.json::<Value>().await.ok()
+    SEC_SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let resp = client.get(url).header("User-Agent", ua).send().await;
+    let refused = match &resp {
+        Ok(r) => sec_refused(r.status()),
+        Err(_) => true,
+    };
+    if refused {
+        SEC_REFUSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    resp.ok()
 }
 
 /// First `open`..`close` slice; `between_all` = every non-overlapping one in document order. Tiny manual
@@ -7749,6 +7794,7 @@ pub(crate) mod tests {
     /// `set` losing the race to another test is fine — both write the same value.
     fn pin_throttle() {
         let _ = THROTTLE.set((Mutex::new(Instant::now()), StdDuration::ZERO));
+        let _ = SEC_THROTTLE.set((Mutex::new(Instant::now()), StdDuration::ZERO)); // (#423) same landmine
     }
 
     /// The SECOND `config::load()` landmine on the transport, and the one `pin_throttle` does not
@@ -7944,6 +7990,60 @@ pub(crate) mod tests {
     async fn sec_get_text_refuses_a_404() {
         let (url, client, _) = routed_stub(vec![]);
         assert!(sec_get_text(&client, &url, "folioman-test").await.is_none());
+    }
+
+    /// (#423) A rate becomes a launch spacing; 0 and below mean no pacing, never a divide.
+    #[test]
+    fn interval_for_turns_a_rate_into_a_spacing() {
+        assert_eq!(interval_for(8.0), StdDuration::from_millis(125));
+        assert_eq!(interval_for(0.0), StdDuration::ZERO);
+        assert_eq!(interval_for(-1.0), StdDuration::ZERO);
+    }
+
+    /// (#423) `pace` spaces successive launches on ITS gate: three calls on a local 40ms gate take
+    /// two intervals. A local gate, so the process-wide pins cannot make this vacuous.
+    #[tokio::test]
+    async fn pace_spaces_launches_by_the_interval() {
+        let t0 = Instant::now();
+        let gate = (Mutex::new(Instant::now()), StdDuration::from_millis(40));
+        for _ in 0..3 {
+            pace(&gate).await;
+        }
+        assert!(t0.elapsed() >= StdDuration::from_millis(80), "{:?}", t0.elapsed());
+    }
+
+    /// (#423) Only a throttle or an outage is a refusal; a 404 is SEC's structural "no such filing".
+    #[test]
+    fn sec_refused_is_throttle_or_outage_only() {
+        use reqwest::StatusCode as S;
+        for s in [S::FORBIDDEN, S::TOO_MANY_REQUESTS, S::INTERNAL_SERVER_ERROR, S::SERVICE_UNAVAILABLE] {
+            assert!(sec_refused(s), "{s}");
+        }
+        for s in [S::OK, S::NOT_FOUND] {
+            assert!(!sec_refused(s), "{s}");
+        }
+    }
+
+    /// (#423) A 429 is counted sent AND refused, and the caller still gets no body. Deltas, not
+    /// absolutes: the counters are process-wide and other tests send too.
+    #[tokio::test]
+    async fn sec_send_counts_a_429_as_refused() {
+        pin_throttle();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let url = format!("http://{}/", listener.local_addr().expect("local addr"));
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept");
+            let _ = std::io::Read::read(&mut sock, &mut [0u8; 4096]);
+            let _ = std::io::Write::write_all(
+                &mut sock,
+                b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        });
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let (sent, refused) = sec_stats();
+        assert!(sec_get_json(&client, &url, "folioman-test").await.is_none());
+        let (sent2, refused2) = sec_stats();
+        assert!(sent2 > sent && refused2 > refused, "sent {sent}->{sent2}, refused {refused}->{refused2}");
     }
 
     /// `sec_get_json` parses it — every CIK, submissions and companyfacts read is this call.

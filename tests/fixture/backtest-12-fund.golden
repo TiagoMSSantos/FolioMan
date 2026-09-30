@@ -255,6 +255,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 
 ── FUNDAMENTAL (as-of, standalone factor probes) ──
   cutoffs with as-of fundamentals: 985 / 1271
+  SEC requests this run: 0 sent, 0 refused (403/429/5xx/transport)
   revenue_cagr   n/a (only 0 cutoffs carry this factor)
   revenue_accel  n/a (only 0 cutoffs carry this factor)
   gross_margin   n=96    rho -0.11  edge +83.2  OOS -0.01 | -0.23

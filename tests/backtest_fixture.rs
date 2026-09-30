@@ -514,10 +514,10 @@ fn dca_markers_are_in_the_20y_golden() {
 /// under the gate when either row is missing; this reds offline first on a rename.
 #[test]
 fn fund_markers_are_in_the_fund_golden() {
-    use folioman::commands::backtest::markers::{FUND_COVERED, FUND_PEG, FUND_SECTION};
+    use folioman::commands::backtest::markers::{FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SECTION};
     let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read backtest-12-fund.golden");
     let sec = golden.split(FUND_SECTION).nth(1).expect("backtest-12-fund.golden carries the FUNDAMENTAL section");
-    for m in [FUND_COVERED, FUND_PEG] {
+    for m in [FUND_COVERED, FUND_PEG, FUND_SEC] {
         assert!(sec.contains(m), "tests/network.rs ratchets `{m}` on the fund leg and the golden's section no longer carries it");
     }
 }

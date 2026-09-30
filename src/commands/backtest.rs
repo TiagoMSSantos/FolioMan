@@ -138,6 +138,8 @@ pub mod markers {
     pub const FUND_SECTION: &str = "── FUNDAMENTAL (as-of";
     pub const FUND_COVERED: &str = "cutoffs with as-of fundamentals:";
     pub const FUND_PEG: &str = "peg_yield      n=";
+    /// (#423) SEC requests sent / refused this run, so the gate tells an SEC throttle (skip) from a thinned join (red).
+    pub const FUND_SEC: &str = "SEC requests this run:";
     /// The three shipped hard gates the re-probe WARN sweeps, by their GATE SWEEP row labels.
     pub const ABLATED_GATES: &[&str] =
         &["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"];
@@ -2211,6 +2213,8 @@ fn report_fund_lane(samples: &[Sample], purge_months: i64) {
     let covered = samples.iter().filter(|s| s.fund.is_some()).count();
     println!("\n── FUNDAMENTAL (as-of, standalone factor probes) ──");
     println!("  cutoffs with as-of fundamentals: {} / {}", covered, samples.len());
+    let (sent, refused) = crate::fetch::sec_stats();
+    println!("  SEC requests this run: {sent} sent, {refused} refused (403/429/5xx/transport)");
     if covered < 4 {
         println!("  too few fundamental cutoffs (needs FMP_API_KEY + cached `stable/income-statement` history) — skipping.");
         return;

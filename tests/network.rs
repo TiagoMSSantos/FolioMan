@@ -397,6 +397,23 @@ async fn euribor_parses() {
     assert!((-2.0..10.0).contains(&rate), "implausible 3M Euribor: {rate}%");
 }
 
+/// (#423) An SEC throttle, not a parse regression: some requests refused (403/429/5xx/transport), at least
+/// one in ten, but not all. EVERY request refused is a broken User-Agent or transport — the 403 that once blamed
+/// rate limiting was the UA's shape — so it stays red, and so does a join that thinned with SEC answering.
+fn sec_throttled(sent: f64, refused: f64) -> bool {
+    refused > 0.0 && refused < sent && refused * 10.0 >= sent
+}
+
+#[test]
+fn sec_throttled_skips_only_a_partial_refusal() {
+    assert!(!sec_throttled(517.0, 0.0), "SEC answered everything: the join is the parser's");
+    assert!(sec_throttled(517.0, 60.0), "over one in ten refused: throttled");
+    assert!(sec_throttled(10.0, 1.0), "exactly one in ten: throttled");
+    assert!(!sec_throttled(517.0, 40.0), "under one in ten: graded");
+    assert!(!sec_throttled(517.0, 517.0), "every request refused is a UA/transport break, not a throttle");
+    assert!(!sec_throttled(0.0, 0.0), "a warm cache sends nothing: graded");
+}
+
 /// Walk-forward regime gate. Shells `backtest {20,12,8} universe` over the LIVE universe and asserts
 /// the committed default tuning still yields a POSITIVE validated edge AND a positive top-10 held book
 /// at each horizon. Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero
@@ -714,13 +731,21 @@ fn backtest_edge_holds() {
             let covered = sec.lines().find(|l| l.contains(markers::FUND_COVERED));
             let share = covered.and_then(|l| Some(num_after(l, markers::FUND_COVERED)? * 100.0 / num_after(l, "/")?));
             let peg = sec.lines().find(|l| l.trim_start().starts_with(markers::FUND_PEG)).and_then(|l| num_after(l, markers::FUND_PEG));
+            // (#423) the join's reading is only the parser's when SEC answered. A missing line reads (0, 0): graded.
+            let sec_line = sec.lines().find(|l| l.contains(markers::FUND_SEC)).unwrap_or("");
+            let sent = num_after(sec_line, markers::FUND_SEC).unwrap_or(0.0);
+            let refused = num_after(sec_line, "sent,").unwrap_or(0.0);
             match (share, peg) {
+                (Some(share), Some(n)) if sec_throttled(sent, refused) => eprintln!(
+                    "backtest-gate {leg} fund floors SKIPPED — SEC refused {refused:.0} of {sent:.0} requests (throttled): \
+                     the join reading ({share:.1}%, peg_yield n={n:.0}) is the network's, not the parser's"
+                ),
                 (Some(share), Some(n)) => {
                     assert!(
                         share >= FUND_COVERED_FLOOR,
                         "{leg}: only {share:.1}% of cutoffs carry as-of fundamentals, under the floor {FUND_COVERED_FLOOR:.0}% — \
-                         the SEC join thinned (a tag drift or a parse regression). Fix it, or measure and justify a new \
-                         floor in the (#421) receipt"
+                         the SEC join thinned (a tag drift or a parse regression; SEC {sent:.0} sent / {refused:.0} refused). \
+                         Fix it, or measure and justify a new floor in the (#421) receipt"
                     );
                     assert!(
                         n >= FUND_PEG_N_FLOOR,
@@ -729,7 +754,7 @@ fn backtest_edge_holds() {
                     );
                     eprintln!(
                         "backtest-gate {leg} as-of fundamentals {share:.1}% (floor {FUND_COVERED_FLOOR:.0}%), peg_yield \
-                         n={n:.0} (floor {FUND_PEG_N_FLOOR:.0})"
+                         n={n:.0} (floor {FUND_PEG_N_FLOOR:.0}), SEC {sent:.0} sent / {refused:.0} refused"
                     );
                 }
                 _ if forced => panic!(

@@ -5308,6 +5308,21 @@ buy_heuristic:
                                  #  edge +54.7, same `growth_max_above_ma` WARN (+22.1, n=144). Matches the local 50.0% / 3282, so the floors stand. Job 221s.
                                  #  RULE: a cache-key bump inside a warm-up bridges EVERY key the live cache may still hold, not just the last one.
                                  #  REVERT RULE: bridge list back to ["_facts16"] once Pages' cache is warm under facts17 (then delete the bridge per #410).
+                                 #── (#423) MEASURED 2026-09-30 — SEC GETS ITS OWN PACER; backtest-gate TELLS A THROTTLE FROM A THINNED JOIN ──
+                                 #  BUG: backtest-gate's fund leg read 51.0% (36704736229) then 38.2% (36706535718, red under the floor 40) on the SAME restored
+                                 #  .sec_cache and byte-identical price legs. The pool's ~517 CIK names all miss facts17 cold (under the 600 budget, so order
+                                 #  is moot) and SEC rode the global pacer: 60 req/s on CI against SEC's fair-access cap of 10, which refuses an IP ~10 min.
+                                 #  A refused companyfacts GET falls back to facts16/15 or to no rows, and nothing counted refusals, so a throttle (a SKIP
+                                 #  under network.rs's contract) read exactly like a parse regression (RED).
+                                 #  FIX: `sec_send` paces every SEC request on its own gate (`sec_requests_per_second`, default 8) before the global one,
+                                 #  and counts sent / refused (403, 429, 5xx, transport; a 404 is structural). `report_fund_lane` prints the pair, and the
+                                 #  gate skips its two fund floors when 10%+ of the requests but not all were refused.
+                                 #  RULE: EVERY request refused stays red: that is a broken User-Agent or transport (the 403 once blamed on rate limits was
+                                 #  the UA's shape), never a throttle. A join that thinned while SEC answered stays red too.
+                                 #  MEASURED locally, facts17 moved aside (CI's cold state): SEC 518 sent / 0 refused, fund 50.0% (10945 / 21883),
+                                 #  peg_yield n=3282, both equal to the warm reading. Four legs 302s against 240s warm: the pacer's ~65s is the cold cost,
+                                 #  a warm cache sends ~nothing. Fund golden: one line, `0 sent, 0 refused` (offline).
+                                 #  REVERT RULE: drop the skip arm and the knob together; the counters are free and stay.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -19548,6 +19563,12 @@ fetch_concurrency_multiplier: 8
 # concurrency (which risks the memory kill above) for little gain. Lower if you see real names drop,
 # 0 disables pacing (a 64-wide burst then drops valid names — e.g. NVDA — so don't).
 fetch_requests_per_second: 60.0
+
+# (#423) SEC EDGAR's OWN pacer (requests/second), applied UNDER the global one above. SEC's fair-access
+# policy caps an IP at 10 req/s and refuses it for ~10 minutes past that; at the global 60 a cold
+# facts cache (backtest-gate's fund leg: ~517 companyfacts GETs) went over, and each refused filer fell
+# back to older cached rows or to none. 8 leaves headroom under the cap; 0 disables it (don't).
+sec_requests_per_second: 8.0
 
 # Worker threads for the CPU-bound half of `backtest` — the per-ticker walk, the knob sweeps and the
 # `tune` search. NOT the two knobs above: those size in-flight NETWORK requests and want to be far
