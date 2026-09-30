@@ -36,6 +36,15 @@ name: Mutation census
 # code only an end-to-end run reaches: `commands/*` entry points and `broker::tr` are called from
 # tests/cli.rs and nothing else. ci.yml's diff gate still leaves cli out (see its comments); a
 # census can afford it because it runs by hand.
+#
+# (#427) `since` grades only the lines changed since a commit — the catch-up the diff gate cannot give.
+# ci.yml's gate grades at most BUDGET (6) mutants per push, one round-robin shard of the push's diff, so
+# a big push leaves most of its mutants ungraded: 50 commits after 4a8b8ff (the last census) had 998
+# that no run had ever graded. Each catch-up's receipt in tests/ci-settings.yaml names the head it
+# graded (LAST GRADED SHA); the next round dispatches `since: <that SHA>`. Still manual: a survivor
+# needs a round to triage it, so a schedule would only publish lists nobody reads.
+# The checkout stays shallow: a diff of two trees needs no history, and GitHub serves a fetch by SHA.
+# The fetch failing is a hard exit, not a fallthrough — without the diff this grades whole files.
 on:
   workflow_dispatch:
     inputs:
@@ -51,6 +60,9 @@ on:
       tests:
         description: "test-target args after cargo mutants' --"
         default: '--lib --test backtest_fixture'
+      since:
+        description: "grade only lines changed since this SHA (empty = whole files)"
+        default: ''
 
 # Its own group and NEVER cancelled: in ci.yml's group, the daily journal commit would cancel a
 # multi-hour census the moment the Pages cron pushed it.
@@ -111,6 +123,7 @@ jobs:
           RE: ${{ inputs.regex }}
           EX: ${{ inputs.exclude }}
           TESTS: ${{ inputs.tests }}
+          SINCE: ${{ inputs.since }}
           SHARD: ${{ matrix.shard }}
         # The baseline stays ON, unlike the gate's `--baseline skip`: no unit-tests job runs before this
         # one, and a suite that is red here would grade every mutant CAUGHT.
@@ -130,8 +143,14 @@ jobs:
           for f in "${names[@]}"; do files+=(--file "$f"); done
           ex=(); [ -n "${EX}" ] && ex=(-E "${EX}")
           read -ra targs <<< "${TESTS}"
+          ind=()
+          if [ -n "${SINCE}" ]; then
+            git fetch -q --no-tags --depth=1 origin "${SINCE}" || { echo "cannot fetch ${SINCE}"; exit 1; }
+            git diff "${SINCE}" HEAD -- src > "${RUNNER_TEMP}/since.diff"
+            ind=(--in-diff "${RUNNER_TEMP}/since.diff")
+          fi
           timeout --signal=INT --kill-after=60s 330m \
-            cargo mutants "${files[@]}" -F "${RE}" "${ex[@]}" --shard "${SHARD}/16" --sharding round-robin \
+            cargo mutants "${files[@]}" -F "${RE}" "${ex[@]}" "${ind[@]}" --shard "${SHARD}/16" --sharding round-robin \
               -j 2 --copy-target=false --timeout 90 --profile mutants \
               -- "${targs[@]}" || echo "cargo mutants exit $? (the files are the verdict)"
       - uses: actions/upload-artifact@v7
@@ -161,13 +180,20 @@ jobs:
           RE: ${{ inputs.regex }}
           EX: ${{ inputs.exclude }}
           TESTS: ${{ inputs.tests }}
+          SINCE: ${{ inputs.since }}
         run: |
           set -uo pipefail
           read -ra names <<< "${FILES}"
           files=()
           for f in "${names[@]}"; do files+=(--file "$f"); done
           ex=(); [ -n "${EX}" ] && ex=(-E "${EX}")
-          listed=$(cargo mutants --list "${files[@]}" -F "${RE}" "${ex[@]}" | wc -l)
+          ind=()
+          if [ -n "${SINCE}" ]; then
+            git fetch -q --no-tags --depth=1 origin "${SINCE}" || { echo "cannot fetch ${SINCE}"; exit 1; }
+            git diff "${SINCE}" HEAD -- src > "${RUNNER_TEMP}/since.diff"
+            ind=(--in-diff "${RUNNER_TEMP}/since.diff")
+          fi
+          listed=$(cargo mutants --list "${files[@]}" -F "${RE}" "${ex[@]}" "${ind[@]}" | wc -l)
           mkdir -p out
           for k in caught missed timeout unviable; do
             cat census/*/"$k".txt 2>/dev/null | sort > "out/$k.txt"
@@ -175,6 +201,7 @@ jobs:
           graded=$(cat out/*.txt | wc -l)
           {
             echo "tests: ${TESTS}"
+            echo "since: ${SINCE:-whole files}"
             echo "listed ${listed}, graded ${graded} (ungraded $((listed - graded)))"
             for k in caught missed timeout unviable; do echo "- ${k}: $(wc -l < "out/$k.txt")"; done
             for k in missed timeout unviable; do
