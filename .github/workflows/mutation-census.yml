@@ -21,7 +21,7 @@ name: Mutation census
 # (#350) That test half is mostly DEPENDENCY code. Measured locally, dependencies at opt 2 with folioman
 # still at 0: lib suite 6.7s -> 2.8s, lib+fixture 29.5s -> 18.6s, per-mutant rebuild unchanged (4.3s),
 # cold tree 66s -> 181s. Paid twice per shard against ~149 mutants, that is ~3.6 min off each shard;
-# against the gate's 6 mutants it is a loss, so ci.yml stays at plain 0. PROVEN by run 36221750549 (b38a3bc)
+# against the gate's 6 mutants it was a loss, until (#427) the fixture outgrew that (ci.yml). PROVEN by run 36221750549 (b38a3bc)
 # against 36174288986, same inputs: verdict files identical except the 4 kills (#344) landed in between;
 # test per mutant 7.0s -> 3.0s median, cold tree 50s -> 125s, wall clock 20m43s -> 17m22s.
 #
@@ -126,16 +126,20 @@ jobs:
           TESTS: ${{ inputs.tests }}
           SINCE: ${{ inputs.since }}
           SHARD: ${{ matrix.shard }}
-        # The baseline stays ON, unlike the gate's `--baseline skip`: no unit-tests job runs before this
-        # one, and a suite that is red here would grade every mutant CAUGHT.
+        # The baseline stays ON: no unit-tests job runs before this one, and a suite that is red here
+        # would grade every mutant CAUGHT.
         #
-        # `--timeout 90`, up from 20 at opt-level 2: at 0 the fixture alone runs ~25s on a runner
-        # (CI's integration-tests), and two workers share its four cores.
+        # (#427) NO `--timeout`: cargo-mutants derives it from that baseline (a multiple of the measured
+        # suite; the log prints "Auto-set test timeout"). A fixed 90 went stale in silence: the fund-lane
+        # goldens (#364)-(#426) took the fixture from ~25s to 83.3s here, so run 36753132950's baseline
+        # timed out at 90s ("TIMEOUT Unmutated baseline in 79s build + 90s test") and graded nothing.
+        # A mutant that only the fixture kills runs the WHOLE fixture binary either way (a failing test
+        # does not stop the others), so a cap under the suite reads every such mutant as TIMEOUT.
         #
         # (#350) Dependencies at opt-level 2, folioman itself still at 0 (the env above), so a mutant
         # still rebuilds in ~5s but its tests stop paying for unoptimised library code. A config file,
         # because Cargo has no env spelling for `package."*"`; it merges over Cargo.toml's profile.
-        # Census only: see COST for why the gate's 6 mutants cannot repay the slower cold tree.
+        # (#427) ci.yml's gate appends the same line now; see its comment for why it pays there too.
         run: |
           set -uo pipefail
           printf '[profile.mutants.package."*"]\nopt-level = 2\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
@@ -152,7 +156,7 @@ jobs:
           fi
           timeout --signal=INT --kill-after=60s 330m \
             cargo mutants "${files[@]}" -F "${RE}" "${ex[@]}" "${ind[@]}" --shard "${SHARD}/16" --sharding round-robin \
-              -j 2 --copy-target=false --timeout 90 --profile mutants \
+              -j 2 --copy-target=false --profile mutants \
               -- "${targs[@]}" || echo "cargo mutants exit $? (the files are the verdict)"
       - uses: actions/upload-artifact@v7
         if: always()

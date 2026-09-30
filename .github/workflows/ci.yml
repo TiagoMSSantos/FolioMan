@@ -420,10 +420,15 @@ jobs:
   # gate still only ever grades code this push touched. See the BUDGET check in the step.
   #
   # fetch-depth: 0 because the default shallow clone has no base commit to diff against.
-  # --baseline skip because unit-tests and integration-tests above already prove the tree is green;
-  # re-proving it here would cost a full build+test per run for nothing.
+  # (#427) The baseline RUNS again. It was `--baseline skip`, on the reasoning that unit-tests and
+  # integration-tests above already prove the tree green, with a fixed `--timeout 90` in its place.
+  # That timeout went stale in silence: the fixture ran 247.8s under this job's plain opt-level 0
+  # (integration-tests' log, 32b8d9c), a TIMEOUT is neither MISSED nor a red, and a failing fixture
+  # test does not stop the others. So every mutant that survived --lib timed out, and the gate went
+  # green whether the goldens would have caught it or not. The fixture leg graded nothing. Now the
+  # timeout is derived from the measured baseline, and the fixture's growth moves it along.
   #
-  # `needs:` is what MAKES that sentence true. It was an assumption before, and jobs run in parallel,
+  # `needs:` is what made that skip safe, and it stays: a red tree fails fast there, not here. It was an assumption before, and jobs run in parallel,
   # so it was false: on 04a74e4 the killing suite panicked in 5 tests and this gate still reported
   # "7 caught, 0 missed" and went GREEN. cargo-mutants scores a mutant CAUGHT when the suite FAILS, so
   # a suite that fails unconditionally catches everything, and --baseline skip removes the one check
@@ -451,12 +456,9 @@ jobs:
   # case: it reds on third-party advisories published by someone else, which would silently stop this
   # gate from grading your commit.
   #
-  # Known residual, documented rather than chased: unit-tests runs the `test` profile (inherits dev,
-  # opt-level 0) while this job grades under --profile mutants (opt-level 2), so the guard proves the
-  # suite green at a different opt-level than the one grading it. Both inherit dev, so debug-assertions
-  # and overflow-checks are on in each; Rust permits no float reassociation and target-cpu=x86-64-v3
-  # applies to both; and the goldens already pass under both profiles. Small — but it IS the same
-  # assumed-not-enforced shape that made `--baseline skip` safe-looking, so it is written down.
+  # (#427) closed a residual this block used to document: the `needs:` jobs prove the suite green
+  # under the `test` profile, not the `mutants` profile this job grades with. The baseline now proves
+  # it under the grading profile itself.
   mutants:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
@@ -491,10 +493,10 @@ jobs:
           # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a
           # branch's first push, where there is no "before" — the step below falls back to HEAD^.
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          # (#171) Same pin as unit-tests, and it MUST track it. --baseline skip means a suite that is
-          # red here grades every mutant CAUGHT and goes vacuously green; the only thing standing in
-          # for the missing baseline is `needs: [unit-tests]` having run the same suite. That proxy
-          # holds only while the two run the same suite in the SAME config regime. Before (#171) both
+          # (#171) Same pin as unit-tests, and it MUST track it. Under the old `--baseline skip` a suite
+          # red here graded every mutant CAUGHT and went vacuously green; the stand-in for the missing
+          # baseline was `needs: [unit-tests]` having run the same suite. That proxy held only while
+          # the two ran the same suite in the SAME config regime. Before (#171) both
           # were config-less and it held by accident; now both pin the fixture and it holds on purpose.
           # Bonus, not the reason: a knob reading its shipped value makes its branch observable, so
           # mutants of a config-gated path become killable instead of unkillable-by-construction.
@@ -531,6 +533,11 @@ jobs:
             BASE=$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)
           fi
           git diff "${BASE}" HEAD > push.diff
+          # (#427) Dependencies at opt-level 2, folioman still at 0: mutation-census.yml's (#350) line.
+          # It was a loss here while a mutant's test half was ~7s. It is not any more: the fixture runs
+          # 247.8s with unoptimised dependencies and 83.3s with optimised ones (census baseline), and
+          # every mutant that --lib lets through pays it. The price is a slower cold tree (~50s -> ~125s).
+          printf '[profile.mutants.package."*"]\nopt-level = 2\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
           # Count first, into the summary: a slow run then reads as "big diff", not as a hang. `--list`
           # only parses, so this costs seconds.
           #
@@ -594,6 +601,12 @@ jobs:
           # (65.7s -> ~66s -> 166s), and so will this one: re-read it from a real run's outcomes.json
           # whenever a feature-sized diff lands — a stale build figure is what overran earlier rounds.
           #
+          # (#427) STALE until re-read: every figure above predates the baseline run and the optimised
+          # dependencies. A mutant that survives --lib now pays the real fixture (83.3s alone on a
+          # runner, more with two workers sharing four cores) instead of a 90s TIMEOUT, and the job pays
+          # one baseline plus a slower cold tree. BUDGET stays 6 until a code push's outcomes.json says
+          # otherwise.
+          #
           # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
           # arguments, and quoting it would pass one empty argument in the common case where no shard
           # is wanted. `"${SHARD[@]}"` expands to nothing at all when empty, and needs no splitting.
@@ -642,14 +655,14 @@ jobs:
           # mutants, 0 survived" instead of to silence. 17m leaves ~3 minutes under timeout-minutes
           # for the 11s setup and the artifact upload.
           #
-          # `--timeout 90`, as in the census, because the default is 300s and the log warns about it on
-          # every run. It was 20 at opt-level 2; at 0 a survivor runs the whole suite in up to 39s on a
-          # runner (the fixture alone is ~25s), and a TIMEOUT is not a MISSED, so too tight a cap would
-          # hide a survivor rather than red the gate.
+          # (#427) NO `--timeout`, and the baseline runs: cargo-mutants derives the timeout as a multiple
+          # of the measured suite (the log prints "Auto-set test timeout"). The fixed 90 it replaces was
+          # sized to a ~25s fixture and hid every fixture-reaching mutant once the fixture outgrew it.
+          # A TIMEOUT is not a MISSED, so too tight a cap hides a survivor rather than reddening the gate.
           rc=0
           timeout --signal=INT --kill-after=60s 17m \
             cargo mutants "${SHARD[@]}" --in-diff push.diff -j 2 --copy-target=false \
-              --timeout 90 --profile mutants --baseline skip -- --lib --test backtest_fixture || rc=$?
+              --profile mutants -- --lib --test backtest_fixture || rc=$?
           # THE FILES ARE THE VERDICT, not the exit code: under `timeout` the code conflates
           # "mutants survived" (2), "interrupted" (124) and any internal error, so it is reported
           # for diagnosis and nothing is decided from it.
