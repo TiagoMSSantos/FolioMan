@@ -5219,6 +5219,35 @@ buy_heuristic:
                                  #  - Domian-Louton-Racine 2007 (shortfall risk keeps falling past 100 stocks) and Morningstar's thematic survival (9%
                                  #    survive and beat the index over 15y): recorded; the 5.0y leg floor already holds young thematics off.
                                  #  REVERT RULE: delete is_hedged_etf, HEDGE_MARKERS and their two call sites. The contracts stand alone.
+                                 #── (#419) MEASURED 2026-09-30 — SEC DEBT READS THE TAGS FILERS MOVED TO; INTEREST PAID UNDER NO DEBT TAG IS UNKNOWN DEBT ──
+                                 #  WHAT: fetch.rs US-GAAP `debt_nc` adds LongTermDebtAndCapitalLeaseObligations and LongTermNotesPayable (ahead of the
+                                 #  LongTermDebt total); `debt_cur` adds LongTermDebtAndCapitalLeaseObligationsCurrent, ShortTermBorrowings, CommercialPaper.
+                                 #  A same-day tie keeps the first tag, so a filer the old names read is untouched. A row with NO debt tag while
+                                 #  InterestExpense > 0 now has debt None, so net_debt and net_cash_rev are None and roic falls to its assets denominator.
+                                 #  Cache key _facts15 -> _facts16 (the warm-up bridge reads _facts15); the 47 fixture files are renamed, rows frozen.
+                                 #  BUG: missing debt read 0. MPC tags LongTermDebtAndCapitalLeaseObligations ($30.5B FY2025; LongTermDebtNoncurrent stops
+                                 #  at 2011), so it read net_debt -1.3B and roic 51.8% (term at its 40 cap, 10 pts) for ~17.8%. ORCL tags LongTermNotesPayable
+                                 #  ($122B); KO left LongTermDebtNoncurrent in 2024. SEC frames census at CY2025Q2I: 207 of 696 mapped filers carry none of
+                                 #  the 4 old tags, 52 of them paying interest. The new tags cover 30 of the 52 (LTD&CLO(+Current) 17, ShortTermBorrowings
+                                 #  10, CommercialPaper 5); most of the other 22 are frame timing (non-calendar FY), and the guard catches what is real.
+                                 #  MEASURED LIVE: roic re-derived from the _facts16 rows (the port matches the served value 256/256), universe.json
+                                 #  re-ranked through the page engine. 105 quotes change; the book keeps the same 29 names; MPC 6.3% -> 3.2%, AP2.DE (AMAT)
+                                 #  3.2% -> 6.3%. Negative-equity buyback names (CAH, LYV, DPZ, YUM, HLT) RISE: invested capital turns positive once the
+                                 #  debt is real. That is the MCK class the term's cap already clamps.
+                                 #  MEASURED BACKTEST {12,8} universe fund pit: control at HEAD before the edit, arm after warm-up, dotfiles restored and
+                                 #  the same run order. Run order matters: a run after a run reads a warmer ETF fund-facts cache (376 vs 308 fallbacks), so
+                                 #  the first 8y pair was confounded and re-run. Windows scored equal (2815/253, 6243/363). Book excess, pts/yr:
+                                 #  12y top-1 +1.6 -> +1.9, top-3 +4.4 -> +4.5. 8y top-1 +5.9 -> +6.0, top-2 +6.3 -> +5.8, top-3 +6.4 -> +6.5.
+                                 #  top-5..top-50 are identical at both horizons. 8y top-2 BREACHES the pre-registered 0.3 bar: one window of 44 flips
+                                 #  (win 80% -> 77%). Shipped anyway, on the user's decision, as a data-correctness fix: the old rows were wrong, and a
+                                 #  bug that pays in one 2-name book is not an edge.
+                                 #  FINDING, NOT ACTED ON: corrected roic's AUC falls 12y 0.56 -> 0.43, 8y 0.49 -> 0.40. Ablating fund_extra:roic now adds
+                                 #  +24.8 at 12y (was +20.7) and +3.9 at 8y (unchanged). Part of what roic seemed to know was the fake net cash. Its weight
+                                 #  is a weight, closed until track ~2027-09: re-read this row then.
+                                 #  SWEEP 14 DROPPED: earnings/cash-flow volatility (Huang 2009; Dichev-Tang 2009) is the stability family, already DEAD
+                                 #  (margin_stability 0.47/0.46, (#407) rev_stability). Exchange tokens (FTT 2022; BNB survived): the risk is the issuer's
+                                 #  solvency, which no price series shows. Recorded only.
+                                 #  REVERT RULE: restore the two tag lists and the unwrap_or(0) debt legs; key back to facts15.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
