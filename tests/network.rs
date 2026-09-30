@@ -235,6 +235,50 @@ async fn sec_facts_parse() {
     }
 }
 
+/// (#424) Split-basis net. A 10-K states EPS and shares on the share count of its FILING date, while Yahoo's
+/// closes are divided by every split since, so `restate_for_splits` divides each pre-split filing by the
+/// splits after it. That only holds while the two live feeds agree on the event: Yahoo's `events.splits`
+/// must carry AVGO's 10:1 (2024-07-15), and SEC's FY2023 10-K (filed 2023-12, EPS 32.98) must then read what
+/// AVGO's OWN FY2024 10-K restated it to as the comparative (3.30). A dropped split feed leaves FY2023 at
+/// ~33 against a ~$170 close: a 10x-cheap P/E the fund tilt ranks as value. Either fetch failing -> skip.
+#[tokio::test]
+async fn sec_rows_restate_onto_the_chart_split_basis() {
+    stamp_run();
+    let (client, urls) = (fetch::client(), config::load().urls);
+    let Some(chart) = fetch::fetch_history(&client, &urls, "AVGO").await else {
+        return eprintln!("network smoke [split AVGO] SKIPPED — Yahoo 10y chart unavailable");
+    };
+    let mut rows = match fetch::sec_facts_live(&client, &urls, "AVGO").await {
+        Ok(rows) => rows,
+        Err(why) => return eprintln!("network smoke [split AVGO] SKIPPED — {why}"),
+    };
+    use chrono::Datelike;
+    assert!(
+        chart.splits.iter().any(|&(d, r)| (d.year(), d.month()) == (2024, 7) && r == 10.0),
+        "AVGO: the chart carries no 10:1 in 2024-07 (got {:?}) — Yahoo's events.splits drifted, and every \
+         pre-split SEC filing now prices 10x cheap",
+        chart.splits
+    );
+    assert!(core::restate_for_splits(&mut rows, &chart.splits), "AVGO: no SEC row filed before its 10:1 was restated");
+    let fy = |y: i32| rows.iter().find(|r| r.period_end.year() == y); // AVGO's fiscal year ends on the Sunday nearest Oct 31
+    let (fy23, fy24) = (fy(2023), fy(2024));
+    let eps23 = fy23.and_then(|r| r.eps).expect("AVGO: no FY2023 EPS parsed — companyfacts drifted");
+    assert!(
+        (2.5..4.5).contains(&eps23),
+        "AVGO FY2023 EPS reads {eps23:.2} after the restate (as filed 32.98, on today's basis ~3.30) — \
+         the split restate is off or the as-filed line moved"
+    );
+    let comparative = fy24.and_then(|r| r.prior_eps);
+    eprintln!("network smoke [split AVGO] FY2023 EPS restated to {eps23:.3}, FY2024 10-K comparative {comparative:?}");
+    if let Some(comparative) = comparative {
+        assert!(
+            (eps23 / comparative - 1.0).abs() < 0.05,
+            "AVGO: FY2023 restated to {eps23:.3} but the FY2024 10-K states it as {comparative:.3} — the two feeds disagree \
+             on the split basis"
+        );
+    }
+}
+
 /// (tests round 3) Yahoo fund-facts drift net — the crumb-gated fallback that fills ETF TER/AUM
 /// holes (the TER drag, AUM gate and bridge hints ride it). Proven silent-degrade: it failed live
 /// on 2026-07-17 ("Yahoo crumb handshake failed — fund-facts fallback skipped this run") and
@@ -727,6 +771,10 @@ fn backtest_edge_holds() {
         if fund {
             const FUND_COVERED_FLOOR: f64 = 40.0;
             const FUND_PEG_N_FLOOR: f64 = 2300.0;
+            // (#424) tickers whose pre-split filings were restated onto the chart's split basis: 165 on the 2026-09-30
+            // local reading, x0.7. Zero means Yahoo's events.splits went dark and the join is back to pricing a future
+            // split as value (the fund tilt's validated edge was mostly that look-ahead).
+            const FUND_SPLIT_FLOOR: f64 = 115.0;
             let sec = stdout.split(markers::FUND_SECTION).nth(1).unwrap_or("");
             let covered = sec.lines().find(|l| l.contains(markers::FUND_COVERED));
             let share = covered.and_then(|l| Some(num_after(l, markers::FUND_COVERED)? * 100.0 / num_after(l, "/")?));
@@ -735,12 +783,20 @@ fn backtest_edge_holds() {
             let sec_line = sec.lines().find(|l| l.contains(markers::FUND_SEC)).unwrap_or("");
             let sent = num_after(sec_line, markers::FUND_SEC).unwrap_or(0.0);
             let refused = num_after(sec_line, "sent,").unwrap_or(0.0);
+            let split = sec.lines().find(|l| l.contains(markers::FUND_SPLIT)).and_then(|l| num_after(l, markers::FUND_SPLIT));
             match (share, peg) {
                 (Some(share), Some(n)) if sec_throttled(sent, refused) => eprintln!(
                     "backtest-gate {leg} fund floors SKIPPED — SEC refused {refused:.0} of {sent:.0} requests (throttled): \
                      the join reading ({share:.1}%, peg_yield n={n:.0}) is the network's, not the parser's"
                 ),
                 (Some(share), Some(n)) => {
+                    let split = split.unwrap_or_else(|| panic!("{leg}: no `{}` line — the split restate went unreported", markers::FUND_SPLIT));
+                    assert!(
+                        split >= FUND_SPLIT_FLOOR,
+                        "{leg}: only {split:.0} tickers had filings restated onto the chart's split basis, under the floor \
+                         {FUND_SPLIT_FLOOR:.0} — Yahoo's events.splits went dark, and every pre-split SEC filing prices cheap by \
+                         its split ratio. Fix it, or measure and justify a new floor in the (#424) receipt"
+                    );
                     assert!(
                         share >= FUND_COVERED_FLOOR,
                         "{leg}: only {share:.1}% of cutoffs carry as-of fundamentals, under the floor {FUND_COVERED_FLOOR:.0}% — \
@@ -754,7 +810,8 @@ fn backtest_edge_holds() {
                     );
                     eprintln!(
                         "backtest-gate {leg} as-of fundamentals {share:.1}% (floor {FUND_COVERED_FLOOR:.0}%), peg_yield \
-                         n={n:.0} (floor {FUND_PEG_N_FLOOR:.0}), SEC {sent:.0} sent / {refused:.0} refused"
+                         n={n:.0} (floor {FUND_PEG_N_FLOOR:.0}), split-restated {split:.0} (floor {FUND_SPLIT_FLOOR:.0}), \
+                         SEC {sent:.0} sent / {refused:.0} refused"
                     );
                 }
                 _ if forced => panic!(

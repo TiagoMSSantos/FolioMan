@@ -257,22 +257,7 @@ fn pin_at(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>) {
         cache.display()
     );
 
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"));
-    cmd.arg("backtest")
-        .args(args)
-        .env("FOLIOMAN_CONFIG", cfg)
-        .env("FOLIOMAN_OFFLINE", "1") // no socket may be opened; a fixture miss must not become a live fetch
-        .env_remove("FMP_API_KEY"); // (#364) CI has none, so a developer's key must not reach the golden either
-    if let Some(n) = threads {
-        cmd.env("RAYON_NUM_THREADS", n);
-    }
-    let out = cmd.output().expect("spawn folioman");
-    assert!(out.status.success(), "backtest exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr));
-    let got = normalize(&format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    ));
+    let got = report_at(cfg, args, threads);
 
     let golden_path = fixture_dir().join(golden_name);
     if std::env::var("FOLIOMAN_BLESS").is_ok_and(|v| !v.is_empty()) {
@@ -284,23 +269,46 @@ fn pin_at(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>) {
         .unwrap_or_else(|e| panic!("read {}: {e} — bless it with FOLIOMAN_BLESS=1", golden_path.display()));
 
     if got != want {
-        // First differing line, then the counts: a whole-file dump of a 200-line report buries the
-        // one line that moved, which is the only thing a reader needs.
-        let (gl, wl): (Vec<_>, Vec<_>) = (got.lines().collect(), want.lines().collect());
-        let at = gl.iter().zip(&wl).position(|(a, b)| a != b);
-        let detail = match at {
-            Some(i) => format!("first difference at line {}:\n  golden: {}\n  got   : {}", i + 1, wl[i], gl[i]),
-            None => format!("identical prefix, length differs: golden {} lines, got {}", wl.len(), gl.len()),
-        };
         panic!(
             "`backtest {}` changed on FROZEN data — the market cannot have moved, so this is a \
-             code or knob change.\n{detail}\n\nIf it was intended: re-validate with a live \
+             code or knob change.\n{}\n\nIf it was intended: re-validate with a live \
              `folioman backtest universe` (both OOS halves positive) exactly as the ci-settings \
              receipts require, then re-bless with \
              `FOLIOMAN_BLESS=1 cargo test --release --test backtest_fixture`.",
-            args.join(" ")
+            args.join(" "),
+            first_difference(&got, &want)
         );
     }
+}
+
+/// First differing line, then the counts: a whole-file dump of a 200-line report buries the one line
+/// that moved, which is the only thing a reader needs.
+fn first_difference(got: &str, want: &str) -> String {
+    let (gl, wl): (Vec<_>, Vec<_>) = (got.lines().collect(), want.lines().collect());
+    match gl.iter().zip(&wl).position(|(a, b)| a != b) {
+        Some(i) => format!("first difference at line {}:\n  golden: {}\n  got   : {}", i + 1, wl[i], gl[i]),
+        None => format!("identical prefix, length differs: golden {} lines, got {}", wl.len(), gl.len()),
+    }
+}
+
+/// The real binary over `cfg`'s data root, offline, stdout+stderr normalized: what `pin_at` diffs.
+fn report_at(cfg: &Path, args: &[&str], threads: Option<&str>) -> String {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"));
+    cmd.arg("backtest")
+        .args(args)
+        .env("FOLIOMAN_CONFIG", cfg)
+        .env("FOLIOMAN_OFFLINE", "1") // no socket may be opened; a fixture miss must not become a live fetch
+        .env_remove("FMP_API_KEY"); // (#364) CI has none, so a developer's key must not reach the golden either
+    if let Some(n) = threads {
+        cmd.env("RAYON_NUM_THREADS", n);
+    }
+    let out = cmd.output().expect("spawn folioman");
+    assert!(out.status.success(), "backtest exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr));
+    normalize(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    ))
 }
 
 /// 12 is >= 8, so this takes the MONTHLY path — the same branch the wide nightly gate uses
@@ -461,6 +469,77 @@ fn backtest_fund_report_ignores_pool_order() {
     pin_at(&fixture_copy("reversed-12-fund", true), &["12", "fund"], "backtest-12-fund.golden", None);
 }
 
+/// (#424) THE SPLIT INVARIANT. A split is a change of unit, not of value, so a world where MAA split 2:1
+/// on 2012-06-15 must print the SAME fund golden. The copy is that world as Yahoo and SEC would serve it:
+/// every bar on today's basis (close and adjclose ÷2, volume ×2, dividends ÷2, the split in
+/// `events.splits`), and every filing made on or after the split stating EPS ÷2 and shares ×2, while the
+/// filings before it keep the numbers they printed. Only `restate_for_splits` reconciles the two halves:
+/// without it the pre-split 10-Ks over the halved closes read twice as cheap, and this reds. Powers of two
+/// scale exactly, so the claim is byte-identical rather than close. The 12y cutoffs run 2011-02..2014-07,
+/// so the as-of join reads rows from both sides of the split.
+#[test]
+fn backtest_fund_report_is_split_invariant() {
+    use serde_json::Value;
+    let cfg = fixture_copy("split-12-fund", false);
+    let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
+    let (tk, split_day, split_ts) = ("MAA", "2012-06-15", 1_339_767_000_i64);
+    let scale = |v: &mut Value, k: f64| {
+        if let Some(x) = v.as_f64() {
+            *v = serde_json::json!(x * k);
+        }
+    };
+
+    let cache_path = root.join(".long_history_cache.json");
+    let mut cache: Value = serde_json::from_str(&std::fs::read_to_string(&cache_path).expect("read cache")).expect("parse cache");
+    let r = &mut cache[tk][1]["chart"]["result"][0];
+    assert!(r["events"]["splits"].is_null(), "{tk} must be split-free in the fixture, or this doubles a real split");
+    r["events"]["splits"] = serde_json::json!({ split_ts.to_string(): {"date": split_ts, "numerator": 2, "denominator": 1, "splitRatio": "2:1"} });
+    for d in r["events"]["dividends"].as_object_mut().expect("dividends").values_mut() {
+        scale(&mut d["amount"], 0.5);
+    }
+    let bars = r["indicators"]["quote"][0]["close"].as_array().map_or(0, Vec::len);
+    assert!(bars > 100, "{tk}'s monthly bars");
+    for v in r["indicators"]["quote"][0]["close"].as_array_mut().expect("close").iter_mut() {
+        scale(v, 0.5);
+    }
+    for v in r["indicators"]["quote"][0]["volume"].as_array_mut().expect("volume").iter_mut() {
+        scale(v, 2.0);
+    }
+    for v in r["indicators"]["adjclose"][0]["adjclose"].as_array_mut().expect("adjclose").iter_mut() {
+        scale(v, 0.5);
+    }
+    std::fs::write(&cache_path, serde_json::to_string(&cache).expect("ser cache")).expect("write cache");
+
+    let facts_path = root.join(format!(".sec_cache/{tk}_facts17.json"));
+    let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
+    let mut restated = (0, 0);
+    for row in rows.as_array_mut().expect("rows") {
+        if row["filed"].as_str().expect("filed") >= split_day {
+            restated.1 += 1;
+            for k in ["eps", "prior_eps", "fcf_ps"] {
+                scale(&mut row[k], 0.5);
+            }
+            for k in ["shares", "prior_shares"] {
+                scale(&mut row[k], 2.0);
+            }
+        } else {
+            restated.0 += 1;
+        }
+    }
+    assert!(restated.0 >= 2 && restated.1 >= 2, "filings on both sides of the split: {restated:?}");
+    std::fs::write(&facts_path, serde_json::to_string(&rows).expect("ser facts")).expect("write facts");
+
+    // the one line that may move: the injected ticker is now restated too, so the count is the golden's + 1
+    use folioman::commands::backtest::markers::FUND_SPLIT;
+    let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read the fund golden");
+    let line = golden.lines().find(|l| l.contains(FUND_SPLIT)).expect("the golden's split-restated line");
+    let n: usize = line.split(FUND_SPLIT).nth(1).and_then(|t| t.split_whitespace().next()).and_then(|t| t.parse().ok()).expect("a count");
+    let want = golden.replace(line, &line.replace(&format!("{FUND_SPLIT} {n} "), &format!("{FUND_SPLIT} {} ", n + 1)));
+    assert_ne!(want, golden, "the count substitution must land");
+    let got = report_at(&cfg, &["12", "fund"], None);
+    assert!(got == want, "a 2:1 split moved the fund report — a unit change priced as value.\n{}", first_difference(&got, &want));
+}
+
 /// THE MARKER CONTRACT, as an assertion rather than a claim.
 ///
 /// `tests/network.rs::backtest_edge_holds` has no parser — it string-searches this report for every
@@ -514,10 +593,10 @@ fn dca_markers_are_in_the_20y_golden() {
 /// under the gate when either row is missing; this reds offline first on a rename.
 #[test]
 fn fund_markers_are_in_the_fund_golden() {
-    use folioman::commands::backtest::markers::{FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SECTION};
+    use folioman::commands::backtest::markers::{FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SECTION, FUND_SPLIT};
     let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read backtest-12-fund.golden");
     let sec = golden.split(FUND_SECTION).nth(1).expect("backtest-12-fund.golden carries the FUNDAMENTAL section");
-    for m in [FUND_COVERED, FUND_PEG, FUND_SEC] {
+    for m in [FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SPLIT] {
         assert!(sec.contains(m), "tests/network.rs ratchets `{m}` on the fund leg and the golden's section no longer carries it");
     }
 }

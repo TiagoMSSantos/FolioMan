@@ -5,8 +5,13 @@
 # feeds it good and broken pools on every push so the file itself can't rot.
 # Floors = the 2026-09-30 reading minus ~10 pts (547 equities: eps_ttm 93.6, net_debt 90.7, peg_yield 75.5,
 # roic 72.6). Raise one when a round lifts its reading; never lower one to get green.
-[.quotes[] | select(.instrument_type == "EQUITY") | .fund // {}] as $f
+# (#424) plus the split feed: SEC files EPS on the share count of its filing date, and the engine divides each
+# pre-split filing by the splits after it. With `splits` gone every such name prices cheap by its split ratio
+# (CVNA read PEG 395.9 at P/E 7.5 after its 5:1). Reading 93 of 547 equities = 17.0%, floor 10.
+[.quotes[] | select(.instrument_type == "EQUITY")] as $eq
+| [$eq[] | .fund // {}] as $f
 | ($f | length) as $n
 | $n >= 100
   and ({eps_ttm: 83, net_debt: 80, peg_yield: 65, roic: 62}
        | all(to_entries[]; .key as $k | .value * $n <= ([$f[] | select(.[$k] != null)] | length) * 100))
+  and 10 * $n <= ([$eq[] | select((.splits // []) | length > 0)] | length) * 100

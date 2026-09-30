@@ -5323,6 +5323,34 @@ buy_heuristic:
                                  #  peg_yield n=3282, both equal to the warm reading. Four legs 302s against 240s warm: the pacer's ~65s is the cold cost,
                                  #  a warm cache sends ~nothing. Fund golden: one line, `0 sent, 0 refused` (offline).
                                  #  REVERT RULE: drop the skip arm and the knob together; the counters are free and stay.
+                                 #── (#424) MEASURED 2026-09-30 — SEC PER-SHARE LINES ONTO THE CHART'S SPLIT BASIS (a future split was being priced as value) ──
+                                 #  BUG: a 10-K states EPS and share counts on the share count of its FILING date (ASC 260-10-55-12 restates for splits only up to
+                                 #  issuance), while Yahoo's closes are divided by EVERY split since, future ones included. EPS / close therefore read each pre-split
+                                 #  filing cheap by the product of the splits after it: NFLX up to 70x, and live CVNA PEG 395.9 at P/E 7.5 after its 5:1 (2026-05-08).
+                                 #  At a backtest cutoff that product includes splits AFTER the cutoff, and splits follow run-ups, so the join rewarded the names
+                                 #  that would go on to win: look-ahead, on the peg_yield the growth score tilts toward and the PEG gate refuses on.
+                                 #  FIX: `core::restate_for_splits` divides eps / prior_eps / fcf_ps and multiplies shares / prior_shares by the splits after each
+                                 #  row's `filed` date (CRSP's cfacpr discipline). Splits after the cutoff then cancel against the close's own adjustment, so only
+                                 #  splits the cutoff could see move the ratio. Applied at the backtest join (chart.splits) and on every live path (enrich, P/E
+                                 #  column, MCAP snapshot, `report`); the TTM roll restates each leg at its own filing, and a split newer than a cached roll
+                                 #  evicts it (`_ttmeps3` -> `_ttmeps4`: one cold roll per SEC name on the next run; budget overflow falls back to the restated
+                                 #  annual EPS). shortcut: FMP rows (no currency) are left alone, their basis is unverified; restate them once one is audited.
+                                 #  MEASURED, controlled pair on the SAME restored dotfiles (8y universe fund, 21883 cutoffs, 10945 with fundamentals, 165 tickers
+                                 #  restated). control -> arm: growth-scored stock cutoffs 681 -> 630 (the PEG gate now sees real PEGs); GROWTH edge +54.3 -> +17.7
+                                 #  (rho +0.19 -> +0.12); null-model lift +43.7 -> +37.7; top-10 excess +6.8 -> +5.6 pts/yr, Série E 90% -> 90% of 60, lane OOS
+                                 #  +0.21/+0.14 -> +0.22/-0.01. Local 4-leg gate green in 144s; the three price legs read what (#423) read, to the decimal.
+                                 #  Factor rows: peg_yield rho +0.18 -> +0.06, edge +77.0 -> -2.7 (OOS +0.17/+0.19 -> +0.04/+0.08); earnings_yield edge +32.5 ->
+                                 #  -54.3; ebitda_yield +69.1 -> -45.8. Coverage 50.0% and peg_yield n=3282 unchanged (a restate rescales, never drops).
+                                 #  FIXTURE (12-fund golden, the only one that moved): 14 tickers restated; earnings_yield edge +182.2 -> -3.5, peg_yield +190.1
+                                 #  -> +97.6 (OOS +0.33/+0.17 -> +0.27/+0.08), headline lane edge -3.3 -> +9.9, stock growth-scored 73 -> 67.
+                                 #  FINDING, NOT ACTED ON (weights closed): the shipped tilt no longer validates. The growth_fund_weight curve sits below tilt-off
+                                 #  at every weight (off -118.4, shipped 0.07 -133.0, OOS -0.06/-0.29). Its (#3b) plateau was measured on the look-ahead join.
+                                 #  Re-grade the tilt and the PEG gate at 12y and 20y before any weight moves; the price legs never read fund rows and did not move.
+                                 #  TESTS: unit (the restate, the per-leg TTM roll, the split eviction); `backtest_fund_report_is_split_invariant` injects a 2:1
+                                 #  into MAA's chart and filings and asserts the 12-fund report byte-identical (red with the join's restate off); forward: the
+                                 #  AVGO net (FY2023 as filed 32.98 restates to 3.298, its FY2024 10-K states 3.30), the gate's split-restated floor 115 (165 x0.7)
+                                 #  and Pages' contract floor of 10% of equities carrying splits (93 of 547 = 17.0%).
+                                 #  REVERT RULE: none for the restate, it is arithmetic. Drop the two floors only with the split feed itself.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -17224,6 +17252,7 @@ buy_heuristic:
   #   peg_yield loses an OOS half. A half that price-only also loses is regime weather, not the tilt.
   growth_fund_factor: "peg_yield"  # 1/PEG = as-of TTM EPS / native close x as-of CAGR — same definition in backtest and live
   growth_fund_weight: 0.07   # ON — the TOP of the measured plateau (curve receipt (#3b) below). Raised from
+                             #   (#424) RE-GRADE PENDING: split-restated, the curve sits below tilt-off at every weight.
                              #   the sweep's argmax 0.018 on 2026-07-25 to give PEG < 1 more say in the rank.
                              #   NOT transferable from the pre-2026-07-25 1.0: that was earnings_yield's knee on
                              #   a ~0-15 factor. Shipping peg_yield (~0-500) at 1.0 would run the tilt ~55x hotter
@@ -18437,6 +18466,7 @@ buy_heuristic:
                                  #   cutoffs with a scored forward window: 20y-s 0/4633, 12y-s 0/11758, 8y-s 18/20575 with 0
                                  #   growth-scored. Judgment gate validated by live-screen eyeball. 0 = off.
   growth_max_peg: 1.6            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
+                                 #   (#424) reads split-restated EPS since 2026-09-30: 51 more 8y fund cutoffs fail it.
                                  #   (reads like the column and like the request), APPLIED to `fund.peg_yield` — which is
                                  #   1/PEG x 100 — as `peg_yield < 100/growth_max_peg`, so a HIGH peg_yield is cheap. Since
                                  #   2026-07-27 this IS the printed `peg` cell: one PEG, both dividing by the score's own

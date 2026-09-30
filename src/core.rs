@@ -4271,6 +4271,36 @@ pub fn split_factor_since(splits: &[(NaiveDate, f64)], since: NaiveDate) -> f64 
     splits.iter().filter(|(d, r)| *d > since && *r > 0.0).map(|(_, r)| r).product()
 }
 
+/// (#424) Put SEC rows' per-share figures on the price series' split basis, in place. Returns whether
+/// any row moved.
+///
+/// A filing states EPS and share counts on the basis of every split effective on or before the day it
+/// was filed (ASC 260-10-55-12 restates EPS only for a split before issuance). Yahoo's `close` is divided
+/// by EVERY split in `splits`, reverse splits and the spin-off factors it books as splits included. So a
+/// 10-K filed before a 10:1 split, divided by an adjusted close, reads ten times too cheap: NFLX 70x in
+/// the backtest, and live CVNA's peg_yield 395.9 at P/E 7.5 after its 5:1. Dividing the EPS by
+/// `split_factor_since(splits, filed)` is CRSP's cfacpr discipline, and it adds no look-ahead: a split
+/// AFTER a cutoff multiplies both sides of every ratio and cancels. Same-filing pairs (eps/prior_eps,
+/// shares/prior_shares) move together, so every growth read stays put.
+///
+/// shortcut: SEC rows only, told apart by `currency` exactly as the FX arms do. FMP rows carry none, and
+/// FMP's history basis is unverified, so they keep the legacy read. Check it before `fund_source: fmp` ships.
+pub fn restate_for_splits(rows: &mut [FundRow], splits: &[(NaiveDate, f64)]) -> bool {
+    let mut moved = false;
+    for r in rows.iter_mut().filter(|r| r.currency.is_some()) {
+        let f = split_factor_since(splits, r.filed);
+        if f != 1.0 {
+            moved = true;
+            r.eps = r.eps.map(|v| v / f);
+            r.prior_eps = r.prior_eps.map(|v| v / f);
+            r.fcf_ps = r.fcf_ps.map(|v| v / f);
+            r.shares = r.shares.map(|v| v * f);
+            r.prior_shares = r.prior_shares.map(|v| v * f);
+        }
+    }
+    moved
+}
+
 pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f64>, eur_to: Option<f64>) -> Option<f64> {
     if !needs_fx(from, to) {
         return Some(close_native); // same books -> EXACT: no rate, no multiply, no rounding
@@ -5802,6 +5832,45 @@ mod tests {
         // 5 — a reverse split is a ratio BELOW one, and it is carried, not filtered: 1:10 leaves one
         //     share where ten were, so the old price divides by 0.1 and gets ten times larger.
         assert_eq!(split_factor_since(&[(d(2021, 1), 0.1)], d(2020, 1)), 0.1);
+    }
+
+    /// (#424) `restate_for_splits` moves a filing onto the chart's basis, and only a filing that needs it.
+    #[test]
+    fn restate_for_splits_moves_only_pre_split_filings() {
+        let d = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        let row = |filed, ccy: Option<&str>| FundRow {
+            filed,
+            eps: Some(8.0),
+            prior_eps: Some(4.0),
+            fcf_ps: Some(2.0),
+            shares: Some(100.0),
+            prior_shares: Some(90.0),
+            currency: ccy.map(String::from),
+            ..Default::default()
+        };
+        // a 4:1 split, then a spin-off factor Yahoo books as a split
+        let splits = [(d(2022, 6), 4.0), (d(2024, 6), 1.25)];
+        let mut rows = vec![row(d(2022, 2), Some("USD")), row(d(2023, 2), Some("USD")), row(d(2024, 6), Some("USD")), row(d(2022, 2), None)];
+        assert!(restate_for_splits(&mut rows, &splits));
+        let got = |r: &FundRow| (r.eps, r.prior_eps, r.fcf_ps, r.shares, r.prior_shares);
+        // before both: ÷5 per share, ×5 shares
+        assert_eq!(got(&rows[0]), (Some(1.6), Some(0.8), Some(0.4), Some(500.0), Some(450.0)));
+        // between: only the spin-off factor is still ahead of it
+        assert_eq!(got(&rows[1]), (Some(6.4), Some(3.2), Some(1.6), Some(125.0), Some(112.5)));
+        // filed ON the split day: already on the new basis, untouched
+        assert_eq!(got(&rows[2]), (Some(8.0), Some(4.0), Some(2.0), Some(100.0), Some(90.0)));
+        // FMP row (no currency): the legacy read, untouched
+        assert_eq!(got(&rows[3]), (Some(8.0), Some(4.0), Some(2.0), Some(100.0), Some(90.0)));
+        // the same-filing ratios the growth reads divide by never move
+        assert_eq!(rows[0].eps.unwrap() / rows[0].prior_eps.unwrap(), 2.0);
+        assert_eq!(rows[0].shares.unwrap() / rows[0].prior_shares.unwrap(), 100.0 / 90.0);
+        // no split after any filing: nothing moves, and it says so
+        let mut late = vec![row(d(2025, 1), Some("USD"))];
+        assert!(!restate_for_splits(&mut late, &splits));
+        assert_eq!(late[0].eps, Some(8.0));
+        // the point of it: a pre-split EPS over the ADJUSTED close equals the raw as-of ratio. Raw close
+        // 200 on 2022-03 is 40 on today's chart (÷4 ÷1.25), raw EPS 8 -> earnings yield 4% both ways.
+        assert_eq!(earnings_yield(rows[0].eps, 200.0 / 5.0), earnings_yield(Some(8.0), 200.0));
     }
 
     /// `quality_return`: ROE when equity is positive, ROA when it isn't. The sign test is indirect (the

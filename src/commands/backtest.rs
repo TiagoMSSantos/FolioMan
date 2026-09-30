@@ -140,6 +140,8 @@ pub mod markers {
     pub const FUND_PEG: &str = "peg_yield      n=";
     /// (#423) SEC requests sent / refused this run, so the gate tells an SEC throttle (skip) from a thinned join (red).
     pub const FUND_SEC: &str = "SEC requests this run:";
+    /// (#424) tickers whose filings were restated onto the chart's split basis. Zero on a live run = the split feed went dark.
+    pub const FUND_SPLIT: &str = "split-restated tickers:";
     /// The three shipped hard gates the re-probe WARN sweeps, by their GATE SWEEP row labels.
     pub const ABLATED_GATES: &[&str] =
         &["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"];
@@ -1288,6 +1290,13 @@ pub async fn run(args: Vec<String>) {
             // ~4300 ETFs into the ~500-name stock peer-mean `demean` splits by, and no-op'd every
             // ETF-scoped gate (the physical-gold/ETC bar among them). Yahoo's own `instrumentType`
             // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
+            // (#424) as-filed EPS and share counts onto the chart's split basis, BEFORE any cutoff divides
+            // them by a close. Without it a pre-split filing over an adjusted close read the factor of every
+            // later split too cheap (NFLX 70x), and splits follow run-ups, so the bias favoured future winners.
+            let mut fund_rows = fund_rows.clone();
+            if fund_rows.as_mut().is_some_and(|r| core::restate_for_splits(r, &chart.splits)) {
+                SPLIT_RESTATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let (dates, closes) = (chart.dates, chart.closes);
             // (#327) the listing's OWN first bar, read before anything older can be glued under it. Everything
             // before it on the spliced series is the donor's, and `own_first` is what keeps the walk from
@@ -2186,6 +2195,10 @@ async fn hold_period_sweep(
 /// — each factor IS its own column, so there's nothing to switch off. This is the validation gate: a
 /// factor earns a place in `growth_score` only if it shows real edge with both-positive OOS, the same
 /// bar the price knobs cleared. `samples` is date-ordered (the OOS split is early-vs-late in time).
+/// (#424) tickers whose SEC rows `restate_for_splits` moved this run. Per process, like `sec_stats`: one
+/// walk per `backtest` invocation, each ticker counted once, so the fixture golden pins an exact number.
+static SPLIT_RESTATED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn report_fund_lane(samples: &[Sample], purge_months: i64) {
     let factors: &[(&str, fn(&core::FundFactors) -> Option<f64>)] = &[
         ("revenue_cagr", |f| f.rev_cagr),
@@ -2215,6 +2228,8 @@ fn report_fund_lane(samples: &[Sample], purge_months: i64) {
     println!("  cutoffs with as-of fundamentals: {} / {}", covered, samples.len());
     let (sent, refused) = crate::fetch::sec_stats();
     println!("  SEC requests this run: {sent} sent, {refused} refused (403/429/5xx/transport)");
+    let restated = SPLIT_RESTATED.load(std::sync::atomic::Ordering::Relaxed);
+    println!("  split-restated tickers: {restated} (filings put on the chart's split basis)");
     if covered < 4 {
         println!("  too few fundamental cutoffs (needs FMP_API_KEY + cached `stable/income-statement` history) — skipping.");
         return;

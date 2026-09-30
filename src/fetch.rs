@@ -641,7 +641,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // SEC EDGAR first: free, no key, no daily cap — the reliable P/E+ROE source for US filers (FMP's
         // 250/day US-centric free tier is what left these columns n/a). A non-US filer has no CIK -> SEC
         // None -> fall back to FMP (covers ADRs / foreign listings SEC doesn't).
-        match fetch_ratios_sec(client, urls, fx_cache, ticker, *chart.closes.last().unwrap(), &chart.currency).await {
+        match fetch_ratios_sec(client, urls, fx_cache, ticker, *chart.closes.last().unwrap(), &chart.currency, &chart.splits).await {
             (None, None) => fetch_ratios(client, urls, ticker).await,
             got => got,
         }
@@ -992,11 +992,13 @@ async fn fetch_ratios_sec(
     ticker: &str,
     close_native: f64,
     quote_ccy: &str,
+    splits: &[(NaiveDate, f64)],
 ) -> (Option<f64>, Option<f64>) {
     // (#84) the one live choke point where both SEC caches are read. Before, not after: this is what
     // makes the P/E below a CURRENT P/E rather than one frozen on the day this box first saw the name.
-    evict_stale_sec_caches(ticker);
-    let rows = fetch_fundamentals_sec(client, urls, ticker).await.unwrap_or_default();
+    evict_stale_sec_caches(ticker, splits);
+    let mut rows = fetch_fundamentals_sec(client, urls, ticker).await.unwrap_or_default();
+    core::restate_for_splits(&mut rows, splits); // (#424) the annual fallback below divides the same close
     let Some(latest) = rows.last() else {
         return (None, None); // rows are BTreeMap-ordered by period_end -> last = newest fiscal year
     };
@@ -1004,7 +1006,7 @@ async fn fetch_ratios_sec(
     // moment it reports a quarter (e.g. LITE FY EPS $0.37 vs TTM ~$5.7 mid-ramp -> P/E 2319 vs the real
     // ~150). Roll TTM from the quarterly concept; fall back to the annual EPS when there's no newer
     // quarter (just-filed 10-K / annual-only filer) so it's never worse than before, never a fake value.
-    let eps = sec_ttm_eps(client, urls, ticker).await.or(latest.eps);
+    let eps = sec_ttm_eps(client, urls, ticker, splits).await.or(latest.eps);
     // (FX) put the price in the same books as the EPS before dividing. Same-currency (every US filer)
     // returns the close untouched and fetches no rate; a mismatch with no rate yields None, so the P/E
     // column stays n/a rather than showing a number that is silently off by the exchange rate.
@@ -1024,7 +1026,7 @@ async fn fetch_ratios_sec(
 /// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
 /// endpoint (tiny vs the multi-MB companyfacts). Disk-cached as one float, budget-capped. None for a
 /// non-US/unknown ticker or when TTM can't be rolled (caller then falls back to the annual EPS).
-async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str, splits: &[(NaiveDate, f64)]) -> Option<f64> {
     use std::sync::atomic::Ordering;
     // `_ttmeps3`, not `_ttmeps2`, for the same reason v2 replaced v1: the file is a BARE FLOAT with no
     // version field and no expiry, so a wrong roll already on disk is served forever no matter what this
@@ -1035,7 +1037,10 @@ async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> 
     // after ~30 staggered days, which is what makes a TTM roll actually trail the twelve months in
     // front of it rather than the twelve months this box first happened to see. The rest of the note
     // stands — a bad roll still survives up to a TTL, and a version bump is still the instant fix.
-    let cache = sec_cache_path(&format!("{ticker}_ttmeps3"));
+    // (#424) `_ttmeps4`: v3 holds rolls on the FILINGS' split basis, which a later split leaves N times too
+    // big against today's close (CVNA 5x after its 5:1). v4 is on the chart's basis the day it was written,
+    // and `evict_stale_sec_caches` drops it when a split lands after that day.
+    let cache = sec_cache_path(&format!("{ticker}_ttmeps4"));
     if let Some(v) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<f64>(&s).ok()) {
         return Some(v); // cache hit -> no network, no budget spend
     }
@@ -1053,7 +1058,7 @@ async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> 
         let Some(j) = sec_get_json(client, &url, &urls.sec_user_agent).await else {
             continue; // concept absent for this filer (404) -> try the next name
         };
-        if let Some(ttm) = ttm_eps_from_concept(&j, today) {
+        if let Some(ttm) = ttm_eps_from_concept(&j, today, splits) {
             let _ = std::fs::write(&cache, serde_json::to_string(&ttm).ok()?);
             return Some(ttm);
         }
@@ -1067,7 +1072,7 @@ async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> 
 /// there's no YTD reported past the latest 10-K (a just-filed annual, or an annual-only filer) it returns
 /// that annual EPS unchanged. Pure -> unit-tested. None if not even an annual EPS is present, or if the
 /// roll fails either guard (see `fresh`/`sane` below) — the caller then tries the next concept name.
-fn ttm_eps_from_concept(j: &Value, today: NaiveDate) -> Option<f64> {
+fn ttm_eps_from_concept(j: &Value, today: NaiveDate, splits: &[(NaiveDate, f64)]) -> Option<f64> {
     // the "USD/shares" unit key contains a '/', which a JSON pointer would mis-split -> chained get.
     // (FX) the unit is NOT assumed USD: a 20-F filer reports EPS in its own currency ("EUR/shares" for
     // ASML), and hard-coding USD returned None for every one of them. The USD-first preference MIRRORS
@@ -1114,12 +1119,18 @@ fn ttm_eps_from_concept(j: &Value, today: NaiveDate) -> Option<f64> {
     // split into full years vs sub-year YTD cumulatives, each carrying (end, val[, span])
     let mut annual: Vec<(NaiveDate, f64)> = Vec::new();
     let mut ytd: Vec<(NaiveDate, f64, i64)> = Vec::new();
-    for ((sd, ed), (_, val)) in &periods {
-        let span = (*ed - *sd).num_days();
-        if (350..=380).contains(&span) {
-            annual.push((*ed, *val));
-        } else if span < 350 {
-            ytd.push((*ed, *val, span));
+    for ((sd, ed), (filed, val)) in &periods {
+        // (#424) every leg onto the chart's split basis at ITS OWN filing. Newest-filing-wins above only
+        // aligns legs that some filing restated: a split between the 10-K and the next 10-Q still leaves
+        // the FY leg on the old basis beside two YTD legs on the new one, and a split after all three
+        // leaves the whole roll on a basis today's close no longer quotes.
+        let val = val / core::split_factor_since(splits, *filed);
+        // a match, not `if contains .. else if span < 350`: that `<` read `<=` identically (350 is annual's
+        // first), so the diff gate could only ever grade it as a survivor
+        match (*ed - *sd).num_days() {
+            350..=380 => annual.push((*ed, val)),
+            span @ ..350 => ytd.push((*ed, val, span)),
+            _ => {}
         }
     }
     annual.sort_by_key(|(e, _)| *e);
@@ -1375,11 +1386,11 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 /// (#84) The two SEC caches the live equity path reads had NO expiry at all, which the comment above
 /// `fetch_ratios_sec`'s call site was already describing as a "weekly TTL" it did not have.
 ///
-/// `{ticker}_ttmeps3` is the worse of the two and the reason this exists: it is a TRAILING-TWELVE-MONTH
+/// `{ticker}_ttmeps4` is the worse of the two and the reason this exists: it is a TRAILING-TWELVE-MONTH
 /// EPS, so it moves every quarter by construction, and it is the DENOMINATOR of the live P/E column.
 /// Cached once and never re-read, a name's P/E is computed against whatever its earnings were the first
 /// day it was screened — for as long as the box lives. The file is a bare float with no version field,
-/// so the only fix that ever reached an existing box was bumping the `3` in its name by hand, and the
+/// so the only fix that ever reached an existing box was bumping the digit in its name by hand, and the
 /// comment on `sec_ttm_eps` records two generations of wrong values shipped exactly that way.
 /// `{ticker}_facts17` holds ANNUAL rows and is genuinely append-only, but "append-only" is not
 /// "complete": each filer's newest fiscal year appears once a year and never reached a warm cache.
@@ -1409,13 +1420,21 @@ fn sec_cache_ttl(ticker: &str) -> StdDuration {
 /// `fetch_fundamentals_ranked`. Evicting from there would make every cutoff refetch data it does not
 /// use. One call site — `fetch_ratios_sec`, which `quote_one` runs for every live equity — covers both
 /// files, because a ticker SEC cannot resolve to a CIK has no cache to expire in the first place.
-fn evict_stale_sec_caches(ticker: &str) {
+fn evict_stale_sec_caches(ticker: &str, splits: &[(NaiveDate, f64)]) {
     let ttl = sec_cache_ttl(ticker);
     // NOT `_inst4`: it caches a per-filing XBRL instance that can run to 13.5MB and is only read when
     // `_facts17`'s newest row has no EPS. (#385) It goes stale when the NEXT 10-K lands, not on a clock,
     // and `fetch_sec_instance_eps` refetches it then; a TTL here would re-download the same filing.
     evict_if_stale(&sec_cache_path(&format!("{ticker}_facts17")), ttl);
-    evict_if_stale(&sec_cache_path(&format!("{ticker}_ttmeps3")), ttl);
+    let ttm = sec_cache_path(&format!("{ticker}_ttmeps4"));
+    evict_if_stale(&ttm, ttl);
+    // (#424) the roll is a bare float on the split basis of the day it was written; a split since then
+    // re-bases the close under it. `_facts17` needs no such rule: its rows carry `filed` and are restated
+    // on every read.
+    let written = std::fs::metadata(&ttm).and_then(|m| m.modified()).ok().map(|t| chrono::DateTime::<chrono::Utc>::from(t).date_naive());
+    if written.is_some_and(|w| core::split_factor_since(splits, w) != 1.0) {
+        let _ = std::fs::remove_file(&ttm);
+    }
 }
 
 /// (G) Populate the LIVE quotes' `fund_factor` from the config-selected as-of fundamental, so the
@@ -1452,7 +1471,12 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
                       // validated WITH the factor — a contains('-') here was a train-serve skew.
         }
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL); // (Item 14) drop a stale newest-quarter
-        let fetched = fetch_fundamentals_ranked(client, urls, &q.ticker).await;
+        let mut fetched = fetch_fundamentals_ranked(client, urls, &q.ticker).await;
+        // (#424) as-filed EPS/shares onto the chart's split basis before `fund_factors` hands them to the
+        // price joins below. The backtest does the same at its join, so train and serve read one number.
+        if let Some(rows) = fetched.as_mut() {
+            core::restate_for_splits(rows, &q.splits);
+        }
         // (FX) the currency the statements are KEPT in travels with the rows. Newest row wins — a filer
         // can redenominate, and the live factors are as-of today anyway. None for FMP-sourced rows,
         // which is exactly the signal to leave the price join untouched.
@@ -1481,7 +1505,7 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // `peg_yield` here would MANUFACTURE a train-serve skew: the live tilt would score on a number
         // the validation never saw. The latent skew is confined to `earnings_yield`, which isn't shipped.
         if factor == "earnings_yield" {
-            if let Some(ttm) = sec_ttm_eps(client, urls, &q.ticker).await {
+            if let Some(ttm) = sec_ttm_eps(client, urls, &q.ticker, &q.splits).await {
                 ff.eps_ttm = Some(ttm);
             }
         }
@@ -1540,7 +1564,8 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
             continue;
         }
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL);
-        if let Some((rows, source)) = fetch_fundamentals_report(client, urls, &q.ticker).await {
+        if let Some((mut rows, source)) = fetch_fundamentals_report(client, urls, &q.ticker).await {
+            core::restate_for_splits(&mut rows, &q.splits); // (#424) MCAP multiplies the share count by today's price
             let annual = core::annual_rollup(&rows);
             if let Some(snap) = core::income_snapshot(&annual) {
                 (q.rev_yoy, q.eps_yoy, q.net_margin_fy, q.buyback_yoy) = snap;
@@ -6326,19 +6351,19 @@ pub(crate) mod tests {
         ]}});
         let today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
         // 15x the annual — the very case this fn exists to serve. It MUST survive the sanity bound.
-        assert_eq!(ttm_eps_from_concept(&j, today), Some(0.37 + 2.59 - (-2.72)));
+        assert_eq!(ttm_eps_from_concept(&j, today, &[]), Some(0.37 + 2.59 - (-2.72)));
         // no YTD past the latest 10-K -> falls back to the annual EPS unchanged (never n/a, never a guess)
         let annual_only = json!({"units": {"USD/shares": [
             facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),
         ]}});
-        assert_eq!(ttm_eps_from_concept(&annual_only, today), Some(0.37));
+        assert_eq!(ttm_eps_from_concept(&annual_only, today, &[]), Some(0.37));
         // current YTD exists but NO prior-year YTD of matching length -> can't de-cumulate -> annual fallback
         let no_prior = json!({"units": {"USD/shares": [
             facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),  // FY base
             facts("2025-06-29", "2026-03-28", 2.59, "2026-05-06"),  // current 9mo YTD, no prior twin
         ]}});
-        assert_eq!(ttm_eps_from_concept(&no_prior, today), Some(0.37));
-        assert_eq!(ttm_eps_from_concept(&json!({}), today), None); // no units at all -> None
+        assert_eq!(ttm_eps_from_concept(&no_prior, today, &[]), Some(0.37));
+        assert_eq!(ttm_eps_from_concept(&json!({}), today, &[]), None); // no units at all -> None
     }
 
     /// (split basis) The roll spans three filings, so all three must be quoted in the SAME share basis —
@@ -6372,14 +6397,62 @@ pub(crate) mod tests {
             facts("2026-01-01", "2026-03-31", 0.72, "2026-05-06"), // current Q1 YTD, post-split
         ]}});
         let today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
-        let ttm = ttm_eps_from_concept(&j, today).expect("the roll must produce a value");
+        let ttm = ttm_eps_from_concept(&j, today, &[]).expect("the roll must produce a value");
         assert!((ttm - (2.98 + 0.72 - 0.62)).abs() < 1e-9, "want the post-split 3.08, got {ttm}");
         assert!(ttm > 0.0, "a positive TTM EPS is what keeps the pe cell from reading n/a");
     }
 
+    /// (#424) Newest-filing-wins cannot align a leg no filing restated. A 2:1 split between the 10-K and
+    /// the next 10-Q leaves the FY leg on the old basis beside two YTD legs on the new one: 4.00 + 0.60
+    /// − 0.50 = 4.10, twice the true 2.10. A later 5:1 after all three then re-bases the whole roll.
+    #[test]
+    fn ttm_eps_restates_each_leg_at_its_own_filing() {
+        use serde_json::json;
+        let d = |y, m, dd| NaiveDate::from_ymd_opt(y, m, dd).unwrap();
+        let j = json!({"units": {"USD/shares": [
+            {"start": "2025-01-01", "end": "2025-12-31", "val": 4.00, "filed": "2026-02-20", "form": "10-K"},
+            {"start": "2026-01-01", "end": "2026-03-31", "val": 0.60, "filed": "2026-05-06", "form": "10-Q"},
+            {"start": "2025-01-01", "end": "2025-03-31", "val": 0.50, "filed": "2026-05-06", "form": "10-Q"},
+        ]}});
+        let today = d(2026, 9, 1);
+        assert_eq!(ttm_eps_from_concept(&j, today, &[]), Some(4.00 + 0.60 - 0.50), "no splits: the legacy roll");
+        let mid = [(d(2026, 3, 15), 2.0)];
+        assert_eq!(ttm_eps_from_concept(&j, today, &mid), Some(2.00 + 0.60 - 0.50), "only the FY leg predates the split");
+        let both = [(d(2026, 3, 15), 2.0), (d(2026, 8, 1), 5.0)];
+        let ttm = ttm_eps_from_concept(&j, today, &both).expect("a roll");
+        assert!((ttm - (0.40 + 0.12 - 0.10)).abs() < 1e-12, "every leg onto today's basis, got {ttm}");
+    }
+
+    /// (#424) `_ttmeps4` is a bare float on the split basis of the day it was written, so a split AFTER
+    /// that day evicts it. One before it is already inside the roll and must not refetch every run, and
+    /// `_facts17` is never evicted by a split: its rows carry `filed` and are restated on every read.
+    #[test]
+    fn a_split_after_the_cached_roll_evicts_it() {
+        std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
+        let aged = |suffix: &str| {
+            let p = sec_cache_path(&format!("SECSPLIT{suffix}"));
+            std::fs::write(&p, "1.0").expect("seed sec cache");
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .expect("reopen to age")
+                .set_modified(SystemTime::now() - StdDuration::from_secs(5 * 24 * 3600))
+                .expect("backdate mtime");
+            p
+        };
+        let today = chrono::Utc::now().date_naive();
+        let (ttm, facts) = (aged("_ttmeps4"), aged("_facts17"));
+        evict_stale_sec_caches("SECSPLIT", &[(today - chrono::Duration::days(10), 2.0)]);
+        assert!(ttm.exists(), "a split before the roll was written is already in it");
+        evict_stale_sec_caches("SECSPLIT", &[(today - chrono::Duration::days(2), 2.0)]);
+        assert!(!ttm.exists(), "a split after the roll re-bases the close under it");
+        assert!(facts.exists(), "rows carry `filed` and are restated on read, never evicted by a split");
+        let _ = std::fs::remove_file(&facts);
+    }
+
     /// (split basis) `sec_ttm_eps`' cache hit — its one branch reachable without a socket, and the branch
     /// that decides what every later run sees. Worth pinning past coverage: the file is a BARE FLOAT with
-    /// no version field and no expiry (see the `_ttmeps3` note on the fn), so whatever lands there is
+    /// no version field and no expiry (see the `_ttmeps4` note on the fn), so whatever lands there is
     /// served forever, and a wrong roll is silent — the `pe` cell simply drops a negative and reads n/a.
     ///
     /// The seeded value is ORLY's real post-split roll. Any float would exercise the branch; this one is
@@ -6387,12 +6460,12 @@ pub(crate) mod tests {
     /// file's contents rather than to "some number came back".
     #[tokio::test]
     async fn sec_ttm_eps_serves_its_cache_before_the_socket() {
-        let cache = sec_cache_path("SPLITCO_ttmeps3");
+        let cache = sec_cache_path("SPLITCO_ttmeps4");
         std::fs::create_dir_all(cache.parent().expect("under .sec_cache")).expect("scratch .sec_cache");
         std::fs::write(&cache, "3.15").expect("seed the roll");
         let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any socket refuses instantly
         let client = Client::builder().no_proxy().build().expect("test client");
-        assert_eq!(sec_ttm_eps(&client, &urls, "SPLITCO").await, Some(3.15), "the cached roll, unmodified");
+        assert_eq!(sec_ttm_eps(&client, &urls, "SPLITCO", &[]).await, Some(3.15), "the cached roll, unmodified");
         let _ = std::fs::remove_file(&cache);
     }
 
@@ -6412,10 +6485,10 @@ pub(crate) mod tests {
             facts("2010-01-01", "2010-06-30", 1.04, "2010-08-01"), // prior-year H1
             facts("2011-01-01", "2011-06-30", 1.49, "2011-08-01"), // current H1
         ]}});
-        assert_eq!(ttm_eps_from_concept(&stale, today), None);
+        assert_eq!(ttm_eps_from_concept(&stale, today, &[]), None);
         // ...and the SAME payload read in 2011 was perfectly good. The guard is about age, not shape.
         assert_eq!(
-            ttm_eps_from_concept(&stale, NaiveDate::from_ymd_opt(2011, 9, 1).unwrap()),
+            ttm_eps_from_concept(&stale, NaiveDate::from_ymd_opt(2011, 9, 1).unwrap(), &[]),
             Some(2.28 + 1.49 - 1.04)
         );
         // HAL: SHARE COUNTS mis-tagged inside the EPS concept. Note the dates — 2024/2025 — well INSIDE
@@ -6425,14 +6498,14 @@ pub(crate) mod tests {
             facts("2024-01-01", "2024-09-30", 600000.0, "2024-10-01"),// prior-year YTD, a SHARE COUNT
             facts("2025-01-01", "2025-09-30", 540000.0, "2025-10-01"),// current YTD, likewise
         ]}});
-        assert_eq!(ttm_eps_from_concept(&insane, today), None);
+        assert_eq!(ttm_eps_from_concept(&insane, today, &[]), None);
         // BRK-A shaped: a genuine ~$40,000 EPS is NOT unit confusion. An absolute band would kill it.
         let huge = json!({"units": {"USD/shares": [
             facts("2024-01-01", "2024-12-31", 39_000.0, "2025-02-01"),
             facts("2024-01-01", "2024-09-30", 28_000.0, "2024-10-01"),
             facts("2025-01-01", "2025-09-30", 31_000.0, "2025-10-01"),
         ]}});
-        assert_eq!(ttm_eps_from_concept(&huge, today), Some(39_000.0 + 31_000.0 - 28_000.0));
+        assert_eq!(ttm_eps_from_concept(&huge, today, &[]), Some(39_000.0 + 31_000.0 - 28_000.0));
     }
 
     #[test]
@@ -6533,24 +6606,24 @@ pub(crate) mod tests {
             p
         };
         let facts = aged("_facts17", 60);
-        let ttmeps = aged("_ttmeps3", 60);
+        let ttmeps = aged("_ttmeps4", 60);
         // `_inst4` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB, and (#385)
         // `fetch_sec_instance_eps` refetches it when the next 10-K lands. A clock here would re-download
         // the largest fetch in this file for nothing, so "evict every SEC file" is a real regression.
         let inst = aged("_inst4", 60);
-        evict_stale_sec_caches("SECEVICT");
+        evict_stale_sec_caches("SECEVICT", &[]);
         assert!(!facts.exists(), "60 days is past every staggered TTL — the newest fiscal year must refresh");
         assert!(!ttmeps.exists(), "a TTM roll 60 days old has missed a quarter by construction");
         assert!(inst.exists(), "the instance cache has no staleness to fix and is the most expensive refetch");
 
         let fresh_facts = aged("_facts17", 5);
-        let fresh_ttmeps = aged("_ttmeps3", 5);
-        evict_stale_sec_caches("SECEVICT");
+        let fresh_ttmeps = aged("_ttmeps4", 5);
+        evict_stale_sec_caches("SECEVICT", &[]);
         assert!(fresh_facts.exists(), "5 days is inside every TTL — evicting here refetches the world each run");
         assert!(fresh_ttmeps.exists());
         // a ticker with nothing on disk must be a silent no-op, not a panic: SEC cannot resolve a CIK
         // for most non-US names, so this is the common case on a mixed universe.
-        evict_stale_sec_caches("SECEVICTNOTHINGHERE");
+        evict_stale_sec_caches("SECEVICTNOTHINGHERE", &[]);
     }
 
     /// (report) `parse_sec_facts`: keeps ANNUAL (10-K, ~12mo) lines only, de-dupes a fiscal period to its
@@ -7361,7 +7434,7 @@ pub(crate) mod tests {
             f("2025-07-01", "2025-12-29", 0.8), // current 181-day YTD
             f("2024-10-01", "2024-12-30", 0.3), // a year earlier, but 90 days long
         ]}});
-        assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()), Some(1.0));
+        assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(), &[]), Some(1.0));
     }
 
     /// (#358) Only a period ending AFTER the latest 10-K is new: a Q4 that ends ON the fiscal year end
@@ -7375,7 +7448,7 @@ pub(crate) mod tests {
             f("2025-10-01", "2025-12-31", 1.5), // its own Q4
             f("2024-10-01", "2024-12-31", 1.0), // a year-earlier Q4 of the same length
         ]}});
-        assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()), Some(4.0));
+        assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(), &[]), Some(4.0));
     }
 
     /// (#358) `fetch_ratios` off a seeded `ratios` cache: P/E as served, ROE a fraction x100. A P/E of
@@ -7416,7 +7489,7 @@ pub(crate) mod tests {
         let row = r#"[{"filed":"2026-02-01","period_end":"2025-12-31","eps":3.0,"roe":20.0,"roa":5.0,"net_margin":10.0,"currency":"USD"}]"#;
         let mut seeded = Vec::new();
         for (t, ttm) in [("ZZSECPE", "4.0"), ("ZZSECPE0", "0.0")] {
-            for (sidecar, body) in [("facts17", row), ("ttmeps3", ttm)] {
+            for (sidecar, body) in [("facts17", row), ("ttmeps4", ttm)] {
                 let p = sec_cache_path(&format!("{t}_{sidecar}"));
                 std::fs::write(&p, body).expect("seed sec cache");
                 seeded.push(p);
@@ -7425,8 +7498,8 @@ pub(crate) mod tests {
         let urls = stub_urls("http://127.0.0.1:1/");
         let client = Client::builder().no_proxy().build().expect("test client");
         let got = (
-            fetch_ratios_sec(&client, &urls, &fx_cache(), "ZZSECPE", 100.0, "USD").await,
-            fetch_ratios_sec(&client, &urls, &fx_cache(), "ZZSECPE0", 100.0, "USD").await,
+            fetch_ratios_sec(&client, &urls, &fx_cache(), "ZZSECPE", 100.0, "USD", &[]).await,
+            fetch_ratios_sec(&client, &urls, &fx_cache(), "ZZSECPE0", 100.0, "USD", &[]).await,
         );
         for p in seeded {
             let _ = std::fs::remove_file(p);
@@ -7441,12 +7514,12 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn sec_ttm_eps_rolls_a_fetched_concept_and_banks_it() {
         seed_cik_map();
-        let cache = sec_cache_path("AAPL_ttmeps3");
+        let cache = sec_cache_path("AAPL_ttmeps4");
         let _ = std::fs::remove_file(&cache);
         let end = chrono::Utc::now().date_naive() - chrono::Duration::days(100);
         let fy = serde_json::json!({"start": (end - chrono::Duration::days(364)).to_string(), "end": end.to_string(), "val": 6.5, "filed": end.to_string(), "form": "10-K"});
         let (base, client) = stub_server(Box::leak(serde_json::json!({"units": {"USD/shares": [fy]}}).to_string().into_boxed_str()));
-        let got = sec_ttm_eps(&client, &stub_urls(&base), "AAPL").await;
+        let got = sec_ttm_eps(&client, &stub_urls(&base), "AAPL", &[]).await;
         let banked = std::fs::read_to_string(&cache).ok();
         let _ = std::fs::remove_file(&cache);
         assert_eq!((got, banked.as_deref()), (Some(6.5), Some("6.5")));
@@ -9048,7 +9121,7 @@ pub(crate) mod tests {
             // `rev_accel` — so 9.0 must never reach `eps_ttm` below. Inverting that gate would let
             // the TTM roll override the annual EPS for every factor, which is a train-serve skew:
             // the live tilt would score on a number the backtest cannot reconstruct as-of.
-            std::fs::write(sec.join(format!("{t}_ttmeps3.json")), "9.0").expect("seed ttm sidecar");
+            std::fs::write(sec.join(format!("{t}_ttmeps4.json")), "9.0").expect("seed ttm sidecar");
         }
 
         let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any stray fetch refuses at once

@@ -76,7 +76,7 @@ pub async fn run(args: Vec<String>) {
             continue;
         }
         equity_requested += 1;
-        let (rows, source) = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
+        let (mut rows, source) = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
             Some(r) => r,
             None => {
                 // (data round) no statements ≠ nothing to say: the book is mostly ETFs, which
@@ -104,6 +104,11 @@ pub async fn run(args: Vec<String>) {
                 continue;
             }
         };
+        // (#424) as-filed EPS/shares onto the chart's split basis, as the screen's enrich does, so this
+        // drill-in prints the same peg the screen ranked on and its FY table reads one basis top to bottom.
+        if let Some(q) = q {
+            core::restate_for_splits(&mut rows, &q.splits);
+        }
         // (FX) every per-share ratio below — the valuation cell's earnings_yield/peg_yield AND the
         // verdict mirror's scored tilt — divides this price by an EPS taken straight from the filing.
         // So it has to be in the FILER's currency, not the listing's: ASML keeps its books in EUR and
