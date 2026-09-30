@@ -98,6 +98,8 @@ jobs:
           if pool 200 null | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no roic"; exit 1; fi
           if pool 50 1 | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a 50-equity pool"; exit 1; fi
           if pool 200 1 '[]' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no splits"; exit 1; fi
+          pool 200 1 | jq '.quotes[].fund.shares_ttm = 1e8 | .quotes[].close_native = 205' | jq -e -f web/universe-contracts.jq > /dev/null
+          if pool 200 1 | jq '.quotes[0].fund.shares_ttm = 716.4 | .quotes[0].close_native = 205' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a share count tagged in millions"; exit 1; fi
 
   build:
     runs-on: ubuntu-latest

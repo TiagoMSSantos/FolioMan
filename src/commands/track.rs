@@ -2916,6 +2916,11 @@ mod tests {
             assert!(s.sized.iter().all(|(t, _)| rows.contains(t.as_str())), "{d}: a sized name is not a ranked row");
             let sum: f64 = s.sized.iter().map(|(_, w)| w).sum();
             assert!(s.sized.is_empty() || (sum > 0.0 && sum <= 100.5), "{d}: sized weights sum to {sum}");
+            // (#425) a scale error journals ~1e6 (HAL's EPS tagged x1e6, MCD's count /1e6), and the forward
+            // record can't be backfilled. Largest real value on 2026-09-30: CVNA's sgr_yield 543.
+            for v in s.fac.iter().map(|(_, _, v)| *v).chain(s.peg.iter().flat_map(|(_, a, b)| [*a, *b])) {
+                assert!(v.abs() < 1e4, "{d}: journalled factor value {v} — a unit error in the join");
+            }
         }
     }
 }

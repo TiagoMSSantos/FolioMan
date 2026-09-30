@@ -5351,6 +5351,43 @@ buy_heuristic:
                                  #  AVGO net (FY2023 as filed 32.98 restates to 3.298, its FY2024 10-K states 3.30), the gate's split-restated floor 115 (165 x0.7)
                                  #  and Pages' contract floor of 10% of equities carrying splits (93 of 547 = 17.0%).
                                  #  REVERT RULE: none for the restate, it is arithmetic. Drop the two floors only with the split feed itself.
+                                 #── (#425) MEASURED 2026-09-30 — THE JOIN'S UNITS, PART 2: ADS RATIO AND XBRL SCALE ERRORS (a unit error priced as value) ──
+                                 #  BUG 1, ADS: a 20-F states EPS and share counts per ORDINARY share, and the US listing is an ADS. PDD's cover: "one American
+                                 #  depositary share representing four Class A ordinary shares". EPS 2.36 over the $77.47 ADS read P/E 32.8 for a true ~8.2,
+                                 #  peg_yield 53.0 for ~212 (PEG 1.89 for ~0.47), so `growth_max_peg` 1.6 refused it on a number four times too high, and its
+                                 #  cap read 4x. PDD is the only live equity with a ratio != 1 (ASML, ARM, CCEP, SHOP, TRI are 1:1).
+                                 #  BUG 2, SCALE: a filer tags a count or an EPS with the wrong scale, the defect SEC's 2020-11-19 statement names ("three
+                                 #  additional zeros"). Census of 707 cached filers: 143 counts off by a clean power of 1000 against NI / EPS (MCD FY2023+ 732.3
+                                 #  for 732.3M, GRMN eight years in thousands, COP ten, SHW x1000 high) and 6 EPS (HAL FY2021-24 1,630,000 for 1.63, TX FY2021-22
+                                 #  1950 for 1.95). Live, MDO.DE (MCD's Xetra twin, the row the dedup keeps) carried 716.4 shares = 146,862 of cap. The counts
+                                 #  poisoned every per-cap probe (rnd/int/book/payout/sales_ev/fcf_ev/ebitda yields, accrual_gap, MCAP); the EPS rows poisoned
+                                 #  the shipped earnings yield and peg_yield (HAL x1e6) at the cutoffs that read them.
+                                 #  SOURCES: PDD FY2025 20-F cover, sec.gov/Archives/edgar/data/1737806/000110465926050727/R1.htm; SEC "scaling errors"
+                                 #  statement (2020-11-19); XBRL US DQC_0095.
+                                 #  FIX: `core::repair_share_scale`: where NI / EPS and the count differ by a clean 1000^k (+-2x), rescale the leg the band
+                                 #  names (a count outside 1e7..10^10.5 that the fix brings nearer is the count; otherwise the EPS). Never blank: FNMA/FMCC's
+                                 #  NI runs 200x their count legitimately (Treasury's senior preferred), and AIG's real -0.01 vs -6.54 prior is why a prior
+                                 #  EPS only follows its own row's repaired EPS. `core::restate_for_ads` x`ads_ratio` (PDD 4) on per-share lines, / on counts.
+                                 #  Both at `fetch_fundamentals_sec`, the one seam every SEC row passes (enrich, P/E, report, backtest join): cached rows are
+                                 #  repaired on read, no `_facts18` refetch. The TTM roll is multiplied by the ratio on its way out; its cache stays per
+                                 #  ordinary share. shortcut: rows with no EPS can't be judged (HSY FY2011, BRK-B FY2010-14) and stay as filed.
+                                 #  MEASURED, controlled 8y universe fund pair on the SAME restored dotfiles (env-gated control, 21883 cutoffs, 637 growth
+                                 #  windows both): every SHIPPED line identical (growth edge, top-10 excess +5.6, Série E 90%, peg_yield n=3282 edge -2.7).
+                                 #  HAL's and PDD's bad rows were filed 2019+ and have no 8y forward window; the fix reaches the live page and later cutoffs.
+                                 #  Probe rows moved: ebitda_yield edge -45.8 -> -55.2 (n 2980 -> 2987), payout_yield gap +0.65 -> +0.55, fcf_ev_yield AUC
+                                 #  0.30 -> 0.29, accrual_gap 0.34 -> 0.33, eps_growth n 1846 -> 1851. Fixture goldens unchanged (GRMN's rows are ungraded).
+                                 #  RE-GRADE of the (#424) finding, same arm, RECORD ONLY (weights closed until the track reopen):
+                                 #    8y  curve: tilt off -118.4, shipped 0.07 -133.0 (below off); growth_max_peg ->off n=117 mean +178.2 vs shipped +151.6 TOO TIGHT.
+                                 #    12y curve: tilt off -80.0, shipped 0.07 -73.5 (ABOVE off); growth_max_peg ->off n=38 mean +178.1 but median -10.0 vs
+                                 #        shipped +139.8: SPLIT, tail-driven. Top-10 excess +6.2, Série E 100% of 52.
+                                 #    20y vacuous: XBRL starts ~2009, so no 20y growth cutoff carries fundamentals (tilt x0/x2 no swaps, the gate admits 0).
+                                 #  Verdict: the horizons disagree, so neither the tilt nor the gate moves on this evidence.
+                                 #  TESTS: unit (each census shape, FNMA/AIG untouched, the band tie, the ADS restate, the TTM roll per ADS);
+                                 #  `backtest_fund_report_is_share_scale_invariant` (every MAA count /1000, the 12-fund report byte-identical; red with the
+                                 #  repair off); network: PDD's newest 20-F cover still says FOUR, MCD's live rows repair into 1e8..1e10; Pages' contract
+                                 #  refuses an equity whose shares x close leaves 1e9..2e13 (ci.yml feeds it MDO.DE's 716.4); the journal test bounds every
+                                 #  journalled factor and PEG value under 1e4 (largest real: CVNA sgr_yield 543).
+                                 #  REVERT RULE: none, both are unit arithmetic. A new ADS with a ratio != 1 is a new `ads_ratio` row.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -17252,7 +17289,8 @@ buy_heuristic:
   #   peg_yield loses an OOS half. A half that price-only also loses is regime weather, not the tilt.
   growth_fund_factor: "peg_yield"  # 1/PEG = as-of TTM EPS / native close x as-of CAGR — same definition in backtest and live
   growth_fund_weight: 0.07   # ON — the TOP of the measured plateau (curve receipt (#3b) below). Raised from
-                             #   (#424) RE-GRADE PENDING: split-restated, the curve sits below tilt-off at every weight.
+                             #   (#424) split-restated, the 8y curve sits below tilt-off at every weight. (#425) RE-GRADED, kept:
+                             #   12y shipped -73.5 beats off -80.0, 20y carries no fundamentals; the horizons disagree.
                              #   the sweep's argmax 0.018 on 2026-07-25 to give PEG < 1 more say in the rank.
                              #   NOT transferable from the pre-2026-07-25 1.0: that was earnings_yield's knee on
                              #   a ~0-15 factor. Shipping peg_yield (~0-500) at 1.0 would run the tilt ~55x hotter
@@ -18467,6 +18505,7 @@ buy_heuristic:
                                  #   growth-scored. Judgment gate validated by live-screen eyeball. 0 = off.
   growth_max_peg: 1.6            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
                                  #   (#424) reads split-restated EPS since 2026-09-30: 51 more 8y fund cutoffs fail it.
+                                 #   (#425) RE-GRADED, kept: ->off TOO TIGHT at 8y (+178.2 vs +151.6), SPLIT at 12y (median -10.0).
                                  #   (reads like the column and like the request), APPLIED to `fund.peg_yield` — which is
                                  #   1/PEG x 100 — as `peg_yield < 100/growth_max_peg`, so a HIGH peg_yield is cheap. Since
                                  #   2026-07-27 this IS the printed `peg` cell: one PEG, both dividing by the score's own

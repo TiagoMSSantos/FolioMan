@@ -279,6 +279,59 @@ async fn sec_rows_restate_onto_the_chart_split_basis() {
     }
 }
 
+/// (#425) ADS-ratio net. A 20-F states EPS per ORDINARY share and the US listing is an ADS, so
+/// `core::ads_ratio` carries the depositary ratio by hand. The table is right only while PDD's newest
+/// 20-F cover page (the XBRL viewer's R1.htm) says each ADS represents FOUR Class A ordinary shares. A
+/// ratio change reads here before it reads as a P/E four times off. Transport/throttle -> skip; a 200
+/// with no 20-F in the index, or a cover that stopped saying four, fails.
+#[tokio::test]
+async fn ads_ratio_matches_the_20f_cover() {
+    let urls = config::load().urls;
+    let get = |url: String| fetch::client().get(url).header(reqwest::header::USER_AGENT, urls.sec_user_agent.as_str());
+    let Some(resp) = probe(get(urls.sec_submissions.replace("{cik}", "0001737806")), "ads PDD submissions").await else {
+        return;
+    };
+    let index: Value = resp.json().await.expect("PDD: submissions answered with a non-JSON body");
+    let recent = &index["filings"]["recent"];
+    let i = recent["form"]
+        .as_array()
+        .and_then(|forms| forms.iter().position(|f| f == "20-F"))
+        .expect("PDD: no 20-F in its recent filings — it changed form, so re-check `core::ads_ratio`");
+    let acc = recent["accessionNumber"][i].as_str().expect("PDD: a 20-F with no accession number").replace('-', "");
+    let cover = format!("https://www.sec.gov/Archives/edgar/data/1737806/{acc}/R1.htm");
+    let Some(resp) = probe(get(cover), "ads PDD cover").await else {
+        return;
+    };
+    let text = resp.text().await.unwrap_or_default().to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        text.contains("representing four"),
+        "PDD 20-F {acc}: the cover no longer says one ADS represents FOUR ordinary shares — read it and fix `core::ads_ratio`"
+    );
+    assert_eq!(core::ads_ratio("PDD"), 4.0, "the hand table disagrees with PDD's cover");
+    eprintln!("network smoke [ads PDD] 20-F {acc}: one ADS = four ordinary shares");
+}
+
+/// (#425) Scale-error net. MCD tags its FY2023+ diluted count in millions (732.3 for 732.3M), a live case
+/// of the defect SEC's 2020-11-19 statement describes. After `core::repair_share_scale` every row it can
+/// judge (EPS, net margin and revenue present) must hold a real count, and MCD must still need the fix:
+/// the day SEC serves it clean the count assertion says so, and the second assertion is the net left.
+#[tokio::test]
+async fn sec_share_scale_is_repaired_live() {
+    stamp_run();
+    let (client, urls) = (fetch::client(), config::load().urls);
+    let mut rows = match fetch::sec_facts_live(&client, &urls, "MCD").await {
+        Ok(rows) => rows,
+        Err(why) => return eprintln!("network smoke [scale MCD] SKIPPED — {why}"),
+    };
+    let fixed = core::repair_share_scale(&mut rows);
+    eprintln!("network smoke [scale MCD] {fixed} of {} rows repaired", rows.len());
+    assert!(fixed >= 1, "MCD: no row needed a scale repair — SEC now serves its counts clean; drop this assertion");
+    for r in rows.iter().filter(|r| r.eps.is_some() && r.net_margin.is_some() && r.revenue.is_some()) {
+        let s = r.shares.unwrap_or(5e8);
+        assert!((1e8..1e10).contains(&s), "MCD FY{}: {s} shares after the repair — the scale rule missed a leg", r.period_end);
+    }
+}
+
 /// (tests round 3) Yahoo fund-facts drift net — the crumb-gated fallback that fills ETF TER/AUM
 /// holes (the TER drag, AUM gate and bridge hints ride it). Proven silent-degrade: it failed live
 /// on 2026-07-17 ("Yahoo crumb handshake failed — fund-facts fallback skipped this run") and

@@ -1023,10 +1023,16 @@ async fn fetch_ratios_sec(
     (pe, core::quality_return(latest.roe, latest.roa, latest.net_margin))
 }
 
+/// (#425) `sec_ttm_eps_filed` on the LISTED share: the roll is per ordinary share as filed, and one PDD
+/// ADS is four of them (`core::ads_ratio`). The cached float stays per ordinary share, so no eviction.
+async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str, splits: &[(NaiveDate, f64)]) -> Option<f64> {
+    Some(sec_ttm_eps_filed(client, urls, ticker, splits).await? * core::ads_ratio(ticker))
+}
+
 /// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
 /// endpoint (tiny vs the multi-MB companyfacts). Disk-cached as one float, budget-capped. None for a
 /// non-US/unknown ticker or when TTM can't be rolled (caller then falls back to the annual EPS).
-async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str, splits: &[(NaiveDate, f64)]) -> Option<f64> {
+async fn sec_ttm_eps_filed(client: &Client, urls: &Urls, ticker: &str, splits: &[(NaiveDate, f64)]) -> Option<f64> {
     use std::sync::atomic::Ordering;
     // `_ttmeps3`, not `_ttmeps2`, for the same reason v2 replaced v1: the file is a BARE FLOAT with no
     // version field and no expiry, so a wrong roll already on disk is served forever no matter what this
@@ -2611,6 +2617,11 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
             }
         }
     }
+    // (#425) the join's units, before anything prices a row: scale errors, then the ADS ratio. Here and
+    // not in the parse, so cached rows get it too and no `_facts18` refetch is needed. Split restatement
+    // runs downstream; all three multiply, so the order doesn't matter.
+    core::repair_share_scale(&mut rows);
+    core::restate_for_ads(&mut rows, core::ads_ratio(ticker));
     Some(rows)
 }
 
@@ -6467,6 +6478,11 @@ pub(crate) mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
         assert_eq!(sec_ttm_eps(&client, &urls, "SPLITCO", &[]).await, Some(3.15), "the cached roll, unmodified");
         let _ = std::fs::remove_file(&cache);
+        // (#425) the same roll on an ADS four ordinary shares wide is four times the listed EPS
+        let ads = sec_cache_path("PDD_ttmeps4");
+        std::fs::write(&ads, "3.15").expect("seed the roll");
+        assert_eq!(sec_ttm_eps(&client, &urls, "PDD", &[]).await, Some(12.6), "per ADS, not per ordinary share");
+        let _ = std::fs::remove_file(&ads);
     }
 
     /// The two guards, each against the REAL payload that motivated it. They are independent: neither

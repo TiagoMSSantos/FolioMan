@@ -4301,6 +4301,82 @@ pub fn restate_for_splits(rows: &mut [FundRow], splits: &[(NaiveDate, f64)]) -> 
     moved
 }
 
+/// (#425) Listed shares per ordinary share the filer reports on. A 20-F states EPS and share counts per
+/// ORDINARY share, and the US listing is an ADS: PDD's cover reads "one American depositary share
+/// representing four Class A ordinary shares", so its as-filed EPS over the ADS close read P/E 32.8 for a
+/// true ~8.2 and refused it at `growth_max_peg` on a PEG four times too high.
+///
+/// shortcut: one hand-kept row per ADS whose ratio isn't 1:1 (a census of the live pool on 2026-09-30:
+/// PDD alone; ASML, ARM, CCEP, SHOP and TRI are 1:1). A ratio change or a new ADS listing needs a dated
+/// row here; the PDD network net reds when its 20-F cover moves.
+pub fn ads_ratio(ticker: &str) -> f64 {
+    match ticker {
+        "PDD" => 4.0,
+        _ => 1.0,
+    }
+}
+
+/// (#425) Put SEC rows' per-share figures on the LISTED share: per-share lines ×`ratio`, counts ÷`ratio`.
+/// A byte-exact no-op at 1.0. Same-filing pairs move together, so growth and buyback reads stay put.
+pub fn restate_for_ads(rows: &mut [FundRow], ratio: f64) {
+    for r in rows.iter_mut() {
+        r.eps = r.eps.map(|v| v * ratio);
+        r.prior_eps = r.prior_eps.map(|v| v * ratio);
+        r.fcf_ps = r.fcf_ps.map(|v| v * ratio);
+        r.shares = r.shares.map(|v| v / ratio);
+        r.prior_shares = r.prior_shares.map(|v| v / ratio);
+    }
+}
+
+/// (#425) Undo XBRL scale errors, in place, and return how many rows moved. SEC's 2020-11-19 statement
+/// names the defect: a value tagged with the wrong `decimals`/scale, "three additional zeros" or three
+/// missing. A row's own identity catches it: net income ÷ EPS is the share count, so when it disagrees
+/// with the tagged count by a CLEAN power of 1000 (±2x), one leg is scaled wrong. Census of the cache:
+/// 143 counts (MCD 732.3 for 732.3M, HSY-style thousands, SHW's ×1000 high) and 6 EPS (HAL 1,630,000 for
+/// 1.63, TX 1950 for 1.95: an earnings yield a million times too rich at those cutoffs).
+///
+/// Which leg: the one the band says. A count outside 1e7..10^10.5 (NVR-small to NVDA's 24.9B) that the
+/// fix brings nearer is the count; otherwise the count is as filed and the EPS takes the fix. A gap that
+/// is not a clean power is left alone, never blanked: FNMA/FMCC's net income goes to Treasury's senior
+/// preferred, so NI ÷ EPS legitimately runs 200x their count. The prior year follows its own leg: the
+/// prior count against this year's always (share counts never move 100x on one basis), the prior EPS
+/// only when this row's EPS moved (AIG's real 2018 -0.01 against -6.54 is 654x and clean enough).
+pub fn repair_share_scale(rows: &mut [FundRow]) -> usize {
+    // the power of 1000 that takes `have` to `want` when that's the whole gap, else 0. NaN (a sign
+    // mismatch, a zero) falls through every arm.
+    let power = |want: f64, have: f64| {
+        let lr = (want / have).log10();
+        let k = (lr / 3.0).round();
+        match (lr - 3.0 * k).abs() {
+            0.0..std::f64::consts::LOG10_2 => k as i32,
+            _ => 0,
+        }
+    };
+    let off_band = |shares: f64| {
+        let l = shares.log10();
+        (7.0 - l).max(l - 10.5).max(0.0)
+    };
+    let mut moved = 0;
+    for r in rows.iter_mut() {
+        let before = (r.eps, r.prior_eps, r.shares, r.prior_shares);
+        if let (Some(eps), Some(shares), Some(nm), Some(rev)) = (r.eps, r.shares, r.net_margin, r.revenue) {
+            let k = power(nm / 100.0 * rev / eps, shares);
+            let f = 1000f64.powi(k);
+            if off_band(shares * f) < off_band(shares) {
+                r.shares = Some(shares * f);
+            } else if k != 0 {
+                r.eps = Some(eps * f);
+                r.prior_eps = r.prior_eps.map(|p| p * 1000f64.powi(power(eps * f, p)));
+            }
+        }
+        if let (Some(s), Some(p)) = (r.shares, r.prior_shares) {
+            r.prior_shares = Some(p * 1000f64.powi(power(s, p)));
+        }
+        moved += usize::from(before != (r.eps, r.prior_eps, r.shares, r.prior_shares));
+    }
+    moved
+}
+
 pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f64>, eur_to: Option<f64>) -> Option<f64> {
     if !needs_fx(from, to) {
         return Some(close_native); // same books -> EXACT: no rate, no multiply, no rounding
@@ -5871,6 +5947,77 @@ mod tests {
         // the point of it: a pre-split EPS over the ADJUSTED close equals the raw as-of ratio. Raw close
         // 200 on 2022-03 is 40 on today's chart (÷4 ÷1.25), raw EPS 8 -> earnings yield 4% both ways.
         assert_eq!(earnings_yield(rows[0].eps, 200.0 / 5.0), earnings_yield(Some(8.0), 200.0));
+    }
+
+    /// (#425) `repair_share_scale` against each shape the cache census found, and the two it must not touch.
+    /// Every row nets 2.5e9 of income on 1e10 of revenue, so NI ÷ EPS names the true count.
+    #[test]
+    fn repair_share_scale_fixes_the_broken_leg_and_only_that() {
+        let row = |eps: Option<f64>, shares: f64, prior_eps: Option<f64>, prior_shares: Option<f64>| FundRow {
+            revenue: Some(1e10),
+            net_margin: Some(25.0),
+            eps,
+            shares: Some(shares),
+            prior_eps,
+            prior_shares,
+            currency: Some("USD".into()),
+            ..Default::default()
+        };
+        let got = |r: &FundRow| (r.eps, r.prior_eps, r.shares, r.prior_shares);
+        let mut rows = vec![
+            row(Some(10.0), 250.0, Some(9.0), Some(260.0)),             // 0 MCD: count tagged in millions
+            row(Some(10.0), 250_000.0, None, Some(245_000.0)),          // 1 HSY: count tagged in thousands
+            row(Some(10.0), 2.5e11, None, None),                        // 2 SHW: count three zeros HIGH
+            row(Some(1e7), 2.5e8, Some(9e6), Some(2.4e8)),              // 3 HAL: the EPS is the broken leg
+            row(Some(1e7), 2.5e8, Some(-3.0), None),                    // 4 HAL's first bad year: prior as filed
+            row(Some(1250.0), 2e9, None, None),                         // 5 TX: EPS ×1000, count in band
+            row(Some(0.125), 2e7, None, None),                          // 6 in band either way: count kept
+            row(Some(0.05), 2.5e8, None, None),                         // 7 FNMA: NI ÷ EPS 200x, not clean
+            row(Some(10.0), 2.5e8, Some(0.01), Some(4.23e5)),           // 8 AMT: the prior count alone
+            row(None, 250.0, None, None),                               // 9 no EPS: nothing to judge by
+            row(Some(0.0), 250.0, None, None),                          // 10 zero EPS
+            row(Some(-10.0), 250.0, None, None),                        // 11 loss EPS on a profit: sign clash
+        ];
+        let untouched: Vec<_> = rows.iter().map(got).collect();
+        assert_eq!(repair_share_scale(&mut rows), 8);
+        assert_eq!(got(&rows[0]), (Some(10.0), Some(9.0), Some(2.5e8), Some(2.6e8)));
+        assert_eq!(got(&rows[1]), (Some(10.0), None, Some(2.5e8), Some(2.45e8)));
+        assert_eq!(got(&rows[2]), (Some(10.0), None, Some(2.5e8), None));
+        assert_eq!(got(&rows[3]), (Some(10.0), Some(9.0), Some(2.5e8), Some(2.4e8)));
+        assert_eq!(got(&rows[4]), (Some(10.0), Some(-3.0), Some(2.5e8), None));
+        assert_eq!(got(&rows[5]), (Some(1.25), None, Some(2e9), None));
+        // 2e7 and 2e10 are both real counts: the count stands as filed and the EPS answers for the gap
+        assert_eq!(got(&rows[6]), (Some(125.0), None, Some(2e7), None));
+        assert_eq!(got(&rows[7]), untouched[7]);
+        // the prior EPS moves only with its own row's EPS: a real recovery off 0.01 is a clean 1000x too
+        assert_eq!(got(&rows[8]), (Some(10.0), Some(0.01), Some(2.5e8), Some(4.23e8)));
+        for i in 9..12 {
+            assert_eq!(got(&rows[i]), untouched[i], "row {i}");
+        }
+        // idempotent: a repaired cache row read twice stays repaired
+        assert_eq!(repair_share_scale(&mut rows), 0);
+    }
+
+    /// (#425) The ADS restate: per-share lines up by the ratio, counts down, and 1:1 is exact.
+    #[test]
+    fn restate_for_ads_moves_per_share_lines_onto_the_listing() {
+        assert_eq!((ads_ratio("PDD"), ads_ratio("AAPL")), (4.0, 1.0));
+        let row = FundRow {
+            eps: Some(2.36),
+            prior_eps: Some(2.6),
+            fcf_ps: Some(3.0),
+            shares: Some(5.9e9),
+            prior_shares: Some(5.8e9),
+            currency: Some("CNY".into()),
+            ..Default::default()
+        };
+        let got = |r: &FundRow| (r.eps, r.prior_eps, r.fcf_ps, r.shares, r.prior_shares);
+        let mut rows = vec![row.clone()];
+        restate_for_ads(&mut rows, 4.0);
+        assert_eq!(got(&rows[0]), (Some(9.44), Some(10.4), Some(12.0), Some(1.475e9), Some(1.45e9)));
+        let mut same = vec![row.clone()];
+        restate_for_ads(&mut same, 1.0);
+        assert_eq!(got(&same[0]), got(&row));
     }
 
     /// `quality_return`: ROE when equity is positive, ROA when it isn't. The sign test is indirect (the

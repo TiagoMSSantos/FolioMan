@@ -8,6 +8,10 @@
 # (#424) plus the split feed: SEC files EPS on the share count of its filing date, and the engine divides each
 # pre-split filing by the splits after it. With `splits` gone every such name prices cheap by its split ratio
 # (CVNA read PEG 395.9 at P/E 7.5 after its 5:1). Reading 93 of 547 equities = 17.0%, floor 10.
+# (#425) plus the share count's scale: a filer that tags its count in thousands or millions (SEC's 2020-11-19
+# statement) prices a market cap 1000x off, and every per-cap yield with it. MDO.DE, MCD's Xetra twin, read
+# 716.4 shares = 146,862 of cap. Every equity's shares x close must sit in 1e9..2e13 of its own currency
+# (2026-09-30: 6.8e9 PSKY to 5.0e12 NVD.DE, EUR/USD only). A pence-quoted listing would need its own band.
 [.quotes[] | select(.instrument_type == "EQUITY")] as $eq
 | [$eq[] | .fund // {}] as $f
 | ($f | length) as $n
@@ -15,3 +19,5 @@
   and ({eps_ttm: 83, net_debt: 80, peg_yield: 65, roic: 62}
        | all(to_entries[]; .key as $k | .value * $n <= ([$f[] | select(.[$k] != null)] | length) * 100))
   and 10 * $n <= ([$eq[] | select((.splits // []) | length > 0)] | length) * 100
+  and ([$eq[] | select(.fund.shares_ttm != null and .close_native != null) | .fund.shares_ttm * .close_native
+        | select(. < 1e9 or . > 2e13)] | length) == 0

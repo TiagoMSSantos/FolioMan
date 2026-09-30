@@ -540,6 +540,35 @@ fn backtest_fund_report_is_split_invariant() {
     assert!(got == want, "a 2:1 split moved the fund report — a unit change priced as value.\n{}", first_difference(&got, &want));
 }
 
+/// (#425) THE SCALE INVARIANT. A filer that tags its share counts in thousands (GRMN did for eight years,
+/// MCD tags millions today) is stating the same company, so a copy where every MAA count is 1000x too
+/// small must print the SAME fund golden. Only `repair_share_scale` reconciles it: without it MAA's
+/// market cap reads 1000x small and every ÷mcap row moves. MAA's counts are whole thousands, so ÷1000
+/// then ×1000 is exact and the claim is byte-identical rather than close.
+#[test]
+fn backtest_fund_report_is_share_scale_invariant() {
+    use serde_json::Value;
+    let cfg = fixture_copy("scale-12-fund", false);
+    let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
+    let facts_path = root.join(".sec_cache/MAA_facts17.json");
+    let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
+    let mut scaled = 0;
+    for row in rows.as_array_mut().expect("rows") {
+        for k in ["shares", "prior_shares"] {
+            if let Some(x) = row[k].as_f64() {
+                assert_eq!(x % 1000.0, 0.0, "whole thousands, or ÷1000 isn't exact");
+                row[k] = serde_json::json!(x / 1000.0);
+                scaled += 1;
+            }
+        }
+    }
+    assert!(scaled > 10, "MAA's counts: {scaled}");
+    std::fs::write(&facts_path, serde_json::to_string(&rows).expect("ser facts")).expect("write facts");
+    let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read the fund golden");
+    let got = report_at(&cfg, &["12", "fund"], None);
+    assert!(got == golden, "counts tagged in thousands moved the fund report — a unit error priced as value.\n{}", first_difference(&got, &golden));
+}
+
 /// THE MARKER CONTRACT, as an assertion rather than a claim.
 ///
 /// `tests/network.rs::backtest_edge_holds` has no parser — it string-searches this report for every
