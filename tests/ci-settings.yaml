@@ -5297,6 +5297,17 @@ buy_heuristic:
                                  #  pts forward (n=144); the plain 8y leg does not warn. Admission is closed until track ~2027-09: re-read it then.
                                  #  DROPPED: a one-thread fund pin (#341 twin): 20s serial against ~6s, paid by every mutant; `12` and `12 tune` pin it.
                                  #  REVERT RULE: drop the four tests, the fund leg and the Pages step; the tie-break stays (it only orders exact ties).
+                                 #── (#422) MEASURED 2026-09-30 — THE facts17 WARM-UP BRIDGE READS TWO KEYS BACK ──
+                                 #  BUG: #419 (facts16) and #420 (facts17) reached Pages two hours apart, so its .sec_cache still held part of the pool under
+                                 #  facts15 alone. #420's bridge read facts16 only: a budget-denied or 429'd facts17 miss for those filers had no rows, and
+                                 #  the first Pages run after #421 read peg_yield on 359 of 548 equities (65.5%, the page had 75.5%). The (#421) coverage
+                                 #  contract refused the deploy, exactly its job: yesterday's page stayed up and the day's journal line waited.
+                                 #  FIX: `fetch_sec_facts_rows` bridges to facts16, then facts15 (first non-empty file). The bridge test gained the
+                                 #  facts15-only leg (red without the fix) and both bridge tests clear a stale facts15 left in the scratch root.
+                                 #  CI FUND LEG (first run, 36704736229): 51.0% of cutoffs carry as-of fundamentals (floor 40), peg_yield n=3260 (floor 2300),
+                                 #  edge +54.7, same `growth_max_above_ma` WARN (+22.1, n=144). Matches the local 50.0% / 3282, so the floors stand. Job 221s.
+                                 #  RULE: a cache-key bump inside a warm-up bridges EVERY key the live cache may still hold, not just the last one.
+                                 #  REVERT RULE: bridge list back to ["_facts16"] once Pages' cache is warm under facts17 (then delete the bridge per #410).
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

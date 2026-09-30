@@ -2560,10 +2560,15 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
     // (#410) shortcut: warm-up bridge. A cache-key rename misses every filer at once and the budget
     // covers fewer than the universe, so a miss serves the previous key's rows (since (#420) facts16:
     // no EBIT for filers without an operating-income tag, not re-cached) instead of n/a. Delete this and
-    // the facts16 files once .sec_cache is warm.
+    // the old files once .sec_cache is warm.
+    // (#422) TWO keys back, not one: #419 and #420 shipped two hours apart, so Pages' cache still held
+    // part of the pool under facts15 alone. A facts16-only bridge left those filers rowless and the
+    // (#421) coverage contract refused the deploy (peg_yield 75.5% of equities -> 359 of 548, 65.5%).
     match fetch_sec_facts_fresh(client, urls, ticker).await {
         Some(rows) => Some(rows),
-        None => sec_cache_rows(&sec_cache_path(&format!("{ticker}_facts16"))).filter(|r| !r.is_empty()),
+        None => ["_facts16", "_facts15"]
+            .iter()
+            .find_map(|k| sec_cache_rows(&sec_cache_path(&format!("{ticker}{k}"))).filter(|r| !r.is_empty())),
     }
 }
 
@@ -7223,13 +7228,14 @@ pub(crate) mod tests {
 
     /// (#410) A cache-key rename misses every filer at once, so a miss serves the previous file (since
     /// (#420) facts16: the OLD shape, no pretax EBIT fallback) and never re-caches it under facts17. BRIDGE has
-    /// no CIK, so it takes the same no-socket path to `None` an over-budget filer does. An empty facts16
-    /// is no rows.
+    /// no CIK, so it takes the same no-socket path to `None` an over-budget filer does. (#422) A filer the
+    /// facts16 warm-up never reached still answers from facts15; empty files at both keys are no rows.
     #[tokio::test]
     async fn sec_facts_rows_bridge_to_the_facts16_file() {
         pin_throttle();
         seed_cik_map();
         let _ = std::fs::remove_file(sec_cache_path("BRIDGE_facts17"));
+        std::fs::write(sec_cache_path("BRIDGE_facts15"), "[]").expect("seed");
         std::fs::write(sec_cache_path("BRIDGE_facts16"), r#"[{"filed": "2021-11-01", "period_end": "2021-09-30", "revenue": 1000.0}]"#)
             .expect("seed");
         let urls = stub_urls("http://127.0.0.1:1/");
@@ -7239,6 +7245,11 @@ pub(crate) mod tests {
         assert!(!sec_cache_path("BRIDGE_facts17").exists(), "a bridged read must not pin old rows under the new name");
         std::fs::write(sec_cache_path("BRIDGE_facts16"), "[]").expect("seed");
         assert!(fetch_sec_facts_rows(&client, &urls, "BRIDGE").await.is_none());
+        let _ = std::fs::remove_file(sec_cache_path("BRIDGE_facts16"));
+        std::fs::write(sec_cache_path("BRIDGE_facts15"), r#"[{"filed": "2020-11-01", "period_end": "2020-09-30", "revenue": 900.0}]"#)
+            .expect("seed");
+        let got = fetch_sec_facts_rows(&client, &urls, "BRIDGE").await.expect("facts15 rows");
+        assert_eq!(got[0].revenue, Some(900.0));
     }
 
     /// (#358) The three zero-denominator guards in `parse_sec_facts`. A zero revenue has no margin,
@@ -8465,6 +8476,7 @@ pub(crate) mod tests {
         // (#410) the scratch root outlives the run, and a CACHED_facts16 from before the rename would
         // answer through the bridge: remove it so this phase still reads the facts17 file alone.
         let _ = std::fs::remove_file(sec_cache_path("CACHED_facts16"));
+        let _ = std::fs::remove_file(sec_cache_path("CACHED_facts15"));
         assert!(fetch_sec_facts_rows(&client, &urls, "CACHED").await.is_none());
 
         // 3. no cache + a ticker absent from the CIK map -> None before any request. This is the
