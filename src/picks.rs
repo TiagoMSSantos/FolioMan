@@ -3386,10 +3386,10 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average" },
-    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ earnings per share, from SEC filings first, FMP as fallback" },
+    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback" },
     // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
-    // exactly equal the TTM-based P/E cell ÷ CAGR
-    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual earnings per share ÷ the long-run growth %/yr. Below 1 = growth priced cheap. Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
+    // exactly equal the TTM-based P/E cell ÷ CAGR. (#426) Nor its EPS: the PEG's is core, gains stripped
+    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap. Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
     // (#45) CRYPTO's valuation cell, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that
     // column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is
     // a P/B analogue

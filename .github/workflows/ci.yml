@@ -93,13 +93,15 @@ jobs:
       # pool with roic gone, and a pool of 50, must fail. (#424) and the pool with the split feed gone.
       - name: Universe contract rejects thin pools
         run: |
-          pool() { jq -n --argjson n "$1" --argjson roic "$2" --argjson splits "${3:-[[\"2024-07-15\",10.0]]}" '{quotes: [range($n) | {instrument_type: "EQUITY", splits: $splits, fund: {eps_ttm: 1, net_debt: 1, peg_yield: 1, roic: $roic}}]}'; }
+          pool() { jq -n --argjson n "$1" --argjson roic "$2" --argjson splits "${3:-[[\"2024-07-15\",10.0]]}" '{quotes: [range($n) | {instrument_type: "EQUITY", splits: $splits, fund: {eps_ttm: 1, net_debt: 1, peg_yield: 1, roic: $roic, core_factor: 0.9}}]}'; }
           pool 200 1 | jq -e -f web/universe-contracts.jq > /dev/null
           if pool 200 null | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no roic"; exit 1; fi
           if pool 50 1 | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a 50-equity pool"; exit 1; fi
           if pool 200 1 '[]' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no splits"; exit 1; fi
           pool 200 1 | jq '.quotes[].fund.shares_ttm = 1e8 | .quotes[].close_native = 205' | jq -e -f web/universe-contracts.jq > /dev/null
           if pool 200 1 | jq '.quotes[0].fund.shares_ttm = 716.4 | .quotes[0].close_native = 205' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a share count tagged in millions"; exit 1; fi
+          if pool 200 1 | jq '.quotes[0].fund.core_factor = 1.5' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a core strip that added earnings"; exit 1; fi
+          if pool 200 1 | jq 'del(.quotes[].fund.core_factor)' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no core factor"; exit 1; fi
 
   build:
     runs-on: ubuntu-latest

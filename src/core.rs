@@ -3666,6 +3666,7 @@ pub struct FundRow {
     pub gross_margin: Option<f64>,    // % = grossProfit/revenue
     pub op_margin: Option<f64>,       // % = operatingIncome/revenue
     pub net_margin: Option<f64>,      // % = netIncome/revenue
+    pub pretax_margin: Option<f64>,   // (#426) % = pretax income (continuing ops)/revenue. SEC only; `core_factor`'s input
     pub eps: Option<f64>,
     pub shares: Option<f64>,          // diluted weighted-avg shares outstanding — DISPLAY-ONLY (buyback column); None on the free tier / when the source omits it
     // The PRIOR fiscal year's eps/shares AS THE SAME FILING STATED THEM — the year-over-year
@@ -3774,6 +3775,7 @@ pub struct FundFactors {
     pub roic: Option<f64>,
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
+    pub core_factor: Option<f64>,  // (#426) the as-of row's `core_factor`: the share of its GAAP EPS that `eps_ttm` kept (1 = clean)
     pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). Set in the backtest loop from the native as-of close; the live path fills it only when `growth_fund_factor: earnings_yield` selects it (fetch.rs gates the fill to dodge the currency skew — see `earnings_yield` fn)
     // (EV/EBITDA probe) capital-structure-neutral value cousin of earnings_yield. The three as-of LEVELS
     // are price-free (set here from the latest filed row); ebitda_yield itself is EBITDA ÷ enterprise value
@@ -4149,6 +4151,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         roic: now.and_then(|r| roic_return(r.revenue, r.op_margin, r.net_margin, r.roe, r.roa, r.net_debt)),
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
         eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
+        core_factor: now.and_then(core_factor),
         earnings_yield: None,             // (Item 19) needs the as-of price -> filled in the backtest loop, not here
         // (EV/EBITDA) as-of levels through the same fund_as_of guard; ebitda_yield needs price -> caller fills
         ebitda_ttm: now.and_then(|r| r.ebitda),
@@ -4373,6 +4376,56 @@ pub fn repair_share_scale(rows: &mut [FundRow]) -> usize {
             r.prior_shares = Some(p * 1000f64.powi(power(s, p)));
         }
         moved += usize::from(before != (r.eps, r.prior_eps, r.shares, r.prior_shares));
+    }
+    moved
+}
+
+/// (#426) The share of a row's GAAP EPS that is core: earned by operations, not booked on a mark, a
+/// divestiture or a tax-benefit release. ASU 2016-01 runs unrealized equity gains through net income, and
+/// Alphabet, the book's #1, carried ~19% of its FY2025 EPS that way. Rouen-So-Wang (JFE 2021): the decile
+/// whose GAAP beats core earns 3.5%/yr against 11.9%, the spread in the income-increasing (gains) tail.
+///
+/// Core pretax is EBIT less interest; the gain is whatever pretax holds above it, and a net income above
+/// pretax is a tax benefit. So the factor is min(pretax, EBIT − interest) ÷ max(pretax, net income), at
+/// most 1: EPS only ever goes DOWN. Margins throughout, so revenue cancels. None (untouched) without all
+/// three lines, on a loss year, and for a bank or insurer (no operating line). Pretax ≤ 0 under a profit
+/// reads ≤ 0, and the name drops out as a loss-maker. A #420 filer's EBIT is pretax + interest, so only
+/// its tax benefit comes off.
+/// shortcut: a gain inside operating income passes as filed, a discontinued-ops gain only comes off where
+/// it lifts net income over pretax, a utility's AFUDC and tax credits read as non-core, and one-off losses
+/// are never added back. Tag-level NonoperatingIncomeExpense splits are the upgrade if a named row reads wrong.
+pub fn core_factor(r: &FundRow) -> Option<f64> {
+    let (ni, pre, op) = (r.net_margin?, r.pretax_margin?, r.op_margin?);
+    let int = match r.interest_cover {
+        Some(c) if c > 0.0 => op / c, // op ÷ (op ÷ interest) = interest, as a margin
+        _ => 0.0,
+    };
+    match ni {
+        ..=0.0 => None,
+        // a #420 filer's EBIT is pretax + interest rebuilt, so its clean row can land an ulp under 1
+        _ => match pre.min(op - int) / pre.max(ni) {
+            0.999_999_999.. => Some(1.0),
+            f => Some(f),
+        },
+    }
+}
+
+/// (#426) Put every SEC row's EPS on core earnings, in place, and return how many rows moved. The prior
+/// year's EPS takes the PRIOR row's factor (period end 300-430 days back), so each same-filing ratio the
+/// growth reads divide stays on one basis (#424); with no such row it stays as filed. Not idempotent:
+/// `fetch_fundamentals_sec` calls it once.
+pub fn strip_noncore(rows: &mut [FundRow]) -> usize {
+    let factors: Vec<(NaiveDate, Option<f64>)> = rows.iter().map(|r| (r.period_end, core_factor(r))).collect();
+    let mut moved = 0;
+    for (r, (_, own)) in rows.iter_mut().zip(&factors) {
+        let prior = factors.iter().find(|(end, _)| (300..=430).contains(&(r.period_end - *end).num_days()));
+        if let Some(f) = prior.and_then(|p| p.1) {
+            r.prior_eps = r.prior_eps.map(|v| v * f);
+        }
+        if let Some(f) = *own {
+            r.eps = r.eps.map(|v| v * f);
+            moved += usize::from(f < 1.0);
+        }
     }
     moved
 }
@@ -5725,6 +5778,7 @@ mod tests {
             roic: Some(22.0),
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
+            core_factor: None,
             earnings_yield: Some(9.0),
             ebitda_ttm: Some(50.0),
             shares_ttm: Some(2.0),
@@ -6018,6 +6072,63 @@ mod tests {
         let mut same = vec![row.clone()];
         restate_for_ads(&mut same, 1.0);
         assert_eq!(got(&same[0]), got(&row));
+    }
+
+    /// (#426) `core_factor` on each shape the formula answers, then `strip_noncore` over a series. Rows are
+    /// margins (op, interest cover, pretax, net), so revenue never appears.
+    #[test]
+    fn core_factor_strips_gains_and_only_gains() {
+        let row = |op: f64, cover: Option<f64>, pre: f64, ni: f64| FundRow {
+            op_margin: Some(op),
+            interest_cover: cover,
+            pretax_margin: Some(pre),
+            net_margin: Some(ni),
+            ..Default::default()
+        };
+        // Alphabet-like: 32 of EBIT, no interest, 6 of marks on top of it
+        assert_eq!(core_factor(&row(32.0, None, 38.0, 31.92)), Some(32.0 / 38.0));
+        // pretax twice the clean EBIT − interest (20 at 4x cover = 5 interest) is exactly half
+        assert_eq!(core_factor(&row(20.0, Some(4.0), 30.0, 22.5)), Some(0.5));
+        assert_eq!(core_factor(&row(20.0, Some(4.0), 15.0, 11.25)), Some(1.0));
+        // a mark LOSS under EBIT stays as filed: losses are never added back
+        assert_eq!(core_factor(&row(20.0, None, 12.0, 9.0)), Some(1.0));
+        // a tax-benefit release: net income over pretax, the excess comes off
+        assert_eq!(core_factor(&row(10.0, None, 10.0, 15.0)), Some(10.0 / 15.0));
+        // levered: 20 of EBIT at 2x cover pays 10 of interest before any gain is read
+        assert_eq!(core_factor(&row(20.0, Some(2.0), 12.0, 9.0)), Some(10.0 / 12.0));
+        // a profit on a pretax loss is all non-core, and reads as a loss
+        assert_eq!(core_factor(&row(5.0, None, -2.0, 3.0)), Some(-2.0 / 3.0));
+        // zero EBIT at zero cover: nothing core, never 0/0
+        assert_eq!(core_factor(&row(0.0, Some(0.0), 5.0, 4.0)), Some(0.0));
+        // a #420 filer's rebuilt EBIT an ulp under pretax is clean
+        assert_eq!(core_factor(&row(10.0, None, 10.0 + 1e-12, 7.5)), Some(1.0));
+        // nothing to judge: a loss year, a zero, a bank or insurer (no operating line), no pretax line
+        assert_eq!(core_factor(&row(20.0, None, 15.0, -1.0)), None);
+        assert_eq!(core_factor(&row(20.0, None, 15.0, 0.0)), None);
+        assert_eq!(core_factor(&FundRow { op_margin: None, ..row(0.0, None, 15.0, 11.0) }), None);
+        assert_eq!(core_factor(&FundRow { pretax_margin: None, ..row(20.0, None, 15.0, 11.0) }), None);
+
+        let fy = |y: i32, r: FundRow| FundRow {
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            eps: Some(4.0),
+            prior_eps: Some(2.0),
+            ..r
+        };
+        let mut rows = vec![
+            fy(2022, row(20.0, Some(4.0), 15.0, 11.25)), // clean, and the oldest: no prior row
+            fy(2023, row(20.0, Some(4.0), 30.0, 22.5)),  // half of pretax is a gain
+            fy(2024, row(20.0, None, 12.0, 9.0)),        // clean, but its prior year was half gains
+            fy(2026, row(20.0, Some(4.0), 30.0, 22.5)),  // a skipped fiscal year: no prior row
+        ];
+        assert_eq!(strip_noncore(&mut rows), 2);
+        let got: Vec<_> = rows.iter().map(|r| (r.eps, r.prior_eps)).collect();
+        assert_eq!(got, [(Some(4.0), Some(2.0)), (Some(2.0), Some(2.0)), (Some(4.0), Some(1.0)), (Some(2.0), Some(2.0))]);
+        // the count is rows that MOVED: a clean row alone is 0
+        assert_eq!(strip_noncore(&mut [fy(2022, row(20.0, None, 12.0, 9.0))]), 0);
+        // an FMP row carries no pretax line: untouched
+        let mut fmp = vec![FundRow { eps: Some(4.0), prior_eps: Some(2.0), op_margin: Some(20.0), net_margin: Some(9.0), ..Default::default() }];
+        assert_eq!(strip_noncore(&mut fmp), 0);
+        assert_eq!((fmp[0].eps, fmp[0].prior_eps), (Some(4.0), Some(2.0)));
     }
 
     /// `quality_return`: ROE when equity is positive, ROA when it isn't. The sign test is indirect (the

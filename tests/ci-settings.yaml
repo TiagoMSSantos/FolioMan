@@ -5388,6 +5388,45 @@ buy_heuristic:
                                  #  refuses an equity whose shares x close leaves 1e9..2e13 (ci.yml feeds it MDO.DE's 716.4); the journal test bounds every
                                  #  journalled factor and PEG value under 1e4 (largest real: CVNA sgr_yield 543).
                                  #  REVERT RULE: none, both are unit arithmetic. A new ADS with a ratio != 1 is a new `ads_ratio` row.
+                                 #── (#426) MEASURED 2026-09-30 — CORE EPS: NON-OPERATING GAINS OFF THE EPS THE PEG PRICES (a mark priced as value) ──
+                                 #  BUG: ASU 2016-01 (FY2018+) puts unrealized marks on equity stakes through net income, so GAAP EPS carries them. Alphabet's
+                                 #  FY2025 10-K: operating margin 32.0%, pretax 39.4%, net 32.8%; EPS 10.81 on ~8.73 of core earnings. Amazon FY2025 the same way
+                                 #  (marks on a private AI stake): op 11.2%, pretax 13.6%. `peg_yield` (annual 10-K EPS x peg_cagr_pct) is the only shipped EPS path, and
+                                 #  it drives `growth_max_peg`, `growth_value_floor_pct` and the `growth_fund_weight` tilt, so a mark read as cheapness. Two more
+                                 #  shapes: a GAAP profit that is interest on a cash pile over an operating loss (DDOG, CRWD FY2024, CSGP), and one that is a tax
+                                 #  release on a pretax loss (INTC FY2023).
+                                 #  SOURCES: Rouen, So & Wang, "Core earnings: New data and evidence", JFE 2021 (firms whose GAAP earnings run above core
+                                 #  earnings earn less: 3.5%/yr vs 11.9%, concentrated in the income-increasing decile); Philadelphia Fed WP 22-05 (after ASU 2016-01,
+                                 #  thinly covered stocks overreact to unrealized gains); SEC companyconcept CIK0001652044 NonoperatingIncomeExpense.
+                                 #  FIX: `core::core_factor` = min(pretax, op - interest) / max(pretax, NI) on margins (revenue cancels; interest = op /
+                                 #  interest_cover). None, so untouched, for a bank or insurer (no op line), a loss-maker, or any missing leg; snapped to 1 at
+                                 #  1 - 1e-9 (a #420 filer's rebuilt EBIT lands an ulp under). Never above 1: gains only, a one-off loss is never added back.
+                                 #  `core::strip_noncore` multiplies eps by its own row's factor and prior_eps by the factor of the row 300..=430 days older
+                                 #  (none: untouched, so a YoY never mixes bases), at `fetch_fundamentals_sec` after the (#425) repairs: every SEC path (peg
+                                 #  tilt and gate, report, backtest join). P/E stays GAAP TTM, and its help now says so. `_facts18` carries pretax_margin;
+                                 #  the bridge reads facts17, then 16, then 15, and a bridged row keeps GAAP EPS until warm. Pages now saves its fetch cache
+                                 #  right after `screen`, so a run Validate refuses keeps its SEC warm-up (the (#422) trap).
+                                 #  shortcut: a utility's AFUDC equity and tax credits read as non-core (SO 0.81, DUK 0.87); non-core items INSIDE operating
+                                 #  income (impairments, restructuring, litigation) are not seen; a profit on a pretax loss reads core <= 0, and the PEG
+                                 #  refuses it as a loss-maker (11 of 452 newest rows: HPE, CSGP, WBD, AXON, DDOG, ...).
+                                 #  CENSUS (warm facts18, 512 filers): 3974 of 6400 profitable rows under 1, row median 0.989 (mostly interest income), 314
+                                 #  under 0.5; newest rows 292 of 452 under 1, median 0.972, p25 0.876. GOOGL 0.808, AMZN 0.798, MSFT 0.917, NVDA 0.920,
+                                 #  META 0.956; AAPL, BRK-B, XOM 1.
+                                 #  MEASURED, controlled `backtest {8,12} universe fund` pairs on the SAME restored dotfiles (env-gated control, cutoffs
+                                 #  equal: 21883 / 12390; 426 tickers stripped):
+                                 #    8y  top-10 excess +5.6 -> +5.7 (OOS +6.2/+4.9 -> +6.2/+5.2, win 82 -> 83%, median book 2.67x -> 2.74x), Série E 90% both,
+                                 #        growth edge +17.7 -> +16.7 (637 -> 633 windows), peg_yield n 3282 -> 3241, edge -2.7 -> +3.5, AUC 0.26 -> 0.29;
+                                 #        growth_max_peg ->off still TOO TIGHT (+168.2 vs shipped +144.8, n=121).
+                                 #    12y top-10 excess +6.2 held (OOS +5.4/+6.9 -> +5.4/+7.0), Série E 100% both, growth edge +151.3 -> +151.4 (509 -> 508),
+                                 #        peg_yield n 1475 -> 1452, edge -148.5 -> -141.2, AUC 0.67 -> 0.72; growth_max_peg ->off still SPLIT (median -14.9 vs
+                                 #        shipped +131.8).
+                                 #  Verdict: PRIMARY up at 8y and held at 12y, so it SHIPS. The gate's grade doesn't move: record only (admission is closed).
+                                 #  TESTS: unit `core_factor_strips_gains_and_only_gains` (each shape, prior_eps from the row a year back, FMP rows untouched);
+                                 #  `backtest_fund_report_is_gain_invariant` (ODFL pretax = 2 x core with EPS doubled: the 12-fund report reads the golden plus
+                                 #  one stripped ticker; red with the strip off); network `sec_core_factor_strips_googl_gains` (FY2025 in 0.70..0.90); the
+                                 #  backtest-gate fund leg floors `core-stripped tickers:` at 210 (426 local, halved for CI's restore-only cache); Pages'
+                                 #  contract refuses a core_factor above 1 and a pool where under 10% of equities carry one (ci.yml feeds 1.5 and none).
+                                 #  REVERT RULE: top-10 excess falling at BOTH 8y and 12y on a controlled pair. A split verdict ships and is recorded.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

@@ -83,8 +83,12 @@ jobs:
       #
       # `.long_history_cache.json` is NOT in this list: ci.yml's backtest-gate owns it, and the step
       # after this one borrows it read-only.
+      # (#426) restore and save apart: the combined action saves on job success only, so a run the Validate
+      # step refuses threw its whole warm-up away and the next run started from the same half-warm cache
+      # (#422). The save below runs after `screen` whatever Validate says. The path list must stay identical
+      # in both, and in ci.yml's read-only copy: the cache version hashes it.
       - name: Restore fetch caches
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: |
             .sec_cache
@@ -168,6 +172,20 @@ jobs:
           # shows as the pool's line (VUAA.L). Without it the map is whatever `.listing_cache.json` holds.
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
         run: ./target/release/folioman screen
+
+      - name: Save fetch caches
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .sec_cache
+            .isin_cache.json
+            .venue_isins.json
+            .regulatory_isins.json
+            .fund_facts_cache.json
+            .holdings_cache.json
+            .eu_listing_cache.json
+          key: folioman-fetch-${{ github.run_id }}
 
       # Fail HERE, before the deploy, when the run came back empty. Pages keeps serving the last
       # successful deployment, so a throttled morning leaves yesterday's page up — which the page's

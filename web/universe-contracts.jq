@@ -12,6 +12,9 @@
 # statement) prices a market cap 1000x off, and every per-cap yield with it. MDO.DE, MCD's Xetra twin, read
 # 716.4 shares = 146,862 of cap. Every equity's shares x close must sit in 1e9..2e13 of its own currency
 # (2026-09-30: 6.8e9 PSKY to 5.0e12 NVD.DE, EUR/USD only). A pence-quoted listing would need its own band.
+# (#426) plus the core-earnings strip: the PEG prices EPS with non-operating gains taken off (GOOGL 0.81), off
+# the pretax line facts18 carries. A factor above 1 means the strip ADDED earnings, which it never may; under
+# 10% of equities stamped means the pretax tag went dark and every mark prices as earnings again.
 [.quotes[] | select(.instrument_type == "EQUITY")] as $eq
 | [$eq[] | .fund // {}] as $f
 | ($f | length) as $n
@@ -21,3 +24,5 @@
   and 10 * $n <= ([$eq[] | select((.splits // []) | length > 0)] | length) * 100
   and ([$eq[] | select(.fund.shares_ttm != null and .close_native != null) | .fund.shares_ttm * .close_native
         | select(. < 1e9 or . > 2e13)] | length) == 0
+  and ([$f[] | .core_factor // empty | select(. > 1)] | length) == 0
+  and 10 * $n <= ([$f[] | select(.core_factor != null)] | length) * 100

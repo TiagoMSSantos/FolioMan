@@ -332,6 +332,24 @@ async fn sec_share_scale_is_repaired_live() {
     }
 }
 
+/// (#426) Alphabet's marks: FY2025 pretax carried tens of billions of non-operating gains (equity marks through
+/// net income since ASU 2016-01) on top of operating income, so its core factor reads ~0.81. Near 1 = the pretax
+/// tag moved or the strip stopped reading it; near 0 = the operating-income tag did.
+#[tokio::test]
+async fn sec_core_factor_strips_googl_gains() {
+    use chrono::Datelike;
+    stamp_run();
+    let (client, urls) = (fetch::client(), config::load().urls);
+    let rows = match fetch::sec_facts_live(&client, &urls, "GOOGL").await {
+        Ok(rows) => rows,
+        Err(why) => return eprintln!("network smoke [core GOOGL] SKIPPED — {why}"),
+    };
+    let fy25 = rows.iter().find(|r| r.period_end.year() == 2025).expect("GOOGL: no FY2025 row — the parse lost Alphabet's 10-K");
+    let f = core::core_factor(fy25).expect("GOOGL FY2025: no core factor — its pretax, operating or net income line went missing");
+    eprintln!("network smoke [core GOOGL] FY2025 core factor {f:.3}");
+    assert!((0.70..0.90).contains(&f), "GOOGL FY2025: core factor {f:.3}, outside 0.70..0.90 — a tag moved under the strip");
+}
+
 /// (tests round 3) Yahoo fund-facts drift net — the crumb-gated fallback that fills ETF TER/AUM
 /// holes (the TER drag, AUM gate and bridge hints ride it). Proven silent-degrade: it failed live
 /// on 2026-07-17 ("Yahoo crumb handshake failed — fund-facts fallback skipped this run") and
@@ -828,6 +846,11 @@ fn backtest_edge_holds() {
             // local reading, x0.7. Zero means Yahoo's events.splits went dark and the join is back to pricing a future
             // split as value (the fund tilt's validated edge was mostly that look-ahead).
             const FUND_SPLIT_FLOOR: f64 = 115.0;
+            // (#426) tickers whose EPS had non-operating gains taken off: 426 on the 2026-09-30 local reading
+            // (warm facts18), about half, because CI's cache only restores (ci.yml, `folioman-fetch-`) and a row still
+            // bridged from facts17 carries no pretax line, so it keeps GAAP EPS. Zero means the pretax tag went dark and
+            // the PEG prices investment gains as cheapness again.
+            const FUND_CORE_FLOOR: f64 = 210.0;
             let sec = stdout.split(markers::FUND_SECTION).nth(1).unwrap_or("");
             let covered = sec.lines().find(|l| l.contains(markers::FUND_COVERED));
             let share = covered.and_then(|l| Some(num_after(l, markers::FUND_COVERED)? * 100.0 / num_after(l, "/")?));
@@ -837,6 +860,7 @@ fn backtest_edge_holds() {
             let sent = num_after(sec_line, markers::FUND_SEC).unwrap_or(0.0);
             let refused = num_after(sec_line, "sent,").unwrap_or(0.0);
             let split = sec.lines().find(|l| l.contains(markers::FUND_SPLIT)).and_then(|l| num_after(l, markers::FUND_SPLIT));
+            let core = sec.lines().find(|l| l.contains(markers::FUND_CORE)).and_then(|l| num_after(l, markers::FUND_CORE));
             match (share, peg) {
                 (Some(share), Some(n)) if sec_throttled(sent, refused) => eprintln!(
                     "backtest-gate {leg} fund floors SKIPPED — SEC refused {refused:.0} of {sent:.0} requests (throttled): \
@@ -849,6 +873,13 @@ fn backtest_edge_holds() {
                         "{leg}: only {split:.0} tickers had filings restated onto the chart's split basis, under the floor \
                          {FUND_SPLIT_FLOOR:.0} — Yahoo's events.splits went dark, and every pre-split SEC filing prices cheap by \
                          its split ratio. Fix it, or measure and justify a new floor in the (#424) receipt"
+                    );
+                    let core = core.unwrap_or_else(|| panic!("{leg}: no `{}` line — the core-EPS strip went unreported", markers::FUND_CORE));
+                    assert!(
+                        core >= FUND_CORE_FLOOR,
+                        "{leg}: only {core:.0} tickers had non-operating gains taken off their EPS, under the floor \
+                         {FUND_CORE_FLOOR:.0} — the pretax tag went dark or the facts18 cache never warmed, and the PEG prices \
+                         investment gains as value again. Fix it, or measure and justify a new floor in the (#426) receipt"
                     );
                     assert!(
                         share >= FUND_COVERED_FLOOR,
@@ -864,7 +895,7 @@ fn backtest_edge_holds() {
                     eprintln!(
                         "backtest-gate {leg} as-of fundamentals {share:.1}% (floor {FUND_COVERED_FLOOR:.0}%), peg_yield \
                          n={n:.0} (floor {FUND_PEG_N_FLOOR:.0}), split-restated {split:.0} (floor {FUND_SPLIT_FLOOR:.0}), \
-                         SEC {sent:.0} sent / {refused:.0} refused"
+                         core-stripped {core:.0} (floor {FUND_CORE_FLOOR:.0}), SEC {sent:.0} sent / {refused:.0} refused"
                     );
                 }
                 _ if forced => panic!(

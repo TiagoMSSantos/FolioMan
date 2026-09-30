@@ -142,6 +142,8 @@ pub mod markers {
     pub const FUND_SEC: &str = "SEC requests this run:";
     /// (#424) tickers whose filings were restated onto the chart's split basis. Zero on a live run = the split feed went dark.
     pub const FUND_SPLIT: &str = "split-restated tickers:";
+    /// (#426) tickers whose EPS `strip_noncore` put on core earnings. Zero on a live run = the pretax tag went dark.
+    pub const FUND_CORE: &str = "core-stripped tickers:";
     /// The three shipped hard gates the re-probe WARN sweeps, by their GATE SWEEP row labels.
     pub const ABLATED_GATES: &[&str] =
         &["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"];
@@ -2230,6 +2232,7 @@ fn report_fund_lane(samples: &[Sample], purge_months: i64) {
     println!("  SEC requests this run: {sent} sent, {refused} refused (403/429/5xx/transport)");
     let restated = SPLIT_RESTATED.load(std::sync::atomic::Ordering::Relaxed);
     println!("  split-restated tickers: {restated} (filings put on the chart's split basis)");
+    println!("  core-stripped tickers: {} (EPS with non-operating gains taken off)", crate::fetch::core_stripped());
     if covered < 4 {
         println!("  too few fundamental cutoffs (needs FMP_API_KEY + cached `stable/income-statement` history) — skipping.");
         return;

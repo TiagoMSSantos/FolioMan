@@ -452,7 +452,7 @@ fn backtest_pit_report_is_pinned() {
 
 /// (#364) The fundamental lane, the ONLY pin on the shipped `growth_fund_weight` tilt. Every other
 /// golden runs without `fund`, so each sample's fund factor is None and the tilt adds nothing: their
-/// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts17` rows, so the as-of join,
+/// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts18` rows, so the as-of join,
 /// the factor pick and the tilted growth score all reach the book, and the factor tables, the held-out
 /// factor sweep and the two-style book print. (#421) backtest-gate runs `8 universe fund` live too;
 /// these pins are its offline half.
@@ -510,7 +510,7 @@ fn backtest_fund_report_is_split_invariant() {
     }
     std::fs::write(&cache_path, serde_json::to_string(&cache).expect("ser cache")).expect("write cache");
 
-    let facts_path = root.join(format!(".sec_cache/{tk}_facts17.json"));
+    let facts_path = root.join(format!(".sec_cache/{tk}_facts18.json"));
     let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
     let mut restated = (0, 0);
     for row in rows.as_array_mut().expect("rows") {
@@ -550,7 +550,7 @@ fn backtest_fund_report_is_share_scale_invariant() {
     use serde_json::Value;
     let cfg = fixture_copy("scale-12-fund", false);
     let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
-    let facts_path = root.join(".sec_cache/MAA_facts17.json");
+    let facts_path = root.join(".sec_cache/MAA_facts18.json");
     let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
     let mut scaled = 0;
     for row in rows.as_array_mut().expect("rows") {
@@ -567,6 +567,49 @@ fn backtest_fund_report_is_share_scale_invariant() {
     let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read the fund golden");
     let got = report_at(&cfg, &["12", "fund"], None);
     assert!(got == golden, "counts tagged in thousands moved the fund report — a unit error priced as value.\n{}", first_difference(&got, &golden));
+}
+
+/// (#426) THE GAIN INVARIANT. A filer whose pretax carries a mark on top of its operating profit earns
+/// no more from operations, so a copy where half of every ODFL year's pretax is a gain and its EPS is
+/// doubled to match must print the SAME fund golden. Only `strip_noncore` reconciles it: without it
+/// ODFL's EPS reads twice as rich and its earnings yield and PEG move. The frozen rows carry no pretax
+/// line, so each gets exactly EBIT − interest (clean) doubled; x ÷ 2x is exact in f64, so the claim is
+/// byte-identical rather than close.
+#[test]
+fn backtest_fund_report_is_gain_invariant() {
+    use serde_json::{json, Value};
+    let cfg = fixture_copy("gain-12-fund", false);
+    let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
+    let facts_path = root.join(".sec_cache/ODFL_facts18.json");
+    let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
+    let rows_mut = rows.as_array_mut().expect("rows");
+    // every prior EPS has its prior year's row, whose factor it takes: only the oldest row has none
+    assert!(rows_mut[0]["prior_eps"].is_null() && rows_mut[1..].iter().all(|r| r["prior_eps"].is_f64()), "ODFL's comparatives");
+    for row in rows_mut.iter_mut() {
+        let op = row["op_margin"].as_f64().expect("op margin");
+        let int = match row["interest_cover"].as_f64() {
+            Some(c) if c > 0.0 => op / c,
+            _ => 0.0,
+        };
+        row["pretax_margin"] = json!(2.0 * (op - int));
+        for k in ["eps", "prior_eps"] {
+            if let Some(x) = row[k].as_f64() {
+                row[k] = json!(2.0 * x);
+            }
+        }
+    }
+    assert!(rows_mut.len() > 10, "ODFL's rows: {}", rows_mut.len());
+    std::fs::write(&facts_path, serde_json::to_string(&rows).expect("ser facts")).expect("write facts");
+
+    // the one line that may move: ODFL is now stripped too, so the count is the golden's + 1
+    use folioman::commands::backtest::markers::FUND_CORE;
+    let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read the fund golden");
+    let line = golden.lines().find(|l| l.contains(FUND_CORE)).expect("the golden's core-stripped line");
+    let n: usize = line.split(FUND_CORE).nth(1).and_then(|t| t.split_whitespace().next()).and_then(|t| t.parse().ok()).expect("a count");
+    let want = golden.replace(line, &line.replace(&format!("{FUND_CORE} {n} "), &format!("{FUND_CORE} {} ", n + 1)));
+    assert_ne!(want, golden, "the count substitution must land");
+    let got = report_at(&cfg, &["12", "fund"], None);
+    assert!(got == want, "a gain on top of operating profit moved the fund report — a mark priced as earnings.\n{}", first_difference(&got, &want));
 }
 
 /// THE MARKER CONTRACT, as an assertion rather than a claim.
@@ -622,10 +665,10 @@ fn dca_markers_are_in_the_20y_golden() {
 /// under the gate when either row is missing; this reds offline first on a rename.
 #[test]
 fn fund_markers_are_in_the_fund_golden() {
-    use folioman::commands::backtest::markers::{FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SECTION, FUND_SPLIT};
+    use folioman::commands::backtest::markers::{FUND_CORE, FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SECTION, FUND_SPLIT};
     let golden = std::fs::read_to_string(fixture_dir().join("backtest-12-fund.golden")).expect("read backtest-12-fund.golden");
     let sec = golden.split(FUND_SECTION).nth(1).expect("backtest-12-fund.golden carries the FUNDAMENTAL section");
-    for m in [FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SPLIT] {
+    for m in [FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SPLIT, FUND_CORE] {
         assert!(sec.contains(m), "tests/network.rs ratchets `{m}` on the fund leg and the golden's section no longer carries it");
     }
 }
@@ -700,7 +743,7 @@ fn regen_backtest_fixture() {
     let copied = out
         .keys()
         .filter(|t| {
-            let f = format!("{t}_facts17.json");
+            let f = format!("{t}_facts18.json");
             std::fs::copy(repo().join(".sec_cache").join(&f), sec.join(&f)).is_ok()
         })
         .count();
