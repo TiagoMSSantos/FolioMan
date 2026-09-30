@@ -43,7 +43,8 @@ name: Mutation census
 # that no run had ever graded. Each catch-up's receipt in tests/ci-settings.yaml names the head it
 # graded (LAST GRADED SHA); the next round dispatches `since: <that SHA>`. Still manual: a survivor
 # needs a round to triage it, so a schedule would only publish lists nobody reads.
-# The checkout stays shallow: a diff of two trees needs no history, and GitHub serves a fetch by SHA.
+# The checkout stays shallow: a diff of two trees needs no history, and GitHub serves a fetch by SHA —
+# by the FULL SHA only: run 36752309351 dispatched `4a8b8ff` and every shard read "couldn't find remote ref".
 # The fetch failing is a hard exit, not a fallthrough — without the diff this grades whole files.
 on:
   workflow_dispatch:
@@ -61,7 +62,7 @@ on:
         description: "test-target args after cargo mutants' --"
         default: '--lib --test backtest_fixture'
       since:
-        description: "grade only lines changed since this SHA (empty = whole files)"
+        description: "grade only lines changed since this FULL 40-char SHA (empty = whole files)"
         default: ''
 
 # Its own group and NEVER cancelled: in ci.yml's group, the daily journal commit would cancel a
@@ -145,7 +146,7 @@ jobs:
           read -ra targs <<< "${TESTS}"
           ind=()
           if [ -n "${SINCE}" ]; then
-            git fetch -q --no-tags --depth=1 origin "${SINCE}" || { echo "cannot fetch ${SINCE}"; exit 1; }
+            git fetch -q --no-tags --depth=1 origin "${SINCE}" || { echo "cannot fetch ${SINCE} (a fetch by SHA needs all 40 characters)"; exit 1; }
             git diff "${SINCE}" HEAD -- src > "${RUNNER_TEMP}/since.diff"
             ind=(--in-diff "${RUNNER_TEMP}/since.diff")
           fi
@@ -189,7 +190,7 @@ jobs:
           ex=(); [ -n "${EX}" ] && ex=(-E "${EX}")
           ind=()
           if [ -n "${SINCE}" ]; then
-            git fetch -q --no-tags --depth=1 origin "${SINCE}" || { echo "cannot fetch ${SINCE}"; exit 1; }
+            git fetch -q --no-tags --depth=1 origin "${SINCE}" || { echo "cannot fetch ${SINCE} (a fetch by SHA needs all 40 characters)"; exit 1; }
             git diff "${SINCE}" HEAD -- src > "${RUNNER_TEMP}/since.diff"
             ind=(--in-diff "${RUNNER_TEMP}/since.diff")
           fi
