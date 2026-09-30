@@ -178,6 +178,9 @@ jobs:
           test -f .screen_web.json || { echo "screen wrote no payload"; exit 1; }
           jq -e '(.stocks | length) + (.etfs | length) + (.crypto | length) > 0' .screen_web.json \
             > /dev/null || { echo "every lane came back empty — not deploying over a good page"; exit 1; }
+          # (#418) and never over a broken one: BUY% not summing to 100, a ticker twice, a NaN cell.
+          jq -e -f web/payload-contracts.jq .screen_web.json > /dev/null \
+            || { echo "payload breaks a contract (BUY% sum / duplicate ticker / NaN) — not deploying over a good page"; exit 1; }
           jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) rows"' .screen_web.json
 
       - name: Assemble the site

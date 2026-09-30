@@ -774,6 +774,25 @@ fn is_commodity_etf(quote: &Quote) -> bool {
     }
 }
 
+/// (#418) Currency-hedged share classes: the return is the index PLUS a hedge carry (the rate gap, the
+/// hedged currency's fall), not earnings compounding — long-run hedged ~= unhedged (Froot 1993), so a
+/// 20y lane must not rank the carry as growth. Substrings catch the glued spellings ("hEURacc",
+/// "PfHdg", "EUR-Hedged"); the bare "h" is a TOKEN ("EUR H Acc", "GBP-H", "EUR(H)"), split on Unicode
+/// alphanumerics so "Høj" can't trip it. No " eur h" substring: it matches "EUR High Yield".
+/// "Unhedged" names are the unhedged class, never refused. "Tail Hedge" put-overlay funds are refused
+/// too, on purpose: the premium is the same kind of drag.
+/// shortcut: name tokens only; "US.Eq.H.Inc" (H = High) is a known 1-name miss.
+const HEDGE_MARKERS: &[&str] = &["hedg", "hdg", "heur", "hchf", "husd", "hgbp"];
+
+fn is_hedged_etf(quote: &Quote) -> bool {
+    quote_is_etf(quote) && {
+        let n = quote.name.to_lowercase();
+        !n.contains("unhedg")
+            && (HEDGE_MARKERS.iter().any(|m| n.contains(m))
+                || n.split(|c: char| !c.is_alphanumeric()).any(|x| x == "h"))
+    }
+}
+
 /// (#44) GICS sectors whose earnings are a SPREAD on a traded input price, so the long CAGR is a
 /// spot-price snapshot rather than a compounding record. Energy is ~90% clean (only the pipelines
 /// WMB/KMI/OKE are toll roads, not spread-takers). Materials is ~50/50 — CF, Mosaic, Freeport, Newmont,
@@ -1331,6 +1350,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     }
     if is_commodity_etf(quote) {
         return None; // physical commodity/metal ETC -> no cashflow, doesn't compound (not this lane's thesis)
+    }
+    if is_hedged_etf(quote) {
+        return None; // (#418) currency-hedge carry, not compounding
     }
     if crypto && is_stablecoin(&quote.ticker) {
         return None; // pegged $1 -> no growth
@@ -2572,7 +2594,7 @@ pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) ->
 ///
 /// Exists for the screen's gate funnel: a tally whose denominator doesn't reconcile
 /// (`scanned = refused + failed + ranked`) can't be trusted to aim a knob at anything. `gate_failures`
-/// calls this as its own early-out rather than re-testing the same four conditions, so the funnel's
+/// calls this as its own early-out rather than re-testing the same five conditions, so the funnel's
 /// refused bucket and the ranking's refusal cannot disagree.
 ///
 /// NOT exhaustive of `None`: `gate_failures` also bails on a missing 1Y leg, one line further down and
@@ -2585,6 +2607,9 @@ pub fn refusal_reason(quote: &Quote) -> Option<&'static str> {
     }
     if is_commodity_etf(quote) {
         return Some("commodity");
+    }
+    if is_hedged_etf(quote) {
+        return Some("hedged");
     }
     if is_currency_quoted(&quote.ticker) && is_stablecoin(&quote.ticker) {
         return Some("stablecoin");
@@ -5434,7 +5459,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
             None => format!("\n--explain: {t} wasn't scanned — not in the universe, or filtered out as not EU-buyable."),
             Some(q) => match gate_failures(q, tuning) {
                 None => format!(
-                    "\n--explain: {t} isn't assessable as a growth candidate (leveraged / stablecoin / physical-commodity ETC, or unknown turnover)."
+                    "\n--explain: {t} isn't assessable as a growth candidate (leveraged / stablecoin / physical-commodity ETC / currency-hedged ETF, or unknown turnover)."
                 ),
                 // NOT "out-scored by the top n": `target` is looked up in the untrimmed `picks`, so a
                 // ranked-but-below-the-cut name still gets the score walkthrough above. Reaching here
@@ -6833,6 +6858,29 @@ mod tests {
     assert!(!is_commodity_etf(&xetra)); // miner-word exemption: equity basket keeps ranking
     xetra.name = "Goldman Sachs Access UCITS ETF".into();
     assert!(!is_commodity_etf(&xetra)); // token boundary: "goldman" != "gold"
+    // (#418) currency-hedged share classes are gated; the unhedged class and lookalikes are not
+    let mut fx = quote(2.0, strong);
+    fx.instrument_type = "ETF".into();
+    for name in [
+        "Vanguard FTSE Japan UCITS ETF USD Hedged Accumulation",
+        "UBS Core MSCI World UCITS ETF hGBP acc",
+        "Robeco 3D US Equity UCITS ETF EUR (H) Acc",
+        "Invesco FTSE All-World UCITS ETF CHF PfHdg Acc",
+    ] {
+        fx.name = name.into();
+        assert!(is_hedged_etf(&fx) && growth_score(&fx, &tuning).is_none(), "{name}");
+    }
+    for name in [
+        "State Street SPDR S&P 500 UCITS ETF USD Accumulation UnHedged", // the unhedged class
+        "Amundi Core EUR High Yield Bond UCITS ETF Acc", // "EUR H..." is not a hedge token
+        "Maj Invest UCITS ETF Høj Rente", // Unicode split: "Høj" is one word, no bare "h"
+    ] {
+        fx.name = name.into();
+        assert!(!is_hedged_etf(&fx) && growth_score(&fx, &tuning).is_some(), "{name}");
+    }
+    fx.name = "Hedgeye Corp".into();
+    fx.instrument_type = "EQUITY".into();
+    assert!(!is_hedged_etf(&fx) && growth_score(&fx, &tuning).is_some()); // ETF-scoped: a stock is never gated
     // (#36) crypto VOL cap: daily swing wilder than the base -> out; at/below cap or unknown -> in
     let vt = BuyHeuristic { growth_max_vol_crypto: 3.0, ..BuyHeuristic::default() };
     let mut wild = quote(2.0, strong);
@@ -11570,6 +11618,9 @@ mod tests {
         let mut commodity = gate_fixture();
         commodity.instrument_type = "ETF".into();
         commodity.name = "WisdomTree Physical Gold UCITS ETF".into();
+        let mut hedged = gate_fixture();
+        hedged.instrument_type = "ETF".into();
+        hedged.name = "Vanguard FTSE Japan UCITS ETF USD Hedged Accumulation".into();
         let mut stable = gate_fixture();
         stable.ticker = "USDT-EUR".into();
         let mut no_turnover = gate_fixture();
@@ -11588,7 +11639,7 @@ mod tests {
 
         let cases: &[(&str, &Quote)] = &[
             ("clean", &clean), ("leveraged", &leveraged), ("commodity", &commodity),
-            ("stablecoin", &stable), ("no-turnover", &no_turnover), ("no-1y", &no_1y),
+            ("hedged", &hedged), ("stablecoin", &stable), ("no-turnover", &no_turnover), ("no-1y", &no_1y),
             ("no-history", &no_history), ("artifact", &artifact), ("deep drawdown", &deep),
             ("stretched", &stretched),
         ];
@@ -11616,10 +11667,11 @@ mod tests {
             }
         }
 
-        // the refusal bucket must name the cause, and must fire for exactly the structural four
+        // the refusal bucket must name the cause, and must fire for exactly the structural five
         assert_eq!(refusal_reason(&clean), None);
         assert_eq!(refusal_reason(&leveraged), Some("leveraged"));
         assert_eq!(refusal_reason(&commodity), Some("commodity"));
+        assert_eq!(refusal_reason(&hedged), Some("hedged"));
         assert_eq!(refusal_reason(&stable), Some("stablecoin"));
         assert_eq!(refusal_reason(&no_turnover), Some("no-turnover"));
         // the missing-1Y bail is NOT structural: gate_failures refuses it, refusal_reason does not —

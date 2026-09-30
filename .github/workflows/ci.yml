@@ -77,6 +77,18 @@ jobs:
           # (#351) 1.7.12 predates the concurrency `queue:` key mutation-census.yml uses (rhysd/actionlint#657,
           # open): ignore that one message, every other check stays on. Drop it once a release knows the key.
           ./actionlint -ignore 'unexpected key "queue" for "concurrency" section'
+      # (#418) The Pages deploy gates on web/payload-contracts.jq; this proves the gate can still say no.
+      # Each broken payload must FAIL it (BUY% sums to 85, a ticker in two lanes, a NaN cell) and the
+      # clean one — whose name contains "inf" mid-word — must pass.
+      - name: Payload contracts reject broken payloads
+        run: |
+          for bad in \
+            '{"stocks":[[["TICKER","A"],["BUY%","85%"]]]}' \
+            '{"stocks":[[["TICKER","A"]]],"etfs":[[["TICKER","A"]]]}' \
+            '{"stocks":[[["TICKER","A"],["PRICE","€NaN"]]]}'; do
+            if echo "$bad" | jq -e -f web/payload-contracts.jq > /dev/null; then echo "contract passed a broken payload: $bad"; exit 1; fi
+          done
+          echo '{"stocks":[[["TICKER","A"],["BUY%","100%"],["NAME","Infrastructure"]]]}' | jq -e -f web/payload-contracts.jq > /dev/null
 
   build:
     runs-on: ubuntu-latest

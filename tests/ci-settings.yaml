@@ -5180,6 +5180,45 @@ buy_heuristic:
                                  #    so read every factor edge as transitory.
                                  #  - Liu-Tsyvinski crypto factors: 1-4 week horizons. The crypto lane already carries its MVRV ceiling (#45).
                                  #  REVERT RULE: drop the two rows; nothing reads them.
+                                 #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
+                                 #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
+                                 #  "hedged", so the screen funnel names it). ETF-scoped. Substrings hedg/hdg/heur/hchf/husd/hgbp catch the glued
+                                 #  spellings ("hEURacc", "PfHdg", "2D-EURHedged"); a bare "h" TOKEN catches "EUR H Acc", "GBP-H", "EUR(H)", split on
+                                 #  Unicode alphanumerics so "Høj" is one word. "unhedg" in the name vetoes it: those are the unhedged class.
+                                 #  WHY: a hedged class earns the index PLUS a hedge carry (the rate gap, the hedged currency's fall), not earnings.
+                                 #  Long-run hedged ~= unhedged: Froot 1993 (NBER w4355; the long-horizon min-variance hedge ratio is ~35%), Vanguard
+                                 #  "To hedge or not to hedge", Campbell-Serfaty-de Medeiros-Viceira 2010 (JF 65(1)). So the carry is a regime, not a
+                                 #  compounder a 20y buy should rank. The case that prompted it: VJPU.L (Vanguard FTSE Japan USD Hedged Acc) sat in
+                                 #  10/10 journalled books since 2026-09-21 at 3.2% on +19.6%/yr, while the same index unhedged (VJPA.DE) made +8.3%/yr.
+                                 #  CENSUS (live universe.json, 4625 ETFs): 904 names refused. CORE's NARROW spellings would have used " eur h", which
+                                 #  matches 18 "EUR High Yield"/"EUR HY" bonds and misses 34 real hedges ("H EUR", "GBP-H", "CHF H A"). Known ceilings:
+                                 #  EDMB.DE "US.Eq.H.Inc" (H = High) is a 1-name miss; "Tail Hedge" put-overlay funds (5PAH.DE, SPQH.L) are refused
+                                 #  too, on purpose, since the option premium is the same kind of drag.
+                                 #  BAR, WRITTEN BEFORE THE RUN: `backtest {12,8} universe fund pit`, control at HEAD vs arm, caches restored after. No
+                                 #  book/PRIMARY row worse by > 0.3 pts/yr, windows scored equal; an identical output passes (the gate can't hurt a walk
+                                 #  it never fires in). RESULT: PASS. Every graded row is byte-identical at 12y (windows 2815/253) and 8y (6243/363);
+                                 #  only the fetch log lines moved. One 8y diagnostic moved: null-model edge +28.0 -> +29.4 ("tuning adds" 60.4 -> 59.0),
+                                 #  unattributed, since the fund-facts fallback drifted 376 -> 303 between the runs. The walk's pit book never held a
+                                 #  hedged class.
+                                 #  LIVE A/B (the page engine, rebuilt from this change, on the served universe.json): exactly one row moves. VJPU.L
+                                 #  3.2% out, HOOD 3.2% in, 29 names both arms, no other weight changes.
+                                 #  CONTRACTS: `web/payload-contracts.jq`. pages.yml refuses to deploy a payload whose funded BUY% does not sum to 100
+                                 #  +/- 2, that prints a ticker twice across the lanes, or that has a NaN/inf cell. ci.yml's actionlint job feeds it
+                                 #  three broken payloads and one clean one on every push, so the gate is itself tested. The live data.json and prev.json
+                                 #  pass, and so does the post-change payload.
+                                 #  CORE SIDE FINDING, NO CHANGE: SPYL.L ("...UnHedged", TER 0.03%) is missing from CORE, and NARROW's bare "hedged"
+                                 #  inside "unhedged" looked like the cause. It is not: stripping "unhedged" from all 18 such names moves 0 CORE rows.
+                                 #  The (#195) hold_name_tokens pair, re-run on this pond through the engine, now TRIPS: ON drops SSAC.L (EUR 31.1B ACWI)
+                                 #  and DEAM.DE, and admits CHF-hedged FWCA.SW ("PfHdg" slips past word-start matching) and XESC.DE. It stays OFF.
+                                 #  SWEEP 13, EVERYTHING ELSE MAPPED OR DROPPED:
+                                 #  - Venue skew: Xetra twins' real records are 5.7-10y behind flat placeholder padding; measured and refused at
+                                 #    (#191)/(#232).
+                                 #  - Nasdaq-100 wrappers: (#318) refused the twin cap. 26 clearing names vs book_names 25 today = 1 refill.
+                                 #  - Acc vs Dist: (#109) growth_acc_drag. Price-only CAGR already docks Dist.
+                                 #  - Industry long-term reversal (3-5y losers beat winners): a weight, and weights are closed until track ~2027-09.
+                                 #  - Domian-Louton-Racine 2007 (shortfall risk keeps falling past 100 stocks) and Morningstar's thematic survival (9%
+                                 #    survive and beat the index over 15y): recorded; the 5.0y leg floor already holds young thematics off.
+                                 #  REVERT RULE: delete is_hedged_etf, HEDGE_MARKERS and their two call sites. The contracts stand alone.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
