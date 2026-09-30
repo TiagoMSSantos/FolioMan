@@ -846,11 +846,11 @@ fn backtest_edge_holds() {
             // local reading, x0.7. Zero means Yahoo's events.splits went dark and the join is back to pricing a future
             // split as value (the fund tilt's validated edge was mostly that look-ahead).
             const FUND_SPLIT_FLOOR: f64 = 115.0;
-            // (#426) tickers whose EPS had non-operating gains taken off: 426 on the 2026-09-30 local reading
-            // (warm facts18), about half, because CI's cache only restores (ci.yml, `folioman-fetch-`) and a row still
-            // bridged from facts17 carries no pretax line, so it keeps GAAP EPS. Zero means the pretax tag went dark and
-            // the PEG prices investment gains as cheapness again.
-            const FUND_CORE_FLOOR: f64 = 210.0;
+            // (#426) tickers whose EPS had non-operating gains taken off: 426 on the 2026-09-30 local reading and on
+            // CI's first, cold facts18 run (520 SEC requests, 0 refused), x0.7. A row still bridged from facts17 carries
+            // no pretax line and keeps GAAP EPS, so a cache that stops warming reads low; zero means the pretax tag went
+            // dark and the PEG prices investment gains as cheapness again.
+            const FUND_CORE_FLOOR: f64 = 300.0;
             let sec = stdout.split(markers::FUND_SECTION).nth(1).unwrap_or("");
             let covered = sec.lines().find(|l| l.contains(markers::FUND_COVERED));
             let share = covered.and_then(|l| Some(num_after(l, markers::FUND_COVERED)? * 100.0 / num_after(l, "/")?));

@@ -5424,7 +5424,7 @@ buy_heuristic:
                                  #  TESTS: unit `core_factor_strips_gains_and_only_gains` (each shape, prior_eps from the row a year back, FMP rows untouched);
                                  #  `backtest_fund_report_is_gain_invariant` (ODFL pretax = 2 x core with EPS doubled: the 12-fund report reads the golden plus
                                  #  one stripped ticker; red with the strip off); network `sec_core_factor_strips_googl_gains` (FY2025 in 0.70..0.90); the
-                                 #  backtest-gate fund leg floors `core-stripped tickers:` at 210 (426 local, halved for CI's restore-only cache); Pages'
+                                 #  backtest-gate fund leg floors `core-stripped tickers:` at 300 (426 local and on CI's cold first run, x0.7); Pages'
                                  #  contract refuses a core_factor above 1 and a pool where under 10% of equities carry one (ci.yml feeds 1.5 and none).
                                  #  REVERT RULE: top-10 excess falling at BOTH 8y and 12y on a controlled pair. A split verdict ships and is recorded.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
