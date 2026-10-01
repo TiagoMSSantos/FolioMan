@@ -157,7 +157,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           # (#354) Unversioned: it follows the action's pin. If an advisory-database format change
           # reds this job before Dependabot's monthly bump, bump the action; never pin the tool back.
@@ -262,7 +262,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup component add llvm-tools-preview
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-llvm-cov   # (#354) follows the action's pin (0.9.1 at v2.87.20)
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -481,7 +481,7 @@ jobs:
       # push that changed nothing it grades. Bump it on purpose, here and in mutation-census.yml
       # together, and re-prove with a census dispatch. PROVEN on 51ce484: census run 36229966422
       # (src/core.rs, convert_price) installed 27.1.0 and graded 18 caught, 0 missed, as before.
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-mutants@27.1.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
