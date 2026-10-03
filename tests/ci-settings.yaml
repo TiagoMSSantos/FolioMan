@@ -7147,6 +7147,54 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#427) A CATCH-UP MUTATION CENSUS OF EVERYTHING SINCE THE LAST ONE. 998 GRADED, 1 SURVIVOR, KILLED.
+  # AND THE PUSH GATE'S FIXTURE LEG WAS FOUND DEAD: ITS FIXED TIMEOUT WAS SHORTER THAN THE FIXTURE.
+  #
+  # Asked ("spend rest of tokens in adding or improving tests"). ci.yml's gate grades at most BUDGET (6)
+  # in-diff mutants per push, one round-robin shard, so a big push leaves most of its mutants ungraded.
+  # 50 commits after 4a8b8ff (the last census, 2026-09-26) touched 15 src files, +4331/-709, and
+  # listed 998 mutants no run had graded, web.rs's 19 among them (the page engine, never in a slice).
+  # mutation-census.yml gained a `since` input (5abd33e): `git diff <SHA> HEAD -- src` on the shallow
+  # checkout, fetched BY FULL SHA (a short one reads "couldn't find remote ref", run 36752309351, and
+  # the step exits instead of grading whole files), passed as `--in-diff` to both jobs.
+  #
+  # THE DEAD LEG. The next dispatch (36753132950) graded 0: "TIMEOUT Unmutated baseline in 79s build +
+  # 90s test". The fund-lane goldens (#364)-(#426) took the fixture from ~25s to 83.3s with optimised
+  # dependencies and 247.8s at the gate's plain opt-level 0 (integration-tests log, 32b8d9c), and both the
+  # gate and the census ran a fixed `--timeout 90`. A TIMEOUT is neither MISSED nor a red, and a failing
+  # fixture test does not stop the others, so in the gate EVERY mutant that survived --lib timed out,
+  # caught or not, and the gate went green. Its fixture leg graded nothing, silently. FIX (820c521): both
+  # run the unmutated baseline and let cargo-mutants derive the timeout from it (auto-set 478s from a 95s
+  # baseline here), and the gate optimises dependencies as the census has since (#350). The gate's
+  # BUDGET figures predate that and are marked stale until a code push's outcomes.json is re-read.
+  #
+  # THE CENSUS (run 36754557478 on 820c521, 20m over 16 shards): files `src/broker/trading212.rs
+  # src/commands/backtest.rs src/commands/check.rs src/commands/mod.rs src/commands/report.rs
+  # src/commands/screen.rs src/commands/sim.rs src/commands/size.rs src/commands/track.rs src/config.rs
+  # src/core.rs src/fetch.rs src/lib.rs src/picks.rs src/web.rs`, regex `.`, exclude the three standing
+  # slice excludes `^src/commands/backtest\.rs:.*replace (proxy_books|book_stats|drop_bottom_book|corr_cap_book|report_entry_state) -> |replace [a-z_]*_live ->|^src/commands/screen\.rs:.*replace last_core -> `,
+  # tests `--lib --test backtest_fixture --test cli`, since 4a8b8ff36ec3cd54e60765e028a694b774ad962c.
+  # 998 in scope: 949 caught, 1 missed, 0 timeout, 48 unviable.
+  # - 1 KILLED: web.rs 109:27 `screen` `&&` -> `||` in `!(twins.is_empty() && missing.is_empty())`. Every
+  #   test placed a twin AND a missing pin together, so "either" and "both" agreed.
+  #   `a_pin_on_another_venue_shows_as_its_pool_twin` now uploads each alone and asserts `pins` names it,
+  #   and that a pool holding every pin carries no `pins` key. Hand-mutated: red at the twin-only assert.
+  # - 0 EQUIVALENT, 0 GAPS.
+  # READING: 949 of 950 viable caught means the rounds' own tests, each mapped against
+  # `cargo mutants --list --in-diff` before its push, did the work the sharded gate could not. The hole
+  # this round found was in the gate's clock, not in the tests.
+  #
+  # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
+  # nothing mutable moved) and 0 missed.
+  # LAST GRADED SHA: (the proof run's head, filled in below once it holds). The next catch-up dispatches
+  # `since: <that SHA>` with `files` = `git diff --name-only <that SHA> HEAD -- src`.
+  #
+  # WHAT SHIPS. The `since` input, the baseline-derived timeouts, the gate's optimised dependencies, and
+  # three asserts. No production line changed.
+  #
+  # REVERT: drop the asserts; the `since` input and its two diff blocks; restore `--timeout 90` and
+  # `--baseline skip` (knowing the fixture leg then grades nothing) and drop the gate's config line.
+  #
   # (#358) ROUND 129: A MUTATION CENSUS OF src/fetch.rs, THE `*_live` SWAPS EXCLUDED. 278 SURVIVORS
   # KILLED, 6 EQUIVALENT, 55 GAPS. A ROUTED LOOPBACK STUB REACHES THE CALLS THAT ASK TWICE, AND A
   # POLLUTED FIXTURE WAS HIDING SURVIVORS.

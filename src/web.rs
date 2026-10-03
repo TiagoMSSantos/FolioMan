@@ -320,6 +320,10 @@ mod tests {
         got.as_object_mut().expect("payload").remove("pins");
         assert_eq!(got, direct(&q, &pinned, 25));
         assert_ne!(got, direct(&q, &pinned[..1], 25), "not vacuous: pinning the twin moves the payload");
+        // either list alone is something to say
+        assert_eq!(engine("tickers: [VWCE.L]\n", &q)["pins"], serde_json::json!({"twins": [["VWCE.L", "VWCE.DE"]], "missing": []}));
+        assert_eq!(engine("tickers: [NOPE]\n", &q)["pins"], serde_json::json!({"twins": [], "missing": ["NOPE"]}));
+        assert!(engine("tickers: [AAPL]\n", &q).get("pins").is_none(), "a pool holding every pin stays byte-equal to `screen`");
     }
 
     /// The fund tilt follows the UPLOAD's weight: re-selected from `fund` while it is on, and `fund`
