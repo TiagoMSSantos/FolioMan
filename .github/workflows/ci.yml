@@ -730,8 +730,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # (#402) Completed PR runs are spared: a PR's checks are its review verdict, and the daily
-          # journal push fired this sweep before anyone had read them. Prune a merged PR's runs by hand.
+          # journal push fired this sweep before anyone had read them. (#429) pr-cleanup.yml deletes a
+          # merged PR's passed runs; prune by hand only a run that was still in flight at the merge.
           for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId,event -q '.[] | select(.event != "pull_request") | .databaseId'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
+          # (#429) pr-cleanup.yml's own runs: its prune and the skipped runs of unmerged closes.
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow pr-cleanup.yml --status completed --limit 200 --json databaseId -q '.[].databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
           for wf in ci.yml mutation-census.yml; do

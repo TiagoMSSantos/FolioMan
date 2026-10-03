@@ -1,0 +1,29 @@
+# (#429) Once a PR merges, its PASSED runs on the head branch are deleted. (#402) spares PR runs in
+# ci.yml's cleanup-runs because a PR's checks are its review verdict; after the merge that verdict is
+# spent. FAILED runs stay as evidence. This workflow's own runs are swept by cleanup-runs.
+# Same-repo heads only: a fork's head_ref can be `main`, and `--branch main` would hit main's runs.
+name: PR cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  prune:
+    if: github.event.pull_request.merged && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write   # gh run delete
+    steps:
+      # shortcut: sweeps once, at merge. A run still in flight then (a hand-merge before checks finish)
+      # survives until the next merge from the same branch name (Renovate reuses them) or a hand prune.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --branch "$HEAD" --status success --limit 200 --json databaseId -q '.[].databaseId'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
