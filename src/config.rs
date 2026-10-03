@@ -849,11 +849,15 @@ pub struct Urls {
     // an older settings.yaml loads.
     #[serde(default = "default_wikimedia_pageviews_url")]
     pub wikimedia_pageviews: String,
-    // (#443) The Dumb Money Live YouTube channel's RSS feed (Chris Camillo's daily show): its newest 15
-    // videos, keyless. Read only by the page's Camillo videos table (`fetch::fetch_camillo`), a
-    // display-only shadow. Defaulted so an older settings.yaml loads.
+    // (#443) The Dumb Money Live YouTube channel's RSS feed (a daily social-arbitrage show): its newest
+    // 15 videos, keyless. Read only by the page's Social Arbitrage trading table (`fetch::fetch_social`),
+    // a display-only shadow. Defaulted so an older settings.yaml loads.
     #[serde(default = "default_youtube_feed_url")]
     pub youtube_feed: String,
+    // (#444) Dataroma's superinvestor buys of the last 13F quarter, most buyers first. Same table, same
+    // contract as `youtube_feed`.
+    #[serde(default = "default_dataroma_buys_url")]
+    pub dataroma_buys: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
@@ -1023,9 +1027,14 @@ fn default_wikimedia_pageviews_url() -> String {
         .to_string()
 }
 
-/// (#443) Dumb Money Live, the channel Camillo names his buys on (`UCS01CiRDAiyhR_mTHXDW23A`).
+/// (#443) Dumb Money Live, a social-arbitrage channel that names its buys (`UCS01CiRDAiyhR_mTHXDW23A`).
 fn default_youtube_feed_url() -> String {
     "https://www.youtube.com/feeds/videos.xml?channel_id=UCS01CiRDAiyhR_mTHXDW23A".to_string()
+}
+
+/// (#444) Dataroma's "Qtr buys" page, sorted by buyer count (`o=c`).
+fn default_dataroma_buys_url() -> String {
+    "https://www.dataroma.com/m/g/portfolio_b.php?q=q&o=c".to_string()
 }
 
 /// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
@@ -2479,14 +2488,15 @@ mod tests {
         );
     }
 
-    /// (#443) Same pin for the Camillo videos table's source.
+    /// (#443)(#444) Same pin for the Social Arbitrage trading table's two sources.
     #[test]
-    fn youtube_feed_defaults_to_dumb_money_live() {
+    fn social_sources_default_to_dumb_money_and_dataroma() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
         let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
-        assert!(!text.contains("youtube_feed"), "fixture must exercise the DEFAULT, not pin the key");
+        assert!(!text.contains("youtube_feed") && !text.contains("dataroma_buys"), "fixture must exercise the DEFAULT, not pin the key");
         let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
         assert_eq!(settings.urls.youtube_feed, "https://www.youtube.com/feeds/videos.xml?channel_id=UCS01CiRDAiyhR_mTHXDW23A");
+        assert_eq!(settings.urls.dataroma_buys, "https://www.dataroma.com/m/g/portfolio_b.php?q=q&o=c");
     }
 
     /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.

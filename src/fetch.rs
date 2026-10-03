@@ -827,8 +827,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         legs_real: print_infl.is_some(),
         brk_bought: false, // (#436) stamped later by `stamp_brk`, once the 13F set is in hand
         brk_held: false,
-        cam_video: false,
-        cam_hand: false,
+        social: false,
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
@@ -2163,36 +2162,44 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     (bought, holds, rows)
 }
 
-// ── (#443) Camillo shadow ───────────────────────────────────────────────────────────────────────────
-// DISPLAY ONLY, like the Berkshire lane: two page tables, the `v`/`V` flags and track's `camv`/`camh`
-// rows; no score term or gate reads it. Two lanes. Video (`v`): a pooled equity named in a title or
-// description of the newest ~15 Dumb Money Live uploads (Chris Camillo's channel; keyless RSS, about one
-// week). Hand (`V`): `src/buy-heuristics/social-arbitrage-trading.json`, picks he said he holds or buys,
-// each with its source, kept by hand and holding only what was verified.
+// ── (#443) Social arbitrage shadow ──────────────────────────────────────────────────────────────────
+// DISPLAY ONLY, like the Berkshire lane: one page table, the `s` rank flag and track's `soc` row; no
+// score term or gate reads it. (#444) One table for every source of "people say they are buying it":
+// - YouTube: a pooled equity named in a title or description of the newest ~15 Dumb Money Live uploads
+//   (keyless RSS, about one week).
+// - Superinvestors: Dataroma's last-quarter buys (13F-based, so 45+ days old), kept when at least
+//   [`SOC_MIN_BUYERS`] of its ~80 tracked managers bought.
+// - Hand list: `src/buy-heuristics/social-arbitrage-trading.json`, verified claims with their source.
 
-const CAM_PICKS: &str = include_str!("buy-heuristics/social-arbitrage-trading.json");
+const SOC_PICKS: &str = include_str!("buy-heuristics/social-arbitrage-trading.json");
 
-/// (#443) One hand-kept pick. `ticker` is the US symbol; [`cam_hand`] adds its Xetra twin.
+/// (#444) Dataroma buyers a stock needs to list: 8 kept 13 of the top 100 on 2026-10-03, 5 kept 46.
+const SOC_MIN_BUYERS: u32 = 8;
+
+/// (#443) One hand-kept pick. `ticker` is the US symbol; [`soc_quote`] finds its pooled row.
 #[derive(serde::Deserialize)]
-pub struct CamPick {
+pub struct SocPick {
     ticker: String,
     date: String,
     said: String,
     source: String,
 }
 
-/// (#443) A pooled equity the video lane found: the videos naming it, the newest one's date and title.
-pub struct CamHit {
+/// (#444) One merged row: the pooled ticker when the pool has the stock, else the source's US symbol.
+#[derive(Default)]
+pub struct SocRow {
     ticker: String,
     name: String,
+    buyers: u32,
     videos: usize,
+    hand: bool,
     newest: String,
-    title: String,
+    why: String,
 }
 
 /// (#443) The feed's entries, newest first as YouTube lists them: (published day, title, title + " " +
 /// description), entities decoded. An entry missing a title or date is skipped.
-fn cam_videos(xml: &str) -> Vec<(String, String, String)> {
+fn soc_videos(xml: &str) -> Vec<(String, String, String)> {
     let field = |e: &str, tag: &str| {
         regex::Regex::new(&format!(r"(?s)<{tag}>(.*?)</{tag}>"))
             .expect("literal regex")
@@ -2210,109 +2217,182 @@ fn cam_videos(xml: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
+/// (#444) Dataroma's buys page -> (quarter as `2026-Q2`, [(Yahoo symbol, name, buyers)]) for every row
+/// with [`SOC_MIN_BUYERS`]+ buyers. Its share-class dot is Yahoo's dash (`BRK.B` -> `BRK-B`).
+fn soc_superinvestors(html: &str) -> (String, Vec<(String, String, u32)>) {
+    let quarter = regex::Regex::new(r"<b>Q([1-4]) (\d{4})</b>")
+        .expect("literal regex")
+        .captures(html)
+        .map(|c| format!("{}-Q{}", &c[2], &c[1]))
+        .unwrap_or_default();
+    let row = regex::Regex::new(
+        r#"(?s)<td class="sym"><a[^>]*>([^<]+)</a></td>\s*<td class="stock"><a[^>]*>([^<]+)</a></td>\s*<td>[^<]*</td>\s*<td>(\d+)</td>"#,
+    )
+    .expect("literal regex");
+    let buys = row
+        .captures_iter(html)
+        .filter_map(|c| {
+            let n: u32 = c[3].parse().ok()?;
+            (n >= SOC_MIN_BUYERS).then(|| (c[1].trim().replace('.', "-"), c[2].trim().replace("&amp;", "&"), n))
+        })
+        .collect();
+    (quarter, buys)
+}
+
 /// (#443) The word a name is matched on: its first, cut at whitespace, `,` or `.` (`Amazon.com, Inc.` ->
 /// `Amazon`), and only with 4+ letters, so `AT&T`-style stubs never match.
-fn cam_key(name: &str) -> Option<&str> {
+fn soc_key(name: &str) -> Option<&str> {
     let w = name.split(|c: char| c.is_whitespace() || c == ',' || c == '.').next()?;
     (w.chars().count() >= 4).then_some(w)
 }
 
-/// (#443) Every pooled equity whose [`cam_key`] is a whole word of a video's text, in its exact case: a
-/// case-blind match read the boilerplate's "strategy" and "best" as MSTR and BBY. Most videos first, then
-/// the newest, then the ticker.
+/// (#443) Every pooled equity whose [`soc_key`] is a whole word of a video's text, in its exact case: a
+/// case-blind match read the boilerplate's "strategy" and "best" as MSTR and BBY. Each as (quote, videos
+/// naming it, the newest one's day and title).
 /// shortcut: a first word shared by several names ("First", "General") marks them all; a hand alias map
 /// if a false hit ever shows on the page.
-fn cam_hits(videos: &[(String, String, String)], quotes: &[Quote]) -> Vec<CamHit> {
+fn soc_hits<'a>(videos: &[(String, String, String)], quotes: &'a [Quote]) -> Vec<(&'a Quote, usize, String, String)> {
     let word = regex::Regex::new(r"[A-Za-z][A-Za-z0-9&'-]+").expect("literal regex");
     let words: Vec<HashSet<&str>> = videos.iter().map(|(_, _, t)| word.find_iter(t).map(|m| m.as_str()).collect()).collect();
-    let mut hits: Vec<CamHit> = quotes
+    quotes
         .iter()
         .filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY"))
         .filter_map(|q| {
-            let key = cam_key(&q.name)?;
+            let key = soc_key(&q.name)?;
             let named: Vec<usize> = (0..videos.len()).filter(|&i| words[i].contains(key)).collect();
             let newest = named.iter().max_by(|&&a, &&b| videos[a].0.cmp(&videos[b].0))?;
-            let (day, title, _) = &videos[*newest];
-            Some(CamHit { ticker: q.ticker.clone(), name: q.name.clone(), videos: named.len(), newest: day.clone(), title: title.clone() })
+            Some((q, named.len(), videos[*newest].0.clone(), videos[*newest].1.clone()))
         })
-        .collect();
-    hits.sort_by(|a, b| b.videos.cmp(&a.videos).then_with(|| b.newest.cmp(&a.newest)).then_with(|| a.ticker.cmp(&b.ticker)));
-    hits
+        .collect()
 }
 
-/// (#443) The hand list's symbols: each US ticker, plus its Xetra twin when the EU swap
+/// (#444) The pooled quote for a US symbol: the symbol itself, or its Xetra twin when the EU swap
 /// ([`EU_LISTING_CACHE_PATH`], "" = no twin) renamed the pool row onto it.
-fn cam_hand(picks: &[CamPick], eu: &HashMap<String, String>) -> HashSet<String> {
-    picks.iter().flat_map(|p| [Some(p.ticker.clone()), eu.get(&p.ticker).filter(|e| !e.is_empty()).cloned()]).flatten().collect()
+fn soc_quote<'a>(us: &str, eu: &HashMap<String, String>, quotes: &'a [Quote]) -> Option<&'a Quote> {
+    quotes.iter().find(|q| q.ticker == us || eu.get(us) == Some(&q.ticker))
 }
 
-/// (#443) Mark every equity quote the video lane named and every one the hand list holds. Equities only,
-/// as [`stamp_brk`].
-pub fn stamp_cam(quotes: &mut [Quote], video: &HashSet<String>, hand: &HashSet<String>) {
+/// (#444) The merged row for a stock, added on first sight under its pooled ticker and name.
+fn soc_row<'r>(rows: &'r mut Vec<SocRow>, us: &str, name: &str, eu: &HashMap<String, String>, quotes: &[Quote]) -> &'r mut SocRow {
+    let (ticker, name) = soc_quote(us, eu, quotes).map_or((us, name), |q| (q.ticker.as_str(), q.name.as_str()));
+    let i = rows.iter().position(|r| r.ticker == ticker).unwrap_or_else(|| {
+        rows.push(SocRow { ticker: ticker.to_string(), name: name.to_string(), ..Default::default() });
+        rows.len() - 1
+    });
+    &mut rows[i]
+}
+
+/// (#444) Every source folded into one row per stock. WHY is the hand list's claim and source, else the
+/// newest video's title, else the Dataroma count; NEWEST is the newest dated source, else the quarter.
+/// Most sources first, then most buyers, then most videos, then the ticker.
+fn soc_merge(
+    hits: &[(&Quote, usize, String, String)],
+    supers: &(String, Vec<(String, String, u32)>),
+    picks: &[SocPick],
+    eu: &HashMap<String, String>,
+    quotes: &[Quote],
+) -> Vec<SocRow> {
+    let mut rows = Vec::new();
+    for (sym, name, n) in &supers.1 {
+        soc_row(&mut rows, sym, name, eu, quotes).buyers = *n;
+    }
+    for (q, n, day, title) in hits {
+        let r = soc_row(&mut rows, &q.ticker, &q.name, eu, quotes);
+        (r.videos, r.newest, r.why) = (*n, day.clone(), title.clone());
+    }
+    for p in picks {
+        let r = soc_row(&mut rows, &p.ticker, "—", eu, quotes);
+        r.hand = true;
+        r.newest = r.newest.clone().max(p.date.clone());
+        r.why = format!("{} {}", p.said, p.source);
+    }
+    for r in &mut rows {
+        if r.newest.is_empty() {
+            r.newest = supers.0.clone();
+        }
+        if r.why.is_empty() {
+            r.why = format!("bought by {} superinvestors in {}", r.buyers, supers.0);
+        }
+    }
+    let sources = |r: &SocRow| usize::from(r.buyers != 0) + usize::from(r.videos != 0) + usize::from(r.hand);
+    rows.sort_by(|a, b| {
+        sources(b).cmp(&sources(a)).then(b.buyers.cmp(&a.buyers)).then(b.videos.cmp(&a.videos)).then_with(|| a.ticker.cmp(&b.ticker))
+    });
+    rows
+}
+
+/// (#444) Mark every equity quote a merged row names. Equities only, as [`stamp_brk`].
+pub fn stamp_social(quotes: &mut [Quote], rows: &[SocRow]) {
     for q in quotes.iter_mut().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")) {
-        q.cam_video = video.contains(&q.ticker);
-        q.cam_hand = hand.contains(&q.ticker);
+        q.social = rows.iter().any(|r| r.ticker == q.ticker);
     }
 }
 
-/// (#443) The page's video table, in the lanes' `[header, cell]` shape.
-fn cam_video_rows(hits: &[CamHit]) -> Value {
-    hits.iter()
+/// (#444) The page's table, in the lanes' `[header, cell]` shape.
+fn soc_table(rows: &[SocRow]) -> Value {
+    rows.iter()
         .enumerate()
-        .map(|(i, h)| {
+        .map(|(i, r)| {
+            let mut sources = Vec::new();
+            if r.buyers > 0 {
+                sources.push(format!("superinvestors {}", r.buyers));
+            }
+            if r.videos > 0 {
+                sources.push(format!("YouTube ×{}", r.videos));
+            }
+            if r.hand {
+                sources.push("hand list".to_string());
+            }
             serde_json::json!([
                 ["#", (i + 1).to_string()],
-                ["TICKER", h.ticker],
-                ["NAME", h.name],
-                ["VIDEOS", h.videos.to_string()],
-                ["NEWEST", h.newest],
-                ["TITLE", h.title],
+                ["TICKER", r.ticker],
+                ["NAME", r.name],
+                ["SOURCES", sources.join("; ")],
+                ["NEWEST", r.newest],
+                ["WHY", r.why],
             ])
         })
         .collect()
 }
 
-/// (#443) The page's hand table, in file order. NAME comes from the pool's quote for the ticker or its
-/// twin, "—" when the pool lacks it (the pick still prints: it is what he said, pooled or not).
-fn cam_hand_rows(picks: &[CamPick], eu: &HashMap<String, String>, quotes: &[Quote]) -> Value {
-    picks
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let twin = eu.get(&p.ticker).map(String::as_str).unwrap_or("");
-            let q = quotes.iter().find(|q| q.ticker == p.ticker || (!twin.is_empty() && q.ticker == twin));
-            serde_json::json!([
-                ["#", (i + 1).to_string()],
-                ["TICKER", p.ticker],
-                ["NAME", q.map_or("—", |q| q.name.as_str())],
-                ["SINCE", p.date],
-                ["SAID", p.said],
-                ["SOURCE", p.source],
-            ])
-        })
-        .collect()
-}
-
-/// (#443) Stamp both lanes onto `quotes`, then the page's (video, hand) tables. Fails soft: no feed (or
-/// FOLIOMAN_OFFLINE) leaves the video lane empty, and the hand lane needs no network.
+/// (#444) Stamp the `s` flag onto `quotes`, then the page's table. Fails soft: a source that does not
+/// answer (or FOLIOMAN_OFFLINE) just adds no rows, and the hand list needs no network.
 #[mutants::skip] // (#443) async network shell; the pure helpers above carry the tests
-pub async fn fetch_camillo(client: &Client, urls: &Urls, quotes: &mut [Quote]) -> (Value, Value) {
-    let picks: Vec<CamPick> = serde_json::from_str(CAM_PICKS).expect("src/buy-heuristics/social-arbitrage-trading.json parses");
+pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) -> Value {
+    let picks: Vec<SocPick> = serde_json::from_str(SOC_PICKS).expect("src/buy-heuristics/social-arbitrage-trading.json parses");
     let eu: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(EU_LISTING_CACHE_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let videos = get_text(client, &urls.youtube_feed).await.map(|x| cam_videos(&x)).unwrap_or_default();
-    let hits = cam_hits(&videos, quotes);
-    let video: HashSet<String> = hits.iter().map(|h| h.ticker.clone()).collect();
-    stamp_cam(quotes, &video, &cam_hand(&picks, &eu));
-    eprintln!("fetch: Camillo: {} videos name {} pooled equities; {} hand picks", videos.len(), hits.len(), picks.len());
-    (cam_video_rows(&hits), cam_hand_rows(&picks, &eu, quotes))
+    let videos = get_text(client, &urls.youtube_feed).await.map(|x| soc_videos(&x)).unwrap_or_default();
+    // Dataroma's Mod_Security answers the shared client's bare "Mozilla/5.0" with a 406; the contact agent passes.
+    let supers = if offline() {
+        None
+    } else {
+        throttle().await;
+        let resp = client.get(&urls.dataroma_buys).header(reqwest::header::USER_AGENT, &urls.sec_user_agent).send().await.ok();
+        match resp {
+            Some(r) => r.text().await.ok(),
+            None => None,
+        }
+    };
+    let supers = supers.map(|x| soc_superinvestors(&x)).unwrap_or_default();
+    let rows = soc_merge(&soc_hits(&videos, quotes), &supers, &picks, &eu, quotes);
+    stamp_social(quotes, &rows);
+    eprintln!(
+        "fetch: social arbitrage: {} videos, {} superinvestor buys ({}), {} hand picks -> {} rows",
+        videos.len(),
+        supers.1.len(),
+        supers.0,
+        picks.len(),
+        rows.len()
+    );
+    soc_table(&rows)
 }
 
 // ── (#438) Wikipedia attention shadow ───────────────────────────────────────────────────────────────
-// DISPLAY ONLY: the page's Attention table prints it; no score term, gate or journal reads it. Camillo's
-// "social arbitrage" as one free series: names whose English Wikipedia article draws more readers than
+// DISPLAY ONLY: the page's Attention table prints it; no score term, gate or journal reads it. Social
+// arbitrage as one free series: names whose English Wikipedia article draws more readers than
 // a year before. The 2026-10-03 probe (182 S&P names, monthly pageviews 2015-07..2026-09) graded the
 // top third over the bottom third at +14.7pp of excess return over 3y and -10.8pp over 5y, so it was
 // refused as a buy signal. This prints that probe's pre-registered signal, nothing tuned since.
@@ -8790,13 +8870,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn cam_videos_parse_and_decode() {
+    fn soc_videos_parse_and_decode() {
         let xml = "<feed><entry><title>Amazon &amp; Robinhood</title><published>2026-09-29T14:00:00+00:00</published>\
                    <media:description>He&#39;s &quot;buying&quot;</media:description></entry>\
                    <entry><title>no date</title></entry>\
                    <entry><title>Bare</title><published>2026-09-28T01:00:00+00:00</published></entry></feed>";
         assert_eq!(
-            cam_videos(xml),
+            soc_videos(xml),
             [
                 ("2026-09-29".into(), "Amazon & Robinhood".into(), "Amazon & Robinhood He's \"buying\"".into()),
                 ("2026-09-28".into(), "Bare".into(), "Bare ".into()),
@@ -8805,51 +8885,69 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn cam_hits_match_first_word_exact_case() {
+    fn soc_superinvestors_keep_eight_buyers_and_dash_the_class() {
+        let row = |sym: &str, name: &str, n: u32| {
+            format!(r#"<tr><td class="sym"><a href="/m/s.php?s={sym}">{sym}</a></td>
+                <td class="stock"><a href="x">{name}</a></td><td>1.2</td><td>{n}</td></tr>"#)
+        };
+        let html = format!("<p>Buys in <b>Q2 2026</b></p>{}{}{}{}", row("MSFT", "Microsoft Corp", 12), row("BRK.B", "Berkshire &amp; Co", 9), row("AAPL", "Apple Inc", 8), row("LOW", "Lowe's", 7));
+        let want = [("MSFT", "Microsoft Corp", 12), ("BRK-B", "Berkshire & Co", 9), ("AAPL", "Apple Inc", 8)].map(|(t, n, b)| (t.to_string(), n.to_string(), b));
+        assert_eq!(soc_superinvestors(&html), ("2026-Q2".to_string(), want.to_vec()));
+        assert_eq!(soc_superinvestors("nothing"), (String::new(), vec![]));
+    }
+
+    #[test]
+    fn soc_merge_folds_every_source_into_one_row() {
+        let picks: Vec<SocPick> = serde_json::from_str(SOC_PICKS).expect("hand list parses");
+        assert!(picks.iter().all(|p| !p.ticker.is_empty() && p.date.len() == 10 && !p.said.is_empty() && p.source.starts_with("https://")));
         let q = |t: &str, kind: &str, name: &str| Quote { instrument_type: kind.to_string(), ..Quote::stub(t, "€1", "", name) };
+        // HOOD first: the twin lookup must find AMZ.DE by its ticker, not by being the first quote
         let quotes = [
-            q("AMZ.DE", "EQUITY", "Amazon.com, Inc."),
             q("HOOD", "EQUITY", "Robinhood Markets"),
+            q("AMZ.DE", "EQUITY", "Amazon.com, Inc."),
+            q("MSFT", "EQUITY", "Microsoft Corp"),
             q("MSTR", "EQUITY", "Strategy Inc"),
             q("IBM", "EQUITY", "IBM Corp"),
             q("TSLA", "EQUITY", "Tesla, Inc."),
             q("META", "EQUITY", "Meta Platforms"),
             q("AMZN-ETF", "ETF", "Amazon Tracker"),
-            q("NONE", "EQUITY", "Nothing Ltd"),
         ];
         let v = |d: &str, t: &str| (d.to_string(), t.to_string(), t.to_string());
-        let videos = [v("2026-09-29", "Amazon and Robinhood, my strategy"), v("2026-09-30", "Amazon again, IBM, Tesla and Meta"), v("2026-09-27", "Robinhoods")];
-        let hits = cam_hits(&videos, &quotes);
-        let got: Vec<(&str, usize, &str)> = hits.iter().map(|h| (h.ticker.as_str(), h.videos, h.newest.as_str())).collect();
-        // a 3-letter key (IBM) never matches, a 4-letter one (Meta) does; ties go newest, then ticker
-        assert_eq!(got, [("AMZ.DE", 2, "2026-09-30"), ("META", 1, "2026-09-30"), ("TSLA", 1, "2026-09-30"), ("HOOD", 1, "2026-09-29")]);
-        assert_eq!(hits[0].title, "Amazon again, IBM, Tesla and Meta");
-        assert_eq!(cam_video_rows(&hits)[3], serde_json::json!([["#", "4"], ["TICKER", "HOOD"], ["NAME", "Robinhood Markets"], ["VIDEOS", "1"], ["NEWEST", "2026-09-29"], ["TITLE", "Amazon and Robinhood, my strategy"]]));
-    }
-
-    #[test]
-    fn cam_hand_adds_twins_and_rows_name_the_pool() {
-        let picks: Vec<CamPick> = serde_json::from_str(CAM_PICKS).expect("hand list parses");
-        assert!(picks.iter().all(|p| !p.ticker.is_empty() && p.date.len() == 10 && !p.said.is_empty() && p.source.starts_with("https://")));
-        let pick = |t: &str| CamPick { ticker: t.into(), date: "2026-09-29".into(), said: "s".into(), source: "u".into() };
-        let picks = [pick("AMZN"), pick("HOOD"), pick("XYZ")];
+        let videos = [
+            v("2026-09-29", "Amazon and Robinhood, my strategy"),
+            v("2026-09-30", "Amazon again, IBM, Tesla and Meta"),
+            v("2026-09-27", "Robinhoods and Tesla"),
+        ];
+        let hits = soc_hits(&videos, &quotes);
+        // a 3-letter key (IBM) never matches, a 4-letter one (Meta) does; case-blind would add MSTR
+        let got: Vec<(&str, usize, &str)> = hits.iter().map(|(q, n, d, _)| (q.ticker.as_str(), *n, d.as_str())).collect();
+        assert_eq!(got, [("HOOD", 1, "2026-09-29"), ("AMZ.DE", 2, "2026-09-30"), ("TSLA", 2, "2026-09-30"), ("META", 1, "2026-09-30")]);
+        let supers = ("2026-Q2".to_string(), [("AMZN", "Amazon", 10), ("MSFT", "Microsoft", 12), ("BRK-B", "Berkshire", 9)].map(|(t, n, b)| (t.to_string(), n.to_string(), b)).to_vec());
+        let pick = |t: &str, d: &str| SocPick { ticker: t.into(), date: d.into(), said: "said".into(), source: "url".into() };
+        let picks = [pick("AMZN", "2026-09-29"), pick("HOOD", "2026-10-01"), pick("XYZ", "2026-09-01"), pick("ABC", "2026-09-01")];
         let eu = HashMap::from([("AMZN".to_string(), "AMZ.DE".to_string()), ("HOOD".to_string(), String::new())]);
-        assert_eq!(cam_hand(&picks, &eu), ["AMZN", "AMZ.DE", "HOOD", "XYZ"].map(String::from).into());
-        // HOOD first: the twin lookup must find AMZ.DE by name, not by being the first quote
-        let quotes = [Quote::stub("HOOD", "€1", "", "Robinhood Markets"), Quote::stub("AMZ.DE", "€1", "", "Amazon.com, Inc.")];
-        let rows = cam_hand_rows(&picks, &eu, &quotes);
-        let names: Vec<&str> = (0..3).map(|i| rows[i][2][1].as_str().unwrap()).collect();
-        assert_eq!(names, ["Amazon.com, Inc.", "Robinhood Markets", "—"]);
-        assert_eq!(rows[0][3], serde_json::json!(["SINCE", "2026-09-29"]));
+        let rows = soc_merge(&hits, &supers, &picks, &eu, &quotes);
+        let order: Vec<&str> = rows.iter().map(|r| r.ticker.as_str()).collect();
+        assert_eq!(order, ["AMZ.DE", "HOOD", "MSFT", "BRK-B", "TSLA", "META", "ABC", "XYZ"]);
+        let table = soc_table(&rows);
+        assert_eq!(
+            table[0],
+            serde_json::json!([["#", "1"], ["TICKER", "AMZ.DE"], ["NAME", "Amazon.com, Inc."], ["SOURCES", "superinvestors 10; YouTube ×2; hand list"], ["NEWEST", "2026-09-30"], ["WHY", "said url"]])
+        );
+        assert_eq!(table[1][3], serde_json::json!(["SOURCES", "YouTube ×1; hand list"]));
+        assert_eq!(table[1][4], serde_json::json!(["NEWEST", "2026-10-01"]));
+        assert_eq!(table[3], serde_json::json!([["#", "4"], ["TICKER", "BRK-B"], ["NAME", "Berkshire"], ["SOURCES", "superinvestors 9"], ["NEWEST", "2026-Q2"], ["WHY", "bought by 9 superinvestors in 2026-Q2"]]));
+        assert_eq!(table[4][5], serde_json::json!(["WHY", "Amazon again, IBM, Tesla and Meta"]));
+        assert_eq!(table[6][2], serde_json::json!(["NAME", "—"]));
     }
 
     #[test]
-    fn stamp_cam_marks_equities_only() {
-        let q = |t: &str, kind: &str, was: bool| Quote { instrument_type: kind.to_string(), cam_video: was, cam_hand: was, ..Quote::stub(t, "€1", "", t) };
+    fn stamp_social_marks_equities_only() {
+        let q = |t: &str, kind: &str, was: bool| Quote { instrument_type: kind.to_string(), social: was, ..Quote::stub(t, "€1", "", t) };
         let mut quotes = [q("AMZ.DE", "EQUITY", false), q("SPY", "ETF", false), q("HOOD", "equity", true)];
-        stamp_cam(&mut quotes, &["AMZ.DE", "SPY"].map(String::from).into(), &["SPY", "HOOD"].map(String::from).into());
-        assert_eq!(quotes.clone().map(|q| q.cam_video), [true, false, false]);
-        assert_eq!(quotes.map(|q| q.cam_hand), [false, false, true]);
+        let row = |t: &str| SocRow { ticker: t.into(), ..Default::default() };
+        stamp_social(&mut quotes, &[row("AMZ.DE"), row("SPY")]);
+        assert_eq!(quotes.map(|q| q.social), [true, false, false]);
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
@@ -9584,7 +9682,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 34] = [
+        const FIELDS: [&str; 35] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -9592,7 +9690,7 @@ pub(crate) mod tests {
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
             "sec_submissions", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
-            "justetf_profile", "wikimedia_pageviews", "youtube_feed",
+            "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field

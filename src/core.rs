@@ -250,15 +250,11 @@ pub struct Quote {
     // `brk_bought`: the `W` rank flag and the track `brkh` shadow read it, nothing scores it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub brk_held: bool,
-    // (#443) One of Chris Camillo's newest Dumb Money Live videos names this company in its title or
-    // description. Same contract as `brk_bought`: the `v` rank flag and the track `camv` shadow read it,
-    // nothing scores it. Stamped by `fetch::stamp_cam` on equities only.
+    // (#444) The Social Arbitrage trading table names this company: a superinvestor buy, a recent
+    // social-arbitrage video or the hand list. Same contract as `brk_bought`: the `s` rank flag and the
+    // track `soc` shadow read it, nothing scores it. Stamped by `fetch::stamp_social` on equities only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub cam_video: bool,
-    // (#443) On the hand list `src/buy-heuristics/social-arbitrage-trading.json`: Camillo said, on a
-    // dated source, that he holds it. The `V` rank flag and the track `camh` shadow read it.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub cam_hand: bool,
+    pub social: bool,
     pub name: String,    // human-readable instrument name (falls back to ticker)
     pub trend: String,   // "↑ 2w" / "↓ 5d": current direction + how long it has held
     pub at_ath: bool,    // at/near all-time high (within tol of max seen)
@@ -380,8 +376,7 @@ impl Quote {
             legs_real: false,         // (#400) nothing deflated a stub's legs
             brk_bought: false,
             brk_held: false,
-            cam_video: false,
-            cam_hand: false,
+            social: false,
             name: name.to_string(),
             trend: String::new(),
             at_ath: false,
