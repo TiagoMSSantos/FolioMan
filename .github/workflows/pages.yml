@@ -245,7 +245,7 @@ jobs:
         continue-on-error: true
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo install --locked wasm-bindgen-cli --version 0.2.125   # = web/engine's pin; a no-op once installed
+          cargo install --locked wasm-bindgen-cli --version 0.2.129   # = web/engine's pin; a no-op once installed
           cargo build --locked --release --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml
           wasm-bindgen --target web --out-dir engine-tmp web/engine/target/wasm32-unknown-unknown/release/folioman_engine.wasm
           cp web/engine/worker.js engine-tmp/
