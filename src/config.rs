@@ -843,6 +843,12 @@ pub struct Urls {
     // never reach the score. Defaulted so an older settings.yaml loads.
     #[serde(default = "default_justetf_profile_url")]
     pub justetf_profile: String,
+    // (#438) Wikimedia's per-article monthly pageviews, `{article}` = the encoded English Wikipedia title.
+    // Read only by the page's Attention table (`fetch::fetch_attention`), a display-only shadow. The
+    // request carries `sec_user_agent`: Wikimedia also refuses an agent with no contact. Defaulted so
+    // an older settings.yaml loads.
+    #[serde(default = "default_wikimedia_pageviews_url")]
+    pub wikimedia_pageviews: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
@@ -1004,6 +1010,12 @@ fn default_bf_etf_search_url() -> String {
 /// ("m"/"bn") is not.
 fn default_justetf_profile_url() -> String {
     "https://www.justetf.com/en/etf-profile.html?isin={isin}".to_string()
+}
+
+/// (#438) The whole series from 2015-07, the API's first month, to an end it clamps to today.
+fn default_wikimedia_pageviews_url() -> String {
+    "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/{article}/monthly/2015070100/2099123100"
+        .to_string()
 }
 
 /// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
@@ -2441,6 +2453,20 @@ mod tests {
         let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
         assert_eq!(settings.urls.justetf_profile, "https://www.justetf.com/en/etf-profile.html?isin={isin}");
         assert!(settings.urls.justetf_profile.contains("{isin}"), "the placeholder is load-bearing");
+    }
+
+    /// (#438) Same pin for the Attention table's source. `all-access/user` is the probe's slice: bots and
+    /// spiders excluded, desktop and mobile both counted.
+    #[test]
+    fn wikimedia_endpoint_defaults_to_the_probe_slice() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        assert!(!text.contains("wikimedia_pageviews"), "fixture must exercise the DEFAULT, not pin the key");
+        let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
+        assert_eq!(
+            settings.urls.wikimedia_pageviews,
+            "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/{article}/monthly/2015070100/2099123100"
+        );
     }
 
     /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.

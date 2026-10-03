@@ -60,10 +60,10 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // re-rendering is what keeps this small and what makes changing N instant.
 // (#249) SCOPED TO THE THREE LANES, and that is load-bearing: a bare `tbody` selector also matches
 // the inflation table, so `?top=1` would publish the USA row and hide the EU one — the deflator, on
-// the view most likely to be bookmarked.
+// the view most likely to be bookmarked. (#438) The Attention table is cut too: it is ranked rows.
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
 function apply(n) {
-  for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody")) {
+  for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody, #attention tbody")) {
     for (const tr of body.rows) tr.hidden = !("pin" in tr.dataset) && +tr.dataset.rank >= n;
   }
   stick();
@@ -186,13 +186,18 @@ function render(data, prev) {
   document
     .getElementById("core")
     .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
+  // (#438) Only CI's payload carries it: an upload's engine output has no key, so CI's table stays.
+  if (data.attention) {
+    document.getElementById("attention").replaceChildren(table(data.attention, "(attention feed unavailable)"));
+  }
   const since = document.getElementById("since");
   since.hidden = !prev;
   since.textContent = prev ? "new = joined its table since " + stamp(prev.generated) + " (" + marked + " marked)" : "";
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   const sizes = LANES.map((lane) => (data[lane] || []).length);
-  chooser(Math.max(1, ...sizes), Math.min(...sizes.filter(Boolean)));
+  const attention = document.querySelectorAll("#attention tbody tr").length;
+  chooser(Math.max(1, attention, ...sizes), Math.min(...sizes.filter(Boolean)));
   glossary(data, help);
   // (#433) Each table and its scroll box are named by the h2 above them, `h-` + the holder's id.
   for (const t of document.querySelectorAll(".scroll table")) {

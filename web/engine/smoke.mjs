@@ -18,8 +18,9 @@ try {
   const t0 = Date.now();
   const raw = screen("", universe);
   const got = JSON.parse(raw);
-  // `generated` aside: the universe is stamped when it is written, the payload a moment later
-  const drift = Object.keys(want).filter((k) => k !== "generated" && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
+  // `generated` aside: the universe is stamped when it is written, the payload a moment later.
+  // (#438) `attention` too: screen fetches it from Wikimedia, the engine has no feed, and an upload keeps CI's.
+  const drift = Object.keys(want).filter((k) => !["generated", "attention"].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
   if (drift.length) {
     console.error("the engine drifts from screen on: " + drift.join(", "));
     process.exit(1);

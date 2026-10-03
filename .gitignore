@@ -76,6 +76,8 @@ config/settings.yaml
 .eu_listing_cache.json
 # ETF ISIN -> its listing on every venue (OpenFIGI, keyed); the page's pin twins
 .listing_cache.json
+# (#438) Wikimedia monthly pageviews behind the page's Attention table; refetched once a month
+.wiki_pageviews_cache.json
 # last-good venue ISIN lists (fallback across venue outages)
 .venue_isins.json
 # weekly ESMA+FCA FIRDS ETF-ISIN scan (regulatory universe source)

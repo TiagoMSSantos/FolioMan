@@ -1784,6 +1784,8 @@ pub async fn run(args: Vec<String>) {
     // (#436) display only: the `w` rank flag and the track `brk` shadow row read it, nothing scores it
     let brk = fetch::fetch_brk_bought(&client, &settings.urls).await;
     fetch::stamp_brk(&mut quotes, &brk);
+    // (#438) display only too: the page's Attention table, carried to the payload below
+    let attention = fetch::fetch_attention(&client, &settings.urls).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
@@ -2043,6 +2045,7 @@ pub async fn run(args: Vec<String>) {
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
         crate::picks::stamp_buy(&mut top, &sized_now);
+        top["attention"] = attention;
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(&web_out, json);
         }

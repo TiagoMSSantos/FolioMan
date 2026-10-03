@@ -2037,6 +2037,166 @@ pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> HashSet<String> {
     out
 }
 
+// ── (#438) Wikipedia attention shadow ───────────────────────────────────────────────────────────────
+// DISPLAY ONLY: the page's Attention table prints it; no score term, gate or journal reads it. Camillo's
+// "social arbitrage" as one free series: names whose English Wikipedia article draws more readers than
+// a year before. The 2026-10-03 probe (182 S&P names, monthly pageviews 2015-07..2026-09) graded the
+// top third over the bottom third at +14.7pp of excess return over 3y and -10.8pp over 5y, so it was
+// refused as a buy signal. This prints that probe's pre-registered signal, nothing tuned since.
+
+/// (#438) The probe's ticker -> article title map, frozen: each pair hand-checked against Wikidata, each
+/// series free of gaps and rename breaks through 2026-09. A name outside it is never counted.
+const WIKI_ARTICLES: &str = include_str!("wiki_articles.json");
+/// (#438) Month -> views per ticker. A series is refetched once its newest month is behind the newest
+/// complete one, so a month's ~180 requests are paid once.
+const ATTN_CACHE_PATH: &str = ".wiki_pageviews_cache.json";
+/// (#438) The probe formed no tertile from fewer scored names, and neither does the table.
+const ATTN_MIN_NAMES: usize = 30;
+
+/// (#438) A month as one integer, `year * 12 + month - 1`, so the same month a year back is `- 12`.
+fn attn_month(year: i32, month: u32) -> i32 {
+    year * 12 + month as i32 - 1
+}
+
+/// (#438) The newest month whose views are complete on `today`. The API serves the current month
+/// part-way, and a just-ended one fills in over its first day, so the 1st and 2nd still read two back.
+fn attn_last_month(today: NaiveDate) -> i32 {
+    use chrono::Datelike;
+    let d = today - chrono::Days::new(2);
+    attn_month(d.year(), d.month()) - 1
+}
+
+/// (#438) A title as the API's path segment: spaces as underscores, every byte outside `A-Za-z0-9-._~`
+/// percent-encoded (`&` -> `%26`, `(` -> `%28`), byte for byte the path the probe asked for.
+fn wiki_path(title: &str) -> String {
+    title
+        .bytes()
+        .map(|b| match b {
+            b' ' => "_".to_string(),
+            b if b.is_ascii_alphanumeric() || b"-._~".contains(&b) => (b as char).to_string(),
+            b => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// (#438) A per-article monthly answer -> views by month, months after `last` dropped.
+fn attn_series(v: &Value, last: i32) -> BTreeMap<i32, u64> {
+    v.get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|it| {
+            let ts = it.get("timestamp")?.as_str()?;
+            let m = attn_month(ts.get(..4)?.parse().ok()?, ts.get(4..6)?.parse().ok()?);
+            Some((m, it.get("views")?.as_u64()?))
+        })
+        .filter(|(m, _)| *m <= last)
+        .collect()
+}
+
+/// (#438) Median, the middle pair averaged. Callers never pass an empty slice.
+fn attn_median(v: &[f64]) -> f64 {
+    let mut v = v.to_vec();
+    v.sort_by(f64::total_cmp);
+    let k = v.len();
+    if k % 2 == 1 { v[k / 2] } else { (v[k / 2 - 1] + v[k / 2]) / 2.0 }
+}
+
+/// (#438) The probe's rename break: a month whose next six months' median (at least three of them) is
+/// over 10x, or under a tenth of, the twelve before. A rename moves an article's readers onto a new
+/// title overnight, and the ratio would then read the rename, not attention.
+fn attn_broken(v: &[f64]) -> bool {
+    (12..v.len()).any(|k| {
+        let (after, before) = (attn_median(&v[k..v.len().min(k + 6)]), attn_median(&v[k - 12..k]));
+        v.len() - k >= 3 && before > 0.0 && (after > 10.0 * before || after < 0.1 * before)
+    })
+}
+
+/// (#438) The probe's signal at month `m`: the median, over the twelve months to `m`, of each month's
+/// views over the same month a year before. None for a gapped or rename-broken series, and without
+/// all 24 months or with a zero base.
+fn attn_ratio(s: &BTreeMap<i32, u64>, m: i32) -> Option<f64> {
+    let (first, last) = (*s.keys().next()?, *s.keys().next_back()?);
+    let v: Vec<f64> = s.values().map(|&n| n as f64).collect();
+    if (last - first + 1) as usize != v.len() || attn_broken(&v) {
+        return None;
+    }
+    let r = (m - 11..=m)
+        .map(|k| match (s.get(&k), s.get(&(k - 12))) {
+            (Some(&now), Some(&before)) if before > 0 => Some(now as f64 / before as f64),
+            _ => None,
+        })
+        .collect::<Option<Vec<f64>>>()?;
+    Some(attn_median(&r))
+}
+
+/// (#438) The top third by ratio, highest first, cut as the probe cut it: `n / 3` names, ties to the
+/// later ticker. The probe also divided by the pool median and clipped the 1%/99% tails; neither moves
+/// a name across the cut, so the raw ratio is what prints. Empty under [`ATTN_MIN_NAMES`].
+fn attn_top(mut scored: Vec<(String, f64)>) -> Vec<(String, f64)> {
+    if scored.len() < ATTN_MIN_NAMES {
+        return Vec::new();
+    }
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+    scored.truncate(scored.len() / 3);
+    scored
+}
+
+/// (#438) The page's rows: rank, ticker, the article the views were counted on, and the median growth
+/// as a percent, in the lanes' `[header, cell]` shape so the page's table code renders it unchanged.
+fn attn_rows(top: &[(String, f64)], titles: &BTreeMap<String, String>) -> Value {
+    top.iter()
+        .enumerate()
+        .map(|(i, (t, r))| {
+            serde_json::json!([
+                ["#", (i + 1).to_string()],
+                ["TICKER", t],
+                ["NAME", titles.get(t).map_or("", String::as_str)],
+                ["VIEWS YoY", format!("{:+.1}%", (r - 1.0) * 100.0)],
+            ])
+        })
+        .collect()
+}
+
+/// (#438) The Attention table's rows (see [`attn_ratio`]). Each series is cached in [`ATTN_CACHE_PATH`]
+/// and refetched only once a newer complete month exists. A failed fetch keeps the old series, which
+/// then lacks the newest month, so that name sits the run out rather than reading a stale ratio.
+#[mutants::skip] // (#438) async network shell; the pure helpers above carry the tests
+pub async fn fetch_attention(client: &Client, urls: &Urls) -> Value {
+    let titles: BTreeMap<String, String> = serde_json::from_str(WIKI_ARTICLES).expect("src/wiki_articles.json parses");
+    let last = attn_last_month(chrono::Utc::now().date_naive());
+    let path = crate::config::data_path(ATTN_CACHE_PATH);
+    let mut cache: HashMap<String, BTreeMap<i32, u64>> =
+        std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let todo: Vec<(&String, &String)> =
+        titles.iter().filter(|(t, _)| cache.get(*t).and_then(|s| s.keys().next_back()).is_none_or(|&m| m < last)).collect();
+    let asked = todo.len();
+    let got: Vec<(String, BTreeMap<i32, u64>)> = stream::iter(todo)
+        .map(|(t, title)| async move {
+            if offline() {
+                return None;
+            }
+            throttle().await;
+            let url = urls.wikimedia_pageviews.replace("{article}", &wiki_path(title));
+            let resp = client.get(&url).header(reqwest::header::USER_AGENT, &urls.sec_user_agent).send().await.ok()?;
+            let s = attn_series(&resp.error_for_status().ok()?.json::<Value>().await.ok()?, last);
+            (!s.is_empty()).then(|| (t.clone(), s))
+        })
+        .buffer_unordered(fetch_concurrency())
+        .filter_map(|x| async move { x })
+        .collect()
+        .await;
+    let answered = got.len();
+    cache.extend(got);
+    if answered > 0 {
+        let _ = std::fs::write(&path, serde_json::to_string(&cache).unwrap_or_default());
+    }
+    let scored: Vec<(String, f64)> =
+        titles.keys().filter_map(|t| Some((t.clone(), attn_ratio(cache.get(t)?, last)?))).collect();
+    eprintln!("fetch: attention: {answered}/{asked} series refetched, {} of {} names scored", scored.len(), titles.len());
+    attn_rows(&attn_top(scored), &titles)
+}
+
 // ── (report) SEC XBRL company-facts — FREE, no key, no daily cap fundamentals fallback ──────────────
 // The income-statement source for `report` when FMP is throttled/keyless. Pulls one `companyfacts`
 // JSON (every us-gaap concept's full history with filingDate), keeps ANNUAL (10-K, ~12-month) figures,
@@ -8089,6 +8249,122 @@ pub(crate) mod tests {
         assert_eq!(figi_id_type(""), "ID_CUSIP");
     }
 
+    /// (#438) The frozen map is the probe's: 182 names, each with a title.
+    #[test]
+    fn wiki_articles_map_is_the_probes_182() {
+        let m: BTreeMap<String, String> = serde_json::from_str(WIKI_ARTICLES).expect("parses");
+        assert_eq!(m.len(), 182);
+        assert!(m.values().all(|t| !t.is_empty() && !t.contains('_')), "titles are stored with spaces");
+        assert_eq!(m["AJG"], "Arthur J. Gallagher & Co.");
+    }
+
+    /// (#438) Months are one integer a year apart by 12, and the newest complete month waits two days.
+    #[test]
+    fn attn_last_month_skips_the_part_month_and_its_first_two_days() {
+        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).expect("date");
+        assert_eq!(attn_month(2026, 1) - attn_month(2025, 1), 12);
+        assert_eq!(attn_month(2026, 2) - attn_month(2026, 1), 1);
+        assert_eq!(attn_last_month(d(2026, 10, 3)), attn_month(2026, 9));
+        assert_eq!(attn_last_month(d(2026, 10, 2)), attn_month(2026, 8));
+        assert_eq!(attn_last_month(d(2026, 10, 31)), attn_month(2026, 9));
+        assert_eq!(attn_last_month(d(2026, 1, 5)), attn_month(2025, 12), "across the year");
+    }
+
+    /// (#438) The path the probe asked for: underscores for spaces, the rest percent-encoded.
+    #[test]
+    fn wiki_path_encodes_as_the_probe_did() {
+        assert_eq!(wiki_path("Arthur J. Gallagher & Co."), "Arthur_J._Gallagher_%26_Co.");
+        assert_eq!(wiki_path("FIS (company)"), "FIS_%28company%29");
+        assert_eq!(wiki_path("Lowe's"), "Lowe%27s");
+        assert_eq!(wiki_path("Mid-America a~Z9"), "Mid-America_a~Z9");
+        assert_eq!(wiki_path("a/b"), "a%2Fb", "a slash would split the path");
+    }
+
+    /// (#438) An answer's months up to `last` only; a malformed item is skipped, not fatal.
+    #[test]
+    fn attn_series_drops_months_after_the_last_complete_one() {
+        let v = serde_json::json!({"items": [
+            {"timestamp": "2026080100", "views": 10},
+            {"timestamp": "2026090100", "views": 20},
+            {"timestamp": "2026100100", "views": 3},
+            {"timestamp": "20", "views": 9},
+            {"timestamp": "2026070100"},
+        ]});
+        let got = attn_series(&v, attn_month(2026, 9));
+        assert_eq!(got, BTreeMap::from([(attn_month(2026, 8), 10), (attn_month(2026, 9), 20)]));
+        assert!(attn_series(&serde_json::json!({}), 0).is_empty());
+    }
+
+    /// (#438) Odd length takes the middle, even averages the middle pair, order never matters.
+    #[test]
+    fn attn_median_reads_the_middle() {
+        assert_eq!(attn_median(&[3.0, 1.0, 2.0]), 2.0);
+        assert_eq!(attn_median(&[4.0, 1.0, 3.0, 2.0]), 2.5);
+        assert_eq!(attn_median(&[7.0]), 7.0);
+    }
+
+    /// (#438) A break is a strict 10x either way, over at least three months after twelve with readers.
+    #[test]
+    fn attn_broken_needs_a_strict_tenfold_move_held_three_months() {
+        let series = |tail: &[f64]| [vec![100.0; 12], tail.to_vec()].concat();
+        assert!(!attn_broken(&[100.0; 24]));
+        assert!(attn_broken(&series(&[1001.0; 3])), "readers jump onto the title");
+        assert!(attn_broken(&series(&[9.0; 3])), "readers leave it");
+        assert!(!attn_broken(&series(&[1001.0; 2])), "two months is not a rename yet");
+        assert!(!attn_broken(&series(&[1000.0; 3])), "exactly 10x is not over it");
+        assert!(!attn_broken(&series(&[10.0; 3])), "exactly a tenth is not under it");
+        assert!(!attn_broken(&[vec![0.0; 12], vec![50.0; 3]].concat()), "no readers before is no base");
+        assert!(attn_broken(&[series(&[1001.0; 3]), vec![1001.0; 3]].concat()), "a break mid-series counts");
+    }
+
+    /// (#438) The signal: the median of the twelve year-on-year ratios, or nothing.
+    #[test]
+    fn attn_ratio_is_the_median_yoy_over_twelve_months() {
+        let s = |vals: &[u64]| -> BTreeMap<i32, u64> { vals.iter().enumerate().map(|(i, &v)| (100 + i as i32, v)).collect() };
+        let mut year2 = vec![120; 11];
+        year2.push(900); // one hot month: the median ignores it, a mean would not
+        let flat = s(&[vec![100; 12], year2.clone()].concat());
+        assert_eq!(attn_ratio(&flat, 123), Some(1.2));
+        assert_eq!(attn_ratio(&flat, 122), None, "needs a full year before the first of the twelve");
+        assert_eq!(attn_ratio(&flat, 124), None, "no views for the month asked");
+        let mut zero = vec![100; 12];
+        zero[5] = 0;
+        assert_eq!(attn_ratio(&s(&[zero, year2.clone()].concat()), 123), None, "a zero base has no ratio");
+        let mut gap = s(&[vec![100; 13], year2.clone()].concat());
+        gap.remove(&100);
+        assert!(gap.contains_key(&124) && attn_ratio(&gap, 124).is_some(), "a clean later start still scores");
+        gap.remove(&110);
+        assert_eq!(attn_ratio(&gap, 124), None, "a hole inside the series is not trusted");
+        assert_eq!(attn_ratio(&s(&[vec![100; 12], vec![5000; 12]].concat()), 123), None, "a rename break is dropped");
+        assert_eq!(attn_ratio(&BTreeMap::new(), 0), None);
+    }
+
+    /// (#438) The probe's cut: `n / 3`, highest first, ties to the later ticker, nothing under 30.
+    #[test]
+    fn attn_top_keeps_the_top_third_of_thirty_or_more() {
+        let pool = |n: usize| (0..n).map(|i| (format!("T{i:02}"), i as f64)).collect::<Vec<_>>();
+        assert!(attn_top(pool(29)).is_empty());
+        let top = attn_top(pool(31));
+        assert_eq!(top.len(), 10);
+        assert_eq!((top[0].0.as_str(), top[9].0.as_str()), ("T30", "T21"));
+        let tie = attn_top([pool(29), vec![("T99".to_string(), 28.0)]].concat());
+        assert_eq!(tie.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>()[..2], ["T99", "T28"]);
+    }
+
+    /// (#438) The lanes' row shape, ranked from 1, growth as a signed percent.
+    #[test]
+    fn attn_rows_print_in_the_lane_shape() {
+        let titles = BTreeMap::from([("AJG".to_string(), "Arthur J. Gallagher & Co.".to_string())]);
+        let got = attn_rows(&[("AJG".to_string(), 1.5), ("ZZ".to_string(), 0.875)], &titles);
+        assert_eq!(
+            got,
+            serde_json::json!([
+                [["#", "1"], ["TICKER", "AJG"], ["NAME", "Arthur J. Gallagher & Co."], ["VIEWS YoY", "+50.0%"]],
+                [["#", "2"], ["TICKER", "ZZ"], ["NAME", ""], ["VIEWS YoY", "-12.5%"]],
+            ])
+        );
+    }
+
     /// (#436) OpenFIGI's share-class slash becomes Yahoo's dash; an empty answer is no ticker.
     #[test]
     fn figi_us_ticker_maps_the_share_class_slash() {
@@ -8850,7 +9126,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 32] = [
+        const FIELDS: [&str; 33] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -8858,7 +9134,7 @@ pub(crate) mod tests {
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
             "sec_submissions", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
-            "justetf_profile",
+            "justetf_profile", "wikimedia_pageviews",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field
