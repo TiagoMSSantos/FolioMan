@@ -52,16 +52,19 @@
     is settled yet.
   </p>
   <div id="attention"></div>
-  <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them. -->
-  <h2 id="h-berkshire">Berkshire buys — shadow, NOT a buy signal</h2>
+  <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
+       (#442) Every holding now, with the `W` flag and the track brkh row. -->
+  <h2 id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
   <p class="note" id="berkshire-note">
-    Every stock Berkshire Hathaway's 13F shows it bought over the last 4 quarters: a new position, or
-    more than 5% more shares than the quarter before (a forward split is not a buy). BOUGHT is the
-    newest quarter it bought in, and SHARES Δ is that quarter's change. A 13F is filed up to 45 days
-    after its quarter ends, so the newest buy is already weeks old. ETFs are left out. A name the
-    screen does not price shows OpenFIGI's upper-case issuer name. Every buy is listed whatever the
-    row count above. It never feeds BUY% or the rankings above, and an uploaded settings.yaml does
-    not change it.
+    Every stock in Berkshire Hathaway's newest 13F. A 13F lists US-listed holdings only, so its
+    Japanese trading houses and its wholly owned companies are not here. WEIGHT is the holding's
+    share of the 13F's reported value. STATUS compares it with the quarter before: new, added (more
+    than 5% more shares), trimmed (below 95% of the shares) or held (a forward split counts as held),
+    and SHARES Δ is that change. BOUGHT is the newest quarter it was bought in over the last 4, or —.
+    A 13F is filed up to 45 days after its quarter ends, so the table is already weeks old. ETFs are
+    left out. A name the screen does not price shows OpenFIGI's upper-case issuer name. Every holding
+    is listed whatever the row count above. It never feeds BUY% or the rankings above, and an
+    uploaded settings.yaml does not change it.
   </p>
   <div id="berkshire"></div>
   <h2 id="h-etfs">ETFs</h2>
@@ -130,7 +133,8 @@
     Rank flags: <code>*</code> pinned · <code>#</code> scored on live fundamentals · <code>!</code>
     late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·
     <code>~</code> bridged history · <code>H</code> hold-suitable core · <code>o</code> already held ·
-    <code>w</code> bought in Berkshire Hathaway's last four 13F quarters (display only).
+    <code>w</code> bought in Berkshire Hathaway's last four 13F quarters (display only) ·
+    <code>W</code> held in Berkshire Hathaway's newest 13F (display only).
     Each ticker links to its Yahoo Finance quote; <code>new</code> marks a name that joined its table
     since the previous day's last run.
   </p>

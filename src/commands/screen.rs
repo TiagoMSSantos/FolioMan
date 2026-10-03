@@ -1781,11 +1781,12 @@ pub async fn run(args: Vec<String>) {
     };
     let targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &targets).await;
-    // (#436) display only: the `w` rank flag and the track `brk` shadow row read it, nothing scores it
-    let (brk, brk_buys) = fetch::fetch_brk_bought(&client, &settings.urls).await;
-    fetch::stamp_brk(&mut quotes, &brk);
-    // (#440) and the page's Berkshire table, every bought name whether the pool ranks it or not
-    let berkshire = fetch::brk_rows(&brk_buys, &quotes);
+    // (#436) display only: the `w`/(#442) `W` rank flags and the track `brk`/`brkh` shadow rows read it,
+    // nothing scores it
+    let (brk, brk_held, brk_holdings) = fetch::fetch_brk(&client, &settings.urls).await;
+    fetch::stamp_brk(&mut quotes, &brk, &brk_held);
+    // (#440) and the page's Berkshire table, (#442) every holding whether the pool ranks it or not
+    let berkshire = fetch::brk_rows(&brk_holdings, &quotes);
     // (#438) display only too: the page's Attention table, carried to the payload below
     let attention = fetch::fetch_attention(&client, &settings.urls).await;
 

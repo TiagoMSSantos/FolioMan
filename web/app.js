@@ -62,6 +62,7 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // the inflation table, so `?top=1` would publish the USA row and hide the EU one — the deflator, on
 // the view most likely to be bookmarked. (#438) The Attention table is cut too: it is ranked rows.
 // (#441) The Berkshire table is NOT: it lists every buy, not a ranking, and the default N of 3 hid 11 of 14.
+// (#442) It lists every holding now, same rule.
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
 function apply(n) {
   for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody, #attention tbody")) {
@@ -85,9 +86,9 @@ function stick() {
 // (#393) A cell's sort key. The cells are the terminal's preformatted strings, so a cell is a NUMBER
 // only when the whole of it is one, with its sign, €, thousands commas, K/M/B/T and trailing marks
 // (`≈+9.9%`, `€1,234.56`, `€1.2B`, `9.9~`, `18.0†`, `9#!xH`, `7#!cb`); a ticker like `2B7A.DE` stays text.
-// (#434) c, * and o are rank flags too (#flags note); `7#!cb` sorted as text. (#436) So is w.
+// (#434) c, * and o are rank flags too (#flags note); `7#!cb` sorted as text. (#436) So is w, (#442) and W.
 // null is a missing cell, which sorts last in either direction.
-const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†#!xHbc*ow]*$/;
+const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†#!xHbc*owW]*$/;
 function key(cell) {
   if (cell === "" || cell === "n/a" || cell === "—") return null;
   const m = NUM.exec(cell);
@@ -95,7 +96,7 @@ function key(cell) {
 }
 console.assert(
   key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
-    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null,
+    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null,
   "sort key misreads a cell shape",
 );
 
