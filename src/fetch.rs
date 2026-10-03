@@ -265,11 +265,19 @@ pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Opti
         .replace("interval=1d", "interval=1mo");
     // via `Value` deliberately: `get_json` already parses to validate the body, and re-serializing that
     // tree is what keeps a freshly fetched entry byte-for-byte what `long_cache_save` used to write.
-    let fetched = get_json(client, &url).await.and_then(|v| serde_json::value::to_raw_value(&v).ok());
-    if let Some(v) = &fetched {
-        LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), v.clone()));
+    let v = get_json(client, &url).await?;
+    let raw = serde_json::value::to_raw_value(&v).ok()?;
+    if long_cache_keeps(&v) {
+        LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), raw.clone()));
     }
-    fetched.map(Cow::Owned)
+    Some(Cow::Owned(raw))
+}
+
+/// (#431) Only an ANSWER is cached: bars, or Yahoo's own "Not Found" for a dead symbol. `get_json`
+/// ignores the HTTP status, so a throttle or error body also parses, and cached it would blank the
+/// name's long-history columns for the whole 7-day TTL. Same lesson as (#377), on the Yahoo side.
+fn long_cache_keeps(v: &Value) -> bool {
+    v.pointer("/chart/result/0/timestamp").is_some() || v.pointer("/chart/error/code").and_then(Value::as_str) == Some("Not Found")
 }
 
 /// `parse_chart` against a payload still in its raw bytes — the one place the deferred parse happens.
@@ -1431,7 +1439,12 @@ fn evict_stale_sec_caches(ticker: &str, splits: &[(NaiveDate, f64)]) {
     // NOT `_inst4`: it caches a per-filing XBRL instance that can run to 13.5MB and is only read when
     // `_facts18`'s newest row has no EPS. (#385) It goes stale when the NEXT 10-K lands, not on a clock,
     // and `fetch_sec_instance_eps` refetches it then; a TTL here would re-download the same filing.
-    evict_if_stale(&sec_cache_path(&format!("{ticker}_facts18")), ttl);
+    // (#432) Set ASIDE, not deleted: the refetch can still miss (spent budget, a SEC refusal), and
+    // `fetch_sec_facts_rows` then serves these rows instead of none. Same rule as `fresh_on_disk`.
+    let facts = sec_cache_path(&format!("{ticker}_facts18"));
+    if !fresh_on_disk(&facts, ttl) {
+        let _ = std::fs::rename(&facts, sec_cache_path(&format!("{ticker}_facts18stale")));
+    }
     let ttm = sec_cache_path(&format!("{ticker}_ttmeps4"));
     evict_if_stale(&ttm, ttl);
     // (#424) the roll is a bare float on the split basis of the day it was written; a split since then
@@ -2662,9 +2675,11 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
     // part of the pool under facts15 alone. A facts16-only bridge left those filers rowless and the
     // (#421) coverage contract refused the deploy (peg_yield 75.5% of equities -> 359 of 548, 65.5%).
     // (#426) three back: facts17 first. A bridged row has no pretax line, so it keeps GAAP EPS until warm.
+    // (#432) `_facts18stale` leads and is NOT warm-up: it is the live eviction's set-aside, so a failed
+    // refetch serves last month's rows. Keep it when the facts15-17 bridge goes.
     match fetch_sec_facts_fresh(client, urls, ticker).await {
         Some(rows) => Some(rows),
-        None => ["_facts17", "_facts16", "_facts15"]
+        None => ["_facts18stale", "_facts17", "_facts16", "_facts15"]
             .iter()
             .find_map(|k| sec_cache_rows(&sec_cache_path(&format!("{ticker}{k}"))).filter(|r| !r.is_empty())),
     }
@@ -6650,6 +6665,9 @@ pub(crate) mod tests {
         let inst = aged("_inst4", 60);
         evict_stale_sec_caches("SECEVICT", &[]);
         assert!(!facts.exists(), "60 days is past every staggered TTL — the newest fiscal year must refresh");
+        let aside = sec_cache_path("SECEVICT_facts18stale");
+        assert!(aside.exists(), "(#432) set aside for a failed refetch, not deleted");
+        let _ = std::fs::remove_file(&aside);
         assert!(!ttmeps.exists(), "a TTM roll 60 days old has missed a quarter by construction");
         assert!(inst.exists(), "the instance cache has no staleness to fix and is the most expensive refetch");
 
@@ -7391,12 +7409,19 @@ pub(crate) mod tests {
         pin_throttle();
         seed_cik_map();
         let _ = std::fs::remove_file(sec_cache_path("BRIDGE_facts18"));
+        // (#432) the live eviction's set-aside outranks every warm-up key
+        std::fs::write(sec_cache_path("BRIDGE_facts18stale"), r#"[{"filed": "2025-11-01", "period_end": "2025-09-30", "revenue": 1300.0}]"#)
+            .expect("seed");
+        std::fs::write(sec_cache_path("BRIDGE_facts17"), "[]").expect("seed");
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let got = fetch_sec_facts_rows(&client, &urls, "BRIDGE").await.expect("set-aside rows");
+        assert_eq!(got[0].revenue, Some(1300.0));
+        let _ = std::fs::remove_file(sec_cache_path("BRIDGE_facts18stale"));
         std::fs::write(sec_cache_path("BRIDGE_facts15"), "[]").expect("seed");
         std::fs::write(sec_cache_path("BRIDGE_facts16"), "[]").expect("seed");
         std::fs::write(sec_cache_path("BRIDGE_facts17"), r#"[{"filed": "2022-11-01", "period_end": "2022-09-30", "revenue": 1100.0}]"#)
             .expect("seed");
-        let urls = stub_urls("http://127.0.0.1:1/");
-        let client = Client::builder().no_proxy().build().expect("test client");
         let got = fetch_sec_facts_rows(&client, &urls, "BRIDGE").await.expect("bridged rows");
         assert_eq!((got[0].revenue, got[0].pretax_margin), (Some(1100.0), None));
         assert!(!sec_cache_path("BRIDGE_facts18").exists(), "a bridged read must not pin old rows under the new name");
@@ -8368,6 +8393,24 @@ pub(crate) mod tests {
         assert_ne!(a, b, "two tickers, two payloads");
         assert_eq!(chart_json_long(&client, &urls, ta).await.expect("reused").get(), a);
         assert_eq!(asked.try_iter().count(), 2, "the repeat ask cost no request");
+    }
+
+    /// (#431) A throttle body is served this once but never cached, so the repeat ask goes back to
+    /// Yahoo; a "Not Found" is an answer and is cached like bars.
+    #[tokio::test]
+    async fn chart_json_long_caches_answers_not_throttle_bodies() {
+        let run = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("clock").as_nanos();
+        let [tt, tn]: [&'static str; 2] = ["T", "N"].map(|k| &*Box::leak(format!("KEEP{k}{run}.DE").into_boxed_str()));
+        let (base, client, asked) = routed_stub(vec![
+            (tt, r#"{"chart":{"result":null,"error":{"code":"Too Many Requests","description":"Rate limited"}}}"#),
+            (tn, r#"{"chart":{"result":null,"error":{"code":"Not Found","description":"No data found"}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        for t in [tt, tt, tn, tn] {
+            assert!(chart_json_long(&client, &urls, t).await.is_some(), "{t}: the body is still handed back");
+        }
+        assert_eq!(asked.try_iter().count(), 3, "the throttle body was asked twice, the Not Found once");
     }
 
     /// (#397) The venue table on the shapes OpenFIGI served for the Vanguard and Amundi S&P 500
