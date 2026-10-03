@@ -1941,8 +1941,8 @@ fn brk_bought_cusips(mut filings: Vec<Brk13f>) -> HashMap<String, (String, u64, 
 }
 
 /// (#440) One bought CUSIP for the page: (US ticker, or the CUSIP when OpenFIGI mapped none; its Xetra
-/// twin or ""; report date; prior shares; shares).
-pub type BrkBuy = (String, String, String, u64, u64);
+/// twin or ""; (#441) OpenFIGI's issuer name or ""; report date; prior shares; shares).
+pub type BrkBuy = (String, String, String, String, u64, u64);
 
 /// (#440) A report date -> its quarter, `2026-06-30` -> `2026-Q2`; anything else prints as given.
 fn brk_quarter(report: &str) -> String {
@@ -1953,7 +1953,8 @@ fn brk_quarter(report: &str) -> String {
 }
 
 /// (#440) The page's Berkshire table, in the lanes' `[header, cell]` shape. NAME comes from the pool's
-/// quote for the ticker or its twin, "—" when the pool has neither, and a pooled non-equity (the SPY
+/// quote for the ticker or its twin, (#441) else OpenFIGI's name (6 of 14 buys were unpooled and read
+/// "—"), "—" only when both lack one. A pooled non-equity (the SPY
 /// and VOO the insurers hold) is dropped as [`stamp_brk`] drops it. Newest quarter first, then the
 /// largest relative add (a new position, prior 0, above any add), then the ticker.
 pub fn brk_rows(buys: &[BrkBuy], quotes: &[Quote]) -> Value {
@@ -1962,17 +1963,18 @@ pub fn brk_rows(buys: &[BrkBuy], quotes: &[Quote]) -> Value {
         .map(|b| (b, quotes.iter().find(|q| q.ticker == b.0 || (!b.1.is_empty() && q.ticker == b.1))))
         .filter(|(_, q)| q.is_none_or(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")))
         .collect();
-    let add = |b: &BrkBuy, o: &BrkBuy| u128::from(b.4) * u128::from(o.3); // b's growth ratio, cross-multiplied
-    rows.sort_by(|(a, _), (b, _)| b.2.cmp(&a.2).then_with(|| add(b, a).cmp(&add(a, b))).then_with(|| a.0.cmp(&b.0)));
+    let add = |b: &BrkBuy, o: &BrkBuy| u128::from(b.5) * u128::from(o.4); // b's growth ratio, cross-multiplied
+    rows.sort_by(|(a, _), (b, _)| b.3.cmp(&a.3).then_with(|| add(b, a).cmp(&add(a, b))).then_with(|| a.0.cmp(&b.0)));
     rows.iter()
         .enumerate()
         .map(|(i, (b, q))| {
-            let delta = if b.3 == 0 { "new".to_string() } else { format!("{:+.1}%", (b.4 as f64 / b.3 as f64 - 1.0) * 100.0) };
+            let delta = if b.4 == 0 { "new".to_string() } else { format!("{:+.1}%", (b.5 as f64 / b.4 as f64 - 1.0) * 100.0) };
+            let name = q.map(|q| q.name.as_str()).or((!b.2.is_empty()).then_some(b.2.as_str()));
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["TICKER", b.0],
-                ["NAME", q.map_or("—", |q| q.name.as_str())],
-                ["BOUGHT", brk_quarter(&b.2)],
+                ["NAME", name.unwrap_or("—")],
+                ["BOUGHT", brk_quarter(&b.3)],
                 ["SHARES Δ", delta],
             ])
         })
@@ -1987,18 +1989,21 @@ fn figi_id_type(cusip: &str) -> &'static str {
 }
 
 /// (#436) One OpenFIGI `ID_CUSIP` + `exchCode: US` answer -> its Yahoo symbol: the first row's ticker,
-/// with the share-class slash as Yahoo's dash (`BRK/B` -> `BRK-B`).
-fn figi_us_ticker(data: &Value) -> Option<String> {
-    let t = data.get(0)?.get("ticker")?.as_str()?;
-    (!t.is_empty()).then(|| t.replace('/', "-"))
+/// with the share-class slash as Yahoo's dash (`BRK/B` -> `BRK-B`). (#441) Plus that row's name, ""
+/// when it has none.
+fn figi_us_ticker(data: &Value) -> Option<(String, String)> {
+    let row = data.get(0)?;
+    let t = row.get("ticker")?.as_str()?;
+    let name = row.get("name").and_then(Value::as_str).unwrap_or("");
+    (!t.is_empty()).then(|| (t.replace('/', "-"), name.to_string()))
 }
 
 /// (#436) Bought CUSIPs -> every symbol a quote may carry: the US ticker, and its Xetra twin when the EU
 /// swap ([`EU_LISTING_CACHE_PATH`], "" = no twin) renamed the pool row onto it.
-fn brk_tickers(cusips: &HashSet<String>, ticker_of: &HashMap<String, String>, eu: &HashMap<String, String>) -> HashSet<String> {
+fn brk_tickers(cusips: &HashSet<String>, ticker_of: &HashMap<String, (String, String)>, eu: &HashMap<String, String>) -> HashSet<String> {
     cusips
         .iter()
-        .filter_map(|c| ticker_of.get(c))
+        .filter_map(|c| ticker_of.get(c).map(|(t, _)| t))
         .flat_map(|t| [Some(t.clone()), eu.get(t).filter(|e| !e.is_empty()).cloned()])
         .flatten()
         .collect()
@@ -2060,8 +2065,8 @@ pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> (HashSet<String>,
     }
     let buys = brk_bought_cusips(filings);
     let cusips: HashSet<String> = buys.keys().cloned().collect();
-    let map_path = sec_cache_path("_cusip_tickers");
-    let mut ticker_of: HashMap<String, String> = read(&map_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let map_path = sec_cache_path("_cusip_tickers2"); // (#441) (ticker, name): the ticker-only map had no name
+    let mut ticker_of: HashMap<String, (String, String)> = read(&map_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let todo: Vec<&String> = cusips.iter().filter(|c| !ticker_of.contains_key(*c)).collect();
     let mut pace = 0; // carried, not branched on the index: see `resolve_eu_listings`
     for chunk in todo.chunks(FIGI_BATCH) {
@@ -2084,9 +2089,9 @@ pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> (HashSet<String>,
     let rows = buys
         .into_iter()
         .map(|(c, (report, prev, cur))| {
-            let t = ticker_of.get(&c).cloned().unwrap_or(c);
+            let (t, name) = ticker_of.get(&c).cloned().unwrap_or((c, String::new()));
             let twin = eu.get(&t).cloned().unwrap_or_default();
-            (t, twin, report, prev, cur)
+            (t, twin, name, report, prev, cur)
         })
         .collect();
     (out, rows)
@@ -8340,17 +8345,17 @@ pub(crate) mod tests {
     }
 
     /// (#440) Newest quarter first, then new above the largest add, then the ticker. NAME from the
-    /// quote for the ticker or its twin, "—" unpooled, and a pooled ETF is dropped.
+    /// quote for the ticker or its twin, (#441) else OpenFIGI's, "—" with neither; a pooled ETF is dropped.
     #[test]
     fn brk_rows_order_name_and_drop_etfs() {
-        let b = |t: &str, twin: &str, r: &str, p: u64, c: u64| -> BrkBuy { (t.into(), twin.into(), r.into(), p, c) };
+        let b = |t: &str, twin: &str, r: &str, p: u64, c: u64| -> BrkBuy { (t.into(), twin.into(), String::new(), r.into(), p, c) };
         let q = |t: &str, kind: &str, name: &str| Quote { instrument_type: kind.to_string(), ..Quote::stub(t, "€1", "", name) };
         let quotes = [q("CB", "EQUITY", "Chubb"), q("ABEA.DE", "EQUITY", "Alphabet A"), q("SPY", "ETF", "SPDR S&P 500")];
         let buys = [
             b("DAL", "", "2025-12-31", 0, 5),
             b("CB", "", "2026-06-30", 100, 110),
-            b("GOOGL", "ABEA.DE", "2026-06-30", 100, 150),
-            b("LEN", "", "2026-06-30", 0, 9),
+            (String::from("GOOGL"), String::from("ABEA.DE"), String::from("ALPHABET INC-CL A"), String::from("2026-06-30"), 100, 150),
+            (String::from("LEN"), String::new(), String::from("LENNAR CORP-A"), String::from("2026-06-30"), 0, 9),
             b("SPY", "", "2026-06-30", 0, 1),
             b("H1467J104", "", "2026-03-31", 10, 20),
             b("AA", "", "2026-06-30", 100, 110),
@@ -8359,7 +8364,7 @@ pub(crate) mod tests {
         assert_eq!(
             got,
             serde_json::json!([
-                [["#", "1"], ["TICKER", "LEN"], ["NAME", "—"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "new"]],
+                [["#", "1"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "new"]],
                 [["#", "2"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "+50.0%"]],
                 [["#", "3"], ["TICKER", "AA"], ["NAME", "—"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "+10.0%"]],
                 [["#", "4"], ["TICKER", "CB"], ["NAME", "Chubb"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "+10.0%"]],
@@ -8507,8 +8512,9 @@ pub(crate) mod tests {
     /// (#436) OpenFIGI's share-class slash becomes Yahoo's dash; an empty answer is no ticker.
     #[test]
     fn figi_us_ticker_maps_the_share_class_slash() {
-        assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": "BRK/B"}, {"ticker": "X"}])), Some("BRK-B".to_string()));
-        assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": "AAPL"}])), Some("AAPL".to_string()));
+        let some = |t: &str, n: &str| Some((t.to_string(), n.to_string()));
+        assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": "BRK/B", "name": "BERKSHIRE HATHAWAY INC-CL B"}, {"ticker": "X"}])), some("BRK-B", "BERKSHIRE HATHAWAY INC-CL B"));
+        assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": "AAPL"}])), some("AAPL", ""));
         assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": ""}])), None);
         assert_eq!(figi_us_ticker(&serde_json::json!([])), None);
     }
@@ -8518,7 +8524,7 @@ pub(crate) mod tests {
     #[test]
     fn brk_tickers_adds_the_xetra_twin() {
         let cusips: HashSet<String> = ["c1", "c2", "c3"].map(String::from).into();
-        let ticker_of = HashMap::from([("c1".to_string(), "AAPL".to_string()), ("c2".to_string(), "KO".to_string())]);
+        let ticker_of = HashMap::from([("c1".to_string(), ("AAPL".to_string(), String::new())), ("c2".to_string(), ("KO".to_string(), String::new()))]);
         let eu = HashMap::from([("AAPL".to_string(), "APC.DE".to_string()), ("KO".to_string(), String::new())]);
         let want: HashSet<String> = ["AAPL", "APC.DE", "KO"].map(String::from).into();
         assert_eq!(brk_tickers(&cusips, &ticker_of, &eu), want);
