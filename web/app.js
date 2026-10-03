@@ -14,6 +14,8 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
   }
   const box = document.createElement("div");
   box.className = "scroll";
+  box.tabIndex = 0; // (#433) a box that scrolls must take focus, or a keyboard cannot scroll it
+  box.role = "group";
   const t = document.createElement("table");
   const head = t.createTHead().insertRow();
   for (const [header] of rows[0]) {
@@ -63,6 +65,19 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 function apply(n) {
   for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody")) {
     for (const tr of body.rows) tr.hidden = !("pin" in tr.dataset) && +tr.dataset.rank >= n;
+  }
+  stick();
+}
+
+// (#433) The sticky label columns' left edges: each is the summed width of the columns before it.
+// Measured after every cut, because a hidden row can be the one that set a column's width.
+function stick() {
+  for (const t of document.querySelectorAll(".scroll table")) {
+    let left = 0;
+    [...t.rows[0].cells].slice(0, 3).forEach((th, i) => {
+      t.style.setProperty("--left" + i, left + "px");
+      left += th.offsetWidth;
+    });
   }
 }
 
@@ -178,6 +193,12 @@ function render(data, prev) {
   const sizes = LANES.map((lane) => (data[lane] || []).length);
   chooser(Math.max(1, ...sizes), Math.min(...sizes.filter(Boolean)));
   glossary(data, help);
+  // (#433) Each table and its scroll box are named by the h2 above them, `h-` + the holder's id.
+  for (const t of document.querySelectorAll(".scroll table")) {
+    const by = "h-" + t.closest("div[id]").id;
+    t.setAttribute("aria-labelledby", by);
+    t.parentElement.setAttribute("aria-labelledby", by);
+  }
 }
 
 // (#400) The unit the ≥1Y columns were printed in is the head of their help ("Nominal — …"), and the

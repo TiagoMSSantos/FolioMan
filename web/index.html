@@ -8,16 +8,17 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
 <title>FolioMan — top picks per class</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
   <h1>FolioMan — top picks per class</h1>
-  <p class="sub" id="generated">loading…</p>
+  <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
-  <p class="stale" id="stale" hidden></p>
-  <p class="stale" id="degraded" hidden></p>
+  <p class="stale" id="stale" role="alert" hidden></p>
+  <p class="stale" id="degraded" role="alert" hidden></p>
   <!-- (#143) One control for all three lanes. Its options are built from the payload, never
        hardcoded, so it can never offer an N with no rows behind it and it follows `top_picks`
        automatically. Hidden entirely when there is nothing to choose. -->
@@ -29,19 +30,19 @@
   <p class="topn" id="upload-box" hidden>
     <label>rank with your settings.yaml <input type="file" id="upload" accept=".yaml,.yml"></label>
   </p>
-  <p class="stale" id="mine" hidden></p>
+  <p class="stale" id="mine" role="status" hidden></p>
   <!-- (#403) The terminal's `screen --explain`, on the ranking the tables show. -->
   <form class="topn" id="why-box" hidden>
     <label>why isn't <input id="why" placeholder="ticker or name" size="16"> in the tables?</label>
     <button>explain</button>
   </form>
-  <pre class="why" id="why-out" hidden></pre>
+  <pre class="why" id="why-out" role="status" hidden></pre>
 
-  <h2>Stocks</h2>
+  <h2 id="h-stocks">Stocks</h2>
   <div id="stocks"></div>
-  <h2>ETFs</h2>
+  <h2 id="h-etfs">ETFs</h2>
   <div id="etfs"></div>
-  <h2>Crypto</h2>
+  <h2 id="h-crypto">Crypto</h2>
   <div id="crypto"></div>
 
   <!-- (#250) The buy-and-hold CORE shortlist, which `screen` has computed and printed below its three
@@ -49,7 +50,7 @@
        rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
        appear there however good a 20-year hold they are. The top-N chooser deliberately does not cut
        it — see `apply()`. -->
-  <h2>CORE — one fund forever</h2>
+  <h2 id="h-core">CORE — one fund forever</h2>
   <div id="core"></div>
   <p class="note" id="hold">
     Broad, cheap, physical, accumulating UCITS funds, ranked broadest-first — all-world → developed →
@@ -66,7 +67,7 @@
        reads straight across. (#366) All three regions, as the terminal prints them. (#400) This note used to
        say the columns above were real and the EU row already subtracted; CI prints them NOMINAL
        (`score_on_nominal`), so the note now states whichever unit the payload's own help names. -->
-  <h2>Inflation</h2>
+  <h2 id="h-inflation">Inflation</h2>
   <div id="inflation"></div>
   <p class="note" id="real">
     Consumer-price inflation over the same spans: USA, the EU (HICP) and Portugal. This run printed

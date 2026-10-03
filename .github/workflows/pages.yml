@@ -208,8 +208,14 @@ jobs:
         run: |
           mkdir -p _site
           cp web/index.html web/app.js web/style.css _site/
-          # shortcut: (#430) the CDN caches each file 10 min on its own, so a deploy can pair the new page
-          # with the old app.js for that long. A content-hashed name fixes it if a split ever bites.
+          # (#433) The CDN caches each file 10 min on its own, so a deploy could pair the new page with
+          # the old app.js for that long. A per-run query string makes each deploy's page ask for its
+          # own copies. The engine's own files (folioman_engine.js, the wasm) still ride the 10 min.
+          v="v=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          sed -i "s|href=\"style.css\"|href=\"style.css?$v\"|; s|src=\"app.js\"|src=\"app.js?$v\"|" _site/index.html
+          sed -i "s|\"engine/worker.js\"|\"engine/worker.js?$v\"|g" _site/app.js
+          if ! grep -q "style.css?$v" _site/index.html || ! grep -q "app.js?$v" _site/index.html \
+             || [ "$(grep -c "worker.js?$v" _site/app.js)" != 2 ]; then echo "cache-bust sed missed a URL"; exit 1; fi
           cp .screen_web.json _site/data.json
           cp .screen_universe.json _site/universe.json
           # (#401) The page marks names that joined a table since YESTERDAY's last deploy. The live

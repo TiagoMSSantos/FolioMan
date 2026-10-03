@@ -37,11 +37,12 @@
   .sub, .note { color: var(--muted); font-size: .8rem; margin: 0; }
   .note { margin-top: 2.5rem; max-width: 60ch; line-height: 1.6; }
   /* Wide by construction — 26+ columns. Each table scrolls inside its own box so the PAGE never
-     scrolls sideways. */
-  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; }
+     scrolls sideways. (#433) Capped in height too: `th`'s sticky `top` pins to the nearest scrolling
+     box, and an overflow-x box with no height cap never scrolls down, so the header never stuck. */
+  .scroll { overflow: auto; max-height: 75vh; border: 1px solid var(--rule); border-radius: 4px; }
   table { border-collapse: collapse; white-space: nowrap; font-size: .8rem; }
   th, td { padding: .4rem .6rem; text-align: right; }
-  th { background: var(--head-bg); color: var(--muted); font-weight: 600; position: sticky; top: 0; }
+  th { background: var(--head-bg); color: var(--muted); font-weight: 600; position: sticky; top: 0; z-index: 2; }
   td { border-top: 1px solid var(--rule); }
   /* (#393) Each header is a button, so sorting is keyboard- and screen-reader-reachable for free;
      `aria-sort` is both the state and the arrow. */
@@ -55,6 +56,16 @@
      above: three label columns are correct for the ranked tables and nothing else should move. */
   #inflation th, #inflation td { text-align: right; }
   #inflation th:first-child, #inflation td:first-child { text-align: left; }
+  /* (#433) The three label columns (RANK NAME TICKER; CORE's flag NAME TICKER) stay put while a wide
+     table scrolls sideways; stick() in app.js measures each one's `left`. Wide screens only: on a
+     phone a long fund NAME would pin most of the viewport. */
+  @media (min-width: 700px) {
+    :is(#stocks, #etfs, #crypto, #core) :is(th, td):nth-child(-n+3) { position: sticky; z-index: 1; background: var(--bg); }
+    :is(#stocks, #etfs, #crypto, #core) th:nth-child(-n+3) { z-index: 3; background: var(--head-bg); }
+    :is(th, td):nth-child(1) { left: var(--left0); }
+    :is(th, td):nth-child(2) { left: var(--left1); }
+    :is(th, td):nth-child(3) { left: var(--left2); }
+  }
   /* (#250) …and the CORE table has FOUR leading label columns (the owned flag, NAME, TICKER, MARKET)
      plus three trailing ones (USE, REPL, DOM), which is how the terminal block aligns them. */
   #core th:nth-child(4), #core td:nth-child(4),
