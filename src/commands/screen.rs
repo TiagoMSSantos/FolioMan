@@ -1789,6 +1789,8 @@ pub async fn run(args: Vec<String>) {
     let berkshire = fetch::brk_rows(&brk_holdings, &quotes);
     // (#438) display only too: the page's Attention table, carried to the payload below
     let attention = fetch::fetch_attention(&client, &settings.urls).await;
+    // (#443) display only: the `v`/`V` rank flags, track's `camv`/`camh` rows and the page's two Camillo tables
+    let (camillo_videos, camillo_hand) = fetch::fetch_camillo(&client, &settings.urls, &mut quotes).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
@@ -2050,6 +2052,8 @@ pub async fn run(args: Vec<String>) {
         crate::picks::stamp_buy(&mut top, &sized_now);
         top["attention"] = attention;
         top["berkshire"] = berkshire;
+        top["camillo_videos"] = camillo_videos;
+        top["camillo_hand"] = camillo_hand;
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(&web_out, json);
         }

@@ -3355,7 +3355,7 @@ struct ColSpec {
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
-    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters, W held in its newest 13F (both display only, never scored), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut" },
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters, W held in its newest 13F, v named in a recent Chris Camillo video, V on his hand-kept picks list (all four display only, never scored), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut" },
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin" },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
@@ -3845,7 +3845,11 @@ fn rank_mark(idx: usize, quote: &Quote, pinned: &HashSet<&str>, owned: &Owned, t
     // W = (#442) Berkshire's NEWEST 13F holds it, bought lately or not. Its own letter beside `w`, so
     // each letter is one fact: `wW` bought and still held, `w` bought and since sold, `W` held.
     let brk_held = if quote.brk_held { "W" } else { "" };
-    format!("{}{star}{enriched}{braked}{commodity}{fx_listed}{bridged}{holdable}{held}{brk}{brk_held}", idx + 1)
+    // v = (#443) a recent Dumb Money Live video (Chris Camillo's channel) names it; V = his hand-kept
+    // picks list holds it. Display-only, like `w`/`W`: one fact per letter.
+    let cam_video = if quote.cam_video { "v" } else { "" };
+    let cam_hand = if quote.cam_hand { "V" } else { "" };
+    format!("{}{star}{enriched}{braked}{commodity}{fx_listed}{bridged}{holdable}{held}{brk}{brk_held}{cam_video}{cam_hand}", idx + 1)
 }
 
 /// (#79) One printed row as `(header, cell)` pairs — the same pairing [`print_picks`] pads into
@@ -3943,7 +3947,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     let mut seen = String::new(); // rank-flag chars that actually printed, drives the legend line
     for (i, (quote, score)) in picks.iter().enumerate().take(n).chain(below_cut) {
         let m = mark(quote, i);
-        for flag in ['*', '#', '!', 'c', 'x', '~', 'H', 'o', 'w', 'W'] {
+        for flag in ['*', '#', '!', 'c', 'x', '~', 'H', 'o', 'w', 'W', 'v', 'V'] {
             if m.contains(flag) && !seen.contains(flag) {
                 seen.push(flag);
             }
@@ -3975,6 +3979,8 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("o", "already held (broker portfolio)"),
         ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
         ("W", "Berkshire Hathaway's newest 13F holds it — display only, never scored"),
+        ("v", "a recent Dumb Money Live (Chris Camillo) video names it — display only, never scored"),
+        ("V", "Chris Camillo's hand-kept picks list holds it — display only, never scored"),
         ("†", "under 8y of record — its S-8Y is the full-history score, not an 8-year one"),
     ]
     .iter()
@@ -6695,6 +6701,8 @@ mod tests {
             legs_real: false,
             brk_bought: false,
             brk_held: false,
+            cam_video: false,
+            cam_hand: false,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, close_native: None, quote_currency: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
@@ -8954,6 +8962,10 @@ mod tests {
         let both = Quote { brk_held: true, ..brk.clone() };
         assert_eq!(rank_mark(0, &both, &none, &owned, &tuning), "1wW");
         assert_eq!(rank_mark(0, &Quote { brk_held: true, ..plain.clone() }, &none, &owned, &tuning), "1W");
+        // (#443) `v` video, `V` hand list; after `W`, and either prints alone.
+        assert_eq!(rank_mark(0, &Quote { cam_video: true, cam_hand: true, ..both.clone() }, &none, &owned, &tuning), "1wWvV");
+        assert_eq!(rank_mark(0, &Quote { cam_video: true, ..plain.clone() }, &none, &owned, &tuning), "1v");
+        assert_eq!(rank_mark(0, &Quote { cam_hand: true, ..plain.clone() }, &none, &owned, &tuning), "1V");
 
         // `#` = ANY ONE live fundamental, not all four. A single populated field must flag the row:
         // on the wide screen only the pins carry fundamentals at all, and requiring the full set

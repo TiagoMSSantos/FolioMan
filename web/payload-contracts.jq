@@ -9,4 +9,4 @@
 | [$rows[] | map(select(.[0] == "TICKER"))[0][1]] as $t
 | (($w | length) == 0 or ((($w | add) - 100) | fabs) <= 2)
   and (($t | length) == ($t | unique | length))
-  and ([.stocks, .etfs, .crypto, .core, .inflation, .attention, .berkshire | .. | strings | select(test("(^|[^A-Za-z])(NaN|inf)([^A-Za-z]|$)"))] | length == 0)
+  and ([.stocks, .etfs, .crypto, .core, .inflation, .attention, .berkshire, .camillo_hand | .. | strings | select(test("(^|[^A-Za-z])(NaN|inf)([^A-Za-z]|$)"))] | length == 0)

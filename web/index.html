@@ -67,6 +67,28 @@
     uploaded settings.yaml does not change it.
   </p>
   <div id="berkshire"></div>
+  <!-- (#443) Chris Camillo's two lanes, shown and never ranked: the `v`/`V` flags and the track
+       camv/camh rows read them. -->
+  <h2 id="h-camillo-videos">Camillo videos — shadow, NOT a buy signal</h2>
+  <p class="note" id="camillo-videos-note">
+    Stocks named in the titles and descriptions of the newest uploads (about 15, roughly one week) on
+    Dumb Money Live, Chris Camillo's YouTube channel. A stock matches when the first word of its name
+    appears as a whole word in the same capitalisation, so "Amazon" counts but "amazon" in sponsor
+    boilerplate does not. A mention is not a buy: he discusses stocks he shorts or avoids too, and a
+    company that shares its first word with another can be named by mistake. VIDEOS counts the
+    uploads that name it; NEWEST and TITLE are the latest of them. It never feeds BUY% or the rankings
+    above, and an uploaded settings.yaml does not change it.
+  </p>
+  <div id="camillo-videos"></div>
+  <h2 id="h-camillo-hand">Camillo holdings (hand list) — shadow, NOT a buy signal</h2>
+  <p class="note" id="camillo-hand-note">
+    Stocks Chris Camillo said he holds or keeps buying, kept by hand in
+    <code>src/buy-heuristics/social-arbitrage-trading.json</code>. Only claims checked against the
+    linked source are listed, so the list is short and lags what he trades. SINCE is the date he said
+    it. A NAME of — means the screen does not price it. It never feeds BUY% or the rankings above, and
+    an uploaded settings.yaml does not change it.
+  </p>
+  <div id="camillo-hand"></div>
   <h2 id="h-etfs">ETFs</h2>
   <div id="etfs"></div>
   <h2 id="h-crypto">Crypto</h2>
@@ -134,7 +156,9 @@
     late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·
     <code>~</code> bridged history · <code>H</code> hold-suitable core · <code>o</code> already held ·
     <code>w</code> bought in Berkshire Hathaway's last four 13F quarters (display only) ·
-    <code>W</code> held in Berkshire Hathaway's newest 13F (display only).
+    <code>W</code> held in Berkshire Hathaway's newest 13F (display only) ·
+    <code>v</code> named in a recent Chris Camillo video (display only) ·
+    <code>V</code> on his hand-kept holdings list (display only).
     Each ticker links to its Yahoo Finance quote; <code>new</code> marks a name that joined its table
     since the previous day's last run.
   </p>

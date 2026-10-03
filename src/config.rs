@@ -849,6 +849,11 @@ pub struct Urls {
     // an older settings.yaml loads.
     #[serde(default = "default_wikimedia_pageviews_url")]
     pub wikimedia_pageviews: String,
+    // (#443) The Dumb Money Live YouTube channel's RSS feed (Chris Camillo's daily show): its newest 15
+    // videos, keyless. Read only by the page's Camillo videos table (`fetch::fetch_camillo`), a
+    // display-only shadow. Defaulted so an older settings.yaml loads.
+    #[serde(default = "default_youtube_feed_url")]
+    pub youtube_feed: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
@@ -1016,6 +1021,11 @@ fn default_justetf_profile_url() -> String {
 fn default_wikimedia_pageviews_url() -> String {
     "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/{article}/monthly/2015070100/2099123100"
         .to_string()
+}
+
+/// (#443) Dumb Money Live, the channel Camillo names his buys on (`UCS01CiRDAiyhR_mTHXDW23A`).
+fn default_youtube_feed_url() -> String {
+    "https://www.youtube.com/feeds/videos.xml?channel_id=UCS01CiRDAiyhR_mTHXDW23A".to_string()
 }
 
 /// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
@@ -2467,6 +2477,16 @@ mod tests {
             settings.urls.wikimedia_pageviews,
             "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/{article}/monthly/2015070100/2099123100"
         );
+    }
+
+    /// (#443) Same pin for the Camillo videos table's source.
+    #[test]
+    fn youtube_feed_defaults_to_dumb_money_live() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        assert!(!text.contains("youtube_feed"), "fixture must exercise the DEFAULT, not pin the key");
+        let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
+        assert_eq!(settings.urls.youtube_feed, "https://www.youtube.com/feeds/videos.xml?channel_id=UCS01CiRDAiyhR_mTHXDW23A");
     }
 
     /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.

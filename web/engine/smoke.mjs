@@ -20,8 +20,8 @@ try {
   const got = JSON.parse(raw);
   // `generated` aside: the universe is stamped when it is written, the payload a moment later.
   // (#438) `attention` too: screen fetches it from Wikimedia, the engine has no feed, and an upload keeps CI's.
-  // (#440) `berkshire` likewise, from SEC's 13F filings.
-  const drift = Object.keys(want).filter((k) => !["generated", "attention", "berkshire"].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
+  // (#440) `berkshire` likewise, from SEC's 13F filings. (#443) The Camillo tables, from YouTube and a hand list.
+  const drift = Object.keys(want).filter((k) => !["generated", "attention", "berkshire", "camillo_videos", "camillo_hand"].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
   if (drift.length) {
     console.error("the engine drifts from screen on: " + drift.join(", "));
     process.exit(1);
