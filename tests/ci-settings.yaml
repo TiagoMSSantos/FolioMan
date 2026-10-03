@@ -7203,8 +7203,14 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: (the proof run's head, filled in below once it holds). The next catch-up dispatches
-  # `since: <that SHA>` with `files` = `git diff --name-only <that SHA> HEAD -- src`.
+  # LAST GRADED SHA: 5cbb35c08202ef38c310c117a15e50bd51c31c00 (proof run 37109779483, 2026-10-03: 1007 in
+  # scope = 959 caught + 48 unviable, 0 missed, 0 timeout). 1007 not 998 because Phase 2 below moved
+  # mutable lines. The next catch-up dispatches `since: <that SHA>` with
+  # `files` = `git diff --name-only <that SHA> HEAD -- src`.
+  # PHASE 2 (5cbb35c): `heuristic_drift` split into a skipped ambient-path wrapper and a graded
+  # `heuristic_drift_at(path)` with a three-file test (off-baseline knob warns, quiet and ci-settings do
+  # not); edge asserts for `slice_since` empty, `cagr` at 0 years, `parse_pt_series` without `value` and
+  # with a bad index; `trend_cagr`'s unreachable `sxx <= 0` guard deleted (n >= 2 distinct x keeps it > 0).
   #
   # WHAT SHIPS. The `since` input, the baseline-derived timeouts, the gate's optimised dependencies, and
   # three asserts. No production line changed.
