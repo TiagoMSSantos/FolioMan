@@ -792,10 +792,7 @@ pub fn trend_cagr(closes: &[f64], cadence: usize) -> Option<f64> {
         sxx += dx * dx;
         sxy += dx * (y - ymean);
     }
-    if sxx <= 0.0 {
-        return None; // all x identical (n<2 already handled) -> no slope
-    }
-    let slope = sxy / sxx; // log-price per bar
+    let slope = sxy / sxx; // log-price per bar; n >= 2 distinct x puts sxx = n(n²-1)/12 > 0
     Some(((slope * cadence as f64).exp() - 1.0) * 100.0)
 }
 
@@ -9375,6 +9372,9 @@ mod tests {
     assert!((real_pct(0.0, 10.0) - (-9.0909091)).abs() < 1e-4);
     assert!((real_pct(50.0, 10.0) - 36.3636363).abs() < 1e-4); // +50% nominal, +10% infl -> ~+36% real
     assert_eq!(slice_since(&ds, &cs, 1), vec![20.0, 30.0]);
+    assert!(slice_since(&[], &[], 5).is_empty());
+    // cagr: no span to annualize over -> the cumulative passes through unchanged
+    assert_eq!(cagr(12.0, 0.0), 12.0);
 
     // intraday: bar-count back. 7 bars, last=110. 1 bar back=105 -> +4.76%; 6 bars back=100 -> +10%
     let ics = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 110.0];
@@ -9627,6 +9627,11 @@ mod tests {
     });
     assert_eq!(parse_pt_series(&pt_obj).get(&2024), Some(&2.4));
     assert!(parse_pt_series(&Value::Null).is_empty());
+    // an index with no `value` array, and an index that is neither array nor object, parse to nothing
+    let no_value = serde_json::json!({"dimension": {"reference_date": {"category": {"index": ["2024-12-31"]}}}});
+    assert!(parse_pt_series(&no_value).is_empty());
+    let scalar = serde_json::json!({"dimension": {"reference_date": {"category": {"index": 5}}}, "value": [2.4]});
+    assert!(parse_pt_series(&scalar).is_empty());
 
     // (r17) Eurostat HICP parse: sparse {position: rate} value keyed off the time index; last
     // month of a year wins; junk -> empty. One parser serves the COICOP-2018 successor and the

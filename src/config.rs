@@ -1257,18 +1257,21 @@ pub fn load() -> Settings {
 /// backtest receipts graded. None when the overlay IS the fixture (CI), names no `buy_heuristic`
 /// knobs, or matches the baseline value-for-value. Deliberate experiments still work — they're just
 /// named. Display-only, never changes behaviour.
-#[mutants::skip] // the answer is the ambient config PATH (None under CI's fixture); `drift_lines` is the graded half
+#[mutants::skip] // the answer is the ambient config PATH (None under CI's fixture); `heuristic_drift_at` is the graded half
 fn heuristic_drift() -> Option<String> {
-    let path = settings_path();
+    heuristic_drift_at(&settings_path())
+}
+
+fn heuristic_drift_at(path: &Path) -> Option<String> {
     if path.ends_with("ci-settings.yaml") {
         return None; // the fixture IS the validated baseline
     }
-    let over: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+    let over: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     let over_bh = over.get("buy_heuristic")?.as_mapping()?;
     let serde_yaml::Value::Mapping(mut base) = serde_yaml::to_value(BuyHeuristic::default()).ok()? else {
         return None;
     };
-    if let Some(serde_yaml::Value::Mapping(cb)) = ci_base_yaml(&path).get("buy_heuristic").cloned() {
+    if let Some(serde_yaml::Value::Mapping(cb)) = ci_base_yaml(path).get("buy_heuristic").cloned() {
         for (k, v) in cb {
             base.insert(k, v);
         }
@@ -2469,6 +2472,26 @@ mod tests {
         // the growth 1Y floor replaced a hardcoded 0.0, so its default must BE that constant — a
         // non-zero default would silently move the live ranking the moment the knob shipped.
         assert_eq!(defaults["growth_min_1y_pct"].as_f64(), Some(0.0));
+    }
+
+    /// (#427) The tripwire itself: an overlay moving a knob off the validated baseline is named, one
+    /// with no `buy_heuristic` is silent, and a file named `ci-settings.yaml` IS the baseline even when
+    /// it carries the same moved knob.
+    #[test]
+    fn heuristic_drift_names_an_off_baseline_knob() {
+        let dir = std::env::temp_dir().join(format!("fm_drift_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let moved = "buy_heuristic:\n  growth_min_range_pct: 1.0\n";
+        let (over, quiet, fixture) = (dir.join("settings.yaml"), dir.join("quiet.yaml"), dir.join("ci-settings.yaml"));
+        std::fs::write(&over, moved).unwrap();
+        std::fs::write(&quiet, "tickers: [AAPL]\n").unwrap();
+        std::fs::write(&fixture, moved).unwrap();
+        let w = heuristic_drift_at(&over).expect("a moved knob is named");
+        assert!(w.starts_with("WARNING: buy_heuristic off-validated in "), "{w}");
+        assert!(w.contains("growth_min_range_pct 80"), "{w}");
+        assert_eq!(heuristic_drift_at(&quiet), None);
+        assert_eq!(heuristic_drift_at(&fixture), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The overlay wins field-by-field over the base, mappings merge DEEP (a partial `buy_heuristic:` only
