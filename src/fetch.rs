@@ -1933,6 +1933,13 @@ fn brk_bought_cusips(mut filings: Vec<Brk13f>) -> HashSet<String> {
         .collect()
 }
 
+/// (#437) OpenFIGI's id type for a 13F CUSIP. One that starts with a letter is a CINS (a foreign issuer:
+/// Chubb's `H1467J104`), and OpenFIGI answers it only as `ID_CINS`: `ID_CUSIP` finds no identifier, so
+/// Chubb went unmarked. A digit-led one is the reverse: `ID_CINS` refuses it as an invalid format.
+fn figi_id_type(cusip: &str) -> &'static str {
+    if cusip.starts_with(|c: char| c.is_ascii_alphabetic()) { "ID_CINS" } else { "ID_CUSIP" }
+}
+
 /// (#436) One OpenFIGI `ID_CUSIP` + `exchCode: US` answer -> its Yahoo symbol: the first row's ticker,
 /// with the share-class slash as Yahoo's dash (`BRK/B` -> `BRK-B`).
 fn figi_us_ticker(data: &Value) -> Option<String> {
@@ -2013,7 +2020,7 @@ pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> HashSet<String> {
     for chunk in todo.chunks(FIGI_BATCH) {
         tokio::time::sleep(StdDuration::from_millis(pace)).await;
         pace = FIGI_PACE_MS;
-        let jobs = chunk.iter().map(|c| serde_json::json!({"idType": "ID_CUSIP", "idValue": c, "exchCode": "US"})).collect();
+        let jobs = chunk.iter().map(|c| serde_json::json!({"idType": figi_id_type(c), "idValue": c, "exchCode": "US"})).collect();
         for (c, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
             if let Some(t) = data.as_ref().and_then(figi_us_ticker) {
                 ticker_of.insert((*c).clone(), t);
@@ -8072,6 +8079,14 @@ pub(crate) mod tests {
         got.sort();
         assert_eq!(got, ["A", "E", "G"]);
         assert!(brk_bought_cusips(vec![f("2025-03-31", "2025-05-15", "", &[("A", 1)])]).is_empty(), "a baseline alone buys nothing");
+    }
+
+    /// (#437) A letter-led 13F CUSIP is a CINS and maps as one; a digit-led one stays a CUSIP.
+    #[test]
+    fn figi_id_type_sends_cins_for_letter_led_cusips() {
+        assert_eq!(figi_id_type("H1467J104"), "ID_CINS");
+        assert_eq!(figi_id_type("247361702"), "ID_CUSIP");
+        assert_eq!(figi_id_type(""), "ID_CUSIP");
     }
 
     /// (#436) OpenFIGI's share-class slash becomes Yahoo's dash; an empty answer is no ticker.
