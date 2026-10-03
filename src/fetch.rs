@@ -8410,7 +8410,11 @@ pub(crate) mod tests {
         for t in [tt, tt, tn, tn] {
             assert!(chart_json_long(&client, &urls, t).await.is_some(), "{t}: the body is still handed back");
         }
-        assert_eq!(asked.try_iter().count(), 3, "the throttle body was asked twice, the Not Found once");
+        // (#435) Per ticker, not a total: census run 37114889103 flipped the Not Found test to `!=`, so the
+        // throttle cached and the Not Found did not, and the total still read 3.
+        let asked: Vec<String> = asked.try_iter().collect();
+        let n = |t: &str| asked.iter().filter(|r| r.contains(t)).count();
+        assert_eq!((n(tt), n(tn)), (2, 1), "the throttle body was asked twice, the Not Found once");
     }
 
     /// (#397) The venue table on the shapes OpenFIGI served for the Vanguard and Amundi S&P 500
