@@ -2158,6 +2158,11 @@ fn attn_rows(top: &[(String, f64)], titles: &BTreeMap<String, String>) -> Value 
         .collect()
 }
 
+/// (#439) The wait a 429 asks for, in whole seconds: 10 when it names none, never over 30.
+fn retry_after_secs(h: Option<&reqwest::header::HeaderValue>) -> u64 {
+    h.and_then(|v| v.to_str().ok()?.trim().parse().ok()).unwrap_or(10).min(30)
+}
+
 /// (#438) The Attention table's rows (see [`attn_ratio`]). Each series is cached in [`ATTN_CACHE_PATH`]
 /// and refetched only once a newer complete month exists. A failed fetch keeps the old series, which
 /// then lacks the newest month, so that name sits the run out rather than reading a stale ratio.
@@ -2176,13 +2181,25 @@ pub async fn fetch_attention(client: &Client, urls: &Urls) -> Value {
             if offline() {
                 return None;
             }
-            throttle().await;
             let url = urls.wikimedia_pageviews.replace("{article}", &wiki_path(title));
-            let resp = client.get(&url).header(reqwest::header::USER_AGENT, &urls.sec_user_agent).send().await.ok()?;
+            // (#439) A cold month's ~180 uncached series trip Wikimedia's burst limit about 100-130 in (a 429
+            // with Retry-After ~11s), and the names past it sat the month out: CI's first run scored
+            // 100 of 182, so the cut came off a different pool. Waiting as told, 4 in flight, clears it.
+            let mut tries = 0;
+            let resp = loop {
+                throttle().await;
+                let r = client.get(&url).header(reqwest::header::USER_AGENT, &urls.sec_user_agent).send().await.ok()?;
+                if r.status() != reqwest::StatusCode::TOO_MANY_REQUESTS || tries == 6 {
+                    break r;
+                }
+                tries += 1;
+                tokio::time::sleep(StdDuration::from_secs(retry_after_secs(r.headers().get(reqwest::header::RETRY_AFTER))))
+                    .await;
+            };
             let s = attn_series(&resp.error_for_status().ok()?.json::<Value>().await.ok()?, last);
             (!s.is_empty()).then(|| (t.clone(), s))
         })
-        .buffer_unordered(fetch_concurrency())
+        .buffer_unordered(4) // not fetch_concurrency(): a wide fan-out only meets the 429 sooner
         .filter_map(|x| async move { x })
         .collect()
         .await;
@@ -8247,6 +8264,17 @@ pub(crate) mod tests {
         assert_eq!(figi_id_type("H1467J104"), "ID_CINS");
         assert_eq!(figi_id_type("247361702"), "ID_CUSIP");
         assert_eq!(figi_id_type(""), "ID_CUSIP");
+    }
+
+    /// (#439) Wikimedia's 429 names its wait in seconds; a missing or odd one waits 10, a long one 30.
+    #[test]
+    fn retry_after_secs_reads_the_429s_wait() {
+        let h = |s: &str| reqwest::header::HeaderValue::from_str(s).expect("header");
+        assert_eq!(retry_after_secs(Some(&h("11"))), 11);
+        assert_eq!(retry_after_secs(Some(&h(" 3 "))), 3);
+        assert_eq!(retry_after_secs(Some(&h("999"))), 30);
+        assert_eq!(retry_after_secs(Some(&h("Wed, 21 Oct 2026 07:28:00 GMT"))), 10);
+        assert_eq!(retry_after_secs(None), 10);
     }
 
     /// (#438) The frozen map is the probe's: 182 names, each with a title.
