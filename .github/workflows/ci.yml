@@ -89,6 +89,16 @@ jobs:
             if echo "$bad" | jq -e -f web/payload-contracts.jq > /dev/null; then echo "contract passed a broken payload: $bad"; exit 1; fi
           done
           echo '{"stocks":[[["TICKER","A"],["BUY%","100%"],["NAME","Infrastructure"]]]}' | jq -e -f web/payload-contracts.jq > /dev/null
+      # (#430) The page's CSP meta allows no inline code, and a blocked script fails silently on the
+      # live page with no red run. So index.html keeps its CSP and nothing inline: no <script> body, no
+      # <style>, no style= or on…= attribute. The proof that the grep can say no runs first.
+      - name: Page keeps its CSP and no inline code
+        run: |
+          inline() { grep -qE '<script>|<script[^>]*>[^<]|<style|style=|[[:space:]]on[a-z]+=' "$1"; }
+          echo '<script>x</script>' > bad.html && inline bad.html || { echo "guard missed an inline script"; exit 1; }
+          rm bad.html
+          if inline web/index.html; then echo "web/index.html carries inline code its CSP blocks"; exit 1; fi
+          grep -q 'http-equiv="Content-Security-Policy"' web/index.html || { echo "web/index.html lost its CSP meta"; exit 1; }
       # (#421) The same proof for web/universe-contracts.jq: 200 equities carrying every field pass; the same
       # pool with roic gone, and a pool of 50, must fail. (#424) and the pool with the split feed gone.
       - name: Universe contract rejects thin pools

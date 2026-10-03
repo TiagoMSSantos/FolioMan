@@ -1,0 +1,100 @@
+  /* No CDN, no build step; out of index.html since (#430) so its CSP allows no inline style. The
+     payload is data.json beside the page; everything here is layout.
+     Colours come from tokens so the dark block below only has to redefine those. */
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa;
+    --fg: #1a1a18;
+    --muted: #6b6b66;
+    --rule: #dedcd6;
+    --head-bg: #f0efea;
+    --warn-bg: #fdf3d8;
+    --warn-fg: #6b4e00;
+    --warn-rule: #e0c97a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --fg: #e6e5e1;
+      --muted: #9a988f;
+      --rule: #33333a;
+      --head-bg: #212127;
+      --warn-bg: #3a2f12;
+      --warn-fg: #f0d78a;
+      --warn-rule: #6b5a20;
+    }
+  }
+  body {
+    margin: 0;
+    padding: 1.5rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  main { max-width: 100%; margin: 0 auto; }
+  h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
+  h2 { font-size: .95rem; margin: 2rem 0 .5rem; font-weight: 600; }
+  .sub, .note { color: var(--muted); font-size: .8rem; margin: 0; }
+  .note { margin-top: 2.5rem; max-width: 60ch; line-height: 1.6; }
+  /* Wide by construction — 26+ columns. Each table scrolls inside its own box so the PAGE never
+     scrolls sideways. */
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; }
+  table { border-collapse: collapse; white-space: nowrap; font-size: .8rem; }
+  th, td { padding: .4rem .6rem; text-align: right; }
+  th { background: var(--head-bg); color: var(--muted); font-weight: 600; position: sticky; top: 0; }
+  td { border-top: 1px solid var(--rule); }
+  /* (#393) Each header is a button, so sorting is keyboard- and screen-reader-reachable for free;
+     `aria-sort` is both the state and the arrow. */
+  th button { all: unset; cursor: pointer; }
+  th button:focus-visible { outline: 1px solid var(--fg); }
+  th[aria-sort="ascending"] button::after { content: " ▲"; }
+  th[aria-sort="descending"] button::after { content: " ▼"; }
+  /* the first three columns are labels, not numbers */
+  th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+  /* (#249) …but the inflation table has ONE label column. Scoped override, not a change to the rule
+     above: three label columns are correct for the ranked tables and nothing else should move. */
+  #inflation th, #inflation td { text-align: right; }
+  #inflation th:first-child, #inflation td:first-child { text-align: left; }
+  /* (#250) …and the CORE table has FOUR leading label columns (the owned flag, NAME, TICKER, MARKET)
+     plus three trailing ones (USE, REPL, DOM), which is how the terminal block aligns them. */
+  #core th:nth-child(4), #core td:nth-child(4),
+  #core th:nth-last-child(-n+3), #core td:nth-last-child(-n+3) { text-align: left; }
+  .empty { padding: .6rem; color: var(--muted); }
+  .stale {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    border: 1px solid var(--warn-rule);
+    border-radius: 4px;
+    padding: .6rem .8rem;
+    margin: 0 0 1rem;
+  }
+  /* The top-N chooser. Native <select> on purpose — it is the platform's own control, it is
+     keyboard- and screen-reader-correct for free, and it needs no styling to be usable. */
+  .topn { color: var(--muted); font-size: .8rem; margin: .75rem 0 0; }
+  .topn select {
+    font: inherit;
+    color: var(--fg);
+    background: var(--head-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .15rem .3rem;
+  }
+  /* (#400) The column glossary: collapsed, one line until asked for. */
+  #glossary summary { cursor: pointer; }
+  #glossary dt { color: var(--fg); font-weight: 600; margin-top: .5rem; }
+  #glossary dt.group { margin-top: 1.25rem; text-decoration: underline; }
+  #glossary dd { margin: 0 0 0 1.5rem; }
+  /* (#401) A ticker links to its Yahoo quote; `new` marks a name that joined its table since the
+     previous day's last deploy. `::after`, so the mark stays out of textContent and the sort key. */
+  td a { color: inherit; text-decoration-color: var(--rule); }
+  td.new::after {
+    content: "new";
+    margin-left: .4rem;
+    padding: 0 .25rem;
+    border-radius: 3px;
+    font-size: .7rem;
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+  }
+  pre.why { white-space: pre-wrap; font-size: .75rem; margin: .5rem 0 0; }
+  [hidden] { display: none !important; }

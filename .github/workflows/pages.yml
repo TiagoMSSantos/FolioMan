@@ -207,7 +207,9 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p _site
-          cp web/index.html _site/index.html
+          cp web/index.html web/app.js web/style.css _site/
+          # shortcut: (#430) the CDN caches each file 10 min on its own, so a deploy can pair the new page
+          # with the old app.js for that long. A content-hashed name fixes it if a split ever bites.
           cp .screen_web.json _site/data.json
           cp .screen_universe.json _site/universe.json
           # (#401) The page marks names that joined a table since YESTERDAY's last deploy. The live
