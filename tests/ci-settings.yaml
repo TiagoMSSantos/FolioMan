@@ -5408,7 +5408,7 @@ buy_heuristic:
                                  #  right after `screen`, so a run Validate refuses keeps its SEC warm-up (the (#422) trap).
                                  #  shortcut: a utility's AFUDC equity and tax credits read as non-core (SO 0.81, DUK 0.87); non-core items INSIDE operating
                                  #  income (impairments, restructuring, litigation) are not seen; a profit on a pretax loss reads core <= 0, and the PEG
-                                 #  refuses it as a loss-maker (11 of 452 newest rows: HPE, CSGP, WBD, AXON, DDOG, ...).
+                                 #  refuses it as a loss-maker (11 of 452 newest rows: HPE, CSGP, WBD, AXON, DDOG, ...). Loss side: see (#428).
                                  #  CENSUS (warm facts18, 512 filers): 3974 of 6400 profitable rows under 1, row median 0.989 (mostly interest income), 314
                                  #  under 0.5; newest rows 292 of 452 under 1, median 0.972, p25 0.876. GOOGL 0.808, AMZN 0.798, MSFT 0.917, NVDA 0.920,
                                  #  META 0.956; AAPL, BRK-B, XOM 1.
@@ -5427,6 +5427,23 @@ buy_heuristic:
                                  #  backtest-gate fund leg floors `core-stripped tickers:` at 300 (426 local and on CI's cold first run, x0.7); Pages'
                                  #  contract refuses a core_factor above 1 and a pool where under 10% of equities carry one (ci.yml feeds 1.5 and none).
                                  #  REVERT RULE: top-10 excess falling at BOTH 8y and 12y on a controlled pair. A split verdict ships and is recorded.
+                                 #── (#428) MAPPED 2026-10-03 — ONE-OFF LOSSES ADDED BACK TO PEG EPS: CENSUSED, DROPPED (not built) ──
+                                 #  LEAD: the loss mirror of (#426). Cready-Lopez-Sisneros: earnings over the next 16 quarters rise by >130% of a negative
+                                 #  special item (restructuring most), and the market underreacts. AGAINST: Atwood & Xie 2010 find the special-items anomaly
+                                 #  rides on accruals (`accrual_gap` is DEAD here), and later work finds the mispricing gone after Reg G.
+                                 #  CENSUS (SEC frames API, CY2024 / CY2025, 2 requests a tag): RestructuringCharges + AssetImpairmentCharges +
+                                 #  GoodwillImpairmentLoss + ImpairmentOfIntangibleAssetsExcludingGoodwill + RestructuringSettlementAndImpairmentProvisions,
+                                 #  summed against IncomeLossFromContinuingOperationsBeforeIncomeTaxes...NoncontrollingInterest.
+                                 #  POND (434 facts18 filers mapped, ~370 with a pretax line): 63 / 64 carry charges >= 10% of pretax, 35 / 36 >= 25%. An
+                                 #  add-back flips 6 / 11 losses to profits: INTC, BAX, KHC, DOW, LYB, EL, SJM, HAS, IFF, CNC, APD, ILMN, STZ, CRL, SNDK, all
+                                 #  fallen angels the 19.0 `growth_min_cagr` gate refuses before the PEG reads them.
+                                 #  LIVE COHORT (09-30 rows + near + peg, 25 names with a CIK): flips WBD (2024 goodwill 9.1B) and HPE (2025 goodwill
+                                 #  1.58B); re-prices GEV 16-24%, CSGP 30% (2025), WBD 24% (2025); LLY, VRT, CF, MNST move <= 7%, the rest 0. AXON, DDOG and
+                                 #  CSGP (2024) sit on (#426)'s loss-refused list with zero charges: their losses are real.
+                                 #  VERDICT: DROPPED, nothing built or graded. The reach is a reorder of names already admitted, which PRIMARY cannot see
+                                 #  (an equal-weight top-N is set-invariant); the flips are gate-refused; the prior is weak.
+                                 #  REOPEN: a named BOOK row whose PEG reads wrong because of a charge inside operating income, or ASU 2024-03's expense
+                                 #  disaggregation tags landing (fiscal years after 2026-12-15). Do not re-propose the add-back on the literature alone.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
