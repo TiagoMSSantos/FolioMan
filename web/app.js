@@ -83,9 +83,10 @@ function stick() {
 
 // (#393) A cell's sort key. The cells are the terminal's preformatted strings, so a cell is a NUMBER
 // only when the whole of it is one, with its sign, €, thousands commas, K/M/B/T and trailing marks
-// (`≈+9.9%`, `€1,234.56`, `€1.2B`, `9.9~`, `18.0†`, `9#!xH`); a ticker like `2B7A.DE` stays text.
+// (`≈+9.9%`, `€1,234.56`, `€1.2B`, `9.9~`, `18.0†`, `9#!xH`, `7#!cb`); a ticker like `2B7A.DE` stays text.
+// (#434) c, * and o are rank flags too (#flags note); `7#!cb` sorted as text.
 // null is a missing cell, which sorts last in either direction.
-const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†#!xHb]*$/;
+const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†#!xHbc*o]*$/;
 function key(cell) {
   if (cell === "" || cell === "n/a" || cell === "—") return null;
   const m = NUM.exec(cell);
@@ -93,7 +94,7 @@ function key(cell) {
 }
 console.assert(
   key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
-    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null,
+    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null,
   "sort key misreads a cell shape",
 );
 
