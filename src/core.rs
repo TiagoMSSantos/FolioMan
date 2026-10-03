@@ -239,6 +239,13 @@ pub struct Quote {
     // older snapshot all print.
     #[serde(default)]
     pub legs_real: bool,
+    // (#436) Berkshire Hathaway's 13F BOUGHT this name (new, or more than 1.05x the shares) in one of
+    // the last four quarter-to-quarter transitions. DISPLAY ONLY: the `w` rank flag and the track `brk`
+    // shadow read it, no score term or gate ever does. Stamped by `fetch::stamp_brk` on equities only;
+    // false in every stub and backtest. Serialized only when set, so universe.json grows by the flagged
+    // names alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub brk_bought: bool,
     pub name: String,    // human-readable instrument name (falls back to ticker)
     pub trend: String,   // "↑ 2w" / "↓ 5d": current direction + how long it has held
     pub at_ath: bool,    // at/near all-time high (within tol of max seen)
@@ -358,6 +365,7 @@ impl Quote {
             perf: Vec::new(),
             perf_nominal: Vec::new(), // (#88) empty = "score on `perf`", the default and the backtest's only state
             legs_real: false,         // (#400) nothing deflated a stub's legs
+            brk_bought: false,
             name: name.to_string(),
             trend: String::new(),
             at_ath: false,

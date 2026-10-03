@@ -825,6 +825,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             Vec::new()
         },
         legs_real: print_infl.is_some(),
+        brk_bought: false, // (#436) stamped later by `stamp_brk`, once the 13F set is in hand
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
@@ -1831,6 +1832,202 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
         let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
     }
     (!txns.is_empty()).then_some(txns)
+}
+
+// ── (#436) Berkshire Hathaway 13F "bought" marker ───────────────────────────────────────────────────
+// DISPLAY ONLY: the `w` rank flag and the track `brk` shadow row read it, no score term or gate does.
+// Flow: Berkshire's submissions -> its 13F-HR(/A) filings for the newest `BRK_QUARTERS` report dates ->
+// each full-submission `.txt` (cover page and info table in one request) -> shares per CUSIP per
+// quarter -> the CUSIPs bought -> OpenFIGI CUSIP -> US ticker, plus the Xetra twin the EU swap may have
+// renamed it to. Every cache lives under `.sec_cache`, which Pages already carries run to run.
+
+/// (#436) Berkshire Hathaway Inc. One filer by design: the ask was to copy Buffett, not 13F filers.
+const BRK_CIK: &str = "0001067983";
+/// (#436) The newest five report dates give four quarter-to-quarter transitions: a year of buys.
+const BRK_QUARTERS: usize = 5;
+/// (#436) Bought = more than +5% shares, as a percent so the compare stays in integers.
+const BRK_BUY_PCT: u128 = 105;
+/// (#436) The filing list is refetched weekly. A 13F lands ~45 days after its quarter, so a week's lag
+/// on a marker that looks back a year costs nothing.
+const BRK_LIST_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600);
+
+/// (#436) One 13F filing: (report date, filing date, amendment type, CUSIP -> shares).
+type Brk13f = (String, String, String, HashMap<String, u64>);
+
+/// (#436) A `submissions` JSON -> every 13F-HR and 13F-HR/A as (accession, report date, filing date).
+fn brk_13f_list(v: &Value) -> Vec<(String, String, String)> {
+    let col = |k: &str| v.pointer(&format!("/filings/recent/{k}")).and_then(Value::as_array).cloned().unwrap_or_default();
+    let (forms, accs, reports, filed) = (col("form"), col("accessionNumber"), col("reportDate"), col("filingDate"));
+    let at = |a: &[Value], i: usize| a.get(i).and_then(Value::as_str).map(str::to_string);
+    forms
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| matches!(f.as_str(), Some("13F-HR" | "13F-HR/A")))
+        .filter_map(|(i, _)| Some((at(&accs, i)?, at(&reports, i)?, at(&filed, i)?)))
+        .collect()
+}
+
+/// (#436) The filings whose report date is one of the newest [`BRK_QUARTERS`] distinct ones.
+fn brk_window(list: Vec<(String, String, String)>) -> Vec<(String, String, String)> {
+    let mut reports: Vec<String> = list.iter().map(|f| f.1.clone()).collect();
+    reports.sort_unstable();
+    reports.dedup();
+    let keep: HashSet<String> = reports.into_iter().rev().take(BRK_QUARTERS).collect();
+    list.into_iter().filter(|f| keep.contains(&f.1)).collect()
+}
+
+/// (#436) One 13F full-submission `.txt` -> (amendment type, CUSIP -> shares). The type is "" for an
+/// original and the upper-cased `<amendmentType>` for an amendment. Only `SH` rows count, never `PRN`
+/// (a bond's principal), and never a row with `<putCall>` (an option, not a holding). A CUSIP listed
+/// once per managing subsidiary sums. Namespace prefixes go first: Berkshire's filing agents write bare
+/// tags today, other agents write `ns1:infoTable`.
+fn parse_13f(txt: &str) -> (String, HashMap<String, u64>) {
+    let txt = regex::Regex::new(r"(</?)[\w-]+:").expect("literal regex").replace_all(txt, "$1");
+    let amend = if between(&txt, "<isAmendment>", "</isAmendment>").is_some_and(|s| s.trim() == "true") {
+        between(&txt, "<amendmentType>", "</amendmentType>").unwrap_or("").trim().to_uppercase()
+    } else {
+        String::new()
+    };
+    let mut held: HashMap<String, u64> = HashMap::new();
+    for row in between_all(&txt, "<infoTable>", "</infoTable>") {
+        if row.contains("<putCall>") || between(row, "<sshPrnamtType>", "</sshPrnamtType>").map(str::trim) != Some("SH") {
+            continue;
+        }
+        let shares = between(row, "<sshPrnamt>", "</sshPrnamt>").and_then(|n| n.trim().parse::<u64>().ok());
+        if let (Some(cusip), Some(n)) = (between(row, "<cusip>", "</cusip>"), shares) {
+            *held.entry(cusip.trim().to_uppercase()).or_default() += n;
+        }
+    }
+    (amend, held)
+}
+
+/// (#436) More than [`BRK_BUY_PCT`]% of the prior quarter's shares, a new position reading prior 0.
+/// An exact whole multiple (2x, 4x, 20x) is a forward split, not a buy: AAPL's 4:1 would otherwise mark
+/// the largest holding for a year. A whole multiple above +5% is at least 2x, so the remainder alone
+/// tells it. shortcut: a 3:2 split still reads as bought; add ratios when one lands on a held name.
+fn brk_bought(prev: u64, cur: u64) -> bool {
+    let split = cur.is_multiple_of(prev); // x.is_multiple_of(0) only for x == 0, which the +5% test refuses anyway
+    u128::from(cur) * 100 > u128::from(prev) * BRK_BUY_PCT && !split
+}
+
+/// (#436) Filings folded per quarter in filing order, then each quarter diffed against the one before
+/// it. An original or a RESTATEMENT replaces its quarter. A NEW HOLDINGS amendment adds to it: Berkshire
+/// files one when a confidentially omitted position goes public (the 2025-03-31 /A added NUE, LEN and
+/// DHI five months on). The oldest quarter is only the baseline.
+fn brk_bought_cusips(mut filings: Vec<Brk13f>) -> HashSet<String> {
+    filings.sort_by(|a, b| (&a.1, !a.2.is_empty()).cmp(&(&b.1, !b.2.is_empty())));
+    let mut quarters: BTreeMap<String, HashMap<String, u64>> = BTreeMap::new();
+    for (report, _, amend, held) in filings {
+        let q = quarters.entry(report).or_default();
+        if amend == "NEW HOLDINGS" {
+            for (c, n) in held {
+                *q.entry(c).or_default() += n;
+            }
+        } else {
+            *q = held;
+        }
+    }
+    let qs: Vec<&HashMap<String, u64>> = quarters.values().collect();
+    qs.windows(2)
+        .flat_map(|w| w[1].iter().filter(|(c, n)| brk_bought(w[0].get(*c).copied().unwrap_or(0), **n)).map(|(c, _)| c.clone()))
+        .collect()
+}
+
+/// (#436) One OpenFIGI `ID_CUSIP` + `exchCode: US` answer -> its Yahoo symbol: the first row's ticker,
+/// with the share-class slash as Yahoo's dash (`BRK/B` -> `BRK-B`).
+fn figi_us_ticker(data: &Value) -> Option<String> {
+    let t = data.get(0)?.get("ticker")?.as_str()?;
+    (!t.is_empty()).then(|| t.replace('/', "-"))
+}
+
+/// (#436) Bought CUSIPs -> every symbol a quote may carry: the US ticker, and its Xetra twin when the EU
+/// swap ([`EU_LISTING_CACHE_PATH`], "" = no twin) renamed the pool row onto it.
+fn brk_tickers(cusips: &HashSet<String>, ticker_of: &HashMap<String, String>, eu: &HashMap<String, String>) -> HashSet<String> {
+    cusips
+        .iter()
+        .filter_map(|c| ticker_of.get(c))
+        .flat_map(|t| [Some(t.clone()), eu.get(t).filter(|e| !e.is_empty()).cloned()])
+        .flatten()
+        .collect()
+}
+
+/// (#436) Mark every equity quote Berkshire bought. Equities only: Berkshire's 13F has listed the SPY
+/// and VOO its insurance subsidiaries hold, and those are not Buffett's picks.
+pub fn stamp_brk(quotes: &mut [Quote], bought: &HashSet<String>) {
+    for q in quotes.iter_mut().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")) {
+        q.brk_bought = bought.contains(&q.ticker);
+    }
+}
+
+/// (#436) The symbols Berkshire bought over the last four quarter transitions (see [`brk_bought_cusips`]).
+/// The list is cached [`BRK_LIST_TTL`], with the stale copy kept on a failed refetch. Each filing's parse
+/// is cached forever, but only when it holds rows. A CUSIP's ticker is cached once OpenFIGI answers.
+/// FAILS CLOSED: one unreadable filing in the window empties the set. A missing quarter would otherwise
+/// read every holding of the next one as new.
+#[mutants::skip] // (#436) async network shell; the pure helpers above carry the tests
+pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> HashSet<String> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
+    let write = |p: &std::path::Path, json: String| {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(p, json);
+    };
+    let list_path = sec_cache_path("_brk13f");
+    if !fresh_on_disk(&list_path, BRK_LIST_TTL) && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
+        let url = urls.sec_submissions.replace("{cik}", BRK_CIK);
+        let list = sec_get_json(client, &url, &urls.sec_user_agent).await.map(|v| brk_13f_list(&v)).unwrap_or_default();
+        if !list.is_empty() {
+            write(&list_path, serde_json::to_string(&list).unwrap_or_default());
+        }
+    }
+    let list: Vec<(String, String, String)> =
+        read(&list_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut filings: Vec<Brk13f> = Vec::new();
+    for (acc, report, filed) in brk_window(list) {
+        let path = sec_cache_path(&format!("_brk13f_{acc}"));
+        let mut parsed: Option<(String, HashMap<String, u64>)> = read(&path).and_then(|s| serde_json::from_str(&s).ok());
+        if parsed.is_none() && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
+            let url = format!(
+                "https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}.txt",
+                BRK_CIK.trim_start_matches('0'),
+                acc.replace('-', "")
+            );
+            parsed = sec_get_text(client, &url, &urls.sec_user_agent).await.map(|t| parse_13f(&t)).filter(|(_, h)| !h.is_empty());
+            if let Some(p) = &parsed {
+                write(&path, serde_json::to_string(p).unwrap_or_default());
+            }
+        }
+        let Some((amend, held)) = parsed else {
+            eprintln!("fetch: Berkshire 13F {acc} unreadable; no `w` marks this run");
+            return HashSet::new();
+        };
+        filings.push((report, filed, amend, held));
+    }
+    let cusips = brk_bought_cusips(filings);
+    let map_path = sec_cache_path("_cusip_tickers");
+    let mut ticker_of: HashMap<String, String> = read(&map_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let todo: Vec<&String> = cusips.iter().filter(|c| !ticker_of.contains_key(*c)).collect();
+    let mut pace = 0; // carried, not branched on the index: see `resolve_eu_listings`
+    for chunk in todo.chunks(FIGI_BATCH) {
+        tokio::time::sleep(StdDuration::from_millis(pace)).await;
+        pace = FIGI_PACE_MS;
+        let jobs = chunk.iter().map(|c| serde_json::json!({"idType": "ID_CUSIP", "idValue": c, "exchCode": "US"})).collect();
+        for (c, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
+            if let Some(t) = data.as_ref().and_then(figi_us_ticker) {
+                ticker_of.insert((*c).clone(), t);
+            }
+        }
+    }
+    if !todo.is_empty() {
+        write(&map_path, serde_json::to_string(&ticker_of).unwrap_or_default());
+    }
+    let eu: HashMap<String, String> =
+        read(&crate::config::data_path(EU_LISTING_CACHE_PATH)).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let out = brk_tickers(&cusips, &ticker_of, &eu);
+    eprintln!("fetch: Berkshire 13F: {} CUSIPs bought in the last {BRK_QUARTERS} quarters -> {} symbols", cusips.len(), out.len());
+    out
 }
 
 // ── (report) SEC XBRL company-facts — FREE, no key, no daily cap fundamentals fallback ──────────────
@@ -7778,6 +7975,132 @@ pub(crate) mod tests {
         assert!(txns[0].buy && txns[0].date == NaiveDate::from_ymd_opt(2021, 3, 4).unwrap());
         assert!(!txns[1].buy && txns[1].date == NaiveDate::from_ymd_opt(2021, 3, 10).unwrap());
         assert!(parse_form4_txns("<x/>").is_empty()); // no transactions -> empty, never panics
+    }
+
+    /// (#436) Only 13F-HR and its /A leave the submissions list, as (accession, report, filed).
+    #[test]
+    fn brk_13f_list_keeps_13f_forms_only() {
+        let v = serde_json::json!({"filings": {"recent": {
+            "form": ["4", "13F-HR", "SC 13G", "13F-HR/A"],
+            "accessionNumber": ["a0", "a1", "a2", "a3"],
+            "reportDate": ["2026-01-02", "2026-06-30", "", "2025-03-31"],
+            "filingDate": ["2026-01-05", "2026-08-14", "2026-02-01", "2025-08-14"],
+        }}});
+        let s = |a: &str, r: &str, f: &str| (a.to_string(), r.to_string(), f.to_string());
+        assert_eq!(brk_13f_list(&v), vec![s("a1", "2026-06-30", "2026-08-14"), s("a3", "2025-03-31", "2025-08-14")]);
+        assert!(brk_13f_list(&serde_json::json!({})).is_empty());
+    }
+
+    /// (#436) The newest five DISTINCT report dates, every filing of each: an amendment does not cost
+    /// the window a quarter.
+    #[test]
+    fn brk_window_keeps_the_newest_five_quarters() {
+        let f = |a: &str, r: &str| (a.to_string(), r.to_string(), String::new());
+        let list = vec![
+            f("q6", "2026-06-30"),
+            f("q1", "2025-03-31"),
+            f("q2", "2025-06-30"),
+            f("q2a", "2025-06-30"),
+            f("q3", "2025-09-30"),
+            f("q4", "2025-12-31"),
+            f("q5", "2026-03-31"),
+        ];
+        let kept: Vec<String> = brk_window(list).into_iter().map(|x| x.0).collect();
+        assert_eq!(kept, ["q6", "q2", "q2a", "q3", "q4", "q5"]);
+    }
+
+    /// (#436) The info table, as another filing agent writes it (`ns1:` prefixes): SH rows sum per
+    /// CUSIP, a PRN row and an option row are no holding, and the cover page types the amendment.
+    #[test]
+    fn parse_13f_sums_sh_rows_and_types_the_amendment() {
+        let row = |cusip: &str, n: &str, kind: &str, extra: &str| {
+            format!(
+                "<ns1:infoTable><ns1:nameOfIssuer>X</ns1:nameOfIssuer><ns1:cusip>{cusip}</ns1:cusip>\
+                 <ns1:shrsOrPrnAmt><ns1:sshPrnamt>{n}</ns1:sshPrnamt><ns1:sshPrnamtType>{kind}</ns1:sshPrnamtType>\
+                 </ns1:shrsOrPrnAmt>{extra}</ns1:infoTable>"
+            )
+        };
+        let table = [
+            row("037833100", "100", "SH", ""),
+            row("037833100", " 20 ", "SH", ""),
+            row("02005n100", "7", "SH", ""),
+            row("111111111", "5", "PRN", ""),
+            row("222222222", "9", "SH", "<ns1:putCall>Put</ns1:putCall>"),
+        ]
+        .concat();
+        let cover = |amend: &str, kind: &str| {
+            format!("<coverPage><isAmendment>{amend}</isAmendment><amendmentInfo><amendmentType>{kind}</amendmentType></amendmentInfo></coverPage>")
+        };
+        let (amend, held) = parse_13f(&format!("{}<ns1:informationTable>{table}</ns1:informationTable>", cover("true", "new holdings")));
+        assert_eq!(amend, "NEW HOLDINGS");
+        assert_eq!(held, HashMap::from([("037833100".to_string(), 120), ("02005N100".to_string(), 7)]));
+        assert_eq!(parse_13f(&format!("{}{table}", cover("false", "RESTATEMENT"))).0, "", "an original carries no type");
+        assert_eq!(parse_13f("<x/>"), (String::new(), HashMap::new()));
+    }
+
+    /// (#436) More than +5% or new, and never an exact whole multiple (a forward split).
+    #[test]
+    fn brk_bought_needs_more_than_five_percent_and_skips_splits() {
+        assert!(brk_bought(0, 1), "a new position is bought");
+        assert!(!brk_bought(0, 0));
+        assert!(!brk_bought(100, 105), "+5% exactly is not more than +5%");
+        assert!(brk_bought(100, 106));
+        assert!(!brk_bought(100, 100) && !brk_bought(100, 50));
+        assert!(!brk_bought(100, 200) && !brk_bought(100, 400), "2:1 and 4:1 splits");
+        assert!(brk_bought(100, 201), "a split plus a buy is not a whole multiple");
+        assert!(!brk_bought(u64::MAX, u64::MAX), "no overflow at the top of the range");
+    }
+
+    /// (#436) The fold: a NEW HOLDINGS /A adds to its quarter (D is no new position in Q2), a
+    /// RESTATEMENT filed the same day as its original still lands after it and replaces it (F is gone,
+    /// G is in), input order does not matter, and the oldest quarter is only the baseline.
+    #[test]
+    fn brk_bought_cusips_folds_amendments_then_diffs_quarters() {
+        let f = |report: &str, filed: &str, amend: &str, held: &[(&str, u64)]| -> Brk13f {
+            let held = held.iter().map(|(c, n)| (c.to_string(), *n)).collect();
+            (report.to_string(), filed.to_string(), amend.to_string(), held)
+        };
+        let q2 = [("A", 106), ("B", 105), ("C", 100), ("D", 50), ("E", 10)];
+        let filings = vec![
+            f("2025-09-30", "2025-11-14", "RESTATEMENT", &[("A", 106), ("B", 105), ("C", 100), ("D", 50), ("E", 10), ("G", 1)]),
+            f("2025-06-30", "2025-08-14", "", &q2),
+            f("2025-03-31", "2025-08-14", "NEW HOLDINGS", &[("D", 50)]),
+            f("2025-09-30", "2025-11-14", "", &[("A", 106), ("F", 5)]),
+            f("2025-03-31", "2025-05-15", "", &[("A", 100), ("B", 100), ("C", 100)]),
+        ];
+        let mut got: Vec<String> = brk_bought_cusips(filings).into_iter().collect();
+        got.sort();
+        assert_eq!(got, ["A", "E", "G"]);
+        assert!(brk_bought_cusips(vec![f("2025-03-31", "2025-05-15", "", &[("A", 1)])]).is_empty(), "a baseline alone buys nothing");
+    }
+
+    /// (#436) OpenFIGI's share-class slash becomes Yahoo's dash; an empty answer is no ticker.
+    #[test]
+    fn figi_us_ticker_maps_the_share_class_slash() {
+        assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": "BRK/B"}, {"ticker": "X"}])), Some("BRK-B".to_string()));
+        assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": "AAPL"}])), Some("AAPL".to_string()));
+        assert_eq!(figi_us_ticker(&serde_json::json!([{"ticker": ""}])), None);
+        assert_eq!(figi_us_ticker(&serde_json::json!([])), None);
+    }
+
+    /// (#436) A bought CUSIP names its US ticker and, when the EU swap moved the row, its Xetra twin;
+    /// an unmapped CUSIP and a "" twin name nothing.
+    #[test]
+    fn brk_tickers_adds_the_xetra_twin() {
+        let cusips: HashSet<String> = ["c1", "c2", "c3"].map(String::from).into();
+        let ticker_of = HashMap::from([("c1".to_string(), "AAPL".to_string()), ("c2".to_string(), "KO".to_string())]);
+        let eu = HashMap::from([("AAPL".to_string(), "APC.DE".to_string()), ("KO".to_string(), String::new())]);
+        let want: HashSet<String> = ["AAPL", "APC.DE", "KO"].map(String::from).into();
+        assert_eq!(brk_tickers(&cusips, &ticker_of, &eu), want);
+    }
+
+    /// (#436) Equities only, and a stamp is a fresh read: a name no longer bought loses its mark.
+    #[test]
+    fn stamp_brk_marks_equities_only() {
+        let q = |t: &str, kind: &str, was: bool| Quote { instrument_type: kind.to_string(), brk_bought: was, ..Quote::stub(t, "€1", "", t) };
+        let mut quotes = [q("AAPL", "EQUITY", false), q("SPY", "ETF", false), q("KO", "equity", true)];
+        stamp_brk(&mut quotes, &["AAPL", "SPY"].map(String::from).into());
+        assert_eq!(quotes.map(|q| q.brk_bought), [true, false, false]);
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +

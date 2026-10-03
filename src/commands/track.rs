@@ -101,7 +101,8 @@ pub struct Snapshot {
     /// the [`FACTORS`] — the backtest CANDIDATEs (#410)/(#412)/(#413)/(#416) that nothing graded forward. The
     /// factor is a tag, not a column, so the next CANDIDATE is one more const entry and no schema
     /// change. Only present, finite values are written. No price, for the reason `peg` has none.
-    /// Same serde contract as `peg`.
+    /// (#436) `brk` rides the same list as a bare tag (value 1.0, never read): Berkshire's 13F bought
+    /// the name. Same serde contract as `peg`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fac: Vec<(String, String, f64)>,
     /// (#334) THE WEIGHT SWAP SHADOW: `(ticker, close EUR, weight notch, entrant?)` for every name one of
@@ -795,10 +796,15 @@ pub(crate) const FACTORS: [(&str, &str); 5] = [
 /// (#415) The `fac` journal for one run: every [`FACTORS`] value the (#332) cohort's names carry, read
 /// through `select_fund_factor` so it is the same number the backtest graded. A non-finite value is
 /// dropped here, not written: JSON has no NaN, and one would poison the line it sits on.
+/// (#436) A cohort name Berkshire's 13F bought also writes `(t, "brk", 1.0)`, fundamentals or not.
 pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quote]) -> Vec<(String, String, f64)> {
     let mut out = Vec::new();
     for (t, ..) in peg {
-        let Some(f) = quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.fund.as_ref()) else { continue };
+        let Some(q) = quotes.iter().find(|q| &q.ticker == t) else { continue };
+        if q.brk_bought {
+            out.push((t.clone(), "brk".to_string(), 1.0));
+        }
+        let Some(f) = q.fund.as_ref() else { continue };
         for (k, _) in FACTORS {
             if let Some(v) = crate::core::select_fund_factor(f, k).filter(|v| v.is_finite()) {
                 out.push((t.clone(), k.to_string(), v));
@@ -826,6 +832,20 @@ fn fac_rows<'a>(snap: &'a Snapshot, factor: &str, by_factor: bool) -> Rows<'a> {
     ranked.iter().map(|(t, _)| (*t, journal_px(snap, t), 1.0)).collect()
 }
 
+/// (#436) The Berkshire side of the `brk` row: EVERY cohort name journalled `brk`, equal-weight. Not a
+/// top half, because the flag is a set, not a rank.
+fn brk_rows(snap: &Snapshot) -> Rows<'_> {
+    snap.peg
+        .iter()
+        .filter(|(t, ..)| snap.fac.iter().any(|(ft, f, _)| ft == t && f == "brk"))
+        .map(|(t, ..)| (t.as_str(), journal_px(snap, t), 1.0))
+        .collect()
+}
+
+/// (#436) Distinct `brk` names the record must have journalled before the row's reopen bar can clear:
+/// a handful of Berkshire's buys is one bet on a few stocks, not a read on the flag.
+const BRK_MIN_NAMES: usize = 8;
+
 /// (#415) The FACTOR SHADOW: the forward half of the backtest CANDIDATEs. Each factor ranks the
 /// same names peg_yield ranks, and its top half is held against peg's cheap half over the same window,
 /// so the market leg cancels. It asks the one question a `growth_fund_extra` reopen would need
@@ -844,10 +864,19 @@ fn fac_section(
         today,
         px_now,
         spx_now,
-        &|s| FACTORS.iter().map(|(f, label)| (*label, fac_rows(s, f, false), fac_rows(s, f, true))).collect(),
+        &|s| {
+            let mut pairs: Pairs = FACTORS.iter().map(|(f, label)| (*label, fac_rows(s, f, false), fac_rows(s, f, true))).collect();
+            pairs.push(("brk bought minus peg cheap", peg_rows(s, false, true), brk_rows(s)));
+            pairs
+        },
         30,
         None,
     );
+    let brk_n = snaps
+        .iter()
+        .flat_map(|s| s.fac.iter().filter(|(_, f, _)| f == "brk").map(|(t, ..)| t.as_str()))
+        .collect::<std::collections::HashSet<&str>>()
+        .len();
     if verdict.is_empty() {
         return format!(
             "\n  Factor shadow: nothing gradeable yet. A month's first line needs a day of age and a priced name\n  \
@@ -858,13 +887,17 @@ fn fac_section(
     format!(
         "\n  Factor shadow — the (#332) PEG cohort ranked by each measured-but-unshipped backtest CANDIDATE\n  \
          ((#410) rnd_yield, (#413) int_yield, (#412) mscore, (#416) lynch_yield and sgr_yield), its top half held\n  \
-         against peg_yield's cheap half on the SAME names. EUR seat, price-only. NOT advice.\n  \
+         against peg_yield's cheap half on the SAME names. (#436) `brk` holds EVERY cohort name Berkshire\n  \
+         Hathaway's 13F bought (the `w` flag) against that same cheap half. EUR seat, price-only. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
          BACKTEST re-grade on `universe fund pit` — never a direct ship — when {REOPEN_LINES}+ monthly lines AND\n  \
-         {REOPEN_LINES}+ chained links each read mean AND median above 0. Five rows read at once, so one can\n  \
-         clear by chance; the backtest re-grade is the guard against that."
+         {REOPEN_LINES}+ chained links each read mean AND median above 0. Six rows read at once, so one can\n  \
+         clear by chance; the backtest re-grade is the guard against that.\n\n  \
+         Pre-registered by (#436) before its first line: `brk` re-opens as a score-term BACKTEST re-grade, never\n  \
+         a direct ship, only when its row clears that same bar AND {BRK_MIN_NAMES}+ distinct brk names have been\n  \
+         journalled ({brk_n} so far) AND the spread survives a rank-slice read. Any miss records a refusal."
     )
 }
 
@@ -1891,11 +1924,13 @@ mod tests {
 
     /// (#415) The journal reads the cohort's own quotes: a name outside `peg`, a name with no quote or
     /// no fundamentals, a missing value and a NaN all write nothing, and the rest write one tagged row
-    /// per factor, in [`FACTORS`] order.
+    /// per factor, in [`FACTORS`] order. (#436) A cohort name Berkshire bought writes `brk` even with no
+    /// fundamentals; one outside the cohort writes nothing.
     #[test]
     fn fac_journal_writes_present_finite_cohort_values_only() {
         let with = |t: &str, f: Option<crate::core::FundFactors>| {
             let mut q = crate::core::Quote::stub(t, "€1.00", "", t);
+            q.brk_bought = t != "A";
             q.fund = f;
             q
         };
@@ -1918,6 +1953,7 @@ mod tests {
                 ("A".to_string(), "rnd_yield".to_string(), 1.0),
                 ("A".to_string(), "mscore".to_string(), -2.0),
                 ("A".to_string(), "sgr_yield".to_string(), 3.0),
+                ("B".to_string(), "brk".to_string(), 1.0),
             ]
         );
     }
@@ -1944,6 +1980,24 @@ mod tests {
         assert!(row.contains("needs 12 lines"), "{row}");
         assert!(!out.contains("int_yield top minus") && !out.contains("mscore top minus"), "{out}");
         assert!(out.contains("Journalled on 1 of 1 run(s)") && out.contains("never a direct ship"), "{out}");
+    }
+
+    /// (#436) The `brk` row holds EVERY cohort name journalled `brk` (no top-half cut) against peg's
+    /// cheap half, and the reopen prose counts distinct brk names across the whole record.
+    #[test]
+    fn fac_section_grades_brk_set_against_peg_cheap() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let px = |t: &str| Some(if t == "D" { 200.0 } else { 100.0 });
+        let rows: Vec<(&str, Option<f64>)> = ["A", "B", "C", "D"].map(|t| (t, Some(100.0))).to_vec();
+        let peg = [("A", 90.0, 0.0), ("B", 70.0, 0.0), ("C", 30.0, 0.0), ("D", 10.0, 0.0)];
+        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &[("C", "brk", 1.0), ("D", "brk", 1.0)]);
+        let again = with_fac(snap("2026-01-02", Some(100.0), &rows), &[("D", "brk", 1.0)]);
+        let out = fac_section(&[s, again], today, &px, Some(100.0));
+        let row = out.lines().find(|l| l.trim_start().starts_with("brk bought minus peg cheap")).unwrap_or_default();
+        // brk holds C, D (+50%); peg holds A, B (0%)
+        assert!(row.contains(" 1 line(s)") && row.matches("+50.0pp").count() == 2, "{row}");
+        assert!(!out.contains("rnd_yield top minus"), "{out}");
+        assert!(out.contains("8+ distinct brk names") && out.contains("(2 so far)"), "{out}");
     }
 
     /// (#285) The MOMENTUM-lane grade: `snap.rows` cut at [`BOOK`], which is what every assertion

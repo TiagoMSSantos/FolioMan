@@ -1781,6 +1781,9 @@ pub async fn run(args: Vec<String>) {
     };
     let targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &targets).await;
+    // (#436) display only: the `w` rank flag and the track `brk` shadow row read it, nothing scores it
+    let brk = fetch::fetch_brk_bought(&client, &settings.urls).await;
+    fetch::stamp_brk(&mut quotes, &brk);
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
