@@ -1913,8 +1913,9 @@ fn brk_bought(prev: u64, cur: u64) -> bool {
 /// (#436) Filings folded per quarter in filing order, then each quarter diffed against the one before
 /// it. An original or a RESTATEMENT replaces its quarter. A NEW HOLDINGS amendment adds to it: Berkshire
 /// files one when a confidentially omitted position goes public (the 2025-03-31 /A added NUE, LEN and
-/// DHI five months on). The oldest quarter is only the baseline.
-fn brk_bought_cusips(mut filings: Vec<Brk13f>) -> HashSet<String> {
+/// DHI five months on). The oldest quarter is only the baseline. (#440) Each CUSIP keeps its NEWEST buy
+/// as (report date, prior shares, shares), for the page's Berkshire table.
+fn brk_bought_cusips(mut filings: Vec<Brk13f>) -> HashMap<String, (String, u64, u64)> {
     filings.sort_by(|a, b| (&a.1, !a.2.is_empty()).cmp(&(&b.1, !b.2.is_empty())));
     let mut quarters: BTreeMap<String, HashMap<String, u64>> = BTreeMap::new();
     for (report, _, amend, held) in filings {
@@ -1927,9 +1928,54 @@ fn brk_bought_cusips(mut filings: Vec<Brk13f>) -> HashSet<String> {
             *q = held;
         }
     }
-    let qs: Vec<&HashMap<String, u64>> = quarters.values().collect();
+    let qs: Vec<(&String, &HashMap<String, u64>)> = quarters.iter().collect();
     qs.windows(2)
-        .flat_map(|w| w[1].iter().filter(|(c, n)| brk_bought(w[0].get(*c).copied().unwrap_or(0), **n)).map(|(c, _)| c.clone()))
+        .flat_map(|w| {
+            let (prev, (report, cur)) = (w[0].1, w[1]);
+            cur.iter()
+                .map(|(c, n)| (c, prev.get(c).copied().unwrap_or(0), *n))
+                .filter(|(_, p, n)| brk_bought(*p, *n))
+                .map(|(c, p, n)| (c.clone(), (report.clone(), p, n)))
+        })
+        .collect() // oldest transition first, so a later buy overwrites an earlier one
+}
+
+/// (#440) One bought CUSIP for the page: (US ticker, or the CUSIP when OpenFIGI mapped none; its Xetra
+/// twin or ""; report date; prior shares; shares).
+pub type BrkBuy = (String, String, String, u64, u64);
+
+/// (#440) A report date -> its quarter, `2026-06-30` -> `2026-Q2`; anything else prints as given.
+fn brk_quarter(report: &str) -> String {
+    match (report.get(..4), report.get(5..7).and_then(|m| m.parse::<u32>().ok())) {
+        (Some(y), Some(m @ 1..=12)) => format!("{y}-Q{}", m.div_ceil(3)),
+        _ => report.to_string(),
+    }
+}
+
+/// (#440) The page's Berkshire table, in the lanes' `[header, cell]` shape. NAME comes from the pool's
+/// quote for the ticker or its twin, "—" when the pool has neither, and a pooled non-equity (the SPY
+/// and VOO the insurers hold) is dropped as [`stamp_brk`] drops it. Newest quarter first, then the
+/// largest relative add (a new position, prior 0, above any add), then the ticker.
+pub fn brk_rows(buys: &[BrkBuy], quotes: &[Quote]) -> Value {
+    let mut rows: Vec<(&BrkBuy, Option<&Quote>)> = buys
+        .iter()
+        .map(|b| (b, quotes.iter().find(|q| q.ticker == b.0 || (!b.1.is_empty() && q.ticker == b.1))))
+        .filter(|(_, q)| q.is_none_or(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")))
+        .collect();
+    let add = |b: &BrkBuy, o: &BrkBuy| u128::from(b.4) * u128::from(o.3); // b's growth ratio, cross-multiplied
+    rows.sort_by(|(a, _), (b, _)| b.2.cmp(&a.2).then_with(|| add(b, a).cmp(&add(a, b))).then_with(|| a.0.cmp(&b.0)));
+    rows.iter()
+        .enumerate()
+        .map(|(i, (b, q))| {
+            let delta = if b.3 == 0 { "new".to_string() } else { format!("{:+.1}%", (b.4 as f64 / b.3 as f64 - 1.0) * 100.0) };
+            serde_json::json!([
+                ["#", (i + 1).to_string()],
+                ["TICKER", b.0],
+                ["NAME", q.map_or("—", |q| q.name.as_str())],
+                ["BOUGHT", brk_quarter(&b.2)],
+                ["SHARES Δ", delta],
+            ])
+        })
         .collect()
 }
 
@@ -1970,9 +2016,9 @@ pub fn stamp_brk(quotes: &mut [Quote], bought: &HashSet<String>) {
 /// The list is cached [`BRK_LIST_TTL`], with the stale copy kept on a failed refetch. Each filing's parse
 /// is cached forever, but only when it holds rows. A CUSIP's ticker is cached once OpenFIGI answers.
 /// FAILS CLOSED: one unreadable filing in the window empties the set. A missing quarter would otherwise
-/// read every holding of the next one as new.
+/// read every holding of the next one as new. (#440) Also returns each bought CUSIP as a [`BrkBuy`].
 #[mutants::skip] // (#436) async network shell; the pure helpers above carry the tests
-pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> HashSet<String> {
+pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> (HashSet<String>, Vec<BrkBuy>) {
     use std::sync::atomic::Ordering::Relaxed;
     let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
     let write = |p: &std::path::Path, json: String| {
@@ -2008,11 +2054,12 @@ pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> HashSet<String> {
         }
         let Some((amend, held)) = parsed else {
             eprintln!("fetch: Berkshire 13F {acc} unreadable; no `w` marks this run");
-            return HashSet::new();
+            return Default::default();
         };
         filings.push((report, filed, amend, held));
     }
-    let cusips = brk_bought_cusips(filings);
+    let buys = brk_bought_cusips(filings);
+    let cusips: HashSet<String> = buys.keys().cloned().collect();
     let map_path = sec_cache_path("_cusip_tickers");
     let mut ticker_of: HashMap<String, String> = read(&map_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let todo: Vec<&String> = cusips.iter().filter(|c| !ticker_of.contains_key(*c)).collect();
@@ -2034,7 +2081,15 @@ pub async fn fetch_brk_bought(client: &Client, urls: &Urls) -> HashSet<String> {
         read(&crate::config::data_path(EU_LISTING_CACHE_PATH)).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let out = brk_tickers(&cusips, &ticker_of, &eu);
     eprintln!("fetch: Berkshire 13F: {} CUSIPs bought in the last {BRK_QUARTERS} quarters -> {} symbols", cusips.len(), out.len());
-    out
+    let rows = buys
+        .into_iter()
+        .map(|(c, (report, prev, cur))| {
+            let t = ticker_of.get(&c).cloned().unwrap_or(c);
+            let twin = eu.get(&t).cloned().unwrap_or_default();
+            (t, twin, report, prev, cur)
+        })
+        .collect();
+    (out, rows)
 }
 
 // ── (#438) Wikipedia attention shadow ───────────────────────────────────────────────────────────────
@@ -8252,10 +8307,66 @@ pub(crate) mod tests {
             f("2025-09-30", "2025-11-14", "", &[("A", 106), ("F", 5)]),
             f("2025-03-31", "2025-05-15", "", &[("A", 100), ("B", 100), ("C", 100)]),
         ];
-        let mut got: Vec<String> = brk_bought_cusips(filings).into_iter().collect();
+        let mut got: Vec<String> = brk_bought_cusips(filings).into_keys().collect();
         got.sort();
         assert_eq!(got, ["A", "E", "G"]);
         assert!(brk_bought_cusips(vec![f("2025-03-31", "2025-05-15", "", &[("A", 1)])]).is_empty(), "a baseline alone buys nothing");
+    }
+
+    /// (#440) A CUSIP bought twice keeps its NEWER buy and that transition's share counts; a new position
+    /// reads prior 0.
+    #[test]
+    fn brk_bought_cusips_keeps_the_newest_buy() {
+        let f = |report: &str, held: &[(&str, u64)]| -> Brk13f {
+            (report.to_string(), report.to_string(), String::new(), held.iter().map(|(c, n)| (c.to_string(), *n)).collect())
+        };
+        let got = brk_bought_cusips(vec![
+            f("2025-12-31", &[("A", 300), ("B", 7)]),
+            f("2025-06-30", &[("A", 100)]),
+            f("2025-09-30", &[("A", 200), ("B", 7)]),
+        ]);
+        assert_eq!(got["A"], ("2025-12-31".to_string(), 200, 300));
+        assert_eq!(got["B"], ("2025-09-30".to_string(), 0, 7));
+        assert_eq!(got.len(), 2);
+    }
+
+    /// (#440) Month -> quarter at every boundary; a date it cannot read prints as given.
+    #[test]
+    fn brk_quarter_reads_the_report_month() {
+        let got = ["2026-01-31", "2026-03-31", "2026-04-30", "2026-06-30", "2026-07-31", "2025-12-31"].map(brk_quarter);
+        assert_eq!(got, ["2026-Q1", "2026-Q1", "2026-Q2", "2026-Q2", "2026-Q3", "2025-Q4"]);
+        assert_eq!(brk_quarter("2026-13-01"), "2026-13-01");
+        assert_eq!(brk_quarter("x"), "x");
+    }
+
+    /// (#440) Newest quarter first, then new above the largest add, then the ticker. NAME from the
+    /// quote for the ticker or its twin, "—" unpooled, and a pooled ETF is dropped.
+    #[test]
+    fn brk_rows_order_name_and_drop_etfs() {
+        let b = |t: &str, twin: &str, r: &str, p: u64, c: u64| -> BrkBuy { (t.into(), twin.into(), r.into(), p, c) };
+        let q = |t: &str, kind: &str, name: &str| Quote { instrument_type: kind.to_string(), ..Quote::stub(t, "€1", "", name) };
+        let quotes = [q("CB", "EQUITY", "Chubb"), q("ABEA.DE", "EQUITY", "Alphabet A"), q("SPY", "ETF", "SPDR S&P 500")];
+        let buys = [
+            b("DAL", "", "2025-12-31", 0, 5),
+            b("CB", "", "2026-06-30", 100, 110),
+            b("GOOGL", "ABEA.DE", "2026-06-30", 100, 150),
+            b("LEN", "", "2026-06-30", 0, 9),
+            b("SPY", "", "2026-06-30", 0, 1),
+            b("H1467J104", "", "2026-03-31", 10, 20),
+            b("AA", "", "2026-06-30", 100, 110),
+        ];
+        let got = brk_rows(&buys, &quotes);
+        assert_eq!(
+            got,
+            serde_json::json!([
+                [["#", "1"], ["TICKER", "LEN"], ["NAME", "—"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "new"]],
+                [["#", "2"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "+50.0%"]],
+                [["#", "3"], ["TICKER", "AA"], ["NAME", "—"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "+10.0%"]],
+                [["#", "4"], ["TICKER", "CB"], ["NAME", "Chubb"], ["BOUGHT", "2026-Q2"], ["SHARES Δ", "+10.0%"]],
+                [["#", "5"], ["TICKER", "H1467J104"], ["NAME", "—"], ["BOUGHT", "2026-Q1"], ["SHARES Δ", "+100.0%"]],
+                [["#", "6"], ["TICKER", "DAL"], ["NAME", "—"], ["BOUGHT", "2025-Q4"], ["SHARES Δ", "new"]],
+            ])
+        );
     }
 
     /// (#437) A letter-led 13F CUSIP is a CINS and maps as one; a digit-led one stays a CUSIP.

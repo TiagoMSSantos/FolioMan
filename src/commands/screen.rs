@@ -1782,8 +1782,10 @@ pub async fn run(args: Vec<String>) {
     let targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &targets).await;
     // (#436) display only: the `w` rank flag and the track `brk` shadow row read it, nothing scores it
-    let brk = fetch::fetch_brk_bought(&client, &settings.urls).await;
+    let (brk, brk_buys) = fetch::fetch_brk_bought(&client, &settings.urls).await;
     fetch::stamp_brk(&mut quotes, &brk);
+    // (#440) and the page's Berkshire table, every bought name whether the pool ranks it or not
+    let berkshire = fetch::brk_rows(&brk_buys, &quotes);
     // (#438) display only too: the page's Attention table, carried to the payload below
     let attention = fetch::fetch_attention(&client, &settings.urls).await;
 
@@ -2046,6 +2048,7 @@ pub async fn run(args: Vec<String>) {
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
         crate::picks::stamp_buy(&mut top, &sized_now);
         top["attention"] = attention;
+        top["berkshire"] = berkshire;
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(&web_out, json);
         }
