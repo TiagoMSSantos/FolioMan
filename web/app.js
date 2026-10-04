@@ -36,20 +36,17 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
     // (#397) a pinned row (`*` in its RANK cell) shows at every N: an uploaded watchlist always shows
     // (#403) so does a `b` row: the book buys it though a display trim cut it from the table
     if (row.some(([h, c]) => h === "RANK" && /[*b]/.test(c))) tr.dataset.pin = "";
-    for (const [h, cell] of row) {
+    for (const [h, cell, url] of row) {
       const td = tr.insertCell();
-      if (h !== "TICKER") {
+      // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo. (#455) A shadow
+      // table's cell may carry its source page as a third element; only https ever becomes a link.
+      const href = h === "TICKER" ? "https://finance.yahoo.com/quote/" + encodeURIComponent(cell) : url;
+      if (!href?.startsWith("https://")) {
         td.textContent = cell;
         continue;
       }
-      // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo.
-      td.append(Object.assign(document.createElement("a"), {
-        href: "https://finance.yahoo.com/quote/" + encodeURIComponent(cell),
-        target: "_blank",
-        rel: "noopener",
-        textContent: cell,
-      }));
-      if (fresh.has(cell)) td.className = "new";
+      td.append(Object.assign(document.createElement("a"), { href, target: "_blank", rel: "noopener", textContent: cell }));
+      if (h === "TICKER" && fresh.has(cell)) td.className = "new";
     }
   });
   box.appendChild(t);

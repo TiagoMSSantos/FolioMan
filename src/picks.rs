@@ -4525,13 +4525,13 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     let attention = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "The company's name"),
+        ("NAME", "The Wikipedia article the views were counted on; click to open it"),
         ("VIEWS YoY", "Median over the last 12 complete months of each month's English Wikipedia page views ÷ the same month a year before, as a % change"),
     ]);
     let berkshire = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "The company's name; upper case = OpenFIGI's issuer name for a stock the screen does not price, — = neither has one"),
+        ("NAME", "The company's name; upper case = OpenFIGI's issuer name for a stock the screen does not price, — = neither has one; click to open the 13F filing on sec.gov"),
         ("WEIGHT", "The holding's share of the 13F's total reported value"),
         ("STATUS", "Vs the quarter before: new, added (more than 5% more shares), trimmed (below 95% of the shares) or held"),
         ("SHARES Δ", "Change in shares held vs the quarter before; new = not held then"),
@@ -4543,7 +4543,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("NAME", "The company's name; — = the screen does not price it"),
         ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter), YouTube ×N (mentions in recent Dumb Money Live videos), hand list"),
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
-        ("WHY", "The hand list's claim, else the newest video title, else the superinvestor count"),
+        ("WHY", "The hand list's claim, else the newest video title, else the superinvestor count; click to open that source"),
     ]);
     BTreeMap::from([
         ("lanes", lanes),

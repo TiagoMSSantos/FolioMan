@@ -2058,6 +2058,13 @@ pub struct BrkRow {
     shares: u64,
     /// The 13F `<value>`, in the filing's unit: only its share of the total is printed.
     value: u64,
+    /// (#455) The newest 13F's sec.gov filing index, NAME's link; "" = none.
+    filing: String,
+}
+
+/// (#455) A `[header, cell]` pair, plus the page's link for the cell when `url` is not empty.
+fn linked(header: &str, cell: &str, url: &str) -> Value {
+    if url.is_empty() { serde_json::json!([header, cell]) } else { serde_json::json!([header, cell, url]) }
 }
 
 /// (#442) Newest quarter against the prior one: `new` from nothing, `added` by the buy rule
@@ -2105,7 +2112,7 @@ pub fn brk_rows(holdings: &[BrkRow], quotes: &[Quote]) -> Value {
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["TICKER", h.ticker],
-                ["NAME", name.unwrap_or("—")],
+                linked("NAME", name.unwrap_or("—"), &h.filing),
                 ["WEIGHT", weight],
                 ["STATUS", brk_status(h.prev, h.shares)],
                 ["SHARES Δ", delta],
@@ -2179,8 +2186,13 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     }
     let list: Vec<(String, String, String)> =
         read(&list_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let window = brk_window(list);
+    // (#455) NAME's link: the newest quarter's original filing, as an amendment lists only what it adds
+    let filing = window.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2))).map_or(String::new(), |(acc, ..)| {
+        format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}-index.htm", BRK_CIK.trim_start_matches('0'), acc.replace('-', ""))
+    });
     let mut filings: Vec<Brk13f> = Vec::new();
-    for (acc, report, filed) in brk_window(list) {
+    for (acc, report, filed) in window {
         let path = sec_cache_path(&format!("_brk13f2_{acc}")); // (#442) 2 = with `<value>`
         let mut parsed: Option<(String, HashMap<String, (u64, u64)>)> = read(&path).and_then(|s| serde_json::from_str(&s).ok());
         if parsed.is_none() && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
@@ -2238,7 +2250,7 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
             let bought = buys.get(&c).map(|b| b.0.clone()).unwrap_or_default();
             let (ticker, name) = ticker_of.get(&c).cloned().unwrap_or((c, String::new()));
             let twin = eu.get(&ticker).cloned().unwrap_or_default();
-            BrkRow { ticker, twin, name, bought, prev, shares, value }
+            BrkRow { ticker, twin, name, bought, prev, shares, value, filing: filing.clone() }
         })
         .collect();
     (bought, holds, rows)
@@ -2277,24 +2289,28 @@ pub struct SocRow {
     hand: bool,
     newest: String,
     why: String,
+    /// (#455) WHY's link: the hand list's source, else the newest video, else the Dataroma stock page.
+    link: String,
 }
 
 /// (#443) The feed's entries, newest first as YouTube lists them: (published day, title, title + " " +
-/// description), entities decoded. An entry missing a title or date is skipped.
-fn soc_videos(xml: &str) -> Vec<(String, String, String)> {
+/// description, (#455) its watch link or ""), entities decoded. An entry missing a title or date is skipped.
+fn soc_videos(xml: &str) -> Vec<(String, String, String, String)> {
     let field = |e: &str, tag: &str| {
         regex::Regex::new(&format!(r"(?s)<{tag}>(.*?)</{tag}>"))
             .expect("literal regex")
             .captures(e)
             .map(|c| c[1].replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&"))
     };
+    let link = regex::Regex::new(r#"<link rel="alternate" href="([^"]+)""#).expect("literal regex");
     regex::Regex::new(r"(?s)<entry>(.*?)</entry>")
         .expect("literal regex")
         .captures_iter(xml)
         .filter_map(|e| {
             let (title, day) = (field(&e[1], "title")?, field(&e[1], "published")?.get(..10)?.to_string());
             let text = format!("{title} {}", field(&e[1], "media:description").unwrap_or_default());
-            Some((day, title, text))
+            let url = link.captures(&e[1]).map_or(String::new(), |c| c[1].replace("&amp;", "&"));
+            Some((day, title, text, url))
         })
         .collect()
 }
@@ -2330,12 +2346,13 @@ fn soc_key(name: &str) -> Option<&str> {
 
 /// (#443) Every pooled equity whose [`soc_key`] is a whole word of a video's text, in its exact case: a
 /// case-blind match read the boilerplate's "strategy" and "best" as MSTR and BBY. Each as (quote, videos
-/// naming it, the newest one's day and title).
+/// naming it, the newest one's day, title and (#455) link).
 /// shortcut: a first word shared by several names ("First", "General") marks them all; a hand alias map
 /// if a false hit ever shows on the page.
-fn soc_hits<'a>(videos: &[(String, String, String)], quotes: &'a [Quote]) -> Vec<(&'a Quote, usize, String, String)> {
+#[allow(clippy::type_complexity)]
+fn soc_hits<'a>(videos: &[(String, String, String, String)], quotes: &'a [Quote]) -> Vec<(&'a Quote, usize, String, String, String)> {
     let word = regex::Regex::new(r"[A-Za-z][A-Za-z0-9&'-]+").expect("literal regex");
-    let words: Vec<HashSet<&str>> = videos.iter().map(|(_, _, t)| word.find_iter(t).map(|m| m.as_str()).collect()).collect();
+    let words: Vec<HashSet<&str>> = videos.iter().map(|(_, _, t, _)| word.find_iter(t).map(|m| m.as_str()).collect()).collect();
     quotes
         .iter()
         .filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY"))
@@ -2343,7 +2360,8 @@ fn soc_hits<'a>(videos: &[(String, String, String)], quotes: &'a [Quote]) -> Vec
             let key = soc_key(&q.name)?;
             let named: Vec<usize> = (0..videos.len()).filter(|&i| words[i].contains(key)).collect();
             let newest = named.iter().max_by(|&&a, &&b| videos[a].0.cmp(&videos[b].0))?;
-            Some((q, named.len(), videos[*newest].0.clone(), videos[*newest].1.clone()))
+            let (day, title, _, link) = &videos[*newest];
+            Some((q, named.len(), day.clone(), title.clone(), link.clone()))
         })
         .collect()
 }
@@ -2364,11 +2382,11 @@ fn soc_row<'r>(rows: &'r mut Vec<SocRow>, us: &str, name: &str, eu: &HashMap<Str
     &mut rows[i]
 }
 
-/// (#444) Every source folded into one row per stock. WHY is the hand list's claim and source, else the
-/// newest video's title, else the Dataroma count; NEWEST is the newest dated source, else the quarter.
+/// (#444) Every source folded into one row per stock. WHY is the hand list's claim, else the newest
+/// video's title, else the Dataroma count, (#455) each linked to where it came from; NEWEST is the newest dated source, else the quarter.
 /// Most sources first, then most buyers, then most videos, then the ticker.
 fn soc_merge(
-    hits: &[(&Quote, usize, String, String)],
+    hits: &[(&Quote, usize, String, String, String)],
     supers: &(String, Vec<(String, String, u32)>),
     picks: &[SocPick],
     eu: &HashMap<String, String>,
@@ -2376,17 +2394,19 @@ fn soc_merge(
 ) -> Vec<SocRow> {
     let mut rows = Vec::new();
     for (sym, name, n) in &supers.1 {
-        soc_row(&mut rows, sym, name, eu, quotes).buyers = *n;
+        let r = soc_row(&mut rows, sym, name, eu, quotes);
+        r.buyers = *n;
+        r.link = format!("https://www.dataroma.com/m/stock.php?sym={}", sym.replace('-', ".")); // back to Dataroma's dot
     }
-    for (q, n, day, title) in hits {
+    for (q, n, day, title, link) in hits {
         let r = soc_row(&mut rows, &q.ticker, &q.name, eu, quotes);
-        (r.videos, r.newest, r.why) = (*n, day.clone(), title.clone());
+        (r.videos, r.newest, r.why, r.link) = (*n, day.clone(), title.clone(), link.clone());
     }
     for p in picks {
         let r = soc_row(&mut rows, &p.ticker, "—", eu, quotes);
         r.hand = true;
         r.newest = r.newest.clone().max(p.date.clone());
-        r.why = format!("{} {}", p.said, p.source);
+        (r.why, r.link) = (p.said.clone(), p.source.clone());
     }
     for r in &mut rows {
         if r.newest.is_empty() {
@@ -2431,7 +2451,7 @@ fn soc_table(rows: &[SocRow]) -> Value {
                 ["NAME", r.name],
                 ["SOURCES", sources.join("; ")],
                 ["NEWEST", r.newest],
-                ["WHY", r.why],
+                linked("WHY", &r.why, &r.link),
             ])
         })
         .collect()
@@ -2583,10 +2603,13 @@ fn attn_rows(top: &[(String, f64)], titles: &BTreeMap<String, String>) -> Value 
     top.iter()
         .enumerate()
         .map(|(i, (t, r))| {
+            let title = titles.get(t).map_or("", String::as_str);
+            // (#455) NAME opens the article the views were counted on
+            let url = if title.is_empty() { String::new() } else { format!("https://en.wikipedia.org/wiki/{}", wiki_path(title)) };
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["TICKER", t],
-                ["NAME", titles.get(t).map_or("", String::as_str)],
+                linked("NAME", title, &url),
                 ["VIEWS YoY", format!("{:+.1}%", (r - 1.0) * 100.0)],
             ])
         })
@@ -8936,6 +8959,7 @@ pub(crate) mod tests {
             prev,
             shares,
             value,
+            filing: "https://f".into(),
         };
         let q = |t: &str, kind: &str, name: &str| Quote { instrument_type: kind.to_string(), ..Quote::stub(t, "€1", "", name) };
         let quotes = [q("CB", "EQUITY", "Chubb"), q("ABEA.DE", "EQUITY", "Alphabet A"), q("SPY", "ETF", "SPDR S&P 500")];
@@ -8949,15 +8973,16 @@ pub(crate) mod tests {
         assert_eq!(
             brk_rows(&holdings, &quotes),
             serde_json::json!([
-                [["#", "1"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A"], ["WEIGHT", "40.0%"], ["STATUS", "trimmed"], ["SHARES Δ", "-10.0%"], ["BOUGHT", "2026-Q1"]],
-                [["#", "2"], ["TICKER", "CB"], ["NAME", "Chubb"], ["WEIGHT", "20.0%"], ["STATUS", "added"], ["SHARES Δ", "+10.0%"], ["BOUGHT", "2026-Q2"]],
-                [["#", "3"], ["TICKER", "DAL"], ["NAME", "—"], ["WEIGHT", "10.0%"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
-                [["#", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A"], ["WEIGHT", "10.0%"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
+                [["#", "1"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A", "https://f"], ["WEIGHT", "40.0%"], ["STATUS", "trimmed"], ["SHARES Δ", "-10.0%"], ["BOUGHT", "2026-Q1"]],
+                [["#", "2"], ["TICKER", "CB"], ["NAME", "Chubb", "https://f"], ["WEIGHT", "20.0%"], ["STATUS", "added"], ["SHARES Δ", "+10.0%"], ["BOUGHT", "2026-Q2"]],
+                [["#", "3"], ["TICKER", "DAL"], ["NAME", "—", "https://f"], ["WEIGHT", "10.0%"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
+                [["#", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A", "https://f"], ["WEIGHT", "10.0%"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
             ])
         );
         help_titles("berkshire", &brk_rows(&holdings, &quotes)[0]);
-        let zero = [b("X", "", "", "", 1, 1, 0)];
+        let zero = [BrkRow { filing: String::new(), ..b("X", "", "", "", 1, 1, 0) }];
         assert_eq!(brk_rows(&zero, &[])[0][3], serde_json::json!(["WEIGHT", "—"]), "no value in hand, no weight");
+        assert_eq!(brk_rows(&zero, &[])[0][2], serde_json::json!(["NAME", "—"]), "(#455) no filing, no link");
     }
 
     /// (#437) A letter-led 13F CUSIP is a CINS and maps as one; a digit-led one stays a CUSIP.
@@ -9097,7 +9122,7 @@ pub(crate) mod tests {
         assert_eq!(
             got,
             serde_json::json!([
-                [["#", "1"], ["TICKER", "AJG"], ["NAME", "Arthur J. Gallagher & Co."], ["VIEWS YoY", "+50.0%"]],
+                [["#", "1"], ["TICKER", "AJG"], ["NAME", "Arthur J. Gallagher & Co.", "https://en.wikipedia.org/wiki/Arthur_J._Gallagher_%26_Co."], ["VIEWS YoY", "+50.0%"]],
                 [["#", "2"], ["TICKER", "ZZ"], ["NAME", ""], ["VIEWS YoY", "-12.5%"]],
             ])
         );
@@ -9143,15 +9168,17 @@ pub(crate) mod tests {
 
     #[test]
     fn soc_videos_parse_and_decode() {
-        let xml = "<feed><entry><title>Amazon &amp; Robinhood</title><published>2026-09-29T14:00:00+00:00</published>\
+        let xml = "<feed><link rel=\"alternate\" href=\"https://channel\"/>\
+                   <entry><title>Amazon &amp; Robinhood</title><link rel=\"alternate\" href=\"https://v?a=1&amp;b=2\"/>\
+                   <published>2026-09-29T14:00:00+00:00</published>\
                    <media:description>He&#39;s &quot;buying&quot;</media:description></entry>\
                    <entry><title>no date</title></entry>\
                    <entry><title>Bare</title><published>2026-09-28T01:00:00+00:00</published></entry></feed>";
         assert_eq!(
             soc_videos(xml),
             [
-                ("2026-09-29".into(), "Amazon & Robinhood".into(), "Amazon & Robinhood He's \"buying\"".into()),
-                ("2026-09-28".into(), "Bare".into(), "Bare ".into()),
+                ("2026-09-29".into(), "Amazon & Robinhood".into(), "Amazon & Robinhood He's \"buying\"".into(), "https://v?a=1&b=2".into()),
+                ("2026-09-28".into(), "Bare".into(), "Bare ".into(), String::new()),
             ]
         );
     }
@@ -9184,7 +9211,7 @@ pub(crate) mod tests {
             q("META", "EQUITY", "Meta Platforms"),
             q("AMZN-ETF", "ETF", "Amazon Tracker"),
         ];
-        let v = |d: &str, t: &str| (d.to_string(), t.to_string(), t.to_string());
+        let v = |d: &str, t: &str| (d.to_string(), t.to_string(), t.to_string(), format!("https://yt/{d}"));
         let videos = [
             v("2026-09-29", "Amazon and Robinhood, my strategy"),
             v("2026-09-30", "Amazon again, IBM, Tesla and Meta"),
@@ -9192,7 +9219,7 @@ pub(crate) mod tests {
         ];
         let hits = soc_hits(&videos, &quotes);
         // a 3-letter key (IBM) never matches, a 4-letter one (Meta) does; case-blind would add MSTR
-        let got: Vec<(&str, usize, &str)> = hits.iter().map(|(q, n, d, _)| (q.ticker.as_str(), *n, d.as_str())).collect();
+        let got: Vec<(&str, usize, &str)> = hits.iter().map(|(q, n, d, _, _)| (q.ticker.as_str(), *n, d.as_str())).collect();
         assert_eq!(got, [("HOOD", 1, "2026-09-29"), ("AMZ.DE", 2, "2026-09-30"), ("TSLA", 2, "2026-09-30"), ("META", 1, "2026-09-30")]);
         let supers = ("2026-Q2".to_string(), [("AMZN", "Amazon", 10), ("MSFT", "Microsoft", 12), ("BRK-B", "Berkshire", 9)].map(|(t, n, b)| (t.to_string(), n.to_string(), b)).to_vec());
         let pick = |t: &str, d: &str| SocPick { ticker: t.into(), date: d.into(), said: "said".into(), source: "url".into() };
@@ -9204,12 +9231,12 @@ pub(crate) mod tests {
         let table = soc_table(&rows);
         assert_eq!(
             table[0],
-            serde_json::json!([["#", "1"], ["TICKER", "AMZ.DE"], ["NAME", "Amazon.com, Inc."], ["SOURCES", "superinvestors 10; YouTube ×2; hand list"], ["NEWEST", "2026-09-30"], ["WHY", "said url"]])
+            serde_json::json!([["#", "1"], ["TICKER", "AMZ.DE"], ["NAME", "Amazon.com, Inc."], ["SOURCES", "superinvestors 10; YouTube ×2; hand list"], ["NEWEST", "2026-09-30"], ["WHY", "said", "url"]])
         );
         assert_eq!(table[1][3], serde_json::json!(["SOURCES", "YouTube ×1; hand list"]));
         assert_eq!(table[1][4], serde_json::json!(["NEWEST", "2026-10-01"]));
-        assert_eq!(table[3], serde_json::json!([["#", "4"], ["TICKER", "BRK-B"], ["NAME", "Berkshire"], ["SOURCES", "superinvestors 9"], ["NEWEST", "2026-Q2"], ["WHY", "bought by 9 superinvestors in 2026-Q2"]]));
-        assert_eq!(table[4][5], serde_json::json!(["WHY", "Amazon again, IBM, Tesla and Meta"]));
+        assert_eq!(table[3], serde_json::json!([["#", "4"], ["TICKER", "BRK-B"], ["NAME", "Berkshire"], ["SOURCES", "superinvestors 9"], ["NEWEST", "2026-Q2"], ["WHY", "bought by 9 superinvestors in 2026-Q2", "https://www.dataroma.com/m/stock.php?sym=BRK.B"]]));
+        assert_eq!(table[4][5], serde_json::json!(["WHY", "Amazon again, IBM, Tesla and Meta", "https://yt/2026-09-30"]));
         assert_eq!(table[6][2], serde_json::json!(["NAME", "—"]));
         help_titles("social", &table[0]);
     }
