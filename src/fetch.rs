@@ -4350,7 +4350,7 @@ async fn yahoo_fund_facts_fill(
         eprintln!("fetch: Yahoo crumb handshake failed — filling fund facts from justETF instead");
     }
 
-    // (TER/AUM) justETF mops up whatever still has no TER — the field that actually reads n/a. This used
+    // (TER/AUM) justETF mops up whatever still has no TER or no AUM. This used
     // to run ONLY when the handshake was dead, an either/or that made it unreachable the moment the
     // handshake was repaired, so the holes it exists to fill just stayed empty.
     //
@@ -4358,11 +4358,14 @@ async fn yahoo_fund_facts_fill(
     // them but a TER for only 65, because its fund coverage is US-centric and this universe is EU UCITS.
     // justETF is keyless and EU-UCITS-native, so it is the one remaining source for that column.
     //
-    // Gated on TER alone rather than "any hole": triggering on AUM too would roughly double the page
-    // count for the field Yahoo already serves well. Bounded by `queried`, so it can never exceed the
-    // same BUDGET, and each answer is cached — the holes converge across runs instead of refetching.
-    let residual: Vec<String> =
-        queried.into_iter().filter(|s| !bf_ter.contains_key(s) && !ter_map.contains_key(s)).collect();
+    // (#453) Any hole, not TER alone. TER-only assumed Yahoo serves AUM well, but its crumb is dead on the
+    // Pages runner, so 772 cached funds sat with a TER and an n/a AUM nobody ever asked justETF for.
+    // Bounded by `queried`, so it can never exceed the same BUDGET, and each answer is cached — the
+    // holes converge across runs instead of refetching.
+    let residual: Vec<String> = queried
+        .into_iter()
+        .filter(|s| (!bf_ter.contains_key(s) && !ter_map.contains_key(s)) || (!bf_aum.contains_key(s) && !aum_map.contains_key(s)))
+        .collect();
     if !residual.is_empty() {
         for (sym, ter, aum) in justetf_fund_facts_fill(client, urls, &residual, isin_of, &mut cache, today).await {
             if !bf_ter.contains_key(&sym) {
@@ -10270,6 +10273,7 @@ pub(crate) mod tests {
                 "PASTCAP.DE":  [past_the_cap.to_string(), 0.88, 8.8e8],
                 "CORRUPT.DE":  ["not-a-date", 0.66, 6.6e8],
                 "TERONLY.DE":  [today.to_string(), 0.15, serde_json::Value::Null],
+                "YDAY.DE":     [(today - chrono::Duration::days(1)).to_string(), 0.31, 3.1e8],
             })
             .to_string(),
         )
@@ -10308,6 +10312,7 @@ pub(crate) mod tests {
             "TERONLY.DE",
             "AUMBF.DE",
             "TERBF.DE",
+            "YDAY.DE",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -10334,6 +10339,7 @@ pub(crate) mod tests {
             ("STALE.DE", "IE00STALE"),
             ("AUMBF.DE", "IE00AUMBF"),
             ("TERBF.DE", "IE00TERBF"),
+            ("YDAY.DE", "IE00YDAY"),
         ]
         .iter()
         .map(|(s, i)| (s.to_string(), i.to_string()))
@@ -10377,12 +10383,10 @@ pub(crate) mod tests {
         assert_eq!(ter.get("AUMBF.DE"), Some(&0.20), "uncached BF TER hole -> justETF is the only source");
         assert!(!aum.contains_key("AUMBF.DE"), "BF holds this AUM — justETF's 1.6988e10 must not override it");
 
-        // BF already answers the TER, so this fund is filtered OUT of the residual and justETF is never
-        // asked about it — even though its AUM is a hole and it does sit on the fetch list. The residual
-        // gate is an AND: widening it to an OR would ask anyway, and the answer's AUM would land here,
-        // since the AUM guard has no reason to refuse a fund BF has no AUM for.
+        // (#453) BF answers the TER but nobody has its AUM, so the AUM hole alone sends it to justETF.
+        // Under the old TER-only residual this AUM stayed n/a forever.
         assert!(!ter.contains_key("TERBF.DE"), "BF holds this TER");
-        assert!(!aum.contains_key("TERBF.DE"), "and the residual gate is AND, not OR — it is never asked");
+        assert_eq!(aum.get("TERBF.DE"), Some(&1.6988e10), "an AUM hole alone asks justETF");
 
         // (fund staleness) THE BOUNDARY, pinned from both sides. Yahoo's handshake is dead upstream, so
         // this comparison is the only thing standing between "last week's TER, silently" and `n/a` —
@@ -10408,6 +10412,11 @@ pub(crate) mod tests {
         let banked: HashMap<String, (String, Option<f64>, Option<f64>)> =
             serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written back")).expect("json");
         assert_eq!(banked.get("STALE.DE"), Some(&(today.to_string(), Some(0.20), Some(1.6988e10))));
+        // Served from yesterday's row AND due a refetch, with both fields in hand: no hole, so justETF
+        // is never asked. `or_insert` would hide an answer in the returned maps, so the proof is the
+        // cache keeping yesterday's row rather than justETF's restamped one.
+        let yday = (today - chrono::Duration::days(1)).to_string();
+        assert_eq!(banked.get("YDAY.DE"), Some(&(yday, Some(0.31), Some(3.1e8))), "no hole -> never asked");
     }
 
     /// (TER/AUM) `justetf_fund_facts_fill` on its own, for the two things its caller structurally
