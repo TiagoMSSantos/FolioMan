@@ -3359,6 +3359,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin" },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
+    // (#447) GICS, stocks only: the book's sector concentration at a glance, which the rank never shows
+    ColSpec { key: "sector", hdr: "SECTOR", width: 0, right: false, help: "Stocks: GICS sector, so a book leaning on one industry shows" },
     ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true, help: "Last close, converted to euros" },
     // (#395) market value € = `shares_out` × price_eur: a stock's newest complete-FY diluted weighted-average
     // shares (so up to ~1y old and a few % off after buybacks; a split after the last 10-K reads 1/N until
@@ -3384,6 +3386,10 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true, help: "Years of price history since listing: how much record backs CAGR and LEG" },
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: standard deviation of daily returns over the last 252 sessions (a daily figure, not annualized)" },
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart" },
+    // (#447) the footer's hold-pain stats on the page. None = under 5 years of closes, never a fake 100%
+    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of all rolling 5-year windows that ended above where they started" },
+    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years" },
+    ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average" },
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback" },
@@ -3396,6 +3402,11 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true, help: "Crypto only: market cap ÷ realized cap (CoinMetrics), each coin valued at the price it last moved. Below 1 = the market sits under its holders' average cost" },
     // one column, two denominators (`core::quality_return`), no per-row flag
     ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity, or on assets where equity is negative or under 1/20th of assets (heavy buyback filers)" },
+    // (#447) the balance sheet, stocks only, off `quote.fund` (filed statements). Display only: never scored
+    ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings" },
+    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash" },
+    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched" },
+    ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold" },
@@ -3617,6 +3628,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             }
         }
         "r2" => format!("{:.2}", quote.trend_r2),
+        "win5y" => quote.roll5y_pos_pct.map_or("n/a".to_string(), |v| format!("{v:.0}%")),
+        "worst5y" => quote.worst_5y_pct.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        "uw" => quote.underwater_yrs.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // Signed, because `above_ma_pct` alone cannot say which of three states a row is in: it clamps at
         // zero (`core::above_long_ma_pct`), so "40% below its own 200wk trend" and "no 200wk history yet"
         // both used to print an identical `0%`. `below_ma_pct` is the mirror clamp and is already on the
@@ -3692,6 +3706,18 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // and hiding a figure the score is already acting on was the inconsistency, not the cure.
         // NEGATIVE-equity filers likewise never reach here: HCA prints its real +9%, not a fake -113%.
         "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        // (#447) balance sheet, stocks only. ND/EBITDA needs a positive EBITDA: dividing by a loss flips
+        // the sign and reads as net cash
+        "roic" | "fcf" | "nde" | "icov" | "sector" if stock_only_na => "—".to_string(),
+        "roic" => quote.fund.as_ref().and_then(|f| f.roic).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "fcf" => quote.fund.as_ref().and_then(|f| f.fcf_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "nde" => quote
+            .fund
+            .as_ref()
+            .and_then(|f| f.net_debt.zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
+            .map_or("n/a".to_string(), |(d, e)| format!("{:.1}x", d / e)),
+        "icov" => quote.fund.as_ref().and_then(|f| f.interest_cover).map_or("n/a".to_string(), |v| format!("{v:.0}x")),
+        "sector" => quote.sector.clone().unwrap_or_else(|| "n/a".to_string()),
         // Read the Option `dividend_yields` already carries rather than `dividend_yield_1y`, whose
         // `unwrap_or(0.0)` collapses two different facts into one: Some(0.0) = pays NOTHING (MNST, and
         // it's a real, knowable 0.00%), None = no price or too little history to say. Printing both as
@@ -4154,10 +4180,13 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 // (#79) Consts rather than three array literals at the `print_picks` calls, because the web payload
 // builds the same three tables and a page that hides a different column set is a page that quietly
 // stops being the terminal's row.
-const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv"];
-const HIDE_ETF: &[&str] = &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap"];
-const HIDE_CRYPTO: &[&str] =
-    &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"];
+const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom"];
+const HIDE_ETF: &[&str] =
+    &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector"];
+const HIDE_CRYPTO: &[&str] = &[
+    "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
+    "icov", "sector",
+];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
 /// OWN NAME width. Inserted into `column_widths` rather than set on `w.name` because `col_width` reads
@@ -6667,6 +6696,39 @@ mod tests {
         assert_eq!(cc("net", &st, 0.0, None, ""), "55.6");
         assert_eq!(cc("rev-yoy", &eq, 0.0, None, ""), "—"); // ETF
         assert_eq!(cc("net", &cq, 0.0, None, ""), "—"); // crypto
+        // (#447) hold pain on every class; balance sheet + SECTOR stocks only, n/a until filled
+        assert_eq!(cc("win5y", &st, 0.0, None, ""), "n/a", "under 5 years of closes makes no claim");
+        st.roll5y_pos_pct = Some(87.4);
+        st.worst_5y_pct = Some(-23.6);
+        st.underwater_yrs = Some(2.24);
+        assert_eq!(cc("win5y", &st, 0.0, None, ""), "87%");
+        assert_eq!(cc("worst5y", &st, 0.0, None, ""), "-24%");
+        assert_eq!(cc("uw", &st, 0.0, None, ""), "2.2");
+        assert_eq!(cc("roic", &st, 0.0, None, ""), "n/a");
+        assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a");
+        assert_eq!(cc("sector", &st, 0.0, None, ""), "n/a");
+        st.sector = Some("Health Care".into());
+        st.fund = Some(core::FundFactors {
+            roic: Some(31.24),
+            fcf_margin: Some(-4.0),
+            interest_cover: Some(12.4),
+            net_debt: Some(-30.0),
+            ebitda_ttm: Some(20.0),
+            ..Default::default()
+        });
+        assert_eq!(cc("sector", &st, 0.0, None, ""), "Health Care");
+        assert_eq!(cc("roic", &st, 0.0, None, ""), "31.2%");
+        assert_eq!(cc("fcf", &st, 0.0, None, ""), "-4.0%");
+        assert_eq!(cc("icov", &st, 0.0, None, ""), "12x");
+        assert_eq!(cc("nde", &st, 0.0, None, ""), "-1.5x", "net cash reads below zero");
+        st.fund.as_mut().unwrap().ebitda_ttm = Some(0.0);
+        assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
+        st.fund.as_mut().unwrap().ebitda_ttm = Some(-20.0);
+        assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a", "a loss must not read as net cash");
+        for k in ["roic", "fcf", "nde", "icov", "sector"] {
+            assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
+            assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
+        }
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5

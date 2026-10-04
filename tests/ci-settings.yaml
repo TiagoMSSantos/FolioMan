@@ -1068,6 +1068,7 @@ widths:
     - name        # instrument name
     - ticker      # Yahoo symbol
     - market      # listing country / venue
+    - sector      # (#447) GICS sector (stocks only) — the book's industry concentration
     - price       # current close (EUR)
     - mcap        # (#395) market value € — stocks: newest-FY diluted shares × price; crypto: circulating supply × price; ETFs show AUM instead
     - cagr        # whole-life CAGR (%/yr since listing) — display only; the growth rank scores `leg`, not this
@@ -1087,16 +1088,24 @@ widths:
     - 20y         # % vs 20 years ago
     - vol         # daily-return stdev (~1y) — risk / "normal swing"
     - maxdd       # worst peak-to-trough drop on the ~10y daily chart — pain endured
+    - win5y       # (#447) % of rolling 5y windows that ended up — how often patience paid
+    - worst5y     # (#447) worst rolling 5y price change — the wrong-moment buyer's 5 years
+    - uw          # (#447) longest stretch below a prior high, years — how LONG the MAXDD lasted
     - r2          # log-trend steadiness 0..1 — smooth compounder vs lumpy
     - abv-ma      # % above the 200wk SMA — overextension / blow-off gauge
     - pe          # trailing P/E (SEC filings first, FMP fallback; else n/a)
     - peg         # price ÷ annual EPS ÷ long CAGR — valuation-vs-growth (<1 cheap for its growth); (#400) not the P/E cell ÷ CAGR, which is TTM
     - mvrv        # crypto market cap ÷ realized cap (CoinMetrics) — no earnings term, a P/B analogue (<1 = below holders' cost basis)
     - roe         # trailing return-on-equity (needs FMP key; else n/a) — quality
+    - roic        # (#447) operating profit ÷ (equity + net debt) (stocks only)
+    - fcf         # (#447) free cash flow % of revenue (stocks only) — do profits turn into cash
+    - nde         # (#447) net debt ÷ EBITDA (stocks only); <0 = net cash, >3 = stretched
+    - icov        # (#447) operating profit ÷ interest expense (stocks only); <2 = distress risk
     - ter         # ETF expense ratio %/yr — the one cost that compounds against a 40y hold (Börse Frankfurt, then FMP, then Yahoo; ETFs only)
     - aum         # ETF fund size (EUR-approx, Börse Frankfurt) — sub-€100M funds risk liquidation/merge (ETFs only)
     - use         # ETF share class: Acc/Dist — Dist payouts taxed yearly; Acc compounds tax-deferred (ETFs only)
     - repl        # ETF replication: Swap/Full/Opt — counterparty structure; swap-based US funds dodge dividend WHT (ETFs only)
+    - dom         # ETF legal domicile from the ISIN: IE keeps more US dividends than LU (ETFs only)
     - rev-yoy     # newest complete-FY revenue growth vs prior FY (stocks only; report pipeline, top rows enriched)
     - eps-yoy     # newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
     - net         # newest complete-FY net margin % (stocks only) — profitability quality

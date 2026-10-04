@@ -84,13 +84,14 @@ function apply(n) {
 // (#445) Column groups for the three ranked tables, finviz-style. A header NOT listed here shows in
 // every view, so RANK NAME TICKER BUY% (and any column added later) can never be hidden by accident.
 const VIEW = {
-  MARKET: "overview", "PRICE(EUR)": "overview", SCORE: "overview",
+  MARKET: "overview", SECTOR: "overview", DOM: "overview", "PRICE(EUR)": "overview", SCORE: "overview",
   CAGR: "returns", YRS: "returns", "1D": "returns", "1W": "returns", "1M": "returns", "2Y": "returns",
   "5Y": "returns", "8Y": "returns", "20Y": "returns", "S-8Y": "returns",
   VOL: "risk", MAXDD: "risk", R2: "risk", "ABV-MA": "risk", "OFF-HI": "risk", TURNOVER: "risk",
+  "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk", "INT-COV": "risk",
   MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
-  MVRV: "value",
+  MVRV: "value", ROIC: "value", "FCF%": "value",
 };
 function view(v) {
   for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto) table")) {
