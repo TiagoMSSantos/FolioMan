@@ -1850,9 +1850,12 @@ pub async fn fetch_insider_history(
         let (Some(acc), Some(doc)) = (accs.get(i).and_then(|x| x.as_str()), docs.get(i).and_then(|x| x.as_str())) else {
             continue;
         };
+        // (#450) `primaryDocument` is `xslF345X06/x.xml`, the HTML render, which parses to nothing. The
+        // raw XML sits at the accession root under the same file name.
+        let doc = doc.rsplit('/').next().unwrap_or(doc);
         let url = urls.sec_form4.replace("{cik}", cik_trim).replace("{acc}", &acc.replace('-', "")).replace("{doc}", doc);
         match sec_get_text(client, &url, &urls.sec_user_agent).await {
-            Some(xml) => txns.extend(parse_form4_txns(&xml)), // an xsl-HTML primaryDocument yields nothing -> harmless
+            Some(xml) => txns.extend(parse_form4_txns(&xml)),
             None => missed = true,
         }
     }
@@ -1916,10 +1919,16 @@ fn next_earnings(v: &Value, today: NaiveDate) -> Option<NaiveDate> {
 #[mutants::skip]
 pub async fn enrich_earnings(client: &Client, quotes: &mut [core::Quote], targets: &HashSet<String>) {
     let today = chrono::Local::now().date_naive();
+    let mut refused: Vec<String> = Vec::new();
     for q in quotes.iter_mut().filter(|q| targets.contains(&q.ticker)) {
-        if let Ok(v) = quote_summary_json(client, &us_symbol(&q.ticker), "calendarEvents").await {
-            q.next_earnings = next_earnings(&v, today);
+        match quote_summary_json(client, &us_symbol(&q.ticker), "calendarEvents").await {
+            Ok(v) => q.next_earnings = next_earnings(&v, today),
+            Err(why) => refused.push(why),
         }
+    }
+    // (#450) the first Pages run printed EARN n/a on every row with no trace of why
+    if let Some(why) = refused.first() {
+        eprintln!("earnings: {} calendarEvents GET(s) refused, first: {why}", refused.len());
     }
 }
 
@@ -8491,7 +8500,7 @@ pub(crate) mod tests {
         let (base, client, _) = routed_stub(vec![
             ("/320193/000032019326000002/new.xml", "<transactionDate><value>2026-06-29</value></transactionDate><transactionCode>P</transactionCode>"),
             ("/320193/000032019326000001/old.xml", "<transactionDate><value>2026-06-28</value></transactionDate><transactionCode>S</transactionCode>"),
-            ("", r#"{"filings": {"recent": {"form": ["4", "10-Q", "4"], "filingDate": ["2026-07-01", "2026-06-30", "2026-06-30"], "accessionNumber": ["0000320193-26-000002", "0000320193-26-000003", "0000320193-26-000001"], "primaryDocument": ["new.xml", "q.htm", "old.xml"]}}}"#),
+            ("", r#"{"filings": {"recent": {"form": ["4", "10-Q", "4"], "filingDate": ["2026-07-01", "2026-06-30", "2026-06-30"], "accessionNumber": ["0000320193-26-000002", "0000320193-26-000003", "0000320193-26-000001"], "primaryDocument": ["xslF345X06/new.xml", "q.htm", "old.xml"]}}}"#),
         ]);
         let mut urls = stub_urls(&base);
         urls.sec_form4 = format!("{base}{{cik}}/{{acc}}/{{doc}}");
