@@ -2100,6 +2100,8 @@ pub async fn run(args: Vec<String>) {
         let (holdings, mix) = fetch::yahoo_top_holdings(&client, &syms).await;
         (holdings, mix, syms)
     };
+    // (#465) TOP10% + TD-1Y/TD-5Y, display only, on Quote so universe.json carries them to the engine
+    fetch::enrich_etf_cells(&client, &settings.urls, &mut quotes, &bench, &holdings).await;
     let mut fund_pe: picks::FundPeMap = mix
         .iter()
         .filter_map(|(t, (_, _, pe, as_of))| {

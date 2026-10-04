@@ -120,6 +120,15 @@ jobs:
           key: folioman-wikiviews-${{ github.run_id }}
           restore-keys: folioman-wikiviews-
 
+      # (#465) The ETF TD-1Y/TD-5Y cells' yearly tracking-difference series, one trackingdifferences.com page
+      # per printed fund. Its own entry so warm runs refetch nothing until the cache is 30 days old.
+      - name: Restore TD cache
+        uses: actions/cache@v6
+        with:
+          path: .td_cache.json
+          key: folioman-td-${{ github.run_id }}
+          restore-keys: folioman-td-
+
       # (#366) The three PERMANENT BLS decades behind the USA 20Y/30Y/40Y inflation cells. `.fmp_cache`
       # is otherwise cold on every run, so each run would re-ask BLS for all three plus the fresh
       # window: 4 keyless calls per run against a 25/day per-IP cap. With this it is 1. Its own step,

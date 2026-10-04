@@ -1109,6 +1109,9 @@ widths:
     - use         # ETF share class: Acc/Dist — Dist payouts taxed yearly; Acc compounds tax-deferred (ETFs only)
     - repl        # ETF replication: Swap/Full/Opt — counterparty structure; swap-based US funds dodge dividend WHT (ETFs only)
     - dom         # ETF legal domicile from the ISIN: IE keeps more US dividends than LU (ETFs only)
+    - top10       # (#465) % of the fund in its 10 biggest holdings: concentration risk (ETFs only)
+    - td1y        # (#465) newest full-year tracking difference vs the index, trackingdifferences.com (ETFs only)
+    - td5y        # (#465) mean yearly tracking difference over the last 5 full years, n/a under 3 (ETFs only)
     - rev-yoy     # newest complete-FY revenue growth vs prior FY (stocks only; report pipeline, top rows enriched)
     - rev5y       # (#463) revenue CAGR over the last 5 filed years (stocks only) — proven top-line compounding
     - eps-yoy     # newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through

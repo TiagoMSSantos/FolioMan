@@ -907,6 +907,9 @@ pub struct Urls {
     pub sec_user_agent: String,    // (#450) Nasdaq's next earnings date for the EARN cell. Keyless, no handshake. {sym} = US ticker.
     #[serde(default = "default_nasdaq_earnings_url")]
     pub nasdaq_earnings: String,
+    // (#465) a fund's yearly tracking difference for the TD-1Y/TD-5Y cells. Keyless HTML. {isin} = the fund's ISIN.
+    #[serde(default = "default_trackingdifferences_url")]
+    pub trackingdifferences: String,
 }
 
 /// (Item 4) Default SEC ticker→CIK map (one fetch, cached): a JSON object of {cik_str, ticker, title}.
@@ -923,6 +926,11 @@ fn default_sec_submissions_url() -> String {
 /// (#450) Default Nasdaq earnings-date endpoint: `data.reportText` names the next report date.
 fn default_nasdaq_earnings_url() -> String {
     "https://api.nasdaq.com/api/analyst/{sym}/earnings-date".to_string()
+}
+
+/// (#465) Default trackingdifferences.com fund page: the `tdChart` script block holds the yearly TD.
+fn default_trackingdifferences_url() -> String {
+    "https://www.trackingdifferences.com/ETF/ISIN/{isin}".to_string()
 }
 
 /// (#448) Default Form 4 document URL, out of `submissions`' accessionNumber/primaryDocument columns.
@@ -2678,6 +2686,7 @@ mod tests {
             (default_sec_submissions_url(), "https://data.sec.gov/", &["{cik}"][..]),
             (default_sec_form4_url(), "https://www.sec.gov/", &["{cik}", "{acc}", "{doc}"][..]),
             (default_nasdaq_earnings_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
+            (default_trackingdifferences_url(), "https://www.trackingdifferences.com/", &["{isin}"][..]),
             (default_sec_companyfacts_url(), "https://data.sec.gov/", &["{cik}"][..]),
             (default_sec_companyconcept_url(), "https://data.sec.gov/", &["{cik}", "{concept}"][..]),
             (default_euronext_track_url(), "https://live.euronext.com/", &[][..]),

@@ -904,6 +904,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         shares_out: None, // (#395) enrich_income_stmt for stocks, screen's CoinGecko stamp for coins
         insider_90d: None, // (#448) enrich_insider, printed stock rows only
         next_earnings: None, // (#449) enrich_earnings, printed stock rows only
+        top10: None, // (#465) enrich_etf_cells, printed funds only
+        td_years: Vec::new(),
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -1922,6 +1924,75 @@ pub async fn enrich_earnings(client: &Client, urls: &Urls, quotes: &mut [core::Q
         match get_json(client, &urls.nasdaq_earnings.replace("{sym}", &us_symbol(&q.ticker))).await {
             Some(v) => q.next_earnings = next_earnings(&v, today),
             None => eprintln!("earnings: Nasdaq refused {}", q.ticker),
+        }
+    }
+}
+
+/// (#465) `{ISIN: ["YYYY-MM-DD", [TD %, oldest year first]]}` for `enrich_etf_cells`. An empty list
+/// is cached too (no page for that fund: the site redirects home); a refused GET is not.
+const TD_CACHE_PATH: &str = ".td_cache.json";
+/// (#465) TD is published once a year, so a month-old answer is as good as today's.
+const TD_CACHE_DAYS: i64 = 30;
+
+/// (#465) The `TD (%)` series in a trackingdifferences.com fund page's `tdChart` block, oldest
+/// year first. A page without the block (the home page an unknown ISIN redirects to) reads empty.
+fn td_years(html: &str) -> Vec<f64> {
+    regex::Regex::new(r"(?s)tdChart=.*?name:'TD \(%\)'.*?data:\[(.*?)\]")
+        .expect("literal regex")
+        .captures(html)
+        .map(|c| c[1].split(',').filter_map(|v| v.trim().parse().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// (#465) DISPLAY ONLY: TOP10% (the `holdings` the fund P/E already fetched) and the TD-1Y/TD-5Y
+/// series on the funds in `syms`, the printed ETF + CORE rows, then copied to every other listing of
+/// the same fund name, since the ETF table prints each venue. The ISIN comes from inverting
+/// `.isin_cache.json`, so a fund the BF/venue pipeline never resolved reads n/a.
+pub async fn enrich_etf_cells(
+    client: &Client,
+    urls: &Urls,
+    quotes: &mut [core::Quote],
+    syms: &[String],
+    holdings: &HashMap<String, Vec<(String, f64)>>,
+) {
+    let read = |p: &str| std::fs::read_to_string(crate::config::data_path(p)).ok();
+    let isins: HashMap<String, String> = read(ISIN_CACHE_PATH)
+        .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(isin, sym)| (sym, isin))
+        .collect();
+    let mut cache: HashMap<String, (String, Vec<f64>)> =
+        read(TD_CACHE_PATH).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let today = chrono::Local::now().date_naive();
+    let mut pace = 0; // carried, not branched on the index: see `resolve_eu_listings`
+    for q in quotes.iter_mut().filter(|q| syms.contains(&q.ticker)) {
+        q.top10 = holdings.get(&q.ticker).map(|h| h.iter().map(|(_, w)| w).sum::<f64>() * 100.0).filter(|s| *s > 0.0);
+        let Some(isin) = isins.get(&q.ticker) else { continue };
+        if !cache.get(isin).is_some_and(|(d, _)| cache_age_days(d, today).is_some_and(|a| a < TD_CACHE_DAYS)) && !offline() {
+            // a small hobby site: one page a second, and only the 2xx answer is believed
+            tokio::time::sleep(StdDuration::from_millis(pace)).await;
+            pace = 1000;
+            match client.get(urls.trackingdifferences.replace("{isin}", isin)).send().await {
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(html) = r.text().await {
+                        cache.insert(isin.clone(), (today.to_string(), td_years(&html)));
+                    }
+                }
+                _ => eprintln!("td: trackingdifferences refused {isin}"),
+            }
+        }
+        q.td_years = cache.get(isin).map(|(_, t)| t.clone()).unwrap_or_default();
+    }
+    let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
+    let by_name: HashMap<String, (Option<f64>, Vec<f64>)> = quotes
+        .iter()
+        .filter(|q| syms.contains(&q.ticker))
+        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone())))
+        .collect();
+    for q in quotes.iter_mut().filter(|q| !syms.contains(&q.ticker)) {
+        if let Some((t, d)) = by_name.get(&q.name.to_lowercase()) {
+            (q.top10, q.td_years) = (*t, d.clone());
         }
     }
 }
@@ -8702,6 +8773,52 @@ pub(crate) mod tests {
         assert_eq!(quotes[2].next_earnings, None, "a body that is not JSON");
     }
 
+    /// (#465) The TD series is read out of the `tdChart` block only, oldest first, trailing comma
+    /// dropped; the TER line after it and a page with no chart read nothing.
+    #[test]
+    fn td_years_reads_the_td_series() {
+        let page = "x=1;data:[9];tdChart=Highcharts.chart('c',{xAxis:{categories:['2024','2025',]},series:[{type:'column',name:'TD (%)',data:[-0.1,0.25,]},{name:'TER',data:[0.07,0.07,]}]});";
+        assert_eq!(td_years(page), vec![-0.1, 0.25]);
+        assert!(td_years("<html>home page</html>").is_empty());
+    }
+
+    /// (#465) `enrich_etf_cells`: ZZTDA is fetched (its ISIN off the inverted ISIN cache) and cached,
+    /// ZZTDB is served off a fresh cache row while port 1 refuses its stale twin, ZZTDC has no ISIN,
+    /// and ZZTDA2 is not printed but shares ZZTDA's name, so it copies both cells.
+    #[tokio::test]
+    async fn enrich_etf_cells_stamps_printed_funds_and_their_listings() {
+        let page = |d: &'static str| -> &'static str { Box::leak(format!("tdChart=x;name:'TD (%)',data:[{d}]").into_boxed_str()) };
+        // B is routed so a wrongful refetch of its fresh row would show; E is not, so it answers 404
+        let routes = vec![("ZZISINA", page("0.3,-0.2,")), ("ZZISINB", page("9.9,")), ("ZZISIND", page("0.5,"))];
+        let (base, client, _) = routed_stub(routes);
+        let mut urls = stub_urls(&base);
+        urls.trackingdifferences = format!("{base}{{isin}}");
+        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE"});
+        std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), isin_cache.to_string()).expect("seed isin cache");
+        let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).to_string();
+        let td = serde_json::json!({"ZZISINB": [ago(0), [0.1]], "ZZISIND": [ago(30), [0.2]], "ZZISINE": [ago(40), [0.7]]});
+        std::fs::write(crate::config::data_path(TD_CACHE_PATH), td.to_string()).expect("seed td cache");
+        let mut quotes: Vec<core::Quote> =
+            ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        quotes[3].name = quotes[0].name.to_uppercase();
+        let syms: Vec<String> = ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDD", "ZZTDE"].iter().map(|t| t.to_string()).collect();
+        let holdings = HashMap::from([
+            ("ZZTDA".to_string(), vec![("X".to_string(), 0.25), ("Y".to_string(), 0.15)]),
+            ("ZZTDC".to_string(), vec![("X".to_string(), 0.0)]),
+        ]);
+        enrich_etf_cells(&client, &urls, &mut quotes, &syms, &holdings).await;
+        assert!(quotes[0].top10.is_some_and(|t| (t - 40.0).abs() < 1e-9), "{:?}", quotes[0].top10);
+        assert_eq!(quotes[0].td_years, vec![0.3, -0.2]);
+        assert_eq!(quotes[1].td_years, vec![0.1], "a fresh cache row is served, not refetched");
+        assert_eq!((quotes[1].top10, &quotes[2].td_years), (None, &vec![]), "no holdings, no ISIN");
+        assert_eq!(quotes[2].top10, None, "zero-weight holdings print n/a, not 0%");
+        assert_eq!(quotes[4].td_years, vec![0.5], "a 30-day-old row is stale and refetched");
+        assert_eq!(quotes[5].td_years, vec![0.7], "a refused refetch keeps the stale row, never a 404 page's []");
+        assert_eq!((quotes[3].top10, &quotes[3].td_years), (quotes[0].top10, &quotes[0].td_years), "same fund name");
+        let saved = std::fs::read_to_string(crate::config::data_path(TD_CACHE_PATH)).expect("td cache");
+        assert!(saved.contains("ZZISINA"), "the fetched answer is cached: {saved}");
+    }
+
     /// (#448) A `filingDate` cell before the day ends the walk; on the day, garbled or missing does not.
     #[test]
     fn filed_before_reads_the_filing_date_cell() {
@@ -10071,7 +10188,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 37] = [
+        const FIELDS: [&str; 38] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -10080,6 +10197,7 @@ pub(crate) mod tests {
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
             "sec_submissions", "sec_form4", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
             "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys", "nasdaq_earnings",
+            "trackingdifferences",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field

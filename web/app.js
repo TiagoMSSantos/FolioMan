@@ -89,6 +89,7 @@ const VIEW = {
   MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
   MVRV: "value", ROIC: "value", "FCF%": "value", "INS-B/S": "value",
+  "TOP10%": "risk", "TD-1Y": "value", "TD-5Y": "value",
   "FCF-YLD": "value", "P/S": "value", "EV/EBITDA": "value",
 };
 function view(v) {

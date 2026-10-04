@@ -3417,6 +3417,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class: Acc reinvests income (tax deferred), Dist pays it out (taxed yearly); n/a or — = only Börse Frankfurt reports it, and this listing is not there" },
     ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index: Full (holds every name), Opt (optimised) or Samp (sampled subset), Swap (a counterparty pays the index), Hybr (hybrid); n/a or — = only Börse Frankfurt reports it, and this listing is not there" },
     ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's legal home, from its ISIN: IE loses 15% of US dividends to tax by treaty, LU 30% (≈ +0.2%/yr to IE on a US or world fund)" },
+    ColSpec { key: "top10", hdr: "TOP10%", width: 7, right: true, help: "Funds: share of the fund in its 10 biggest holdings; high = a few companies drive the result, whatever the fund's name says" },
+    ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out (trackingdifferences.com)" },
+    ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before" },
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 7, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; n/a = under 5 years filed" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
@@ -3771,6 +3774,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "repl" => quote.replication.map_or("n/a".to_string(), str::to_string),
         "dom" if etf_only_na => "—".to_string(),
         "dom" => quote.domicile.clone().unwrap_or_else(|| "n/a".to_string()),
+        // (#465) look-through concentration and realized cost, stamped on the printed funds
+        "top10" | "td1y" | "td5y" if etf_only_na => "—".to_string(),
+        "top10" | "td1y" | "td5y" => fund_cell(key, quote),
         // newest complete-FY income-statement snapshot (report pipeline; enriched only for displayed
         // stock rows). "—" for ETF/crypto (no income statement); "n/a" = not enriched / no data.
         "rev-yoy" if stock_only_na => "—".to_string(),
@@ -4211,13 +4217,13 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 // (#79) Consts rather than three array literals at the `print_picks` calls, because the web payload
 // builds the same three tables and a page that hides a different column set is a page that quietly
 // stops being the terminal's row.
-const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom"];
+const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
     "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
-    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc",
+    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -5143,8 +5149,21 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
 /// The first column has no name because it is the flag column (`o` = already held), exactly as the
 /// terminal prints it. It reaches the page as a blank header over a mostly-blank column, which is
 /// honest: on the published run there is no broker portfolio to read, so it is empty by construction.
-pub(crate) const HOLD_CORE_COLS: [&str; 11] =
-    ["", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM"];
+pub(crate) const HOLD_CORE_COLS: [&str; 14] =
+    ["", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM", "TOP10%", "TD-1Y", "TD-5Y"];
+
+/// (#465) TOP10% / TD-1Y / TD-5Y, one spelling for the lane tables and CORE. TD-5Y averages the
+/// newest 5 full years and reads n/a under 3, so one odd launch year never prints as a record.
+fn fund_cell(key: &str, q: &Quote) -> String {
+    match key {
+        "top10" => q.top10.map_or("n/a".to_string(), |v| format!("{v:.0}%")),
+        "td1y" => q.td_years.last().map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        _ => {
+            let t = &q.td_years[q.td_years.len().saturating_sub(5)..];
+            if t.len() < 3 { "n/a".to_string() } else { format!("{:+.2}%", t.iter().sum::<f64>() / t.len() as f64) }
+        }
+    }
+}
 
 /// (#250) One CORE row's cells, in `HOLD_CORE_COLS` order. Extracted from [`print_hold_core`], which
 /// is `#[mutants::skip]`ped — the same move (#79) made on `print_lane`: the formatting stays in the
@@ -5167,6 +5186,9 @@ pub(crate) fn hold_core_cells(q: &Quote, owned: &Owned) -> Vec<String> {
         q.use_of_profits.unwrap_or("—").to_string(),
         q.replication.unwrap_or("—").to_string(),
         q.domicile.as_deref().unwrap_or("n/a").to_string(),
+        fund_cell("top10", q),
+        fund_cell("td1y", q),
+        fund_cell("td5y", q),
     ]
 }
 
@@ -5442,14 +5464,17 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
     let h = HOLD_CORE_COLS; // (#250) one spelling of the column names, shared with the cells and the page
-    println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10]);
+    println!(
+        "  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4} {:>6} {:>6} {:>6}",
+        h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11], h[12], h[13]
+    );
     let mut any_owned = false;
     for q in cores {
         let c = hold_core_cells(q, owned); // (#250) the page publishes these very cells
         any_owned |= !c[0].is_empty();
         println!(
-            "  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}",
-            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10],
+            "  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4} {:>6} {:>6} {:>6}",
+            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12], c[13],
         );
     }
     if any_owned {
@@ -6870,6 +6895,24 @@ mod tests {
         f.ebitda_ttm = Some(0.0);
         assert_eq!(cc("ps", &st, 0.0, None, ""), "n/a", "no revenue, no ratio");
         assert_eq!(cc("evebitda", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
+        // (#465) fund-only cells: concentration and the realized-cost series
+        assert_eq!(cc("top10", &eq, 0.0, None, ""), "n/a");
+        assert_eq!(cc("td1y", &eq, 0.0, None, ""), "n/a");
+        eq.top10 = Some(41.6);
+        eq.td_years = vec![0.9, 0.1, -0.2, -0.3, -0.2, -0.1];
+        assert_eq!(cc("top10", &eq, 0.0, None, ""), "42%");
+        assert_eq!(cc("td1y", &eq, 0.0, None, ""), "-0.1%", "the newest year");
+        assert_eq!(cc("td5y", &eq, 0.0, None, ""), "-0.14%", "the 2016 +0.9 is past the 5-year window");
+        eq.td_years = vec![0.1, -0.2, -0.5];
+        assert_eq!(cc("td5y", &eq, 0.0, None, ""), "-0.20%", "3 years are enough");
+        eq.td_years.remove(0);
+        assert_eq!(cc("td5y", &eq, 0.0, None, ""), "n/a", "2 years are not");
+        let mut sq = Quote::stub("S", "€1", "", "Co");
+        sq.instrument_type = "EQUITY".into();
+        for k in ["top10", "td1y", "td5y"] {
+            assert_eq!(cc(k, &sq, 0.0, None, ""), "—", "{k} on a stock");
+            assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
+        }
         // (#463) the 5y income-statement levels
         assert_eq!(cc("rev5y", &st, 0.0, None, ""), "n/a", "under 5 years filed");
         let f = st.fund.as_mut().unwrap();
@@ -7012,6 +7055,8 @@ mod tests {
             shares_out: None,
             insider_90d: None,
             next_earnings: None,
+            top10: None,
+            td_years: Vec::new(),
             annual_brief: None,
         }
     };
@@ -9830,11 +9875,12 @@ mod tests {
     /// CAGR or the fallback off a missing leg has to die here or it lives.
     #[test]
     fn hold_core_cells_are_the_printed_cells() {
-        let q = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        let mut q = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        (q.top10, q.td_years) = (Some(17.4), vec![0.2, 0.0, -0.1, 0.1]);
         let owned = Owned { stocks: ["vwce".to_string()].into(), ..Default::default() };
         assert_eq!(
             hold_core_cells(&q, &owned),
-            ["o", "Vanguard FTSE All-World UCITS ETF", "VWCE.DE", "Germany", "+9%", "12.0", "0.22%", "€20.0B", "Acc", "Opt", "IE"]
+            ["o", "Vanguard FTSE All-World UCITS ETF", "VWCE.DE", "Germany", "+9%", "12.0", "0.22%", "€20.0B", "Acc", "Opt", "IE", "17%", "+0.1%", "+0.05%"]
         );
         assert_eq!(hold_core_cells(&q, &Owned::default())[0], "", "no broker overlay -> no marker");
         // every optional leg empty: a missing number prints its fallback, it never blanks a column
@@ -9846,9 +9892,10 @@ mod tests {
         bare.use_of_profits = None;
         bare.replication = None;
         bare.domicile = None;
+        (bare.top10, bare.td_years) = (None, vec![]);
         assert_eq!(
             hold_core_cells(&bare, &Owned::default()),
-            ["", "Vanguard FTSE All-World UCITS ETF", "VWCE.DE", "Germany", "n/a", "—", "n/a", "n/a", "—", "—", "n/a"]
+            ["", "Vanguard FTSE All-World UCITS ETF", "VWCE.DE", "Germany", "n/a", "—", "n/a", "n/a", "—", "—", "n/a", "n/a", "n/a", "n/a"]
         );
         // the page rows carry the printer's own column names, in the printer's order
         let rows = hold_core_web_rows(&[&q], &Owned::default());
