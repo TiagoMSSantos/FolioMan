@@ -474,7 +474,7 @@ async fn inflation_us_parses() {
 async fn constituent_ponds_parse() {
     let settings = config::load();
     let urls = &settings.urls;
-    for url in std::iter::once(&urls.sp500_csv).chain(&urls.constituents_csv) {
+    for url in std::iter::once(&urls.sp500_csv).chain(&urls.constituents_csv).filter(|u| u.starts_with("http")) {
         let Some(resp) = probe(fetch::client().get(url), url).await else { continue };
         let rows = core::pond_rows(url, &resp.text().await.unwrap_or_default(), &[]);
         let floor = if url == &urls.sp500_csv { 480 } else { 1 };

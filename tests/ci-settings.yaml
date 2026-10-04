@@ -20754,6 +20754,9 @@ urls:
   #
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
+    # (#459) hand-kept big US-listed ADRs (TSMC, Novo, SAP, ...) + the 9 Berkshire 13F names no pond
+    # carried; a non-http entry is read from disk. Ratios for non-1:1 ADSs live in `core::ads_ratio`.
+    - "tests/adr-pond.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
   # latest Bitcoin NUPL (net unrealized profit/loss), free on-chain sentiment gauge; `screen` prints it after the crypto table

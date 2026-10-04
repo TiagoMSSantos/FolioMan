@@ -4341,9 +4341,20 @@ pub fn restate_for_splits(rows: &mut [FundRow], splits: &[(NaiveDate, f64)]) -> 
 /// shortcut: one hand-kept row per ADS whose ratio isn't 1:1 (a census of the live pool on 2026-09-30:
 /// PDD alone; ASML, ARM, CCEP, SHOP and TRI are 1:1). A ratio change or a new ADS listing needs a dated
 /// row here; the PDD network net reds when its 20-F cover moves.
+///
+/// (#459) The `tests/adr-pond.csv` rows, each matched on 2026-10-04 by ADR close ÷ (home close × FX)
+/// to the 20-F ratio. TSM reads 6.0 on price for a 20-F ratio of 5: the ADR trades at a premium. AZN
+/// is 1:1 since its ordinary shares listed on NYSE directly.
 pub fn ads_ratio(ticker: &str) -> f64 {
     match ticker {
-        "PDD" => 4.0,
+        "TM" => 10.0,
+        "BABA" => 8.0,
+        "BP" => 6.0,
+        "TSM" | "HSBC" => 5.0,
+        "PDD" | "DEO" => 4.0,
+        "HDB" => 3.0,
+        "SHEL" | "BHP" | "GSK" => 2.0,
+        "SNY" => 0.5,
         _ => 1.0,
     }
 }
@@ -6085,6 +6096,8 @@ mod tests {
     #[test]
     fn restate_for_ads_moves_per_share_lines_onto_the_listing() {
         assert_eq!((ads_ratio("PDD"), ads_ratio("AAPL")), (4.0, 1.0));
+        let adr = ["TM", "BABA", "BP", "TSM", "HSBC", "DEO", "HDB", "SHEL", "BHP", "GSK", "SNY"].map(ads_ratio);
+        assert_eq!(adr, [10.0, 8.0, 6.0, 5.0, 5.0, 4.0, 3.0, 2.0, 2.0, 2.0, 0.5], "(#459) 20-F cover ratios");
         let row = FundRow {
             eps: Some(2.36),
             prior_eps: Some(2.6),

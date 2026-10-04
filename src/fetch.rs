@@ -5653,10 +5653,14 @@ pub async fn fetch_regulatory_etf_isins(client: &Client, urls: &Urls) -> Vec<Str
 ///
 /// (#372) An EMPTY pond warns like an unreachable one. `get_text` never reads the status, so a 404 or
 /// 429 page, or a reshaped CSV, arrived here as text, parsed to 0 rows and dropped ~500 stocks in silence.
+///
+/// (#459) An entry not starting with `http` is read from DISK, like `membership_csv`: the hand-kept
+/// `tests/adr-pond.csv` (big US-listed ADRs no index CSV carries, e.g. TSMC) rides here.
 pub async fn constituent_ponds(client: &Client, urls: &Urls, sectors: &[String]) -> Vec<Vec<(String, String)>> {
     let mut ponds: Vec<Vec<(String, String)>> = Vec::new();
     for url in std::iter::once(&urls.sp500_csv).chain(urls.constituents_csv.iter()) {
-        let pond = get_text(client, url).await.map(|t| core::pond_rows(url, &t, sectors)).unwrap_or_default();
+        let text = if url.starts_with("http") { get_text(client, url).await } else { std::fs::read_to_string(url).ok() };
+        let pond = text.map(|t| core::pond_rows(url, &t, sectors)).unwrap_or_default();
         if pond.is_empty() {
             eprintln!("fetch: constituents CSV {url} unavailable or 0 rows parsed — its stocks absent from the screen");
             continue;
@@ -11423,6 +11427,18 @@ pub(crate) mod tests {
         let ponds = constituent_ponds(&client, &urls, &["Technology".to_string()]).await;
         assert_eq!(ponds.len(), 1, "one endpoint served -> one pond");
         assert_eq!(ponds[0], [("AAPL".to_string(), "Technology".to_string())], "Energy filtered out");
+    }
+
+    /// (#459) A non-http entry reads the repo's own file from disk, and the live list parses whole.
+    #[tokio::test]
+    async fn constituent_ponds_reads_a_disk_pond() {
+        let (base, client) = stub_server("Symbol,Name,Sector\nAAPL,Apple,Technology");
+        let mut urls = stub_urls(&base);
+        urls.constituents_csv = vec!["tests/adr-pond.csv".to_string()];
+        let ponds = constituent_ponds(&client, &urls, &[]).await;
+        assert_eq!(ponds.len(), 2, "stub + disk");
+        assert!(ponds[1].contains(&("TSM".to_string(), "Information Technology".to_string())));
+        assert_eq!(ponds[1].len(), 29);
     }
 
     /// `sector_map` flattens those ponds ticker -> sector.
