@@ -344,6 +344,7 @@ pub struct Quote {
     pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
     pub shares_out: Option<f64>,       // (#395) units outstanding, for the MCAP cell (× price_eur): a stock's newest complete-FY diluted weighted-average share count (same rollup and scoping as rev_yoy), a coin's CoinGecko circulating supply. DISPLAY-ONLY; None for funds, which show AUM instead
     pub insider_90d: Option<(u32, u32)>, // (#448) open-market insider (buys, sales) dated in the 90 days to today, from SEC Form 4s. DISPLAY-ONLY: `fetch::enrich_insider` fills the printed stock rows only; None = no SEC coverage or a run that hit the fetch budget
+    pub next_earnings: Option<NaiveDate>, // (#449) next scheduled earnings report, from Yahoo's calendarEvents. DISPLAY-ONLY: `fetch::enrich_earnings` fills the printed stock rows only
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy
     pub splits: Vec<(NaiveDate, f64)>, // (#82) (effective date, ratio) from the chart's events.splits; a 4:1 split is 4.0, ascending. NOT SCORED and never will be — it exists so `track` and `sim`, which replay prices journaled BEFORE a split against a series retro-adjusted AFTER one, can restate the old price into today's share definition. Empty for stubs and for `backtest_quote`, which walks one internally consistent series and has nothing to restate
 }
@@ -437,6 +438,7 @@ impl Quote {
             buyback_yoy: None,
             shares_out: None,
             insider_90d: None,
+            next_earnings: None,
             splits: Vec::new(),
         }
     }

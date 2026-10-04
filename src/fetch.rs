@@ -903,6 +903,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         buyback_yoy: None,
         shares_out: None, // (#395) enrich_income_stmt for stocks, screen's CoinGecko stamp for coins
         insider_90d: None, // (#448) enrich_insider, printed stock rows only
+        next_earnings: None, // (#449) enrich_earnings, printed stock rows only
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -1769,7 +1770,13 @@ async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
         }
         m
     });
-    let key = EU_TO_US
+    map.get(&us_symbol(ticker)).cloned()
+}
+
+/// (EU listing) A Xetra twin's US symbol, else the ticker upper-cased. [`sec_cik`] keys on it, and
+/// (#449) so does the EARN lookup: Yahoo publishes no earnings calendar for the Xetra line.
+fn us_symbol(ticker: &str) -> String {
+    EU_TO_US
         .get_or_init(|| {
             let eu: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(EU_LISTING_CACHE_PATH))
                 .ok()
@@ -1779,8 +1786,7 @@ async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
         })
         .get(&ticker.to_uppercase())
         .cloned()
-        .unwrap_or_else(|| ticker.to_uppercase());
-    map.get(&key).cloned()
+        .unwrap_or_else(|| ticker.to_uppercase())
 }
 
 /// (EU listing) `US -> EU` inverted to `EU -> US`, for [`sec_cik`]. Read once from the resolver's cache.
@@ -1889,6 +1895,33 @@ pub async fn enrich_insider(client: &Client, urls: &Urls, quotes: &mut [core::Qu
 // each full-submission `.txt` (cover page and info table in one request) -> shares per CUSIP per
 // quarter -> the CUSIPs bought -> OpenFIGI CUSIP -> US ticker, plus the Xetra twin the EU swap may have
 // renamed it to. Every cache lives under `.sec_cache`, which Pages already carries run to run.
+
+/// (#449) The earliest `calendarEvents` earnings date on or after `today`. Yahoo lists one date, or
+/// a two-date window while the company has not confirmed, so the earliest one still ahead wins.
+fn next_earnings(v: &Value, today: NaiveDate) -> Option<NaiveDate> {
+    v.pointer("/quoteSummary/result/0/calendarEvents/earnings/earningsDate")?
+        .as_array()?
+        .iter()
+        .filter_map(|d| DateTime::from_timestamp(d.get("raw")?.as_i64()?, 0))
+        .map(|t| t.date_naive())
+        .filter(|d| *d >= today)
+        .min()
+}
+
+/// (#449) DISPLAY ONLY: the EARN cell, each printed stock row's next earnings date. ~25 uncached
+/// quoteSummary GETs a run; a refused one leaves n/a. shortcut: no cache, add a daily one if Yahoo
+/// 429s ever show as a column of n/a.
+/// UNGRADEABLE, hence the skip: `quote_summary_json` hardcodes Yahoo's host, like `yahoo_crumb`.
+/// The parse is `next_earnings`, graded on its own.
+#[mutants::skip]
+pub async fn enrich_earnings(client: &Client, quotes: &mut [core::Quote], targets: &HashSet<String>) {
+    let today = chrono::Local::now().date_naive();
+    for q in quotes.iter_mut().filter(|q| targets.contains(&q.ticker)) {
+        if let Ok(v) = quote_summary_json(client, &us_symbol(&q.ticker), "calendarEvents").await {
+            q.next_earnings = next_earnings(&v, today);
+        }
+    }
+}
 
 /// (#436) Berkshire Hathaway Inc. One filer by design: the ask was to copy Buffett, not 13F filers.
 const BRK_CIK: &str = "0001067983";
@@ -8480,6 +8513,26 @@ pub(crate) mod tests {
         assert_eq!(empty_banked.as_deref(), Some("[]"));
         assert!(refused.is_none() && !refused_banked, "a failed GET is no answer and banks nothing");
         assert!(!sec_cache_path("AAPL").exists(), "the backtest's forever file is untouched");
+    }
+
+    /// (#449) The earliest date still ahead, today included; past dates, a missing block and a
+    /// garbled cell read as no date, never as a wrong one.
+    #[test]
+    fn next_earnings_takes_the_earliest_date_ahead() {
+        let at = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).expect("date");
+        let ts = |d: NaiveDate| d.and_hms_opt(20, 0, 0).expect("time").and_utc().timestamp();
+        let body = |dates: &[i64]| {
+            let cells: Vec<Value> = dates.iter().map(|t| serde_json::json!({"raw": t, "fmt": "x"})).collect();
+            serde_json::json!({"quoteSummary": {"result": [{"calendarEvents": {"earnings": {"earningsDate": cells}}}]}})
+        };
+        let today = at(2026, 10, 4);
+        let window = body(&[ts(at(2026, 10, 27)), ts(at(2026, 10, 22)), ts(at(2026, 7, 23))]);
+        assert_eq!(next_earnings(&window, today), Some(at(2026, 10, 22)), "the unconfirmed window's first day");
+        assert_eq!(next_earnings(&body(&[ts(today)]), today), Some(today), "reporting today still counts");
+        assert_eq!(next_earnings(&body(&[ts(at(2026, 7, 23))]), today), None, "only a past date");
+        assert_eq!(next_earnings(&serde_json::json!({"quoteSummary": {"result": []}}), today), None);
+        let garbled = serde_json::json!({"quoteSummary": {"result": [{"calendarEvents": {"earnings": {"earningsDate": [{"raw": "soon"}]}}}]}});
+        assert_eq!(next_earnings(&garbled, today), None);
     }
 
     /// (#448) A `filingDate` cell before the day ends the walk; on the day, garbled or missing does not.

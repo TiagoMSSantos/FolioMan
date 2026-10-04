@@ -3418,8 +3418,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares" },
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
-    // (#448) display only, the printed stock rows
+    // (#448)/(#449) display only, the printed stock rows
     ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage" },
+    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Yahoo. The price often jumps on the day; n/a = no date published" },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
@@ -3710,7 +3711,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // (#447) balance sheet, stocks only. ND/EBITDA needs a positive EBITDA: dividing by a loss flips
         // the sign and reads as net cash
-        "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" if stock_only_na => "—".to_string(),
+        "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" | "earn" if stock_only_na => "—".to_string(),
+        "earn" => quote.next_earnings.map_or("n/a".to_string(), |d| d.format("%m-%d").to_string()),
         "ins" => quote.insider_90d.map_or("n/a".to_string(), |(b, s)| format!("{b}/{s}")),
         "roic" => quote.fund.as_ref().and_then(|f| f.roic).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "fcf" => quote.fund.as_ref().and_then(|f| f.fcf_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
@@ -4185,10 +4187,11 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 // stops being the terminal's row.
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom"];
 const HIDE_ETF: &[&str] =
-    &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins"];
+    &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
+    "earn"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
-    "icov", "sector", "ins",
+    "icov", "sector", "ins", "earn",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -6731,7 +6734,10 @@ mod tests {
         assert_eq!(cc("ins", &st, 0.0, None, ""), "n/a", "(#448) no SEC coverage");
         st.insider_90d = Some((2, 7));
         assert_eq!(cc("ins", &st, 0.0, None, ""), "2/7");
-        for k in ["roic", "fcf", "nde", "icov", "sector", "ins"] {
+        assert_eq!(cc("earn", &st, 0.0, None, ""), "n/a", "(#449) no date published");
+        st.next_earnings = chrono::NaiveDate::from_ymd_opt(2026, 10, 22);
+        assert_eq!(cc("earn", &st, 0.0, None, ""), "10-22");
+        for k in ["roic", "fcf", "nde", "icov", "sector", "ins", "earn"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }
@@ -6850,6 +6856,7 @@ mod tests {
             buyback_yoy: None,
             shares_out: None,
             insider_90d: None,
+            next_earnings: None,
             annual_brief: None,
         }
     };
