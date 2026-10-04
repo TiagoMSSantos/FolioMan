@@ -12377,7 +12377,7 @@ mod tests {
         assert_eq!(tuning.growth_min_cagr, 19.0, "shipped CAGR gate moved — re-measure, then update this pin");
         assert_eq!(tuning.growth_max_peg, 1.6, "shipped PEG ceiling moved — re-measure, then update this pin");
         assert_eq!(tuning.growth_min_range_pct, 80.0, "80 is settled (70 and 50 both measured worse)");
-        assert_eq!(tuning.growth_min_1y_pct, 0.0, "removing this floor crashes the 20y lane edge -31%");
+        assert_eq!(tuning.growth_min_1y_pct, -0.3, "(#457) lowest floor with live and fixture books identical to 0.0; removing it crashes the lane edge -31%");
         assert_eq!(tuning.growth_min_leg_years, 5.0, "the 2Y rung ships only once the grid clears it — receipt beside the knob");
         // (2026-08-03) the 9-rung ladder's single peak: 20y lane edge +410.8 -> +459.3, rank-1 median
         // +6.0 -> +6.4, h2h 67% -> 76%, with +100 and +150 falling away on the other side.

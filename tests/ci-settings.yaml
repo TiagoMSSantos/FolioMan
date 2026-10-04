@@ -2071,7 +2071,19 @@ sizing:
 buy_heuristic:
   # --- GATES (fail any one -> excluded before scoring) ---
   min_1y_pct: -25.0              # [FOIL] on-sale only: reject if 1Y % <= this (the growth lane reads growth_min_1y_pct below, not this)
-  growth_min_1y_pct: 0.0         # RE-MEASURED AND RE-CONFIRMED 2026-08-03 (5-rung stress ladder). Loosening this is the single most
+  growth_min_1y_pct: -0.3        # (#457) 2026-10-04: lowest floor whose live AND fixture books are IDENTICAL to 0.0. Live = `backtest 20 universe fund pit`,
+                                 #   one session, one pond (4754/4732 cache), dotfiles restored before every run, 0.0 control run three times:
+                                 #     floor      0.0  -0.1..-0.6  -0.7..-0.9  -1.0  -1.5  -2.0  -2.5  -5.0  -7.5
+                                 #     samples    121     121         122       123   124   126   127   135   146
+                                 #     top-10 xs +0.6    +0.6        +0.6      +0.5  +0.5  +0.5  +0.5  +0.3  +0.4   (pts/yr vs ^GSPC)
+                                 #   -0.1..-0.6 admit no sample, so the live book is identical (-0.1 byte-identical; the others differ only in the
+                                 #   floor-relative `1Y+` notch rows). -0.7 admits one sample that ENTERS the top-10 book (holds 113 -> 114):
+                                 #   top-10 still prints +0.6, but the top-15..50 median slips +1.4 -> +1.3, so it is not provably equal.
+                                 #   The frozen FIXTURE is stricter: it holds a sample with 1Y in (-0.4, -0.3]. -0.4..-0.6 admit it, and it
+                                 #   ENTERS the book: 20y top-10 +3.5 -> +3.4, 8y +5.4 -> +5.2 (12y +2.2 -> +2.4). -0.1..-0.3 leave every
+                                 #   fixture book unchanged (only other gates' notch rows move, 23 lines). So -0.3 = lowest floor equal on BOTH.
+                                 #   Live it only admits names whose 1Y is in (-0.3, 0.0]. Everything below stays the record for 0.0 and still binds.
+                                 # RE-MEASURED AND RE-CONFIRMED 2026-08-03 (5-rung stress ladder). Loosening this is the single most
                                  #   expensive thing in the whole grid, and it is MONOTONE — every step down costs 20y lane edge:
                                  #     +10 (tighter) +397.4 | 0.0 SHIPPED +410.8 | -10 +331.9 | -25 +316.2 | off(-1e9) +287.5
                                  #   rho falls with it (+0.16 / +0.14 / +0.13 / +0.12 / +0.12). Tightening to +10 does not rescue it

@@ -221,9 +221,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   growth_max_above_ma ->off  n=18   fwd peer-relative  mean -252.3 | med -261.0 pts  vs shipped -138.0
   growth_require_lifetime_uptrend ->off admits 0 new names (gate not binding on this sample)
   growth_maxdd_cap ->off     admits 0 new names (gate not binding on this sample)
-  growth_min_leg_years ->2 (admits the 2Y rung) n=34   fwd peer-relative  mean +272.4 | med -38.3 pts  vs shipped +84.7  <- ADMITS NO WORSE THAN THE BOOK  <- SPLIT (tail-driven, read the median)
+  growth_min_leg_years ->2 (admits the 2Y rung) n=35   fwd peer-relative  mean +260.1 | med -45.9 pts  vs shipped +77.1  <- ADMITS NO WORSE THAN THE BOOK  <- SPLIT (tail-driven, read the median)
   growth_max_peg ->off       n=9    fwd peer-relative  mean -287.4 | med -375.2 pts  vs shipped -252.3
-  growth_min_5y_pct -15      n=4    fwd peer-relative  mean -165.1 | med -151.5 pts  vs shipped -28.6
+  growth_min_5y_pct -15      n=5    fwd peer-relative  mean -313.4 | med -167.0 pts  vs shipped -44.0
   growth_min_range_pct_8y -10 (live-only) admits 0 new names (gate not binding on this sample)
   growth_min_aum_etf x0.5 (live-only) admits 0 new names (gate not binding on this sample)
   growth_regime_slack_pct 0 (bear-only) n=8    fwd peer-relative  mean -198.3 | med -232.9 pts  vs shipped -110.0
@@ -393,9 +393,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   cagr       n=25     book +8.7%/yr  excess +2.4  win 65%  worst -17.0  OOS +7.3/-2.4  bar +3.3  top10 +2.4/-17.0  bar +3.3  ship FAIL
   1Y+        n=8      book +8.3%/yr  excess +2.4  win 58%  worst -17.9  OOS +9.6/-4.9  bar +2.8  top10 +2.4/-17.9  bar +2.8  ship FAIL
   stretch    n=18     book +6.9%/yr  excess +1.0  win 54%  worst -17.9  OOS +7.4/-5.1  bar +2.6  top10 +1.0/-17.9  bar +2.6  ship FAIL
-  history    n=34     book +11.0%/yr  excess +4.9  win 72%  worst -17.0  OOS +10.7/-0.7  bar +4.3  top10 +4.9/-17.0  bar +4.3  ship pass
+  history    n=35     book +11.0%/yr  excess +4.8  win 72%  worst -17.0  OOS +10.6/-0.7  bar +4.0  top10 +4.8/-17.0  bar +4.0  ship pass
   peg        n=9      book +8.4%/yr  excess +2.2  win 53%  worst -18.5  OOS +9.5/-5.1  bar +3.8  top10 +2.2/-18.5  bar +3.8  ship FAIL
-  5Y+        n=4      book +8.0%/yr  excess +1.8  win 56%  worst -17.9  OOS +9.4/-5.7  bar +2.2  top10 +1.8/-17.9  bar +2.2  ship FAIL
+  5Y+        n=5      book +7.9%/yr  excess +1.7  win 53%  worst -17.9  OOS +9.1/-5.7  bar +2.7  top10 +1.7/-17.9  bar +2.7  ship FAIL
   regime     n=8      book +7.9%/yr  excess +1.8  win 57%  worst -17.9  OOS +9.1/-5.1  bar +2.6  top10 +1.8/-17.9  bar +2.6  ship FAIL
   (n = samples: the cleared book's own, or what the notch adds. `excess`/`bar` are the UNCAPPED book — every admit bought at full weight — kept for continuity with (#324)..(#329). (#330): THE `ship` VERDICT DECIDES AND IT IS READ AT top10 (excess/worst, and the cleared row is the baseline it is measured against), the basket the journaled verdict publishes, where a cohort name must OUTRANK an incumbent to be bought: excess >= that column's `bar`, the p95 of 200 same-n cohorts drawn at random from the refused pool, cutoff-matched and entered at the cohort's own ranks, AND worst >= cleared -1.0, at 20y, 12y and 8y. `inert` = the cohort never reaches the published basket, so the notch changes nothing the tool prints — not a pass, and not a cost it was charged for through (#329). `bar n/a` = the null could not match the cohort's shape, so the row falls back to (#324)'s flat -0.1. `track` grades the same cohorts forward)
 

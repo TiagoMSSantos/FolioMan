@@ -49,7 +49,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       range       + 5Y+            1 winners     2.1% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 8Y+            1 winners     1.9% of the missed wealth   both near-miss:    0 ( 0.0%)
       range       + 1Y+            1 winners     1.5% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 9.7% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:12% 2:10% 3:19% 4:12% 5:14% 6:34%
+      -> exactly-2-gate winners hold 9.7% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:12% 2:10% 3:19% 4:12% 5:17% 6:31%
     why the ≥10× misses were missed (21 of 21 winners = 100% of their wealth; capture above is the rest):
       range                      12 winners    60.0% of the missed wealth   sole blocker:    0 ( 0.0%)
       cagr                        9 winners    40.0% of the missed wealth   sole blocker:    2 ( 7.7%)
@@ -185,7 +185,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   growth_max_above_ma ->off  n=10   fwd peer-relative  mean -74.2 | med -81.8 pts  vs shipped -31.9
   growth_require_lifetime_uptrend ->off admits 0 new names (gate not binding on this sample)
   growth_maxdd_cap ->off     admits 0 new names (gate not binding on this sample)
-  growth_min_leg_years ->2 (admits the 2Y rung) n=10   fwd peer-relative  mean +4.6 | med +16.3 pts  vs shipped +66.2  <- ADMITS NO WORSE THAN THE BOOK  <- TOO TIGHT (loosen this gate)
+  growth_min_leg_years ->2 (admits the 2Y rung) n=11   fwd peer-relative  mean +17.5 | med +27.4 pts  vs shipped +77.3  <- ADMITS NO WORSE THAN THE BOOK  <- TOO TIGHT (loosen this gate)
   growth_max_peg ->off       admits 0 new names (gate not binding on this sample)
   growth_min_5y_pct -15      n=4    fwd peer-relative  mean -61.8 | med -58.5 pts  vs shipped -8.7
   growth_min_range_pct_8y -10 (live-only) admits 0 new names (gate not binding on this sample)
@@ -268,7 +268,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   cagr       n=15     book +2.7%/yr  excess -4.2  win 19%  worst -17.0  OOS -2.0/-6.5  bar -2.3  top10 -4.2/-17.0  bar -2.3  ship FAIL
   1Y+        n=4      book +2.1%/yr  excess -5.1  win 13%  worst -23.3  OOS -2.3/-7.6  bar -3.8  top10 -5.1/-23.3  bar -3.8  ship FAIL
   stretch    n=10     book +0.7%/yr  excess -5.7  win 8%  worst -22.6  OOS -3.1/-8.3  bar -3.4  top10 -5.7/-22.6  bar -3.4  ship FAIL
-  history    n=10     book +3.7%/yr  excess -3.1  win 26%  worst -17.0  OOS +0.7/-6.5  bar -2.5  top10 -3.1/-17.0  bar -2.5  ship FAIL
+  history    n=11     book +4.0%/yr  excess -2.5  win 29%  worst -17.0  OOS +1.5/-6.5  bar -2.2  top10 -2.5/-17.0  bar -2.2  ship FAIL
   5Y+        n=4      book +2.7%/yr  excess -4.5  win 14%  worst -17.0  OOS -1.0/-7.9  bar -3.5  top10 -4.5/-17.0  bar -3.5  ship FAIL
   regime     n=5      book +2.0%/yr  excess -5.2  win 16%  worst -23.3  OOS -2.3/-7.8  bar -3.3  top10 -5.2/-23.3  bar -3.3  ship FAIL
   (n = samples: the cleared book's own, or what the notch adds. `excess`/`bar` are the UNCAPPED book — every admit bought at full weight — kept for continuity with (#324)..(#329). (#330): THE `ship` VERDICT DECIDES AND IT IS READ AT top10 (excess/worst, and the cleared row is the baseline it is measured against), the basket the journaled verdict publishes, where a cohort name must OUTRANK an incumbent to be bought: excess >= that column's `bar`, the p95 of 200 same-n cohorts drawn at random from the refused pool, cutoff-matched and entered at the cohort's own ranks, AND worst >= cleared -1.0, at 20y, 12y and 8y. `inert` = the cohort never reaches the published basket, so the notch changes nothing the tool prints — not a pass, and not a cost it was charged for through (#329). `bar n/a` = the null could not match the cohort's shape, so the row falls back to (#324)'s flat -0.1. `track` grades the same cohorts forward)
