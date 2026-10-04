@@ -1906,7 +1906,6 @@ pub async fn run(args: Vec<String>) {
         order
     };
     let targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
-    fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &targets).await;
     // (#436) display only: the `w`/(#442) `W` rank flags and the track `brk`/`brkh` shadow rows read it,
     // nothing scores it
     let (brk, brk_held, brk_holdings) = fetch::fetch_brk(&client, &settings.urls).await;
@@ -1917,6 +1916,11 @@ pub async fn run(args: Vec<String>) {
     let attention = fetch::fetch_attention(&client, &settings.urls).await;
     // (#444) display only: the `s` rank flag, track's `soc` row and the page's Social Arbitrage trading table
     let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
+    // (#467) after the three shadow tables, so their pool names get the same MCAP/REV-YoY/EPS-YoY/NET%/BUYBK
+    // cells the printed rows do: display only, and the 3-day SEC cache serves the repeats
+    let mut filled = targets.clone();
+    filled.extend(shadow_pool(&[&attention, &berkshire, &social], &quotes, &fetch::us_symbol));
+    fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
     // (#448) display only: the INS-B/S cell, last so the SEC fundamentals and the 13F lane spend the
     // shared SEC budget first
     fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
@@ -3528,6 +3532,17 @@ fn stamp_regime(quotes: &mut [Quote], spx: Option<&Quote>) {
 /// Discovery itself is free: it reads `trail_monthly`, `age_years` and `quote_currency`, all already
 /// on every quote, and issues no request. With the knob off nothing is written and the line is a
 /// suggestion, which is exactly what `bridge_hint_lines` has always printed.
+/// (#467) The pool tickers a shadow table (Attention, Berkshire, Social) prints: a row names a ticker, and the
+/// pool may hold that company on its own line or on a Xetra twin whose `us` symbol is the row's ticker.
+fn shadow_pool(tables: &[&serde_json::Value], quotes: &[Quote], us: &dyn Fn(&str) -> String) -> std::collections::HashSet<String> {
+    let shown: std::collections::HashSet<&str> = tables
+        .iter()
+        .flat_map(|t| t.as_array().into_iter().flatten())
+        .filter_map(|r| r.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str())
+        .collect();
+    quotes.iter().filter(|q| shown.contains(q.ticker.as_str()) || shown.contains(us(&q.ticker).as_str())).map(|q| q.ticker.clone()).collect()
+}
+
 fn journal_proxies(quotes: &[Quote], tuning: &crate::config::BuyHeuristic) -> String {
     let mut found = crate::picks::discover_proxies(quotes, tuning);
     let fresh = found.len();
@@ -4101,6 +4116,19 @@ mod tests {
 
     /// (#343) Discovery is off in both regimes, so the one line `run` prints about the lane says so
     /// and counts nothing.
+    /// (#467) A shadow row reaches the pool on the exact ticker or through a Xetra twin's US symbol; a pool
+    /// name no table prints, and a row the pool lacks, add nothing.
+    #[test]
+    fn shadow_pool_maps_rows_to_pool_tickers() {
+        let q = |t: &str| Quote::stub(t, "1", "", t);
+        let quotes = [q("AJG"), q("APC.DE"), q("ZZOFF")];
+        let attention = serde_json::json!([[["#", "1"], ["TICKER", "AJG"]], [["#", "2"], ["TICKER", "ZZNONE"]]]);
+        let berkshire = serde_json::json!([[["#", "1"], ["TICKER", "AAPL"]]]);
+        let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
+        let got = shadow_pool(&[&attention, &berkshire, &serde_json::json!(null)], &quotes, &us);
+        assert_eq!(got, ["AJG", "APC.DE"].iter().map(|t| t.to_string()).collect());
+    }
+
     #[test]
     fn journal_proxies_reports_discovery_off() {
         let line = journal_proxies(&[], &config::BuyHeuristic::default());
