@@ -34,6 +34,11 @@ pub struct Universe {
     /// pin the pool does not carry still shows. Empty when `screen` ran without an OpenFIGI key.
     #[serde(default)]
     pub aliases: HashMap<String, String>,
+    /// (#461) A printed stock's European line -> its US line's quote, which [`picks::stamp_us_twin`]
+    /// fills that row's n/a cells from. Only the rows `screen` printed: an upload that prints another
+    /// European line shows its n/a.
+    #[serde(default)]
+    pub twins: HashMap<String, Quote>,
 }
 
 /// The `.screen_universe.json` body. `base` is the merged config `screen` ran on (None = no config,
@@ -47,6 +52,7 @@ pub fn snapshot(
     inflation: &[Vec<(String, String)>],
     degraded: &[String],
     aliases: &HashMap<String, String>,
+    twins: &HashMap<String, Quote>,
 ) -> String {
     let u = Universe {
         generated: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -58,6 +64,7 @@ pub fn snapshot(
         inflation: inflation.to_vec(),
         degraded: degraded.to_vec(),
         aliases: aliases.clone(),
+        twins: twins.clone(),
     };
     serde_json::to_string(&u).unwrap_or_default()
 }
@@ -105,6 +112,7 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
         picks::stamp_buy(&mut top, &picks::buy_book(&ranked, &u.quotes, bh, &s.sizing, u.nupl, &HashMap::new()));
     }
     picks::stamp_index(&mut top, &u.quotes); // (#446) after BUY%, which it sits beside
+    picks::stamp_us_twin(&mut top, &u.twins, &s.widths, bh, &u.fund_pe);
     top["generated"] = u.generated.into();
     // only when there is something to say, so a pool that holds every pin stays byte-equal to `screen`
     if !(twins.is_empty() && missing.is_empty()) {
@@ -259,7 +267,7 @@ mod tests {
         let infl = vec![vec![("REGION".to_string(), "EU".to_string())]];
         let degraded = ["MVRV feed down".to_string()];
         let aliases = HashMap::from([("VWCE.L".to_string(), "VWCE.DE".to_string())]);
-        snapshot(serde_yaml::from_str(CI).ok(), quotes, None, &FundPeMap::new(), Some(0.3), &infl, &degraded, &aliases)
+        snapshot(serde_yaml::from_str(CI).ok(), quotes, None, &FundPeMap::new(), Some(0.3), &infl, &degraded, &aliases, &HashMap::new())
     }
 
     /// What `screen` itself would have published for this pool, pinned set and cut.
@@ -308,6 +316,23 @@ mod tests {
         assert_eq!(engine("", &q), direct(&q, &[], 25), "an empty upload IS CI's config");
         // a bare `buy_heuristic:` names no knob, so it moves nothing (the null-safe merge arm)
         assert_eq!(engine("buy_heuristic:\n", &q), engine("", &q));
+    }
+
+    /// (#461) The US twins ride in universe.json, so the engine fills the n/a cells `screen` fills, with
+    /// the same `$` mark.
+    #[test]
+    fn the_engine_fills_na_cells_from_the_published_twins() {
+        let q = pool();
+        let sector = |u: &str| {
+            let v: serde_json::Value = serde_json::from_str(&screen("", u).expect("ranks")).expect("JSON");
+            let row = v["stocks"].as_array().expect("stocks lane").iter().find(|r| r.as_array().is_some_and(|c| c.contains(&serde_json::json!(["TICKER", "NVD.DE"])))).cloned();
+            row.and_then(|r| r.as_array()?.iter().find(|c| c[0] == "SECTOR").map(|c| c[1].clone()))
+        };
+        let nvda = Quote { sector: Some("Information Technology".into()), ..Quote::stub("NVDA", "$1", "", "NVIDIA") };
+        let twins = HashMap::from([("NVD.DE".to_string(), nvda)]);
+        let with = snapshot(serde_yaml::from_str(CI).ok(), &q, None, &FundPeMap::new(), Some(0.3), &[], &[], &HashMap::new(), &twins);
+        assert_eq!(sector(&universe(&q)), Some("n/a".into()), "not vacuous: the European line has no sector");
+        assert_eq!(sector(&with), Some("Information Technology$".into()));
     }
 
     /// (#397) A pin the pool lacks shows as the pool's line of the same fund: the engine ranks exactly

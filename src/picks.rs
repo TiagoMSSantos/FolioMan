@@ -4658,6 +4658,30 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &
     }
 }
 
+/// (#461) A stock row the pool holds on a European line (`APC.DE`, `TSFA.F`) with an n/a cell takes that
+/// column from the same company's US line (`twins`, keyed by the European ticker), marked with a trailing
+/// `$`: the European line is often too young for the 10Y/20Y legs the US one carries. A shadow-table row
+/// names the US ticker itself, so it finds the twin by that too. Runs over the stock lane and the shadow
+/// tables; only n/a cells move, and only to a value, never to "—". Display only, stamped by both
+/// builders, so the twins ride in universe.json.
+pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Quote>, w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
+    let cols = lane_columns(w, HIDE_STOCK);
+    for table in ["stocks", "attention", "berkshire", "social"] {
+        let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
+        for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
+            let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default().to_string();
+            let Some(twin) = twins.get(&t).or_else(|| twins.values().find(|q| q.ticker == t)) else { continue };
+            for cell in cells.iter_mut().filter(|c| c[1] == "n/a") {
+                let Some(c) = cols.iter().find(|c| cell[0] == c.hdr) else { continue };
+                let v = col_cell(c.key, twin, 0.0, None, "", tuning, fund_pe);
+                if v != "n/a" && v != "—" {
+                    cell[1] = format!("{v}$").into();
+                }
+            }
+        }
+    }
+}
+
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
 /// = the coin's year minus BTC's, as a fraction; the score scales by (1 + w·edge), bounded 0.5x..2x so
 /// one moonshot can't run away and a laggard is docked, not zeroed. BTC vs itself = edge 0 = 1.0x (the
@@ -9653,6 +9677,30 @@ mod tests {
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
         assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
         assert!(p.get("attention").is_none(), "an absent table stays absent");
+    }
+
+    /// (#461) Only n/a cells of a column take the US line's value, marked `$`; a shadow row finds the twin
+    /// by its US ticker; a twin with no value (or a "—") leaves n/a; a row with no twin, a non-column
+    /// header and a filled cell stay as they were.
+    #[test]
+    fn stamp_us_twin_fills_na_cells_from_the_us_line() {
+        let aapl = Quote { sector: Some("Information Technology".into()), ..Quote::stub("AAPL", "$1", "", "Apple") };
+        let fund = Quote { instrument_type: "ETF".into(), underwater_yrs: Some(2.0), ..Quote::stub("FUND", "$1", "", "Fund") };
+        let twins = HashMap::from([("APC.DE".to_string(), aapl), ("FND.DE".to_string(), fund)]);
+        let w = Widths { columns: vec!["ticker".into(), "sector".into(), "uw".into()], ..Widths::default() };
+        let row = |t: &str, uw: &str| serde_json::json!([["TICKER", t], ["SECTOR", "n/a"], ["UW-YRS", uw], ["WEIGHT", "n/a"]]);
+        let mut p = serde_json::json!({
+            "stocks": [row("APC.DE", "3.0"), row("HOOD", "n/a"), row("FND.DE", "n/a")],
+            "berkshire": [row("AAPL", "n/a")],
+            "etfs": [row("APC.DE", "n/a")],
+        });
+        stamp_us_twin(&mut p, &twins, &w, &BuyHeuristic::default(), &FundPeMap::new());
+        let filled = serde_json::json!([["TICKER", "APC.DE"], ["SECTOR", "Information Technology$"], ["UW-YRS", "3.0"], ["WEIGHT", "n/a"]]);
+        assert_eq!(p["stocks"][0], filled, "only the n/a column cell moves");
+        assert_eq!(p["stocks"][1], row("HOOD", "n/a"), "no twin, no change");
+        assert_eq!(p["stocks"][2], serde_json::json!([["TICKER", "FND.DE"], ["SECTOR", "n/a"], ["UW-YRS", "2.0$"], ["WEIGHT", "n/a"]]), "a — never lands");
+        assert_eq!(p["berkshire"][0], serde_json::json!([["TICKER", "AAPL"], ["SECTOR", "Information Technology$"], ["UW-YRS", "n/a"], ["WEIGHT", "n/a"]]), "a US-ticker row finds its twin; a twin with no value leaves n/a");
+        assert_eq!(p["etfs"][0], row("APC.DE", "n/a"), "the fund lane is not a stock lane");
     }
 
     #[test]

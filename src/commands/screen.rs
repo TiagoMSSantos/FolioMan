@@ -1922,6 +1922,28 @@ pub async fn run(args: Vec<String>) {
     fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
     // (#449) display only: the EARN cell
     fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
+    // (#461) display only: the US line of every printed or shadow-table stock the pool holds on a European
+    // line, so `stamp_us_twin` can fill the cells that line leaves n/a (often its 10Y/20Y legs)
+    let shown: std::collections::HashSet<String> = [&attention, &berkshire, &social]
+        .iter()
+        .flat_map(|t| t.as_array().into_iter().flatten())
+        .filter_map(|r| r.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str().map(String::from))
+        .collect();
+    let swapped: Vec<(String, String)> = quotes
+        .iter()
+        .map(|q| (q.ticker.clone(), fetch::us_symbol(&q.ticker)))
+        .filter(|(eu, us)| !us.eq_ignore_ascii_case(eu) && (targets.contains(eu) || shown.contains(eu) || shown.contains(us)))
+        .collect();
+    let us_lines: Vec<String> = swapped.iter().map(|(_, us)| us.clone()).collect();
+    let twins: std::collections::HashMap<String, Quote> = swapped
+        .into_iter()
+        .map(|(eu, _)| eu)
+        .zip(fetch::quotes(
+            &client, &settings.urls, &fx_cache, &us_lines, settings.dip_days, settings.high_days, false, false,
+            &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
+        ).await)
+        .filter(|(_, q)| q.price != "err" && q.price != "no data")
+        .collect();
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
@@ -2146,7 +2168,7 @@ pub async fn run(args: Vec<String>) {
     let aliases = fetch::fetch_listing_aliases(&client, &settings.urls, figi_key.as_deref(), &isin_of, &etfs).await;
     let _ = std::fs::write(
         crate::config::data_path(".screen_universe.json"),
-        crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded, &aliases),
+        crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded, &aliases, &twins),
     );
     // (#403) captured, not written: the page's BUY% column is stamped onto it once `sized_now` exists
     let web_json = std::cell::RefCell::new(None);
@@ -2187,6 +2209,7 @@ pub async fn run(args: Vec<String>) {
         top["berkshire"] = berkshire;
         top["social"] = social;
         crate::picks::stamp_shadow_cols(&mut top, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
+        crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(&web_out, json);
         }
