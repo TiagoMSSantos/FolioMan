@@ -256,6 +256,19 @@ function render(data, prev) {
   if (data.social) {
     document.getElementById("social").replaceChildren(table(data.social, "(no source answered)", help.social));
   }
+  // (#456) Only CI's payload carries it, and unlike the shadow tables it describes the BUY% book, which
+  // an upload changes: the page has no fund holdings to look a new book through, so it says so.
+  document
+    .getElementById("exposure")
+    .replaceChildren(
+      data.exposure
+        ? table(data.exposure, "(no book to look through)", help.exposure)
+        : Object.assign(document.createElement("p"), {
+            className: "sub",
+            textContent: "Describes CI's default book only: an uploaded settings.yaml changes BUY%, and the page has no fund holdings to redo it.",
+          }),
+    );
+  sheet("exposure", data.exposure);
   const since = document.getElementById("since");
   since.hidden = !prev;
   since.textContent = prev ? "new = joined its table since " + stamp(prev.generated) + " (" + marked + " marked)" : "";
@@ -287,6 +300,7 @@ function glossary(data, help) {
   const tag = (name, text, cls) => Object.assign(document.createElement(name), { textContent: text, className: cls || "" });
   for (const [name, part, tables] of [
     ["Stocks, ETFs, Crypto", "lanes", LANES.map((lane) => data[lane])],
+    ["Exposure", "exposure", [data.exposure]],
     ["CORE", "core", [data.core]],
     ["Inflation", "inflation", [data.inflation]],
     // (#452) the shadow tables. An upload carries none, so these groups drop from its glossary; the

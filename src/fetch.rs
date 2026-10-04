@@ -1775,7 +1775,7 @@ async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
 
 /// (EU listing) A Xetra twin's US symbol, else the ticker upper-cased. [`sec_cik`] keys on it, and
 /// (#449) so does the EARN lookup: no earnings calendar lists the Xetra line.
-fn us_symbol(ticker: &str) -> String {
+pub(crate) fn us_symbol(ticker: &str) -> String {
     EU_TO_US
         .get_or_init(|| {
             let eu: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(EU_LISTING_CACHE_PATH))

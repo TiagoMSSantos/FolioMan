@@ -368,14 +368,10 @@ fn holdings_unscanned_line(
     ))
 }
 
-/// (round 57) Group the printed picks that hold most of the same top-10 names, one line per group
-/// of 2+ instead of round-56's O(n²) pair spam. COMPLETE linkage: a pick joins a group only if it
-/// shares ≥ `HOLDINGS_OVERLAP_MIN` holdings with EVERY current member — single-linkage would chain
-/// an all-world tracker to a semis ETF through the one megacap (NVDA) they both hold and call 15
-/// unrelated funds "one bet" (verified live). Greedy/order-dependent, but every printed group is a
-/// true clique whose members all mutually overlap. The line reports the holdings common to the
-/// whole group, so its own size states how tight the group is.
-fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<String> {
+/// (#456) [`holdings_overlap_lines`]' groups, biggest first: each clique's members (sorted) and the
+/// holdings common to all of them (sorted). The terminal footer and the page's Exposure table read the
+/// same groups. Singletons are dropped.
+fn overlap_groups(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<(Vec<&str>, Vec<&str>)> {
     let mut tickers: Vec<&String> =
         holdings.keys().filter(|t| holdings_scannable(holdings, t)).collect();
     tickers.sort();
@@ -401,13 +397,31 @@ fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(Stri
                 acc.retain(|x| s.contains(x));
                 acc
             });
+            let mut common: Vec<&str> = common.into_iter().collect();
+            common.sort();
+            (members, common)
+        })
+        .collect()
+}
+
+/// (round 57) Group the printed picks that hold most of the same top-10 names, one line per group
+/// of 2+ instead of round-56's O(n²) pair spam. COMPLETE linkage: a pick joins a group only if it
+/// shares ≥ `HOLDINGS_OVERLAP_MIN` holdings with EVERY current member — single-linkage would chain
+/// an all-world tracker to a semis ETF through the one megacap (NVDA) they both hold and call 15
+/// unrelated funds "one bet" (verified live). Greedy/order-dependent, but every printed group is a
+/// true clique whose members all mutually overlap. The line reports the holdings common to the
+/// whole group, so its own size states how tight the group is.
+fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<String> {
+    overlap_groups(holdings)
+        .into_iter()
+        .map(|(members, common)| {
             // (round 58) how much of each member the common names ARE: the same 4 shared megacaps
             // can be ~18% of an S&P 500 tracker but ~45% of a tech-sector fund — the range is the
             // number that says whether buying two members is double-buying. Members whose weights
             // Yahoo omitted (all 0.0) are left out; no weights anywhere -> no suffix.
             let sums: Vec<f64> = members
                 .iter()
-                .map(|m| holdings[*m].iter().filter(|(s, _)| common.contains(s.as_str())).map(|(_, p)| p).sum())
+                .map(|m| holdings[*m].iter().filter(|(s, _)| common.contains(&s.as_str())).map(|(_, p)| p).sum())
                 .filter(|s: &f64| *s > 0.0)
                 .collect();
             let weight = match (
@@ -420,8 +434,6 @@ fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(Stri
                 }
                 (lo, hi) => format!(" = {:.0}-{:.0}% of each fund", lo * 100.0, hi * 100.0),
             };
-            let mut common: Vec<&str> = common.into_iter().collect();
-            common.sort();
             let more = if common.len() > 4 { format!(" +{}", common.len() - 4) } else { String::new() };
             let lead = if common.len() >= HOLDINGS_OVERLAP_MIN { "effectively one bet" } else { "heavily overlap" };
             format!(
@@ -576,6 +588,120 @@ fn currency_mix_line(
     Some(format!(
         "Book currency exposure (equal weight per row; funds looked THROUGH their holdings, not read off their listing): {parts}{note}"
     ))
+}
+
+/// (#456) The page's Exposure table: the BUY% book (`book`, `(ticker, %)`) looked through, in four kinds
+/// of row, each kind heaviest first.
+/// - `sector`: a stock's own GICS sector, a fund's Yahoo sector weights in GICS spelling, a coin as Crypto.
+/// - `currency`: a stock's home listing (`home` maps a Xetra twin to its US symbol, so LLY.DE is
+///   dollars), a fund's top-10 holdings' listings, a coin as Crypto.
+/// - `one bet`: the [`overlap_groups`] among the book's funds.
+/// - `name`: the ten heaviest single names, direct plus each fund's top-10 weight, so a lower bound.
+///
+/// A fund with no data lands in its kind's `?` row, NAMED (#257): a blank beats a guess, and nothing is
+/// borrowed from a twin. Display only: nothing reads it back.
+fn exposure_rows(
+    book: &[(String, f64)],
+    quotes: &[Quote],
+    holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+    mix: &std::collections::HashMap<String, fetch::FundMix>,
+    home: &dyn Fn(&str) -> String,
+) -> serde_json::Value {
+    use std::collections::HashMap;
+    let mut sector: HashMap<String, f64> = HashMap::new();
+    let mut ccy: HashMap<String, f64> = HashMap::new();
+    // symbol -> (% bought direct, % inside funds, funds holding it)
+    let mut names: HashMap<String, (f64, f64, usize)> = HashMap::new();
+    let mut funds: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+    let (mut no_sector, mut no_holdings, mut ungrouped) = (Vec::new(), Vec::new(), Vec::new());
+    let add = |m: &mut HashMap<String, f64>, k: &str, w: f64| *m.entry(k.to_string()).or_default() += w;
+    for (t, w) in book {
+        let Some(q) = quotes.iter().find(|q| &q.ticker == t) else { continue };
+        if picks::is_currency_quoted(t) {
+            add(&mut sector, "Crypto", *w);
+            add(&mut ccy, "Crypto", *w);
+            continue;
+        }
+        if !picks::quote_is_etf(q) {
+            let us = home(t);
+            match &q.sector {
+                Some(s) => add(&mut sector, s, *w),
+                None => {
+                    add(&mut sector, "?", *w);
+                    no_sector.push(t.as_str());
+                }
+            }
+            add(&mut ccy, core::listing_currency(&us).unwrap_or("?"), *w);
+            names.entry(us).or_default().0 += w;
+            continue;
+        }
+        let sectors = mix.get(t).map_or(&[][..], |m| &m.0[..]);
+        let total: f64 = sectors.iter().map(|(_, s)| s).sum();
+        if total > 0.0 {
+            for (name, s) in sectors {
+                let gics = crate::commands::size::YAHOO_GICS.iter().find(|(y, _)| y == name).map_or(name.as_str(), |(_, g)| g);
+                add(&mut sector, gics, w * s / total);
+            }
+        } else {
+            add(&mut sector, "?", *w);
+            no_sector.push(t.as_str());
+        }
+        let hs = holdings.get(t).map_or(&[][..], |h| &h[..]);
+        let total: f64 = hs.iter().map(|(_, x)| x).sum();
+        if total > 0.0 {
+            for (sym, x) in hs {
+                add(&mut ccy, core::listing_currency(sym).unwrap_or("?"), w * x / total);
+                let e = names.entry(sym.clone()).or_default();
+                (e.1, e.2) = (e.1 + w * x, e.2 + 1);
+            }
+        } else {
+            add(&mut ccy, "?", *w);
+            no_holdings.push(t.as_str());
+        }
+        if !holdings_scannable(holdings, t) {
+            ungrouped.push(t.as_str());
+        }
+        funds.insert(t.clone(), hs.to_vec());
+    }
+    let row = |kind: &str, name: &str, w: f64, detail: String| {
+        serde_json::json!([["KIND", kind], ["NAME", name], ["BUY%", format!("{w:.1}%")], ["DETAIL", detail]])
+    };
+    let heaviest = |m: HashMap<String, f64>| {
+        let mut v: Vec<(String, f64)> = m.into_iter().filter(|(_, w)| *w >= 0.05).collect();
+        v.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v
+    };
+    let weight = |ts: &[&str]| ts.iter().filter_map(|t| book.iter().find(|(b, _)| b == t)).map(|(_, w)| w).sum::<f64>();
+    let mut rows = Vec::new();
+    for (kind, mix, blind, why) in [
+        ("sector", sector, &no_sector, "no sector data"),
+        ("currency", ccy, &no_holdings, "no holdings served"),
+    ] {
+        for (name, w) in heaviest(mix) {
+            let detail = if name == "?" { format!("{why}: {}", blind.join(" ")) } else { String::new() };
+            rows.push(row(kind, &name, w, detail));
+        }
+    }
+    for (members, common) in overlap_groups(&funds) {
+        let detail = format!("{} share top-10 holdings {}", members.join(" "), common.join(" "));
+        rows.push(row("one bet", &format!("{} funds", members.len()), weight(&members), detail));
+    }
+    if !ungrouped.is_empty() {
+        let detail = format!("too few holdings served to group: {}", ungrouped.join(" "));
+        rows.push(row("one bet", "?", weight(&ungrouped), detail));
+    }
+    let mut top: Vec<(String, (f64, f64, usize))> = names.into_iter().collect();
+    top.sort_by(|a, b| (b.1 .0 + b.1 .1).total_cmp(&(a.1 .0 + a.1 .1)).then_with(|| a.0.cmp(&b.0)));
+    for (sym, (direct, via, n)) in top.into_iter().take(10) {
+        let held = if n == 1 { "1 fund".to_string() } else { format!("{n} funds") };
+        let detail = match (direct > 0.0, n > 0) {
+            (true, true) => format!("{direct:.1}% direct + {held}"),
+            (true, false) => "direct".to_string(),
+            _ => format!("via {held}"),
+        };
+        rows.push(row("name", &sym, direct + via, detail));
+    }
+    serde_json::Value::Array(rows)
 }
 
 /// (funnel) Where the growth lane's candidates died: per gate, how many names failed it and how many
@@ -2056,6 +2182,7 @@ pub async fn run(args: Vec<String>) {
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
         crate::picks::stamp_buy(&mut top, &sized_now);
         crate::picks::stamp_index(&mut top, &quotes); // (#446) the ETF rows' INDEX, after BUY%
+        top["exposure"] = exposure_rows(&sized_now, &quotes, &holdings, &mix, &fetch::us_symbol);
         top["attention"] = attention;
         top["berkshire"] = berkshire;
         top["social"] = social;
@@ -4042,6 +4169,79 @@ mod tests {
             holdings_overlap_lines(&h),
             vec!["  3 picks heavily overlap: P.L R.L T.L (shared top-10: S0 S1 S2 S3)".to_string()]
         );
+    }
+
+    /// (#456) The Exposure table on a book holding every case: a .DE twin read as its US home, a
+    /// fund's Yahoo sectors in GICS spelling, a fund with nothing served (named in each `?` row), a
+    /// sectorless stock, a coin, and two funds sharing 5 holdings as one bet. Sector and currency rows
+    /// each sum to the whole book; a name adds its direct buy to its weight inside every fund.
+    #[test]
+    fn exposure_rows_look_the_book_through() {
+        let stock = |t: &str, sector: Option<&str>| {
+            let mut q = Quote::stub(t, "1", "", t);
+            q.sector = sector.map(str::to_string);
+            q
+        };
+        let etf = |t: &str| {
+            let mut q = Quote::stub(t, "1", "", t);
+            q.instrument_type = "ETF".into();
+            q
+        };
+        let quotes = vec![
+            stock("NVDA.DE", Some("Information Technology")),
+            etf("A.L"),
+            etf("B.L"),
+            etf("BLIND.L"),
+            Quote::stub("BTC-EUR", "1", "", "Bitcoin"),
+            stock("NOSEC", None),
+        ];
+        let book: Vec<(String, f64)> =
+            [("NVDA.DE", 10.0), ("A.L", 30.0), ("B.L", 20.0), ("BLIND.L", 20.0), ("BTC-EUR", 10.0), ("NOSEC", 10.0), ("UNPRICED", 5.0)]
+                .iter()
+                .map(|(t, w)| (t.to_string(), *w))
+                .collect();
+        let hold = |ws: [f64; 5]| -> Vec<(String, f64)> {
+            ["NVDA", "AAPL", "ASML.AS", "S3", "S4"].iter().zip(ws).map(|(s, w)| (s.to_string(), w)).collect()
+        };
+        let holdings: HashMap<String, Vec<(String, f64)>> =
+            HashMap::from([("A.L".into(), hold([0.2, 0.1, 0.1, 0.05, 0.05])), ("B.L".into(), hold([0.3, 0.1, 0.1, 0.1, 0.1]))]);
+        let sectors = |v: &[(&str, f64)]| -> fetch::FundMix { (v.iter().map(|(s, w)| (s.to_string(), *w)).collect(), None, None, None) };
+        let mix: HashMap<String, fetch::FundMix> = HashMap::from([
+            ("A.L".into(), sectors(&[("Technology", 0.6), ("Healthcare", 0.4)])),
+            ("B.L".into(), sectors(&[("Technology", 1.0), ("Utilities", 0.0)])),
+        ]);
+        let home = |t: &str| t.trim_end_matches(".DE").to_string();
+        let rows = exposure_rows(&book, &quotes, &holdings, &mix, &home);
+        let got: Vec<String> = rows
+            .as_array()
+            .expect("an array of rows")
+            .iter()
+            .map(|r| (0..4).map(|i| r[i][1].as_str().expect("a string cell")).collect::<Vec<_>>().join(" | "))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "sector | Information Technology | 48.0% | ",
+                "sector | ? | 30.0% | no sector data: BLIND.L NOSEC",
+                "sector | Health Care | 12.0% | ",
+                "sector | Crypto | 10.0% | ",
+                "currency | USD | 61.1% | ",
+                "currency | ? | 20.0% | no holdings served: BLIND.L",
+                "currency | Crypto | 10.0% | ",
+                "currency | EUR | 8.9% | ",
+                "one bet | 2 funds | 50.0% | A.L B.L share top-10 holdings AAPL ASML.AS NVDA S3 S4",
+                "one bet | ? | 20.0% | too few holdings served to group: BLIND.L",
+                "name | NVDA | 22.0% | 10.0% direct + 2 funds",
+                "name | NOSEC | 10.0% | direct",
+                "name | AAPL | 5.0% | via 2 funds",
+                "name | ASML.AS | 5.0% | via 2 funds",
+                "name | S3 | 3.5% | via 2 funds",
+                "name | S4 | 3.5% | via 2 funds",
+            ]
+        );
+        let one = exposure_rows(&book[1..2], &quotes, &holdings, &mix, &home);
+        assert_eq!(one[one.as_array().expect("rows").len() - 1][3][1], "via 1 fund");
+        assert_eq!(exposure_rows(&[], &quotes, &holdings, &mix, &home), serde_json::json!([]));
     }
 
     /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the

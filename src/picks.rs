@@ -4545,6 +4545,12 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
         ("WHY", "The hand list's claim, else the newest video title, else the superinvestor count; click to open that source"),
     ]);
+    let exposure = fixed(&[
+        ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),
+        ("NAME", "The sector, currency, group size or company ticker; ? = the data source served nothing for the funds named in DETAIL"),
+        ("BUY%", "Share of the BUY% book. A name's share is a lower bound: a fund counts only its top-10 holdings"),
+        ("DETAIL", "For a name: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
+    ]);
     BTreeMap::from([
         ("lanes", lanes),
         ("core", core),
@@ -4552,6 +4558,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("attention", attention),
         ("berkshire", berkshire),
         ("social", social),
+        ("exposure", exposure),
     ])
 }
 

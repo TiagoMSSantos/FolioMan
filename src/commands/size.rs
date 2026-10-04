@@ -209,7 +209,7 @@ pub(crate) use crate::picks::{equal_weights, sized_book, HEAD};
 
 /// (#293) Yahoo's fund sector names (`fetch::pretty_sector`) against the GICS spelling the constituents
 /// CSV gives a stock, so a fund and a stock in the same sector meet under one cap.
-const YAHOO_GICS: [(&str, &str); 11] = [
+pub(crate) const YAHOO_GICS: [(&str, &str); 11] = [
     ("Technology", "Information Technology"),
     ("Financial Services", "Financials"),
     ("Healthcare", "Health Care"),
