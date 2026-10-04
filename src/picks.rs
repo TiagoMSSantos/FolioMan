@@ -3418,8 +3418,11 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index: Full (holds every name), Opt (optimised) or Samp (sampled subset), Swap (a counterparty pays the index), Hybr (hybrid); n/a or — = only Börse Frankfurt reports it, and this listing is not there" },
     ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's legal home, from its ISIN: IE loses 15% of US dividends to tax by treaty, LU 30% (≈ +0.2%/yr to IE on a US or world fund)" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before" },
+    ColSpec { key: "rev5y", hdr: "REV-5Y", width: 7, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; n/a = under 5 years filed" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
+    ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps" },
+    ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Stocks: OP% now minus OP% a year earlier, in percentage points; positive = margins widening" },
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares" },
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
     // (#448)/(#449) display only, the printed stock rows
@@ -3774,6 +3777,11 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "eps-yoy" => quote.eps_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "net" if stock_only_na => "—".to_string(),
         "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        // (#463) the 5y fund_factors levels the live enrich already fills
+        "rev5y" | "opm" | "mtrend" if stock_only_na => "—".to_string(),
+        "rev5y" => quote.fund.as_ref().and_then(|f| f.rev_cagr).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "mtrend" => quote.fund.as_ref().and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
         "buyback" if stock_only_na => "—".to_string(),
         "buyback" => quote.buyback_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
@@ -4200,10 +4208,10 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
-    "earn", "fcfy", "ps", "evebitda"];
+    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
-    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda",
+    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -6856,13 +6864,22 @@ mod tests {
         f.ebitda_ttm = Some(0.0);
         assert_eq!(cc("ps", &st, 0.0, None, ""), "n/a", "no revenue, no ratio");
         assert_eq!(cc("evebitda", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
+        // (#463) the 5y income-statement levels
+        assert_eq!(cc("rev5y", &st, 0.0, None, ""), "n/a", "under 5 years filed");
+        let f = st.fund.as_mut().unwrap();
+        f.rev_cagr = Some(12.34);
+        f.op_margin = Some(28.06);
+        f.margin_trend = Some(-1.25);
+        assert_eq!(cc("rev5y", &st, 0.0, None, ""), "+12.3%");
+        assert_eq!(cc("opm", &st, 0.0, None, ""), "28.1%");
+        assert_eq!(cc("mtrend", &st, 0.0, None, ""), "-1.2pp");
         assert_eq!(cc("ins", &st, 0.0, None, ""), "n/a", "(#448) no SEC coverage");
         st.insider_90d = Some((2, 7));
         assert_eq!(cc("ins", &st, 0.0, None, ""), "2/7");
         assert_eq!(cc("earn", &st, 0.0, None, ""), "n/a", "(#449) no date published");
         st.next_earnings = chrono::NaiveDate::from_ymd_opt(2026, 10, 22);
         assert_eq!(cc("earn", &st, 0.0, None, ""), "10-22");
-        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "sector", "ins", "earn"] {
+        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "sector", "ins", "earn"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }
