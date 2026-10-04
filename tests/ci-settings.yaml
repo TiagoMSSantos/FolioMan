@@ -1101,6 +1101,9 @@ widths:
     - fcf         # (#447) free cash flow % of revenue (stocks only) — do profits turn into cash
     - nde         # (#447) net debt ÷ EBITDA (stocks only); <0 = net cash, >3 = stretched
     - icov        # (#447) operating profit ÷ interest expense (stocks only); <2 = distress risk
+    - fcfy        # (#462) free cash flow ÷ market value (stocks only) — the cash yield a buyer gets
+    - ps          # (#462) market value ÷ revenue (stocks only) — the value ratio a loss-maker still has
+    - evebitda    # (#462) (market value + net debt) ÷ EBITDA (stocks only) — the whole business's price, debt included
     - ter         # ETF expense ratio %/yr — the one cost that compounds against a 40y hold (Börse Frankfurt, then FMP, then Yahoo; ETFs only)
     - aum         # ETF fund size (EUR-approx, Börse Frankfurt) — sub-€100M funds risk liquidation/merge (ETFs only)
     - use         # ETF share class: Acc/Dist — Dist payouts taxed yearly; Acc compounds tax-deferred (ETFs only)

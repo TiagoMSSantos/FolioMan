@@ -3407,6 +3407,10 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed, or EBITDA at or below 0" },
     ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed" },
+    // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
+    ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
+    ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
+    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed, or EBITDA at or below 0" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
@@ -3711,7 +3715,15 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // (#447) balance sheet, stocks only. ND/EBITDA needs a positive EBITDA: dividing by a loss flips
         // the sign and reads as net cash
-        "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" | "earn" if stock_only_na => "—".to_string(),
+        "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" | "earn" | "fcfy" | "ps" | "evebitda" if stock_only_na => "—".to_string(),
+        // (#462) a cap needs a positive level under it; FCF keeps its sign, a burn is worth seeing
+        "fcfy" => quote.fund.as_ref().and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
+        "ps" => quote.fund.as_ref().and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
+        "evebitda" => quote
+            .fund
+            .as_ref()
+            .and_then(|f| f.cap_fund.map(|m| m + f.net_debt.unwrap_or(0.0)).zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
+            .map_or("n/a".to_string(), |(ev, e)| format!("{:.1}x", ev / e)),
         "earn" => quote.next_earnings.map_or("n/a".to_string(), |d| d.format("%m-%d").to_string()),
         "ins" => quote.insider_90d.map_or("n/a".to_string(), |(b, s)| format!("{b}/{s}")),
         "roic" => quote.fund.as_ref().and_then(|f| f.roic).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
@@ -4188,10 +4200,10 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
-    "earn"];
+    "earn", "fcfy", "ps", "evebitda"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
-    "icov", "sector", "ins", "earn",
+    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -6825,13 +6837,32 @@ mod tests {
         assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
         st.fund.as_mut().unwrap().ebitda_ttm = Some(-20.0);
         assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a", "a loss must not read as net cash");
+        // (#462) cap-based cash value: n/a with no live cap, then FCF/cap, cap/revenue, (cap+net debt)/EBITDA
+        for k in ["fcfy", "ps", "evebitda"] {
+            assert_eq!(cc(k, &st, 0.0, None, ""), "n/a", "{k} with no live cap");
+        }
+        let f = st.fund.as_mut().unwrap();
+        f.cap_fund = Some(400.0);
+        f.fcf_ttm = Some(-10.0);
+        f.revenue_ttm = Some(160.0);
+        f.ebitda_ttm = Some(50.0);
+        assert_eq!(cc("fcfy", &st, 0.0, None, ""), "-2.5%", "cash burn keeps its sign");
+        assert_eq!(cc("ps", &st, 0.0, None, ""), "2.5x");
+        assert_eq!(cc("evebitda", &st, 0.0, None, ""), "7.4x", "net cash -30 lowers EV to 370");
+        st.fund.as_mut().unwrap().net_debt = None;
+        assert_eq!(cc("evebitda", &st, 0.0, None, ""), "8.0x", "no debt filed reads as zero");
+        let f = st.fund.as_mut().unwrap();
+        f.revenue_ttm = Some(0.0);
+        f.ebitda_ttm = Some(0.0);
+        assert_eq!(cc("ps", &st, 0.0, None, ""), "n/a", "no revenue, no ratio");
+        assert_eq!(cc("evebitda", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
         assert_eq!(cc("ins", &st, 0.0, None, ""), "n/a", "(#448) no SEC coverage");
         st.insider_90d = Some((2, 7));
         assert_eq!(cc("ins", &st, 0.0, None, ""), "2/7");
         assert_eq!(cc("earn", &st, 0.0, None, ""), "n/a", "(#449) no date published");
         st.next_earnings = chrono::NaiveDate::from_ymd_opt(2026, 10, 22);
         assert_eq!(cc("earn", &st, 0.0, None, ""), "10-22");
-        for k in ["roic", "fcf", "nde", "icov", "sector", "ins", "earn"] {
+        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "sector", "ins", "earn"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }

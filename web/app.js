@@ -89,6 +89,7 @@ const VIEW = {
   MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
   MVRV: "value", ROIC: "value", "FCF%": "value", "INS-B/S": "value",
+  "FCF-YLD": "value", "P/S": "value", "EV/EBITDA": "value",
 };
 function view(v) {
   for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social) table")) {

@@ -3904,6 +3904,10 @@ pub struct FundFactors {
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
     pub op_rd: Option<f64>,          // (#417) (gross profit − SG&A) ÷ assets, %; XBRL SG&A already excludes R&D
     pub discipline: Option<f64>,     // (#417) 1y EBITDA growth − 1y asset growth, pts; high = profit outgrew assets
+    // (#462) today's market cap in the REPORTING currency: `shares_ttm` × the close `price_in` converted
+    // to it, so a cap divides cleanly by the filed levels above. Live only (the backtest leaves None),
+    // read by the FCF-YLD, P/S and EV/EBITDA cells and nothing scored.
+    pub cap_fund: Option<f64>,
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4250,6 +4254,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         discipline: grow(now.and_then(|r| r.ebitda), yr_ago.and_then(|r| r.ebitda))
             .zip(grow(now.and_then(|r| r.assets), yr_ago.and_then(|r| r.assets)))
             .map(|(e, a)| e - a),
+        cap_fund: None,
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -5861,6 +5866,7 @@ mod tests {
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
+            cap_fund: None,
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));

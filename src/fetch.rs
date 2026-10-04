@@ -1564,6 +1564,7 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // again exactly as backtest.rs stamps them. `exp_neg` read DEAD, so it stays backtest-only.
         ff.lynch_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, ff.eps_growth, p));
         ff.sgr_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, core::sgr_pct(&ff), p));
+        ff.cap_fund = price.zip(ff.shares_ttm).map(|(p, n)| p * n); // (#462) display only
         q.fund_factor = core::select_fund_factor(&ff, factor);
         // (G+) carry the whole struct so `growth_fund_extra`'s named terms resolve here too. Set AFTER
         // the price-dependent fields above, or the extra terms would read a half-built earnings_yield.
@@ -10805,6 +10806,11 @@ pub(crate) mod tests {
         let (a, b) = (yield_of(&quotes[0]).expect("AAA yield"), yield_of(&quotes[1]).expect("BBB yield"));
         assert!((a - 2.0 * b).abs() < 1e-9, "twice the price must halve the yield: {a} vs {b}");
         assert_eq!(quotes[0].fund.as_ref().and_then(|f| f.eps_ttm), Some(4.0), "the newest row's eps");
+        // (#462) the display cap is shares × the same close, so it doubles where the yield halves
+        let f = quotes[1].fund.as_ref().expect("BBB fund");
+        let n = f.shares_ttm.expect("BBB shares");
+        assert!(n > 1.0, "a share count of 1 or 2 would let + or / pass as ×");
+        assert_eq!(f.cap_fund, Some(200.0 * n));
 
         // 2. a currency-quoted ticker is skipped WHOLE — no budget slot spent probing an instrument
         //    that has no income statement, and `fund` stays None rather than becoming an empty struct.
