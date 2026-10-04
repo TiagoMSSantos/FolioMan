@@ -8897,6 +8897,7 @@ pub(crate) mod tests {
                 [["#", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A"], ["WEIGHT", "10.0%"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
             ])
         );
+        help_titles("berkshire", &brk_rows(&holdings, &quotes)[0]);
         let zero = [b("X", "", "", "", 1, 1, 0)];
         assert_eq!(brk_rows(&zero, &[])[0][3], serde_json::json!(["WEIGHT", "—"]), "no value in hand, no weight");
     }
@@ -9022,6 +9023,14 @@ pub(crate) mod tests {
         assert_eq!(tie.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>()[..2], ["T99", "T28"]);
     }
 
+    /// (#452) Each shadow table's hover text keys on exactly the headers its builder prints, so a
+    /// renamed or added column cannot ship a blank tooltip.
+    fn help_titles(group: &str, row: &serde_json::Value) {
+        let heads: Vec<&str> = row.as_array().expect("a row").iter().map(|c| c[0].as_str().expect("a header")).collect();
+        let help = crate::picks::web_help(false, &[]);
+        assert_eq!(help[group].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads.into_iter().collect(), "{group}");
+    }
+
     /// (#438) The lanes' row shape, ranked from 1, growth as a signed percent.
     #[test]
     fn attn_rows_print_in_the_lane_shape() {
@@ -9034,6 +9043,7 @@ pub(crate) mod tests {
                 [["#", "2"], ["TICKER", "ZZ"], ["NAME", ""], ["VIEWS YoY", "-12.5%"]],
             ])
         );
+        help_titles("attention", &got[0]);
     }
 
     /// (#436) OpenFIGI's share-class slash becomes Yahoo's dash; an empty answer is no ticker.
@@ -9143,6 +9153,7 @@ pub(crate) mod tests {
         assert_eq!(table[3], serde_json::json!([["#", "4"], ["TICKER", "BRK-B"], ["NAME", "Berkshire"], ["SOURCES", "superinvestors 9"], ["NEWEST", "2026-Q2"], ["WHY", "bought by 9 superinvestors in 2026-Q2"]]));
         assert_eq!(table[4][5], serde_json::json!(["WHY", "Amazon again, IBM, Tesla and Meta"]));
         assert_eq!(table[6][2], serde_json::json!(["NAME", "—"]));
+        help_titles("social", &table[0]);
     }
 
     #[test]

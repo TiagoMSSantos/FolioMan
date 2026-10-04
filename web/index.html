@@ -52,11 +52,11 @@
   </form>
   <pre class="why" id="why-out" role="status" hidden></pre>
 
-  <h2 id="h-stocks">Stocks</h2>
+  <h2 title="Single stocks ranked for a 20-year hold: strong proven long-run growth, near their own highs, braked when far above trend. BUY% is the share of new money the book puts in each. NOT advice" id="h-stocks">Stocks</h2>
   <div id="stocks"></div>
-  <h2 id="h-etfs">ETFs</h2>
+  <h2 title="Funds ranked on the same 20-year growth rules as the stocks; mostly sector and theme bets, not the one-fund-forever pick (that is CORE). NOT advice" id="h-etfs">ETFs</h2>
   <div id="etfs"></div>
-  <h2 id="h-crypto">Crypto</h2>
+  <h2 title="Coins ranked against Bitcoin on the same growth rules, with a valuation ceiling (MVRV). NOT advice" id="h-crypto">Crypto</h2>
   <div id="crypto"></div>
 
   <!-- (#250) The buy-and-hold CORE shortlist, which `screen` has computed and printed below its three
@@ -64,7 +64,7 @@
        rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
        appear there however good a 20-year hold they are. The top-N chooser deliberately does not cut
        it — see `apply()`. -->
-  <h2 id="h-core">CORE — one fund forever</h2>
+  <h2 title="Broad, cheap, physical, accumulating index funds to hold forever, broadest first; the rankings above bury these at 0 by design. NOT advice" id="h-core">CORE — one fund forever</h2>
   <div id="core"></div>
   <details class="note" id="hold">
     <summary>about CORE</summary>
@@ -78,7 +78,7 @@
   </details>
 
   <!-- (#438) The social-arbitrage probe's top third, shown and never ranked: no BUY%, no journal. -->
-  <h2 id="h-attention">Attention — shadow, NOT a buy signal</h2>
+  <h2 title="S&amp;P companies whose Wikipedia readership grew most year on year. Shown only, never ranked: graded on history it helped over 3 years and hurt over 5" id="h-attention">Attention — shadow, NOT a buy signal</h2>
   <details class="note" id="attention-note">
     <summary>about this table</summary>
     S&amp;P names whose English Wikipedia page gained the most readers: the median, over the last
@@ -92,7 +92,7 @@
   <div id="attention"></div>
   <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
        (#442) Every holding now, with the `W` flag and the track brkh row. -->
-  <h2 id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
+  <h2 title="Every stock in Berkshire Hathaway's newest 13F filing, largest first, with what changed vs the quarter before. Shown only, never ranked; weeks old by filing rules" id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
   <details class="note" id="berkshire-note">
     <summary>about this table</summary>
     Every stock in Berkshire Hathaway's newest 13F. A 13F lists US-listed holdings only, so its
@@ -107,7 +107,7 @@
   </details>
   <div id="berkshire"></div>
   <!-- (#444) social arbitrage, shown and never ranked: the `s` flag and the track soc row read it. -->
-  <h2 id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
+  <h2 title="Stocks people say they are buying: superinvestor 13F buys, Dumb Money Live videos and a checked hand list. Shown only, never ranked" id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
   <details class="note" id="social-note">
     <summary>about this table</summary>
     Stocks people say they are buying, one row per stock, from three free sources. Superinvestors:
@@ -129,7 +129,7 @@
        reads straight across. (#366) All three regions, as the terminal prints them. (#400) This note used to
        say the columns above were real and the EU row already subtracted; CI prints them NOMINAL
        (`score_on_nominal`), so the note now states whichever unit the payload's own help names. -->
-  <h2 id="h-inflation">Inflation</h2>
+  <h2 title="Consumer-price inflation over the same spans as the return columns: USA, the EU (HICP) and Portugal. Read a nominal return against it" id="h-inflation">Inflation</h2>
   <div id="inflation"></div>
   <details class="note" id="real">
     <summary>about inflation and the column units</summary>
@@ -182,6 +182,7 @@
        as each header's hover title), and listing only the headers these tables show. -->
   <details class="note" id="glossary" hidden>
     <summary>What the columns mean</summary>
+    <p>In any column, n/a = no data for this row and — = does not apply to this kind of row.</p>
     <dl></dl>
   </details>
 </main>

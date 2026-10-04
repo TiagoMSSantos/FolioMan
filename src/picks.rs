@@ -3368,7 +3368,7 @@ const COLUMNS: &[ColSpec] = &[
     // surfacing a stock CI never displayed). Funds show AUM instead.
     ColSpec { key: "mcap", hdr: "MCAP", width: 7, right: true, help: "Whole market value in euros: shares × price. Stocks use the newest full-year diluted share count (up to a year old), coins their circulating supply. Funds show AUM instead" },
     // display only; ranking uses the fixed-horizon ladder — see `leg`
-    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG" },
+    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG; n/a = listed under a year" },
     ColSpec { key: "leg", hdr: "LEG", width: 8, right: true, help: "The long-run %/yr the growth rank actually scores: the 20Y window, else 8Y, else 5Y, whichever the record allows, after the score's cap" },
     ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "CAGR with the dividends paid added back: a lower bound on total return. Equals CAGR for accumulating funds and non-payers" },
     ColSpec { key: "1h", hdr: "1H", width: 7, right: true, help: "Price change over the last hourly bar" },
@@ -3387,9 +3387,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: standard deviation of daily returns over the last 252 sessions (a daily figure, not annualized)" },
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart" },
     // (#447) the footer's hold-pain stats on the page. None = under 5 years of closes, never a fake 100%
-    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of all rolling 5-year windows that ended above where they started" },
-    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years" },
-    ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted" },
+    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of all rolling 5-year windows that ended above where they started; n/a = under 5 years of record" },
+    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years; n/a = under 5 years of record" },
+    ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average" },
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback" },
@@ -3399,19 +3399,19 @@ const COLUMNS: &[ColSpec] = &[
     // (#45) CRYPTO's valuation cell, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that
     // column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is
     // a P/B analogue
-    ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true, help: "Crypto only: market cap ÷ realized cap (CoinMetrics), each coin valued at the price it last moved. Below 1 = the market sits under its holders' average cost" },
+    ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true, help: "Crypto only: market cap ÷ realized cap (CoinMetrics), each coin valued at the price it last moved. Below 1 = the market sits under its holders' average cost; n/a = no free feed covers this coin" },
     // one column, two denominators (`core::quality_return`), no per-row flag
     ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity, or on assets where equity is negative or under 1/20th of assets (heavy buyback filers)" },
     // (#447) the balance sheet, stocks only, off `quote.fund` (filed statements). Display only: never scored
-    ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings" },
-    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash" },
-    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched" },
+    ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings; n/a = no SEC filing carries the lines (most non-US companies)" },
+    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
+    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed, or EBITDA at or below 0" },
     ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
-    ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold" },
-    ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold" },
-    ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class: Acc reinvests income (tax deferred), Dist pays it out (taxed yearly)" },
-    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index: Full (holds every name), Opt (optimised) or Samp (sampled subset), Swap (a counterparty pays the index), Hybr (hybrid)" },
+    ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
+    ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
+    ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class: Acc reinvests income (tax deferred), Dist pays it out (taxed yearly); n/a or — = only Börse Frankfurt reports it, and this listing is not there" },
+    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index: Full (holds every name), Opt (optimised) or Samp (sampled subset), Swap (a counterparty pays the index), Hybr (hybrid); n/a or — = only Börse Frankfurt reports it, and this listing is not there" },
     ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's legal home, from its ISIN: IE loses 15% of US dividends to tax by treaty, LU 30% (≈ +0.2%/yr to IE on a US or world fund)" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
@@ -3419,8 +3419,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares" },
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
     // (#448)/(#449) display only, the printed stock rows
-    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage" },
-    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Yahoo. The price often jumps on the day; n/a = no date published" },
+    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage, or a row the screen did not print (only printed stocks are fetched)" },
+    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Nasdaq. The price often jumps on the day; n/a = no date published yet, or a row the screen did not print (only printed stocks are fetched)" },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
@@ -4485,7 +4485,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
             let text = match c.key {
                 "1d" | "1w" | "1m" => format!("Nominal — {}", c.help),
                 "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => format!(
-                    "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return",
+                    "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return; n/a = the record is too short (a .DE twin of a US stock counts only its Xetra years)",
                     c.help
                 ),
                 _ => c.help.to_string(),
@@ -4513,12 +4513,46 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
                 "REGION" => "Whose consumer prices: USA, the EU (HICP, what a Real column is deflated by) or Portugal".to_string(),
                 "LATEST" => "Newest yearly inflation rate; for a year still running, the latest month's rate vs a year earlier".to_string(),
                 "AS OF" => "Year of that newest rate; ⚠ marks a stale or missing feed".to_string(),
-                span => format!("Total price rise over the last {} yearly rates, compounded", span.trim_end_matches('Y')),
+                span => format!("Total price rise over the last {} yearly rates, compounded; n/a = the series is shorter (EU HICP starts in 1996)", span.trim_end_matches('Y')),
             };
             (h.clone(), text)
         })
         .collect();
-    BTreeMap::from([("lanes", lanes), ("core", core), ("inflation", inflation)])
+    // (#452) The three shadow tables' headers are fixed strings built in `fetch`, so their text is too.
+    // Here rather than in `screen` alone so an upload's payload still titles CI's tables, which it keeps.
+    let fixed = |pairs: &[(&str, &str)]| pairs.iter().map(|(h, t)| (h.to_string(), t.to_string())).collect();
+    let (num, ticker) = (("#", "Position in this table"), lanes["TICKER"].as_str());
+    let attention = fixed(&[
+        num,
+        ("TICKER", ticker),
+        ("NAME", "The company's name"),
+        ("VIEWS YoY", "Median over the last 12 complete months of each month's English Wikipedia page views ÷ the same month a year before, as a % change"),
+    ]);
+    let berkshire = fixed(&[
+        num,
+        ("TICKER", ticker),
+        ("NAME", "The company's name; upper case = OpenFIGI's issuer name for a stock the screen does not price, — = neither has one"),
+        ("WEIGHT", "The holding's share of the 13F's total reported value"),
+        ("STATUS", "Vs the quarter before: new, added (more than 5% more shares), trimmed (below 95% of the shares) or held"),
+        ("SHARES Δ", "Change in shares held vs the quarter before; new = not held then"),
+        ("BOUGHT", "Newest quarter of the last 4 in which Berkshire bought it; — = not bought in that time"),
+    ]);
+    let social = fixed(&[
+        num,
+        ("TICKER", ticker),
+        ("NAME", "The company's name; — = the screen does not price it"),
+        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter), YouTube ×N (mentions in recent Dumb Money Live videos), hand list"),
+        ("NEWEST", "Date of the latest mention, or the 13F quarter"),
+        ("WHY", "The hand list's claim, else the newest video title, else the superinvestor count"),
+    ]);
+    BTreeMap::from([
+        ("lanes", lanes),
+        ("core", core),
+        ("inflation", inflation),
+        ("attention", attention),
+        ("berkshire", berkshire),
+        ("social", social),
+    ])
 }
 
 /// (#403) The BUY NOW book as `(ticker, % of gross)`: [`sized_book`] over the rows `render` returned (its

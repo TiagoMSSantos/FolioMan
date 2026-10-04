@@ -250,14 +250,14 @@ function render(data, prev) {
     .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
   // (#438) Only CI's payload carries it: an upload's engine output has no key, so CI's table stays.
   if (data.attention) {
-    document.getElementById("attention").replaceChildren(table(data.attention, "(attention feed unavailable)"));
+    document.getElementById("attention").replaceChildren(table(data.attention, "(attention feed unavailable)", help.attention));
   }
   if (data.berkshire) {
-    document.getElementById("berkshire").replaceChildren(table(data.berkshire, "(Berkshire 13F unavailable)"));
+    document.getElementById("berkshire").replaceChildren(table(data.berkshire, "(Berkshire 13F unavailable)", help.berkshire));
   }
   // (#444) Not cut by the row chooser either: it lists every match, not a ranking.
   if (data.social) {
-    document.getElementById("social").replaceChildren(table(data.social, "(no source answered)"));
+    document.getElementById("social").replaceChildren(table(data.social, "(no source answered)", help.social));
   }
   const since = document.getElementById("since");
   since.hidden = !prev;
@@ -292,6 +292,11 @@ function glossary(data, help) {
     ["Stocks, ETFs, Crypto", "lanes", LANES.map((lane) => data[lane])],
     ["CORE", "core", [data.core]],
     ["Inflation", "inflation", [data.inflation]],
+    // (#452) the shadow tables. An upload carries none, so these groups drop from its glossary; the
+    // tables CI rendered keep their hover text.
+    ["Attention", "attention", [data.attention]],
+    ["Berkshire holdings", "berkshire", [data.berkshire]],
+    ["Social Arbitrage trading", "social", [data.social]],
   ]) {
     const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];
     const known = heads.filter((h) => help[part]?.[h]);
