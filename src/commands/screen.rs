@@ -2104,8 +2104,15 @@ pub async fn run(args: Vec<String>) {
         let (holdings, mix) = fetch::yahoo_top_holdings(&client, &syms).await;
         (holdings, mix, syms)
     };
-    // (#465) TOP10% + TD-1Y/TD-5Y, display only, on Quote so universe.json carries them to the engine
-    fetch::enrich_etf_cells(&client, &settings.urls, &mut quotes, &bench, &holdings).await;
+    // (#465) TOP10% + TD-1Y/TD-5Y, display only, on Quote so universe.json carries them to the engine.
+    // (#468) The CORE table prints all of `core_all`, so its funds past `bench` take a second holdings call
+    // whose fund P/E mix is DROPPED: the PEG trim, the look-through anchor and the overlap footers still
+    // read `bench`'s `holdings`/`mix` only, and no gate moves.
+    let extra: Vec<String> = core_all.iter().filter(|t| !bench.contains(t)).cloned().collect();
+    let mut cells = holdings.clone();
+    cells.extend(fetch::yahoo_top_holdings(&client, &extra).await.0);
+    let funds: Vec<String> = bench.iter().chain(&extra).cloned().collect();
+    fetch::enrich_etf_cells(&client, &settings.urls, &mut quotes, &funds, &cells).await;
     let mut fund_pe: picks::FundPeMap = mix
         .iter()
         .filter_map(|(t, (_, _, pe, as_of))| {
