@@ -1774,7 +1774,7 @@ async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
 }
 
 /// (EU listing) A Xetra twin's US symbol, else the ticker upper-cased. [`sec_cik`] keys on it, and
-/// (#449) so does the EARN lookup: Yahoo publishes no earnings calendar for the Xetra line.
+/// (#449) so does the EARN lookup: no earnings calendar lists the Xetra line.
 fn us_symbol(ticker: &str) -> String {
     EU_TO_US
         .get_or_init(|| {
@@ -1800,7 +1800,7 @@ static EU_TO_US: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceL
 /// `recent` block (~1000 newest filings) is read, so very old backtest cutoffs may get no coverage.
 ///
 /// (#448) `since: Some(day)` is the page's live walk. It stops at the first Form 4 filed before `day`,
-/// so it costs the window's filings, not `SEC_FORM4_CAP`. It keeps its own `{ticker}_f4live` cache, so
+/// so it costs the window's filings, not `SEC_FORM4_CAP`. It keeps its own `{ticker}_f4raw` cache, so
 /// the backtest's forever file is never cut short. A walk that ran to its end banks an EMPTY answer too:
 /// the caller evicts it weekly, so "no buys or sales" is a fact for a week, not forever. A walk cut by
 /// the budget or a failed Form 4 GET banks nothing, as before.
@@ -1811,7 +1811,8 @@ pub async fn fetch_insider_history(
     since: Option<NaiveDate>,
 ) -> Option<Vec<core::InsiderTx>> {
     use std::sync::atomic::Ordering;
-    let cache = sec_cache_path(&since.map_or(ticker.to_string(), |_| format!("{ticker}_f4live")));
+    // (#450) `_f4raw`, not `_f4live`: the first week of those banked empties read off the xsl HTML
+    let cache = sec_cache_path(&since.map_or(ticker.to_string(), |_| format!("{ticker}_f4raw")));
     if let Some(txns) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, bool)>>(&s).ok()) {
         return Some(
             txns.iter()
@@ -1877,7 +1878,7 @@ fn filed_before(cell: Option<&Value>, day: NaiveDate) -> bool {
 }
 
 /// (#448) DISPLAY ONLY: the INS-B/S cell, open-market insider (buys, sales) dated in the last 90 days.
-/// `targets` is screen's printed stock rows, so ~25 names, each refetched weekly off `{ticker}_f4live`.
+/// `targets` is screen's printed stock rows, so ~25 names, each refetched weekly off `{ticker}_f4raw`.
 /// Screen calls this after the SEC fundamentals and the 13F lane, which spend `SEC_FETCH_BUDGET` first.
 /// `sec_cik` maps a Xetra twin to its US filer, so a swapped name still gets its count.
 pub async fn enrich_insider(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
@@ -1885,7 +1886,7 @@ pub async fn enrich_insider(client: &Client, urls: &Urls, quotes: &mut [core::Qu
     let today = chrono::Local::now().date_naive();
     let since = today - chrono::Duration::days(WINDOW_DAYS);
     for q in quotes.iter_mut().filter(|q| targets.contains(&q.ticker)) {
-        evict_if_stale(&sec_cache_path(&format!("{}_f4live", q.ticker)), StdDuration::from_secs(7 * 24 * 3600));
+        evict_if_stale(&sec_cache_path(&format!("{}_f4raw", q.ticker)), StdDuration::from_secs(7 * 24 * 3600));
         if let Some(txns) = fetch_insider_history(client, urls, &q.ticker, Some(since)).await {
             q.insider_90d = Some(core::insider_counts(&txns, today, WINDOW_DAYS));
         }
@@ -1899,36 +1900,28 @@ pub async fn enrich_insider(client: &Client, urls: &Urls, quotes: &mut [core::Qu
 // quarter -> the CUSIPs bought -> OpenFIGI CUSIP -> US ticker, plus the Xetra twin the EU swap may have
 // renamed it to. Every cache lives under `.sec_cache`, which Pages already carries run to run.
 
-/// (#449) The earliest `calendarEvents` earnings date on or after `today`. Yahoo lists one date, or
-/// a two-date window while the company has not confirmed, so the earliest one still ahead wins.
+/// (#450) The first date in Nasdaq's `data.reportText` that is not past. The text is prose ("is
+/// expected* to report earnings on  10/29/2026 before market open."), so read its mm/dd/yyyy words.
 fn next_earnings(v: &Value, today: NaiveDate) -> Option<NaiveDate> {
-    v.pointer("/quoteSummary/result/0/calendarEvents/earnings/earningsDate")?
-        .as_array()?
-        .iter()
-        .filter_map(|d| DateTime::from_timestamp(d.get("raw")?.as_i64()?, 0))
-        .map(|t| t.date_naive())
-        .filter(|d| *d >= today)
-        .min()
+    v.pointer("/data/reportText")?
+        .as_str()?
+        .split_whitespace()
+        .filter_map(|w| NaiveDate::parse_from_str(w.trim_end_matches(['.', ',']), "%m/%d/%Y").ok())
+        .find(|d| *d >= today)
 }
 
 /// (#449) DISPLAY ONLY: the EARN cell, each printed stock row's next earnings date. ~25 uncached
-/// quoteSummary GETs a run; a refused one leaves n/a. shortcut: no cache, add a daily one if Yahoo
-/// 429s ever show as a column of n/a.
-/// UNGRADEABLE, hence the skip: `quote_summary_json` hardcodes Yahoo's host, like `yahoo_crumb`.
-/// The parse is `next_earnings`, graded on its own.
-#[mutants::skip]
-pub async fn enrich_earnings(client: &Client, quotes: &mut [core::Quote], targets: &HashSet<String>) {
+/// GETs a run; a refused one leaves n/a. shortcut: no cache, add a daily one if Nasdaq refusals
+/// ever show as a column of n/a.
+/// (#450) Off Nasdaq, not Yahoo's `calendarEvents`: on the Pages runner the Yahoo crumb handshake
+/// failed for every row, and Nasdaq needs no handshake.
+pub async fn enrich_earnings(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
     let today = chrono::Local::now().date_naive();
-    let mut refused: Vec<String> = Vec::new();
     for q in quotes.iter_mut().filter(|q| targets.contains(&q.ticker)) {
-        match quote_summary_json(client, &us_symbol(&q.ticker), "calendarEvents").await {
-            Ok(v) => q.next_earnings = next_earnings(&v, today),
-            Err(why) => refused.push(why),
+        match get_json(client, &urls.nasdaq_earnings.replace("{sym}", &us_symbol(&q.ticker))).await {
+            Some(v) => q.next_earnings = next_earnings(&v, today),
+            None => eprintln!("earnings: Nasdaq refused {}", q.ticker),
         }
-    }
-    // (#450) the first Pages run printed EARN n/a on every row with no trace of why
-    if let Some(why) = refused.first() {
-        eprintln!("earnings: {} calendarEvents GET(s) refused, first: {why}", refused.len());
     }
 }
 
@@ -8490,12 +8483,12 @@ pub(crate) mod tests {
 
     /// (#448) The live walk reads the Form 4s filed on or after `since`, and the first one filed before
     /// it ends the walk: the old filing's sale is never fetched. A finished walk banks its answer under
-    /// `_f4live`, an empty one too, and leaves the backtest's file alone. A failed Form 4 GET banks
+    /// `_f4raw`, an empty one too, and leaves the backtest's file alone. A failed Form 4 GET banks
     /// nothing, so a refused request never reads as "no insider trades" for a week.
     #[tokio::test]
     async fn insider_live_walk_stops_at_since_and_banks_its_answer() {
         seed_cik_map();
-        let live = sec_cache_path("AAPL_f4live");
+        let live = sec_cache_path("AAPL_f4raw");
         let _ = std::fs::remove_file(&live);
         let (base, client, _) = routed_stub(vec![
             ("/320193/000032019326000002/new.xml", "<transactionDate><value>2026-06-29</value></transactionDate><transactionCode>P</transactionCode>"),
@@ -8524,24 +8517,38 @@ pub(crate) mod tests {
         assert!(!sec_cache_path("AAPL").exists(), "the backtest's forever file is untouched");
     }
 
-    /// (#449) The earliest date still ahead, today included; past dates, a missing block and a
-    /// garbled cell read as no date, never as a wrong one.
+    /// (#450) The first date still ahead, today included, trailing period or comma stripped; a past
+    /// date, a missing block and dateless prose read as no date, never as a wrong one.
     #[test]
-    fn next_earnings_takes_the_earliest_date_ahead() {
-        let at = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).expect("date");
-        let ts = |d: NaiveDate| d.and_hms_opt(20, 0, 0).expect("time").and_utc().timestamp();
-        let body = |dates: &[i64]| {
-            let cells: Vec<Value> = dates.iter().map(|t| serde_json::json!({"raw": t, "fmt": "x"})).collect();
-            serde_json::json!({"quoteSummary": {"result": [{"calendarEvents": {"earnings": {"earningsDate": cells}}}]}})
-        };
-        let today = at(2026, 10, 4);
-        let window = body(&[ts(at(2026, 10, 27)), ts(at(2026, 10, 22)), ts(at(2026, 7, 23))]);
-        assert_eq!(next_earnings(&window, today), Some(at(2026, 10, 22)), "the unconfirmed window's first day");
-        assert_eq!(next_earnings(&body(&[ts(today)]), today), Some(today), "reporting today still counts");
-        assert_eq!(next_earnings(&body(&[ts(at(2026, 7, 23))]), today), None, "only a past date");
-        assert_eq!(next_earnings(&serde_json::json!({"quoteSummary": {"result": []}}), today), None);
-        let garbled = serde_json::json!({"quoteSummary": {"result": [{"calendarEvents": {"earnings": {"earningsDate": [{"raw": "soon"}]}}}]}});
-        assert_eq!(next_earnings(&garbled, today), None);
+    fn next_earnings_reads_the_first_date_ahead() {
+        let at = |m, d| NaiveDate::from_ymd_opt(2026, m, d).expect("date");
+        let body = |text: &str| serde_json::json!({"data": {"reportText": text}});
+        let today = at(10, 4);
+        let both = body("reported 07/23/2026, is expected* to report earnings on  10/29/2026 before market open.");
+        assert_eq!(next_earnings(&both, today), Some(at(10, 29)), "the past date is skipped");
+        assert_eq!(next_earnings(&body("is estimated to report earnings on  10/04/2026."), today), Some(today));
+        assert_eq!(next_earnings(&body("reported on 07/23/2026"), today), None, "only a past date");
+        assert_eq!(next_earnings(&body("No data available"), today), None);
+        assert_eq!(next_earnings(&serde_json::json!({"data": null}), today), None);
+    }
+
+    /// (#450) `enrich_earnings` stamps TARGETS only, through `urls.nasdaq_earnings`; a refused GET
+    /// leaves the row None.
+    #[tokio::test]
+    async fn enrich_earnings_stamps_targets_only() {
+        seed_cik_map(); // `us_symbol` reads EU_TO_US, which only the seed may fill
+        let (base, client, _) = routed_stub(vec![
+            ("/ZZEARN/", r#"{"data": {"reportText": "is expected* to report earnings on  12/31/2099 before market open."}}"#),
+            ("", "not json"),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.nasdaq_earnings = format!("{base}{{sym}}/earnings-date");
+        let mut quotes: Vec<core::Quote> = ["ZZEARN", "ZZEARNOFF", "ZZREFUSED"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        let targets: HashSet<String> = ["ZZEARN", "ZZREFUSED"].iter().map(|t| t.to_string()).collect();
+        enrich_earnings(&client, &urls, &mut quotes, &targets).await;
+        assert_eq!(quotes[0].next_earnings, NaiveDate::from_ymd_opt(2099, 12, 31));
+        assert_eq!(quotes[1].next_earnings, None, "not a target");
+        assert_eq!(quotes[2].next_earnings, None, "a body that is not JSON");
     }
 
     /// (#448) A `filingDate` cell before the day ends the walk; on the day, garbled or missing does not.
@@ -8555,7 +8562,7 @@ pub(crate) mod tests {
     }
 
     /// (#448) `enrich_insider` stamps TARGETS only, counting the 90 days to today. ZZINS is served off a
-    /// three-day-old `_f4live` cache, so this is also its week-long TTL: a shorter one evicts the file,
+    /// three-day-old `_f4raw` cache, so this is also its week-long TTL: a shorter one evicts the file,
     /// port 1 refuses the refetch and the row stays None. XOM has no cache and walks from today − 90:
     /// the filing 50 days old is read, the one 100 days old ends the walk unread.
     #[tokio::test]
@@ -8574,7 +8581,7 @@ pub(crate) mod tests {
         urls.sec_form4 = format!("{base}{{doc}}");
         let cached = format!(r#"[["{}",true],["{}",false],["{}",false],["{}",true]]"#, ago(10), ago(20), ago(30), ago(200));
         for t in ["ZZINS", "ZZINSOFF"] {
-            let p = sec_cache_path(&format!("{t}_f4live"));
+            let p = sec_cache_path(&format!("{t}_f4raw"));
             std::fs::write(&p, &cached).expect("seed live insider cache");
             std::fs::OpenOptions::new()
                 .write(true)
@@ -8583,12 +8590,12 @@ pub(crate) mod tests {
                 .set_modified(SystemTime::now() - StdDuration::from_secs(3 * 24 * 3600))
                 .expect("backdate mtime");
         }
-        let xom = sec_cache_path("XOM_f4live");
+        let xom = sec_cache_path("XOM_f4raw");
         let _ = std::fs::remove_file(&xom);
         let mut quotes: Vec<core::Quote> = ["ZZINS", "ZZINSOFF", "XOM"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
         let targets: HashSet<String> = ["ZZINS", "XOM"].iter().map(|t| t.to_string()).collect();
         enrich_insider(&client, &urls, &mut quotes, &targets).await;
-        for t in ["ZZINS_f4live", "ZZINSOFF_f4live", "XOM_f4live"] {
+        for t in ["ZZINS_f4raw", "ZZINSOFF_f4raw", "XOM_f4raw"] {
             let _ = std::fs::remove_file(sec_cache_path(t));
         }
         assert_eq!(quotes[0].insider_90d, Some((1, 2)), "the 200-day-old buy is outside the window");
@@ -9879,7 +9886,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 36] = [
+        const FIELDS: [&str; 37] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -9887,7 +9894,7 @@ pub(crate) mod tests {
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
             "sec_submissions", "sec_form4", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
-            "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys",
+            "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys", "nasdaq_earnings",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field

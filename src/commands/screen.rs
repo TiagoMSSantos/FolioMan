@@ -1795,7 +1795,7 @@ pub async fn run(args: Vec<String>) {
     // shared SEC budget first
     fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
     // (#449) display only: the EARN cell
-    fetch::enrich_earnings(&client, &mut quotes, &targets).await;
+    fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER

@@ -904,7 +904,9 @@ pub struct Urls {
     // SET THIS to a real "app contact@email" — SEC blocks generic/empty agents. Placeholder works in dev
     // but be a good citizen before any wide run.
     #[serde(default = "default_sec_user_agent")]
-    pub sec_user_agent: String,
+    pub sec_user_agent: String,    // (#450) Nasdaq's next earnings date for the EARN cell. Keyless, no handshake. {sym} = US ticker.
+    #[serde(default = "default_nasdaq_earnings_url")]
+    pub nasdaq_earnings: String,
 }
 
 /// (Item 4) Default SEC ticker→CIK map (one fetch, cached): a JSON object of {cik_str, ticker, title}.
@@ -916,6 +918,11 @@ fn default_sec_ticker_cik_url() -> String {
 /// primaryDocument/filingDate arrays; we filter form == "4". {cik} = 10-digit zero-padded.
 fn default_sec_submissions_url() -> String {
     "https://data.sec.gov/submissions/CIK{cik}.json".to_string()
+}
+
+/// (#450) Default Nasdaq earnings-date endpoint: `data.reportText` names the next report date.
+fn default_nasdaq_earnings_url() -> String {
+    "https://api.nasdaq.com/api/analyst/{sym}/earnings-date".to_string()
 }
 
 /// (#448) Default Form 4 document URL, out of `submissions`' accessionNumber/primaryDocument columns.
@@ -2652,6 +2659,7 @@ mod tests {
             (default_sec_ticker_cik_url(), "https://www.sec.gov/", &[][..]),
             (default_sec_submissions_url(), "https://data.sec.gov/", &["{cik}"][..]),
             (default_sec_form4_url(), "https://www.sec.gov/", &["{cik}", "{acc}", "{doc}"][..]),
+            (default_nasdaq_earnings_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_sec_companyfacts_url(), "https://data.sec.gov/", &["{cik}"][..]),
             (default_sec_companyconcept_url(), "https://data.sec.gov/", &["{cik}", "{concept}"][..]),
             (default_euronext_track_url(), "https://live.euronext.com/", &[][..]),
