@@ -1378,6 +1378,24 @@ pub fn splice_max_weekly_rate() -> f64 {
     })
 }
 
+/// (#460) free accessor for the stock turnover floor `picks::turnover_floor` applies, for the EU-listing
+/// resolver, which holds no `tuning`: a Frankfurt twin thinner than this would be refused where its US
+/// line ranks. 0 inherits `min_avg_turnover_eur`, as the field doc says.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+pub fn stock_turnover_floor() -> f64 {
+    use std::sync::OnceLock;
+    static FLOOR: OnceLock<f64> = OnceLock::new();
+    *FLOOR.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| match s.buy_heuristic.min_avg_turnover_eur_stock {
+                f if f > 0.0 => f,
+                _ => s.buy_heuristic.min_avg_turnover_eur,
+            })
+            .unwrap_or(0.0)
+    })
+}
+
 /// (#263) free accessor twin of `splice_max_weekly_rate`, read at the same three sites and for the
 /// same reason: `parse_chart`, the merged-series seam and `core::backtest_quote` hold no `tuning`, and
 /// the value must be identical live and in the walk (train==serve).

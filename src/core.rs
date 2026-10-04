@@ -136,7 +136,7 @@ pub fn beats_serie_e(multiples: &[f64], years: f64) -> usize {
 /// Yahoo ticker suffix -> market country (listing venue, not legal domicile).
 fn suffix_country(suf: &str) -> Option<&'static str> {
     Some(match suf {
-        "DE" => "Germany", "L" => "UK", "PA" => "France", "AS" => "Netherlands",
+        "DE" | "F" => "Germany", "L" => "UK", "PA" => "France", "AS" => "Netherlands",
         "MI" => "Italy", "MC" => "Spain", "SW" => "Switzerland", "VI" => "Austria",
         "LS" => "Portugal", "BR" => "Belgium", "HE" => "Finland", "ST" => "Sweden",
         "OL" => "Norway", "CO" => "Denmark", "IR" => "Ireland", "TO" => "Canada",
@@ -157,7 +157,7 @@ fn suffix_country(suf: &str) -> Option<&'static str> {
 /// EUR holder's FX risk is, not what unit the ticker prints in.
 fn suffix_currency(suf: &str) -> Option<&'static str> {
     Some(match suf {
-        "DE" | "PA" | "AS" | "MI" | "MC" | "VI" | "LS" | "BR" | "HE" | "IR" => "EUR",
+        "DE" | "F" | "PA" | "AS" | "MI" | "MC" | "VI" | "LS" | "BR" | "HE" | "IR" => "EUR",
         "L" => "GBP", "SW" => "CHF", "ST" => "SEK", "OL" => "NOK", "CO" => "DKK",
         "TO" => "CAD", "HK" => "HKD", "T" => "JPY", "AX" => "AUD", "SA" => "BRL",
         "NS" => "INR", "SS" | "SZ" => "CNY", "KS" => "KRW",
@@ -5393,7 +5393,7 @@ mod tests {
     #[test]
     fn an_unknown_venue_has_no_currency_rather_than_a_guessed_one() {
         // four venues share EUR, and that is a fact about the euro, not a coincidence worth deriving
-        for suf in ["DE", "PA", "AS", "MI", "MC", "VI", "LS", "BR", "HE", "IR"] {
+        for suf in ["DE", "F", "PA", "AS", "MI", "MC", "VI", "LS", "BR", "HE", "IR"] {
             assert_eq!(listing_currency(&format!("X.{suf}")), Some("EUR"), "{suf} is in the euro bloc");
         }
         assert_eq!(listing_currency("VOD.L"), Some("GBP"), "the pence quote is the same GBP exposure");
@@ -5404,7 +5404,7 @@ mod tests {
         assert_eq!(listing_currency("BRK-B"), Some("USD"), "a share-class dash is not a venue");
         assert_eq!(listing_currency("X.ZZ"), None, "an unrecognised venue is unknown, never guessed");
         // every suffix `suffix_country` knows must carry a currency too — the drift this pins
-        for suf in ["DE", "L", "PA", "AS", "MI", "MC", "SW", "VI", "LS", "BR", "HE", "ST", "OL", "CO",
+        for suf in ["DE", "F", "L", "PA", "AS", "MI", "MC", "SW", "VI", "LS", "BR", "HE", "ST", "OL", "CO",
                     "IR", "TO", "HK", "T", "AX", "SA", "NS", "SS", "SZ", "KS"] {
             assert!(suffix_currency(suf).is_some(), "{suf} has a country but no currency");
             assert!(suffix_country(suf).is_some(), "{suf} has a currency but no country");

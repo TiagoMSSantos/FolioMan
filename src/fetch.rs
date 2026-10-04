@@ -1039,7 +1039,7 @@ async fn fetch_ratios_sec(
 /// (#425) `sec_ttm_eps_filed` on the LISTED share: the roll is per ordinary share as filed, and one PDD
 /// ADS is four of them (`core::ads_ratio`). The cached float stays per ordinary share, so no eviction.
 async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str, splits: &[(NaiveDate, f64)]) -> Option<f64> {
-    Some(sec_ttm_eps_filed(client, urls, ticker, splits).await? * core::ads_ratio(ticker))
+    Some(sec_ttm_eps_filed(client, urls, ticker, splits).await? * core::ads_ratio(&us_symbol(ticker)))
 }
 
 /// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
@@ -3489,7 +3489,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
     // not in the parse, so cached rows get it too and no cache-key bump is needed. Split restatement
     // runs downstream; all three multiply, so the order doesn't matter.
     core::repair_share_scale(&mut rows);
-    core::restate_for_ads(&mut rows, core::ads_ratio(ticker));
+    core::restate_for_ads(&mut rows, core::ads_ratio(&us_symbol(ticker))); // (#460) TSFA.F is TSM's ADS
     // (#426) then EPS onto core earnings, once, on the same seam: every path that prices EPS (the peg
     // tilt and gate, report, the backtest join) reads what's left after the marks and tax releases.
     if core::strip_noncore(&mut rows) > 0 {
@@ -5778,6 +5778,8 @@ async fn fetch_sp500_base(client: &Client, urls: &Urls) -> core::MemberSpans {
 /// a negative never expires, so a listing that appears later stays unseen until this file is deleted.
 /// Cheap failure — the name simply keeps its US row — and `rm .eu_listing_cache.json` is the upgrade
 /// path. Swap in a dated negative like `ISIN_NEG_CACHE_PATH`'s if that ever actually bites.
+///
+/// (#460) A `.F` value is a Frankfurt twin, see [`figi_eu_symbol`].
 pub(crate) const EU_LISTING_CACHE_PATH: &str = ".eu_listing_cache.json";
 
 /// OpenFIGI's keyless job cap. MEASURED, not guessed: 10 jobs returns HTTP 200, 20 and 50 both return
@@ -5787,8 +5789,15 @@ pub(crate) const EU_LISTING_CACHE_PATH: &str = ".eu_listing_cache.json";
 const FIGI_BATCH: usize = 10;
 const FIGI_PACE_MS: u64 = 2500;
 
-/// Bloomberg exchange code for Xetra. The ONLY venue this swap accepts — see `figi_eu_symbol`.
+/// Bloomberg exchange code for Xetra, the venue this swap prefers — see `figi_eu_symbol`.
 const XETRA_EXCH_CODE: &str = "GY";
+
+/// (#460) Bloomberg exchange code for Frankfurt, the fallback when a share class has no Xetra line.
+const FRANKFURT_EXCH_CODE: &str = "GF";
+
+/// (#460) Marker key in [`EU_LISTING_CACHE_PATH`]: present once every cached miss has been re-asked
+/// with the Frankfurt fallback. Empty value, so every reader of the map treats it as a miss.
+const EU_GF_MARK: &str = "__gf460";
 
 /// (EU listing) The Xetra common-stock line inside one OpenFIGI share-class response, as a Yahoo
 /// symbol. Pure, so the venue rule is testable without a network: `GY` + `Common Stock` -> `<t>.DE`.
@@ -5798,16 +5807,37 @@ const XETRA_EXCH_CODE: &str = "GY";
 /// rather than its venue — the exact failure that killed the Yahoo-search route, where `?q=AAPL`
 /// offered Thai DRs and an Argentine CEDEAR as if they were Apple.
 ///
-/// shortcut: Xetra ONLY, no venue ladder. All ten probed S&P names carried `GY`, `LN` returns
-/// non-EUR depositary lines (`0RIH`, `0QYP`), and a preference order over `NA`/`FP`/`IM`/`SW` is
-/// guesswork until a real run reports a Xetra miss. Add fallbacks when that count is a number.
-fn figi_eu_symbol(data: &Value) -> Option<String> {
-    let row = data.as_array()?.iter().find(|r| {
-        r.get("exchCode").and_then(Value::as_str) == Some(XETRA_EXCH_CODE)
-            && r.get("securityType").and_then(Value::as_str) == Some("Common Stock")
-    })?;
-    let ticker = row.get("ticker").and_then(Value::as_str)?;
-    (!ticker.is_empty()).then(|| format!("{ticker}.DE"))
+/// shortcut: Xetra, then Frankfurt, no wider venue ladder. All ten probed S&P names carried `GY`, `LN`
+/// returns non-EUR depositary lines (`0RIH`, `0QYP`), and a preference order over `NA`/`FP`/`IM`/`SW`
+/// is guesswork until a real run reports a miss on both German venues.
+///
+/// (#460) No Xetra line -> the `GF` row of the SAME `securityType` as the US line (`us_type`), as
+/// `<t>.F`. An ADR has no Xetra line: TSM's share class lists `TSFA` as an `ADR` on GF, GR, GD and four
+/// more German venues, and only Frankfurt's carries Yahoo history (`TSFA.F`, EUR, since 2000). Matching
+/// the US type keeps the rule the Xetra arm states: the swap moves the venue, never the instrument.
+fn figi_eu_symbol(data: &Value, us_type: &str) -> Option<String> {
+    let rows = data.as_array()?;
+    let line = |exch: &str, kind: &str| {
+        rows.iter()
+            .find(|r| {
+                r.get("exchCode").and_then(Value::as_str) == Some(exch)
+                    && r.get("securityType").and_then(Value::as_str) == Some(kind)
+            })
+            .and_then(|r| r.get("ticker").and_then(Value::as_str))
+            .filter(|t| !t.is_empty())
+    };
+    line(XETRA_EXCH_CODE, "Common Stock")
+        .map(|t| format!("{t}.DE"))
+        .or_else(|| line(FRANKFURT_EXCH_CODE, us_type).map(|t| format!("{t}.F")))
+}
+
+/// (#460) Does a daily chart trade at least `floor` EUR a day, over the same 30 sessions the quote
+/// path's `avg_turnover_eur` reads? Only a Frankfurt twin is asked: an ADR there can be a ghost line
+/// (`9PDA.F` PDD ~€4k a day, `ASMF.F` ~€53k, against `TSFA.F` ~€559k on 2026-10-04), and swapping
+/// onto one would refuse at the stock turnover floor a name its US line ranks. EUR is not re-checked
+/// here: [`eu_chart_ok`] already required it of the same listing.
+fn eu_turnover_ok(v: &Value, floor: f64) -> bool {
+    parse_chart(v, "").and_then(|c| core::avg_turnover(&c.closes, &c.volumes, 30)).is_some_and(|t| t >= floor)
 }
 
 /// (EU listing) Is this long-chart payload a usable EUR series? The swap is confirmed by the fetch the
@@ -5893,7 +5923,11 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let todo: Vec<String> = syms.iter().filter(|s| !cache.contains_key(*s)).cloned().collect();
+    // (#460) Once, every cached miss is asked again: it was a miss before the Frankfurt fallback existed.
+    let regrade = !cache.contains_key(EU_GF_MARK);
+    let todo: Vec<String> =
+        syms.iter().filter(|s| cache.get(*s).is_none_or(|e| regrade && e.is_empty())).cloned().collect();
+    cache.insert(EU_GF_MARK.into(), String::new());
     // (#404) Every KNOWN twin goes back through the chart check below, not just the new ones. Yahoo
     // restarted some Xetra series in 2026 (1170.DE Arista and 49V.DE Vertiv now start 2026-08-20), and a
     // twin checked once and cached forever kept 84 established US names on a months-old chart that the
@@ -5908,7 +5942,7 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         todo.len().div_ceil(FIGI_BATCH) * 2 * FIGI_PACE_MS as usize / 1000,
         candidates.len()
     );
-    let mut share_figis: Vec<(String, String)> = Vec::new();
+    let mut share_figis: Vec<(String, String, String)> = Vec::new(); // (US symbol, share class, securityType)
     // Pace BETWEEN requests, never before the first one of a hop: the leading sleep bought nothing and
     // cost 2.5s on every run, including the single-batch case where no pacing is needed at all.
     //
@@ -5929,8 +5963,12 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
             .map(|t| serde_json::json!({"idType": "TICKER", "idValue": t, "exchCode": "US"}))
             .collect();
         for (sym, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
-            match data.as_ref().and_then(|d| d.get(0)).and_then(|r| r.get("shareClassFIGI")).and_then(Value::as_str) {
-                Some(f) => share_figis.push((sym.clone(), f.to_string())),
+            let row = data.as_ref().and_then(|d| d.get(0));
+            match row.and_then(|r| r.get("shareClassFIGI")).and_then(Value::as_str) {
+                Some(f) => {
+                    let kind = row.and_then(|r| r.get("securityType")).and_then(Value::as_str).unwrap_or_default();
+                    share_figis.push((sym.clone(), f.to_string(), kind.to_string()));
+                }
                 None => {
                     cache.insert(sym.clone(), String::new()); // no US share class -> no twin to find
                 }
@@ -5945,13 +5983,13 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
         let jobs = chunk
             .iter()
-            .map(|(_, f)| serde_json::json!({"idType": "ID_BB_GLOBAL_SHARE_CLASS_LEVEL", "idValue": f}))
+            .map(|(_, f, _)| serde_json::json!({"idType": "ID_BB_GLOBAL_SHARE_CLASS_LEVEL", "idValue": f}))
             .collect();
-        for ((sym, _), data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
-            match data.as_ref().and_then(figi_eu_symbol) {
+        for ((sym, _, kind), data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
+            match data.as_ref().and_then(|d| figi_eu_symbol(d, kind)) {
                 Some(eu) => candidates.push((sym.clone(), eu)),
                 None => {
-                    cache.insert(sym.clone(), String::new()); // resolves, but lists nowhere on Xetra
+                    cache.insert(sym.clone(), String::new()); // resolves, but lists on neither German venue
                 }
             }
         }
@@ -5961,9 +5999,13 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
     // known twin (~266 on CI) now passes through here on every run.
     let checked: Vec<(String, String, Option<bool>)> = stream::iter(candidates)
         .map(|(sym, eu)| async move {
-            let ok = chart_json_long(client, urls, &eu).await.map(|raw| {
+            let mut ok = chart_json_long(client, urls, &eu).await.map(|raw| {
                 eu_chart_ok(&raw, crate::config::splice_max_weekly_rate(), crate::config::flat_run_max_years())
             });
+            // (#460) a Frankfurt twin also pays one daily chart for its turnover; see `eu_turnover_ok`
+            if ok == Some(true) && eu.ends_with(".F") {
+                ok = chart_json(client, urls, &eu, "1mo").await.map(|v| eu_turnover_ok(&v, crate::config::stock_turnover_floor()));
+            }
             (sym, eu, ok)
         })
         .buffer_unordered(fetch_concurrency())
@@ -6367,21 +6409,44 @@ pub(crate) mod tests {
             {"ticker": "ABEA", "exchCode": "GY", "securityType": "Common Stock"},
             {"ticker": "0R2U", "exchCode": "LN", "securityType": "Common Stock"},
         ]);
-        assert_eq!(figi_eu_symbol(&alphabet).as_deref(), Some("ABEA.DE"));
+        // Xetra wins even though the Frankfurt row comes first.
+        assert_eq!(figi_eu_symbol(&alphabet, "Common Stock").as_deref(), Some("ABEA.DE"));
 
         // Right venue, wrong instrument — a Xetra certificate must never stand in for the share.
         let certificate = json!([{"ticker": "XYZ", "exchCode": "GY", "securityType": "Certificate"}]);
-        assert_eq!(figi_eu_symbol(&certificate), None);
+        assert_eq!(figi_eu_symbol(&certificate, "Common Stock"), None);
 
-        // Listed in Europe, but not on Xetra: this swap knows one venue, so this is a miss, not a guess.
+        // Listed in Europe, but on neither German venue: a miss, not a guess.
         let paris_only = json!([{"ticker": "MC", "exchCode": "FP", "securityType": "Common Stock"}]);
-        assert_eq!(figi_eu_symbol(&paris_only), None);
+        assert_eq!(figi_eu_symbol(&paris_only, "Common Stock"), None);
 
-        // Degenerate payloads: an empty ticker would build a bare ".DE", and hop 2 can answer with
-        // nothing at all.
-        assert_eq!(figi_eu_symbol(&json!([{"ticker": "", "exchCode": "GY", "securityType": "Common Stock"}])), None);
-        assert_eq!(figi_eu_symbol(&json!([])), None);
-        assert_eq!(figi_eu_symbol(&json!({"error": "No identifier found."})), None);
+        // (#460) No Xetra line: the Frankfurt row of the US line's own type, never another one. TSM's
+        // shape, where the German composite `GR` row comes first.
+        let tsm = json!([
+            {"ticker": "TSM", "exchCode": "US", "securityType": "ADR"},
+            {"ticker": "TSFA", "exchCode": "GR", "securityType": "ADR"},
+            {"ticker": "TSFA", "exchCode": "GF", "securityType": "ADR"},
+        ]);
+        assert_eq!(figi_eu_symbol(&tsm, "ADR").as_deref(), Some("TSFA.F"));
+        assert_eq!(figi_eu_symbol(&tsm, "Common Stock"), None, "an ADR on GF never stands in for a share");
+
+        // Degenerate payloads: an empty ticker would build a bare ".DE" or ".F", and hop 2 can answer
+        // with nothing at all.
+        assert_eq!(figi_eu_symbol(&json!([{"ticker": "", "exchCode": "GY", "securityType": "Common Stock"}]), "Common Stock"), None);
+        assert_eq!(figi_eu_symbol(&json!([{"ticker": "", "exchCode": "GF", "securityType": "ADR"}]), "ADR"), None);
+        assert_eq!(figi_eu_symbol(&json!([]), "ADR"), None);
+        assert_eq!(figi_eu_symbol(&json!({"error": "No identifier found."}), "ADR"), None);
+    }
+
+    /// (#460) The Frankfurt liquidity rule: the quote path's 30-session EUR turnover against the floor,
+    /// equal passes. Every stub bar trades 1000 shares at 2.0 = 2000 a day.
+    #[test]
+    fn eu_turnover_ok_reads_the_quote_paths_turnover() {
+        let d = |i: u32| (NaiveDate::from_ymd_opt(2026, 9, i).expect("date"), 2.0);
+        let v: Value = serde_json::from_str(chart_body(&(1..=30).map(d).collect::<Vec<_>>(), &[], "EUR")).expect("json");
+        assert!(eu_turnover_ok(&v, 2000.0));
+        assert!(!eu_turnover_ok(&v, 2000.5));
+        assert!(!eu_turnover_ok(&serde_json::json!({}), 0.0), "no chart is no turnover, never a pass");
     }
 
     /// (#76) The chart check is what makes a bad venue self-excluding: OpenFIGI can name a Xetra line
@@ -9812,7 +9877,7 @@ pub(crate) mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
 
         // 1. every symbol already known -> the file is served verbatim and nothing is fetched
-        std::fs::write(&path, r#"{"GOOGL":"ABEA.DE","BRK-B":""}"#).expect("seed cache");
+        std::fs::write(&path, r#"{"GOOGL":"ABEA.DE","BRK-B":"","__gf460":""}"#).expect("seed cache");
         let got = resolve_eu_listings(&client, &urls, &["GOOGL".to_string(), "BRK-B".to_string()]).await;
         assert_eq!(got["GOOGL"], "ABEA.DE");
         assert_eq!(got["BRK-B"], "", "an empty value is a remembered miss, not a cache gap");
@@ -9843,6 +9908,25 @@ pub(crate) mod tests {
         let on_disk: HashMap<String, String> =
             serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
         assert_eq!((on_disk["KEPTUS"].as_str(), on_disk["CUTUS"].as_str()), ("KEPT.DE", ""), "the demotion is persisted");
+
+        // 4. (#460) A miss cached before the Frankfurt fallback existed is asked once more, and only once.
+        // Every chart trades zero shares, so only a twin the turnover check reads is demoted: ZERO.F.
+        let mut zero: Value = serde_json::from_str(chart_body(&long, &[], "EUR")).expect("chart json");
+        zero["chart"]["result"][0]["indicators"]["quote"][0]["volume"] = serde_json::json!(vec![0; long.len()]);
+        let zero: &'static str = Box::leak(zero.to_string().into_boxed_str());
+        let (base, client, requests) =
+            routed_stub(vec![("figi", r#"[{"warning": "No identifier found."}]"#), ("ZERO.DE", zero), ("ZERO.F", zero)]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        urls.openfigi_mapping = format!("{base}figi");
+        std::fs::write(&path, r#"{"OLDMISS":"","ZERODE":"ZERO.DE","ZEROF":"ZERO.F"}"#).expect("seed cache");
+        let syms = ["OLDMISS", "ZERODE", "ZEROF"].map(String::from);
+        let asked = || requests.try_iter().filter(|r| r.starts_with("POST") && r.contains("OLDMISS")).count();
+        let got = resolve_eu_listings(&client, &urls, &syms).await;
+        assert_eq!((got["ZERODE"].as_str(), got["ZEROF"].as_str()), ("ZERO.DE", ""), "only a Frankfurt twin pays the turnover check");
+        assert_eq!(asked(), 1, "the old miss went back to OpenFIGI");
+        resolve_eu_listings(&client, &urls, &syms).await;
+        assert_eq!(asked(), 0, "the marker is persisted, so the re-ask happens once");
         // Safe to delete again: `seed_cik_map` no longer reads this file, it sets `EU_TO_US` directly.
         let _ = std::fs::remove_file(&path);
     }
