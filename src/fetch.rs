@@ -2342,66 +2342,39 @@ pub fn stamp_brk(quotes: &mut [Quote], bought: &HashSet<String>, held: &HashSet<
     }
 }
 
-/// (#436) The symbols Berkshire bought over the last four quarter transitions (see [`brk_bought_cusips`]),
-/// (#442) then the symbols its newest 13F holds, then every holding as a [`BrkRow`] for the page.
-/// The list is cached [`BRK_LIST_TTL`], with the stale copy kept on a failed refetch. Each filing's parse
-/// is cached forever, but only when it holds rows. A CUSIP's ticker is cached once OpenFIGI answers.
-/// FAILS CLOSED: one unreadable filing in the window empties all three. A missing quarter would otherwise
-/// read every holding of the next one as new.
-#[mutants::skip] // (#436) async network shell; the pure helpers above carry the tests
-pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSet<String>, Vec<BrkRow>) {
-    use std::sync::atomic::Ordering::Relaxed;
-    let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
-    let write = |p: &std::path::Path, json: String| {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, json);
-    };
-    let list_path = sec_cache_path("_brk13f");
-    if !fresh_on_disk(&list_path, BRK_LIST_TTL) && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
-        let url = urls.sec_submissions.replace("{cik}", BRK_CIK);
-        let list = sec_get_json(client, &url, &urls.sec_user_agent).await.map(|v| brk_13f_list(&v)).unwrap_or_default();
-        if !list.is_empty() {
-            write(&list_path, serde_json::to_string(&list).unwrap_or_default());
-        }
+/// (#436) Write a cache file, its directory first. A failed write only costs a refetch next run.
+fn cache_write(p: &std::path::Path, json: String) {
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
     }
-    let list: Vec<(String, String, String)> =
-        read(&list_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let window = brk_window(list);
-    // (#455) NAME's link: the newest quarter's original filing, as an amendment lists only what it adds
-    let filing = window.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2))).map_or(String::new(), |(acc, ..)| {
-        format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}-index.htm", BRK_CIK.trim_start_matches('0'), acc.replace('-', ""))
-    });
-    let mut filings: Vec<Brk13f> = Vec::new();
-    for (acc, report, filed) in window {
-        let path = sec_cache_path(&format!("_brk13f2_{acc}")); // (#442) 2 = with `<value>`
-        let mut parsed: Option<(String, HashMap<String, (u64, u64)>)> = read(&path).and_then(|s| serde_json::from_str(&s).ok());
-        if parsed.is_none() && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
-            let url = format!(
-                "https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}.txt",
-                BRK_CIK.trim_start_matches('0'),
-                acc.replace('-', "")
-            );
-            parsed = sec_get_text(client, &url, &urls.sec_user_agent).await.map(|t| parse_13f(&t)).filter(|(_, h)| !h.is_empty());
-            if let Some(p) = &parsed {
-                write(&path, serde_json::to_string(p).unwrap_or_default());
-            }
-        }
-        let Some((amend, held)) = parsed else {
-            eprintln!("fetch: Berkshire 13F {acc} unreadable; no `w` or `W` marks this run");
-            return Default::default();
-        };
-        filings.push((report, filed, amend, held));
+    let _ = std::fs::write(p, json);
+}
+
+/// (#436) One 13F filing parsed by [`parse_13f`], cached forever but only when it holds rows. None = not
+/// cached and not fetched: SEC refused it, or [`SEC_FETCH_BUDGET`] is spent.
+#[mutants::skip] // (#470) async network shell, split out of `fetch_brk`
+async fn read_13f(client: &Client, urls: &Urls, cik: &str, acc: &str) -> Option<(String, HashMap<String, (u64, u64)>)> {
+    let path = sec_cache_path(&format!("_brk13f2_{acc}")); // (#442) 2 = with `<value>`; (#470) every filer, not only Berkshire
+    let cached = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok());
+    if cached.is_some() || SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+        return cached;
     }
-    let quarters = brk_fold(filings);
-    let buys = brk_bought_cusips(&quarters);
-    let holdings = brk_holdings(&quarters);
-    let cusips: HashSet<String> = buys.keys().cloned().collect();
-    let held: HashSet<String> = holdings.iter().map(|h| h.0.clone()).collect();
+    let url = format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}.txt", cik.trim_start_matches('0'), acc.replace('-', ""));
+    let parsed = sec_get_text(client, &url, &urls.sec_user_agent).await.map(|t| parse_13f(&t)).filter(|(_, h)| !h.is_empty());
+    if let Some(p) = &parsed {
+        cache_write(&path, serde_json::to_string(p).unwrap_or_default());
+    }
+    parsed
+}
+
+/// (#436) CUSIP -> (US ticker, OpenFIGI name) for `cusips`, from the forever cache, OpenFIGI asked only
+/// for the ones it lacks. A CUSIP OpenFIGI cannot map is absent.
+#[mutants::skip] // (#470) async network shell, split out of `fetch_brk`
+async fn cusip_tickers(client: &Client, urls: &Urls, cusips: &HashSet<String>) -> HashMap<String, (String, String)> {
     let map_path = sec_cache_path("_cusip_tickers2"); // (#441) (ticker, name): the ticker-only map had no name
-    let mut ticker_of: HashMap<String, (String, String)> = read(&map_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let todo: Vec<&String> = cusips.union(&held).filter(|c| !ticker_of.contains_key(*c)).collect();
+    let mut ticker_of: HashMap<String, (String, String)> =
+        std::fs::read_to_string(&map_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let todo: Vec<&String> = cusips.iter().filter(|c| !ticker_of.contains_key(*c)).collect();
     let mut pace = 0; // carried, not branched on the index: see `resolve_eu_listings`
     for chunk in todo.chunks(FIGI_BATCH) {
         tokio::time::sleep(StdDuration::from_millis(pace)).await;
@@ -2414,8 +2387,50 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
         }
     }
     if !todo.is_empty() {
-        write(&map_path, serde_json::to_string(&ticker_of).unwrap_or_default());
+        cache_write(&map_path, serde_json::to_string(&ticker_of).unwrap_or_default());
     }
+    ticker_of
+}
+
+/// (#436) The symbols Berkshire bought over the last four quarter transitions (see [`brk_bought_cusips`]),
+/// (#442) then the symbols its newest 13F holds, then every holding as a [`BrkRow`] for the page.
+/// The list is cached [`BRK_LIST_TTL`], with the stale copy kept on a failed refetch. Each filing's parse
+/// is cached forever, but only when it holds rows. A CUSIP's ticker is cached once OpenFIGI answers.
+/// FAILS CLOSED: one unreadable filing in the window empties all three. A missing quarter would otherwise
+/// read every holding of the next one as new.
+#[mutants::skip] // (#436) async network shell; the pure helpers above carry the tests
+pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSet<String>, Vec<BrkRow>) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
+    let list_path = sec_cache_path("_brk13f");
+    if !fresh_on_disk(&list_path, BRK_LIST_TTL) && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
+        let url = urls.sec_submissions.replace("{cik}", BRK_CIK);
+        let list = sec_get_json(client, &url, &urls.sec_user_agent).await.map(|v| brk_13f_list(&v)).unwrap_or_default();
+        if !list.is_empty() {
+            cache_write(&list_path, serde_json::to_string(&list).unwrap_or_default());
+        }
+    }
+    let list: Vec<(String, String, String)> =
+        read(&list_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let window = brk_window(list);
+    // (#455) NAME's link: the newest quarter's original filing, as an amendment lists only what it adds
+    let filing = window.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2))).map_or(String::new(), |(acc, ..)| {
+        format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}-index.htm", BRK_CIK.trim_start_matches('0'), acc.replace('-', ""))
+    });
+    let mut filings: Vec<Brk13f> = Vec::new();
+    for (acc, report, filed) in window {
+        let Some((amend, held)) = read_13f(client, urls, BRK_CIK, &acc).await else {
+            eprintln!("fetch: Berkshire 13F {acc} unreadable; no `w` or `W` marks this run");
+            return Default::default();
+        };
+        filings.push((report, filed, amend, held));
+    }
+    let quarters = brk_fold(filings);
+    let buys = brk_bought_cusips(&quarters);
+    let holdings = brk_holdings(&quarters);
+    let cusips: HashSet<String> = buys.keys().cloned().collect();
+    let held: HashSet<String> = holdings.iter().map(|h| h.0.clone()).collect();
+    let ticker_of = cusip_tickers(client, urls, &cusips.union(&held).cloned().collect()).await;
     let eu: HashMap<String, String> =
         read(&crate::config::data_path(EU_LISTING_CACHE_PATH)).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let (bought, holds) = (brk_tickers(&cusips, &ticker_of, &eu), brk_tickers(&held, &ticker_of, &eu));
@@ -2444,7 +2459,8 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
 // - YouTube: a pooled equity named in a title or description of the newest ~15 Dumb Money Live uploads
 //   (keyless RSS, about one week).
 // - Superinvestors: Dataroma's last-quarter buys (13F-based, so 45+ days old), kept when at least
-//   [`SOC_MIN_BUYERS`] of its ~80 tracked managers bought.
+//   [`SOC_MIN_BUYERS`] of its ~80 tracked managers bought. (#470) When Dataroma lists none (it answers
+//   GitHub's runners with nothing), the same managers' own 13Fs on SEC EDGAR, see [`fetch_sec_superinvestors`].
 // - Hand list: `src/buy-heuristics/social-arbitrage-trading.json`, verified claims with their source.
 
 const SOC_PICKS: &str = include_str!("buy-heuristics/social-arbitrage-trading.json");
@@ -2517,6 +2533,88 @@ fn soc_superinvestors(html: &str) -> (String, Vec<(String, String, u32)>) {
         })
         .collect();
     (quarter, buys)
+}
+
+/// (#470) Dataroma's 83 managers frozen 2026-10-04 as SEC 13F filer CIK -> Dataroma's name, each CIK
+/// the filer with the newest 13F-HR under the manager's or its firm's name.
+const SOC_SEC_MANAGERS: &str = include_str!("buy-heuristics/superinvestors.json");
+
+/// (#470) The quarter pair every manager is diffed on: the two newest report dates that at least half
+/// the managers filed, as (current, prior). One pair for all, so a manager that files late is left out,
+/// never diffed on an older quarter. None with fewer than two such dates.
+fn sup_quarters(lists: &[Vec<(String, String, String)>]) -> Option<(String, String)> {
+    let mut filed: BTreeMap<&str, usize> = BTreeMap::new();
+    for list in lists {
+        for report in list.iter().map(|f| f.1.as_str()).collect::<HashSet<_>>() {
+            *filed.entry(report).or_default() += 1;
+        }
+    }
+    let mut common = filed.into_iter().rev().filter(|(_, n)| n * 2 >= lists.len()).map(|(r, _)| r.to_string());
+    Some((common.next()?, common.next()?))
+}
+
+/// (#470) CUSIP -> managers whose `cur` quarter holds more shares than `prev`, a new position included.
+/// Any add, not [`brk_bought`]'s +5%: the 2026-Q2 replay matched Dataroma's own counts within one this
+/// way (14 names at 8+ vs its 13), and +5% kept 4. An exact multiple is still a split. A manager
+/// missing either quarter counts for nothing.
+fn sup_buyers(managers: &[BrkQuarters], cur: &str, prev: &str) -> HashMap<String, u32> {
+    let mut buyers: HashMap<String, u32> = HashMap::new();
+    for m in managers {
+        let (Some(c), Some(p)) = (m.get(cur), m.get(prev)) else { continue };
+        for (cusip, (n, _)) in c {
+            let before = p.get(cusip).map_or(0, |x| x.0);
+            // no `*n > before`: its `>=` mutant is equivalent (an equal count IS a multiple), and the
+            // gate allows no survivor. `checked_sub` refuses a trim; the multiple test refuses equal.
+            if n.checked_sub(before).is_some() && !n.is_multiple_of(before) {
+                *buyers.entry(cusip.clone()).or_default() += 1;
+            }
+        }
+    }
+    buyers
+}
+
+/// (#470) [`soc_superinvestors`]'s answer rebuilt from SEC EDGAR: each [`SOC_SEC_MANAGERS`] filing list
+/// (cached [`BRK_LIST_TTL`]), the [`sup_quarters`] pair's filings (cached forever by [`read_13f`]), and
+/// [`sup_buyers`] at [`SOC_MIN_BUYERS`]+, named by OpenFIGI. A manager with an unreadable filing is
+/// left out, not the run. Empty when no quarter pair is in hand.
+#[mutants::skip] // (#470) async network shell; the pure helpers above carry the tests
+async fn fetch_sec_superinvestors(client: &Client, urls: &Urls) -> (String, Vec<(String, String, u32)>) {
+    let managers: BTreeMap<String, String> =
+        serde_json::from_str(SOC_SEC_MANAGERS).expect("src/buy-heuristics/superinvestors.json parses");
+    let mut lists = Vec::new();
+    for cik in managers.keys() {
+        let path = sec_cache_path(&format!("_sup13f_{cik}"));
+        if !fresh_on_disk(&path, BRK_LIST_TTL) && SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < SEC_FETCH_BUDGET {
+            let url = urls.sec_submissions.replace("{cik}", cik);
+            let list = sec_get_json(client, &url, &urls.sec_user_agent).await.map(|v| brk_13f_list(&v)).unwrap_or_default();
+            if !list.is_empty() {
+                cache_write(&path, serde_json::to_string(&list).unwrap_or_default());
+            }
+        }
+        let list: Vec<(String, String, String)> =
+            std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        lists.push((cik, list));
+    }
+    let Some((cur, prev)) = sup_quarters(&lists.iter().map(|(_, l)| l.clone()).collect::<Vec<_>>()) else {
+        return Default::default();
+    };
+    let mut folded = Vec::new();
+    'manager: for (cik, list) in lists {
+        let mut filings: Vec<Brk13f> = Vec::new();
+        for (acc, report, filed) in list.into_iter().filter(|f| f.1 == cur || f.1 == prev) {
+            let Some((amend, held)) = read_13f(client, urls, cik, &acc).await else { continue 'manager };
+            filings.push((report, filed, amend, held));
+        }
+        folded.push(brk_fold(filings));
+    }
+    let buyers: HashMap<String, u32> = sup_buyers(&folded, &cur, &prev).into_iter().filter(|(_, n)| *n >= SOC_MIN_BUYERS).collect();
+    let ticker_of = cusip_tickers(client, urls, &buyers.keys().cloned().collect()).await;
+    let mut buys: Vec<(String, String, u32)> =
+        buyers.iter().filter_map(|(c, n)| ticker_of.get(c).map(|(t, name)| (t.clone(), name.clone(), *n))).collect();
+    buys.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    let read = folded.iter().filter(|q| q.contains_key(&cur) && q.contains_key(&prev)).count();
+    eprintln!("fetch: SEC 13F superinvestors: {read} of {} managers read, {cur} vs {prev}", managers.len());
+    (brk_quarter(&cur), buys)
 }
 
 /// (#443) The word a name is matched on: its first, cut at whitespace, `,` or `.` (`Amazon.com, Inc.` ->
@@ -2612,14 +2710,15 @@ pub fn stamp_social(quotes: &mut [Quote], rows: &[SocRow]) {
     }
 }
 
-/// (#444) The page's table, in the lanes' `[header, cell]` shape.
-fn soc_table(rows: &[SocRow]) -> Value {
+/// (#444) The page's table, in the lanes' `[header, cell]` shape. (#470) `supers` names the buyer
+/// count's source: Dataroma's "superinvestors", or its SEC 13F fallback.
+fn soc_table(rows: &[SocRow], supers: &str) -> Value {
     rows.iter()
         .enumerate()
         .map(|(i, r)| {
             let mut sources = Vec::new();
             if r.buyers > 0 {
-                sources.push(format!("superinvestors {}", r.buyers));
+                sources.push(format!("{supers} {}", r.buyers));
             }
             if r.videos > 0 {
                 sources.push(format!("YouTube ×{}", r.videos));
@@ -2660,18 +2759,23 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
             None => None,
         }
     };
-    let supers = supers.map(|x| soc_superinvestors(&x)).unwrap_or_default();
+    let mut supers = supers.map(|x| soc_superinvestors(&x)).unwrap_or_default();
+    let mut label = "superinvestors";
+    if supers.1.is_empty() {
+        supers = fetch_sec_superinvestors(client, urls).await;
+        label = "superinvestors (SEC 13F)";
+    }
     let rows = soc_merge(&soc_hits(&videos, quotes), &supers, &picks, &eu, quotes);
     stamp_social(quotes, &rows);
     eprintln!(
-        "fetch: social arbitrage: {} videos, {} superinvestor buys ({}), {} hand picks -> {} rows",
+        "fetch: social arbitrage: {} videos, {} {label} buys ({}), {} hand picks -> {} rows",
         videos.len(),
         supers.1.len(),
         supers.0,
         picks.len(),
         rows.len()
     );
-    soc_table(&rows)
+    soc_table(&rows, label)
 }
 
 // ── (#438) Wikipedia attention shadow ───────────────────────────────────────────────────────────────
@@ -9635,7 +9739,7 @@ pub(crate) mod tests {
         let rows = soc_merge(&hits, &supers, &picks, &eu, &quotes);
         let order: Vec<&str> = rows.iter().map(|r| r.ticker.as_str()).collect();
         assert_eq!(order, ["AMZ.DE", "HOOD", "MSFT", "BRK-B", "TSLA", "META", "ABC", "XYZ"]);
-        let table = soc_table(&rows);
+        let table = soc_table(&rows, "superinvestors");
         assert_eq!(
             table[0],
             serde_json::json!([["#", "1"], ["TICKER", "AMZ.DE"], ["NAME", "Amazon.com, Inc."], ["SOURCES", "superinvestors 10; YouTube ×2; hand list"], ["NEWEST", "2026-09-30"], ["WHY", "said", "url"]])
@@ -9646,6 +9750,52 @@ pub(crate) mod tests {
         assert_eq!(table[4][5], serde_json::json!(["WHY", "Amazon again, IBM, Tesla and Meta", "https://yt/2026-09-30"]));
         assert_eq!(table[6][2], serde_json::json!(["NAME", "—"]));
         help_titles("social", &table[0]);
+        assert_eq!(soc_table(&rows, "superinvestors (SEC 13F)")[3][3], serde_json::json!(["SOURCES", "superinvestors (SEC 13F) 9"]));
+    }
+
+    #[test]
+    fn cache_write_makes_the_directory() {
+        let dir = std::env::temp_dir().join(format!("folioman-cache-write-{}", std::process::id()));
+        let path = dir.join("nested").join("x.json");
+        cache_write(&path, "[1]".to_string());
+        assert_eq!(std::fs::read_to_string(&path).ok().as_deref(), Some("[1]"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sec_managers_are_dataromas_83_ciks() {
+        let m: BTreeMap<String, String> = serde_json::from_str(SOC_SEC_MANAGERS).expect("parses");
+        assert_eq!(m.len(), 83);
+        assert!(m.iter().all(|(cik, name)| cik.len() == 10 && cik.bytes().all(|b| b.is_ascii_digit()) && !name.is_empty()));
+    }
+
+    #[test]
+    fn sup_quarters_takes_the_two_newest_half_filed() {
+        let l = |rs: &[&str]| rs.iter().map(|r| ("acc".to_string(), r.to_string(), "f".to_string())).collect::<Vec<_>>();
+        // Q3 has 1 of 4 filers: below half. An amendment's repeated date counts its filer once.
+        let lists = [l(&["2026-09-30", "2026-06-30", "2026-03-31"]), l(&["2026-06-30", "2026-03-31"]), l(&["2026-06-30", "2026-06-30"]), l(&["2025-12-31"])];
+        assert_eq!(sup_quarters(&lists), Some(("2026-06-30".to_string(), "2026-03-31".to_string())));
+        assert_eq!(sup_quarters(&lists[..3]), Some(("2026-06-30".to_string(), "2026-03-31".to_string())), "2 of 3 is half");
+        assert_eq!(sup_quarters(&lists[1..]), None, "1 of 3 is not");
+        assert_eq!(sup_quarters(&lists[2..]), Some(("2026-06-30".to_string(), "2025-12-31".to_string())), "1 of 2 is half");
+        assert_eq!(sup_quarters(&lists[3..]), None);
+        assert_eq!(sup_quarters(&[]), None);
+    }
+
+    #[test]
+    fn sup_buyers_counts_any_add_but_not_a_split() {
+        let q = |rows: &[(&str, u64)]| rows.iter().map(|(c, n)| (c.to_string(), (*n, 0))).collect::<HashMap<_, _>>();
+        let m = |prev: &[(&str, u64)], cur: &[(&str, u64)]| {
+            BrkQuarters::from([("2026-03-31".to_string(), q(prev)), ("2026-06-30".to_string(), q(cur))])
+        };
+        let managers = [
+            // A +1 share, B new, C held, D a 2:1 split, E trimmed
+            m(&[("A", 100), ("C", 50), ("D", 10), ("E", 9)], &[("A", 101), ("B", 5), ("C", 50), ("D", 20), ("E", 8)]),
+            m(&[("A", 100)], &[("A", 300), ("B", 7)]), // A 3x reads as a split
+            BrkQuarters::from([("2026-06-30".to_string(), q(&[("A", 500)]))]), // no prior quarter: counts for nothing
+        ];
+        let got = sup_buyers(&managers, "2026-06-30", "2026-03-31");
+        assert_eq!(got, HashMap::from([("A".to_string(), 1), ("B".to_string(), 2)]));
     }
 
     #[test]

@@ -4573,7 +4573,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("TICKER", ticker),
         ("NAME", "The company's name; — = the screen does not price it; click to open the company's own website"),
-        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter), YouTube ×N (mentions in recent Dumb Money Live videos), hand list"),
+        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), YouTube ×N (mentions in recent Dumb Money Live videos), hand list"),
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
         ("WHY", "The hand list's claim, else the newest video title, else the superinvestor count; click to open that source"),
     ]);
