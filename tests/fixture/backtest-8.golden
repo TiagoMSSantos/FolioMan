@@ -239,7 +239,7 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   top-2  book +11.3%/yr  vs S&P500 +6.5%/yr  ->  excess +4.8 (med +4.9) pts/yr   win 67% of 42   worst -14.0   OOS +10.0/-0.4   rode 0 zeros/73 holds
   top-3  book +11.2%/yr  vs S&P500 +6.5%/yr  ->  excess +4.7 (med +4.0) pts/yr   win 64% of 42   worst -14.7   OOS +10.5/-1.1   rode 1 zeros/91 holds
   top-5  book +11.9%/yr  vs S&P500 +6.5%/yr  ->  excess +5.4 (med +5.7) pts/yr   win 64% of 42   worst -14.0   OOS +10.6/+0.2   rode 2 zeros/102 holds
-  top-10 zero names (8y): FRCB@b4034(-100%), FRCB@b4035(-100%)
+  zero names in top-10 (8y): FRCB@b4034(-100%), FRCB@b4035(-100%)
   top-10 book +11.9%/yr  vs S&P500 +6.5%/yr  ->  excess +5.4 (med +5.7) pts/yr   win 64% of 42   worst -14.0   OOS +10.6/+0.2   rode 2 zeros/102 holds
   vs Série E best case (top-10): beat 71% of 42 windows (30) at 4.5%/yr   median book 2.53× vs 1.42×
   top-15 book +11.9%/yr  vs S&P500 +6.5%/yr  ->  excess +5.4 (med +5.7) pts/yr   win 64% of 42   worst -14.0   OOS +10.6/+0.2   rode 2 zeros/102 holds

@@ -673,6 +673,23 @@ fn fund_markers_are_in_the_fund_golden() {
     }
 }
 
+/// (#466) The gate reads the FIRST `VERDICT_ROW` line and panics when it has no `excess`. A data-triggered
+/// `top-10 zero names` line once printed above the book row and red CI; every golden must parse.
+#[test]
+fn first_verdict_row_is_the_book_row() {
+    use folioman::commands::backtest::markers::{EXCESS, VERDICT_ROW};
+    for e in std::fs::read_dir(fixture_dir()).expect("read fixture dir") {
+        let p = e.expect("dir entry").path();
+        if p.extension().is_none_or(|x| x != "golden") {
+            continue;
+        }
+        let g = std::fs::read_to_string(&p).expect("read golden");
+        if let Some(l) = g.lines().find(|l| l.trim_start().starts_with(VERDICT_ROW)) {
+            assert!(l.contains(EXCESS), "{}: the gate parses `{l}`, which has no `{EXCESS}`", p.display());
+        }
+    }
+}
+
 /// Rebuild `tests/fixture/.long_history_cache.json` from a warm real one. `#[ignore]`d: it needs the
 /// developer's own ~125 MB cache, which CI and a fresh clone do not have.
 ///

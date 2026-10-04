@@ -2880,7 +2880,9 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             held += take;
         }
         if n == 10 && !zero_names.is_empty() {
-            println!("  top-10 zero names ({years}y): {}", zero_names.join(", "));
+            // (#466) Never lead with `markers::VERDICT_ROW`: this prints BEFORE the book row, so a
+            // `top-10 zero names` spelling was the line the gate parsed, found no `excess`, and red.
+            println!("  zero names in top-10 ({years}y): {}", zero_names.join(", "));
         }
         let m = excess.len();
         if m == 0 {
