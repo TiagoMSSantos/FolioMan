@@ -3356,7 +3356,7 @@ struct ColSpec {
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
     ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters, W held in its newest 13F, s in the Social Arbitrage trading table (all three display only, never scored), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut" },
-    ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin; click to open the company's own website (stocks) or the fund's justETF page (funds)" },
+    ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin; click to open the company's own website (stocks; its Wikipedia article when none is found), the fund's justETF page (funds) or the coin's CoinGecko page (coins)" },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
     // (#447) GICS, stocks only: the book's sector concentration at a glance, which the rank never shows
@@ -4557,13 +4557,13 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     let attention = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "Title of the Wikipedia article the views were counted on; click to open the company's own website when the screen prices it"),
+        ("NAME", "Title of the Wikipedia article the views were counted on; click to open the company's own website (or its Wikipedia article) when the screen prices it"),
         ("VIEWS YoY", "Median over the last 12 complete months of each month's English Wikipedia page views ÷ the same month a year before, as a % change; click to open the article"),
     ]);
     let berkshire = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "The company's name; upper case = OpenFIGI's issuer name for a stock the screen does not price, — = neither has one; click to open the company's own website when the screen prices it"),
+        ("NAME", "The company's name; upper case = OpenFIGI's issuer name for a stock the screen does not price, — = neither has one; click to open the company's own website (or its Wikipedia article) when the screen prices it"),
         ("WEIGHT", "The holding's share of the 13F's total reported value; click to open the 13F filing on sec.gov"),
         ("STATUS", "Vs the quarter before: new, added (more than 5% more shares), trimmed (below 95% of the shares) or held"),
         ("SHARES Δ", "Change in shares held vs the quarter before; new = not held then"),
@@ -4572,7 +4572,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     let social = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "The company's name; — = the screen does not price it; click to open the company's own website"),
+        ("NAME", "The company's name; — = the screen does not price it; click to open the company's own website (or its Wikipedia article)"),
         ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), YouTube ×N (mentions in recent Dumb Money Live videos), hand list"),
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
         ("WHY", "The hand list's claim, else the newest video title, else the superinvestor count; click to open that source"),
@@ -4717,11 +4717,12 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
 /// (#469) The NAME link: each row's `Quote::profile.site` (a stock's own website, a fund's justETF
 /// page) as the NAME cell's third element, found like [`stamp_shadow_cols`] does, by exact ticker or
 /// the US symbol a Xetra twin stands for. Only an https URL is stamped, the page's rule for any cell
-/// link; a row with none keeps a plain NAME. Coins have no profile. Display only, both builders.
+/// link; a row with none keeps a plain NAME. (#471) A coin links its CoinGecko page. Display only,
+/// both builders.
 pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn(&str) -> String) {
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q)));
-    for table in ["stocks", "etfs", "core", "attention", "berkshire", "social"] {
+    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default();
@@ -9794,15 +9795,16 @@ mod tests {
             q.profile.site = site.map(String::from);
             q
         };
-        let quotes = [q("APC.DE", Some("https://www.apple.com")), q("VWCE.DE", Some("https://jetf/IE00")), q("BAD", Some("http://x")), q("NONE", None)];
+        let quotes = [q("APC.DE", Some("https://www.apple.com")), q("VWCE.DE", Some("https://jetf/IE00")), q("BAD", Some("http://x")), q("NONE", None), q("BTC-EUR", Some("https://cg/bitcoin"))];
         let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
         let row = |t: &str| serde_json::json!([["TICKER", t], ["NAME", "n", "https://old"]]);
-        let mut p = serde_json::json!({"stocks": [row("APC.DE"), row("BAD"), row("NONE")], "core": [row("VWCE.DE")], "berkshire": [row("AAPL"), row("SIRI")], "crypto": [row("APC.DE")]});
+        let mut p = serde_json::json!({"stocks": [row("APC.DE"), row("BAD"), row("NONE")], "core": [row("VWCE.DE")], "berkshire": [row("AAPL"), row("SIRI")], "crypto": [row("BTC-EUR")]});
         stamp_site(&mut p, &quotes, &us);
         assert_eq!(p["stocks"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "a stale third element is replaced");
         assert_eq!(p["core"][0][1], serde_json::json!(["NAME", "n", "https://jetf/IE00"]));
         assert_eq!(p["berkshire"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "a US filing finds its Xetra twin");
-        for (t, i) in [("stocks", 1), ("stocks", 2), ("berkshire", 1), ("crypto", 0)] {
+        assert_eq!(p["crypto"][0][1], serde_json::json!(["NAME", "n", "https://cg/bitcoin"]), "(#471) a coin links too");
+        for (t, i) in [("stocks", 1), ("stocks", 2), ("berkshire", 1)] {
             assert_eq!(p[t][i][1], serde_json::json!(["NAME", "n", "https://old"]), "{t}[{i}] untouched");
         }
     }

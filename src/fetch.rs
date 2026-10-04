@@ -1946,15 +1946,45 @@ fn nasdaq_number(v: &Value) -> Option<f64> {
 /// a bare host given one), and the consensus target against the previous close, both USD. `short`
 /// is FINRA's position, read separately because one bulk query serves every symbol.
 fn profile_of(company: &Value, target: &Value, summary: &Value, short: Option<f64>) -> core::Profile {
-    let site = company.pointer("/data/CompanyUrl/value").and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty()).map(|u| {
-        let host = u.trim_start_matches("https://").trim_start_matches("http://");
-        format!("https://{host}")
-    });
+    let site = company.pointer("/data/CompanyUrl/value").and_then(Value::as_str).and_then(https_site);
     let consensus = target.pointer("/data/consensusOverview");
     let analysts = ["buy", "hold", "sell"].iter().filter_map(|k| consensus?.get(k)?.as_u64()).sum::<u64>() as u32;
     let close = summary.pointer("/data/summaryData/PreviousClose/value").and_then(nasdaq_number).filter(|c| *c > 0.0);
     let target_pct = consensus.and_then(|c| c["priceTarget"].as_f64()).filter(|t| *t > 0.0).zip(close).map(|(t, c)| (t / c - 1.0) * 100.0);
     core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts) }
+}
+
+/// (#469) A home page as https: http upgraded, a bare host given the scheme, blank = None.
+fn https_site(u: &str) -> Option<String> {
+    let host = u.trim().trim_start_matches("https://").trim_start_matches("http://");
+    (!host.is_empty()).then(|| format!("https://{host}"))
+}
+
+/// (#471) Wikipedia's top search hit: its article URL and Wikidata id (None when it has none).
+fn wiki_hit(search: &Value) -> Option<(String, Option<String>)> {
+    let page = search.pointer("/query/pages")?.as_object()?.values().next()?;
+    let qid = page.pointer("/pageprops/wikibase_item").and_then(Value::as_str).map(String::from);
+    Some((page["fullurl"].as_str()?.to_string(), qid))
+}
+
+/// (#471) A Wikidata entity's official website (P856), the preferred-rank one when it marks one.
+fn official_site(entity: &Value) -> Option<String> {
+    let claims = entity.get("entities")?.as_object()?.values().next()?.pointer("/claims/P856")?.as_array()?;
+    let best = claims.iter().find(|c| c["rank"] == "preferred").or(claims.first())?;
+    best.pointer("/mainsnak/datavalue/value").and_then(Value::as_str).and_then(https_site)
+}
+
+/// (#471) DISPLAY ONLY: the NAME link of a stock Nasdaq gives no home page (BF.B, HONA, CBOE). The
+/// official website Wikidata lists for Wikipedia's best article on `name`, else that article, which
+/// at least says what the company is. None = no article, or refused.
+async fn wiki_site(client: &Client, urls: &Urls, name: &str) -> Option<String> {
+    let search = reqwest::Url::parse_with_params(&urls.wikipedia_search, [("gsrsearch", name)]).ok()?;
+    let (article, qid) = wiki_hit(&get_json(client, search.as_str()).await?)?;
+    let entity = match qid {
+        Some(q) => get_json(client, &urls.wikidata_entity.replace("{qid}", &q)).await,
+        None => None,
+    };
+    entity.as_ref().and_then(official_site).or(Some(article))
 }
 
 /// (#469) Newest-settlement short position per FINRA symbol, out of one bulk query's rows.
@@ -1974,6 +2004,7 @@ fn finra_newest(rows: &Value) -> HashMap<String, f64> {
 /// keyless Nasdaq GETs per stale stock plus ONE FINRA query for all of them, cached a week. Nasdaq
 /// spells a class share `BRK.B`, FINRA `BRKB`. A refused piece keeps its cached value and leaves the
 /// row due, so a throttled run never caches a hole (see `budget-miss` in `fetch_insider_history`).
+/// (#471) No home page from Nasdaq or the cache: up to two more GETs, `wiki_site`.
 pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
     let path = crate::config::data_path(PROFILE_CACHE_PATH);
     let mut cache: HashMap<String, (String, core::Profile)> =
@@ -1984,6 +2015,7 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
         .filter(|q| targets.contains(&q.ticker) && q.instrument_type.eq_ignore_ascii_case("EQUITY"))
         .map(|q| us_symbol(&q.ticker))
         .collect();
+    let names: HashMap<String, String> = quotes.iter().map(|q| (us_symbol(&q.ticker), q.name.clone())).collect();
     let mut due: Vec<String> = stocks
         .iter()
         .filter(|s| !cache.get(*s).is_some_and(|(d, _)| cache_age_days(d, today).is_some_and(|a| a < PROFILE_CACHE_DAYS)))
@@ -2022,6 +2054,10 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
                 target_pct: fresh.target_pct.or(old.target_pct),
                 analysts: fresh.analysts.or(old.analysts),
             };
+            if row.1.site.is_none() {
+                // shortcut: a refused Wikipedia lookup leaves the name unlinked for the cache week
+                row.1.site = wiki_site(client, urls, names.get(sym).map_or(sym.as_str(), String::as_str)).await;
+            }
             if answered {
                 row.0 = today.to_string();
             } else {
@@ -4065,29 +4101,28 @@ pub async fn fetch_mvrv(client: &Client, urls: &Urls, tickers: &[String]) -> Has
 }
 
 /// (#395) Circulating supply per crypto ticker ("BTC-EUR" -> ~19.9M), for the MCAP cell, which
-/// multiplies it by the row's own € price. ONE request: the CoinGecko market-cap-ranked list the crypto
+/// multiplies it by the row's own € price, and (#471) the coin's CoinGecko page, its NAME link. ONE
+/// request: the CoinGecko market-cap-ranked list the crypto
 /// lane is built from, at its 250-row page maximum so an explicit `screen ETH-EUR` finds its coin too.
 /// The first row per symbol wins — the list is cap-descending, and that is the coin the universe took
-/// the symbol from. A zero or missing supply is skipped rather than printed as a €0 cap. Empty map on
+/// the symbol from. A zero or missing supply is None rather than printed as a €0 cap. Empty map on
 /// any failure: the column reads n/a and nothing is gated on it.
-pub async fn fetch_coin_supply(client: &Client, urls: &Urls, tickers: &[String]) -> HashMap<String, f64> {
+pub async fn fetch_coin_supply(client: &Client, urls: &Urls, tickers: &[String]) -> HashMap<String, (Option<f64>, String)> {
     let mut out = HashMap::new();
     let coins: Vec<&String> = tickers.iter().filter(|t| crate::picks::is_currency_quoted(t)).collect();
     if coins.is_empty() {
         return out; // no crypto lane, no request
     }
     let Some(body) = get_json(client, &urls.coingecko_markets.replace("{n}", "250")).await else { return out };
-    let mut supply: HashMap<String, f64> = HashMap::new();
+    let mut supply: HashMap<String, (Option<f64>, String)> = HashMap::new();
     for c in body.as_array().into_iter().flatten() {
-        let sym = c.get("symbol").and_then(Value::as_str);
+        let (Some(sym), Some(id)) = (c.get("symbol").and_then(Value::as_str), c.get("id").and_then(Value::as_str)) else { continue };
         let s = c.get("circulating_supply").and_then(Value::as_f64).filter(|s| *s > 0.0);
-        if let (Some(sym), Some(s)) = (sym, s) {
-            supply.entry(sym.to_uppercase()).or_insert(s);
-        }
+        supply.entry(sym.to_uppercase()).or_insert((s, format!("https://www.coingecko.com/en/coins/{id}")));
     }
     for t in coins {
         if let Some(s) = supply.get(&crate::picks::underlying(t).to_uppercase()) {
-            out.insert(t.clone(), *s);
+            out.insert(t.clone(), s.clone());
         }
     }
     out
@@ -7038,22 +7073,30 @@ pub(crate) mod tests {
         assert_eq!(kept, ["bare", "edge"]);
     }
 
-    /// (#395) One CoinGecko list -> supply per coin ticker. The second `btc` is a smaller coin reusing
-    /// the symbol and must not overwrite the first; a zero and a null supply are skipped; `AAPL` is
-    /// not currency-quoted and never matched.
+    /// (#395) One CoinGecko list -> supply and (#471) page per coin ticker. The second `btc` is a
+    /// smaller coin reusing the symbol and must not overwrite the first; a zero and a null supply read
+    /// None; a row with no id is skipped; `AAPL` is not currency-quoted and never matched.
     #[tokio::test]
     async fn fetch_coin_supply_maps_each_coin_back_to_its_ticker() {
         let body = serde_json::json!([
-            {"symbol": "btc", "circulating_supply": 19_900_000.0},
-            {"symbol": "gt", "circulating_supply": 80_000_000.0},
-            {"symbol": "btc", "circulating_supply": 5.0},
-            {"symbol": "eth", "circulating_supply": 0.0},
-            {"symbol": "sol", "circulating_supply": null}
+            {"id": "bitcoin", "symbol": "btc", "circulating_supply": 19_900_000.0},
+            {"id": "gatechain-token", "symbol": "gt", "circulating_supply": 80_000_000.0},
+            {"id": "fake-btc", "symbol": "btc", "circulating_supply": 5.0},
+            {"id": "ethereum", "symbol": "eth", "circulating_supply": 0.0},
+            {"symbol": "sol", "circulating_supply": 9.0}
         ]);
         let (url, client) = stub_server(Box::leak(body.to_string().into_boxed_str()));
         let tickers: Vec<String> = ["BTC-EUR", "GT-USD", "ETH-EUR", "SOL-EUR", "AAPL"].map(String::from).into();
         let got = fetch_coin_supply(&client, &stub_urls(&url), &tickers).await;
-        assert_eq!(got, HashMap::from([("BTC-EUR".to_string(), 19_900_000.0), ("GT-USD".to_string(), 80_000_000.0)]));
+        let page = |id: &str| format!("https://www.coingecko.com/en/coins/{id}");
+        assert_eq!(
+            got,
+            HashMap::from([
+                ("BTC-EUR".to_string(), (Some(19_900_000.0), page("bitcoin"))),
+                ("GT-USD".to_string(), (Some(80_000_000.0), page("gatechain-token"))),
+                ("ETH-EUR".to_string(), (None, page("ethereum"))),
+            ])
+        );
     }
 
     /// (#358) The whole CoinMetrics round trip. The stub serves one reply to every connection, so one
@@ -9002,6 +9045,42 @@ pub(crate) mod tests {
         assert_eq!(profile_of(&Value::Null, &Value::Null, &Value::Null, None), core::Profile::default());
     }
 
+    /// (#471) The top hit's URL and Wikidata id (none on a page without one); the preferred P856 wins
+    /// over a first normal one, http is upgraded, no claim reads None.
+    #[test]
+    fn wiki_hit_and_official_site_read_the_two_answers() {
+        let hit = serde_json::json!({"query": {"pages": {"9": {"fullurl": "https://en.wikipedia.org/wiki/X", "pageprops": {"wikibase_item": "Q9"}}}}});
+        assert_eq!(wiki_hit(&hit), Some(("https://en.wikipedia.org/wiki/X".into(), Some("Q9".into()))));
+        assert_eq!(wiki_hit(&serde_json::json!({"query": {"pages": {"9": {"fullurl": "u"}}}})), Some(("u".into(), None)));
+        assert_eq!(wiki_hit(&serde_json::json!({"batchcomplete": ""})), None, "no hit");
+        let claim = |rank: &str, u: &str| serde_json::json!({"rank": rank, "mainsnak": {"datavalue": {"value": u}}});
+        let entity = |claims: Value| serde_json::json!({"entities": {"Q9": {"claims": {"P856": claims}}}});
+        assert_eq!(official_site(&entity(serde_json::json!([claim("normal", "https://a"), claim("preferred", "http://b")]))).as_deref(), Some("https://b"));
+        assert_eq!(official_site(&entity(serde_json::json!([claim("normal", "https://a")]))).as_deref(), Some("https://a"));
+        assert_eq!(official_site(&serde_json::json!({"entities": {"Q9": {"claims": {}}}})), None);
+    }
+
+    /// (#471) `wiki_site`: the search term rides as `gsrsearch`; Wikidata's site wins, the article
+    /// stands in when Wikidata lists none or the article has no id; no hit is None.
+    #[tokio::test]
+    async fn wiki_site_prefers_the_official_site_then_the_article() {
+        let (base, client, requests) = routed_stub(vec![
+            ("gsrsearch=Has+Site", r#"{"query": {"pages": {"1": {"fullurl": "https://w/Has", "pageprops": {"wikibase_item": "Q1"}}}}}"#),
+            ("/wd/Q1.json", r#"{"entities": {"Q1": {"claims": {"P856": [{"mainsnak": {"datavalue": {"value": "https://has.example"}}}]}}}}"#),
+            ("gsrsearch=No+Site", r#"{"query": {"pages": {"2": {"fullurl": "https://w/No", "pageprops": {"wikibase_item": "Q2"}}}}}"#),
+            ("gsrsearch=No+Id", r#"{"query": {"pages": {"3": {"fullurl": "https://w/Id"}}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.wikipedia_search = format!("{base}search?action=query");
+        urls.wikidata_entity = format!("{base}wd/{{qid}}.json");
+        assert_eq!(wiki_site(&client, &urls, "Has Site").await.as_deref(), Some("https://has.example"));
+        assert_eq!(wiki_site(&client, &urls, "No Site").await.as_deref(), Some("https://w/No"), "Q2 answers 404");
+        assert_eq!(wiki_site(&client, &urls, "No Id").await.as_deref(), Some("https://w/Id"));
+        assert_eq!(wiki_site(&client, &urls, "Nothing").await, None);
+        let asked: Vec<String> = requests.try_iter().collect();
+        assert!(!asked.iter().any(|r| r.contains("/wd/") && !r.contains("Q1") && !r.contains("Q2")), "no id, no Wikidata GET: {asked:?}");
+    }
+
     /// (#469) The newest settlement date wins per symbol, whatever order FINRA lists them in.
     #[test]
     fn finra_newest_keeps_the_newest_settlement() {
@@ -9023,12 +9102,14 @@ pub(crate) mod tests {
             ("/ZZP.B/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$100.00"}}}}"#),
             ("/ZZPRC/profile", r#"{"data": {"CompanyUrl": {"value": "https://c.example"}}}"#),
             ("/ZZPRC/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$5"}}}}"#),
+            ("gsrsearch=ZZPRN", r#"{"query": {"pages": {"1": {"fullurl": "https://w/ZZPRN"}}}}"#),
         ]);
         let mut urls = stub_urls(&base);
         urls.finra_short = format!("{base}finra");
         urls.nasdaq_profile = format!("{base}{{sym}}/profile");
         urls.nasdaq_target = format!("{base}{{sym}}/target");
         urls.nasdaq_summary = format!("{base}{{sym}}/summary");
+        urls.wikipedia_search = format!("{base}search?action=query");
         let fresh = core::Profile { site: Some("https://f.example".into()), ..Default::default() };
         let today = chrono::Local::now().date_naive().to_string();
         let week = (chrono::Local::now().date_naive() - chrono::Duration::days(PROFILE_CACHE_DAYS)).to_string();
@@ -9036,7 +9117,7 @@ pub(crate) mod tests {
         // stale one unfetched)
         let seed = serde_json::json!({"ZZPRF": [today, fresh], "ZZPRW": [week, fresh], "ZZPRX": [today, fresh], "ZZPRE": [week, fresh]});
         std::fs::write(crate::config::data_path(PROFILE_CACHE_PATH), seed.to_string()).expect("seed profile cache");
-        let mut quotes: Vec<core::Quote> = ["ZZP-B", "ZZPRF", "ZZPRC", "ZZPRX", "ZZPRE", "ZZPRW"]
+        let mut quotes: Vec<core::Quote> = ["ZZP-B", "ZZPRF", "ZZPRC", "ZZPRX", "ZZPRE", "ZZPRW", "ZZPRN"]
             .iter()
             .map(|t| {
                 let mut q = core::Quote::stub(t, "1.00", "", t);
@@ -9045,17 +9126,19 @@ pub(crate) mod tests {
             })
             .collect();
         let set = |ts: &[&str]| -> HashSet<String> { ts.iter().map(|t| t.to_string()).collect() };
-        enrich_profile(&client, &urls, &mut quotes, &set(&["ZZP-B", "ZZPRF", "ZZPRC", "ZZPRE", "ZZPRW"])).await;
+        enrich_profile(&client, &urls, &mut quotes, &set(&["ZZP-B", "ZZPRF", "ZZPRC", "ZZPRE", "ZZPRW", "ZZPRN"])).await;
         let p = &quotes[0].profile;
         assert_eq!((p.site.as_deref(), p.short_shares, p.analysts), (Some("https://zzp.example"), Some(1234.0), Some(4)));
         assert!(p.target_pct.is_some_and(|t| (t - 10.0).abs() < 1e-9), "{:?}", p.target_pct);
         assert_eq!(quotes[1].profile, fresh, "a fresh row is served");
         assert_eq!((quotes[2].profile.site.as_deref(), quotes[2].profile.target_pct), (Some("https://c.example"), None));
         assert_eq!((&quotes[3].profile, &quotes[4].profile), (&core::Profile::default(), &core::Profile::default()), "not a target, not a stock");
+        assert_eq!(quotes[6].profile.site.as_deref(), Some("https://w/ZZPRN"), "(#471) no Nasdaq site: Wikipedia's");
         let asked: Vec<String> = requests.try_iter().collect();
         assert!(!asked.iter().any(|r| r.contains("ZZPRF") || r.contains("ZZPRX") || r.contains("ZZPRE")), "{asked:?}");
-        assert!(asked.iter().any(|r| r.starts_with("POST /finra") && r.contains(r#"["ZZPB","ZZPRC","ZZPRW"]"#)), "one FINRA query for the due symbols: {asked:?}");
+        assert!(asked.iter().any(|r| r.starts_with("POST /finra") && r.contains(r#"["ZZPB","ZZPRC","ZZPRN","ZZPRW"]"#)), "one FINRA query for the due symbols: {asked:?}");
         assert!(asked.iter().any(|r| r.contains("/ZZPRW/profile")), "a week-old row is stale");
+        assert_eq!(asked.iter().filter(|r| r.contains("gsrsearch")).count(), 1, "only the row with no site asks Wikipedia: {asked:?}");
         let saved = || -> HashMap<String, (String, core::Profile)> {
             serde_json::from_str(&std::fs::read_to_string(crate::config::data_path(PROFILE_CACHE_PATH)).expect("cache")).expect("cache json")
         };
@@ -10558,7 +10641,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 42] = [
+        const FIELDS: [&str; 44] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -10568,6 +10651,7 @@ pub(crate) mod tests {
             "sec_submissions", "sec_form4", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
             "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys", "nasdaq_earnings",
             "trackingdifferences", "nasdaq_profile", "nasdaq_target", "nasdaq_summary", "finra_short",
+            "wikipedia_search", "wikidata_entity",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field

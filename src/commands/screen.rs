@@ -1977,12 +1977,14 @@ pub async fn run(args: Vec<String>) {
     // (#395) the coins' MCAP share count, one more bulk request; display-only. Only coins are keyed, so
     // the stocks' `enrich_income_stmt` stamp above survives. Keyed off the QUOTES' tickers, not
     // `universe`: a coin Yahoo has no -EUR pair for was refetched as -USD (GT-EUR -> GT-USD).
+    // (#471) the same list names each coin's CoinGecko page, its NAME link
     let quoted: Vec<String> = quotes.iter().map(|q| q.ticker.clone()).collect();
     let supply = fetch::fetch_coin_supply(&client, &settings.urls, &quoted).await;
     for quote in &mut quotes {
         quote.mvrv = mvrv.get(&quote.ticker).copied();
-        if let Some(s) = supply.get(&quote.ticker) {
-            quote.shares_out = Some(*s);
+        if let Some((s, page)) = supply.get(&quote.ticker) {
+            quote.shares_out = s.or(quote.shares_out);
+            quote.profile.site = Some(page.clone());
         }
     }
     // Coverage is thin BY DESIGN of the source, so state it rather than letting a column of n/a imply

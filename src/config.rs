@@ -921,6 +921,12 @@ pub struct Urls {
     // (#469) FINRA's consolidated short interest, every US exchange. Keyless POST query.
     #[serde(default = "default_finra_short_url")]
     pub finra_short: String,
+    // (#471) the NAME link when Nasdaq has no home page: Wikipedia's best article for the name, then
+    // that article's Wikidata official website (P856). Keyless. The search term is appended as `gsrsearch`.
+    #[serde(default = "default_wikipedia_search_url")]
+    pub wikipedia_search: String,
+    #[serde(default = "default_wikidata_entity_url")]
+    pub wikidata_entity: String,
 }
 
 /// (Item 4) Default SEC ticker→CIK map (one fetch, cached): a JSON object of {cik_str, ticker, title}.
@@ -957,6 +963,16 @@ fn default_nasdaq_summary_url() -> String {
 /// (#469) Default FINRA consolidated short interest dataset (POST a symbol + settlement-date filter).
 fn default_finra_short_url() -> String {
     "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest".to_string()
+}
+
+/// (#471) Default Wikipedia search: the top hit's `fullurl` plus its Wikidata id.
+fn default_wikipedia_search_url() -> String {
+    "https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrlimit=1&prop=pageprops%7Cinfo&inprop=url&ppprop=wikibase_item".to_string()
+}
+
+/// (#471) Default Wikidata entity: `claims.P856` is the official website.
+fn default_wikidata_entity_url() -> String {
+    "https://www.wikidata.org/wiki/Special:EntityData/{qid}.json".to_string()
 }
 
 /// (#465) Default trackingdifferences.com fund page: the `tdChart` script block holds the yearly TD.
@@ -2722,6 +2738,8 @@ mod tests {
             (default_nasdaq_target_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_nasdaq_summary_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_finra_short_url(), "https://api.finra.org/", &[][..]),
+            (default_wikipedia_search_url(), "https://en.wikipedia.org/", &[][..]),
+            (default_wikidata_entity_url(), "https://www.wikidata.org/", &["{qid}"][..]),
             (default_sec_companyfacts_url(), "https://data.sec.gov/", &["{cik}"][..]),
             (default_sec_companyconcept_url(), "https://data.sec.gov/", &["{cik}", "{concept}"][..]),
             (default_euronext_track_url(), "https://live.euronext.com/", &[][..]),
