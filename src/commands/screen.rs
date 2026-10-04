@@ -2050,6 +2050,7 @@ pub async fn run(args: Vec<String>) {
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
         crate::picks::stamp_buy(&mut top, &sized_now);
+        crate::picks::stamp_index(&mut top, &quotes); // (#446) the ETF rows' INDEX, after BUY%
         top["attention"] = attention;
         top["berkshire"] = berkshire;
         top["social"] = social;

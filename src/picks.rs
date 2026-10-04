@@ -4522,6 +4522,37 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
     payload["help"]["lanes"]["BUY%"] = BUY_HELP.into();
 }
 
+/// (#446) What the page's INDEX header means, set by [`stamp_index`].
+const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it; ×N = N rows of this table track that same index, so the book holds the same bet N times. — = no benchmark on record, so a count can undercount. Display only, never scored";
+
+/// (#446) The page's INDEX column on ETF rows, right after BUY%: `Quote::benchmark`, with ` ×N` when N
+/// rows of the lane share it, "—" when the quote has none. Exact `==` on the benchmark string and no
+/// name fallback, so it can undercount a family but never merges two indices. Display only: stamped
+/// by both payload builders, like [`stamp_buy`], so an upload keeps it. A lane the payload lacks stays
+/// absent.
+pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
+    let Some(rows) = payload.get_mut("etfs").and_then(serde_json::Value::as_array_mut) else { return };
+    let bench = |row: &serde_json::Value| {
+        let t = row.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str()?;
+        quotes.iter().find(|q| q.ticker == t)?.benchmark.clone()
+    };
+    let keys: Vec<Option<String>> = rows.iter().map(bench).collect();
+    for (row, key) in rows.iter_mut().zip(&keys) {
+        let Some(cells) = row.as_array_mut() else { continue };
+        let cell = match key {
+            None => "—".to_string(),
+            Some(b) => match keys.iter().filter(|k| k.as_ref() == Some(b)).count() {
+                1 => b.clone(),
+                n => format!("{b} ×{n}"),
+            },
+        };
+        let after = |h: &str| cells.iter().position(|c| c[0] == h);
+        let at = after("BUY%").or_else(|| after("TICKER")).map_or(cells.len(), |i| i + 1);
+        cells.insert(at, serde_json::json!(["INDEX", cell]));
+    }
+    payload["help"]["lanes"]["INDEX"] = INDEX_HELP.into();
+}
+
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
 /// = the coin's year minus BTC's, as a fraction; the score scales by (1 + w·edge), bounded 0.5x..2x so
 /// one moonshot can't run away and a laggard is docked, not zeroed. BTC vs itself = edge 0 = 1.0x (the
@@ -9452,6 +9483,33 @@ mod tests {
         assert!(p.get("etfs").is_none(), "an absent lane stays absent");
         assert_eq!(p["help"]["lanes"]["BUY%"], BUY_HELP);
         assert_eq!(p["help"]["lanes"]["SCORE"], "x", "the other entries stay");
+    }
+
+    /// (#446) INDEX lands after BUY% (after TICKER when BUY% is absent) on ETF rows only: a shared
+    /// benchmark reads `×N`, a lone one bare, an unknown "—" (two unknowns are NOT a pair), and an
+    /// unpriced ticker "—" too. Stocks and an absent lane are left alone; the help rides with it.
+    #[test]
+    fn stamp_index_counts_same_benchmark_etf_rows() {
+        let q = |t: &str, b: Option<&str>| Quote { benchmark: b.map(str::to_string), ..Quote::stub(t, "€1", "", t) };
+        let quotes = [q("A", Some("nasdaq 100 index")), q("B", Some("nasdaq 100 index")), q("C", Some("msci world index")), q("D", None), q("E", None)];
+        let etf = |t: &str| serde_json::json!([["RANK", "1"], ["TICKER", t], ["BUY%", "3.2%"], ["SCORE", "1.0"]]);
+        let mut p = serde_json::json!({
+            "etfs": [etf("A"), etf("B"), etf("C"), etf("D"), etf("E"), etf("ZZ"), [["TICKER", "B"]]],
+            "stocks": [[["TICKER", "A"]]],
+            "help": {"lanes": {"SCORE": "x"}},
+        });
+        stamp_index(&mut p, &quotes);
+        let index = |i: usize| p["etfs"][i].as_array().and_then(|r| r.iter().find(|c| c[0] == "INDEX")).map(|c| c[1].clone());
+        assert_eq!(p["etfs"][0], serde_json::json!([["RANK", "1"], ["TICKER", "A"], ["BUY%", "3.2%"], ["INDEX", "nasdaq 100 index ×3"], ["SCORE", "1.0"]]));
+        assert_eq!(index(2), Some("msci world index".into()));
+        assert_eq!([index(3), index(4), index(5)], [Some("—".into()), Some("—".into()), Some("—".into())]);
+        assert_eq!(p["etfs"][6], serde_json::json!([["TICKER", "B"], ["INDEX", "nasdaq 100 index ×3"]]), "after TICKER when no BUY%");
+        assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "A"]]]), "stocks carry no index");
+        assert_eq!(p["help"]["lanes"]["INDEX"], INDEX_HELP);
+        assert_eq!(p["help"]["lanes"]["SCORE"], "x");
+        let mut bare = serde_json::json!({"help": {}});
+        stamp_index(&mut bare, &quotes);
+        assert!(bare.get("etfs").is_none() && bare["help"].get("lanes").is_none(), "an absent lane stays absent");
     }
 
     /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and
