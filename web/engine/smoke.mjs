@@ -21,7 +21,8 @@ try {
   // `generated` aside: the universe is stamped when it is written, the payload a moment later.
   // (#438) `attention` too: screen fetches it from Wikimedia, the engine has no feed, and an upload keeps CI's.
   // (#440) `berkshire` likewise, from SEC's 13F filings. (#444) `social`, from Dataroma, YouTube and a hand list.
-  const drift = Object.keys(want).filter((k) => !["generated", "attention", "berkshire", "social"].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
+  // (#456) `exposure`, from Yahoo's fund holdings, which the engine does not carry.
+  const drift = Object.keys(want).filter((k) => !["generated", "attention", "berkshire", "social", "exposure"].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
   if (drift.length) {
     console.error("the engine drifts from screen on: " + drift.join(", "));
     process.exit(1);
