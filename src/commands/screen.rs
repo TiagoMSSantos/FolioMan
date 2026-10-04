@@ -2186,6 +2186,7 @@ pub async fn run(args: Vec<String>) {
         top["attention"] = attention;
         top["berkshire"] = berkshire;
         top["social"] = social;
+        crate::picks::stamp_shadow_cols(&mut top, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(&web_out, json);
         }

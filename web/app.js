@@ -91,7 +91,7 @@ const VIEW = {
   MVRV: "value", ROIC: "value", "FCF%": "value", "INS-B/S": "value",
 };
 function view(v) {
-  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto) table")) {
+  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social) table")) {
     const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && VIEW[th.textContent] !== v);
     for (const tr of t.rows) [...tr.cells].forEach((c, i) => (c.hidden = hide[i]));
   }

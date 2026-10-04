@@ -4629,6 +4629,35 @@ pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
     payload["help"]["lanes"]["INDEX"] = INDEX_HELP.into();
 }
 
+/// (#458) Columns the shadow tables leave out: their own TICKER/NAME already lead the row, RANK/SCORE/S-8Y
+/// rank a lane these rows are not in, and INS-B/S/EARN are fetched for printed stocks only, so they would
+/// read n/a on nearly every shadow row.
+const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "score8y", "ins", "earn"];
+
+/// (#458) The stocks table's columns appended to each shadow table (Attention, Berkshire, Social), after
+/// the table's own cells, through the same [`col_cell`] the lanes print with, and each header's lane help
+/// copied into that table's glossary. A row finds its quote by ticker, else by the US symbol a Xetra twin
+/// stands for (`us`, [`crate::fetch::us_symbol`] on CI): Berkshire files AAPL, the pond holds APC.DE. A row
+/// the screen did not price reads n/a in every column, so the table stays rectangular. Display only.
+pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap, us: &dyn Fn(&str) -> String) {
+    let cols: Vec<&ColSpec> = lane_columns(w, HIDE_STOCK).into_iter().filter(|c| !HIDE_SHADOW.contains(&c.key)).collect();
+    let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
+    by.extend(quotes.iter().map(|q| (q.ticker.clone(), q))); // the exact ticker wins over a twin
+    for table in ["attention", "berkshire", "social"] {
+        let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
+        for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
+            let quote = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).and_then(|t| by.get(t));
+            for c in &cols {
+                let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, None, "", tuning, fund_pe));
+                cells.push(serde_json::json!([c.hdr, cell]));
+            }
+        }
+        for c in &cols {
+            payload["help"][table][c.hdr] = payload["help"]["lanes"][c.hdr].clone();
+        }
+    }
+}
+
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
 /// = the coin's year minus BTC's, as a fraction; the score scales by (1 + w·edge), bounded 0.5x..2x so
 /// one moonshot can't run away and a laggard is docked, not zeroed. BTC vs itself = edge 0 = 1.0x (the
@@ -9605,6 +9634,27 @@ mod tests {
     /// (#446) INDEX lands after BUY% (after TICKER when BUY% is absent) on ETF rows only: a shared
     /// benchmark reads `×N`, a lone one bare, an unknown "—" (two unknowns are NOT a pair), and an
     /// unpriced ticker "—" too. Stocks and an absent lane are left alone; the help rides with it.
+    #[test]
+    fn stamp_shadow_cols_append_the_stock_columns_by_ticker_or_twin() {
+        let q = |t: &str, sector: &str| Quote { sector: Some(sector.to_string()), ..Quote::stub(t, "€1", "", t) };
+        let quotes = [q("APC.DE", "Information Technology"), q("HOOD", "Financials")];
+        let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
+        let w = Widths { columns: vec!["rank".into(), "ticker".into(), "sector".into(), "score".into(), "ins".into(), "earn".into(), "ter".into()], ..Widths::default() };
+        let mut p = serde_json::json!({
+            "berkshire": [[["#", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"]], [["#", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"]]],
+            "social": [[["#", "1"], ["TICKER", "HOOD"], ["WHY", "x"]]],
+            "stocks": [[["TICKER", "HOOD"]]],
+            "help": {"lanes": {"SECTOR": "the sector"}},
+        });
+        stamp_shadow_cols(&mut p, &quotes, &w, &BuyHeuristic::default(), &FundPeMap::new(), &us);
+        assert_eq!(p["berkshire"][0], serde_json::json!([["#", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"]]), "a US filing finds its Xetra twin");
+        assert_eq!(p["berkshire"][1], serde_json::json!([["#", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"]]), "unpriced = n/a, still rectangular");
+        assert_eq!(p["social"][0], serde_json::json!([["#", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"]]));
+        assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
+        assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
+        assert!(p.get("attention").is_none(), "an absent table stays absent");
+    }
+
     #[test]
     fn stamp_index_counts_same_benchmark_etf_rows() {
         let q = |t: &str, b: Option<&str>| Quote { benchmark: b.map(str::to_string), ..Quote::stub(t, "€1", "", t) };
