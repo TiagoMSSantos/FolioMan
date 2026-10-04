@@ -15,6 +15,12 @@
 <body>
 <main>
   <h1>FolioMan — top picks per class</h1>
+  <!-- (#445) Plain anchors to each section's h2: the page is eight tables long. -->
+  <nav class="sub" aria-label="sections">
+    <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
+    <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
+    <a href="#h-social">Social</a> · <a href="#h-inflation">Inflation</a>
+  </nav>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
   <p class="stale" id="stale" role="alert" hidden></p>
@@ -24,6 +30,14 @@
        automatically. Hidden entirely when there is nothing to choose. -->
   <p class="topn" id="topn-box" hidden>
     <label>show top <select id="topn"></select> rows per table</label>
+  </p>
+  <!-- (#445) Column groups for the three ranked tables; RANK NAME TICKER BUY% always show. A phone
+       opens on `overview`, a wide screen on `all`; `?view=` overrides either. -->
+  <p class="topn">
+    <label>columns <select id="view">
+      <option>all</option><option>overview</option><option>returns</option><option>risk</option><option>value</option>
+    </select></label>
+    · <label>filter <input id="filter" type="search" placeholder="ticker or name" size="16"></label>
   </p>
   <!-- (#392) Re-rank this run's pool under your own settings.yaml, in this tab: engine/ is the same
        Rust ranking compiled to wasm. Shown only when the deploy shipped it. -->
@@ -40,49 +54,6 @@
 
   <h2 id="h-stocks">Stocks</h2>
   <div id="stocks"></div>
-  <!-- (#438) The social-arbitrage probe's top third, shown and never ranked: no BUY%, no journal. -->
-  <h2 id="h-attention">Attention — shadow, NOT a buy signal</h2>
-  <p class="note" id="attention-note">
-    S&amp;P names whose English Wikipedia page gained the most readers: the median, over the last
-    12 complete months, of each month's views over the same month a year before (VIEWS YoY). The
-    pool is the 182 names the probe mapped to an article. Graded on history, this top third beat the
-    pool by +14.7pp over 3 years and LOST −10.8pp over 5, so it reverses: it never feeds BUY% or the
-    rankings above, and an uploaded settings.yaml does not change it. The 5-year read rests on less
-    than one independent window (pageviews start in 2015), so neither the reversal nor any fix for it
-    is settled yet.
-  </p>
-  <div id="attention"></div>
-  <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
-       (#442) Every holding now, with the `W` flag and the track brkh row. -->
-  <h2 id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
-  <p class="note" id="berkshire-note">
-    Every stock in Berkshire Hathaway's newest 13F. A 13F lists US-listed holdings only, so its
-    Japanese trading houses and its wholly owned companies are not here. WEIGHT is the holding's
-    share of the 13F's reported value. STATUS compares it with the quarter before: new, added (more
-    than 5% more shares), trimmed (below 95% of the shares) or held (a forward split counts as held),
-    and SHARES Δ is that change. BOUGHT is the newest quarter it was bought in over the last 4, or —.
-    A 13F is filed up to 45 days after its quarter ends, so the table is already weeks old. ETFs are
-    left out. A name the screen does not price shows OpenFIGI's upper-case issuer name. Every holding
-    is listed whatever the row count above. It never feeds BUY% or the rankings above, and an
-    uploaded settings.yaml does not change it.
-  </p>
-  <div id="berkshire"></div>
-  <!-- (#444) social arbitrage, shown and never ranked: the `s` flag and the track soc row read it. -->
-  <h2 id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
-  <p class="note" id="social-note">
-    Stocks people say they are buying, one row per stock, from three free sources. Superinvestors:
-    Dataroma's last-quarter buys, kept when at least 8 of its ~80 tracked managers bought; these come
-    from 13F filings, so they are 45 or more days old, and a Berkshire buy above can show again here.
-    YouTube: stocks named in the newest uploads (about 15, roughly one week) of Dumb Money Live, a
-    social-arbitrage channel; the first word of the stock's name must appear as a whole word in the same
-    capitalisation, and a mention is not a buy (shorts and avoids are discussed too). Hand list: claims
-    checked against a linked source, kept in
-    <code>src/buy-heuristics/social-arbitrage-trading.json</code>. SOURCES names each source that lists
-    the stock; NEWEST is the latest dated mention, or the 13F quarter; WHY quotes the hand list, else
-    the newest video title. A NAME of — means the screen does not price it. It never feeds BUY% or the
-    rankings above, and an uploaded settings.yaml does not change it.
-  </p>
-  <div id="social"></div>
   <h2 id="h-etfs">ETFs</h2>
   <div id="etfs"></div>
   <h2 id="h-crypto">Crypto</h2>
@@ -95,7 +66,8 @@
        it — see `apply()`. -->
   <h2 id="h-core">CORE — one fund forever</h2>
   <div id="core"></div>
-  <p class="note" id="hold">
+  <details class="note" id="hold">
+    <summary>about CORE</summary>
     Broad, cheap, physical, accumulating UCITS funds, ranked broadest-first — all-world → developed →
     emerging → US → ex-US → Europe → Japan → Asia-Pacific — then domicile (IE first, for withholding),
     then cheapest <code>TER</code>, then largest <code>AUM</code>. One row per fund name, capped per
@@ -103,7 +75,54 @@
     book</strong>; the sleeves under it are for building one yourself. The tables above rank momentum
     and bury these at 0.0 — that is the ranking working, not a verdict on the fund.
     <strong>NOT advice.</strong>
-  </p>
+  </details>
+
+  <!-- (#438) The social-arbitrage probe's top third, shown and never ranked: no BUY%, no journal. -->
+  <h2 id="h-attention">Attention — shadow, NOT a buy signal</h2>
+  <details class="note" id="attention-note">
+    <summary>about this table</summary>
+    S&amp;P names whose English Wikipedia page gained the most readers: the median, over the last
+    12 complete months, of each month's views over the same month a year before (VIEWS YoY). The
+    pool is the 182 names the probe mapped to an article. Graded on history, this top third beat the
+    pool by +14.7pp over 3 years and LOST −10.8pp over 5, so it reverses: it never feeds BUY% or the
+    rankings above, and an uploaded settings.yaml does not change it. The 5-year read rests on less
+    than one independent window (pageviews start in 2015), so neither the reversal nor any fix for it
+    is settled yet.
+  </details>
+  <div id="attention"></div>
+  <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
+       (#442) Every holding now, with the `W` flag and the track brkh row. -->
+  <h2 id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
+  <details class="note" id="berkshire-note">
+    <summary>about this table</summary>
+    Every stock in Berkshire Hathaway's newest 13F. A 13F lists US-listed holdings only, so its
+    Japanese trading houses and its wholly owned companies are not here. WEIGHT is the holding's
+    share of the 13F's reported value. STATUS compares it with the quarter before: new, added (more
+    than 5% more shares), trimmed (below 95% of the shares) or held (a forward split counts as held),
+    and SHARES Δ is that change. BOUGHT is the newest quarter it was bought in over the last 4, or —.
+    A 13F is filed up to 45 days after its quarter ends, so the table is already weeks old. ETFs are
+    left out. A name the screen does not price shows OpenFIGI's upper-case issuer name. Every holding
+    is listed whatever the row count above. It never feeds BUY% or the rankings above, and an
+    uploaded settings.yaml does not change it.
+  </details>
+  <div id="berkshire"></div>
+  <!-- (#444) social arbitrage, shown and never ranked: the `s` flag and the track soc row read it. -->
+  <h2 id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
+  <details class="note" id="social-note">
+    <summary>about this table</summary>
+    Stocks people say they are buying, one row per stock, from three free sources. Superinvestors:
+    Dataroma's last-quarter buys, kept when at least 8 of its ~80 tracked managers bought; these come
+    from 13F filings, so they are 45 or more days old, and a Berkshire buy above can show again here.
+    YouTube: stocks named in the newest uploads (about 15, roughly one week) of Dumb Money Live, a
+    social-arbitrage channel; the first word of the stock's name must appear as a whole word in the same
+    capitalisation, and a mention is not a buy (shorts and avoids are discussed too). Hand list: claims
+    checked against a linked source, kept in
+    <code>src/buy-heuristics/social-arbitrage-trading.json</code>. SOURCES names each source that lists
+    the stock; NEWEST is the latest dated mention, or the 13F quarter; WHY quotes the hand list, else
+    the newest video title. A NAME of — means the screen does not price it. It never feeds BUY% or the
+    rankings above, and an uploaded settings.yaml does not change it.
+  </details>
+  <div id="social"></div>
 
   <!-- (#249) The footer table `screen` prints below its three rankings, published because its
        cumulative columns cover the spans the tables above carry (2Y/5Y/20Y) and longer ones — a row
@@ -112,21 +131,23 @@
        (`score_on_nominal`), so the note now states whichever unit the payload's own help names. -->
   <h2 id="h-inflation">Inflation</h2>
   <div id="inflation"></div>
-  <p class="note" id="real">
+  <details class="note" id="real">
+    <summary>about inflation and the column units</summary>
     Consumer-price inflation over the same spans: USA, the EU (HICP) and Portugal. This run printed
     the ≥1Y columns above as <strong id="unit">(unit not stated)</strong>. A <em>nominal</em> column
     still holds inflation — in today's money it is (1 + column) ÷ (1 + row) − 1. A <em>real</em>
     column had the EU row taken out before it printed — do not subtract it again. 1D/1W/1M are always
     nominal.
-  </p>
+  </details>
 
-  <p class="note">
+  <details class="note">
+    <summary>about the rankings</summary>
     <code>screen</code>'s three ranked tables — the 20yr+ growth ranking:
     at/near its own ~10y high with a strong proven long-term CAGR and an accelerating recent year,
     braked by how far it has run above its 200wk trend. Crypto is ranked against Bitcoin, the market
     base. These ranked tilts are higher-variance, regime-dependent sector/thematic bets whose recent
     leadership won't necessarily repeat. <strong>NOT advice.</strong>
-  </p>
+  </details>
   <!-- (#83, resolved at #114) Which config produced these rows. This paragraph used to be a
        confession: the page ran config/web-settings.yaml, a second committed overlay mirroring the
        private terminal, which opened four gates wide enough to reject almost nothing and ranked on
@@ -136,7 +157,8 @@
        collapsing configs: a backtested edge is not a forecast. Static text on purpose — the payload
        carries three rows and no config, and shipping the knobs to the browser would be a second place
        for them to drift. -->
-  <p class="note" id="lane">
+  <details class="note" id="lane">
+    <summary>which ranking this is</summary>
     <strong>Which ranking this is.</strong> These rows come from
     <code>tests/ci-settings.yaml</code> — the same configuration the repo's own test suite grades, with
     no overlay of any kind. Every gate and weight behind them carries a written receipt in that file
@@ -144,8 +166,9 @@
     about outcome: the receipts were measured on historical windows, several were fitted before the
     point-in-time universe landed and are marked <code>PRE-PIT</code> because that fitting is now
     suspect, and a live universe is not the backtest pool. A ranking you can audit is still a ranking.
-  </p>
-  <p class="note" id="flags">
+  </details>
+  <details class="note" id="flags">
+    <summary>rank flags and links</summary>
     Rank flags: <code>*</code> pinned · <code>#</code> scored on live fundamentals · <code>!</code>
     late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·
     <code>~</code> bridged history · <code>H</code> hold-suitable core · <code>o</code> already held ·
@@ -154,7 +177,7 @@
     <code>s</code> in the Social Arbitrage trading table (display only).
     Each ticker links to its Yahoo Finance quote; <code>new</code> marks a name that joined its table
     since the previous day's last run.
-  </p>
+  </details>
   <!-- (#400) Built from the payload's `help`, Rust's one copy of each column's meaning (the same text
        as each header's hover title), and listing only the headers these tables show. -->
   <details class="note" id="glossary" hidden>

@@ -64,11 +64,70 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // (#441) The Berkshire table is NOT: it lists every buy, not a ranking, and the default N of 3 hid 11 of 14.
 // (#442) It lists every holding now, same rule.
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
+// (#445) A filter query overrides the cut in every table but inflation: a row shows iff its TICKER or
+// NAME holds the query, so a name the chooser hid can still be found. An empty query is the cut alone.
 function apply(n) {
-  for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody, #attention tbody")) {
-    for (const tr of body.rows) tr.hidden = !("pin" in tr.dataset) && +tr.dataset.rank >= n;
+  const q = document.getElementById("filter").value.trim().toLowerCase();
+  for (const t of document.querySelectorAll(".scroll table")) {
+    if (t.closest("#inflation")) continue;
+    const cut = t.closest("#stocks, #etfs, #crypto, #attention");
+    const cols = [...t.rows[0].cells].flatMap((th, i) => (["TICKER", "NAME"].includes(th.textContent) ? [i] : []));
+    for (const tr of t.tBodies[0].rows) {
+      tr.hidden = q
+        ? !cols.some((i) => tr.cells[i].textContent.toLowerCase().includes(q))
+        : !!cut && !("pin" in tr.dataset) && +tr.dataset.rank >= n;
+    }
   }
   stick();
+}
+
+// (#445) Column groups for the three ranked tables, finviz-style. A header NOT listed here shows in
+// every view, so RANK NAME TICKER BUY% (and any column added later) can never be hidden by accident.
+const VIEW = {
+  MARKET: "overview", "PRICE(EUR)": "overview", SCORE: "overview",
+  CAGR: "returns", YRS: "returns", "1D": "returns", "1W": "returns", "1M": "returns", "2Y": "returns",
+  "5Y": "returns", "8Y": "returns", "20Y": "returns", "S-8Y": "returns",
+  VOL: "risk", MAXDD: "risk", R2: "risk", "ABV-MA": "risk", "OFF-HI": "risk", TURNOVER: "risk",
+  MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "EPS-YoY": "value",
+  "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
+  MVRV: "value",
+};
+function view(v) {
+  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto) table")) {
+    const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && VIEW[th.textContent] !== v);
+    for (const tr of t.rows) [...tr.cells].forEach((c, i) => (c.hidden = hide[i]));
+  }
+  stick();
+}
+
+// (#445) One query string for both choosers: each writes its own key and keeps the other's.
+function remember(k, v) {
+  const u = new URLSearchParams(location.search);
+  u.set(k, v);
+  history.replaceState(null, "", "?" + u);
+}
+
+// (#445) A table as CSV, straight from the payload rows: every row and column, cells verbatim.
+const csv = (rows) =>
+  [rows[0].map(([h]) => h), ...rows.map((r) => r.map(([, c]) => c))]
+    .map((line) => line.map((f) => (/[",\n]/.test(String(f)) ? '"' + String(f).replaceAll('"', '""') + '"' : f)).join(","))
+    .join("\n") + "\n";
+console.assert(
+  csv([[["A", "1"], ["B", "2"]]]) === "A,B\n1,2\n" && csv([[["N", 'x,"y"']]]) === 'N\n"x,""y"""\n',
+  "csv misquotes a field",
+);
+// (#445) One CSV link per section, in its h2, made once; a re-render (an upload) only swaps the rows.
+const sheets = {};
+function sheet(id, rows) {
+  sheets[id] = rows;
+  const h = document.getElementById("h-" + id);
+  let a = h.querySelector("a.csv");
+  if (!a) {
+    a = Object.assign(document.createElement("a"), { className: "csv", textContent: "CSV", download: id + ".csv", href: "#" });
+    a.onclick = () => (a.href = URL.createObjectURL(new Blob([csv(sheets[id])], { type: "text/csv" })));
+    h.append(" ", a);
+  }
+  a.hidden = !rows?.length;
 }
 
 // (#433) The sticky label columns' left edges: each is the summed width of the columns before it.
@@ -131,7 +190,7 @@ function chooser(max, dflt) {
   sel.value = Math.min(Math.max(want, 1), max);
   sel.onchange = () => {
     apply(+sel.value);
-    history.replaceState(null, "", "?top=" + sel.value);
+    remember("top", sel.value);
   };
   box.hidden = max <= 1; // one row everywhere: nothing to choose, so don't offer a choice
   apply(+sel.value);
@@ -207,6 +266,11 @@ function render(data, prev) {
   const sizes = LANES.map((lane) => (data[lane] || []).length);
   const attention = document.querySelectorAll("#attention tbody tr").length;
   chooser(Math.max(1, attention, ...sizes), Math.min(...sizes.filter(Boolean)));
+  view(viewSel.value);
+  // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
+  for (const id of [...LANES, "core", "inflation", "attention", "berkshire", "social"]) {
+    if (data[id]) sheet(id, data[id]);
+  }
   glossary(data, help);
   // (#433) Each table and its scroll box are named by the h2 above them, `h-` + the holder's id.
   for (const t of document.querySelectorAll(".scroll table")) {
@@ -237,6 +301,17 @@ function glossary(data, help) {
   box.querySelector("dl").replaceWith(dl);
   box.hidden = !dl.children.length;
 }
+
+// (#445) `?view=` wins when it names an option; otherwise the 700px breakpoint the sticky columns use.
+const viewSel = document.getElementById("view");
+const wantView = new URLSearchParams(location.search).get("view");
+viewSel.value = [...viewSel.options].some((o) => o.value === wantView) ? wantView
+  : matchMedia("(min-width: 700px)").matches ? "all" : "overview";
+viewSel.onchange = () => {
+  view(viewSel.value);
+  remember("view", viewSel.value);
+};
+document.getElementById("filter").oninput = () => apply(+document.getElementById("topn").value);
 
 // (#401) prev.json is best effort: missing, unreadable or undated is no marks, never an error.
 function load() {

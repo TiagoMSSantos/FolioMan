@@ -91,7 +91,18 @@
     padding: .15rem .3rem;
   }
   /* (#400) The column glossary: collapsed, one line until asked for. */
-  #glossary summary { cursor: pointer; }
+  /* (#445) every note is a <details> now, folded to its summary line until asked for */
+  details.note summary { cursor: pointer; }
+  nav a, a.csv { color: inherit; text-decoration-color: var(--rule); }
+  a.csv { font-size: .7rem; font-weight: 400; color: var(--muted); margin-left: .4rem; }
+  .topn input {
+    font: inherit;
+    color: var(--fg);
+    background: var(--head-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .15rem .3rem;
+  }
   #glossary dt { color: var(--fg); font-weight: 600; margin-top: .5rem; }
   #glossary dt.group { margin-top: 1.25rem; text-decoration: underline; }
   #glossary dd { margin: 0 0 0 1.5rem; }
