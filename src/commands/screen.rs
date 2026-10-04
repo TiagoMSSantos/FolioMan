@@ -1921,6 +1921,8 @@ pub async fn run(args: Vec<String>) {
     let mut filled = targets.clone();
     filled.extend(shadow_pool(&[&attention, &berkshire, &social], &quotes, &fetch::us_symbol));
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
+    // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
+    fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
     // (#448) display only: the INS-B/S cell, last so the SEC fundamentals and the 13F lane spend the
     // shared SEC budget first
     fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
@@ -2223,6 +2225,7 @@ pub async fn run(args: Vec<String>) {
         top["social"] = social;
         crate::picks::stamp_shadow_cols(&mut top, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
         crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);
+        crate::picks::stamp_site(&mut top, &quotes, &fetch::us_symbol); // (#469) after every table is set
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(&web_out, json);
         }

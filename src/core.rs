@@ -214,6 +214,16 @@ pub struct Stats8 {
     pub underwater_yrs: Option<f64>,
 }
 
+/// (#469) Company facts for the page only: the NAME link and the SHORT%/TARGET% cells. DISPLAY-ONLY,
+/// filled by `fetch::enrich_profile` (stocks) and `fetch::enrich_etf_cells` (funds' `site`), never scored.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Profile {
+    pub site: Option<String>,      // https home page: Nasdaq's CompanyUrl for a stock, the justETF profile for a fund
+    pub short_shares: Option<f64>, // FINRA's newest settlement-date short position, in shares
+    pub target_pct: Option<f64>,   // Nasdaq's 1-year consensus price target vs the previous close, %
+    pub analysts: Option<u32>,     // buy + hold + sell opinions behind that target
+}
+
 // (#391) serde: the page engine re-ranks the published pool (`web::Universe`) in the browser.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Quote {
@@ -348,6 +358,8 @@ pub struct Quote {
     #[serde(default)]
     pub td_years: Vec<f64>, // (#465) yearly tracking difference %, oldest year first (trackingdifferences.com). DISPLAY-ONLY, same rows as top10
     pub next_earnings: Option<NaiveDate>, // (#449) next scheduled earnings report, from Yahoo's calendarEvents. DISPLAY-ONLY: `fetch::enrich_earnings` fills the printed stock rows only
+    #[serde(default)]
+    pub profile: Profile, // (#469) DISPLAY-ONLY: the NAME link + SHORT%/TARGET% facts, printed and shadow-table rows only
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy
     pub splits: Vec<(NaiveDate, f64)>, // (#82) (effective date, ratio) from the chart's events.splits; a 4:1 split is 4.0, ascending. NOT SCORED and never will be — it exists so `track` and `sim`, which replay prices journaled BEFORE a split against a series retro-adjusted AFTER one, can restate the old price into today's share definition. Empty for stubs and for `backtest_quote`, which walks one internally consistent series and has nothing to restate
 }
@@ -442,6 +454,7 @@ impl Quote {
             shares_out: None,
             insider_90d: None,
             next_earnings: None,
+            profile: Profile::default(),
             top10: None,
             td_years: Vec::new(),
             splits: Vec::new(),

@@ -910,6 +910,17 @@ pub struct Urls {
     // (#465) a fund's yearly tracking difference for the TD-1Y/TD-5Y cells. Keyless HTML. {isin} = the fund's ISIN.
     #[serde(default = "default_trackingdifferences_url")]
     pub trackingdifferences: String,
+    // (#469) Nasdaq's company profile (CompanyUrl, the NAME link), analyst target and quote summary (the
+    // close the target is read against). Keyless, like nasdaq_earnings. {sym} = US ticker.
+    #[serde(default = "default_nasdaq_profile_url")]
+    pub nasdaq_profile: String,
+    #[serde(default = "default_nasdaq_target_url")]
+    pub nasdaq_target: String,
+    #[serde(default = "default_nasdaq_summary_url")]
+    pub nasdaq_summary: String,
+    // (#469) FINRA's consolidated short interest, every US exchange. Keyless POST query.
+    #[serde(default = "default_finra_short_url")]
+    pub finra_short: String,
 }
 
 /// (Item 4) Default SEC ticker→CIK map (one fetch, cached): a JSON object of {cik_str, ticker, title}.
@@ -926,6 +937,26 @@ fn default_sec_submissions_url() -> String {
 /// (#450) Default Nasdaq earnings-date endpoint: `data.reportText` names the next report date.
 fn default_nasdaq_earnings_url() -> String {
     "https://api.nasdaq.com/api/analyst/{sym}/earnings-date".to_string()
+}
+
+/// (#469) Default Nasdaq company profile: `data.CompanyUrl.value` is the home page.
+fn default_nasdaq_profile_url() -> String {
+    "https://api.nasdaq.com/api/company/{sym}/company-profile".to_string()
+}
+
+/// (#469) Default Nasdaq analyst target: `data.consensusOverview` holds priceTarget + buy/hold/sell.
+fn default_nasdaq_target_url() -> String {
+    "https://api.nasdaq.com/api/analyst/{sym}/targetprice".to_string()
+}
+
+/// (#469) Default Nasdaq quote summary: `data.summaryData.PreviousClose`, the USD close the target reads against.
+fn default_nasdaq_summary_url() -> String {
+    "https://api.nasdaq.com/api/quote/{sym}/summary?assetClass=stocks".to_string()
+}
+
+/// (#469) Default FINRA consolidated short interest dataset (POST a symbol + settlement-date filter).
+fn default_finra_short_url() -> String {
+    "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest".to_string()
 }
 
 /// (#465) Default trackingdifferences.com fund page: the `tdChart` script block holds the yearly TD.
@@ -2687,6 +2718,10 @@ mod tests {
             (default_sec_form4_url(), "https://www.sec.gov/", &["{cik}", "{acc}", "{doc}"][..]),
             (default_nasdaq_earnings_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_trackingdifferences_url(), "https://www.trackingdifferences.com/", &["{isin}"][..]),
+            (default_nasdaq_profile_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
+            (default_nasdaq_target_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
+            (default_nasdaq_summary_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
+            (default_finra_short_url(), "https://api.finra.org/", &[][..]),
             (default_sec_companyfacts_url(), "https://data.sec.gov/", &["{cik}"][..]),
             (default_sec_companyconcept_url(), "https://data.sec.gov/", &["{cik}", "{concept}"][..]),
             (default_euronext_track_url(), "https://live.euronext.com/", &[][..]),

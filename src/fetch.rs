@@ -904,6 +904,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         shares_out: None, // (#395) enrich_income_stmt for stocks, screen's CoinGecko stamp for coins
         insider_90d: None, // (#448) enrich_insider, printed stock rows only
         next_earnings: None, // (#449) enrich_earnings, printed stock rows only
+        profile: core::Profile::default(), // (#469) enrich_profile / enrich_etf_cells
         top10: None, // (#465) enrich_etf_cells, printed funds only
         td_years: Vec::new(),
         annual_brief: None,
@@ -1928,6 +1929,114 @@ pub async fn enrich_earnings(client: &Client, urls: &Urls, quotes: &mut [core::Q
     }
 }
 
+/// (#469) `{US symbol: ["YYYY-MM-DD", Profile]}` for `enrich_profile`. A row whose fetch was partly
+/// refused keeps the date "", so the next run retries it, and the pieces that did answer still print.
+const PROFILE_CACHE_PATH: &str = ".profile_cache.json";
+/// (#469) A target or a short position moves within weeks, a home page in years: weekly is plenty.
+const PROFILE_CACHE_DAYS: i64 = 7;
+/// (#469) FINRA settles short interest twice a month; 45 days always holds the newest one.
+const FINRA_LOOKBACK_DAYS: i64 = 45;
+
+/// (#469) `$1,234.50` -> 1234.5, the way Nasdaq spells a price.
+fn nasdaq_number(v: &Value) -> Option<f64> {
+    v.as_str()?.replace(['$', ','], "").trim().parse().ok()
+}
+
+/// (#469) The Profile the three Nasdaq answers spell: the company home page (http upgraded to https,
+/// a bare host given one), and the consensus target against the previous close, both USD. `short`
+/// is FINRA's position, read separately because one bulk query serves every symbol.
+fn profile_of(company: &Value, target: &Value, summary: &Value, short: Option<f64>) -> core::Profile {
+    let site = company.pointer("/data/CompanyUrl/value").and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty()).map(|u| {
+        let host = u.trim_start_matches("https://").trim_start_matches("http://");
+        format!("https://{host}")
+    });
+    let consensus = target.pointer("/data/consensusOverview");
+    let analysts = ["buy", "hold", "sell"].iter().filter_map(|k| consensus?.get(k)?.as_u64()).sum::<u64>() as u32;
+    let close = summary.pointer("/data/summaryData/PreviousClose/value").and_then(nasdaq_number).filter(|c| *c > 0.0);
+    let target_pct = consensus.and_then(|c| c["priceTarget"].as_f64()).filter(|t| *t > 0.0).zip(close).map(|(t, c)| (t / c - 1.0) * 100.0);
+    core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts) }
+}
+
+/// (#469) Newest-settlement short position per FINRA symbol, out of one bulk query's rows.
+fn finra_newest(rows: &Value) -> HashMap<String, f64> {
+    let mut best: HashMap<String, (String, f64)> = HashMap::new();
+    for r in rows.as_array().into_iter().flatten() {
+        let (Some(sym), Some(date), Some(n)) = (r["symbolCode"].as_str(), r["settlementDate"].as_str(), r["currentShortPositionQuantity"].as_f64()) else { continue };
+        if best.get(sym).is_none_or(|(d, _)| date > d.as_str()) {
+            best.insert(sym.to_string(), (date.to_string(), n));
+        }
+    }
+    best.into_iter().map(|(s, (_, n))| (s, n)).collect()
+}
+
+/// (#469) DISPLAY ONLY: the NAME link and the SHORT%/TARGET% facts on the stocks in `targets` (the
+/// printed and shadow-table rows), keyed on the US symbol so a Xetra twin reads its parent. Three
+/// keyless Nasdaq GETs per stale stock plus ONE FINRA query for all of them, cached a week. Nasdaq
+/// spells a class share `BRK.B`, FINRA `BRKB`. A refused piece keeps its cached value and leaves the
+/// row due, so a throttled run never caches a hole (see `budget-miss` in `fetch_insider_history`).
+pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
+    let path = crate::config::data_path(PROFILE_CACHE_PATH);
+    let mut cache: HashMap<String, (String, core::Profile)> =
+        std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let today = chrono::Local::now().date_naive();
+    let stocks: Vec<String> = quotes
+        .iter()
+        .filter(|q| targets.contains(&q.ticker) && q.instrument_type.eq_ignore_ascii_case("EQUITY"))
+        .map(|q| us_symbol(&q.ticker))
+        .collect();
+    let mut due: Vec<String> = stocks
+        .iter()
+        .filter(|s| !cache.get(*s).is_some_and(|(d, _)| cache_age_days(d, today).is_some_and(|a| a < PROFILE_CACHE_DAYS)))
+        .cloned()
+        .collect();
+    due.sort();
+    due.dedup();
+    if !due.is_empty() && !offline() {
+        let finra = |s: &str| s.replace(['-', '.'], "");
+        let body = serde_json::json!({
+            "limit": 5000,
+            "domainFilters": [{"fieldName": "symbolCode", "values": due.iter().map(|s| finra(s)).collect::<Vec<_>>()}],
+            "dateRangeFilters": [{"fieldName": "settlementDate", "startDate": (today - chrono::Duration::days(FINRA_LOOKBACK_DAYS)).to_string(), "endDate": today.to_string()}],
+        });
+        throttle().await;
+        // 204 + no body = none of them is shorted on record, an answer; anything else unread is not
+        let shorts: Option<HashMap<String, f64>> = match client.post(&urls.finra_short).header("Accept", "application/json").json(&body).send().await {
+            Ok(r) if r.status().is_success() => match r.text().await.ok() {
+                Some(t) if t.trim().is_empty() => Some(HashMap::new()),
+                t => t.and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| finra_newest(&v)),
+            },
+            _ => None,
+        };
+        for sym in &due {
+            let url = |u: &str| u.replace("{sym}", &sym.replace('-', "."));
+            let (pu, tu, su) = (url(&urls.nasdaq_profile), url(&urls.nasdaq_target), url(&urls.nasdaq_summary));
+            let (company, target, summary) = (get_json(client, &pu).await, get_json(client, &tu).await, get_json(client, &su).await);
+            let answered = company.is_some() && target.is_some() && summary.is_some() && shorts.is_some();
+            let short = shorts.as_ref().and_then(|m| m.get(&finra(sym)).copied());
+            let fresh = profile_of(&company.unwrap_or_default(), &target.unwrap_or_default(), &summary.unwrap_or_default(), short);
+            let row = cache.entry(sym.clone()).or_default();
+            let old = std::mem::take(&mut row.1);
+            row.1 = core::Profile {
+                site: fresh.site.or(old.site),
+                short_shares: if shorts.is_some() { fresh.short_shares } else { old.short_shares },
+                target_pct: fresh.target_pct.or(old.target_pct),
+                analysts: fresh.analysts.or(old.analysts),
+            };
+            if answered {
+                row.0 = today.to_string();
+            } else {
+                eprintln!("profile: Nasdaq or FINRA refused {sym}, retried next run");
+            }
+        }
+        let _ = std::fs::write(&path, serde_json::to_string(&cache).unwrap_or_default());
+    }
+    for q in quotes.iter_mut().filter(|q| targets.contains(&q.ticker) && q.instrument_type.eq_ignore_ascii_case("EQUITY")) {
+        if let Some((_, p)) = cache.get(&us_symbol(&q.ticker)) {
+            q.profile = p.clone();
+        }
+    }
+}
+
 /// (#465) `{ISIN: ["YYYY-MM-DD", [TD %, oldest year first]]}` for `enrich_etf_cells`. An empty list
 /// is cached too (no page for that fund: the site redirects home); a refused GET is not.
 const TD_CACHE_PATH: &str = ".td_cache.json";
@@ -1969,6 +2078,7 @@ pub async fn enrich_etf_cells(
     for q in quotes.iter_mut().filter(|q| syms.contains(&q.ticker)) {
         q.top10 = holdings.get(&q.ticker).map(|h| h.iter().map(|(_, w)| w).sum::<f64>() * 100.0).filter(|s| *s > 0.0);
         let Some(isin) = isins.get(&q.ticker) else { continue };
+        q.profile.site = Some(urls.justetf_profile.replace("{isin}", isin)); // (#469) the NAME link
         if !cache.get(isin).is_some_and(|(d, _)| cache_age_days(d, today).is_some_and(|a| a < TD_CACHE_DAYS)) && !offline() {
             // a small hobby site: one page a second, and only the 2xx answer is believed
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
@@ -1985,14 +2095,14 @@ pub async fn enrich_etf_cells(
         q.td_years = cache.get(isin).map(|(_, t)| t.clone()).unwrap_or_default();
     }
     let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
-    let by_name: HashMap<String, (Option<f64>, Vec<f64>)> = quotes
+    let by_name: HashMap<String, (Option<f64>, Vec<f64>, Option<String>)> = quotes
         .iter()
         .filter(|q| syms.contains(&q.ticker))
-        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone())))
+        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone(), q.profile.site.clone())))
         .collect();
     for q in quotes.iter_mut().filter(|q| !syms.contains(&q.ticker)) {
-        if let Some((t, d)) = by_name.get(&q.name.to_lowercase()) {
-            (q.top10, q.td_years) = (*t, d.clone());
+        if let Some((t, d, site)) = by_name.get(&q.name.to_lowercase()) {
+            (q.top10, q.td_years, q.profile.site) = (*t, d.clone(), site.clone());
         }
     }
 }
@@ -2184,8 +2294,8 @@ pub fn brk_rows(holdings: &[BrkRow], quotes: &[Quote]) -> Value {
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["TICKER", h.ticker],
-                linked("NAME", name.unwrap_or("—"), &h.filing),
-                ["WEIGHT", weight],
+                ["NAME", name.unwrap_or("—")], // (#469) NAME links the company site, `picks::stamp_site`
+                linked("WEIGHT", &weight, &h.filing),
                 ["STATUS", brk_status(h.prev, h.shares)],
                 ["SHARES Δ", delta],
                 ["BOUGHT", bought],
@@ -2676,13 +2786,13 @@ fn attn_rows(top: &[(String, f64)], titles: &BTreeMap<String, String>) -> Value 
         .enumerate()
         .map(|(i, (t, r))| {
             let title = titles.get(t).map_or("", String::as_str);
-            // (#455) NAME opens the article the views were counted on
+            // (#455) the article the views were counted on, (#469) on VIEWS YoY: NAME links the company site
             let url = if title.is_empty() { String::new() } else { format!("https://en.wikipedia.org/wiki/{}", wiki_path(title)) };
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["TICKER", t],
-                linked("NAME", title, &url),
-                ["VIEWS YoY", format!("{:+.1}%", (r - 1.0) * 100.0)],
+                ["NAME", title],
+                linked("VIEWS YoY", &format!("{:+.1}%", (r - 1.0) * 100.0), &url),
             ])
         })
         .collect()
@@ -8773,6 +8883,112 @@ pub(crate) mod tests {
         assert_eq!(quotes[2].next_earnings, None, "a body that is not JSON");
     }
 
+    /// (#469) `profile_of`: http upgraded to https, a bare host given one, analysts summed, the target
+    /// read against the `$1,234`-spelled close; a missing piece is None, never a 0.
+    #[test]
+    fn profile_of_reads_the_three_nasdaq_answers() {
+        let company = |u: &str| serde_json::json!({"data": {"CompanyUrl": {"value": u}}});
+        let target = serde_json::json!({"data": {"consensusOverview": {"priceTarget": 1350.0, "buy": 20, "hold": 5, "sell": 1}}});
+        let summary = serde_json::json!({"data": {"summaryData": {"PreviousClose": {"value": "$1,200.00"}}}});
+        let p = profile_of(&company("http://www.apple.com"), &target, &summary, Some(7.0));
+        assert_eq!((p.site.as_deref(), p.analysts, p.short_shares), (Some("https://www.apple.com"), Some(26), Some(7.0)));
+        assert!(p.target_pct.is_some_and(|t| (t - 12.5).abs() < 1e-9), "{:?}", p.target_pct);
+        assert_eq!(profile_of(&company("abc.com"), &Value::Null, &summary, None).site.as_deref(), Some("https://abc.com"));
+        assert_eq!(profile_of(&company(" "), &target, &Value::Null, None), core::Profile { analysts: Some(26), ..Default::default() }, "no close, no target");
+        assert_eq!(profile_of(&Value::Null, &Value::Null, &Value::Null, None), core::Profile::default());
+    }
+
+    /// (#469) The newest settlement date wins per symbol, whatever order FINRA lists them in.
+    #[test]
+    fn finra_newest_keeps_the_newest_settlement() {
+        let row = |s: &str, d: &str, n: f64| serde_json::json!({"symbolCode": s, "settlementDate": d, "currentShortPositionQuantity": n});
+        let rows = serde_json::json!([row("A", "2026-09-15", 5.0), row("A", "2026-09-30", 9.0), row("A", "2026-08-29", 1.0), row("B", "2026-09-30", 2.0), {"symbolCode": "C"}]);
+        assert_eq!(finra_newest(&rows), HashMap::from([("A".to_string(), 9.0), ("B".to_string(), 2.0)]));
+    }
+
+    /// (#469) `enrich_profile`: ZZP-B answers every piece (Nasdaq as `ZZP.B`, FINRA as `ZZPB`) and is
+    /// cached today; ZZPRF sits on a fresh row and is not refetched; ZZPRC's target is refused, so its
+    /// other pieces still print but its row stays due; ZZPRX is not a target, ZZPRE not a stock.
+    #[tokio::test]
+    async fn enrich_profile_stamps_and_caches_equity_targets() {
+        seed_cik_map(); // `us_symbol` reads EU_TO_US, which only the seed may fill
+        let (base, client, requests) = routed_stub(vec![
+            ("/finra", r#"[{"symbolCode": "ZZPB", "settlementDate": "2026-09-30", "currentShortPositionQuantity": 1234}]"#),
+            ("/ZZP.B/profile", r#"{"data": {"CompanyUrl": {"value": "http://zzp.example"}}}"#),
+            ("/ZZP.B/target", r#"{"data": {"consensusOverview": {"priceTarget": 110, "buy": 3, "hold": 1, "sell": 0}}}"#),
+            ("/ZZP.B/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$100.00"}}}}"#),
+            ("/ZZPRC/profile", r#"{"data": {"CompanyUrl": {"value": "https://c.example"}}}"#),
+            ("/ZZPRC/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$5"}}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.finra_short = format!("{base}finra");
+        urls.nasdaq_profile = format!("{base}{{sym}}/profile");
+        urls.nasdaq_target = format!("{base}{{sym}}/target");
+        urls.nasdaq_summary = format!("{base}{{sym}}/summary");
+        let fresh = core::Profile { site: Some("https://f.example".into()), ..Default::default() };
+        let today = chrono::Local::now().date_naive().to_string();
+        let week = (chrono::Local::now().date_naive() - chrono::Duration::days(PROFILE_CACHE_DAYS)).to_string();
+        // ZZPRX/ZZPRE have rows too, so only the target + stock filter keeps them unstamped (and ZZPRE's
+        // stale one unfetched)
+        let seed = serde_json::json!({"ZZPRF": [today, fresh], "ZZPRW": [week, fresh], "ZZPRX": [today, fresh], "ZZPRE": [week, fresh]});
+        std::fs::write(crate::config::data_path(PROFILE_CACHE_PATH), seed.to_string()).expect("seed profile cache");
+        let mut quotes: Vec<core::Quote> = ["ZZP-B", "ZZPRF", "ZZPRC", "ZZPRX", "ZZPRE", "ZZPRW"]
+            .iter()
+            .map(|t| {
+                let mut q = core::Quote::stub(t, "1.00", "", t);
+                q.instrument_type = if *t == "ZZPRE" { "ETF" } else { "EQUITY" }.into();
+                q
+            })
+            .collect();
+        let set = |ts: &[&str]| -> HashSet<String> { ts.iter().map(|t| t.to_string()).collect() };
+        enrich_profile(&client, &urls, &mut quotes, &set(&["ZZP-B", "ZZPRF", "ZZPRC", "ZZPRE", "ZZPRW"])).await;
+        let p = &quotes[0].profile;
+        assert_eq!((p.site.as_deref(), p.short_shares, p.analysts), (Some("https://zzp.example"), Some(1234.0), Some(4)));
+        assert!(p.target_pct.is_some_and(|t| (t - 10.0).abs() < 1e-9), "{:?}", p.target_pct);
+        assert_eq!(quotes[1].profile, fresh, "a fresh row is served");
+        assert_eq!((quotes[2].profile.site.as_deref(), quotes[2].profile.target_pct), (Some("https://c.example"), None));
+        assert_eq!((&quotes[3].profile, &quotes[4].profile), (&core::Profile::default(), &core::Profile::default()), "not a target, not a stock");
+        let asked: Vec<String> = requests.try_iter().collect();
+        assert!(!asked.iter().any(|r| r.contains("ZZPRF") || r.contains("ZZPRX") || r.contains("ZZPRE")), "{asked:?}");
+        assert!(asked.iter().any(|r| r.starts_with("POST /finra") && r.contains(r#"["ZZPB","ZZPRC","ZZPRW"]"#)), "one FINRA query for the due symbols: {asked:?}");
+        assert!(asked.iter().any(|r| r.contains("/ZZPRW/profile")), "a week-old row is stale");
+        let saved = || -> HashMap<String, (String, core::Profile)> {
+            serde_json::from_str(&std::fs::read_to_string(crate::config::data_path(PROFILE_CACHE_PATH)).expect("cache")).expect("cache json")
+        };
+        assert_eq!((saved()["ZZP-B"].0.as_str(), saved()["ZZPRC"].0.as_str()), (today.as_str(), ""), "a partly refused row stays due");
+        // nothing due: not one request
+        enrich_profile(&client, &urls, &mut quotes, &set(&["ZZPRF"])).await;
+        assert_eq!(requests.try_iter().count(), 0);
+        // FINRA refused (404): the Nasdaq pieces land, the row stays due
+        let (base, client, _) = routed_stub(vec![
+            ("/ZZPRC/profile", r#"{"data": {"CompanyUrl": {"value": "https://c.example"}}}"#),
+            ("/ZZPRC/target", r#"{"data": {"consensusOverview": {"priceTarget": 6, "buy": 1}}}"#),
+            ("/ZZPRC/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$5"}}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.finra_short = format!("{base}finra");
+        urls.nasdaq_profile = format!("{base}{{sym}}/profile");
+        urls.nasdaq_target = format!("{base}{{sym}}/target");
+        urls.nasdaq_summary = format!("{base}{{sym}}/summary");
+        enrich_profile(&client, &urls, &mut quotes, &set(&["ZZPRC"])).await;
+        assert!(quotes[2].profile.target_pct.is_some_and(|t| (t - 20.0).abs() < 1e-9), "{:?}", quotes[2].profile);
+        assert_eq!(saved()["ZZPRC"].0, "", "a FINRA 404 is no answer");
+        // FINRA's empty 2xx body (its 204) is an answer: nobody is shorted on record
+        let (base, client, _) = routed_stub(vec![
+            ("/finra", ""),
+            ("/ZZPRC/profile", r#"{"data": {"CompanyUrl": {"value": "https://c.example"}}}"#),
+            ("/ZZPRC/target", r#"{"data": {"consensusOverview": {"priceTarget": 6, "buy": 1}}}"#),
+            ("/ZZPRC/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$5"}}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.finra_short = format!("{base}finra");
+        urls.nasdaq_profile = format!("{base}{{sym}}/profile");
+        urls.nasdaq_target = format!("{base}{{sym}}/target");
+        urls.nasdaq_summary = format!("{base}{{sym}}/summary");
+        enrich_profile(&client, &urls, &mut quotes, &set(&["ZZPRC"])).await;
+        assert_eq!((saved()["ZZPRC"].0.as_str(), quotes[2].profile.short_shares), (today.as_str(), None));
+    }
+
     /// (#465) The TD series is read out of the `tdChart` block only, oldest first, trailing comma
     /// dropped; the TER line after it and a page with no chart read nothing.
     #[test]
@@ -8793,6 +9009,7 @@ pub(crate) mod tests {
         let (base, client, _) = routed_stub(routes);
         let mut urls = stub_urls(&base);
         urls.trackingdifferences = format!("{base}{{isin}}");
+        urls.justetf_profile = "https://jetf.example/{isin}".to_string();
         let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE"});
         std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), isin_cache.to_string()).expect("seed isin cache");
         let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).to_string();
@@ -8815,6 +9032,9 @@ pub(crate) mod tests {
         assert_eq!(quotes[4].td_years, vec![0.5], "a 30-day-old row is stale and refetched");
         assert_eq!(quotes[5].td_years, vec![0.7], "a refused refetch keeps the stale row, never a 404 page's []");
         assert_eq!((quotes[3].top10, &quotes[3].td_years), (quotes[0].top10, &quotes[0].td_years), "same fund name");
+        // (#469) the NAME link: the justETF page off the same ISIN, copied like the cells; no ISIN, no link
+        assert_eq!(quotes[0].profile.site.as_deref(), Some("https://jetf.example/ZZISINA"));
+        assert_eq!((&quotes[3].profile.site, &quotes[2].profile.site), (&quotes[0].profile.site, &None));
         let saved = std::fs::read_to_string(crate::config::data_path(TD_CACHE_PATH)).expect("td cache");
         assert!(saved.contains("ZZISINA"), "the fetched answer is cached: {saved}");
     }
@@ -9160,10 +9380,10 @@ pub(crate) mod tests {
         assert_eq!(
             brk_rows(&holdings, &quotes),
             serde_json::json!([
-                [["#", "1"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A", "https://f"], ["WEIGHT", "40.0%"], ["STATUS", "trimmed"], ["SHARES Δ", "-10.0%"], ["BOUGHT", "2026-Q1"]],
-                [["#", "2"], ["TICKER", "CB"], ["NAME", "Chubb", "https://f"], ["WEIGHT", "20.0%"], ["STATUS", "added"], ["SHARES Δ", "+10.0%"], ["BOUGHT", "2026-Q2"]],
-                [["#", "3"], ["TICKER", "DAL"], ["NAME", "—", "https://f"], ["WEIGHT", "10.0%"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
-                [["#", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A", "https://f"], ["WEIGHT", "10.0%"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
+                [["#", "1"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A"], ["WEIGHT", "40.0%", "https://f"], ["STATUS", "trimmed"], ["SHARES Δ", "-10.0%"], ["BOUGHT", "2026-Q1"]],
+                [["#", "2"], ["TICKER", "CB"], ["NAME", "Chubb"], ["WEIGHT", "20.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+10.0%"], ["BOUGHT", "2026-Q2"]],
+                [["#", "3"], ["TICKER", "DAL"], ["NAME", "—"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
+                [["#", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
             ])
         );
         help_titles("berkshire", &brk_rows(&holdings, &quotes)[0]);
@@ -9309,7 +9529,7 @@ pub(crate) mod tests {
         assert_eq!(
             got,
             serde_json::json!([
-                [["#", "1"], ["TICKER", "AJG"], ["NAME", "Arthur J. Gallagher & Co.", "https://en.wikipedia.org/wiki/Arthur_J._Gallagher_%26_Co."], ["VIEWS YoY", "+50.0%"]],
+                [["#", "1"], ["TICKER", "AJG"], ["NAME", "Arthur J. Gallagher & Co."], ["VIEWS YoY", "+50.0%", "https://en.wikipedia.org/wiki/Arthur_J._Gallagher_%26_Co."]],
                 [["#", "2"], ["TICKER", "ZZ"], ["NAME", ""], ["VIEWS YoY", "-12.5%"]],
             ])
         );
@@ -10188,7 +10408,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 38] = [
+        const FIELDS: [&str; 42] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -10197,7 +10417,7 @@ pub(crate) mod tests {
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
             "sec_submissions", "sec_form4", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
             "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys", "nasdaq_earnings",
-            "trackingdifferences",
+            "trackingdifferences", "nasdaq_profile", "nasdaq_target", "nasdaq_summary", "finra_short",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field

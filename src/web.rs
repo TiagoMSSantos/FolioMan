@@ -113,6 +113,8 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     }
     picks::stamp_index(&mut top, &u.quotes); // (#446) after BUY%, which it sits beside
     picks::stamp_us_twin(&mut top, &u.twins, &s.widths, bh, &u.fund_pe);
+    // (#469) every re-ranked row's quote carries its own site, so the exact ticker finds it
+    picks::stamp_site(&mut top, &u.quotes, &|t: &str| t.to_string());
     top["generated"] = u.generated.into();
     // only when there is something to say, so a pool that holds every pin stays byte-equal to `screen`
     if !(twins.is_empty() && missing.is_empty()) {
