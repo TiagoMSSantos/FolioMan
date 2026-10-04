@@ -91,7 +91,7 @@ const VIEW = {
   "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk", "INT-COV": "risk",
   MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
-  MVRV: "value", ROIC: "value", "FCF%": "value",
+  MVRV: "value", ROIC: "value", "FCF%": "value", "INS-B/S": "value",
 };
 function view(v) {
   for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto) table")) {

@@ -889,6 +889,9 @@ pub struct Urls {
     pub sec_ticker_cik: String,
     #[serde(default = "default_sec_submissions_url")]
     pub sec_submissions: String,
+    // (#448) one Form 4 primary document. {cik} unpadded, {acc} the accession number without dashes.
+    #[serde(default = "default_sec_form4_url")]
+    pub sec_form4: String,
     // (report) SEC XBRL company-facts: every us-gaap concept (revenue/grossProfit/operatingIncome/
     // netIncome/EPS) with filingDate — the FREE, no-key, no-daily-cap fallback when FMP is throttled.
     #[serde(default = "default_sec_companyfacts_url")]
@@ -913,6 +916,11 @@ fn default_sec_ticker_cik_url() -> String {
 /// primaryDocument/filingDate arrays; we filter form == "4". {cik} = 10-digit zero-padded.
 fn default_sec_submissions_url() -> String {
     "https://data.sec.gov/submissions/CIK{cik}.json".to_string()
+}
+
+/// (#448) Default Form 4 document URL, out of `submissions`' accessionNumber/primaryDocument columns.
+fn default_sec_form4_url() -> String {
+    "https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{doc}".to_string()
 }
 
 /// (report) Default SEC XBRL company-facts endpoint: one JSON with every reported us-gaap concept's
@@ -2643,6 +2651,7 @@ mod tests {
         for (url, host, tokens) in [
             (default_sec_ticker_cik_url(), "https://www.sec.gov/", &[][..]),
             (default_sec_submissions_url(), "https://data.sec.gov/", &["{cik}"][..]),
+            (default_sec_form4_url(), "https://www.sec.gov/", &["{cik}", "{acc}", "{doc}"][..]),
             (default_sec_companyfacts_url(), "https://data.sec.gov/", &["{cik}"][..]),
             (default_sec_companyconcept_url(), "https://data.sec.gov/", &["{cik}", "{concept}"][..]),
             (default_euronext_track_url(), "https://live.euronext.com/", &[][..]),

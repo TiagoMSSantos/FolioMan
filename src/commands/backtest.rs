@@ -1205,7 +1205,7 @@ pub async fn run(args: Vec<String>) {
                 };
                 // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
                 // derived per cutoff from these transactions with no further network. None -> factor skips.
-                let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk).await } else { None };
+                let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk, None).await } else { None };
                 Some((tk, hist, fund_rows, fx, insider_txns))
             }
         })

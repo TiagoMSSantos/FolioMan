@@ -1112,6 +1112,7 @@ widths:
     - div         # trailing-1Y dividend yield
     - buyback     # newest complete-FY share-count change, sign-flipped: + = buying back, − = diluting (stocks only)
     - off-hi      # % below its OFF-HI high
+    - ins         # (#448) insider open-market buys/sales, last 90 days, SEC Form 4 (printed stock rows)
     # - upside      # room back to that high (NOT a forecast)
     - turnover    # avg daily turnover (EUR) — liquidity
     - score       # the growth ranking score

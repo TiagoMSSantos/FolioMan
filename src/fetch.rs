@@ -902,6 +902,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         net_margin_fy: None,
         buyback_yoy: None,
         shares_out: None, // (#395) enrich_income_stmt for stocks, screen's CoinGecko stamp for coins
+        insider_90d: None, // (#448) enrich_insider, printed stock rows only
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -1508,7 +1509,7 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
             .unwrap_or_default(); // no rows/key -> empty factors; insider can still fill in below
         if needs_insider {
             evict_if_stale(&sec_cache_path(&q.ticker), LIVE_TTL);
-            if let Some(txns) = fetch_insider_history(client, urls, &q.ticker).await {
+            if let Some(txns) = fetch_insider_history(client, urls, &q.ticker, None).await {
                 ff.insider_net_buys_90d = core::insider_net_buys(&txns, today, 90);
             }
         }
@@ -1791,9 +1792,20 @@ static EU_TO_US: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceL
 /// parsed for P/S transactions. Caps fetches per ticker (`SEC_FORM4_CAP`) and per run (`SEC_FETCH_BUDGET`)
 /// to respect SEC fair-access. None unless real transactions parse. ceiling: only the submissions
 /// `recent` block (~1000 newest filings) is read, so very old backtest cutoffs may get no coverage.
-pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::InsiderTx>> {
+///
+/// (#448) `since: Some(day)` is the page's live walk. It stops at the first Form 4 filed before `day`,
+/// so it costs the window's filings, not `SEC_FORM4_CAP`. It keeps its own `{ticker}_f4live` cache, so
+/// the backtest's forever file is never cut short. A walk that ran to its end banks an EMPTY answer too:
+/// the caller evicts it weekly, so "no buys or sales" is a fact for a week, not forever. A walk cut by
+/// the budget or a failed Form 4 GET banks nothing, as before.
+pub async fn fetch_insider_history(
+    client: &Client,
+    urls: &Urls,
+    ticker: &str,
+    since: Option<NaiveDate>,
+) -> Option<Vec<core::InsiderTx>> {
     use std::sync::atomic::Ordering;
-    let cache = sec_cache_path(ticker);
+    let cache = sec_cache_path(&since.map_or(ticker.to_string(), |_| format!("{ticker}_f4live")));
     if let Some(txns) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, bool)>>(&s).ok()) {
         return Some(
             txns.iter()
@@ -1807,33 +1819,68 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
     let forms = recent.get("form")?.as_array()?;
     let accs = recent.get("accessionNumber")?.as_array()?;
     let docs = recent.get("primaryDocument")?.as_array()?;
+    let filed = recent.get("filingDate").and_then(Value::as_array);
     let cik_trim = cik.trim_start_matches('0');
     let mut txns: Vec<core::InsiderTx> = Vec::new();
     let mut fetched = 0;
+    let mut missed = false;
     for (i, form) in forms.iter().enumerate() {
         if form.as_str() != Some("4") {
             continue;
         }
-        if fetched >= SEC_FORM4_CAP || SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+        if since.is_some_and(|day| filed_before(filed.and_then(|f| f.get(i)), day)) {
+            break; // (#448) `recent` is newest first: every filing after this one is older still
+        }
+        // shortcut: the live walk still stops at SEC_FORM4_CAP, so a name with more than 40 Form 4s in
+        // 90 days undercounts. Print it as `40+` if a mega cap ever shows that.
+        if fetched >= SEC_FORM4_CAP {
+            break;
+        }
+        if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+            missed = true;
             break;
         }
         fetched += 1;
         let (Some(acc), Some(doc)) = (accs.get(i).and_then(|x| x.as_str()), docs.get(i).and_then(|x| x.as_str())) else {
             continue;
         };
-        let url = format!("https://www.sec.gov/Archives/edgar/data/{cik_trim}/{}/{doc}", acc.replace('-', ""));
-        if let Some(xml) = sec_get_text(client, &url, &urls.sec_user_agent).await {
-            txns.extend(parse_form4_txns(&xml)); // an xsl-HTML primaryDocument yields nothing -> harmless
+        let url = urls.sec_form4.replace("{cik}", cik_trim).replace("{acc}", &acc.replace('-', "")).replace("{doc}", doc);
+        match sec_get_text(client, &url, &urls.sec_user_agent).await {
+            Some(xml) => txns.extend(parse_form4_txns(&xml)), // an xsl-HTML primaryDocument yields nothing -> harmless
+            None => missed = true,
         }
     }
-    if !txns.is_empty() {
+    let answered = !txns.is_empty() || (since.is_some() && !missed);
+    if answered {
         let serial: Vec<(String, bool)> = txns.iter().map(|t| (t.date.format("%Y-%m-%d").to_string(), t.buy)).collect();
         if let Some(dir) = cache.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
     }
-    (!txns.is_empty()).then_some(txns)
+    answered.then_some(txns)
+}
+
+/// (#448) A `filings.recent.filingDate` cell dated before `day`. A missing or garbled date reads false:
+/// the walk goes on and `SEC_FORM4_CAP` still bounds it.
+fn filed_before(cell: Option<&Value>, day: NaiveDate) -> bool {
+    cell.and_then(Value::as_str).and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).is_some_and(|d| d < day)
+}
+
+/// (#448) DISPLAY ONLY: the INS-B/S cell, open-market insider (buys, sales) dated in the last 90 days.
+/// `targets` is screen's printed stock rows, so ~25 names, each refetched weekly off `{ticker}_f4live`.
+/// Screen calls this after the SEC fundamentals and the 13F lane, which spend `SEC_FETCH_BUDGET` first.
+/// `sec_cik` maps a Xetra twin to its US filer, so a swapped name still gets its count.
+pub async fn enrich_insider(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
+    const WINDOW_DAYS: i64 = 90;
+    let today = chrono::Local::now().date_naive();
+    let since = today - chrono::Duration::days(WINDOW_DAYS);
+    for q in quotes.iter_mut().filter(|q| targets.contains(&q.ticker)) {
+        evict_if_stale(&sec_cache_path(&format!("{}_f4live", q.ticker)), StdDuration::from_secs(7 * 24 * 3600));
+        if let Some(txns) = fetch_insider_history(client, urls, &q.ticker, Some(since)).await {
+            q.insider_90d = Some(core::insider_counts(&txns, today, WINDOW_DAYS));
+        }
+    }
 }
 
 // ── (#436) Berkshire Hathaway 13F "bought" marker ───────────────────────────────────────────────────
@@ -8389,14 +8436,102 @@ pub(crate) mod tests {
         let _ = std::fs::remove_file(&aapl);
         let (base, client) = stub_server(r#"{"filings": {"recent": {"form": ["10-K"], "accessionNumber": [], "primaryDocument": []}}}"#);
         let urls = stub_urls(&base);
-        let hit = fetch_insider_history(&client, &urls, "ZZINSIDER").await;
+        let hit = fetch_insider_history(&client, &urls, "ZZINSIDER", None).await;
         let _ = std::fs::remove_file(&cached);
-        let miss = fetch_insider_history(&client, &urls, "AAPL").await;
+        let miss = fetch_insider_history(&client, &urls, "AAPL", None).await;
         let banked = aapl.exists();
         let _ = std::fs::remove_file(&aapl);
         let d = NaiveDate::from_ymd_opt(2025, 3, 4).unwrap();
         assert_eq!(hit.map(|t| t.iter().map(|x| (x.date, x.buy)).collect::<Vec<_>>()), Some(vec![(d, true)]));
         assert!(miss.is_none() && !banked, "no Form 4 -> None, and no empty cache");
+    }
+
+    /// (#448) The live walk reads the Form 4s filed on or after `since`, and the first one filed before
+    /// it ends the walk: the old filing's sale is never fetched. A finished walk banks its answer under
+    /// `_f4live`, an empty one too, and leaves the backtest's file alone. A failed Form 4 GET banks
+    /// nothing, so a refused request never reads as "no insider trades" for a week.
+    #[tokio::test]
+    async fn insider_live_walk_stops_at_since_and_banks_its_answer() {
+        seed_cik_map();
+        let live = sec_cache_path("AAPL_f4live");
+        let _ = std::fs::remove_file(&live);
+        let (base, client, _) = routed_stub(vec![
+            ("/320193/000032019326000002/new.xml", "<transactionDate><value>2026-06-29</value></transactionDate><transactionCode>P</transactionCode>"),
+            ("/320193/000032019326000001/old.xml", "<transactionDate><value>2026-06-28</value></transactionDate><transactionCode>S</transactionCode>"),
+            ("", r#"{"filings": {"recent": {"form": ["4", "10-Q", "4"], "filingDate": ["2026-07-01", "2026-06-30", "2026-06-30"], "accessionNumber": ["0000320193-26-000002", "0000320193-26-000003", "0000320193-26-000001"], "primaryDocument": ["new.xml", "q.htm", "old.xml"]}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.sec_form4 = format!("{base}{{cik}}/{{acc}}/{{doc}}");
+        let day = |d| NaiveDate::from_ymd_opt(2026, 7, d);
+        let pairs = |t: Option<Vec<core::InsiderTx>>| t.map(|t| t.iter().map(|x| (x.date.to_string(), x.buy)).collect::<Vec<_>>());
+        let read = fetch_insider_history(&client, &urls, "AAPL", day(1)).await;
+        let read_banked = std::fs::read_to_string(&live).ok();
+        let _ = std::fs::remove_file(&live);
+        let empty = fetch_insider_history(&client, &urls, "AAPL", day(2)).await;
+        let empty_banked = std::fs::read_to_string(&live).ok();
+        let _ = std::fs::remove_file(&live);
+        urls.sec_form4 = "http://127.0.0.1:1/{doc}".to_string();
+        let refused = fetch_insider_history(&client, &urls, "AAPL", day(1)).await;
+        let refused_banked = live.exists();
+        let _ = std::fs::remove_file(&live);
+        assert_eq!(pairs(read), Some(vec![("2026-06-29".to_string(), true)]), "filed ON `since` is read; the older sale is not");
+        assert_eq!(read_banked.as_deref(), Some(r#"[["2026-06-29",true]]"#));
+        assert_eq!(pairs(empty), Some(vec![]), "a finished walk with no trades is an answer");
+        assert_eq!(empty_banked.as_deref(), Some("[]"));
+        assert!(refused.is_none() && !refused_banked, "a failed GET is no answer and banks nothing");
+        assert!(!sec_cache_path("AAPL").exists(), "the backtest's forever file is untouched");
+    }
+
+    /// (#448) A `filingDate` cell before the day ends the walk; on the day, garbled or missing does not.
+    #[test]
+    fn filed_before_reads_the_filing_date_cell() {
+        let day = NaiveDate::from_ymd_opt(2026, 7, 1).expect("day");
+        let cells = serde_json::json!(["2026-06-30", "2026-07-01", "07/01/2026", 5]);
+        assert!(filed_before(cells.get(0), day));
+        assert!(!filed_before(cells.get(1), day), "filed on the day is inside the window");
+        assert!(!filed_before(cells.get(2), day) && !filed_before(cells.get(3), day) && !filed_before(None, day));
+    }
+
+    /// (#448) `enrich_insider` stamps TARGETS only, counting the 90 days to today. ZZINS is served off a
+    /// three-day-old `_f4live` cache, so this is also its week-long TTL: a shorter one evicts the file,
+    /// port 1 refuses the refetch and the row stays None. XOM has no cache and walks from today − 90:
+    /// the filing 50 days old is read, the one 100 days old ends the walk unread.
+    #[tokio::test]
+    async fn enrich_insider_counts_ninety_days_on_targets_only() {
+        seed_cik_map();
+        let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).format("%Y-%m-%d").to_string();
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        let form4 = |date: String, code: &str| leak(format!("<transactionDate><value>{date}</value></transactionDate><transactionCode>{code}</transactionCode>"));
+        let subs = leak(format!(
+            r#"{{"filings": {{"recent": {{"form": ["4", "4"], "filingDate": ["{}", "{}"], "accessionNumber": ["a-1", "a-2"], "primaryDocument": ["x50.xml", "x100.xml"]}}}}}}"#,
+            ago(50),
+            ago(100)
+        ));
+        let (base, client, _) = routed_stub(vec![("x50.xml", form4(ago(51), "P")), ("x100.xml", form4(ago(80), "S")), ("", subs)]);
+        let mut urls = stub_urls(&base);
+        urls.sec_form4 = format!("{base}{{doc}}");
+        let cached = format!(r#"[["{}",true],["{}",false],["{}",false],["{}",true]]"#, ago(10), ago(20), ago(30), ago(200));
+        for t in ["ZZINS", "ZZINSOFF"] {
+            let p = sec_cache_path(&format!("{t}_f4live"));
+            std::fs::write(&p, &cached).expect("seed live insider cache");
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .expect("reopen to age")
+                .set_modified(SystemTime::now() - StdDuration::from_secs(3 * 24 * 3600))
+                .expect("backdate mtime");
+        }
+        let xom = sec_cache_path("XOM_f4live");
+        let _ = std::fs::remove_file(&xom);
+        let mut quotes: Vec<core::Quote> = ["ZZINS", "ZZINSOFF", "XOM"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        let targets: HashSet<String> = ["ZZINS", "XOM"].iter().map(|t| t.to_string()).collect();
+        enrich_insider(&client, &urls, &mut quotes, &targets).await;
+        for t in ["ZZINS_f4live", "ZZINSOFF_f4live", "XOM_f4live"] {
+            let _ = std::fs::remove_file(sec_cache_path(t));
+        }
+        assert_eq!(quotes[0].insider_90d, Some((1, 2)), "the 200-day-old buy is outside the window");
+        assert_eq!(quotes[1].insider_90d, None, "not a target");
+        assert_eq!(quotes[2].insider_90d, Some((1, 0)), "the walk stops at the filing before today − 90");
     }
 
     /// (#358) `fetch_stats` reads the live counters: two paced calls move the first by at least two
@@ -9682,14 +9817,14 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 35] = [
+        const FIELDS: [&str; 36] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals_quality",
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
-            "sec_submissions", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
+            "sec_submissions", "sec_form4", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
             "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();

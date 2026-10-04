@@ -343,6 +343,7 @@ pub struct Quote {
     pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
     pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
     pub shares_out: Option<f64>,       // (#395) units outstanding, for the MCAP cell (× price_eur): a stock's newest complete-FY diluted weighted-average share count (same rollup and scoping as rev_yoy), a coin's CoinGecko circulating supply. DISPLAY-ONLY; None for funds, which show AUM instead
+    pub insider_90d: Option<(u32, u32)>, // (#448) open-market insider (buys, sales) dated in the 90 days to today, from SEC Form 4s. DISPLAY-ONLY: `fetch::enrich_insider` fills the printed stock rows only; None = no SEC coverage or a run that hit the fetch budget
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy
     pub splits: Vec<(NaiveDate, f64)>, // (#82) (effective date, ratio) from the chart's events.splits; a 4:1 split is 4.0, ascending. NOT SCORED and never will be — it exists so `track` and `sim`, which replay prices journaled BEFORE a split against a series retro-adjusted AFTER one, can restate the old price into today's share definition. Empty for stubs and for `backtest_quote`, which walks one internally consistent series and has nothing to restate
 }
@@ -435,6 +436,7 @@ impl Quote {
             annual_brief: None,
             buyback_yoy: None,
             shares_out: None,
+            insider_90d: None,
             splits: Vec::new(),
         }
     }
@@ -3934,6 +3936,15 @@ pub fn insider_net_buys(txns: &[InsiderTx], cutoff: NaiveDate, window_days: i64)
     any.then_some(net as f64)
 }
 
+/// (#448) (buys, sales) over the same [cutoff−window, cutoff) as `insider_net_buys`, for the page's
+/// INS-B/S cell. Display only: the net count above is the scored factor, and it stays off.
+pub fn insider_counts(txns: &[InsiderTx], cutoff: NaiveDate, window_days: i64) -> (u32, u32) {
+    let start = cutoff - Duration::days(window_days);
+    txns.iter()
+        .filter(|t| t.date >= start && t.date < cutoff)
+        .fold((0, 0), |(b, s), t| if t.buy { (b + 1, s) } else { (b, s + 1) })
+}
+
 /// (Item 3) A per-name blend of the available as-of factors for the `"composite"` `growth_fund_factor`.
 /// shortcut: a plain mean of the factors present — they're all growth-%/points of similar magnitude, so
 /// averaging is a defensible first cut. CEILING: a true cross-sectional rank-normalisation (0..1 across
@@ -7193,6 +7204,10 @@ mod tests {
         assert_eq!(insider_net_buys(&txns, cutoff, 90), Some(1.0)); // +1 +1 −1 = +1; the d(3,1) buy excluded
         assert_eq!(insider_net_buys(&txns, cutoff, 5), None); // nothing in the 5d before -> no coverage
         assert_eq!(insider_net_buys(&[], cutoff, 90), None); // no data -> None
+        // (#448) the same window split into (buys, sales); the window's first day counts, the cutoff doesn't
+        assert_eq!(insider_counts(&txns, cutoff, 90), (2, 1));
+        assert_eq!(insider_counts(&txns, cutoff, 10), (0, 1)); // 2020 is leap: Mar 1 − 10 = Feb 20, the sale
+        assert_eq!(insider_counts(&[], cutoff, 90), (0, 0));
     }
 
     /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.
