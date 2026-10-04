@@ -1115,6 +1115,8 @@ widths:
     - net         # newest complete-FY net margin % (stocks only) — profitability quality
     - opm         # (#463) operating margin % (stocks only) — pricing power before interest and tax
     - mtrend      # (#463) operating margin now minus a year earlier, pp (stocks only) — widening or shrinking
+    - mscore      # (#464) Beneish M-score (stocks only) — above -1.78 = accounting red flag
+    - sbc         # (#464) stock-based pay % of revenue (stocks only) — dilution GAAP leaves out
     - div         # trailing-1Y dividend yield
     - buyback     # newest complete-FY share-count change, sign-flipped: + = buying back, − = diluting (stocks only)
     - off-hi      # % below its OFF-HI high

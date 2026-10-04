@@ -3423,6 +3423,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
     ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps" },
     ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Stocks: OP% now minus OP% a year earlier, in percentage points; positive = margins widening" },
+    ColSpec { key: "mscore", hdr: "M-SCORE", width: 8, right: true, help: "Stocks: Beneish M-score, an accounting red-flag test on the newest two filed years; above -1.78 = the books look like those of known earnings manipulators, read the filings before buying. A missing input counts as no change" },
+    ColSpec { key: "sbc", hdr: "SBC%", width: 6, right: true, help: "Stocks: stock-based pay as % of revenue, a real cost that reported earnings leave out and that dilutes owners every year" },
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares" },
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
     // (#448)/(#449) display only, the printed stock rows
@@ -3782,6 +3784,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "rev5y" => quote.fund.as_ref().and_then(|f| f.rev_cagr).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "mtrend" => quote.fund.as_ref().and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
+        // (#464) the (#412) red flags, un-negated back to their published sign
+        "mscore" | "sbc" if stock_only_na => "—".to_string(),
+        "mscore" => quote.fund.as_ref().and_then(|f| f.mscore).map_or("n/a".to_string(), |v| format!("{:.2}", -v)),
+        "sbc" => quote.fund.as_ref().and_then(|f| f.sbc).map_or("n/a".to_string(), |v| format!("{:.1}%", -v)),
         "buyback" if stock_only_na => "—".to_string(),
         "buyback" => quote.buyback_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
@@ -4208,10 +4214,10 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
-    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend"];
+    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
-    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend",
+    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -6873,13 +6879,20 @@ mod tests {
         assert_eq!(cc("rev5y", &st, 0.0, None, ""), "+12.3%");
         assert_eq!(cc("opm", &st, 0.0, None, ""), "28.1%");
         assert_eq!(cc("mtrend", &st, 0.0, None, ""), "-1.2pp");
+        // (#464) stored negated (high = clean), printed with the published sign
+        assert_eq!(cc("mscore", &st, 0.0, None, ""), "n/a", "no prior year filed");
+        let f = st.fund.as_mut().unwrap();
+        f.mscore = Some(1.234);
+        f.sbc = Some(-3.46);
+        assert_eq!(cc("mscore", &st, 0.0, None, ""), "-1.23");
+        assert_eq!(cc("sbc", &st, 0.0, None, ""), "3.5%");
         assert_eq!(cc("ins", &st, 0.0, None, ""), "n/a", "(#448) no SEC coverage");
         st.insider_90d = Some((2, 7));
         assert_eq!(cc("ins", &st, 0.0, None, ""), "2/7");
         assert_eq!(cc("earn", &st, 0.0, None, ""), "n/a", "(#449) no date published");
         st.next_earnings = chrono::NaiveDate::from_ymd_opt(2026, 10, 22);
         assert_eq!(cc("earn", &st, 0.0, None, ""), "10-22");
-        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "sector", "ins", "earn"] {
+        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }
