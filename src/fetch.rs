@@ -2501,6 +2501,9 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
 //   [`SOC_MIN_BUYERS`] of its ~80 tracked managers bought. (#470) When Dataroma lists none (it answers
 //   GitHub's runners with nothing), the same managers' own 13Fs on SEC EDGAR, see [`fetch_sec_superinvestors`].
 // - Hand list: `src/buy-heuristics/social-arbitrage-trading.json`, verified claims with their source.
+// - (#475) New 13D/13G stakes: the same managers' original SCHEDULE 13D/13G filings of the last
+//   [`SOC_STAKE_DAYS`], one more buyer each. ARK's net buys and openinsider's cluster buys of a pooled
+//   stock are tips, like a video. Four more channels' videos pool with Dumb Money Live's.
 
 const SOC_PICKS: &str = include_str!("buy-heuristics/social-arbitrage-trading.json");
 
@@ -2516,12 +2519,40 @@ pub struct SocPick {
     source: String,
 }
 
+/// (#475) One dated claim from the newer sources, keyed on its US symbol.
+pub struct SocTip {
+    us: String,
+    name: String,
+    kind: TipKind,
+    day: String,
+    why: String,
+    link: String,
+}
+
+/// (#475) A stake counts as one more superinvestor buyer; ARK and insider buys are tips, and only on a
+/// pooled stock (their unpooled rows are SPACs, funds and microcaps the book can't buy).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TipKind {
+    Stake,
+    Ark,
+    Insider,
+}
+
+/// (#475) Look-back of each newer source: a new 13D/13G stake, then an ARK net buy.
+const SOC_STAKE_DAYS: i64 = 90;
+const SOC_ARK_DAYS: i64 = 30;
+const ARK_FUNDS: [&str; 6] = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF", "ARKX"];
+
 /// (#444) One merged row: the pooled ticker when the pool has the stock, else the source's US symbol.
 #[derive(Default)]
 pub struct SocRow {
     ticker: String,
     name: String,
     buyers: u32,
+    /// (#475) managers with a new 13D/13G stake, on top of `buyers`
+    stakes: u32,
+    ark: bool,
+    insiders: bool,
     videos: usize,
     hand: bool,
     newest: String,
@@ -2656,6 +2687,121 @@ async fn fetch_sec_superinvestors(client: &Client, urls: &Urls) -> (String, Vec<
     (brk_quarter(&cur), buys)
 }
 
+/// (#475) One manager's EDGAR full-text search answer -> its ORIGINAL SCHEDULE 13D/13G filings, one per
+/// subject stock: the display name with a ticker whose CIK is not the filer's. An amendment is an old
+/// stake, and a filer's own stock (Berkshire on Berkshire) is no buy.
+/// shortcut: an affiliate's own stock (Pershing Square on Pershing Square Inc.) still reads as a stake;
+/// it scores nothing alone, so skip it by CIK pair if one ever crosses a boost step.
+fn sup_stakes(v: &Value, filer: &str, manager: &str) -> Vec<SocTip> {
+    let subject = regex::Regex::new(r"^(.*?)\s+\(([^)]+)\)\s+\(CIK (\d{10})\)$").expect("literal regex");
+    let mut tips: Vec<SocTip> = Vec::new();
+    for h in v.pointer("/hits/hits").and_then(Value::as_array).into_iter().flatten() {
+        let s = &h["_source"];
+        let form = s["form"].as_str().unwrap_or_default();
+        if form != "SCHEDULE 13D" && form != "SCHEDULE 13G" {
+            continue;
+        }
+        let names = s["display_names"].as_array().into_iter().flatten().filter_map(Value::as_str);
+        let Some(c) = names.filter_map(|n| subject.captures(n)).find(|c| &c[3] != filer) else { continue };
+        let us = c[2].split(',').next().unwrap_or_default().trim().to_string();
+        if tips.iter().any(|t| t.us == us) {
+            continue;
+        }
+        let adsh = s["adsh"].as_str().unwrap_or_default().replace('-', "");
+        tips.push(SocTip {
+            name: c[1].trim().to_string(),
+            kind: TipKind::Stake,
+            day: s["file_date"].as_str().unwrap_or_default().to_string(),
+            why: format!("new {} stake by {manager}", &form[9..]),
+            link: format!("https://www.sec.gov/Archives/edgar/data/{}/{adsh}/", c[3].trim_start_matches('0')),
+            us,
+        });
+    }
+    tips
+}
+
+/// (#475) ARK's trade lists, one per fund -> every stock bought and never sold across them, dated by
+/// its newest buy. A stock both bought and sold is a rebalance, not a call.
+fn ark_buys(funds: &[(&str, Value)]) -> Vec<SocTip> {
+    let mut seen: BTreeMap<String, (String, Vec<&str>, bool, String)> = BTreeMap::new();
+    for (fund, v) in funds {
+        for t in v["trades"].as_array().into_iter().flatten() {
+            let Some(us) = t["ticker"].as_str() else { continue };
+            let e = seen.entry(us.to_string()).or_default();
+            e.0 = t["company"].as_str().unwrap_or_default().to_string();
+            if t["direction"] == "Buy" {
+                if !e.1.contains(fund) {
+                    e.1.push(*fund);
+                }
+                e.3 = e.3.clone().max(t["date"].as_str().unwrap_or_default().to_string());
+            } else {
+                e.2 = true;
+            }
+        }
+    }
+    seen.into_iter()
+        .filter(|(_, (_, bought, sold, _))| !bought.is_empty() && !sold)
+        .map(|(us, (name, bought, _, day))| SocTip {
+            why: format!("ARK bought it in {} over {SOC_ARK_DAYS} days, sold none", bought.join(", ")),
+            link: format!("https://www.ark-funds.com/funds/{}", bought[0].to_lowercase()),
+            us,
+            name,
+            kind: TipKind::Ark,
+            day,
+        })
+        .collect()
+}
+
+/// (#475) openinsider's cluster-buys page -> one tip per stock, its newest cluster (the page lists newest
+/// first): filing day and insider count. Its class dot is Yahoo's dash, and a trailing dot is dropped.
+fn insider_clusters(html: &str) -> Vec<SocTip> {
+    let row = regex::Regex::new(
+        r#"(?s)<a href="/[^"]+">(\d{4}-\d\d-\d\d) [^<]*</a>.*?>([A-Z][A-Z0-9.]*)</a></b></td><td><a href="/[^"]*">([^<]+)</a></td><td><a href="/industry/[^"]*">[^<]*</a></td><td>(\d+)</td>"#,
+    )
+    .expect("literal regex");
+    let mut tips: Vec<SocTip> = Vec::new();
+    for c in row.captures_iter(html) {
+        let us = c[2].trim_end_matches('.').replace('.', "-");
+        if tips.iter().any(|t| t.us == us) {
+            continue;
+        }
+        tips.push(SocTip {
+            name: c[3].replace("&amp;", "&"),
+            kind: TipKind::Insider,
+            day: c[1].to_string(),
+            why: format!("{} insiders bought on the open market (cluster filed {})", &c[4], &c[1]),
+            link: format!("http://openinsider.com/{}", &c[2]),
+            us,
+        });
+    }
+    tips
+}
+
+/// (#475) [`sup_stakes`] for every [`SOC_SEC_MANAGERS`] manager over the last [`SOC_STAKE_DAYS`], each
+/// answer cached [`SUP_STAKE_TTL`] inside [`SEC_FETCH_BUDGET`]. A manager whose search fails adds nothing.
+#[mutants::skip] // (#475) async network shell; `sup_stakes` carries the tests
+async fn fetch_sup_stakes(client: &Client, urls: &Urls, today: chrono::NaiveDate) -> Vec<SocTip> {
+    let managers: BTreeMap<String, String> =
+        serde_json::from_str(SOC_SEC_MANAGERS).expect("src/buy-heuristics/superinvestors.json parses");
+    let start = (today - chrono::Duration::days(SOC_STAKE_DAYS)).to_string();
+    let mut tips = Vec::new();
+    for (cik, manager) in &managers {
+        let path = sec_cache_path(&format!("_sup13d_{cik}"));
+        if !fresh_on_disk(&path, SUP_STAKE_TTL) && SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < SEC_FETCH_BUDGET {
+            let url = urls.sec_fts.replace("{cik}", cik).replace("{start}", &start).replace("{end}", &today.to_string());
+            if let Some(v) = sec_get_json(client, &url, &urls.sec_user_agent).await.filter(|v| v.pointer("/hits/hits").is_some()) {
+                cache_write(&path, v.to_string());
+            }
+        }
+        let v: Value = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        tips.extend(sup_stakes(&v, cik, manager));
+    }
+    tips
+}
+
+/// (#475) A day: the search window ends today, so an older answer misses the newest filings.
+const SUP_STAKE_TTL: StdDuration = StdDuration::from_secs(24 * 3600);
+
 /// (#443) The word a name is matched on: its first, cut at whitespace, `,` or `.` (`Amazon.com, Inc.` ->
 /// `Amazon`), and only with 4+ letters, so `AT&T`-style stubs never match.
 fn soc_key(name: &str) -> Option<&str> {
@@ -2708,6 +2854,7 @@ fn soc_merge(
     hits: &[(&Quote, usize, String, String, String)],
     supers: &(String, Vec<(String, String, u32)>),
     picks: &[SocPick],
+    tips: &[SocTip],
     eu: &HashMap<String, String>,
     quotes: &[Quote],
 ) -> Vec<SocRow> {
@@ -2717,9 +2864,21 @@ fn soc_merge(
         r.buyers = *n;
         r.link = format!("https://www.dataroma.com/m/stock.php?sym={}", sym.replace('-', ".")); // back to Dataroma's dot
     }
+    // (#475) before the videos and the hand list, so their WHY wins; among these the later kind wins
+    for t in tips.iter().filter(|t| t.kind == TipKind::Stake || soc_quote(&t.us, eu, quotes).is_some()) {
+        let r = soc_row(&mut rows, &t.us, &t.name, eu, quotes);
+        match t.kind {
+            TipKind::Stake => r.stakes += 1,
+            TipKind::Ark => r.ark = true,
+            TipKind::Insider => r.insiders = true,
+        }
+        r.newest = r.newest.clone().max(t.day.clone());
+        (r.why, r.link) = (t.why.clone(), t.link.clone());
+    }
     for (q, n, day, title, link) in hits {
         let r = soc_row(&mut rows, &q.ticker, &q.name, eu, quotes);
-        (r.videos, r.newest, r.why, r.link) = (*n, day.clone(), title.clone(), link.clone());
+        (r.videos, r.why, r.link) = (*n, title.clone(), link.clone());
+        r.newest = r.newest.clone().max(day.clone());
     }
     for p in picks {
         let r = soc_row(&mut rows, &p.ticker, "—", eu, quotes);
@@ -2735,22 +2894,29 @@ fn soc_merge(
             r.why = format!("bought by {} superinvestors in {}", r.buyers, supers.0);
         }
     }
-    let sources = |r: &SocRow| usize::from(r.buyers != 0) + usize::from(r.videos != 0) + usize::from(r.hand);
+    let sources = |r: &SocRow| {
+        [r.buyers != 0, r.stakes != 0, r.ark, r.insiders, r.videos != 0, r.hand].into_iter().filter(|&b| b).count()
+    };
     rows.sort_by(|a, b| {
-        sources(b).cmp(&sources(a)).then(b.buyers.cmp(&a.buyers)).then(b.videos.cmp(&a.videos)).then_with(|| a.ticker.cmp(&b.ticker))
+        sources(b)
+            .cmp(&sources(a))
+            .then((b.buyers + b.stakes).cmp(&(a.buyers + a.stakes)))
+            .then(b.videos.cmp(&a.videos))
+            .then_with(|| a.ticker.cmp(&b.ticker))
     });
     rows
 }
 
 /// (#444) Mark every equity quote a merged row names, (#472) with its superinvestor buyer count and
-/// (#473) whether a video or the hand list names it. Equities only, as [`stamp_brk`]. Merged rows hold
+/// (#473) whether a video or the hand list names it, (#475) its new 13D/13G stakes counted as buyers and
+/// an ARK or insider buy as a tip. Equities only, as [`stamp_brk`]. Merged rows hold
 /// one row per ticker, so the first match is the only one.
 pub fn stamp_social(quotes: &mut [Quote], rows: &[SocRow]) {
     for q in quotes.iter_mut().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")) {
         let row = rows.iter().find(|r| r.ticker == q.ticker);
         q.social = row.is_some();
-        q.super_buyers = row.map_or(0, |r| r.buyers);
-        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand);
+        q.super_buyers = row.map_or(0, |r| r.buyers + r.stakes);
+        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand || r.ark || r.insiders);
     }
 }
 
@@ -2763,6 +2929,15 @@ fn soc_table(rows: &[SocRow], supers: &str) -> Value {
             let mut sources = Vec::new();
             if r.buyers > 0 {
                 sources.push(format!("{supers} {}", r.buyers));
+            }
+            if r.stakes > 0 {
+                sources.push(format!("13D/G {}", r.stakes));
+            }
+            if r.ark {
+                sources.push("ARK".to_string());
+            }
+            if r.insiders {
+                sources.push("insiders".to_string());
             }
             if r.videos > 0 {
                 sources.push(format!("YouTube ×{}", r.videos));
@@ -2791,7 +2966,10 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let videos = get_text(client, &urls.youtube_feed).await.map(|x| soc_videos(&x)).unwrap_or_default();
+    let mut videos = Vec::new();
+    for feed in std::iter::once(&urls.youtube_feed).chain(&urls.youtube_more_feeds) {
+        videos.extend(get_text(client, feed).await.map(|x| soc_videos(&x)).unwrap_or_default());
+    }
     // Dataroma's Mod_Security answers the shared client's bare "Mozilla/5.0" with a 406; the contact agent passes.
     let supers = if offline() {
         None
@@ -2809,13 +2987,25 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
         supers = fetch_sec_superinvestors(client, urls).await;
         label = "superinvestors (SEC 13F)";
     }
-    let rows = soc_merge(&soc_hits(&videos, quotes), &supers, &picks, &eu, quotes);
+    let today = chrono::Utc::now().date_naive();
+    let mut tips = fetch_sup_stakes(client, urls, today).await;
+    let stakes = tips.len();
+    let since = (today - chrono::Duration::days(SOC_ARK_DAYS)).to_string();
+    let mut funds = Vec::new();
+    for fund in ARK_FUNDS {
+        let url = urls.ark_trades.replace("{fund}", fund).replace("{start}", &since).replace("{end}", &today.to_string());
+        funds.extend(get_json(client, &url).await.map(|v| (fund, v)));
+    }
+    tips.extend(ark_buys(&funds));
+    tips.extend(get_text(client, &urls.openinsider_clusters).await.map(|x| insider_clusters(&x)).unwrap_or_default());
+    let rows = soc_merge(&soc_hits(&videos, quotes), &supers, &picks, &tips, &eu, quotes);
     stamp_social(quotes, &rows);
     eprintln!(
-        "fetch: social arbitrage: {} videos, {} {label} buys ({}), {} hand picks -> {} rows",
+        "fetch: social arbitrage: {} videos, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider tips, {} hand picks -> {} rows",
         videos.len(),
         supers.1.len(),
         supers.0,
+        tips.len() - stakes,
         picks.len(),
         rows.len()
     );
@@ -9840,7 +10030,7 @@ pub(crate) mod tests {
         let pick = |t: &str, d: &str| SocPick { ticker: t.into(), date: d.into(), said: "said".into(), source: "url".into() };
         let picks = [pick("AMZN", "2026-09-29"), pick("HOOD", "2026-10-01"), pick("XYZ", "2026-09-01"), pick("ABC", "2026-09-01")];
         let eu = HashMap::from([("AMZN".to_string(), "AMZ.DE".to_string()), ("HOOD".to_string(), String::new())]);
-        let rows = soc_merge(&hits, &supers, &picks, &eu, &quotes);
+        let rows = soc_merge(&hits, &supers, &picks, &[], &eu, &quotes);
         let order: Vec<&str> = rows.iter().map(|r| r.ticker.as_str()).collect();
         assert_eq!(order, ["AMZ.DE", "HOOD", "MSFT", "BRK-B", "TSLA", "META", "ABC", "XYZ"]);
         let table = soc_table(&rows, "superinvestors");
@@ -9855,6 +10045,106 @@ pub(crate) mod tests {
         assert_eq!(table[6][2], serde_json::json!(["NAME", "—"]));
         help_titles("social", &table[0]);
         assert_eq!(soc_table(&rows, "superinvestors (SEC 13F)")[3][3], serde_json::json!(["SOURCES", "superinvestors (SEC 13F) 9"]));
+    }
+
+    #[test]
+    fn sup_stakes_keep_originals_on_someone_else() {
+        let hit = |form: &str, names: &[&str], adsh: &str| {
+            serde_json::json!({"_source": {"form": form, "display_names": names, "file_date": "2026-08-14", "adsh": adsh}})
+        };
+        let v = serde_json::json!({"hits": {"hits": [
+            hit("SCHEDULE 13G", &["LENNAR CORP /NEW/  (LEN, LEN-B)  (CIK 0000920760)", "BERKSHIRE HATHAWAY INC  (CIK 0001067983)"], "0001-26-1"),
+            hit("SCHEDULE 13G/A", &["DELTA AIR LINES, INC.  (DAL)  (CIK 0000027904)"], "0001-26-2"),
+            hit("SCHEDULE 13D", &["BERKSHIRE HATHAWAY INC  (BRK-A, BRK-B)  (CIK 0001067983)"], "0001-26-3"),
+            hit("SCHEDULE 13G", &["LENNAR CORP /NEW/  (LEN, LEN-B)  (CIK 0000920760)"], "0001-26-4"),
+            hit("SCHEDULE 13D", &["NO TICKER CORP  (CIK 0000000001)", "Hilton Grand Vacations Inc.  (HGV)  (CIK 0001674168)"], "0001-26-5"),
+        ]}});
+        let got = sup_stakes(&v, "0001067983", "Warren Buffett");
+        let short: Vec<(&str, &str, &str)> = got.iter().map(|t| (t.us.as_str(), t.name.as_str(), t.why.as_str())).collect();
+        assert_eq!(short, [("LEN", "LENNAR CORP /NEW/", "new 13G stake by Warren Buffett"), ("HGV", "Hilton Grand Vacations Inc.", "new 13D stake by Warren Buffett")]);
+        assert_eq!((got[0].kind, got[0].day.as_str()), (TipKind::Stake, "2026-08-14"));
+        assert_eq!(got[0].link, "https://www.sec.gov/Archives/edgar/data/920760/0001261/");
+        assert!(sup_stakes(&Value::Null, "0001067983", "x").is_empty());
+    }
+
+    #[test]
+    fn ark_buys_keep_bought_never_sold() {
+        let t = |tk: &str, dir: &str, day: &str| serde_json::json!({"ticker": tk, "company": format!("{tk} Inc"), "direction": dir, "date": day});
+        let funds = [
+            ("ARKK", serde_json::json!({"trades": [t("TSLA", "Buy", "2026-09-10"), t("AMZN", "Buy", "2026-09-11"), t("CRWV", "Sell", "2026-09-12"), t("TSLA", "Buy", "2026-09-01")]})),
+            ("ARKW", serde_json::json!({"trades": [t("TSLA", "Buy", "2026-09-20"), t("AMZN", "Sell", "2026-09-21"), t("HOOD", "Buy", "2026-09-05")]})),
+            ("ARKG", Value::Null),
+        ];
+        let got = ark_buys(&funds);
+        let short: Vec<(&str, &str, &str)> = got.iter().map(|t| (t.us.as_str(), t.day.as_str(), t.why.as_str())).collect();
+        assert_eq!(
+            short,
+            [("HOOD", "2026-09-05", "ARK bought it in ARKW over 30 days, sold none"), ("TSLA", "2026-09-20", "ARK bought it in ARKK, ARKW over 30 days, sold none")]
+        );
+        assert_eq!((got[1].kind, got[1].name.as_str(), got[1].link.as_str()), (TipKind::Ark, "TSLA Inc", "https://www.ark-funds.com/funds/arkk"));
+    }
+
+    #[test]
+    fn insider_clusters_take_the_newest_per_stock() {
+        let row = |tk: &str, day: &str, name: &str, n: u32| {
+            format!(
+                r#"<tr><td align=right></td><td align=right><div><a href="/{tk}">{day} 16:57:33</a></div></td><td align=right><div>2026-09-08</div></td><td><b> <a href="/{tk}" onmouseover="Tip('<img src=\'x\' alt=\'\'>', DELAY, 1)" onmouseout="UnTip()">{tk}</a></b></td><td><a href="/{tk}">{name}</a></td><td><a href="/industry/Retail/5734">Retail</a></td><td>{n}</td><td>P - Purchase</td></tr>"#
+            )
+        };
+        let html = [row("DKS", "2026-10-01", "Dick'S Sporting Goods, Inc.", 7), row("BRK.B", "2026-09-30", "Berkshire &amp; Co", 2), row("PORT.", "2026-09-29", "Southport II", 2), row("DKS", "2026-08-01", "old", 3)].concat();
+        let got = insider_clusters(&html);
+        let short: Vec<(&str, &str, &str, &str)> = got.iter().map(|t| (t.us.as_str(), t.name.as_str(), t.day.as_str(), t.link.as_str())).collect();
+        assert_eq!(
+            short,
+            [
+                ("DKS", "Dick'S Sporting Goods, Inc.", "2026-10-01", "http://openinsider.com/DKS"),
+                ("BRK-B", "Berkshire & Co", "2026-09-30", "http://openinsider.com/BRK.B"),
+                ("PORT", "Southport II", "2026-09-29", "http://openinsider.com/PORT."),
+            ]
+        );
+        assert_eq!((got[0].kind, got[0].why.as_str()), (TipKind::Insider, "7 insiders bought on the open market (cluster filed 2026-10-01)"));
+        assert!(insider_clusters("nothing").is_empty());
+    }
+
+    #[test]
+    fn soc_merge_counts_stakes_as_buyers_and_pools_the_tips() {
+        let q = |t: &str| Quote { instrument_type: "EQUITY".to_string(), ..Quote::stub(t, "€1", "", t) };
+        let mut quotes = [q("MSF.DE"), q("TSLA"), q("NVDA"), q("ZZZ")];
+        let tip = |us: &str, kind: TipKind, day: &str, why: &str| SocTip { us: us.into(), name: format!("{us} Inc"), kind, day: day.into(), why: why.into(), link: format!("l/{why}") };
+        let tips = [
+            tip("MSFT", TipKind::Stake, "2026-08-01", "a"),
+            tip("MSFT", TipKind::Stake, "2026-09-01", "b"),
+            tip("WHK", TipKind::Stake, "2026-08-14", "c"),
+            tip("WHK", TipKind::Stake, "2026-08-10", "c2"),
+            tip("AAA", TipKind::Stake, "2026-08-20", "c3"),
+            tip("TSLA", TipKind::Ark, "2026-09-20", "d"),
+            tip("SOLQ.U", TipKind::Ark, "2026-09-21", "e"),
+            tip("NVDA", TipKind::Insider, "2026-09-10", "f"),
+            tip("OUT", TipKind::Insider, "2026-09-10", "g"),
+        ];
+        let supers = ("2026-Q2".to_string(), vec![("MSFT".to_string(), "Microsoft".to_string(), 8)]);
+        let eu = HashMap::from([("MSFT".to_string(), "MSF.DE".to_string())]);
+        let rows = soc_merge(&[], &supers, &[], &tips, &eu, &quotes);
+        let table = soc_table(&rows, "superinvestors");
+        let cells: Vec<(&str, &str, &str, &str)> = (0..rows.len())
+            .map(|i| (table[i][1][1].as_str().unwrap(), table[i][3][1].as_str().unwrap(), table[i][4][1].as_str().unwrap(), table[i][5][1].as_str().unwrap()))
+            .collect();
+        // unpooled ARK/insider rows drop; an unpooled stake keeps its row; the later tip's WHY wins;
+        // stakes rank as buyers do
+        assert_eq!(
+            cells,
+            [
+                ("MSF.DE", "superinvestors 8; 13D/G 2", "2026-09-01", "b"),
+                ("WHK", "13D/G 2", "2026-08-14", "c2"),
+                ("AAA", "13D/G 1", "2026-08-20", "c3"),
+                ("NVDA", "insiders", "2026-09-10", "f"),
+                ("TSLA", "ARK", "2026-09-20", "d"),
+            ]
+        );
+        stamp_social(&mut quotes, &rows);
+        assert_eq!(quotes.clone().map(|q| q.super_buyers), [10, 0, 0, 0]);
+        assert_eq!(quotes.map(|q| (q.social, q.social_tip)), [(true, false), (true, true), (true, true), (false, false)]);
+        assert_eq!(SUP_STAKE_TTL.as_secs(), 86_400);
     }
 
     #[test]
@@ -10665,7 +10955,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 44] = [
+        const FIELDS: [&str; 47] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -10675,10 +10965,10 @@ pub(crate) mod tests {
             "sec_submissions", "sec_form4", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
             "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys", "nasdaq_earnings",
             "trackingdifferences", "nasdaq_profile", "nasdaq_target", "nasdaq_summary", "finra_short",
-            "wikipedia_search", "wikidata_entity",
+            "wikipedia_search", "wikidata_entity", "sec_fts", "ark_trades", "openinsider_clusters",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
-        yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field
+        yaml.push_str(&format!("constituents_csv: [\"{base}\"]\nyoutube_more_feeds: [\"{base}\"]\n")); // the two non-String fields
         serde_yaml::from_str(&yaml).expect("stub urls")
     }
 

@@ -105,27 +105,33 @@
     and SHARES Δ is that change. BOUGHT is the newest quarter it was bought in over the last 4, or —.
     A 13F is filed up to 45 days after its quarter ends, so the table is already weeks old. ETFs are
     left out. A name the screen does not price shows OpenFIGI's upper-case issuer name. Every holding
-    is listed whatever the row count above. It never feeds BUY% or the rankings above, and an
-    uploaded settings.yaml does not change it.
+    is listed whatever the row count above. A held stock ranks a little higher above
+    (growth_brk_held_boost), and an uploaded settings.yaml does not change this table.
   </details>
   <div id="berkshire"></div>
   <!-- (#444) social arbitrage, shown and never ranked: the `s` flag and the track soc row read it. -->
-  <h2 title="Stocks people say they are buying: superinvestor 13F buys, Dumb Money Live videos and a checked hand list. These rank a little higher: a superinvestor buy by its buyer count (growth_superinvestor_boost per growth_superinvestor_step), a video or hand-list row a little less (growth_social_boost)" id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
+  <h2 title="Stocks people say they are buying: superinvestor 13F buys and new 13D/13G stakes, ARK fund buys, insider cluster buys, stock-channel videos and a checked hand list. These rank a little higher: a superinvestor buy or stake by its buyer count (growth_superinvestor_boost per growth_superinvestor_step), an ARK, insider, video or hand-list row a little less (growth_social_boost)" id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
   <details class="note" id="social-note">
     <summary>about this table</summary>
-    Stocks people say they are buying, one row per stock, from three free sources. Superinvestors:
+    Stocks people say they are buying, one row per stock, from free sources. Superinvestors:
     Dataroma's last-quarter buys, kept when at least 8 of its ~80 tracked managers bought; these come
     from 13F filings, so they are 45 or more days old, and a Berkshire buy above can show again here.
     When Dataroma does not answer, the same managers' own 13F filings on SEC EDGAR are counted instead
     (any share increase, a stock split excluded) and the source reads "superinvestors (SEC 13F) N".
-    YouTube: stocks named in the newest uploads (about 15, roughly one week) of Dumb Money Live, a
-    social-arbitrage channel; the first word of the stock's name must appear as a whole word in the same
+    13D/G: a new (not amended) SCHEDULE 13D or 13G stake those managers filed in the last 90 days, one
+    buyer per filing; these are fresher than 13F and the row shows even when the screen does not price it.
+    ARK: a stock an ARK fund (ARKK, ARKW, ARKG, ARKQ, ARKF, ARKX) bought in the last 30 days with no sale.
+    Insiders: openinsider.com's latest cluster buys, two or more insiders buying on the open market.
+    ARK and insider rows show only for stocks the screen prices.
+    YouTube: stocks named in the newest uploads (about 15 each, roughly one week) of Dumb Money Live, a
+    social-arbitrage channel, and of Joseph Carlson, Ticker Symbol: YOU, Financial Education and Tom Nash; the first word of the stock's name must appear as a whole word in the same
     capitalisation, and a mention is not a buy (shorts and avoids are discussed too). Hand list: claims
     checked against a linked source, kept in
     <code>src/buy-heuristics/social-arbitrage-trading.json</code>. SOURCES names each source that lists
     the stock; NEWEST is the latest dated mention, or the 13F quarter; WHY quotes the hand list, else
-    the newest video title. A NAME of — means the screen does not price it. It never feeds BUY% or the
-    rankings above, and an uploaded settings.yaml does not change it.
+    the newest video title, else the newest filing. A NAME of — means the screen does not price it. The
+    rows rank a little higher above (see the heading's hover), and an uploaded settings.yaml does not
+    change this table.
   </details>
   <div id="social"></div>
 

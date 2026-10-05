@@ -3205,7 +3205,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     };
     // (#472) and the 13F nudge, (#473) with the social one, printed only on a flagged name with a knob set
     let holder_frag = if p.holder_boost != 1.0 {
-        s.push_str(&format!("  13F boost    = Berkshire holds × superinvestor buyers × social video/hand list = {:.3}\n", p.holder_boost));
+        s.push_str(&format!("  13F boost    = Berkshire holds × superinvestor buyers × social tip (ARK, insiders, video, hand list) = {:.3}\n", p.holder_boost));
         format!(" × {:.3}", p.holder_boost)
     } else {
         String::new()
@@ -3924,8 +3924,8 @@ fn rank_mark(idx: usize, quote: &Quote, pinned: &HashSet<&str>, owned: &Owned, t
     // W = (#442) Berkshire's NEWEST 13F holds it, bought lately or not. Its own letter beside `w`, so
     // each letter is one fact: `wW` bought and still held, `w` bought and since sold, `W` held.
     let brk_held = if quote.brk_held { "W" } else { "" };
-    // s = (#444) the Social Arbitrage trading table names it (superinvestor buys, a recent video, the
-    // hand list). Display-only, like `w`/`W`.
+    // s = (#444) the Social Arbitrage trading table names it (superinvestor buys, (#475) new 13D/13G
+    // stakes, ARK buys, insider cluster buys, a recent video, the hand list). Display-only, like `w`/`W`.
     let social = if quote.social { "s" } else { "" };
     format!("{}{star}{enriched}{braked}{commodity}{fx_listed}{bridged}{holdable}{held}{brk}{brk_held}{social}", idx + 1)
 }
@@ -4530,7 +4530,7 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
         ("o", "already held (broker portfolio)"),
         ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
         ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
-        ("s", "the Social Arbitrage trading table names it — superinvestor buyers score × growth_superinvestor_boost once per growth_superinvestor_step of them, a video or hand-list row × growth_social_boost (1.0 = off)"),
+        ("s", "the Social Arbitrage trading table names it — superinvestor buyers (13F buys plus new 13D/13G stakes) score × growth_superinvestor_boost once per growth_superinvestor_step of them, an ARK, insider, video or hand-list row × growth_social_boost (1.0 = off)"),
         ("b", "bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score; page only"),
 ];
 
@@ -4607,9 +4607,9 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("TICKER", ticker),
         ("NAME", "The company's name; — = the screen does not price it; click to open the company's own website (or its Wikipedia article)"),
-        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), YouTube ×N (mentions in recent Dumb Money Live videos), hand list"),
+        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), 13D/G N (N of those managers filed a new 13D or 13G stake in the last 90 days), ARK (an ARK fund bought it in the last 30 days and none sold), insiders (2+ insiders bought on the open market in one recent filing), YouTube ×N (mentions in recent videos of five stock channels), hand list"),
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
-        ("WHY", "The hand list's claim, else the newest video title, else the superinvestor count; click to open that source"),
+        ("WHY", "The hand list's claim, else the newest video title, else the 13D/G, ARK or insider filing, else the superinvestor count; click to open that source"),
     ]);
     let exposure = fixed(&[
         ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),

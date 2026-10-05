@@ -866,6 +866,19 @@ pub struct Urls {
     // contract as `youtube_feed`.
     #[serde(default = "default_dataroma_buys_url")]
     pub dataroma_buys: String,
+    // (#475) More social-arbitrage channels' RSS feeds, read like `youtube_feed`: their videos pool with it.
+    #[serde(default = "default_youtube_more_feeds")]
+    pub youtube_more_feeds: Vec<String>,
+    // (#475) EDGAR full-text search for one filer's SCHEDULE 13D/13G filings over a date window (`{cik}`,
+    // `{start}`, `{end}`): a superinvestor's new 5%+ stake. Same table, same contract as `youtube_feed`.
+    #[serde(default = "default_sec_fts_url")]
+    pub sec_fts: String,
+    // (#475) ARK's trades of one fund over a date window (`{fund}`, `{start}`, `{end}`), via arkfunds.io.
+    #[serde(default = "default_ark_trades_url")]
+    pub ark_trades: String,
+    // (#475) openinsider's latest cluster buys: open-market purchases by 2+ insiders of one company.
+    #[serde(default = "default_openinsider_clusters_url")]
+    pub openinsider_clusters: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
@@ -1113,6 +1126,27 @@ fn default_youtube_feed_url() -> String {
 /// (#444) Dataroma's "Qtr buys" page, sorted by buyer count (`o=c`).
 fn default_dataroma_buys_url() -> String {
     "https://www.dataroma.com/m/g/portfolio_b.php?q=q&o=c".to_string()
+}
+
+/// (#475) Joseph Carlson, Ticker Symbol: YOU, Financial Education, Tom Nash.
+fn default_youtube_more_feeds() -> Vec<String> {
+    ["UCbta0n8i6Rljh0obO7HzG9A", "UC7kCeZ53sli_9XwuQeFxLqw", "UCnMn36GT_H0X-w5_ckLtlgQ", "UCJwKCyEIFHwUOPQQ-4kC1Zw"]
+        .map(|id| format!("https://www.youtube.com/feeds/videos.xml?channel_id={id}"))
+        .to_vec()
+}
+
+/// (#475) Original and amended 13D/13G both match `forms`; the caller keeps the originals.
+fn default_sec_fts_url() -> String {
+    "https://efts.sec.gov/LATEST/search-index?forms=SCHEDULE%2013D,SCHEDULE%2013G&dateRange=custom&startdt={start}&enddt={end}&ciks={cik}".to_string()
+}
+
+fn default_ark_trades_url() -> String {
+    "https://arkfunds.io/api/v2/etf/trades?symbol={fund}&date_from={start}&date_to={end}".to_string()
+}
+
+/// (#475) Plain http: the https host refuses the connection.
+fn default_openinsider_clusters_url() -> String {
+    "http://openinsider.com/latest-cluster-buys".to_string()
 }
 
 /// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
@@ -2593,6 +2627,16 @@ mod tests {
         let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
         assert_eq!(settings.urls.youtube_feed, "https://www.youtube.com/feeds/videos.xml?channel_id=UCS01CiRDAiyhR_mTHXDW23A");
         assert_eq!(settings.urls.dataroma_buys, "https://www.dataroma.com/m/g/portfolio_b.php?q=q&o=c");
+        // (#475) the newer sources, unpinned too
+        for key in ["youtube_more_feeds", "sec_fts", "ark_trades", "openinsider_clusters"] {
+            assert!(!text.contains(key), "fixture must exercise the DEFAULT of {key}");
+        }
+        assert_eq!(settings.urls.youtube_more_feeds.len(), 4);
+        assert!(settings.urls.youtube_more_feeds[3].ends_with("channel_id=UCJwKCyEIFHwUOPQQ-4kC1Zw"));
+        assert!(settings.urls.sec_fts.starts_with("https://efts.sec.gov/LATEST/search-index?forms=SCHEDULE%2013D,SCHEDULE%2013G&"));
+        assert!(["{start}", "{end}", "{cik}"].iter().all(|k| settings.urls.sec_fts.contains(k)));
+        assert_eq!(settings.urls.ark_trades, "https://arkfunds.io/api/v2/etf/trades?symbol={fund}&date_from={start}&date_to={end}");
+        assert_eq!(settings.urls.openinsider_clusters, "http://openinsider.com/latest-cluster-buys");
     }
 
     /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.
