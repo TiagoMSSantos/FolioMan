@@ -140,13 +140,14 @@ jobs:
 
       # (#469) The NAME link and SHORT%/TARGET% facts: three Nasdaq GETs per stock plus one FINRA query.
       # Its own entry so warm runs refetch only rows a week old or partly refused. (#471) profile2: the
-      # rows cached before the Wikipedia fallback hold no site for a week, so start cold once.
+      # rows cached before the Wikipedia fallback hold no site for a week, so start cold once. (#481)
+      # profile3: the same again for the SECTOR fallback, so the Social names outside the CSV read one.
       - name: Restore profile cache
         uses: actions/cache@v6
         with:
           path: .profile_cache.json
-          key: folioman-profile2-${{ github.run_id }}
-          restore-keys: folioman-profile2-
+          key: folioman-profile3-${{ github.run_id }}
+          restore-keys: folioman-profile3-
 
       # (#366) The three PERMANENT BLS decades behind the USA 20Y/30Y/40Y inflation cells. `.fmp_cache`
       # is otherwise cold on every run, so each run would re-ask BLS for all three plus the fresh

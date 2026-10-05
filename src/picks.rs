@@ -3621,7 +3621,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
     // (#447) GICS, stocks only: the book's sector concentration at a glance, which the rank never shows
-    ColSpec { key: "sector", hdr: "SECTOR", width: 0, right: false, help: "Stocks: GICS sector, so a book leaning on one industry shows" },
+    ColSpec { key: "sector", hdr: "SECTOR", width: 0, right: false, help: "Stocks: GICS sector, so a book leaning on one industry shows; Nasdaq's sector for a name outside the universe list" },
     ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true, help: "Last close, converted to euros" },
     // (#395) market value € = `shares_out` × price_eur: a stock's newest complete-FY diluted weighted-average
     // shares (so up to ~1y old and a few % off after buybacks; a split after the last 10-K reads 1/N until
@@ -4005,7 +4005,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             .and_then(|f| f.net_debt.zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
             .map_or("n/a".to_string(), |(d, e)| format!("{:.1}x", d / e)),
         "icov" => quote.fund.as_ref().and_then(|f| f.interest_cover).map_or("n/a".to_string(), |v| format!("{v:.0}x")),
-        "sector" => quote.sector.clone().unwrap_or_else(|| "n/a".to_string()),
+        "sector" => quote.sector.clone().or_else(|| quote.profile.sector.clone()).unwrap_or_else(|| "n/a".to_string()),
         // Read the Option `dividend_yields` already carries rather than `dividend_yield_1y`, whose
         // `unwrap_or(0.0)` collapses two different facts into one: Some(0.0) = pays NOTHING (MNST, and
         // it's a real, knowable 0.00%), None = no price or too little history to say. Printing both as
@@ -7171,6 +7171,8 @@ mod tests {
         assert_eq!(cc("roic", &st, 0.0, None, ""), "n/a");
         assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a");
         assert_eq!(cc("sector", &st, 0.0, None, ""), "n/a");
+        st.profile.sector = Some("Health Care Equipment".into()); // (#481) Nasdaq's, only with no CSV sector
+        assert_eq!(cc("sector", &st, 0.0, None, ""), "Health Care Equipment");
         st.sector = Some("Health Care".into());
         st.fund = Some(core::FundFactors {
             roic: Some(31.24),

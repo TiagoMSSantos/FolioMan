@@ -226,6 +226,8 @@ pub struct Profile {
     pub use_class: Option<String>, // (#479) justETF's distribution policy as BF's token, read by the USE cell only when BF has none
     #[serde(default)]
     pub repl: Option<String>,      // (#479) justETF's replication as BF's token, read by the REPL cell only when BF has none
+    #[serde(default)]
+    pub sector: Option<String>,    // (#481) Nasdaq's sector, read by the SECTOR cell only when the universe CSV has none
 }
 
 // (#473) serde's skip test for a count: universe.json carries `super_buyers` on the flagged names alone.

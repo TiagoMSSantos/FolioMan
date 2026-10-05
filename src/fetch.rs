@@ -1953,7 +1953,8 @@ fn profile_of(company: &Value, target: &Value, summary: &Value, short: Option<f6
     let analysts = ["buy", "hold", "sell"].iter().filter_map(|k| consensus?.get(k)?.as_u64()).sum::<u64>() as u32;
     let close = summary.pointer("/data/summaryData/PreviousClose/value").and_then(nasdaq_number).filter(|c| *c > 0.0);
     let target_pct = consensus.and_then(|c| c["priceTarget"].as_f64()).filter(|t| *t > 0.0).zip(close).map(|(t, c)| (t / c - 1.0) * 100.0);
-    core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts), ..Default::default() }
+    let sector = company.pointer("/data/Sector/value").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts), sector, ..Default::default() }
 }
 
 /// (#469) A home page as https: http upgraded, a bare host given the scheme, blank = None.
@@ -2055,6 +2056,7 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
                 short_shares: if shorts.is_some() { fresh.short_shares } else { old.short_shares },
                 target_pct: fresh.target_pct.or(old.target_pct),
                 analysts: fresh.analysts.or(old.analysts),
+                sector: fresh.sector.or(old.sector),
                 ..Default::default()
             };
             if row.1.site.is_none() {
@@ -9355,6 +9357,8 @@ pub(crate) mod tests {
         assert_eq!(profile_of(&company("abc.com"), &Value::Null, &summary, None).site.as_deref(), Some("https://abc.com"));
         assert_eq!(profile_of(&company(" "), &target, &Value::Null, None), core::Profile { analysts: Some(26), ..Default::default() }, "no close, no target");
         assert_eq!(profile_of(&Value::Null, &Value::Null, &Value::Null, None), core::Profile::default());
+        let sector = |v: &str| profile_of(&serde_json::json!({"data": {"Sector": {"value": v}}}), &Value::Null, &Value::Null, None).sector;
+        assert_eq!((sector("Industrials").as_deref(), sector(" ")), (Some("Industrials"), None), "(#481) blank reads None");
     }
 
     /// (#471) The top hit's URL and Wikidata id (none on a page without one); the preferred P856 wins
@@ -9409,7 +9413,7 @@ pub(crate) mod tests {
         seed_cik_map(); // `us_symbol` reads EU_TO_US, which only the seed may fill
         let (base, client, requests) = routed_stub(vec![
             ("/finra", r#"[{"symbolCode": "ZZPB", "settlementDate": "2026-09-30", "currentShortPositionQuantity": 1234}]"#),
-            ("/ZZP.B/profile", r#"{"data": {"CompanyUrl": {"value": "http://zzp.example"}}}"#),
+            ("/ZZP.B/profile", r#"{"data": {"CompanyUrl": {"value": "http://zzp.example"}, "Sector": {"value": "Industrials"}}}"#),
             ("/ZZP.B/target", r#"{"data": {"consensusOverview": {"priceTarget": 110, "buy": 3, "hold": 1, "sell": 0}}}"#),
             ("/ZZP.B/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$100.00"}}}}"#),
             ("/ZZPRC/profile", r#"{"data": {"CompanyUrl": {"value": "https://c.example"}}}"#),
@@ -9440,7 +9444,7 @@ pub(crate) mod tests {
         let set = |ts: &[&str]| -> HashSet<String> { ts.iter().map(|t| t.to_string()).collect() };
         enrich_profile(&client, &urls, &mut quotes, &set(&["ZZP-B", "ZZPRF", "ZZPRC", "ZZPRE", "ZZPRW", "ZZPRN"])).await;
         let p = &quotes[0].profile;
-        assert_eq!((p.site.as_deref(), p.short_shares, p.analysts), (Some("https://zzp.example"), Some(1234.0), Some(4)));
+        assert_eq!((p.site.as_deref(), p.short_shares, p.analysts, p.sector.as_deref()), (Some("https://zzp.example"), Some(1234.0), Some(4), Some("Industrials")));
         assert!(p.target_pct.is_some_and(|t| (t - 10.0).abs() < 1e-9), "{:?}", p.target_pct);
         assert_eq!(quotes[1].profile, fresh, "a fresh row is served");
         assert_eq!((quotes[2].profile.site.as_deref(), quotes[2].profile.target_pct), (Some("https://c.example"), None));
