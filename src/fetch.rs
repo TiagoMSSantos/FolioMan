@@ -828,7 +828,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         brk_bought: false, // (#436) stamped later by `stamp_brk`, once the 13F set is in hand
         brk_held: false,
         social: false,
-        super_bought: false,
+        super_buyers: 0,
+        social_tip: false,
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
@@ -2492,7 +2493,8 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
 
 // ── (#443) Social arbitrage shadow ──────────────────────────────────────────────────────────────────
 // One page table, the `s` rank flag and track's `soc` row; no gate reads it, and since (#472) only the
-// superinvestor rows score, through `Quote::super_bought` and `growth_superinvestor_boost`. (#444) One table for every source of "people say they are buying it":
+// superinvestor rows score, through `Quote::super_buyers` and `growth_superinvestor_boost`; (#473) the
+// video and hand-list rows too, through `Quote::social_tip` and the smaller `growth_social_boost`. (#444) One table for every source of "people say they are buying it":
 // - YouTube: a pooled equity named in a title or description of the newest ~15 Dumb Money Live uploads
 //   (keyless RSS, about one week).
 // - Superinvestors: Dataroma's last-quarter buys (13F-based, so 45+ days old), kept when at least
@@ -2740,12 +2742,15 @@ fn soc_merge(
     rows
 }
 
-/// (#444) Mark every equity quote a merged row names, (#472) and the ones superinvestors bought.
-/// Equities only, as [`stamp_brk`].
+/// (#444) Mark every equity quote a merged row names, (#472) with its superinvestor buyer count and
+/// (#473) whether a video or the hand list names it. Equities only, as [`stamp_brk`]. Merged rows hold
+/// one row per ticker, so the first match is the only one.
 pub fn stamp_social(quotes: &mut [Quote], rows: &[SocRow]) {
     for q in quotes.iter_mut().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")) {
-        q.social = rows.iter().any(|r| r.ticker == q.ticker);
-        q.super_bought = rows.iter().any(|r| r.ticker == q.ticker && r.buyers > 0);
+        let row = rows.iter().find(|r| r.ticker == q.ticker);
+        q.social = row.is_some();
+        q.super_buyers = row.map_or(0, |r| r.buyers);
+        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand);
     }
 }
 
@@ -2818,11 +2823,11 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
 }
 
 /// (#472) The 13F flags for a command that ranks but prints no 13F table (`size`, `check`), so its book
-/// carries the same `growth_brk_held_boost`/`growth_superinvestor_boost` `screen` scores. No request
-/// while both knobs are off.
+/// carries the same `growth_brk_held_boost`/`growth_superinvestor_boost`/(#473) `growth_social_boost`
+/// `screen` scores. No request while every knob is off.
 #[mutants::skip] // async network shell over `fetch_brk`/`fetch_social`
 pub async fn stamp_13f(client: &Client, urls: &Urls, quotes: &mut [Quote], tuning: &crate::config::BuyHeuristic) {
-    if tuning.growth_brk_held_boost == 1.0 && tuning.growth_superinvestor_boost == 1.0 {
+    if tuning.growth_brk_held_boost == 1.0 && tuning.growth_superinvestor_boost == 1.0 && tuning.growth_social_boost == 1.0 {
         return;
     }
     let (bought, held, _) = fetch_brk(client, urls).await;
@@ -9900,12 +9905,13 @@ pub(crate) mod tests {
     #[test]
     fn stamp_social_marks_equities_only() {
         let q = |t: &str, kind: &str, was: bool| Quote { instrument_type: kind.to_string(), social: was, ..Quote::stub(t, "€1", "", t) };
-        let mut quotes = [q("AMZ.DE", "EQUITY", false), q("SPY", "ETF", false), q("HOOD", "equity", true), q("COF", "EQUITY", false)];
-        let row = |t: &str, buyers: u32| SocRow { ticker: t.into(), buyers, ..Default::default() };
-        stamp_social(&mut quotes, &[row("AMZ.DE", 0), row("SPY", 9), row("COF", 9)]);
-        assert_eq!(quotes.clone().map(|q| q.social), [true, false, false, true]);
-        // (#472) only a superinvestor buy sets the scored flag: a video or hand-list row is not one
-        assert_eq!(quotes.map(|q| q.super_bought), [false, false, false, true]);
+        let mut quotes = [q("AMZ.DE", "EQUITY", false), q("SPY", "ETF", false), q("HOOD", "equity", true), q("COF", "EQUITY", false), q("MSF.DE", "EQUITY", false)];
+        let row = |t: &str, buyers: u32, videos: usize, hand: bool| SocRow { ticker: t.into(), buyers, videos, hand, ..Default::default() };
+        stamp_social(&mut quotes, &[row("AMZ.DE", 0, 2, false), row("SPY", 9, 1, true), row("COF", 9, 0, true), row("MSF.DE", 14, 0, false)]);
+        assert_eq!(quotes.clone().map(|q| q.social), [true, false, false, true, true]);
+        // (#472) the buyer count rides alone; (#473) a video or the hand list sets the tip, buyers never do
+        assert_eq!(quotes.clone().map(|q| q.super_buyers), [0, 0, 0, 9, 14]);
+        assert_eq!(quotes.map(|q| q.social_tip), [true, false, false, true, false]);
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +

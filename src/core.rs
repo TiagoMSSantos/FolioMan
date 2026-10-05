@@ -224,6 +224,11 @@ pub struct Profile {
     pub analysts: Option<u32>,     // buy + hold + sell opinions behind that target
 }
 
+// (#473) serde's skip test for a count: universe.json carries `super_buyers` on the flagged names alone.
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 // (#391) serde: the page engine re-ranks the published pool (`web::Universe`) in the browser.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Quote {
@@ -265,10 +270,15 @@ pub struct Quote {
     // track `soc` shadow read it, nothing scores it. Stamped by `fetch::stamp_social` on equities only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub social: bool,
-    // (#472) the superinvestor half of `social` alone: 8+ Dataroma buyers, or the SEC 13F fallback's.
-    // `growth_superinvestor_boost` multiplies its score; the videos and the hand list never do.
+    // (#472) the superinvestor half of `social` alone: how many of Dataroma's superinvestors bought it last
+    // quarter (8+ to list), or the SEC 13F fallback's managers; 0 = none. (#473) The score takes
+    // `growth_superinvestor_boost` once per `growth_superinvestor_step` buyers.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub super_buyers: u32,
+    // (#473) the other half: a recent social-arbitrage video or the hand list names it. The score takes
+    // `growth_social_boost`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub super_bought: bool,
+    pub social_tip: bool,
     pub name: String,    // human-readable instrument name (falls back to ticker)
     pub trend: String,   // "↑ 2w" / "↓ 5d": current direction + how long it has held
     pub at_ath: bool,    // at/near all-time high (within tol of max seen)
@@ -398,7 +408,8 @@ impl Quote {
             brk_bought: false,
             brk_held: false,
             social: false,
-            super_bought: false,
+            super_buyers: 0,
+            social_tip: false,
             name: name.to_string(),
             trend: String::new(),
             at_ath: false,
@@ -5411,6 +5422,16 @@ pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#473) universe.json carries the buyer count on the flagged names alone, and the wasm engine
+    /// reads it back unchanged.
+    #[test]
+    fn super_buyers_rides_universe_json_only_when_set() {
+        let plain = Quote::stub("A", "€1", "", "A");
+        assert!(!serde_json::to_string(&plain).unwrap().contains("super_buyers"));
+        let json = serde_json::to_string(&Quote { super_buyers: 9, ..plain }).unwrap();
+        assert_eq!(serde_json::from_str::<Quote>(&json).unwrap().super_buyers, 9);
+    }
 
     /// (#112) The two suffix tables answer different questions and must not be allowed to drift into
     /// each other. This pins the three ways `listing_currency` can be wrong in a way nobody would see

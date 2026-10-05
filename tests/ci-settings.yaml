@@ -19544,15 +19544,26 @@ buy_heuristic:
   growth_brk_held_boost: 1.20    # (#472) 13F NUDGE: multiply the growth score of a stock Berkshire Hathaway's NEWEST 13F
                                  #   holds (the `W` rank flag). growth_superinvestor_boost below does the same for a stock
                                  #   8+ Dataroma superinvestors bought last quarter (or the (#470) SEC 13F fallback's); the
-                                 #   two stack, so a name with both earns x1.44. The Social table's YouTube and hand-list
-                                 #   rows earn nothing. USER DECISION 2026-10-05, over the (#436)/(#442)/(#444) "wait for
+                                 #   two stack by multiplication. (#473) That one now scales with the buyer count, and the
+                                 #   Social table's YouTube and hand-list rows earn growth_social_boost. USER DECISION 2026-10-05, over the (#436)/(#442)/(#444) "wait for
                                  #   track" answer, at x1.20 each over x1.05/x1.10: a real lift, not just a tie-break.
                                  #   Code default 1.0 = off, so the backtest and the config-less job are byte-identical.
                                  #   UNMEASURABLE BY CONSTRUCTION, same class as (#44)/(#45): both flags are false on every
                                  #   backtest quote. Graded FORWARD by the track `brkh` and `soc` rows; if either reads
                                  #   negative once it has its 12 links, return its knob to 1.0. Never applied to a
                                  #   negative score (the (#86) branch takes no multiplier).
-  growth_superinvestor_boost: 1.20  # (#472) see growth_brk_held_boost directly above.
+  growth_superinvestor_boost: 1.10  # (#472) see growth_brk_held_boost directly above. (#473) USER DECISION 2026-10-05:
+                                 #   x1.10 once per growth_superinvestor_step buyers, rounded down, counted from zero,
+                                 #   no cap. Dataroma lists 8+ buyers, so the smallest boost is x1.21; live counts on
+                                 #   2026-10-05 ran 8-18: 8 -> x1.21, 11 -> x1.33, 14 -> x1.46, 18 (MSF.DE) -> x1.77.
+                                 #   The count is LAST-QUARTER BUYERS, not holders: a manager who held without adding
+                                 #   does not count.
+  growth_superinvestor_step: 3   # (#473) buyers per growth_superinvestor_boost step (0 reads as 1).
+  growth_social_boost: 1.05      # (#473) USER DECISION 2026-10-05: the Social table's YouTube and hand-list rows (any
+                                 #   row naming the stock through a video or the hand list) earn x1.05, kept below one
+                                 #   superinvestor step on purpose. All three boosts multiply: AMZ.DE (11 buyers + hand
+                                 #   list) earns x1.33 x 1.05. Same contract: backtest-blind, graded forward by track's
+                                 #   `soc` row; return it to 1.0 if that row reads negative.
   growth_overext_floor: 0.05     # (#100 / finding C5) READ THIS FIRST: the number written here is NOT
                                  #   the multiplier delivered. `damp = combine_damps(&[trust, overext])`
                                  #   is a 2-slot GEOMETRIC MEAN, so it square-roots the floor. The

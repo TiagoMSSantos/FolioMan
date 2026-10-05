@@ -1294,7 +1294,7 @@ struct ScoreParts {
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
-    holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost on a `super_bought` one; 1.0 otherwise / knobs off / every backtest quote
+    holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one; 1.0 otherwise / knobs off / every backtest quote
     score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
@@ -1901,7 +1901,11 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // (#472) the 13F nudge: the user's call, not a measured edge. Both flags are false on every backtest
     // quote, so this is backtest-blind like the docks above; the track `brkh`/`soc` rows grade it forward.
     let brk_boost = if quote.brk_held { tuning.growth_brk_held_boost } else { 1.0 };
-    let holder_boost = brk_boost * if quote.super_bought { tuning.growth_superinvestor_boost } else { 1.0 };
+    // (#473) one superinvestor step per `growth_superinvestor_step` buyers, rounded down; `powi(0)` is an
+    // exact 1.0, so a name under one step and the knob at 1.0 both stay byte-identical
+    let super_boost = tuning.growth_superinvestor_boost.powi((quote.super_buyers / tuning.growth_superinvestor_step.max(1)) as i32);
+    let social_boost = if quote.social_tip { tuning.growth_social_boost } else { 1.0 };
+    let holder_boost = brk_boost * super_boost * social_boost;
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
     // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
@@ -3199,9 +3203,9 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         String::new()
     };
-    // (#472) and the 13F nudge, printed only on a flagged name with a knob set
+    // (#472) and the 13F nudge, (#473) with the social one, printed only on a flagged name with a knob set
     let holder_frag = if p.holder_boost != 1.0 {
-        s.push_str(&format!("  13F boost    = Berkshire holds / superinvestors bought = {:.3}\n", p.holder_boost));
+        s.push_str(&format!("  13F boost    = Berkshire holds × superinvestor buyers × social video/hand list = {:.3}\n", p.holder_boost));
         format!(" × {:.3}", p.holder_boost)
     } else {
         String::new()
@@ -3367,7 +3371,7 @@ struct ColSpec {
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
-    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters (display only), W held in its newest 13F (score × growth_brk_held_boost), s in the Social Arbitrage trading table (only a superinvestor buy scores: × growth_superinvestor_boost), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut" },
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters (display only), W held in its newest 13F (score × growth_brk_held_boost), s in the Social Arbitrage trading table (superinvestor buyers score × growth_superinvestor_boost per growth_superinvestor_step of them, a video or hand-list row × growth_social_boost), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score" },
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin; click to open the company's own website (stocks; its Wikipedia article when none is found), the fund's justETF page (funds) or the coin's CoinGecko page (coins)" },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
@@ -4053,7 +4057,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("o", "already held (broker portfolio)"),
         ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
         ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
-        ("s", "the Social Arbitrage trading table names it — a superinvestor buy scores × growth_superinvestor_boost (1.0 = off), a video or hand-list row never scores"),
+        ("s", "the Social Arbitrage trading table names it — superinvestor buyers score × growth_superinvestor_boost once per growth_superinvestor_step of them, a video or hand-list row × growth_social_boost (1.0 = off)"),
         ("†", "under 8y of record — its S-8Y is the full-history score, not an 8-year one"),
     ]
     .iter()
@@ -4472,8 +4476,10 @@ pub struct WebTop {
 pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap, inflation: &[Vec<(String, String)>], core: &[Vec<(String, String)>]) -> WebTop {
     // (#403) The book `render` returns (coins ride free of `n`), captured before `lane_split` consumes
     // `picks`, because the page's BUY% funds every name in it. One past its table's cut shows at its real
-    // rank like a pin; one a display trim dropped from its lane rides at the lane's end. Both are flagged
-    // `b`: the page's copy of the terminal's (#284) "those N in full" tables.
+    // rank like a pin; one a display trim dropped from its lane (#473) takes its place by score, so a
+    // boosted name the value brake cut climbs the printed rows too. Both are flagged `b`: the page's copy
+    // of the terminal's (#284) "those N in full" tables. Who shows is decided on the lane alone, so a
+    // `b` row never pushes a lane row out; the RANK cell counts the merged order.
     let keep = equal_weights(&picks.iter().map(|(q, _)| (asset_class(q) == 0, 0.0)).collect::<Vec<_>>(), n, 1.0);
     let book: Vec<(&Quote, f64)> = picks.iter().zip(keep).filter_map(|(p, k)| k.map(|_| *p)).collect();
     let bought = |q: &Quote| book.iter().any(|(b, _)| b.ticker == q.ticker);
@@ -4492,10 +4498,16 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
         // (#397) Plus every PINNED row below the cut, with its real rank: `print_picks`' `below_cut`,
         // so an uploaded watchlist shows whatever it ranked.
         let pin = |q: &Quote| pinned.contains(q.ticker.as_str());
-        let below_cut = lane.iter().enumerate().skip(n).filter(|(_, (quote, _))| pin(quote) || bought(quote));
-        let shown = lane.iter().enumerate().take(n).chain(below_cut).map(|(i, row)| (i, row, if i < n || pin(row.0) { "" } else { "b" }));
-        shown
-            .chain(hid.iter().enumerate().map(|(k, row)| (lane.len() + k, row, "b"))) // after every row, pins included
+        let mut merged: Vec<(&(&Quote, f64), Option<usize>)> = lane.iter().enumerate().map(|(at, row)| (row, Some(at))).chain(hid.iter().map(|row| (row, None))).collect();
+        merged.sort_by(|a, b| b.0 .1.total_cmp(&a.0 .1)); // stable: the lane is already in score order, a tie keeps a hidden row after it
+        merged
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, (row, at))| match at {
+                Some(at) if at < n || pin(row.0) => Some((i, row, "")),
+                Some(_) if !bought(row.0) => None,
+                _ => Some((i, row, "b")),
+            })
             .map(|(i, (quote, score), flag)| {
                 let alt = growth_score(&as_8y_window(quote), &tuning_8y(tuning));
                 // The row's own index, so ranks read 1, 2, 3… — and the flags (`*` pinned, `!`
@@ -7036,7 +7048,8 @@ mod tests {
             brk_bought: false,
             brk_held: false,
             social: false,
-            super_bought: false,
+            super_buyers: 0,
+            social_tip: false,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, close_native: None, quote_currency: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
@@ -9600,6 +9613,27 @@ mod tests {
         assert_eq!(lane(&top.crypto), ["1 BTC-EUR", "2b ETH-EUR"], "past the cut but bought: its own rank");
     }
 
+    /// (#473) A bought name the value brake cut takes its place by score, so a boosted name climbs the
+    /// printed rows; who shows is still decided on the lane, so it pushes no lane row out.
+    #[test]
+    fn web_top_sorts_a_trimmed_book_row_into_place() {
+        let w = Widths { columns: ["rank", "ticker", "score"].iter().map(|s| s.to_string()).collect(), ..Widths::default() };
+        let q = |t: &str, peg: Option<f64>| Quote {
+            instrument_type: "EQUITY".into(),
+            fund: Some(core::FundFactors { peg_yield: peg, ..Default::default() }),
+            ..Quote::stub(t, "€100.00", "", t)
+        };
+        let (top, x1, x2, x3, x4) = (q("TOP", Some(40.0)), q("X1", Some(100.0)), q("X2", Some(80.0)), q("X3", Some(60.0)), q("X4", None));
+        let picks = vec![(&top, 9.0), (&x1, 8.0), (&x2, 7.0), (&x3, 6.0), (&x4, 5.0)];
+        // 25% of [40,60,80,100] -> floor 60 cuts TOP; the book is the first 3, so TOP is bought
+        let tuning = BuyHeuristic { growth_value_floor_pct: 25.0, ..BuyHeuristic::default() };
+        let (none, owned) = (HashSet::new(), Owned::default());
+        let got = web_top(picks, 3, &w, &[], &tuning, &none, &owned, &HashMap::new(), &[], &[]);
+        let rows: Vec<String> =
+            got.stocks.iter().map(|r| r.iter().filter(|(h, _)| h == "RANK" || h == "TICKER").map(|(_, c)| c.trim()).collect::<Vec<_>>().join(" ")).collect();
+        assert_eq!(rows, ["1b TOP", "2 X1", "3 X2", "4 X3"], "X3 keeps its lane slot, X4 stays past the cut");
+    }
+
     /// (QA) `--explain TICKER` for a name that did NOT rank must name WHICH of the four things
     /// happened. All four printed ONE string before ("fails a growth gate, isn't EU-buyable, or wasn't
     /// scanned") — the same non-answer whichever applied, which is how a name failing 2+ gates ended up
@@ -10823,20 +10857,23 @@ mod tests {
         assert_eq!(compose_score(&p, &neg), compose_score(&p, &plain), "a POSITIVE base ignores the knob entirely");
     }
 
-    /// (#472) each 13F flag earns its own knob, the two stack by multiplication, and the code default
-    /// moves nothing.
+    /// (#472) each 13F flag earns its own knob, (#473) the superinvestor one once per step of buyers and
+    /// the social tip its own; all three stack by multiplication, and the code default moves nothing.
     #[test]
     fn holder_boost_takes_each_flag_its_own_knob() {
         let q = gate_fixture();
-        let t = BuyHeuristic { growth_brk_held_boost: 1.2, growth_superinvestor_boost: 1.5, ..BuyHeuristic::default() };
-        let boost = |brk_held, super_bought, t: &BuyHeuristic| {
-            score_parts(&Quote { brk_held, super_bought, ..q.clone() }, t).expect("the fixture clears the gates").holder_boost
+        let t = BuyHeuristic { growth_brk_held_boost: 1.2, growth_superinvestor_boost: 1.5, growth_social_boost: 1.25, ..BuyHeuristic::default() };
+        let boost = |brk_held, super_buyers, social_tip, t: &BuyHeuristic| {
+            score_parts(&Quote { brk_held, super_buyers, social_tip, ..q.clone() }, t).expect("the fixture clears the gates").holder_boost
         };
-        assert_eq!(boost(false, false, &t), 1.0);
-        assert_eq!(boost(true, false, &t), 1.2);
-        assert_eq!(boost(false, true, &t), 1.5);
-        assert_eq!(boost(true, true, &t), 1.2 * 1.5);
-        assert_eq!(boost(true, true, &BuyHeuristic::default()), 1.0, "both knobs ship off in code");
+        assert_eq!(boost(false, 0, false, &t), 1.0);
+        assert_eq!(boost(true, 0, false, &t), 1.2);
+        assert_eq!(boost(false, 2, false, &t), 1.0, "under one step of 3 buyers earns nothing");
+        assert_eq!(boost(false, 9, false, &t), 3.375, "9 buyers = 3 steps of x1.5");
+        assert_eq!(boost(false, 0, true, &t), 1.25);
+        assert_eq!(boost(true, 9, true, &t), 1.2 * 3.375 * 1.25);
+        assert_eq!(boost(false, 2, false, &BuyHeuristic { growth_superinvestor_step: 0, ..t.clone() }), 2.25, "a 0 step reads as 1");
+        assert_eq!(boost(true, 18, true, &BuyHeuristic::default()), 1.0, "every knob ships off in code");
     }
 
     /// (#144) non-negotiable #1, and the only witness for it: no golden covers this path.

@@ -1898,7 +1898,8 @@ pub async fn run(args: Vec<String>) {
     // (#438) display only: the page's Attention table, carried to the payload below
     let attention = fetch::fetch_attention(&client, &settings.urls).await;
     // (#444) the `s` rank flag, track's `soc` row and the page's Social Arbitrage trading table; (#472) its
-    // superinvestor half also scores, through `growth_superinvestor_boost`
+    // superinvestor half also scores, through `growth_superinvestor_boost`, (#473) the rest through
+    // `growth_social_boost`
     let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
