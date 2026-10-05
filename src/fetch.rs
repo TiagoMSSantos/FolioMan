@@ -1963,9 +1963,13 @@ fn https_site(u: &str) -> Option<String> {
     (!host.is_empty()).then(|| format!("https://{host}"))
 }
 
-/// (#471) Wikipedia's top search hit: its article URL and Wikidata id (None when it has none).
-fn wiki_hit(search: &Value) -> Option<(String, Option<String>)> {
+/// (#471) Wikipedia's top search hit: its article URL and Wikidata id (None when it has none). (#482)
+/// Only an article whose title holds the name's first word, case-blind (a leading "The" skipped): the
+/// search answered WhiteHawk Minerals with "Silver mining in the United States".
+fn wiki_hit(search: &Value, name: &str) -> Option<(String, Option<String>)> {
     let page = search.pointer("/query/pages")?.as_object()?.values().next()?;
+    let word = name.split(|c: char| c.is_whitespace() || c == ',' || c == '.').find(|w| !w.is_empty() && !w.eq_ignore_ascii_case("the"))?;
+    page["title"].as_str()?.to_lowercase().contains(&word.to_lowercase()).then_some(())?;
     let qid = page.pointer("/pageprops/wikibase_item").and_then(Value::as_str).map(String::from);
     Some((page["fullurl"].as_str()?.to_string(), qid))
 }
@@ -1982,7 +1986,7 @@ fn official_site(entity: &Value) -> Option<String> {
 /// at least says what the company is. None = no article, or refused.
 async fn wiki_site(client: &Client, urls: &Urls, name: &str) -> Option<String> {
     let search = reqwest::Url::parse_with_params(&urls.wikipedia_search, [("gsrsearch", name)]).ok()?;
-    let (article, qid) = wiki_hit(&get_json(client, search.as_str()).await?)?;
+    let (article, qid) = wiki_hit(&get_json(client, search.as_str()).await?, name)?;
     let entity = match qid {
         Some(q) => get_json(client, &urls.wikidata_entity.replace("{qid}", &q)).await,
         None => None,
@@ -2146,10 +2150,15 @@ pub async fn enrich_etf_cells(
     let today = chrono::Local::now().date_naive();
     let fresh = |d: &str| cache_age_days(d, today).is_some_and(|a| a < TD_CACHE_DAYS);
     let mut pace = 0; // carried, not branched on the index: see `resolve_eu_listings`
+    // (#469) the NAME link, (#482) on every fund with an ISIN, so a row an upload ranks keeps it too
+    for q in quotes.iter_mut().filter(|q| q.profile.site.is_none()) {
+        if let Some(isin) = isins.get(&q.ticker) {
+            q.profile.site = Some(urls.justetf_profile.replace("{isin}", isin));
+        }
+    }
     for q in quotes.iter_mut().filter(|q| syms.contains(&q.ticker)) {
         q.top10 = holdings.get(&q.ticker).map(|h| h.iter().map(|(_, w)| w).sum::<f64>() * 100.0).filter(|s| *s > 0.0);
         let Some(isin) = isins.get(&q.ticker) else { continue };
-        q.profile.site = Some(urls.justetf_profile.replace("{isin}", isin)); // (#469) the NAME link
         if !cache.get(isin).is_some_and(|(d, _)| fresh(d)) && !offline() {
             // a small hobby site: one page a second, and only the 2xx answer is believed
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
@@ -9365,10 +9374,13 @@ pub(crate) mod tests {
     /// over a first normal one, http is upgraded, no claim reads None.
     #[test]
     fn wiki_hit_and_official_site_read_the_two_answers() {
-        let hit = serde_json::json!({"query": {"pages": {"9": {"fullurl": "https://en.wikipedia.org/wiki/X", "pageprops": {"wikibase_item": "Q9"}}}}});
-        assert_eq!(wiki_hit(&hit), Some(("https://en.wikipedia.org/wiki/X".into(), Some("Q9".into()))));
-        assert_eq!(wiki_hit(&serde_json::json!({"query": {"pages": {"9": {"fullurl": "u"}}}})), Some(("u".into(), None)));
-        assert_eq!(wiki_hit(&serde_json::json!({"batchcomplete": ""})), None, "no hit");
+        let hit = serde_json::json!({"query": {"pages": {"9": {"title": "The X Company", "fullurl": "https://en.wikipedia.org/wiki/X", "pageprops": {"wikibase_item": "Q9"}}}}});
+        assert_eq!(wiki_hit(&hit, "The x Co."), Some(("https://en.wikipedia.org/wiki/X".into(), Some("Q9".into()))));
+        assert_eq!(wiki_hit(&serde_json::json!({"query": {"pages": {"9": {"title": "Ab", "fullurl": "u"}}}}), "AB, Inc."), Some(("u".into(), None)));
+        assert_eq!(wiki_hit(&serde_json::json!({"batchcomplete": ""}), "X"), None, "no hit");
+        let silver = serde_json::json!({"query": {"pages": {"9": {"title": "Silver mining in the United States", "fullurl": "u"}}}});
+        assert_eq!(wiki_hit(&silver, "WhiteHawk Minerals Corp."), None, "(#482) an article about something else");
+        assert_eq!(wiki_hit(&silver, "The"), None, "no word to match");
         let claim = |rank: &str, u: &str| serde_json::json!({"rank": rank, "mainsnak": {"datavalue": {"value": u}}});
         let entity = |claims: Value| serde_json::json!({"entities": {"Q9": {"claims": {"P856": claims}}}});
         assert_eq!(official_site(&entity(serde_json::json!([claim("normal", "https://a"), claim("preferred", "http://b")]))).as_deref(), Some("https://b"));
@@ -9381,10 +9393,10 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn wiki_site_prefers_the_official_site_then_the_article() {
         let (base, client, requests) = routed_stub(vec![
-            ("gsrsearch=Has+Site", r#"{"query": {"pages": {"1": {"fullurl": "https://w/Has", "pageprops": {"wikibase_item": "Q1"}}}}}"#),
+            ("gsrsearch=Has+Site", r#"{"query": {"pages": {"1": {"title": "Has Site", "fullurl": "https://w/Has", "pageprops": {"wikibase_item": "Q1"}}}}}"#),
             ("/wd/Q1.json", r#"{"entities": {"Q1": {"claims": {"P856": [{"mainsnak": {"datavalue": {"value": "https://has.example"}}}]}}}}"#),
-            ("gsrsearch=No+Site", r#"{"query": {"pages": {"2": {"fullurl": "https://w/No", "pageprops": {"wikibase_item": "Q2"}}}}}"#),
-            ("gsrsearch=No+Id", r#"{"query": {"pages": {"3": {"fullurl": "https://w/Id"}}}}"#),
+            ("gsrsearch=No+Site", r#"{"query": {"pages": {"2": {"title": "No Site", "fullurl": "https://w/No", "pageprops": {"wikibase_item": "Q2"}}}}}"#),
+            ("gsrsearch=No+Id", r#"{"query": {"pages": {"3": {"title": "No Id", "fullurl": "https://w/Id"}}}}"#),
         ]);
         let mut urls = stub_urls(&base);
         urls.wikipedia_search = format!("{base}search?action=query");
@@ -9418,7 +9430,7 @@ pub(crate) mod tests {
             ("/ZZP.B/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$100.00"}}}}"#),
             ("/ZZPRC/profile", r#"{"data": {"CompanyUrl": {"value": "https://c.example"}}}"#),
             ("/ZZPRC/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$5"}}}}"#),
-            ("gsrsearch=ZZPRN", r#"{"query": {"pages": {"1": {"fullurl": "https://w/ZZPRN"}}}}"#),
+            ("gsrsearch=ZZPRN", r#"{"query": {"pages": {"1": {"title": "ZZPRN", "fullurl": "https://w/ZZPRN"}}}}"#),
         ]);
         let mut urls = stub_urls(&base);
         urls.finra_short = format!("{base}finra");
@@ -9545,7 +9557,7 @@ pub(crate) mod tests {
         let mut urls = stub_urls(&base);
         urls.trackingdifferences = format!("{base}{{isin}}");
         urls.justetf_profile = format!("{base}je/{{isin}}");
-        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE", "ZZISINF": "ZZTDF"});
+        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE", "ZZISINF": "ZZTDF", "ZZISING": "ZZTDG", "ZZISINH": "ZZTDH"});
         std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), isin_cache.to_string()).expect("seed isin cache");
         let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).to_string();
         let td = serde_json::json!({"ZZISINB": [ago(0), [0.1]], "ZZISIND": [ago(30), [0.2]], "ZZISINE": [ago(40), [0.7]]});
@@ -9553,7 +9565,8 @@ pub(crate) mod tests {
         let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0]]});
         std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), je.to_string()).expect("seed justetf cache");
         let mut quotes: Vec<core::Quote> =
-            ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE", "ZZTDF"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+            ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE", "ZZTDF", "ZZTDG", "ZZTDH"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        quotes[8].profile.site = Some("https://own".into());
         quotes[3].name = quotes[0].name.to_uppercase();
         quotes[0].replication = Some("Full");
         for q in &mut quotes[4..6] {
@@ -9577,6 +9590,8 @@ pub(crate) mod tests {
         // (#469) the NAME link: the justETF page off the same ISIN, copied like the cells; no ISIN, no link
         assert_eq!(quotes[0].profile.site, Some(format!("{base}je/ZZISINA")));
         assert_eq!((&quotes[3].profile.site, &quotes[2].profile.site), (&quotes[0].profile.site, &None));
+        // (#482) a fund off the printed rows links too, and a site already set is kept
+        assert_eq!((quotes[7].profile.site.clone(), quotes[8].profile.site.as_deref()), (Some(format!("{base}je/ZZISING")), Some("https://own")));
         let saved = std::fs::read_to_string(crate::config::data_path(TD_CACHE_PATH)).expect("td cache");
         assert!(saved.contains("ZZISINA"), "the fetched answer is cached: {saved}");
         // (#479) a gap in USE alone reads the page; Yahoo's TOP10% wins over justETF's

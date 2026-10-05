@@ -45,7 +45,11 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
       }
       // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo. (#455) A shadow
       // table's cell may carry its source page as a third element; only https ever becomes a link.
-      const href = h === "TICKER" ? "https://finance.yahoo.com/quote/" + encodeURIComponent(cell) : url;
+      // (#482) A NAME with no page of its own links the row's Yahoo quote, and so does an Exposure
+      // `name` row, whose NAME is the symbol.
+      const yahoo = (t) => "https://finance.yahoo.com/quote/" + encodeURIComponent(t);
+      const sym = h === "NAME" && !url?.startsWith("https://") && (row.find(([k]) => k === "TICKER")?.[1] ?? (row.some(([k, c]) => k === "KIND" && c === "name") ? cell : null));
+      const href = h === "TICKER" ? yahoo(cell) : sym ? yahoo(sym) : url;
       if (!href?.startsWith("https://")) {
         td.textContent = cell;
         continue;
