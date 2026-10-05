@@ -2595,12 +2595,19 @@ enum TipKind {
     Stake,
     Ark,
     Insider,
+    Reddit,
+    Trends,
 }
 
 /// (#475) Look-back of each newer source: a new 13D/13G stake, then an ARK net buy.
 const SOC_STAKE_DAYS: i64 = 90;
 const SOC_ARK_DAYS: i64 = 30;
 const ARK_FUNDS: [&str; 6] = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF", "ARKX"];
+/// (#483) A Reddit/4chan surge: this many mentions in the last 24h, and this many times the 24h before.
+const SOC_APE_MIN: u64 = 10;
+const SOC_APE_JUMP: u64 = 3;
+/// (#483) Hacker News look-back; the 100-point floor rides in `urls.hn_stories`.
+const SOC_HN_DAYS: i64 = 7;
 
 /// (#444) One merged row: the pooled ticker when the pool has the stock, else the source's US symbol.
 #[derive(Default)]
@@ -2612,6 +2619,10 @@ pub struct SocRow {
     stakes: u32,
     ark: bool,
     insiders: bool,
+    /// (#483) a Reddit/4chan mention surge, a Google Trends hit, Hacker News stories naming it
+    reddit: bool,
+    trends: bool,
+    hn: usize,
     videos: usize,
     hand: bool,
     newest: String,
@@ -2836,6 +2847,73 @@ fn insider_clusters(html: &str) -> Vec<SocTip> {
     tips
 }
 
+/// (#483) ApeWisdom's most-mentioned stocks -> one tip per surge: [`SOC_APE_MIN`]+ mentions over the
+/// last 24h and [`SOC_APE_JUMP`]x the 24h before (a name new to the list counts as 1 before). A 1-2
+/// letter ticker is skipped: "IT", "ES" and "CD" are counted off ordinary words.
+fn ape_surges(v: &Value, today: &str) -> Vec<SocTip> {
+    v["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let (us, now) = (r["ticker"].as_str()?, r["mentions"].as_u64()?);
+            let before = r["mentions_24h_ago"].as_u64().unwrap_or(0);
+            (us.len() >= 3 && now >= SOC_APE_MIN && now >= SOC_APE_JUMP * before.max(1)).then(|| SocTip {
+                us: us.replace('.', "-"),
+                name: r["name"].as_str().unwrap_or_default().to_string(),
+                kind: TipKind::Reddit,
+                day: today.to_string(),
+                why: format!("Reddit/4chan mentions {now} vs {before} a day before"),
+                link: format!("https://apewisdom.io/stocks/{us}/"),
+            })
+        })
+        .collect()
+}
+
+/// (#483) Google Trends' daily US RSS -> one tip per trend whose whole title, case-blind, is a pooled
+/// stock: its ticker (3+ letters, as RXO trended) or its [`soc_key`] (`nvidia`). A title naming
+/// anything else ("united states") matches nothing.
+fn trend_hits(xml: &str, today: &str, eu: &HashMap<String, String>, quotes: &[Quote]) -> Vec<SocTip> {
+    let field = |e: &str, tag: &str| regex::Regex::new(&format!(r"(?s)<{tag}>(.*?)</{tag}>")).expect("literal regex").captures(e).map(|c| c[1].trim().replace("&amp;", "&"));
+    regex::Regex::new(r"(?s)<item>(.*?)</item>")
+        .expect("literal regex")
+        .captures_iter(xml)
+        .filter_map(|c| {
+            let title = field(&c[1], "title")?;
+            let stock = |q: &&Quote| q.instrument_type.eq_ignore_ascii_case("EQUITY");
+            let by_ticker = (title.len() >= 3 && title.chars().all(|ch| ch.is_ascii_alphanumeric()))
+                .then(|| soc_quote(&title.to_uppercase(), eu, quotes))
+                .flatten()
+                .filter(stock);
+            let q = by_ticker.or_else(|| quotes.iter().filter(stock).find(|q| soc_key(&q.name).is_some_and(|k| k.eq_ignore_ascii_case(&title))))?;
+            let traffic = field(&c[1], "ht:approx_traffic").map_or(String::new(), |t| format!(", {t} searches"));
+            Some(SocTip {
+                us: q.ticker.clone(),
+                name: q.name.clone(),
+                kind: TipKind::Trends,
+                day: today.to_string(),
+                why: format!("US daily search trend \"{title}\"{traffic}"),
+                link: reqwest::Url::parse_with_params("https://trends.google.com/trends/explore?geo=US&date=now%207-d", [("q", &title)]).map_or(String::new(), String::from),
+            })
+        })
+        .collect()
+}
+
+/// (#483) Hacker News' Algolia answer -> its stories in [`soc_videos`]' shape (day, title, title, the
+/// HN thread), so [`soc_hits`] names the pooled stocks in them the way it reads a video.
+fn hn_stories(v: &Value) -> Vec<(String, String, String, String)> {
+    v["hits"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|h| {
+            let (title, id) = (h["title"].as_str()?, h["objectID"].as_str()?);
+            let day = h["created_at"].as_str()?.get(..10)?.to_string();
+            Some((day, title.to_string(), title.to_string(), format!("https://news.ycombinator.com/item?id={id}")))
+        })
+        .collect()
+}
+
 /// (#475) [`sup_stakes`] for every [`SOC_SEC_MANAGERS`] manager over the last [`SOC_STAKE_DAYS`], each
 /// answer cached [`SUP_STAKE_TTL`] inside [`SEC_FETCH_BUDGET`]. A manager whose search fails adds nothing.
 #[mutants::skip] // (#475) async network shell; `sup_stakes` carries the tests
@@ -2911,6 +2989,7 @@ fn soc_row<'r>(rows: &'r mut Vec<SocRow>, us: &str, name: &str, eu: &HashMap<Str
 /// Most sources first, then most buyers, then most videos, then the ticker.
 fn soc_merge(
     hits: &[(&Quote, usize, String, String, String)],
+    hn: &[(&Quote, usize, String, String, String)],
     supers: &(String, Vec<(String, String, u32)>),
     picks: &[SocPick],
     tips: &[SocTip],
@@ -2930,9 +3009,16 @@ fn soc_merge(
             TipKind::Stake => r.stakes += 1,
             TipKind::Ark => r.ark = true,
             TipKind::Insider => r.insiders = true,
+            TipKind::Reddit => r.reddit = true,
+            TipKind::Trends => r.trends = true,
         }
         r.newest = r.newest.clone().max(t.day.clone());
         (r.why, r.link) = (t.why.clone(), t.link.clone());
+    }
+    for (q, n, day, title, link) in hn {
+        let r = soc_row(&mut rows, &q.ticker, &q.name, eu, quotes);
+        (r.hn, r.why, r.link) = (*n, title.clone(), link.clone());
+        r.newest = r.newest.clone().max(day.clone());
     }
     for (q, n, day, title, link) in hits {
         let r = soc_row(&mut rows, &q.ticker, &q.name, eu, quotes);
@@ -2954,7 +3040,7 @@ fn soc_merge(
         }
     }
     let sources = |r: &SocRow| {
-        [r.buyers != 0, r.stakes != 0, r.ark, r.insiders, r.videos != 0, r.hand].into_iter().filter(|&b| b).count()
+        [r.buyers != 0, r.stakes != 0, r.ark, r.insiders, r.reddit, r.trends, r.hn != 0, r.videos != 0, r.hand].into_iter().filter(|&b| b).count()
     };
     rows.sort_by(|a, b| {
         sources(b)
@@ -2975,7 +3061,7 @@ pub fn stamp_social(quotes: &mut [Quote], rows: &[SocRow]) {
         let row = rows.iter().find(|r| r.ticker == q.ticker);
         q.social = row.is_some();
         q.super_buyers = row.map_or(0, |r| r.buyers + r.stakes);
-        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand || r.ark || r.insiders);
+        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand || r.ark || r.insiders || r.reddit || r.trends || r.hn > 0);
     }
 }
 
@@ -2997,6 +3083,15 @@ fn soc_table(rows: &[SocRow], supers: &str) -> Value {
             }
             if r.insiders {
                 sources.push("insiders".to_string());
+            }
+            if r.reddit {
+                sources.push("Reddit".to_string());
+            }
+            if r.trends {
+                sources.push("Google Trends".to_string());
+            }
+            if r.hn > 0 {
+                sources.push(format!("HN ×{}", r.hn));
             }
             if r.videos > 0 {
                 sources.push(format!("YouTube ×{}", r.videos));
@@ -3057,11 +3152,17 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
     }
     tips.extend(ark_buys(&funds));
     tips.extend(get_text(client, &urls.openinsider_clusters).await.map(|x| insider_clusters(&x)).unwrap_or_default());
-    let rows = soc_merge(&soc_hits(&videos, quotes), &supers, &picks, &tips, &eu, quotes);
+    let day = today.to_string();
+    tips.extend(get_json(client, &urls.apewisdom).await.map(|v| ape_surges(&v, &day)).unwrap_or_default());
+    tips.extend(get_text(client, &urls.google_trends_rss).await.map(|x| trend_hits(&x, &day, &eu, quotes)).unwrap_or_default());
+    let hn_since = (chrono::Utc::now() - chrono::Duration::days(SOC_HN_DAYS)).timestamp().to_string();
+    let stories = get_json(client, &urls.hn_stories.replace("{since}", &hn_since)).await.map(|v| hn_stories(&v)).unwrap_or_default();
+    let rows = soc_merge(&soc_hits(&videos, quotes), &soc_hits(&stories, quotes), &supers, &picks, &tips, &eu, quotes);
     stamp_social(quotes, &rows);
     eprintln!(
-        "fetch: social arbitrage: {} videos, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider tips, {} hand picks -> {} rows",
+        "fetch: social arbitrage: {} videos, {} HN stories, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider/Reddit/Trends tips, {} hand picks -> {} rows",
         videos.len(),
+        stories.len(),
         supers.1.len(),
         supers.0,
         tips.len() - stakes,
@@ -10199,7 +10300,7 @@ pub(crate) mod tests {
         let pick = |t: &str, d: &str| SocPick { ticker: t.into(), date: d.into(), said: "said".into(), source: "url".into() };
         let picks = [pick("AMZN", "2026-09-29"), pick("HOOD", "2026-10-01"), pick("XYZ", "2026-09-01"), pick("ABC", "2026-09-01")];
         let eu = HashMap::from([("AMZN".to_string(), "AMZ.DE".to_string()), ("HOOD".to_string(), String::new())]);
-        let rows = soc_merge(&hits, &supers, &picks, &[], &eu, &quotes);
+        let rows = soc_merge(&hits, &[], &supers, &picks, &[], &eu, &quotes);
         let order: Vec<&str> = rows.iter().map(|r| r.ticker.as_str()).collect();
         assert_eq!(order, ["AMZ.DE", "HOOD", "MSFT", "BRK-B", "TSLA", "META", "ABC", "XYZ"]);
         let table = soc_table(&rows, "superinvestors");
@@ -10275,6 +10376,91 @@ pub(crate) mod tests {
         assert!(insider_clusters("nothing").is_empty());
     }
 
+    /// (#483) A surge needs both the volume and the jump; a list newcomer counts as 1 before; a 1-2
+    /// letter ticker is a word, not a stock.
+    #[test]
+    fn ape_surges_need_volume_and_a_jump() {
+        let r = |t: &str, now: u64, before: Value| serde_json::json!({"ticker": t, "name": format!("{t} Co"), "mentions": now, "mentions_24h_ago": before});
+        let v = serde_json::json!({"results": [r("MU", 63, 23.into()), r("VST", 38, 1.into()), r("NEW", 10, Value::Null), r("IT", 40, 1.into()), r("LOW", 9, 0.into()), r("BRK.B", 30, 10.into()), r("EDGE", 11, 4.into())]});
+        let got = ape_surges(&v, "2026-10-05");
+        let short: Vec<(&str, &str, &str)> = got.iter().map(|t| (t.us.as_str(), t.why.as_str(), t.link.as_str())).collect();
+        assert_eq!(
+            short,
+            [
+                ("VST", "Reddit/4chan mentions 38 vs 1 a day before", "https://apewisdom.io/stocks/VST/"),
+                ("NEW", "Reddit/4chan mentions 10 vs 0 a day before", "https://apewisdom.io/stocks/NEW/"),
+                ("BRK-B", "Reddit/4chan mentions 30 vs 10 a day before", "https://apewisdom.io/stocks/BRK.B/"),
+            ]
+        );
+        assert_eq!((got[0].kind, got[0].name.as_str(), got[0].day.as_str()), (TipKind::Reddit, "VST Co", "2026-10-05"));
+        assert!(ape_surges(&serde_json::json!({}), "d").is_empty());
+    }
+
+    /// (#483) A trend is a stock only when its WHOLE title is a pooled stock's ticker (3+ letters, the
+    /// Xetra twin found through `eu`) or its match word, case-blind; a fund never is.
+    #[test]
+    fn trend_hits_match_whole_titles_on_stocks() {
+        let q = |t: &str, name: &str, kind: &str| Quote { instrument_type: kind.to_string(), name: name.to_string(), ..Quote::stub(t, "€1", "", t) };
+        let quotes = [q("RXO", "RXO, Inc.", "EQUITY"), q("NVDA", "NVIDIA Corporation", "EQUITY"), q("UAL", "United Airlines Holdings", "EQUITY"), q("AB", "AllianceBernstein", "EQUITY"), q("MSF.DE", "Microsoft Corporation", "EQUITY"), q("SPY", "SPDR S&P 500", "ETF")];
+        let eu = HashMap::from([("MSFT".to_string(), "MSF.DE".to_string())]);
+        let item = |t: &str, traffic: &str| format!("<item><title>{t}</title><ht:approx_traffic>{traffic}</ht:approx_traffic><link>x</link></item>");
+        let xml = [item("rxo", "500+"), item("Nvidia", "2000+"), item("united states", "5000+"), item("ab", "200+"), item("msft", "100+"), item("spy", "100+"), "<item><title> united </title></item>".to_string()].concat();
+        let got = trend_hits(&xml, "2026-10-05", &eu, &quotes);
+        let short: Vec<(&str, &str, TipKind)> = got.iter().map(|t| (t.us.as_str(), t.why.as_str(), t.kind)).collect();
+        assert_eq!(
+            short,
+            [
+                ("RXO", "US daily search trend \"rxo\", 500+ searches", TipKind::Trends),
+                ("NVDA", "US daily search trend \"Nvidia\", 2000+ searches", TipKind::Trends),
+                ("MSF.DE", "US daily search trend \"msft\", 100+ searches", TipKind::Trends),
+                ("UAL", "US daily search trend \"united\"", TipKind::Trends),
+            ]
+        );
+        assert_eq!((got[0].name.as_str(), got[0].day.as_str()), ("RXO, Inc.", "2026-10-05"));
+        assert_eq!(got[3].link, "https://trends.google.com/trends/explore?geo=US&date=now%207-d&q=united");
+    }
+
+    /// (#483) A story reads as a video would: its day, its title twice, its HN thread; a hit missing a
+    /// field is skipped.
+    #[test]
+    fn hn_stories_read_like_videos() {
+        let v = serde_json::json!({"hits": [{"title": "Nvidia ships X", "objectID": "42", "created_at": "2026-10-04T11:13:51Z"}, {"title": "no id", "created_at": "2026-10-04T00:00:00Z"}]});
+        let s = |x: &str| x.to_string();
+        assert_eq!(hn_stories(&v), vec![(s("2026-10-04"), s("Nvidia ships X"), s("Nvidia ships X"), s("https://news.ycombinator.com/item?id=42"))]);
+        assert!(hn_stories(&serde_json::json!({})).is_empty());
+    }
+
+    /// (#483) Reddit, Trends and HN each add a SOURCES entry and count as one more source in the sort;
+    /// each is a tip on the quote; a video's WHY still wins over an HN story's.
+    #[test]
+    fn soc_merge_adds_the_crowd_lanes() {
+        let q = |t: &str, name: &str| Quote { instrument_type: "EQUITY".to_string(), name: name.to_string(), ..Quote::stub(t, "€1", "", t) };
+        let mut quotes = [q("VST", "Vistra Corp."), q("RXO", "RXO, Inc."), q("NVDA", "Nvidia Corporation"), q("AMD", "Advanced Micro")];
+        let tip = |us: &str, kind: TipKind, why: &str| SocTip { us: us.into(), name: us.into(), kind, day: "2026-10-05".into(), why: why.into(), link: format!("l/{why}") };
+        let tips = [tip("VST", TipKind::Reddit, "r"), tip("NVDA", TipKind::Reddit, "r2"), tip("RXO", TipKind::Trends, "t")];
+        let hn = [(&quotes[2], 3, "2026-10-04".to_string(), "story".to_string(), "hn/1".to_string()), (&quotes[3], 1, "2026-10-03".to_string(), "amd story".to_string(), "hn/2".to_string())];
+        let videos = [(&quotes[2], 1, "2026-10-01".to_string(), "video".to_string(), "yt/1".to_string())];
+        let supers = ("2026-Q2".to_string(), vec![]);
+        let rows = soc_merge(&videos, &hn, &supers, &[], &tips, &HashMap::new(), &quotes);
+        let table = soc_table(&rows, "superinvestors");
+        let cells: Vec<(&str, &str, &str, &str)> = (0..rows.len())
+            .map(|i| (table[i][1][1].as_str().unwrap(), table[i][3][1].as_str().unwrap(), table[i][4][1].as_str().unwrap(), table[i][5][1].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            cells,
+            [
+                ("NVDA", "Reddit; HN ×3; YouTube ×1", "2026-10-05", "video"),
+                ("AMD", "HN ×1", "2026-10-03", "amd story"),
+                ("RXO", "Google Trends", "2026-10-05", "t"),
+                ("VST", "Reddit", "2026-10-05", "r"),
+            ]
+        );
+        assert_eq!(table[1][5], serde_json::json!(["WHY", "amd story", "hn/2"]));
+        let rows: Vec<SocRow> = rows.into_iter().map(|r| SocRow { videos: 0, ..r }).collect();
+        stamp_social(&mut quotes, &rows);
+        assert_eq!(quotes.map(|q| q.social_tip), [true, true, true, true], "each crowd lane alone is a tip");
+    }
+
     #[test]
     fn soc_merge_counts_stakes_as_buyers_and_pools_the_tips() {
         let q = |t: &str| Quote { instrument_type: "EQUITY".to_string(), ..Quote::stub(t, "€1", "", t) };
@@ -10293,7 +10479,7 @@ pub(crate) mod tests {
         ];
         let supers = ("2026-Q2".to_string(), vec![("MSFT".to_string(), "Microsoft".to_string(), 8)]);
         let eu = HashMap::from([("MSFT".to_string(), "MSF.DE".to_string())]);
-        let rows = soc_merge(&[], &supers, &[], &tips, &eu, &quotes);
+        let rows = soc_merge(&[], &[], &supers, &[], &tips, &eu, &quotes);
         let table = soc_table(&rows, "superinvestors");
         let cells: Vec<(&str, &str, &str, &str)> = (0..rows.len())
             .map(|i| (table[i][1][1].as_str().unwrap(), table[i][3][1].as_str().unwrap(), table[i][4][1].as_str().unwrap(), table[i][5][1].as_str().unwrap()))
@@ -11124,7 +11310,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 47] = [
+        const FIELDS: [&str; 50] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -11135,6 +11321,7 @@ pub(crate) mod tests {
             "justetf_profile", "wikimedia_pageviews", "youtube_feed", "dataroma_buys", "nasdaq_earnings",
             "trackingdifferences", "nasdaq_profile", "nasdaq_target", "nasdaq_summary", "finra_short",
             "wikipedia_search", "wikidata_entity", "sec_fts", "ark_trades", "openinsider_clusters",
+            "apewisdom", "google_trends_rss", "hn_stories",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\nyoutube_more_feeds: [\"{base}\"]\n")); // the two non-String fields

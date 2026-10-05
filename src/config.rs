@@ -879,6 +879,15 @@ pub struct Urls {
     // (#475) openinsider's latest cluster buys: open-market purchases by 2+ insiders of one company.
     #[serde(default = "default_openinsider_clusters_url")]
     pub openinsider_clusters: String,
+    // (#483) ApeWisdom's most-mentioned stocks on Reddit and 4chan, now and 24h before (page 1 = the top 100).
+    #[serde(default = "default_apewisdom_url")]
+    pub apewisdom: String,
+    // (#483) Google Trends' daily US trending searches, RSS.
+    #[serde(default = "default_google_trends_rss_url")]
+    pub google_trends_rss: String,
+    // (#483) Hacker News stories with 100+ points created after `{since}` (unix seconds), via Algolia.
+    #[serde(default = "default_hn_stories_url")]
+    pub hn_stories: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
@@ -1128,9 +1137,23 @@ fn default_dataroma_buys_url() -> String {
     "https://www.dataroma.com/m/g/portfolio_b.php?q=q&o=c".to_string()
 }
 
-/// (#475) Joseph Carlson, Ticker Symbol: YOU, Financial Education, Tom Nash.
+/// (#475) Joseph Carlson, Ticker Symbol: YOU, Financial Education, Tom Nash. (#483) Everything Money,
+/// Learn to Invest, Chip Stock Investor, Dividendology, Meet Kevin, Stock Moe, Andrei Jikh, InvestAnswers.
 fn default_youtube_more_feeds() -> Vec<String> {
-    ["UCbta0n8i6Rljh0obO7HzG9A", "UC7kCeZ53sli_9XwuQeFxLqw", "UCnMn36GT_H0X-w5_ckLtlgQ", "UCJwKCyEIFHwUOPQQ-4kC1Zw"]
+    [
+        "UCbta0n8i6Rljh0obO7HzG9A",
+        "UC7kCeZ53sli_9XwuQeFxLqw",
+        "UCnMn36GT_H0X-w5_ckLtlgQ",
+        "UCJwKCyEIFHwUOPQQ-4kC1Zw",
+        "UChBVf9YnourrEDTsbbwJPRA",
+        "UCSglJMvX-zSgv3PEJIE_inw",
+        "UC3aD-gfmHV_MhMmcwyIu1wA",
+        "UCgCh-2AfEBtWrNBC2OoNQYg",
+        "UCUvvj5lwue7PspotMDjk5UA",
+        "UCoMzWLaPjDJBbipihD694pQ",
+        "UCGy7SkBjcIAgTiwkXEtPnYg",
+        "UClgJyzwGs-GyaNxUHcLZrkg",
+    ]
         .map(|id| format!("https://www.youtube.com/feeds/videos.xml?channel_id={id}"))
         .to_vec()
 }
@@ -1147,6 +1170,18 @@ fn default_ark_trades_url() -> String {
 /// (#475) Plain http: the https host refuses the connection.
 fn default_openinsider_clusters_url() -> String {
     "http://openinsider.com/latest-cluster-buys".to_string()
+}
+
+fn default_apewisdom_url() -> String {
+    "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1".to_string()
+}
+
+fn default_google_trends_rss_url() -> String {
+    "https://trends.google.com/trending/rss?geo=US".to_string()
+}
+
+fn default_hn_stories_url() -> String {
+    "https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=created_at_i%3E{since},points%3E100&hitsPerPage=1000".to_string()
 }
 
 /// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
@@ -2628,11 +2663,16 @@ mod tests {
         assert_eq!(settings.urls.youtube_feed, "https://www.youtube.com/feeds/videos.xml?channel_id=UCS01CiRDAiyhR_mTHXDW23A");
         assert_eq!(settings.urls.dataroma_buys, "https://www.dataroma.com/m/g/portfolio_b.php?q=q&o=c");
         // (#475) the newer sources, unpinned too
-        for key in ["youtube_more_feeds", "sec_fts", "ark_trades", "openinsider_clusters"] {
+        for key in ["youtube_more_feeds", "sec_fts", "ark_trades", "openinsider_clusters", "apewisdom", "google_trends_rss", "hn_stories"] {
             assert!(!text.contains(key), "fixture must exercise the DEFAULT of {key}");
         }
-        assert_eq!(settings.urls.youtube_more_feeds.len(), 4);
+        assert_eq!(settings.urls.youtube_more_feeds.len(), 12);
         assert!(settings.urls.youtube_more_feeds[3].ends_with("channel_id=UCJwKCyEIFHwUOPQQ-4kC1Zw"));
+        assert!(settings.urls.youtube_more_feeds[11].ends_with("channel_id=UClgJyzwGs-GyaNxUHcLZrkg"));
+        // (#483)
+        assert_eq!(settings.urls.apewisdom, "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1");
+        assert_eq!(settings.urls.google_trends_rss, "https://trends.google.com/trending/rss?geo=US");
+        assert!(settings.urls.hn_stories.contains("created_at_i%3E{since},points%3E100"));
         assert!(settings.urls.sec_fts.starts_with("https://efts.sec.gov/LATEST/search-index?forms=SCHEDULE%2013D,SCHEDULE%2013G&"));
         assert!(["{start}", "{end}", "{cik}"].iter().all(|k| settings.urls.sec_fts.contains(k)));
         assert_eq!(settings.urls.ark_trades, "https://arkfunds.io/api/v2/etf/trades?symbol={fund}&date_from={start}&date_to={end}");
