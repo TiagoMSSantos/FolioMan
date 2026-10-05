@@ -158,7 +158,10 @@
     <summary>about the bond returns</summary>
     Each row is one government's 10-year bond, the benchmark safe asset of its market. A cell is the
     total return of holding it for that span, compounded: bought at par each month at that month's
-    yield, sold a month later at the next, coupons reinvested. It is rebuilt from FRED's monthly
+    yield, sold a month later at the next, coupons reinvested. A negative cell is a real loss, not a
+    bug: when yields rise, a bond you already hold falls in price, about 8% per point for a 10-year.
+    They rose fast in 2021-23 (Germany's from about -0.5% to 3%) after years of near-zero coupons, so
+    a span starting before that is still under water. Real bond funds lost the same. It is rebuilt from FRED's monthly
     average yields, so it is a model with no fees, not a fund you can buy. Each row is in its own
     currency; <em>USA in EUR</em> is the same Treasury for a euro holder, the dollar's swing included.
     n/a = the series is shorter (euro FX starts in 1999, Italy in 1991, Portugal in 1993).

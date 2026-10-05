@@ -144,6 +144,12 @@ mod tests {
         assert_eq!(bond_web_rows(&[("Germany", flat(end - 5, end - 5))], &fx, today)[0][10].1, "2026-04", "6 months behind is not yet stale");
     }
 
+    /// (#488) A cell that rounds to zero carries no sign either way; one that rounds to 0.1 keeps it.
+    #[test]
+    fn signed_pct_drops_the_sign_only_off_a_rounded_zero() {
+        assert_eq!([-0.04, 0.04, -0.06, 6.2].map(signed_pct), ["0.0%", "0.0%", "-0.1%", "+6.2%"]);
+    }
+
     /// (#367) The EU-span column's two decisions, off the `println!` sink where nothing could see them:
     /// which row sets the span (the EU's, by label — Portugal is longer, so a wrong match shows), and
     /// where it lands among the fixed horizons (sorted in; a span equal to one of them adds nothing).
@@ -309,6 +315,13 @@ pub(crate) fn inflation_web_rows(
 /// (`core::bond_index`). "USA in EUR" follows USA: the same dollar index divided by USD per EUR, so it
 /// carries the currency swing a euro holder took, and stops where EXUSEU does (1999). Display only.
 /// `AS OF` is the newest month; ⚠ STALE past 6 months, as a dead series still prints its last numbers.
+/// (#488) A return cell as `+6.2%`, but one that rounds to nothing prints `0.0%`: the US 10Y's
+/// -0.04% read "-0.0%" on the page and looked like a bug.
+fn signed_pct(v: f64) -> String {
+    let s = format!("{v:+.1}%");
+    if &s[1..] == "0.0%" { s[1..].to_string() } else { s }
+}
+
 pub(crate) fn bond_web_rows(
     yields: &[(&str, std::collections::BTreeMap<i32, f64>)],
     usd_per_eur: &std::collections::BTreeMap<i32, f64>,
@@ -327,7 +340,7 @@ pub(crate) fn bond_web_rows(
             ("YIELD".to_string(), yld.values().next_back().map_or("n/a".to_string(), |y| format!("{y:.2}%"))),
         ];
         cells.extend(crate::core::BOND_YEARS.iter().map(|&y| {
-            (format!("{y}Y"), crate::core::bond_cum(&index, y).map_or("n/a".to_string(), |v| format!("{v:+.1}%")))
+            (format!("{y}Y"), crate::core::bond_cum(&index, y).map_or("n/a".to_string(), signed_pct))
         }));
         cells.push(("AS OF".to_string(), as_of));
         cells
