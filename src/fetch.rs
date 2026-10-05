@@ -2191,7 +2191,7 @@ pub async fn enrich_etf_cells(
         }
         if let Some((_, (use_class, repl, top10, index))) = je.get(isin) {
             (q.profile.use_class, q.profile.repl, q.top10) = (use_class.clone(), repl.clone(), q.top10.or(*top10));
-            q.profile.index = index.clone();
+            q.profile.index = index.as_ref().map(|v| v.replace("&amp;", "&")); // decoded here, so a cached row reads clean too
         }
     }
     let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
@@ -9672,7 +9672,7 @@ pub(crate) mod tests {
         let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).to_string();
         let td = serde_json::json!({"ZZISINB": [ago(0), [0.1]], "ZZISIND": [ago(30), [0.2]], "ZZISINE": [ago(40), [0.7]]});
         std::fs::write(crate::config::data_path(TD_CACHE_PATH), td.to_string()).expect("seed td cache");
-        let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0, null]]});
+        let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0, "S&amp;P 500"]]});
         std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), je.to_string()).expect("seed justetf cache");
         let mut quotes: Vec<core::Quote> =
             ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE", "ZZTDF", "ZZTDG", "ZZTDH", "ZZTDI"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
@@ -9716,6 +9716,7 @@ pub(crate) mod tests {
         assert_eq!(cells(&quotes[5]), (None, None, Some(50.0)), "no gap, no justETF read");
         // (#490) the index name lands on profile, never on the BF benchmark the CORE family key reads
         assert_eq!((quotes[0].profile.index.as_deref(), quotes[0].benchmark.as_deref()), (Some("Nasdaq 100®"), Some("bf")));
+        assert_eq!(quotes[1].profile.index.as_deref(), Some("S&P 500"), "the page's escaped ampersand, decoded off a cached row");
         assert_eq!((cells(&quotes[9]), quotes[9].profile.index.as_deref()), ((Some("Acc".into()), Some("Swap".into()), Some(50.0)), Some("Nasdaq 100®")), "no benchmark alone reads the page");
         assert_eq!(quotes[0].replication, Some("Full"), "the scored BF field is never touched");
         let saved = std::fs::read_to_string(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH)).expect("justetf cache");
