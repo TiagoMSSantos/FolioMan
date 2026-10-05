@@ -1792,9 +1792,9 @@ pub async fn run(args: Vec<String>) {
     eprintln!("screen: fetching 10Y government bond yields (FRED)…");
     let mut bond_yields = Vec::new();
     for (label, id) in fetch::BOND_SERIES {
-        bond_yields.push((label, fetch::fetch_fred(&client, &settings.urls.fred, id).await));
+        bond_yields.push((label, fetch::fetch_fred(&client, &settings.urls.fred, &settings.urls.sec_user_agent, id).await));
     }
-    let usd_per_eur = fetch::fetch_fred(&client, &settings.urls.fred, "EXUSEU").await;
+    let usd_per_eur = fetch::fetch_fred(&client, &settings.urls.fred, &settings.urls.sec_user_agent, "EXUSEU").await;
     let bonds = crate::commands::bond_web_rows(&bond_yields, &usd_per_eur, chrono::Local::now().date_naive());
     // intraday ONLY when the table actually prints 1h/6h/12h — it was hardcoded on, and it costs one
     // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display

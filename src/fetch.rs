@@ -12245,11 +12245,12 @@ pub(crate) mod tests {
         let csv = "observation_date,X\n2026-08-01,3.5\n2026-09-01,.\n";
         let (url, client, requests) = recording_stub(csv);
         let _ = std::fs::remove_file(macro_cache_path("fred_TEST486"));
-        let got = fetch_fred(&client, &format!("{url}?id={{id}}"), "TEST486").await;
+        let got = fetch_fred(&client, &format!("{url}?id={{id}}"), "ua-486 a@b.c", "TEST486").await;
         assert_eq!(got, BTreeMap::from([(2026 * 12 + 7, 3.5)]));
         let asked: Vec<String> = requests.try_iter().collect();
         assert_eq!(asked.len(), 1);
         assert!(asked[0].starts_with("GET /?id=TEST486 "), "{}", asked[0]);
+        assert!(asked[0].to_ascii_lowercase().contains("user-agent: ua-486 a@b.c\r\n"), "{}", asked[0]);
         assert_eq!(macro_cache_read("fred_TEST486"), Some(Value::String(csv.into())));
         let _ = std::fs::remove_file(macro_cache_path("fred_TEST486"));
     }
@@ -13099,13 +13100,22 @@ pub async fn fetch_eu_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
     cached_macro(client, &urls.eu_hicp, "eu_hicp2", core::parse_eurostat_hicp).await
 }
 
-/// (label, series) — Portugal (BPstat), USA (BLS CPI-U), EU (Eurostat). Async fetched.
 /// (#486) One FRED series through the day cache, as {month index -> value} (`core::parse_fred_monthly`).
 /// `screen` asks for each [`BOND_SERIES`] in turn, then `EXUSEU` (USD per EUR, for the USA in EUR row):
 /// seven small keyless GETs a day, one by one rather than a burst at a host with no published limit.
-pub async fn fetch_fred(client: &Client, template: &str, id: &str) -> BTreeMap<i32, f64> {
+/// FRED resets the stream on the shared client's bare "Mozilla/5.0" (every row read "no data" on the
+/// first deploy), so it gets the contact agent `ua`, as Dataroma does.
+pub async fn fetch_fred(client: &Client, template: &str, ua: &str, id: &str) -> BTreeMap<i32, f64> {
     let url = template.replace("{id}", id);
-    cached_feed(&format!("fred_{id}"), crate::core::parse_fred_monthly, async { get_text(client, &url).await.map(Value::String) }).await
+    let live = async {
+        if offline() {
+            return None;
+        }
+        throttle().await;
+        let r = client.get(&url).header(reqwest::header::USER_AGENT, ua).send().await.ok()?;
+        r.text().await.ok().map(Value::String)
+    };
+    cached_feed(&format!("fred_{id}"), crate::core::parse_fred_monthly, live).await
 }
 
 /// (#486) The Bonds table's 10Y government yields, in the page's row order. USA is the Treasury's
@@ -13120,6 +13130,7 @@ pub const BOND_SERIES: [(&str, &str); 6] = [
     ("Portugal", "IRLTLT01PTM156N"),
 ];
 
+/// (label, series) — Portugal (BPstat), USA (BLS CPI-U), EU (Eurostat). Async fetched.
 pub async fn inflation_all(client: &Client, urls: &Urls) -> Vec<(&'static str, BTreeMap<i32, f64>)> {
     let (pt, us, eu) = tokio::join!(
         fetch_pt_inflation(client, urls),
