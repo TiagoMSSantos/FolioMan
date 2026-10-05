@@ -3664,14 +3664,14 @@ const COLUMNS: &[ColSpec] = &[
     // one column, two denominators (`core::quality_return`), no per-row flag
     ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity, or on assets where equity is negative or under 1/20th of assets (heavy buyback filers)" },
     // (#447) the balance sheet, stocks only, off `quote.fund` (filed statements). Display only: never scored
-    ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings; n/a = no SEC filing carries the lines (most non-US companies)" },
+    ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings; n/a = no SEC filing carries the lines (most non-US companies); — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
-    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed, or EBITDA at or below 0" },
-    ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed" },
+    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed, or EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; — = a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
-    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed, or EBITDA at or below 0" },
+    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed, or EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
@@ -3685,8 +3685,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 7, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; n/a = under 5 years filed" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
-    ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps" },
-    ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Stocks: OP% now minus OP% a year earlier, in percentage points; positive = margins widening" },
+    ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps; — = a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Stocks: OP% now minus OP% a year earlier, in percentage points; positive = margins widening; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "mscore", hdr: "M-SCORE", width: 8, right: true, help: "Stocks: Beneish M-score, an accounting red-flag test on the newest two filed years; above -1.78 = the books look like those of known earnings manipulators, read the filings before buying. A missing input counts as no change" },
     ColSpec { key: "sbc", hdr: "SBC%", width: 6, right: true, help: "Stocks: stock-based pay as % of revenue, a real cost that reported earnings leave out and that dilutes owners every year" },
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares" },
@@ -3985,6 +3985,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#447) balance sheet, stocks only. ND/EBITDA needs a positive EBITDA: dividing by a loss flips
         // the sign and reads as net cash
         "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" | "earn" | "fcfy" | "ps" | "evebitda" if stock_only_na => "—".to_string(),
+        // (#478) a bank's interest is its cost of goods: no operating profit, EBITDA or invested capital
+        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" if quote.fund.as_ref().is_some_and(|f| f.financial) => "—".to_string(),
         // (#462) a cap needs a positive level under it; FCF keeps its sign, a burn is worth seeing
         "fcfy" => quote.fund.as_ref().and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
         "ps" => quote.fund.as_ref().and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
@@ -7203,6 +7205,13 @@ mod tests {
         f.ebitda_ttm = Some(0.0);
         assert_eq!(cc("ps", &st, 0.0, None, ""), "n/a", "no revenue, no ratio");
         assert_eq!(cc("evebitda", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
+        // (#478) a bank's EBIT-type cells are not missing, they do not apply; its FCF% still prints
+        st.fund.as_mut().unwrap().financial = true;
+        for k in ["roic", "nde", "icov", "evebitda", "opm", "mtrend"] {
+            assert_eq!(cc(k, &st, 0.0, None, ""), "—", "{k} on a bank");
+        }
+        assert_eq!(cc("fcf", &st, 0.0, None, ""), "-4.0%");
+        st.fund.as_mut().unwrap().financial = false;
         // (#465) fund-only cells: concentration and the realized-cost series
         assert_eq!(cc("top10", &eq, 0.0, None, ""), "n/a");
         assert_eq!(cc("td1y", &eq, 0.0, None, ""), "n/a");

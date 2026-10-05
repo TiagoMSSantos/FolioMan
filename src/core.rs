@@ -3715,6 +3715,7 @@ pub(crate) fn ranks(v: &[f64]) -> Vec<f64> {
 #[derive(Clone, Debug, Default)]
 pub struct FundRow {
     pub filed: NaiveDate,
+    pub financial: bool,               // (#478) a bank or insurer line filed within 2y of this period: EBIT-type ratios mean nothing here
     pub period_end: NaiveDate,         // FMP period-end `date` — DISPLAY-ONLY (groups quarters by fiscal year in `report`). The as-of join (`fund_as_of`) keys on `filed`, never this, so it can't leak look-ahead into the backtest
     pub revenue: Option<f64>,
     pub gross_margin: Option<f64>,    // % = grossProfit/revenue
@@ -3827,6 +3828,9 @@ pub struct FundFactors {
     // `growth_fund_extra` can price it; `quality` keeps its measured weight untouched until it earns one.
     // NOT `FundRow::roic` (premium, never populated) — see the fn's doc for why they must not be mixed.
     pub roic: Option<f64>,
+    // (#478) the as-of row's bank/insurer mark: the page prints — for its EBIT-type cells. Display only.
+    #[serde(default)]
+    pub financial: bool,
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub core_factor: Option<f64>,  // (#426) the as-of row's `core_factor`: the share of its GAAP EPS that `eps_ttm` kept (1 = clean)
@@ -4216,6 +4220,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         // (#43) same as-of row, same look-ahead guard — every input is a LEVEL already on it, so this
         // costs no fetch. Any missing leg -> None (neutral), never a fabricated 0.
         roic: now.and_then(|r| roic_return(r.revenue, r.op_margin, r.net_margin, r.roe, r.roa, r.net_debt)),
+        financial: now.is_some_and(|r| r.financial),
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
         eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
         core_factor: now.and_then(core_factor),
@@ -5865,6 +5870,7 @@ mod tests {
             roe: Some(11.0),
             quality: Some(18.0),
             roic: Some(22.0),
+            financial: false,
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             core_factor: None,
