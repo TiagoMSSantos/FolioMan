@@ -2087,14 +2087,15 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
 const TD_CACHE_PATH: &str = ".td_cache.json";
 /// (#465) TD is published once a year, so a month-old answer is as good as today's.
 const TD_CACHE_DAYS: i64 = 30;
-/// (#479) `{ISIN: ["YYYY-MM-DD", USE, REPL, TOP10%]}` from justETF, for the printed funds with a gap.
+/// (#479) `{ISIN: ["YYYY-MM-DD", [USE, REPL, TOP10%, INDEX]]}` from justETF, for the printed funds with a gap.
 /// Refetched on the TD cache's month: a fund's share class and replication don't move in a month.
+/// (#490) A 3-cell file from before INDEX fails to parse once, so every gap row refetches.
 const JUSTETF_CELLS_CACHE_PATH: &str = ".justetf_cells_cache.json";
-type JustEtfCells = (Option<String>, Option<String>, Option<f64>);
+type JustEtfCells = (Option<String>, Option<String>, Option<f64>, Option<String>);
 
 /// (#479) DISPLAY ONLY: (USE, REPL, TOP10%) off a justETF profile page, in Börse Frankfurt's tokens
 /// so a cell reads the same whichever source filled it. Physical funds carry the method in a second
-/// span; an unknown wording reads None (n/a), never a guess.
+/// span; an unknown wording reads None (n/a), never a guess. (#490) INDEX is justETF's own wording.
 fn parse_justetf_cells(html: &str) -> JustEtfCells {
     let val = |id: &str| between(html, &format!("tl_etf-basics_value_{id}\">"), "<").map(str::trim);
     let use_class = match val("distribution-policy") {
@@ -2110,7 +2111,8 @@ fn parse_justetf_cells(html: &str) -> JustEtfCells {
         _ => None,
     };
     let top10 = between(html, "tl_etf-holdings_top-holdings_weight\">", "%").and_then(|v| v.trim().parse().ok()).filter(|v: &f64| *v > 0.0);
-    (use_class.map(String::from), repl.map(String::from), top10)
+    let index = val("index-name").filter(|v| !v.is_empty()).map(String::from);
+    (use_class.map(String::from), repl.map(String::from), top10, index)
 }
 
 /// (#465) The `TD (%)` series in a trackingdifferences.com fund page's `tdChart` block, oldest
@@ -2173,7 +2175,8 @@ pub async fn enrich_etf_cells(
             }
         }
         q.td_years = cache.get(isin).map(|(_, t)| t.clone()).unwrap_or_default();
-        let gap = q.use_of_profits.is_none() || q.replication.is_none() || q.top10.is_none();
+        // (#490) no BF benchmark: the INDEX cell would read — and its ×N undercount the book's bet
+        let gap = q.use_of_profits.is_none() || q.replication.is_none() || q.top10.is_none() || q.benchmark.is_none();
         if gap && !je.get(isin).is_some_and(|(d, _)| fresh(d)) && !offline() {
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
             pace = 1000;
@@ -2186,8 +2189,9 @@ pub async fn enrich_etf_cells(
                 _ => eprintln!("justetf: profile refused {isin}"),
             }
         }
-        if let Some((_, (use_class, repl, top10))) = je.get(isin) {
+        if let Some((_, (use_class, repl, top10, index))) = je.get(isin) {
             (q.profile.use_class, q.profile.repl, q.top10) = (use_class.clone(), repl.clone(), q.top10.or(*top10));
+            q.profile.index = index.clone();
         }
     }
     let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
@@ -9623,13 +9627,16 @@ pub(crate) mod tests {
                 r#"<span class="val" data-testid="tl_etf-basics_value_replication">{repl}</span> (<span class="val2" data-testid="tl_etf-basics_value_replication-method">{method}</span>) <td class="val" data-testid="tl_etf-basics_value_distribution-policy">{policy}</td> <span data-testid="tl_etf-holdings_top-holdings_weight">46.00%</span>"#
             )
         };
-        assert_eq!(parse_justetf_cells(&page("Synthetic", "Unfunded swap", "Accumulating")), (Some("Acc".into()), Some("Swap".into()), Some(46.0)));
+        assert_eq!(parse_justetf_cells(&page("Synthetic", "Unfunded swap", "Accumulating")), (Some("Acc".into()), Some("Swap".into()), Some(46.0), None));
         assert_eq!(parse_justetf_cells(&page("Physical", "Full replication", "Distributing")).0.as_deref(), Some("Dist"));
         assert_eq!(parse_justetf_cells(&page("Physical", "Full replication", "x")).1.as_deref(), Some("Full"));
         assert_eq!(parse_justetf_cells(&page("Physical", "Optimized sampling", "x")).1.as_deref(), Some("Opt"));
         assert_eq!(parse_justetf_cells(&page("Physical", "Sampling", "x")).1.as_deref(), Some("Samp"));
-        assert_eq!(parse_justetf_cells(&page("Physical", "Lending", "Other")), (None, None, Some(46.0)));
-        assert_eq!(parse_justetf_cells("<html>home</html>"), (None, None, None));
+        assert_eq!(parse_justetf_cells(&page("Physical", "Lending", "Other")), (None, None, Some(46.0), None));
+        assert_eq!(parse_justetf_cells("<html>home</html>"), (None, None, None, None));
+        // (#490) the live page's index row, kept in justETF's own wording
+        let index = |v: &str| parse_justetf_cells(&format!(r#"<div class="val" data-testid="tl_etf-basics_value_index-name">{v}</div>"#)).3;
+        assert_eq!((index(" Nasdaq 100® ").as_deref(), index(" ")), (Some("Nasdaq 100®"), None));
         assert_eq!(parse_justetf_cells(r#"tl_etf-holdings_top-holdings_weight">0.00%"#).2, None, "0 is justETF's unknown");
     }
 
@@ -9638,18 +9645,20 @@ pub(crate) mod tests {
     /// and ZZTDA2 is not printed but shares ZZTDA's name, so it copies both cells. (#479) justETF:
     /// ZZTDA lacks USE only and ZZTDD TOP10% only, so both read their page; ZZTDB is served off a fresh
     /// row; ZZTDE has every cell, so its routed page is never read; ZZTDF's page 404s and is not cached.
+    /// (#490) ZZTDI has every cell but no BF benchmark, so it reads its page for the index name.
     #[tokio::test]
     async fn enrich_etf_cells_stamps_printed_funds_and_their_listings() {
         let page = |d: &'static str| -> &'static str { Box::leak(format!("tdChart=x;name:'TD (%)',data:[{d}]").into_boxed_str()) };
         // B is routed so a wrongful refetch of its fresh row would show; E is not, so it answers 404
         let je_page = |use_: &str, top10: &str| -> &'static str {
-            Box::leak(format!(r#"tl_etf-basics_value_replication">Synthetic< tl_etf-basics_value_distribution-policy">{use_}< tl_etf-holdings_top-holdings_weight">{top10}%"#).into_boxed_str())
+            Box::leak(format!(r#"tl_etf-basics_value_replication">Synthetic< tl_etf-basics_value_distribution-policy">{use_}< tl_etf-holdings_top-holdings_weight">{top10}% tl_etf-basics_value_index-name">Nasdaq 100®<"#).into_boxed_str())
         };
         let routes = vec![
             ("je/ZZISINA", je_page("Accumulating", "55.5")),
             ("je/ZZISINB", je_page("Distributing", "99")),
             ("je/ZZISIND", je_page("Accumulating", "30")),
             ("je/ZZISINE", je_page("Accumulating", "77")),
+            ("je/ZZISINI", je_page("Accumulating", "88")),
             ("ZZISINA", page("0.3,-0.2,")),
             ("ZZISINB", page("9.9,")),
             ("ZZISIND", page("0.5,")),
@@ -9658,26 +9667,29 @@ pub(crate) mod tests {
         let mut urls = stub_urls(&base);
         urls.trackingdifferences = format!("{base}{{isin}}");
         urls.justetf_profile = format!("{base}je/{{isin}}");
-        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE", "ZZISINF": "ZZTDF", "ZZISING": "ZZTDG", "ZZISINH": "ZZTDH"});
+        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE", "ZZISINF": "ZZTDF", "ZZISING": "ZZTDG", "ZZISINH": "ZZTDH", "ZZISINI": "ZZTDI"});
         std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), isin_cache.to_string()).expect("seed isin cache");
         let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).to_string();
         let td = serde_json::json!({"ZZISINB": [ago(0), [0.1]], "ZZISIND": [ago(30), [0.2]], "ZZISINE": [ago(40), [0.7]]});
         std::fs::write(crate::config::data_path(TD_CACHE_PATH), td.to_string()).expect("seed td cache");
-        let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0]]});
+        let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0, null]]});
         std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), je.to_string()).expect("seed justetf cache");
         let mut quotes: Vec<core::Quote> =
-            ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE", "ZZTDF", "ZZTDG", "ZZTDH"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+            ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE", "ZZTDF", "ZZTDG", "ZZTDH", "ZZTDI"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
         quotes[8].profile.site = Some("https://own".into());
         quotes[3].name = quotes[0].name.to_uppercase();
-        quotes[0].replication = Some("Full");
-        for q in &mut quotes[4..6] {
-            (q.use_of_profits, q.replication) = (Some("Dist"), Some("Full"));
+        (quotes[0].replication, quotes[0].benchmark) = (Some("Full"), Some("bf".into()));
+        for i in [4, 5, 9] {
+            let q = &mut quotes[i];
+            (q.use_of_profits, q.replication, q.benchmark) = (Some("Dist"), Some("Full"), Some("bf".into()));
         }
-        let syms: Vec<String> = ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDD", "ZZTDE", "ZZTDF"].iter().map(|t| t.to_string()).collect();
+        quotes[9].benchmark = None;
+        let syms: Vec<String> = ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDD", "ZZTDE", "ZZTDF", "ZZTDI"].iter().map(|t| t.to_string()).collect();
         let holdings = HashMap::from([
             ("ZZTDA".to_string(), vec![("X".to_string(), 0.25), ("Y".to_string(), 0.15)]),
             ("ZZTDC".to_string(), vec![("X".to_string(), 0.0)]),
             ("ZZTDE".to_string(), vec![("X".to_string(), 0.5)]),
+            ("ZZTDI".to_string(), vec![("X".to_string(), 0.5)]),
         ]);
         enrich_etf_cells(&client, &urls, &mut quotes, &syms, &holdings).await;
         assert!(quotes[0].top10.is_some_and(|t| (t - 40.0).abs() < 1e-9), "{:?}", quotes[0].top10);
@@ -9702,6 +9714,9 @@ pub(crate) mod tests {
         assert_eq!(cells(&quotes[1]), (None, Some("Opt".into()), Some(12.0)), "a fresh row is served, not refetched");
         assert_eq!(cells(&quotes[4]), (Some("Acc".into()), Some("Swap".into()), Some(30.0)), "a gap in TOP10% alone reads the page");
         assert_eq!(cells(&quotes[5]), (None, None, Some(50.0)), "no gap, no justETF read");
+        // (#490) the index name lands on profile, never on the BF benchmark the CORE family key reads
+        assert_eq!((quotes[0].profile.index.as_deref(), quotes[0].benchmark.as_deref()), (Some("Nasdaq 100®"), Some("bf")));
+        assert_eq!((cells(&quotes[9]), quotes[9].profile.index.as_deref()), ((Some("Acc".into()), Some("Swap".into()), Some(50.0)), Some("Nasdaq 100®")), "no benchmark alone reads the page");
         assert_eq!(quotes[0].replication, Some("Full"), "the scored BF field is never touched");
         let saved = std::fs::read_to_string(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH)).expect("justetf cache");
         assert!(saved.contains("ZZISIND") && !saved.contains("ZZISINE") && !saved.contains("ZZISINF"), "{saved}");

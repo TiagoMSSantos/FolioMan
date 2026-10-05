@@ -4955,29 +4955,48 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
 }
 
 /// (#446) What the page's INDEX header means, set by [`stamp_index`].
-const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it; ×N = N rows of this table track that same index, so the book holds the same bet N times. — = no benchmark on record, so a count can undercount. Display only, never scored";
+const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it (justETF's name when Börse Frankfurt has none); ×N = N rows of this table track that same index, so the book holds the same bet N times, and · TICKER names the cheapest of them by TER, a euro-quoted line first so no currency conversion is paid. — = no index on record, so a count can undercount. Display only, never scored";
+
+/// (#490) The INDEX count key: Börse Frankfurt's "nasdaq 100 index" and justETF's "Nasdaq 100®" are one index.
+fn index_key(name: &str) -> String {
+    let s = name.to_lowercase().replace(['®', '™'], "").replace('-', " ");
+    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    s.strip_suffix(" index").map_or(s.clone(), str::to_string)
+}
 
 /// (#446) The page's INDEX column on ETF rows, right after BUY%: `Quote::benchmark`, with ` ×N` when N
-/// rows of the lane share it, "—" when the quote has none. Exact `==` on the benchmark string and no
-/// name fallback, so it can undercount a family but never merges two indices. Display only: stamped
+/// rows of the lane share it, "—" when the quote has none. (#490) justETF's `profile.index` fills a
+/// missing benchmark and rows count on [`index_key`], so a fund off Frankfurt joins its index; each row
+/// prints its own wording, and a ×N cell adds ` · TICKER`, the lowest TER among the group's euro lines
+/// (every line when none is euro). Display only: stamped
 /// by both payload builders, like [`stamp_buy`], so an upload keeps it. A lane the payload lacks stays
 /// absent.
 pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
     let Some(rows) = payload.get_mut("etfs").and_then(serde_json::Value::as_array_mut) else { return };
-    let bench = |row: &serde_json::Value| {
+    let named = |row: &serde_json::Value| {
         let t = row.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str()?;
-        quotes.iter().find(|q| q.ticker == t)?.benchmark.clone()
+        let q = quotes.iter().find(|q| q.ticker == t)?;
+        Some((q, q.benchmark.as_ref().or(q.profile.index.as_ref())?))
     };
-    let keys: Vec<Option<String>> = rows.iter().map(bench).collect();
-    for (row, key) in rows.iter_mut().zip(&keys) {
+    let named: Vec<Option<(&Quote, &String)>> = rows.iter().map(named).collect();
+    let keys: Vec<Option<String>> = named.iter().map(|n| n.map(|(_, b)| index_key(b))).collect();
+    let cells: Vec<String> = named
+        .iter()
+        .zip(&keys)
+        .map(|(n, key)| {
+            let Some((_, b)) = n else { return "—".to_string() };
+            let group: Vec<&Quote> = named.iter().zip(&keys).filter(|(_, k)| *k == key).filter_map(|(n, _)| n.map(|(q, _)| q)).collect();
+            if group.len() == 1 {
+                return b.to_string();
+            }
+            let eur: Vec<&Quote> = group.iter().copied().filter(|q| !is_noneur_etf(q)).collect();
+            let pool = if eur.is_empty() { &group } else { &eur };
+            let cheapest = pool.iter().filter_map(|q| Some((q.ter_shown()?, &q.ticker))).min_by(|a, b| a.0.total_cmp(&b.0));
+            format!("{b} ×{}{}", group.len(), cheapest.map_or(String::new(), |(_, t)| format!(" · {t}")))
+        })
+        .collect();
+    for (row, cell) in rows.iter_mut().zip(cells) {
         let Some(cells) = row.as_array_mut() else { continue };
-        let cell = match key {
-            None => "—".to_string(),
-            Some(b) => match keys.iter().filter(|k| k.as_ref() == Some(b)).count() {
-                1 => b.clone(),
-                n => format!("{b} ×{n}"),
-            },
-        };
         let after = |h: &str| cells.iter().position(|c| c[0] == h);
         let at = after("BUY%").or_else(|| after("TICKER")).map_or(cells.len(), |i| i + 1);
         cells.insert(at, serde_json::json!(["INDEX", cell]));
@@ -10366,7 +10385,7 @@ mod tests {
     #[test]
     fn stamp_index_counts_same_benchmark_etf_rows() {
         let q = |t: &str, b: Option<&str>| Quote { benchmark: b.map(str::to_string), ..Quote::stub(t, "€1", "", t) };
-        let quotes = [q("A", Some("nasdaq 100 index")), q("B", Some("nasdaq 100 index")), q("C", Some("msci world index")), q("D", None), q("E", None)];
+        let mut quotes = [q("A", Some("nasdaq 100 index")), q("B", Some("nasdaq 100 index")), q("C", Some("msci world index")), q("D", None), q("E", None)];
         let etf = |t: &str| serde_json::json!([["RANK", "1"], ["TICKER", t], ["BUY%", "3.2%"], ["SCORE", "1.0"]]);
         let mut p = serde_json::json!({
             "etfs": [etf("A"), etf("B"), etf("C"), etf("D"), etf("E"), etf("ZZ"), [["TICKER", "B"]]],
@@ -10385,6 +10404,32 @@ mod tests {
         let mut bare = serde_json::json!({"help": {}});
         stamp_index(&mut bare, &quotes);
         assert!(bare.get("etfs").is_none() && bare["help"].get("lanes").is_none(), "an absent lane stays absent");
+        // (#490) D's justETF wording joins A/B's group; E's MSCI-World-like name stays apart; the cheapest
+        // euro line wins over a cheaper USD line; a pair with no TER gets no suffix
+        let etf_q = |t: &str, ter: Option<f64>, ccy: &str| Quote {
+            instrument_type: "ETF".into(),
+            expense_ratio: ter,
+            quote_currency: Some(ccy.into()),
+            ..q(t, Some("nasdaq 100 index"))
+        };
+        quotes[0] = etf_q("A", Some(0.30), "EUR");
+        quotes[1] = etf_q("B", Some(0.10), "USD");
+        quotes[3].profile.index = Some("Nasdaq-100®  Index".into());
+        quotes[4].profile.index = Some("MSCI World Momentum".into());
+        let mut p = serde_json::json!({"etfs": [etf("A"), etf("B"), etf("C"), etf("D"), etf("E")]});
+        stamp_index(&mut p, &quotes);
+        let index = |i: usize| p["etfs"][i].as_array().and_then(|r| r.iter().find(|c| c[0] == "INDEX")).map(|c| c[1].clone());
+        assert_eq!([index(0), index(3)], [Some("nasdaq 100 index ×3 · A".into()), Some("Nasdaq-100®  Index ×3 · A".into())]);
+        assert_eq!([index(2), index(4)], [Some("msci world index".into()), Some("MSCI World Momentum".into())]);
+        quotes[0].quote_currency = Some("GBP".into());
+        let mut p = serde_json::json!({"etfs": [etf("A"), etf("B")]});
+        stamp_index(&mut p, &quotes);
+        assert_eq!(p["etfs"][0][3][1], "nasdaq 100 index ×2 · B", "no euro line: the cheapest of all");
+        (quotes[0].expense_ratio, quotes[1].expense_ratio) = (None, None);
+        let mut p = serde_json::json!({"etfs": [etf("A"), etf("B")]});
+        stamp_index(&mut p, &quotes);
+        assert_eq!(p["etfs"][0][3][1], "nasdaq 100 index ×2", "no TER on record: no suffix");
+        assert_eq!(index_key("S&P 500 - Index"), "s&p 500");
     }
 
     /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and
