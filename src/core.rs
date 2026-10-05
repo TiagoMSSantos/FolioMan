@@ -256,8 +256,8 @@ pub struct Quote {
     // names alone.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub brk_bought: bool,
-    // (#442) Berkshire's NEWEST 13F holds this name, whenever it was bought. Same contract as
-    // `brk_bought`: the `W` rank flag and the track `brkh` shadow read it, nothing scores it.
+    // (#442) Berkshire's NEWEST 13F holds this name, whenever it was bought. The `W` rank flag and the
+    // track `brkh` shadow read it, and since (#472) `growth_brk_held_boost` multiplies its score.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub brk_held: bool,
     // (#444) The Social Arbitrage trading table names this company: a superinvestor buy, a recent
@@ -265,6 +265,10 @@ pub struct Quote {
     // track `soc` shadow read it, nothing scores it. Stamped by `fetch::stamp_social` on equities only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub social: bool,
+    // (#472) the superinvestor half of `social` alone: 8+ Dataroma buyers, or the SEC 13F fallback's.
+    // `growth_superinvestor_boost` multiplies its score; the videos and the hand list never do.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub super_bought: bool,
     pub name: String,    // human-readable instrument name (falls back to ticker)
     pub trend: String,   // "↑ 2w" / "↓ 5d": current direction + how long it has held
     pub at_ath: bool,    // at/near all-time high (within tol of max seen)
@@ -394,6 +398,7 @@ impl Quote {
             brk_bought: false,
             brk_held: false,
             social: false,
+            super_bought: false,
             name: name.to_string(),
             trend: String::new(),
             at_ath: false,

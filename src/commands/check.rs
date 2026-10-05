@@ -78,6 +78,7 @@ pub async fn run(args: Vec<String>) {
     if settings.buy_heuristic.growth_fund_weight > 0.0 {
         fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
     }
+    fetch::stamp_13f(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await; // (#472) the 13F boost, as `screen`
     for quote in &quotes {
         let cells = HORIZONS
             .iter()

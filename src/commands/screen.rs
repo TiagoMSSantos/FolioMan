@@ -1889,6 +1889,17 @@ pub async fn run(args: Vec<String>) {
     // fetched, so it costs no request and cannot move THIS run's book — what it finds is journalled and
     // spliced by the next run's fetch, through the same `history_proxy` path the curated map uses.
     eprintln!("{}", journal_proxies(&quotes, &settings.buy_heuristic));
+    // (#436) the `w`/(#442) `W` rank flags and the track `brk`/`brkh` shadow rows read it, and (#472)
+    // `growth_brk_held_boost` scores it, so it is stamped ABOVE the pre-rank like the regime stamp
+    let (brk, brk_held, brk_holdings) = fetch::fetch_brk(&client, &settings.urls).await;
+    fetch::stamp_brk(&mut quotes, &brk, &brk_held);
+    // (#440) and the page's Berkshire table, (#442) every holding whether the pool ranks it or not
+    let berkshire = fetch::brk_rows(&brk_holdings, &quotes);
+    // (#438) display only: the page's Attention table, carried to the payload below
+    let attention = fetch::fetch_attention(&client, &settings.urls).await;
+    // (#444) the `s` rank flag, track's `soc` row and the page's Social Arbitrage trading table; (#472) its
+    // superinvestor half also scores, through `growth_superinvestor_boost`
+    let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
@@ -1906,16 +1917,6 @@ pub async fn run(args: Vec<String>) {
         order
     };
     let targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
-    // (#436) display only: the `w`/(#442) `W` rank flags and the track `brk`/`brkh` shadow rows read it,
-    // nothing scores it
-    let (brk, brk_held, brk_holdings) = fetch::fetch_brk(&client, &settings.urls).await;
-    fetch::stamp_brk(&mut quotes, &brk, &brk_held);
-    // (#440) and the page's Berkshire table, (#442) every holding whether the pool ranks it or not
-    let berkshire = fetch::brk_rows(&brk_holdings, &quotes);
-    // (#438) display only too: the page's Attention table, carried to the payload below
-    let attention = fetch::fetch_attention(&client, &settings.urls).await;
-    // (#444) display only: the `s` rank flag, track's `soc` row and the page's Social Arbitrage trading table
-    let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
     // (#467) after the three shadow tables, so their pool names get the same MCAP/REV-YoY/EPS-YoY/NET%/BUYBK
     // cells the printed rows do: display only, and the 3-day SEC cache serves the repeats
     let mut filled = targets.clone();

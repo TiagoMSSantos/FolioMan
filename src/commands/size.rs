@@ -290,6 +290,7 @@ pub async fn run(args: Vec<String>) {
     if settings.buy_heuristic.growth_fund_weight > 0.0 {
         fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
     }
+    fetch::stamp_13f(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await; // (#472) the 13F boost, as `screen`
 
     // (Item 17) whole-market NUPL, fetched once. The adjustment it drives lives in `sized_book`.
     let nupl = fetch::fetch_nupl(&client, &settings.urls).await;

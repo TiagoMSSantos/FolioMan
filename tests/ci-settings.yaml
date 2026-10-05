@@ -19541,6 +19541,18 @@ buy_heuristic:
                                  #   SEMI.AS 5.1->5.0 — note SEMI.AS is a Euronext AMSTERDAM line quoted in USD, the
                                  #   currency-not-country rule catching what a venue rule would miss. EUR rows (VVSM.DE,
                                  #   VUAA/SPYL/AUM5) and crypto identical; ranks unchanged at today's gaps (tie-break sized).
+  growth_brk_held_boost: 1.20    # (#472) 13F NUDGE: multiply the growth score of a stock Berkshire Hathaway's NEWEST 13F
+                                 #   holds (the `W` rank flag). growth_superinvestor_boost below does the same for a stock
+                                 #   8+ Dataroma superinvestors bought last quarter (or the (#470) SEC 13F fallback's); the
+                                 #   two stack, so a name with both earns x1.44. The Social table's YouTube and hand-list
+                                 #   rows earn nothing. USER DECISION 2026-10-05, over the (#436)/(#442)/(#444) "wait for
+                                 #   track" answer, at x1.20 each over x1.05/x1.10: a real lift, not just a tie-break.
+                                 #   Code default 1.0 = off, so the backtest and the config-less job are byte-identical.
+                                 #   UNMEASURABLE BY CONSTRUCTION, same class as (#44)/(#45): both flags are false on every
+                                 #   backtest quote. Graded FORWARD by the track `brkh` and `soc` rows; if either reads
+                                 #   negative once it has its 12 links, return its knob to 1.0. Never applied to a
+                                 #   negative score (the (#86) branch takes no multiplier).
+  growth_superinvestor_boost: 1.20  # (#472) see growth_brk_held_boost directly above.
   growth_overext_floor: 0.05     # (#100 / finding C5) READ THIS FIRST: the number written here is NOT
                                  #   the multiplier delivered. `damp = combine_damps(&[trust, overext])`
                                  #   is a 2-slot GEOMETRIC MEAN, so it square-roots the floor. The

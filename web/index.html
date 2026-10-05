@@ -95,7 +95,7 @@
   <div id="attention"></div>
   <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
        (#442) Every holding now, with the `W` flag and the track brkh row. -->
-  <h2 title="Every stock in Berkshire Hathaway's newest 13F filing, largest first, with what changed vs the quarter before. Shown only, never ranked; weeks old by filing rules" id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
+  <h2 title="Every stock in Berkshire Hathaway's newest 13F filing, largest first, with what changed vs the quarter before. Held names rank a little higher (growth_brk_held_boost in settings); weeks old by filing rules" id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
   <details class="note" id="berkshire-note">
     <summary>about this table</summary>
     Every stock in Berkshire Hathaway's newest 13F. A 13F lists US-listed holdings only, so its
@@ -110,7 +110,7 @@
   </details>
   <div id="berkshire"></div>
   <!-- (#444) social arbitrage, shown and never ranked: the `s` flag and the track soc row read it. -->
-  <h2 title="Stocks people say they are buying: superinvestor 13F buys, Dumb Money Live videos and a checked hand list. Shown only, never ranked" id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
+  <h2 title="Stocks people say they are buying: superinvestor 13F buys, Dumb Money Live videos and a checked hand list. Only the superinvestor buys rank a little higher (growth_superinvestor_boost in settings)" id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
   <details class="note" id="social-note">
     <summary>about this table</summary>
     Stocks people say they are buying, one row per stock, from three free sources. Superinvestors:
@@ -178,8 +178,8 @@
     late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·
     <code>~</code> bridged history · <code>H</code> hold-suitable core · <code>o</code> already held ·
     <code>w</code> bought in Berkshire Hathaway's last four 13F quarters (display only) ·
-    <code>W</code> held in Berkshire Hathaway's newest 13F (display only) ·
-    <code>s</code> in the Social Arbitrage trading table (display only).
+    <code>W</code> held in Berkshire Hathaway's newest 13F (ranked a little higher: growth_brk_held_boost) ·
+    <code>s</code> in the Social Arbitrage trading table (a superinvestor buy ranks a little higher: growth_superinvestor_boost).
     Each ticker links to its Yahoo Finance quote and each name to the company's website (its Wikipedia
     article when none is found), the fund's justETF page or the coin's CoinGecko page; <code>new</code> marks a name that joined its table
     since the previous day's last run.

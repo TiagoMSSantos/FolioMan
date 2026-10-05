@@ -1294,7 +1294,8 @@ struct ScoreParts {
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
-    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
+    holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost on a `super_bought` one; 1.0 otherwise / knobs off / every backtest quote
+    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
 /// (#98) The acceleration leg, and the ONE definition of it — `score_parts` computes it, nothing else
@@ -1897,6 +1898,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     } else {
         1.0
     };
+    // (#472) the 13F nudge: the user's call, not a measured edge. Both flags are false on every backtest
+    // quote, so this is backtest-blind like the docks above; the track `brkh`/`soc` rows grade it forward.
+    let brk_boost = if quote.brk_held { tuning.growth_brk_held_boost } else { 1.0 };
+    let holder_boost = brk_boost * if quote.super_bought { tuning.growth_superinvestor_boost } else { 1.0 };
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
     // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
@@ -1941,7 +1946,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base_offset, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, score: 0.0,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, score: 0.0,
     };
     parts.score = compose_score(&parts, tuning);
     Some(parts)
@@ -1958,9 +1963,9 @@ fn compose_score(p: &ScoreParts, tuning: &BuyHeuristic) -> f64 {
     if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
         p.base + p.liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
     } else if tuning.growth_geomean_fold {
-        p.base * combine_damps(&[p.trust, p.overext_damp, p.proximity, p.value]) * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp + p.liq_bonus
+        p.base * combine_damps(&[p.trust, p.overext_damp, p.proximity, p.value]) * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost + p.liq_bonus
     } else {
-        p.base * p.proximity * p.value * p.damp * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp + p.liq_bonus
+        p.base * p.proximity * p.value * p.damp * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost + p.liq_bonus
     }
 }
 
@@ -3194,11 +3199,18 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         String::new()
     };
+    // (#472) and the 13F nudge, printed only on a flagged name with a knob set
+    let holder_frag = if p.holder_boost != 1.0 {
+        s.push_str(&format!("  13F boost    = Berkshire holds / superinvestors bought = {:.3}\n", p.holder_boost));
+        format!(" × {:.3}", p.holder_boost)
+    } else {
+        String::new()
+    };
     if tuning.growth_geomean_fold {
-        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag}{acc_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2} = {:.2}\n",
             p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
     } else {
-        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2} = {:.2}\n",
             p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     }
     if (displayed - p.score).abs() > 1e-6 {
@@ -3355,7 +3367,7 @@ struct ColSpec {
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
-    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters, W held in its newest 13F, s in the Social Arbitrage trading table (all three display only, never scored), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut" },
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters (display only), W held in its newest 13F (score × growth_brk_held_boost), s in the Social Arbitrage trading table (only a superinvestor buy scores: × growth_superinvestor_boost), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut" },
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin; click to open the company's own website (stocks; its Wikipedia article when none is found), the fund's justETF page (funds) or the coin's CoinGecko page (coins)" },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
@@ -4040,8 +4052,8 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
         ("o", "already held (broker portfolio)"),
         ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
-        ("W", "Berkshire Hathaway's newest 13F holds it — display only, never scored"),
-        ("s", "the Social Arbitrage trading table names it — display only, never scored"),
+        ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
+        ("s", "the Social Arbitrage trading table names it — a superinvestor buy scores × growth_superinvestor_boost (1.0 = off), a video or hand-list row never scores"),
         ("†", "under 8y of record — its S-8Y is the full-history score, not an 8-year one"),
     ]
     .iter()
@@ -7024,6 +7036,7 @@ mod tests {
             brk_bought: false,
             brk_held: false,
             social: false,
+            super_bought: false,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, close_native: None, quote_currency: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
@@ -9196,7 +9209,7 @@ mod tests {
             explain_growth_score(q, t, s + bump).expect("a scoring row explains")
         };
         let base = ex(&q, &d, 0.0);
-        for quiet in ["×CAGR", "exp.ret  =", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "crypto NUPL", "brake off"] {
+        for quiet in ["×CAGR", "exp.ret  =", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "13F boost", "crypto NUPL", "brake off"] {
             assert!(!base.contains(quiet), "default must not print {quiet:?}:\n{base}");
         }
         assert!(base.contains("overext_damp = 1 − ("), "{base}");
@@ -9219,6 +9232,8 @@ mod tests {
         dist.price_eur = Some(100.0);
         let acc = BuyHeuristic { growth_acc_drag: true, tax_keep_other: 0.5, tax_keep_eu: 0.5, ..d.clone() };
         assert!(ex(&dist, &acc, 0.0).contains("acc_damp     ="));
+        let held = Quote { brk_held: true, ..q.clone() };
+        assert!(ex(&held, &BuyHeuristic { growth_brk_held_boost: 1.2, ..d.clone() }, 0.0).contains("13F boost    ="));
         assert!(ex(&q, &d, 1.0).contains("crypto NUPL"), "a displayed value off the score says why");
     }
 
@@ -10785,15 +10800,16 @@ mod tests {
         p.commodity_damp = 0.5;
         p.fx_damp = 0.4;
         p.acc_damp = 0.3;
+        p.holder_boost = 1.2;
         p.liq_bonus = 2.0;
 
         let plain = BuyHeuristic::default();
         assert!(!plain.growth_geomean_fold && !plain.growth_allow_negative_scores, "the shipped lane is the else branch");
-        let want = 8.0 * 0.9 * 0.8 * 0.7 * 0.6 * 0.5 * 0.4 * 0.3 + 2.0;
-        assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all eight damps and ADDS the bonus");
+        let want = 8.0 * 0.9 * 0.8 * 0.7 * 0.6 * 0.5 * 0.4 * 0.3 * 1.2 + 2.0;
+        assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all eight damps and the boost, and ADDS the bonus");
 
         let fold = BuyHeuristic { growth_geomean_fold: true, ..BuyHeuristic::default() };
-        let want = 8.0 * combine_damps(&[0.95, 0.85, 0.9, 0.8]) * 0.6 * 0.5 * 0.4 * 0.3 + 2.0;
+        let want = 8.0 * combine_damps(&[0.95, 0.85, 0.9, 0.8]) * 0.6 * 0.5 * 0.4 * 0.3 * 1.2 + 2.0;
         assert_eq!(compose_score(&p, &fold), want, "(#8) the fold takes trust/overext/prox/value geometrically, the rest as-is");
         assert_ne!(compose_score(&p, &fold), compose_score(&p, &plain), "the two branches must not coincide on this fixture");
 
@@ -10805,6 +10821,22 @@ mod tests {
         // ...and the knob is what selects it: same parts, knob off, back to the damped branch.
         p.base = 8.0;
         assert_eq!(compose_score(&p, &neg), compose_score(&p, &plain), "a POSITIVE base ignores the knob entirely");
+    }
+
+    /// (#472) each 13F flag earns its own knob, the two stack by multiplication, and the code default
+    /// moves nothing.
+    #[test]
+    fn holder_boost_takes_each_flag_its_own_knob() {
+        let q = gate_fixture();
+        let t = BuyHeuristic { growth_brk_held_boost: 1.2, growth_superinvestor_boost: 1.5, ..BuyHeuristic::default() };
+        let boost = |brk_held, super_bought, t: &BuyHeuristic| {
+            score_parts(&Quote { brk_held, super_bought, ..q.clone() }, t).expect("the fixture clears the gates").holder_boost
+        };
+        assert_eq!(boost(false, false, &t), 1.0);
+        assert_eq!(boost(true, false, &t), 1.2);
+        assert_eq!(boost(false, true, &t), 1.5);
+        assert_eq!(boost(true, true, &t), 1.2 * 1.5);
+        assert_eq!(boost(true, true, &BuyHeuristic::default()), 1.0, "both knobs ship off in code");
     }
 
     /// (#144) non-negotiable #1, and the only witness for it: no golden covers this path.
