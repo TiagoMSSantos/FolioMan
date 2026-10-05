@@ -5,7 +5,7 @@
 const LANES = ["stocks", "etfs", "crypto"];
 const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
 
-function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set()) {
+function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set(), flags = {}) {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
     p.className = "empty";
@@ -38,6 +38,11 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
     if (row.some(([h, c]) => h === "RANK" && /[*b]/.test(c))) tr.dataset.pin = "";
     for (const [h, cell, url] of row) {
       const td = tr.insertCell();
+      // (#474) a RANK cell's hover reads its position, then what each of its flags means
+      if (h === "RANK") {
+        const [, n, marks] = cell.match(/^(\d*)(.*)$/);
+        td.title = ["rank " + n + " in this table", ...[...marks].filter((f) => flags[f]).map((f) => f + " " + flags[f])].join("\n");
+      }
       // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo. (#455) A shadow
       // table's cell may carry its source page as a third element; only https ever becomes a link.
       const href = h === "TICKER" ? "https://finance.yahoo.com/quote/" + encodeURIComponent(cell) : url;
@@ -224,6 +229,14 @@ function render(data, prev) {
   }
   // (#400) A payload written before `help` existed has no key, and renders untitled.
   const help = data.help || {};
+  // (#474) the "rank flags" note, from the same list as each RANK cell's hover
+  document.getElementById("flag-list").replaceChildren(
+    ...Object.entries(help.flags || {}).map(([f, what]) => {
+      const li = document.createElement("li");
+      li.append(Object.assign(document.createElement("code"), { textContent: f }), " " + what);
+      return li;
+    }),
+  );
   // (#401) The tickers now in a table that its prev copy lacked. No prev, or a prev from before that
   // table existed, marks nothing; an empty prev table marks every row, since they all joined.
   const tickers = (rows) => new Set((rows || []).flatMap((row) => row.filter(([h]) => h === "TICKER").map(([, c]) => c)));
@@ -236,7 +249,7 @@ function render(data, prev) {
     return now;
   };
   for (const lane of LANES) {
-    document.getElementById(lane).replaceChildren(table(data[lane], undefined, help.lanes, fresh(lane)));
+    document.getElementById(lane).replaceChildren(table(data[lane], undefined, help.lanes, fresh(lane), help.flags));
   }
   // A run whose inflation feeds all failed publishes an empty list; say that, rather than borrowing
   // the lanes' "(none pass the gates)", which would read as a gate verdict on a macro series.

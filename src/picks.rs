@@ -3371,7 +3371,7 @@ struct ColSpec {
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
-    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags: * pinned by you, # scored on live fundamentals, ! late-cycle (far above its 200-week trend), c commodity-linked, x fund quoted in another currency than EUR, ~ history borrowed from an older twin, H hold-suitable core fund, o already held, w bought by Berkshire Hathaway in its last four 13F quarters (display only), W held in its newest 13F (score × growth_brk_held_boost), s in the Social Arbitrage trading table (superinvestor buyers score × growth_superinvestor_boost per growth_superinvestor_step of them, a video or hand-list row × growth_social_boost), b bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score" },
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags" },
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin; click to open the company's own website (stocks; its Wikipedia article when none is found), the fund's justETF page (funds) or the coin's CoinGecko page (coins)" },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
@@ -4046,24 +4046,12 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         row(&m, quote, *score);
     }
     // Legend: explain only the flags THIS table used, so clean tables stay clean.
-    let mut legend: Vec<String> = [
-        ("*", "pinned watchlist name"),
-        ("#", "score used live fundamentals, not price-only"),
-        ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
-        ("c", "commodity-linked (GICS Energy/Materials, or a commodity-named fund) — earnings are a spread on a traded input price, so the CAGR is a spot-price snapshot, not compounding; scaled by growth_commodity_damp when set"),
-        ("x", "non-EUR-quoted ETF line — a EUR buyer pays FX conversion + off-home spread vs the EUR twin; scaled by growth_fx_damp when set"),
-        ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
-        ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
-        ("o", "already held (broker portfolio)"),
-        ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
-        ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
-        ("s", "the Social Arbitrage trading table names it — superinvestor buyers score × growth_superinvestor_boost once per growth_superinvestor_step of them, a video or hand-list row × growth_social_boost (1.0 = off)"),
-        ("†", "under 8y of record — its S-8Y is the full-history score, not an 8-year one"),
-    ]
-    .iter()
-    .filter(|(flag, _)| seen.contains(flag))
-    .map(|(flag, what)| format!("{flag} = {what}"))
-    .collect();
+    let mut legend: Vec<String> = RANK_FLAGS
+        .iter()
+        .chain(&[("†", "under 8y of record — its S-8Y is the full-history score, not an 8-year one")])
+        .filter(|(flag, _)| seen.contains(flag))
+        .map(|(flag, what)| format!("{flag} = {what}"))
+        .collect();
     // Carries the configured coverage, so it can't be a static entry in the table above.
     if seen.contains('°') {
         legend.push(
@@ -4529,6 +4517,23 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
     }
 }
 
+/// (#474) What each RANK flag means — one list for the terminal legend, the page's RANK header, its
+/// "rank flags" note and each RANK cell's hover (data.json `help.flags`). `b` is page-only (`web_top`).
+pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
+        ("*", "pinned watchlist name"),
+        ("#", "score used live fundamentals, not price-only"),
+        ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
+        ("c", "commodity-linked (GICS Energy/Materials, or a commodity-named fund) — earnings are a spread on a traded input price, so the CAGR is a spot-price snapshot, not compounding; scaled by growth_commodity_damp when set"),
+        ("x", "non-EUR-quoted ETF line — a EUR buyer pays FX conversion + off-home spread vs the EUR twin; scaled by growth_fx_damp when set"),
+        ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
+        ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
+        ("o", "already held (broker portfolio)"),
+        ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
+        ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
+        ("s", "the Social Arbitrage trading table names it — superinvestor buyers score × growth_superinvestor_boost once per growth_superinvestor_step of them, a video or hand-list row × growth_social_boost (1.0 = off)"),
+        ("b", "bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score; page only"),
+];
+
 /// (#400) The page's column glossary, keyed per table because one header can mean two things: 2Y is a
 /// price return in a lane and a CPI rise in the inflation table. `real` = the printed >=1Y legs are
 /// deflated (`Quote::legs_real`); the <1Y legs never are (`core::horizon_changes`). The inflation
@@ -4543,6 +4548,11 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
                 "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => format!(
                     "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return; n/a = the record is too short (a .DE twin of a US stock counts only its Xetra years)",
                     c.help
+                ),
+                "rank" => format!(
+                    "{}: {}",
+                    c.help,
+                    RANK_FLAGS.iter().map(|(f, what)| format!("{f} {what}")).collect::<Vec<_>>().join(" · ")
                 ),
                 _ => c.help.to_string(),
             };
@@ -4609,6 +4619,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     ]);
     BTreeMap::from([
         ("lanes", lanes),
+        ("flags", RANK_FLAGS.iter().map(|(f, what)| (f.to_string(), what.to_string())).collect()),
         ("core", core),
         ("inflation", inflation),
         ("attention", attention),
@@ -9961,6 +9972,13 @@ mod tests {
             assert!(real["lanes"][leg].starts_with("Nominal — "), "{leg} is never deflated");
         }
         assert!(web_help(false, &[])["inflation"].is_empty(), "no feed, no rows, no entries");
+        // (#474) every flag ships for the cell hovers and the RANK header names each one, `b` included.
+        assert_eq!(nominal["flags"].len(), RANK_FLAGS.len());
+        for (f, what) in RANK_FLAGS {
+            assert_eq!(nominal["flags"][*f], *what);
+            assert!(nominal["lanes"]["RANK"].contains(&format!("{f} {what}")), "{f}");
+        }
+        assert!(nominal["flags"].contains_key("b"));
     }
 
     /// (#250) The cells the page publishes ARE the cells the terminal prints — one definition, two
