@@ -3675,6 +3675,8 @@ const COLUMNS: &[ColSpec] = &[
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
     ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; n/a = cash burn, or under 5 years of FCF filed" },
     ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; n/a as FAIR" },
+    // (#489) display only, the Nasdaq profile the NAME link already fetches
+    ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
     ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed, or EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
@@ -3697,6 +3699,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "sbc", hdr: "SBC%", width: 6, right: true, help: "Stocks: stock-based pay as % of revenue, a real cost that reported earnings leave out and that dilutes owners every year" },
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares" },
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
+    // (#489) display only
+    ColSpec { key: "short", hdr: "SHORT%", width: 7, right: true, help: "Stocks: shares sold short as % of shares outstanding, from FINRA's newest twice-monthly settlement (US listings; a Xetra twin reads its US parent). High short interest has historically come before weaker returns; n/a = no FINRA position" },
     // (#448)/(#449) display only, the printed stock rows
     ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage, or a row the screen did not print (only printed stocks are fetched)" },
     ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Nasdaq. The price often jumps on the day; n/a = no date published yet, or a row the screen did not print (only printed stocks are fetched)" },
@@ -4071,7 +4075,11 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "mscore" | "sbc" if stock_only_na => "—".to_string(),
         "mscore" => quote.fund.as_ref().and_then(|f| f.mscore).map_or("n/a".to_string(), |v| format!("{:.2}", -v)),
         "sbc" => quote.fund.as_ref().and_then(|f| f.sbc).map_or("n/a".to_string(), |v| format!("{:.1}%", -v)),
-        "buyback" if stock_only_na => "—".to_string(),
+        "buyback" | "target" | "short" if stock_only_na => "—".to_string(),
+        // (#489) fewer than 3 analysts is one bank's opinion, not a consensus
+        "target" => quote.profile.target_pct.filter(|_| quote.profile.analysts.is_some_and(|n| n >= 3)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        // the MCAP cell's share count, so an ADR's ratio (#425) cancels the same way it does there
+        "short" => quote.profile.short_shares.zip(quote.shares_out.filter(|n| *n > 0.0)).map_or("n/a".to_string(), |(s, n)| format!("{:.1}%", s / n * 100.0)),
         "buyback" => quote.buyback_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
@@ -4494,11 +4502,11 @@ fn dcf_multiple(g_pct: f64) -> f64 {
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
-    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "fair", "mos"];
+    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "fair", "mos", "target", "short"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
-    "fcf5y", "fair", "mos",
+    "fcf5y", "fair", "mos", "target", "short",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -7309,10 +7317,28 @@ mod tests {
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "no euro price");
         st.price_eur = Some(50.0);
         assert_eq!((cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")), ("€44.27".to_string(), "-11%".to_string()), "5% yield × 17.71");
+        // (#489) TARGET% needs 3 analysts; SHORT% needs a positive share count
+        st.profile.target_pct = Some(27.6);
+        assert_eq!(cc("target", &st, 0.0, None, ""), "n/a", "analyst count unknown");
+        st.profile.analysts = Some(2);
+        assert_eq!(cc("target", &st, 0.0, None, ""), "n/a", "2 analysts is no consensus");
+        st.profile.analysts = Some(3);
+        assert_eq!(cc("target", &st, 0.0, None, ""), "+28%");
+        st.profile.target_pct = None;
+        assert_eq!(cc("target", &st, 0.0, None, ""), "n/a", "no target published");
+        st.profile.short_shares = Some(3.0e6);
+        for n in [None, Some(0.0)] {
+            st.shares_out = n;
+            assert_eq!(cc("short", &st, 0.0, None, ""), "n/a", "shares out {n:?}");
+        }
+        st.shares_out = Some(2.0e8);
+        assert_eq!(cc("short", &st, 0.0, None, ""), "1.5%");
+        st.profile.short_shares = None;
+        assert_eq!(cc("short", &st, 0.0, None, ""), "n/a", "no FINRA position");
         // the growth leg is held to 0-15%: 13.08x with no growth, 40.53x at the cap
         let m = |g: f64| (dcf_multiple(g) * 100.0).round() / 100.0;
         assert_eq!([m(-5.0), m(0.0), m(15.0), m(30.0)], [13.08, 13.08, 40.53, 40.53]);
-        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "fair", "mos"] {
+        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "fair", "mos", "target", "short"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }
