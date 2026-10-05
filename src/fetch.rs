@@ -11310,8 +11310,8 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 50] = [
-            "openfigi_mapping",
+        const FIELDS: [&str; 51] = [
+            "openfigi_mapping", "fred",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals_quality",
@@ -12238,6 +12238,22 @@ pub(crate) mod tests {
         );
     }
 
+    /// (#486) One FRED series on the stub: asked by its id, parsed off CSV, and banked under its own
+    /// `fred_{id}` name as a JSON string, so the next run's day-cache read parses the same text.
+    #[tokio::test]
+    async fn fetch_fred_asks_by_id_and_banks_the_csv() {
+        let csv = "observation_date,X\n2026-08-01,3.5\n2026-09-01,.\n";
+        let (url, client, requests) = recording_stub(csv);
+        let _ = std::fs::remove_file(macro_cache_path("fred_TEST486"));
+        let got = fetch_fred(&client, &format!("{url}?id={{id}}"), "TEST486").await;
+        assert_eq!(got, BTreeMap::from([(2026 * 12 + 7, 3.5)]));
+        let asked: Vec<String> = requests.try_iter().collect();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].starts_with("GET /?id=TEST486 "), "{}", asked[0]);
+        assert_eq!(macro_cache_read("fred_TEST486"), Some(Value::String(csv.into())));
+        let _ = std::fs::remove_file(macro_cache_path("fred_TEST486"));
+    }
+
     /// (#358) The three inflation feeds end to end. ONE test because every phase owns the same cache
     /// files (`pt_cpi`, `us_cpi`, `us_cpi_old`/`old2`/`old3`, `eu_hicp2`), and as
     /// separate tests the phases would race. The footer test in `commands::mod` reads them too but never writes: its
@@ -12934,12 +12950,21 @@ fn macro_cache_write(name: &str, v: &Value) {
 /// (a throttled reply can be valid JSON with empty results), so a dud is never cached and falls
 /// back to the stale copy.
 async fn cached_macro<F: Fn(&Value) -> BTreeMap<i32, f64>>(client: &Client, url: &str, name: &str, parse: F) -> BTreeMap<i32, f64> {
+    cached_feed(name, parse, get_json(client, url)).await
+}
+
+/// [`cached_macro`] for any fetch: (#486) FRED answers CSV, banked as a JSON string.
+async fn cached_feed<F: Fn(&Value) -> BTreeMap<i32, f64>>(
+    name: &str,
+    parse: F,
+    live: impl std::future::Future<Output = Option<Value>>,
+) -> BTreeMap<i32, f64> {
     if macro_cache_fresh(name) {
         if let Some(m) = macro_cache_read(name).map(|d| parse(&d)).filter(|m| !m.is_empty()) {
             return m;
         }
     }
-    if let Some(d) = get_json(client, url).await {
+    if let Some(d) = live.await {
         let m = parse(&d);
         if !m.is_empty() {
             macro_cache_write(name, &d);
@@ -13075,6 +13100,26 @@ pub async fn fetch_eu_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
 }
 
 /// (label, series) — Portugal (BPstat), USA (BLS CPI-U), EU (Eurostat). Async fetched.
+/// (#486) One FRED series through the day cache, as {month index -> value} (`core::parse_fred_monthly`).
+/// `screen` asks for each [`BOND_SERIES`] in turn, then `EXUSEU` (USD per EUR, for the USA in EUR row):
+/// seven small keyless GETs a day, one by one rather than a burst at a host with no published limit.
+pub async fn fetch_fred(client: &Client, template: &str, id: &str) -> BTreeMap<i32, f64> {
+    let url = template.replace("{id}", id);
+    cached_feed(&format!("fred_{id}"), crate::core::parse_fred_monthly, async { get_text(client, &url).await.map(Value::String) }).await
+}
+
+/// (#486) The Bonds table's 10Y government yields, in the page's row order. USA is the Treasury's
+/// constant-maturity series; the five euro markets are the OECD's long-term rate, which IS the
+/// 10-year benchmark for each.
+pub const BOND_SERIES: [(&str, &str); 6] = [
+    ("USA", "GS10"),
+    ("Germany", "IRLTLT01DEM156N"),
+    ("France", "IRLTLT01FRM156N"),
+    ("Italy", "IRLTLT01ITM156N"),
+    ("Spain", "IRLTLT01ESM156N"),
+    ("Portugal", "IRLTLT01PTM156N"),
+];
+
 pub async fn inflation_all(client: &Client, urls: &Urls) -> Vec<(&'static str, BTreeMap<i32, f64>)> {
     let (pt, us, eu) = tokio::join!(
         fetch_pt_inflation(client, urls),

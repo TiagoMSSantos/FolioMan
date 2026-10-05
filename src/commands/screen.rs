@@ -1788,6 +1788,14 @@ pub async fn run(args: Vec<String>) {
     // The page's copy of the footer's table. Built HERE because the payload is written inside
     // `render`, ~1000 lines before the footer prints — same numbers, two renderers.
     let infl_rows = crate::commands::inflation_web_rows(&inflations, chrono::Local::now().date_naive());
+    // (#486) the page's Bonds table, display only: nothing here reaches a score or the terminal
+    eprintln!("screen: fetching 10Y government bond yields (FRED)…");
+    let mut bond_yields = Vec::new();
+    for (label, id) in fetch::BOND_SERIES {
+        bond_yields.push((label, fetch::fetch_fred(&client, &settings.urls.fred, id).await));
+    }
+    let usd_per_eur = fetch::fetch_fred(&client, &settings.urls.fred, "EXUSEU").await;
+    let bonds = crate::commands::bond_web_rows(&bond_yields, &usd_per_eur, chrono::Local::now().date_naive());
     // intraday ONLY when the table actually prints 1h/6h/12h — it was hardcoded on, and it costs one
     // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display
     // cells nothing scores on. news off (screen never prints headlines).
@@ -2244,6 +2252,7 @@ pub async fn run(args: Vec<String>) {
         top["attention"] = attention;
         top["berkshire"] = berkshire;
         top["social"] = social;
+        top["bonds"] = serde_json::json!(bonds);
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();

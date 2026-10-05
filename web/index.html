@@ -19,7 +19,7 @@
   <nav class="sub" aria-label="sections">
     <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
-    <a href="#h-social">Social</a> · <a href="#h-inflation">Inflation</a>
+    <a href="#h-social">Social</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
   </nav>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
@@ -149,6 +149,20 @@
     still holds inflation — in today's money it is (1 + column) ÷ (1 + row) − 1. A <em>real</em>
     column had the EU row taken out before it printed — do not subtract it again. 1D/1W/1M are always
     nominal.
+  </details>
+  <!-- (#486) Display only: the safe-asset yardstick next to the inflation it has to beat. Rows from CI's
+       FRED fetch (`commands::bond_web_rows`), so an upload keeps them. -->
+  <h2 title="What a 10-year government bond returned over the same spans, US and the big euro markets. Read a stock's or fund's return against it" id="h-bonds">Bonds</h2>
+  <div id="bonds"></div>
+  <details class="note">
+    <summary>about the bond returns</summary>
+    Each row is one government's 10-year bond, the benchmark safe asset of its market. A cell is the
+    total return of holding it for that span, compounded: bought at par each month at that month's
+    yield, sold a month later at the next, coupons reinvested. It is rebuilt from FRED's monthly
+    average yields, so it is a model with no fees, not a fund you can buy. Each row is in its own
+    currency; <em>USA in EUR</em> is the same Treasury for a euro holder, the dollar's swing included.
+    n/a = the series is shorter (euro FX starts in 1999, Italy in 1991, Portugal in 1993).
+    Compare a cell with the Inflation table above to see the real return.
   </details>
 
   <details class="note">

@@ -4888,11 +4888,21 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("BUY%", "Share of the BUY% book. A name's share is a lower bound: a fund counts only its top-10 holdings"),
         ("DETAIL", "For a name: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
     ]);
+    // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
+    let mut bonds: BTreeMap<String, String> = fixed(&[
+        ("MARKET", "Whose 10-year government bond: the US Treasury, the same bond for a euro holder (USA in EUR), or a euro-area government"),
+        ("YIELD", "Newest monthly average 10-year yield, % a year"),
+        ("AS OF", "Month of that newest yield; ⚠ marks a series more than 6 months old or missing"),
+    ]);
+    bonds.extend(crate::core::BOND_YEARS.iter().map(|y| {
+        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} years, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; n/a = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993)"))
+    }));
     BTreeMap::from([
         ("lanes", lanes),
         ("flags", RANK_FLAGS.iter().map(|(f, what)| (f.to_string(), what.to_string())).collect()),
         ("core", core),
         ("inflation", inflation),
+        ("bonds", bonds),
         ("attention", attention),
         ("berkshire", berkshire),
         ("social", social),
@@ -10385,6 +10395,11 @@ mod tests {
             assert!(real["lanes"][leg].starts_with("Nominal — "), "{leg} is never deflated");
         }
         assert!(web_help(false, &[])["inflation"].is_empty(), "no feed, no rows, no entries");
+        // (#486) every Bonds header has its line, each horizon naming its own span
+        assert_eq!(nominal["bonds"].len(), 3 + crate::core::BOND_YEARS.len());
+        for y in crate::core::BOND_YEARS {
+            assert!(nominal["bonds"][&format!("{y}Y")].contains(&format!(" last {y} years")), "{y}");
+        }
         // (#474) every flag ships for the cell hovers and the RANK header names each one, `b` included.
         assert_eq!(nominal["flags"].len(), RANK_FLAGS.len());
         for (f, what) in RANK_FLAGS {

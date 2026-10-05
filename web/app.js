@@ -70,12 +70,12 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // (#441) The Berkshire table is NOT: it lists every buy, not a ranking, and the default N of 3 hid 11 of 14.
 // (#442) It lists every holding now, same rule.
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
-// (#445) A filter query overrides the cut in every table but inflation: a row shows iff its TICKER or
+// (#445) A filter query overrides the cut in every table but inflation and (#486) bonds: a row shows iff its TICKER or
 // NAME holds the query, so a name the chooser hid can still be found. An empty query is the cut alone.
 function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
   for (const t of document.querySelectorAll(".scroll table")) {
-    if (t.closest("#inflation")) continue;
+    if (t.closest("#inflation, #bonds")) continue;
     const cut = t.closest("#stocks, #etfs, #crypto, #attention");
     const cols = [...t.rows[0].cells].flatMap((th, i) => (["TICKER", "NAME"].includes(th.textContent) ? [i] : []));
     for (const tr of t.tBodies[0].rows) {
@@ -269,6 +269,10 @@ function render(data, prev) {
   if (data.attention) {
     document.getElementById("attention").replaceChildren(table(data.attention, "(attention feed unavailable)", help.attention));
   }
+  // (#486) CI's FRED fetch, so an upload keeps CI's table like the shadow tables below.
+  if (data.bonds) {
+    document.getElementById("bonds").replaceChildren(table(data.bonds, "(bond feeds unavailable)", help.bonds));
+  }
   if (data.berkshire) {
     document.getElementById("berkshire").replaceChildren(table(data.berkshire, "(Berkshire 13F unavailable)", help.berkshire));
   }
@@ -299,7 +303,7 @@ function render(data, prev) {
   chooser(Math.max(1, attention, ...sizes), Math.min(...sizes.filter(Boolean)));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "attention", "berkshire", "social"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, help);
@@ -323,6 +327,7 @@ function glossary(data, help) {
     ["Exposure", "exposure", [data.exposure]],
     ["CORE", "core", [data.core]],
     ["Inflation", "inflation", [data.inflation]],
+    ["Bonds", "bonds", [data.bonds]],
     // (#452) the shadow tables. An upload carries none, so these groups drop from its glossary; the
     // tables CI rendered keep their hover text.
     ["Attention", "attention", [data.attention]],

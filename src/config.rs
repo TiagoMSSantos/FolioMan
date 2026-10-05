@@ -765,6 +765,10 @@ pub struct Urls {
     pub us_cpi: String, // BLS CPI-U base /data/ URL (v1); seriesID + year window POSTed by fetch_us_inflation — keyless it POSTs the fresh 10y window daily plus three PERMANENT old-decade windows once (merged, fills 20Y/30Y/40Y); swaps to /v2/ when BLS_API_KEY env is set (20y/call vs v1's 10y, 500 vs 25 req/day)
     pub pt_cpi: String,
     pub eu_hicp: String, // Eurostat HICP annual-rate series (COICOP-2018 successor prc_hicp_minr since Feb 2026)
+    // (#486) FRED's keyless CSV download, `{id}` = series id: the Bonds table's 10Y government yields
+    // and USD per EUR. Defaulted so an older settings.yaml still loads.
+    #[serde(default = "default_fred")]
+    pub fred: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
     pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe (the base equity pond)
     // (Item 18) EXTRA equity constituent CSVs in the SAME column layout (Symbol, _, GICS Sector, …) —
@@ -1188,6 +1192,10 @@ fn default_hn_stories_url() -> String {
 /// probed that answers "which European line is this US ticker" correctly and consistently.
 fn default_openfigi_mapping() -> String {
     "https://api.openfigi.com/v3/mapping".to_string()
+}
+
+fn default_fred() -> String {
+    "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}".to_string()
 }
 
 /// Default request-signing salt, lifted from the Börse Frankfurt web bundle (`tracing.salt`). Public
@@ -2623,6 +2631,9 @@ mod tests {
         assert!(!text.contains("openfigi_mapping"), "fixture must exercise the DEFAULT, not pin the key");
         let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
         assert_eq!(settings.urls.openfigi_mapping, "https://api.openfigi.com/v3/mapping");
+        // (#486) FRED likewise, `{id}` and all: without it every Bonds row would fetch one page
+        assert!(!text.contains("fred:"), "fixture must exercise the DEFAULT");
+        assert_eq!(settings.urls.fred, "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}");
     }
 
     /// (TER/AUM) Same story as the OpenFIGI pin above, and the same reason it needs one: `serde(default)`

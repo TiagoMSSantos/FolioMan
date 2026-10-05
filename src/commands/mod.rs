@@ -105,6 +105,45 @@ mod tests {
         assert!(inflation_web_rows(&[], today).is_empty());
     }
 
+    /// (#486) The Bonds rows as EXACT STRINGS, for the same reason as the inflation ones: the page
+    /// prints them verbatim. A flat 6% yield earns +6.2% a year, 41 years of it fills every column,
+    /// USA in EUR lands right after USA with the dollar's 10% fall off the euro taken out, and short,
+    /// stale and dead series say so rather than printing a shorter span as the full one.
+    #[test]
+    fn bond_web_rows_publish_usa_twice_and_say_where_a_series_stops() {
+        use std::collections::BTreeMap;
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 5).expect("a real date");
+        let end = 2026 * 12 + 8; // 2026-09
+        let flat = |from: i32, to: i32| -> BTreeMap<i32, f64> { (from..=to).map(|m| (m, 6.0)).collect() };
+        // USD per EUR: 1.0 until a year ago, then 1.1 (a euro buys more dollars, so dollars lost value)
+        let fx: BTreeMap<i32, f64> = (end - 27 * 12..=end).map(|m| (m, if m > end - 12 { 1.1 } else { 1.0 })).collect();
+        let rows = bond_web_rows(
+            &[("USA", flat(end - 41 * 12, end)), ("Italy", flat(end - 35 * 12, end)), ("Spain", flat(end - 41 * 12, end - 7)), ("Portugal", BTreeMap::new())],
+            &fx,
+            today,
+        );
+        let cells = |r: &Vec<(String, String)>| r.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(),
+            ["MARKET", "YIELD", "1Y", "2Y", "5Y", "10Y", "20Y", "27Y", "30Y", "40Y", "AS OF"]
+        );
+        assert_eq!(cells(&rows[0]), ["USA", "6.00%", "+6.2%", "+12.7%", "+34.9%", "+81.9%", "+231.0%", "+403.3%", "+502.3%", "+995.7%", "2026-09"]);
+        assert_eq!(
+            cells(&rows[1]),
+            ["USA in EUR", "6.00%", "-3.5%", "+2.5%", "+22.6%", "+65.4%", "+200.9%", "+357.5%", "n/a", "n/a", "2026-09"],
+            "the 1.1 a euro now costs divides every span that starts before it; EXUSEU's 27 years cap the row"
+        );
+        assert_eq!(cells(&rows[2])[9], "n/a", "Italy's 35 years stop short of 40Y");
+        assert_eq!(cells(&rows[2])[8], "+502.3%");
+        assert_eq!(cells(&rows[3])[10], "2026-02 ⚠ STALE", "8 months behind October");
+        assert_eq!(
+            cells(&rows[4]),
+            ["Portugal", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "⚠ no data"]
+        );
+        assert_eq!(rows.len(), 5);
+        assert_eq!(bond_web_rows(&[("Germany", flat(end - 5, end - 5))], &fx, today)[0][10].1, "2026-04", "6 months behind is not yet stale");
+    }
+
     /// (#367) The EU-span column's two decisions, off the `println!` sink where nothing could see them:
     /// which row sets the span (the EU's, by label — Portugal is longer, so a wrong match shows), and
     /// where it lands among the fixed horizons (sorted in; a span equal to one of them adds nothing).
@@ -261,6 +300,47 @@ pub(crate) fn inflation_web_rows(
             row.extend(ys.iter().map(|&y| (format!("{y}Y"), cum(y))));
             row.push(("AS OF".to_string(), as_of));
             row
+        })
+        .collect()
+}
+
+/// (#486) The page's Bonds table: per market, the newest 10Y yield and what a constant-maturity 10Y
+/// government bond returned over each [`core::BOND_YEARS`] span, in its own currency, compounded
+/// (`core::bond_index`). "USA in EUR" follows USA: the same dollar index divided by USD per EUR, so it
+/// carries the currency swing a euro holder took, and stops where EXUSEU does (1999). Display only.
+/// `AS OF` is the newest month; ⚠ STALE past 6 months, as a dead series still prints its last numbers.
+pub(crate) fn bond_web_rows(
+    yields: &[(&str, std::collections::BTreeMap<i32, f64>)],
+    usd_per_eur: &std::collections::BTreeMap<i32, f64>,
+    today: chrono::NaiveDate,
+) -> Vec<Vec<(String, String)>> {
+    use chrono::Datelike;
+    let now = today.year() * 12 + today.month0() as i32;
+    let row = |label: &str, yld: &std::collections::BTreeMap<i32, f64>, index: std::collections::BTreeMap<i32, f64>| {
+        let as_of = match index.keys().next_back() {
+            None => "⚠ no data".to_string(),
+            Some(&m) if now - m > 6 => format!("{}-{:02} ⚠ STALE", m.div_euclid(12), m.rem_euclid(12) + 1),
+            Some(&m) => format!("{}-{:02}", m.div_euclid(12), m.rem_euclid(12) + 1),
+        };
+        let mut cells = vec![
+            ("MARKET".to_string(), label.to_string()),
+            ("YIELD".to_string(), yld.values().next_back().map_or("n/a".to_string(), |y| format!("{y:.2}%"))),
+        ];
+        cells.extend(crate::core::BOND_YEARS.iter().map(|&y| {
+            (format!("{y}Y"), crate::core::bond_cum(&index, y).map_or("n/a".to_string(), |v| format!("{v:+.1}%")))
+        }));
+        cells.push(("AS OF".to_string(), as_of));
+        cells
+    };
+    yields
+        .iter()
+        .flat_map(|(label, yld)| {
+            let index = crate::core::bond_index(yld);
+            let eur = (*label == "USA").then(|| {
+                let eur = index.iter().filter_map(|(m, v)| usd_per_eur.get(m).map(|fx| (*m, v / fx))).collect();
+                row("USA in EUR", yld, eur)
+            });
+            std::iter::once(row(label, yld, index)).chain(eur)
         })
         .collect()
 }

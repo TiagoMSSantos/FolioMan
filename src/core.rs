@@ -3339,6 +3339,63 @@ pub fn inflation_compounded(series: &BTreeMap<i32, f64>, years: usize) -> Option
     Some((factor - 1.0) * 100.0)
 }
 
+/// (#486) The Bonds table's horizons, in years: the Inflation table's set plus 1Y and 27Y.
+pub const BOND_YEARS: [i32; 8] = [1, 2, 5, 10, 20, 27, 30, 40];
+
+/// (#486) A FRED `fredgraph.csv` download (`observation_date,ID`, then `YYYY-MM-DD,value` per month)
+/// as {month index -> value}, the index being year * 12 + month0 so a span is plain arithmetic. The
+/// header and FRED's `.` (no observation) drop out; anything else unparseable reads empty.
+pub fn parse_fred_monthly(v: &Value) -> BTreeMap<i32, f64> {
+    v.as_str()
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let (date, value) = line.split_once(',')?;
+            let date = NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d").ok()?;
+            Some((date.year() * 12 + date.month0() as i32, value.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+/// (#486) One month's total return on a constant-maturity 10Y government bond: bought at par last
+/// month, so its coupon `c` is last month's yield, and sold a month older at this month's yield `y`
+/// (both % a year). Coupon accrual plus the price change; annual coupons and compounding. This is the
+/// standard way to rebuild a bond return from a yield series alone (Swinkels 2019), and it is a
+/// model: no fees, no credit events, and the monthly yield is an average, not a close.
+pub fn bond_month_return(c: f64, y: f64) -> f64 {
+    let (c, y, n) = (c / 100.0, y / 100.0, 10.0 - 1.0 / 12.0);
+    let disc = (1.0 + y).powf(-n);
+    let price = if y == 0.0 { 1.0 + c * n } else { c / y * (1.0 - disc) + disc };
+    price - 1.0 + c / 12.0
+}
+
+/// (#486) The yields chained into a wealth index, 1.0 at the first month. A missing month ENDS the
+/// chain: only the run of consecutive months up to the newest one is kept, so a horizon reaching
+/// back past a gap reads n/a instead of splicing two unrelated stretches together.
+pub fn bond_index(yields: &BTreeMap<i32, f64>) -> BTreeMap<i32, f64> {
+    let mut out = BTreeMap::new();
+    let mut prev: Option<(i32, f64, f64)> = None; // (month, yield, level)
+    for (&m, &y) in yields {
+        let level = match prev {
+            Some((pm, c, level)) if pm + 1 == m => level * (1.0 + bond_month_return(c, y)),
+            _ => {
+                out.clear();
+                1.0
+            }
+        };
+        out.insert(m, level);
+        prev = Some((m, y, level));
+    }
+    out
+}
+
+/// (#486) Total % gained over the last `years` years of a wealth index; None when the index does
+/// not reach back that far.
+pub fn bond_cum(index: &BTreeMap<i32, f64>, years: i32) -> Option<f64> {
+    let (&last, &end) = index.last_key_value()?;
+    Some((end / index.get(&(last - 12 * years))? - 1.0) * 100.0)
+}
+
 /// Parse a Eurostat JSON-stat monthly annual-rate payload into {year -> annual %}: the sparse
 /// `value` map is keyed by the `time` index POSITION, positions sorted so the last month of a
 /// year wins (a partial current year resolves to its newest month YoY — same stance as the
@@ -9876,4 +9933,35 @@ fn switch_edge_prices_the_tax_paid_early() {
     let e = switch_edge(10000.0, 0.0, 0.20, 0.07, 0.28, 0.07, 20);
     assert!(close(e, 660.9815153910313), "{e}");
     assert_eq!(switch_edge(10000.0, 0.0, 0.20, 0.20, 0.28, 0.07, 20), 0.0);
+}
+
+/// (#486) The Bonds table's arithmetic against a Python replay. A flat yield earns its coupon and
+/// nothing else (6% a year compounds monthly to +6.17%); a rise from 5% to 6% costs ~7.3% of price
+/// for 0.42% of coupon; a 0% yield takes the no-discount branch; a missing month ends the chain.
+#[test]
+fn bond_index_rebuilds_a_10y_return_from_yields() {
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let csv = Value::String("observation_date,GS10\n1953-04-01,2.83\n1953-05-01,.\nbad\n1953-06-01, 3.11 \n".into());
+    assert_eq!(parse_fred_monthly(&csv), BTreeMap::from([(1953 * 12 + 3, 2.83), (1953 * 12 + 5, 3.11)]));
+    assert!(parse_fred_monthly(&Value::Null).is_empty());
+
+    assert!(close(bond_month_return(6.0, 6.0), 0.005));
+    assert!(close(bond_month_return(5.0, 6.0), -0.06898120137880402), "{}", bond_month_return(5.0, 6.0));
+    assert!(close(bond_month_return(1.0, 0.0), 0.1), "{}", bond_month_return(1.0, 0.0));
+    assert!(bond_month_return(-0.5, -0.6) > 0.0, "a negative yield falling further still gains");
+
+    let flat: BTreeMap<i32, f64> = (0..=24).map(|m| (24000 + m, 6.0)).collect();
+    let index = bond_index(&flat);
+    assert_eq!(index[&24000], 1.0);
+    assert!(close(bond_cum(&index, 1).unwrap(), 6.167781186449828), "{:?}", bond_cum(&index, 1));
+    assert!(close(bond_cum(&index, 2).unwrap(), (1.005f64.powi(24) - 1.0) * 100.0));
+    assert_eq!(bond_cum(&index, 3), None, "24 months cannot answer 3 years");
+    assert_eq!(bond_cum(&BTreeMap::new(), 1), None);
+
+    let mut gap = flat.clone();
+    gap.remove(&24005);
+    let index = bond_index(&gap);
+    assert_eq!(index.keys().next(), Some(&24006), "the chain restarts after the hole");
+    assert_eq!(bond_cum(&index, 2), None, "so 2Y reads n/a, never a splice");
+    assert!(close(bond_cum(&index, 1).unwrap(), 6.167781186449828));
 }
