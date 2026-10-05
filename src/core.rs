@@ -4287,7 +4287,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         roe: now.and_then(|r| r.roe), // as-of level through fund_as_of, same look-ahead guard as the margins
         // the SCORED quality level, resolved from the same as-of row. `roe` above stays raw so the
         // factor sweep can still price it standalone; everything that feeds the ranking reads this.
-        quality: now.and_then(|r| quality_return(r.roe, r.roa, r.net_margin)),
+        quality: now.and_then(core_quality), // (#491) on core earnings
         // (#43) same as-of row, same look-ahead guard — every input is a LEVEL already on it, so this
         // costs no fetch. Any missing leg -> None (neutral), never a fabricated 0.
         roic: now.and_then(|r| roic_return(r.revenue, r.op_margin, r.net_margin, r.roe, r.roa, r.net_debt)),
@@ -4627,6 +4627,16 @@ pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f
 /// land on a denominator that understates them. Nothing separates them from Colgate without sector
 /// data, which this path does not carry (`sector_matches` reads the NAME string, not a sector field).
 /// ROA understates them; it does not lie about them, which is the trade taken here.
+/// (#491) `quality_return` on core earnings: ROE, ROA and the net margin all divide the same net income,
+/// so each takes the row's `core_factor` (#426), the share the PEG's EPS keeps. A mark on a stake
+/// (Alphabet's SpaceX and Anthropic gains) or a tax release stops reading as quality of capital. No
+/// factor (a bank, an insurer, a loss year, no pretax line) scores as filed. Both lanes call this.
+pub fn core_quality(r: &FundRow) -> Option<f64> {
+    let f = core_factor(r).unwrap_or(1.0);
+    let core = |v: Option<f64>| v.map(|v| v * f);
+    quality_return(core(r.roe), core(r.roa), core(r.net_margin))
+}
+
 pub fn quality_return(roe: Option<f64>, roa: Option<f64>, net_margin: Option<f64>) -> Option<f64> {
     // Both tests answer "is equity a credible denominator". Unjudgeable never blocks: no ROA means the
     // multiplier can't be computed (the FMP path fills no ROA at all), so the sign test decides alone.
@@ -6242,6 +6252,24 @@ mod tests {
         let mut same = vec![row.clone()];
         restate_for_ads(&mut same, 1.0);
         assert_eq!(got(&same[0]), got(&row));
+    }
+
+    /// (#491) quality on core earnings: Alphabet's marks come off ROE, a filer with no factor scores as
+    /// filed, the 20x leverage test still falls back to ROA, and a profit on a pretax loss reads as a loss.
+    #[test]
+    fn core_quality_strips_marks_off_roe() {
+        let row = |op: Option<f64>, pre: f64, ni: f64, roe: f64| FundRow {
+            op_margin: op,
+            pretax_margin: Some(pre),
+            net_margin: Some(ni),
+            roe: Some(roe),
+            roa: Some(10.0),
+            ..Default::default()
+        };
+        assert_eq!(core_quality(&row(Some(32.0), 38.0, 31.92, 30.0)), Some(30.0 * (32.0 / 38.0)));
+        assert_eq!(core_quality(&row(None, 38.0, 31.92, 30.0)), Some(30.0), "a bank scores as filed");
+        assert_eq!(core_quality(&row(Some(32.0), 38.0, 31.92, 300.0)), Some(10.0 * (32.0 / 38.0)));
+        assert_eq!(core_quality(&row(Some(5.0), -2.0, 3.0, 30.0)), Some(30.0 * (-2.0 / 3.0)));
     }
 
     /// (#426) `core_factor` on each shape the formula answers, then `strip_noncore` over a series. Rows are

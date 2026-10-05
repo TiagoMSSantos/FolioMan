@@ -571,7 +571,7 @@ fn backtest_fund_report_is_share_scale_invariant() {
 
 /// (#426) THE GAIN INVARIANT. A filer whose pretax carries a mark on top of its operating profit earns
 /// no more from operations, so a copy where half of every ODFL year's pretax is a gain and its EPS is
-/// doubled to match must print the SAME fund golden. Only `strip_noncore` reconciles it: without it
+/// doubled to match (its net margin, ROE and ROA with it, (#491)) must print the SAME fund golden. Only `strip_noncore` reconciles it: without it
 /// ODFL's EPS reads twice as rich and its earnings yield and PEG move. The frozen rows carry no pretax
 /// line, so each gets exactly EBIT − interest (clean) doubled; x ÷ 2x is exact in f64, so the claim is
 /// byte-identical rather than close.
@@ -592,7 +592,8 @@ fn backtest_fund_report_is_gain_invariant() {
             _ => 0.0,
         };
         row["pretax_margin"] = json!(2.0 * (op - int));
-        for k in ["eps", "prior_eps"] {
+        // (#491) the gain lands in net income too, so every ratio over it doubles with the EPS
+        for k in ["eps", "prior_eps", "net_margin", "roe", "roa"] {
             if let Some(x) = row[k].as_f64() {
                 row[k] = json!(2.0 * x);
             }
@@ -608,7 +609,11 @@ fn backtest_fund_report_is_gain_invariant() {
     let n: usize = line.split(FUND_CORE).nth(1).and_then(|t| t.split_whitespace().next()).and_then(|t| t.parse().ok()).expect("a count");
     let want = golden.replace(line, &line.replace(&format!("{FUND_CORE} {n} "), &format!("{FUND_CORE} {} ", n + 1)));
     assert_ne!(want, golden, "the count substitution must land");
+    // (#491) except the two sweep rows that price GAAP net income raw, on purpose: they must move
+    let cooked = |r: &str| r.lines().filter(|l| !["net_margin ", "roe_raw "].iter().any(|k| l.trim_start().starts_with(k))).collect::<Vec<_>>().join("\n");
     let got = report_at(&cfg, &["12", "fund"], None);
+    assert_ne!(cooked(&want), want, "the raw rows the filter drops must exist");
+    let (got, want) = (cooked(&got), cooked(&want));
     assert!(got == want, "a gain on top of operating profit moved the fund report — a mark priced as earnings.\n{}", first_difference(&got, &want));
 }
 

@@ -1038,7 +1038,7 @@ async fn fetch_ratios_sec(
         .map(|(e, p)| p / e);
     // ROE where equity is a credible denominator, ROA where it isn't — the SAME resolver the backtest scores through
     // (core::fund_factors), so the live column and the validated factor can't drift apart.
-    (pe, core::quality_return(latest.roe, latest.roa, latest.net_margin))
+    (pe, core::core_quality(latest)) // (#491) on core earnings, investment marks off
 }
 
 /// (#425) `sec_ttm_eps_filed` on the LISTED share: the roll is per ordinary share as filed, and one PDD
@@ -9273,12 +9273,12 @@ pub(crate) mod tests {
 
     /// (#358) `fetch_ratios_sec` off seeded SEC caches: the P/E divides the close by the TTM roll (4.0,
     /// not the annual row's 3.0), a zero EPS has none, and the quality level is the row's own through
-    /// `core::quality_return`. A USD close against USD books fetches no rate.
+    /// `core::core_quality`, gains off (#491). A USD close against USD books fetches no rate.
     #[tokio::test]
     async fn fetch_ratios_sec_divides_the_close_by_the_trailing_eps() {
         pin_throttle();
         seed_cik_map();
-        let row = r#"[{"filed":"2026-02-01","period_end":"2025-12-31","eps":3.0,"roe":20.0,"roa":5.0,"net_margin":10.0,"currency":"USD"}]"#;
+        let row = r#"[{"filed":"2026-02-01","period_end":"2025-12-31","eps":3.0,"roe":20.0,"roa":5.0,"net_margin":10.0,"op_margin":15.0,"pretax_margin":20.0,"currency":"USD"}]"#;
         let mut seeded = Vec::new();
         for (t, ttm) in [("ZZSECPE", "4.0"), ("ZZSECPE0", "0.0")] {
             for (sidecar, body) in [("facts19", row), ("ttmeps4", ttm)] {
@@ -9296,8 +9296,8 @@ pub(crate) mod tests {
         for p in seeded {
             let _ = std::fs::remove_file(p);
         }
-        let quality = core::quality_return(Some(20.0), Some(5.0), Some(10.0));
-        assert!(quality.is_some());
+        // (#491) a quarter of pretax is a gain (EBIT 15 of 20), so ROE 20 scores on core earnings: 15
+        let quality = Some(15.0);
         assert_eq!(got, ((Some(25.0), quality), (None, quality)));
     }
 
