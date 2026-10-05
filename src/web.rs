@@ -437,7 +437,7 @@ mod tests {
         assert!(why("n").ends_with("Also matching \"n\": AAPL, VWCE.DE"), "the rest in pool order: {}", why("n"));
         assert!(why("vwce.l").starts_with("VWCE.DE isn't assessable"), "by alias: {}", why("vwce.l"));
         assert!(why("msft").starts_with("MSFT isn't assessable"));
-        assert!(why(" nvidia ").contains("\n\n─── how the #1 SCORE was computed — NVIDIA Corp (NVD.DE), score 6.70"));
+        assert!(why(" nvidia ").contains("\n\n─── how the SCORE was computed — NVIDIA Corp (NVD.DE), score 6.70"));
         assert!(!why("nvidia").contains("Also matching"), "the hit itself is not an also");
         assert!(why("i").ends_with("\n\nAlso matching \"i\": VWCE.DE, MSFT, NVD.DE"), "{}", why("i"));
         assert!(why("NOPE").starts_with("No pool row matches \"NOPE\". The pool keeps one listing per company"));

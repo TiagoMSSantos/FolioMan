@@ -1898,13 +1898,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     } else {
         1.0
     };
-    // (#472) the 13F nudge: the user's call, not a measured edge. Both flags are false on every backtest
-    // quote, so this is backtest-blind like the docks above; the track `brkh`/`soc` rows grade it forward.
-    let brk_boost = if quote.brk_held { tuning.growth_brk_held_boost } else { 1.0 };
-    // (#473) one superinvestor step per `growth_superinvestor_step` buyers, rounded down; `powi(0)` is an
-    // exact 1.0, so a name under one step and the knob at 1.0 both stay byte-identical
-    let super_boost = tuning.growth_superinvestor_boost.powi((quote.super_buyers / tuning.growth_superinvestor_step.max(1)) as i32);
-    let social_boost = if quote.social_tip { tuning.growth_social_boost } else { 1.0 };
+    let (brk_boost, super_boost, social_boost) = holder_boosts(quote, tuning);
     let holder_boost = brk_boost * super_boost * social_boost;
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
@@ -1954,6 +1948,19 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     };
     parts.score = compose_score(&parts, tuning);
     Some(parts)
+}
+
+/// (#472) the 13F nudge as (Berkshire, superinvestors, social tip): the user's call, not a measured edge.
+/// Every flag is false on a backtest quote, so this is backtest-blind like the docks; the track
+/// `brkh`/`soc` rows grade it forward. (#477) one definition for the score and the walkthrough that
+/// splits it per source.
+fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64) {
+    let brk = if quote.brk_held { tuning.growth_brk_held_boost } else { 1.0 };
+    // (#473) one superinvestor step per `growth_superinvestor_step` buyers, rounded down; `powi(0)` is an
+    // exact 1.0, so a name under one step and the knob at 1.0 both stay byte-identical
+    let sup = tuning.growth_superinvestor_boost.powi((quote.super_buyers / tuning.growth_superinvestor_step.max(1)) as i32);
+    let soc = if quote.social_tip { tuning.growth_social_boost } else { 1.0 };
+    (brk, sup, soc)
 }
 
 /// (#144) `base` and the multiplier stack -> the ranked score. The ONE definition of that composition:
@@ -3144,9 +3151,49 @@ pub fn exit_review_lines(prior_passing: &[String], quotes: &[&Quote], tuning: &B
         .collect()
 }
 
+/// (#477) one plain-English line under a walkthrough row, for a reader with no finance background
+fn say(s: &mut String, t: &str) {
+    s.push_str("        ");
+    s.push_str(t);
+    s.push('\n');
+}
+
+/// (#477) the plain line of an ADDED row: what it measures, then why a 0 is a 0 — the knob is off,
+/// or the row is on and this name earns nothing (`nothing` says why)
+fn plain(on: bool, v: f64, what: &str, nothing: &str) -> String {
+    if !on {
+        format!("{what}. Off in today's settings (weight 0), so it adds nothing.")
+    } else if v == 0.0 {
+        format!("{what}. Adds nothing here: {nothing}.")
+    } else {
+        format!("{what}.")
+    }
+}
+
+/// (#477) the plain line of a MULTIPLIER row
+fn plain_x(on: bool, f: f64, what: &str) -> String {
+    if on { format!("{what}. Here ×{f:.3}.") } else { format!("{what}. Off in today's settings (weight 0), so ×1.000 changes nothing.") }
+}
+
+/// (#477) a fund factor in plain words; an unlisted one falls back to the generic phrase
+fn factor_words(f: &str) -> &'static str {
+    match f {
+        "peg_yield" => "cheap for its profit growth (1 ÷ PEG: price-to-earnings divided by profit growth)",
+        "roic" => "return on invested capital: yearly profit per € put into the business",
+        "roe" => "return on equity: yearly profit per € of the owners' money",
+        "earnings_yield" => "yearly profit ÷ price, the inverse of P/E",
+        "fcf_margin" => "free cash flow: cash left from each € of sales after running costs and investment",
+        "rev_cagr" => "how fast sales grew per year",
+        "eps_growth" => "how fast profit per share grew per year",
+        "gross_margin" | "op_margin" | "net_margin" => "profit kept from each € of sales",
+        "rnd_yield" => "research spending ÷ company value",
+        _ => "a figure read from the company's filings",
+    }
+}
+
 /// Human-readable derivation of a growth SCORE: the formula then every term filled in with this quote's
-/// real numbers, ending in the score itself. Lets a `screen` reader hand-verify why the #1 row ranked
-/// where it did. `displayed` is the score AS SHOWN in the table (crypto rows carry a NUPL + BTC-relative
+/// real numbers, ending in the score itself. Lets a `screen` reader hand-verify why a row ranked where
+/// it did; (#477) every row carries a plain-English line and an "In short" closes it. `displayed` is the score AS SHOWN in the table (crypto rows carry a NUPL + BTC-relative
 /// adjustment on top of the base formula); when it differs from the base `score`, the extra step is noted
 /// so the math still reconciles to the table. `None` if the quote fails a growth gate (nothing to explain).
 pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64) -> Option<String> {
@@ -3154,7 +3201,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     let mut s = String::new();
     let name = if quote.name.is_empty() { quote.ticker.as_str() } else { quote.name.as_str() };
     s.push_str(&format!(
-        "\n─── how the #1 SCORE was computed — {name} ({}), score {displayed:.2}. Verify it yourself ───\n",
+        "\n─── how the SCORE was computed — {name} ({}), score {displayed:.2}. Verify it yourself ───\n",
         quote.ticker
     ));
     if tuning.growth_geomean_fold {
@@ -3169,6 +3216,10 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("    trend    = growth_trend_weight × {:<21} = {:.2} × {:.2} = {:.2}\n",
         if tuning.long_trend_cap > 0.0 { "min(CAGR, cap)" } else { "CAGR (cap off)" },
         tuning.growth_trend_weight, p.trend, p.trend_term));
+    let cap = if tuning.long_trend_cap > 0.0 { format!(", counted up to {:.0}%/yr", tuning.long_trend_cap) } else { String::new() };
+    say(&mut s, &plain(tuning.growth_trend_weight != 0.0, p.trend_term,
+        &format!("Long-run growth: its average yearly price gain over its whole record, {:.1}%/yr{cap}", p.long_cagr),
+        "no long-run gain"));
     // (#98) the trailing parenthetical tracks `growth_accel_beta` for the same reason the `trend` row
     // above tracks the cap knob: printing a plain `1Y − CAGR` while the leg subtracts a FRACTION of the
     // CAGR would advertise arithmetic that is not running. At the shipped 1.0 the tail is unchanged.
@@ -3179,10 +3230,22 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     };
     s.push_str(&format!("    accel    = growth_accel_weight × clamp(1Y−CAGR,0,cap)  = {:.2} × {:.2} = {:.2}   (1Y {:.1} − {beta} {:.1})\n",
         tuning.growth_accel_weight, p.accel, p.accel_term, p.return_1y, p.long_cagr));
+    say(&mut s, &plain(tuning.growth_accel_weight != 0.0, p.accel_term,
+        &format!("Speeding up: how far last year's gain ({:.1}%) beats its long-run rate ({:.1}%/yr)", p.return_1y, p.long_cagr),
+        "last year did not beat its long-run rate"));
     s.push_str(&format!("    risk     = Sharpe+Calmar bonus                        = {:.2}\n", p.risk_reward));
+    say(&mut s, &plain(tuning.sharpe_weight != 0.0 || tuning.calmar_weight != 0.0, p.risk_reward,
+        "Gain per unit of risk: Sharpe (gain vs day-to-day swings) plus Calmar (gain vs its worst fall)",
+        "too little history or gain to reward"));
     s.push_str(&format!("    quality  = quality_weight × ROE                       = {:.2}\n", p.quality));
+    say(&mut s, &plain(tuning.quality_weight != 0.0, p.quality,
+        "Profitability: yearly profit as a % of the owners' money (return on equity, ROE)",
+        "no profit figures (funds and coins have none) or no profit"));
     let (keep, tier) = tax_keep(quote, tuning); // (D) same call dividend_reward scored on -> label can't drift
     s.push_str(&format!("    dividend = dividend_weight × min(1Y yield, cap) × keep = {:.2}   (PT tax keep {keep:.2} — {tier})\n", p.dividend));
+    say(&mut s, &plain(tuning.dividend_weight != 0.0, p.dividend,
+        &format!("Dividends: cash paid to owners over the last year, keeping {:.0}% after Portuguese tax", keep * 100.0),
+        "it paid no dividend in the last year"));
     // (G+) `p.fund` is the SUM of the primary tilt AND every `growth_fund_extra` term, so the one-line
     // label is the whole story only while that list is EMPTY (the default, and then this is byte-identical
     // to before). With extras configured the label would otherwise name a formula that did not produce the
@@ -3192,6 +3255,9 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         if tuning.growth_fund_extra.is_empty() { "growth_fund_weight × clamp(fund_factor)" } else { "primary tilt + the extras below" },
         p.fund
     ));
+    say(&mut s, &plain(tuning.growth_fund_weight != 0.0 || !tuning.growth_fund_extra.is_empty(), p.fund,
+        &format!("Business quality from company filings. Main tilt '{}': {}", tuning.growth_fund_factor, factor_words(&tuning.growth_fund_factor)),
+        "no company filings (funds and coins have none)"));
     for t in &tuning.growth_fund_extra {
         let v = quote.fund.as_ref().and_then(|f| crate::core::select_fund_factor(f, &t.factor));
         let shown = v.map_or_else(|| "n/a".to_string(), |v| format!("{v:.1}"));
@@ -3202,10 +3268,21 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
             format!("clamp({shown}, 0, {:.0})", t.cap),
             t.weight * v.unwrap_or(0.0).clamp(0.0, t.cap)
         ));
+        say(&mut s, &format!("  {}: {}, counted up to {:.0}.", t.factor, factor_words(&t.factor), t.cap));
     }
     s.push_str(&format!("    mom121   = growth_mom121_weight × clamp(12-1 mom)     = {:.2}\n", p.mom121));
+    say(&mut s, &plain(tuning.growth_mom121_weight != 0.0, p.mom121,
+        "Momentum: last year's gain, skipping the latest month (short bounces fade)",
+        "it was flat or down over that stretch"));
     s.push_str(&format!("    smooth   = growth_smoothness_weight × trend_r2 (R²)   = {:.2}\n", p.smooth));
+    say(&mut s, &plain(tuning.growth_smoothness_weight != 0.0, p.smooth,
+        "Steadiness: how close the climb is to a straight line (R² 1 = perfectly steady)",
+        "no usable price history"));
     s.push_str(&format!("    underwtr = −growth_underwater_weight × underwater_yrs = {:.2}\n", p.underwater));
+    say(&mut s, &plain(tuning.growth_underwater_weight != 0.0, p.underwater,
+        &format!("Penalty for its longest stretch below an old high: {}",
+            quote.underwater_yrs.map_or_else(|| "unknown".to_string(), |y| format!("{y:.1} years"))),
+        "no stretch below an old high on record"));
     // (#105) same treatment as the ter/commodity/fx fragments below: printed only when it bites, so a
     // run at the default weight 0 renders the byte-identical breakdown every golden was blessed on.
     // The row spells the four legs out because the whole claim of the term is that they are
@@ -3217,6 +3294,9 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
             p.er.map_or_else(|| "n/a".to_string(), |v| format!("{v:.2}")),
             p.er_term
         ));
+        say(&mut s, &plain(true, p.er_term,
+            "Expected yearly return if bought today: dividends + profit growth + buybacks ± a change in valuation",
+            "no estimate (it needs company filings)"));
     }
     // (#133) same (#105) treatment: printed only when it bites, so a run at the default weight 0
     // renders the byte-identical breakdown every golden was blessed on. The row spells out the leg
@@ -3227,25 +3307,53 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
             "    record   = −growth_record_weight × missing years       = −{:.2} × max(0, {:.0} − {:.1}) = {:.2}\n",
             tuning.growth_record_weight, tuning.growth_record_full_years, p.record_years, p.record_term
         ));
+        say(&mut s, &plain(true, p.record_term,
+            &format!("Penalty for a short price record: each year short of {:.0} costs points", tuning.growth_record_full_years),
+            "the record is long enough"));
     }
     s.push_str(&format!("    base (sum)                                            = {:.2}\n", p.base));
+    say(&mut s, "Raw strength: the sum of the rows above, before the multipliers below shrink or grow it.");
     s.push_str(&format!("  proximity    = 1 + growth_proximity_weight × (range−1)  = 1 + {:.2} × ({:.3}−1) = {:.3}\n",
         tuning.growth_proximity_weight, quote.range_pct / 100.0, p.proximity));
+    say(&mut s, &plain_x(tuning.growth_proximity_weight != 0.0, p.proximity, &format!(
+        "Price position: today's price beats {:.0}% of its own prices of the last ~10 years (100% = at the high). \
+         This lane buys strength, so near the high keeps the most of the score", quote.range_pct)));
     s.push_str(&format!("  value        = 1 + growth_value_weight × (P/E factor−1) = 1 + {:.2} × ({:.2}−1) = {:.3}\n",
         tuning.growth_value_weight, p.value_raw, p.value));
+    say(&mut s, &plain_x(tuning.growth_value_weight != 0.0, p.value, "Cheapness: price ÷ yearly profit (P/E); a lower P/E keeps more"));
     s.push_str(&format!("  trust        = history-completeness damp                = {:.3}\n", p.trust));
+    say(&mut s, "Trust in the price history: 1.000 = a full, clean long record; a short or patchy one shrinks the score.");
     if p.overext_cap > 0.0 {
         s.push_str(&format!("  overext_damp = 1 − (min(above_MA,cap)/cap)×(1−floor)    = 1 − ({:.1}/{:.0})×(1−{:.2}) = {:.3}\n",
             p.overext, p.overext_cap, tuning.growth_overext_floor, p.overext_damp));
+        if p.overext > 0.0 {
+            say(&mut s, &format!(
+                "Ran-too-far brake: the price is {:.1}% above its ~200-week average (full brake at {:.0}%). \
+                 Prices far above it often fall back, so the score is cut, at most to ×{:.2}.",
+                p.overext, p.overext_cap, tuning.growth_overext_floor));
+        } else {
+            say(&mut s, "Ran-too-far brake: the price is not above its ~200-week average, so no cut.");
+        }
     } else {
         s.push_str("  overext_damp = (brake off, cap 0)                       = 1.000\n");
+        say(&mut s, "Ran-too-far brake: off in today's settings.");
     }
     s.push_str(&format!("  geomean(trust, overext_damp) = √({:.3} × {:.3})         = {:.3}\n", p.trust, p.overext_damp, p.damp));
+    say(&mut s, "Blends the two brakes as the square root of their product, so one harsh brake counts only half as hard.");
     s.push_str(&format!("  liq_bonus    = growth_turnover_weight × ln(max(turn/1e9,1)) = {:.2}\n", p.liq_bonus));
+    let turn = quote.avg_turnover_eur.unwrap_or(0.0) / 1e9;
+    say(&mut s, &if tuning.growth_turnover_weight == 0.0 {
+        "Bonus for heavy daily trading (easy to buy and sell). Off in today's settings (weight 0), so it adds nothing.".to_string()
+    } else if p.liq_bonus == 0.0 {
+        format!("Bonus for heavy daily trading: €{turn:.2}B/day is not above the €1B/day where it starts, so it adds nothing.")
+    } else {
+        format!("Bonus for heavy daily trading: €{turn:.2}B/day, growing slowly (log) above €1B/day. Added after the multipliers.")
+    });
     // (T) TER cost drag only prints when it bites (an ETF with a TER, drag on) — stocks/crypto are ×1.0.
     let ter_frag = if p.ter_damp < 1.0 {
         s.push_str(&format!("  ter_damp     = (1 − TER)^20                             = (1 − {:.2}%)^20 = {:.3}\n",
             quote.expense_ratio.unwrap_or(0.0), p.ter_damp));
+        say(&mut s, "The fund's yearly fee, compounded over 20 years of holding.");
         format!(" × {:.3}", p.ter_damp)
     } else {
         String::new()
@@ -3255,6 +3363,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     let commodity_frag = if p.commodity_damp < 1.0 {
         s.push_str(&format!("  commodity    = growth_commodity_damp ({}) — CAGR tracks a mean-reverting input price = {:.3}\n",
             quote.sector.as_deref().unwrap_or("commodity-named fund"), p.commodity_damp));
+        say(&mut s, "Raw-material price: its long-run gain follows a price that swings back and forth, so it overstates the future.");
         format!(" × {:.3}", p.commodity_damp)
     } else {
         String::new()
@@ -3263,6 +3372,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     let fx_frag = if p.fx_damp < 1.0 {
         s.push_str(&format!("  fx           = growth_fx_damp ({} listing) — FX conversion + off-home spread for a EUR buyer = {:.3}\n",
             quote.quote_currency.as_deref().unwrap_or("non-EUR"), p.fx_damp));
+        say(&mut s, "Bought in another currency: conversion costs and wider spreads for a euro buyer.");
         format!(" × {:.3}", p.fx_damp)
     } else {
         String::new()
@@ -3272,13 +3382,26 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     let acc_frag = if p.acc_damp < 1.0 {
         s.push_str(&format!("  acc_damp     = (1 − yield × payout tax)^20 (Dist class)  = (1 − {:.2}% × {:.0}%)^20 = {:.3}\n",
             dividend_yield_1y(quote), (1.0 - tax_keep(quote, tuning).0) * 100.0, p.acc_damp));
+        say(&mut s, "This class pays dividends out and each payout is taxed; that drag compounded over 20 years.");
         format!(" × {:.3}", p.acc_damp)
     } else {
         String::new()
     };
-    // (#472) and the 13F nudge, (#473) with the social one, printed only on a flagged name with a knob set
+    // (#472) and the 13F nudge, (#473) with the social one, printed only on a flagged name with a knob set;
+    // (#477) one plain line per source that bites
     let holder_frag = if p.holder_boost != 1.0 {
-        s.push_str(&format!("  13F boost    = Berkshire holds × superinvestor buyers × social tip (ARK, insiders, video, hand list) = {:.3}\n", p.holder_boost));
+        s.push_str(&format!("  bonuses      = Berkshire × superinvestors × social tip     = {:.3}\n", p.holder_boost));
+        let (brk, sup, soc) = holder_boosts(quote, tuning);
+        if brk != 1.0 {
+            say(&mut s, &format!("Berkshire Hathaway holds it (its newest 13F filing): ×{brk:.2}."));
+        }
+        if sup != 1.0 {
+            say(&mut s, &format!("{} superinvestors bought it last quarter: ×{:.2} per {} buyers = ×{sup:.3}.",
+                quote.super_buyers, tuning.growth_superinvestor_boost, tuning.growth_superinvestor_step.max(1)));
+        }
+        if soc != 1.0 {
+            say(&mut s, &format!("Social tip: the Social table names it (ARK buys, insider buying, big stake filings, videos or the hand list): ×{soc:.2}."));
+        }
         format!(" × {:.3}", p.holder_boost)
     } else {
         String::new()
@@ -3292,9 +3415,58 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     }
     if (displayed - p.score).abs() > 1e-6 {
         s.push_str(&format!("  crypto NUPL + BTC-relative adjustment: {:.2} → {displayed:.2} (the table value)\n", p.score));
+        say(&mut s, "Coins only: scaled by Bitcoin market mood (NUPL) and by strength against Bitcoin.");
     }
-    s.push_str("  (BACKTEST-BLIND terms — value/TER/fund(if FMP-only) — were never in the\n   walk-forward; quality, dividends and the PT tax split ARE graded there. NOT advice.)\n");
+    s.push_str(&in_short(&p, tuning));
+    s.push_str("  Not advice. The backtest (a replay on past prices) never saw value, the ETF fee, or fund\n  terms read from FMP only; it did test quality, dividends and the Portuguese tax split.\n");
     Some(s)
+}
+
+/// (#477) the walkthrough's three-line "In short": the two rows that add the most, the one multiplier
+/// that cuts the most (with the score it would have without that cut), and the bonuses
+fn in_short(p: &ScoreParts, tuning: &BuyHeuristic) -> String {
+    let mut adds = [
+        ("long-run growth", p.trend_term),
+        ("speeding up", p.accel_term),
+        ("gain per risk", p.risk_reward),
+        ("profitability", p.quality),
+        ("dividends", p.dividend),
+        ("business quality", p.fund),
+        ("momentum", p.mom121),
+        ("steadiness", p.smooth),
+        ("expected return", p.er_term),
+    ];
+    adds.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let top: Vec<String> = adds.iter().take(2).filter(|a| a.1 > 0.0).map(|(n, v)| format!("{n} {v:.2}")).collect();
+    let mut s = String::from("\n  In short:\n");
+    if top.is_empty() {
+        s.push_str("    · No row adds strength.\n");
+    } else {
+        s.push_str(&format!("    · Adds the most: {}.\n", top.join(", ")));
+    }
+    if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
+        s.push_str("    · Base is below 0, so no multiplier applies.\n");
+    } else {
+        let mut cuts = if tuning.growth_geomean_fold {
+            vec![("the blended brakes", combine_damps(&[p.trust, p.overext_damp, p.proximity, p.value]))]
+        } else {
+            vec![("price position", p.proximity), ("cheapness", p.value), ("trust and ran-too-far brakes", p.damp)]
+        };
+        cuts.extend([("fund fee", p.ter_damp), ("raw-material price", p.commodity_damp), ("currency", p.fx_damp), ("dividend tax", p.acc_damp)]);
+        let (n, f) = cuts.into_iter().min_by(|a, b| a.1.total_cmp(&b.1)).expect("the dock list is never empty");
+        if f >= 1.0 {
+            s.push_str("    · No multiplier cuts it.\n");
+        } else if f > 0.0 {
+            s.push_str(&format!("    · Cut the most by {n} (×{f:.3}); without it the score would be {:.2}.\n",
+                (p.score - p.liq_bonus) / f + p.liq_bonus));
+        } else {
+            s.push_str(&format!("    · Cut to zero by {n}.\n"));
+        }
+    }
+    if p.holder_boost != 1.0 {
+        s.push_str(&format!("    · Bonuses multiply it by ×{:.3}.\n", p.holder_boost));
+    }
+    s
 }
 
 /// (4) Whole-market crypto sentiment FACTOR from Bitcoin NUPL (net unrealized profit/loss — already
@@ -9313,7 +9485,7 @@ mod tests {
             explain_growth_score(q, t, s + bump).expect("a scoring row explains")
         };
         let base = ex(&q, &d, 0.0);
-        for quiet in ["×CAGR", "exp.ret  =", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "13F boost", "crypto NUPL", "brake off"] {
+        for quiet in ["×CAGR", "exp.ret  =", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "bonuses      =", "crypto NUPL", "brake off"] {
             assert!(!base.contains(quiet), "default must not print {quiet:?}:\n{base}");
         }
         assert!(base.contains("overext_damp = 1 − ("), "{base}");
@@ -9337,8 +9509,100 @@ mod tests {
         let acc = BuyHeuristic { growth_acc_drag: true, tax_keep_other: 0.5, tax_keep_eu: 0.5, ..d.clone() };
         assert!(ex(&dist, &acc, 0.0).contains("acc_damp     ="));
         let held = Quote { brk_held: true, ..q.clone() };
-        assert!(ex(&held, &BuyHeuristic { growth_brk_held_boost: 1.2, ..d.clone() }, 0.0).contains("13F boost    ="));
+        assert!(ex(&held, &BuyHeuristic { growth_brk_held_boost: 1.2, ..d.clone() }, 0.0).contains("bonuses      ="));
         assert!(ex(&q, &d, 1.0).contains("crypto NUPL"), "a displayed value off the score says why");
+    }
+
+    #[test]
+    fn explain_says_each_term_in_plain_words() {
+        // (#477) every row gets a plain line; a 0 says whether the knob is off or the name earns nothing
+        let q = gate_fixture();
+        let d = BuyHeuristic::default();
+        let ex = |q: &Quote, t: &BuyHeuristic| explain_growth_score(q, t, growth_score(q, t).unwrap()).unwrap();
+        let off = BuyHeuristic { growth_mom121_weight: 0.0, growth_turnover_weight: 0.0, ..d.clone() };
+        let s = ex(&q, &off);
+        assert!(s.contains("─── how the SCORE was computed — Test Corp (TEST)"), "{s}");
+        assert!(s.contains("Momentum: last year's gain, skipping the latest month (short bounces fade). Off in today's settings (weight 0)"), "{s}");
+        assert!(s.contains("Bonus for heavy daily trading (easy to buy and sell). Off in today's settings"), "{s}");
+        assert!(s.contains("today's price beats 90% of its own prices"), "{s}");
+        assert!(s.contains("so one harsh brake counts only half as hard"), "{s}");
+        assert!(s.contains("Not advice."), "{s}");
+        let thin = Quote { avg_turnover_eur: Some(3e8), ..q.clone() };
+        assert!(ex(&thin, &BuyHeuristic { growth_turnover_weight: 0.5, ..d.clone() })
+            .contains("€0.30B/day is not above the €1B/day where it starts, so it adds nothing."));
+        assert!(ex(&Quote { avg_turnover_eur: Some(3e9), ..q.clone() }, &BuyHeuristic { growth_turnover_weight: 0.5, ..d.clone() }).contains("€3.00B/day, growing slowly"));
+        // the fixture's 1Y 20% trails its ~24.6%/yr CAGR, so the on accel row earns nothing
+        let flat = BuyHeuristic { growth_accel_weight: 1.0, ..d.clone() };
+        assert!(ex(&q, &flat).contains("Adds nothing here: last year did not beat its long-run rate."));
+        // the In short cut reconciles: undoing the biggest cut by hand gives the printed number
+        let p = score_parts(&q, &d).unwrap();
+        let f = [p.proximity, p.value, p.damp].into_iter().fold(1.0, f64::min);
+        if f < 1.0 {
+            let undone = format!("without it the score would be {:.2}.", (p.score - p.liq_bonus) / f + p.liq_bonus);
+            assert!(s.contains("In short:") && ex(&q, &d).contains(&undone), "{s}");
+        }
+        let flagged = Quote { brk_held: true, super_buyers: 6, social_tip: true, ..q.clone() };
+        let all = BuyHeuristic { growth_brk_held_boost: 1.2, growth_superinvestor_boost: 1.1, growth_superinvestor_step: 3, growth_social_boost: 1.05, ..d.clone() };
+        let b = ex(&flagged, &all);
+        assert!(b.contains("Berkshire Hathaway holds it (its newest 13F filing): ×1.20."), "{b}");
+        assert!(b.contains("6 superinvestors bought it last quarter: ×1.10 per 3 buyers = ×1.210."), "{b}");
+        assert!(b.contains("Social tip: the Social table names it"), "{b}");
+        assert!(b.contains("Bonuses multiply it by ×1.525."), "{b}");
+        let only = ex(&Quote { social_tip: true, ..q.clone() }, &all);
+        assert!(!only.contains("Berkshire Hathaway holds") && !only.contains("superinvestors bought"), "×1.00 parts are not printed");
+        assert!(!s.contains("Bonuses multiply"), "{s}");
+    }
+
+    #[test]
+    fn explain_plain_lines_track_every_knob() {
+        // (#477) each row's own knob decides its "Off" line: all off reads 12 of them, all on reads none
+        let q = gate_fixture();
+        let d = BuyHeuristic::default();
+        let ex = |q: &Quote, t: &BuyHeuristic| explain_growth_score(q, t, growth_score(q, t).unwrap()).unwrap();
+        let offs = |s: &str| s.matches("Off in today's settings (weight 0)").count();
+        let all_off = BuyHeuristic {
+            growth_trend_weight: 0.0, growth_accel_weight: 0.0, sharpe_weight: 0.0, calmar_weight: 0.0,
+            quality_weight: 0.0, dividend_weight: 0.0, growth_fund_weight: 0.0, growth_fund_extra: vec![],
+            growth_mom121_weight: 0.0, growth_smoothness_weight: 0.0, growth_underwater_weight: 0.0,
+            growth_proximity_weight: 0.0, growth_value_weight: 0.0, growth_turnover_weight: 0.0, ..d.clone()
+        };
+        let s = ex(&q, &all_off);
+        assert_eq!(offs(&s), 12, "{s}");
+        assert!(s.contains("No row adds strength."), "{s}");
+        let all_on = BuyHeuristic {
+            growth_trend_weight: 1.0, growth_accel_weight: 1.0, sharpe_weight: 1.0, calmar_weight: 1.0,
+            quality_weight: 1.0, dividend_weight: 1.0, growth_fund_weight: 1.0,
+            growth_mom121_weight: 1.0, growth_smoothness_weight: 1.0, growth_underwater_weight: 1.0,
+            growth_proximity_weight: 1.0, growth_value_weight: 1.0, growth_turnover_weight: 1.0, ..d.clone()
+        };
+        assert_eq!(offs(&ex(&q, &all_on)), 0);
+        // either risk half, and an extra alone, switch their row on
+        assert_eq!(offs(&ex(&q, &BuyHeuristic { calmar_weight: 1.0, ..all_off.clone() })), 11);
+        let extra = crate::config::FundTerm { factor: "roic".into(), weight: 0.25, cap: 40.0, neutral: 0.0 };
+        let e = ex(&q, &BuyHeuristic { growth_fund_extra: vec![extra], ..all_off.clone() });
+        assert_eq!(offs(&e), 11, "{e}");
+        assert!(e.contains("roic: return on invested capital: yearly profit per € put into the business, counted up to 40."), "{e}");
+        // the trend cap phrase tracks the cap knob
+        assert!(ex(&q, &BuyHeuristic { long_trend_cap: 30.0, ..d.clone() }).contains("counted up to 30%/yr"));
+        assert!(!ex(&q, &BuyHeuristic { long_trend_cap: 0.0, ..d.clone() }).contains("counted up to"));
+        // the ran-too-far brake says how far above, or that it is not
+        let base = ex(&q, &d);
+        assert!(base.contains("the price is not above its ~200-week average, so no cut."), "{base}");
+        assert!(base.contains("Adds the most: long-run growth 8.60.\n"), "{base}");
+        assert!(!base.contains("Base is below 0"));
+        let ran = Quote { above_ma_pct: 40.0, ..q.clone() };
+        assert!(ex(&ran, &d).contains("the price is 40.0% above its ~200-week average (full brake at 100%)"));
+        let zero = Quote { above_ma_pct: 200.0, ..q.clone() };
+        let z = ex(&zero, &BuyHeuristic { growth_overext_floor: 0.0, ..d.clone() });
+        assert!(z.contains("Cut to zero by trust and ran-too-far brakes."), "{z}");
+        // a base under 0 skips the multipliers; an allowed but positive base does not
+        let neg = BuyHeuristic { growth_allow_negative_scores: true, ..d.clone() };
+        assert!(!ex(&q, &neg).contains("Base is below 0"));
+        let sunk = Quote { underwater_yrs: Some(10.0), ..q.clone() };
+        assert!(ex(&sunk, &BuyHeuristic { growth_underwater_weight: 5.0, ..neg }).contains("Base is below 0, so no multiplier applies."));
+        for f in ["peg_yield", "roic", "roe", "earnings_yield", "fcf_margin", "rev_cagr", "eps_growth", "gross_margin", "op_margin", "net_margin", "rnd_yield"] {
+            assert_ne!(factor_words(f), factor_words("zzz"), "{f} has its own words");
+        }
     }
 
     /// (#344) `col_cell`'s class arms: the dash is for the class a field does not apply to, and ONLY
