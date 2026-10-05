@@ -3813,6 +3813,7 @@ pub fn fund_as_of(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
 pub struct FundFactors {
     pub rev_cagr: Option<f64>,     // revenue CAGR over the lookback (proven top-line compounding)
     pub rev_accel: Option<f64>,    // last-1y revenue growth minus that long CAGR (top-line accelerating)
+    pub fcf_cagr: Option<f64>,     // (#484) free-cash-flow CAGR over the lookback, both ends positive. Display only
     pub gross_margin: Option<f64>, // current gross margin level (pricing power / moat)
     pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
@@ -4072,6 +4073,10 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     };
     let rev_cagr = grow(now.and_then(|r| r.revenue), long_ago.and_then(|r| r.revenue)).map(|c| cagr(c, yrs as f64));
     let rev_1y = grow(now.and_then(|r| r.revenue), yr_ago.and_then(|r| r.revenue));
+    // (#484) the same rate on FCF (`fcf_ttm`'s level, unscaled: a ratio of two levels needs no ÷100); a burn
+    // or a zero at either end is no growth rate at all
+    let fcf = |r: Option<&FundRow>| r.and_then(|r| Some(r.fcf_margin? * r.revenue?)).filter(|f| *f > 0.0);
+    let fcf_cagr = grow(fcf(now), fcf(long_ago)).map(|c| cagr(c, yrs as f64));
     // (P3) same two endpoints, same `grow` positivity guard and the same `cagr` annualiser as rev_cagr
     // above — one definition of a growth rate, per the house rule — then NEGATED so a slow-growing
     // asset base ranks high alongside the other safety factors.
@@ -4197,6 +4202,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     FundFactors {
         rev_cagr,
         rev_accel,
+        fcf_cagr,
         gross_margin: now.and_then(|r| r.gross_margin),
         op_margin: now.and_then(|r| r.op_margin),
         margin_trend,
@@ -5866,6 +5872,7 @@ mod tests {
         let f = FundFactors {
             rev_cagr: Some(1.0),
             rev_accel: Some(2.0),
+            fcf_cagr: None, // (#484) display only, no factor name selects it
             gross_margin: Some(3.0),
             op_margin: Some(4.0),
             margin_trend: Some(5.0),
@@ -6851,6 +6858,14 @@ mod tests {
         assert_eq!((f.fcf_ev_yield, f.sales_ev_yield, f.value_composite), (None, None, None));
         assert_eq!(fund_factors(&[r(None, Some(200.0))], cutoff, 5).fcf_ttm, None);
         assert_eq!(fund_factors(&[r(Some(10.0), None)], cutoff, 5).fcf_ttm, None);
+        // (#484) FCF 20 now vs 10 five years back = +100% -> 14.9%/yr; a burn at either end -> None
+        let old = |fcf: f64| FundRow { filed: NaiveDate::from_ymd_opt(2019, 2, 1).unwrap(), ..r(Some(fcf), Some(100.0)) };
+        let g = |rows: &[FundRow]| fund_factors(rows, cutoff, 5).fcf_cagr.map(|g| (g * 10.0).round() / 10.0);
+        assert_eq!(g(&[old(10.0), r(Some(10.0), Some(200.0))]), Some(14.9));
+        assert_eq!(g(&[old(-10.0), r(Some(10.0), Some(200.0))]), None);
+        assert_eq!(g(&[old(10.0), r(Some(-10.0), Some(200.0))]), None);
+        assert_eq!(g(&[old(10.0), r(Some(0.0), Some(200.0))]), None, "zero FCF now is no rate");
+        assert_eq!(g(&[r(Some(10.0), Some(200.0))]), None, "under 5 years filed");
         // FCF 20 over EV 2·40 + 20 = 100 -> 20%; a negative FCF drops out, never ranks last
         assert_eq!(ev_ebitda_yield(f.fcf_ttm, Some(2.0), Some(20.0), 40.0), Some(20.0));
         assert_eq!(ev_ebitda_yield(Some(-20.0), Some(2.0), Some(20.0), 40.0), None);

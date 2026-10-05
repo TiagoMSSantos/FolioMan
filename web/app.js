@@ -95,9 +95,9 @@ const VIEW = {
   "5Y": "returns", "8Y": "returns", "20Y": "returns", "S-8Y": "returns",
   VOL: "risk", MAXDD: "risk", R2: "risk", "ABV-MA": "risk", "OFF-HI": "risk", TURNOVER: "risk",
   "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk", "INT-COV": "risk",
-  MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
+  MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "FCF-5Y": "value", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
-  MVRV: "value", ROIC: "value", "FCF%": "value", "INS-B/S": "value",
+  MVRV: "value", ROIC: "value", "FCF%": "value", FAIR: "value", "MOS%": "value", "INS-B/S": "value",
   "TOP10%": "risk", "TD-1Y": "value", "TD-5Y": "value",
   "FCF-YLD": "value", "P/S": "value", "EV/EBITDA": "value",
 };

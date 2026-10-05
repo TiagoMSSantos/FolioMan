@@ -3670,6 +3670,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; — = a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
+    // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; n/a = cash burn, or under 5 years of FCF filed" },
+    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; n/a as FAIR" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
     ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed, or EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
@@ -3683,6 +3686,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record, or trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before" },
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 7, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; n/a = under 5 years filed" },
+    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 7, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; n/a = under 5 years filed, or a cash burn at either end" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
     ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps; — = a bank or insurer, where interest is the cost of doing business" },
@@ -4049,7 +4053,15 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "net" if stock_only_na => "—".to_string(),
         "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // (#463) the 5y fund_factors levels the live enrich already fills
-        "rev5y" | "opm" | "mtrend" if stock_only_na => "—".to_string(),
+        "rev5y" | "opm" | "mtrend" | "fcf5y" | "fair" | "mos" if stock_only_na => "—".to_string(),
+        "fcf5y" => quote.fund.as_ref().and_then(|f| f.fcf_cagr).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio
+        "fair" | "mos" => quote
+            .fund
+            .as_ref()
+            .and_then(|f| Some(f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(f.fcf_cagr?)))
+            .and_then(|x| if key == "mos" { Some(format!("{:+.0}%", (x - 1.0) * 100.0)) } else { quote.price_eur.map(|p| format!("€{:.2}", p * x)) })
+            .unwrap_or_else(|| "n/a".to_string()),
         "rev5y" => quote.fund.as_ref().and_then(|f| f.rev_cagr).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "mtrend" => quote.fund.as_ref().and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
@@ -4459,6 +4471,15 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     (stock, etf, crypto)
 }
 
+/// (#484) What one unit of this year's FCF is worth today: 10 years growing at `g_pct` (FCF-5Y, held to
+/// 0-15% so a hot streak never compounds a decade), then 2.5% forever, all discounted at 9%. FAIR ÷ price
+/// = FCF-YLD × this. shortcut: one fixed rate for every stock; a per-name cost of capital if it matters.
+fn dcf_multiple(g_pct: f64) -> f64 {
+    let (r, end) = (1.09, 1.025);
+    let k = (1.0 + g_pct.clamp(0.0, 15.0) / 100.0) / r;
+    (1..=10).map(|t| k.powi(t)).sum::<f64>() + k.powi(10) * end / (r - end)
+}
+
 // The always-"—" columns each lane drops. P/E, ROE, REV-YoY, EPS-YoY, NET% are equity-only; TER/AUM/
 // USE/REPL are ETF-only; MVRV is crypto-only. PEG spans equity AND funds now — one header, two
 // constructions (per-share EPS vs look-through book P/E), both over the same CAGR: stocks drop the
@@ -4471,10 +4492,11 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
-    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc"];
+    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "fair", "mos"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
+    "fcf5y", "fair", "mos",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -7257,7 +7279,28 @@ mod tests {
         assert_eq!(cc("earn", &st, 0.0, None, ""), "n/a", "(#449) no date published");
         st.next_earnings = chrono::NaiveDate::from_ymd_opt(2026, 10, 22);
         assert_eq!(cc("earn", &st, 0.0, None, ""), "10-22");
-        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn"] {
+        // (#484) n/a on a burn or with no 5y FCF rate; then price × FCF-YLD × the multiple
+        assert_eq!(cc("fcf5y", &st, 0.0, None, ""), "n/a", "under 5 years filed");
+        st.fund.as_mut().unwrap().fcf_cagr = Some(4.04);
+        assert_eq!(cc("fcf5y", &st, 0.0, None, ""), "+4.0%");
+        for fcf in [-10.0, 0.0] {
+            st.fund.as_mut().unwrap().fcf_ttm = Some(fcf);
+            assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "FCF {fcf} has no value to discount");
+        }
+        let f = st.fund.as_mut().unwrap();
+        (f.fcf_ttm, f.cap_fund) = (Some(20.0), Some(0.0));
+        assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "no cap, no yield");
+        let f = st.fund.as_mut().unwrap();
+        (f.cap_fund, f.fcf_cagr) = (Some(400.0), None);
+        assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "no 5y FCF rate");
+        st.fund.as_mut().unwrap().fcf_cagr = Some(4.04);
+        assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "no euro price");
+        st.price_eur = Some(50.0);
+        assert_eq!((cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")), ("€44.27".to_string(), "-11%".to_string()), "5% yield × 17.71");
+        // the growth leg is held to 0-15%: 13.08x with no growth, 40.53x at the cap
+        let m = |g: f64| (dcf_multiple(g) * 100.0).round() / 100.0;
+        assert_eq!([m(-5.0), m(0.0), m(15.0), m(30.0)], [13.08, 13.08, 40.53, 40.53]);
+        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "fair", "mos"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }

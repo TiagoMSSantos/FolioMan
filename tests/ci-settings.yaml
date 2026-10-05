@@ -1102,6 +1102,8 @@ widths:
     - nde         # (#447) net debt ÷ EBITDA (stocks only); <0 = net cash, >3 = stretched
     - icov        # (#447) operating profit ÷ interest expense (stocks only); <2 = distress risk
     - fcfy        # (#462) free cash flow ÷ market value (stocks only) — the cash yield a buyer gets
+    - fair        # (#484) 2-stage DCF fair price: FCF grows at FCF-5Y (0-15%) 10y, then 2.5%, at 9% (stocks only; display only)
+    - mos         # (#484) margin of safety, FAIR ÷ price − 1 (stocks only; display only)
     - ps          # (#462) market value ÷ revenue (stocks only) — the value ratio a loss-maker still has
     - evebitda    # (#462) (market value + net debt) ÷ EBITDA (stocks only) — the whole business's price, debt included
     - ter         # ETF expense ratio %/yr — the one cost that compounds against a 40y hold (Börse Frankfurt, then FMP, then Yahoo; ETFs only)
@@ -1114,6 +1116,7 @@ widths:
     - td5y        # (#465) mean yearly tracking difference over the last 5 full years, n/a under 3 (ETFs only)
     - rev-yoy     # newest complete-FY revenue growth vs prior FY (stocks only; report pipeline, top rows enriched)
     - rev5y       # (#463) revenue CAGR over the last 5 filed years (stocks only) — proven top-line compounding
+    - fcf5y       # (#484) free-cash-flow CAGR over the last 5 filed years, both ends positive (stocks only)
     - eps-yoy     # newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
     - net         # newest complete-FY net margin % (stocks only) — profitability quality
     - opm         # (#463) operating margin % (stocks only) — pricing power before interest and tax
