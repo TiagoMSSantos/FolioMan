@@ -2872,6 +2872,79 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     Some(fails)
 }
 
+/// (#476) Switch off the knob behind one of [`gate_failures`]' tags. `young`/`history` move to the 2Y
+/// rung, the `history` notch in [`gate_notches`]. `artifact` has no knob: a repriced bar is not a price
+/// history, so it stays failed.
+fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
+    const OFF: f64 = f64::NEG_INFINITY;
+    match tag {
+        "young" | "history" => (t.growth_min_age_years, t.growth_min_leg_years) = (0.0, t.growth_min_leg_years.min(2.0)),
+        "aum" => t.growth_min_aum_etf = 0.0,
+        "range" => (t.growth_min_range_pct, t.growth_min_range_pct_crypto) = (OFF, OFF),
+        "range8y" => (t.growth_min_range_pct_8y, t.growth_min_range_pct_8y_crypto) = (0.0, 0.0),
+        "cagr" | "cagr-life" => (t.growth_min_cagr, t.growth_min_cagr_etf, t.growth_min_cagr_crypto) = (OFF, 0.0, OFF),
+        "1Y+" => (t.growth_min_1y_pct, t.min_1y_pct_crypto) = (OFF, OFF),
+        "1M-knife" => (t.max_1m_drop_pct, t.max_1m_drop_pct_crypto) = (OFF, OFF),
+        "5Y+" => (t.growth_min_5y_pct, t.growth_min_5y_pct_crypto) = (OFF, OFF),
+        "8Y+" => t.growth_min_8y_pct = OFF,
+        "20Y+" => t.growth_min_20y_pct = OFF,
+        "liquidity" => (t.min_avg_turnover_eur, t.min_avg_turnover_eur_stock) = (0.0, 0.0),
+        "stretch" => t.growth_max_above_ma = 0.0,
+        "lifetime" => t.growth_require_lifetime_uptrend = false,
+        "volatile" => (t.growth_max_vol, t.growth_max_vol_crypto) = (0.0, 0.0),
+        "spike" => t.growth_max_daily_1m = 0.0,
+        "mvrv" => t.crypto_max_mvrv = 0.0,
+        "peg" => (t.growth_max_peg, t.growth_require_peg) = (0.0, false),
+        "margin" => t.growth_min_net_margin = 0.0,
+        "swing" => t.growth_max_margin_swing = 0.0,
+        "dilution" => t.growth_max_dilution_pct = 0.0,
+        "cover" => t.growth_min_interest_cover = 0.0,
+        "fcf" => t.growth_min_fcf_margin = OFF,
+        "netcash" => t.growth_min_net_cash_rev = OFF,
+        "maxdd" => (t.growth_maxdd_cap, t.growth_maxdd_cap_crypto) = (0.0, 0.0),
+        _ => {}
+    }
+}
+
+/// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 2Y rung
+/// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
+fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<&'static str>, Vec<(&'static str, String, bool)>)> {
+    let (mut t, mut tags) = (tuning.clone(), Vec::new());
+    loop {
+        let fails = gate_failures(quote, &t)?;
+        let new: Vec<&str> = fails.iter().map(|f| f.0).filter(|g| *g != "artifact" && !tags.contains(g)).collect();
+        if new.is_empty() {
+            return Some((t, tags, fails));
+        }
+        for g in new {
+            waive_gate(&mut t, g);
+            tags.push(g);
+        }
+    }
+}
+
+/// (#476) The why box's what-if for a name the gates refused: with those gates waived, its score and the
+/// place it would take among `class` (the scores today's ranking gave its own asset class), then the
+/// score walkthrough. `score` is the displayed score under a tuning. Display only: nothing ranks it.
+fn what_if_lines(quote: &Quote, tuning: &BuyHeuristic, class: &[f64], score: impl Fn(&BuyHeuristic) -> Option<f64>) -> String {
+    let Some((t, tags, left)) = waived(quote, tuning) else { return String::new() };
+    let tags = tags.join(", ");
+    if !left.is_empty() {
+        let why: Vec<String> = left.iter().map(|(g, why, _)| format!("{g}: {why}")).collect();
+        return format!("\n  what if: even with {tags} waived it cannot rank — {}", why.join("; "));
+    }
+    let lane = ["coins", "ETFs", "stocks"][asset_class(quote) as usize];
+    match score(&t).filter(|&s| s > 0.0) {
+        None => format!("\n  what if: with {tags} waived it scores at or below the lane floor (0.0), so it still would not rank"),
+        Some(s) => format!(
+            "\n  what if: with {tags} waived it would score {s:.2}, #{} of {} ranked {lane} (display only, nothing ranks it){}",
+            1 + class.iter().filter(|&&c| c > s).count(),
+            class.len() + 1,
+            explain_growth_score(quote, &t, s).unwrap_or_default()
+        ),
+    }
+}
+
 /// (#327) How much older a donor must be before its history is worth borrowing. Under two years the
 /// splice prepends almost nothing and the pair is churn, not evidence.
 pub(crate) const PROXY_MIN_AGE_GAP_YEARS: f64 = 2.0;
@@ -5659,6 +5732,12 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
         None => picks.first(),
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
+    // (#476) a name the gates refused: where it would land with them waived, read off `picks` here because
+    // `print_lane` consumes them
+    let what_if = ctx.explain.filter(|_| target.is_none()).and_then(|t| quotes.iter().find(|q| q.ticker.eq_ignore_ascii_case(t))).map(|q| {
+        let class: Vec<f64> = picks.iter().filter(|(p, _)| asset_class(p) == asset_class(q)).map(|(_, s)| *s).collect();
+        what_if_lines(q, tuning, &class, |t| growth_score(q, t).map(|s| crypto_adj(q, s)))
+    });
     // (#79) the web payload, built from the same `picks` the tables below are about to print — cloned
     // because `print_lane` consumes them, which is a Vec of (&Quote, f64) and therefore ~free. A write
     // failure is deliberately silent: the page's own staleness banner is what reports a stale payload,
@@ -5750,10 +5829,11 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
                     "\n--explain: {t} clears every growth gate but isn't ranked — its score fell to/below the lane floor (0.0), or a better-scoring twin (dual-class / currency listing) took its row."
                 ),
                 Some(f) => format!(
-                    "\n--explain: {t} is scanned but fails {} growth gate{}:\n{}",
+                    "\n--explain: {t} is scanned but fails {} growth gate{}:\n{}{}",
                     f.len(),
                     if f.len() == 1 { "" } else { "s" },
-                    gate_review_lines(&[q], tuning, w.ticker).join("\n")
+                    gate_review_lines(&[q], tuning, w.ticker).join("\n"),
+                    what_if.unwrap_or_default()
                 ),
             },
         }),
@@ -9699,6 +9779,16 @@ mod tests {
         let g2 = explain("TWOG", 5);
         assert!(g2.contains("fails 2 growth gates:"), "the case with no other home in the tool: {g2}");
         assert!(g2.contains("range") && g2.contains("cagr"), "both gates named, not just the first: {g2}");
+        // (#476) …and where it would land with them waived: both trail the three ranked stocks (ONEG's
+        // range 75 still costs it score, TWOG's 72% 8Y is the weakest leg)
+        assert!(g1.contains("with range waived it would score") && g1.contains("#4 of 4 ranked stocks") && g1.contains("SCORE"), "{g1}");
+        assert!(g2.contains("with range, cagr waived") && g2.contains("#4 of 4 ranked stocks"), "{g2}");
+        let mut art = good("ARTF", 300.0);
+        art.perf = legs(&[("1D", 212.9), ("1W", 212.9), ("1M", 212.9), ("1Y", 10.0), ("5Y", 40.0), ("8Y", 300.0)]);
+        assert!(what_if_lines(&art, &tuning, &[], |_| Some(1.0)).contains("cannot rank — artifact"), "a repriced bar has no knob");
+        assert!(what_if_lines(&quotes[4], &tuning, &[], |_| Some(0.0)).contains("at or below the lane floor"));
+        let tie = what_if_lines(&quotes[4], &tuning, &[5.0, 2.0, 1.0], |_| Some(2.0));
+        assert!(tie.contains("score 2.00, #2 of 4 ranked stocks"), "a tie does not outrank it: {tie}");
         // gated-out and unranked-but-clean are DIFFERENT answers; the old catch-all gave one string.
         assert!(gate_failures(&good("TWINB", 200.0), &tuning).is_some_and(|f| f.is_empty()), "fixture must clear every gate");
         let tw = explain("TWINB", 5);
@@ -12265,7 +12355,7 @@ mod tests {
         }
         let mut r = Rng(0x9E37_79B9_7F4A_7C15);
         let d = BuyHeuristic::default();
-        let (mut clears, mut ranks_none) = (0, 0);
+        let (mut clears, mut ranks_none, mut rescued) = (0, 0, 0);
         let mut seen = std::collections::BTreeSet::new();
         for i in 0..DRAWS {
             let mut q = gate_fixture();
@@ -12368,10 +12458,18 @@ mod tests {
             let ranks = growth_score(&q, &t).is_some();
             assert_eq!(fails.as_ref().is_some_and(|f| f.is_empty()), ranks,
                 "draw {i}: gate_failures {fails:?}, scorer ranks={ranks} — the mirror drifted from score_parts");
+            // (#476) every gate the why box waives really is switched off: only a repriced bar, or a
+            // history too short even for the 2Y rung, may still fail; anything else must then rank
+            if let Some((wt, _, left)) = waived(&q, &t) {
+                assert!(left.iter().all(|(g, ..)| matches!(*g, "artifact" | "history")), "draw {i}: waiving left {left:?}");
+                assert_eq!(left.is_empty(), growth_score(&q, &wt).is_some(), "draw {i}: waived {left:?}");
+                rescued += usize::from(left.is_empty() && !ranks);
+            }
             clears += usize::from(ranks);
             ranks_none += usize::from(!ranks);
             seen.extend(fails.into_iter().flatten().map(|(g, ..)| g));
         }
+        assert!(rescued * 20 >= DRAWS, "{rescued} of {DRAWS} draws rescued by waiving: the waiver is unswept");
         assert!(clears * 20 >= DRAWS && ranks_none * 20 >= DRAWS, "{clears} of {DRAWS} draws rank: the sweep is lopsided");
         let missing: Vec<_> = LABELS.iter().filter(|l| !seen.contains(*l)).collect();
         assert!(missing.is_empty(), "no draw fired {missing:?}: those gates are unswept");
