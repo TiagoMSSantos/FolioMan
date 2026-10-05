@@ -1952,6 +1952,23 @@ pub async fn run(args: Vec<String>) {
         ).await)
         .filter(|(_, q)| q.price != "err" && q.price != "no data")
         .collect();
+    // (#480) display only: the shadow-table names the pool holds on no line (a 13D/G stake in a small cap),
+    // priced and filed like a pool stock so their row stops reading n/a. A side list, never `quotes`: no
+    // rank, journal line or universe.json row sees them, and no `$` marks them, since it is their own line.
+    let covered: std::collections::HashSet<String> = quotes.iter().flat_map(|q| [q.ticker.clone(), fetch::us_symbol(&q.ticker)]).collect();
+    let unpriced: Vec<String> = shown.iter().filter(|t| !covered.contains(*t)).cloned().collect();
+    let mut shadow_extra: Vec<Quote> = fetch::quotes(
+        &client, &settings.urls, &fx_cache, &unpriced, settings.dip_days, settings.high_days, false, false,
+        &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
+    )
+    .await
+    .into_iter()
+    .filter(|q| q.price != "err" && q.price != "no data")
+    .collect();
+    let extra_set: std::collections::HashSet<String> = shadow_extra.iter().map(|q| q.ticker.clone()).collect();
+    fetch::enrich_fund_factor(&client, &settings.urls, &mut shadow_extra, &settings.buy_heuristic).await;
+    fetch::enrich_income_stmt(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
+    fetch::enrich_profile(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
@@ -2227,9 +2244,13 @@ pub async fn run(args: Vec<String>) {
         top["attention"] = attention;
         top["berkshire"] = berkshire;
         top["social"] = social;
-        crate::picks::stamp_shadow_cols(&mut top, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
+        // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
+        let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"]], &quotes, &fetch::us_symbol);
+        let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
+        crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
         crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);
         crate::picks::stamp_site(&mut top, &quotes, &fetch::us_symbol); // (#469) after every table is set
+        crate::picks::stamp_site(&mut top, &shadow_extra, &fetch::us_symbol);
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(&web_out, json);
         }
