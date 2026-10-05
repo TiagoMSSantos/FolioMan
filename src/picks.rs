@@ -2350,6 +2350,7 @@ pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))
 
 /// (#334) The multipliers every shipped ranking weight is notched by. PRE-REGISTERED ((#277)/(#278)): fixed
 /// before the first run and never tuned after. ×0 prices the term's keep, ×2 prices "more of it".
+#[cfg(not(target_family = "wasm"))] // its readers (backtest, screen) are native-only
 pub(crate) const WEIGHT_NOTCHES: [f64; 2] = [0.0, 2.0];
 
 /// (#334) [`gate_notches`]' twin for the RANKING weights: each nonzero [`WEIGHT_DIMS`] weight at every
@@ -2357,6 +2358,7 @@ pub(crate) const WEIGHT_NOTCHES: [f64; 2] = [0.0, 2.0];
 /// backtest's WEIGHT SWEEP prices what each notch swaps across the top-10 on past windows, and `screen`
 /// journals what it would swap TODAY (`track::Snapshot::swap`) so `track` can grade it forward. A weight
 /// that ships at 0 yields no row — no multiple of 0 moves it.
+#[cfg(not(target_family = "wasm"))] // its readers (backtest, screen) are native-only
 pub(crate) fn weight_notches(tuning: &BuyHeuristic) -> Vec<(String, BuyHeuristic)> {
     WEIGHT_DIMS
         .iter()
