@@ -753,6 +753,27 @@ pub fn flat_trim_start(dates: &[NaiveDate], closes: &[f64], max_flat_years: f64)
     start
 }
 
+/// (#492) The DAILY head a monthly plateau verdict condemns: the length of the series' leading run of
+/// byte-identical closes, when the MAX-range monthly series of the same ticker — already cut by
+/// [`flat_trim_start`] — starts after the daily window does. 0 otherwise.
+///
+/// THE 10Y DAILY WINDOW CLIPS A PLATEAU BELOW THE BAR THAT JUDGES IT. LLY.DE carries the (#263)
+/// placeholder €44.30 from 2013-02 to 2017-11 (4.8y); the daily fetch starts 2016-10 and sees 1.1y of
+/// it, under `flat_run_max_years` 2.0, so it survived and its fake 10Y leg (+2159%) bought the name full
+/// `trust_factor` (18.5 vs 13.1 honest). The monthly series sees the whole run and already convicted it,
+/// so this borrows that verdict and adds NO threshold of its own.
+///
+/// `r >= 2` because one bar is not a run; `r < n` for the same reason as the trailing guard above.
+/// A monthly series the trim never touched starts no later than the daily one, so this reads 0.
+pub fn clipped_head_trim(dates: &[NaiveDate], closes: &[f64], monthly_first: NaiveDate) -> usize {
+    let n = dates.len().min(closes.len());
+    if n == 0 || monthly_first <= dates[0] {
+        return 0;
+    }
+    let r = closes[..n].iter().take_while(|c| **c == closes[0]).count();
+    if r >= 2 && r < n { r } else { 0 }
+}
+
 /// Whole-life CUMULATIVE return %, REAL (deflated) when `infl` is given — the same treatment
 /// `horizon_changes` gives its >=1Y legs, so this number is comparable to the cells it stands in for.
 /// Same reason for the smoothed endpoint: a long leg is measured against `measure_endpoint`, not the
@@ -5590,6 +5611,26 @@ mod tests {
         assert_eq!(flat_trim_start(&two, &[1.0, 1.0, 2.0, 3.0, 3.0, 4.0], 2.0), 5);
 
         assert_eq!(flat_trim_start(&[], &[], 2.0), 0, "empty in -> no trim");
+    }
+
+    #[test]
+    fn clipped_head_trim_borrows_the_monthly_verdict() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // LLY.DE in miniature: the 10y daily window opens inside the placeholder, the monthly series
+        // (already trimmed) starts after it, so the clipped head goes.
+        let dates = vec![ymd(2016, 10, 5), ymd(2017, 3, 1), ymd(2017, 11, 20), ymd(2017, 12, 1), ymd(2026, 10, 2)];
+        let closes = vec![44.3, 44.3, 44.3, 71.2, 1026.8];
+        assert_eq!(clipped_head_trim(&dates, &closes, ymd(2017, 12, 1)), 3);
+        // a monthly series the trim never touched starts no later than the daily one -> untouched
+        assert_eq!(clipped_head_trim(&dates, &closes, ymd(2016, 10, 1)), 0);
+        assert_eq!(clipped_head_trim(&dates, &closes, ymd(2016, 10, 5)), 0, "same day is not later");
+        // one bar is not a run
+        assert_eq!(clipped_head_trim(&dates, &[44.3, 50.0, 60.0, 71.2, 1026.8], ymd(2017, 12, 1)), 0);
+        // the head is the run and nothing after it, even when the run recurs later
+        assert_eq!(clipped_head_trim(&dates, &[44.3, 44.3, 50.0, 44.3, 9.0], ymd(2017, 12, 1)), 2);
+        // a wholly flat series keeps its bars, same trailing guard as `flat_trim_start`
+        assert_eq!(clipped_head_trim(&dates, &[5.0; 5], ymd(2017, 12, 1)), 0);
+        assert_eq!(clipped_head_trim(&[], &[], ymd(2017, 12, 1)), 0, "empty in -> no trim");
     }
 
     /// (splice) the trimmer must cut a redenomination joint, not real market history: the 0A08.L

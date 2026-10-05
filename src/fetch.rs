@@ -606,6 +606,24 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         }
     };
 
+    // (#492) The monthly series is parsed HERE, before anything reads `chart`: when its plateau verdict
+    // falls inside the 10y daily window, the daily head is the clipped tail of that placeholder, and
+    // every daily metric (life CAGR, year_returns, age, the 10Y leg, `trust_factor`) must start after
+    // it. All parallel arrays cut together, as in `parse_chart`.
+    let lc = chart_long_j.as_deref().and_then(|j| parse_chart_raw(j, ticker));
+    let head = lc
+        .as_ref()
+        .and_then(|lc| lc.dates.first())
+        .map_or(0, |&m| core::clipped_head_trim(&chart.dates, &chart.closes, m));
+    if head != 0 {
+        let cut = chart.dates[head];
+        chart.dates.drain(..head);
+        chart.closes.drain(..head);
+        chart.volumes.drain(..head);
+        chart.divs.retain(|(d, _)| *d >= cut);
+        chart.splits.retain(|(d, _)| *d >= cut);
+    }
+
     // (history_proxy) young listing of an old strategy: splice the configured older twin's closes
     // (rebased at the listing's first bar) UNDER the listing's own series, so every downstream metric
     // (5Y/10Y legs, range, SMA, R², age) reads the strategy's proven history while price/TER/turnover
@@ -675,12 +693,13 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // to daily-only (20Y stays n/a) if the monthly fetch failed.
     let cut = chart.dates[0];
     let (mut long_dates, mut long_closes, mut long_divs) =
-        match chart_long_j.as_deref().and_then(|j| parse_chart_raw(j, ticker)) {
+        match lc {
             Some(lc) => {
                 let keep = lc.dates.iter().take_while(|d| **d < cut).count();
                 // (round 51) monthly series contributed nothing (young listing) — flag the ticker so
                 // the next 30 days of runs skip its useless second fetch.
-                if keep == 0 {
+                // (#492) ...unless it contributed the head cut: that is a verdict, not a young listing.
+                if keep == 0 && head == 0 {
                     LONG_SKIP_NEW.lock().unwrap().push(ticker.to_string());
                 }
                 let mut dates = lc.dates[..keep].to_vec();
@@ -12630,6 +12649,18 @@ pub(crate) mod tests {
         let (m0, m1) = (ago(3400), ago(3200));
         // SEAM: a ×100 monthly head a week before a daily tail, so only the MERGED series shows the step
         let (s0, s1) = (ago(400), ago(200));
+        // (#492) CLIP: the daily window opens on the last 150 days of a 5.3y placeholder (under the 2.0y
+        // bar on its own); the monthly series sees the whole run and starts after it
+        let clip = [(ago(3000), 44.3), (ago(2900), 44.3), (ago(2850), 44.3), (ago(2700), 50.0), (ago(400), 60.0), (last, 70.0)];
+        let with_splits = |body: &str, splits: &[(NaiveDate, f64)]| -> &'static str {
+            let mut v: Value = serde_json::from_str(body).expect("chart_body is json");
+            for (d, r) in splits {
+                let ts = d.and_hms_opt(0, 0, 0).expect("midnight").and_utc().timestamp();
+                v["chart"]["result"][0]["events"]["splits"][ts.to_string()] =
+                    serde_json::json!({"date": ts, "numerator": r, "denominator": 1.0});
+            }
+            Box::leak(v.to_string().into_boxed_str())
+        };
         let (base, client, _) = routed_stub(vec![
             ("USDEUR", chart_body(&[(last, 0.9)], &[], "EUR")),
             (route("8Y", "10y"), chart_body(&[(d0, 1.2), (d1, 2.0), (d2, 1.5), (d3, 2.0), (last, 2.5)], &[(d2, 0.4)], "EUR")),
@@ -12638,6 +12669,8 @@ pub(crate) mod tests {
             (route("SEAM", "max"), chart_body(&[(ago(437), 100.0), (ago(407), 101.0)], &[(ago(437), 5.0)], "EUR")),
             (route("YOUNG", "10y"), chart_body(&[(ago(400), 1.0), (ago(200), 1.2), (last, 1.1)], &[], "EUR")),
             (route("YOUNG", "max"), chart_body(&[(ago(400), 0.8)], &[], "EUR")),
+            (route("CLIP", "10y"), with_splits(chart_body(&clip, &[(ago(2900), 0.5), (ago(400), 0.3)], "EUR"), &[(ago(2900), 2.0), (ago(400), 4.0)])),
+            (route("CLIP", "max"), chart_body(&[(ago(4800), 44.3), (ago(3600), 44.3), (ago(2850), 44.3), (ago(2700), 50.0), (ago(400), 60.0)], &[], "EUR")),
             (route("ZERO", "10y"), chart_body(&[(ago(60), 1.0), (ago(30), 0.0), (last, 1.0)], &[], "EUR")),
             (route("EMPTY", "10y"), chart_body(&[], &[], "EUR")),
         ]);
@@ -12700,6 +12733,18 @@ pub(crate) mod tests {
             assert_eq!(q.tr_cagr, core::tr_life_cagr(&dates, &closes, 0.05), "and its dividend with it");
         } else {
             assert_eq!(q.age_years, core::age_years(&[ago(437), last]), "no trim configured, the head stays");
+        }
+
+        let q = quote_one(&client, &urls, &fx, &tk("CLIP"), 30, 0, false, false, &w, None, false).await;
+        if crate::config::flat_run_max_years() > 0.0 {
+            let (dates, closes) = ([ago(2700), ago(400), last], [50.0, 60.0, 70.0]);
+            assert_eq!(q.age_years, core::age_years(&dates), "the clipped plateau head is cut from the daily series");
+            assert_eq!(q.life_cagr, core::life_cagr(&dates, &closes));
+            assert_eq!(q.tr_cagr, core::tr_life_cagr(&dates, &closes, 0.3), "the dividend inside the plateau goes with it");
+            assert_eq!(q.splits, vec![(ago(400), 4.0)], "and so does the split");
+            assert!(!LONG_SKIP_NEW.lock().unwrap().contains(&tk("CLIP")), "a monthly series that cut the head is not a skip");
+        } else {
+            assert_eq!(q.age_years, core::age_years(&[ago(4800), last]), "no trim configured, the monthly head leads");
         }
 
         // the two savers `quotes` ends with: this run's findings reach the disk, and an earlier run's
