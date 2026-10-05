@@ -215,13 +215,17 @@ pub struct Stats8 {
 }
 
 /// (#469) Company facts for the page only: the NAME link and the SHORT%/TARGET% cells. DISPLAY-ONLY,
-/// filled by `fetch::enrich_profile` (stocks) and `fetch::enrich_etf_cells` (funds' `site`), never scored.
+/// filled by `fetch::enrich_profile` (stocks) and `fetch::enrich_etf_cells` (funds' `site`, (#479) USE/REPL), never scored.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Profile {
     pub site: Option<String>,      // https home page: Nasdaq's CompanyUrl for a stock, the justETF profile for a fund
     pub short_shares: Option<f64>, // FINRA's newest settlement-date short position, in shares
     pub target_pct: Option<f64>,   // Nasdaq's 1-year consensus price target vs the previous close, %
     pub analysts: Option<u32>,     // buy + hold + sell opinions behind that target
+    #[serde(default)]
+    pub use_class: Option<String>, // (#479) justETF's distribution policy as BF's token, read by the USE cell only when BF has none
+    #[serde(default)]
+    pub repl: Option<String>,      // (#479) justETF's replication as BF's token, read by the REPL cell only when BF has none
 }
 
 // (#473) serde's skip test for a count: universe.json carries `super_buyers` on the flagged names alone.

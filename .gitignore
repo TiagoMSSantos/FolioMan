@@ -80,6 +80,7 @@ config/settings.yaml
 .wiki_pageviews_cache.json
 # (#465) yearly ETF tracking differences behind the page's TD-1Y/TD-5Y cells; refetched every 30 days
 .td_cache.json
+.justetf_cells_cache.json
 # (#469) the NAME link + SHORT%/TARGET% facts (Nasdaq + FINRA); refetched every 7 days
 .profile_cache.json
 # last-good venue ISIN lists (fallback across venue outages)

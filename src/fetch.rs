@@ -1953,7 +1953,7 @@ fn profile_of(company: &Value, target: &Value, summary: &Value, short: Option<f6
     let analysts = ["buy", "hold", "sell"].iter().filter_map(|k| consensus?.get(k)?.as_u64()).sum::<u64>() as u32;
     let close = summary.pointer("/data/summaryData/PreviousClose/value").and_then(nasdaq_number).filter(|c| *c > 0.0);
     let target_pct = consensus.and_then(|c| c["priceTarget"].as_f64()).filter(|t| *t > 0.0).zip(close).map(|(t, c)| (t / c - 1.0) * 100.0);
-    core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts) }
+    core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts), ..Default::default() }
 }
 
 /// (#469) A home page as https: http upgraded, a bare host given the scheme, blank = None.
@@ -2055,6 +2055,7 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
                 short_shares: if shorts.is_some() { fresh.short_shares } else { old.short_shares },
                 target_pct: fresh.target_pct.or(old.target_pct),
                 analysts: fresh.analysts.or(old.analysts),
+                ..Default::default()
             };
             if row.1.site.is_none() {
                 // shortcut: a refused Wikipedia lookup leaves the name unlinked for the cache week
@@ -2080,6 +2081,31 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
 const TD_CACHE_PATH: &str = ".td_cache.json";
 /// (#465) TD is published once a year, so a month-old answer is as good as today's.
 const TD_CACHE_DAYS: i64 = 30;
+/// (#479) `{ISIN: ["YYYY-MM-DD", USE, REPL, TOP10%]}` from justETF, for the printed funds with a gap.
+/// Refetched on the TD cache's month: a fund's share class and replication don't move in a month.
+const JUSTETF_CELLS_CACHE_PATH: &str = ".justetf_cells_cache.json";
+type JustEtfCells = (Option<String>, Option<String>, Option<f64>);
+
+/// (#479) DISPLAY ONLY: (USE, REPL, TOP10%) off a justETF profile page, in Börse Frankfurt's tokens
+/// so a cell reads the same whichever source filled it. Physical funds carry the method in a second
+/// span; an unknown wording reads None (n/a), never a guess.
+fn parse_justetf_cells(html: &str) -> JustEtfCells {
+    let val = |id: &str| between(html, &format!("tl_etf-basics_value_{id}\">"), "<").map(str::trim);
+    let use_class = match val("distribution-policy") {
+        Some("Accumulating") => Some("Acc"),
+        Some("Distributing") => Some("Dist"),
+        _ => None,
+    };
+    let repl = match (val("replication"), val("replication-method").unwrap_or("")) {
+        (Some("Synthetic"), _) => Some("Swap"),
+        (Some("Physical"), "Full replication") => Some("Full"),
+        (Some("Physical"), "Optimized sampling") => Some("Opt"),
+        (Some("Physical"), "Sampling") => Some("Samp"),
+        _ => None,
+    };
+    let top10 = between(html, "tl_etf-holdings_top-holdings_weight\">", "%").and_then(|v| v.trim().parse().ok()).filter(|v: &f64| *v > 0.0);
+    (use_class.map(String::from), repl.map(String::from), top10)
+}
 
 /// (#465) The `TD (%)` series in a trackingdifferences.com fund page's `tdChart` block, oldest
 /// year first. A page without the block (the home page an unknown ISIN redirects to) reads empty.
@@ -2094,7 +2120,9 @@ fn td_years(html: &str) -> Vec<f64> {
 /// (#465) DISPLAY ONLY: TOP10% (the `holdings` the fund P/E already fetched) and the TD-1Y/TD-5Y
 /// series on the funds in `syms`, the printed ETF + CORE rows, then copied to every other listing of
 /// the same fund name, since the ETF table prints each venue. The ISIN comes from inverting
-/// `.isin_cache.json`, so a fund the BF/venue pipeline never resolved reads n/a.
+/// `.isin_cache.json`, so a fund the BF/venue pipeline never resolved reads n/a. (#479) A fund still
+/// missing USE, REPL or TOP10% reads its justETF page; the tokens land on `profile`, never on the
+/// scored `use_of_profits`/`replication`, so no rank moves.
 pub async fn enrich_etf_cells(
     client: &Client,
     urls: &Urls,
@@ -2111,13 +2139,16 @@ pub async fn enrich_etf_cells(
         .collect();
     let mut cache: HashMap<String, (String, Vec<f64>)> =
         read(TD_CACHE_PATH).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut je: HashMap<String, (String, JustEtfCells)> =
+        read(JUSTETF_CELLS_CACHE_PATH).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let today = chrono::Local::now().date_naive();
+    let fresh = |d: &str| cache_age_days(d, today).is_some_and(|a| a < TD_CACHE_DAYS);
     let mut pace = 0; // carried, not branched on the index: see `resolve_eu_listings`
     for q in quotes.iter_mut().filter(|q| syms.contains(&q.ticker)) {
         q.top10 = holdings.get(&q.ticker).map(|h| h.iter().map(|(_, w)| w).sum::<f64>() * 100.0).filter(|s| *s > 0.0);
         let Some(isin) = isins.get(&q.ticker) else { continue };
         q.profile.site = Some(urls.justetf_profile.replace("{isin}", isin)); // (#469) the NAME link
-        if !cache.get(isin).is_some_and(|(d, _)| cache_age_days(d, today).is_some_and(|a| a < TD_CACHE_DAYS)) && !offline() {
+        if !cache.get(isin).is_some_and(|(d, _)| fresh(d)) && !offline() {
             // a small hobby site: one page a second, and only the 2xx answer is believed
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
             pace = 1000;
@@ -2131,16 +2162,33 @@ pub async fn enrich_etf_cells(
             }
         }
         q.td_years = cache.get(isin).map(|(_, t)| t.clone()).unwrap_or_default();
+        let gap = q.use_of_profits.is_none() || q.replication.is_none() || q.top10.is_none();
+        if gap && !je.get(isin).is_some_and(|(d, _)| fresh(d)) && !offline() {
+            tokio::time::sleep(StdDuration::from_millis(pace)).await;
+            pace = 1000;
+            match client.get(urls.justetf_profile.replace("{isin}", isin)).send().await {
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(html) = r.text().await {
+                        je.insert(isin.clone(), (today.to_string(), parse_justetf_cells(&html)));
+                    }
+                }
+                _ => eprintln!("justetf: profile refused {isin}"),
+            }
+        }
+        if let Some((_, (use_class, repl, top10))) = je.get(isin) {
+            (q.profile.use_class, q.profile.repl, q.top10) = (use_class.clone(), repl.clone(), q.top10.or(*top10));
+        }
     }
     let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
-    let by_name: HashMap<String, (Option<f64>, Vec<f64>, Option<String>)> = quotes
+    let _ = std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), serde_json::to_string(&je).unwrap_or_default());
+    let by_name: HashMap<String, (Option<f64>, Vec<f64>, core::Profile)> = quotes
         .iter()
         .filter(|q| syms.contains(&q.ticker))
-        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone(), q.profile.site.clone())))
+        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone(), q.profile.clone())))
         .collect();
     for q in quotes.iter_mut().filter(|q| !syms.contains(&q.ticker)) {
-        if let Some((t, d, site)) = by_name.get(&q.name.to_lowercase()) {
-            (q.top10, q.td_years, q.profile.site) = (*t, d.clone(), site.clone());
+        if let Some((t, d, p)) = by_name.get(&q.name.to_lowercase()) {
+            (q.top10, q.td_years, q.profile) = (*t, d.clone(), p.clone());
         }
     }
 }
@@ -9449,45 +9497,94 @@ pub(crate) mod tests {
         assert!(td_years("<html>home page</html>").is_empty());
     }
 
+    /// (#479) justETF's wording -> BF's tokens: the method span decides a physical fund, a wording
+    /// nobody mapped reads None, and a page without the rows reads nothing at all.
+    #[test]
+    fn parse_justetf_cells_maps_onto_bf_tokens() {
+        let page = |repl: &str, method: &str, policy: &str| {
+            format!(
+                r#"<span class="val" data-testid="tl_etf-basics_value_replication">{repl}</span> (<span class="val2" data-testid="tl_etf-basics_value_replication-method">{method}</span>) <td class="val" data-testid="tl_etf-basics_value_distribution-policy">{policy}</td> <span data-testid="tl_etf-holdings_top-holdings_weight">46.00%</span>"#
+            )
+        };
+        assert_eq!(parse_justetf_cells(&page("Synthetic", "Unfunded swap", "Accumulating")), (Some("Acc".into()), Some("Swap".into()), Some(46.0)));
+        assert_eq!(parse_justetf_cells(&page("Physical", "Full replication", "Distributing")).0.as_deref(), Some("Dist"));
+        assert_eq!(parse_justetf_cells(&page("Physical", "Full replication", "x")).1.as_deref(), Some("Full"));
+        assert_eq!(parse_justetf_cells(&page("Physical", "Optimized sampling", "x")).1.as_deref(), Some("Opt"));
+        assert_eq!(parse_justetf_cells(&page("Physical", "Sampling", "x")).1.as_deref(), Some("Samp"));
+        assert_eq!(parse_justetf_cells(&page("Physical", "Lending", "Other")), (None, None, Some(46.0)));
+        assert_eq!(parse_justetf_cells("<html>home</html>"), (None, None, None));
+        assert_eq!(parse_justetf_cells(r#"tl_etf-holdings_top-holdings_weight">0.00%"#).2, None, "0 is justETF's unknown");
+    }
+
     /// (#465) `enrich_etf_cells`: ZZTDA is fetched (its ISIN off the inverted ISIN cache) and cached,
     /// ZZTDB is served off a fresh cache row while port 1 refuses its stale twin, ZZTDC has no ISIN,
-    /// and ZZTDA2 is not printed but shares ZZTDA's name, so it copies both cells.
+    /// and ZZTDA2 is not printed but shares ZZTDA's name, so it copies both cells. (#479) justETF:
+    /// ZZTDA lacks USE only and ZZTDD TOP10% only, so both read their page; ZZTDB is served off a fresh
+    /// row; ZZTDE has every cell, so its routed page is never read; ZZTDF's page 404s and is not cached.
     #[tokio::test]
     async fn enrich_etf_cells_stamps_printed_funds_and_their_listings() {
         let page = |d: &'static str| -> &'static str { Box::leak(format!("tdChart=x;name:'TD (%)',data:[{d}]").into_boxed_str()) };
         // B is routed so a wrongful refetch of its fresh row would show; E is not, so it answers 404
-        let routes = vec![("ZZISINA", page("0.3,-0.2,")), ("ZZISINB", page("9.9,")), ("ZZISIND", page("0.5,"))];
+        let je_page = |use_: &str, top10: &str| -> &'static str {
+            Box::leak(format!(r#"tl_etf-basics_value_replication">Synthetic< tl_etf-basics_value_distribution-policy">{use_}< tl_etf-holdings_top-holdings_weight">{top10}%"#).into_boxed_str())
+        };
+        let routes = vec![
+            ("je/ZZISINA", je_page("Accumulating", "55.5")),
+            ("je/ZZISINB", je_page("Distributing", "99")),
+            ("je/ZZISIND", je_page("Accumulating", "30")),
+            ("je/ZZISINE", je_page("Accumulating", "77")),
+            ("ZZISINA", page("0.3,-0.2,")),
+            ("ZZISINB", page("9.9,")),
+            ("ZZISIND", page("0.5,")),
+        ];
         let (base, client, _) = routed_stub(routes);
         let mut urls = stub_urls(&base);
         urls.trackingdifferences = format!("{base}{{isin}}");
-        urls.justetf_profile = "https://jetf.example/{isin}".to_string();
-        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE"});
+        urls.justetf_profile = format!("{base}je/{{isin}}");
+        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE", "ZZISINF": "ZZTDF"});
         std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), isin_cache.to_string()).expect("seed isin cache");
         let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).to_string();
         let td = serde_json::json!({"ZZISINB": [ago(0), [0.1]], "ZZISIND": [ago(30), [0.2]], "ZZISINE": [ago(40), [0.7]]});
         std::fs::write(crate::config::data_path(TD_CACHE_PATH), td.to_string()).expect("seed td cache");
+        let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0]]});
+        std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), je.to_string()).expect("seed justetf cache");
         let mut quotes: Vec<core::Quote> =
-            ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+            ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE", "ZZTDF"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
         quotes[3].name = quotes[0].name.to_uppercase();
-        let syms: Vec<String> = ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDD", "ZZTDE"].iter().map(|t| t.to_string()).collect();
+        quotes[0].replication = Some("Full");
+        for q in &mut quotes[4..6] {
+            (q.use_of_profits, q.replication) = (Some("Dist"), Some("Full"));
+        }
+        let syms: Vec<String> = ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDD", "ZZTDE", "ZZTDF"].iter().map(|t| t.to_string()).collect();
         let holdings = HashMap::from([
             ("ZZTDA".to_string(), vec![("X".to_string(), 0.25), ("Y".to_string(), 0.15)]),
             ("ZZTDC".to_string(), vec![("X".to_string(), 0.0)]),
+            ("ZZTDE".to_string(), vec![("X".to_string(), 0.5)]),
         ]);
         enrich_etf_cells(&client, &urls, &mut quotes, &syms, &holdings).await;
         assert!(quotes[0].top10.is_some_and(|t| (t - 40.0).abs() < 1e-9), "{:?}", quotes[0].top10);
         assert_eq!(quotes[0].td_years, vec![0.3, -0.2]);
         assert_eq!(quotes[1].td_years, vec![0.1], "a fresh cache row is served, not refetched");
-        assert_eq!((quotes[1].top10, &quotes[2].td_years), (None, &vec![]), "no holdings, no ISIN");
+        assert_eq!((quotes[2].profile.use_class.as_deref(), &quotes[2].td_years), (None, &vec![]), "no ISIN");
         assert_eq!(quotes[2].top10, None, "zero-weight holdings print n/a, not 0%");
         assert_eq!(quotes[4].td_years, vec![0.5], "a 30-day-old row is stale and refetched");
         assert_eq!(quotes[5].td_years, vec![0.7], "a refused refetch keeps the stale row, never a 404 page's []");
         assert_eq!((quotes[3].top10, &quotes[3].td_years), (quotes[0].top10, &quotes[0].td_years), "same fund name");
         // (#469) the NAME link: the justETF page off the same ISIN, copied like the cells; no ISIN, no link
-        assert_eq!(quotes[0].profile.site.as_deref(), Some("https://jetf.example/ZZISINA"));
+        assert_eq!(quotes[0].profile.site, Some(format!("{base}je/ZZISINA")));
         assert_eq!((&quotes[3].profile.site, &quotes[2].profile.site), (&quotes[0].profile.site, &None));
         let saved = std::fs::read_to_string(crate::config::data_path(TD_CACHE_PATH)).expect("td cache");
         assert!(saved.contains("ZZISINA"), "the fetched answer is cached: {saved}");
+        // (#479) a gap in USE alone reads the page; Yahoo's TOP10% wins over justETF's
+        let cells = |q: &core::Quote| (q.profile.use_class.clone(), q.profile.repl.clone(), q.top10);
+        assert_eq!(cells(&quotes[0]), (Some("Acc".into()), Some("Swap".into()), quotes[0].top10));
+        assert_eq!(cells(&quotes[3]), cells(&quotes[0]), "same fund name copies the justETF tokens too");
+        assert_eq!(cells(&quotes[1]), (None, Some("Opt".into()), Some(12.0)), "a fresh row is served, not refetched");
+        assert_eq!(cells(&quotes[4]), (Some("Acc".into()), Some("Swap".into()), Some(30.0)), "a gap in TOP10% alone reads the page");
+        assert_eq!(cells(&quotes[5]), (None, None, Some(50.0)), "no gap, no justETF read");
+        assert_eq!(quotes[0].replication, Some("Full"), "the scored BF field is never touched");
+        let saved = std::fs::read_to_string(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH)).expect("justetf cache");
+        assert!(saved.contains("ZZISIND") && !saved.contains("ZZISINE") && !saved.contains("ZZISINF"), "{saved}");
     }
 
     /// (#448) A `filingDate` cell before the day ends the walk; on the day, garbled or missing does not.

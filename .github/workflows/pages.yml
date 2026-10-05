@@ -129,6 +129,15 @@ jobs:
           key: folioman-td-${{ github.run_id }}
           restore-keys: folioman-td-
 
+      # (#479) The USE/REPL/TOP10% cells justETF fills for printed funds Börse Frankfurt and Yahoo left
+      # n/a, one profile page per fund with a gap. Its own entry so warm runs refetch nothing for 30 days.
+      - name: Restore justETF cells cache
+        uses: actions/cache@v6
+        with:
+          path: .justetf_cells_cache.json
+          key: folioman-justetf-cells-${{ github.run_id }}
+          restore-keys: folioman-justetf-cells-
+
       # (#469) The NAME link and SHORT%/TARGET% facts: three Nasdaq GETs per stock plus one FINRA query.
       # Its own entry so warm runs refetch only rows a week old or partly refused. (#471) profile2: the
       # rows cached before the Wikipedia fallback hold no site for a week, so start cold once.

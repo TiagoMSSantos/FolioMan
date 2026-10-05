@@ -3675,12 +3675,12 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
-    ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class: Acc reinvests income (tax deferred), Dist pays it out (taxed yearly); n/a or — = only Börse Frankfurt reports it, and this listing is not there" },
-    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index: Full (holds every name), Opt (optimised) or Samp (sampled subset), Swap (a counterparty pays the index), Hybr (hybrid); n/a or — = only Börse Frankfurt reports it, and this listing is not there" },
+    ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class: Acc reinvests income (tax deferred), Dist pays it out (taxed yearly); n/a = neither Börse Frankfurt nor justETF lists this fund" },
+    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index: Full (holds every name), Opt (optimised) or Samp (sampled subset), Swap (a counterparty pays the index), Hybr (hybrid); n/a = neither Börse Frankfurt nor justETF lists this fund" },
     ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's legal home, from its ISIN: IE loses 15% of US dividends to tax by treaty, LU 30% (≈ +0.2%/yr to IE on a US or world fund)" },
-    ColSpec { key: "top10", hdr: "TOP10%", width: 7, right: true, help: "Funds: share of the fund in its 10 biggest holdings; high = a few companies drive the result, whatever the fund's name says" },
-    ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out (trackingdifferences.com)" },
-    ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record" },
+    ColSpec { key: "top10", hdr: "TOP10%", width: 7, right: true, help: "Funds: share of the fund in its 10 biggest holdings; high = a few companies drive the result, whatever the fund's name says; n/a = neither Yahoo nor justETF lists its holdings" },
+    ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out; n/a = trackingdifferences.com doesn't cover this fund" },
+    ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record, or trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before" },
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 7, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; n/a = under 5 years filed" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
@@ -4032,9 +4032,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // ETF share class + replication tokens (BF keyData). Display-only — the price-only CAGR already
         // prices the Dist payout drag, so these inform the BUY (which listing), never the ranking.
         "use" if etf_only_na => "—".to_string(),
-        "use" => quote.use_of_profits.map_or("n/a".to_string(), str::to_string),
+        "use" => quote.use_of_profits.map(str::to_string).or_else(|| quote.profile.use_class.clone()).unwrap_or_else(|| "n/a".to_string()),
         "repl" if etf_only_na => "—".to_string(),
-        "repl" => quote.replication.map_or("n/a".to_string(), str::to_string),
+        "repl" => quote.replication.map(str::to_string).or_else(|| quote.profile.repl.clone()).unwrap_or_else(|| "n/a".to_string()),
         "dom" if etf_only_na => "—".to_string(),
         "dom" => quote.domicile.clone().unwrap_or_else(|| "n/a".to_string()),
         // (#465) look-through concentration and realized cost, stamped on the printed funds
@@ -7013,6 +7013,9 @@ mod tests {
         eq.instrument_type = "ETF".to_string();
         assert_eq!(cc("use", &eq, 0.0, None, ""), "n/a");
         assert_eq!(cc("repl", &eq, 0.0, None, ""), "n/a");
+        // (#479) justETF's tokens fill the gap, and BF wins once it reports
+        (eq.profile.use_class, eq.profile.repl) = (Some("Dist".into()), Some("Opt".into()));
+        assert_eq!((cc("use", &eq, 0.0, None, ""), cc("repl", &eq, 0.0, None, "")), ("Dist".into(), "Opt".into()));
         eq.use_of_profits = Some("Acc");
         eq.replication = Some("Swap");
         assert_eq!(cc("use", &eq, 0.0, None, ""), "Acc");
