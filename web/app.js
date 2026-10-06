@@ -104,7 +104,7 @@ const VIEW = {
   "FCF-YLD": "value cash", "P/S": "value", "EV/EBITDA": "value",
 };
 function view(v) {
-  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social) table")) {
+  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social, #young) table")) {
     const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && !VIEW[th.textContent].split(" ").includes(v));
     for (const tr of t.rows) [...tr.cells].forEach((c, i) => (c.hidden = hide[i]));
   }
@@ -282,6 +282,10 @@ function render(data, prev) {
   if (data.social) {
     document.getElementById("social").replaceChildren(table(data.social, "(no source answered)", help.social));
   }
+  // (#500) CI's payload only, like the shadow tables above; every young stock, never cut.
+  if (data.young) {
+    document.getElementById("young").replaceChildren(table(data.young, "(no stock listed under 5 years)", help.young));
+  }
   // (#456) Only CI's payload carries it, and unlike the shadow tables it describes the BUY% book, which
   // an upload changes: the page has no fund holdings to look a new book through, so it says so.
   document
@@ -305,7 +309,7 @@ function render(data, prev) {
   chooser(Math.max(1, attention, ...sizes), Math.min(...sizes.filter(Boolean)));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, help);
@@ -335,6 +339,7 @@ function glossary(data, help) {
     ["Attention", "attention", [data.attention]],
     ["Berkshire holdings", "berkshire", [data.berkshire]],
     ["Social Arbitrage trading", "social", [data.social]],
+    ["Young", "young", [data.young]],
   ]) {
     const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];
     const known = heads.filter((h) => help[part]?.[h]);

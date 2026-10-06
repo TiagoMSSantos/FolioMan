@@ -22,8 +22,8 @@ try {
   // (#438) `attention` too: screen fetches it from Wikimedia, the engine has no feed, and an upload keeps CI's.
   // (#440) `berkshire` likewise, from SEC's 13F filings. (#444) `social`, from Dataroma, YouTube and a hand list.
   // (#456) `exposure`, from Yahoo's fund holdings, which the engine does not carry.
-  // (#486) `bonds`, from FRED.
-  const ci = ["attention", "berkshire", "social", "exposure", "bonds"];
+  // (#486) `bonds`, from FRED. (#500) `young`, built by screen alone like the three shadow tables.
+  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);
   const drift = Object.keys(want).filter((k) => !["generated", ...ci].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));

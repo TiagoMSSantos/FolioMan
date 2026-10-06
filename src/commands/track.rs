@@ -135,6 +135,12 @@ pub struct Snapshot {
     /// contract as `sized`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub carry: Vec<(String, Option<f64>)>,
+    /// (#500) THE YOUNG SHADOW: `(ticker, close EUR)` for every stock the page's Young table lists
+    /// (`picks::young`, listed under `picks::YOUNG_YEARS`), in its revenue-growth order. The `history`
+    /// gate refuses every one of them, so no other list prices them and they carry their own close.
+    /// [`young_section`] grades the set against the book the line bought. Same serde contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub young: Vec<(String, Option<f64>)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -205,6 +211,8 @@ pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&s
         let lanes = lanes.chain(snap.exit.iter_mut().map(|(t, p, _)| (&*t, p)));
         // (#337) and the carry, which is nothing but closes
         let lanes = lanes.chain(snap.carry.iter_mut().map(|(t, p)| (&*t, p)));
+        // (#500) and the young shadow, same shape
+        let lanes = lanes.chain(snap.young.iter_mut().map(|(t, p)| (&*t, p)));
         for (ticker, px) in lanes.chain(snap.near.iter_mut().map(|(t, p, _)| (&*t, p))) {
             let factor = factor_since(ticker, then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
@@ -371,6 +379,7 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
                 .chain(s.swap.iter().map(|(t, ..)| t))
                 // (#335) a name that left the book is in no other list that line wrote
                 .chain(s.exit.iter().map(|(t, ..)| t))
+                .chain(s.young.iter().map(|(t, _)| t)) // (#500)
         })
         .cloned()
         .chain(std::iter::once("^GSPC".to_string()))
@@ -1204,6 +1213,49 @@ fn exit_section(
     )
 }
 
+/// (#500) Distinct young names the record must have journalled before the row's reopen bar can clear,
+/// for the reason [`BRK_MIN_NAMES`] gives.
+const YOUNG_MIN_NAMES: usize = 8;
+
+/// (#500) THE YOUNG SHADOW: every stock the page's Young table listed, equal-weight, against the book the
+/// same line bought. Asks whether the `history` gate's refusal of a name too young to own a 5-year leg
+/// costs money, on prices that did not exist when it refused.
+fn young_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let body = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| vec![("yng young minus book", book_rows(s), equal(&s.young))],
+        22,
+        None,
+    );
+    let journalled = snaps.iter().filter(|s| !s.young.is_empty()).count();
+    let names = snaps.iter().flat_map(|s| s.young.iter().map(|(t, _)| t)).collect::<std::collections::HashSet<_>>().len();
+    if body.is_empty() {
+        return format!(
+            "\n  Young shadow: nothing gradeable yet. A line needs a day of age, a book and a priced young name,\n  \
+             and only {journalled} of {} journalled run(s) carry young names. The record starts the run AFTER one\n  \
+             is journalled and cannot be backdated.",
+            snaps.len()
+        );
+    }
+    format!(
+        "\n  Young shadow (#500) — every stock listed under 5 years (the page's Young table, which the `history`\n  \
+         gate keeps out of every ranking) held equal-weight against the book the same line bought. One line a\n  \
+         month. Pre-registered: `yng` flags REOPEN SIGNAL at {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained links,\n  \
+         each with mean AND median above 0, AND {YOUNG_MIN_NAMES}+ distinct young names journalled ({names} so far).\n  \
+         A flag re-opens a young-name admission lane as an A/B round (the (#49) 2Y rung lost in-sample), never\n  \
+         a move. EUR seat, price-only. NOT advice. Journalled on {journalled} of {} run(s).{body}",
+        snaps.len()
+    )
+}
+
 /// (#338) A link's close for `t`, off the later line's own journal: `rows` for the names it ranks, (#335)
 /// `exit` for the ones its book dropped, (#337) `carry` for every other name the earlier line graded.
 /// One price source for every chained reading, the book's included. A non-positive close is no price.
@@ -1469,6 +1521,7 @@ pub async fn run(args: Vec<String>) {
     println!("{}", swap_section(&snaps, today, &px_now, spx_now)); // (#334)
     println!("{}", ladder_section(&snaps, today, &px_now, spx_now)); // (#335)
     println!("{}", exit_section(&snaps, today, &px_now, spx_now));
+    println!("{}", young_section(&snaps, today, &px_now, spx_now)); // (#500)
     println!("{}", chain_section(&snaps)); // (#336)
     if push {
         let delivered = fetch::push(
@@ -1498,7 +1551,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(),
         }
     }
 
@@ -2032,6 +2085,23 @@ mod tests {
         assert!(out.contains("(1 distinct soc names so far)"), "{out}");
     }
 
+    /// (#500) The `yng` row holds every young name equal-weight against the line's book, and the reopen
+    /// prose counts distinct young names across the whole record; no young name, nothing graded.
+    #[test]
+    fn young_section_grades_the_young_set_against_the_book() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let px = |t: &str| Some(match t { "Y1" => 300.0, "Y2" => 100.0, _ => 110.0 });
+        let rows: Vec<(&str, Option<f64>)> = ["A", "B"].map(|t| (t, Some(100.0))).to_vec();
+        let bare = snap("2026-01-01", Some(100.0), &rows);
+        assert!(young_section(std::slice::from_ref(&bare), today, &px, Some(100.0)).contains("nothing gradeable yet"));
+        let s = Snapshot { young: vec![("Y1".into(), Some(100.0)), ("Y2".into(), Some(100.0))], ..bare };
+        let out = young_section(&[s], today, &px, Some(100.0));
+        let row = out.lines().find(|l| l.trim_start().starts_with("yng young minus book")).unwrap_or_default();
+        // young holds Y1 (+200%) and Y2 (0%) = +100%; the book A, B = +10%
+        assert!(row.contains(" 1 line(s)") && row.contains("+90.0pp"), "{row}");
+        assert!(out.contains("(2 so far)") && out.contains("Journalled on 1 of 1 run(s)"), "{out}");
+    }
+
     /// (#285) The MOMENTUM-lane grade: `snap.rows` cut at [`BOOK`], which is what every assertion
     /// written before this round grades. A shim rather than an inline call because `grade` now takes
     /// the list alongside the snapshot, and a temporary `&snap(..)` cannot lend both at once.
@@ -2138,6 +2208,12 @@ mod tests {
         carried[0].carry = vec![("AAA".into(), Some(100.0)), ("BBB".into(), Some(50.0))];
         assert_eq!(adjust_for_splits(&mut carried, &factor), 1, "{:?}", carried[0].carry);
         assert_eq!(carried[0].carry, vec![("AAA".into(), Some(10.0)), ("BBB".into(), Some(50.0))]);
+
+        // (#500) and the young shadow's own close
+        let mut young = vec![snap("2024-06-01", Some(5000.0), &[])];
+        young[0].young = vec![("AAA".into(), Some(100.0)), ("BBB".into(), Some(50.0))];
+        assert_eq!(adjust_for_splits(&mut young, &factor), 1, "{:?}", young[0].young);
+        assert_eq!(young[0].young, vec![("AAA".into(), Some(10.0)), ("BBB".into(), Some(50.0))]);
 
         // (#323) and the near-miss tail, which `near_section` grades the same way
         let mut neared = vec![with_near(
@@ -2495,8 +2571,9 @@ mod tests {
         );
         let s = with_swap(s, &[("SW", Some(1.0), "quality_weight x2", true)]); // (#334) an entrant past the book
         let s = with_exit(s, &[("EX", Some(1.0), false)]); // (#335) a name that left the book
+        let s = Snapshot { young: vec![("YG".into(), Some(1.0))], ..s }; // (#500) a name no gate passes
         let mut want: Vec<String> = names[..BOOK].to_vec();
-        want.extend(["BTC-EUR", "CORE", "EX", "NM", "R10", "SW", "^GSPC"].map(String::from));
+        want.extend(["BTC-EUR", "CORE", "EX", "NM", "R10", "SW", "YG", "^GSPC"].map(String::from));
         want.sort();
         assert_eq!(fetch_set(&[s.clone(), s]), want, "sorted, deduped across lanes and lines");
     }

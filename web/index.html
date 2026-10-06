@@ -19,7 +19,7 @@
   <nav class="sub" aria-label="sections">
     <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
-    <a href="#h-social">Social</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
+    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
   </nav>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
@@ -134,6 +134,20 @@
     change this table.
   </details>
   <div id="social"></div>
+  <!-- (#500) stocks too young for the 5-year history gate, shown and never ranked: the track yng row reads it. -->
+  <h2 title="Stocks listed less than 5 years ago, fastest revenue growth first. The rankings above need a 5-year record, so none of these can rank yet" id="h-young">Young (listed under 5 years) — shadow, NOT a buy signal</h2>
+  <details class="note" id="young-note">
+    <summary>about this table</summary>
+    Every stock the screen prices that has been listed for less than 5 years (YRS), including the big
+    US IPOs of the last 5 years (an offer of $1 billion or more on Nasdaq's IPO calendar, SPACs left out).
+    The rankings above need at least a 5-year price record, so a young stock cannot rank there however
+    well it does; this table is where to watch it. Rows sort by REV-YoY, the newest full year's revenue
+    growth, fastest first; a stock with no revenue figure is listed last, not dropped. A short record is
+    a real risk: a young stock has not yet been through a full cycle, and a fast-growing year can be a
+    peak. Each run journals these names and <code>track</code> grades them against the bought book, to
+    learn whether keeping young stocks out costs money. An uploaded settings.yaml does not change this table.
+  </details>
+  <div id="young"></div>
 
   <!-- (#249) The footer table `screen` prints below its three rankings, published because its
        cumulative columns cover the spans the tables above carry (2Y/5Y/20Y) and longer ones — a row

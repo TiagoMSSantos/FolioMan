@@ -4911,6 +4911,12 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
         ("WHY", "The hand list's claim, else the newest video title, else the 13D/G, ARK or insider filing, else the superinvestor count; click to open that source"),
     ]);
+    // (#500) the rest of the Young table's headers are the stock columns, stamped by `stamp_shadow_cols`
+    let young = fixed(&[
+        num,
+        ("TICKER", ticker),
+        ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
+    ]);
     let exposure = fixed(&[
         ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),
         ("NAME", "The sector, currency, group size or company ticker; ? = the data source served nothing for the funds named in DETAIL"),
@@ -4935,6 +4941,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("attention", attention),
         ("berkshire", berkshire),
         ("social", social),
+        ("young", young),
         ("exposure", exposure),
     ])
 }
@@ -5048,6 +5055,44 @@ pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
     payload["help"]["lanes"]["INDEX"] = INDEX_HELP.into();
 }
 
+/// (#500) Listing age under which a stock is "young": the shortest leg the `history` gate ranks on
+/// (`growth_min_leg_years`, 5), so these can only show here, never in the book.
+pub const YOUNG_YEARS: f64 = 5.0;
+
+/// (#500) The Young table's names: every stock listed under [`YOUNG_YEARS`], fastest newest-year
+/// revenue growth first. A name with no revenue figure sorts last and is never dropped; ties break on
+/// ticker. `screen` adds them to the fundamentals pool, so a printed n/a is a real gap.
+pub fn young(quotes: &[Quote]) -> Vec<&Quote> {
+    let rev = |q: &Quote| q.rev_yoy.filter(|v| v.is_finite()).unwrap_or(f64::NEG_INFINITY);
+    let mut v: Vec<&Quote> = quotes
+        .iter()
+        .filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY") && q.age_years.is_some_and(|a| a < YOUNG_YEARS))
+        .collect();
+    v.sort_by(|a, b| rev(b).total_cmp(&rev(a)).then_with(|| a.ticker.cmp(&b.ticker)));
+    v
+}
+
+/// (#500) The page's Young table in the shadow tables' `[header, cell]` shape: rank, ticker, name.
+/// [`stamp_shadow_cols`] appends the stock columns, YRS and REV-YoY among them. Display only, no BUY%.
+pub fn young_rows(quotes: &[Quote]) -> serde_json::Value {
+    young(quotes)
+        .iter()
+        .enumerate()
+        .map(|(i, q)| serde_json::json!([["#", (i + 1).to_string()], ["TICKER", q.ticker], ["NAME", q.name]]))
+        .collect()
+}
+
+/// (#500) The terminal's one line for the same table: how many, and the first `n` with their revenue growth.
+pub fn young_line(quotes: &[Quote], n: usize) -> String {
+    let all = young(quotes);
+    let head: Vec<String> = all
+        .iter()
+        .take(n)
+        .map(|q| format!("{} {}", q.ticker, q.rev_yoy.filter(|v| v.is_finite()).map_or("n/a".to_string(), |v| format!("{v:+.0}%"))))
+        .collect();
+    format!("young (<{YOUNG_YEARS:.0}y listed, shadow, NOT ranked): {} stock(s), by revenue growth: {}", all.len(), head.join(", "))
+}
+
 /// (#458) Columns the shadow tables leave out: their own TICKER/NAME already lead the row, RANK/SCORE/S-8Y
 /// rank a lane these rows are not in, and INS-B/S/EARN are fetched for printed stocks only, so they would
 /// read n/a on nearly every shadow row.
@@ -5062,7 +5107,7 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &
     let cols: Vec<&ColSpec> = lane_columns(w, HIDE_STOCK).into_iter().filter(|c| !HIDE_SHADOW.contains(&c.key)).collect();
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q))); // the exact ticker wins over a twin
-    for table in ["attention", "berkshire", "social"] {
+    for table in ["attention", "berkshire", "social", "young"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let quote = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).and_then(|t| by.get(t));
@@ -5085,7 +5130,7 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &
 /// builders, so the twins ride in universe.json.
 pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Quote>, w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
     let cols = lane_columns(w, HIDE_STOCK);
-    for table in ["stocks", "attention", "berkshire", "social"] {
+    for table in ["stocks", "attention", "berkshire", "social", "young"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default().to_string();
@@ -5109,7 +5154,7 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
 pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn(&str) -> String) {
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q)));
-    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social"] {
+    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default();
@@ -10411,6 +10456,33 @@ mod tests {
         for (t, i) in [("stocks", 1), ("stocks", 2), ("berkshire", 1)] {
             assert_eq!(p[t][i][1], serde_json::json!(["NAME", "n", "https://old"]), "{t}[{i}] untouched");
         }
+    }
+
+    /// (#500) Young = an equity listed under 5 years: fastest revenue growth first, a missing or NaN
+    /// figure last (ticker order among them), never dropped; a fund, an old stock or an unknown age is out.
+    #[test]
+    fn young_lists_recent_stocks_by_revenue_growth() {
+        let q = |t: &str, kind: &str, age: Option<f64>, rev: Option<f64>| Quote {
+            instrument_type: kind.to_string(),
+            age_years: age,
+            rev_yoy: rev,
+            ..Quote::stub(t, "€1", "", &format!("{t} Inc"))
+        };
+        let quotes = [
+            q("SLOW", "EQUITY", Some(1.0), Some(5.0)),
+            q("NONE", "EQUITY", Some(2.0), None),
+            q("FAST", "EQUITY", Some(4.9), Some(175.0)),
+            q("NAN", "EQUITY", Some(3.0), Some(f64::NAN)),
+            q("OLD", "EQUITY", Some(5.0), Some(500.0)),
+            q("FUND", "ETF", Some(1.0), Some(500.0)),
+            q("NOAGE", "EQUITY", None, Some(500.0)),
+        ];
+        let got: Vec<&str> = young(&quotes).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, ["FAST", "SLOW", "NAN", "NONE"]);
+        assert_eq!(young_rows(&quotes)[0], serde_json::json!([["#", "1"], ["TICKER", "FAST"], ["NAME", "FAST Inc"]]));
+        assert_eq!(young_rows(&quotes).as_array().map(Vec::len), Some(4));
+        assert_eq!(young_line(&quotes, 2), "young (<5y listed, shadow, NOT ranked): 4 stock(s), by revenue growth: FAST +175%, SLOW +5%");
+        assert!(young_line(&quotes, 9).ends_with("SLOW +5%, NAN n/a, NONE n/a"), "{}", young_line(&quotes, 9));
     }
 
     #[test]
