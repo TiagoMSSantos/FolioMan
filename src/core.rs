@@ -4166,7 +4166,19 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     // (#484) the same rate on FCF (`fcf_ttm`'s level, unscaled: a ratio of two levels needs no ÷100); a burn
     // or a zero at either end is no growth rate at all
     let fcf = |r: Option<&FundRow>| r.and_then(|r| Some(r.fcf_margin? * r.revenue?)).filter(|f| *f > 0.0);
-    let fcf_cagr = grow(fcf(now), fcf(long_ago)).map(|c| cagr(c, yrs as f64));
+    // (#498) ...and when the yrs-back row filed NO FCF figure (a company-private capex tag the free API
+    // omits: NVDA's FY2013-21), the OLDEST newer row >= 3y before `now` that has one stands in, over its
+    // own span. A burn is a figure, so it still reads None; no such row -> None, as before.
+    let fcf_from = match (now, long_ago) {
+        (Some(n), Some(old)) if old.fcf_margin.is_none() => rows
+            .iter()
+            .filter(|r| r.filed <= cutoff && r.fcf_margin.is_some() && r.period_end > old.period_end)
+            .filter(|r| (n.period_end - r.period_end).num_days() >= 3 * 365)
+            .min_by_key(|r| r.period_end)
+            .map(|r| (r, (n.period_end - r.period_end).num_days() as f64 / 365.25)),
+        _ => long_ago.map(|r| (r, yrs as f64)),
+    };
+    let fcf_cagr = fcf_from.and_then(|(r, span)| grow(fcf(now), fcf(Some(r))).map(|c| cagr(c, span)));
     // (P3) same two endpoints, same `grow` positivity guard and the same `cagr` annualiser as rev_cagr
     // above — one definition of a growth rate, per the house rule — then NEGATED so a slow-growing
     // asset base ranks high alongside the other safety factors.
@@ -7011,6 +7023,17 @@ mod tests {
         assert_eq!(g(&[old(10.0), r(Some(-10.0), Some(200.0))]), None);
         assert_eq!(g(&[old(10.0), r(Some(0.0), Some(200.0))]), None, "zero FCF now is no rate");
         assert_eq!(g(&[r(Some(10.0), Some(200.0))]), None, "under 5 years filed");
+        // (#498) the 5y-back row has no FCF figure: the oldest newer row >= 3y back stands in, over its span
+        let at = |y: i32, fcf: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 1, 1).unwrap(),
+            ..r(fcf, Some(100.0))
+        };
+        let now = FundRow { filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(), period_end: NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(), ..r(Some(20.0), Some(100.0)) };
+        let nvda = [at(2017, Some(1.0)), at(2019, None), at(2021, Some(10.0)), at(2022, Some(15.0)), now.clone()];
+        assert_eq!(g(&nvda), Some(26.0), "2021 -> 2024, exactly 3y (1095 days): x2 over 3y");
+        assert_eq!(g(&[at(2019, None), at(2022, Some(10.0)), now.clone()]), None, "2y is too short to stand in");
+        assert_eq!(g(&[at(2019, Some(-5.0)), at(2021, Some(10.0)), now.clone()]), None, "a burn is a figure, no stand-in");
         // FCF 20 over EV 2·40 + 20 = 100 -> 20%; a negative FCF drops out, never ranks last
         assert_eq!(ev_ebitda_yield(f.fcf_ttm, Some(2.0), Some(20.0), 40.0), Some(20.0));
         assert_eq!(ev_ebitda_yield(Some(-20.0), Some(2.0), Some(20.0), 40.0), None);
