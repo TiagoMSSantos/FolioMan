@@ -1495,7 +1495,7 @@ fn drift_lines(base: &serde_yaml::Mapping, over: &serde_yaml::Mapping) -> Vec<St
     over.iter()
         .filter(|(k, v)| base.get(k).is_none_or(|b| !eq(b, v)))
         .map(|(k, v)| {
-            let from = base.get(k).map(&fmt).unwrap_or_else(|| "?".to_string());
+            let from = base.get(k).map(fmt).unwrap_or_else(|| "?".to_string());
             format!("{} {from}->{}", fmt(k), fmt(v))
         })
         .collect()
