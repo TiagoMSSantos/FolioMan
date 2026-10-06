@@ -3705,7 +3705,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "top10", hdr: "TOP10%", width: 7, right: true, help: "Funds: share of the fund in its 10 biggest holdings; high = a few companies drive the result, whatever the fund's name says; n/a = neither Yahoo nor justETF lists its holdings" },
     ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out; n/a = trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record, or trackingdifferences.com doesn't cover this fund" },
-    ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before" },
+    ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before. ‡ = no annual report yet, so year to date vs the same months a year earlier" },
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 7, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; n/a = under 5 years filed" },
     ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 7, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; n/a = under 3 years filed, or a cash burn at either end" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
@@ -4070,7 +4070,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // newest complete-FY income-statement snapshot (report pipeline; enriched only for displayed
         // stock rows). "—" for ETF/crypto (no income statement); "n/a" = not enriched / no data.
         "rev-yoy" if stock_only_na => "—".to_string(),
-        "rev-yoy" => quote.rev_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "rev-yoy" => quote.rev_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%{}", if quote.rev_ytd { "‡" } else { "" })),
         "eps-yoy" if stock_only_na => "—".to_string(),
         "eps-yoy" => quote.eps_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "net" if stock_only_na => "—".to_string(),
@@ -7594,6 +7594,7 @@ mod tests {
             benchmark: None,        // twin-hint key only; the hint tests set it explicitly
             domicile: None,         // (DOM) display + CORE ordering only; its tests set it explicitly
             rev_yoy: None,          // display-only FY snapshot; cell tests set them explicitly
+            rev_ytd: false,
             eps_yoy: None,
             net_margin_fy: None,
             buyback_yoy: None,

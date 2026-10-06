@@ -371,6 +371,8 @@ pub struct Quote {
     pub benchmark: Option<String>,     // BF benchmark-index name, lowercased at capture (BF normalizes it: same-index funds share the literal string, hedged classes differ). Used ONLY for history_proxy twin HINTS — never scored, never a match key beyond exact `==`
     pub domicile: Option<String>,      // (DOM) fund legal domicile from the ISIN prefix ("IE"/"LU"/"DE"…). DISPLAY + CORE-shortlist ordering (IE first: 15% US-dividend withholding treaty vs LU's 30% ≈ +0.2%/yr on a US/world fund) — never scored; None for stocks/crypto, watchlist-only runs and backtest
     pub rev_yoy: Option<f64>,          // newest COMPLETE-fiscal-year revenue growth (%) vs the prior FY, from the same income-statement pipeline `report` prints. DISPLAY-ONLY (stocks) — the fund-factor family measured null for ranking; enriched only for the displayed top rows, None otherwise/backtest
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rev_ytd: bool,                 // (#504) rev_yoy is year-to-date vs the same months a year earlier: a filer with only 10-Qs (HONA, CBRS). DISPLAY-ONLY, the REV-YoY cell's ‡
     pub eps_yoy: Option<f64>,          // newest complete-FY EPS growth (%) vs the prior FY. DISPLAY-ONLY, same scoping as rev_yoy
     pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
     pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
@@ -471,6 +473,7 @@ impl Quote {
             benchmark: None,
             domicile: None,
             rev_yoy: None,
+            rev_ytd: false,
             eps_yoy: None,
             net_margin_fy: None,
             annual_brief: None,

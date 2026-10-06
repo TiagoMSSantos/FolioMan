@@ -919,6 +919,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         domicile: meta.dom,
         // (REV-YoY/EPS-YoY/NET%/BUYBK + trend line) filled later by enrich_income_stmt for the DISPLAYED stock rows only
         rev_yoy: None,
+        rev_ytd: false,
         eps_yoy: None,
         net_margin_fy: None,
         buyback_yoy: None,
@@ -1625,7 +1626,22 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
             // fundamentals footer. Zero extra requests — this was fetched and discarded before.
             q.annual_brief = core::annual_brief(&annual).map(|b| format!("{b}  [{source}]"));
         }
+        if q.rev_yoy.is_none() {
+            q.rev_yoy = fetch_sec_ytd_rev_yoy(client, urls, &q.ticker).await;
+            q.rev_ytd = q.rev_yoy.is_some();
+        }
     }
+}
+
+/// (#504) One companyfacts read for a filer whose REV-YoY is still None after the annual pipeline.
+/// shortcut: uncached, so ~a dozen 10-Q-only IPOs spend a budget slot each run; cache when SEC runs short.
+#[mutants::skip] // (#504) async network shell; `sec_ytd_rev_yoy` carries the tests
+async fn fetch_sec_ytd_rev_yoy(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    let cik = sec_cik(client, urls, ticker).await?;
+    if SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+        return None;
+    }
+    sec_ytd_rev_yoy(&sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent).await?)
 }
 
 // ── (Item 4) SEC EDGAR insider (Form 4) lane ───────────────────────────────────────────────────────
@@ -3691,6 +3707,34 @@ fn money_unit(g: &Value, tags: &FactTags) -> Option<String> {
         }
     }
     count.iter().max_by_key(|&(k, n)| (*n, *k == "USD", std::cmp::Reverse(*k))).map(|(k, _)| k.to_string())
+}
+
+/// (#504) A filer listed this year has filed no annual report, so it has no SEC rows and REV-YoY read
+/// n/a (HONA, CBRS). Its newest 10-Q carries the year-to-date revenue AND the same months a year
+/// earlier, under one concept in one document: growth over that span. us-gaap only: an IPO filing
+/// 10-Qs is a domestic filer.
+fn sec_ytd_rev_yoy(j: &Value) -> Option<f64> {
+    let g = j.pointer("/facts/us-gaap")?;
+    let unit = money_unit(g, &US_GAAP_TAGS)?;
+    let day = |x: &Value, k: &str| NaiveDate::parse_from_str(x.get(k)?.as_str()?, "%Y-%m-%d").ok();
+    // (tag, filed, start, end, value) for every 10-Q revenue fact
+    let facts: Vec<(usize, NaiveDate, NaiveDate, NaiveDate, f64)> = US_GAAP_TAGS
+        .rev
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| Some((i, g.get(t)?.get("units")?.get(&unit)?.as_array()?)))
+        .flat_map(|(i, arr)| arr.iter().map(move |x| (i, x)))
+        .filter(|(_, x)| x.get("form").and_then(Value::as_str).is_some_and(|f| f.starts_with("10-Q")))
+        .filter_map(|(i, x)| Some((i, day(x, "filed")?, day(x, "start")?, day(x, "end")?, x.get("val")?.as_f64()?)))
+        .collect();
+    let filed = facts.iter().map(|f| f.1).max()?;
+    // newest end, then the longest span (the year-to-date slice, not the quarter), then the first tag
+    let cur = facts.iter().filter(|f| f.1 == filed).max_by_key(|f| (f.3, f.3 - f.2, std::cmp::Reverse(f.0)))?;
+    let span = (cur.3 - cur.2).num_days();
+    let prior = facts.iter().find(|f| {
+        f.0 == cur.0 && f.1 == filed && f.4 > 0.0 && (350..=380).contains(&(cur.3 - f.3).num_days()) && ((f.3 - f.2).num_days() - span).abs() <= 10
+    })?;
+    Some((cur.4 / prior.4 - 1.0) * 100.0)
 }
 
 /// Newest `end` on any annual-form fact in a taxonomy block.
@@ -9949,6 +9993,48 @@ pub(crate) mod tests {
         assert_eq!(quotes[1].annual_brief, None, "not a target");
         assert_eq!((quotes[0].shares_out, quotes[1].shares_out), (Some(50.0), None), "(#395) MCAP's count is the newest FY's");
         assert_eq!(quotes[2].annual_brief, None, "a fund has no income statement");
+    }
+
+    /// (#504) A 10-Q-only filer's REV-YoY: the newest 10-Q's year-to-date slice against the same months a
+    /// year earlier, off that one document. CBRS's Q2 10-Q is the live shape: its Q1 10-Q (+94.4%) and
+    /// both quarters (+74.3%) sit beside the answer, +84.2%. HONA's 52-53-week calendar shifts the span
+    /// a day. A prior of zero, or a span more than 10 days off, is no comparison.
+    #[test]
+    fn sec_ytd_rev_yoy_reads_the_newest_10q_ytd_against_its_prior_year() {
+        use serde_json::json;
+        let tag = "RevenueFromContractWithCustomerExcludingAssessedTax";
+        let doc = |facts: &[(&str, &str, f64, &str)]| {
+            let arr: Vec<Value> = facts
+                .iter()
+                .map(|(s, e, v, f)| json!({"start": s, "end": e, "val": v, "filed": f, "form": "10-Q"}))
+                .collect();
+            json!({"facts": {"us-gaap": {tag: {"units": {"USD": arr}}}}})
+        };
+        let cbrs = doc(&[
+            ("2025-01-01", "2025-03-31", 99.512, "2026-06-24"),
+            ("2026-01-01", "2026-03-31", 193.406, "2026-06-24"),
+            ("2025-01-01", "2025-06-30", 202.834, "2026-08-12"),
+            ("2025-04-01", "2025-06-30", 103.322, "2026-08-12"),
+            ("2026-01-01", "2026-06-30", 373.516, "2026-08-12"),
+            ("2026-04-01", "2026-06-30", 180.110, "2026-08-12"),
+        ]);
+        let got = sec_ytd_rev_yoy(&cbrs).expect("CBRS YTD");
+        assert!((got - 84.15).abs() < 0.01, "{got}");
+        let hona = doc(&[
+            ("2025-01-01", "2025-06-28", 8363.0, "2026-08-05"),
+            ("2025-03-30", "2025-06-28", 4289.0, "2026-08-05"),
+            ("2026-01-01", "2026-06-27", 8874.0, "2026-08-05"),
+            ("2026-03-29", "2026-06-27", 4522.0, "2026-08-05"),
+        ]);
+        let got = sec_ytd_rev_yoy(&hona).expect("HONA YTD");
+        assert!((got - 6.11).abs() < 0.01, "{got}");
+        let zero = doc(&[("2025-01-01", "2025-06-30", 0.0, "2026-08-12"), ("2026-01-01", "2026-06-30", 10.0, "2026-08-12")]);
+        assert_eq!(sec_ytd_rev_yoy(&zero), None, "a zero prior is no comparison");
+        // current span 180 days; a 170-day prior is 10 off and reads, a 169-day one does not
+        let edge = |start: &str| sec_ytd_rev_yoy(&doc(&[(start, "2025-06-30", 100.0, "2026-08-12"), ("2026-01-01", "2026-06-30", 150.0, "2026-08-12")]));
+        assert_eq!(edge("2025-01-11"), Some(50.0));
+        assert_eq!(edge("2025-01-12"), None);
+        assert_eq!(sec_ytd_rev_yoy(&json!({"facts": {}})), None, "no us-gaap block");
     }
 
     /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost
