@@ -112,6 +112,7 @@ jobs:
           if pool 50 1 | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a 50-equity pool"; exit 1; fi
           if pool 200 1 '[]' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no splits"; exit 1; fi
           pool 200 1 | jq '.quotes[].fund.shares_ttm = 1e8 | .quotes[].close_native = 205' | jq -e -f web/universe-contracts.jq > /dev/null
+          pool 200 1 | jq '.quotes[0].fund.shares_ttm = 322000000 | .quotes[0].close_native = 1.79' | jq -e -f web/universe-contracts.jq > /dev/null  # (#501) HTZ, a real $576M cap
           if pool 200 1 | jq '.quotes[0].fund.shares_ttm = 716.4 | .quotes[0].close_native = 205' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a share count tagged in millions"; exit 1; fi
           if pool 200 1 | jq '.quotes[0].fund.core_factor = 1.5' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a core strip that added earnings"; exit 1; fi
           if pool 200 1 | jq 'del(.quotes[].fund.core_factor)' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no core factor"; exit 1; fi

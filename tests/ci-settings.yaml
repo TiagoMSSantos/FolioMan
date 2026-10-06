@@ -5437,7 +5437,7 @@ buy_heuristic:
                                  #  TESTS: unit (each census shape, FNMA/AIG untouched, the band tie, the ADS restate, the TTM roll per ADS);
                                  #  `backtest_fund_report_is_share_scale_invariant` (every MAA count /1000, the 12-fund report byte-identical; red with the
                                  #  repair off); network: PDD's newest 20-F cover still says FOUR, MCD's live rows repair into 1e8..1e10; Pages' contract
-                                 #  refuses an equity whose shares x close leaves 1e9..2e13 (ci.yml feeds it MDO.DE's 716.4); the journal test bounds every
+                                 #  refuses an equity whose shares x close leaves 1e8..2e13 ((#501) was 1e9: HTZ's real $576M cap red Pages; ci.yml feeds it MDO.DE's 716.4); the journal test bounds every
                                  #  journalled factor and PEG value under 1e4 (largest real: CVNA sgr_yield 543).
                                  #  REVERT RULE: none, both are unit arithmetic. A new ADS with a ratio != 1 is a new `ads_ratio` row.
                                  #── (#426) MEASURED 2026-09-30 — CORE EPS: NON-OPERATING GAINS OFF THE EPS THE PEG PRICES (a mark priced as value) ──
