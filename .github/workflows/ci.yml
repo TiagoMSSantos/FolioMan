@@ -388,6 +388,14 @@ jobs:
             .eu_listing_cache.json
           key: folioman-fetch-${{ github.run_id }}
           restore-keys: folioman-fetch-
+      # (#499) Pages' IPO pond cache, READ-ONLY like the step above; same path as pages.yml's "Restore IPO
+      # cache". Cold, the pond is 60 calendar + ~40 profile GETs (~200s locally); warm, one month.
+      - name: Restore Pages' IPO cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ipo_cache.json
+          key: folioman-ipo-${{ github.run_id }}
+          restore-keys: folioman-ipo-
       # (#352) The monthly history, cached HERE and written by this job only. Live, it was ~90s of the
       # 20y horizon's 143s: ~4700 series at the 60 rps pacer (local: 94s cold vs 5.6s warm). A cache
       # hit is the raw Yahoo payload taking the same parse as a fetch, under the tool's own 7-day

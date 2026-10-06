@@ -6403,7 +6403,92 @@ pub async fn constituent_ponds(client: &Client, urls: &Urls, sectors: &[String])
         }
         ponds.push(pond);
     }
+    // (#499) LAST, so a name another pond already carries keeps that pond's GICS sector
+    if !urls.nasdaq_ipo.is_empty() {
+        let pond: Vec<_> = ipo_pond(client, urls).await.into_iter().filter(|(_, s)| core::sector_matches(s, sectors)).collect();
+        if pond.is_empty() {
+            eprintln!("fetch: Nasdaq IPO calendar unavailable or 0 rows kept — recent IPOs absent from the screen");
+        } else {
+            ponds.push(pond);
+        }
+    }
     ponds
+}
+
+/// (#499) `{"YYYY-MM": [[symbol, sector], ...]}`: one Nasdaq IPO-calendar month, already filtered. A
+/// past month never changes, so it is kept forever; the current month is refetched every run.
+const IPO_CACHE_PATH: &str = ".ipo_cache.json";
+/// (#499) The pond reaches back this many months, current one included: the young table's 5-year span.
+const IPO_MONTHS: u32 = 60;
+/// (#499) A $1B+ offer: a real company raising real money, not a micro-cap or a shell.
+const IPO_MIN_OFFER_USD: f64 = 1.0e9;
+
+/// (#499) The kept symbols of one Nasdaq IPO-calendar answer (`data.priced.rows`): offer >= $1B, a
+/// symbol, and no SPAC (the name says so, or a `…U` unit priced at the $10.00 trust value).
+fn ipo_rows(v: &Value) -> Vec<String> {
+    let rows = v.pointer("/data/priced/rows").and_then(Value::as_array).cloned().unwrap_or_default();
+    rows.iter()
+        .filter_map(|r| {
+            let field = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+            let (sym, name, price) = (field("proposedTickerSymbol"), field("companyName").to_lowercase(), field("proposedSharePrice"));
+            let offer: f64 = field("dollarValueOfSharesOffered").replace(['$', ','], "").parse().ok()?;
+            let spac = ["acquisition", "capital corp", "spac", "merger"].iter().any(|t| name.contains(t))
+                || (sym.ends_with('U') && price == "10.00");
+            (!sym.is_empty() && offer >= IPO_MIN_OFFER_USD && !spac).then_some(sym)
+        })
+        .collect()
+}
+
+/// (#499) Nasdaq's sector words -> the GICS names the constituent ponds carry, so `c` and the sector
+/// mix read one vocabulary. Unknown words pass through; a missing sector reads "other", like a
+/// sector-less CSV row.
+fn gics_of_nasdaq(sector: Option<&str>) -> String {
+    match sector.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("Technology") => "Information Technology",
+        Some("Finance") => "Financials",
+        Some("Basic Materials") => "Materials",
+        Some("Telecommunications") => "Communication Services",
+        Some(s) => s,
+        None => "other",
+    }
+    .to_string()
+}
+
+/// (#499) Every $1B+ US IPO of the last 5 years, as a pond: (Yahoo symbol, GICS sector). Sector is
+/// one Nasdaq profile read per kept name, paid once per month thanks to the cache. A refused month is
+/// not cached, so it is retried next run; only the months on disk feed the pond meanwhile.
+async fn ipo_pond(client: &Client, urls: &Urls) -> Vec<(String, String)> {
+    use chrono::Datelike;
+    let mut cache: BTreeMap<String, Vec<(String, String)>> =
+        std::fs::read(crate::config::data_path(IPO_CACHE_PATH)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let today = chrono::Local::now().date_naive();
+    let months: Vec<String> = (0..IPO_MONTHS)
+        .map(|back| {
+            let m = today.year() * 12 + today.month0() as i32 - back as i32;
+            format!("{}-{:02}", m.div_euclid(12), m.rem_euclid(12) + 1)
+        })
+        .collect();
+    for (i, ym) in months.iter().enumerate() {
+        if i > 0 && cache.contains_key(ym) {
+            continue;
+        }
+        let Some(v) = get_json(client, &urls.nasdaq_ipo.replace("{ym}", ym)).await else { continue };
+        if v.pointer("/data").is_none() {
+            continue;
+        }
+        let mut rows = Vec::new();
+        for sym in ipo_rows(&v) {
+            let profile = get_json(client, &urls.nasdaq_profile.replace("{sym}", &sym)).await;
+            let sector = profile.as_ref().and_then(|p| p.pointer("/data/Sector/value")).and_then(Value::as_str);
+            rows.push((sym.replace('.', "-"), gics_of_nasdaq(sector)));
+        }
+        cache.insert(ym.clone(), rows);
+    }
+    let _ = std::fs::write(crate::config::data_path(IPO_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
+    let mut pond: Vec<(String, String)> = months.iter().filter_map(|m| cache.get(m)).flatten().cloned().collect();
+    pond.sort();
+    pond.dedup_by(|a, b| a.0 == b.0);
+    pond
 }
 
 /// (#44) Ticker -> GICS sector over those ponds, first pond winning (a dual-member keeps its real sector).
@@ -12840,6 +12925,86 @@ pub(crate) mod tests {
         let ponds = constituent_ponds(&client, &urls, &["Technology".to_string()]).await;
         assert_eq!(ponds.len(), 1, "one endpoint served -> one pond");
         assert_eq!(ponds[0], [("AAPL".to_string(), "Technology".to_string())], "Energy filtered out");
+    }
+
+    /// (#499) $1B+ only, SPACs out (by name, or a `U` unit at $10.00), a null symbol skipped.
+    #[test]
+    fn ipo_rows_keep_big_real_offers() {
+        let row = |sym: Value, name: &str, price: &str, offer: &str| {
+            serde_json::json!({"proposedTickerSymbol": sym, "companyName": name, "proposedSharePrice": price, "dollarValueOfSharesOffered": offer})
+        };
+        let v = serde_json::json!({"data": {"priced": {"rows": [
+            row("ARM".into(), "Arm Holdings plc", "51.00", "$4,870,000,000"),
+            row("SMOL".into(), "Small Co", "12.00", "$999,999,999"),
+            row("BIGU".into(), "Big Acquisition Corp", "10.00", "$1,500,000,000"),
+            row("UNTU".into(), "Plain Name Corp", "10.00", "$1,200,000,000"),
+            row(Value::Null, "No Symbol Inc", "20.00", "$2,000,000,000"),
+            row("CRWV".into(), "CoreWeave, Inc.", "40.00", "$1,500,000,000"),
+            row("EXACT".into(), "Exactly A Billion", "18.00", "$1,000,000,000"),
+            row("TENX".into(), "Ten Dollar Inc", "10.00", "$1,100,000,000"),
+            row("SOLU".into(), "Solu Inc", "25.00", "$1,100,000,000"),
+        ]}}});
+        assert_eq!(ipo_rows(&v), vec!["ARM", "CRWV", "EXACT", "TENX", "SOLU"]);
+        assert_eq!(ipo_rows(&serde_json::json!({"data": null})), Vec::<String>::new());
+        assert_eq!(gics_of_nasdaq(Some("Technology")), "Information Technology");
+        assert_eq!(gics_of_nasdaq(Some("Energy")), "Energy");
+        assert_eq!(gics_of_nasdaq(None), "other");
+    }
+
+    /// (#499) The ONE owner of `.ipo_cache.json`. Cold: all 60 months asked, each cached under its
+    /// YYYY-MM, one row per name. Warm: only the current month is asked again. A refused month
+    /// (no `data`) is not cached. `constituent_ponds` appends the pond only when the URL is set.
+    #[tokio::test]
+    async fn ipo_pond_caches_past_months_and_refetches_this_one() {
+        use chrono::Datelike;
+        let path = crate::config::data_path(IPO_CACHE_PATH);
+        let _ = std::fs::remove_file(&path);
+        let cal = r#"{"data": {"priced": {"rows": [
+            {"proposedTickerSymbol": "ARM", "companyName": "Arm", "proposedSharePrice": "51.00", "dollarValueOfSharesOffered": "$4,870,000,000"},
+            {"proposedTickerSymbol": "ZZ.B", "companyName": "Zz", "proposedSharePrice": "20.00", "dollarValueOfSharesOffered": "$2,000,000,000"}]}}}"#;
+        let (base, client, _) = routed_stub(vec![
+            ("/ARM/profile", r#"{"data": {"Sector": {"value": "Technology"}}}"#),
+            ("calendar", cal),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.nasdaq_ipo = format!("{base}calendar?date={{ym}}");
+        urls.nasdaq_profile = format!("{base}{{sym}}/profile");
+        let arm = ("ARM".to_string(), "Information Technology".to_string());
+        let zz = ("ZZ-B".to_string(), "other".to_string());
+        assert_eq!(ipo_pond(&client, &urls).await, vec![arm.clone(), zz.clone()], "60 months, one row per name");
+        let cache: BTreeMap<String, Vec<(String, String)>> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let today = chrono::Local::now().date_naive();
+        let ym = |d: NaiveDate| format!("{}-{:02}", d.year(), d.month());
+        assert_eq!(cache.len(), 60);
+        assert!(cache.contains_key(&ym(today)) && cache.contains_key(&ym(today.checked_sub_months(chrono::Months::new(59)).unwrap())));
+        assert!(!cache.contains_key(&ym(today.checked_sub_months(chrono::Months::new(60)).unwrap())));
+
+        // warm: every month says OLD; the calendar now refuses, so only the current month is asked and it stays OLD
+        let old = ("OLD".to_string(), "Energy".to_string());
+        let seeded: BTreeMap<_, _> = cache.keys().map(|k| (k.clone(), vec![old.clone()])).collect();
+        std::fs::write(&path, serde_json::to_string(&seeded).unwrap()).unwrap();
+        let (base2, client2, asked) = routed_stub(vec![("calendar", r#"{"message": "refused"}"#)]);
+        urls.nasdaq_ipo = format!("{base2}calendar?date={{ym}}");
+        assert_eq!(ipo_pond(&client2, &urls).await, vec![old.clone()], "a refused month keeps what is cached");
+        assert_eq!(asked.try_iter().count(), 1, "past months are never asked again");
+        // the current month answers again: its rows replace the cached ones, past months stay OLD
+        urls.nasdaq_ipo = format!("{base}calendar?date={{ym}}");
+        assert_eq!(ipo_pond(&client, &urls).await, vec![arm.clone(), old, zz]);
+
+        // the pond rides last in `constituent_ponds`, sector-filtered, and only when the URL is set
+        let (csv, csv_client) = stub_server("Symbol,Name,Sector\nAAPL,Apple,Technology");
+        let mut urls3 = stub_urls(&csv);
+        urls3.constituents_csv.clear();
+        urls3.nasdaq_profile = urls.nasdaq_profile.clone();
+        assert_eq!(constituent_ponds(&csv_client, &urls3, &[]).await.len(), 1, "no URL, no pond");
+        urls3.nasdaq_ipo = urls.nasdaq_ipo.clone();
+        let ponds = constituent_ponds(&csv_client, &urls3, &["Technology".to_string()]).await;
+        assert_eq!(ponds.len(), 2);
+        assert_eq!(ponds[1], vec![arm], "Energy OLD and other ZZ-B filtered out");
+        urls3.nasdaq_ipo = format!("{base2}calendar?date={{ym}}");
+        std::fs::write(&path, "{}").unwrap();
+        assert_eq!(constituent_ponds(&csv_client, &urls3, &[]).await.len(), 1, "an empty IPO pond is dropped");
+        let _ = std::fs::remove_file(&path);
     }
 
     /// (#459) A non-http entry reads the repo's own file from disk, and the live list parses whole.

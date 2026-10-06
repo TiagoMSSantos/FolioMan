@@ -20830,6 +20830,13 @@ urls:
     # (#459) hand-kept big US-listed ADRs (TSMC, Novo, SAP, ...) + the 9 Berkshire 13F names no pond
     # carried; a non-http entry is read from disk. Ratios for non-1:1 ADSs live in `core::ads_ratio`.
     - "tests/adr-pond.csv"
+  # (#499) Every $1B+ US IPO of the last 5 years joins the stock pond (`fetch::ipo_pond`), SPACs out.
+  # Asked 2026-10-06 after SNDK (+620% in a year) never showed: a young name fails the 5y history gate
+  # by design, and the IPOs no index CSV carries yet (ARM, CRWV, RIVN, KVUE...) were not even fetched.
+  # They feed the (#500) young table; the gates still keep them out of the book until they have a
+  # record. Census that day: ~40 names. Past months cache forever in `.ipo_cache.json`, the current
+  # month is refetched. REVERT: delete this line, the pond and its requests go with it.
+  nasdaq_ipo: "https://api.nasdaq.com/api/ipo/calendar?date={ym}"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
   # latest Bitcoin NUPL (net unrealized profit/loss), free on-chain sentiment gauge; `screen` prints it after the crypto table

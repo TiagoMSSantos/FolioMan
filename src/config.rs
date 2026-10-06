@@ -955,6 +955,11 @@ pub struct Urls {
     // close the target is read against). Keyless, like nasdaq_earnings. {sym} = US ticker.
     #[serde(default = "default_nasdaq_profile_url")]
     pub nasdaq_profile: String,
+    // (#499) Nasdaq's IPO calendar, {ym} = YYYY-MM: every $1B+ US IPO of the last 5 years joins the
+    // stock pond (`fetch::ipo_pond`). EMPTY is the off switch, so no request is made and every golden
+    // stays byte-identical; CI sets it.
+    #[serde(default)]
+    pub nasdaq_ipo: String,
     #[serde(default = "default_nasdaq_target_url")]
     pub nasdaq_target: String,
     #[serde(default = "default_nasdaq_summary_url")]
