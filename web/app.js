@@ -89,21 +89,23 @@ function apply(n) {
 
 // (#445) Column groups for the three ranked tables, finviz-style. A header NOT listed here shows in
 // every view, so RANK NAME TICKER BUY% (and any column added later) can never be hidden by accident.
+// (#493) A header may sit in several views, space-separated: `cash` regroups the cash-flow and debt
+// columns that `value` and `risk` split, so a phone reader finds them in one pick.
 const VIEW = {
   MARKET: "overview", SECTOR: "overview", DOM: "overview", EARN: "overview", "PRICE(EUR)": "overview", SCORE: "overview",
   CAGR: "returns", YRS: "returns", "1D": "returns", "1W": "returns", "1M": "returns", "2Y": "returns",
   "5Y": "returns", "8Y": "returns", "20Y": "returns", "S-8Y": "returns",
   VOL: "risk", MAXDD: "risk", R2: "risk", "ABV-MA": "risk", "OFF-HI": "risk", TURNOVER: "risk",
-  "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk", "INT-COV": "risk", "SHORT%": "risk",
-  MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "FCF-5Y": "value", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
+  "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk cash", "INT-COV": "risk cash", "SHORT%": "risk",
+  MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "FCF-5Y": "value cash", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
-  MVRV: "value", ROIC: "value", "FCF%": "value", FAIR: "value", "MOS%": "value", "TARGET%": "value", "INS-B/S": "value",
+  MVRV: "value", ROIC: "value", "FCF%": "value cash", FAIR: "value", "MOS%": "value", "TARGET%": "value", "INS-B/S": "value",
   "TOP10%": "risk", "TD-1Y": "value", "TD-5Y": "value",
-  "FCF-YLD": "value", "P/S": "value", "EV/EBITDA": "value",
+  "FCF-YLD": "value cash", "P/S": "value", "EV/EBITDA": "value",
 };
 function view(v) {
   for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social) table")) {
-    const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && VIEW[th.textContent] !== v);
+    const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && !VIEW[th.textContent].split(" ").includes(v));
     for (const tr of t.rows) [...tr.cells].forEach((c, i) => (c.hidden = hide[i]));
   }
   stick();
