@@ -19569,6 +19569,18 @@ buy_heuristic:
                                  #   superinvestor step on purpose. All three boosts multiply: AMZ.DE (11 buyers + hand
                                  #   list) earns x1.33 x 1.05. Same contract: backtest-blind, graded forward by track's
                                  #   `soc` row; return it to 1.0 if that row reads negative.
+  growth_etf_one_per_index: true # (#494) USER DECISION 2026-10-06: one fund per benchmark index. The 2026-10-06 book
+                                 #   held six Nasdaq-100 lines at 3.2% each (19.2%, more than any stock) and five US or
+                                 #   world-IT lines (16%), only because several issuers list each index, so 18 ETF slots
+                                 #   carried about two bets. On: each index keeps its cheapest euro line (the INDEX
+                                 #   cell's `· TICKER`), its twins leave the table and the book, and the freed slots go
+                                 #   to the next clearing names (HOOD on the day). Pins are kept; a fund with no index on
+                                 #   record passes (missing data passes). (#318) refused a twin cap while the book was
+                                 #   supply-bound; its reopen rule (clearing names exceed book_names) held on 2026-10-06.
+                                 #   The book SHORTENS (25 -> ~21 on the day, one refill); unlike (#245)'s vol-target
+                                 #   sizer, the (#313) equal-weight book re-splits over the names left, so nothing strands.
+                                 #   JUDGEMENT, BACKTEST-BLIND (stub quotes carry no benchmark), goldens identical.
+                                 #   REVERT: false, if the freed slots fill with names the track grades worse.
   growth_overext_floor: 0.05     # (#100 / finding C5) READ THIS FIRST: the number written here is NOT
                                  #   the multiplier delivered. `damp = combine_damps(&[trust, overext])`
                                  #   is a 2-slot GEOMETRIC MEAN, so it square-roots the floor. The

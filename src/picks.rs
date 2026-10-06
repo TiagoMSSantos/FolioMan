@@ -3576,6 +3576,13 @@ fn ranked<'a>(
         let fresh = seen.insert(quote.name.as_str());
         pinned.contains(quote.ticker.as_str()) || fresh
     });
+    // (#494) then one fund per benchmark index, the cheapest euro line: six Nasdaq-100 wrappers held
+    // 19.2% of the equal-weight book only because six issuers list it. Pins are kept, like (B).
+    if tuning.growth_etf_one_per_index {
+        let keep = one_per_index(&picks.iter().map(|(q, _)| *q).collect::<Vec<_>>());
+        let mut keep = keep.into_iter();
+        picks.retain(|(quote, _)| keep.next().unwrap_or(true) || pinned.contains(quote.ticker.as_str()));
+    }
     picks
 }
 
@@ -4955,13 +4962,39 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
 }
 
 /// (#446) What the page's INDEX header means, set by [`stamp_index`].
-const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it (justETF's name when Börse Frankfurt has none); ×N = N rows of this table track that same index, so the book holds the same bet N times, and · TICKER names the cheapest of them by TER, a euro-quoted line first so no currency conversion is paid. — = no index on record, so a count can undercount. Display only, never scored";
+const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it (justETF's name when Börse Frankfurt has none); ×N = N rows of this table track that same index, so the book holds the same bet N times, and · TICKER names the cheapest of them by TER, a euro-quoted line first so no currency conversion is paid. When the settings' growth_etf_one_per_index is on, only that line ranks, so ×N then marks a pinned twin. — = no index on record, so a count can undercount. Display only, never scored";
 
 /// (#490) The INDEX count key: Börse Frankfurt's "nasdaq 100 index" and justETF's "Nasdaq 100®" are one index.
 fn index_key(name: &str) -> String {
     let s = name.to_lowercase().replace(['®', '™'], "").replace('-', " ");
     let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
     s.strip_suffix(" index").map_or(s.clone(), str::to_string)
+}
+
+/// (#446) The line a same-index group names: the lowest TER among its euro lines (every line when none is
+/// euro), the first on a tie. (#494) One spelling for the INDEX cell's ` · TICKER` and the line
+/// `growth_etf_one_per_index` keeps, so the page never names one line and buys another.
+fn cheapest_line<'a>(group: &[&'a Quote]) -> Option<&'a Quote> {
+    let eur: Vec<&Quote> = group.iter().copied().filter(|q| !is_noneur_etf(q)).collect();
+    let pool = if eur.is_empty() { group } else { &eur };
+    pool.iter().filter_map(|q| Some((q.ter_shown()?, *q))).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q)
+}
+
+/// (#494) Which ranked rows `growth_etf_one_per_index` keeps: per benchmark index ([`index_key`] over
+/// `Quote::benchmark`, else justETF's `profile.index`, as the INDEX cell counts them), only the
+/// [`cheapest_line`] fund, or the best-ranked one when no line has a TER. Stocks, coins and funds with no
+/// index on record are always kept: twins cannot be proven without a name (non-negotiable #5).
+fn one_per_index(rows: &[&Quote]) -> Vec<bool> {
+    let key = |q: &Quote| quote_is_etf(q).then(|| q.benchmark.as_ref().or(q.profile.index.as_ref()).map(|b| index_key(b))).flatten();
+    let keys: Vec<Option<String>> = rows.iter().map(|q| key(q)).collect();
+    rows.iter()
+        .zip(&keys)
+        .map(|(q, k)| {
+            let Some(k) = k else { return true };
+            let group: Vec<&Quote> = rows.iter().zip(&keys).filter(|(_, o)| o.as_ref() == Some(k)).map(|(g, _)| *g).collect();
+            std::ptr::eq(cheapest_line(&group).unwrap_or(group[0]), *q)
+        })
+        .collect()
 }
 
 /// (#446) The page's INDEX column on ETF rows, right after BUY%: `Quote::benchmark`, with ` ×N` when N
@@ -4989,10 +5022,7 @@ pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
             if group.len() == 1 {
                 return b.to_string();
             }
-            let eur: Vec<&Quote> = group.iter().copied().filter(|q| !is_noneur_etf(q)).collect();
-            let pool = if eur.is_empty() { &group } else { &eur };
-            let cheapest = pool.iter().filter_map(|q| Some((q.ter_shown()?, &q.ticker))).min_by(|a, b| a.0.total_cmp(&b.0));
-            format!("{b} ×{}{}", group.len(), cheapest.map_or(String::new(), |(_, t)| format!(" · {t}")))
+            format!("{b} ×{}{}", group.len(), cheapest_line(&group).map_or(String::new(), |q| format!(" · {}", q.ticker)))
         })
         .collect();
     for (row, cell) in rows.iter_mut().zip(cells) {
@@ -10854,6 +10884,32 @@ mod tests {
         }
         let out = ranked(&quotes, &BuyHeuristic::default(), |_, _| Some(1.0), 0.0, &HashSet::new());
         assert_eq!(out.len(), 2, "a NaN tie-break key must order, not panic");
+    }
+
+    /// (#494) `growth_etf_one_per_index` keeps the cheapest euro line per index, whatever its rank; a USD
+    /// line cheaper still is not it. Another index, a fund with no index and a stock all pass; a pinned
+    /// twin stays; off is the old table.
+    #[test]
+    fn one_fund_per_index_keeps_the_cheapest_euro_line() {
+        let fund = |t: &str, ter: f64, ccy: &str, b: Option<&str>| Quote {
+            quote_currency: Some(ccy.into()),
+            benchmark: b.map(str::to_string),
+            ..core_etf(t, &format!("{t} UCITS ETF"), 1e9, ter)
+        };
+        let quotes = vec![
+            fund("A.DE", 0.30, "EUR", Some("Nasdaq 100 Index")),
+            fund("B.L", 0.10, "USD", Some("nasdaq 100")),
+            fund("C.DE", 0.20, "EUR", Some("NASDAQ-100")),
+            fund("D.DE", 0.20, "EUR", Some("MSCI World")),
+            fund("E.DE", 0.50, "EUR", None),
+            Quote::stub("S", "€1", "", "Stock Inc"),
+        ];
+        let score = |q: &Quote, _: &BuyHeuristic| Some(10.0 - quotes.iter().position(|o| o.ticker == q.ticker).unwrap() as f64);
+        let on = BuyHeuristic { growth_etf_one_per_index: true, ..BuyHeuristic::default() };
+        let tickers = |t: &BuyHeuristic, pins: &HashSet<&str>| ranked(&quotes, t, score, 0.0, pins).iter().map(|(q, _)| q.ticker.clone()).collect::<Vec<_>>();
+        assert_eq!(tickers(&on, &HashSet::new()), ["C.DE", "D.DE", "E.DE", "S"]);
+        assert_eq!(tickers(&on, &HashSet::from(["A.DE"])), ["A.DE", "C.DE", "D.DE", "E.DE", "S"]);
+        assert_eq!(tickers(&BuyHeuristic::default(), &HashSet::new()).len(), 6);
     }
 
     /// (QA) `col_cell` VALUE arms the `screen_columns_config` test leaves at n/a (it uses a bare stub):
