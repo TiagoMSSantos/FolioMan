@@ -3892,11 +3892,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // below); in scoring `life_cagr` appears only as a NEGATIVE guard, the value-trap dock when it
         // is <= 0. So this cell can differ from the CAGR a gate message quotes — by design, and the
         // two now sit side by side rather than one silently standing in for the other.
-        "cagr" => match (quote.life_cagr, quote.young_ret_pct) {
-            (Some(v), _) => format!("{v:+.0}%"),
-            (None, Some(v)) => format!("{v:+.0}%ⁱ"), // (#507) under 6 months: since listing, not per year
-            _ => "n/a".to_string(),
-        },
+        "cagr" => cagr_cell(quote),
         // proven long-term CAGR (%/yr) from the ranked leg — the annualized trend the ranking actually
         // rewards, shown so a reader sees "+14%/yr" and not just a +1344% cumulative blob. This is
         // EXACTLY what `trend_term` multiplies (`--explain`: "trend = growth_trend_weight × CAGR").
@@ -5666,7 +5662,7 @@ pub(crate) fn hold_core_cells(q: &Quote, owned: &Owned) -> Vec<String> {
         truncate(&q.name, 44),
         truncate(&q.ticker, 9),
         truncate(&q.market, 9),
-        q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        cagr_cell(q), // (#507) the lane tables' cell, ⁱ included
         q.age_years.map_or("—".to_string(), |a| format!("{a:.1}")), // 1 decimal, as in the screen table
         q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%")),
         turnover_cell(q.aum_shown()),
@@ -5677,6 +5673,16 @@ pub(crate) fn hold_core_cells(q: &Quote, owned: &Owned) -> Vec<String> {
         fund_cell("td1y", q),
         fund_cell("td5y", q),
     ]
+}
+
+/// (#507) The CAGR cell, lanes and CORE alike: whole-life CAGR, else under 6 months the plain change
+/// since listing marked ⁱ (not per year), else n/a.
+fn cagr_cell(q: &Quote) -> String {
+    match (q.life_cagr, q.young_ret_pct) {
+        (Some(v), _) => format!("{v:+.0}%"),
+        (None, Some(v)) => format!("{v:+.0}%ⁱ"),
+        _ => "n/a".to_string(),
+    }
 }
 
 /// (#250) The CORE shortlist as page rows — `(header, cell)` pairs, the shape the three ranked lanes
@@ -10705,6 +10711,8 @@ mod tests {
             hold_core_cells(&bare, &Owned::default()),
             ["", "Vanguard FTSE All-World UCITS ETF", "VWCE.DE", "Germany", "n/a", "—", "n/a", "n/a", "—", "—", "n/a", "n/a", "n/a", "n/a"]
         );
+        bare.young_ret_pct = Some(-12.4);
+        assert_eq!(hold_core_cells(&bare, &Owned::default())[4], "-12%ⁱ", "(#507) a young fund reads since listing too");
         // the page rows carry the printer's own column names, in the printer's order
         let rows = hold_core_web_rows(&[&q], &Owned::default());
         assert_eq!(rows.len(), 1);
