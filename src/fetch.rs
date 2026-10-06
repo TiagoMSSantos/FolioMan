@@ -954,6 +954,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         fund: None,        // (G+) same: `enrich_fund_factor` fills it on the paths that fetch fundamentals
         age_years,
         life_cagr,
+        young_ret_pct: core::young_return(&long_dates, &long_closes),
         capped_cagr,
         life_return_pct,
         trail_monthly,

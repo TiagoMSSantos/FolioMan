@@ -3648,7 +3648,7 @@ const COLUMNS: &[ColSpec] = &[
     // surfacing a stock CI never displayed). Funds show AUM instead.
     ColSpec { key: "mcap", hdr: "MCAP", width: 7, right: true, help: "Whole market value in euros: shares × price. Stocks use the newest full-year diluted share count (up to a year old), coins their circulating supply. Funds show AUM instead" },
     // display only; ranking uses the fixed-horizon ladder — see `leg`
-    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG; n/a = listed under a year" },
+    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); n/a = no usable price history" },
     ColSpec { key: "leg", hdr: "LEG", width: 8, right: true, help: "The long-run %/yr the growth rank actually scores: the 20Y window, else 8Y, else 5Y, whichever the record allows, after the score's cap" },
     ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "CAGR with the dividends paid added back: a lower bound on total return. Equals CAGR for accumulating funds and non-payers" },
     ColSpec { key: "1h", hdr: "1H", width: 7, right: true, help: "Price change over the last hourly bar" },
@@ -3892,7 +3892,11 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // below); in scoring `life_cagr` appears only as a NEGATIVE guard, the value-trap dock when it
         // is <= 0. So this cell can differ from the CAGR a gate message quotes — by design, and the
         // two now sit side by side rather than one silently standing in for the other.
-        "cagr" => quote.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        "cagr" => match (quote.life_cagr, quote.young_ret_pct) {
+            (Some(v), _) => format!("{v:+.0}%"),
+            (None, Some(v)) => format!("{v:+.0}%ⁱ"), // (#507) under 6 months: since listing, not per year
+            _ => "n/a".to_string(),
+        },
         // proven long-term CAGR (%/yr) from the ranked leg — the annualized trend the ranking actually
         // rewards, shown so a reader sees "+14%/yr" and not just a +1344% cumulative blob. This is
         // EXACTLY what `trend_term` multiplies (`--explain`: "trend = growth_trend_weight × CAGR").
@@ -7618,6 +7622,7 @@ mod tests {
             fund: None,            // (G+) default off; the multi-term asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
+            young_ret_pct: None,
             capped_cagr: None,     // (#3l) default off; the capped-window arm sets it via config
             life_return_pct: None,     // (perf_fill) display-only; the fill asserts set it explicitly
             trail_monthly: Vec::new(), // (#41) no trail -> unjudgeable -> the redundancy skip never blocks
@@ -11111,6 +11116,12 @@ mod tests {
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "n/a", "both clamps at zero = no 200wk history");
         q.ma200d_pct = Some(-12.4);
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "-12%ᵈ", "(#505) a young name reads its 200-day average");
+        assert_eq!(cc("cagr", &q, 0.0, None, ""), "n/a");
+        q.young_ret_pct = Some(41.6);
+        assert_eq!(cc("cagr", &q, 0.0, None, ""), "+42%ⁱ", "(#507) under 6 months reads since listing");
+        q.life_cagr = Some(19.4);
+        assert_eq!(cc("cagr", &q, 0.0, None, ""), "+19%", "life_cagr wins, no mark");
+        (q.life_cagr, q.young_ret_pct) = (None, None);
         q.age_years = Some(11.0);
         assert_eq!(cc("yrs", &q, 0.0, None, ""), "11.0"); // 1 decimal: "8" for a 7.7y record contradicted its own blank 8Y
         q.intraday = [Some(0.12), Some(-0.34), Some(2.0)];

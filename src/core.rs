@@ -332,6 +332,7 @@ pub struct Quote {
     pub fund: Option<FundFactors>,
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history, via `core::life_cagr`. NOT display-only since (#3i)/(#3j): the `cagr` column, the `growth_min_cagr` whole-life bar, and the growth RANK when `use_life_cagr` is on. Filled in the backtest too (same fn, `[..=as_of]` slice) -> train==serve. None = <6mo history / non-positive first close / stub
+    pub young_ret_pct: Option<f64>,    // (#507) plain % since the first close for a name listed under the 6 months `life_cagr` needs, any age down to one bar (0%). DISPLAY ONLY, the CAGR cell's ⁱ
     pub capped_cagr: Option<f64>,      // (#3l/#73) endpoint CAGR over the last min(age, life_cagr_max_years) years, via `core::capped_life_cagr`. ONE reader: `picks::life_leg_cagr`, i.e. `growth_min_cagr`'s whole-life reject bar — (#73) repointed this field from the RANK (where (#3l) measured it at -66 edge and shipped it off) to that bar. Filled at the same two sites as `life_cagr` (fetch + backtest_quote), same knob read via the free accessor -> train==serve. None = knob off / <5y of history, and the bar then falls back to the uncapped `life_cagr` it always used -> the pool is unchanged at 0 and young names never move
     pub life_return_pct: Option<f64>,  // whole-life CUMULATIVE real return (%) over that same full history, via `core::life_return`. DISPLAY-ONLY, and deliberately NOT an entry in `perf`: `picks::perf_fill` prints it (marked `≈`) in a long rung the record ALMOST reaches, and putting it in `perf` would hand it to `perf_pct` and therefore to every gate. None = <6mo history / non-positive first close / stub / BACKTEST (never rendered there)
     pub trail_monthly: Vec<f64>,       // (#41) up to 36 trailing MONTH-over-MONTH returns (%), newest last, via `core::monthly_returns_tail`. Sole input to the growth_corr_cap redundancy skip. Built from the DAILY chart live and from the monthly slice in the backtest — the same fn, so a pair's correlation means the same thing in train and serve. Empty = no history / stub -> unjudgeable, and an unjudgeable pair never blocks
@@ -458,6 +459,7 @@ impl Quote {
             fund: None,
             age_years: None,
             life_cagr: None,
+            young_ret_pct: None,
             capped_cagr: None,
             life_return_pct: None,
             trail_monthly: Vec::new(),
@@ -627,6 +629,13 @@ pub fn age_years(dates: &[NaiveDate]) -> Option<f64> {
         .first()
         .zip(dates.last())
         .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)
+}
+
+/// (#507) The CAGR cell's fill where `life_cagr` is None for age alone: the plain % since the first close,
+/// NOT per year (a 2-week pop annualised reads thousands). Any age under 6 months, a single bar reads 0.
+pub fn young_return(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
+    let (&first, &last) = (closes.first()?, closes.last()?);
+    (age_years(dates)? < 0.5 && first > 0.0).then(|| (last / first - 1.0) * 100.0)
 }
 
 pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
@@ -9542,6 +9551,12 @@ mod tests {
     assert!(life_return(&young, &vec![0.0; 1460], None).is_none());
     let stub_d = &young[..30];
     assert!(life_return(stub_d, &yc[..30], None).is_none(), "<6mo is not a 'life'");
+    // (#507) young_return covers exactly that gap: under 6 months only, not annualised, one bar = 0
+    let r = young_return(stub_d, &yc[..30]).unwrap();
+    assert!((r - (yc[29] / yc[0] - 1.0) * 100.0).abs() < 1e-9, "{r}");
+    assert_eq!(young_return(&young, &yc), None, "6mo+ is life_cagr's");
+    assert_eq!(young_return(&young[..1], &yc[..1]), Some(0.0), "day 0 is listed");
+    assert_eq!(young_return(stub_d, &vec![0.0; 30]), None, "junk first close");
     // backtest_quote on a synthetic rising MONTHLY series (cadence=12): the cadence window math must
     // still populate volatility (from monthly returns) and put a monotone climber at the top of its
     // range. Guards the long-horizon path against a zero/oversized window silently nulling the metrics.
