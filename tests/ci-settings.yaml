@@ -19588,6 +19588,15 @@ buy_heuristic:
                                  #   sizer, the (#313) equal-weight book re-splits over the names left, so nothing strands.
                                  #   JUDGEMENT, BACKTEST-BLIND (stub quotes carry no benchmark), goldens identical.
                                  #   REVERT: false, if the freed slots fill with names the track grades worse.
+  growth_exchange_token_damp: 0.5 # (#496) USER DECISION 2026-10-06 (the user's number): an exchange's own token (BNB,
+                                 #   GT, OKB, CRO, LEO, KCS, HT, FTT, BGB, MX; flag `e`) scores x0.5. Sweeps 14 and 15
+                                 #   recorded the risk and built nothing: the coin's value is one company's fee discounts
+                                 #   and buy-backs, so it carries that exchange's solvency, which no price series shows
+                                 #   (FTT went to ~0 with FTX in 2022; BNB survived). On the day BNB ranked crypto #1 and
+                                 #   GT #3 over BTC. The coin weight is score / vol inside budget_crypto, so x0.5 also
+                                 #   about halves their share (BNB ~1.45%, GT ~0.8%) and BTC leads. Applied in
+                                 #   crypto_adjust, so the table, `size` and the page agree. JUDGEMENT, BACKTEST-BLIND
+                                 #   (crypto is outside the graded edge). REVERT: 1.0. 0.0 also reads as off.
   growth_overext_floor: 0.05     # (#100 / finding C5) READ THIS FIRST: the number written here is NOT
                                  #   the multiplier delivered. `damp = combine_damps(&[trust, overext])`
                                  #   is a 2-slot GEOMETRIC MEAN, so it square-roots the floor. The

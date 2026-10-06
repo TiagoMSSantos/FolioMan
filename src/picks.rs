@@ -883,6 +883,16 @@ fn is_stablecoin(ticker: &str) -> bool {
     PEGGED.contains(&underlying(ticker))
 }
 
+/// (#496) EXCHANGE TOKENS: coins an exchange issues and backs (BNB Binance, GT Gate, OKB OKX, CRO
+/// Crypto.com, LEO Bitfinex, KCS KuCoin, HT Huobi, FTT FTX, BGB Bitget, MX MEXC). Their value is one
+/// company's fee discounts and buy-backs, so the coin carries that company's custody, solvency and
+/// regulatory risk on top of crypto's own: FTT went to ~0 with FTX in November 2022 (sweep 14).
+const EXCHANGE_TOKENS: &[&str] = &["BNB", "GT", "OKB", "CRO", "LEO", "KCS", "HT", "FTT", "BGB", "MX"];
+
+fn is_exchange_token(ticker: &str) -> bool {
+    is_currency_quoted(ticker) && EXCHANGE_TOKENS.contains(&underlying(ticker))
+}
+
 /// Collapse `<X>-EUR`/`<X>-USD` twins to ONE row (same asset, just a different quote currency),
 /// keeping the `prefer_eur`-matching leg when both are present (else whichever exists). Other
 /// tickers pass through untouched. Order is NOT preserved (the caller re-sorts).
@@ -4180,6 +4190,9 @@ fn rank_mark(idx: usize, quote: &Quote, pinned: &HashSet<&str>, owned: &Owned, t
     // the two commodity names (CF 0.76, MPC 0.68) — so the flag names the CAUSE. Printed whether or not
     // growth_commodity_damp is set: the dock is optional, knowing what the row is never is.
     let commodity = if is_commodity(quote) { "c" } else { "" };
+    // e = (#496) an exchange's own token (`EXCHANGE_TOKENS`). Printed whether or not
+    // growth_exchange_token_damp is set, the `c` rule.
+    let exchange = if is_exchange_token(&quote.ticker) { "e" } else { "" };
     // x = non-EUR-quoted ETF line (GBp/USD/SEK…): a EUR buyer pays broker FX conversion + the
     // off-home spread the EUR twin of the same fund doesn't. Printed whether or not growth_fx_damp
     // is set — same rule as `c`: the dock is optional, knowing what the row is never is.
@@ -4203,7 +4216,7 @@ fn rank_mark(idx: usize, quote: &Quote, pinned: &HashSet<&str>, owned: &Owned, t
     // s = (#444) the Social Arbitrage trading table names it (superinvestor buys, (#475) new 13D/13G
     // stakes, ARK buys, insider cluster buys, a recent video, the hand list). Display-only, like `w`/`W`.
     let social = if quote.social { "s" } else { "" };
-    format!("{}{star}{enriched}{braked}{commodity}{fx_listed}{bridged}{holdable}{held}{brk}{brk_held}{social}", idx + 1)
+    format!("{}{star}{enriched}{braked}{commodity}{exchange}{fx_listed}{bridged}{holdable}{held}{brk}{brk_held}{social}", idx + 1)
 }
 
 /// (#79) One printed row as `(header, cell)` pairs — the same pairing [`print_picks`] pads into
@@ -4810,6 +4823,7 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
         ("#", "score used live fundamentals, not price-only"),
         ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
         ("c", "commodity-linked (GICS Energy/Materials, or a commodity-named fund) — earnings are a spread on a traded input price, so the CAGR is a spot-price snapshot, not compounding; scaled by growth_commodity_damp when set"),
+        ("e", "an exchange's own token (BNB, GT, OKB, CRO…) — its value rides one company's solvency, as FTT's went with FTX in 2022; scaled by growth_exchange_token_damp when set"),
         ("x", "non-EUR-quoted ETF line — a EUR buyer pays FX conversion + off-home spread vs the EUR twin; scaled by growth_fx_damp when set"),
         ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
         ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
@@ -5128,7 +5142,12 @@ pub fn crypto_adjust(quote: &Quote, base: f64, tuning: &BuyHeuristic, cfactor: f
     if !is_currency_quoted(&quote.ticker) {
         return base; // equities/ETFs: no crypto-market damp, no BTC base
     }
-    btc_relative(perf_pct(quote, "1Y"), btc_1y, base * cfactor, tuning.growth_btc_outperf_weight)
+    // (#496) an exchange's own token, docked like (#44)'s commodity damp: 1.0 = off, and 0.0 is ALSO off
+    let exchange = match tuning.growth_exchange_token_damp {
+        d if d > 0.0 && is_exchange_token(&quote.ticker) => d,
+        _ => 1.0,
+    };
+    btc_relative(perf_pct(quote, "1Y"), btc_1y, base * cfactor * exchange, tuning.growth_btc_outperf_weight)
 }
 
 /// CORE-shortlist domicile ordering: IE first — the 15% US-dividend withholding treaty vs LU's 30%
@@ -11149,6 +11168,14 @@ mod tests {
         let mut btc = Quote::stub("BTC-USD", "€1", "", "Bitcoin");
         btc.perf = legs(&[("1Y", 40.0)]);
         assert!((crypto_adjust(&btc, 10.0, &tuning, 0.8, Some(40.0)) - 8.0).abs() < 1e-9);
+        // (#496) an exchange token takes growth_exchange_token_damp on top; 1.0 and 0.0 are off; BTC is not one
+        let mut bnb = Quote::stub("BNB-EUR", "€1", "", "BNB");
+        bnb.perf = legs(&[("1Y", 40.0)]);
+        let damp = |d: f64| BuyHeuristic { growth_exchange_token_damp: d, ..tuning.clone() };
+        assert!((crypto_adjust(&bnb, 10.0, &damp(0.5), 0.8, Some(40.0)) - 4.0).abs() < 1e-9);
+        assert!((crypto_adjust(&bnb, 10.0, &damp(0.0), 0.8, Some(40.0)) - 8.0).abs() < 1e-9);
+        assert!((crypto_adjust(&btc, 10.0, &damp(0.5), 0.8, Some(40.0)) - 8.0).abs() < 1e-9);
+        assert!(is_exchange_token("GT-USD") && !is_exchange_token("GT") && !is_exchange_token("BTC-EUR"), "a stock ticker GT is not the coin");
     }
 
     /// A quote that clears every growth gate with room: near its high, a 24.6%/yr 5Y leg, climbing on
