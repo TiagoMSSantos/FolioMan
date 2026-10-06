@@ -3671,7 +3671,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years; n/a = under 5 years of record" },
     ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
-    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average" },
+    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in" },
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback" },
     // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
     // exactly equal the TTM-based P/E cell ÷ CAGR. (#426) Nor its EPS: the PEG's is core, gains stripped
@@ -3690,7 +3690,7 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; n/a = cash burn, or under 5 years of FCF filed" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; n/a = cash burn, or under 2 years of FCF filed" },
     ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; n/a as FAIR" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
@@ -3706,8 +3706,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out; n/a = trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record, or trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before. ‡ = no annual report yet, so year to date vs the same months a year earlier" },
-    ColSpec { key: "rev5y", hdr: "REV-5Y", width: 7, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; n/a = under 5 years filed" },
-    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 7, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; n/a = under 3 years filed, or a cash burn at either end" },
+    ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years (display only, never scored); n/a = under 2 years filed" },
+    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years; n/a = under 2 years filed, or a cash burn at either end" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
     ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps; — = a bank or insurer, where interest is the cost of doing business" },
@@ -3944,7 +3944,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "abv-ma" => match (quote.above_ma_pct, quote.below_ma_pct) {
             (a, _) if a > 0.0 => format!("+{a:.0}%"),
             (_, b) if b > 0.0 => format!("-{b:.0}%"),
-            _ => "n/a".to_string(),
+            // (#505) under ~4 years listed: the 200-day average stands in, marked ᵈ
+            _ => quote.ma200d_pct.map_or("n/a".to_string(), |v| format!("{v:+.0}%ᵈ")),
         },
         "pe" if stock_only_na => "—".to_string(),
         "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
@@ -4077,15 +4078,18 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // (#463) the 5y fund_factors levels the live enrich already fills
         "rev5y" | "opm" | "mtrend" | "fcf5y" | "fair" | "mos" if stock_only_na => "—".to_string(),
-        "fcf5y" => quote.fund.as_ref().and_then(|f| f.fcf_cagr).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "fcf5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.fcf_cagr, f.fcf_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
         // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio
         "fair" | "mos" => quote
             .fund
             .as_ref()
-            .and_then(|f| Some(f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(f.fcf_cagr?)))
-            .and_then(|x| if key == "mos" { Some(format!("{:+.0}%", (x - 1.0) * 100.0)) } else { quote.price_eur.map(|p| format!("€{:.2}", p * x)) })
+            .and_then(|f| {
+                let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
+                Some((f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
+            })
+            .and_then(|(x, m)| if key == "mos" { Some(format!("{:+.0}%{m}", (x - 1.0) * 100.0)) } else { quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)) })
             .unwrap_or_else(|| "n/a".to_string()),
-        "rev5y" => quote.fund.as_ref().and_then(|f| f.rev_cagr).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "rev5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.rev_cagr, f.rev_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
         "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "mtrend" => quote.fund.as_ref().and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
         // (#464) the (#412) red flags, un-negated back to their published sign
@@ -4499,6 +4503,14 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
         etf
     };
     (stock, etf, crypto)
+}
+
+/// (#505) The 5y rate unmarked, else the short-span fallback marked with its years, rounded, in superscript
+/// (³ = over ~3 filed years: 52-week fiscal years land a day either side). Display only: the scored rates never read the short ones.
+fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, String)> {
+    const SUP: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    full.map(|v| (v, String::new()))
+        .or_else(|| short.map(|(v, span)| (v, (span.round() as u32).to_string().bytes().map(|d| SUP[(d - b'0') as usize]).collect())))
 }
 
 /// (#484) What one unit of this year's FCF is worth today: 10 years growing at `g_pct` (FCF-5Y, held to
@@ -7457,6 +7469,14 @@ mod tests {
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "no euro price");
         st.price_eur = Some(50.0);
         assert_eq!((cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")), ("€44.27".to_string(), "-11%".to_string()), "5% yield × 17.71");
+        // (#505) no 5y rate: the short-span one stands in, marked with its years; the full rate wins when both exist
+        let f = st.fund.as_mut().unwrap();
+        (f.fcf_cagr, f.fcf_cagr_short, f.rev_cagr, f.rev_cagr_short) = (None, Some((4.04, 2.998)), None, Some((31.25, 2.4)));
+        assert_eq!((cc("fcf5y", &st, 0.0, None, ""), cc("rev5y", &st, 0.0, None, "")), ("+4.0%³".to_string(), "+31.2%²".to_string()));
+        assert_eq!((cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")), ("€44.27³".to_string(), "-11%³".to_string()));
+        st.fund.as_mut().unwrap().rev_cagr = Some(12.0);
+        assert_eq!(cc("rev5y", &st, 0.0, None, ""), "+12.0%");
+        assert_eq!(span_or_short(None, Some((1.0, 11.6))).map(|x| x.1), Some("¹²".to_string()), "two digits");
         // (#489) TARGET% needs 3 analysts; SHORT% needs a positive share count
         st.profile.target_pct = Some(27.6);
         assert_eq!(cc("target", &st, 0.0, None, ""), "n/a", "analyst count unknown");
@@ -7559,7 +7579,7 @@ mod tests {
             splits: Vec::new(), // (#82) journal-replay only (`track`/`sim`); nothing in the score reads it
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
-            avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
+            avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,
             max_daily_1m: None, // (P4) unknown worst day -> the spike gate passes, as unknown vol does
             pe_ratio: None,
             mvrv: None, // (#45) no MVRV -> the crypto ceiling passes these fixtures free; the gate's own tests set it
@@ -11066,6 +11086,8 @@ mod tests {
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "-40%", "below the 200wk trend reads signed, not 0%");
         q.below_ma_pct = 0.0;
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "n/a", "both clamps at zero = no 200wk history");
+        q.ma200d_pct = Some(-12.4);
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "-12%ᵈ", "(#505) a young name reads its 200-day average");
         q.age_years = Some(11.0);
         assert_eq!(cc("yrs", &q, 0.0, None, ""), "11.0"); // 1 decimal: "8" for a 7.7y record contradicted its own blank 8Y
         q.intraday = [Some(0.12), Some(-0.34), Some(2.0)];

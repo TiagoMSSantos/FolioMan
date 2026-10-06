@@ -307,6 +307,7 @@ pub struct Quote {
     // +38% day last week. That lottery-ticket day is the documented signal, and nothing in the tree sees it.
     pub max_daily_1m: Option<f64>,
     pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
+    pub ma200d_pct: Option<f64>,       // (#505) signed % vs the 200-SESSION SMA, only for a name listed under the 200 weeks above_ma_pct needs. DISPLAY ONLY, the ABV-MA cell's ᵈ
     pub above_ma_pct: f64,             // % ABOVE the ~200-week SMA (overextension "how far it ran"); 0 if at/below or history too short. Growth-lane brake on blow-off tops
     pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
     pub mvrv: Option<f64>,             // (#45) CRYPTO ONLY — market cap / realized cap (CoinMetrics `CapMVRVCur`). The coin's price against what its holders actually paid; <1 = the market sits below its own aggregate cost basis. This is the per-coin form of the Bitcoin-only NUPL already fetched (NUPL = 1 - 1/MVRV), and what `crypto_max_mvrv` gates on. None for every non-coin, and for most coins — CoinMetrics serves ~17 of the top 100. BACKTEST-BLIND in practice: `backtest_quote` never fills it, and no crypto row is growth-scored at any cutoff anyway
@@ -436,6 +437,7 @@ impl Quote {
             volatility_pct: None,
             max_daily_1m: None,
             below_ma_pct: 0.0,
+            ma200d_pct: None,
             above_ma_pct: 0.0,
             pe_ratio: None,
             mvrv: None,
@@ -843,6 +845,13 @@ pub fn above_long_ma_pct(closes: &[f64], n: usize) -> f64 {
     }
     // (#19) raw last close on purpose — see below_long_ma_pct; the brake must see the spike.
     f64::max(0.0, (*closes.last().expect("closes non-empty: closes.len() >= n >= 1 guarded above") - ma) / ma * 100.0)
+}
+
+/// (#505) A name listed under `LONG_MA_SESSIONS` sessions has no 200-week average, so ABV-MA read n/a for
+/// every young stock. Display only: the signed % vs the 200-session average, the same two helpers.
+pub fn short_ma_pct(closes: &[f64]) -> Option<f64> {
+    (closes.len() < crate::config::LONG_MA_SESSIONS && closes.len() >= 200)
+        .then(|| above_long_ma_pct(closes, 200) - below_long_ma_pct(closes, 200))
 }
 
 /// (A) R² (0..1) of a straight-line fit to LOG price over time — how STEADILY the asset compounds. A
@@ -3907,6 +3916,10 @@ pub struct FundFactors {
     pub rev_cagr: Option<f64>,     // revenue CAGR over the lookback (proven top-line compounding)
     pub rev_accel: Option<f64>,    // last-1y revenue growth minus that long CAGR (top-line accelerating)
     pub fcf_cagr: Option<f64>,     // (#484) free-cash-flow CAGR over the lookback, both ends positive. Display only
+    // (#505) DISPLAY ONLY, (rate, span in years): a filer with under `yrs` years filed reads rev_cagr and
+    // fcf_cagr off its oldest row 2+ years back instead, over that span. The scored rev_cagr stays None.
+    pub rev_cagr_short: Option<(f64, f64)>,
+    pub fcf_cagr_short: Option<(f64, f64)>,
     pub gross_margin: Option<f64>, // current gross margin level (pricing power / moat)
     pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
@@ -4182,6 +4195,15 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         _ => long_ago.map(|r| (r, yrs as f64)),
     };
     let fcf_cagr = fcf_from.and_then(|(r, span)| grow(fcf(now), fcf(Some(r))).map(|c| cagr(c, span)));
+    // (#505) no row `yrs` back at all (HOOD, RDDT, SNDK): the oldest row 2+ years before `now`, over its span
+    let first_2y = now.filter(|_| long_ago.is_none()).and_then(|n| {
+        rows.iter()
+            .filter(|r| r.filed <= cutoff && (n.period_end - r.period_end).num_days() >= 730)
+            .min_by_key(|r| r.period_end)
+            .map(|r| (r, (n.period_end - r.period_end).num_days() as f64 / 365.25))
+    });
+    let rev_cagr_short = first_2y.and_then(|(r, span)| grow(now.and_then(|n| n.revenue), r.revenue).map(|c| (cagr(c, span), span)));
+    let fcf_cagr_short = first_2y.and_then(|(r, span)| grow(fcf(now), fcf(Some(r))).map(|c| (cagr(c, span), span)));
     // (P3) same two endpoints, same `grow` positivity guard and the same `cagr` annualiser as rev_cagr
     // above — one definition of a growth rate, per the house rule — then NEGATED so a slow-growing
     // asset base ranks high alongside the other safety factors.
@@ -4308,6 +4330,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         rev_cagr,
         rev_accel,
         fcf_cagr,
+        rev_cagr_short,
+        fcf_cagr_short,
         gross_margin: now.and_then(|r| r.gross_margin),
         op_margin: now.and_then(|r| r.op_margin),
         margin_trend,
@@ -6015,6 +6039,8 @@ mod tests {
             rev_cagr: Some(1.0),
             rev_accel: Some(2.0),
             fcf_cagr: None, // (#484) display only, no factor name selects it
+            rev_cagr_short: None,
+            fcf_cagr_short: None,
             gross_margin: Some(3.0),
             op_margin: Some(4.0),
             margin_trend: Some(5.0),
@@ -7001,6 +7027,17 @@ mod tests {
         near(no_gw.int_book_ttm, 500.0 + 1417.0 / 3.0);
     }
 
+    /// (#505) 200..LONG_MA_SESSIONS closes read signed vs the 200-session mean; outside that, None
+    #[test]
+    fn short_ma_pct_covers_only_the_young() {
+        let flat = |n: usize, last: f64| -> Vec<f64> { (0..n).map(|i| if i + 1 == n { last } else { 100.0 }).collect() };
+        assert_eq!(short_ma_pct(&flat(199, 100.0)), None, "under 200 closes");
+        assert_eq!(short_ma_pct(&flat(crate::config::LONG_MA_SESSIONS, 100.0)), None, "the 200-week one exists");
+        let r = |x: Option<f64>| x.map(|v| (v * 100.0).round() / 100.0);
+        assert_eq!(r(short_ma_pct(&flat(200, 299.0))), Some(196.05), "mean 100.995: +196%");
+        assert_eq!(r(short_ma_pct(&flat(500, 1.0))), Some(-99.0), "below reads negative");
+    }
+
     /// (#408) the as-of levels the backtest prices into FCF/EV and sales/EV: a 10% FCF margin on 200 of
     /// revenue is 20 of FCF. A missing leg is None; the yields stay None until the backtest fills them.
     #[test]
@@ -7037,6 +7074,17 @@ mod tests {
         assert_eq!(g(&nvda), Some(26.0), "2021 -> 2024, exactly 3y (1095 days): x2 over 3y");
         assert_eq!(g(&[at(2019, None), at(2022, Some(10.0)), now.clone()]), None, "2y is too short to stand in");
         assert_eq!(g(&[at(2019, Some(-5.0)), at(2021, Some(10.0)), now.clone()]), None, "a burn is a figure, no stand-in");
+        // (#505) no row 5y back at all: the oldest row 2+ years back, over its span; the scored rates stay None
+        let short = |rows: &[FundRow]| {
+            let f = fund_factors(rows, cutoff, 5);
+            let r = |x: Option<(f64, f64)>| x.map(|(g, s)| ((g * 10.0).round() / 10.0, (s * 100.0).round() / 100.0));
+            (f.rev_cagr, f.fcf_cagr, r(f.rev_cagr_short), r(f.fcf_cagr_short))
+        };
+        assert_eq!(short(&[at(2021, Some(10.0)), at(2022, Some(15.0)), now.clone()]), (None, None, Some((0.0, 3.0)), Some((26.0, 3.0))));
+        assert_eq!(short(&[at(2022, Some(10.0)), now.clone()]).3, Some((41.5, 2.0)), "exactly 730 days stands in");
+        assert_eq!(short(&[at(2023, Some(10.0)), now.clone()]).3, None, "1 year is too short");
+        assert_eq!(short(&[at(2021, Some(-1.0)), now.clone()]).3, None, "a burn at the old end");
+        assert_eq!(short(&nvda).2, None, "a row 5y back exists: the full rate's job, never the short one");
         // FCF 20 over EV 2·40 + 20 = 100 -> 20%; a negative FCF drops out, never ranks last
         assert_eq!(ev_ebitda_yield(f.fcf_ttm, Some(2.0), Some(20.0), 40.0), Some(20.0));
         assert_eq!(ev_ebitda_yield(Some(-20.0), Some(2.0), Some(20.0), 40.0), None);

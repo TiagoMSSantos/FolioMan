@@ -894,6 +894,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         below_ma_pct: core::below_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
         // (1) % ABOVE the ~200wk SMA — overextension brake for the growth lane (far above trend = stretched).
         above_ma_pct: core::above_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
+        ma200d_pct: core::short_ma_pct(&chart.closes),
         // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
         pe_ratio: pe,
         // (#45) MVRV is stamped LATER, in the screen enrichment block, not here: it comes from one bulk
