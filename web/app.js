@@ -72,16 +72,24 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
 // (#445) A filter query overrides the cut in every table but inflation and (#486) bonds: a row shows iff its TICKER or
 // NAME holds the query, so a name the chooser hid can still be found. An empty query is the cut alone.
+// (#502) The shadow tables also hide a row whose CAGR is under the stock lane's floor (`growth_min_cagr`),
+// unless "below floor" is ticked; an n/a CAGR stays. A query overrides it like the cut, and the CSV follows it.
+// CI's payload alone carries `cagr_floor`, so an upload keeps CI's.
+const SHADOW = ["attention", "berkshire", "social", "young"];
+let floor = null;
+const low = (cell, v = key(cell)) => floor !== null && !document.getElementById("below").checked && typeof v === "number" && v < floor;
 function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
   for (const t of document.querySelectorAll(".scroll table")) {
     if (t.closest("#inflation, #bonds")) continue;
     const cut = t.closest("#stocks, #etfs, #crypto, #attention");
-    const cols = [...t.rows[0].cells].flatMap((th, i) => (["TICKER", "NAME"].includes(th.textContent) ? [i] : []));
+    const heads = [...t.rows[0].cells].map((th) => th.textContent);
+    const cols = heads.flatMap((h, i) => (["TICKER", "NAME"].includes(h) ? [i] : []));
+    const c = SHADOW.includes(t.closest("div[id]").id) ? heads.indexOf("CAGR") : -1;
     for (const tr of t.tBodies[0].rows) {
       tr.hidden = q
         ? !cols.some((i) => tr.cells[i].textContent.toLowerCase().includes(q))
-        : !!cut && !("pin" in tr.dataset) && +tr.dataset.rank >= n;
+        : (!!cut && !("pin" in tr.dataset) && +tr.dataset.rank >= n) || (c >= 0 && low(tr.cells[c].textContent));
     }
   }
   stick();
@@ -135,7 +143,8 @@ function sheet(id, rows) {
   let a = h.querySelector("a.csv");
   if (!a) {
     a = Object.assign(document.createElement("a"), { className: "csv", textContent: "CSV", download: id + ".csv", href: "#" });
-    a.onclick = () => (a.href = URL.createObjectURL(new Blob([csv(sheets[id])], { type: "text/csv" })));
+    const rows = () => (SHADOW.includes(id) ? sheets[id].filter((r) => !low(r.find(([h]) => h === "CAGR")?.[1] ?? "")) : sheets[id]);
+    a.onclick = () => (a.href = URL.createObjectURL(new Blob([csv(rows())], { type: "text/csv" })));
     h.append(" ", a);
   }
   a.hidden = !rows?.length;
@@ -267,6 +276,7 @@ function render(data, prev) {
   document
     .getElementById("core")
     .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
+  if (typeof data.cagr_floor === "number") floor = data.cagr_floor; // (#502)
   // (#438) Only CI's payload carries it: an upload's engine output has no key, so CI's table stays.
   if (data.attention) {
     document.getElementById("attention").replaceChildren(table(data.attention, "(attention feed unavailable)", help.attention));
@@ -360,7 +370,8 @@ viewSel.onchange = () => {
   view(viewSel.value);
   remember("view", viewSel.value);
 };
-document.getElementById("filter").oninput = () => apply(+document.getElementById("topn").value);
+document.getElementById("filter").oninput = document.getElementById("below").onchange = () =>
+  apply(+document.getElementById("topn").value);
 
 // (#401) prev.json is best effort: missing, unreadable or undated is no marks, never an error.
 function load() {

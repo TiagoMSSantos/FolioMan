@@ -38,6 +38,8 @@
       <option>all</option><option>overview</option><option>returns</option><option>risk</option><option>value</option><option>cash</option>
     </select></label>
     · <label>filter <input id="filter" type="search" placeholder="ticker or name" size="16"></label>
+    <!-- (#502) The shadow tables hide rows under the stock lane's CAGR floor until this is ticked. -->
+    · <label title="Young, Social, Attention and Berkshire hide rows whose CAGR is under the stock lane's floor; n/a rows stay"><input id="below" type="checkbox"> show shadow rows below the CAGR floor</label>
   </p>
   <!-- (#392) Re-rank this run's pool under your own settings.yaml, in this tab: engine/ is the same
        Rust ranking compiled to wasm. Shown only when the deploy shipped it. -->
