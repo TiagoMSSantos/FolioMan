@@ -2372,6 +2372,8 @@ pub struct BrkRow {
     name: String,
     /// The newest report date it was bought in over the last year, or "".
     bought: String,
+    /// (#506) The first report date a buy can show in (the window's second quarter), or "" with no window.
+    since: String,
     /// The prior quarter's shares, 0 for a new position.
     prev: u64,
     shares: u64,
@@ -2427,7 +2429,12 @@ pub fn brk_rows(holdings: &[BrkRow], quotes: &[Quote]) -> Value {
             let delta = if h.prev == 0 { "new".to_string() } else { format!("{:+.1}%", (h.shares as f64 / h.prev as f64 - 1.0) * 100.0) };
             let weight = if total == 0 { "—".to_string() } else { format!("{:.1}%", h.value as f64 / total as f64 * 100.0) };
             let name = q.map(|q| q.name.as_str()).or((!h.name.is_empty()).then_some(h.name.as_str()));
-            let bought = if h.bought.is_empty() { "—".to_string() } else { brk_quarter(&h.bought) };
+            // (#506) no buy in the window: held since before it, which "—" hid
+            let bought = match (h.bought.is_empty(), h.since.is_empty()) {
+                (false, _) => brk_quarter(&h.bought),
+                (true, false) => format!("before {}", brk_quarter(&h.since)),
+                (true, true) => "—".to_string(),
+            };
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["TICKER", h.ticker],
@@ -2565,6 +2572,7 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     let quarters = brk_fold(filings);
     let buys = brk_bought_cusips(&quarters);
     let holdings = brk_holdings(&quarters);
+    let since = quarters.keys().nth(1).cloned().unwrap_or_default(); // (#506) the oldest is only the baseline
     let cusips: HashSet<String> = buys.keys().cloned().collect();
     let held: HashSet<String> = holdings.iter().map(|h| h.0.clone()).collect();
     let ticker_of = cusip_tickers(client, urls, &cusips.union(&held).cloned().collect()).await;
@@ -2584,7 +2592,7 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
             let bought = buys.get(&c).map(|b| b.0.clone()).unwrap_or_default();
             let (ticker, name) = ticker_of.get(&c).cloned().unwrap_or((c, String::new()));
             let twin = eu.get(&ticker).cloned().unwrap_or_default();
-            BrkRow { ticker, twin, name, bought, prev, shares, value, filing: filing.clone() }
+            BrkRow { ticker, twin, name, bought, since: since.clone(), prev, shares, value, filing: filing.clone() }
         })
         .collect();
     (bought, holds, rows)
@@ -10254,7 +10262,7 @@ pub(crate) mod tests {
 
     /// (#442) Largest WEIGHT first (its share of the whole 13F, a dropped ETF's value included), then the
     /// ticker. NAME from the quote for the ticker or its twin, (#441) else OpenFIGI's, "—" with neither;
-    /// a pooled ETF is dropped. STATUS and SHARES Δ against the prior quarter, BOUGHT its quarter or "—".
+    /// a pooled ETF is dropped. STATUS and SHARES Δ against the prior quarter, BOUGHT its quarter, (#506) else "before" the window's first buy quarter.
     #[test]
     fn brk_rows_weigh_name_and_drop_etfs() {
         let b = |t: &str, twin: &str, name: &str, bought: &str, prev: u64, shares: u64, value: u64| BrkRow {
@@ -10262,6 +10270,7 @@ pub(crate) mod tests {
             twin: twin.into(),
             name: name.into(),
             bought: bought.into(),
+            since: "2025-09-30".into(),
             prev,
             shares,
             value,
@@ -10281,14 +10290,15 @@ pub(crate) mod tests {
             serde_json::json!([
                 [["#", "1"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A"], ["WEIGHT", "40.0%", "https://f"], ["STATUS", "trimmed"], ["SHARES Δ", "-10.0%"], ["BOUGHT", "2026-Q1"]],
                 [["#", "2"], ["TICKER", "CB"], ["NAME", "Chubb"], ["WEIGHT", "20.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+10.0%"], ["BOUGHT", "2026-Q2"]],
-                [["#", "3"], ["TICKER", "DAL"], ["NAME", "—"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
+                [["#", "3"], ["TICKER", "DAL"], ["NAME", "—"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "before 2025-Q3"]],
                 [["#", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
             ])
         );
         help_titles("berkshire", &brk_rows(&holdings, &quotes)[0]);
-        let zero = [BrkRow { filing: String::new(), ..b("X", "", "", "", 1, 1, 0) }];
+        let zero = [BrkRow { filing: String::new(), since: String::new(), ..b("X", "", "", "", 1, 1, 0) }];
         assert_eq!(brk_rows(&zero, &[])[0][3], serde_json::json!(["WEIGHT", "—"]), "no value in hand, no weight");
         assert_eq!(brk_rows(&zero, &[])[0][2], serde_json::json!(["NAME", "—"]), "(#455) no filing, no link");
+        assert_eq!(brk_rows(&zero, &[])[0][6], serde_json::json!(["BOUGHT", "—"]), "(#506) no window, no since");
     }
 
     /// (#437) A letter-led 13F CUSIP is a CINS and maps as one; a digit-led one stays a CUSIP.

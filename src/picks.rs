@@ -3672,7 +3672,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in" },
-    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback" },
+    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback; loss = earnings at or below 0" },
     // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
     // exactly equal the TTM-based P/E cell ÷ CAGR. (#426) Nor its EPS: the PEG's is core, gains stripped
     ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap. Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
@@ -3685,17 +3685,17 @@ const COLUMNS: &[ColSpec] = &[
     // (#447) the balance sheet, stocks only, off `quote.fund` (filed statements). Display only: never scored
     ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings; n/a = no SEC filing carries the lines (most non-US companies); — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
-    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed, or EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; — = a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; n/a = cash burn, or under 2 years of FCF filed" },
-    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; n/a as FAIR" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = free cash flow at or below 0; n/a = under 2 years of FCF filed" },
+    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn and n/a as FAIR" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
-    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed, or EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
@@ -3707,7 +3707,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record, or trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before. ‡ = no annual report yet, so year to date vs the same months a year earlier" },
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years (display only, never scored); n/a = under 2 years filed" },
-    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years; n/a = under 2 years filed, or a cash burn at either end" },
+    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years; burn = free cash flow at or below 0 now; n/a = under 2 years filed, or a burn at the old end" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
     ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps; — = a bank or insurer, where interest is the cost of doing business" },
@@ -3948,7 +3948,12 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             _ => quote.ma200d_pct.map_or("n/a".to_string(), |v| format!("{v:+.0}%ᵈ")),
         },
         "pe" if stock_only_na => "—".to_string(),
-        "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        // (#506) a loss-maker has no P/E, and "n/a" read as missing data: "loss" says the filing was read
+        "pe" => match (quote.pe_ratio, quote.fund.as_ref().and_then(|f| f.eps_ttm)) {
+            (Some(v), _) => format!("{v:.1}"),
+            (None, Some(e)) if e <= 0.0 => "loss".to_string(),
+            _ => "n/a".to_string(),
+        },
         // (#37) THE one PEG: the number `growth_max_peg` cuts on and `growth_fund_factor: peg_yield`
         // tilts on, printed verbatim as its reciprocal (`peg_yield` 100 <=> PEG 1). <1 = cheap for its
         // growth, >2 = pricey.
@@ -4018,6 +4023,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#462) a cap needs a positive level under it; FCF keeps its sign, a burn is worth seeing
         "fcfy" => quote.fund.as_ref().and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
         "ps" => quote.fund.as_ref().and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
+        "evebitda" | "nde" if ebitda_loss(quote) => "loss".to_string(),
         "evebitda" => quote
             .fund
             .as_ref()
@@ -4078,6 +4084,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // (#463) the 5y fund_factors levels the live enrich already fills
         "rev5y" | "opm" | "mtrend" | "fcf5y" | "fair" | "mos" if stock_only_na => "—".to_string(),
+        // (#506) a cash burn today has no growth rate and no DCF value; "burn" says so where "n/a" hid it
+        "fcf5y" | "fair" | "mos" if quote.fund.as_ref().and_then(|f| f.fcf_ttm).is_some_and(|c| c <= 0.0) => "burn".to_string(),
         "fcf5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.fcf_cagr, f.fcf_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
         // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio
         "fair" | "mos" => quote
@@ -4505,6 +4513,11 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     (stock, etf, crypto)
 }
 
+/// (#506) EBITDA filed at or below 0: EV/EBITDA and ND/EBITDA print "loss", not "n/a"
+fn ebitda_loss(quote: &Quote) -> bool {
+    quote.fund.as_ref().and_then(|f| f.ebitda_ttm).is_some_and(|e| e <= 0.0)
+}
+
 /// (#505) The 5y rate unmarked, else the short-span fallback marked with its years, rounded, in superscript
 /// (³ = over ~3 filed years: 52-week fiscal years land a day either side). Display only: the scored rates never read the short ones.
 fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, String)> {
@@ -4913,7 +4926,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("WEIGHT", "The holding's share of the 13F's total reported value; click to open the 13F filing on sec.gov"),
         ("STATUS", "Vs the quarter before: new, added (more than 5% more shares), trimmed (below 95% of the shares) or held"),
         ("SHARES Δ", "Change in shares held vs the quarter before; new = not held then"),
-        ("BOUGHT", "Newest quarter of the last 4 in which Berkshire bought it; — = not bought in that time"),
+        ("BOUGHT", "Newest quarter of the last 4 in which Berkshire bought it; before … = held, and not bought since that quarter; — = no 13F in hand"),
     ]);
     let social = fixed(&[
         num,
@@ -7382,11 +7395,11 @@ mod tests {
         assert_eq!(cc("icov", &st, 0.0, None, ""), "12x");
         assert_eq!(cc("nde", &st, 0.0, None, ""), "-1.5x", "net cash reads below zero");
         st.fund.as_mut().unwrap().ebitda_ttm = Some(0.0);
-        assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
+        assert_eq!(cc("nde", &st, 0.0, None, ""), "loss", "(#506) no positive EBITDA, no ratio");
         st.fund.as_mut().unwrap().ebitda_ttm = Some(-20.0);
-        assert_eq!(cc("nde", &st, 0.0, None, ""), "n/a", "a loss must not read as net cash");
+        assert_eq!((cc("nde", &st, 0.0, None, ""), cc("evebitda", &st, 0.0, None, "")), ("loss".to_string(), "loss".to_string()), "a loss must not read as net cash");
         // (#462) cap-based cash value: n/a with no live cap, then FCF/cap, cap/revenue, (cap+net debt)/EBITDA
-        for k in ["fcfy", "ps", "evebitda"] {
+        for k in ["fcfy", "ps"] {
             assert_eq!(cc(k, &st, 0.0, None, ""), "n/a", "{k} with no live cap");
         }
         let f = st.fund.as_mut().unwrap();
@@ -7403,7 +7416,7 @@ mod tests {
         f.revenue_ttm = Some(0.0);
         f.ebitda_ttm = Some(0.0);
         assert_eq!(cc("ps", &st, 0.0, None, ""), "n/a", "no revenue, no ratio");
-        assert_eq!(cc("evebitda", &st, 0.0, None, ""), "n/a", "no positive EBITDA, no ratio");
+        assert_eq!(cc("evebitda", &st, 0.0, None, ""), "loss", "(#506) no positive EBITDA, no ratio");
         // (#478) a bank's EBIT-type cells are not missing, they do not apply; its FCF% still prints
         st.fund.as_mut().unwrap().financial = true;
         for k in ["roic", "nde", "icov", "evebitda", "opm", "mtrend"] {
@@ -7451,13 +7464,17 @@ mod tests {
         assert_eq!(cc("earn", &st, 0.0, None, ""), "n/a", "(#449) no date published");
         st.next_earnings = chrono::NaiveDate::from_ymd_opt(2026, 10, 22);
         assert_eq!(cc("earn", &st, 0.0, None, ""), "10-22");
-        // (#484) n/a on a burn or with no 5y FCF rate; then price × FCF-YLD × the multiple
+        // (#484) n/a with no 5y FCF rate, (#506) burn on a burn; then price × FCF-YLD × the multiple
+        assert_eq!(cc("fcf5y", &st, 0.0, None, ""), "burn", "(#506) FCF -10 now");
+        st.fund.as_mut().unwrap().fcf_ttm = Some(20.0);
         assert_eq!(cc("fcf5y", &st, 0.0, None, ""), "n/a", "under 5 years filed");
         st.fund.as_mut().unwrap().fcf_cagr = Some(4.04);
         assert_eq!(cc("fcf5y", &st, 0.0, None, ""), "+4.0%");
         for fcf in [-10.0, 0.0] {
             st.fund.as_mut().unwrap().fcf_ttm = Some(fcf);
-            assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "FCF {fcf} has no value to discount");
+            for k in ["fcf5y", "fair", "mos"] {
+                assert_eq!(cc(k, &st, 0.0, None, ""), "burn", "(#506) FCF {fcf} has no rate and no value to discount");
+            }
         }
         let f = st.fund.as_mut().unwrap();
         (f.fcf_ttm, f.cap_fund) = (Some(20.0), Some(0.0));
@@ -9889,6 +9906,12 @@ mod tests {
         assert_eq!(cc("aum", &eq, 0.0, None, ""), "—", "a stock has no fund size");
         eq.max_drawdown_pct = 0.0;
         assert_eq!(cc("maxdd", &eq, 0.0, None, ""), "n/a", "a zero drawdown is no history, not -0%");
+        eq.pe_ratio = None;
+        assert_eq!(cc("pe", &eq, 0.0, None, ""), "n/a", "no EPS filed");
+        eq.fund = Some(crate::core::FundFactors { eps_ttm: Some(0.0), ..Default::default() });
+        assert_eq!(cc("pe", &eq, 0.0, None, ""), "loss", "(#506) earnings at or below 0");
+        eq.fund = Some(crate::core::FundFactors { eps_ttm: Some(0.1), ..Default::default() });
+        assert_eq!(cc("pe", &eq, 0.0, None, ""), "n/a", "a profit with no P/E is missing data");
 
         // clean_name: a coin by TICKER alone (no instrument type) still loses its quote-currency suffix
         let mut btc = Quote::stub("BTC-EUR", "€1", "", "Bitcoin EUR");
