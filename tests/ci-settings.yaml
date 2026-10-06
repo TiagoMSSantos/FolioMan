@@ -5496,6 +5496,21 @@ buy_heuristic:
                                  #  (an equal-weight top-N is set-invariant); the flips are gate-refused; the prior is weak.
                                  #  REOPEN: a named BOOK row whose PEG reads wrong because of a charge inside operating income, or ASU 2024-03's expense
                                  #  disaggregation tags landing (fiscal years after 2026-12-15). Do not re-propose the add-back on the literature alone.
+                                 #── (#503) MEASURED 2026-10-06 — THREE WAYS A LIVE FILER LOST ITS SEC ROWS, AND FIVE DEBT TAGS FILERS MOVED TO ──
+                                 #  ASK: the page's n/a cells hide useful data. 575 cells on 23 shadow rows had NO fundamentals at all, and three of the causes
+                                 #  also froze RANKED names. (1) us-gaap was read first even when stale: TM moved to IFRS (frozen FY2013), SONY (FY2021-03),
+                                 #  KSPI carries a stub us-gaap block (no rows). Now the taxonomy with the newer annual fact wins. (2) USD was taken whenever
+                                 #  tagged: SAP's one stray USD line beat a decade of EUR (frozen FY2017). Now the unit with the most facts wins, USD on a
+                                 #  tie; `price_in` converts the close, TM's 10:1 ADS ratio already in `ads_ratio`. (3) IFRS 15 revenue
+                                 #  (RevenueFromContractsWithCustomers) was not a rev tag: VIK, AS rowless.
+                                 #  DEBT: (#419) reads a filer paying interest under no debt tag as UNKNOWN, so ND/EBITDA printed n/a for 49 Social rows.
+                                 #  Frames census (CY2024Q4I / CY2025Q4I, calendar filers only): ~20 of 553 pond filers carry debt only as UnsecuredLongTermDebt
+                                 #  (CDNS), SeniorNotes (DLR EXR VRSN), SeniorLongTermNotes, UnsecuredDebt (ESS MAA), NotesPayable (DHI), ConvertibleDebtNoncurrent
+                                 #  (ALNY). Appended after LongTermDebt. LineOfCredit left out (a revolver draw read alone understates). TPL stays unknown.
+                                 #  Cache key _facts20 -> _facts21 (bridge reads _facts20 first); the 47 fixture files are renamed, rows frozen.
+                                 #  MEASURED, backtest-gate control (HEAD) vs arm, same session: 20/12/8y price legs byte-identical (+5.4/+5.9/+6.5 top-10).
+                                 #  8y fund: top-10 excess +5.2 both, lane edge +21.4 -> +20.7, as-of fundamentals 51.0% -> 51.5%, peg_yield n 3301 -> 3293.
+                                 #  REVERT RULE: none, all three are parse errors. A new debt tag is a census line here.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

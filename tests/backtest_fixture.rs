@@ -452,7 +452,7 @@ fn backtest_pit_report_is_pinned() {
 
 /// (#364) The fundamental lane, the ONLY pin on the shipped `growth_fund_weight` tilt. Every other
 /// golden runs without `fund`, so each sample's fund factor is None and the tilt adds nothing: their
-/// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts20` rows, so the as-of join,
+/// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts21` rows, so the as-of join,
 /// the factor pick and the tilted growth score all reach the book, and the factor tables, the held-out
 /// factor sweep and the two-style book print. (#421) backtest-gate runs `8 universe fund` live too;
 /// these pins are its offline half.
@@ -510,7 +510,7 @@ fn backtest_fund_report_is_split_invariant() {
     }
     std::fs::write(&cache_path, serde_json::to_string(&cache).expect("ser cache")).expect("write cache");
 
-    let facts_path = root.join(format!(".sec_cache/{tk}_facts20.json"));
+    let facts_path = root.join(format!(".sec_cache/{tk}_facts21.json"));
     let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
     let mut restated = (0, 0);
     for row in rows.as_array_mut().expect("rows") {
@@ -550,7 +550,7 @@ fn backtest_fund_report_is_share_scale_invariant() {
     use serde_json::Value;
     let cfg = fixture_copy("scale-12-fund", false);
     let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
-    let facts_path = root.join(".sec_cache/MAA_facts20.json");
+    let facts_path = root.join(".sec_cache/MAA_facts21.json");
     let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
     let mut scaled = 0;
     for row in rows.as_array_mut().expect("rows") {
@@ -580,7 +580,7 @@ fn backtest_fund_report_is_gain_invariant() {
     use serde_json::{json, Value};
     let cfg = fixture_copy("gain-12-fund", false);
     let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
-    let facts_path = root.join(".sec_cache/ODFL_facts20.json");
+    let facts_path = root.join(".sec_cache/ODFL_facts21.json");
     let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
     let rows_mut = rows.as_array_mut().expect("rows");
     // every prior EPS has its prior year's row, whose factor it takes: only the oldest row has none
@@ -765,7 +765,7 @@ fn regen_backtest_fixture() {
     let copied = out
         .keys()
         .filter(|t| {
-            let f = format!("{t}_facts20.json");
+            let f = format!("{t}_facts21.json");
             std::fs::copy(repo().join(".sec_cache").join(&f), sec.join(&f)).is_ok()
         })
         .count();
