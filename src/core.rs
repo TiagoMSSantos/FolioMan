@@ -705,6 +705,16 @@ pub fn splice_trim_start(dates: &[NaiveDate], closes: &[f64], max_weekly_rate: f
     start
 }
 
+/// (#497) The splice bar THIS ticker is judged by: `rate`, or 0.0 (the trimmer's own "off") on a bare
+/// symbol. A symbol with no `.XX` venue suffix is a US-exchange line (crypto too, already exempt at
+/// every caller), and a US line never redenominates — Yahoo pre-adjusts its splits — so the only
+/// steps it can show are real. MRNA's real +129% week (2026-08-17, $63 -> $145, 2.29x/wk) tripped
+/// the 2.0 bar and erased 7.7 of its 7.8 years; it was the ONLY bare symbol the bar cut in the
+/// 5345-series cache, against 176 suffixed lines (GBp/USD/EUR/CHF ETFs, mostly .L) it still trims.
+pub fn splice_rate_for(ticker: &str, rate: f64) -> f64 {
+    if ticker.contains('.') { rate } else { 0.0 }
+}
+
 /// (#263) First index AFTER the last PLATEAU — a run of byte-identical consecutive closes spanning
 /// `max_flat_years` or more. The caller keeps `[start..]`, exactly as with [`splice_trim_start`], and
 /// the two compose by `max`: a record can carry both lies.
@@ -5179,7 +5189,7 @@ pub fn backtest_quote(
     // returned, so the live path is unchanged. 0 when the knob is off (the series arrived pre-trimmed,
     // so this finds nothing anyway) and for crypto, whose real 13x/wk weeks are not splices.
     let splice = if pit_splice_trim(crate::config::splice_trim_point_in_time(), ticker) {
-        splice_trim_start(&dates[..=as_of], &closes[..=as_of], crate::config::splice_max_weekly_rate())
+        splice_trim_start(&dates[..=as_of], &closes[..=as_of], splice_rate_for(ticker, crate::config::splice_max_weekly_rate()))
     } else {
         0
     };
@@ -5669,6 +5679,13 @@ mod tests {
         // degenerate inputs: empty and single-point series trim nothing
         assert_eq!(splice_trim_start(&[], &[], 2.0), 0);
         assert_eq!(splice_trim_start(&dates[..1], &closes[..1], 2.0), 0);
+    }
+
+    /// (#497) a bare US symbol is judged with the trimmer off; a suffixed venue line keeps the bar
+    #[test]
+    fn splice_rate_for_exempts_bare_us_symbols() {
+        assert_eq!(splice_rate_for("MRNA", 2.0), 0.0, "a real +129% week is not a splice");
+        assert_eq!(splice_rate_for("0A08.L", 2.0), 2.0);
     }
 
     /// (#94) The as-of trim: a splice must not delete history that had not happened yet.

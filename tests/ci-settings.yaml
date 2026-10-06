@@ -2726,6 +2726,12 @@ buy_heuristic:
                                  #   instruments glued together, and growth_min_age_years gates the stubs.
                                  #   BACKTEST-BLIND: changes the INPUT universe, so before/after edges are two
                                  #   different measurements, never an A/B. 0.0 = off.
+                                 #   (#497) 2026-10-06: a BARE symbol (no `.XX` venue suffix = a US line)
+                                 #   skips this bar, `core::splice_rate_for`. A US line never redenominates
+                                 #   and Yahoo pre-adjusts its splits, so its steps are real: MRNA's +129%
+                                 #   week (2026-08-17, 2.29x/wk) erased 7.7 of its 7.8 years and read it as
+                                 #   a 49-day listing. It was the only bare symbol cut in the 5345-series
+                                 #   cache; the 176 suffixed lines (mostly .L ETFs) still trim.
   growth_proximity_weight: 1.0   # (#48) SLOPE of the distance-below-own-high dock: score ×(1 + w·(range_pct/100 − 1)).
                                  #   1.0 = the raw `range_pct/100` multiply the lane has always shipped. Written here
                                  #   EXPLICITLY (it is also the code default, so this line changes no behaviour) because

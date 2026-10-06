@@ -390,7 +390,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     if !crate::picks::is_currency_quoted(ticker) && !crate::config::splice_trim_point_in_time() {
         // (#263) ...composed with the plateau twin by `max`: a record can carry both lies, and the
         // trustworthy start is after whichever ends later.
-        let start = core::splice_trim_start(&dates, &closes, crate::config::splice_max_weekly_rate())
+        let start = core::splice_trim_start(&dates, &closes, core::splice_rate_for(ticker, crate::config::splice_max_weekly_rate()))
             .max(core::flat_trim_start(&dates, &closes, crate::config::flat_run_max_years()));
         if start > 0 {
             let cut = dates[start];
@@ -718,7 +718,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // the monthly-head/daily-tail seam is a joint neither payload contains alone — a redenomination
     // exactly there only becomes a visible step once the two are glued.
     if !crate::picks::is_currency_quoted(ticker) {
-        let start = core::splice_trim_start(&long_dates, &long_closes, crate::config::splice_max_weekly_rate())
+        let start = core::splice_trim_start(&long_dates, &long_closes, core::splice_rate_for(ticker, crate::config::splice_max_weekly_rate()))
             .max(core::flat_trim_start(&long_dates, &long_closes, crate::config::flat_run_max_years())); // (#263) same `max` compose
         if start > 0 {
             let cut_d = long_dates[start];
@@ -12546,11 +12546,11 @@ pub(crate) mod tests {
                 }
             }]}})
         };
-        let clean = parse_chart(&body([1.0, 1.01, 1.02, 1.03, 1.04]), "ZZEVENTS").expect("chart");
+        let clean = parse_chart(&body([1.0, 1.01, 1.02, 1.03, 1.04]), "ZZEVENTS.X").expect("chart");
         assert_eq!(clean.divs, [(day(-3), 0.5), (day(21), 0.01)], "untrimmed: the early dividend stays");
         assert_eq!(clean.splits, [(day(0), 2.0), (day(21), 3.0)], "the 0:1 split is gone");
 
-        let spliced = parse_chart(&body([100.0, 101.0, 1.0, 1.01, 1.02]), "ZZEVENTS").expect("chart");
+        let spliced = parse_chart(&body([100.0, 101.0, 1.0, 1.01, 1.02]), "ZZEVENTS.X").expect("chart");
         if crate::config::splice_max_weekly_rate() > 1.0 {
             assert_eq!(spliced.dates.first(), Some(&day(14)), "cut at the first post-splice bar");
             assert_eq!(spliced.divs, [(day(21), 0.01)]);
@@ -12647,7 +12647,7 @@ pub(crate) mod tests {
         // d1 sits exactly 2920 days (8 years) before the last bar; the monthly head ends before d0
         let (d0, d1, d2, d3) = (ago(3000), ago(2920), ago(400), ago(30));
         let (m0, m1) = (ago(3400), ago(3200));
-        // SEAM: a ×100 monthly head a week before a daily tail, so only the MERGED series shows the step
+        // SEAM (a venue suffix, since a bare US symbol skips the splice bar, #497): a ×100 monthly head a week before a daily tail, so only the MERGED series shows the step
         let (s0, s1) = (ago(400), ago(200));
         // (#492) CLIP: the daily window opens on the last 150 days of a 5.3y placeholder (under the 2.0y
         // bar on its own); the monthly series sees the whole run and starts after it
@@ -12665,8 +12665,8 @@ pub(crate) mod tests {
             ("USDEUR", chart_body(&[(last, 0.9)], &[], "EUR")),
             (route("8Y", "10y"), chart_body(&[(d0, 1.2), (d1, 2.0), (d2, 1.5), (d3, 2.0), (last, 2.5)], &[(d2, 0.4)], "EUR")),
             (route("8Y", "max"), chart_body(&[(m0, 0.9), (m1, 1.0)], &[(ago(3410), 0.05), (m0, 0.1), (d0, 0.2)], "EUR")),
-            (route("SEAM", "10y"), chart_body(&[(s0, 1.0), (s1, 1.1), (last, 1.2)], &[(s1, 0.05)], "EUR")),
-            (route("SEAM", "max"), chart_body(&[(ago(437), 100.0), (ago(407), 101.0)], &[(ago(437), 5.0)], "EUR")),
+            (route("SEAM.X", "10y"), chart_body(&[(s0, 1.0), (s1, 1.1), (last, 1.2)], &[(s1, 0.05)], "EUR")),
+            (route("SEAM.X", "max"), chart_body(&[(ago(437), 100.0), (ago(407), 101.0)], &[(ago(437), 5.0)], "EUR")),
             (route("YOUNG", "10y"), chart_body(&[(ago(400), 1.0), (ago(200), 1.2), (last, 1.1)], &[], "EUR")),
             (route("YOUNG", "max"), chart_body(&[(ago(400), 0.8)], &[], "EUR")),
             (route("CLIP", "10y"), with_splits(chart_body(&clip, &[(ago(2900), 0.5), (ago(400), 0.3)], "EUR"), &[(ago(2900), 2.0), (ago(400), 4.0)])),
@@ -12726,7 +12726,7 @@ pub(crate) mod tests {
         let q = quote_one(&client, &urls, &fx, &tk("EMPTY"), 30, 0, false, false, &w, None, false).await;
         assert_eq!(q.price, "no data");
 
-        let q = quote_one(&client, &urls, &fx, &tk("SEAM"), 30, 0, false, false, &w, None, false).await;
+        let q = quote_one(&client, &urls, &fx, &tk("SEAM.X"), 30, 0, false, false, &w, None, false).await;
         if crate::config::splice_max_weekly_rate() > 1.0 {
             let (dates, closes) = ([s0, s1, last], [1.0, 1.1, 1.2]);
             assert_eq!(q.age_years, core::age_years(&dates), "the head before the step is cut");
