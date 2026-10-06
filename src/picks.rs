@@ -4942,7 +4942,7 @@ pub(crate) fn buy_book(
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
 /// the column is there.
-const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list across stocks and ETFs by score, its first five names weighted `sizing.head_weight` (2 on CI) against 1 for each later one, coins at their crypto budget. Blank = the book does not fund this row. NOT advice";
+const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list across stocks and ETFs by score, its first five names weighted `sizing.head_weight` (2 on CI) against 1 for each later one (a `c` commodity-price name never takes one of the five when `sizing.head_skip_commodity` is on, as on CI), coins at their crypto budget. Blank = the book does not fund this row. NOT advice";
 
 /// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
@@ -6375,6 +6375,27 @@ pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize, head: f64) -> Vec
 /// every horizon. shortcut: a const, not a knob — one boundary was graded; make it a knob when a second is.
 pub(crate) const HEAD: usize = 5;
 
+/// (#495) The book order `Sizing::head_skip_commodity` funds. Rows are `(is_coin, is_commodity)` in score order; a
+/// commodity name that would land among the first [`HEAD`] non-coin rows is parked right after them, in its own
+/// order, so the head's double share goes to the next earnings-led name. Coins keep their places, and a book too
+/// short to fill the head with other names hands parked rows the head after all.
+pub(crate) fn head_skip(rows: &[(bool, bool)]) -> Vec<usize> {
+    let (mut order, mut parked, mut seen) = (Vec::new(), Vec::new(), 0);
+    for (i, &(coin, commodity)) in rows.iter().enumerate() {
+        if !coin && commodity && seen < HEAD {
+            parked.push(i);
+            continue;
+        }
+        order.push(i);
+        seen += usize::from(!coin);
+        if seen == HEAD {
+            order.append(&mut parked);
+        }
+    }
+    order.append(&mut parked);
+    order
+}
+
 /// (#262) Indices of the first row per ISSUER, in rank order — every later row carrying a name already
 /// seen is dropped. The caller's list MUST already be sorted best-first, because that is what decides
 /// which listing of a twin pair survives.
@@ -6475,6 +6496,12 @@ pub(crate) fn sized_book<'a>(
     // (#313) the graded equal-weight book, opt-in: coins keep the crypto-budget weight struck above, the
     // first `book_names` (#317) other names split the rest equally, uncapped like the backtest's top-10 lane.
     let coin = |q: &crate::core::Quote| crate::picks::asset_class(q) == 0;
+    // (#495) a commodity-price name (`c`) stays bought, but at a tail share: MPC sat at head rank 5 on 6.3%
+    let book: Vec<_> = if sz.head_skip_commodity {
+        head_skip(&book.iter().map(|r| (coin(r.0), is_commodity(r.0))).collect::<Vec<_>>()).into_iter().map(|i| book[i]).collect()
+    } else {
+        book
+    };
     let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
     book.into_iter().zip(eq).filter_map(|((q, s, _, cap), w)| w.map(|w| (q, s, w, if coin(q) { cap } else { None }))).collect()
 }

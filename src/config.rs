@@ -86,6 +86,8 @@ pub struct Sizing {
     pub equal_weight_book: bool, // (#313) buy the graded book instead of the vol-target one: coins keep the crypto-budget weight `size_weights` strikes, the first `book_cut` (#317) other names split the rest equally, uncapped like the backtest's equal-weight top-10. false = the (#286) SIZED book, the DEFAULT. See the (#313) receipt
     #[serde(skip_serializing_if = "is_flat_head")] // flat serialises nothing, so every `sizing_fp` journaled before (#322) still matches
     pub head_weight: f64, // (#322) what each of the equal-weight book's first `size::HEAD` non-coin names weighs against a later name's 1: 2.0 pays ranks 1-5 double. Read through `head_share`. 1.0 = the flat (#313) book, the DEFAULT. See the (#322) receipt
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `sizing_fp` journaled before (#495) still matches
+    pub head_skip_commodity: bool, // (#495) the equal-weight book never seats a commodity-price name (`picks::is_commodity`, the `c` flag) among its first `size::HEAD` non-coin rows: it moves to just after them, so it is still bought at a tail share and the head's `head_weight` goes to the next name. false = score order, the DEFAULT
 }
 
 /// Defaults are the SHIPPED policy, not a neutral off-state — the one place in this file where a
@@ -105,6 +107,7 @@ impl Default for Sizing {
             equal_weight_book: false, // (#313) opt-in
             book_names: 10, // (#317) the graded top-10
             head_weight: 1.0, // (#322) flat
+            head_skip_commodity: false, // (#495) opt-in
         }
     }
 }

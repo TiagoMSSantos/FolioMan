@@ -733,6 +733,35 @@ pub(crate) mod tests {
         assert_eq!(equal_weights(&rows[..3], 10, 2.0), [Some(5.0), Some(47.5), Some(47.5)], "an all-head book is flat");
     }
 
+    /// (#495) commodity rows (`true` second) inside the head move to just after it; coins hold their places; a book
+    /// with too few other names gives the parked rows the head anyway.
+    #[test]
+    fn head_skip_parks_commodities_after_the_head() {
+        use crate::picks::head_skip;
+        let (n, c, coin) = ((false, false), (false, true), (true, false));
+        assert_eq!(head_skip(&[n, c, coin, n, n, n, n, n, c]), [0, 2, 3, 4, 5, 6, 1, 7, 8]);
+        assert_eq!(head_skip(&[c, c, n, n]), [2, 3, 0, 1]);
+        assert_eq!(head_skip(&[n, n, n, n, n, c]), [0, 1, 2, 3, 4, 5]);
+    }
+
+    /// (#495) `head_skip_commodity` in the funded book: an Energy name scored 2nd is bought at the tail share, rank 6.
+    #[test]
+    fn sized_book_head_skip_commodity_pays_a_tail_share() {
+        let tuning = config::BuyHeuristic::default();
+        let mut quotes: Vec<crate::core::Quote> =
+            ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"].iter().enumerate().map(|(i, n)| scoring_quote(&format!("S{i}.DE"), n, 1120.0 - 20.0 * i as f64, 2.0)).collect();
+        quotes[1].sector = Some("Energy".into());
+        let refs: Vec<&crate::core::Quote> = quotes.iter().collect();
+        let on = config::Sizing { equal_weight_book: true, head_weight: 2.0, head_skip_commodity: true, ..config::Sizing::default() };
+        let got: Vec<(String, f64)> = sized_book(&refs, &tuning, &on, None, &Default::default()).iter().map(|(q, _, w, _)| (q.ticker.clone(), *w)).collect();
+        let order: Vec<&str> = got.iter().map(|r| r.0.as_str()).collect();
+        assert_eq!(order, ["S0.DE", "S2.DE", "S3.DE", "S4.DE", "S5.DE", "S1.DE", "S6.DE"]);
+        assert!((got[5].1 - 100.0 / 12.0).abs() < 1e-9 && (got[0].1 - 200.0 / 12.0).abs() < 1e-9, "{got:?}");
+        let off = config::Sizing { head_skip_commodity: false, ..on };
+        assert_eq!(sized_book(&refs, &tuning, &off, None, &Default::default())[1].0.ticker, "S1.DE", "off: score order");
+        assert!(!crate::commands::backtest::tuning_fingerprint(&off).contains("head_skip_commodity"));
+    }
+
     /// (#287) the line that names the vetted holds the spill does not fund. Graded on the three
     /// things a reader acts on: WHICH markets are missing, HOW MANY, and that nothing was dropped.
     #[test]

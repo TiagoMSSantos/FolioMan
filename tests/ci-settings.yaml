@@ -1359,6 +1359,13 @@ sizing:
                       #   rank-1 / 2-5 slice boundary) weighs 2 shares against a later name's 1, so on 24 names
                       #   the head holds 6.6% each and the rest 3.3%. Coins untouched. 1.0 = the flat (#313)
                       #   book and the code default. Read the (#322) receipt. Anything not above 0 is read as 1.
+  head_skip_commodity: true  # (#495) USER DECISION 2026-10-06: a `c` commodity-price name (GICS Energy/Materials,
+                      #   or a miner/oil/uranium-named fund) never takes one of those five double shares. It
+                      #   moves to just after the head, still bought at a tail share. On the day MPC (refiner,
+                      #   flags c) sat at head rank 5 on 6.3%; its margin is a crack spread, the cyclical earnings
+                      #   (#44)'s 0.8 damp already docks, and a damp cannot stop a rank-5 name from doubling.
+                      #   JUDGEMENT, BACKTEST-BLIND (stub quotes carry no sector), goldens identical. track's
+                      #   rank ladder still grades score order. REVERT: false.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
