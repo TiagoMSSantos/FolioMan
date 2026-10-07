@@ -968,6 +968,11 @@ pub struct Urls {
     // stays byte-identical; CI sets it.
     #[serde(default)]
     pub nasdaq_ipo: String,
+    // (#517) Wikidata's SPARQL endpoint: stocks listed on 10 European exchanges in the last 5 years join
+    // the stock pond for the Young table only (`fetch::wikidata_pond`, `picks::young_pond_keep`). EMPTY
+    // is the off switch, like `nasdaq_ipo`; CI sets it.
+    #[serde(default)]
+    pub wikidata_sparql: String,
     #[serde(default = "default_nasdaq_target_url")]
     pub nasdaq_target: String,
     #[serde(default = "default_nasdaq_summary_url")]

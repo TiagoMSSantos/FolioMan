@@ -1766,6 +1766,29 @@ pub async fn run(args: Vec<String>) {
         // growth_score and every backtest caller. Empty map on the explicit-args path -> None -> inert.
         quote.sector = sector_of.get(&quote.ticker).cloned();
     }
+    // (#517) the Wikidata pond is Young-table supply only. Its old and thin names leave HERE, before the
+    // fund tilt spends budget on them and before anything ranks. Pins and explicit args are never dropped.
+    if !explicit_args {
+        let pond: std::collections::HashSet<String> = std::fs::read(config::data_path(fetch::WIKIDATA_POND_PATH))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Vec<(String, String)>>(&b).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
+        quotes.retain(|q| !pond.contains(&q.ticker) || settings.tickers.contains(&q.ticker) || picks::young_pond_keep(q));
+        if !pond.is_empty() {
+            let kept: Vec<&str> = quotes.iter().filter(|q| pond.contains(&q.ticker)).map(|q| q.ticker.as_str()).collect();
+            eprintln!(
+                "screen: Wikidata EU pond — {} of {} names kept (<{:.0}y listed, €{:.1}M+/day), the rest dropped before ranking: {}",
+                kept.len(),
+                pond.len(),
+                picks::YOUNG_YEARS,
+                picks::YOUNG_POND_MIN_TURNOVER_EUR / 1e6,
+                kept.join(", ")
+            );
+        }
+    }
     // (#45) why the USE/REPL columns read n/a, bucketed by cause. Runs here because bf_meta is consulted
     // per-quote inside the fetch above, long after fetch_universe (where the other BF diagnostics print)
     // has returned — and because the ETF tagging it filters on is the loop directly above. Conditional,

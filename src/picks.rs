@@ -5186,6 +5186,18 @@ pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
 /// (`growth_min_leg_years`, 5), so these can only show here, never in the book.
 pub const YOUNG_YEARS: f64 = 5.0;
 
+/// (#517) The Wikidata pond's size bar: average € traded a day. EU names carry no share count at the point
+/// `screen` filters (FMP is refused on this key, SEC files US issuers only), so turnover stands in for a
+/// €1B market cap. Probe 2026-10-07: every €1B+ name at €0.5M/day or more (Springer Nature 0.68M, the
+/// thinnest), every micro-cap at €0.27M or less (Planethic 0.00M, Gelion 0.04M).
+pub const YOUNG_POND_MIN_TURNOVER_EUR: f64 = 500_000.0;
+
+/// (#517) A Wikidata pond name stays only when it is young and traded at the bar above. That drops
+/// re-listings (Shell, DHL, TUI: decades of Yahoo history) and micro-caps before anything ranks.
+pub fn young_pond_keep(q: &Quote) -> bool {
+    q.age_years.is_some_and(|a| a < YOUNG_YEARS) && q.avg_turnover_eur.is_some_and(|t| t >= YOUNG_POND_MIN_TURNOVER_EUR)
+}
+
 /// (#500) The Young table's names: every stock listed under [`YOUNG_YEARS`], fastest newest-year
 /// revenue growth first. A name with no revenue figure sorts last and is never dropped; ties break on
 /// ticker. `screen` adds them to the fundamentals pool, so a printed n/a is a real gap.
@@ -10641,6 +10653,17 @@ mod tests {
         assert_eq!(young_rows(&quotes).as_array().map(Vec::len), Some(4));
         assert_eq!(young_line(&quotes, 2), "young (<5y listed, shadow, NOT ranked): 4 stock(s), by revenue growth: FAST +175%, SLOW +5%");
         assert!(young_line(&quotes, 9).ends_with("SLOW +5%, NAN n/a, NONE n/a"), "{}", young_line(&quotes, 9));
+    }
+
+    /// (#517) The Wikidata pond keeps a name under 5 years old AND trading €500K+/day; either unknown drops it.
+    #[test]
+    fn young_pond_keep_needs_young_and_liquid() {
+        let q = |age: Option<f64>, turn: Option<f64>| Quote { age_years: age, avg_turnover_eur: turn, ..Quote::stub("X.DE", "€1", "", "X") };
+        assert!(young_pond_keep(&q(Some(4.9), Some(500_000.0))));
+        assert!(!young_pond_keep(&q(Some(5.0), Some(9e9))), "a re-listing with 5y+ of history");
+        assert!(!young_pond_keep(&q(Some(1.0), Some(499_999.0))), "a micro-cap");
+        assert!(!young_pond_keep(&q(None, Some(9e9))));
+        assert!(!young_pond_keep(&q(Some(1.0), None)));
     }
 
     #[test]

@@ -20900,6 +20900,15 @@ urls:
   # record. Census that day: ~40 names. Past months cache forever in `.ipo_cache.json`, the current
   # month is refetched. REVERT: delete this line, the pond and its requests go with it.
   nasdaq_ipo: "https://api.nasdaq.com/api/ipo/calendar?date={ym}"
+  # (#517) European stocks listed in the last 5 years, off Wikidata (keyless SPARQL, one GET a day,
+  # kept 24h in `.wikidata_listings.json`): Frankfurt, London, SIX, Paris, Amsterdam, Stockholm,
+  # Madrid, Milan, Oslo, Copenhagen. Asked 2026-10-07: all 48 young rows were US. Young table ONLY:
+  # `screen` drops every pond name that is not under 5y on Yahoo (re-listings: Shell, DHL, TUI) or
+  # trades under EUR 500K/day (micro-caps: Planethic, Gelion), before anything ranks. Probe that day:
+  # 43 companies, kept among others SDZ.SW, P911.DE, DTG.DE, MICC.AS, VSURE.ST, CAN.L, SPG.DE, PLX.PA,
+  # IVG.MI. CEILING: the data is crowd-edited, so Haleon, Galderma, Puig, CVC and Renk are missing.
+  # REVERT: delete this line.
+  wikidata_sparql: "https://query.wikidata.org/sparql"
   # (#516) Apple's US top-free App Store chart, one GET a run. A pooled company whose developer climbs
   # 25+ places over its best rank of the week before, or enters the chart, is a social tip (`s` flag,
   # the existing x1.05 and `soc` track). Conglomerates (3+ apps: Google, Microsoft, TikTok, Instagram) are

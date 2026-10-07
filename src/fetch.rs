@@ -6744,6 +6744,15 @@ pub async fn constituent_ponds(client: &Client, urls: &Urls, sectors: &[String])
             ponds.push(pond);
         }
     }
+    // (#517) after the IPO pond, same reason; `screen` keeps only its young names
+    if !urls.wikidata_sparql.is_empty() {
+        let pond: Vec<_> = wikidata_young_pond(client, urls).await.into_iter().filter(|(_, s)| core::sector_matches(s, sectors)).collect();
+        if pond.is_empty() {
+            eprintln!("fetch: Wikidata EU listings unavailable or 0 rows kept — young EU stocks absent from the screen");
+        } else {
+            ponds.push(pond);
+        }
+    }
     ponds
 }
 
@@ -6875,6 +6884,80 @@ async fn ipo_pond(client: &Client, urls: &Urls) -> Vec<(String, String)> {
     let mut pond: Vec<(String, String)> = months.iter().filter_map(|m| cache.get(m)).flatten().cloned().collect();
     pond.sort();
     pond.dedup_by(|a, b| a.0 == b.0);
+    pond
+}
+
+/// (#517) The Wikidata pond, kept 24h. `screen` reads it back to hold these names to the young-only rule.
+pub const WIKIDATA_POND_PATH: &str = ".wikidata_listings.json";
+
+/// (#517) Wikidata exchange item -> Yahoo suffix. Each QID was checked against its label on 2026-10-07:
+/// four of the first guesses named a person, Lisbon, a lake and a national park.
+const WIKIDATA_EXCHANGES: [(&str, &str); 10] = [
+    ("Q151139", ".DE"),  // Frankfurt Stock Exchange (Yahoo's .DE line is Xetra)
+    ("Q171240", ".L"),   // London Stock Exchange
+    ("Q661834", ".SW"),  // SIX Swiss Exchange
+    ("Q2385849", ".PA"), // Euronext Paris
+    ("Q478720", ".AS"),  // Amsterdam Stock Exchange
+    ("Q1019992", ".ST"), // Nasdaq Stockholm
+    ("Q617426", ".MC"),  // Madrid Stock Exchange
+    ("Q936563", ".MI"),  // Borsa Italiana
+    ("Q909158", ".OL"),  // Oslo Stock Exchange
+    ("Q1019983", ".CO"), // Nasdaq Copenhagen
+];
+
+/// (#517) Every listing (P414) on those exchanges whose start (P580) is on or after `since`, with its
+/// ticker (P249), newest first.
+fn wikidata_query(since: NaiveDate) -> String {
+    let ex: Vec<String> = WIKIDATA_EXCHANGES.iter().map(|(q, _)| format!("wd:{q}")).collect();
+    format!(
+        "SELECT ?c ?ex ?tick WHERE {{ VALUES ?ex {{ {} }} ?c p:P414 ?st . ?st ps:P414 ?ex ; pq:P580 ?start ; pq:P249 ?tick . \
+         FILTER(?start >= \"{since}T00:00:00Z\"^^xsd:dateTime) }} ORDER BY DESC(?start)",
+        ex.join(" ")
+    )
+}
+
+/// (#517) The SPARQL rows as a pond: (Yahoo symbol, "other"). One row per company, the newest listing
+/// winning. A ticker Yahoo cannot read is skipped: an ISIN typed into the field, or non-ASCII.
+fn wikidata_pond(v: &Value) -> Vec<(String, String)> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for r in v.pointer("/results/bindings").and_then(Value::as_array).into_iter().flatten() {
+        let val = |k: &str| r.pointer(&format!("/{k}/value")).and_then(Value::as_str).unwrap_or("").to_string();
+        let ex = val("ex");
+        let Some((_, suffix)) = WIKIDATA_EXCHANGES.iter().find(|(q, _)| ex.rsplit('/').next() == Some(q)) else { continue };
+        let tick = val("tick").trim().to_uppercase().replace([' ', '.'], "-");
+        let isin = tick.len() == 12 && tick.chars().take(2).all(|c| c.is_ascii_alphabetic()) && tick.chars().any(|c| c.is_ascii_digit());
+        if tick.is_empty() || isin || !tick.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') || !seen.insert(val("c")) {
+            continue;
+        }
+        out.push((format!("{tick}{suffix}"), "other".to_string()));
+    }
+    out
+}
+
+/// (#517) One SPARQL GET a day, sent with the repo's contact User-Agent as Wikidata's policy asks. A
+/// refused or empty answer is not cached, so the next run retries.
+#[mutants::skip] // one GET around the tested `wikidata_query` / `wikidata_pond`
+async fn wikidata_young_pond(client: &Client, urls: &Urls) -> Vec<(String, String)> {
+    let path = crate::config::data_path(WIKIDATA_POND_PATH);
+    evict_if_stale(&path, StdDuration::from_secs(24 * 3600));
+    if let Some(pond) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
+        return pond;
+    }
+    if offline() {
+        return Vec::new();
+    }
+    throttle().await;
+    let since = chrono::Local::now().date_naive() - chrono::Duration::days((crate::picks::YOUNG_YEARS * 365.25) as i64);
+    let query = wikidata_query(since);
+    let req = client.get(&urls.wikidata_sparql).query(&[("format", "json"), ("query", query.as_str())]);
+    let Some(v) = req.header(reqwest::header::USER_AGENT, &urls.sec_user_agent).send().await.ok().and_then(|r| r.error_for_status().ok()) else {
+        return Vec::new();
+    };
+    let pond = v.json::<Value>().await.map(|v| wikidata_pond(&v)).unwrap_or_default();
+    if !pond.is_empty() {
+        let _ = std::fs::write(&path, serde_json::to_string(&pond).unwrap_or_default());
+    }
     pond
 }
 
@@ -13554,6 +13637,35 @@ pub(crate) mod tests {
         assert_eq!(gics_of_nasdaq(Some("Technology")), "Information Technology");
         assert_eq!(gics_of_nasdaq(Some("Energy")), "Energy");
         assert_eq!(gics_of_nasdaq(None), "other");
+    }
+
+    /// (#517) Exchange QID -> Yahoo suffix, one row per company (newest listing first), spaces and dots to
+    /// dashes; an ISIN, a non-ASCII or empty ticker, or an unknown exchange is skipped.
+    #[test]
+    fn wikidata_pond_maps_exchanges_and_skips_unreadable_tickers() {
+        let row = |c: &str, ex: &str, tick: &str| {
+            serde_json::json!({
+                "c": {"value": format!("http://www.wikidata.org/entity/{c}")},
+                "ex": {"value": format!("http://www.wikidata.org/entity/{ex}")},
+                "tick": {"value": tick},
+            })
+        };
+        let v = serde_json::json!({"results": {"bindings": [
+            row("Q1", "Q151139", "P911"),
+            row("Q2", "Q1019992", "volv b"),
+            row("Q3", "Q171240", "BT.A"),
+            row("Q4", "Q151139", "DE000A41ZZJ4"),
+            row("Q5", "Q999", "NOPE"),
+            row("Q1", "Q936563", "P911M"),
+            row("Q6", "Q661834", ""),
+            row("Q7", "Q2385849", "Ä1"),
+            row("Q8", "Q1019983", "NOVO B"),
+        ]}});
+        let got: Vec<String> = wikidata_pond(&v).into_iter().map(|(s, sector)| format!("{s} {sector}")).collect();
+        assert_eq!(got, ["P911.DE other", "VOLV-B.ST other", "BT-A.L other", "NOVO-B.CO other"]);
+        let q = wikidata_query(NaiveDate::from_ymd_opt(2021, 10, 7).unwrap());
+        assert!(q.contains("wd:Q151139 wd:Q171240") && q.contains("wd:Q1019983 }"), "{q}");
+        assert!(q.contains("FILTER(?start >= \"2021-10-07T00:00:00Z\"^^xsd:dateTime)"), "{q}");
     }
 
     /// (#515) The upcoming section, same $1B+ no-SPAC rule, soonest first, date in ISO form; a missing

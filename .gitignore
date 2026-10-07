@@ -81,6 +81,8 @@ config/settings.yaml
 # (#465) yearly ETF tracking differences behind the page's TD-1Y/TD-5Y cells; refetched every 30 days
 .td_cache.json
 .ipo_cache.json
+# (#517) the Wikidata EU listings pond, kept 24h; screen reads it for the young-only rule
+.wikidata_listings.json
 # (#516) 14 days of App Store chart ranks; restored by its own cache step in pages.yml
 .appstore_ranks.json
 .justetf_cells_cache.json
