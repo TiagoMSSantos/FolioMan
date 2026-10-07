@@ -4943,7 +4943,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("TICKER", ticker),
         ("NAME", "The company's name; — = the screen does not price it; click to open the company's own website (or its Wikipedia article)"),
-        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), 13D/G N (N of those managers filed a new 13D or 13G stake in the last 90 days), ARK (an ARK fund bought it in the last 30 days and none sold), insiders (2+ insiders bought on the open market in one recent filing), YouTube ×N (mentions in recent videos of five stock channels), hand list"),
+        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), 13D/G N (N of those managers filed a new 13D or 13G stake in the last 90 days), ARK (an ARK fund bought it in the last 30 days and none sold), insiders (2+ insiders bought on the open market in one recent filing), App Store (its app climbed 25+ places on Apple's US top-free chart in a week, or entered it), YouTube ×N (mentions in recent videos of five stock channels), hand list"),
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
         ("WHY", "The hand list's claim, else the newest video title, else the 13D/G, ARK or insider filing, else the superinvestor count; click to open that source"),
     ]);

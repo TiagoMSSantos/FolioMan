@@ -2784,6 +2784,8 @@ enum TipKind {
     Insider,
     Reddit,
     Trends,
+    /// (#516) a developer climbing Apple's US top-free chart
+    AppStore,
 }
 
 /// (#475) Look-back of each newer source: a new 13D/13G stake, then an ARK net buy.
@@ -2809,6 +2811,8 @@ pub struct SocRow {
     /// (#483) a Reddit/4chan mention surge, a Google Trends hit, Hacker News stories naming it
     reddit: bool,
     trends: bool,
+    /// (#516) its developer climbed the App Store chart
+    app: bool,
     hn: usize,
     videos: usize,
     hand: bool,
@@ -3086,6 +3090,70 @@ fn trend_hits(xml: &str, today: &str, eu: &HashMap<String, String>, quotes: &[Qu
         .collect()
 }
 
+/// (#516) A developer with this many apps on the chart is a conglomerate (Google 11, Microsoft 4, TikTok,
+/// Instagram, X 3): its rank moves are its portfolio's, not one product's adoption.
+const APP_CONGLOMERATE: usize = 3;
+/// (#516) A tip is a climb of [`APP_CLIMB`] places over the developer's best rank of the [`APP_DAYS`]
+/// days before, or a rank it held none of them. The file keeps [`APP_KEEP_DAYS`], so a missed CI day
+/// still leaves a full week.
+const APP_DAYS: i64 = 7;
+const APP_CLIMB: u32 = 25;
+const APP_KEEP_DAYS: i64 = 14;
+const APPSTORE_RANKS_PATH: &str = ".appstore_ranks.json";
+
+/// (#516) Apple's US top-free chart -> each developer's best rank (1-based), conglomerates dropped.
+fn app_chart(v: &Value) -> BTreeMap<String, u32> {
+    let ranked: Vec<(u32, &str)> = v["feed"]["results"].as_array().into_iter().flatten().zip(1..).filter_map(|(r, i)| Some((i, r["artistName"].as_str()?))).collect();
+    let mut best = BTreeMap::new();
+    for &(i, a) in &ranked {
+        if ranked.iter().filter(|(_, b)| *b == a).count() < APP_CONGLOMERATE {
+            best.entry(a.to_string()).or_insert(i);
+        }
+    }
+    best
+}
+
+/// (#516) A company name as the chart and the pool both spell it: lowercase words, legal suffixes,
+/// one-letter words and punctuation dropped (`Spotify Technology S.A.` == `Spotify`).
+fn app_name(name: &str) -> String {
+    const NOISE: [&str; 21] = [
+        "inc", "incorporated", "llc", "ltd", "limited", "plc", "corp", "corporation", "co", "company", "holdings", "holding", "group", "the", "sa", "nv", "ag", "se",
+        "technologies", "technology", "financial",
+    ];
+    let lower = name.to_lowercase();
+    lower.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 1 && !NOISE.contains(w)).collect::<Vec<_>>().join(" ")
+}
+
+/// (#516) Pooled stocks whose developer climbed the chart (see [`APP_CLIMB`]), from `history`
+/// (`{day: app_chart}`, today's included). Nothing until the history reaches back [`APP_DAYS`]: on
+/// the first runs every developer reads as new.
+fn app_climbs(history: &BTreeMap<String, BTreeMap<String, u32>>, today: NaiveDate, quotes: &[Quote]) -> Vec<SocTip> {
+    let (start, day) = ((today - chrono::Duration::days(APP_DAYS)).to_string(), today.to_string());
+    let Some(now) = history.get(&day) else { return Vec::new() };
+    if history.keys().next().is_none_or(|d| *d > start) {
+        return Vec::new();
+    }
+    let pooled: Vec<(String, &Quote)> = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")).map(|q| (app_name(&q.name), q)).collect();
+    now.iter()
+        .filter_map(|(artist, &rank)| {
+            let was = history.range(start.clone()..day.clone()).filter_map(|(_, m)| m.get(artist).copied()).min();
+            if was.is_some_and(|w| w < rank + APP_CLIMB) {
+                return None;
+            }
+            let key = app_name(artist);
+            let (_, q) = pooled.iter().find(|(k, _)| !key.is_empty() && *k == key)?;
+            Some(SocTip {
+                us: q.ticker.clone(),
+                name: q.name.clone(),
+                kind: TipKind::AppStore,
+                day: day.clone(),
+                why: was.map_or(format!("App Store US top free #{rank} (new this week)"), |w| format!("App Store US top free #{rank} (was #{w})")),
+                link: "https://apps.apple.com/us/charts/iphone/top-free-apps/36".to_string(),
+            })
+        })
+        .collect()
+}
+
 /// (#483) Hacker News' Algolia answer -> its stories in [`soc_videos`]' shape (day, title, title, the
 /// HN thread), so [`soc_hits`] names the pooled stocks in them the way it reads a video.
 fn hn_stories(v: &Value) -> Vec<(String, String, String, String)> {
@@ -3198,6 +3266,7 @@ fn soc_merge(
             TipKind::Insider => r.insiders = true,
             TipKind::Reddit => r.reddit = true,
             TipKind::Trends => r.trends = true,
+            TipKind::AppStore => r.app = true,
         }
         r.newest = r.newest.clone().max(t.day.clone());
         (r.why, r.link) = (t.why.clone(), t.link.clone());
@@ -3227,7 +3296,7 @@ fn soc_merge(
         }
     }
     let sources = |r: &SocRow| {
-        [r.buyers != 0, r.stakes != 0, r.ark, r.insiders, r.reddit, r.trends, r.hn != 0, r.videos != 0, r.hand].into_iter().filter(|&b| b).count()
+        [r.buyers != 0, r.stakes != 0, r.ark, r.insiders, r.reddit, r.trends, r.app, r.hn != 0, r.videos != 0, r.hand].into_iter().filter(|&b| b).count()
     };
     rows.sort_by(|a, b| {
         sources(b)
@@ -3248,7 +3317,7 @@ pub fn stamp_social(quotes: &mut [Quote], rows: &[SocRow]) {
         let row = rows.iter().find(|r| r.ticker == q.ticker);
         q.social = row.is_some();
         q.super_buyers = row.map_or(0, |r| r.buyers + r.stakes);
-        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand || r.ark || r.insiders || r.reddit || r.trends || r.hn > 0);
+        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand || r.ark || r.insiders || r.reddit || r.trends || r.app || r.hn > 0);
     }
 }
 
@@ -3276,6 +3345,9 @@ fn soc_table(rows: &[SocRow], supers: &str) -> Value {
             }
             if r.trends {
                 sources.push("Google Trends".to_string());
+            }
+            if r.app {
+                sources.push("App Store".to_string());
             }
             if r.hn > 0 {
                 sources.push(format!("HN ×{}", r.hn));
@@ -3342,12 +3414,24 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
     let day = today.to_string();
     tips.extend(get_json(client, &urls.apewisdom).await.map(|v| ape_surges(&v, &day)).unwrap_or_default());
     tips.extend(get_text(client, &urls.google_trends_rss).await.map(|x| trend_hits(&x, &day, &eu, quotes)).unwrap_or_default());
+    if !urls.appstore_chart.is_empty() {
+        let path = crate::config::data_path(APPSTORE_RANKS_PATH);
+        let mut ranks: BTreeMap<String, BTreeMap<String, u32>> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        if let Some(chart) = get_json(client, &urls.appstore_chart).await.map(|v| app_chart(&v)).filter(|c| !c.is_empty()) {
+            ranks.insert(day.clone(), chart);
+            ranks.retain(|d, _| *d >= (today - chrono::Duration::days(APP_KEEP_DAYS)).to_string());
+            let _ = std::fs::write(&path, serde_json::to_string(&ranks).unwrap_or_default());
+        }
+        let climbs = app_climbs(&ranks, today, quotes);
+        eprintln!("fetch: App Store chart: {} days of ranks (climbs need {APP_DAYS} before today), {} climbs", ranks.len(), climbs.len());
+        tips.extend(climbs);
+    }
     let hn_since = (chrono::Utc::now() - chrono::Duration::days(SOC_HN_DAYS)).timestamp().to_string();
     let stories = get_json(client, &urls.hn_stories.replace("{since}", &hn_since)).await.map(|v| hn_stories(&v)).unwrap_or_default();
     let rows = soc_merge(&soc_hits(&videos, quotes), &soc_hits(&stories, quotes), &supers, &picks, &tips, &eu, quotes);
     stamp_social(quotes, &rows);
     eprintln!(
-        "fetch: social arbitrage: {} videos, {} HN stories, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider/Reddit/Trends tips, {} hand picks -> {} rows",
+        "fetch: social arbitrage: {} videos, {} HN stories, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider/Reddit/Trends/App Store tips, {} hand picks -> {} rows",
         videos.len(),
         stories.len(),
         supers.1.len(),
@@ -10972,6 +11056,63 @@ pub(crate) mod tests {
         assert_eq!(got[3].link, "https://trends.google.com/trends/explore?geo=US&date=now%207-d&q=united");
     }
 
+    /// (#516) Each developer's best chart rank, counted over every row (one without a developer still
+    /// takes its place); a developer with 3 apps on the chart is dropped.
+    #[test]
+    fn app_chart_keeps_best_ranks_and_drops_conglomerates() {
+        let rows: Vec<Value> = ["Shopify Inc.", "Google LLC", "Lyft, Inc.", "Google LLC", "Lyft, Inc.", "Google LLC", "", "Roku, Inc."]
+            .iter()
+            .map(|a| if a.is_empty() { serde_json::json!({"name": "x"}) } else { serde_json::json!({"artistName": a}) })
+            .collect();
+        let got = app_chart(&serde_json::json!({"feed": {"results": rows}}));
+        let want: BTreeMap<String, u32> = [("Lyft, Inc.", 3), ("Roku, Inc.", 8), ("Shopify Inc.", 1)].map(|(a, r)| (a.to_string(), r)).into();
+        assert_eq!(got, want);
+        assert!(app_chart(&serde_json::json!({})).is_empty());
+    }
+
+    /// (#516) Chart and pool spellings of one company meet; a name of only legal words is empty.
+    #[test]
+    fn app_name_drops_legal_words_and_punctuation() {
+        assert_eq!(app_name("Spotify Technology S.A."), "spotify");
+        assert_eq!(app_name("JPMorgan Chase & Co."), "jpmorgan chase");
+        assert_eq!(app_name("Capital One Financial Corporation"), app_name("Capital One"));
+        assert_eq!(app_name("Life360, Inc."), "life360");
+        assert_eq!(app_name("The Group, Inc."), "");
+    }
+
+    /// (#516) A tip is a climb of 25+ places over the best rank of the 7 days before (the 7th day back
+    /// counts, the 8th does not), or a developer absent all of them; only pooled equities; nothing
+    /// until the ranks reach back 7 days, or with no ranks for today.
+    #[test]
+    fn app_climbs_tip_big_climbs_and_new_entries_once_warm() {
+        let q = |t: &str, name: &str, kind: &str| Quote { instrument_type: kind.to_string(), name: name.to_string(), ..Quote::stub(t, "€1", "", t) };
+        let quotes = [q("XSHP", "Shopify Inc.", "ETF"), q("SHOP", "Shopify Inc.", "EQUITY"), q("LYFT", "Lyft, Inc.", "EQUITY"), q("SNAP", "Snap Inc.", "EQUITY"), q("UBER", "Uber Technologies, Inc.", "EQUITY"), q("ROKU", "Roku, Inc.", "EQUITY")];
+        let day = |d: &str, ranks: &[(&str, u32)]| (d.to_string(), ranks.iter().map(|(a, r)| (a.to_string(), *r)).collect::<BTreeMap<_, _>>());
+        let mut history: BTreeMap<String, BTreeMap<String, u32>> = [
+            day("2026-09-29", &[("Uber Technologies, Inc.", 90)]),
+            day("2026-09-30", &[("Snap Inc.", 45), ("Shopify Inc.", 70)]),
+            day("2026-10-03", &[("Shopify Inc.", 61), ("Roku, Inc.", 44)]),
+            day("2026-10-07", &[("Shopify Inc.", 12), ("Lyft, Inc.", 40), ("Snap Inc.", 20), ("Roku, Inc.", 20), ("Uber Technologies, Inc.", 5), ("Temu", 1)]),
+        ]
+        .into();
+        let today = NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+        let got = app_climbs(&history, today, &quotes);
+        let short: Vec<(&str, &str, TipKind)> = got.iter().map(|t| (t.us.as_str(), t.why.as_str(), t.kind)).collect();
+        assert_eq!(
+            short,
+            [
+                ("LYFT", "App Store US top free #40 (new this week)", TipKind::AppStore),
+                ("SHOP", "App Store US top free #12 (was #61)", TipKind::AppStore),
+                ("SNAP", "App Store US top free #20 (was #45)", TipKind::AppStore),
+                ("UBER", "App Store US top free #5 (new this week)", TipKind::AppStore),
+            ]
+        );
+        assert_eq!((got[0].name.as_str(), got[0].day.as_str()), ("Lyft, Inc.", "2026-10-07"));
+        assert!(app_climbs(&history, today.succ_opt().unwrap(), &quotes).is_empty(), "no ranks for today");
+        history.retain(|d, _| d.as_str() > "2026-09-30");
+        assert!(app_climbs(&history, today, &quotes).is_empty(), "warming up");
+    }
+
     /// (#483) A story reads as a video would: its day, its title twice, its HN thread; a hit missing a
     /// field is skipped.
     #[test]
@@ -10987,9 +11128,9 @@ pub(crate) mod tests {
     #[test]
     fn soc_merge_adds_the_crowd_lanes() {
         let q = |t: &str, name: &str| Quote { instrument_type: "EQUITY".to_string(), name: name.to_string(), ..Quote::stub(t, "€1", "", t) };
-        let mut quotes = [q("VST", "Vistra Corp."), q("RXO", "RXO, Inc."), q("NVDA", "Nvidia Corporation"), q("AMD", "Advanced Micro")];
+        let mut quotes = [q("VST", "Vistra Corp."), q("RXO", "RXO, Inc."), q("NVDA", "Nvidia Corporation"), q("AMD", "Advanced Micro"), q("HOOD", "Robinhood Markets")];
         let tip = |us: &str, kind: TipKind, why: &str| SocTip { us: us.into(), name: us.into(), kind, day: "2026-10-05".into(), why: why.into(), link: format!("l/{why}") };
-        let tips = [tip("VST", TipKind::Reddit, "r"), tip("NVDA", TipKind::Reddit, "r2"), tip("RXO", TipKind::Trends, "t")];
+        let tips = [tip("VST", TipKind::Reddit, "r"), tip("NVDA", TipKind::Reddit, "r2"), tip("RXO", TipKind::Trends, "t"), tip("RXO", TipKind::AppStore, "a"), tip("HOOD", TipKind::AppStore, "a2")];
         let hn = [(&quotes[2], 3, "2026-10-04".to_string(), "story".to_string(), "hn/1".to_string()), (&quotes[3], 1, "2026-10-03".to_string(), "amd story".to_string(), "hn/2".to_string())];
         let videos = [(&quotes[2], 1, "2026-10-01".to_string(), "video".to_string(), "yt/1".to_string())];
         let supers = ("2026-Q2".to_string(), vec![]);
@@ -11002,15 +11143,16 @@ pub(crate) mod tests {
             cells,
             [
                 ("NVDA", "Reddit; HN ×3; YouTube ×1", "2026-10-05", "video"),
+                ("RXO", "Google Trends; App Store", "2026-10-05", "a"),
                 ("AMD", "HN ×1", "2026-10-03", "amd story"),
-                ("RXO", "Google Trends", "2026-10-05", "t"),
+                ("HOOD", "App Store", "2026-10-05", "a2"),
                 ("VST", "Reddit", "2026-10-05", "r"),
             ]
         );
-        assert_eq!(table[1][5], serde_json::json!(["WHY", "amd story", "hn/2"]));
+        assert_eq!(table[2][5], serde_json::json!(["WHY", "amd story", "hn/2"]));
         let rows: Vec<SocRow> = rows.into_iter().map(|r| SocRow { videos: 0, ..r }).collect();
         stamp_social(&mut quotes, &rows);
-        assert_eq!(quotes.map(|q| q.social_tip), [true, true, true, true], "each crowd lane alone is a tip");
+        assert_eq!(quotes.map(|q| q.social_tip), [true, true, true, true, true], "each crowd lane alone is a tip");
     }
 
     #[test]

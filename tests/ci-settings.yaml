@@ -20900,6 +20900,12 @@ urls:
   # record. Census that day: ~40 names. Past months cache forever in `.ipo_cache.json`, the current
   # month is refetched. REVERT: delete this line, the pond and its requests go with it.
   nasdaq_ipo: "https://api.nasdaq.com/api/ipo/calendar?date={ym}"
+  # (#516) Apple's US top-free App Store chart, one GET a run. A pooled company whose developer climbs
+  # 25+ places over its best rank of the week before, or enters the chart, is a social tip (`s` flag,
+  # the existing x1.05 and `soc` track). Conglomerates (3+ apps: Google, Microsoft, TikTok, Instagram) are
+  # skipped. Ranks keep 14 days in `.appstore_ranks.json`; no tip until a week of them exists. Asked
+  # 2026-10-07 for more social sources than the hand list. REVERT: delete this line.
+  appstore_chart: "https://rss.marketingtools.apple.com/api/v2/us/apps/top-free/100/apps.json"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
   # latest Bitcoin NUPL (net unrealized profit/loss), free on-chain sentiment gauge; `screen` prints it after the crypto table

@@ -903,6 +903,10 @@ pub struct Urls {
     // (#483) Hacker News stories with 100+ points created after `{since}` (unix seconds), via Algolia.
     #[serde(default = "default_hn_stories_url")]
     pub hn_stories: String,
+    // (#516) Apple's US top-free App Store chart (100 apps, JSON): a pooled company whose app climbs it
+    // is a social tip (`fetch::app_climbs`). EMPTY is the off switch, like `nasdaq_ipo`; CI sets it.
+    #[serde(default)]
+    pub appstore_chart: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
