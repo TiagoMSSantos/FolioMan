@@ -4145,7 +4145,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "impl_g" => quote
             .fund
             .as_ref()
-            .and_then(|f| Some(f.fcf_base? / f.cap_fund.filter(|m| *m > 0.0)?))
+            .and_then(|f| Some(f.fcf_base? / f.cap_fund?))
             .and_then(implied_growth)
             .map_or("n/a".to_string(), |g| format!("{g:+.1}%")),
         "rev5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.rev_cagr, f.rev_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
@@ -7737,6 +7737,11 @@ mod tests {
         assert_eq!((cc("fair_oe", &st, 0.0, None, ""), cc("mos_oe", &st, 0.0, None, "")), ("€22.13".to_string(), "-56%".to_string()));
         assert_eq!(cc("fair_cap", &st, 0.0, None, ""), "€35.4B", "8e8 shares × €44.27");
         assert_eq!(cc("impl_g", &st, 0.0, None, ""), "+5.7%", "a 5% yield needs a 20× multiple");
+        // a zero cap is an infinite yield, which implied_growth's range check already refuses: no cap guard
+        let cap = st.fund.as_ref().unwrap().cap_fund;
+        st.fund.as_mut().unwrap().cap_fund = Some(0.0);
+        assert_eq!(cc("impl_g", &st, 0.0, None, ""), "n/a", "a zero cap");
+        st.fund.as_mut().unwrap().cap_fund = cap;
         st.fund.as_mut().unwrap().oe_base = Some(-1.0);
         assert_eq!((cc("fair_oe", &st, 0.0, None, ""), cc("fair", &st, 0.0, None, "")), ("burn".to_string(), "€44.27".to_string()), "SBC can burn alone");
         // (#478) a bank's FCF is deposit flow: the whole family reads —, and feeds no look-through
@@ -14583,6 +14588,9 @@ mod tests {
         assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", 8000.0), ("2020-12-31", -4.0), ("2022-12-31", 4000.0)]), 1e5), None);
         assert_eq!(ep_fair_ratio(&sap, 0.0), None);
         assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", 8000.0), ("2024-12-31", 4000.0)]), 1e5), None);
+        // a zero 3y median is no base: n/a, as the SEC path (`fair_on` refuses base <= 0)
+        let zero = rows(&[("2025-12-31", 8000.0), ("2024-12-31", 0.0), ("2023-12-31", 0.0), ("2020-12-31", 4000.0)]);
+        assert_eq!(ep_fair_ratio(&zero, 1e5), None);
         assert_eq!(ep_fair_ratio(&[], 1e5), None);
     }
 
