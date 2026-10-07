@@ -5008,19 +5008,28 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
 }
 
 /// (#446) What the page's INDEX header means, set by [`stamp_index`].
-const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it (justETF's name when Börse Frankfurt has none); ×N = N rows of this table track that same index, so the book holds the same bet N times, and · TICKER names the cheapest of them by TER, a euro-quoted line first so no currency conversion is paid. When the settings' growth_etf_one_per_index is on, only that line ranks, so ×N then marks a pinned twin. — = no index on record, so a count can undercount. Display only, never scored";
+const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it (justETF's name when Börse Frankfurt has none); ×N = N rows of this table track that same index, so the book holds the same bet N times, and · TICKER names the cheapest of them by TER, an accumulating line first so no payout is taxed, then a euro-quoted line so no currency conversion is paid. Spellings that differ only in word order, the word index or a capping rule (20%, 20/35, capped) count as one index. When the settings' growth_etf_one_per_index is on, only that line ranks, so ×N then marks a pinned twin. — = no index on record, so a count can undercount. Display only, never scored";
 
 /// (#490) The INDEX count key: Börse Frankfurt's "nasdaq 100 index" and justETF's "Nasdaq 100®" are one index.
+/// (#509) Word order and capping rules are spelling too: BF's "s&p technology select sector index" and
+/// justETF's "S&P Select Sector Capped 20% Technology" are one index, so "index", "capped", a `20%` cap and a
+/// `20/35` cap drop out and the words sort. A capped variant fuses with its parent, which is the same bet.
 fn index_key(name: &str) -> String {
     let s = name.to_lowercase().replace(['®', '™'], "").replace('-', " ");
-    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    s.strip_suffix(" index").map_or(s.clone(), str::to_string)
+    let cap = |w: &str| w.strip_suffix('%').or_else(|| w.contains('/').then_some(w)).is_some_and(|c| c.split('/').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())));
+    let mut words: Vec<&str> = s.split_whitespace().filter(|w| !matches!(*w, "index" | "capped") && !cap(w)).collect();
+    words.sort_unstable();
+    words.join(" ")
 }
 
 /// (#446) The line a same-index group names: the lowest TER among its euro lines (every line when none is
 /// euro), the first on a tie. (#494) One spelling for the INDEX cell's ` · TICKER` and the line
-/// `growth_etf_one_per_index` keeps, so the page never names one line and buys another.
+/// `growth_etf_one_per_index` keeps, so the page never names one line and buys another. (#509) A
+/// distributing line goes last: a 20-year hold pays tax on every payout, which a TER gap of a few bp never
+/// buys back, so the accumulating lines (or unknown ones) are the pool whenever the group has one.
 fn cheapest_line<'a>(group: &[&'a Quote]) -> Option<&'a Quote> {
+    let acc: Vec<&Quote> = group.iter().copied().filter(|q| q.use_of_profits.or(q.profile.use_class.as_deref()) != Some("Dist")).collect();
+    let group: &[&Quote] = if acc.is_empty() { group } else { &acc };
     let eur: Vec<&Quote> = group.iter().copied().filter(|q| !is_noneur_etf(q)).collect();
     let pool = if eur.is_empty() { group } else { &eur };
     pool.iter().filter_map(|q| Some((q.ter_shown()?, *q))).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q)
@@ -10632,7 +10641,23 @@ mod tests {
         let mut p = serde_json::json!({"etfs": [etf("A"), etf("B")]});
         stamp_index(&mut p, &quotes);
         assert_eq!(p["etfs"][0][3][1], "nasdaq 100 index ×2", "no TER on record: no suffix");
-        assert_eq!(index_key("S&P 500 - Index"), "s&p 500");
+        assert_eq!(index_key("S&P 500 - Index"), index_key("s&p 500"));
+        // (#509) word order and capping rules fuse; a different index, or a plain number, never does
+        let key = |a: &str, b: &str| index_key(a) == index_key(b);
+        assert!(key("s&p technology select sector index", "S&P Select Sector Capped 20% Technology"), "SXLK/XLKS");
+        assert!(key("msci europe financials 20/35 capped index", "MSCI Europe Financials"));
+        assert!(!key("S&P 500 Information Technology", "msci usa information technology index"), "IITU/XUTC");
+        assert!(!key("ftse 100", "ftse 250") && !key("ftse 100", "ftse"));
+        assert_eq!(index_key("S&P/ASX 200"), "200 s&p/asx", "a slash between words is a name, not a cap");
+        // (#509) an accumulating line beats a cheaper distributing one, whichever field says Dist
+        let (acc, mut dist, mut dist2) = (etf_q("A", Some(0.30), "EUR"), etf_q("B", Some(0.10), "EUR"), etf_q("C", Some(0.20), "EUR"));
+        dist.use_of_profits = Some("Dist");
+        let pick = |g: &[&Quote]| cheapest_line(g).map(|q| q.ticker.clone());
+        assert_eq!(pick(&[&dist, &acc]), Some("A".into()));
+        (dist.use_of_profits, dist.profile.use_class) = (None, Some("Dist".into()));
+        assert_eq!(pick(&[&dist, &acc]), Some("A".into()), "justETF's USE token counts too");
+        dist2.use_of_profits = Some("Dist");
+        assert_eq!(pick(&[&dist2, &dist]), Some("B".into()), "no accumulating line: the cheapest of all");
     }
 
     /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and

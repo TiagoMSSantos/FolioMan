@@ -19629,6 +19629,13 @@ buy_heuristic:
                                  #   sizer, the (#313) equal-weight book re-splits over the names left, so nothing strands.
                                  #   JUDGEMENT, BACKTEST-BLIND (stub quotes carry no benchmark), goldens identical.
                                  #   REVERT: false, if the freed slots fill with names the track grades worse.
+                                 #   (#509) 2026-10-07: the key was order- and cap-sensitive, so SXLK ("s&p technology
+                                 #   select sector index") and XLKS ("S&P Select Sector Capped 20% Technology") both
+                                 #   stayed. The key now drops "index", "capped", `20%` and `20/35` and sorts its words.
+                                 #   IITU (S&P 500 IT) and XUTC (MSCI USA IT) stay apart: different indices; (#510)
+                                 #   handles that overlap. The kept line is now accumulating first, then euro, then TER:
+                                 #   a Dist line pays tax on every payout over 20 years, which a few bp of TER never buys
+                                 #   back. The INDEX cell's `· TICKER` reads the same helper. Goldens identical.
   growth_exchange_token_damp: 0.5 # (#496) USER DECISION 2026-10-06 (the user's number): an exchange's own token (BNB,
                                  #   GT, OKB, CRO, LEO, KCS, HT, FTT, BGB, MX; flag `e`) scores x0.5. Sweeps 14 and 15
                                  #   recorded the risk and built nothing: the coin's value is one company's fee discounts
