@@ -4543,10 +4543,17 @@ pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
 /// Empty map on ANY failure, which reads downstream as "no MVRV for anything" and lets every coin pass
 /// the ceiling free. Coverage is thin by nature (~17 of the top 100 carry a value, and BNB, SOL, TRX,
 /// AVAX, SUI and XMR are among the misses), so the gate is designed around absence, not around a
-/// fetch that is expected to succeed.
+/// fetch that is expected to succeed. (#513) Each call is tried twice: one blip on 2026-10-07 10:03Z
+/// emptied a run (0 of 99, then 20 of 99 on replay), and a failure now prints its last HTTP status.
 pub async fn fetch_mvrv(client: &Client, urls: &Urls, tickers: &[String]) -> HashMap<String, f64> {
     let mut out = HashMap::new();
-    let Some(catalog) = get_json(client, &urls.coinmetrics_catalog).await else { return out };
+    let catalog = match coinmetrics_get(client, &urls.coinmetrics_catalog).await {
+        Ok(v) => v,
+        Err(s) => {
+            eprintln!("fetch: CoinMetrics MVRV catalog failed after 2 attempts (last status: {s}) — crypto_max_mvrv off this run");
+            return out;
+        }
+    };
     // catalog -> metrics[0].frequencies[freq == "1d"].assets
     let supported: std::collections::HashSet<String> = catalog
         .get("data")
@@ -4578,7 +4585,13 @@ pub async fn fetch_mvrv(client: &Client, urls: &Urls, tickers: &[String]) -> Has
         v
     };
     let url = urls.coinmetrics_mvrv.replace("{assets}", &ids.join(","));
-    let Some(body) = get_json(client, &url).await else { return out };
+    let body = match coinmetrics_get(client, &url).await {
+        Ok(v) => v,
+        Err(s) => {
+            eprintln!("fetch: CoinMetrics MVRV values failed after 2 attempts (last status: {s}) — crypto_max_mvrv off this run");
+            return out;
+        }
+    };
     let cutoff = (chrono::Utc::now().date_naive() - chrono::Duration::days(MVRV_MAX_AGE_DAYS)).to_string();
     let by_id = mvrv_rows(&body, &cutoff);
     for (id, ticker) in &want {
@@ -4587,6 +4600,31 @@ pub async fn fetch_mvrv(client: &Client, urls: &Urls, tickers: &[String]) -> Has
         }
     }
     out
+}
+
+/// (#513) A CoinMetrics GET tried twice, 400ms apart (Lisbon's shape). Success = a JSON body with a
+/// `data` array: CoinMetrics answers a 400/429 with a JSON `{"error": ...}`, so "it parsed" would take
+/// an error for an answer. `Err` carries the last HTTP status for the diagnostic. The sleep follows
+/// every failed try, not just the first: 400ms more on a total failure buys a loop with no
+/// attempt-index test, which the mutation gate could only grade on timing.
+async fn coinmetrics_get(client: &Client, url: &str) -> Result<Value, String> {
+    if offline() {
+        return Err("offline".to_string());
+    }
+    let mut last = String::from("no response");
+    for _ in 0..2 {
+        throttle().await;
+        if let Ok(r) = client.get(url).send().await {
+            last = r.status().to_string();
+            if let Ok(v) = r.json::<Value>().await {
+                if v.get("data").is_some_and(Value::is_array) {
+                    return Ok(v);
+                }
+            }
+        }
+        tokio::time::sleep(StdDuration::from_millis(400)).await;
+    }
+    Err(last)
 }
 
 /// (#395) Circulating supply per crypto ticker ("BTC-EUR" -> ~19.9M), for the MCAP cell, which
@@ -7687,6 +7725,16 @@ pub(crate) mod tests {
         let (url, client) = stub_server(Box::leak(body.to_string().into_boxed_str()));
         let got = fetch_mvrv(&client, &stub_urls(&url), &["BTC-EUR".into(), "AAPL".into()]).await;
         assert_eq!(got, HashMap::from([("BTC-EUR".to_string(), 1.5)]));
+    }
+
+    /// (#513) CoinMetrics' error reply parses as JSON, so it must count as a miss and be asked again:
+    /// two requests to the catalog, then nothing, and no coin carries an MVRV.
+    #[tokio::test]
+    async fn fetch_mvrv_retries_an_error_reply_once() {
+        let (url, client, requests) = recording_stub(r#"{"error":{"type":"bad_parameter"}}"#);
+        let got = fetch_mvrv(&client, &stub_urls(&url), &["BTC-EUR".into()]).await;
+        assert!(got.is_empty());
+        assert_eq!(requests.try_iter().count(), 2);
     }
 
     /// Signing + concurrency + throttle asserts (no live calls). White-box via `use super::*`.
