@@ -4114,6 +4114,58 @@ pub fn insider_counts(txns: &[InsiderTx], cutoff: NaiveDate, window_days: i64) -
         .fold((0, 0), |(b, s), t| if t.buy { (b + 1, s) } else { (b, s + 1) })
 }
 
+/// (#518) One 13F manager's change in one name, public on `filed`: `add` = more shares than the quarter
+/// before (a new position included, a split not), else fewer or none. Berkshire's Form 4s land here too,
+/// as manager [`HOLDER_BRK`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HolderTx {
+    pub filed: NaiveDate,
+    pub manager: u32,
+    pub add: bool,
+}
+
+/// (#518) The manager id Berkshire's 13Fs and Form 4s carry.
+pub const HOLDER_BRK: u32 = 0;
+/// (#518) How long a filed change counts: 13Fs land up to 45 days after the quarter, so 135 days keeps
+/// one quarter's filing plus the next quarter's, and a manager's newer change replaces its older one.
+pub const HOLDER_WINDOW_DAYS: i64 = 135;
+
+/// (#518) What the 13F record said about one name just before `cutoff`.
+#[derive(Debug, Default, PartialEq)]
+pub struct HolderFlags {
+    /// Berkshire's newest change in the window is an add.
+    pub brk_add: bool,
+    /// Managers whose newest change in the window is an add.
+    pub adders: u32,
+    /// Those adders minus the managers whose newest change is a trim or exit.
+    pub net: i32,
+}
+
+/// (#518) Each manager's NEWEST change filed in [cutoff - [`HOLDER_WINDOW_DAYS`], cutoff), counted. The
+/// filing date is the look-ahead guard, as in [`insider_net_buys`]: a 13F's report date is 45 days older
+/// than anyone could read it. On a same-day tie the first change listed stands.
+pub fn holder_flags(txs: &[HolderTx], cutoff: NaiveDate) -> HolderFlags {
+    let start = cutoff - Duration::days(HOLDER_WINDOW_DAYS);
+    let mut newest: BTreeMap<u32, HolderTx> = BTreeMap::new();
+    for t in txs.iter().filter(|t| t.filed >= start && t.filed < cutoff) {
+        let e = newest.entry(t.manager).or_insert(*t);
+        if t.filed > e.filed {
+            *e = *t;
+        }
+    }
+    let mut f = HolderFlags::default();
+    for t in newest.values() {
+        if t.add {
+            f.adders += 1;
+            f.net += 1;
+            f.brk_add |= t.manager == HOLDER_BRK;
+        } else {
+            f.net -= 1;
+        }
+    }
+    f
+}
+
 /// (Item 3) A per-name blend of the available as-of factors for the `"composite"` `growth_fund_factor`.
 /// shortcut: a plain mean of the factors present — they're all growth-%/points of similar magnitude, so
 /// averaging is a defensible first cut. CEILING: a true cross-sectional rank-normalisation (0..1 across
@@ -7531,6 +7583,34 @@ mod tests {
         assert_eq!(insider_counts(&txns, cutoff, 90), (2, 1));
         assert_eq!(insider_counts(&txns, cutoff, 10), (0, 1)); // 2020 is leap: Mar 1 − 10 = Feb 20, the sale
         assert_eq!(insider_counts(&[], cutoff, 90), (0, 0));
+    }
+
+    /// (#518) Newest change per manager inside [cutoff-135d, cutoff): the cutoff day and older changes are
+    /// out, a newer trim cancels an older add, a same-day tie keeps the first listed, and only manager 0
+    /// marks Berkshire.
+    #[test]
+    fn holder_flags_counts_each_managers_newest_change() {
+        let d = |s: &str| s.parse::<NaiveDate>().expect("date");
+        let tx = |filed: &str, manager, add| HolderTx { filed: d(filed), manager, add };
+        let cutoff = d("2020-06-01");
+        let txs = vec![
+            tx("2020-01-18", 1, true),  // 2020-06-01 - 135d = 2020-01-18: the window's first day counts
+            tx("2020-01-17", 2, true),  // a day older: out
+            tx("2020-02-14", 3, true),  // adder...
+            tx("2020-05-15", 3, false), // ...whose newer trim replaces the add
+            tx("2020-05-15", 4, true),  // same-day tie, first listed stands: add
+            tx("2020-05-15", 4, false),
+            tx("2020-05-14", 5, true),
+            tx("2020-06-01", 6, true),  // on the cutoff: out
+            tx("2020-05-20", HOLDER_BRK, true),
+        ];
+        assert_eq!(holder_flags(&txs, cutoff), HolderFlags { brk_add: true, adders: 4, net: 3 });
+        // Berkshire's newest change a sale: no brk_add, and the net drops by two
+        let mut sold = txs.clone();
+        sold.push(tx("2020-05-25", HOLDER_BRK, false));
+        assert_eq!(holder_flags(&sold, cutoff), HolderFlags { brk_add: false, adders: 3, net: 1 });
+        // a cutoff before every filing reads all zero
+        assert_eq!(holder_flags(&txs, d("2019-01-01")), HolderFlags::default());
     }
 
     /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.

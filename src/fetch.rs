@@ -2285,8 +2285,11 @@ fn brk_form4_list(v: &Value, since: &str) -> Vec<(String, String, String)> {
 }
 
 /// (#514) The `filings.recent` rows whose form passes `keep`, as (accession, the `mid` column, filing date).
+/// (#518) A `filings.files` page carries the same columns at its root, and reads the same way.
 fn brk_list(v: &Value, mid: &str, keep: impl Fn(&str) -> bool) -> Vec<(String, String, String)> {
-    let col = |k: &str| v.pointer(&format!("/filings/recent/{k}")).and_then(Value::as_array).cloned().unwrap_or_default();
+    let col = |k: &str| {
+        v.pointer(&format!("/filings/recent/{k}")).or_else(|| v.get(k)).and_then(Value::as_array).cloned().unwrap_or_default()
+    };
     let (forms, accs, mids, filed) = (col("form"), col("accessionNumber"), col(mid), col("filingDate"));
     let at = |a: &[Value], i: usize| a.get(i).and_then(Value::as_str).map(str::to_string);
     forms
@@ -2594,12 +2597,13 @@ fn cache_write(p: &std::path::Path, json: String) {
 }
 
 /// (#436) One 13F filing parsed by [`parse_13f`], cached forever but only when it holds rows. None = not
-/// cached and not fetched: SEC refused it, or [`SEC_FETCH_BUDGET`] is spent.
+/// cached and not fetched: SEC refused it, or the run's SEC count has reached `cap` ((#518) the
+/// [`SEC_FETCH_BUDGET`], or the holders backtest's own [`HOLDER_FETCH_BUDGET`]).
 #[mutants::skip] // (#470) async network shell, split out of `fetch_brk`
-async fn read_13f(client: &Client, urls: &Urls, cik: &str, acc: &str) -> Option<(String, HashMap<String, (u64, u64)>)> {
+async fn read_13f(client: &Client, urls: &Urls, cik: &str, acc: &str, cap: usize) -> Option<(String, HashMap<String, (u64, u64)>)> {
     let path = sec_cache_path(&format!("_brk13f2_{acc}")); // (#442) 2 = with `<value>`; (#470) every filer, not only Berkshire
     let cached = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok());
-    if cached.is_some() || SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+    if cached.is_some() || SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= cap {
         return cached;
     }
     let url = format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}.txt", cik.trim_start_matches('0'), acc.replace('-', ""));
@@ -2611,13 +2615,13 @@ async fn read_13f(client: &Client, urls: &Urls, cik: &str, acc: &str) -> Option<
 }
 
 /// (#514) One Berkshire Form 4 parsed by [`parse_brk_form4`], cached forever, a director's filing as
-/// `null` so it is never refetched. None = not cached and not fetched: SEC refused it, or the budget is
-/// spent.
+/// `null` so it is never refetched. None = not cached and not fetched: SEC refused it, or the run's SEC
+/// count has reached `cap`, as in [`read_13f`].
 #[mutants::skip] // (#514) async network shell, the `read_13f` shape
-async fn read_brk_form4(client: &Client, urls: &Urls, acc: &str, doc: &str) -> Option<Option<(String, String, String, i64)>> {
+async fn read_brk_form4(client: &Client, urls: &Urls, acc: &str, doc: &str, cap: usize) -> Option<Option<(String, String, String, i64)>> {
     let path = sec_cache_path(&format!("_brkf4_{acc}"));
     let cached = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok());
-    if cached.is_some() || SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+    if cached.is_some() || SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= cap {
         return cached;
     }
     let url = format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{doc}", BRK_CIK.trim_start_matches('0'), acc.replace('-', ""));
@@ -2684,7 +2688,7 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     let filing = window.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2))).map_or(String::new(), |(acc, ..)| brk_filing_url(acc));
     let mut filings: Vec<Brk13f> = Vec::new();
     for (acc, report, filed) in window {
-        let Some((amend, held)) = read_13f(client, urls, BRK_CIK, &acc).await else {
+        let Some((amend, held)) = read_13f(client, urls, BRK_CIK, &acc, SEC_FETCH_BUDGET).await else {
             eprintln!("fetch: Berkshire 13F {acc} unreadable; no `w` or `W` marks this run");
             return Default::default();
         };
@@ -2720,7 +2724,7 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     let f4_list: Vec<(String, String, String)> = read(&f4_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mut f4 = Vec::new();
     for (acc, doc, _) in &f4_list {
-        if let Some(Some(p)) = read_brk_form4(client, urls, acc, doc).await {
+        if let Some(Some(p)) = read_brk_form4(client, urls, acc, doc, SEC_FETCH_BUDGET).await {
             f4.push((acc.clone(), p));
         }
     }
@@ -2893,15 +2897,20 @@ fn sup_buyers(managers: &[BrkQuarters], cur: &str, prev: &str) -> HashMap<String
     for m in managers {
         let (Some(c), Some(p)) = (m.get(cur), m.get(prev)) else { continue };
         for (cusip, (n, _)) in c {
-            let before = p.get(cusip).map_or(0, |x| x.0);
-            // no `*n > before`: its `>=` mutant is equivalent (an equal count IS a multiple), and the
-            // gate allows no survivor. `checked_sub` refuses a trim; the multiple test refuses equal.
-            if n.checked_sub(before).is_some() && !n.is_multiple_of(before) {
+            if sup_added(p.get(cusip).map_or(0, |x| x.0), *n) {
                 *buyers.entry(cusip.clone()).or_default() += 1;
             }
         }
     }
     buyers
+}
+
+/// (#470) More shares than `before`, a new position included, and not an exact multiple (a split).
+/// (#518) Split out of [`sup_buyers`] for [`holder_moves`].
+fn sup_added(before: u64, n: u64) -> bool {
+    // no `n > before`: its `>=` mutant is equivalent (an equal count IS a multiple), and the gate allows
+    // no survivor. `checked_sub` refuses a trim; the multiple test refuses equal.
+    n.checked_sub(before).is_some() && !n.is_multiple_of(before)
 }
 
 /// (#470) [`soc_superinvestors`]'s answer rebuilt from SEC EDGAR: each [`SOC_SEC_MANAGERS`] filing list
@@ -2933,7 +2942,7 @@ async fn fetch_sec_superinvestors(client: &Client, urls: &Urls) -> (String, Vec<
     'manager: for (cik, list) in lists {
         let mut filings: Vec<Brk13f> = Vec::new();
         for (acc, report, filed) in list.into_iter().filter(|f| f.1 == cur || f.1 == prev) {
-            let Some((amend, held)) = read_13f(client, urls, cik, &acc).await else { continue 'manager };
+            let Some((amend, held)) = read_13f(client, urls, cik, &acc, SEC_FETCH_BUDGET).await else { continue 'manager };
             filings.push((report, filed, amend, held));
         }
         folded.push(brk_fold(filings));
@@ -2946,6 +2955,169 @@ async fn fetch_sec_superinvestors(client: &Client, urls: &Urls) -> (String, Vec<
     let read = folded.iter().filter(|q| q.contains_key(&cur) && q.contains_key(&prev)).count();
     eprintln!("fetch: SEC 13F superinvestors: {read} of {} managers read, {cur} vs {prev}", managers.len());
     (brk_quarter(&cur), buys)
+}
+
+// ── (#518) The holders backtest's 13F history ───────────────────────────────────────────────────────
+// Every move Berkshire and the [`SOC_SEC_MANAGERS`] made since 13F XML began, dated by its SEC filing, so
+// `backtest … holders` can grade the `W`/superinvestor boosts that every backtest quote is blind to.
+
+/// (#518) The oldest 13F report the holders backtest reads: SEC's XML information table starts with it,
+/// and an older text filing parses empty (and is never cached).
+const HOLDER_SINCE: &str = "2013-06-30";
+/// (#518) SEC calls a `backtest … holders` run may spend: the cold history is ~4,400 filings (84
+/// managers' 13Fs since [`HOLDER_SINCE`], Berkshire's Form 4s, their filing lists), on top of the fund
+/// lane's [`SEC_FETCH_BUDGET`]. ~10 minutes cold at the 8 req/s pacer; a warm cache spends nothing.
+pub const HOLDER_FETCH_BUDGET: usize = 6000;
+
+/// (#518) A `submissions` JSON -> the names of its older `filings.files` pages that reach back to
+/// [`HOLDER_SINCE`]. Berkshire's 1000 `recent` rows (Form 4s included) start in 2022.
+fn holder_pages(v: &Value) -> Vec<String> {
+    v.pointer("/filings/files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|f| f.get("filingTo").and_then(Value::as_str).is_some_and(|t| t >= HOLDER_SINCE))
+        .filter_map(|f| f.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect()
+}
+
+/// (#518) A `filings.files` page's URL: it sits beside the submissions JSON the `template` names.
+fn sec_page_url(template: &str, name: &str) -> String {
+    format!("{}/{name}", template.rsplit_once('/').map_or(template, |(dir, _)| dir))
+}
+
+/// (#518) One manager's 13F filings -> every quarter-to-quarter move as (CUSIP, filing date, add).
+/// Add = [`sup_added`], the superinvestor rule; trim = fewer shares, or the position gone. A move is
+/// dated by the newer quarter's first filing that shows the CUSIP, so a NEW HOLDINGS amendment's add
+/// lands when the amendment did, months after the quarter's original. A trim is dated by the original.
+/// shortcut: a RESTATEMENT keeps the original's date, so its corrected count is read ~weeks early.
+fn holder_moves(mut filings: Vec<Brk13f>) -> Vec<(String, String, bool)> {
+    filings.sort_by(|a, b| a.1.cmp(&b.1));
+    let (mut opened, mut shown) = (HashMap::new(), HashMap::new());
+    for (report, filed, _, held) in &filings {
+        opened.entry(report.clone()).or_insert_with(|| filed.clone());
+        for c in held.keys() {
+            shown.entry((report.clone(), c.clone())).or_insert_with(|| filed.clone());
+        }
+    }
+    let quarters = brk_fold(filings);
+    let qs: Vec<(&String, &HashMap<String, (u64, u64)>)> = quarters.iter().collect();
+    let mut moves = Vec::new();
+    for w in qs.windows(2) {
+        let ((_, prev), (report, cur)) = (w[0], w[1]);
+        for (c, (n, _)) in cur {
+            let before = prev.get(c).map_or(0, |x| x.0);
+            if sup_added(before, *n) {
+                moves.push((c.clone(), shown[&(report.clone(), c.clone())].clone(), true));
+            } else if *n < before {
+                moves.push((c.clone(), opened[report].clone(), false));
+            }
+        }
+        for c in prev.keys().filter(|c| !cur.contains_key(*c)) {
+            moves.push((c.clone(), opened[report].clone(), false));
+        }
+    }
+    moves
+}
+
+/// (#518) The CUSIPs worth an OpenFIGI ask: any Berkshire move, or three or more adders in
+/// [`core::holder_flags`]' window the day after one of its moves was filed (the count only rises then).
+fn holder_cusips(by_cusip: &HashMap<String, Vec<core::HolderTx>>) -> HashSet<String> {
+    by_cusip
+        .iter()
+        .filter(|(_, txs)| {
+            txs.iter().any(|t| t.manager == core::HOLDER_BRK || core::holder_flags(txs, t.filed + chrono::Duration::days(1)).adders >= 3)
+        })
+        .map(|(c, _)| c.clone())
+        .collect()
+}
+
+/// (#518) Ticker -> every 13F move of Berkshire and the [`SOC_SEC_MANAGERS`] since [`HOLDER_SINCE`],
+/// plus Berkshire's Form 4 net trades, each dated by its filing. Berkshire is manager
+/// [`core::HOLDER_BRK`]. Each manager's filing list (submissions plus its older pages) is cached
+/// [`BRK_LIST_TTL`]; filings are cached forever by [`read_13f`] / [`read_brk_form4`]. A quarter whose
+/// original filing is unreadable is dropped, so its moves fold into the next quarter's; an unreadable
+/// amendment is skipped. Only [`holder_cusips`] are named by OpenFIGI.
+#[mutants::skip] // (#518) async network shell; the pure helpers above carry the tests
+pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<String, Vec<core::HolderTx>> {
+    use std::sync::atomic::Ordering::Relaxed;
+    type List = Vec<(String, String, String)>;
+    let others: BTreeMap<String, String> =
+        serde_json::from_str(SOC_SEC_MANAGERS).expect("src/buy-heuristics/superinvestors.json parses");
+    let ciks: Vec<&str> = std::iter::once(BRK_CIK).chain(others.keys().map(String::as_str).filter(|c| *c != BRK_CIK)).collect();
+    let ask = || SEC_FETCHES.fetch_add(1, Relaxed) < HOLDER_FETCH_BUDGET;
+    let ua = &urls.sec_user_agent;
+    let mut by_cusip: HashMap<String, Vec<core::HolderTx>> = HashMap::new();
+    let mut by_ticker: HashMap<String, Vec<core::HolderTx>> = HashMap::new();
+    let (mut read, mut f4_moves) = (0, 0);
+    for (m, cik) in ciks.iter().enumerate() {
+        let brk = m == core::HOLDER_BRK as usize;
+        let path = sec_cache_path(&format!("_holders_{cik}"));
+        if !fresh_on_disk(&path, BRK_LIST_TTL) && ask() {
+            if let Some(v) = sec_get_json(client, &urls.sec_submissions.replace("{cik}", cik), ua).await {
+                let f4 = |v: &Value| if brk { brk_form4_list(v, HOLDER_SINCE) } else { Vec::new() };
+                let (mut l13, mut l4, mut whole) = (brk_13f_list(&v), f4(&v), true);
+                for name in holder_pages(&v) {
+                    let page = if ask() { sec_get_json(client, &sec_page_url(&urls.sec_submissions, &name), ua).await } else { None };
+                    let Some(p) = page else {
+                        whole = false;
+                        break;
+                    };
+                    l13.extend(brk_13f_list(&p));
+                    l4.extend(f4(&p));
+                }
+                if whole && !l13.is_empty() {
+                    cache_write(&path, serde_json::to_string(&(l13, l4)).unwrap_or_default());
+                }
+            }
+        }
+        let (mut l13, l4): (List, List) =
+            std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        l13.retain(|f| f.1.as_str() >= HOLDER_SINCE);
+        l13.sort_by(|a, b| a.2.cmp(&b.2));
+        let (mut filings, mut seen, mut dead): (Vec<Brk13f>, HashSet<String>, HashSet<String>) = Default::default();
+        for (acc, report, filed) in l13 {
+            let first = seen.insert(report.clone());
+            match read_13f(client, urls, cik, &acc, HOLDER_FETCH_BUDGET).await {
+                Some((amend, held)) => filings.push((report, filed, amend, held)),
+                None if first => {
+                    dead.insert(report);
+                }
+                None => {}
+            }
+        }
+        filings.retain(|f| !dead.contains(&f.0));
+        read += usize::from(!filings.is_empty());
+        for (c, filed, add) in holder_moves(filings) {
+            if let Ok(filed) = NaiveDate::parse_from_str(&filed, "%Y-%m-%d") {
+                by_cusip.entry(c).or_default().push(core::HolderTx { filed, manager: m as u32, add });
+            }
+        }
+        for (acc, doc, filed) in &l4 {
+            let Some(Some((ticker, _, _, net))) = read_brk_form4(client, urls, acc, doc, HOLDER_FETCH_BUDGET).await else { continue };
+            let Ok(filed) = NaiveDate::parse_from_str(filed, "%Y-%m-%d") else { continue };
+            if net != 0 {
+                f4_moves += 1;
+                by_ticker.entry(ticker).or_default().push(core::HolderTx { filed, manager: core::HOLDER_BRK, add: net > 0 });
+            }
+        }
+    }
+    let cusips = holder_cusips(&by_cusip);
+    let ticker_of = cusip_tickers(client, urls, &cusips).await;
+    let moves: usize = by_cusip.values().map(Vec::len).sum();
+    for (c, txs) in by_cusip {
+        if let Some((t, _)) = ticker_of.get(&c) {
+            by_ticker.entry(t.clone()).or_default().extend(txs);
+        }
+    }
+    eprintln!(
+        "fetch: holders: {read} of {} managers read since {HOLDER_SINCE}, {moves} 13F moves + {f4_moves} Berkshire Form 4s; {} CUSIPs asked, {} named -> {} tickers",
+        ciks.len(),
+        cusips.len(),
+        cusips.iter().filter(|c| ticker_of.contains_key(*c)).count(),
+        by_ticker.len()
+    );
+    by_ticker
 }
 
 /// (#475) One manager's EDGAR full-text search answer -> its ORIGINAL SCHEDULE 13D/13G filings, one per
@@ -10536,6 +10708,65 @@ pub(crate) mod tests {
         let s = |a: &str, r: &str, f: &str| (a.to_string(), r.to_string(), f.to_string());
         assert_eq!(brk_13f_list(&v), vec![s("a1", "2026-06-30", "2026-08-14"), s("a3", "2025-03-31", "2025-08-14")]);
         assert!(brk_13f_list(&serde_json::json!({})).is_empty());
+    }
+
+    /// (#518) A `filings.files` page: the same columns at the root, read the same way; its URL sits beside
+    /// the submissions JSON, and only pages reaching [`HOLDER_SINCE`] are asked for.
+    #[test]
+    fn holder_pages_reach_back_to_13f_xml() {
+        let page = serde_json::json!({"form": ["13F-HR", "4"], "accessionNumber": ["p1", "p2"],
+            "reportDate": ["2014-03-31", ""], "filingDate": ["2014-05-15", "2014-05-16"]});
+        assert_eq!(brk_13f_list(&page), vec![("p1".to_string(), "2014-03-31".to_string(), "2014-05-15".to_string())]);
+        let v = serde_json::json!({"filings": {"files": [
+            {"name": "CIK1-submissions-001.json", "filingTo": "2013-06-30"},
+            {"name": "CIK1-submissions-002.json", "filingTo": "2013-06-29"},
+            {"name": "CIK1-submissions-003.json"},
+        ]}});
+        assert_eq!(holder_pages(&v), ["CIK1-submissions-001.json"]);
+        assert!(holder_pages(&serde_json::json!({})).is_empty());
+        assert_eq!(sec_page_url("https://sec.test/submissions/CIK{cik}.json", "p.json"), "https://sec.test/submissions/p.json");
+        assert_eq!(sec_page_url("p", "q"), "p/q");
+    }
+
+    /// (#518) Adds and trims between consecutive quarters, an exit included, a split and an unchanged
+    /// count ignored. An amendment's add carries the amendment's date; the rest the original's, even
+    /// with the amendment listed first.
+    #[test]
+    fn holder_moves_dates_each_move_by_its_filing() {
+        let held = |rows: &[(&str, u64)]| rows.iter().map(|(c, n)| (c.to_string(), (*n, 0))).collect::<HashMap<_, _>>();
+        let f = |r: &str, d: &str, a: &str, rows: &[(&str, u64)]| (r.to_string(), d.to_string(), a.to_string(), held(rows));
+        let filings = vec![
+            f("2020-06-30", "2020-11-16", "NEW HOLDINGS", &[("F", 70)]),
+            f("2020-03-31", "2020-05-15", "", &[("A", 100), ("B", 50), ("C", 10), ("S", 100), ("E", 30)]),
+            f("2020-06-30", "2020-08-14", "", &[("A", 150), ("B", 40), ("S", 200), ("E", 30), ("D", 5)]),
+        ];
+        let mut moves = holder_moves(filings);
+        moves.sort();
+        let m = |c: &str, d: &str, add: bool| (c.to_string(), d.to_string(), add);
+        assert_eq!(
+            moves,
+            [m("A", "2020-08-14", true), m("B", "2020-08-14", false), m("C", "2020-08-14", false), m("D", "2020-08-14", true), m("F", "2020-11-16", true)]
+        );
+        assert!(holder_moves(vec![f("2020-03-31", "2020-05-15", "", &[("A", 1)])]).is_empty());
+    }
+
+    /// (#518) Berkshire's moves always; others only once three adders share the window.
+    #[test]
+    fn holder_cusips_keeps_berkshire_and_crowded_adds() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let tx = |filed: &str, manager: u32| core::HolderTx { filed: d(filed), manager, add: true };
+        let by_cusip: HashMap<String, Vec<core::HolderTx>> = [
+            ("brk", vec![tx("2020-01-01", core::HOLDER_BRK)]),
+            ("three", vec![tx("2020-01-01", 1), tx("2020-02-01", 2), tx("2020-03-01", 3)]),
+            ("two", vec![tx("2020-01-01", 1), tx("2020-02-01", 2)]),
+            ("apart", vec![tx("2020-01-01", 1), tx("2020-02-01", 2), tx("2020-08-01", 3)]),
+        ]
+        .into_iter()
+        .map(|(c, t)| (c.to_string(), t))
+        .collect();
+        let mut kept: Vec<String> = holder_cusips(&by_cusip).into_iter().collect();
+        kept.sort();
+        assert_eq!(kept, ["brk", "three"]);
     }
 
     /// (#436) The newest five DISTINCT report dates, every filing of each: an amendment does not cost

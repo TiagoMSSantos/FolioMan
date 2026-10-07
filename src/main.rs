@@ -6,7 +6,7 @@
 //!   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
 //!                                 no TICKERS -> last `screen` run's ranked picks; --watchlist for the typed list
 //!   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower profile (FMP key; only the valuation tilt is score-weighed)
-//!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
+//!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [holders] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `holders` = Berkshire/superinvestor 13F-add cohorts, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
 //!   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
 //!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
@@ -31,7 +31,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
                                   no TICKERS -> last `screen` run's ranked picks; --watchlist for the typed list
   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower profile (FMP key; only the valuation tilt is score-weighed)
-  folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
+  folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [holders] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `holders` = Berkshire/superinvestor 13F-add cohorts, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows

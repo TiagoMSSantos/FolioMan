@@ -696,6 +696,7 @@ struct Args {
     fund: bool,
     tune: bool,
     insider: bool,
+    holders: bool,
     halflife: bool,
     stress: bool,
     pit: bool,
@@ -715,6 +716,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("fund") => a_.fund = true,
             _ if a.eq_ignore_ascii_case("tune") => a_.tune = true,
             _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) also pull SEC Form-4 net buys
+            _ if a.eq_ignore_ascii_case("holders") => a_.holders = true, // (#518) grade the 13F-holder boosts
             _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
             _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
             _ if a.eq_ignore_ascii_case("pit") => a_.pit = true, // (PIT) score each cutoff against the index AS IT WAS
@@ -1035,7 +1037,7 @@ pub async fn run(args: Vec<String>) {
     let anchor_windows =
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
-    let Args { years, wide, long, fund, tune, insider, halflife, stress, pit, mut tickers } = parse_args(&args);
+    let Args { years, wide, long, fund, tune, insider, holders, halflife, stress, pit, mut tickers } = parse_args(&args);
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
     // mutate the process environment.
     if fmp_key_missing(fund, &crate::config::fund_source(), std::env::var("FMP_API_KEY").ok()) {
@@ -1220,6 +1222,8 @@ pub async fn run(args: Vec<String>) {
     // exits below. The monthly payloads are the expensive part of a wide run and `screen` shares the
     // same file, so whichever ran first pays and the other reads free for a week.
     fetch::long_cache_save();
+    // (#518) after the walk's fetches, so the history's SEC calls never starve the fund lane's budget
+    let holder_txs = if holders { fetch::fetch_holder_history(&client, &settings.urls).await } else { HashMap::new() };
 
     // (PIT) the names the pool asked for and Yahoo could not answer for — counted HERE, while the
     // fetch tickets still remember which ticker they were, and printed in the caveats below. `fetched`
@@ -1836,6 +1840,9 @@ pub async fn run(args: Vec<String>) {
         report_fund_lane(&samples, tuning.split_purge_months);
         sweep_fund_factor(&samples, tuning, years); // (G) which factor pays THROUGH the growth lane, held-out
     }
+    if holders {
+        report_holder_cohorts(&samples, &holder_txs, years);
+    }
     report_risk_lane(&samples, tuning.split_purge_months); // closes-derived risk stats, standalone — no fundamentals needed
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
     // (survivorship-clean), matched to the sample cadence. realized is untouched by de-mean.
@@ -2188,6 +2195,73 @@ async fn hold_period_sweep(
             turn * 100.0,
             nt - nb,
             scored.len()
+        );
+    }
+}
+
+/// (#518) One side of a `holders` cohort row: n, then mean and median excess (`Sample::relative`, the
+/// forward return minus its cutoff's peer mean) and hit rate (excess > 0, in percent). NaN when empty.
+#[derive(Debug, Default, PartialEq)]
+struct CohortSide {
+    n: usize,
+    mean: f64,
+    median: f64,
+    hit: f64,
+}
+
+fn cohort_side(xs: Vec<f64>) -> CohortSide {
+    let n = xs.len();
+    let mean = xs.iter().sum::<f64>() / n as f64;
+    let hit = xs.iter().filter(|x| **x > 0.0).count() as f64 * 100.0 / n as f64;
+    CohortSide { n, mean, median: median(xs), hit }
+}
+
+/// (#518) The cohorts `backtest … holders` grades, each a test on [`core::holder_flags`]. The shipped
+/// superinvestor boost starts at the 8 buyers a stock needs to list (`fetch::SOC_MIN_BUYERS`); 3 is the
+/// boost's step, graded as the lower bar. The `W` boost reads Berkshire HOLDING a name, which no move
+/// list can replay; its add is the nearest gradeable row.
+const HOLDER_COHORTS: [(&str, fn(&core::HolderFlags) -> bool); 4] = [
+    ("Berkshire added (13F or Form 4)", |f| f.brk_add),
+    ("3+ superinvestors added", |f| f.adders >= 3),
+    ("8+ added (the shipped listing rule)", |f| f.adders >= 8),
+    ("net 3+ (adders minus trimmers)", |f| f.net >= 3),
+];
+
+/// (#518) Every [`HOLDER_COHORTS`] row as (name, the stock samples flagged at their cutoff, the stock
+/// samples not). Stocks only: no ETF or coin is ever a 13F move here.
+fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>) -> Vec<(&'static str, CohortSide, CohortSide)> {
+    let stocks: Vec<(core::HolderFlags, f64)> = samples
+        .iter()
+        .filter(|s| picks::asset_class(&s.quote) == 2)
+        .map(|s| (txs.get(&s.quote.ticker).map_or_else(Default::default, |t| core::holder_flags(t, s.date)), s.relative))
+        .collect();
+    HOLDER_COHORTS
+        .iter()
+        .map(|(name, on)| {
+            let (a, b): (Vec<_>, Vec<_>) = stocks.iter().partition(|(f, _)| on(f));
+            (*name, cohort_side(a.iter().map(|x| x.1).collect()), cohort_side(b.iter().map(|x| x.1).collect()))
+        })
+        .collect()
+}
+
+/// (#518) The `holders` report: [`holder_cohorts`] printed with its caveats. Report only, no knob reads it.
+#[mutants::skip] // printing only; `holder_cohorts` carries the test
+fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>, years: i64) {
+    println!("\n── (#518) HOLDERS: do Berkshire's and the superinvestors' adds pick winners? ({years}y forward, stocks) ──");
+    println!("  excess = forward return minus the same-cutoff stock peer mean; hit = excess > 0. Each cohort is");
+    println!("  read against the stock samples outside it. A sample is flagged by the moves FILED in the 135 days");
+    println!("  before its cutoff, each manager's newest one counting: no look-ahead. {} tickers carry moves.", txs.len());
+    println!("  CAVEATS: 13F XML starts 2013-Q2, so a 20y leg is blind and early 12y cutoffs see little; the 83");
+    println!("  managers were picked in 2026, so survivor bias flatters their rows; cutoffs overlap, so n counts");
+    println!("  samples, not independent bets. Read mean AND hit: a hit rate up with the mean down dilutes.");
+    println!(
+        "  {:<36} {:>6} {:>8} {:>8} {:>6} | {:>6} {:>8} {:>8} {:>6}",
+        "cohort", "n", "mean", "median", "hit%", "rest n", "mean", "median", "hit%"
+    );
+    for (name, a, b) in holder_cohorts(samples, txs) {
+        println!(
+            "  {name:<36} {:>6} {:>+8.2} {:>+8.2} {:>6.1} | {:>6} {:>+8.2} {:>+8.2} {:>6.1}",
+            a.n, a.mean, a.median, a.hit, b.n, b.mean, b.median, b.hit
         );
     }
 }
@@ -7334,6 +7408,7 @@ mod tests {
         assert!(p("fund").fund);
         assert!(p("tune").tune);
         assert!(p("insider").insider);
+        assert!(p("holders").holders);
         assert!(p("halflife").halflife);
         assert!(p("stress").stress);
         assert!(p("pit").pit, "`pit` must set pit — lose it and the point-in-time run is a plain one that says it isn't");
@@ -7368,7 +7443,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider halflife stress pit");
+        let all = p("8 universe long fund tune insider holders halflife stress pit");
         assert_eq!(
             all,
             Args {
@@ -7378,12 +7453,39 @@ mod tests {
                 fund: true,
                 tune: true,
                 insider: true,
+                holders: true,
                 halflife: true,
                 stress: true,
                 pit: true,
                 tickers: vec![]
             }
         );
+    }
+
+    /// (#518) Each cohort splits the STOCK samples on the flags at their own cutoff; a coin is never
+    /// counted, a move filed after the cutoff never flags it.
+    #[test]
+    fn holder_cohorts_split_stocks_on_flags_at_the_cutoff() {
+        let at = |tk: &str, rel: f64| Sample { relative: rel, quote: Arc::new(Quote::stub(tk, "1", "", tk)), ..sample(ymd(2020, 6, 1), 0.0) };
+        let tx = |m: u32, add: bool| core::HolderTx { filed: ymd(2020, 5, 1), manager: m, add };
+        let txs: HashMap<String, Vec<core::HolderTx>> = [
+            ("B8", (0..8).map(|m| tx(m, true)).collect()),
+            ("A3", (1..4).map(|m| tx(m, true)).collect()),
+            ("MIX", vec![tx(1, true), tx(2, true), tx(3, true), tx(4, false)]),
+            ("LATE", (0..8).map(|m| tx(m, true)).collect()),
+            ("BTC-USD", (0..8).map(|m| tx(m, true)).collect()),
+        ]
+        .into_iter()
+        .map(|(t, v)| (t.to_string(), v))
+        .collect();
+        let late = Sample { date: ymd(2020, 5, 1), ..at("LATE", -2.0) }; // its moves are filed ON the cutoff
+        let pool = [at("B8", 4.0), at("A3", 2.0), at("MIX", -1.0), late, at("NONE", 0.0), at("BTC-USD", 9.0)];
+        let rows = holder_cohorts(&pool, &txs);
+        assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), HOLDER_COHORTS.map(|c| c.0));
+        assert_eq!(rows.iter().map(|r| (r.1.n, r.2.n)).collect::<Vec<_>>(), [(1, 4), (3, 2), (1, 4), (2, 3)]);
+        assert_eq!(rows[1].1, CohortSide { n: 3, mean: 5.0 / 3.0, median: 2.0, hit: 200.0 / 3.0 });
+        assert_eq!(rows[1].2, CohortSide { n: 2, mean: -1.0, median: -1.0, hit: 0.0 }, "a zero excess is no hit");
+        assert!(cohort_side(Vec::new()).mean.is_nan());
     }
 
     /// The verdict journal's OTHER half — the merge and the horizon pick, which had no test caller
