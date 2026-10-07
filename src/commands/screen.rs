@@ -320,21 +320,11 @@ pub(crate) fn last_ranked(raw: Option<String>) -> Option<(String, Vec<String>)> 
     (!state.ranked.is_empty()).then_some((state.date, state.ranked))
 }
 
-/// (round 56) Two printed fund picks overlap when they share at least this many of their top-10
-/// holdings — half the book, past coincidence: buying both mostly doubles the same mega-caps.
-const HOLDINGS_OVERLAP_MIN: usize = 5;
+use crate::picks::{holdings_scannable, overlap_groups, HOLDINGS_OVERLAP_MIN};
 /// (round 57) A pick is "top-heavy" when its top-10 holdings are at least this fraction of the
 /// whole fund — single-name/sector risk concentrated inside the wrapper (a "diversified" semis ETF
 /// that is half NVDA+AVGO+TSM), the risk a 20yr survival screen cares about.
 const TOP_HEAVY_FRACTION: f64 = 0.40;
-
-/// (#257) Whether the overlap scan can see this pick AT ALL — the served book has to reach
-/// `HOLDINGS_OVERLAP_MIN` before `holdings_overlap_lines` will group it. ONE spelling of that test,
-/// read by the grouper and by `holdings_unscanned_line`, which reports its complement
-/// (non-negotiable #4: the two must never be able to disagree about who was scanned).
-fn holdings_scannable(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>, ticker: &str) -> bool {
-    holdings.get(ticker).is_some_and(|h| h.len() >= HOLDINGS_OVERLAP_MIN)
-}
 
 /// (#257) The picks the overlap scan could not see, NAMED instead of silently exempt. The grouper
 /// can only group what Yahoo served, so a fund with an empty or stub holdings book reads as
@@ -368,42 +358,6 @@ fn holdings_unscanned_line(
     ))
 }
 
-/// (#456) [`holdings_overlap_lines`]' groups, biggest first: each clique's members (sorted) and the
-/// holdings common to all of them (sorted). The terminal footer and the page's Exposure table read the
-/// same groups. Singletons are dropped.
-fn overlap_groups(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<(Vec<&str>, Vec<&str>)> {
-    let mut tickers: Vec<&String> =
-        holdings.keys().filter(|t| holdings_scannable(holdings, t)).collect();
-    tickers.sort();
-    let syms = |t: &str| -> std::collections::HashSet<&str> {
-        holdings[t].iter().map(|(s, _)| s.as_str()).collect()
-    };
-    let overlap = |a: &str, b: &str| syms(a).intersection(&syms(b)).count();
-    let mut groups: Vec<Vec<&str>> = Vec::new();
-    for t in &tickers {
-        // join the first group this pick overlaps with ALL members of; else start its own
-        match groups.iter_mut().find(|g| g.iter().all(|m| overlap(t, m) >= HOLDINGS_OVERLAP_MIN)) {
-            Some(g) => g.push(t),
-            None => groups.push(vec![t]),
-        }
-    }
-    let mut groups: Vec<Vec<&str>> = groups.into_iter().filter(|g| g.len() >= 2).collect();
-    groups.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a[0].cmp(b[0])));
-    groups
-        .into_iter()
-        .map(|members| {
-            let common = members[1..].iter().fold(syms(members[0]), |mut acc, m| {
-                let s = syms(m);
-                acc.retain(|x| s.contains(x));
-                acc
-            });
-            let mut common: Vec<&str> = common.into_iter().collect();
-            common.sort();
-            (members, common)
-        })
-        .collect()
-}
-
 /// (round 57) Group the printed picks that hold most of the same top-10 names, one line per group
 /// of 2+ instead of round-56's O(n²) pair spam. COMPLETE linkage: a pick joins a group only if it
 /// shares ≥ `HOLDINGS_OVERLAP_MIN` holdings with EVERY current member — single-linkage would chain
@@ -412,7 +366,7 @@ fn overlap_groups(holdings: &std::collections::HashMap<String, Vec<(String, f64)
 /// true clique whose members all mutually overlap. The line reports the holdings common to the
 /// whole group, so its own size states how tight the group is.
 fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<String> {
-    overlap_groups(holdings)
+    overlap_groups(holdings, HOLDINGS_OVERLAP_MIN)
         .into_iter()
         .map(|(members, common)| {
             // (round 58) how much of each member the common names ARE: the same 4 shared megacaps
@@ -682,7 +636,7 @@ fn exposure_rows(
             rows.push(row(kind, &name, w, detail));
         }
     }
-    for (members, common) in overlap_groups(&funds) {
+    for (members, common) in overlap_groups(&funds, HOLDINGS_OVERLAP_MIN) {
         let detail = format!("{} share top-10 holdings {}", members.join(" "), common.join(" "));
         rows.push(row("one bet", &format!("{} funds", members.len()), weight(&members), detail));
     }

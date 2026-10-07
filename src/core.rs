@@ -383,6 +383,8 @@ pub struct Quote {
     pub top10: Option<f64>, // (#465) % of the fund held in its 10 biggest holdings (Yahoo topHoldings). DISPLAY-ONLY: `fetch::enrich_etf_cells` fills the printed ETF + CORE funds and their other listings
     #[serde(default)]
     pub td_years: Vec<f64>, // (#465) yearly tracking difference %, oldest year first (trackingdifferences.com). DISPLAY-ONLY, same rows as top10
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_holdings: Vec<String>, // (#510) the fund's Yahoo top-10 holding symbols, same rows as top10. SCORED only through `growth_etf_one_per_overlap`'s trim
     pub next_earnings: Option<NaiveDate>, // (#449) next scheduled earnings report, from Yahoo's calendarEvents. DISPLAY-ONLY: `fetch::enrich_earnings` fills the printed stock rows only
     #[serde(default)]
     pub profile: Profile, // (#469) DISPLAY-ONLY: the NAME link + SHORT%/TARGET% facts, printed and shadow-table rows only
@@ -488,6 +490,7 @@ impl Quote {
             profile: Profile::default(),
             top10: None,
             td_years: Vec::new(),
+            top_holdings: Vec::new(),
             splits: Vec::new(),
         }
     }

@@ -930,6 +930,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         profile: core::Profile::default(), // (#469) enrich_profile / enrich_etf_cells
         top10: None, // (#465) enrich_etf_cells, printed funds only
         td_years: Vec::new(),
+        top_holdings: Vec::new(),
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -2197,6 +2198,7 @@ pub async fn enrich_etf_cells(
     }
     for q in quotes.iter_mut().filter(|q| syms.contains(&q.ticker)) {
         q.top10 = holdings.get(&q.ticker).map(|h| h.iter().map(|(_, w)| w).sum::<f64>() * 100.0).filter(|s| *s > 0.0);
+        q.top_holdings = holdings.get(&q.ticker).map(|h| h.iter().map(|(s, _)| s.clone()).collect()).unwrap_or_default();
         let Some(isin) = isins.get(&q.ticker) else { continue };
         if !cache.get(isin).is_some_and(|(d, _)| fresh(d)) && !offline() {
             // a small hobby site: one page a second, and only the 2xx answer is believed
@@ -2233,14 +2235,14 @@ pub async fn enrich_etf_cells(
     }
     let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
     let _ = std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), serde_json::to_string(&je).unwrap_or_default());
-    let by_name: HashMap<String, (Option<f64>, Vec<f64>, core::Profile)> = quotes
+    let by_name: HashMap<String, (Option<f64>, Vec<f64>, core::Profile, Vec<String>)> = quotes
         .iter()
         .filter(|q| syms.contains(&q.ticker))
-        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone(), q.profile.clone())))
+        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone(), q.profile.clone(), q.top_holdings.clone())))
         .collect();
     for q in quotes.iter_mut().filter(|q| !syms.contains(&q.ticker)) {
-        if let Some((t, d, p)) = by_name.get(&q.name.to_lowercase()) {
-            (q.top10, q.td_years, q.profile) = (*t, d.clone(), p.clone());
+        if let Some((t, d, p, h)) = by_name.get(&q.name.to_lowercase()) {
+            (q.top10, q.td_years, q.profile, q.top_holdings) = (*t, d.clone(), p.clone(), h.clone());
         }
     }
 }
@@ -9882,6 +9884,8 @@ pub(crate) mod tests {
         assert_eq!(quotes[4].td_years, vec![0.5], "a 30-day-old row is stale and refetched");
         assert_eq!(quotes[5].td_years, vec![0.7], "a refused refetch keeps the stale row, never a 404 page's []");
         assert_eq!((quotes[3].top10, &quotes[3].td_years), (quotes[0].top10, &quotes[0].td_years), "same fund name");
+        // (#510) the holding symbols too, a fund with no ISIN included, for the overlap trim
+        assert_eq!((&quotes[3].top_holdings, &quotes[2].top_holdings), (&vec!["X".to_string(), "Y".to_string()], &vec!["X".to_string()]));
         // (#469) the NAME link: the justETF page off the same ISIN, copied like the cells; no ISIN, no link
         assert_eq!(quotes[0].profile.site, Some(format!("{base}je/ZZISINA")));
         assert_eq!((&quotes[3].profile.site, &quotes[2].profile.site), (&quotes[0].profile.site, &None));

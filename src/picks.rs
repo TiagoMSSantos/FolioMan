@@ -3588,8 +3588,10 @@ fn ranked<'a>(
     });
     // (#494) then one fund per benchmark index, the cheapest euro line: six Nasdaq-100 wrappers held
     // 19.2% of the equal-weight book only because six issuers list it. Pins are kept, like (B).
-    if tuning.growth_etf_one_per_index {
-        let keep = one_per_index(&picks.iter().map(|(q, _)| *q).collect::<Vec<_>>());
+    // (#510) and, with `growth_etf_one_per_overlap`, one fund per holdings clique: IITU and XUTC track two
+    // indices but hold the same ten US tech names.
+    if tuning.growth_etf_one_per_index || tuning.growth_etf_one_per_overlap > 0 {
+        let keep = one_per_index(&picks.iter().map(|(q, _)| *q).collect::<Vec<_>>(), tuning.growth_etf_one_per_overlap);
         let mut keep = keep.into_iter();
         picks.retain(|(quote, _)| keep.next().unwrap_or(true) || pinned.contains(quote.ticker.as_str()));
     }
@@ -5035,13 +5037,84 @@ fn cheapest_line<'a>(group: &[&'a Quote]) -> Option<&'a Quote> {
     pool.iter().filter_map(|q| Some((q.ter_shown()?, *q))).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, q)| q)
 }
 
+/// (round 56) Two printed fund picks overlap when they share at least this many of their top-10
+/// holdings — half the book, past coincidence: buying both mostly doubles the same mega-caps.
+pub(crate) const HOLDINGS_OVERLAP_MIN: usize = 5;
+/// (#257) Whether the overlap scan can see this pick AT ALL — the served book has to reach
+/// `HOLDINGS_OVERLAP_MIN` before `holdings_overlap_lines` will group it. ONE spelling of that test,
+/// read by the grouper and by `holdings_unscanned_line`, which reports its complement
+/// (non-negotiable #4: the two must never be able to disagree about who was scanned).
+pub(crate) fn holdings_scannable(holdings: &HashMap<String, Vec<(String, f64)>>, ticker: &str) -> bool {
+    holdings.get(ticker).is_some_and(|h| h.len() >= HOLDINGS_OVERLAP_MIN)
+}
+
+/// (#456) `screen::holdings_overlap_lines`' groups, biggest first: each clique's members (sorted) and the
+/// holdings common to all of them (sorted). The terminal footer and the page's Exposure table read the
+/// same groups. Singletons are dropped. (#510) `min` is the clique bar: the footers pass
+/// [`HOLDINGS_OVERLAP_MIN`], the `growth_etf_one_per_overlap` trim passes its own.
+pub(crate) fn overlap_groups(holdings: &HashMap<String, Vec<(String, f64)>>, min: usize) -> Vec<(Vec<&str>, Vec<&str>)> {
+    let mut tickers: Vec<&String> =
+        holdings.keys().filter(|t| holdings_scannable(holdings, t)).collect();
+    tickers.sort();
+    let syms = |t: &str| -> HashSet<&str> {
+        holdings[t].iter().map(|(s, _)| s.as_str()).collect()
+    };
+    let overlap = |a: &str, b: &str| syms(a).intersection(&syms(b)).count();
+    let mut groups: Vec<Vec<&str>> = Vec::new();
+    for t in &tickers {
+        // join the first group this pick overlaps with ALL members of; else start its own
+        match groups.iter_mut().find(|g| g.iter().all(|m| overlap(t, m) >= min)) {
+            Some(g) => g.push(t),
+            None => groups.push(vec![t]),
+        }
+    }
+    let mut groups: Vec<Vec<&str>> = groups.into_iter().filter(|g| g.len() >= 2).collect();
+    groups.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a[0].cmp(b[0])));
+    groups
+        .into_iter()
+        .map(|members| {
+            let common = members[1..].iter().fold(syms(members[0]), |mut acc, m| {
+                let s = syms(m);
+                acc.retain(|x| s.contains(x));
+                acc
+            });
+            let mut common: Vec<&str> = common.into_iter().collect();
+            common.sort();
+            (members, common)
+        })
+        .collect()
+}
+
 /// (#494) Which ranked rows `growth_etf_one_per_index` keeps: per benchmark index ([`index_key`] over
 /// `Quote::benchmark`, else justETF's `profile.index`, as the INDEX cell counts them), only the
 /// [`cheapest_line`] fund, or the best-ranked one when no line has a TER. Stocks, coins and funds with no
 /// index on record are always kept: twins cannot be proven without a name (non-negotiable #5).
-fn one_per_index(rows: &[&Quote]) -> Vec<bool> {
-    let key = |q: &Quote| quote_is_etf(q).then(|| q.benchmark.as_ref().or(q.profile.index.as_ref()).map(|b| index_key(b))).flatten();
-    let keys: Vec<Option<String>> = rows.iter().map(|q| key(q)).collect();
+/// (#510) `overlap` > 0 also fuses index groups whose top-10 books share at least `overlap` names with every
+/// other member ([`overlap_groups`]' clique), and a fund with no index joins as a group of one. A group's
+/// book is its first member's scannable one, so a same-index twin lends it. No index and no book = kept.
+fn one_per_index(rows: &[&Quote], overlap: usize) -> Vec<bool> {
+    let key = |q: &Quote| {
+        let named = q.benchmark.as_ref().or(q.profile.index.as_ref()).map(|b| index_key(b));
+        quote_is_etf(q).then(|| named.or_else(|| (overlap > 0).then(|| format!("\0{}", q.ticker)))).flatten()
+    };
+    let mut keys: Vec<Option<String>> = rows.iter().map(|q| key(q)).collect();
+    if overlap > 0 {
+        let mut books: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        for (q, k) in rows.iter().zip(&keys) {
+            if let Some(k) = k.as_ref().filter(|_| q.top_holdings.len() >= HOLDINGS_OVERLAP_MIN) {
+                books.entry(k.clone()).or_insert_with(|| q.top_holdings.iter().map(|s| (s.clone(), 0.0)).collect());
+            }
+        }
+        let lead: HashMap<String, String> = overlap_groups(&books, overlap)
+            .into_iter()
+            .flat_map(|(m, _)| m.iter().map(|k| (k.to_string(), m[0].to_string())).collect::<Vec<_>>())
+            .collect();
+        for k in keys.iter_mut().flatten() {
+            if let Some(l) = lead.get(k) {
+                *k = l.clone();
+            }
+        }
+    }
     rows.iter()
         .zip(&keys)
         .map(|(q, k)| {
@@ -7661,6 +7734,7 @@ mod tests {
             profile: Default::default(),
             top10: None,
             td_years: Vec::new(),
+            top_holdings: Vec::new(),
             annual_brief: None,
         }
     };
@@ -11110,6 +11184,40 @@ mod tests {
         assert_eq!(tickers(&on, &HashSet::new()), ["C.DE", "D.DE", "E.DE", "S"]);
         assert_eq!(tickers(&on, &HashSet::from(["A.DE"])), ["A.DE", "C.DE", "D.DE", "E.DE", "S"]);
         assert_eq!(tickers(&BuyHeuristic::default(), &HashSet::new()).len(), 6);
+    }
+
+    /// (#510) `growth_etf_one_per_overlap` fuses index groups whose books share at least that many names:
+    /// IITU and XUTC track two indices but hold one bet, so only the cheapest line ranks. The XUTC line
+    /// with no book borrows its same-index twin's; a fund with no index joins by its book; one sharing 6
+    /// of 7 stays, as does a fund with neither index nor book. On alone it also fuses same-index twins.
+    #[test]
+    fn one_fund_per_overlap_clique_keeps_the_cheapest_line() {
+        let tech = ["AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "AMD", "ADBE", "CSCO", "ACN"];
+        let fund = |t: &str, ter: f64, b: Option<&str>, own: usize, extra: &[&str]| Quote {
+            quote_currency: Some("EUR".into()),
+            benchmark: b.map(str::to_string),
+            top_holdings: tech[..own].iter().chain(extra).map(|s| s.to_string()).collect(),
+            ..core_etf(t, &format!("{t} UCITS ETF"), 1e9, ter)
+        };
+        let quotes = vec![
+            fund("IITU.DE", 0.15, Some("S&P 500 Information Technology"), 10, &[]),
+            fund("XUTC.DE", 0.12, Some("MSCI USA Information Technology"), 0, &[]),
+            fund("XUTD.DE", 0.30, Some("MSCI USA Information Technology"), 7, &["INTU", "IBM", "QCOM"]),
+            fund("K.DE", 0.50, None, 9, &["QCOM"]),
+            fund("W.DE", 0.20, Some("MSCI World"), 6, &["JPM", "V", "LLY", "XOM"]),
+            fund("N.DE", 0.60, None, 0, &[]),
+            Quote::stub("S", "€1", "", "Stock Inc"),
+        ];
+        let score = |q: &Quote, _: &BuyHeuristic| Some(10.0 - quotes.iter().position(|o| o.ticker == q.ticker).unwrap() as f64);
+        let tickers = |t: &BuyHeuristic| ranked(&quotes, t, score, 0.0, &HashSet::new()).iter().map(|(q, _)| q.ticker.clone()).collect::<Vec<_>>();
+        let index = BuyHeuristic { growth_etf_one_per_index: true, ..BuyHeuristic::default() };
+        assert_eq!(tickers(&index), ["IITU.DE", "XUTC.DE", "K.DE", "W.DE", "N.DE", "S"]);
+        let both = BuyHeuristic { growth_etf_one_per_overlap: 7, ..index };
+        assert_eq!(tickers(&both), ["XUTC.DE", "W.DE", "N.DE", "S"]);
+        let alone = BuyHeuristic { growth_etf_one_per_overlap: 7, ..BuyHeuristic::default() };
+        assert_eq!(tickers(&alone), ["XUTC.DE", "W.DE", "N.DE", "S"]);
+        let six = BuyHeuristic { growth_etf_one_per_overlap: 6, ..BuyHeuristic::default() };
+        assert_eq!(tickers(&six), ["XUTC.DE", "N.DE", "S"], "at 6 the world fund joins the clique");
     }
 
     /// (QA) `col_cell` VALUE arms the `screen_columns_config` test leaves at n/a (it uses a bare stub):

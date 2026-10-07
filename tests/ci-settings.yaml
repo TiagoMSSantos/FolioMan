@@ -19636,6 +19636,18 @@ buy_heuristic:
                                  #   handles that overlap. The kept line is now accumulating first, then euro, then TER:
                                  #   a Dist line pays tax on every payout over 20 years, which a few bp of TER never buys
                                  #   back. The INDEX cell's `· TICKER` reads the same helper. Goldens identical.
+  growth_etf_one_per_overlap: 7  # (#510) USER DECISION 2026-10-07: one fund per HOLDINGS clique too. The 2026-10-07
+                                 #   book held IITU (S&P 500 IT), XUTC (MSCI USA IT) and XLKS/SXLK (S&P tech select):
+                                 #   three indices, one top-10 book, so (#494)'s index key cannot fuse them. Index
+                                 #   groups whose Yahoo top-10 books share >= 7 names with EVERY other member (complete
+                                 #   linkage, the footer's grouper at its own bar) keep one line, by (#509)'s rule (Acc,
+                                 #   then euro, then TER). 7, not the footer's 5: 5 is "heavily overlap" for a reader,
+                                 #   7 is one bet for the book; LYBK/ESIF share 6 and both stay. A same-index twin lends
+                                 #   its book, so a line Yahoo serves no book for still fuses; a fund with neither an
+                                 #   index nor a book passes (missing data passes). Pins are kept. Predicted on the day:
+                                 #   US tech keeps one line, semis keep one, ANX/XAIX/MIBA/FLXK stay. JUDGEMENT,
+                                 #   BACKTEST-BLIND (stub quotes carry no holdings), goldens identical.
+                                 #   REVERT: 0, if the freed slots fill with names the track grades worse.
   growth_exchange_token_damp: 0.5 # (#496) USER DECISION 2026-10-06 (the user's number): an exchange's own token (BNB,
                                  #   GT, OKB, CRO, LEO, KCS, HT, FTT, BGB, MX; flag `e`) scores x0.5. Sweeps 14 and 15
                                  #   recorded the risk and built nothing: the coin's value is one company's fee discounts
