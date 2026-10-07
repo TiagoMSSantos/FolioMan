@@ -114,7 +114,7 @@ const VIEW = {
   "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk cash", "INT-COV": "risk cash", "SHORT%": "risk",
   MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "FCF-5Y": "value cash", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
-  MVRV: "value", ROIC: "value", "FCF%": "value cash", FAIR: "value", "MOS%": "value", "TARGET%": "value", "INS-B/S": "value",
+  MVRV: "value", ROIC: "value", "FCF%": "value cash", FAIR: "value", "MOS%": "value", "FAIR-OE": "value", "MOS-OE%": "value", "FAIR-CAP": "value", "IMPL-G": "value", "TARGET%": "value", "INS-B/S": "value",
   "TOP10%": "risk", "TD-1Y": "value", "TD-5Y": "value",
   "FCF-YLD": "value cash", "P/S": "value", "EV/EBITDA": "value",
 };

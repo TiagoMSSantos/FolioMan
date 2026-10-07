@@ -3919,6 +3919,13 @@ fn neg_sample_std(vals: &[f64]) -> Option<f64> {
 /// THE look-ahead guard for the fundamentals backtest — at a given cutoff a strategy could only have
 /// seen filings public by then. `None` if nothing was filed yet. O(n), order-independent (FMP returns
 /// newest-first; don't assume it). Compose it twice (cutoff and cutoff−Ny) to get as-of growth/trend.
+/// (#522) The middle value, the mean of the two middle ones on an even count; None when empty.
+pub fn median(mut v: Vec<f64>) -> Option<f64> {
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    (n > 0).then(|| if n.is_multiple_of(2) { (v[n / 2 - 1] + v[n / 2]) / 2.0 } else { v[n / 2] })
+}
+
 pub fn fund_as_of(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
     rows.iter().filter(|r| r.filed <= cutoff).max_by_key(|r| r.filed)
 }
@@ -4075,6 +4082,13 @@ pub struct FundFactors {
     // to it, so a cap divides cleanly by the filed levels above. Live only (the backtest leaves None),
     // read by the FCF-YLD, P/S and EV/EBITDA cells and nothing scored.
     pub cap_fund: Option<f64>,
+    // (#522) the FAIR family's base, DISPLAY ONLY (never scored; `fcf_ttm` stays the backtest's level):
+    // the MEDIAN fcf margin of the last 3 filed years × today's revenue ÷ 100, so one odd year (LEN 2025
+    // 0.08% vs 6.3%) can't move FAIR. Measured on 957 SEC caches against the next 3 years' FCF: ties the
+    // 1-year base on median error, fewest sign errors; 5y+ windows were worse. `oe_base` = the same on
+    // owner earnings, fcf − stock-based comp (a missing SBC line reads 0).
+    pub fcf_base: Option<f64>,
+    pub oe_base: Option<f64>,
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4246,6 +4260,12 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         _ => None,
     };
     let rev_cagr = grow(now.and_then(|r| r.revenue), long_ago.and_then(|r| r.revenue)).map(|c| cagr(c, yrs as f64));
+    // (#522) `fcf_base`/`oe_base`: the three as-of rows a year apart, one per fiscal year, median margin
+    let margin_base = |m: fn(&FundRow) -> Option<f64>| {
+        let mut years: Vec<&FundRow> = [0, 365, 730].iter().filter_map(|d| fund_as_of(rows, cutoff - Duration::days(*d))).collect();
+        years.dedup_by_key(|r| r.period_end);
+        Some(median(years.iter().filter_map(|r| m(r)).collect())? * now?.revenue? / 100.0)
+    };
     let rev_1y = grow(now.and_then(|r| r.revenue), yr_ago.and_then(|r| r.revenue));
     // (#484) the same rate on FCF (`fcf_ttm`'s level, unscaled: a ratio of two levels needs no ÷100); a burn
     // or a zero at either end is no growth rate at all
@@ -4503,6 +4523,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             .zip(grow(now.and_then(|r| r.assets), yr_ago.and_then(|r| r.assets)))
             .map(|(e, a)| e - a),
         cap_fund: None,
+        fcf_base: margin_base(|r| r.fcf_margin),
+        oe_base: margin_base(|r| Some(r.fcf_margin? - r.sbc_margin.unwrap_or(0.0))),
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -6166,6 +6188,8 @@ mod tests {
             op_rd: Some(45.0),
             discipline: Some(46.0),
             cap_fund: None,
+            fcf_base: None,
+            oe_base: None,
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -7104,6 +7128,27 @@ mod tests {
         let r = |x: Option<f64>| x.map(|v| (v * 100.0).round() / 100.0);
         assert_eq!(r(short_ma_pct(&flat(200, 299.0))), Some(196.05), "mean 100.995: +196%");
         assert_eq!(r(short_ma_pct(&flat(500, 1.0))), Some(-99.0), "below reads negative");
+    }
+
+    /// (#522) FAIR's base is the median margin of the newest 3 fiscal years × this year's revenue, so a
+    /// one-off year (LEN's 0.1%) can't sink it; the owner-earnings base takes SBC off each year first
+    #[test]
+    fn fair_base_is_the_three_year_median_margin() {
+        let y = |yr: i32, fcf: f64, sbc: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(yr, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(yr - 1, 12, 31).unwrap(),
+            fcf_margin: Some(fcf),
+            sbc_margin: sbc,
+            revenue: Some(200.0),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let rows = [y(2022, 7.0, Some(2.0)), y(2023, 9.0, Some(2.0)), y(2024, 0.1, None)];
+        let f = fund_factors(&rows, cutoff, 5);
+        assert_eq!((f.fcf_ttm, f.fcf_base, f.oe_base), (Some(0.2), Some(14.0), Some(10.0)), "7% and 5% of 200");
+        assert_eq!(fund_factors(&rows[2..], cutoff, 5).fcf_base, Some(0.2), "one year filed is its own base");
+        assert_eq!(median(vec![1.0, 3.0]), Some(2.0));
+        assert_eq!(median(vec![]), None);
     }
 
     /// (#408) the as-of levels the backtest prices into FCF/EV and sales/EV: a 10% FCF margin on 200 of

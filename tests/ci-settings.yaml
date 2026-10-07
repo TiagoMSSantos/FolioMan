@@ -1123,6 +1123,10 @@ widths:
     - fcfy        # (#462) free cash flow ÷ market value (stocks only) — the cash yield a buyer gets
     - fair        # (#484) 2-stage DCF fair price: FCF grows at FCF-5Y (0-15%) 10y, then 2.5%, at 9%; ETFs (#521) their top-10 holdings' FAIR weight-averaged, Bitcoin its realized price (price ÷ MVRV); display only
     - mos         # (#484) margin of safety, FAIR ÷ price − 1 (stocks, ETFs, Bitcoin; display only)
+    - fair_oe     # (#522) FAIR on owner earnings, FCF − stock-based pay (SEC stocks; display only)
+    - mos_oe      # (#522) margin of safety on FAIR-OE (display only)
+    - fair_cap    # (#522) intrinsic equity value of the whole company, FAIR × shares, beside MCAP; Bitcoin its realized cap (display only)
+    - impl_g      # (#522) reverse DCF: the yearly FCF growth (10y, then 2.5%, at 9%) the price already assumes (display only)
     - target      # (#489) consensus analyst target vs price, 3+ analysts (stocks only; display only)
     - ps          # (#462) market value ÷ revenue (stocks only) — the value ratio a loss-maker still has
     - evebitda    # (#462) (market value + net debt) ÷ EBITDA (stocks only) — the whole business's price, debt included

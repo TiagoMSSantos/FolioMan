@@ -3695,14 +3695,19 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity, or on assets where equity is negative or under 1/20th of assets (heavy buyback filers)" },
     // (#447) the balance sheet, stocks only, off `quote.fund` (filed statements). Display only: never scored
     ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings; n/a = no SEC filing carries the lines (most non-US companies); — = a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
+    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies); — = a bank or insurer" },
     ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; — = a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = free cash flow at or below 0; n/a = under 2 years of FCF filed. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; n/a = under 2 years of FCF filed; — = a bank or insurer, whose cash flow is deposits and loans. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
     ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn and n/a as FAIR. ETFs and Bitcoin: the same against their FAIR" },
+    // (#522) the FAIR pair on owner earnings, the whole-company value, and the reverse DCF. Display only
+    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; n/a for non-US stocks (no stock-pay line); burn, n/a and — as FAIR" },
+    ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Stocks: margin of safety on FAIR-OE, FAIR-OE ÷ price − 1; burn, n/a and — as FAIR-OE" },
+    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn, n/a and — as FAIR" },
+    ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Stocks: the growth the price already assumes, a reverse DCF: how fast free cash flow (FAIR's base) must grow each year for 10 years, then 2.5% forever at 9%, for the price to be fair. Set it beside FCF-5Y: below = the price asks less than the record; burn, n/a and — as FAIR" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
@@ -4030,7 +4035,13 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // the sign and reads as net cash
         "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" | "earn" | "fcfy" | "ps" | "evebitda" if stock_only_na => "—".to_string(),
         // (#478) a bank's interest is its cost of goods: no operating profit, EBITDA or invested capital
-        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" if quote.fund.as_ref().is_some_and(|f| f.financial) => "—".to_string(),
+        // (#522) ...and its free cash flow is deposit and loan flow, so the whole FCF family goes with it
+        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcfy" | "fcf5y" | "fair" | "mos" | "fair_oe" | "mos_oe"
+        | "fair_cap" | "impl_g"
+            if quote.fund.as_ref().is_some_and(|f| f.financial) =>
+        {
+            "—".to_string()
+        }
         // (#462) a cap needs a positive level under it; FCF keeps its sign, a burn is worth seeing
         "fcfy" => quote.fund.as_ref().and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
         "ps" => quote.fund.as_ref().and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
@@ -4096,19 +4107,47 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#463) the 5y fund_factors levels the live enrich already fills
         "rev5y" | "opm" | "mtrend" | "fcf5y" if stock_only_na => "—".to_string(),
         // (#506) a cash burn today has no growth rate and no DCF value; "burn" says so where "n/a" hid it
-        "fcf5y" | "fair" | "mos" if !stock_only_na && quote.fund.as_ref().and_then(|f| f.fcf_ttm).is_some_and(|c| c <= 0.0) => "burn".to_string(),
+        // (#522) each cell against its own base: FCF-5Y this year's FCF, the FAIR family the 3-year median
+        "fcf5y" | "fair" | "mos" | "fair_oe" | "mos_oe" | "fair_cap" | "impl_g"
+            if !stock_only_na
+                && quote
+                    .fund
+                    .as_ref()
+                    .and_then(|f| match key {
+                        "fcf5y" => f.fcf_ttm,
+                        "fair_oe" | "mos_oe" => f.oe_base,
+                        _ => f.fcf_base,
+                    })
+                    .is_some_and(|c| c <= 0.0) =>
+        {
+            "burn".to_string()
+        }
         "fcf5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.fcf_cagr, f.fcf_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
         // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio. (#521) An ETF reads its
         // top-10 look-through, a coin its realized price (price ÷ MVRV: what holders paid, not a cash-flow value).
-        "fair" | "mos" => if is_etf {
+        // (#522) FAIR-CAP = the same ratio × MCAP, the whole company's equity value (SEC FCF is after
+        // interest, so no net-debt step); FAIR-OE / MOS-OE% the same pair on owner earnings.
+        "fair" | "mos" | "fair_cap" | "fair_oe" | "mos_oe" => if key.ends_with("_oe") {
+            stock_oe_ratio(quote)
+        } else if is_etf {
             quote.look_fair.map(|x| (x, String::new()))
         } else if is_crypto {
             quote.mvrv.filter(|v| *v > 0.0).map(|v| (1.0 / v, String::new()))
         } else {
             stock_fair_ratio(quote)
         }
-        .and_then(|(x, m)| if key == "mos" { Some(format!("{:+.0}%{m}", (x - 1.0) * 100.0)) } else { quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)) })
-            .unwrap_or_else(|| "n/a".to_string()),
+        .and_then(|(x, m)| match key {
+            "mos" | "mos_oe" => Some(format!("{:+.0}%{m}", (x - 1.0) * 100.0)),
+            "fair_cap" => quote.shares_out.zip(quote.price_eur).map(|(n, p)| format!("{}{m}", turnover_cell(Some(n * p * x)))),
+            _ => quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)),
+        })
+        .unwrap_or_else(|| "n/a".to_string()),
+        "impl_g" => quote
+            .fund
+            .as_ref()
+            .and_then(|f| Some(f.fcf_base? / f.cap_fund.filter(|m| *m > 0.0)?))
+            .and_then(implied_growth)
+            .map_or("n/a".to_string(), |g| format!("{g:+.1}%")),
         "rev5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.rev_cagr, f.rev_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
         "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "mtrend" => quote.fund.as_ref().and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
@@ -4538,16 +4577,43 @@ fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, S
         .or_else(|| short.map(|(v, span)| (v, (span.round() as u32).to_string().bytes().map(|d| SUP[(d - b'0') as usize]).collect())))
 }
 
-/// (#484) FAIR ÷ price for a stock: FCF-YLD × [`dcf_multiple`] at FCF-5Y, with the short-span marker.
-/// None on a burn, no cap, or no rate.
+/// (#484) FAIR ÷ price for a stock: base ÷ cap × [`dcf_multiple`] at FCF-5Y, with the short-span marker.
+/// (#522) The base is `fcf_base`, the 3-year median margin; a bank or insurer (#478) reads None, its FCF
+/// being deposit and loan flow (COF read +607%). None on a burn, no cap, or no rate.
 pub fn stock_fair_ratio(q: &Quote) -> Option<(f64, String)> {
-    q.fund
-        .as_ref()
-        .and_then(|f| {
-            let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
-            Some((f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
-        })
-        .or_else(|| q.ep_fair.clone())
+    if q.fund.as_ref().is_some_and(|f| f.financial) {
+        return None;
+    }
+    fair_on(q, |f| f.fcf_base).or_else(|| q.ep_fair.clone())
+}
+
+/// (#522) FAIR-OE ÷ price: [`stock_fair_ratio`] on owner earnings (FCF − stock-based comp). SEC filers only:
+/// Eulerpool carries no SBC line, so a non-US stock reads None rather than a copy of FAIR.
+pub fn stock_oe_ratio(q: &Quote) -> Option<(f64, String)> {
+    fair_on(q, |f| f.oe_base)
+}
+
+fn fair_on(q: &Quote, base: fn(&crate::core::FundFactors) -> Option<f64>) -> Option<(f64, String)> {
+    q.fund.as_ref().filter(|f| !f.financial).and_then(|f| {
+        let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
+        Some((base(f).filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
+    })
+}
+
+/// (#522) IMPL-G, a reverse DCF: the yearly FCF growth over 10 years (then 2.5%, at 9%) that makes FCF-YLD ×
+/// the multiple = 1, i.e. the growth today's price already pays for. Unclamped, unlike FAIR's 0-15%;
+/// None on a burn or outside −50..100%/yr.
+pub fn implied_growth(fcf_yield: f64) -> Option<f64> {
+    let need = 1.0 / fcf_yield;
+    let (mut lo, mut hi) = (-50.0, 100.0);
+    if !(dcf_raw(lo) <= need && need <= dcf_raw(hi)) {
+        return None;
+    }
+    for _ in 0..60 {
+        let mid = (lo + hi) / 2.0;
+        if dcf_raw(mid) < need { lo = mid } else { hi = mid }
+    }
+    Some((lo + hi) / 2.0)
 }
 
 /// (#519) [`stock_fair_ratio`] for a stock SEC never filed: Eulerpool's annual `(period, fcf)` and its market
@@ -4566,7 +4632,9 @@ pub fn ep_fair_ratio(fcf: &[(String, f64)], mcap: f64) -> Option<(f64, String)> 
         None => (None, rows.iter().find(|r| ny - r.0 >= 2).and_then(|r| Some((rate(r)?, (ny - r.0) as f64)))),
     };
     let (g, m) = span_or_short(full, short)?;
-    (now > 0.0 && mcap > 0.0).then(|| (now / mcap * dcf_multiple(g), m))
+    // (#522) the base is the median of the last 3 years, as `fcf_base` (levels: Eulerpool has no revenue)
+    let base = crate::core::median(rows.iter().rev().take(3).map(|r| r.1).collect())?;
+    (now > 0.0 && base > 0.0 && mcap > 0.0).then(|| (base / mcap * dcf_multiple(g), m))
 }
 
 /// (#521) An ETF's FAIR ÷ price: its top holdings' own ratios, weight-averaged over the ones that have one.
@@ -4582,8 +4650,12 @@ pub fn look_through_fair(top: &[(String, f64)], ratios: &HashMap<String, f64>) -
 /// 0-15% so a hot streak never compounds a decade), then 2.5% forever, all discounted at 9%. FAIR ÷ price
 /// = FCF-YLD × this. shortcut: one fixed rate for every stock; a per-name cost of capital if it matters.
 fn dcf_multiple(g_pct: f64) -> f64 {
+    dcf_raw(g_pct.clamp(0.0, 15.0))
+}
+
+fn dcf_raw(g_pct: f64) -> f64 {
     let (r, end) = (1.09, 1.025);
-    let k = (1.0 + g_pct.clamp(0.0, 15.0) / 100.0) / r;
+    let k = (1.0 + g_pct / 100.0) / r;
     (1..=10).map(|t| k.powi(t)).sum::<f64>() + k.powi(10) * end / (r - end)
 }
 
@@ -4599,11 +4671,12 @@ fn dcf_multiple(g_pct: f64) -> f64 {
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
-    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "target", "short"];
+    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "target", "short",
+    "fair_oe", "mos_oe", "fair_cap", "impl_g"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
-    "fcf5y", "target", "short",
+    "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -7636,14 +7709,15 @@ mod tests {
         st.fund.as_mut().unwrap().fcf_cagr = Some(4.04);
         assert_eq!(cc("fcf5y", &st, 0.0, None, ""), "+4.0%");
         for fcf in [-10.0, 0.0] {
-            st.fund.as_mut().unwrap().fcf_ttm = Some(fcf);
-            for k in ["fcf5y", "fair", "mos"] {
+            let f = st.fund.as_mut().unwrap();
+            (f.fcf_ttm, f.fcf_base) = (Some(fcf), Some(fcf));
+            for k in ["fcf5y", "fair", "mos", "fair_cap", "impl_g"] {
                 assert_eq!(cc(k, &st, 0.0, None, ""), "burn", "(#506) FCF {fcf} has no rate and no value to discount");
             }
             assert_eq!(stock_fair_ratio(&st), None, "(#521) a burn feeds no look-through either");
         }
         let f = st.fund.as_mut().unwrap();
-        (f.fcf_ttm, f.cap_fund) = (Some(20.0), Some(0.0));
+        (f.fcf_ttm, f.fcf_base, f.cap_fund) = (Some(20.0), Some(20.0), Some(0.0));
         assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "no cap, no yield");
         let f = st.fund.as_mut().unwrap();
         (f.cap_fund, f.fcf_cagr) = (Some(400.0), None);
@@ -7652,6 +7726,28 @@ mod tests {
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "no euro price");
         st.price_eur = Some(50.0);
         assert_eq!((cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")), ("€44.27".to_string(), "-11%".to_string()), "5% yield × 17.71");
+        // (#522) FAIR reads the 3-year base, never this year's level; FAIR-OE its own base; FAIR-CAP × shares;
+        // IMPL-G the growth a 5% yield prices in (4.04% would be fair, the price asks a bit more)
+        st.fund.as_mut().unwrap().fcf_ttm = Some(1.0);
+        assert_eq!(cc("fair", &st, 0.0, None, ""), "€44.27", "fcf_ttm is not FAIR's base");
+        assert_eq!((cc("fair_oe", &st, 0.0, None, ""), cc("fair_cap", &st, 0.0, None, "")), ("n/a".to_string(), "n/a".to_string()), "no SBC base, no shares");
+        let f = st.fund.as_mut().unwrap();
+        f.oe_base = Some(10.0);
+        st.shares_out = Some(8.0e8);
+        assert_eq!((cc("fair_oe", &st, 0.0, None, ""), cc("mos_oe", &st, 0.0, None, "")), ("€22.13".to_string(), "-56%".to_string()));
+        assert_eq!(cc("fair_cap", &st, 0.0, None, ""), "€35.4B", "8e8 shares × €44.27");
+        assert_eq!(cc("impl_g", &st, 0.0, None, ""), "+5.7%", "a 5% yield needs a 20× multiple");
+        st.fund.as_mut().unwrap().oe_base = Some(-1.0);
+        assert_eq!((cc("fair_oe", &st, 0.0, None, ""), cc("fair", &st, 0.0, None, "")), ("burn".to_string(), "€44.27".to_string()), "SBC can burn alone");
+        // (#478) a bank's FCF is deposit flow: the whole family reads —, and feeds no look-through
+        st.fund.as_mut().unwrap().financial = true;
+        for k in ["fcfy", "fcf5y", "fair", "mos", "fair_oe", "mos_oe", "fair_cap", "impl_g"] {
+            assert_eq!(cc(k, &st, 0.0, None, ""), "—", "{k} on a bank");
+        }
+        assert_eq!(stock_fair_ratio(&st), None);
+        let f = st.fund.as_mut().unwrap();
+        (f.financial, f.fcf_ttm, f.oe_base) = (false, Some(20.0), None);
+        st.shares_out = None;
         // (#519) SEC's row wins; Eulerpool's stands in only where `fund` has no ratio
         st.ep_fair = Some((2.0, "²".into()));
         assert_eq!(cc("fair", &st, 0.0, None, ""), "€44.27");
@@ -7687,6 +7783,12 @@ mod tests {
         // the growth leg is held to 0-15%: 13.08x with no growth, 40.53x at the cap
         let m = |g: f64| (dcf_multiple(g) * 100.0).round() / 100.0;
         assert_eq!([m(-5.0), m(0.0), m(15.0), m(30.0)], [13.08, 13.08, 40.53, 40.53]);
+        // (#522) IMPL-G inverts the unclamped multiple, so it reads past FAIR's 15% cap; burn and absurd yields None
+        let near = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 1e-6);
+        for g in [-8.0, 0.0, 12.0, 28.7] {
+            assert!(near(implied_growth(1.0 / dcf_raw(g)), g), "{g}");
+        }
+        assert_eq!([implied_growth(0.0), implied_growth(-0.05), implied_growth(5.0), implied_growth(1e-9)], [None; 4]);
         for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "target", "short"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
@@ -14468,13 +14570,14 @@ mod tests {
         let rows = |v: &[(&str, f64)]| v.iter().map(|(p, f)| (p.to_string(), *f)).collect::<Vec<_>>();
         // SAP-like: 5y back doubled, rows out of order; FCF 8000 on a 200000 cap
         let sap = rows(&[("2025-12-31", 8000.0), ("2019-12-31", 1.0), ("2020-12-31", 4000.0), ("2024-12-31", -50.0), ("FY?", 9e9)]);
-        let want = 8000.0 / 200000.0 * dcf_multiple(crate::core::cagr(100.0, 5.0));
+        // (#522) the base is the median of the newest 3 years (4000 of 4000 / −50 / 8000), the rate this year's
+        let want = 4000.0 / 200000.0 * dcf_multiple(crate::core::cagr(100.0, 5.0));
         // near, not equal: the literal `want` lets LLVM fold `powf` at compile time, a ULP off runtime libm
         let near = |got: Option<(f64, String)>, want: f64, m: &str| assert!(got.as_ref().is_some_and(|(r, s)| (r - want).abs() < 1e-12 && s == m), "{got:?} vs {want}{m}");
         near(ep_fair_ratio(&sap, 200000.0), want, "");
         // no 5y row: the oldest 2+ years back, marked
         let short = rows(&[("2025-12-31", 8000.0), ("2022-12-31", 4000.0), ("2024-12-31", 7000.0)]);
-        near(ep_fair_ratio(&short, 200000.0), 8000.0 / 200000.0 * dcf_multiple(crate::core::cagr(100.0, 3.0)), "³");
+        near(ep_fair_ratio(&short, 200000.0), 7000.0 / 200000.0 * dcf_multiple(crate::core::cagr(100.0, 3.0)), "³");
         // None: a burn now, a burn 5y back (no short rescue), no cap, under 2 years
         assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", -1.0), ("2020-12-31", 4000.0)]), 1e5), None);
         assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", 8000.0), ("2020-12-31", -4.0), ("2022-12-31", 4000.0)]), 1e5), None);
