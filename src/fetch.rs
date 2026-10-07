@@ -2264,15 +2264,105 @@ type BrkQuarters = BTreeMap<String, HashMap<String, (u64, u64)>>;
 
 /// (#436) A `submissions` JSON -> every 13F-HR and 13F-HR/A as (accession, report date, filing date).
 fn brk_13f_list(v: &Value) -> Vec<(String, String, String)> {
+    brk_list(v, "reportDate", |f| matches!(f, "13F-HR" | "13F-HR/A"))
+}
+
+/// (#514) Look-back of the Form 4 lane: Berkshire files one within two business days of a trade, about
+/// six weeks before the quarter's 13F shows it.
+const BRK_FORM4_DAYS: i64 = 90;
+/// (#514) The Form 4 list is refetched daily: [`BRK_LIST_TTL`]'s week would spend the lane's head start.
+const BRK_FORM4_TTL: StdDuration = StdDuration::from_secs(86_400);
+
+/// (#514) A `submissions` JSON -> every Form 4 filed on or after `since`, as (accession, raw XML file
+/// name, filing date). `primaryDocument` is the `xslF345X0N/` HTML render; the raw XML sits at the
+/// accession root under the same name, as in [`fetch_insider_history`].
+fn brk_form4_list(v: &Value, since: &str) -> Vec<(String, String, String)> {
+    brk_list(v, "primaryDocument", |f| f == "4")
+        .into_iter()
+        .filter(|(_, _, filed)| filed.as_str() >= since)
+        .map(|(acc, doc, filed)| (acc, doc.rsplit('/').next().unwrap_or(&doc).to_string(), filed))
+        .collect()
+}
+
+/// (#514) The `filings.recent` rows whose form passes `keep`, as (accession, the `mid` column, filing date).
+fn brk_list(v: &Value, mid: &str, keep: impl Fn(&str) -> bool) -> Vec<(String, String, String)> {
     let col = |k: &str| v.pointer(&format!("/filings/recent/{k}")).and_then(Value::as_array).cloned().unwrap_or_default();
-    let (forms, accs, reports, filed) = (col("form"), col("accessionNumber"), col("reportDate"), col("filingDate"));
+    let (forms, accs, mids, filed) = (col("form"), col("accessionNumber"), col(mid), col("filingDate"));
     let at = |a: &[Value], i: usize| a.get(i).and_then(Value::as_str).map(str::to_string);
     forms
         .iter()
         .enumerate()
-        .filter(|(_, f)| matches!(f.as_str(), Some("13F-HR" | "13F-HR/A")))
-        .filter_map(|(i, _)| Some((at(&accs, i)?, at(&reports, i)?, at(&filed, i)?)))
+        .filter(|(_, f)| f.as_str().is_some_and(&keep))
+        .filter_map(|(i, _)| Some((at(&accs, i)?, at(&mids, i)?, at(&filed, i)?)))
         .collect()
+}
+
+/// (#514) One Form 4 -> (ticker, issuer name, newest trade date, net shares bought), or None when
+/// Berkshire is not a reporting owner: its submissions also list its directors' BRK.A/BRK.B filings,
+/// where Berkshire is only the issuer. Net = open-market buys (`P`) minus sales (`S`) over every
+/// non-derivative row, share classes summed. A multi-class symbol (`LEN, LEN.B`) keeps its first, in
+/// Yahoo's spelling (`BRK.B` -> `BRK-B`).
+fn parse_brk_form4(xml: &str) -> Option<(String, String, String, i64)> {
+    if !between_all(xml, "<rptOwnerName>", "</rptOwnerName>").iter().any(|o| o.to_uppercase().contains("BERKSHIRE HATHAWAY")) {
+        return None;
+    }
+    let ticker = between(xml, "<issuerTradingSymbol>", "</issuerTradingSymbol>")?.split(',').next()?.trim().replace('.', "-");
+    let name = between(xml, "<issuerName>", "</issuerName>").unwrap_or("").trim().to_string();
+    let (mut net, mut day) = (0_i64, String::new());
+    for row in between_all(xml, "<nonDerivativeTransaction>", "</nonDerivativeTransaction>") {
+        let value = |tag: &str| between(row, &format!("<{tag}>"), &format!("</{tag}>")).and_then(|s| between(s, "<value>", "</value>")).map(str::trim);
+        let shares = value("transactionShares").and_then(|n| n.parse::<f64>().ok()).unwrap_or(0.0) as i64;
+        match between(row, "<transactionCode>", "</transactionCode>").map(str::trim) {
+            Some("P") => net += shares,
+            Some("S") => net -= shares,
+            _ => continue,
+        }
+        day = day.max(value("transactionDate").unwrap_or("").to_string());
+    }
+    (!ticker.is_empty()).then_some((ticker, name, day, net))
+}
+
+/// (#514) Parsed Form 4s, as (accession, parse) -> per ticker (issuer name, newest trade date, that
+/// filing's accession), kept only when the window's net is a buy: a sale nets the buys down, and a
+/// trim is the 13F STATUS's to tell.
+fn brk_form4_buys(filings: Vec<(String, (String, String, String, i64))>) -> HashMap<String, (String, String, String)> {
+    let mut by: HashMap<String, (i64, String, String, String)> = HashMap::new();
+    for (acc, (ticker, name, day, net)) in filings {
+        let e = by.entry(ticker).or_default();
+        e.0 += net;
+        if day > e.2 {
+            (e.1, e.2, e.3) = (name, day, acc);
+        }
+    }
+    by.into_iter().filter(|(_, e)| e.0 > 0).map(|(t, (_, name, day, acc))| (t, (name, day, acc))).collect()
+}
+
+/// (#514) Form 4 buys onto the 13F rows: a held ticker's BOUGHT turns to the trade date; a ticker the 13F
+/// lacks (a stake opened since its quarter) joins as its own row, linked to its Form 4. Returns every
+/// symbol a quote may carry (the ticker and its Xetra twin), for `w` and `W`.
+fn brk_merge_form4(rows: &mut Vec<BrkRow>, buys: &HashMap<String, (String, String, String)>, eu: &HashMap<String, String>) -> HashSet<String> {
+    let mut marks = HashSet::new();
+    for (ticker, (name, day, acc)) in buys {
+        let twin = eu.get(ticker).cloned().unwrap_or_default();
+        match rows.iter_mut().find(|r| r.ticker == *ticker) {
+            Some(r) => r.form4.clone_from(day),
+            None => rows.push(BrkRow {
+                ticker: ticker.clone(),
+                twin: twin.clone(),
+                name: name.clone(),
+                form4: day.clone(),
+                filing: brk_filing_url(acc),
+                ..BrkRow::default()
+            }),
+        }
+        marks.extend([ticker.clone(), twin].into_iter().filter(|s| !s.is_empty()));
+    }
+    marks
+}
+
+/// (#455) A Berkshire filing's sec.gov index page.
+fn brk_filing_url(acc: &str) -> String {
+    format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}-index.htm", BRK_CIK.trim_start_matches('0'), acc.replace('-', ""))
 }
 
 /// (#436) The filings whose report date is one of the newest [`BRK_QUARTERS`] distinct ones.
@@ -2366,6 +2456,7 @@ fn brk_holdings(quarters: &BrkQuarters) -> Vec<(String, u64, u64, u64)> {
 }
 
 /// (#440) One Berkshire row for the page. (#442) Every holding of the newest 13F, no longer only buys.
+#[derive(Default)]
 pub struct BrkRow {
     /// The US ticker, or the CUSIP when OpenFIGI mapped none.
     ticker: String,
@@ -2384,6 +2475,8 @@ pub struct BrkRow {
     value: u64,
     /// (#455) The newest 13F's sec.gov filing index, NAME's link; "" = none.
     filing: String,
+    /// (#514) The newest trade date of a Form 4 net buy in the last [`BRK_FORM4_DAYS`], or "".
+    form4: String,
 }
 
 /// (#455) A `[header, cell]` pair, plus the page's link for the cell when `url` is not empty.
@@ -2430,20 +2523,23 @@ pub fn brk_rows(holdings: &[BrkRow], quotes: &[Quote]) -> Value {
         .enumerate()
         .map(|(i, (h, q))| {
             let delta = if h.prev == 0 { "new".to_string() } else { format!("{:+.1}%", (h.shares as f64 / h.prev as f64 - 1.0) * 100.0) };
-            let weight = if total == 0 { "—".to_string() } else { format!("{:.1}%", h.value as f64 / total as f64 * 100.0) };
+            let form4_only = h.value == 0 && !h.form4.is_empty(); // (#514) a stake no 13F lists yet
+            let weight = if total == 0 || form4_only { "—".to_string() } else { format!("{:.1}%", h.value as f64 / total as f64 * 100.0) };
             let name = q.map(|q| q.name.as_str()).or((!h.name.is_empty()).then_some(h.name.as_str()));
             // (#506) no buy in the window: held since before it, which "—" hid
-            let bought = match (h.bought.is_empty(), h.since.is_empty()) {
-                (false, _) => brk_quarter(&h.bought),
-                (true, false) => format!("before {}", brk_quarter(&h.since)),
-                (true, true) => "—".to_string(),
+            let bought = match (h.form4.is_empty(), h.bought.is_empty(), h.since.is_empty()) {
+                (false, ..) => format!("{} (Form 4)", h.form4),
+                (true, false, _) => brk_quarter(&h.bought),
+                (true, true, false) => format!("before {}", brk_quarter(&h.since)),
+                (true, true, true) => "—".to_string(),
             };
+            let status = if form4_only { "new (Form 4)" } else { brk_status(h.prev, h.shares) };
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["TICKER", h.ticker],
                 ["NAME", name.unwrap_or("—")], // (#469) NAME links the company site, `picks::stamp_site`
                 linked("WEIGHT", &weight, &h.filing),
-                ["STATUS", brk_status(h.prev, h.shares)],
+                ["STATUS", status],
                 ["SHARES Δ", delta],
                 ["BOUGHT", bought],
             ])
@@ -2514,6 +2610,24 @@ async fn read_13f(client: &Client, urls: &Urls, cik: &str, acc: &str) -> Option<
     parsed
 }
 
+/// (#514) One Berkshire Form 4 parsed by [`parse_brk_form4`], cached forever, a director's filing as
+/// `null` so it is never refetched. None = not cached and not fetched: SEC refused it, or the budget is
+/// spent.
+#[mutants::skip] // (#514) async network shell, the `read_13f` shape
+async fn read_brk_form4(client: &Client, urls: &Urls, acc: &str, doc: &str) -> Option<Option<(String, String, String, i64)>> {
+    let path = sec_cache_path(&format!("_brkf4_{acc}"));
+    let cached = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok());
+    if cached.is_some() || SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+        return cached;
+    }
+    let url = format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{doc}", BRK_CIK.trim_start_matches('0'), acc.replace('-', ""));
+    let parsed = sec_get_text(client, &url, &urls.sec_user_agent).await.map(|t| parse_brk_form4(&t));
+    if let Some(p) = &parsed {
+        cache_write(&path, serde_json::to_string(p).unwrap_or_default());
+    }
+    parsed
+}
+
 /// (#436) CUSIP -> (US ticker, OpenFIGI name) for `cusips`, from the forever cache, OpenFIGI asked only
 /// for the ones it lacks. A CUSIP OpenFIGI cannot map is absent.
 #[mutants::skip] // (#470) async network shell, split out of `fetch_brk`
@@ -2549,21 +2663,25 @@ async fn cusip_tickers(client: &Client, urls: &Urls, cusips: &HashSet<String>) -
 pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSet<String>, Vec<BrkRow>) {
     use std::sync::atomic::Ordering::Relaxed;
     let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
-    let list_path = sec_cache_path("_brk13f");
-    if !fresh_on_disk(&list_path, BRK_LIST_TTL) && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
+    let (list_path, f4_path) = (sec_cache_path("_brk13f"), sec_cache_path("_brkf4"));
+    // (#514) one submissions GET feeds both lists; the Form 4 one wants it daily
+    let stale = !fresh_on_disk(&list_path, BRK_LIST_TTL) || !fresh_on_disk(&f4_path, BRK_FORM4_TTL);
+    if stale && SEC_FETCHES.fetch_add(1, Relaxed) < SEC_FETCH_BUDGET {
         let url = urls.sec_submissions.replace("{cik}", BRK_CIK);
-        let list = sec_get_json(client, &url, &urls.sec_user_agent).await.map(|v| brk_13f_list(&v)).unwrap_or_default();
+        let since = (chrono::Utc::now().date_naive() - chrono::Duration::days(BRK_FORM4_DAYS)).to_string();
+        let v = sec_get_json(client, &url, &urls.sec_user_agent).await.unwrap_or_default();
+        let list = brk_13f_list(&v);
         if !list.is_empty() {
+            // a real answer: an empty Form 4 list is then a fact for the day
             cache_write(&list_path, serde_json::to_string(&list).unwrap_or_default());
+            cache_write(&f4_path, serde_json::to_string(&brk_form4_list(&v, &since)).unwrap_or_default());
         }
     }
     let list: Vec<(String, String, String)> =
         read(&list_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let window = brk_window(list);
     // (#455) NAME's link: the newest quarter's original filing, as an amendment lists only what it adds
-    let filing = window.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2))).map_or(String::new(), |(acc, ..)| {
-        format!("https://www.sec.gov/Archives/edgar/data/{}/{}/{acc}-index.htm", BRK_CIK.trim_start_matches('0'), acc.replace('-', ""))
-    });
+    let filing = window.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2))).map_or(String::new(), |(acc, ..)| brk_filing_url(acc));
     let mut filings: Vec<Brk13f> = Vec::new();
     for (acc, report, filed) in window {
         let Some((amend, held)) = read_13f(client, urls, BRK_CIK, &acc).await else {
@@ -2581,7 +2699,7 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     let ticker_of = cusip_tickers(client, urls, &cusips.union(&held).cloned().collect()).await;
     let eu: HashMap<String, String> =
         read(&crate::config::data_path(EU_LISTING_CACHE_PATH)).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let (bought, holds) = (brk_tickers(&cusips, &ticker_of, &eu), brk_tickers(&held, &ticker_of, &eu));
+    let (mut bought, mut holds) = (brk_tickers(&cusips, &ticker_of, &eu), brk_tickers(&held, &ticker_of, &eu));
     eprintln!(
         "fetch: Berkshire 13F: {} CUSIPs bought in the last {BRK_QUARTERS} quarters -> {} symbols; {} held -> {} symbols",
         cusips.len(),
@@ -2589,15 +2707,33 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
         held.len(),
         holds.len()
     );
-    let rows = holdings
+    let mut rows: Vec<BrkRow> = holdings
         .into_iter()
         .map(|(c, prev, shares, value)| {
             let bought = buys.get(&c).map(|b| b.0.clone()).unwrap_or_default();
             let (ticker, name) = ticker_of.get(&c).cloned().unwrap_or((c, String::new()));
             let twin = eu.get(&ticker).cloned().unwrap_or_default();
-            BrkRow { ticker, twin, name, bought, since: since.clone(), prev, shares, value, filing: filing.clone() }
+            BrkRow { ticker, twin, name, bought, since: since.clone(), prev, shares, value, filing: filing.clone(), form4: String::new() }
         })
         .collect();
+    // (#514) a missed Form 4 only misses a buy, never misreads one: skipped, not failed closed
+    let f4_list: Vec<(String, String, String)> = read(&f4_path).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut f4 = Vec::new();
+    for (acc, doc, _) in &f4_list {
+        if let Some(Some(p)) = read_brk_form4(client, urls, acc, doc).await {
+            f4.push((acc.clone(), p));
+        }
+    }
+    let (f4_rows, f4_buys) = (f4.len(), brk_form4_buys(f4));
+    let marks = brk_merge_form4(&mut rows, &f4_buys, &eu);
+    eprintln!(
+        "fetch: Berkshire Form 4: {} filings in {BRK_FORM4_DAYS} days, {f4_rows} by Berkshire -> {} net buys ({})",
+        f4_list.len(),
+        f4_buys.len(),
+        f4_buys.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
+    bought.extend(marks.iter().cloned());
+    holds.extend(marks);
     (bought, holds, rows)
 }
 
@@ -10328,6 +10464,7 @@ pub(crate) mod tests {
             shares,
             value,
             filing: "https://f".into(),
+            form4: String::new(),
         };
         let q = |t: &str, kind: &str, name: &str| Quote { instrument_type: kind.to_string(), ..Quote::stub(t, "€1", "", name) };
         let quotes = [q("CB", "EQUITY", "Chubb"), q("ABEA.DE", "EQUITY", "Alphabet A"), q("SPY", "ETF", "SPDR S&P 500")];
@@ -10352,6 +10489,72 @@ pub(crate) mod tests {
         assert_eq!(brk_rows(&zero, &[])[0][3], serde_json::json!(["WEIGHT", "—"]), "no value in hand, no weight");
         assert_eq!(brk_rows(&zero, &[])[0][2], serde_json::json!(["NAME", "—"]), "(#455) no filing, no link");
         assert_eq!(brk_rows(&zero, &[])[0][6], serde_json::json!(["BOUGHT", "—"]), "(#506) no window, no since");
+    }
+
+    /// (#514) Form 4s filed on or after `since`, the xsl render's folder cut off the file name.
+    #[test]
+    fn brk_form4_list_keeps_recent_form_4s() {
+        let v = serde_json::json!({"filings": {"recent": {
+            "form": ["4", "13F-HR", "4", "4/A", "4"],
+            "accessionNumber": ["a0", "a1", "a2", "a3", "a4"],
+            "primaryDocument": ["xslF345X05/x0.xml", "", "x2.xml", "xslF345X05/x3.xml", "xslF345X05/x4.xml"],
+            "filingDate": ["2026-10-02", "2026-08-14", "2026-07-09", "2026-09-01", "2026-07-08"],
+        }}});
+        let s = |a: &str, d: &str, f: &str| (a.to_string(), d.to_string(), f.to_string());
+        assert_eq!(brk_form4_list(&v, "2026-07-09"), vec![s("a0", "x0.xml", "2026-10-02"), s("a2", "x2.xml", "2026-07-09")]);
+        assert!(brk_form4_list(&serde_json::json!({}), "").is_empty());
+    }
+
+    /// (#514) Berkshire as a reporting owner: P minus S over every row, both classes, the newest trade
+    /// date, the first symbol of a multi-class issuer. A director's BRK.A filing names no Berkshire owner.
+    #[test]
+    fn parse_brk_form4_nets_berkshire_trades_only() {
+        let row = |day: &str, code: &str, n: &str| {
+            format!(
+                "<nonDerivativeTransaction><transactionDate><value>{day}</value></transactionDate><transactionCoding>\
+                 <transactionCode>{code}</transactionCode></transactionCoding><transactionAmounts><transactionShares>\
+                 <value>{n}</value></transactionShares></transactionAmounts><postTransactionAmounts>\
+                 <sharesOwnedFollowingTransaction><value>99</value></sharesOwnedFollowingTransaction>\
+                 </postTransactionAmounts></nonDerivativeTransaction>"
+            )
+        };
+        let doc = |sym: &str, owners: &[&str], rows: &[String]| {
+            let owners: String = owners.iter().map(|o| format!("<reportingOwner><rptOwnerName>{o}</rptOwnerName></reportingOwner>")).collect();
+            format!("<issuerName>LENNAR CORP /NEW/</issuerName><issuerTradingSymbol>{sym}</issuerTradingSymbol>{owners}<nonDerivativeTable>{}</nonDerivativeTable>", rows.concat())
+        };
+        let len = doc("LEN, LEN.B", &["BERKSHIRE HATHAWAY INC", "BUFFETT WARREN E"], &[row("2026-09-18", "P", "1218429"), row("2026-09-17", "P", "267585"), row("2026-09-19", "G", "5")]);
+        assert_eq!(parse_brk_form4(&len), Some(("LEN".into(), "LENNAR CORP /NEW/".into(), "2026-09-18".into(), 1_486_014)));
+        let sale = doc("BRK.B", &["Berkshire Hathaway Inc"], &[row("2026-09-01", "P", "10"), row("2026-09-02", "S", "25.5")]);
+        assert_eq!(parse_brk_form4(&sale).map(|p| (p.0, p.3)), Some(("BRK-B".into(), -15)));
+        assert_eq!(parse_brk_form4(&doc("BRK.A", &["Jain Ajit"], &[row("2026-09-28", "S", "39700")])), None);
+    }
+
+    /// (#514) Per ticker: the window's net, kept when a buy, named and dated by its newest filing.
+    #[test]
+    fn brk_form4_buys_sum_per_ticker() {
+        let f = |acc: &str, t: &str, day: &str, net: i64| (acc.to_string(), (t.to_string(), format!("{t} co"), day.to_string(), net));
+        let buys = brk_form4_buys(vec![f("a1", "LEN", "2026-09-17", 5), f("a3", "LEN", "2026-10-01", 7), f("a4", "LEN", "2026-10-01", 0), f("a2", "LEN", "2026-09-23", 1), f("b1", "OXY", "2026-09-01", 4), f("b2", "OXY", "2026-09-02", -4)]);
+        assert_eq!(buys.len(), 1, "a net zero is no buy");
+        assert_eq!(buys["LEN"], ("LEN co".into(), "2026-10-01".into(), "a3".into()), "a same-day later filing keeps the first");
+    }
+
+    /// (#514) A held ticker's BOUGHT turns to its Form 4 date; a new stake is its own row, "—" weight,
+    /// linked to its Form 4; both mark their ticker and its Xetra twin.
+    #[test]
+    fn brk_merge_form4_dates_held_rows_and_adds_new_stakes() {
+        let mut rows = vec![BrkRow { ticker: "LEN".into(), bought: "2026-06-30".into(), prev: 9, shares: 10, value: 100, filing: "https://f".into(), ..BrkRow::default() }];
+        let buys: HashMap<String, (String, String, String)> =
+            [("LEN", "Lennar", "2026-10-01", "a1"), ("NEW", "New Co", "2026-09-30", "0001-26-7")].iter().map(|(t, n, d, a)| (t.to_string(), (n.to_string(), d.to_string(), a.to_string()))).collect();
+        let eu: HashMap<String, String> = [("NEW".to_string(), "NEW.DE".to_string()), ("LEN".to_string(), String::new())].into();
+        let marks = brk_merge_form4(&mut rows, &buys, &eu);
+        assert_eq!(marks, ["LEN", "NEW", "NEW.DE"].iter().map(|s| s.to_string()).collect::<HashSet<_>>());
+        assert_eq!(
+            brk_rows(&rows, &[Quote { instrument_type: "EQUITY".into(), ..Quote::stub("NEW.DE", "€1", "", "New Co Xetra") }]),
+            serde_json::json!([
+                [["#", "1"], ["TICKER", "LEN"], ["NAME", "—"], ["WEIGHT", "100.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+11.1%"], ["BOUGHT", "2026-10-01 (Form 4)"]],
+                [["#", "2"], ["TICKER", "NEW"], ["NAME", "New Co Xetra"], ["WEIGHT", "—", "https://www.sec.gov/Archives/edgar/data/1067983/0001267/0001-26-7-index.htm"], ["STATUS", "new (Form 4)"], ["SHARES Δ", "new"], ["BOUGHT", "2026-09-30 (Form 4)"]],
+            ])
+        );
     }
 
     /// (#437) A letter-led 13F CUSIP is a CINS and maps as one; a digit-led one stays a CUSIP.
