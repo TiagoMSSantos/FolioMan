@@ -204,12 +204,23 @@ function sortBy(th) {
   body.append(...rows.map(([, tr]) => tr));
 }
 
+// (#512) The default is the SECOND-shortest non-empty lane (stocks 7, ETFs 8, crypto 1 -> 7): the
+// shortest-lane default (#396) opened every table at one row once crypto narrowed to BTC. The shortest
+// lane caps itself at its own length; one non-empty lane gives its own size, and none gives 1.
+const secondShortest = (sizes) => {
+  const s = sizes.filter(Boolean).sort((a, b) => a - b);
+  return s[1] ?? s[0] ?? 1;
+};
+console.assert(
+  secondShortest([7, 8, 1]) === 7 && secondShortest([0, 3, 0]) === 3 &&
+    secondShortest([0, 0, 0]) === 1 && secondShortest([5, 5, 2]) === 5,
+  "secondShortest",
+);
+
 // (#143) `?top=N` rather than localStorage: a bare URL always opens at the default, and a reader who
 // wants ten rows every morning bookmarks the URL that gives them. Clamped and truncated because the
 // query string is user input — `?top=abc`, `?top=0`, `?top=3.7` and `?top=999` must all land on an
 // option that exists, or `sel.value` silently becomes "" and apply(0) blanks every table.
-// (#396) The default is the shortest NON-empty lane (stocks 5, ETFs 17, crypto 3 -> 3), so every table
-// fills the same N rows; an empty lane is skipped, and all-empty makes it Infinity, which clamps to 1.
 function chooser(max, dflt) {
   const box = document.getElementById("topn-box");
   const sel = document.getElementById("topn");
@@ -324,7 +335,7 @@ function render(data, prev) {
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   const sizes = LANES.map((lane) => (data[lane] || []).length);
   const attention = document.querySelectorAll("#attention tbody tr").length;
-  chooser(Math.max(1, attention, ...sizes), Math.min(...sizes.filter(Boolean)));
+  chooser(Math.max(1, attention, ...sizes), secondShortest(sizes));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
   for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young"]) {
