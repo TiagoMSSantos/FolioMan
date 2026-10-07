@@ -5255,6 +5255,49 @@ buy_heuristic:
                                  #    so read every factor edge as transitory.
                                  #  - Liu-Tsyvinski crypto factors: 1-4 week horizons. The crypto lane already carries its MVRV ceiling (#45).
                                  #  REVERT RULE: drop the two rows; nothing reads them.
+                                 #── (#523) MEASURED 2026-10-07 — THE PAGE'S FAIR FAMILY AS FACTORS: ALL THREE DEAD, JOURNALLED FORWARD ANYWAY ──
+                                 #  WHAT: three FUND_FACTORS rows off the (#522) cells, as-of, same close and currency. fair_yield = 3y-median FCF ÷ cap
+                                 #  × dcf_multiple(FCF-5Y) × 100, i.e. FAIR ÷ price (ranks like MOS%); oe_fair_yield = the same on owner earnings
+                                 #  (MOS-OE%); fcf_cap_yield = 3y-median FCF ÷ cap × 100 (IMPL-G is monotone in it). `picks::stamp_fair_yields` stamps
+                                 #  all three at backtest.rs's as-of site AND fetch.rs's live one, so the shadow journals the graded number. A financial,
+                                 #  a burn or no FCF-5Y rate is None. FUND_FACTORS 46 -> 49, so every Šidák band tightens again.
+                                 #  WHY: the user asked whether columns the page shows but the rank never reads should feed it. Inventory: every other
+                                 #  useful column is graded already: P/E (#147), FCF-YLD / P/S / EV/EBITDA (#408), M-SCORE (#412), the margins,
+                                 #  ND/EBITDA, INT-COV, BUYBK, lynch (#416). TARGET%, UPSIDE, SHORT% and EARN keep no history, so nothing can grade
+                                 #  them. The FAIR family (#522) was the only one never graded. Prior: the value family again, an FCF yield times a
+                                 #  growth-capped multiple.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at both ->
+                                 #  CANDIDATE, anything else -> DEAD. Measure only: no weight and no rank change either way (weights stay closed until
+                                 #  the track read, ~2027-09).
+                                 #  RUNS: `backtest {12,8} universe fund pit`, control = HEAD ee4f5df built from `git archive`, root dotfiles and
+                                 #  .sec_cache restored before EVERY run, the control's too (cmp). 12y: windows scored 2815 both (= #417). 8y: 6244 both
+                                 #  (#417 read 6243, pond drift). Every shipped line is byte-identical control vs arm; only the three rows and the
+                                 #  factor-count line differ.
+                                 #  THE CONTROL MOVED SINCE (#417): peg_yield reads 0.54/0.38, not 0.91/0.71. The (#424)-(#426) restatements took the
+                                 #  look-ahead out of the EPS this table prices, so today's control is the scale below, not the older receipts'.
+                                 #    AUC            12y (w/l)     8y (w/l)       8y held book
+                                 #    fair_yield     0.51 (58/10)  0.46 (110/22)  +16.7%/yr n=168   DEAD, a coin flip at both horizons
+                                 #    oe_fair_yield  0.50 (58/10)  0.45 (109/22)  +16.6%/yr n=166   DEAD, a coin flip at both horizons
+                                 #    fcf_cap_yield  0.44 (63/12)  0.43 (122/24)  +17.3%/yr n=186   DEAD, same side but under 0.10 at both
+                                 #    fcf_ev_yield   0.38 (61/12)  0.36 (120/26)  +16.6%/yr n=185   today's control, for scale
+                                 #    peg_yield      0.54 (63/12)  0.38 (124/27)  +17.2%/yr n=200   the shipped tilt, today's control
+                                 #  (growth_score baseline, 8y held book: +11.4%/yr n=497.)
+                                 #  VERDICT: all three DEAD. The capped multiple adds no separation: fair_yield sits within 0.01 of 0.5 at 12y. The cheap
+                                 #  half of fcf_cap_yield LOST at both horizons, the same direction as fcf_ev_yield, but too thin for the bar. None beats
+                                 #  peg_yield's 8y held book. The 8y held-out TEST edge is negative for all three (fair −115.0, oe −127.3, fcf_cap −93.2).
+                                 #  The 12y edge is positive (+143.0 / +143.0 / +144.3), the same +144.3 that noa, mscore, sbc, goodwill and fcf_ev print:
+                                 #  a small gated pool holds one SET whatever the order. So the page keeps the cells as display only.
+                                 #  RECORDED, NOT ACTED ON: on today's control the shipped peg_yield would itself read DEAD (opposite sides of 0.5).
+                                 #  Weights are closed, so that is a note for the track read, not a change.
+                                 #  SHADOW: the user's call before the run journals all three forward NOW, whatever this verdict, so `track::FACTORS` goes
+                                 #  5 -> 8. LIVE COVERAGE (2026-10-07 probe, 40 cohort stocks with any `fac` value): fair_yield 34, oe_fair_yield 33,
+                                 #  fcf_cap_yield 39. Eleven rows now read at once, so the (#415) chance-clear caveat widens. The bar (12 monthly lines
+                                 #  AND 12 chained links, each mean AND median > 0) and the `growth_fund_extra` backtest re-grade guard are unchanged.
+                                 #  Earliest ~2027-10, and that re-grade starts from the coin flip above.
+                                 #  PROBE HYGIENE: `append_snapshot` skips a same-day line, so the probe ran with today's CI line set aside, and
+                                 #  `git checkout -- .screen_snapshots.jsonl` put it back. The other state files were restored (cmp).
+                                 #  REVERT RULE: drop the three rows, the three FACTORS entries and `stamp_fair_yields` with its two call sites; journal
+                                 #  lines already written read back.
                                  #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
                                  #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
                                  #  "hedged", so the screen funnel names it). ETF-scoped. Substrings hedg/hdg/heur/hchf/husd/hgbp catch the glued

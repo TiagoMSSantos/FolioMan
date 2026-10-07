@@ -4600,6 +4600,21 @@ fn fair_on(q: &Quote, base: fn(&crate::core::FundFactors) -> Option<f64>) -> Opt
     })
 }
 
+/// (#523) The FAIR family as three factor yields, %, for the backtest sweep and the (#415) shadow: FAIR ÷
+/// price (MOS% + 1), the same on owner earnings, and the 3y-median FCF over the cap (IMPL-G is monotone in
+/// it). One fn for both stamp sites, backtest.rs as-of and fetch.rs live, so the shadow journals the graded
+/// number. Same base, rate and multiple as the cells; a financial, a burn or no rate is None, like FCF/EV.
+/// shortcut: the cap is shares × `p`, the filer-currency close both sites hand `ev_ebitda_yield`, not
+/// `cap_fund`; the two agree wherever the listing trades in the filing currency.
+pub fn stamp_fair_yields(f: &mut crate::core::FundFactors, p: f64) {
+    let y = |b| if f.financial { None } else { crate::core::ev_ebitda_yield(b, f.shares_ttm, None, p) };
+    let (fcf, oe) = (y(f.fcf_base), y(f.oe_base));
+    let m = span_or_short(f.fcf_cagr, f.fcf_cagr_short).map(|(g, _)| dcf_multiple(g));
+    f.fcf_cap_yield = fcf;
+    f.fair_yield = fcf.zip(m).map(|(a, b)| a * b);
+    f.oe_fair_yield = oe.zip(m).map(|(a, b)| a * b);
+}
+
 /// (#522) IMPL-G, a reverse DCF: the yearly FCF growth over 10 years (then 2.5%, at 9%) that makes FCF-YLD ×
 /// the multiple = 1, i.e. the growth today's price already pays for. Unclamped, unlike FAIR's 0-15%;
 /// None on a burn or outside −50..100%/yr.
@@ -7824,6 +7839,25 @@ mod tests {
         assert_eq!(look_through_fair(&top(&[("A", 0.3), ("C", 0.3)]), &r), Some(1.5), "half covered still counts");
         assert_eq!(look_through_fair(&top(&[("A", 0.29), ("C", 0.3)]), &r), None, "under half");
         assert_eq!(look_through_fair(&[], &r), None);
+    }
+
+    /// (#523) cap 10 × 10 = 100, so a base of 5 is a 5% yield, × the 13.08x no-growth multiple for FAIR;
+    /// growth past 15% is capped like the cell. A burn, a financial or no rate drops the rows that need them.
+    #[test]
+    fn fair_yields_mirror_the_fair_cells() {
+        let near = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 1e-9);
+        let mut f = crate::core::FundFactors { fcf_base: Some(5.0), oe_base: Some(3.0), shares_ttm: Some(10.0), fcf_cagr: Some(0.0), ..Default::default() };
+        stamp_fair_yields(&mut f, 10.0);
+        assert!(near(f.fcf_cap_yield, 5.0) && near(f.fair_yield, 65.393_755_972_570_42) && near(f.oe_fair_yield, 39.236_253_583_542_25), "{f:?}");
+        (f.fcf_cagr, f.oe_base) = (Some(30.0), Some(-1.0));
+        stamp_fair_yields(&mut f, 10.0);
+        assert!(near(f.fair_yield, 202.674_225_185_414_26) && f.oe_fair_yield.is_none(), "15% cap; an owner-earnings burn");
+        f.fcf_cagr = None;
+        stamp_fair_yields(&mut f, 10.0);
+        assert!(f.fair_yield.is_none() && near(f.fcf_cap_yield, 5.0), "no rate: no FAIR, the yield stays");
+        (f.fcf_cagr, f.financial) = (Some(0.0), true);
+        stamp_fair_yields(&mut f, 10.0);
+        assert_eq!((f.fcf_cap_yield, f.fair_yield, f.oe_fair_yield), (None, None, None), "a bank's FCF is deposit flow");
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5

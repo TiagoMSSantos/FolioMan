@@ -791,15 +791,20 @@ const PEG_HEADER: &str =
     "  DATE            AGE    N  LADDER CHEAP  LADDER RICH    PIN CHEAP     PIN RICH   PIN-LADDER";
 
 /// (#415) The factors the shadow journals, each with its verdict label (a `&'static str` because
-/// [`Pairs`] borrows its labels). High is the good end for all five: four are yields, and `mscore` is
+/// [`Pairs`] borrows its labels). High is the good end for all eight: seven are yields, and `mscore` is
 /// the Beneish M-score NEGATED, so its top half is the half LEAST like a manipulator. (#416) added the
-/// two PEG-family CANDIDATEs, the same earnings yield over EPS growth and over ROE · retention.
-pub(crate) const FACTORS: [(&str, &str); 5] = [
+/// two PEG-family CANDIDATEs, the same earnings yield over EPS growth and over ROE · retention. (#523)
+/// added the page's FAIR family (FAIR ÷ price, FAIR-OE ÷ price, 3y-median FCF ÷ cap), journalled from
+/// day one rather than after a backtest verdict, so the forward clock runs alongside it.
+pub(crate) const FACTORS: [(&str, &str); 8] = [
     ("rnd_yield", "rnd_yield top minus peg cheap"),
     ("int_yield", "int_yield top minus peg cheap"),
     ("mscore", "mscore top minus peg cheap"),
     ("lynch_yield", "lynch_yield top minus peg cheap"),
     ("sgr_yield", "sgr_yield top minus peg cheap"),
+    ("fair_yield", "fair_yield top minus peg cheap"),
+    ("oe_fair_yield", "oe_fair_yield top minus peg cheap"),
+    ("fcf_cap_yield", "fcf_cap_yield top minus peg cheap"),
 ];
 
 /// (#415) The `fac` journal for one run: every [`FACTORS`] value the (#332) cohort's names carry, read
@@ -908,16 +913,17 @@ fn fac_section(
     }
     format!(
         "\n  Factor shadow — the (#332) PEG cohort ranked by each measured-but-unshipped backtest CANDIDATE\n  \
-         ((#410) rnd_yield, (#413) int_yield, (#412) mscore, (#416) lynch_yield and sgr_yield), its top half held\n  \
-         against peg_yield's cheap half on the SAME names. (#436) `brk` holds EVERY cohort name Berkshire\n  \
-         Hathaway's 13F bought (the `w` flag), (#442) `brkh` every one its newest 13F holds (the `W` flag),\n  \
+         ((#410) rnd_yield, (#413) int_yield, (#412) mscore, (#416) lynch_yield and sgr_yield; (#523) the page's\n  \
+         FAIR family fair_yield, oe_fair_yield and fcf_cap_yield, journalled before their backtest verdict), its\n  \
+         top half held against peg_yield's cheap half on the SAME names. (#436) `brk` holds EVERY cohort name\n  \
+         Berkshire Hathaway's 13F bought (the `w` flag), (#442) `brkh` every one its newest 13F holds (the `W` flag),\n  \
          each against that same cheap half. (#444) `soc` holds every one the Social Arbitrage trading table\n  \
          names (the `s` flag). EUR seat, price-only. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
          BACKTEST re-grade on `universe fund pit` — never a direct ship — when {REOPEN_LINES}+ monthly lines AND\n  \
-         {REOPEN_LINES}+ chained links each read mean AND median above 0. Six rows read at once, so one can\n  \
+         {REOPEN_LINES}+ chained links each read mean AND median above 0. Eleven rows read at once, so one can\n  \
          clear by chance; the backtest re-grade is the guard against that.\n\n  \
          Pre-registered by (#436) before its first line: `brk` re-opens as a score-term BACKTEST re-grade, never\n  \
          a direct ship, only when its row clears that same bar AND {BRK_MIN_NAMES}+ distinct brk names have been\n  \
@@ -2012,6 +2018,7 @@ mod tests {
             int_yield: Some(f64::NAN),
             mscore: Some(-2.0),
             sgr_yield: Some(3.0), // (#416)
+            fcf_cap_yield: Some(5.0), // (#523)
             ..Default::default()
         };
         let quotes = [
@@ -2028,6 +2035,7 @@ mod tests {
                 ("A".to_string(), "rnd_yield".to_string(), 1.0),
                 ("A".to_string(), "mscore".to_string(), -2.0),
                 ("A".to_string(), "sgr_yield".to_string(), 3.0),
+                ("A".to_string(), "fcf_cap_yield".to_string(), 5.0),
                 ("B".to_string(), "brk".to_string(), 1.0),
                 ("B".to_string(), "brkh".to_string(), 1.0),
             ]

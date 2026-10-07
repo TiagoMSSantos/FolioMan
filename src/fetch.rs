@@ -1611,6 +1611,7 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // again exactly as backtest.rs stamps them. `exp_neg` read DEAD, so it stays backtest-only.
         ff.lynch_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, ff.eps_growth, p));
         ff.sgr_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, core::sgr_pct(&ff), p));
+        if let Some(p) = price { crate::picks::stamp_fair_yields(&mut ff, p) } // (#523) shadow only, exactly as backtest.rs
         ff.cap_fund = price.zip(ff.shares_ttm).map(|(p, n)| p * n); // (#462) display only
         q.fund_factor = core::select_fund_factor(&ff, factor);
         // (G+) carry the whole struct so `growth_fund_extra`'s named terms resolve here too. Set AFTER

@@ -1448,6 +1448,7 @@ pub async fn run(args: Vec<String>) {
                             f.lynch_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, f.eps_growth, p));
                             f.sgr_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, core::sgr_pct(f), p));
                             f.exp_neg = core::ey_cagr(f.eps_growth, picks::perf_pct(&quote, "5Y").map(|c| core::cagr(c, 5.0)));
+                            if let Some(p) = px { picks::stamp_fair_yields(f, p) } // (#523) the FAIR family, as fetch.rs stamps it
                         }
                         // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                         // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -2473,7 +2474,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 46] = [
+const FUND_FACTORS: [&str; 49] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2510,6 +2511,7 @@ const FUND_FACTORS: [&str; 46] = [
     "org_cap", "int_yield", // (#413) Eisfeldt-Papanikolaou org capital ÷ assets, EKP intangible value; 39 -> 41
     "lynch_yield", "sgr_yield", "exp_neg", // (#416) PEG over EPS growth, over ROE·retention, and de-rating; 41 -> 44
     "op_rd", "discipline", // (#417) Ball et al. R&D-adjusted OP ÷ assets, EBITDA growth minus asset growth; 44 -> 46
+    "fair_yield", "oe_fair_yield", "fcf_cap_yield", // (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4446,6 +4448,9 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("exp_neg", |f| f.exp_neg),
         ("op_rd", |f| f.op_rd), // (#417)
         ("discipline", |f| f.discipline),
+        ("fair_yield", |f| f.fair_yield), // (#523)
+        ("oe_fair_yield", |f| f.oe_fair_yield),
+        ("fcf_cap_yield", |f| f.fcf_cap_yield),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();

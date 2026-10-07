@@ -4073,6 +4073,12 @@ pub struct FundFactors {
     // live enrich stamps the two CANDIDATEs for the (#415) shadow only, weighted nowhere.
     pub lynch_yield: Option<f64>,    // (#416) earnings_yield · chained EPS CAGR (Lynch's PEG). Shadow only
     pub sgr_yield: Option<f64>,      // (#416) earnings_yield · `sgr_pct` (sustainable growth). Shadow only
+    // (#523) the FAIR family as factors, %: FAIR ÷ price (ranks like MOS%), the same on owner earnings
+    // (MOS-OE%), and the 3y-median FCF ÷ cap (IMPL-G is monotone in it). `picks::stamp_fair_yields` fills
+    // all three, backtest and live alike. Shadow only, weighted nowhere.
+    pub fair_yield: Option<f64>,
+    pub oe_fair_yield: Option<f64>,
+    pub fcf_cap_yield: Option<f64>,
     pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
@@ -4516,6 +4522,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         payout_yield: None,
         lynch_yield: None, // (#416) all three need a price
         sgr_yield: None,
+        fair_yield: None, // (#523) need a price too
+        oe_fair_yield: None,
+        fcf_cap_yield: None,
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5275,6 +5284,9 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "exp_neg" => f.exp_neg,                           // (#416) earnings-yield CAGR (multiple contraction): measured, unweighted
         "op_rd" => f.op_rd,                               // (#417) Ball 2015 R&D-adjusted OP ÷ assets: measured, unweighted
         "discipline" => f.discipline,                     // (#417) EBITDA growth minus asset growth: measured, unweighted
+        "fair_yield" => f.fair_yield,                     // (#523) FAIR ÷ price: measured, unweighted
+        "oe_fair_yield" => f.oe_fair_yield,               // (#523) FAIR-OE ÷ price: measured, unweighted
+        "fcf_cap_yield" => f.fcf_cap_yield,               // (#523) 3y-median FCF ÷ cap: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6184,6 +6196,9 @@ mod tests {
             payout_yield: Some(34.0),
             lynch_yield: Some(42.0),
             sgr_yield: Some(43.0),
+            fair_yield: Some(47.0),
+            oe_fair_yield: Some(48.0),
+            fcf_cap_yield: Some(49.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6232,6 +6247,9 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "exp_neg"), Some(44.0));
         assert_eq!(select_fund_factor(&f, "op_rd"), Some(45.0)); // (#417)
         assert_eq!(select_fund_factor(&f, "discipline"), Some(46.0));
+        assert_eq!(select_fund_factor(&f, "fair_yield"), Some(47.0)); // (#523)
+        assert_eq!(select_fund_factor(&f, "oe_fair_yield"), Some(48.0));
+        assert_eq!(select_fund_factor(&f, "fcf_cap_yield"), Some(49.0));
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS

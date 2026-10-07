@@ -94,8 +94,11 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     noa                   winners n=1    med    -70.09   losers n=6    med    -79.91   gap      9.82   AUC  1.00
     op_leverage           winners n=1    med     42.85   losers n=6    med     20.80   gap     22.05   AUC  1.00
     discipline            winners n=1    med     -1.61   losers n=5    med     20.06   gap    -21.68   AUC  0.20
+    fair_yield            winners n=1    med    166.16   losers n=6    med    121.17   gap     44.99   AUC  1.00
+    oe_fair_yield         winners n=1    med    166.16   losers n=6    med    121.17   gap     44.99   AUC  1.00
+    fcf_cap_yield         winners n=1    med      4.10   losers n=6    med      2.99   gap      1.11   AUC  1.00
     composite             winners n=1    med     38.29   losers n=5    med     23.78   gap     14.51   AUC  1.00
-    (30 of 46 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (33 of 49 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -323,6 +326,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   exp_neg        TEST edge +87.7 (w 0.249)  OOS +0.54 | -0.70
   op_rd          TEST edge +87.7 (w 0.249)  OOS +0.54 | -0.70
   discipline     TEST edge +69.0 (w 0.249)  OOS +0.26 | -0.70
+  fair_yield     TEST edge -95.3 (w 0.249)  OOS -0.49 | -0.70
+  oe_fair_yield  TEST edge -95.3 (w 0.249)  OOS -0.49 | -0.70
+  fcf_cap_yield  TEST edge +87.7 (w 0.249)  OOS +0.26 | -0.50
   composite      TEST edge +87.7 (w 0.249)  OOS +0.26 | -0.50
   -> no factor beats price-only with both OOS halves + — keep growth_fund_weight 0. SHIP NOTHING.
 
@@ -446,6 +452,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   lynch_yield    book -4.0%/yr  excess -15.8  win 0%  worst -17.0  OOS -17.0/-15.2   (n=3)
   exp_neg        book -4.0%/yr  excess -15.8  win 0%  worst -17.0  OOS -17.0/-15.2   (n=3)
   discipline     book -1.0%/yr  excess -13.0  win 0%  worst -17.9  OOS -9.2/-16.7   (n=9)
+  fair_yield     book -1.5%/yr  excess -13.1  win 0%  worst -17.9  OOS -11.0/-15.1   (n=11)
+  oe_fair_yield  book -1.5%/yr  excess -13.1  win 0%  worst -17.9  OOS -11.0/-15.1   (n=11)
+  fcf_cap_yield  book -1.5%/yr  excess -13.1  win 0%  worst -17.9  OOS -11.0/-15.1   (n=11)
   no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0, op_rd n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
   (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.
    every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,
