@@ -169,6 +169,15 @@ jobs:
           key: folioman-appstore-${{ github.run_id }}
           restore-keys: folioman-appstore-
 
+      # (#520) Berkshire's EDINET reports and the day range already scanned: a past day's list never
+      # changes, so without this every run would restart the 2020-08 backfill.
+      - name: Restore EDINET cache
+        uses: actions/cache@v6
+        with:
+          path: .edinet_brk.json
+          key: folioman-edinet-${{ github.run_id }}
+          restore-keys: folioman-edinet-
+
       # (#366) The three PERMANENT BLS decades behind the USA 20Y/30Y/40Y inflation cells. `.fmp_cache`
       # is otherwise cold on every run, so each run would re-ask BLS for all three plus the fresh
       # window: 4 keyless calls per run against a 25/day per-IP cap. With this it is 1. Its own step,
@@ -231,6 +240,8 @@ jobs:
           # (#397) OPTIONAL too: it resolves each ETF's other venues, so an uploaded pin on one (VUAA.DE)
           # shows as the pool's line (VUAA.L). Without it the map is whatever `.listing_cache.json` holds.
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          # (#520) OPTIONAL: Berkshire's Japan stakes (EDINET). Without it the lane logs one line, stays off.
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
         run: ./target/release/folioman screen
 
       - name: Save fetch caches

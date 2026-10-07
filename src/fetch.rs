@@ -106,6 +106,23 @@ async fn post_json_with(client: &Client, url: &str, body: &Value, headers: &[(&s
     req.send().await.ok()?.json::<Value>().await.ok()
 }
 
+/// (#520) A GET with request headers (EDINET's key rides `Ocp-Apim-Subscription-Key`, never the URL):
+/// the status and the raw body, so a caller can tell an answer from an error page.
+#[mutants::skip] // (#520) transport only: a status + body passthrough, like `post_json_with`
+async fn get_with(client: &Client, url: &str, headers: &[(&str, &str)]) -> Option<(u16, Vec<u8>)> {
+    if offline() {
+        return None;
+    }
+    throttle().await;
+    let mut req = client.get(url);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let r = req.send().await.ok()?;
+    let status = r.status().as_u16();
+    Some((status, r.bytes().await.ok()?.to_vec()))
+}
+
 /// Global outbound-request pacer. The concurrency cap bounds how many requests are *in flight*, but
 /// nothing stopped 64 of them launching in the same millisecond — that burst is what Yahoo 429s into
 /// err stubs (forcing the reactive re-fetch pass). This proactively spaces request *launches* ≥
@@ -2487,6 +2504,8 @@ pub struct BrkRow {
     filing: String,
     /// (#514) The newest trade date of a Form 4 net buy in the last [`BRK_FORM4_DAYS`], or "".
     form4: String,
+    /// (#520) A Japan stake's newest EDINET report: the day its filing duty arose, or "".
+    edinet: String,
 }
 
 /// (#455) A `[header, cell]` pair, plus the page's link for the cell when `url` is not empty.
@@ -2534,10 +2553,12 @@ pub fn brk_rows(holdings: &[BrkRow], quotes: &[Quote]) -> Value {
         .map(|(i, (h, q))| {
             let delta = if h.prev == 0 { "new".to_string() } else { format!("{:+.1}%", (h.shares as f64 / h.prev as f64 - 1.0) * 100.0) };
             let form4_only = h.value == 0 && !h.form4.is_empty(); // (#514) a stake no 13F lists yet
-            let weight = if total == 0 || form4_only { "—".to_string() } else { format!("{:.1}%", h.value as f64 / total as f64 * 100.0) };
+            let japan = !h.edinet.is_empty(); // (#520) a 13F never lists a Tokyo stake
+            let weight = if total == 0 || form4_only || japan { "—".to_string() } else { format!("{:.1}%", h.value as f64 / total as f64 * 100.0) };
             let name = q.map(|q| q.name.as_str()).or((!h.name.is_empty()).then_some(h.name.as_str()));
             // (#506) no buy in the window: held since before it, which "—" hid
             let bought = match (h.form4.is_empty(), h.bought.is_empty(), h.since.is_empty()) {
+                _ if japan => if h.shares > h.prev { format!("{} (EDINET)", h.edinet) } else { "—".to_string() },
                 (false, ..) => format!("{} (Form 4)", h.form4),
                 (true, false, _) => brk_quarter(&h.bought),
                 (true, true, false) => format!("before {}", brk_quarter(&h.since)),
@@ -2724,7 +2745,7 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
             let bought = buys.get(&c).map(|b| b.0.clone()).unwrap_or_default();
             let (ticker, name) = ticker_of.get(&c).cloned().unwrap_or((c, String::new()));
             let twin = eu.get(&ticker).cloned().unwrap_or_default();
-            BrkRow { ticker, twin, name, bought, since: since.clone(), prev, shares, value, filing: filing.clone(), form4: String::new() }
+            BrkRow { ticker, twin, name, bought, since: since.clone(), prev, shares, value, filing: filing.clone(), ..BrkRow::default() }
         })
         .collect();
     // (#514) a missed Form 4 only misses a buy, never misreads one: skipped, not failed closed
@@ -2745,7 +2766,176 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     );
     bought.extend(marks.iter().cloned());
     holds.extend(marks);
+    rows.extend(fetch_edinet_brk(client, urls).await); // (#520) display only: no `w`/`W` mark
     (bought, holds, rows)
+}
+
+// ── (#520) EDINET: Berkshire's Japan stakes ─────────────────────────────────────────────────────────
+// A 13F lists US-listed holdings only, so the five trading houses (Berkshire's largest stakes outside
+// the US) never showed. Japan's large-holding reports (5%+, refiled on every 1-point move) do, on the FSA's
+// EDINET API. Display only: rows join the Berkshire table, nothing is marked, scored or ranked.
+
+/// (#520) Berkshire's EDINET filer, National Indemnity Company. The list writes its name in FULL-WIDTH
+/// Latin, so only the code matches.
+const EDINET_BRK: &str = "E35979";
+/// (#520) Berkshire's first Japan filing came in 2020-08; the backfill stops here.
+const EDINET_FIRST: &str = "2020-08-01";
+/// (#520) Day lists fetched per run. Cold, the backfill reaches [`EDINET_FIRST`] in ~12 daily runs; a
+/// past day's list never changes, so each one is fetched once ever.
+const EDINET_DAY_BUDGET: usize = 200;
+/// (#520) `(lo, hi, docID -> report)`: every day in `lo..=hi` is scanned.
+const EDINET_CACHE_PATH: &str = ".edinet_brk.json";
+
+/// (#520) One large-holding report: (submit time, issuer code, issuer name, day the filing duty arose,
+/// shares, holding ratio, the prior report's ratio). Code "" = an unreadable document, kept so its day
+/// is not refetched forever.
+type EdinetHit = (String, String, String, String, u64, f64, f64);
+type EdinetCache = (String, String, BTreeMap<String, EdinetHit>);
+
+/// (#520) One day's EDINET document list -> Berkshire's large-holding reports (350) and their amendments
+/// (360), as (docID, submit time); withdrawn ones dropped. None when the answer is no list at all.
+fn edinet_brk_hits(list: &Value) -> Option<Vec<(String, String)>> {
+    let rows = list.get("results")?.as_array()?;
+    let s = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    Some(
+        rows.iter()
+            .filter(|r| s(r, "edinetCode") == EDINET_BRK && matches!(s(r, "docTypeCode").as_str(), "350" | "360"))
+            .filter(|r| s(r, "withdrawalStatus") == "0")
+            .map(|r| (s(r, "docID"), s(r, "submitDateTime")))
+            .collect(),
+    )
+}
+
+/// (#520) One `type=5` document (a zip holding the XBRL as a tab-separated CSV, UTF-16LE with a BOM) ->
+/// (issuer code, issuer name, duty day, shares, ratio, prior ratio). A first report has no prior ratio
+/// and reads 0. Each element is read at its first row: Berkshire files alone, so there is one holder.
+fn parse_edinet_doc(zip: &[u8]) -> Option<(String, String, String, u64, f64, f64)> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(zip)).ok()?;
+    let mut raw = Vec::new();
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).ok()?;
+        if f.name().ends_with(".csv") {
+            std::io::Read::read_to_end(&mut f, &mut raw).ok()?;
+            break;
+        }
+    }
+    let text = match raw.as_slice() {
+        [0xFF, 0xFE, rest @ ..] => String::from_utf16_lossy(&rest.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<_>>()),
+        _ => String::from_utf8_lossy(&raw).into_owned(),
+    };
+    let mut cell: HashMap<&str, &str> = HashMap::new();
+    for line in text.lines() {
+        let mut cols = line.split('\t').map(|c| c.trim().trim_matches('"'));
+        if let (Some(k), Some(v)) = (cols.next(), cols.next_back()) {
+            cell.entry(k).or_insert(v);
+        }
+    }
+    // an absent value reads "－", which no number parses
+    let get = |k: &str| cell.get(format!("jplvh_cor:{k}").as_str()).copied();
+    let prev = get("HoldingRatioOfShareCertificatesEtcPerLastReport").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    Some((
+        get("SecurityCodeOfIssuer")?.to_string(),
+        get("NameOfIssuer").unwrap_or("").to_string(),
+        get("DateWhenFilingRequirementAroseCoverPage").unwrap_or("").to_string(),
+        get("TotalNumberOfStocksEtcHeld")?.parse().ok()?,
+        get("HoldingRatioOfShareCertificatesEtc")?.parse().ok()?,
+        prev,
+    ))
+}
+
+/// (#520) Every report -> one row per issuer, its newest by submit time (an amendment supersedes). Its
+/// prior shares are the newest earlier report's with an earlier duty day (so an amendment is no move),
+/// else the prior ratio scaled onto today's shares (that report is still past the backfill), else 0:
+/// new. A sold-out stake (0 shares) is dropped. Linked to the report's PDF on EDINET.
+fn edinet_rows(hits: &BTreeMap<String, EdinetHit>) -> Vec<BrkRow> {
+    let mut by: BTreeMap<&str, Vec<(&String, &EdinetHit)>> = BTreeMap::new();
+    for (doc, h) in hits.iter().filter(|(_, h)| !h.1.is_empty()) {
+        by.entry(&h.1).or_default().push((doc, h));
+    }
+    by.into_iter()
+        .filter_map(|(code, mut v)| {
+            v.sort_by(|a, b| (&a.1 .0, a.0).cmp(&(&b.1 .0, b.0)));
+            let (doc, (_, _, name, day, shares, ratio, prior)) = *v.last()?;
+            let earlier = v.iter().rev().find(|(_, h)| h.3 < *day).map(|(_, h)| h.4);
+            let est = (*shares as f64 * prior / ratio).round() as u64; // a 0 prior ratio scales to 0
+            (*shares > 0).then(|| BrkRow {
+                ticker: format!("{code}.T"),
+                name: name.clone(),
+                prev: earlier.unwrap_or(est),
+                shares: *shares,
+                filing: format!("https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/{doc}.pdf"),
+                edinet: day.clone(),
+                ..BrkRow::default()
+            })
+        })
+        .collect()
+}
+
+/// (#520) One day's list, then each new Berkshire report on it. False when the list or a document did
+/// not arrive: that day is retried next run. A document that arrives but does not parse is kept as
+/// unreadable, never retried.
+#[mutants::skip] // (#520) async network shell; `edinet_brk_hits` and `parse_edinet_doc` carry the tests
+async fn edinet_scan(client: &Client, base: &str, hdr: &[(&str, &str)], day: NaiveDate, hits: &mut BTreeMap<String, EdinetHit>) -> bool {
+    let url = format!("{base}documents.json?date={day}&type=2");
+    let list = get_with(client, &url, hdr).await.filter(|(s, _)| *s == 200).and_then(|(_, b)| serde_json::from_slice::<Value>(&b).ok());
+    let Some(found) = list.as_ref().and_then(edinet_brk_hits) else { return false };
+    for (doc, submit) in found {
+        if hits.contains_key(&doc) {
+            continue;
+        }
+        let url = format!("{base}documents/{doc}?type=5");
+        // an error answers as JSON, never as a zip: only `PK` is a document
+        let Some((_, zip)) = get_with(client, &url, hdr).await.filter(|(s, b)| *s == 200 && b.starts_with(b"PK")) else { return false };
+        let (code, name, duty, shares, ratio, prior) = parse_edinet_doc(&zip).unwrap_or_else(|| {
+            eprintln!("fetch: EDINET {doc} unreadable; skipped");
+            Default::default()
+        });
+        hits.insert(doc, (submit, code, name, duty, shares, ratio, prior));
+    }
+    true
+}
+
+/// (#520) Berkshire's Japan stakes for the Berkshire table. Off with no `urls.edinet_api` (every golden
+/// stays byte-identical; CI sets it) or no `EDINET_API_KEY`. Each run rescans the two days before `hi`
+/// through today (today's list still grows), then walks `lo` back toward [`EDINET_FIRST`], all within
+/// [`EDINET_DAY_BUDGET`] lists. Both edges move only over days that scanned, so a failure is retried.
+#[mutants::skip] // (#520) async network shell; the pure helpers above carry the tests
+async fn fetch_edinet_brk(client: &Client, urls: &Urls) -> Vec<BrkRow> {
+    if urls.edinet_api.is_empty() {
+        return Vec::new();
+    }
+    let Some(key) = std::env::var("EDINET_API_KEY").ok().filter(|k| !k.is_empty()) else {
+        eprintln!("fetch: EDINET lane off: no EDINET_API_KEY");
+        return Vec::new();
+    };
+    let hdr = [("Ocp-Apim-Subscription-Key", key.as_str())];
+    let path = crate::config::data_path(EDINET_CACHE_PATH);
+    let (lo, hi, mut hits): EdinetCache = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let date = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
+    let (first, today) = (date(EDINET_FIRST).expect("literal date"), chrono::Utc::now().date_naive());
+    let (mut lo, mut hi, mut budget) = (date(&lo), date(&hi), EDINET_DAY_BUDGET);
+    let start = hi.map_or(today, |h| h - chrono::Duration::days(2)).max(first);
+    for d in start.iter_days().take_while(|d| *d <= today) {
+        if budget == 0 || !edinet_scan(client, &urls.edinet_api, &hdr, d, &mut hits).await {
+            break;
+        }
+        budget -= 1;
+        hi = hi.max(Some(d));
+        lo = lo.or(Some(d));
+    }
+    while let Some(d) = lo.filter(|l| budget > 0 && *l > first).and_then(|l| l.pred_opt()) {
+        if !edinet_scan(client, &urls.edinet_api, &hdr, d, &mut hits).await {
+            break;
+        }
+        budget -= 1;
+        lo = Some(d);
+    }
+    let s = |d: Option<NaiveDate>| d.map(|d| d.to_string()).unwrap_or_default();
+    let (lo, hi) = (s(lo), s(hi));
+    let rows = edinet_rows(&hits);
+    eprintln!("fetch: EDINET: {} lists fetched, {lo}..{hi} scanned, {} Berkshire reports -> {} Japan stakes", EDINET_DAY_BUDGET - budget, hits.len(), rows.len());
+    cache_write(&path, serde_json::to_string(&(lo, hi, hits)).unwrap_or_default());
+    rows
 }
 
 // ── (#443) Social arbitrage shadow ──────────────────────────────────────────────────────────────────
@@ -10924,7 +11114,7 @@ pub(crate) mod tests {
             shares,
             value,
             filing: "https://f".into(),
-            form4: String::new(),
+            ..BrkRow::default()
         };
         let q = |t: &str, kind: &str, name: &str| Quote { instrument_type: kind.to_string(), ..Quote::stub(t, "€1", "", name) };
         let quotes = [q("CB", "EQUITY", "Chubb"), q("ABEA.DE", "EQUITY", "Alphabet A"), q("SPY", "ETF", "SPDR S&P 500")];
@@ -11013,6 +11203,103 @@ pub(crate) mod tests {
             serde_json::json!([
                 [["#", "1"], ["TICKER", "LEN"], ["NAME", "—"], ["WEIGHT", "100.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+11.1%"], ["BOUGHT", "2026-10-01 (Form 4)"]],
                 [["#", "2"], ["TICKER", "NEW"], ["NAME", "New Co Xetra"], ["WEIGHT", "—", "https://www.sec.gov/Archives/edgar/data/1067983/0001267/0001-26-7-index.htm"], ["STATUS", "new (Form 4)"], ["SHARES Δ", "new"], ["BOUGHT", "2026-09-30 (Form 4)"]],
+            ])
+        );
+    }
+
+    /// (#520) A day's EDINET list keeps Berkshire's filer code only (its name is full-width Latin), report
+    /// and amendment types only, withdrawn ones out; an error answer (no `results`) is None.
+    #[test]
+    fn edinet_brk_hits_match_the_filer_code() {
+        let row = |code: &str, ty: &str, wd: &str, doc: &str| {
+            serde_json::json!({"edinetCode": code, "filerName": "Ｎａｔｉｏｎａｌ　Ｉｎｄｅｍｎｉｔｙ　Ｃｏｍｐａｎｙ", "docTypeCode": ty, "withdrawalStatus": wd, "docID": doc, "submitDateTime": "2025-03-17 15:33"})
+        };
+        let list = serde_json::json!({"results": [
+            row("E35979", "350", "0", "S100VE43"), row("E35979", "360", "0", "S100AMND"), row("E35979", "350", "1", "S100GONE"),
+            row("E35979", "120", "0", "S100ANNL"), row("E99999", "350", "0", "S100OTHR"),
+        ]});
+        let hit = |d: &str| (d.to_string(), "2025-03-17 15:33".to_string());
+        assert_eq!(edinet_brk_hits(&list), Some(vec![hit("S100VE43"), hit("S100AMND")]));
+        assert_eq!(edinet_brk_hits(&serde_json::json!({"metadata": {"status": "401"}})), None);
+    }
+
+    /// (#520) The `type=5` zip, trimmed from Berkshire's real 2025-03-17 Mitsubishi report (S100VE43):
+    /// UTF-16LE with a BOM, or UTF-8; a first report's "－" prior ratio reads 0; not a zip is None.
+    #[test]
+    fn parse_edinet_doc_reads_the_holding() {
+        let csv = |prior: &str| {
+            [
+                ("jplvh_cor:TotalNumberOfStocksEtcHeld", "389043900"),
+                ("jplvh_cor:HoldingRatioOfShareCertificatesEtc", "0.0967"),
+                ("jplvh_cor:HoldingRatioOfShareCertificatesEtcPerLastReport", prior),
+                ("jplvh_cor:DateWhenFilingRequirementAroseCoverPage", "2025-03-10"),
+                ("jplvh_cor:NameOfIssuer", "三菱商事株式会社"),
+                ("jplvh_cor:SecurityCodeOfIssuer", "8058"),
+                ("jplvh_cor:SecurityCodeOfIssuer", "9999"),
+            ]
+            .iter()
+            .map(|(k, v)| format!("\"{k}\"\t\"要素\"\t\"FilingDateInstant\"\t\"提出日時点\"\t\"{v}\"\r\n"))
+            .collect::<String>()
+        };
+        let zip = |body: Vec<u8>| {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            w.start_file("XBRL_TO_CSV/readme.txt", zip::write::SimpleFileOptions::default()).expect("zip entry");
+            w.start_file("XBRL_TO_CSV/jplvh030000-lvh-001_E35979-000_2025-03-10_01_2025-03-17.csv", zip::write::SimpleFileOptions::default()).expect("zip entry");
+            std::io::Write::write_all(&mut w, &body).expect("zip write");
+            w.finish().expect("zip finish").into_inner()
+        };
+        let utf16 = |s: String| [0xFF, 0xFE].into_iter().chain(s.encode_utf16().flat_map(u16::to_le_bytes)).collect::<Vec<u8>>();
+        let want = |prior| Some(("8058".to_string(), "三菱商事株式会社".to_string(), "2025-03-10".to_string(), 389_043_900, 0.0967, prior));
+        assert_eq!(parse_edinet_doc(&zip(utf16(csv("0.0831")))), want(0.0831));
+        assert_eq!(parse_edinet_doc(&zip(csv("0.0831").into_bytes())), want(0.0831));
+        assert_eq!(parse_edinet_doc(&zip(utf16(csv("－")))), want(0.0));
+        assert_eq!(parse_edinet_doc(&zip(b"\"jplvh_cor:NameOfIssuer\"\t\"x\"".to_vec())), None);
+        assert_eq!(parse_edinet_doc(b"{\"statusCode\": 401}"), None);
+    }
+
+    /// (#520) One row per issuer from its newest report. Prior shares: the newest report with an earlier
+    /// duty day (an amendment is no move), else the prior ratio scaled, else 0. A sold-out stake and an
+    /// unreadable document drop. The table prints WEIGHT "—" and BOUGHT only on a rise.
+    #[test]
+    fn edinet_rows_fold_reports_per_issuer() {
+        let h = |submit: &str, code: &str, day: &str, shares: u64, ratio: f64, prior: f64| {
+            (submit.to_string(), code.to_string(), format!("Co {code}"), day.to_string(), shares, ratio, prior)
+        };
+        let hits: BTreeMap<String, EdinetHit> = [
+            ("S1", h("2023-04-11 09:00", "8058", "2023-04-04", 300, 0.0831, 0.0659)),
+            ("S2", h("2025-03-17 15:33", "8058", "2025-03-10", 390, 0.0967, 0.0831)),
+            ("S3", h("2025-03-20 10:00", "8058", "2025-03-10", 389, 0.0967, 0.0831)), // amends S2
+            ("S4", h("2025-03-17 15:34", "8053", "2025-03-10", 920, 0.092, 0.1)),
+            ("S5", h("2020-08-31 09:00", "8002", "2020-08-24", 100, 0.05, 0.0)),
+            ("S6", h("2024-01-01 09:00", "8031", "2023-12-25", 0, 0.0, 0.05)),
+            ("S7", h("2024-01-01 09:00", "", "", 0, 0.0, 0.0)),
+            ("S8", h("2022-05-02 09:00", "8001", "2022-04-25", 200, 0.05, 0.05)),
+        ]
+        .into_iter()
+        .map(|(d, h)| (d.to_string(), h))
+        .collect();
+        let rows = edinet_rows(&hits);
+        let got: Vec<(&str, &str, u64, u64, &str, &str)> =
+            rows.iter().map(|r| (r.ticker.as_str(), r.name.as_str(), r.prev, r.shares, r.edinet.as_str(), r.filing.as_str())).collect();
+        let pdf = "https://disclosure2dl.edinet-fsa.go.jp/searchdocument/pdf/";
+        assert_eq!(
+            got,
+            [
+                ("8001.T", "Co 8001", 200, 200, "2022-04-25", &*format!("{pdf}S8.pdf")),
+                ("8002.T", "Co 8002", 0, 100, "2020-08-24", &*format!("{pdf}S5.pdf")),
+                ("8053.T", "Co 8053", 1000, 920, "2025-03-10", &*format!("{pdf}S4.pdf")),
+                ("8058.T", "Co 8058", 300, 389, "2025-03-10", &*format!("{pdf}S3.pdf")),
+            ]
+        );
+        let us = BrkRow { ticker: "AAPL".into(), prev: 10, shares: 10, value: 100, filing: "https://f".into(), ..BrkRow::default() };
+        assert_eq!(
+            brk_rows(&std::iter::once(us).chain(rows).collect::<Vec<_>>(), &[]),
+            serde_json::json!([
+                [["#", "1"], ["TICKER", "AAPL"], ["NAME", "—"], ["WEIGHT", "100.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
+                [["#", "2"], ["TICKER", "8001.T"], ["NAME", "Co 8001"], ["WEIGHT", "—", format!("{pdf}S8.pdf")], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
+                [["#", "3"], ["TICKER", "8002.T"], ["NAME", "Co 8002"], ["WEIGHT", "—", format!("{pdf}S5.pdf")], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2020-08-24 (EDINET)"]],
+                [["#", "4"], ["TICKER", "8053.T"], ["NAME", "Co 8053"], ["WEIGHT", "—", format!("{pdf}S4.pdf")], ["STATUS", "trimmed"], ["SHARES Δ", "-8.0%"], ["BOUGHT", "—"]],
+                [["#", "5"], ["TICKER", "8058.T"], ["NAME", "Co 8058"], ["WEIGHT", "—", format!("{pdf}S3.pdf")], ["STATUS", "added"], ["SHARES Δ", "+29.7%"], ["BOUGHT", "2025-03-10 (EDINET)"]],
             ])
         );
     }

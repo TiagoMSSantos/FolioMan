@@ -973,6 +973,10 @@ pub struct Urls {
     // is the off switch, like `nasdaq_ipo`; CI sets it.
     #[serde(default)]
     pub wikidata_sparql: String,
+    // (#520) EDINET API v2 base (Japan FSA, ends in `/`): Berkshire's Japan stakes join its table
+    // (`fetch::fetch_edinet_brk`). Needs EDINET_API_KEY too. EMPTY is the off switch; CI sets it.
+    #[serde(default)]
+    pub edinet_api: String,
     #[serde(default = "default_nasdaq_target_url")]
     pub nasdaq_target: String,
     #[serde(default = "default_nasdaq_summary_url")]

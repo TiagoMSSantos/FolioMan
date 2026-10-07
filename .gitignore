@@ -85,6 +85,8 @@ config/settings.yaml
 .wikidata_listings.json
 # (#516) 14 days of App Store chart ranks; restored by its own cache step in pages.yml
 .appstore_ranks.json
+# (#520) Berkshire's EDINET reports + the scanned day range; restored by its own cache step in pages.yml
+.edinet_brk.json
 .justetf_cells_cache.json
 # (#469) the NAME link + SHORT%/TARGET% facts (Nasdaq + FINRA); refetched every 7 days
 .profile_cache.json
