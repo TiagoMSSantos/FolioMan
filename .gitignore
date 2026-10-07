@@ -87,6 +87,8 @@ config/settings.yaml
 .appstore_ranks.json
 # (#520) Berkshire's EDINET reports + the scanned day range; restored by its own cache step in pages.yml
 .edinet_brk.json
+# (#519) Eulerpool annual FCF (30 days) + market cap (1 day) per non-US stock; its own cache step in pages.yml
+.eulerpool_fcf.json
 .justetf_cells_cache.json
 # (#469) the NAME link + SHORT%/TARGET% facts (Nasdaq + FINRA); refetched every 7 days
 .profile_cache.json

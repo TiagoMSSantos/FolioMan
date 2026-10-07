@@ -20921,6 +20921,12 @@ urls:
   # Needs EDINET_API_KEY (header only). Reports cache forever in `.edinet_brk.json`; the backfill to
   # 2020-08 walks 200 day lists a run. Asked 2026-10-07 for more sources. REVERT: delete this line.
   edinet_api: "https://api.edinet-fsa.go.jp/api/v2/"
+  # (#519) Eulerpool: annual free cash flow + market cap for non-US stocks (ASML.AS, NESN.SW, 7203.T...),
+  # which file no SEC cash flow, so FAIR/MOS% read on pooled ones and on ETF top-10 look-throughs.
+  # Display only: lands on `Quote.ep_fair`, never the scored `fund`. Needs EULERPOOL_API_KEY (Bearer
+  # header). Cash flow cached 30 days, market cap 1 day, in `.eulerpool_fcf.json`; ~5k calls a month
+  # on a 100k quota. Asked 2026-10-07 for more sources. REVERT: delete this line.
+  eulerpool_api: "https://api.eulerpool.com/api/1/equity/"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
   # latest Bitcoin NUPL (net unrealized profit/loss), free on-chain sentiment gauge; `screen` prints it after the crypto table

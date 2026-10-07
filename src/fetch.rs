@@ -949,6 +949,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         td_years: Vec::new(),
         top_holdings: Vec::new(),
         look_fair: None,
+        ep_fair: None,
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -2181,6 +2182,97 @@ fn td_years(html: &str) -> Vec<f64> {
         .unwrap_or_default()
 }
 
+/// (#519) Eulerpool per ticker: (cash flow day, annual `(period, fcf)`), (profile day, market cap), all in
+/// millions of the reporting currency. A 404 is a dated empty row, so a name Eulerpool lacks is asked once
+/// a month, never daily.
+type EpEntry = (String, Vec<(String, f64)>, String, Option<f64>);
+const EULERPOOL_CACHE_PATH: &str = ".eulerpool_fcf.json";
+const EP_CASHFLOW_DAYS: i64 = 30;
+
+/// (#519) One Eulerpool GET: Ok(Some) on 200, Ok(None) on 404 (no such security), Err(status) on anything
+/// else, 0 = no answer. Bearer header: the key never rides the URL.
+#[mutants::skip] // (#519) transport only, like `get_with`
+async fn ep_get(client: &Client, url: &str, hdr: &[(&str, &str)]) -> Result<Option<Value>, u16> {
+    match get_with(client, url, hdr).await {
+        Some((200, body)) => serde_json::from_slice(&body).map(Some).map_err(|_| 200),
+        Some((404, _)) => Ok(None),
+        other => Err(other.map_or(0, |(s, _)| s)),
+    }
+}
+
+/// (#519) DISPLAY ONLY: FAIR ÷ price ([`picks::ep_fair_ratio`]) for the non-US stocks SEC filed no FCF for, stamped
+/// as `ep_fair` on pooled stock rows (never `fund`, which is scored) and returned for every non-US top-10
+/// holding of `holdings`, which the ETF look-through averages. Cash flow refetched every 30 days, the
+/// market cap daily, ~5k calls a month on a 100k quota. No `EULERPOOL_API_KEY` = lane off, one log line.
+/// Any answer but 200/404 (quota, key) stops the fetches for the run; the cached rows still serve.
+#[mutants::skip] // (#519) network + cache shell; the math is `picks::ep_fair_ratio`
+async fn enrich_eulerpool_fcf(
+    client: &Client,
+    urls: &Urls,
+    quotes: &mut [core::Quote],
+    holdings: &HashMap<String, Vec<(String, f64)>>,
+) -> HashMap<String, f64> {
+    if urls.eulerpool_api.is_empty() {
+        return HashMap::new();
+    }
+    let Some(key) = std::env::var("EULERPOOL_API_KEY").ok().filter(|k| !k.is_empty()) else {
+        eprintln!("fetch: Eulerpool lane off: no EULERPOOL_API_KEY");
+        return HashMap::new();
+    };
+    let auth = format!("Bearer {key}");
+    let hdr = [("Authorization", auth.as_str())];
+    // a venue suffix and no US twin behind it: SEC files nothing for these
+    let foreign = |t: &str| t.contains('.') && us_symbol(t) == t;
+    let pooled = |q: &core::Quote| crate::picks::asset_class(q) == 2 && foreign(&q.ticker) && q.fund.as_ref().and_then(|f| f.fcf_ttm).is_none();
+    let targets: std::collections::BTreeSet<String> = quotes
+        .iter()
+        .filter(|q| pooled(q))
+        .map(|q| q.ticker.clone())
+        .chain(holdings.values().flatten().map(|(t, _)| t.clone()).filter(|t| foreign(t)))
+        .collect();
+    let path = crate::config::data_path(EULERPOOL_CACHE_PATH);
+    let mut cache: HashMap<String, EpEntry> =
+        std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let today = chrono::Local::now().date_naive();
+    let fresh = |d: &str, days: i64| cache_age_days(d, today).is_some_and(|a| a < days);
+    let mut calls = 0;
+    'run: for t in &targets {
+        let e = cache.entry(t.clone()).or_default();
+        for (cf, url) in [(true, "cashflowstatement"), (false, "profile")] {
+            let stale = if cf { !fresh(&e.0, EP_CASHFLOW_DAYS) } else { !e.1.is_empty() && !fresh(&e.2, 1) };
+            if !stale {
+                continue;
+            }
+            calls += 1;
+            let v = match ep_get(client, &format!("{}{url}/{t}", urls.eulerpool_api), &hdr).await {
+                Ok(v) => v,
+                Err(s) => {
+                    eprintln!("fetch: Eulerpool answered {s} on {t}: no more fetches this run");
+                    break 'run;
+                }
+            };
+            if cf {
+                e.1 = v.as_ref().and_then(Value::as_array).into_iter().flatten()
+                    .filter_map(|r| Some((r["period"].as_str()?.to_string(), r["fcf"].as_f64()?)))
+                    .collect();
+                e.0 = today.to_string();
+            } else {
+                (e.2, e.3) = (today.to_string(), v.and_then(|v| v["mcap"].as_f64()));
+            }
+        }
+    }
+    let ratios: HashMap<String, (f64, String)> = targets
+        .iter()
+        .filter_map(|t| cache.get(t).and_then(|e| crate::picks::ep_fair_ratio(&e.1, e.3?)).map(|r| (t.clone(), r)))
+        .collect();
+    for q in quotes.iter_mut().filter(|q| pooled(q)) {
+        q.ep_fair = ratios.get(&q.ticker).cloned();
+    }
+    eprintln!("fetch: Eulerpool: {calls} calls, FAIR on {} of {} non-US names", ratios.len(), targets.len());
+    cache_write(&path, serde_json::to_string(&cache).unwrap_or_default());
+    ratios.into_iter().map(|(t, (r, _))| (t, r)).collect()
+}
+
 /// (#465) DISPLAY ONLY: TOP10% (the `holdings` the fund P/E already fetched) and the TD-1Y/TD-5Y
 /// series on the funds in `syms`, the printed ETF + CORE rows, then copied to every other listing of
 /// the same fund name, since the ETF table prints each venue. The ISIN comes from inverting
@@ -2216,8 +2308,13 @@ pub async fn enrich_etf_cells(
     }
     // (#521) the stock FAIR ratios the look-through averages; `enrich_fund_factor` filled `fund` earlier. Keyed
     // on the US symbol: holdings name AAPL while the pond holds its Xetra twin APC.DE
-    let ratios: HashMap<String, f64> =
+    // (#519) plus the non-US holdings Eulerpool values, which no pooled row carries
+    let ep = enrich_eulerpool_fcf(client, urls, quotes, holdings).await;
+    let mut ratios: HashMap<String, f64> =
         quotes.iter().filter_map(|q| crate::picks::stock_fair_ratio(q).map(|(r, _)| (us_symbol(&q.ticker), r))).collect();
+    for (t, r) in ep {
+        ratios.entry(t).or_insert(r); // SEC's TTM row wins where both exist
+    }
     for q in quotes.iter_mut().filter(|q| syms.contains(&q.ticker)) {
         q.look_fair = holdings.get(&q.ticker).and_then(|h| crate::picks::look_through_fair(h, &ratios));
         q.top10 = holdings.get(&q.ticker).map(|h| h.iter().map(|(_, w)| w).sum::<f64>() * 100.0).filter(|s| *s > 0.0);

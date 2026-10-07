@@ -977,6 +977,11 @@ pub struct Urls {
     // (`fetch::fetch_edinet_brk`). Needs EDINET_API_KEY too. EMPTY is the off switch; CI sets it.
     #[serde(default)]
     pub edinet_api: String,
+    // (#519) Eulerpool equity API base (ends in `/`): annual FCF + market cap for the non-US stocks SEC files
+    // no cash flow for, so FAIR/MOS% read on them and on ETF look-throughs (`fetch::enrich_eulerpool_fcf`).
+    // Needs EULERPOOL_API_KEY too. EMPTY is the off switch; CI sets it.
+    #[serde(default)]
+    pub eulerpool_api: String,
     #[serde(default = "default_nasdaq_target_url")]
     pub nasdaq_target: String,
     #[serde(default = "default_nasdaq_summary_url")]

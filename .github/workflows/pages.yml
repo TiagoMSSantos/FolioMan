@@ -178,6 +178,15 @@ jobs:
           key: folioman-edinet-${{ github.run_id }}
           restore-keys: folioman-edinet-
 
+      # (#519) Eulerpool FCF rows (30 days) and market caps (1 day): without it every run re-asks ~176 names
+      # twice, and the 100k monthly quota would carry ~10k calls instead of ~5k.
+      - name: Restore Eulerpool cache
+        uses: actions/cache@v6
+        with:
+          path: .eulerpool_fcf.json
+          key: folioman-eulerpool-${{ github.run_id }}
+          restore-keys: folioman-eulerpool-
+
       # (#366) The three PERMANENT BLS decades behind the USA 20Y/30Y/40Y inflation cells. `.fmp_cache`
       # is otherwise cold on every run, so each run would re-ask BLS for all three plus the fresh
       # window: 4 keyless calls per run against a 25/day per-IP cap. With this it is 1. Its own step,
@@ -242,6 +251,8 @@ jobs:
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
           # (#520) OPTIONAL: Berkshire's Japan stakes (EDINET). Without it the lane logs one line, stays off.
           EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+          # (#519) OPTIONAL: FAIR/MOS% on non-US stocks (Eulerpool FCF). Without it the lane logs one line, stays off.
+          EULERPOOL_API_KEY: ${{ secrets.EULERPOOL_API_KEY }}
         run: ./target/release/folioman screen
 
       - name: Save fetch caches

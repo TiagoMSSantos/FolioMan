@@ -3701,7 +3701,7 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = free cash flow at or below 0; n/a = under 2 years of FCF filed. ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (most non-US holdings file no SEC cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = free cash flow at or below 0; n/a = under 2 years of FCF filed. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
     ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn and n/a as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
@@ -4541,9 +4541,32 @@ fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, S
 /// (#484) FAIR ÷ price for a stock: FCF-YLD × [`dcf_multiple`] at FCF-5Y, with the short-span marker.
 /// None on a burn, no cap, or no rate.
 pub fn stock_fair_ratio(q: &Quote) -> Option<(f64, String)> {
-    let f = q.fund.as_ref()?;
-    let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
-    Some((f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
+    q.fund
+        .as_ref()
+        .and_then(|f| {
+            let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
+            Some((f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
+        })
+        .or_else(|| q.ep_fair.clone())
+}
+
+/// (#519) [`stock_fair_ratio`] for a stock SEC never filed: Eulerpool's annual `(period, fcf)` and its market
+/// cap, both in millions of the reporting currency, so no FX step. Same rate rule as `core::fund_factors`:
+/// the row 5 years back, both ends positive, else (no such row) the oldest row 2+ years back with its span
+/// marker. None on a burn, no cap, or no rate. ponytail: newest FY, not TTM, and an EU burn reads n/a, not
+/// "burn" (the cell's burn arm reads `fund`); stamp the burn too if a non-US row ever needs telling apart.
+/// A bank's FCF carries deposit flows (BCP.LS read 12×): a sector skip if the column ever gets trusted.
+pub fn ep_fair_ratio(fcf: &[(String, f64)], mcap: f64) -> Option<(f64, String)> {
+    let mut rows: Vec<(i32, f64)> = fcf.iter().filter_map(|(p, f)| Some((p.get(..4)?.parse().ok()?, *f))).collect();
+    rows.sort_by_key(|r| r.0);
+    let &(ny, now) = rows.last()?;
+    let rate = |&(y, f): &(i32, f64)| (f > 0.0).then(|| crate::core::cagr((now / f - 1.0) * 100.0, (ny - y) as f64));
+    let (full, short) = match rows.iter().find(|r| r.0 == ny - 5) {
+        Some(r) => (rate(r), None),
+        None => (None, rows.iter().find(|r| ny - r.0 >= 2).and_then(|r| Some((rate(r)?, (ny - r.0) as f64)))),
+    };
+    let (g, m) = span_or_short(full, short)?;
+    (now > 0.0 && mcap > 0.0).then(|| (now / mcap * dcf_multiple(g), m))
 }
 
 /// (#521) An ETF's FAIR ÷ price: its top holdings' own ratios, weight-averaged over the ones that have one.
@@ -7629,6 +7652,12 @@ mod tests {
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "no euro price");
         st.price_eur = Some(50.0);
         assert_eq!((cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")), ("€44.27".to_string(), "-11%".to_string()), "5% yield × 17.71");
+        // (#519) SEC's row wins; Eulerpool's stands in only where `fund` has no ratio
+        st.ep_fair = Some((2.0, "²".into()));
+        assert_eq!(cc("fair", &st, 0.0, None, ""), "€44.27");
+        let f = st.fund.take();
+        assert_eq!((cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")), ("€100.00²".to_string(), "+100%²".to_string()));
+        (st.fund, st.ep_fair) = (f, None);
         // (#505) no 5y rate: the short-span one stands in, marked with its years; the full rate wins when both exist
         let f = st.fund.as_mut().unwrap();
         (f.fcf_cagr, f.fcf_cagr_short, f.rev_cagr, f.rev_cagr_short) = (None, Some((4.04, 2.998)), None, Some((31.25, 2.4)));
@@ -7813,6 +7842,7 @@ mod tests {
             td_years: Vec::new(),
             top_holdings: Vec::new(),
             look_fair: None,
+            ep_fair: None,
             annual_brief: None,
         }
     };
@@ -14433,6 +14463,26 @@ mod tests {
     /// (#327) The oscillation guard. A rescued fund passes the gate it was rescued from, so discovery
     /// stops naming it — and a wholesale journal would then forget it and un-splice it next run. This
     /// is the measured failure (154 pairs, then 7), reduced to three names.
+    #[test]
+    fn ep_fair_ratio_mirrors_the_sec_rate_rule() {
+        let rows = |v: &[(&str, f64)]| v.iter().map(|(p, f)| (p.to_string(), *f)).collect::<Vec<_>>();
+        // SAP-like: 5y back doubled, rows out of order; FCF 8000 on a 200000 cap
+        let sap = rows(&[("2025-12-31", 8000.0), ("2019-12-31", 1.0), ("2020-12-31", 4000.0), ("2024-12-31", -50.0), ("FY?", 9e9)]);
+        let want = 8000.0 / 200000.0 * dcf_multiple(crate::core::cagr(100.0, 5.0));
+        // near, not equal: the literal `want` lets LLVM fold `powf` at compile time, a ULP off runtime libm
+        let near = |got: Option<(f64, String)>, want: f64, m: &str| assert!(got.as_ref().is_some_and(|(r, s)| (r - want).abs() < 1e-12 && s == m), "{got:?} vs {want}{m}");
+        near(ep_fair_ratio(&sap, 200000.0), want, "");
+        // no 5y row: the oldest 2+ years back, marked
+        let short = rows(&[("2025-12-31", 8000.0), ("2022-12-31", 4000.0), ("2024-12-31", 7000.0)]);
+        near(ep_fair_ratio(&short, 200000.0), 8000.0 / 200000.0 * dcf_multiple(crate::core::cagr(100.0, 3.0)), "³");
+        // None: a burn now, a burn 5y back (no short rescue), no cap, under 2 years
+        assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", -1.0), ("2020-12-31", 4000.0)]), 1e5), None);
+        assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", 8000.0), ("2020-12-31", -4.0), ("2022-12-31", 4000.0)]), 1e5), None);
+        assert_eq!(ep_fair_ratio(&sap, 0.0), None);
+        assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", 8000.0), ("2024-12-31", 4000.0)]), 1e5), None);
+        assert_eq!(ep_fair_ratio(&[], 1e5), None);
+    }
+
     #[test]
     fn carry_proxies_keeps_a_pair_that_is_already_in_force() {
         let q = |tk: &str, on: bool| {
