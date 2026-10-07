@@ -640,7 +640,7 @@ impl Default for BuyHeuristic {
             growth_min_interest_cover: 0.0, // (P1b) off by default. 3.0 rejects operating income under 3x interest expense
             growth_min_fcf_margin: -1e9,    // (P1c) off by default — NOT 0, which is a real bar here. See the field doc
             growth_min_net_cash_rev: -1e9,  // (P1d) off by default — NOT 0, for the same reason as P1c
-            growth_commodity_damp: 1.0,    // (#44) 1.0 = OFF (this knob is a MULTIPLIER, so neutral is 1.0, not the house 0 — same inversion as tax_keep_eu); ci-settings ships 0.8
+            growth_commodity_damp: 1.0,    // (#44) 1.0 = OFF (this knob is a MULTIPLIER, so neutral is 1.0, not the house 0 — same inversion as tax_keep_eu); ci-settings ships 0.2, swept (#508)
             growth_fx_damp: 1.0,           // (#45) 1.0 = OFF (multiplier, same inversion as #44); ci-settings ships 0.98 (non-EUR-listed ETF FX/venue tie-break)
             growth_brk_held_boost: 1.0, // (#472) 1.0 = OFF; ci-settings ships 1.20
             growth_superinvestor_boost: 1.0, // (#472) 1.0 = OFF; ci-settings ships 1.10

@@ -196,8 +196,27 @@
 #   - `growth_commodity_damp` is edge-POSITIVE at every horizon measured. This is the FIRST measurement
 #     the knob has ever had; it was set to 0.8 by judgement precisely because it was believed unsweepable.
 #     At 12y it also lifts OOS-late from -0.02 to +0.01, i.e. off the wrong side of zero.
-# DEBT: the damp is now sweepable and has NOT been swept — 0.8 remains an unfitted judgement value that
-# happens to measure positive. Sweep it before treating 0.8 as validated.
+# (#508) SWEPT 2026-10-07, which pays the debt this block used to carry. Arms 1.0/0.8/0.6/0.4/0.2/0.1,
+# each a full copy of this file with that one knob changed, one binary, dotfiles restored before every
+# run, diffed arm-vs-arm (never vs a fixture run). GROWTH lane, `backtest N universe fund pit`:
+#
+#   arm    8y rho  edge   top-5 excess/win   12y rho  edge    top-5 excess/win   20y (pit)
+#   1.0    +0.10   +6.6     +2.2  64%         -0.02   +98.3     +2.8  67%       inert
+#   0.8    +0.11   +6.6     +2.2  64%         -0.01   +98.3     +2.8  67%       inert   <- was shipped
+#   0.6    +0.12   +6.6     +2.2  64%           .       .         .             inert
+#   0.4    +0.13   +7.3     +2.2  64%           .       .         .             inert
+#   0.2    +0.15  +15.1     +2.4  68%         +0.03  +137.8     +2.9  72%       inert   <- ships
+#   0.1    +0.15  +15.1     +2.4  68%           .       .         .               .
+#
+# 20y PIT is BLIND, not a tie: no commodity row is admitted in that pond at a 20y cutoff, so every arm
+# printed byte-identical numbers (only the pond-drift header lines differed). The 20y read therefore
+# comes from the survivor pond where the knob is live, `backtest 20 universe fund`: 0.8 rho +0.22 edge
+# +697.6 -> 0.2 rho +0.23 edge +708.5, every top-N book row identical. So 0.2 is no worse than 0.8 at
+# any horizon and better on rank at 8y, 12y and 20y. 0.1 reads the same as 0.2 (a plateau), so the
+# milder end of it ships. Top-1/3/10 book rows do not move at any arm: the damp sorts the tail of the
+# admitted set, it does not swap the head.
+# CAVEAT: the walk stamps TODAY's GICS sector (#95), a look-ahead. It is the same look-ahead in every
+# arm, so it cancels in the arm-vs-arm diff, but it does not cancel in the level.
 #
 # GATES THAT WERE DEAD AND ARE NOW LIVE in the backtest (they read name/instrument_type/sector):
 #   is_commodity_etf (physical-gold/ETC), is_commodity (fund name tokens), sharpe_cap_etf.
@@ -19494,10 +19513,11 @@ buy_heuristic:
                                  #   reverting recent year. ETF-ONLY (expense_ratio is None for stocks/crypto -> x1.0). BACKTEST-BLIND:
                                  #   expense_ratio is None in the backtest pool -> x1.0 there, so the validated edge is byte-identical;
                                  #   this shapes only the LIVE ETF lane. false = off. (Magnitude: 0.10% TER -> x0.980, 0.65% -> x0.878.)
-  growth_commodity_damp: 0.8     # (#44) COMMODITY dock: scale the growth score of a row whose earnings are a SPREAD on a
+  growth_commodity_damp: 0.2     # (#44) COMMODITY dock: scale the growth score of a row whose earnings are a SPREAD on a
                                  #   traded input price — GICS Energy/Materials, or a fund whose name carries a commodity token
                                  #   (picks::is_commodity). Such a name's long CAGR is a spot-price snapshot, not a compounding
                                  #   record. 1.0 = off. The `c` rank flag prints either way; only the dock is knob-gated.
+                                 #   (#508) 0.8 -> 0.2 by sweep, not judgement: see the SWEPT table near the top of this file.
                                  #
                                  #   WHAT PROMPTED IT (live screen 2026-07-27, top-12 stocks):
                                  #     rank 1  CF Industries   Materials  CAGR +20%  maxdd -62%  R2 0.76  score 22.3
