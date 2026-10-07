@@ -19657,6 +19657,15 @@ buy_heuristic:
                                  #   about halves their share (BNB ~1.45%, GT ~0.8%) and BTC leads. Applied in
                                  #   crypto_adjust, so the table, `size` and the page agree. JUDGEMENT, BACKTEST-BLIND
                                  #   (crypto is outside the graded edge). REVERT: 1.0. 0.0 also reads as off.
+  growth_refuse_exchange_tokens: true # (#511) USER DECISION 2026-10-07: refuse exchange tokens outright, gate tag
+                                 #   `exchange` (the funnel names it, the why box waives it). On 2026-10-07 BNB and GT
+                                 #   still ranked under (#496)'s x0.5 and both were hand-skipped: the damp shrinks a
+                                 #   company IOU, it does not refuse one. Crypto is BTC only on the day. The damp stays
+                                 #   as the fallback when this is off. JUDGEMENT, BACKTEST-BLIND (no coins in the walk),
+                                 #   goldens identical. REVERT: false.
+                                 #   NOT DONE, same grill: HOOD and the weak stock tail were hand-skipped too, with no
+                                 #   rule. ROIC reads backwards here, MAXDD is fat-tailed at 20y and a score floor has
+                                 #   no ruler, so nothing was built: record + wait for track (~2027-09).
   growth_overext_floor: 0.05     # (#100 / finding C5) READ THIS FIRST: the number written here is NOT
                                  #   the multiplier delivered. `damp = combine_damps(&[trust, overext])`
                                  #   is a 2-slot GEOMETRIC MEAN, so it square-roots the floor. The

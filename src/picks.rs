@@ -1599,6 +1599,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if crypto && tuning.crypto_max_mvrv > 0.0 && quote.mvrv.is_some_and(|m| m > tuning.crypto_max_mvrv) {
         return None;
     }
+    // (#511) an exchange's own token is refused outright: the coin is one company's IOU (FTT, 2022)
+    if tuning.growth_refuse_exchange_tokens && is_exchange_token(&quote.ticker) {
+        return None;
+    }
     // (#37)/(#38) VALUATION + MARGIN gates, both off (0) by default. No `!crypto` guard, unlike the two
     // above: coins and ETFs carry no `quote.fund` at all, so the None arms already scope these to
     // equities. Adding the guard "for consistency" would be a second thing to keep true for no gain.
@@ -2816,6 +2820,10 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
             fails.push(("mvrv", format!("MVRV {m:.2} (ceiling {:.2})", tuning.crypto_max_mvrv), m <= tuning.crypto_max_mvrv * 1.5));
         }
     }
+    // (#511) the exchange-token refusal's reason, the twin of the `score_parts` line; never a near miss
+    if tuning.growth_refuse_exchange_tokens && is_exchange_token(&quote.ticker) {
+        fails.push(("exchange", format!("{} is an exchange's own token", underlying(&quote.ticker)), false));
+    }
     // (#37) the PEG ceiling's reason. Convert the gating value BACK to a PEG (100/peg_yield) so the
     // footer speaks the same units as the knob and the column. Since 2026-07-27 the `peg` cell prints
     // this same number, so the footer's PEG and the table's PEG must MATCH for a given ticker — that
@@ -2913,6 +2921,7 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
         "volatile" => (t.growth_max_vol, t.growth_max_vol_crypto) = (0.0, 0.0),
         "spike" => t.growth_max_daily_1m = 0.0,
         "mvrv" => t.crypto_max_mvrv = 0.0,
+        "exchange" => t.growth_refuse_exchange_tokens = false,
         "peg" => (t.growth_max_peg, t.growth_require_peg) = (0.0, false),
         "margin" => t.growth_min_net_margin = 0.0,
         "swing" => t.growth_max_margin_swing = 0.0,
@@ -13122,10 +13131,10 @@ mod tests {
     #[test]
     fn gate_failures_agrees_with_the_scorer_on_random_draws() {
         const DRAWS: usize = 4000;
-        const LABELS: [&str; 27] = [
+        const LABELS: [&str; 28] = [
             "young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact",
             "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "peg",
-            "margin", "swing", "dilution", "cover", "fcf", "netcash", "maxdd",
+            "margin", "swing", "dilution", "cover", "fcf", "netcash", "maxdd", "exchange",
         ];
         struct Rng(u64);
         impl Rng {
@@ -13148,9 +13157,10 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         for i in 0..DRAWS {
             let mut q = gate_fixture();
-            match r.pick(&[0.0, 1.0, 2.0]) as u8 {
+            match r.pick(&[0.0, 1.0, 2.0, 3.0]) as u8 {
                 1 => { q.ticker = "FUND.DE".into(); q.instrument_type = "ETF".into(); }
                 2 => { q.ticker = "BTC-EUR".into(); q.instrument_type = "CRYPTOCURRENCY".into(); }
+                3 => { q.ticker = "BNB-EUR".into(); q.instrument_type = "CRYPTOCURRENCY".into(); }
                 _ => {}
             }
             if r.hit(0.02) { q.name = "Some Index 2x Daily Leveraged".into(); }
@@ -13232,6 +13242,7 @@ mod tests {
             t.growth_max_vol = r.arm(t.growth_max_vol, &[3.0]);
             t.growth_max_daily_1m = r.arm(t.growth_max_daily_1m, &[10.0]);
             t.crypto_max_mvrv = r.arm(t.crypto_max_mvrv, &[2.0]);
+            t.growth_refuse_exchange_tokens = r.hit(0.5);
             t.growth_max_peg = r.arm(t.growth_max_peg, &[0.0, 2.0]);
             t.growth_require_peg = r.hit(0.2);
             t.growth_min_net_margin = r.arm(t.growth_min_net_margin, &[10.0]);
