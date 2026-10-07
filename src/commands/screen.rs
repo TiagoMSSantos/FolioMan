@@ -1863,6 +1863,8 @@ pub async fn run(args: Vec<String>) {
     // superinvestor half also scores, through `growth_superinvestor_boost`, (#473) the rest through
     // `growth_social_boost`
     let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
+    // (#515) display only: this month's $1B+ US IPOs not priced yet, under the Young table
+    let upcoming = fetch::fetch_ipo_upcoming(&client, &settings.urls).await;
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
@@ -2210,6 +2212,7 @@ pub async fn run(args: Vec<String>) {
         top["berkshire"] = berkshire;
         top["social"] = social;
         top["young"] = crate::picks::young_rows(&quotes); // (#500)
+        top["upcoming"] = upcoming;
         // (#502) the page hides shadow rows under the stock lane's CAGR floor unless asked to show them
         top["cagr_floor"] = serde_json::json!(settings.buy_heuristic.growth_min_cagr);
         top["bonds"] = serde_json::json!(bonds);

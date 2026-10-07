@@ -4953,6 +4953,16 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("TICKER", ticker),
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
     ]);
+    // (#515) `fetch::ipo_upcoming`
+    let upcoming = fixed(&[
+        num,
+        ("TICKER", "The symbol the company asked for; it may list under another"),
+        ("NAME", "The company's name, as filed"),
+        ("EXPECTED", "The day Nasdaq expects the shares to be priced; the date often slips"),
+        ("RAISE", "Dollars the offer raises at the top of the range, $ billion"),
+        ("RANGE", "The price range per share the company filed, $"),
+        ("EXCHANGE", "Where the shares are to list"),
+    ]);
     let exposure = fixed(&[
         ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),
         ("NAME", "The sector, currency, group size or company ticker; ? = the data source served nothing for the funds named in DETAIL"),
@@ -4978,6 +4988,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("berkshire", berkshire),
         ("social", social),
         ("young", young),
+        ("upcoming", upcoming),
         ("exposure", exposure),
     ])
 }

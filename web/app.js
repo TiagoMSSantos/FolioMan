@@ -315,6 +315,10 @@ function render(data, prev) {
   if (data.young) {
     document.getElementById("young").replaceChildren(table(data.young, "(no stock listed under 5 years)", help.young));
   }
+  // (#515) CI's payload only; not a shadow table, so no stock columns and no CAGR cut
+  if (data.upcoming) {
+    document.getElementById("upcoming").replaceChildren(table(data.upcoming, "(no $1B+ US IPO expected this month)", help.upcoming));
+  }
   // (#456) Only CI's payload carries it, and unlike the shadow tables it describes the BUY% book, which
   // an upload changes: the page has no fund holdings to look a new book through, so it says so.
   document
@@ -338,7 +342,7 @@ function render(data, prev) {
   chooser(Math.max(1, attention, ...sizes), secondShortest(sizes));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "upcoming"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, help);
@@ -369,6 +373,7 @@ function glossary(data, help) {
     ["Berkshire holdings", "berkshire", [data.berkshire]],
     ["Social Arbitrage trading", "social", [data.social]],
     ["Young", "young", [data.young]],
+    ["Upcoming IPOs", "upcoming", [data.upcoming]],
   ]) {
     const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];
     const known = heads.filter((h) => help[part]?.[h]);

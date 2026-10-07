@@ -6671,20 +6671,75 @@ const IPO_MONTHS: u32 = 60;
 /// (#499) A $1B+ offer: a real company raising real money, not a micro-cap or a shell.
 const IPO_MIN_OFFER_USD: f64 = 1.0e9;
 
-/// (#499) The kept symbols of one Nasdaq IPO-calendar answer (`data.priced.rows`): offer >= $1B, a
-/// symbol, and no SPAC (the name says so, or a `…U` unit priced at the $10.00 trust value).
-fn ipo_rows(v: &Value) -> Vec<String> {
-    let rows = v.pointer("/data/priced/rows").and_then(Value::as_array).cloned().unwrap_or_default();
-    rows.iter()
+/// (#499) The kept rows of one Nasdaq IPO-calendar section (`data.{section}.rows`) with their offer in
+/// dollars: offer >= $1B, a symbol, and no SPAC (the name says so, or a `…U` unit priced at the $10.00
+/// trust value).
+fn ipo_kept(v: &Value, section: &str) -> Vec<(Value, f64)> {
+    let rows = v.pointer(&format!("/data/{section}/rows")).and_then(Value::as_array).cloned().unwrap_or_default();
+    rows.into_iter()
         .filter_map(|r| {
-            let field = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
-            let (sym, name, price) = (field("proposedTickerSymbol"), field("companyName").to_lowercase(), field("proposedSharePrice"));
-            let offer: f64 = field("dollarValueOfSharesOffered").replace(['$', ','], "").parse().ok()?;
+            let (sym, name, price) = (ipo_field(&r, "proposedTickerSymbol"), ipo_field(&r, "companyName").to_lowercase(), ipo_field(&r, "proposedSharePrice"));
+            let offer: f64 = ipo_field(&r, "dollarValueOfSharesOffered").replace(['$', ','], "").parse().ok()?;
             let spac = ["acquisition", "capital corp", "spac", "merger"].iter().any(|t| name.contains(t))
                 || (sym.ends_with('U') && price == "10.00");
-            (!sym.is_empty() && offer >= IPO_MIN_OFFER_USD && !spac).then_some(sym)
+            (!sym.is_empty() && offer >= IPO_MIN_OFFER_USD && !spac).then_some((r, offer))
         })
         .collect()
+}
+
+fn ipo_field(r: &Value, k: &str) -> String {
+    r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string()
+}
+
+/// (#499) The kept symbols of the priced section: the pond.
+fn ipo_rows(v: &Value) -> Vec<String> {
+    ipo_kept(v, "priced").iter().map(|(r, _)| ipo_field(r, "proposedTickerSymbol")).collect()
+}
+
+/// (#515) The page's Upcoming table: the same $1B+, no-SPAC rule over `data.upcoming.upcomingTable.rows`,
+/// soonest first. No price yet, so nothing is journalled or ranked; once priced, the pond above takes it.
+fn ipo_upcoming(v: &Value) -> Value {
+    let mut rows: Vec<(String, String, String, f64, String, String)> = ipo_kept(v, "upcoming/upcomingTable")
+        .into_iter()
+        .map(|(r, offer)| {
+            let day = ipo_field(&r, "expectedPriceDate");
+            let day = NaiveDate::parse_from_str(&day, "%m/%d/%Y").map_or(day, |d| d.to_string());
+            let [sym, name, range, exchange] = ["proposedTickerSymbol", "companyName", "proposedSharePrice", "proposedExchange"].map(|k| ipo_field(&r, k));
+            (day, sym, name, offer, range, exchange)
+        })
+        .collect();
+    rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    rows.iter()
+        .enumerate()
+        .map(|(i, (day, sym, name, offer, range, exchange))| {
+            serde_json::json!([
+                ["#", (i + 1).to_string()],
+                ["TICKER", sym],
+                ["NAME", name],
+                ["EXPECTED", day],
+                ["RAISE", format!("${:.1}B", offer / 1e9)],
+                ["RANGE", format!("${range}")],
+                ["EXCHANGE", exchange],
+            ])
+        })
+        .collect()
+}
+
+/// (#515) This month's upcoming $1B+ US IPOs, for the page; `Null` when the URL is off or Nasdaq refused,
+/// so the payload carries no table rather than a false "none".
+#[mutants::skip] // one GET around the tested `ipo_upcoming`
+pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
+    if urls.nasdaq_ipo.is_empty() {
+        return Value::Null;
+    }
+    let ym = chrono::Local::now().format("%Y-%m").to_string();
+    match get_json(client, &urls.nasdaq_ipo.replace("{ym}", &ym)).await.filter(|v| v.pointer("/data").is_some()) {
+        Some(v) => ipo_upcoming(&v),
+        None => {
+            eprintln!("fetch: Nasdaq IPO calendar unavailable — no Upcoming table");
+            Value::Null
+        }
+    }
 }
 
 /// (#499) Nasdaq's sector words -> the GICS names the constituent ponds carry, so `c` and the sector
@@ -13357,6 +13412,36 @@ pub(crate) mod tests {
         assert_eq!(gics_of_nasdaq(Some("Technology")), "Information Technology");
         assert_eq!(gics_of_nasdaq(Some("Energy")), "Energy");
         assert_eq!(gics_of_nasdaq(None), "other");
+    }
+
+    /// (#515) The upcoming section, same $1B+ no-SPAC rule, soonest first, date in ISO form; a missing
+    /// section reads no rows.
+    #[test]
+    fn ipo_upcoming_lists_big_real_offers_soonest_first() {
+        let row = |sym: &str, name: &str, price: &str, day: &str, offer: &str| {
+            serde_json::json!({"proposedTickerSymbol": sym, "companyName": name, "proposedSharePrice": price,
+                "expectedPriceDate": day, "dollarValueOfSharesOffered": offer, "proposedExchange": "NASDAQ Global Select"})
+        };
+        let v = serde_json::json!({"data": {"upcoming": {"upcomingTable": {"rows": [
+            row("LATE", "Late Co", "20.00-22.00", "10/21/2026", "$1,250,000,000"),
+            row("TRXB", "TRex Bio, Inc.", "14.00-16.00", "10/09/2026", "$153,333,344"),
+            row("AFNXU", "AfterNext Acquisition I Corp.", "10.00", "10/07/2026", "$1,150,000,000"),
+            row("SOON", "Soon Inc", "30.00-34.00", "10/08/2026", "$2,040,000,000"),
+            row("ODD", "Odd Inc", "18.00", "next week", "$1,000,000,000"),
+        ]}}}});
+        let cells = |sym: &str, name: &str, i: &str, day: &str, raise: &str, range: &str| {
+            serde_json::json!([["#", i], ["TICKER", sym], ["NAME", name], ["EXPECTED", day], ["RAISE", raise], ["RANGE", range], ["EXCHANGE", "NASDAQ Global Select"]])
+        };
+        assert_eq!(
+            ipo_upcoming(&v),
+            serde_json::json!([
+                cells("SOON", "Soon Inc", "1", "2026-10-08", "$2.0B", "$30.00-34.00"),
+                cells("LATE", "Late Co", "2", "2026-10-21", "$1.2B", "$20.00-22.00"),
+                cells("ODD", "Odd Inc", "3", "next week", "$1.0B", "$18.00"),
+            ]),
+            "TRXB too small, AFNXU a SPAC unit; an unparsed date stays as Nasdaq wrote it"
+        );
+        assert_eq!(ipo_upcoming(&serde_json::json!({"data": {"priced": {"rows": [row("X", "X", "1", "", "$9,000,000,000")]}}})), serde_json::json!([]));
     }
 
     /// (#499) The ONE owner of `.ipo_cache.json`. Cold: all 60 months asked, each cached under its
