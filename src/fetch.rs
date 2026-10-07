@@ -931,6 +931,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         top10: None, // (#465) enrich_etf_cells, printed funds only
         td_years: Vec::new(),
         top_holdings: Vec::new(),
+        look_fair: None,
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -2196,7 +2197,12 @@ pub async fn enrich_etf_cells(
             q.profile.site = Some(urls.justetf_profile.replace("{isin}", isin));
         }
     }
+    // (#521) the stock FAIR ratios the look-through averages; `enrich_fund_factor` filled `fund` earlier. Keyed
+    // on the US symbol: holdings name AAPL while the pond holds its Xetra twin APC.DE
+    let ratios: HashMap<String, f64> =
+        quotes.iter().filter_map(|q| crate::picks::stock_fair_ratio(q).map(|(r, _)| (us_symbol(&q.ticker), r))).collect();
     for q in quotes.iter_mut().filter(|q| syms.contains(&q.ticker)) {
+        q.look_fair = holdings.get(&q.ticker).and_then(|h| crate::picks::look_through_fair(h, &ratios));
         q.top10 = holdings.get(&q.ticker).map(|h| h.iter().map(|(_, w)| w).sum::<f64>() * 100.0).filter(|s| *s > 0.0);
         q.top_holdings = holdings.get(&q.ticker).map(|h| h.iter().map(|(s, _)| s.clone()).collect()).unwrap_or_default();
         let Some(isin) = isins.get(&q.ticker) else { continue };
@@ -2235,14 +2241,15 @@ pub async fn enrich_etf_cells(
     }
     let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
     let _ = std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), serde_json::to_string(&je).unwrap_or_default());
-    let by_name: HashMap<String, (Option<f64>, Vec<f64>, core::Profile, Vec<String>)> = quotes
+    type Cells = (Option<f64>, Vec<f64>, core::Profile, Vec<String>, Option<f64>);
+    let by_name: HashMap<String, Cells> = quotes
         .iter()
         .filter(|q| syms.contains(&q.ticker))
-        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone(), q.profile.clone(), q.top_holdings.clone())))
+        .map(|q| (q.name.to_lowercase(), (q.top10, q.td_years.clone(), q.profile.clone(), q.top_holdings.clone(), q.look_fair)))
         .collect();
     for q in quotes.iter_mut().filter(|q| !syms.contains(&q.ticker)) {
-        if let Some((t, d, p, h)) = by_name.get(&q.name.to_lowercase()) {
-            (q.top10, q.td_years, q.profile, q.top_holdings) = (*t, d.clone(), p.clone(), h.clone());
+        if let Some((t, d, p, h, f)) = by_name.get(&q.name.to_lowercase()) {
+            (q.top10, q.td_years, q.profile, q.top_holdings, q.look_fair) = (*t, d.clone(), p.clone(), h.clone(), *f);
         }
     }
 }

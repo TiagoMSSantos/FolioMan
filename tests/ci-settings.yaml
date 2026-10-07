@@ -1121,8 +1121,8 @@ widths:
     - nde         # (#447) net debt ÷ EBITDA (stocks only); <0 = net cash, >3 = stretched
     - icov        # (#447) operating profit ÷ interest expense (stocks only); <2 = distress risk
     - fcfy        # (#462) free cash flow ÷ market value (stocks only) — the cash yield a buyer gets
-    - fair        # (#484) 2-stage DCF fair price: FCF grows at FCF-5Y (0-15%) 10y, then 2.5%, at 9% (stocks only; display only)
-    - mos         # (#484) margin of safety, FAIR ÷ price − 1 (stocks only; display only)
+    - fair        # (#484) 2-stage DCF fair price: FCF grows at FCF-5Y (0-15%) 10y, then 2.5%, at 9%; ETFs (#521) their top-10 holdings' FAIR weight-averaged, Bitcoin its realized price (price ÷ MVRV); display only
+    - mos         # (#484) margin of safety, FAIR ÷ price − 1 (stocks, ETFs, Bitcoin; display only)
     - target      # (#489) consensus analyst target vs price, 3+ analysts (stocks only; display only)
     - ps          # (#462) market value ÷ revenue (stocks only) — the value ratio a loss-maker still has
     - evebitda    # (#462) (market value + net debt) ÷ EBITDA (stocks only) — the whole business's price, debt included

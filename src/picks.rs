@@ -3701,8 +3701,8 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = free cash flow at or below 0; n/a = under 2 years of FCF filed" },
-    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn and n/a as FAIR" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. This year's free cash flow grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = free cash flow at or below 0; n/a = under 2 years of FCF filed. ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (most non-US holdings file no SEC cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
+    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn and n/a as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
@@ -4094,19 +4094,20 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "net" if stock_only_na => "—".to_string(),
         "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // (#463) the 5y fund_factors levels the live enrich already fills
-        "rev5y" | "opm" | "mtrend" | "fcf5y" | "fair" | "mos" if stock_only_na => "—".to_string(),
+        "rev5y" | "opm" | "mtrend" | "fcf5y" if stock_only_na => "—".to_string(),
         // (#506) a cash burn today has no growth rate and no DCF value; "burn" says so where "n/a" hid it
-        "fcf5y" | "fair" | "mos" if quote.fund.as_ref().and_then(|f| f.fcf_ttm).is_some_and(|c| c <= 0.0) => "burn".to_string(),
+        "fcf5y" | "fair" | "mos" if !stock_only_na && quote.fund.as_ref().and_then(|f| f.fcf_ttm).is_some_and(|c| c <= 0.0) => "burn".to_string(),
         "fcf5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.fcf_cagr, f.fcf_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
-        // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio
-        "fair" | "mos" => quote
-            .fund
-            .as_ref()
-            .and_then(|f| {
-                let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
-                Some((f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
-            })
-            .and_then(|(x, m)| if key == "mos" { Some(format!("{:+.0}%{m}", (x - 1.0) * 100.0)) } else { quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)) })
+        // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio. (#521) An ETF reads its
+        // top-10 look-through, a coin its realized price (price ÷ MVRV: what holders paid, not a cash-flow value).
+        "fair" | "mos" => if is_etf {
+            quote.look_fair.map(|x| (x, String::new()))
+        } else if is_crypto {
+            quote.mvrv.filter(|v| *v > 0.0).map(|v| (1.0 / v, String::new()))
+        } else {
+            stock_fair_ratio(quote)
+        }
+        .and_then(|(x, m)| if key == "mos" { Some(format!("{:+.0}%{m}", (x - 1.0) * 100.0)) } else { quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)) })
             .unwrap_or_else(|| "n/a".to_string()),
         "rev5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.rev_cagr, f.rev_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
         "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
@@ -4537,6 +4538,23 @@ fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, S
         .or_else(|| short.map(|(v, span)| (v, (span.round() as u32).to_string().bytes().map(|d| SUP[(d - b'0') as usize]).collect())))
 }
 
+/// (#484) FAIR ÷ price for a stock: FCF-YLD × [`dcf_multiple`] at FCF-5Y, with the short-span marker.
+/// None on a burn, no cap, or no rate.
+pub fn stock_fair_ratio(q: &Quote) -> Option<(f64, String)> {
+    let f = q.fund.as_ref()?;
+    let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
+    Some((f.fcf_ttm.filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
+}
+
+/// (#521) An ETF's FAIR ÷ price: its top holdings' own ratios, weight-averaged over the ones that have one.
+/// None when those cover under half the listed weight. ponytail: top-10 only (~35% of a broad index) and
+/// non-US holdings mostly file no SEC FCF, so EU-heavy funds read n/a; full holdings if the column earns it.
+pub fn look_through_fair(top: &[(String, f64)], ratios: &HashMap<String, f64>) -> Option<f64> {
+    let total: f64 = top.iter().map(|(_, w)| w).sum();
+    let (cov, sum) = top.iter().filter_map(|(t, w)| ratios.get(t).map(|r| (w, w * r))).fold((0.0, 0.0), |(a, b), (w, x)| (a + w, b + x));
+    (total > 0.0 && cov * 2.0 >= total).then(|| sum / cov)
+}
+
 /// (#484) What one unit of this year's FCF is worth today: 10 years growing at `g_pct` (FCF-5Y, held to
 /// 0-15% so a hot streak never compounds a decade), then 2.5% forever, all discounted at 9%. FAIR ÷ price
 /// = FCF-YLD × this. shortcut: one fixed rate for every stock; a per-name cost of capital if it matters.
@@ -4558,11 +4576,11 @@ fn dcf_multiple(g_pct: f64) -> f64 {
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
 const HIDE_ETF: &[&str] =
     &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
-    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "fair", "mos", "target", "short"];
+    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "target", "short"];
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
-    "fcf5y", "fair", "mos", "target", "short",
+    "fcf5y", "target", "short",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -7599,6 +7617,7 @@ mod tests {
             for k in ["fcf5y", "fair", "mos"] {
                 assert_eq!(cc(k, &st, 0.0, None, ""), "burn", "(#506) FCF {fcf} has no rate and no value to discount");
             }
+            assert_eq!(stock_fair_ratio(&st), None, "(#521) a burn feeds no look-through either");
         }
         let f = st.fund.as_mut().unwrap();
         (f.fcf_ttm, f.cap_fund) = (Some(20.0), Some(0.0));
@@ -7639,10 +7658,36 @@ mod tests {
         // the growth leg is held to 0-15%: 13.08x with no growth, 40.53x at the cap
         let m = |g: f64| (dcf_multiple(g) * 100.0).round() / 100.0;
         assert_eq!([m(-5.0), m(0.0), m(15.0), m(30.0)], [13.08, 13.08, 40.53, 40.53]);
-        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "fair", "mos", "target", "short"] {
+        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "target", "short"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }
+        // (#521) an ETF reads its look-through, a coin its realized price; a burn FCF never leaks onto either
+        let (mut e, mut c) = (eq.clone(), cq.clone());
+        (e.price_eur, c.price_eur) = (Some(100.0), Some(60000.0));
+        e.fund = st.fund.clone().map(|mut f| {
+            f.fcf_ttm = Some(-1.0);
+            f
+        });
+        for k in ["fair", "mos"] {
+            assert_eq!((cc(k, &e, 0.0, None, ""), cc(k, &c, 0.0, None, "")), ("n/a".to_string(), "n/a".to_string()), "{k} unfetched");
+        }
+        (e.look_fair, c.mvrv) = (Some(1.25), Some(2.0));
+        assert_eq!((cc("fair", &e, 0.0, None, ""), cc("mos", &e, 0.0, None, "")), ("€125.00".to_string(), "+25%".to_string()));
+        assert_eq!((cc("fair", &c, 0.0, None, ""), cc("mos", &c, 0.0, None, "")), ("€30000.00".to_string(), "-50%".to_string()));
+        c.mvrv = Some(0.0);
+        assert_eq!(cc("mos", &c, 0.0, None, ""), "n/a", "no realized price to divide by");
+    }
+
+    /// (#521) weight-averaged over the covered holdings; under half the listed weight covered = None
+    #[test]
+    fn look_through_fair_needs_half_the_weight() {
+        let top = |v: &[(&str, f64)]| v.iter().map(|(t, w)| (t.to_string(), *w)).collect::<Vec<_>>();
+        let r: HashMap<String, f64> = [("A", 1.5), ("B", 0.5)].iter().map(|(t, x)| (t.to_string(), *x)).collect();
+        assert_eq!(look_through_fair(&top(&[("A", 0.375), ("B", 0.125)]), &r), Some(1.25));
+        assert_eq!(look_through_fair(&top(&[("A", 0.3), ("C", 0.3)]), &r), Some(1.5), "half covered still counts");
+        assert_eq!(look_through_fair(&top(&[("A", 0.29), ("C", 0.3)]), &r), None, "under half");
+        assert_eq!(look_through_fair(&[], &r), None);
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5
@@ -7767,6 +7812,7 @@ mod tests {
             top10: None,
             td_years: Vec::new(),
             top_holdings: Vec::new(),
+            look_fair: None,
             annual_brief: None,
         }
     };
