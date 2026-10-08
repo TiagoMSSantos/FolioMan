@@ -20947,6 +20947,37 @@ urls:
   # record. Census that day: ~40 names. Past months cache forever in `.ipo_cache.json`, the current
   # month is refetched. REVERT: delete this line, the pond and its requests go with it.
   nasdaq_ipo: "https://api.nasdaq.com/api/ipo/calendar?date={ym}"
+  # (#524) The page's Upcoming IPOs table read EMPTY on 2026-10-08 while Anthropic was reported for
+  # November. Three causes, measured that day:
+  #  - only the current month was read. October's two upcoming deals raise $0.15B (TRXB) and $0.05B
+  #    (RTSN), both under the $1B bar. November and December were empty.
+  #  - a deal set late in a month to price early in the next stayed invisible until that month.
+  #  - Anthropic had filed only a confidential draft (DRS, 2026-06-01). With no public S-1, no
+  #    calendar (Nasdaq, NYSE, Finnhub, FMP, Renaissance) can list it. The SEC wants the public S-1 at
+  #    least 15 days before the roadshow.
+  # So the table (`fetch::fetch_ipo_upcoming`) now reads:
+  #  - Nasdaq's `upcoming` for this month and next.
+  #  - `filed` (a public S-1, no pricing day yet) for the last 3 months. Both drop priced and
+  #    withdrawn dealIDs and keep the $1B+ no-SPAC rule.
+  #  - Nasdaq's deal overview: CIK, site, shares outstanding, lockup, staff.
+  #  - this hand-kept watch list. Each row's status is found on EDGAR full-text search:
+  #    confidential, then filed once an S-1 is public. A priced deal drops out and joins the Young
+  #    table. Press figures (date, valuation, raise) read with an ` r` and give way to real ones.
+  # Priced = a 424B4 or an exchange in SEC submissions, never a bare ticker: SEC stamps the symbol
+  # off the S-1 cover. Oura ($2.53B, S-1/A 2026-09-21, range $40-44) carried `OURA` with a null
+  # exchange, and the first cut dropped it as listed.
+  # FY / REV / NET / CASH / ASSETS / LIAB / EQUITY are read from the newest S-1's "Summary ... Financial
+  # Data" table. Pre-IPO statements are NOT in XBRL; companyfacts holds only the fee table. The parse
+  # is a label/column heuristic over free HTML, cached per accession under `.sec_cache`:
+  #  - the section must carry a units mark, `(in thousands)` or `(millions)`. With no mark the cells
+  #    read n/a; a scale is never guessed.
+  #  - checked whole on three 2026 prospectuses: TRex Bio (thousands, annual columns first), NSCALE
+  #    (millions, interim first) and SpaceX (millions, interim first, three years).
+  #    Live the same day on Oura's S-1/A (thousands, fiscal year to September, nine-month interim
+  #    first): REV $907.9M (+123%), NET $12K, a $1.6B stockholders' deficit, all as filed.
+  # Big issuers often file with a $100M placeholder; the watch list covers those.
+  # REVERT: delete this line. The watch rows go; the Nasdaq/S-1 part stays with `nasdaq_ipo`.
+  ipo_watch: "tests/ipo-watch.csv"
   # (#517) European stocks listed in the last 5 years, off Wikidata (keyless SPARQL, one GET a day,
   # kept 24h in `.wikidata_listings.json`): Frankfurt, London, SIX, Paris, Amsterdam, Stockholm,
   # Madrid, Milan, Oslo, Copenhagen. Asked 2026-10-07: all 48 young rows were US. Young table ONLY:

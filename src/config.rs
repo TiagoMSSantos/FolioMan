@@ -968,6 +968,19 @@ pub struct Urls {
     // stays byte-identical; CI sets it.
     #[serde(default)]
     pub nasdaq_ipo: String,
+    // (#524) One Nasdaq IPO deal's overview, {id} = dealID: CIK, shares outstanding, lock-up, staff and
+    // home page for the Upcoming table. Read only when `nasdaq_ipo` is set.
+    #[serde(default = "default_nasdaq_ipo_overview_url")]
+    pub nasdaq_ipo_overview: String,
+    // (#524) EDGAR full-text search over registration statements: finds a watch-list company's CIK once
+    // its S-1/F-1 goes public. The quoted name is appended as `q`.
+    #[serde(default = "default_sec_fts_s1_url")]
+    pub sec_fts_s1: String,
+    // (#524) Hand-kept CSV of big IPOs the press reports before any public filing (Anthropic filed
+    // confidentially): they join the Upcoming table as `confidential` rows. A disk path. EMPTY is the off
+    // switch; CI sets it.
+    #[serde(default)]
+    pub ipo_watch: String,
     // (#517) Wikidata's SPARQL endpoint: stocks listed on 10 European exchanges in the last 5 years join
     // the stock pond for the Young table only (`fetch::wikidata_pond`, `picks::young_pond_keep`). EMPTY
     // is the off switch, like `nasdaq_ipo`; CI sets it.
@@ -1011,6 +1024,16 @@ fn default_sec_submissions_url() -> String {
 /// (#450) Default Nasdaq earnings-date endpoint: `data.reportText` names the next report date.
 fn default_nasdaq_earnings_url() -> String {
     "https://api.nasdaq.com/api/analyst/{sym}/earnings-date".to_string()
+}
+
+/// (#524) Default Nasdaq IPO deal overview: `data.poOverview.<Key>.value` per field.
+fn default_nasdaq_ipo_overview_url() -> String {
+    "https://api.nasdaq.com/api/ipo/overview/?dealId={id}".to_string()
+}
+
+/// (#524) Original and amended S-1/F-1 both match `forms`; the caller reads the newest from submissions.
+fn default_sec_fts_s1_url() -> String {
+    "https://efts.sec.gov/LATEST/search-index?forms=S-1,S-1/A,F-1,F-1/A".to_string()
 }
 
 /// (#469) Default Nasdaq company profile: `data.CompanyUrl.value` is the home page.
@@ -2872,6 +2895,8 @@ mod tests {
             (default_nasdaq_earnings_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_trackingdifferences_url(), "https://www.trackingdifferences.com/", &["{isin}"][..]),
             (default_nasdaq_profile_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
+            (default_nasdaq_ipo_overview_url(), "https://api.nasdaq.com/", &["{id}"][..]),
+            (default_sec_fts_s1_url(), "https://efts.sec.gov/", &[][..]),
             (default_nasdaq_target_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_nasdaq_summary_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_finra_short_url(), "https://api.finra.org/", &[][..]),

@@ -5082,15 +5082,30 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("TICKER", ticker),
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
     ]);
-    // (#515) `fetch::ipo_upcoming`
+    // (#515) (#524) `fetch::ipo_web_rows`; ` r` = a press figure from `tests/ipo-watch.csv`
     let upcoming = fixed(&[
         num,
-        ("TICKER", "The symbol the company asked for; it may list under another"),
-        ("NAME", "The company's name, as filed"),
-        ("EXPECTED", "The day Nasdaq expects the shares to be priced; the date often slips"),
-        ("RAISE", "Dollars the offer raises at the top of the range, $ billion"),
+        ("STATUS", "upcoming = Nasdaq has a price range and a day; filed = a public S-1/F-1 is on EDGAR, no pricing day set yet; confidential = a watched company that only filed in private (no S-1 yet)"),
+        ("TICKER", "The symbol the company asked for; it may list under another; — = none asked for yet"),
+        ("NAME", "The company's name, as filed; click to open its website, or for a watched company the article its figures come from"),
+        ("EXPECTED", "The day Nasdaq expects the shares to be priced (the date often slips); r = the month the press reports, not confirmed"),
+        ("RAISE", "Dollars the offer raises at the top of the range; r = the amount the press reports, not confirmed"),
         ("RANGE", "The price range per share the company filed, $"),
+        ("MCAP@MID", "Market value at the middle of the range: mid price × the shares outstanding after the offer; r = the valuation the press reports, not confirmed"),
+        ("SHARES", "Shares outstanding after the offer, as Nasdaq reads it from the filing, millions"),
+        ("LOCKUP", "Days insiders may not sell after the listing"),
+        ("EMPLOYEES", "Staff count, as Nasdaq reads it from the filing"),
         ("EXCHANGE", "Where the shares are to list"),
+        ("FILING", "The newest public S-1/F-1 (or amendment) and its date; click to open it on sec.gov"),
+        ("FY", "Latest full fiscal year in the S-1's summary financial table; REV to EQUITY are read from it (n/a = the table could not be read)"),
+        ("REV", "Revenue in that fiscal year"),
+        ("REV-YoY", "Revenue growth vs the fiscal year before"),
+        ("NET", "Net income (negative = loss) in that fiscal year"),
+        ("NET%", "Net income ÷ revenue"),
+        ("CASH", "Cash and equivalents (with marketable securities when the filing sums them) at the newest balance-sheet date, before the offer"),
+        ("ASSETS", "Total assets at the newest balance-sheet date, before the offer"),
+        ("LIAB", "Total liabilities at the newest balance-sheet date"),
+        ("EQUITY", "Total shareholders' equity (negative = deficit) at the newest balance-sheet date, before the offer"),
     ]);
     let exposure = fixed(&[
         ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),

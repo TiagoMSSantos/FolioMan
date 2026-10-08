@@ -49,7 +49,8 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
       // `name` row, whose NAME is the symbol.
       const yahoo = (t) => "https://finance.yahoo.com/quote/" + encodeURIComponent(t);
       const sym = h === "NAME" && !url?.startsWith("https://") && (row.find(([k]) => k === "TICKER")?.[1] ?? (row.some(([k, c]) => k === "KIND" && c === "name") ? cell : null));
-      const href = h === "TICKER" ? yahoo(cell) : sym ? yahoo(sym) : url;
+      // (#524) an IPO row's TICKER reads — before a symbol is asked for: no quote to link
+      const href = h === "TICKER" ? (cell === "—" ? null : yahoo(cell)) : sym && sym !== "—" ? yahoo(sym) : url;
       if (!href?.startsWith("https://")) {
         td.textContent = cell;
         continue;
@@ -317,7 +318,7 @@ function render(data, prev) {
   }
   // (#515) CI's payload only; not a shadow table, so no stock columns and no CAGR cut
   if (data.upcoming) {
-    document.getElementById("upcoming").replaceChildren(table(data.upcoming, "(no $1B+ US IPO expected this month)", help.upcoming));
+    document.getElementById("upcoming").replaceChildren(table(data.upcoming, "(no $1B+ US IPO filed, expected or watched)", help.upcoming));
   }
   // (#456) Only CI's payload carries it, and unlike the shadow tables it describes the BUY% book, which
   // an upload changes: the page has no fund holdings to look a new book through, so it says so.
