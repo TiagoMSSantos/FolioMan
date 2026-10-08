@@ -7232,9 +7232,9 @@ const IPO_MONTHS: u32 = 60;
 const IPO_MIN_OFFER_USD: f64 = 1.0e9;
 
 /// (#499) The kept rows of one Nasdaq IPO-calendar section (`data.{section}.rows`) with their offer in
-/// dollars: offer >= $1B, a symbol ((#524) `filed` rows often have none yet), and no SPAC (the name says so, or a `…U` unit priced at the $10.00
+/// dollars: offer >= `min_offer`, a symbol ((#524) `filed` rows often have none yet), and no SPAC (the name says so, or a `…U` unit priced at the $10.00
 /// trust value).
-fn ipo_kept(v: &Value, section: &str) -> Vec<(Value, f64)> {
+fn ipo_kept(v: &Value, section: &str, min_offer: f64) -> Vec<(Value, f64)> {
     let rows = v.pointer(&format!("/data/{section}/rows")).and_then(Value::as_array).cloned().unwrap_or_default();
     rows.into_iter()
         .filter_map(|r| {
@@ -7242,7 +7242,7 @@ fn ipo_kept(v: &Value, section: &str) -> Vec<(Value, f64)> {
             let offer: f64 = ipo_field(&r, "dollarValueOfSharesOffered").replace(['$', ','], "").parse().ok()?;
             let spac = ["acquisition", "capital corp", "spac", "merger"].iter().any(|t| name.contains(t))
                 || (sym.ends_with('U') && price == "10.00");
-            ((!sym.is_empty() || section == "filed") && offer >= IPO_MIN_OFFER_USD && !spac).then_some((r, offer))
+            ((!sym.is_empty() || section == "filed") && offer >= min_offer && !spac).then_some((r, offer))
         })
         .collect()
 }
@@ -7253,10 +7253,11 @@ fn ipo_field(r: &Value, k: &str) -> String {
 
 /// (#499) The kept symbols of the priced section: the pond.
 fn ipo_rows(v: &Value) -> Vec<String> {
-    ipo_kept(v, "priced").iter().map(|(r, _)| ipo_field(r, "proposedTickerSymbol")).collect()
+    ipo_kept(v, "priced", IPO_MIN_OFFER_USD).iter().map(|(r, _)| ipo_field(r, "proposedTickerSymbol")).collect()
 }
 
-/// (#524) One row of the page's Upcoming table: a $1B+ US deal not priced yet. Three sources, best
+/// (#524) One row of the page's Upcoming table: a $1B+ US deal not priced yet ((#527) or one led by
+/// two bulge-bracket banks, see `ipo_admit`). Three sources, best
 /// first: Nasdaq's `upcoming` section (a price range and a day), its `filed` section (a public S-1, no
 /// range yet) and the hand-kept watch list (`urls.ipo_watch`), for deals the press reports before any
 /// public filing. Once priced, the pond takes it and the Young table shows it.
@@ -7278,6 +7279,10 @@ struct IpoDeal {
     employees: String,
     filing: Option<(String, String, String)>, // the newest S-1/F-1: form, day, document URL
     figs: S1Figs,
+    // (#527) SEC's SIC description, Nasdaq's lead underwriters and auditor (short names)
+    industry: String,
+    leads: Vec<String>,
+    auditor: String,
     // the watch list's press figures: a cell shows one only when its real figure is missing
     rep_expected: String,
     rep_raise: Option<f64>,
@@ -7291,9 +7296,10 @@ fn ipo_day(r: &Value, k: &str) -> String {
     NaiveDate::parse_from_str(&day, "%m/%d/%Y").map_or(day, |d| d.to_string())
 }
 
-/// (#524) The kept deals of the scanned Nasdaq months, same $1B+, no-SPAC rule as the pond: `upcoming`
+/// (#524) The kept deals of the scanned Nasdaq months, same no-SPAC rule as the pond: `upcoming`
 /// from this month and the next (`ahead`), `filed` from those and the two before (`back`), minus any
-/// dealID priced or withdrawn in any of them. A deal in both sections keeps its upcoming row.
+/// dealID priced or withdrawn in any of them. A deal in both sections keeps its upcoming row. (#527)
+/// Any offer size: `ipo_admit` applies the $1B rule once the underwriters are known.
 fn ipo_deals(back: &[Value], ahead: &[Value]) -> Vec<IpoDeal> {
     let all = || back.iter().chain(ahead);
     let gone: HashSet<String> = all()
@@ -7301,14 +7307,14 @@ fn ipo_deals(back: &[Value], ahead: &[Value]) -> Vec<IpoDeal> {
         .flatten()
         .map(|r| ipo_field(&r, "dealID"))
         .collect();
-    let upcoming = ahead.iter().flat_map(|v| ipo_kept(v, "upcoming/upcomingTable")).map(|(r, offer)| IpoDeal {
+    let upcoming = ahead.iter().flat_map(|v| ipo_kept(v, "upcoming/upcomingTable", 0.0)).map(|(r, offer)| IpoDeal {
         status: "upcoming",
         day: ipo_day(&r, "expectedPriceDate"),
         range: ipo_field(&r, "proposedSharePrice"),
         exchange: ipo_field(&r, "proposedExchange"),
         ..ipo_deal(&r, offer)
     });
-    let filed = all().flat_map(|v| ipo_kept(v, "filed")).map(|(r, offer)| IpoDeal { status: "filed", day: ipo_day(&r, "filedDate"), ..ipo_deal(&r, offer) });
+    let filed = all().flat_map(|v| ipo_kept(v, "filed", 0.0)).map(|(r, offer)| IpoDeal { status: "filed", day: ipo_day(&r, "filedDate"), ..ipo_deal(&r, offer) });
     let mut seen = HashSet::new();
     upcoming.chain(filed).filter(|d| !gone.contains(&d.id) && seen.insert(d.id.clone())).collect()
 }
@@ -7341,6 +7347,45 @@ fn ipo_overview(v: &Value, d: &mut IpoDeal) {
     d.site = href.map(|h| h.replacen("http://", "https://", 1)).filter(|h| h.starts_with("https://")).unwrap_or_default();
 }
 
+/// (#527) A lead underwriter or auditor as the table shows it: the firm's name up to its legal or
+/// business-line suffix (`Goldman Sachs & Co. LLC` -> `Goldman Sachs`, `KPMG LLP` -> `KPMG`).
+fn expert_short(name: &str) -> String {
+    let cut = [",", " LLC", " L.L.C", " LLP", " Inc", " & Co.", " Securities", " Global Markets", " Capital Markets", " Group"]
+        .iter()
+        .filter_map(|s| name.find(s))
+        .min()
+        .unwrap_or(name.len());
+    name[..cut].trim().to_string()
+}
+
+/// (#527) Nasdaq's deal experts (`data.tableModel.rows[{expertName, role}]`) into the deal: lead
+/// underwriters in Nasdaq's order and the auditor, short names.
+fn ipo_experts(v: &Value, d: &mut IpoDeal) {
+    let rows = v.pointer("/data/tableModel/rows").and_then(Value::as_array).cloned().unwrap_or_default();
+    let named = |role: &str| -> Vec<String> {
+        rows.iter().filter(|r| r["role"] == role).filter_map(|r| r["expertName"].as_str()).map(expert_short).filter(|n| !n.is_empty()).collect()
+    };
+    d.leads = named("LeadUnderwriter");
+    d.auditor = named("Auditor").into_iter().next().unwrap_or_default();
+}
+
+/// (#527) Lead underwriters from the five bulge-bracket banks.
+fn bulge_leads(leads: &[String]) -> usize {
+    let banks = ["goldman sachs", "morgan stanley", "j.p. morgan", "bofa", "citigroup"];
+    leads.iter().filter(|l| banks.contains(&l.to_lowercase().as_str())).count()
+}
+
+/// (#527) A deal the Upcoming table keeps: a $1B+ offer, or two bulge-bracket leads. The second catches
+/// big deals whose S-1 cover still reads Nasdaq's placeholder raise ($100M), so their RAISE reads n/a
+/// until the price range gives a real one.
+fn ipo_admit(d: &mut IpoDeal) -> bool {
+    let big = d.raise.is_some_and(|r| r >= IPO_MIN_OFFER_USD);
+    if !big && d.status == "filed" {
+        d.raise = None;
+    }
+    big || bulge_leads(&d.leads) >= 2
+}
+
 /// (#524) Listed already: SEC submissions show a final prospectus (424B4) or an exchange. A ticker
 /// alone is not enough: SEC stamps the symbol off the S-1 cover with a null exchange (Oura, 2026-10).
 fn s1_priced(sub: &Value) -> bool {
@@ -7361,6 +7406,10 @@ fn s1_doc(sub: &Value) -> Option<(String, String, String, String)> {
 /// (#524) The figures of an S-1's summary financial table, in dollars. `fy` is the latest full fiscal
 /// year; income rows read at its column, `rev_prior` at the year before; balance-sheet rows read their
 /// first column (the latest "Actual"). Serialized as the per-accession cache.
+/// (#527) Gross profit, operating income and operating cash flow join the FY rows; `interim` names the
+/// latest interim period (`9M 2026`) when it ends in a year after `fy`, and each `i_` pair is that
+/// period and the same period a year before, so a reader can roll FY forward to the trailing twelve
+/// months (`ttm`).
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone, Debug, PartialEq)]
 struct S1Figs {
     fy: Option<i32>,
@@ -7371,6 +7420,24 @@ struct S1Figs {
     assets: Option<f64>,
     liab: Option<f64>,
     equity: Option<f64>,
+    gross: Option<f64>,
+    op: Option<f64>,
+    ocf: Option<f64>,
+    interim: Option<String>,
+    i_rev: Option<[f64; 2]>,
+    i_net: Option<[f64; 2]>,
+    i_gross: Option<[f64; 2]>,
+    i_op: Option<[f64; 2]>,
+    i_ocf: Option<[f64; 2]>,
+}
+
+/// (#527) The trailing twelve months: the fiscal year plus the latest interim minus the same interim a
+/// year before; the fiscal year alone when the S-1 has no interim pair for the row.
+fn ttm(fy: Option<f64>, interim: Option<[f64; 2]>) -> Option<f64> {
+    match interim {
+        Some([cur, prior]) => fy.map(|y| y + cur - prior),
+        None => fy,
+    }
 }
 
 /// (#524) An S-1's HTML as one line of text: tags dropped, entities decoded, dot leaders and footnote
@@ -7396,7 +7463,9 @@ fn s1_text(html: &str) -> String {
 /// never a guessed scale. Rows are a label followed directly by numbers (`(x)` negative, `—` zero), so
 /// prose and "Net loss per share" lines never match a label. The header is the last run of years before
 /// the income row: with "months ended" in it, two of its columns are interim, first when "months ended"
-/// comes before "year(s) ended". An income row counts only with one number per year.
+/// comes before "year(s) ended". An income row counts only with one number per year. (#527) Gross
+/// profit, operating income and operating cash flow are read the same way, and so is the interim pair
+/// (latest interim year, the year before) of every income row.
 /// ponytail: a label/column heuristic over free HTML, n/a on any miss; read Inline XBRL instead once
 /// filers tag their S-1 statements.
 fn s1_figures(html: &str) -> S1Figs {
@@ -7441,6 +7510,10 @@ fn s1_figures(html: &str) -> S1Figs {
     let income = |r: &&(usize, String, Vec<f64>)| r.2.len() >= 2;
     let rev = rows.iter().filter(income).find(|r| is_rev(&r.1) && r.1.starts_with("total")).or_else(|| rows.iter().filter(income).find(|r| is_rev(&r.1)));
     let net = rows.iter().filter(income).find(|r| net_re.is_match(&r.1));
+    let gross_re = re(r"^gross (profit|profit \(loss\)|loss|\(loss\) profit)$");
+    let op_re = re(r"^(income|loss|income \(loss\)|loss \(income\)|\(loss\) income) from operations$|^operating (income|loss|income \(loss\)|\(loss\) income)$");
+    let ocf_re = re(r"^net cash (provided by|used in|provided by \(used in\)|\(used in\) provided by|used in \(provided by\)) operating activities$");
+    let [gross, op, ocf] = [gross_re, op_re, ocf_re].map(|x| rows.iter().filter(income).find(|r| x.is_match(&r.1)));
     let mut f = S1Figs {
         cash: money(first(&|l| l.starts_with("cash") && !["flow", "provided", "used"].iter().any(|w| l.contains(w)))),
         assets: money(first(&|l| l == "total assets")),
@@ -7464,6 +7537,19 @@ fn s1_figures(html: &str) -> S1Figs {
     f.rev = at(rev, Some(fy_i));
     f.rev_prior = at(rev, prior_i);
     f.net = at(net, Some(fy_i));
+    (f.gross, f.op, f.ocf) = (at(gross, Some(fy_i)), at(op, Some(fy_i)), at(ocf, Some(fy_i)));
+    let cur_i = (0..years.len()).filter(|i| !annual.contains(i)).max_by_key(|&i| years[i]).filter(|&i| years[i] > fy);
+    let Some(cur_i) = cur_i else { return f };
+    let Some(prev_i) = (0..years.len()).find(|&i| !annual.contains(&i) && years[i] == years[cur_i] - 1) else { return f };
+    let span = re(r"(three|six|nine|\d+) months ended").captures(&phrase).map(|c| match &c[1] {
+        "three" => "3".to_string(),
+        "six" => "6".to_string(),
+        "nine" => "9".to_string(),
+        n => n.to_string(),
+    });
+    f.interim = Some(span.map_or_else(|| years[cur_i].to_string(), |n| format!("{n}M {}", years[cur_i])));
+    let pair = |r| at(r, Some(cur_i)).zip(at(r, Some(prev_i))).map(|(c, p)| [c, p]);
+    (f.i_rev, f.i_net, f.i_gross, f.i_op, f.i_ocf) = (pair(rev), pair(net), pair(gross), pair(op), pair(ocf));
     f
 }
 
@@ -7518,18 +7604,22 @@ fn ipo_watch_merge(deals: &mut Vec<IpoDeal>, w: IpoWatch, cik: Option<String>) {
     (d.rep_expected, d.rep_raise, d.rep_value, d.source) = (w.expected, w.raise, w.value, w.source);
 }
 
-/// (#524) A dollar cell: `$X.XB` from $1B, `$X.XM` below, a minus in front when negative.
+/// (#524) A dollar cell: `$X.XB` from $1B, `$X.XM` below, (#527) `$XK` below $1M, a minus in front
+/// when negative.
 fn usd_cell(x: f64) -> String {
     let sign = if x < 0.0 { "-" } else { "" };
     match x.abs() {
         a if a >= 1e9 => format!("{sign}${:.1}B", a / 1e9),
-        a => format!("{sign}${:.1}M", a / 1e6),
+        a if a >= 1e6 => format!("{sign}${:.1}M", a / 1e6),
+        a => format!("{sign}${:.0}K", a / 1e3),
     }
 }
 
 /// (#524) The page's Upcoming table: upcoming soonest first, then filed by filing day, then
 /// confidential by the reported month. A real figure wins; a press figure fills a missing one, marked
-/// ` r`; anything else reads n/a.
+/// ` r`; anything else reads n/a. (#527) Ratios read the trailing twelve months (`ttm`) and value the
+/// company at the middle of its range; REV-YoY compares the latest interim with the year before when
+/// the S-1 has one.
 fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
     let rank = |d: &IpoDeal| ["upcoming", "filed", "confidential"].iter().position(|s| *s == d.status).unwrap_or(3);
     let key = |d: &IpoDeal| (rank(d), if d.status == "confidential" { d.rep_expected.clone() } else { d.day.clone() }, d.name.clone());
@@ -7559,25 +7649,44 @@ fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
             };
             let g = &d.figs;
             let money = |x: Option<f64>| x.map_or_else(na, usd_cell);
+            let mcap = mid(&d.range).zip(d.shares).map(|(m, s)| m * s);
+            let rev = ttm(g.rev, g.i_rev).filter(|r| *r > 0.0);
+            let margin = |x: Option<f64>| x.zip(rev).map_or_else(na, |(x, r)| pct(x / r));
+            let net = ttm(g.net, g.i_net);
+            let yoy = g.i_rev.map(|[c, p]| (c, p)).or(g.rev.zip(g.rev_prior)).filter(|(_, p)| *p > 0.0);
+            let pe = match (mcap, net) {
+                (Some(m), Some(n)) if n > 0.0 => format!("{:.1}", m / n),
+                (Some(_), Some(_)) => "loss".to_string(),
+                _ => na(),
+            };
             serde_json::json!([
                 ["#", (i + 1).to_string()],
                 ["STATUS", d.status],
                 ["TICKER", if d.sym.is_empty() { "—" } else { &d.sym }],
                 ["NAME", d.name, link],
+                ["INDUSTRY", or_na(&d.industry)],
                 ["EXPECTED", expected],
                 ["RAISE", real_or_r(d.raise, d.rep_raise)],
                 ["RANGE", if d.range.is_empty() { na() } else { format!("${}", d.range) }],
-                ["MCAP@MID", real_or_r(mid(&d.range).zip(d.shares).map(|(m, s)| m * s), d.rep_value)],
+                ["MCAP@MID", real_or_r(mcap, d.rep_value)],
+                ["P/S@MID", mcap.zip(rev).map_or_else(na, |(m, r)| format!("{:.1}x", m / r))],
+                ["P/E@MID", pe],
                 ["SHARES", d.shares.map_or_else(na, |s| format!("{:.1}M", s / 1e6))],
                 ["LOCKUP", or_na(&d.lockup)],
                 ["EMPLOYEES", or_na(&d.employees)],
                 ["EXCHANGE", or_na(&d.exchange)],
+                ["LEADS", or_na(&d.leads.join(", "))],
+                ["AUDITOR", or_na(&d.auditor)],
                 filing,
                 ["FY", g.fy.map_or_else(na, |y| y.to_string())],
+                ["INTERIM", g.interim.clone().unwrap_or_else(na)],
                 ["REV", money(g.rev)],
-                ["REV-YoY", g.rev.zip(g.rev_prior.filter(|p| *p > 0.0)).map_or_else(na, |(r, p)| pct(r / p - 1.0))],
+                ["REV-YoY", yoy.map_or_else(na, |(r, p)| pct(r / p - 1.0))],
                 ["NET", money(g.net)],
-                ["NET%", g.net.zip(g.rev.filter(|r| *r > 0.0)).map_or_else(na, |(n, r)| pct(n / r))],
+                ["NET%", margin(net)],
+                ["GROSS%", margin(ttm(g.gross, g.i_gross))],
+                ["OP%", margin(ttm(g.op, g.i_op))],
+                ["OCF%", margin(ttm(g.ocf, g.i_ocf))],
                 ["CASH", money(g.cash)],
                 ["ASSETS", money(g.assets)],
                 ["LIAB", money(g.liab)],
@@ -7591,7 +7700,7 @@ fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
 /// accession). None = SEC did not answer, so nothing is cached and the next run asks again.
 #[mutants::skip] // network shell around the tested `s1_figures`
 async fn s1_figures_cached(client: &Client, url: &str, acc: &str, ua: &str) -> Option<S1Figs> {
-    let path = sec_cache_path(&format!("_s1_{acc}"));
+    let path = sec_cache_path(&format!("_s1v2_{acc}"));
     if let Some(f) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
         return Some(f);
     }
@@ -7602,7 +7711,8 @@ async fn s1_figures_cached(client: &Client, url: &str, acc: &str, ua: &str) -> O
 
 /// (#515) (#524) The upcoming $1B+ US IPOs, for the page; `Null` when the URL is off or Nasdaq refused a
 /// month, so the payload carries no table rather than a false "none". Four calendar months (two back,
-/// this, next), one overview per kept deal, one EDGAR search per watch row, then SEC submissions and the
+/// this, next), (#527) one experts read per non-SPAC deal of any size (its leads decide admission), one
+/// overview per kept deal, one EDGAR search per watch row, then SEC submissions and the
 /// S-1 for every deal with a CIK: a deal SEC shows as priced is dropped.
 #[mutants::skip] // network glue around the tested pure fns above
 pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
@@ -7621,7 +7731,15 @@ pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
         };
         months.push(v);
     }
-    let mut deals = ipo_deals(&months[..2], &months[2..]);
+    let mut deals = Vec::new();
+    for mut d in ipo_deals(&months[..2], &months[2..]) {
+        if let Some(v) = get_json(client, &urls.nasdaq_ipo_experts.replace("{id}", &d.id)).await {
+            ipo_experts(&v, &mut d);
+        }
+        if ipo_admit(&mut d) {
+            deals.push(d);
+        }
+    }
     for d in &mut deals {
         if let Some(v) = get_json(client, &urls.nasdaq_ipo_overview.replace("{id}", &d.id)).await {
             ipo_overview(&v, d);
@@ -7651,6 +7769,7 @@ pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
                 if s1_priced(&sub) {
                     continue;
                 }
+                d.industry = sub["sicDescription"].as_str().unwrap_or("").to_string();
                 if let Some((form, day, acc, doc)) = s1_doc(&sub) {
                     let url = urls.sec_form4.replace("{cik}", cik.trim_start_matches('0')).replace("{acc}", &acc.replace('-', "")).replace("{doc}", &doc);
                     d.figs = s1_figures_cached(client, &url, &acc, ua).await.unwrap_or_default();
@@ -13074,7 +13193,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 53] = [
+        const FIELDS: [&str; 54] = [
             "openfigi_mapping", "fred",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -13086,6 +13205,7 @@ pub(crate) mod tests {
             "trackingdifferences", "nasdaq_profile", "nasdaq_target", "nasdaq_summary", "finra_short",
             "wikipedia_search", "wikidata_entity", "sec_fts", "ark_trades", "openinsider_clusters",
             "apewisdom", "google_trends_rss", "hn_stories", "nasdaq_ipo_overview", "sec_fts_s1",
+            "nasdaq_ipo_experts",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\nyoutube_more_feeds: [\"{base}\"]\n")); // the two non-String fields
@@ -14657,7 +14777,7 @@ pub(crate) mod tests {
 
     /// (#524) Nasdaq's sections into deals: upcoming only from this month and the next, filed from all
     /// four (a symbol-less filed row kept), priced/withdrawn dealIDs dropped, upcoming beating filed,
-    /// the $1B+ / no-SPAC rule on both.
+    /// the no-SPAC rule on both; (#527) any size, `ipo_admit` applies the $1B rule later.
     #[test]
     fn ipo_deals_merge_upcoming_and_filed_and_drop_priced() {
         let up = |id: &str, sym: &str, name: &str, day: &str, offer: &str| {
@@ -14688,10 +14808,56 @@ pub(crate) mod tests {
             got,
             vec![
                 ("upcoming", "S".into(), "SOON".into(), "2026-10-21".into(), Some(2.04e9)),
+                ("upcoming", "T".into(), "TRXB".into(), "2026-10-09".into(), Some(153_333_344.0)),
                 ("filed", "A".into(), "".into(), "2026-08-04".into(), Some(1.2e9)),
             ],
-            "OLD priced, W withdrawn, TRXB too small, Beta a SPAC, S's filed row a duplicate; Aug's upcoming not read"
+            "OLD priced, W withdrawn, Beta a SPAC, S's filed row a duplicate; Aug's upcoming not read"
         );
+    }
+
+    /// (#527) Experts on trimmed real answers: Wella (2026-10, three bulge leads of four) and TRex Bio
+    /// (one of five). A $1B+ deal stays whatever its leads; a smaller one needs two bulge leads, and a
+    /// filed one then loses Nasdaq's placeholder raise.
+    #[test]
+    fn ipo_experts_read_leads_and_auditor_and_bulge_leads_admit() {
+        let ex = |rows: &[(&str, &str)]| {
+            let rows: Vec<Value> = rows.iter().map(|(n, r)| serde_json::json!({"expertName": n, "role": r})).collect();
+            serde_json::json!({"data": {"dealID": "x", "tableModel": {"asOf": null, "headers": null, "rows": rows}}})
+        };
+        let wella = ex(&[
+            ("Deloitte & Touche LLP", "Auditor"),
+            ("BofA Securities, Inc", "LeadUnderwriter"),
+            ("Goldman Sachs & Co. LLC", "LeadUnderwriter"),
+            ("J.P. Morgan Securities LLC", "LeadUnderwriter"),
+            ("KKR Capital Markets LLC", "LeadUnderwriter"),
+            ("Computershare Trust Company, N.A", "TransferAgent"),
+            ("Morgan Stanley & Co. LLC", "Underwriter"),
+        ]);
+        let trex = ex(&[
+            ("KPMG LLP", "Auditor"),
+            ("Cantor Fitzgerald & Co.", "LeadUnderwriter"),
+            ("Evercore Group L.L.C", "LeadUnderwriter"),
+            ("J.P. Morgan Securities LLC", "LeadUnderwriter"),
+            ("TD Securities (USA) LLC", "LeadUnderwriter"),
+        ]);
+        let mut w = IpoDeal { status: "filed", raise: Some(1e8), ..IpoDeal::default() };
+        ipo_experts(&wella, &mut w);
+        assert_eq!((w.leads.join(", "), w.auditor.as_str()), ("BofA, Goldman Sachs, J.P. Morgan, KKR".into(), "Deloitte & Touche"));
+        assert_eq!(bulge_leads(&w.leads), 3, "Morgan Stanley is only a co-underwriter here");
+        assert!(ipo_admit(&mut w));
+        assert_eq!(w.raise, None, "a filed deal admitted by its leads drops the placeholder raise");
+        let mut t = IpoDeal { status: "upcoming", raise: Some(153e6), ..IpoDeal::default() };
+        ipo_experts(&trex, &mut t);
+        assert_eq!((t.leads.join(", "), t.auditor.as_str()), ("Cantor Fitzgerald, Evercore, J.P. Morgan, TD".into(), "KPMG"));
+        assert!(!ipo_admit(&mut t), "one bulge lead");
+        let mut u = IpoDeal { status: "upcoming", raise: Some(8e8), leads: w.leads.clone(), ..IpoDeal::default() };
+        assert!(ipo_admit(&mut u));
+        assert_eq!(u.raise, Some(8e8), "an upcoming raise is the range's, real");
+        let mut big = IpoDeal { status: "filed", raise: Some(1e9), ..IpoDeal::default() };
+        assert!(ipo_admit(&mut big) && big.raise == Some(1e9), "$1B+ needs no leads");
+        let mut none = IpoDeal::default();
+        ipo_experts(&serde_json::json!({"data": null}), &mut none);
+        assert_eq!(none, IpoDeal::default(), "no answer, no leads");
     }
 
     /// (#524) The overview's values are strings or numbers; the site is the href, upgraded to https.
@@ -14770,7 +14936,7 @@ pub(crate) mod tests {
             site: "https://soon.example".into(),
             shares: Some(100e6),
             filing: Some(("S-1/A".into(), "2026-10-01".into(), "https://www.sec.gov/x.htm".into())),
-            figs: S1Figs { fy: Some(2025), rev: Some(33e6), rev_prior: Some(19.1e6), net: Some(-761.8e6), cash: None, assets: Some(17_252e6), liab: Some(12_359.8e6), equity: Some(4_792.2e6) },
+            figs: S1Figs { fy: Some(2025), rev: Some(33e6), rev_prior: Some(19.1e6), net: Some(-761.8e6), cash: None, assets: Some(17_252e6), liab: Some(12_359.8e6), equity: Some(4_792.2e6), ..S1Figs::default() },
             ..IpoDeal::default()
         };
         let filed = IpoDeal { status: "filed", name: "Alpha Inc".into(), day: "2026-08-04".into(), raise: Some(1.2e9), ..IpoDeal::default() };
@@ -14788,7 +14954,8 @@ pub(crate) mod tests {
             "real figures win over Soon's press valuation"
         );
         assert_eq!(rows[0][3][2], "https://soon.example");
-        assert_eq!(rows[0][12][2], "https://www.sec.gov/x.htm");
+        let filing = rows[0].as_array().unwrap().iter().find(|c| c[0] == "FILING").unwrap();
+        assert_eq!(filing[2], "https://www.sec.gov/x.htm");
         assert_eq!(["STATUS", "TICKER", "EXPECTED", "RAISE", "MCAP@MID", "FILING", "FY"].map(|h| cell(1, h)), ["filed", "—", "n/a", "$1.2B", "n/a", "filed 2026-08-04", "n/a"]);
         assert_eq!(
             ["STATUS", "TICKER", "EXPECTED", "RAISE", "RANGE", "MCAP@MID", "LOCKUP", "FILING", "REV"].map(|h| cell(2, h)),
@@ -14796,7 +14963,62 @@ pub(crate) mod tests {
         );
         assert_eq!(rows[2][3][2], "https://example.com/a", "a watch row's NAME links its source");
         assert_eq!(cell(0, "#"), "1");
-        assert_eq!(usd_cell(-0.5e6), "-$0.5M");
+        assert_eq!(usd_cell(-0.5e6), "-$500K");
+        assert_eq!(usd_cell(12e3), "$12K");
+        assert_eq!(usd_cell(1e6), "$1.0M");
+        assert_eq!(["P/S@MID", "P/E@MID", "INTERIM", "GROSS%", "LEADS", "INDUSTRY"].map(|h| cell(0, h)), ["97.0x", "loss", "n/a", "n/a", "n/a", "n/a"]);
+    }
+
+    /// (#527) Oura's S-1/A (2026-09-21), trimmed: fiscal year to September, nine-month interim first.
+    /// Gross profit, income from operations and operating cash flow join; the interim pair rolls FY 2025
+    /// forward to the twelve months to June 2026, which the ratios read at the range's middle.
+    #[test]
+    fn s1_figures_reads_interim_pairs_and_the_rows_read_ttm() {
+        let oura = "SUMMARY CONSOLIDATED FINANCIAL AND OTHER DATA The following tables present the summary. Nine Months Ended June 30, \
+            Year Ended September 30, 2026 2025 2025 2024 (in thousands, except share and per share data) Consolidated Statements of \
+            Operations: Revenue: Hardware $ 973,980 $ 588,726 $ 749,393 $ 331,203 Membership 240,526 108,843 158,463 75,548 Total revenue \
+            1,214,506 697,569 907,856 406,751 Cost of revenue 552,339 341,544 436,844 142,657 Gross profit 662,167 356,025 471,012 264,094 \
+            Operating expenses: Total operating expenses 590,979 295,760 425,680 250,654 Income from operations 71,188 60,265 45,332 13,440 \
+            Interest expense (2,222 ) (10,602 ) (13,384 ) (15,613 ) Net income $ 60,768 $ 1,573 $ 12 $ 3,649 Net loss attributable to \
+            common stockholders $ (924,255 ) $ (182,844 ) $ (186,088 ) $ (8,551 ) Nine Months Ended June 30, Year Ended September 30, 2026 \
+            2025 2025 2024 (in thousands) Consolidated Statements of Cash Flows: Net cash provided by operating activities $ 328,008 $ \
+            135,315 $ 121,693 $ 28,227 Net cash used in investing activities (76,958 ) (20,281 ) (29,186 ) (12,383 ) As of June 30, 2026 \
+            Actual Pro Forma Pro Forma As Adjusted (in thousands) Consolidated Balance Sheet: Cash and cash equivalents $ 371,764 $ 371,764 \
+            $ 377,919 Total assets 1,063,188 1,063,188 1,065,094 Total liabilities 1,181,171 1,657,569 1,127,855 Total stockholders’ \
+            deficit (1,617,734 ) (594,381 ) (62,760 )";
+        let f = s1_figures(oura);
+        let k = |x: f64| x * 1e3;
+        assert_eq!(
+            f,
+            S1Figs {
+                fy: Some(2025),
+                rev: Some(k(907_856.0)),
+                rev_prior: Some(k(406_751.0)),
+                net: Some(k(12.0)),
+                cash: Some(k(371_764.0)),
+                assets: Some(k(1_063_188.0)),
+                liab: Some(k(1_181_171.0)),
+                equity: Some(k(-1_617_734.0)),
+                gross: Some(k(471_012.0)),
+                op: Some(k(45_332.0)),
+                ocf: Some(k(121_693.0)),
+                interim: Some("9M 2026".into()),
+                i_rev: Some([k(1_214_506.0), k(697_569.0)]),
+                i_net: Some([k(60_768.0), k(1_573.0)]),
+                i_gross: Some([k(662_167.0), k(356_025.0)]),
+                i_op: Some([k(71_188.0), k(60_265.0)]),
+                i_ocf: Some([k(328_008.0), k(135_315.0)]),
+            }
+        );
+        assert_eq!(ttm(f.rev, f.i_rev), Some(k(1_424_793.0)));
+        assert_eq!(ttm(f.rev, None), f.rev);
+        let d = IpoDeal { status: "filed", name: "Oura".into(), range: "40.00-44.00".into(), shares: Some(13.5e9 / 42.0), figs: f, ..IpoDeal::default() };
+        let rows = ipo_web_rows(vec![d]);
+        let cell = |h: &str| rows[0].as_array().unwrap().iter().find(|c| c[0] == h).map(|c| c[1].as_str().unwrap().to_string()).unwrap();
+        assert_eq!(
+            ["MCAP@MID", "P/S@MID", "P/E@MID", "FY", "INTERIM", "REV", "REV-YoY", "NET", "NET%", "GROSS%", "OP%", "OCF%"].map(cell),
+            ["$13.5B", "9.5x", "228.0", "2025", "9M 2026", "$907.9M", "74.1%", "$12K", "4.2%", "54.5%", "3.9%", "22.1%"]
+        );
     }
 
     /// (#524) The S-1 summary table, on trimmed copies of three real layouts: TRex Bio (annual columns
@@ -14828,6 +15050,11 @@ pub(crate) mod tests {
             (unaudited) (millions) Consolidated Balance Sheet Data: Total current assets $ 3,927.6 $ $ Total assets 17,252.0 Total liabilities \
             12,359.8 Total shareholders&#x2019; equity 4,792.2";
         assert_eq!(r(s1_figures(nscale)), (Some(2025), [Some(33e6), Some(19.1e6), Some(-761.8e6), None, Some(17_252e6), Some(12_359.8e6), Some(4_792.2e6)]));
+        let n = s1_figures(nscale);
+        let m = |x: Option<[f64; 2]>| x.map(|p| p.map(|v| (v / 1e5).round() / 10.0));
+        assert_eq!((n.interim.as_deref(), m(n.i_rev), m(n.i_ocf), n.ocf.map(f64::round)), (Some("6M 2026"), Some([140.6, 10.4]), Some([1686.1, 5.6]), Some(1_376.4e6)));
+        let t = s1_figures(trex);
+        assert_eq!((t.interim.as_deref(), t.i_net), (Some("6M 2026"), Some([-29_308e3, -17_722e3])), "interim columns last");
         let spacex = "<p>Summary Historical Consolidated Financial and Operating Data</p><p>The following information should be read together \
             with our statements. Stat ements of Operations Data&#58; Three Months Ended March 31, Year Ended December 31, 2026 2025 2025 \
             2024 2023 (in millions, except per share data ) (unaudited) Revenue ........ $ 4,694 $ 4,067 $ 18,674 $ 14,015 $ 10,387 \
@@ -14835,6 +15062,7 @@ pub(crate) mod tests {
             Balance Sheet Data&#58; March 31, December 31, 2026 2025 2024 (in millions) (unaudited) Cash and cash equivalents $ 15,852 \
             $ 24,747 $ 11,385 Total assets 102,094 92,079 57,062 Total liabilities 60,512 50,754 31,258 Total shareholders&#8217; equity \
             34,533 2,573 4,863</p>";
+        assert_eq!(s1_figures(spacex).interim.as_deref(), Some("3M 2026"));
         assert_eq!(r(s1_figures(spacex)), (Some(2025), [Some(18_674e6), Some(14_015e6), Some(-4_937e6), Some(15_852e6), Some(102_094e6), Some(60_512e6), Some(34_533e6)]));
         assert_eq!(s1_figures(&trex.replace("(in thousands)", "")), S1Figs::default(), "no units mark: no scale is guessed");
     }

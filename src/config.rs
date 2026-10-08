@@ -984,6 +984,11 @@ pub struct Urls {
     // home page for the Upcoming table. Read only when `nasdaq_ipo` is set.
     #[serde(default = "default_nasdaq_ipo_overview_url")]
     pub nasdaq_ipo_overview: String,
+    // (#527) One Nasdaq IPO deal's experts, {id} = dealID: lead underwriters and auditor for the
+    // Upcoming table, and the bulge-bracket count that admits a filed deal whose S-1 cover still reads a
+    // placeholder raise. Read only when `nasdaq_ipo` is set.
+    #[serde(default = "default_nasdaq_ipo_experts_url")]
+    pub nasdaq_ipo_experts: String,
     // (#524) EDGAR full-text search over registration statements: finds a watch-list company's CIK once
     // its S-1/F-1 goes public. The quoted name is appended as `q`.
     #[serde(default = "default_sec_fts_s1_url")]
@@ -1046,6 +1051,11 @@ fn default_nasdaq_earnings_url() -> String {
 /// (#524) Default Nasdaq IPO deal overview: `data.poOverview.<Key>.value` per field.
 fn default_nasdaq_ipo_overview_url() -> String {
     "https://api.nasdaq.com/api/ipo/overview/?dealId={id}".to_string()
+}
+
+/// (#527) Default Nasdaq IPO deal experts: `data.tableModel.rows[{expertName, role}]`.
+fn default_nasdaq_ipo_experts_url() -> String {
+    "https://api.nasdaq.com/api/ipo/experts/?dealId={id}".to_string()
 }
 
 /// (#524) Original and amended S-1/F-1 both match `forms`; the caller reads the newest from submissions.
@@ -2915,6 +2925,7 @@ mod tests {
             (default_trackingdifferences_url(), "https://www.trackingdifferences.com/", &["{isin}"][..]),
             (default_nasdaq_profile_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_nasdaq_ipo_overview_url(), "https://api.nasdaq.com/", &["{id}"][..]),
+            (default_nasdaq_ipo_experts_url(), "https://api.nasdaq.com/", &["{id}"][..]),
             (default_sec_fts_s1_url(), "https://efts.sec.gov/", &[][..]),
             (default_nasdaq_target_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
             (default_nasdaq_summary_url(), "https://api.nasdaq.com/", &["{sym}"][..]),
