@@ -20990,6 +20990,9 @@ urls:
   #    first): REV $907.9M (+123%), NET $12K, a $1.6B stockholders' deficit, all as filed.
   # Big issuers often file with a $100M placeholder; the watch list covers those.
   # REVERT: delete this line. The watch rows go; the Nasdaq/S-1 part stays with `nasdaq_ipo`.
+  # (#528) OpenAI (confidential S-1 announced 2026-06-08, CFO: public in 2027), Altera, Discord,
+  # Strava and Panera joined on 2026-10-08. None had a public S-1 on EDGAR that day. Values are the
+  # last reported private marks; Panera's only confirmed draft dates from 2023, so its cells are blank.
   ipo_watch: "tests/ipo-watch.csv"
   # (#525) Portuguese SIGIs (listed real-estate investment companies on Euronext Access Lisbon) for
   # the REITs table: no index lists them, so they ride as display-only side quotes, never `quotes`,

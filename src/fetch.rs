@@ -7240,7 +7240,11 @@ fn ipo_kept(v: &Value, section: &str, min_offer: f64) -> Vec<(Value, f64)> {
         .filter_map(|r| {
             let (sym, name, price) = (ipo_field(&r, "proposedTickerSymbol"), ipo_field(&r, "companyName").to_lowercase(), ipo_field(&r, "proposedSharePrice"));
             let offer: f64 = ipo_field(&r, "dollarValueOfSharesOffered").replace(['$', ','], "").parse().ok()?;
-            let spac = ["acquisition", "capital corp", "spac", "merger"].iter().any(|t| name.contains(t))
+            // (#528) "spac" counts only as a whole word: as a substring it matched "SPACE EXPLORATION
+            // TECHNOLOGIES CORP" (SPCX, $75B, priced 2026-06-12) and kept SpaceX out of the pond. Over 60
+            // months of $1B+ priced deals that was the token's only hit; no real SPAC raised $1B+.
+            let spac = ["acquisition", "capital corp", "merger"].iter().any(|t| name.contains(t))
+                || name.split(|c: char| !c.is_alphanumeric()).any(|w| w == "spac")
                 || (sym.ends_with('U') && price == "10.00");
             ((!sym.is_empty() || section == "filed") && offer >= min_offer && !spac).then_some((r, offer))
         })
@@ -14738,8 +14742,10 @@ pub(crate) mod tests {
             row("EXACT".into(), "Exactly A Billion", "18.00", "$1,000,000,000"),
             row("TENX".into(), "Ten Dollar Inc", "10.00", "$1,100,000,000"),
             row("SOLU".into(), "Solu Inc", "25.00", "$1,100,000,000"),
+            row("SPCX".into(), "SPACE EXPLORATION TECHNOLOGIES CORP", "135.00", "$74,999,999,925"),
+            row("RKT".into(), "Rocket SPAC Inc", "20.00", "$1,200,000,000"),
         ]}}});
-        assert_eq!(ipo_rows(&v), vec!["ARM", "CRWV", "EXACT", "TENX", "SOLU"]);
+        assert_eq!(ipo_rows(&v), vec!["ARM", "CRWV", "EXACT", "TENX", "SOLU", "SPCX"], "(#528) Space is no SPAC");
         assert_eq!(ipo_rows(&serde_json::json!({"data": null})), Vec::<String>::new());
         assert_eq!(gics_of_nasdaq(Some("Technology")), "Information Technology");
         assert_eq!(gics_of_nasdaq(Some("Energy")), "Energy");

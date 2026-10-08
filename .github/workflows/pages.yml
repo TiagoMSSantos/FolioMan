@@ -153,12 +153,13 @@ jobs:
 
       # (#499) The $1B+ IPO pond: one Nasdaq calendar GET per month plus one profile GET per kept name.
       # Past months never change, so a warm run asks only for the current month.
+      # (#528) ipo2: the old cache held June 2026 without SpaceX (a substring SPAC test dropped it).
       - name: Restore IPO cache
         uses: actions/cache@v6
         with:
           path: .ipo_cache.json
-          key: folioman-ipo-${{ github.run_id }}
-          restore-keys: folioman-ipo-
+          key: folioman-ipo2-${{ github.run_id }}
+          restore-keys: folioman-ipo2-
 
       # (#516) The App Store chart's daily ranks: a climb is graded against the week before, so the
       # file must survive between runs or every run is day one.

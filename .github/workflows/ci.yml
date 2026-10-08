@@ -395,8 +395,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .ipo_cache.json
-          key: folioman-ipo-${{ github.run_id }}
-          restore-keys: folioman-ipo-
+          key: folioman-ipo2-${{ github.run_id }}
+          restore-keys: folioman-ipo2-
       # (#352) The monthly history, cached HERE and written by this job only. Live, it was ~90s of the
       # 20y horizon's 143s: ~4700 series at the 60 rps pacer (local: 94s cold vs 5.6s warm). A cache
       # hit is the raw Yahoo payload taking the same parse as a fetch, under the tool's own 7-day
