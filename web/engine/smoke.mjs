@@ -24,7 +24,8 @@ try {
   // (#456) `exposure`, from Yahoo's fund holdings, which the engine does not carry.
   // (#486) `bonds`, from FRED. (#500) `young`, built by screen alone like the three shadow tables.
   // (#502) `cagr_floor`, the floor the page cuts those shadow tables at. (#515) `upcoming`, Nasdaq's calendar.
-  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "cagr_floor", "upcoming"];
+  // (#525) `reits` (side-priced SIGIs) and `reit_cagr_floor`, the REIT table's grey line.
+  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "cagr_floor", "upcoming", "reits", "reit_cagr_floor"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);
   const drift = Object.keys(want).filter((k) => !["generated", ...ci].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));

@@ -1168,6 +1168,11 @@ dip_days: 30       # trailing window (days) for the vs-high dip
 drop_pct: 5.0      # `alert` fires when a name is >= this % below that window high
 top_picks: 25      # how many "buy candidate" rows `check` lists after the table, and the cut `picks::render`
                    #   hands the screen as its ranked book (coins ride free of it since (#320)). (#321) 20 -> 25.
+# (#525) The page's REITs table greys a row whose CAGR is under this % a year; the row stays, in rank
+# order. Display only: nothing scores, gates or sizes on it. The code default is 5.0; CI asks 10.0, so a
+# REIT shows plainly only when it compounded near broad equity (VNQ 20y 5.1%, SPY 11.1%, 2026-10-08).
+# The other shadow tables grey under `growth_min_cagr`. REVERT: delete this line (back to 5.0).
+reit_min_cagr: 10.0
 # deploy-math base (€ you put in per month): `screen` prints "DEPLOY THIS MONTH: €base × entry-state
 # multiplier" (near-high 1×, pullback 1.5×, drawdown 2× — the backtest's deploy-faster shape). 0 = line
 # off. PERSONAL number — set it in the private config/settings.yaml overlay, never here.
@@ -20978,6 +20983,12 @@ urls:
   # Big issuers often file with a $100M placeholder; the watch list covers those.
   # REVERT: delete this line. The watch rows go; the Nasdaq/S-1 part stays with `nasdaq_ipo`.
   ipo_watch: "tests/ipo-watch.csv"
+  # (#525) Portuguese SIGIs (listed real-estate investment companies on Euronext Access Lisbon) for
+  # the REITs table: no index lists them, so they ride as display-only side quotes, never `quotes`,
+  # the journal or universe.json. They barely trade (MLATR.LS 1 day in 14 months, 2026-10-08), so the
+  # turnover gate refuses them and they rank last. REVERT: delete this line; the REIT stocks and
+  # funds stay.
+  sigi_pond: "tests/sigi-pond.csv"
   # (#517) European stocks listed in the last 5 years, off Wikidata (keyless SPARQL, one GET a day,
   # kept 24h in `.wikidata_listings.json`): Frankfurt, London, SIX, Paris, Amsterdam, Stockholm,
   # Madrid, Milan, Oslo, Copenhagen. Asked 2026-10-07: all 48 young rows were US. Young table ONLY:

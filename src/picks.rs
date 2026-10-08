@@ -5034,6 +5034,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
             };
             (h.to_string(), text)
         })
+        .chain([("SCORE".to_string(), RANK_SCORE_HELP.to_string()), ("MISSES".to_string(), RANK_MISSES_HELP.to_string())])
         .collect();
     let inflation = inflation
         .first()
@@ -5081,6 +5082,13 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("TICKER", ticker),
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
+    ]);
+    // (#525) the REITs table: `reit_rows`, then the stock columns like Young
+    let reits = fixed(&[
+        num,
+        ("TICKER", ticker),
+        ("NAME", "The company's or fund's name; click to open its own website or justETF page"),
+        ("KIND", "stock = a stock whose GICS sector is Real Estate (US REITs and property firms); ETF = a fund named for real estate, REITs, property or EPRA/NAREIT; SIGI = a Portuguese listed real-estate investment company (SIGI), from a hand-kept list"),
     ]);
     // (#515) (#524) `fetch::ipo_web_rows`; ` r` = a press figure from `tests/ipo-watch.csv`
     let upcoming = fixed(&[
@@ -5132,6 +5140,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("berkshire", berkshire),
         ("social", social),
         ("young", young),
+        ("reits", reits),
         ("upcoming", upcoming),
         ("exposure", exposure),
     ])
@@ -5365,6 +5374,66 @@ pub fn young_rows(quotes: &[Quote]) -> serde_json::Value {
         .collect()
 }
 
+/// (#525) Name tokens that make a fund a real-estate fund for the REITs table, matched lower-case.
+const REIT_TOKENS: &[&str] = &["real estate", "reit", "propert", "epra", "nareit", "immobil"];
+
+/// (#525) A pool row's place in the REITs table, if any: a stock whose GICS sector is Real Estate, or a
+/// fund whose name carries one of [`REIT_TOKENS`].
+fn reit_kind(q: &Quote) -> Option<&'static str> {
+    let name = q.name.to_lowercase();
+    if q.instrument_type.eq_ignore_ascii_case("EQUITY") && q.sector.as_deref().is_some_and(|s| s.contains("Real Estate")) {
+        Some("stock")
+    } else if q.instrument_type.eq_ignore_ascii_case("ETF") && REIT_TOKENS.iter().any(|t| name.contains(t)) {
+        Some("ETF")
+    } else {
+        None
+    }
+}
+
+/// (#525) The page's REITs table in the shadow tables' `[header, cell]` shape: the pool's real-estate
+/// stocks and funds ([`reit_kind`]), then the hand-kept Portuguese SIGIs (`urls.sigi_pond`, symbol and
+/// name) the pool does not hold. [`stamp_shadow_cols`] adds the stock columns and ranks the rows.
+/// Display only: no BUY%, no journal line.
+pub fn reit_rows(quotes: &[Quote], sigis: &[(String, String)]) -> serde_json::Value {
+    let mut rows: Vec<(&str, &str, &str)> = quotes.iter().filter_map(|q| Some((q.ticker.as_str(), q.name.as_str(), reit_kind(q)?))).collect();
+    let pooled: HashSet<&str> = rows.iter().map(|r| r.0).collect();
+    rows.extend(sigis.iter().filter(|(t, _)| !pooled.contains(t.as_str())).map(|(t, n)| (t.as_str(), n.as_str(), "SIGI")));
+    rows.iter().enumerate().map(|(i, (t, n, k))| serde_json::json!([["#", (i + 1).to_string()], ["TICKER", t], ["NAME", n], ["KIND", k]])).collect()
+}
+
+/// (#525) A row's order key in every page table but the lanes and the IPOs: (class, gates missed, score),
+/// where class 0 passes every gate, 1 fails some, 2 is refused ([`refusal_reason`]) and 3 has no quote or
+/// no 1-year record. A failing row's score is the one it would get with its gates waived ([`waived`]).
+type RankKey = (u8, usize, f64);
+
+/// (#525) Passing rows first by score, then failing rows by fewest gates missed and their waived score,
+/// then refused, then unscorable. Equal keys compare equal, so a stable sort keeps the table's order.
+fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
+    a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.2.total_cmp(&a.2))
+}
+
+/// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
+const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then refused, then n/a";
+const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each); refused = a kind the screen never buys (leveraged, commodity, hedged, no turnover); n/a = not priced, or no 1-year record";
+
+/// (#525) A row's [`RankKey`] and its SCORE and MISSES cells.
+fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic) -> (RankKey, String, String) {
+    const NONE: f64 = f64::NEG_INFINITY;
+    let na = ((3, 0, NONE), "—".to_string(), "n/a".to_string());
+    let Some(q) = q else { return na };
+    if let Some(why) = refusal_reason(q) {
+        return ((2, 0, NONE), "—".to_string(), format!("refused: {why}"));
+    }
+    let Some((t, mut tags, left)) = waived(q, tuning) else { return na };
+    tags.extend(left.iter().map(|f| f.0));
+    let score = if left.is_empty() { growth_score(q, &t) } else { None };
+    match (tags.len(), score) {
+        (0, Some(s)) => ((0, 0, s), format!("{s:.1}"), "0".to_string()),
+        (0, None) => na,
+        (n, s) => ((1, n, s.unwrap_or(NONE)), s.map_or("—".to_string(), |s| format!("{s:.1}ʷ")), format!("{n}: {}", tags.join(", "))),
+    }
+}
+
 /// (#500) The terminal's one line for the same table: how many, and the first `n` with their revenue growth.
 pub fn young_line(quotes: &[Quote], n: usize) -> String {
     let all = young(quotes);
@@ -5386,22 +5455,39 @@ const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "score8y", "in
 /// copied into that table's glossary. A row finds its quote by ticker, else by the US symbol a Xetra twin
 /// stands for (`us`, [`crate::fetch::us_symbol`] on CI): Berkshire files AAPL, the pond holds APC.DE. A row
 /// the screen did not price reads n/a in every column, so the table stays rectangular. Display only.
+/// (#525) Each row also gains SCORE and MISSES right after its NAME, the rows sort by [`rank_key`] and
+/// `#` is renumbered to the new order.
 pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap, us: &dyn Fn(&str) -> String) {
     let cols: Vec<&ColSpec> = lane_columns(w, HIDE_STOCK).into_iter().filter(|c| !HIDE_SHADOW.contains(&c.key)).collect();
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q))); // the exact ticker wins over a twin
-    for table in ["attention", "berkshire", "social", "young"] {
+    for table in ["attention", "berkshire", "social", "young", "reits"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
-        for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
-            let quote = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).and_then(|t| by.get(t));
+        let mut keyed: Vec<(RankKey, serde_json::Value)> = Vec::new();
+        for mut row in std::mem::take(rows) {
+            let Some(cells) = row.as_array_mut() else { continue };
+            let quote = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).and_then(|t| by.get(t)).copied();
             for c in &cols {
                 let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, None, "", tuning, fund_pe));
                 cells.push(serde_json::json!([c.hdr, cell]));
             }
+            let (key, score, misses) = rank_key(quote, tuning);
+            let at = cells.iter().position(|c| c[0] == "NAME").map_or(cells.len(), |i| i + 1);
+            cells.splice(at..at, [serde_json::json!(["SCORE", score]), serde_json::json!(["MISSES", misses])]);
+            keyed.push((key, row));
+        }
+        keyed.sort_by(|a, b| rank_cmp(&a.0, &b.0));
+        for (i, (_, mut row)) in keyed.into_iter().enumerate() {
+            if let Some(n) = row.as_array_mut().and_then(|c| c.iter_mut().find(|c| c[0] == "#")) {
+                n[1] = (i + 1).to_string().into();
+            }
+            rows.push(row);
         }
         for c in &cols {
             payload["help"][table][c.hdr] = payload["help"]["lanes"][c.hdr].clone();
         }
+        payload["help"][table]["SCORE"] = RANK_SCORE_HELP.into();
+        payload["help"][table]["MISSES"] = RANK_MISSES_HELP.into();
     }
 }
 
@@ -5413,7 +5499,7 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &
 /// builders, so the twins ride in universe.json.
 pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Quote>, w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
     let cols = lane_columns(w, HIDE_STOCK);
-    for table in ["stocks", "attention", "berkshire", "social", "young"] {
+    for table in ["stocks", "attention", "berkshire", "social", "young", "reits"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default().to_string();
@@ -5437,7 +5523,7 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
 pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn(&str) -> String) {
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q)));
-    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young"] {
+    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young", "reits"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default();
@@ -5947,10 +6033,18 @@ fn cagr_cell(q: &Quote) -> String {
 /// and (#249)'s inflation table already use, so `web/index.html` renders it with the table builder it
 /// has. `cores` is the list [`print_hold_core`] is about to print, passed in rather than rebuilt:
 /// parity with the terminal is then a property of there being one list, not of two calls agreeing.
-pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned) -> Vec<Vec<(String, String)>> {
-    cores
-        .iter()
-        .map(|q| HOLD_CORE_COLS.iter().map(|h| (*h).to_string()).zip(hold_core_cells(q, owned)).collect())
+/// (#525) The page's copy is ranked like the shadow tables ([`rank_key`]), with SCORE and MISSES after
+/// TICKER; the terminal block and the sizing list keep `cores` in its sleeve order.
+pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned, tuning: &BuyHeuristic) -> Vec<Vec<(String, String)>> {
+    let mut keyed: Vec<_> = cores.iter().map(|q| (rank_key(Some(q), tuning), q)).collect();
+    keyed.sort_by(|a, b| rank_cmp(&a.0 .0, &b.0 .0));
+    keyed
+        .into_iter()
+        .map(|((_, score, misses), q)| {
+            let mut row: Vec<(String, String)> = HOLD_CORE_COLS.iter().map(|h| (*h).to_string()).zip(hold_core_cells(q, owned)).collect();
+            row.splice(3..3, [("SCORE".to_string(), score), ("MISSES".to_string(), misses)]);
+            row
+        })
         .collect()
 }
 
@@ -6367,7 +6461,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // (#250) the CORE shortlist, built ONCE here because both the page and the terminal block below
     // read it. Same gate that decides whether the block prints decides whether the page carries it.
     let cores = if ctx.show_hold_core { hold_core_list(quotes) } else { Vec::new() };
-    let core_rows = hold_core_web_rows(&cores, ctx.owned);
+    let core_rows = hold_core_web_rows(&cores, ctx.owned, tuning);
     if let Some(sink) = ctx.web_out {
         let mut top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation, &core_rows);
         top.degraded = ctx.web_degraded.to_vec();
@@ -10911,12 +11005,87 @@ mod tests {
             "help": {"lanes": {"SECTOR": "the sector"}},
         });
         stamp_shadow_cols(&mut p, &quotes, &w, &BuyHeuristic::default(), &FundPeMap::new(), &us);
-        assert_eq!(p["berkshire"][0], serde_json::json!([["#", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"]]), "a US filing finds its Xetra twin");
-        assert_eq!(p["berkshire"][1], serde_json::json!([["#", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"]]), "unpriced = n/a, still rectangular");
-        assert_eq!(p["social"][0], serde_json::json!([["#", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"]]));
+        // (#525) no NAME cell here, so SCORE and MISSES go last; a stub has no turnover, so it is refused
+        let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: no-turnover"])];
+        let [rs, rm] = refused();
+        assert_eq!(p["berkshire"][0], serde_json::json!([["#", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], rs, rm]), "a US filing finds its Xetra twin");
+        assert_eq!(p["berkshire"][1], serde_json::json!([["#", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
+        let [rs, rm] = refused();
+        assert_eq!(p["social"][0], serde_json::json!([["#", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"], rs, rm]));
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
         assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
         assert!(p.get("attention").is_none(), "an absent table stays absent");
+    }
+
+    /// (#525) Every shadow table and the page's CORE copy rank alike: passing rows by score, then by
+    /// fewest gates missed and the waived (`ʷ`) score, then refused, then unpriced, equal keys in their
+    /// old order; SCORE and MISSES follow NAME and `#` is renumbered. CORE's input order is untouched.
+    #[test]
+    fn page_tables_rank_by_score_then_gates_missed() {
+        let good = |t: &str, cum8: f64| {
+            let mut q = Quote::stub(t, "€100.00", "", t);
+            q.instrument_type = "EQUITY".into();
+            (q.range_pct, q.avg_turnover_eur, q.age_years) = (95.0, Some(3.0e9), Some(12.0));
+            q.perf = legs(&[("1Y", 10.0), ("5Y", 40.0), ("8Y", cum8)]);
+            q
+        };
+        let (strong, weak) = (good("STRONG", 400.0), good("WEAK", 250.0));
+        let (mut one, mut one_lo, mut two) = (good("ONEG", 300.0), good("ONELO", 250.0), good("TWOG", 72.0));
+        (one.range_pct, one_lo.range_pct, two.range_pct) = (75.0, 75.0, 75.0);
+        let mut lev = good("LEVX", 300.0);
+        lev.name = "Some 3x Daily Leveraged ETP".into();
+        let quotes = [strong, weak, one, one_lo, two, lev];
+        let row = |t: &str| serde_json::json!([["#", "0"], ["TICKER", t], ["NAME", t], ["X", "x"]]);
+        let tables: Vec<serde_json::Value> = ["NOPE", "LEVX", "TWOG", "ONELO", "ONEG", "WEAK", "STRONG", "NOPE2"].map(row).into();
+        let mut p = serde_json::json!({"reits": tables, "help": {"lanes": {}}});
+        let (w, d) = (Widths { columns: vec!["ticker".into()], ..Widths::default() }, BuyHeuristic::default());
+        stamp_shadow_cols(&mut p, &quotes, &w, &d, &FundPeMap::new(), &|t: &str| t.to_string());
+        let rows = p["reits"].as_array().unwrap();
+        let order: Vec<&str> = rows.iter().map(|r| r[1][1].as_str().unwrap()).collect();
+        assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "TWOG", "LEVX", "NOPE", "NOPE2"]);
+        let s = growth_score(&quotes[0], &d).unwrap();
+        assert_eq!(rows[0], serde_json::json!([["#", "1"], ["TICKER", "STRONG"], ["NAME", "STRONG"], ["SCORE", format!("{s:.1}")], ["MISSES", "0"], ["X", "x"]]));
+        assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range"]));
+        assert!(rows[2][3][1].as_str().unwrap().ends_with('ʷ'), "a failing row prints its waived score");
+        assert_eq!(rows[4][4], serde_json::json!(["MISSES", "2: range, cagr"]));
+        assert_eq!(rows[5].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
+        assert_eq!(rows[7].as_array().unwrap()[..1], [serde_json::json!(["#", "8"])]);
+        assert_eq!(p["help"]["reits"]["MISSES"], RANK_MISSES_HELP);
+        // CORE: the same order on a copy, SCORE and MISSES after TICKER
+        let cores = [&quotes[5], &quotes[1], &quotes[0]];
+        let web = hold_core_web_rows(&cores, &Owned::default(), &d);
+        assert_eq!(web.iter().map(|r| r[2].1.as_str()).collect::<Vec<_>>(), ["STRONG", "WEAK", "LEVX"]);
+        assert_eq!(cores.map(|q| q.ticker.as_str()), ["LEVX", "WEAK", "STRONG"]);
+    }
+
+    /// (#525) The REITs table: a Real Estate sector stock, a fund named for property, then a SIGI the
+    /// pool does not hold; a tech stock, a broad fund and a stock named REIT without the sector stay out.
+    #[test]
+    fn reit_rows_pick_real_estate_stocks_funds_and_sigis() {
+        let q = |t: &str, kind: &str, sector: Option<&str>, name: &str| Quote {
+            instrument_type: kind.into(),
+            sector: sector.map(Into::into),
+            ..Quote::stub(t, "€1", "", name)
+        };
+        let quotes = [
+            q("DLR", "EQUITY", Some("Real Estate"), "Digital Realty"),
+            q("AAPL", "EQUITY", Some("Information Technology"), "Apple"),
+            q("VNQ", "ETF", None, "Vanguard Real Estate ETF"),
+            q("IPRP.L", "ETF", None, "iShares European Property Yield"),
+            q("SPY", "ETF", None, "SPDR S&P 500"),
+            q("XREIT", "EQUITY", None, "Some REIT Corp"),
+        ];
+        let sigis = [("MLCIA.LS".to_string(), "Ciagest SIGI".to_string()), ("DLR".to_string(), "dup".to_string())];
+        let row = |i: &str, t: &str, n: &str, k: &str| serde_json::json!([["#", i], ["TICKER", t], ["NAME", n], ["KIND", k]]);
+        assert_eq!(
+            reit_rows(&quotes, &sigis),
+            serde_json::json!([
+                row("1", "DLR", "Digital Realty", "stock"),
+                row("2", "VNQ", "Vanguard Real Estate ETF", "ETF"),
+                row("3", "IPRP.L", "iShares European Property Yield", "ETF"),
+                row("4", "MLCIA.LS", "Ciagest SIGI", "SIGI"),
+            ])
+        );
     }
 
     /// (#461) Only n/a cells of a column take the US line's value, marked `$`; a shadow row finds the twin
@@ -11088,11 +11257,16 @@ mod tests {
         bare.young_ret_pct = Some(-12.4);
         assert_eq!(hold_core_cells(&bare, &Owned::default())[4], "-12%ⁱ", "(#507) a young fund reads since listing too");
         // the page rows carry the printer's own column names, in the printer's order
-        let rows = hold_core_web_rows(&[&q], &Owned::default());
+        // (#525) plus SCORE and MISSES after TICKER
+        let rows = hold_core_web_rows(&[&q], &Owned::default(), &BuyHeuristic::default());
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(), HOLD_CORE_COLS);
-        assert_eq!(rows[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(), hold_core_cells(&q, &Owned::default()));
-        assert!(hold_core_web_rows(&[], &Owned::default()).is_empty(), "no cores -> no rows");
+        let mut heads = HOLD_CORE_COLS.to_vec();
+        heads.splice(3..3, ["SCORE", "MISSES"]);
+        assert_eq!(rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(), heads);
+        let mut cells = hold_core_cells(&q, &Owned::default());
+        cells.drain(..3);
+        assert_eq!(rows[0][5..].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(), cells);
+        assert!(hold_core_web_rows(&[], &Owned::default(), &BuyHeuristic::default()).is_empty(), "no cores -> no rows");
     }
 
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + the per-tier cap, and the

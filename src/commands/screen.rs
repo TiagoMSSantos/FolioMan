@@ -1946,7 +1946,18 @@ pub async fn run(args: Vec<String>) {
     // priced and filed like a pool stock so their row stops reading n/a. A side list, never `quotes`: no
     // rank, journal line or universe.json row sees them, and no `$` marks them, since it is their own line.
     let covered: std::collections::HashSet<String> = quotes.iter().flat_map(|q| [q.ticker.clone(), fetch::us_symbol(&q.ticker)]).collect();
-    let unpriced: Vec<String> = shown.iter().filter(|t| !covered.contains(*t)).cloned().collect();
+    // (#525) the REITs table's hand-kept SIGIs (`Symbol,Name`), priced on the same side list
+    let sigis: Vec<(String, String)> = match settings.urls.sigi_pond.as_str() {
+        "" => Vec::new(),
+        path => std::fs::read_to_string(path).map_or_else(
+            |_| {
+                eprintln!("screen: SIGI list {path} unreadable — no SIGI rows");
+                Vec::new()
+            },
+            |csv| csv.lines().skip(1).filter_map(|l| l.split_once(',')).map(|(t, n)| (t.trim().to_string(), n.trim().to_string())).collect(),
+        ),
+    };
+    let unpriced: Vec<String> = shown.iter().chain(sigis.iter().map(|s| &s.0)).filter(|t| !covered.contains(*t)).cloned().collect();
     let mut shadow_extra: Vec<Quote> = fetch::quotes(
         &client, &settings.urls, &fx_cache, &unpriced, settings.dip_days, settings.high_days, false, false,
         &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
@@ -2235,12 +2246,15 @@ pub async fn run(args: Vec<String>) {
         top["berkshire"] = berkshire;
         top["social"] = social;
         top["young"] = crate::picks::young_rows(&quotes); // (#500)
+        top["reits"] = crate::picks::reit_rows(&quotes, &sigis); // (#525)
         top["upcoming"] = upcoming;
-        // (#502) the page hides shadow rows under the stock lane's CAGR floor unless asked to show them
+        // (#502) the page greys (#525: no longer hides) shadow rows under the stock lane's CAGR floor,
+        // and the REITs table's under its own
         top["cagr_floor"] = serde_json::json!(settings.buy_heuristic.growth_min_cagr);
+        top["reit_cagr_floor"] = serde_json::json!(settings.reit_min_cagr);
         top["bonds"] = serde_json::json!(bonds);
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
-        let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"]], &quotes, &fetch::us_symbol);
+        let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
         crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
         crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);

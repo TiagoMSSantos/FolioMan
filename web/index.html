@@ -19,7 +19,7 @@
   <nav class="sub" aria-label="sections">
     <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
-    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
+    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
   </nav>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
@@ -38,8 +38,9 @@
       <option>all</option><option>overview</option><option>returns</option><option>risk</option><option>value</option><option>cash</option>
     </select></label>
     · <label>filter <input id="filter" type="search" placeholder="ticker or name" size="16"></label>
-    <!-- (#502) The shadow tables hide rows under the stock lane's CAGR floor until this is ticked. -->
-    · <label title="Young, Social, Attention and Berkshire hide rows whose CAGR is under the stock lane's floor; n/a rows stay"><input id="below" type="checkbox"> show shadow rows below the CAGR floor</label>
+    <!-- (#525) The tables under the three lanes show their 20 best-ranked rows until this is ticked; a filter
+         query shows every match. A row under its table's CAGR floor is greyed, never hidden. -->
+    · <label title="CORE, Attention, Berkshire, Social, Young, REITs and IPOs show their top 20 rows; tick to list them all. Greyed rows have a CAGR under the table's floor"><input id="allrows" type="checkbox"> show all rows</label>
   </p>
   <!-- (#392) Re-rank this run's pool under your own settings.yaml, in this tab: engine/ is the same
        Rust ranking compiled to wasm. Shown only when the deploy shipped it. -->
@@ -67,16 +68,18 @@
   <!-- (#250) The buy-and-hold CORE shortlist, which `screen` has computed and printed below its three
        rankings all along and this page never carried. It is NOT a fourth ranking: the tables above
        rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
-       appear there however good a 20-year hold they are. The top-N chooser deliberately does not cut
-       it — see `apply()`. -->
-  <h2 title="Broad, cheap, physical, accumulating index funds to hold forever, broadest first; the rankings above bury these at 0 by design. NOT advice" id="h-core">CORE — one fund forever</h2>
+       appear there however good a 20-year hold they are. The top-N chooser does not cut it; (#525) the
+       20-row cut of the tables below does — see `apply()`. -->
+  <h2 title="Broad, cheap, physical, accumulating index funds to hold forever, ranked by buy score here; the rankings above bury these at 0 by design. NOT advice" id="h-core">CORE — one fund forever</h2>
   <div id="core"></div>
   <details class="note" id="hold">
     <summary>about CORE</summary>
-    Broad, cheap, physical, accumulating UCITS funds, ranked broadest-first — all-world → developed →
+    Broad, cheap, physical, accumulating UCITS funds, chosen broadest-first — all-world → developed →
     emerging → US → ex-US → Europe → Japan → Asia-Pacific — then domicile (IE first, for withholding),
     then cheapest <code>TER</code>, then largest <code>AUM</code>. One row per fund name, capped per
-    sleeve so no index family crowds out the rest. <strong>One all-world fund is already a whole
+    sleeve so no index family crowds out the rest. This page then ranks the chosen funds like every table
+    below it, by SCORE and gates missed (hover the headers); the terminal keeps the broadest-first order.
+    <strong>One all-world fund is already a whole
     book</strong>; the sleeves under it are for building one yourself. The tables above rank momentum
     and bury these at 0.0 — that is the ranking working, not a verdict on the fund.
     <strong>NOT advice.</strong>
@@ -97,7 +100,7 @@
   <div id="attention"></div>
   <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
        (#442) Every holding now, with the `W` flag and the track brkh row. -->
-  <h2 title="Every stock in Berkshire Hathaway's newest 13F filing, largest first, with what changed vs the quarter before. Held names rank a little higher (growth_brk_held_boost in settings); weeks old by filing rules" id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
+  <h2 title="Every stock in Berkshire Hathaway's newest 13F filing, best buy score first, with what changed vs the quarter before. Held names rank a little higher (growth_brk_held_boost in settings); weeks old by filing rules" id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
   <details class="note" id="berkshire-note">
     <summary>about this table</summary>
     Every stock in Berkshire Hathaway's newest 13F. A 13F lists US-listed holdings only, so its
@@ -106,8 +109,7 @@
     than 5% more shares), trimmed (below 95% of the shares) or held (a forward split counts as held),
     and SHARES Δ is that change. BOUGHT is the newest quarter it was bought in over the last 4, or —.
     A 13F is filed up to 45 days after its quarter ends, so the table is already weeks old. ETFs are
-    left out. A name the screen does not price shows OpenFIGI's upper-case issuer name. Every holding
-    is listed whatever the row count above. A held stock ranks a little higher above
+    left out. A name the screen does not price shows OpenFIGI's upper-case issuer name. A held stock ranks a little higher above
     (growth_brk_held_boost), and an uploaded settings.yaml does not change this table.
   </details>
   <div id="berkshire"></div>
@@ -140,19 +142,36 @@
   </details>
   <div id="social"></div>
   <!-- (#500) stocks too young for the 5-year history gate, shown and never ranked: the track yng row reads it. -->
-  <h2 title="Stocks listed less than 5 years ago, fastest revenue growth first. The rankings above need a 5-year record, so none of these can rank yet" id="h-young">Young (listed under 5 years) — shadow, NOT a buy signal</h2>
+  <h2 title="Stocks listed less than 5 years ago, best buy score first. The rankings above need a 5-year record, so none of these can rank yet" id="h-young">Young (listed under 5 years) — shadow, NOT a buy signal</h2>
   <details class="note" id="young-note">
     <summary>about this table</summary>
     Every stock the screen prices that has been listed for less than 5 years (YRS), including the big
     US IPOs of the last 5 years (an offer of $1 billion or more on Nasdaq's IPO calendar, SPACs left out).
     The rankings above need at least a 5-year price record, so a young stock cannot rank there however
-    well it does; this table is where to watch it. Rows sort by REV-YoY, the newest full year's revenue
-    growth, fastest first; a stock with no revenue figure is listed last, not dropped. A short record is
+    well it does; this table is where to watch it. Rows rank by SCORE and gates missed like the tables
+    around it, so most read <code>young</code> or <code>history</code> in MISSES; REV-YoY is the newest full year's revenue growth. A short record is
     a real risk: a young stock has not yet been through a full cycle, and a fast-growing year can be a
     peak. Each run journals these names and <code>track</code> grades them against the bought book, to
     learn whether keeping young stocks out costs money. An uploaded settings.yaml does not change this table.
   </details>
   <div id="young"></div>
+
+  <!-- (#525) REIT stocks, REIT funds and Portuguese SIGIs, ranked like the other shadow tables. -->
+  <h2 title="Real-estate stocks (REITs), real-estate funds and Portuguese SIGIs, best buy score first. Shown for comparison; nothing here changes BUY% or the rankings above" id="h-reits">REITs and SIGIs — shadow, NOT a buy signal</h2>
+  <details class="note" id="reits-note">
+    <summary>about this table</summary>
+    Every stock the screen prices in the Real Estate sector, every fund whose name says real estate,
+    REIT, property, EPRA, NAREIT or Immobilien, and the Portuguese SIGIs (the local REIT form) kept in
+    <code>tests/sigi-pond.csv</code>. They rank by SCORE and gates missed like the tables around them;
+    the REIT stocks are already scored in the Stocks ranking above, dividends included, net of
+    Portuguese tax. Measured on 2026-10-08, this class has not beaten broad equity: total return a year
+    over 20/10/5 years was 5.1/4.9/−0.2% for VNQ (US REITs) and 3.2/0.3/−6.9% for XDER (European), against
+    11.1/15.7/12.6% for SPY. The SIGIs (Atrium BIRE, ORES Portugal, Ciagest) on Euronext Access Lisbon barely
+    trade (Atrium BIRE once in 14 months, ORES Portugal 15 days in five years), so their dividend yields
+    are quoted on prices few have paid and the turnover gate refuses them. A row is greyed when its CAGR is under
+    <code>reit_min_cagr</code> (display only). An uploaded settings.yaml does not change this table.
+  </details>
+  <div id="reits"></div>
 
   <h2 title="US IPOs of $1 billion or more that are filed, expected or watched, not priced yet" id="h-upcoming">Upcoming IPOs ($1B+, US) — not priced yet</h2>
   <details class="note" id="upcoming-note">

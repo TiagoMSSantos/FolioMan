@@ -36,6 +36,8 @@ pub struct Settings {
     pub monthly_deploy_eur: f64, // deploy-math base: the € amount you put in per month. `screen` prints "DEPLOY THIS MONTH: €X" = this × the entry-state multiplier (near-high 1×, pullback 1.5×, drawdown 2×). 0 (default) = line off. Personal number — set it in the private config/settings.yaml overlay, never in the shared base
     #[serde(default = "default_top_picks")]
     pub top_picks: usize, // how many buy candidates `check` lists after the table
+    #[serde(default = "default_reit_min_cagr")]
+    pub reit_min_cagr: f64, // (#525) the page greys a REITs-table row whose CAGR is under this % a year (rows stay, in rank order). Display only: never scores, gates or sizes. The other shadow tables grey under `buy_heuristic.growth_min_cagr`
     #[serde(default = "default_stale_days")]
     pub stale_days: i64, // (D) `screen` drops a name whose newest close bar is older than this many CALENDAR days (halted/dead listing frozen at a stale price -> a fake near-high). Default 7 tolerates a long weekend/holiday. 0 = off (keep everything)
     #[serde(default)]
@@ -167,6 +169,10 @@ pub struct InflationAdjust {
 
 fn default_top_picks() -> usize {
     5
+}
+
+fn default_reit_min_cagr() -> f64 {
+    5.0
 }
 
 fn default_stale_days() -> i64 {
@@ -981,6 +987,11 @@ pub struct Urls {
     // switch; CI sets it.
     #[serde(default)]
     pub ipo_watch: String,
+    // (#525) Hand-kept CSV (`Symbol,Name`) of Portuguese SIGIs, the listed real-estate companies Yahoo
+    // prices but no index lists: they join the REITs table as display-only side quotes. A disk path.
+    // EMPTY is the off switch; CI sets it.
+    #[serde(default)]
+    pub sigi_pond: String,
     // (#517) Wikidata's SPARQL endpoint: stocks listed on 10 European exchanges in the last 5 years join
     // the stock pond for the Young table only (`fetch::wikidata_pond`, `picks::young_pond_keep`). EMPTY
     // is the off switch, like `nasdaq_ipo`; CI sets it.
@@ -2871,6 +2882,7 @@ mod tests {
     fn serde_defaults_are_the_documented_values() {
         assert_eq!(default_top_picks(), 5);
         assert_eq!(default_stale_days(), 7);
+        assert_eq!(default_reit_min_cagr(), 5.0); // (#525) CI pins 10.0
         assert_eq!(default_universe_size(), 100);
         assert_eq!(default_fetch_concurrency_multiplier(), 8);
         assert_eq!(default_fetch_requests_per_second(), 10.0);

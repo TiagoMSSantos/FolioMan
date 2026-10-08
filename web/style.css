@@ -109,6 +109,8 @@
   /* (#401) A ticker links to its Yahoo quote; `new` marks a name that joined its table since the
      previous day's last deploy. `::after`, so the mark stays out of textContent and the sort key. */
   td a { color: inherit; text-decoration-color: var(--rule); }
+  /* (#525) a shadow row whose CAGR is under its table's floor: shown in rank order, greyed */
+  tr.below td { color: var(--muted); }
   td.new::after {
     content: "new";
     margin-left: .4rem;

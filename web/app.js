@@ -67,37 +67,41 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // re-rendering is what keeps this small and what makes changing N instant.
 // (#249) SCOPED TO THE THREE LANES, and that is load-bearing: a bare `tbody` selector also matches
 // the inflation table, so `?top=1` would publish the USA row and hide the EU one — the deflator, on
-// the view most likely to be bookmarked. (#438) The Attention table is cut too: it is ranked rows.
-// (#441) The Berkshire table is NOT: it lists every buy, not a ranking, and the default N of 3 hid 11 of 14.
-// (#442) It lists every holding now, same rule.
+// the view most likely to be bookmarked. (#438) The Attention table was cut too; (#441) the Berkshire table
+// was not, since the default N of 3 hid 11 of 14. (#525) Every table under the lanes now ranks its own rows
+// and takes a fixed cut of TOP instead, so N stays the lanes' alone.
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
 // (#445) A filter query overrides the cut in every table but inflation and (#486) bonds: a row shows iff its TICKER or
 // NAME holds the query, so a name the chooser hid can still be found. An empty query is the cut alone.
-// (#502) The shadow tables also hide a row whose CAGR is under the stock lane's floor (`growth_min_cagr`),
-// unless "below floor" is ticked; an n/a CAGR stays. A query overrides it like the cut, and the CSV follows it.
-// CI's payload alone carries `cagr_floor`, so an upload keeps CI's.
+// (#502) The shadow tables mark a row whose CAGR is under the stock lane's floor (`growth_min_cagr`); (#525) the
+// REITs table's floor is `reit_min_cagr`. The row is greyed, never hidden (it hid until #525), and an n/a CAGR
+// is not marked. CI's payload alone carries the floors, so an upload keeps CI's.
 // (#507) An ⁱ CAGR is the plain change since listing (under 6 months), so its bar is the floor compounded
-// over the row's YRS: (1 + floor/100)^YRS − 1. A day-0 listing's bar is 0, so it shows unless it fell.
-const SHADOW = ["attention", "berkshire", "social", "young"];
-let floor = null;
-const bar = (cell, yrs, f = floor) => (cell.endsWith("ⁱ") ? ((1 + f / 100) ** (+yrs || 0) - 1) * 100 : f);
+// over the row's YRS: (1 + floor/100)^YRS − 1. A day-0 listing's bar is 0, so it is unmarked unless it fell.
+// (#525) Every table below the lanes but Inflation and Bonds shows its top TOP rows (by `data-rank`, the
+// payload's order, which ranks by SCORE then gates missed) until "show all rows" is ticked or a query is set.
+const SHADOW = ["attention", "berkshire", "social", "young", "reits"];
+const TOP = 20;
+const floors = {};
+const bar = (cell, yrs, f) => (cell.endsWith("ⁱ") ? ((1 + f / 100) ** (+yrs || 0) - 1) * 100 : f);
 console.assert(
   Math.abs(bar("+5%ⁱ", "0.5", 19) - 9.087) < 1e-3 && bar("+0%ⁱ", "0.0", 19) === 0 && bar("+5%", "0.5", 19) === 19,
   "the since-listing bar misreads YRS",
 );
-const low = (cell, yrs, v = key(cell)) => floor !== null && !document.getElementById("below").checked && typeof v === "number" && v < bar(cell, yrs);
+const low = (id, cell, yrs, v = key(cell)) => typeof floors[id] === "number" && typeof v === "number" && v < bar(cell, yrs, floors[id]);
 function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
+  const all = document.getElementById("allrows").checked;
   for (const t of document.querySelectorAll(".scroll table")) {
     if (t.closest("#inflation, #bonds")) continue;
-    const cut = t.closest("#stocks, #etfs, #crypto, #attention");
+    const id = t.closest("div[id]").id;
+    const cap = LANES.includes(id) ? n : all || id === "exposure" ? Infinity : TOP;
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
     const cols = heads.flatMap((h, i) => (["TICKER", "NAME"].includes(h) ? [i] : []));
-    const c = SHADOW.includes(t.closest("div[id]").id) ? heads.indexOf("CAGR") : -1;
+    const c = SHADOW.includes(id) ? heads.indexOf("CAGR") : -1;
     for (const tr of t.tBodies[0].rows) {
-      tr.hidden = q
-        ? !cols.some((i) => tr.cells[i].textContent.toLowerCase().includes(q))
-        : (!!cut && !("pin" in tr.dataset) && +tr.dataset.rank >= n) || (c >= 0 && low(tr.cells[c].textContent, tr.cells[heads.indexOf("YRS")]?.textContent));
+      tr.hidden = q ? !cols.some((i) => tr.cells[i].textContent.toLowerCase().includes(q)) : !("pin" in tr.dataset) && +tr.dataset.rank >= cap;
+      tr.classList.toggle("below", c >= 0 && low(id, tr.cells[c].textContent, tr.cells[heads.indexOf("YRS")]?.textContent));
     }
   }
   stick();
@@ -120,7 +124,7 @@ const VIEW = {
   "FCF-YLD": "value cash", "P/S": "value", "EV/EBITDA": "value",
 };
 function view(v) {
-  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social, #young) table")) {
+  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social, #young, #reits) table")) {
     const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && !VIEW[th.textContent].split(" ").includes(v));
     for (const tr of t.rows) [...tr.cells].forEach((c, i) => (c.hidden = hide[i]));
   }
@@ -151,8 +155,7 @@ function sheet(id, rows) {
   let a = h.querySelector("a.csv");
   if (!a) {
     a = Object.assign(document.createElement("a"), { className: "csv", textContent: "CSV", download: id + ".csv", href: "#" });
-    const rows = () => (SHADOW.includes(id) ? sheets[id].filter((r) => !low(r.find(([h]) => h === "CAGR")?.[1] ?? "", r.find(([h]) => h === "YRS")?.[1])) : sheets[id]);
-    a.onclick = () => (a.href = URL.createObjectURL(new Blob([csv(rows())], { type: "text/csv" })));
+    a.onclick = () => (a.href = URL.createObjectURL(new Blob([csv(sheets[id])], { type: "text/csv" })));
     h.append(" ", a);
   }
   a.hidden = !rows?.length;
@@ -176,8 +179,9 @@ function stick() {
 // (#434) c, * and o are rank flags too (#flags note); `7#!cb` sorted as text. (#436) So is w, (#442) and W.
 // (#461) $ marks a value read off the US line. (#504) ‡ marks a year-to-date REV-YoY.
 // (#505) a superscript digit marks a short-span rate (³ = 3 filed years), ᵈ a 200-day ABV-MA. (#507) ⁱ a since-listing CAGR.
+// (#525) ʷ a SCORE the row would get with its failed gates waived.
 // null is a missing cell, which sorts last in either direction; (#506) so do "loss" and "burn", no ratio.
-const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†‡#!xHbc*owWs$⁰¹²³⁴⁵⁶⁷⁸⁹ᵈⁱ]*$/;
+const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†‡#!xHbc*owWs$⁰¹²³⁴⁵⁶⁷⁸⁹ᵈⁱʷ]*$/;
 function key(cell) {
   if (["", "n/a", "—", "loss", "burn"].includes(cell)) return null;
   const m = NUM.exec(cell);
@@ -185,7 +189,7 @@ function key(cell) {
 }
 console.assert(
   key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
-    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("3#wWs") === 3 && key("+17.7%$") === 17.7 && key("+6.1%‡") === 6.1 && key("+12.3%³") === 12.3 && key("-4%ᵈ") === -4 && key("+42%ⁱ") === 42 && key("€51.20²") === 51.2 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null && key("loss") === null && key("burn") === null,
+    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("3#wWs") === 3 && key("+17.7%$") === 17.7 && key("+6.1%‡") === 6.1 && key("+12.3%³") === 12.3 && key("-4%ᵈ") === -4 && key("+42%ⁱ") === 42 && key("14.2ʷ") === 14.2 && key("€51.20²") === 51.2 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null && key("loss") === null && key("burn") === null,
   "sort key misreads a cell shape",
 );
 
@@ -296,7 +300,8 @@ function render(data, prev) {
   document
     .getElementById("core")
     .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
-  if (typeof data.cagr_floor === "number") floor = data.cagr_floor; // (#502)
+  // (#502) (#525) per-table CAGR floors, CI's payload only
+  if (typeof data.cagr_floor === "number") for (const id of SHADOW) floors[id] = id === "reits" ? data.reit_cagr_floor : data.cagr_floor;
   // (#438) Only CI's payload carries it: an upload's engine output has no key, so CI's table stays.
   if (data.attention) {
     document.getElementById("attention").replaceChildren(table(data.attention, "(attention feed unavailable)", help.attention));
@@ -308,15 +313,18 @@ function render(data, prev) {
   if (data.berkshire) {
     document.getElementById("berkshire").replaceChildren(table(data.berkshire, "(Berkshire 13F unavailable)", help.berkshire));
   }
-  // (#444) Not cut by the row chooser either: it lists every match, not a ranking.
   if (data.social) {
     document.getElementById("social").replaceChildren(table(data.social, "(no source answered)", help.social));
   }
-  // (#500) CI's payload only, like the shadow tables above; every young stock, never cut.
+  // (#500) CI's payload only, like the shadow tables above
   if (data.young) {
     document.getElementById("young").replaceChildren(table(data.young, "(no stock listed under 5 years)", help.young));
   }
   // (#515) CI's payload only; not a shadow table, so no stock columns and no CAGR cut
+  // (#525) CI's payload only, like the shadow tables above
+  if (data.reits) {
+    document.getElementById("reits").replaceChildren(table(data.reits, "(no REIT, property fund or SIGI priced)", help.reits));
+  }
   if (data.upcoming) {
     document.getElementById("upcoming").replaceChildren(table(data.upcoming, "(no $1B+ US IPO filed, expected or watched)", help.upcoming));
   }
@@ -339,11 +347,10 @@ function render(data, prev) {
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   const sizes = LANES.map((lane) => (data[lane] || []).length);
-  const attention = document.querySelectorAll("#attention tbody tr").length;
-  chooser(Math.max(1, attention, ...sizes), secondShortest(sizes));
+  chooser(Math.max(1, ...sizes), secondShortest(sizes));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "upcoming"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "reits", "upcoming"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, help);
@@ -374,6 +381,7 @@ function glossary(data, help) {
     ["Berkshire holdings", "berkshire", [data.berkshire]],
     ["Social Arbitrage trading", "social", [data.social]],
     ["Young", "young", [data.young]],
+    ["REITs and SIGIs", "reits", [data.reits]],
     ["Upcoming IPOs", "upcoming", [data.upcoming]],
   ]) {
     const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];
@@ -395,7 +403,7 @@ viewSel.onchange = () => {
   view(viewSel.value);
   remember("view", viewSel.value);
 };
-document.getElementById("filter").oninput = document.getElementById("below").onchange = () =>
+document.getElementById("filter").oninput = document.getElementById("allrows").onchange = () =>
   apply(+document.getElementById("topn").value);
 
 // (#401) prev.json is best effort: missing, unreadable or undated is no marks, never an error.
