@@ -38,6 +38,8 @@ pub struct Settings {
     pub top_picks: usize, // how many buy candidates `check` lists after the table
     #[serde(default = "default_reit_min_cagr")]
     pub reit_min_cagr: f64, // (#525) the page greys a REITs-table row whose CAGR is under this % a year (rows stay, in rank order). Display only: never scores, gates or sizes. The other shadow tables grey under `buy_heuristic.growth_min_cagr`
+    #[serde(default = "default_page_min_cagr")]
+    pub page_min_cagr: f64, // (#526) the page hides a row of the shadow tables and CORE whose total-return CAGR (TR-CAGR, else CAGR) is under this % a year; "show all rows" or a filter query shows it again, greyed. 5.0 sits just above the Série E hurdle (`core::serie_e_best_pct`, 4.5). 0 = off. Display only: never scores, gates or sizes
     #[serde(default = "default_stale_days")]
     pub stale_days: i64, // (D) `screen` drops a name whose newest close bar is older than this many CALENDAR days (halted/dead listing frozen at a stale price -> a fake near-high). Default 7 tolerates a long weekend/holiday. 0 = off (keep everything)
     #[serde(default)]
@@ -172,6 +174,10 @@ fn default_top_picks() -> usize {
 }
 
 fn default_reit_min_cagr() -> f64 {
+    5.0
+}
+
+fn default_page_min_cagr() -> f64 {
     5.0
 }
 
@@ -2883,6 +2889,7 @@ mod tests {
         assert_eq!(default_top_picks(), 5);
         assert_eq!(default_stale_days(), 7);
         assert_eq!(default_reit_min_cagr(), 5.0); // (#525) CI pins 10.0
+        assert_eq!(default_page_min_cagr(), 5.0); // (#526)
         assert_eq!(default_universe_size(), 100);
         assert_eq!(default_fetch_concurrency_multiplier(), 8);
         assert_eq!(default_fetch_requests_per_second(), 10.0);

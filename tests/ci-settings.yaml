@@ -1091,6 +1091,7 @@ widths:
     - price       # current close (EUR)
     - mcap        # (#395) market value € — stocks: newest-FY diluted shares × price; crypto: circulating supply × price; ETFs show AUM instead
     - cagr        # whole-life CAGR (%/yr since listing) — display only; the growth rank scores `leg`, not this
+    - trcagr      # (#526) CAGR with the dividends paid added back (n/a under 6 months); the page's `page_min_cagr` floor reads it
     # - leg         # the CAGR the growth rank DOES score: the 20/8/5Y ladder rung, capped at long_trend_cap
     - yrs         # real listing age in years — also picks the rung above (≥20y→20Y, ≥8y→8Y, else 5Y)
     # (#362) the three intraday columns stay hidden: showing ANY of them makes `wants_intraday` spend
@@ -1173,6 +1174,13 @@ top_picks: 25      # how many "buy candidate" rows `check` lists after the table
 # REIT shows plainly only when it compounded near broad equity (VNQ 20y 5.1%, SPY 11.1%, 2026-10-08).
 # The other shadow tables grey under `growth_min_cagr`. REVERT: delete this line (back to 5.0).
 reit_min_cagr: 10.0
+# (#526) The page hides a row of the shadow tables (Attention, Berkshire, Social, Young, REITs) and CORE
+# whose total-return CAGR (TR-CAGR, which adds back the dividends paid; CAGR when TR-CAGR is n/a) is under
+# this % a year. "show all rows" or a filter query shows it again, greyed. 5.0 sits just above the Série E
+# hurdle (4.5): under it a riskless certificate beat the asset. Live payload 2026-10-08, price + yield
+# estimate: hides ~2/60 Attention, 2/34 Berkshire, 38/148 Social, 37/63 Young, 44/84 REITs, 10/99 CORE.
+# Display only. 0 = off. REVERT: 0.0.
+page_min_cagr: 5.0
 # deploy-math base (€ you put in per month): `screen` prints "DEPLOY THIS MONTH: €base × entry-state
 # multiplier" (near-high 1×, pullback 1.5×, drawdown 2× — the backtest's deploy-faster shape). 0 = line
 # off. PERSONAL number — set it in the private config/settings.yaml overlay, never here.

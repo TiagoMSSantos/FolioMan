@@ -80,15 +80,21 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // over the row's YRS: (1 + floor/100)^YRS − 1. A day-0 listing's bar is 0, so it is unmarked unless it fell.
 // (#525) Every table below the lanes but Inflation and Bonds shows its top TOP rows (by `data-rank`, the
 // payload's order, which ranks by SCORE then gates missed) until "show all rows" is ticked or a query is set.
+// (#526) The shadow tables and CORE also hide a row whose total-return CAGR is under `page_min_cagr`: the
+// TR-CAGR cell (n/a under 6 months, so never ⁱ), else CAGR with its ⁱ bar. The top TOP counts only the rows
+// kept, "show all rows" or a query shows the rest greyed, and a pinned row is never hidden.
 const SHADOW = ["attention", "berkshire", "social", "young", "reits"];
 const TOP = 20;
 const floors = {};
+let minCagr = 0; // (#526) CI's payload only, like the floors
 const bar = (cell, yrs, f) => (cell.endsWith("ⁱ") ? ((1 + f / 100) ** (+yrs || 0) - 1) * 100 : f);
 console.assert(
   Math.abs(bar("+5%ⁱ", "0.5", 19) - 9.087) < 1e-3 && bar("+0%ⁱ", "0.0", 19) === 0 && bar("+5%", "0.5", 19) === 19,
   "the since-listing bar misreads YRS",
 );
-const low = (id, cell, yrs, v = key(cell)) => typeof floors[id] === "number" && typeof v === "number" && v < bar(cell, yrs, floors[id]);
+const lt = (cell, yrs, f, v = key(cell)) => typeof f === "number" && typeof v === "number" && v < bar(cell, yrs, f);
+const low = (id, cell, yrs) => lt(cell, yrs, floors[id]);
+const under = (tr, cell, yrs, f = minCagr) => f > 0 && (typeof key(tr) === "number" ? lt(tr, yrs, f) : lt(cell, yrs, f));
 function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
   const all = document.getElementById("allrows").checked;
@@ -99,9 +105,14 @@ function apply(n) {
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
     const cols = heads.flatMap((h, i) => (["TICKER", "NAME"].includes(h) ? [i] : []));
     const c = SHADOW.includes(id) ? heads.indexOf("CAGR") : -1;
-    for (const tr of t.tBodies[0].rows) {
-      tr.hidden = q ? !cols.some((i) => tr.cells[i].textContent.toLowerCase().includes(q)) : !("pin" in tr.dataset) && +tr.dataset.rank >= cap;
-      tr.classList.toggle("below", c >= 0 && low(id, tr.cells[c].textContent, tr.cells[heads.indexOf("YRS")]?.textContent));
+    const at = (tr, h) => tr.cells[heads.indexOf(h)]?.textContent;
+    const rows = [...t.tBodies[0].rows];
+    const floored = SHADOW.includes(id) || id === "core";
+    const out = new Set(rows.filter((tr) => floored && !("pin" in tr.dataset) && under(at(tr, "TR-CAGR"), at(tr, "CAGR"), at(tr, "YRS"))));
+    const lim = rows.filter((tr) => !out.has(tr)).map((tr) => +tr.dataset.rank).sort((a, b) => a - b)[cap] ?? Infinity; // first rank cut
+    for (const tr of rows) {
+      tr.hidden = q ? !cols.some((i) => tr.cells[i].textContent.toLowerCase().includes(q)) : !("pin" in tr.dataset) && ((out.has(tr) && !all) || +tr.dataset.rank >= lim);
+      tr.classList.toggle("below", out.has(tr) || (c >= 0 && low(id, tr.cells[c].textContent, at(tr, "YRS"))));
     }
   }
   stick();
@@ -191,6 +202,12 @@ console.assert(
   key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
     key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("3#wWs") === 3 && key("+17.7%$") === 17.7 && key("+6.1%‡") === 6.1 && key("+12.3%³") === 12.3 && key("-4%ᵈ") === -4 && key("+42%ⁱ") === 42 && key("14.2ʷ") === 14.2 && key("€51.20²") === 51.2 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null && key("loss") === null && key("burn") === null,
   "sort key misreads a cell shape",
+);
+// (#526) TR-CAGR wins over the price CAGR; n/a or no TR-CAGR column falls back to it, ⁱ bar and all.
+console.assert(
+  !under("+9%", "+4%", "10", 5) && under("+4%", "+9%", "10", 5) && under("n/a", "+4%", "10", 5) && !under(undefined, "+6%", "10", 5) &&
+    under(undefined, "-8%ⁱ", "0.2", 5) && !under("n/a", "n/a", "1", 5) && !under("-9%", "-9%", "10", 0),
+  "the CAGR floor misreads TR-CAGR or its fallback",
 );
 
 // First click ascending, then it flips. Numbers before text, missing last, ties in rank order.
@@ -302,6 +319,7 @@ function render(data, prev) {
     .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
   // (#502) (#525) per-table CAGR floors, CI's payload only
   if (typeof data.cagr_floor === "number") for (const id of SHADOW) floors[id] = id === "reits" ? data.reit_cagr_floor : data.cagr_floor;
+  if (typeof data.page_min_cagr === "number") minCagr = data.page_min_cagr; // (#526)
   // (#438) Only CI's payload carries it: an upload's engine output has no key, so CI's table stays.
   if (data.attention) {
     document.getElementById("attention").replaceChildren(table(data.attention, "(attention feed unavailable)", help.attention));

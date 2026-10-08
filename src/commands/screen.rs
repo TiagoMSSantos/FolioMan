@@ -2252,6 +2252,7 @@ pub async fn run(args: Vec<String>) {
         // and the REITs table's under its own
         top["cagr_floor"] = serde_json::json!(settings.buy_heuristic.growth_min_cagr);
         top["reit_cagr_floor"] = serde_json::json!(settings.reit_min_cagr);
+        top["page_min_cagr"] = serde_json::json!(settings.page_min_cagr); // (#526) the page hides rows under it
         top["bonds"] = serde_json::json!(bonds);
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["reits"]], &quotes, &fetch::us_symbol);

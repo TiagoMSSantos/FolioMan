@@ -5404,33 +5404,40 @@ pub fn reit_rows(quotes: &[Quote], sigis: &[(String, String)]) -> serde_json::Va
 /// (#525) A row's order key in every page table but the lanes and the IPOs: (class, gates missed, score),
 /// where class 0 passes every gate, 1 fails some, 2 is refused ([`refusal_reason`]) and 3 has no quote or
 /// no 1-year record. A failing row's score is the one it would get with its gates waived ([`waived`]).
+/// (#526) A failing row with no score even then (a record under the 2Y rung) is class 2, after every
+/// scored one, so refused is 3 and unscorable 4.
 type RankKey = (u8, usize, f64);
 
 /// (#525) Passing rows first by score, then failing rows by fewest gates missed and their waived score,
-/// then refused, then unscorable. Equal keys compare equal, so a stable sort keeps the table's order.
+/// then (#526) failing rows with no score, then refused, then unscorable. Equal keys compare equal, so a stable sort keeps the table's order.
 fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
     a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.2.total_cmp(&a.2))
 }
 
 /// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
-const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then refused, then n/a";
+const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then the — ones, then refused, then n/a";
 const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each); refused = a kind the screen never buys (leveraged, commodity, hedged, no turnover); n/a = not priced, or no 1-year record";
 
 /// (#525) A row's [`RankKey`] and its SCORE and MISSES cells.
 fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic) -> (RankKey, String, String) {
     const NONE: f64 = f64::NEG_INFINITY;
-    let na = ((3, 0, NONE), "—".to_string(), "n/a".to_string());
+    let na = ((4, 0, NONE), "—".to_string(), "n/a".to_string());
     let Some(q) = q else { return na };
     if let Some(why) = refusal_reason(q) {
-        return ((2, 0, NONE), "—".to_string(), format!("refused: {why}"));
+        return ((3, 0, NONE), "—".to_string(), format!("refused: {why}"));
     }
     let Some((t, mut tags, left)) = waived(q, tuning) else { return na };
-    tags.extend(left.iter().map(|f| f.0));
+    for f in &left {
+        if !tags.contains(&f.0) {
+            tags.push(f.0); // (#526) `history` waived and still failing is one gate, not two
+        }
+    }
     let score = if left.is_empty() { growth_score(q, &t) } else { None };
     match (tags.len(), score) {
         (0, Some(s)) => ((0, 0, s), format!("{s:.1}"), "0".to_string()),
         (0, None) => na,
-        (n, s) => ((1, n, s.unwrap_or(NONE)), s.map_or("—".to_string(), |s| format!("{s:.1}ʷ")), format!("{n}: {}", tags.join(", "))),
+        (n, Some(s)) => ((1, n, s), format!("{s:.1}ʷ"), format!("{n}: {}", tags.join(", "))),
+        (n, None) => ((2, n, NONE), "—".to_string(), format!("{n}: {}", tags.join(", "))),
     }
 }
 
@@ -11018,8 +11025,9 @@ mod tests {
     }
 
     /// (#525) Every shadow table and the page's CORE copy rank alike: passing rows by score, then by
-    /// fewest gates missed and the waived (`ʷ`) score, then refused, then unpriced, equal keys in their
-    /// old order; SCORE and MISSES follow NAME and `#` is renumbered. CORE's input order is untouched.
+    /// fewest gates missed and the waived (`ʷ`) score, then (#526) failing rows with no score even waived,
+    /// then refused, then unpriced, equal keys in their old order; SCORE and MISSES follow NAME and `#` is
+    /// renumbered. CORE's input order is untouched.
     #[test]
     fn page_tables_rank_by_score_then_gates_missed() {
         let good = |t: &str, cum8: f64| {
@@ -11034,22 +11042,25 @@ mod tests {
         (one.range_pct, one_lo.range_pct, two.range_pct) = (75.0, 75.0, 75.0);
         let mut lev = good("LEVX", 300.0);
         lev.name = "Some 3x Daily Leveraged ETP".into();
-        let quotes = [strong, weak, one, one_lo, two, lev];
+        let mut fresh = good("FRESH", 300.0); // (#526) a 1.5y record: no score even at the 2Y rung
+        (fresh.age_years, fresh.perf) = (Some(1.5), legs(&[("1Y", 10.0)]));
+        let quotes = [strong, weak, one, one_lo, two, lev, fresh];
         let row = |t: &str| serde_json::json!([["#", "0"], ["TICKER", t], ["NAME", t], ["X", "x"]]);
-        let tables: Vec<serde_json::Value> = ["NOPE", "LEVX", "TWOG", "ONELO", "ONEG", "WEAK", "STRONG", "NOPE2"].map(row).into();
+        let tables: Vec<serde_json::Value> = ["FRESH", "NOPE", "LEVX", "TWOG", "ONELO", "ONEG", "WEAK", "STRONG", "NOPE2"].map(row).into();
         let mut p = serde_json::json!({"reits": tables, "help": {"lanes": {}}});
         let (w, d) = (Widths { columns: vec!["ticker".into()], ..Widths::default() }, BuyHeuristic::default());
         stamp_shadow_cols(&mut p, &quotes, &w, &d, &FundPeMap::new(), &|t: &str| t.to_string());
         let rows = p["reits"].as_array().unwrap();
         let order: Vec<&str> = rows.iter().map(|r| r[1][1].as_str().unwrap()).collect();
-        assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "TWOG", "LEVX", "NOPE", "NOPE2"]);
+        assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "TWOG", "FRESH", "LEVX", "NOPE", "NOPE2"], "no score sorts after every ʷ score");
         let s = growth_score(&quotes[0], &d).unwrap();
         assert_eq!(rows[0], serde_json::json!([["#", "1"], ["TICKER", "STRONG"], ["NAME", "STRONG"], ["SCORE", format!("{s:.1}")], ["MISSES", "0"], ["X", "x"]]));
         assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range"]));
         assert!(rows[2][3][1].as_str().unwrap().ends_with('ʷ'), "a failing row prints its waived score");
         assert_eq!(rows[4][4], serde_json::json!(["MISSES", "2: range, cagr"]));
-        assert_eq!(rows[5].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
-        assert_eq!(rows[7].as_array().unwrap()[..1], [serde_json::json!(["#", "8"])]);
+        assert_eq!(rows[5].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history"])], "a gate waived and still failing counts once");
+        assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
+        assert_eq!(rows[8].as_array().unwrap()[..1], [serde_json::json!(["#", "9"])]);
         assert_eq!(p["help"]["reits"]["MISSES"], RANK_MISSES_HELP);
         // CORE: the same order on a copy, SCORE and MISSES after TICKER
         let cores = [&quotes[5], &quotes[1], &quotes[0]];
