@@ -5459,6 +5459,32 @@ buy_heuristic:
                                  #  receivables leg is mild to absent. Per the unlock, no shadow line and no live stamp.
                                  #  REVERT RULE: drop the row, the field, its arm and the demean block in `stamp_cohort_ranks`; the goldens move back
                                  #  by the same lines.
+                                 #── (#534) RECORDED 2026-10-10 — SWEEP 28 FINDS NOTHING NEW TO BUILD; CASH-TO-ASSETS BANKED FOR THE NEXT _factsN BUMP ──
+                                 #  WHY: sweep 28 (2026-10-10, "find assets that grow above average over 20+ years"). Four web batches and one
+                                 #  live-book audit. No idea is buildable from cached rows, so nothing is graded, weighted, gated or shipped.
+                                 #  BANKED: cash-to-assets (Palazzo 2012 JFE, 0.42%/mo long-short; Simutin 2010, excess cash +5-6%/yr). Against it:
+                                 #  EFMA 2017 reads it as spurious, IREF 2019 as a face of the mispricing anomalies, Southampton finds it in low
+                                 #  sentiment only. FundRow caches net_debt and net_cash_rev, not cash alone, so the row needs a `_factsN` bump and its
+                                 #  ~1 run of new-name starvation. It is kin of net_cash_rev, already graded. Add the cash tag the next time a bump
+                                 #  happens for something else, alongside DIO's inventory tag (#533); never bump for it alone.
+                                 #  NEEDS-DATA (no tag, feed or ticker link): brand/advertising capital (Belo-Lin-Vitorino; AdvertisingExpense is left
+                                 #  out on purpose and the SG&A stock org_cap is DEAD); Hoberg-Phillips product-market fluidity (gvkey only); labor
+                                 #  mobility and labor share (Donangelo 2014; no staff-expense tag); new trademarks (Hsu et al. 2022 Management
+                                 #  Science; USPTO case files only crosswalk to NETS, so owners need name matching); corporate culture (Li-Mai-Shen-Yan
+                                 #  2021 RFS; earnings-call text, and no return test); ACSI customer satisfaction (proprietary; Jacobson-Mizik 2009
+                                 #  insignificant, Stanford GSB finds no long-run return); debt capacity (Hahn-Lee 2009, constrained firms only);
+                                 #  efficiency frontier (Nguyen-Swanson 2009, sign flips with the measure); carbon premium; GenAI exposure (Eisfeldt
+                                 #  et al., a two-week event return).
+                                 #  DEAD: industry concentration (Hou-Robinson 2006; insignificant 1963-2018 and gone at industry level 1966-2024 in
+                                 #  replications, and GICS 11 is too coarse for an HHI); G-index (Bebchuk-Cohen-Wang 2013, gone 2000-08); firm age
+                                 #  (Loderer-Waelchli, null).
+                                 #  CONTEXT ONLY: HXZ 2020 and Chen et al. (post-2005 large-cap median 7 bp/mo, see #415); 2026 20y capital-market
+                                 #  assumptions (Capital Group: US 6.1%, non-US developed 5.7%, Japan 6.8%, EM 6.5%) are index forecasts, and timing
+                                 #  is closed.
+                                 #  LIVE-BOOK AUDIT, NO CHANGE: ANX.PA and XLKS.L serve empty holdings books (swap wrappers, the blind spot recorded
+                                 #  above). The exposure sector row already reads their FundMix (IT 45.1% is real). Only the currency and name rows
+                                 #  read "?". Their top-10 overlap is ~4-5 names, under the (#510) bar of 7, so full holdings would not merge them.
+                                 #  Nothing reopens before the forward-record review (~2027-09, #415 bar).
                                  #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
                                  #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
                                  #  "hedged", so the screen funnel names it). ETF-scoped. Substrings hedg/hdg/heur/hchf/husd/hgbp catch the glued
