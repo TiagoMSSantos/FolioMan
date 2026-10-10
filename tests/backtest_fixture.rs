@@ -617,6 +617,168 @@ fn backtest_fund_report_is_gain_invariant() {
     assert!(got == want, "a gain on top of operating profit moved the fund report — a mark priced as earnings.\n{}", first_difference(&got, &want));
 }
 
+/// (#529) `fixture_copy`, then every frozen bar, dividend and SEC row dated on or after `t` deleted: the
+/// world as the caches would have served it on the eve of `t`. `None` cuts nothing but still rewrites
+/// both caches through the same serializer, so the two arms of a comparison differ ONLY in the cut.
+///
+/// `events.splits` is KEPT, deliberately. Yahoo serves every bar on today's split basis, and
+/// `restate_for_splits` (#424) puts the filings onto the basis of the bars it is handed. Dropping a
+/// later split would leave the bars on the post-split basis and the EPS on the pre-split one, a world
+/// no feed ever served, and the test would red on a fixture artefact. The basis is a fact about the
+/// series as served, not news from after the cutoff. `.sp500_history.json` is not cut either: a
+/// membership span answers every day before `t` the same way whatever it says about the days after.
+fn fixture_cut(name: &str, t: Option<chrono::NaiveDate>) -> PathBuf {
+    let cfg = fixture_copy(name, false);
+    let dir = cfg.parent().and_then(Path::parent).expect("<dir>/config/settings.yaml").to_path_buf();
+    let end = t.map_or(i64::MAX, |d| d.and_hms_opt(0, 0, 0).expect("midnight").and_utc().timestamp());
+    let path = dir.join(".long_history_cache.json");
+    let mut cache: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read cache")).expect("cache json");
+    for entry in cache.as_object_mut().expect("ticker -> [fetched, chart]").values_mut() {
+        let Some(r) = entry.pointer_mut("/1/chart/result/0") else { continue };
+        let keep: Vec<bool> = r["timestamp"].as_array().map_or(Vec::new(), |ts| ts.iter().map(|x| x.as_i64().is_some_and(|x| x < end)).collect());
+        let cut = |v: &mut serde_json::Value| {
+            if let Some(a) = v.as_array_mut() {
+                *a = a.iter().zip(&keep).filter(|(_, k)| **k).map(|(x, _)| x.clone()).collect();
+            }
+        };
+        if let Some(ts) = r.get_mut("timestamp") {
+            cut(ts);
+        }
+        if let Some(q) = r.pointer_mut("/indicators/quote/0").and_then(|q| q.as_object_mut()) {
+            q.values_mut().for_each(cut);
+        }
+        if let Some(a) = r.pointer_mut("/indicators/adjclose/0/adjclose") {
+            cut(a);
+        }
+        if let Some(d) = r.pointer_mut("/events/dividends").and_then(|d| d.as_object_mut()) {
+            d.retain(|_, e| e["date"].as_i64().is_some_and(|x| x < end));
+        }
+    }
+    std::fs::write(&path, cache.to_string()).expect("write cut cache");
+    let first_unseen = t.map(|d| d.to_string());
+    for e in std::fs::read_dir(dir.join(".sec_cache")).expect("copied SEC rows") {
+        let p = e.expect("dir entry").path();
+        let mut rows: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).expect("read SEC row")).expect("SEC json");
+        if let (Some(rows), Some(t)) = (rows.as_array_mut(), first_unseen.as_deref()) {
+            rows.retain(|r| r["filed"].as_str().is_some_and(|f| f < t));
+        }
+        std::fs::write(&p, rows.to_string()).expect("write SEC row");
+    }
+    cfg
+}
+
+/// Every sample one `8 fund` run walks, keyed (ticker, date), as the JSON line `write_samples` printed.
+fn samples_at(cfg: &Path) -> std::collections::BTreeMap<(String, String), String> {
+    let out = cfg.with_file_name("samples.jsonl");
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
+        .args(["backtest", "8", "fund"])
+        .env("FOLIOMAN_CONFIG", cfg)
+        .env("FOLIOMAN_OFFLINE", "1")
+        .env_remove("FMP_API_KEY")
+        .env("FOLIOMAN_BACKTEST_SAMPLES", &out)
+        .output()
+        .expect("spawn folioman");
+    assert!(run.status.success(), "backtest exited {}: {}", run.status, String::from_utf8_lossy(&run.stderr));
+    std::fs::read_to_string(&out)
+        .expect("FOLIOMAN_BACKTEST_SAMPLES was written")
+        .lines()
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).expect("sample json");
+            let key = (v["ticker"].as_str().expect("ticker").to_string(), v["date"].as_str().expect("date").to_string());
+            (key, l.to_string())
+        })
+        .collect()
+}
+
+/// (#529) THE LOOK-AHEAD INVARIANT, end to end. Every look-ahead this backtest ever had was found one
+/// field at a time, after it had faked edge: the split basis (#424), the splice trim (#94), the proxy's
+/// borrowed years (#327), a later FX rate. The unit twins in core.rs pin each as-of read alone; this
+/// pins their COMPOSITION and the cross-sectional stamps after it (cohort ranks, regime, sector door),
+/// which no unit test can see. A world cut at T must write the very same sample, byte for byte, for
+/// every cutoff whose 8y forward window closes before T. `8 fund` because the 12y cutoffs end 2014-07,
+/// so a 12y cut keeps two dates; at 8y the kept cutoffs run 2011..2015, all inside the SEC join.
+///
+/// Compared only up to T - 8y - 45d: a cohort is the same set of names only when every name's forward
+/// bar is inside the cut, and the monthly bar gap is the 45 days of slack.
+///
+/// Known ceilings, not testable here: a Form 4 counts by its trade date (`InsiderTx` has no filing
+/// date, so a trade filed two days after the cutoff counts); Yahoo `meta` is today's and uncut, which is
+/// harmless while `backtest_quote` builds from `Quote::stub`; the pool itself is today's list, which is
+/// survivorship, not look-ahead inside a series.
+///
+/// ONE KNOWN LEAK, pinned rather than fixed (a fix is a scoring change and gets its own A/B). The fund
+/// lane builds `fund_factors` whenever the SEC file holds ANY row, so a name whose first filing is
+/// after the cutoff gets an all-null `FundFactors` where the cut world has `None`. Every field agrees;
+/// the presence does not, and `s.fund.is_none()` is what the fund-covered cohorts skip on
+/// (`report_book_by_factor`'s baseline, the `growth_fund_weight` sweep, the EY table, the "cutoffs with
+/// as-of fundamentals" count), and what `expected_return_pct` turns into income + rerating instead of
+/// None. So those probes admit names for becoming SEC filers LATER. The shipped score is untouched
+/// (`growth_er_weight` 0, every other read goes through a field). On this fixture it is FERG alone
+/// (first 10-K filed 2024-09-25), six samples. The set is asserted EXACTLY: a new leaker reds, and so
+/// does the fix, which should then delete this paragraph and the `fund_without_rows` arm.
+///
+/// REACH. Only a read past T can differ, and the compared cutoffs sit 8y+45d before T, so this test sees
+/// whole-series reads (a stat over the full history, a row's mere existence) and is blind to short
+/// ones by construction; the core.rs `look_ahead_*` twins own those. Trip-verified 2026-10-10, each
+/// planted and reverted: `fund_as_of` taking the newest row whatever the cutoff reds here (ACGL
+/// 1998-10-01, every fund field); the TR dividend sum taking every dividend reds here (ACGL tr_cagr
+/// 44.0 -> -1.9); `fund_as_of` reading 365d ahead and the dividend sum reading 40d ahead pass here and
+/// red the core.rs twins.
+#[test]
+fn backtest_8y_fund_samples_ignore_the_future() {
+    let t = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).expect("T");
+    let full = samples_at(&fixture_cut("cut-none-8-fund", None));
+    let cut = samples_at(&fixture_cut("cut-2024-8-fund", Some(t)));
+    let last = (t - chrono::Duration::days(8 * 365 + 45)).to_string();
+    let kept = |m: &std::collections::BTreeMap<(String, String), String>| -> std::collections::BTreeMap<(String, String), String> {
+        m.iter().filter(|((_, d), _)| *d <= last).map(|(k, v)| (k.clone(), v.clone())).collect()
+    };
+    let (a, b) = (kept(&full), kept(&cut));
+    assert!(a.len() >= 500, "only {} samples compared: the invariant would pass on nothing", a.len());
+    assert!(a.values().any(|l| l.contains("\"peg_yield\":") && !l.contains("\"peg_yield\":null")), "no compared sample carries a fund factor");
+    assert!(cut.keys().map(|(_, d)| d).max() < full.keys().map(|(_, d)| d).max(), "the cut never bit");
+    let only: Vec<_> = a.keys().filter(|k| !b.contains_key(*k)).chain(b.keys().filter(|k| !a.contains_key(*k))).take(5).collect();
+    assert!(only.is_empty(), "samples in one world only (first 5): {only:?}");
+    // an all-null FundFactors and no FundFactors, the one known leak (see the doc)
+    let null_fund = |v: &mut serde_json::Value| {
+        for at in ["/fund", "/quote/fund"] {
+            let f = v.pointer_mut(at).expect("sample has a fund slot");
+            if f.as_object().is_some_and(|o| o.values().all(|x| x.is_null() || *x == false)) {
+                *f = serde_json::Value::Null;
+            }
+        }
+    };
+    let mut fund_without_rows = std::collections::BTreeSet::new();
+    for (k, line) in &a {
+        if *line != b[k] {
+            let (mut x, mut y): (serde_json::Value, serde_json::Value) = (serde_json::from_str(line).unwrap(), serde_json::from_str(&b[k]).unwrap());
+            null_fund(&mut x);
+            null_fund(&mut y);
+            if x == y {
+                fund_without_rows.insert(k.0.as_str());
+                continue;
+            }
+            let mut moved: Vec<String> = Vec::new();
+            for part in ["realized", "trail", "quote", "fund"] {
+                match (x[part].as_object(), y[part].as_object()) {
+                    (Some(p), Some(q)) => {
+                        for (f, v) in p {
+                            let w = q.get(f).unwrap_or(&serde_json::Value::Null);
+                            if v != w {
+                                moved.push(format!("{part}.{f}: {v} -> {w}"));
+                            }
+                        }
+                    }
+                    _ if x[part] != y[part] => moved.push(format!("{part}: {} -> {}", x[part], y[part])),
+                    _ => {}
+                }
+            }
+            panic!("{k:?} read the future (full -> cut): {moved:?}");
+        }
+    }
+    assert_eq!(fund_without_rows.into_iter().collect::<Vec<_>>(), ["FERG"], "the known fund-presence leak moved (see the doc)");
+}
+
 /// THE MARKER CONTRACT, as an assertion rather than a claim.
 ///
 /// `tests/network.rs::backtest_edge_holds` has no parser — it string-searches this report for every

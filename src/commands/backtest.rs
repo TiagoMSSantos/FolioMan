@@ -754,6 +754,22 @@ fn trailing_returns(closes: &[f64], i: usize) -> Vec<f64> {
         .collect()
 }
 
+/// (#529) `FOLIOMAN_BACKTEST_SAMPLES=<path>`: one JSON line per sample, written once every cross-sectional
+/// stamp is on and before any report reads them. The seam of the whole-walk look-ahead test in
+/// `tests/backtest_fixture.rs`: a run that cannot see past a date must write these exact lines for every
+/// cutoff whose forward window closes before it.
+fn write_samples(samples: &[Sample], path: &std::path::Path) {
+    let lines: String = samples
+        .iter()
+        .map(|s| {
+            let q = &*s.quote;
+            let line = serde_json::json!({"ticker": q.ticker, "date": s.date, "realized": s.realized, "trail": s.trail, "quote": q, "fund": s.fund});
+            line.to_string() + "\n"
+        })
+        .collect();
+    std::fs::write(path, lines).expect("write FOLIOMAN_BACKTEST_SAMPLES");
+}
+
 /// The rayon pool size to force, or `None` to leave rayon alone.
 ///
 /// `compute_threads: 0` (the default) deliberately builds NO pool: rayon's own default is already
@@ -1511,6 +1527,9 @@ pub async fn run(args: Vec<String>) {
     // stamp is written and never read, so each number below is unchanged — and the SECTOR BOOK row can
     // still price the door for free by re-scoring with the knob flipped.
     stamp_sector_cohorts(&mut samples, &bench, tuning);
+    if let Some(p) = std::env::var_os("FOLIOMAN_BACKTEST_SAMPLES") {
+        write_samples(&samples, p.as_ref()); // (#529) the look-ahead test's seam; unset = no-op
+    }
 
     // `tune`: honest out-of-sample selection. Search the growth weights on an EARLY train split and
     // report the winner on a LATE test split it never saw — the only way to a trustworthy number when
@@ -7310,6 +7329,7 @@ mod tests {
         assert_eq!(trailing_returns(&clean, 40).len(), 36, "36 months back");
         assert_eq!(trailing_returns(&clean, 10).len(), 10, "clamp at the series start, never underflow");
         assert!(trailing_returns(&clean, 0).is_empty(), "no history at index 0");
+        assert_eq!(trailing_returns(&clean, 40), trailing_returns(&clean[..=40], 40), "(#529) nothing past the cutoff is read");
         for r in trailing_returns(&clean, 40) {
             assert!((r - 1.0).abs() < 1e-9, "a 1%/month series must yield 1.0, got {r}");
         }

@@ -10232,6 +10232,99 @@ mod tests {
         charge_ter_gap(&dates, &mut flat, own_first, 0.0);
         assert_eq!(flat, vec![100.0; 4]);
     }
+
+    /// (#529) THE LOOK-AHEAD INVARIANT, every field at once. `census_344_..` proves one field (`tr_cagr`)
+    /// stops at the cutoff; every other field `backtest_quote` writes was trusted on its own receipt. This
+    /// hands it the same record with the future cut off and demands the identical Quote, compared as JSON
+    /// so a field added later that peeks past `as_of` reds here without anyone having to name it. Both the
+    /// empty windows map the backtest ships and a ci-shaped one, since the anchor average is a ±days window.
+    #[test]
+    fn look_ahead_backtest_quote_ignores_the_future() {
+        let dates: Vec<NaiveDate> = (0..120i32).map(|m| NaiveDate::from_ymd_opt(2010 + m / 12, (m % 12) as u32 + 1, 15).unwrap()).collect();
+        let closes: Vec<f64> = (0..120).map(|m| 100.0 * 1.01f64.powi(m) * (1.0 + 0.15 * (m as f64 / 5.0).sin())).collect();
+        let divs: Vec<(NaiveDate, f64)> = (0..10).map(|y| (NaiveDate::from_ymd_opt(2010 + y, 6, 15).unwrap(), 1.0 + y as f64)).collect();
+        let ci: BTreeMap<String, i64> = [("1Y".to_string(), 182), ("1M".to_string(), 15)].into();
+        for windows in [BTreeMap::new(), ci] {
+            for as_of in [40, 59, 65, 83, 100] {
+                let seen: Vec<_> = divs.iter().copied().filter(|(d, _)| *d <= dates[as_of]).collect();
+                let full = backtest_quote("X", &dates, &closes, &divs, as_of, 12, &windows);
+                let cut = backtest_quote("X", &dates[..=as_of], &closes[..=as_of], &seen, as_of, 12, &windows);
+                assert_eq!(serde_json::to_string(&full).unwrap(), serde_json::to_string(&cut).unwrap(), "as_of {as_of}, {windows:?}");
+            }
+        }
+    }
+
+    /// (#529) The same invariant for the fundamental join: rows filed after the cutoff must change no
+    /// factor. Two planted traps, because both are how a filing leaks: a restatement of FY2014 filed in
+    /// 2019 with wild numbers (its `period_end` is old, its `filed` is not), and the rows of later years.
+    /// Every field is populated so every factor has something to read.
+    #[test]
+    fn look_ahead_fund_factors_ignores_the_future() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let row = |y: i32, filed: NaiveDate, k: f64| FundRow {
+            filed,
+            financial: false,
+            period_end: ymd(y, 12, 31),
+            revenue: Some(1000.0 * k),
+            gross_margin: Some(40.0 + k),
+            op_margin: Some(20.0 + k),
+            net_margin: Some(10.0 + k),
+            pretax_margin: Some(12.0 + k),
+            eps: Some(2.0 * k),
+            shares: Some(100.0 - k),
+            prior_eps: Some(1.8 * k),
+            prior_shares: Some(101.0 - k),
+            roe: Some(15.0 + k),
+            roa: Some(8.0 + k),
+            assets: Some(5000.0 * k),
+            roic: Some(12.0 + k),
+            net_debt_ebitda: Some(1.5),
+            fcf_ps: Some(k),
+            fcf_margin: Some(9.0 + k),
+            interest_cover: Some(8.0 + k),
+            net_cash_rev: Some(k - 10.0),
+            ebitda: Some(300.0 * k),
+            net_debt: Some(200.0 * k),
+            rnd_margin: Some(5.0 + k),
+            payout_margin: Some(4.0 + k),
+            rec_margin: Some(10.0 + k),
+            sga_margin: Some(15.0 - k),
+            sbc_margin: Some(1.0 + k / 10.0),
+            ocf_margin: Some(18.0 + k),
+            gw_assets: Some(10.0 + k),
+            soft_assets: Some(20.0 + k),
+            dep_rate: Some(5.0 + k / 10.0),
+            lev: Some(2.0 + k / 10.0),
+            currency: Some("USD".into()),
+        };
+        let mut rows: Vec<FundRow> = (2010..=2021).map(|y| row(y, ymd(y + 1, 2, 15), 1.0 + 0.1 * (y - 2010) as f64)).collect();
+        rows.push(row(2014, ymd(2019, 8, 1), 50.0));
+        for cutoff in [ymd(2013, 3, 1), ymd(2016, 6, 1), ymd(2019, 7, 31), ymd(2020, 3, 1), ymd(2021, 12, 31)] {
+            let seen: Vec<FundRow> = rows.iter().filter(|r| r.filed <= cutoff).cloned().collect();
+            assert!(seen.len() < rows.len(), "the trap is live at {cutoff}");
+            for yrs in [1, 5] {
+                let full = serde_json::to_string(&fund_factors(&rows, cutoff, yrs)).unwrap();
+                assert_eq!(full, serde_json::to_string(&fund_factors(&seen, cutoff, yrs)).unwrap(), "{cutoff} {yrs}y");
+            }
+        }
+    }
+
+    /// (#529) The two one-line as-of reads the walk also joins: insider trades and the FX rate. Each must
+    /// read the same with everything after the cutoff deleted.
+    #[test]
+    fn look_ahead_insider_and_fx_ignore_the_future() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let txns: Vec<InsiderTx> = [(3, 1, true), (5, 20, false), (5, 31, true), (6, 1, true), (7, 1, false), (8, 9, true)]
+            .map(|(m, d, buy)| InsiderTx { date: ymd(2020, m, d), buy })
+            .into();
+        let fx: BTreeMap<NaiveDate, f64> = [(ymd(2020, 1, 1), 1.1), (ymd(2020, 6, 1), 1.2), (ymd(2020, 9, 1), 1.3)].into();
+        for c in [ymd(2020, 5, 31), ymd(2020, 6, 1), ymd(2020, 7, 15)] {
+            let seen: Vec<InsiderTx> = txns.iter().copied().filter(|t| t.date <= c).collect();
+            assert_eq!(insider_net_buys(&txns, c, 90), insider_net_buys(&seen, c, 90), "{c}");
+            let fx_seen: BTreeMap<NaiveDate, f64> = fx.range(..=c).map(|(d, r)| (*d, *r)).collect();
+            assert_eq!(rate_as_of(&fx, c), rate_as_of(&fx_seen, c), "{c}");
+        }
+    }
 }
 
 #[test]
