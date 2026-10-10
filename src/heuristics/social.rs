@@ -143,8 +143,11 @@ mod tests {
         assert_eq!(s("ARK", "2026-10-12", Some(1e9), None), 1.0, "a future date is fresh, never fresher");
         assert_eq!(s("ARK", "2026-10-10", Some(2e10), Some(0.0)), 0.5, "10× the pivot halves materiality");
         assert_eq!(s("ARK", "2026-10-10", None, Some(0.0)), 0.5, "unknown cap reads 10× the pivot");
+        assert_eq!(s("ARK", "2026-10-10", Some(0.0), Some(0.0)), 0.5, "a zero cap is unknown, never the smallest");
         assert_eq!(s("ARK", "2026-10-10", Some(1e9), Some(25.0)), 0.5, "half the run-up cap is half priced");
         assert_eq!(s("ARK", "2026-10-10", Some(1e9), Some(80.0)), 0.0, "past the cap is fully priced");
+        let flat = resolve(&BuyHeuristic::default(), &serde_yaml::from_str("half_life_days: 30\nrunup_cap_pct: 0\n").unwrap()).unwrap();
+        assert_eq!(score("ARK", "2026-10-10", Some(1e9), Some(80.0), asof, &flat), Some(1.0), "a 0 run-up cap drops the factor");
         assert_eq!(s("ARK; Reddit", "2026-10-10", Some(1e9), Some(0.0)), 1.0, "a loud source halves unpriced");
         assert_eq!(s("", "2026-10-10", Some(1e9), Some(0.0)), 0.0);
         assert_eq!(score("ARK", "bad", Some(1e9), Some(0.0), asof, &k), Some(0.5), "unknown date reads half fresh");

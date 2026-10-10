@@ -11170,6 +11170,7 @@ mod tests {
         assert_eq!(order(&off, "TICKER"), ["\"BIG\":\"1\":\"BIG\"", "\"SMALL\":\"2\":\"SMALL\""], "the 20y order puts the bigger CAGR first");
         assert_eq!(order(&on, "RANK-20Y"), ["\"SMALL\":\"1\":\"2\"", "\"BIG\":\"2\":\"1\""], "SOC puts the €1B name over the €3T one");
         assert_eq!(cell(&on["social"][0], "SOC"), "3.00");
+        assert_eq!(cell(&on["social"][1], "SOC"), "0.72", "market cap is shares × price: €3T is 1500× the pivot");
         assert_eq!(book.new, [("SMALL".to_string(), Some(100.0)), ("BIG".to_string(), Some(100.0))]);
         assert_eq!(book.old, [("BIG".to_string(), Some(100.0)), ("SMALL".to_string(), Some(100.0))]);
         assert_eq!(on["help"]["social"]["SOC"], social::SOC_HELP);
@@ -11274,6 +11275,7 @@ mod tests {
         let ((_, _, twin), _, _) = rank_key(Some(&older), &d, &[]);
         assert_eq!((c, s, cell), (1, twin, format!("{twin:.1}ʷ~")));
         assert!(misses.contains("history ~OLDER"), "{misses}");
+        assert_eq!(rank_key(Some(&pool[0]), &d, &pool), rank_key(Some(&pool[0]), &d, &[]), "a fund with its own record never borrows its twin's score");
         assert!(rank_key(Some(&kid), &d, &[]).1.ends_with('ⁱ'), "no twin in the pool: its own since-listing change");
         // no turnover scores at the floor, where the liquidity bonus is 0
         assert!(turnover_floor(&y15, &d) <= 1e9, "ln(max(floor/1e9, 1)) = 0");
