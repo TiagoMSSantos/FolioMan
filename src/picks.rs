@@ -4996,7 +4996,7 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
         ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
         ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
         ("s", "the Social Arbitrage trading table names it — superinvestor buyers (13F buys plus new 13D/13G stakes) score × growth_superinvestor_boost once per growth_superinvestor_step of them, an ARK, insider, video or hand-list row × growth_social_boost (1.0 = off)"),
-        ("b", "bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score; page only"),
+        ("b", "bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score; page only, and (#535) the page's N cuts it like any other row"),
 ];
 
 /// (#400) The page's column glossary, keyed per table because one header can mean two things: 2Y is a
@@ -5028,7 +5028,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         .iter()
         .map(|h| {
             let text = match *h {
-                "" => "o = you already hold it; blank here, as the page reads no broker account".to_string(),
+                "" => return ("RANK".to_string(), CORE_RANK_HELP.to_string()), // (#535) the page's flag column
                 "NAME" => "Fund's full name; click to open its justETF page".to_string(),
                 _ => lanes[*h].clone(),
             };
@@ -5053,7 +5053,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     // (#452) The three shadow tables' headers are fixed strings built in `fetch`, so their text is too.
     // Here rather than in `screen` alone so an upload's payload still titles CI's tables, which it keeps.
     let fixed = |pairs: &[(&str, &str)]| pairs.iter().map(|(h, t)| (h.to_string(), t.to_string())).collect();
-    let (num, ticker) = (("#", "Position in this table"), lanes["TICKER"].as_str());
+    let (num, ticker) = (("RANK", "Position in this table"), lanes["TICKER"].as_str());
     let attention = fixed(&[
         num,
         ("TICKER", ticker),
@@ -5125,8 +5125,11 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("EQUITY", "Total shareholders' equity (negative = deficit) at the newest balance-sheet date, before the offer"),
     ]);
     let exposure = fixed(&[
+        ("RANK", "A name row's position by the buy heuristic, the ruler CORE ranks on; blank on sector, currency and one-bet rows, which are not assets"),
         ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),
         ("NAME", "The sector, currency, group size or company ticker; ? = the data source served nothing for the funds named in DETAIL"),
+        ("SCORE", RANK_SCORE_HELP),
+        ("MISSES", RANK_MISSES_HELP),
         ("BUY%", "Share of the BUY% book. A name's share is a lower bound: a fund counts only its top-10 holdings"),
         ("DETAIL", "For a name: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
     ]);
@@ -5379,7 +5382,7 @@ pub fn young_rows(quotes: &[Quote]) -> serde_json::Value {
     young(quotes)
         .iter()
         .enumerate()
-        .map(|(i, q)| serde_json::json!([["#", (i + 1).to_string()], ["TICKER", q.ticker], ["NAME", q.name]]))
+        .map(|(i, q)| serde_json::json!([["RANK", (i + 1).to_string()], ["TICKER", q.ticker], ["NAME", q.name]]))
         .collect()
 }
 
@@ -5407,7 +5410,7 @@ pub fn reit_rows(quotes: &[Quote], sigis: &[(String, String)]) -> serde_json::Va
     let mut rows: Vec<(&str, &str, &str)> = quotes.iter().filter_map(|q| Some((q.ticker.as_str(), q.name.as_str(), reit_kind(q)?))).collect();
     let pooled: HashSet<&str> = rows.iter().map(|r| r.0).collect();
     rows.extend(sigis.iter().filter(|(t, _)| !pooled.contains(t.as_str())).map(|(t, n)| (t.as_str(), n.as_str(), "SIGI")));
-    rows.iter().enumerate().map(|(i, (t, n, k))| serde_json::json!([["#", (i + 1).to_string()], ["TICKER", t], ["NAME", n], ["KIND", k]])).collect()
+    rows.iter().enumerate().map(|(i, (t, n, k))| serde_json::json!([["RANK", (i + 1).to_string()], ["TICKER", t], ["NAME", n], ["KIND", k]])).collect()
 }
 
 /// (#525) A row's order key in every page table but the lanes and the IPOs: (class, gates missed, score),
@@ -5415,20 +5418,22 @@ pub fn reit_rows(quotes: &[Quote], sigis: &[(String, String)]) -> serde_json::Va
 /// no 1-year record. A failing row's score is the one it would get with its gates waived ([`waived`]).
 /// (#526) A failing row with no score even then (a record under the 2Y rung) is class 2, after every
 /// scored one, so refused is 3 and unscorable 4.
-type RankKey = (u8, usize, f64);
+pub(crate) type RankKey = (u8, usize, f64);
 
 /// (#525) Passing rows first by score, then failing rows by fewest gates missed and their waived score,
 /// then (#526) failing rows with no score, then refused, then unscorable. Equal keys compare equal, so a stable sort keeps the table's order.
-fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
+pub(crate) fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
     a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.2.total_cmp(&a.2))
 }
 
+/// (#535) Help for the page CORE table's RANK cell, which carries the terminal's flag column.
+const CORE_RANK_HELP: &str = "Position in this table, by the buy heuristic (SCORE, then MISSES); o = you already hold it, never on the page, which reads no broker account";
 /// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
 const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then the — ones, then refused, then n/a";
 const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each); refused = a kind the screen never buys (leveraged, commodity, hedged, no turnover); n/a = not priced, or no 1-year record";
 
 /// (#525) A row's [`RankKey`] and its SCORE and MISSES cells.
-fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic) -> (RankKey, String, String) {
+pub(crate) fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic) -> (RankKey, String, String) {
     const NONE: f64 = f64::NEG_INFINITY;
     let na = ((4, 0, NONE), "—".to_string(), "n/a".to_string());
     let Some(q) = q else { return na };
@@ -5472,7 +5477,7 @@ const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "score8y", "in
 /// stands for (`us`, [`crate::fetch::us_symbol`] on CI): Berkshire files AAPL, the pond holds APC.DE. A row
 /// the screen did not price reads n/a in every column, so the table stays rectangular. Display only.
 /// (#525) Each row also gains SCORE and MISSES right after its NAME, the rows sort by [`rank_key`] and
-/// `#` is renumbered to the new order.
+/// RANK is renumbered to the new order.
 pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap, us: &dyn Fn(&str) -> String) {
     let cols: Vec<&ColSpec> = lane_columns(w, HIDE_STOCK).into_iter().filter(|c| !HIDE_SHADOW.contains(&c.key)).collect();
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
@@ -5494,7 +5499,7 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &
         }
         keyed.sort_by(|a, b| rank_cmp(&a.0, &b.0));
         for (i, (_, mut row)) in keyed.into_iter().enumerate() {
-            if let Some(n) = row.as_array_mut().and_then(|c| c.iter_mut().find(|c| c[0] == "#")) {
+            if let Some(n) = row.as_array_mut().and_then(|c| c.iter_mut().find(|c| c[0] == "RANK")) {
                 n[1] = (i + 1).to_string().into();
             }
             rows.push(row);
@@ -5992,6 +5997,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
 /// The first column has no name because it is the flag column (`o` = already held), exactly as the
 /// terminal prints it. It reaches the page as a blank header over a mostly-blank column, which is
 /// honest: on the published run there is no broker portfolio to read, so it is empty by construction.
+/// (#535) The page's copy prints it as RANK ([`hold_core_web_rows`]), the position with the flag after it.
 pub(crate) const HOLD_CORE_COLS: [&str; 14] =
     ["", "NAME", "TICKER", "MARKET", "TR-CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM", "TOP10%", "TD-1Y", "TD-5Y"];
 
@@ -6060,14 +6066,17 @@ fn trcagr_cell(q: &Quote) -> String {
 /// has. `cores` is the list [`print_hold_core`] is about to print, passed in rather than rebuilt:
 /// parity with the terminal is then a property of there being one list, not of two calls agreeing.
 /// (#525) The page's copy is ranked like the shadow tables ([`rank_key`]), with SCORE and MISSES after
-/// TICKER; the terminal block and the sizing list keep `cores` in its sleeve order.
+/// TICKER; the terminal block and the sizing list keep `cores` in its sleeve order. (#535) The flag
+/// column becomes RANK there: the position, then `o` when held.
 pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned, tuning: &BuyHeuristic) -> Vec<Vec<(String, String)>> {
     let mut keyed: Vec<_> = cores.iter().map(|q| (rank_key(Some(q), tuning), q)).collect();
     keyed.sort_by(|a, b| rank_cmp(&a.0 .0, &b.0 .0));
     keyed
         .into_iter()
-        .map(|((_, score, misses), q)| {
+        .enumerate()
+        .map(|(i, ((_, score, misses), q))| {
             let mut row: Vec<(String, String)> = HOLD_CORE_COLS.iter().map(|h| (*h).to_string()).zip(hold_core_cells(q, owned)).collect();
+            row[0] = ("RANK".to_string(), format!("{}{}", i + 1, row[0].1)); // (#535) position, then the `o` flag
             row.splice(3..3, [("SCORE".to_string(), score), ("MISSES".to_string(), misses)]);
             row
         })
@@ -10119,7 +10128,7 @@ mod tests {
         assert_eq!(cores.len(), 1, "the one qualifying fund, published");
         assert_eq!(cores[0][1][0], "NAME", "the page's header row is the printer's");
         assert_eq!(cores[0][1][1], "Vanguard FTSE All-World UCITS ETF");
-        assert_eq!(cores[0][0][1], "", "the broker overlay holds no fund here, and nothing else may fill that cell");
+        assert_eq!(cores[0][0], serde_json::json!(["RANK", "1"]), "(#535) the flag column ranks; the broker overlay holds no fund here");
         // (#378) …and the DEGRADED line, verbatim, so the page names the feed this run went without
         assert_eq!(payload["degraded"], serde_json::json!(["EU HICP feed down (inflation adjustment off)"]));
         // (#400) …and the glossary, whose >=1Y unit is the quotes' own stamp
@@ -11001,7 +11010,7 @@ mod tests {
         ];
         let got: Vec<&str> = young(&quotes).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, ["FAST", "SLOW", "NAN", "NONE"]);
-        assert_eq!(young_rows(&quotes)[0], serde_json::json!([["#", "1"], ["TICKER", "FAST"], ["NAME", "FAST Inc"]]));
+        assert_eq!(young_rows(&quotes)[0], serde_json::json!([["RANK", "1"], ["TICKER", "FAST"], ["NAME", "FAST Inc"]]));
         assert_eq!(young_rows(&quotes).as_array().map(Vec::len), Some(4));
         assert_eq!(young_line(&quotes, 2), "young (<5y listed, shadow, NOT ranked): 4 stock(s), by revenue growth: FAST +175%, SLOW +5%");
         assert!(young_line(&quotes, 9).ends_with("SLOW +5%, NAN n/a, NONE n/a"), "{}", young_line(&quotes, 9));
@@ -11025,8 +11034,8 @@ mod tests {
         let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
         let w = Widths { columns: vec!["rank".into(), "ticker".into(), "sector".into(), "score".into(), "ins".into(), "earn".into(), "ter".into()], ..Widths::default() };
         let mut p = serde_json::json!({
-            "berkshire": [[["#", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"]], [["#", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"]]],
-            "social": [[["#", "1"], ["TICKER", "HOOD"], ["WHY", "x"]]],
+            "berkshire": [[["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"]], [["RANK", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"]]],
+            "social": [[["RANK", "1"], ["TICKER", "HOOD"], ["WHY", "x"]]],
             "stocks": [[["TICKER", "HOOD"]]],
             "help": {"lanes": {"SECTOR": "the sector"}},
         });
@@ -11034,10 +11043,10 @@ mod tests {
         // (#525) no NAME cell here, so SCORE and MISSES go last; a stub has no turnover, so it is refused
         let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: no-turnover"])];
         let [rs, rm] = refused();
-        assert_eq!(p["berkshire"][0], serde_json::json!([["#", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], rs, rm]), "a US filing finds its Xetra twin");
-        assert_eq!(p["berkshire"][1], serde_json::json!([["#", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
+        assert_eq!(p["berkshire"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], rs, rm]), "a US filing finds its Xetra twin");
+        assert_eq!(p["berkshire"][1], serde_json::json!([["RANK", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
         let [rs, rm] = refused();
-        assert_eq!(p["social"][0], serde_json::json!([["#", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"], rs, rm]));
+        assert_eq!(p["social"][0], serde_json::json!([["RANK", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"], rs, rm]));
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
         assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
         assert!(p.get("attention").is_none(), "an absent table stays absent");
@@ -11045,7 +11054,7 @@ mod tests {
 
     /// (#525) Every shadow table and the page's CORE copy rank alike: passing rows by score, then by
     /// fewest gates missed and the waived (`ʷ`) score, then (#526) failing rows with no score even waived,
-    /// then refused, then unpriced, equal keys in their old order; SCORE and MISSES follow NAME and `#` is
+    /// then refused, then unpriced, equal keys in their old order; SCORE and MISSES follow NAME and RANK is
     /// renumbered. CORE's input order is untouched.
     #[test]
     fn page_tables_rank_by_score_then_gates_missed() {
@@ -11064,7 +11073,7 @@ mod tests {
         let mut fresh = good("FRESH", 300.0); // (#526) a 1.5y record: no score even at the 2Y rung
         (fresh.age_years, fresh.perf) = (Some(1.5), legs(&[("1Y", 10.0)]));
         let quotes = [strong, weak, one, one_lo, two, lev, fresh];
-        let row = |t: &str| serde_json::json!([["#", "0"], ["TICKER", t], ["NAME", t], ["X", "x"]]);
+        let row = |t: &str| serde_json::json!([["RANK", "0"], ["TICKER", t], ["NAME", t], ["X", "x"]]);
         let tables: Vec<serde_json::Value> = ["FRESH", "NOPE", "LEVX", "TWOG", "ONELO", "ONEG", "WEAK", "STRONG", "NOPE2"].map(row).into();
         let mut p = serde_json::json!({"reits": tables, "help": {"lanes": {}}});
         let (w, d) = (Widths { columns: vec!["ticker".into()], ..Widths::default() }, BuyHeuristic::default());
@@ -11073,18 +11082,19 @@ mod tests {
         let order: Vec<&str> = rows.iter().map(|r| r[1][1].as_str().unwrap()).collect();
         assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "TWOG", "FRESH", "LEVX", "NOPE", "NOPE2"], "no score sorts after every ʷ score");
         let s = growth_score(&quotes[0], &d).unwrap();
-        assert_eq!(rows[0], serde_json::json!([["#", "1"], ["TICKER", "STRONG"], ["NAME", "STRONG"], ["SCORE", format!("{s:.1}")], ["MISSES", "0"], ["X", "x"]]));
+        assert_eq!(rows[0], serde_json::json!([["RANK", "1"], ["TICKER", "STRONG"], ["NAME", "STRONG"], ["SCORE", format!("{s:.1}")], ["MISSES", "0"], ["X", "x"]]));
         assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range"]));
         assert!(rows[2][3][1].as_str().unwrap().ends_with('ʷ'), "a failing row prints its waived score");
         assert_eq!(rows[4][4], serde_json::json!(["MISSES", "2: range, cagr"]));
         assert_eq!(rows[5].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history"])], "a gate waived and still failing counts once");
         assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
-        assert_eq!(rows[8].as_array().unwrap()[..1], [serde_json::json!(["#", "9"])]);
+        assert_eq!(rows[8].as_array().unwrap()[..1], [serde_json::json!(["RANK", "9"])]);
         assert_eq!(p["help"]["reits"]["MISSES"], RANK_MISSES_HELP);
         // CORE: the same order on a copy, SCORE and MISSES after TICKER
         let cores = [&quotes[5], &quotes[1], &quotes[0]];
         let web = hold_core_web_rows(&cores, &Owned::default(), &d);
         assert_eq!(web.iter().map(|r| r[2].1.as_str()).collect::<Vec<_>>(), ["STRONG", "WEAK", "LEVX"]);
+        assert_eq!(web.iter().map(|r| (r[0].0.as_str(), r[0].1.as_str())).collect::<Vec<_>>(), [("RANK", "1"), ("RANK", "2"), ("RANK", "3")], "(#535)");
         assert_eq!(cores.map(|q| q.ticker.as_str()), ["LEVX", "WEAK", "STRONG"]);
     }
 
@@ -11106,7 +11116,7 @@ mod tests {
             q("XREIT", "EQUITY", None, "Some REIT Corp"),
         ];
         let sigis = [("MLCIA.LS".to_string(), "Ciagest SIGI".to_string()), ("DLR".to_string(), "dup".to_string())];
-        let row = |i: &str, t: &str, n: &str, k: &str| serde_json::json!([["#", i], ["TICKER", t], ["NAME", n], ["KIND", k]]);
+        let row = |i: &str, t: &str, n: &str, k: &str| serde_json::json!([["RANK", i], ["TICKER", t], ["NAME", n], ["KIND", k]]);
         assert_eq!(
             reit_rows(&quotes, &sigis),
             serde_json::json!([
@@ -11221,12 +11231,13 @@ mod tests {
             assert!(!nominal["lanes"][c.hdr].is_empty(), "{}", c.hdr);
         }
         assert_eq!(nominal["lanes"].len(), COLUMNS.len(), "one entry per header, none shared");
-        for h in HOLD_CORE_COLS {
+        for h in HOLD_CORE_COLS.map(|h| if h.is_empty() { "RANK" } else { h }) {
             assert!(!nominal["core"][h].is_empty(), "{h:?}");
         }
+        assert!(!nominal["core"].contains_key(""), "(#535) the page's flag column is RANK");
         assert_eq!(nominal["core"]["TR-CAGR"], nominal["lanes"]["TR-CAGR"], "a shared header keeps the lane's text");
         assert_ne!(nominal["core"]["NAME"], nominal["lanes"]["NAME"], "CORE prints the raw name");
-        assert!(!nominal["lanes"].values().any(|t| *t == nominal["core"][""]), "the flag column has its own line");
+        assert!(!nominal["lanes"].values().any(|t| *t == nominal["core"]["RANK"]), "the flag column has its own line");
         let heads: Vec<&str> = infl[0].iter().map(|(h, _)| h.as_str()).collect();
         assert_eq!(nominal["inflation"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads.iter().copied().collect());
         for (h, t) in &nominal["inflation"] {
@@ -11291,6 +11302,7 @@ mod tests {
         let rows = hold_core_web_rows(&[&q], &Owned::default(), &BuyHeuristic::default());
         assert_eq!(rows.len(), 1);
         let mut heads = HOLD_CORE_COLS.to_vec();
+        heads[0] = "RANK"; // (#535)
         heads.splice(3..3, ["SCORE", "MISSES"]);
         assert_eq!(rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(), heads);
         let mut cells = hold_core_cells(&q, &Owned::default());

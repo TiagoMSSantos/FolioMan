@@ -551,6 +551,8 @@ fn currency_mix_line(
 ///   dollars), a fund's top-10 holdings' listings, a coin as Crypto.
 /// - `one bet`: the [`overlap_groups`] among the book's funds.
 /// - `name`: the ten heaviest single names, direct plus each fund's top-10 weight, so a lower bound.
+///   (#535) They print ranked by [`picks::rank_key`], the ruler CORE and the shadow tables sort on, with
+///   RANK, SCORE and MISSES; the other kinds are not assets, so those three cells stay blank.
 ///
 /// A fund with no data lands in its kind's `?` row, NAMED (#257): a blank beats a guess, and nothing is
 /// borrowed from a twin. Display only: nothing reads it back.
@@ -560,6 +562,7 @@ fn exposure_rows(
     holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
     mix: &std::collections::HashMap<String, fetch::FundMix>,
     home: &dyn Fn(&str) -> String,
+    tuning: &config::BuyHeuristic,
 ) -> serde_json::Value {
     use std::collections::HashMap;
     let mut sector: HashMap<String, f64> = HashMap::new();
@@ -617,8 +620,8 @@ fn exposure_rows(
         }
         funds.insert(t.clone(), hs.to_vec());
     }
-    let row = |kind: &str, name: &str, w: f64, detail: String| {
-        serde_json::json!([["KIND", kind], ["NAME", name], ["BUY%", format!("{w:.1}%")], ["DETAIL", detail]])
+    let row = |(rank, score, misses): (String, String, String), kind: &str, name: &str, w: f64, detail: String| {
+        serde_json::json!([["RANK", rank], ["KIND", kind], ["NAME", name], ["SCORE", score], ["MISSES", misses], ["BUY%", format!("{w:.1}%")], ["DETAIL", detail]])
     };
     let heaviest = |m: HashMap<String, f64>| {
         let mut v: Vec<(String, f64)> = m.into_iter().filter(|(_, w)| *w >= 0.05).collect();
@@ -633,27 +636,31 @@ fn exposure_rows(
     ] {
         for (name, w) in heaviest(mix) {
             let detail = if name == "?" { format!("{why}: {}", blind.join(" ")) } else { String::new() };
-            rows.push(row(kind, &name, w, detail));
+            rows.push(row(Default::default(), kind, &name, w, detail));
         }
     }
     for (members, common) in overlap_groups(&funds, HOLDINGS_OVERLAP_MIN) {
         let detail = format!("{} share top-10 holdings {}", members.join(" "), common.join(" "));
-        rows.push(row("one bet", &format!("{} funds", members.len()), weight(&members), detail));
+        rows.push(row(Default::default(), "one bet", &format!("{} funds", members.len()), weight(&members), detail));
     }
     if !ungrouped.is_empty() {
         let detail = format!("too few holdings served to group: {}", ungrouped.join(" "));
-        rows.push(row("one bet", "?", weight(&ungrouped), detail));
+        rows.push(row(Default::default(), "one bet", "?", weight(&ungrouped), detail));
     }
     let mut top: Vec<(String, (f64, f64, usize))> = names.into_iter().collect();
     top.sort_by(|a, b| (b.1 .0 + b.1 .1).total_cmp(&(a.1 .0 + a.1 .1)).then_with(|| a.0.cmp(&b.0)));
-    for (sym, (direct, via, n)) in top.into_iter().take(10) {
+    // a name finds its quote by home symbol, else by its exact ticker, which wins over a twin
+    let by: HashMap<String, &Quote> = quotes.iter().map(|q| (home(&q.ticker), q)).chain(quotes.iter().map(|q| (q.ticker.clone(), q))).collect();
+    let mut ranked: Vec<_> = top.into_iter().take(10).map(|(sym, v)| (picks::rank_key(by.get(&sym).copied(), tuning), sym, v)).collect();
+    ranked.sort_by(|a, b| picks::rank_cmp(&a.0 .0, &b.0 .0));
+    for (i, ((_, score, misses), sym, (direct, via, n))) in ranked.into_iter().enumerate() {
         let held = if n == 1 { "1 fund".to_string() } else { format!("{n} funds") };
         let detail = match (direct > 0.0, n > 0) {
             (true, true) => format!("{direct:.1}% direct + {held}"),
             (true, false) => "direct".to_string(),
             _ => format!("via {held}"),
         };
-        rows.push(row("name", &sym, direct + via, detail));
+        rows.push(row(((i + 1).to_string(), score, misses), "name", &sym, direct + via, detail));
     }
     serde_json::Value::Array(rows)
 }
@@ -2241,7 +2248,7 @@ pub async fn run(args: Vec<String>) {
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
         crate::picks::stamp_buy(&mut top, &sized_now);
         crate::picks::stamp_index(&mut top, &quotes); // (#446) the ETF rows' INDEX, after BUY%
-        top["exposure"] = exposure_rows(&sized_now, &quotes, &holdings, &mix, &fetch::us_symbol);
+        top["exposure"] = exposure_rows(&sized_now, &quotes, &holdings, &mix, &fetch::us_symbol, &settings.buy_heuristic);
         top["attention"] = attention;
         top["berkshire"] = berkshire;
         top["social"] = social;
@@ -4169,8 +4176,8 @@ mod tests {
     fn shadow_pool_maps_rows_to_pool_tickers() {
         let q = |t: &str| Quote::stub(t, "1", "", t);
         let quotes = [q("AJG"), q("APC.DE"), q("ZZOFF")];
-        let attention = serde_json::json!([[["#", "1"], ["TICKER", "AJG"]], [["#", "2"], ["TICKER", "ZZNONE"]]]);
-        let berkshire = serde_json::json!([[["#", "1"], ["TICKER", "AAPL"]]]);
+        let attention = serde_json::json!([[["RANK", "1"], ["TICKER", "AJG"]], [["RANK", "2"], ["TICKER", "ZZNONE"]]]);
+        let berkshire = serde_json::json!([[["RANK", "1"], ["TICKER", "AAPL"]]]);
         let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
         let got = shadow_pool(&[&attention, &berkshire, &serde_json::json!(null)], &quotes, &us);
         assert_eq!(got, ["AJG", "APC.DE"].iter().map(|t| t.to_string()).collect());
@@ -4295,6 +4302,7 @@ mod tests {
             etf("BLIND.L"),
             Quote::stub("BTC-EUR", "1", "", "Bitcoin"),
             stock("NOSEC", None),
+            Quote::stub("S4", "1", "", "Some 3x Daily Leveraged ETP"), // (#535) refused, so it ranks above AAPL, which is heavier but unpriced
         ];
         let book: Vec<(String, f64)> =
             [("NVDA.DE", 10.0), ("A.L", 30.0), ("B.L", 20.0), ("BLIND.L", 20.0), ("BTC-EUR", 10.0), ("NOSEC", 10.0), ("UNPRICED", 5.0)]
@@ -4312,37 +4320,38 @@ mod tests {
             ("B.L".into(), sectors(&[("Technology", 1.0), ("Utilities", 0.0)])),
         ]);
         let home = |t: &str| t.trim_end_matches(".DE").to_string();
-        let rows = exposure_rows(&book, &quotes, &holdings, &mix, &home);
+        let d = config::BuyHeuristic::default();
+        let rows = exposure_rows(&book, &quotes, &holdings, &mix, &home, &d);
         let got: Vec<String> = rows
             .as_array()
             .expect("an array of rows")
             .iter()
-            .map(|r| (0..4).map(|i| r[i][1].as_str().expect("a string cell")).collect::<Vec<_>>().join(" | "))
+            .map(|r| (0..7).map(|i| r[i][1].as_str().expect("a string cell")).collect::<Vec<_>>().join(" | "))
             .collect();
         assert_eq!(
             got,
             [
-                "sector | Information Technology | 48.0% | ",
-                "sector | ? | 30.0% | no sector data: BLIND.L NOSEC",
-                "sector | Health Care | 12.0% | ",
-                "sector | Crypto | 10.0% | ",
-                "currency | USD | 61.1% | ",
-                "currency | ? | 20.0% | no holdings served: BLIND.L",
-                "currency | Crypto | 10.0% | ",
-                "currency | EUR | 8.9% | ",
-                "one bet | 2 funds | 50.0% | A.L B.L share top-10 holdings AAPL ASML.AS NVDA S3 S4",
-                "one bet | ? | 20.0% | too few holdings served to group: BLIND.L",
-                "name | NVDA | 22.0% | 10.0% direct + 2 funds",
-                "name | NOSEC | 10.0% | direct",
-                "name | AAPL | 5.0% | via 2 funds",
-                "name | ASML.AS | 5.0% | via 2 funds",
-                "name | S3 | 3.5% | via 2 funds",
-                "name | S4 | 3.5% | via 2 funds",
+                " | sector | Information Technology |  |  | 48.0% | ",
+                " | sector | ? |  |  | 30.0% | no sector data: BLIND.L NOSEC",
+                " | sector | Health Care |  |  | 12.0% | ",
+                " | sector | Crypto |  |  | 10.0% | ",
+                " | currency | USD |  |  | 61.1% | ",
+                " | currency | ? |  |  | 20.0% | no holdings served: BLIND.L",
+                " | currency | Crypto |  |  | 10.0% | ",
+                " | currency | EUR |  |  | 8.9% | ",
+                " | one bet | 2 funds |  |  | 50.0% | A.L B.L share top-10 holdings AAPL ASML.AS NVDA S3 S4",
+                " | one bet | ? |  |  | 20.0% | too few holdings served to group: BLIND.L",
+                "1 | name | NVDA | — | refused: no-turnover | 22.0% | 10.0% direct + 2 funds",
+                "2 | name | NOSEC | — | refused: no-turnover | 10.0% | direct",
+                "3 | name | S4 | — | refused: leveraged | 3.5% | via 2 funds",
+                "4 | name | AAPL | — | n/a | 5.0% | via 2 funds",
+                "5 | name | ASML.AS | — | n/a | 5.0% | via 2 funds",
+                "6 | name | S3 | — | n/a | 3.5% | via 2 funds",
             ]
         );
-        let one = exposure_rows(&book[1..2], &quotes, &holdings, &mix, &home);
-        assert_eq!(one[one.as_array().expect("rows").len() - 1][3][1], "via 1 fund");
-        assert_eq!(exposure_rows(&[], &quotes, &holdings, &mix, &home), serde_json::json!([]));
+        let one = exposure_rows(&book[1..2], &quotes, &holdings, &mix, &home, &d);
+        assert_eq!(one[one.as_array().expect("rows").len() - 1][6][1], "via 1 fund");
+        assert_eq!(exposure_rows(&[], &quotes, &holdings, &mix, &home, &d), serde_json::json!([]));
     }
 
     /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the

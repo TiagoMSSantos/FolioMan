@@ -56,7 +56,7 @@
      above: three label columns are correct for the ranked tables and nothing else should move. */
   #inflation th, #inflation td { text-align: right; }
   #inflation th:first-child, #inflation td:first-child { text-align: left; }
-  /* (#433) The three label columns (RANK NAME TICKER; CORE's flag NAME TICKER) stay put while a wide
+  /* (#433) The three label columns (RANK NAME TICKER, CORE's too) stay put while a wide
      table scrolls sideways; stick() in app.js measures each one's `left`. Wide screens only: on a
      phone a long fund NAME would pin most of the viewport. */
   @media (min-width: 700px) {
@@ -66,7 +66,7 @@
     :is(th, td):nth-child(2) { left: var(--left1); }
     :is(th, td):nth-child(3) { left: var(--left2); }
   }
-  /* (#250) …and the CORE table has FOUR leading label columns (the owned flag, NAME, TICKER, MARKET)
+  /* (#250) …and the CORE table has FOUR leading label columns (RANK, NAME, TICKER, MARKET)
      plus three trailing ones (USE, REPL, DOM), which is how the terminal block aligns them. */
   #core th:nth-child(4), #core td:nth-child(4),
   #core th:nth-last-child(-n+3), #core td:nth-last-child(-n+3) { text-align: left; }

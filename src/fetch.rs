@@ -2664,7 +2664,7 @@ pub fn brk_rows(holdings: &[BrkRow], quotes: &[Quote]) -> Value {
             };
             let status = if form4_only { "new (Form 4)" } else { brk_status(h.prev, h.shares) };
             serde_json::json!([
-                ["#", (i + 1).to_string()],
+                ["RANK", (i + 1).to_string()],
                 ["TICKER", h.ticker],
                 ["NAME", name.unwrap_or("—")], // (#469) NAME links the company site, `picks::stamp_site`
                 linked("WEIGHT", &weight, &h.filing),
@@ -3826,7 +3826,7 @@ fn soc_table(rows: &[SocRow], supers: &str) -> Value {
                 sources.push("hand list".to_string());
             }
             serde_json::json!([
-                ["#", (i + 1).to_string()],
+                ["RANK", (i + 1).to_string()],
                 ["TICKER", r.ticker],
                 ["NAME", r.name],
                 ["SOURCES", sources.join("; ")],
@@ -4038,7 +4038,7 @@ fn attn_rows(top: &[(String, f64)], titles: &BTreeMap<String, String>) -> Value 
             // (#455) the article the views were counted on, (#469) on VIEWS YoY: NAME links the company site
             let url = if title.is_empty() { String::new() } else { format!("https://en.wikipedia.org/wiki/{}", wiki_path(title)) };
             serde_json::json!([
-                ["#", (i + 1).to_string()],
+                ["RANK", (i + 1).to_string()],
                 ["TICKER", t],
                 ["NAME", title],
                 linked("VIEWS YoY", &format!("{:+.1}%", (r - 1.0) * 100.0), &url),
@@ -7664,7 +7664,7 @@ fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
                 _ => na(),
             };
             serde_json::json!([
-                ["#", (i + 1).to_string()],
+                ["RANK", (i + 1).to_string()],
                 ["STATUS", d.status],
                 ["TICKER", if d.sym.is_empty() { "—" } else { &d.sym }],
                 ["NAME", d.name, link],
@@ -11713,10 +11713,10 @@ pub(crate) mod tests {
         assert_eq!(
             brk_rows(&holdings, &quotes),
             serde_json::json!([
-                [["#", "1"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A"], ["WEIGHT", "40.0%", "https://f"], ["STATUS", "trimmed"], ["SHARES Δ", "-10.0%"], ["BOUGHT", "2026-Q1"]],
-                [["#", "2"], ["TICKER", "CB"], ["NAME", "Chubb"], ["WEIGHT", "20.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+10.0%"], ["BOUGHT", "2026-Q2"]],
-                [["#", "3"], ["TICKER", "DAL"], ["NAME", "—"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "before 2025-Q3"]],
-                [["#", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
+                [["RANK", "1"], ["TICKER", "GOOGL"], ["NAME", "Alphabet A"], ["WEIGHT", "40.0%", "https://f"], ["STATUS", "trimmed"], ["SHARES Δ", "-10.0%"], ["BOUGHT", "2026-Q1"]],
+                [["RANK", "2"], ["TICKER", "CB"], ["NAME", "Chubb"], ["WEIGHT", "20.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+10.0%"], ["BOUGHT", "2026-Q2"]],
+                [["RANK", "3"], ["TICKER", "DAL"], ["NAME", "—"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "before 2025-Q3"]],
+                [["RANK", "4"], ["TICKER", "LEN"], ["NAME", "LENNAR CORP-A"], ["WEIGHT", "10.0%", "https://f"], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2026-Q2"]],
             ])
         );
         help_titles("berkshire", &brk_rows(&holdings, &quotes)[0]);
@@ -11786,8 +11786,8 @@ pub(crate) mod tests {
         assert_eq!(
             brk_rows(&rows, &[Quote { instrument_type: "EQUITY".into(), ..Quote::stub("NEW.DE", "€1", "", "New Co Xetra") }]),
             serde_json::json!([
-                [["#", "1"], ["TICKER", "LEN"], ["NAME", "—"], ["WEIGHT", "100.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+11.1%"], ["BOUGHT", "2026-10-01 (Form 4)"]],
-                [["#", "2"], ["TICKER", "NEW"], ["NAME", "New Co Xetra"], ["WEIGHT", "—", "https://www.sec.gov/Archives/edgar/data/1067983/0001267/0001-26-7-index.htm"], ["STATUS", "new (Form 4)"], ["SHARES Δ", "new"], ["BOUGHT", "2026-09-30 (Form 4)"]],
+                [["RANK", "1"], ["TICKER", "LEN"], ["NAME", "—"], ["WEIGHT", "100.0%", "https://f"], ["STATUS", "added"], ["SHARES Δ", "+11.1%"], ["BOUGHT", "2026-10-01 (Form 4)"]],
+                [["RANK", "2"], ["TICKER", "NEW"], ["NAME", "New Co Xetra"], ["WEIGHT", "—", "https://www.sec.gov/Archives/edgar/data/1067983/0001267/0001-26-7-index.htm"], ["STATUS", "new (Form 4)"], ["SHARES Δ", "new"], ["BOUGHT", "2026-09-30 (Form 4)"]],
             ])
         );
     }
@@ -11880,11 +11880,11 @@ pub(crate) mod tests {
         assert_eq!(
             brk_rows(&std::iter::once(us).chain(rows).collect::<Vec<_>>(), &[]),
             serde_json::json!([
-                [["#", "1"], ["TICKER", "AAPL"], ["NAME", "—"], ["WEIGHT", "100.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
-                [["#", "2"], ["TICKER", "8001.T"], ["NAME", "Co 8001"], ["WEIGHT", "—", format!("{pdf}S8.pdf")], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
-                [["#", "3"], ["TICKER", "8002.T"], ["NAME", "Co 8002"], ["WEIGHT", "—", format!("{pdf}S5.pdf")], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2020-08-24 (EDINET)"]],
-                [["#", "4"], ["TICKER", "8053.T"], ["NAME", "Co 8053"], ["WEIGHT", "—", format!("{pdf}S4.pdf")], ["STATUS", "trimmed"], ["SHARES Δ", "-8.0%"], ["BOUGHT", "—"]],
-                [["#", "5"], ["TICKER", "8058.T"], ["NAME", "Co 8058"], ["WEIGHT", "—", format!("{pdf}S3.pdf")], ["STATUS", "added"], ["SHARES Δ", "+29.7%"], ["BOUGHT", "2025-03-10 (EDINET)"]],
+                [["RANK", "1"], ["TICKER", "AAPL"], ["NAME", "—"], ["WEIGHT", "100.0%", "https://f"], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
+                [["RANK", "2"], ["TICKER", "8001.T"], ["NAME", "Co 8001"], ["WEIGHT", "—", format!("{pdf}S8.pdf")], ["STATUS", "held"], ["SHARES Δ", "+0.0%"], ["BOUGHT", "—"]],
+                [["RANK", "3"], ["TICKER", "8002.T"], ["NAME", "Co 8002"], ["WEIGHT", "—", format!("{pdf}S5.pdf")], ["STATUS", "new"], ["SHARES Δ", "new"], ["BOUGHT", "2020-08-24 (EDINET)"]],
+                [["RANK", "4"], ["TICKER", "8053.T"], ["NAME", "Co 8053"], ["WEIGHT", "—", format!("{pdf}S4.pdf")], ["STATUS", "trimmed"], ["SHARES Δ", "-8.0%"], ["BOUGHT", "—"]],
+                [["RANK", "5"], ["TICKER", "8058.T"], ["NAME", "Co 8058"], ["WEIGHT", "—", format!("{pdf}S3.pdf")], ["STATUS", "added"], ["SHARES Δ", "+29.7%"], ["BOUGHT", "2025-03-10 (EDINET)"]],
             ])
         );
     }
@@ -12026,8 +12026,8 @@ pub(crate) mod tests {
         assert_eq!(
             got,
             serde_json::json!([
-                [["#", "1"], ["TICKER", "AJG"], ["NAME", "Arthur J. Gallagher & Co."], ["VIEWS YoY", "+50.0%", "https://en.wikipedia.org/wiki/Arthur_J._Gallagher_%26_Co."]],
-                [["#", "2"], ["TICKER", "ZZ"], ["NAME", ""], ["VIEWS YoY", "-12.5%"]],
+                [["RANK", "1"], ["TICKER", "AJG"], ["NAME", "Arthur J. Gallagher & Co."], ["VIEWS YoY", "+50.0%", "https://en.wikipedia.org/wiki/Arthur_J._Gallagher_%26_Co."]],
+                [["RANK", "2"], ["TICKER", "ZZ"], ["NAME", ""], ["VIEWS YoY", "-12.5%"]],
             ])
         );
         help_titles("attention", &got[0]);
@@ -12135,11 +12135,11 @@ pub(crate) mod tests {
         let table = soc_table(&rows, "superinvestors");
         assert_eq!(
             table[0],
-            serde_json::json!([["#", "1"], ["TICKER", "AMZ.DE"], ["NAME", "Amazon.com, Inc."], ["SOURCES", "superinvestors 10; YouTube ×2; hand list"], ["NEWEST", "2026-09-30"], ["WHY", "said", "url"]])
+            serde_json::json!([["RANK", "1"], ["TICKER", "AMZ.DE"], ["NAME", "Amazon.com, Inc."], ["SOURCES", "superinvestors 10; YouTube ×2; hand list"], ["NEWEST", "2026-09-30"], ["WHY", "said", "url"]])
         );
         assert_eq!(table[1][3], serde_json::json!(["SOURCES", "YouTube ×1; hand list"]));
         assert_eq!(table[1][4], serde_json::json!(["NEWEST", "2026-10-01"]));
-        assert_eq!(table[3], serde_json::json!([["#", "4"], ["TICKER", "BRK-B"], ["NAME", "Berkshire"], ["SOURCES", "superinvestors 9"], ["NEWEST", "2026-Q2"], ["WHY", "bought by 9 superinvestors in 2026-Q2", "https://www.dataroma.com/m/stock.php?sym=BRK.B"]]));
+        assert_eq!(table[3], serde_json::json!([["RANK", "4"], ["TICKER", "BRK-B"], ["NAME", "Berkshire"], ["SOURCES", "superinvestors 9"], ["NEWEST", "2026-Q2"], ["WHY", "bought by 9 superinvestors in 2026-Q2", "https://www.dataroma.com/m/stock.php?sym=BRK.B"]]));
         assert_eq!(table[4][5], serde_json::json!(["WHY", "Amazon again, IBM, Tesla and Meta", "https://yt/2026-09-30"]));
         assert_eq!(table[6][2], serde_json::json!(["NAME", "—"]));
         help_titles("social", &table[0]);
@@ -14968,7 +14968,7 @@ pub(crate) mod tests {
             ["confidential", "—", "2026-11 r", "$100.0B r", "n/a", "$2000.0B r", "n/a", "n/a", "n/a"]
         );
         assert_eq!(rows[2][3][2], "https://example.com/a", "a watch row's NAME links its source");
-        assert_eq!(cell(0, "#"), "1");
+        assert_eq!(cell(0, "RANK"), "1");
         assert_eq!(usd_cell(-0.5e6), "-$500K");
         assert_eq!(usd_cell(12e3), "$12K");
         assert_eq!(usd_cell(1e6), "$1.0M");

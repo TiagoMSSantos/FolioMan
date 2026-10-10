@@ -34,12 +34,12 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
     const tr = body.insertRow();
     tr.dataset.rank = i; // (#393) the ranked order, which a sort reorders but apply() still cuts on
     // (#397) a pinned row (`*` in its RANK cell) shows at every N: an uploaded watchlist always shows
-    // (#403) so does a `b` row: the book buys it though a display trim cut it from the table
-    if (row.some(([h, c]) => h === "RANK" && /[*b]/.test(c))) tr.dataset.pin = "";
+    // (#535) a `b` row does not: N cuts it like any row, so ?top=1 shows one name
+    if (row.some(([h, c]) => h === "RANK" && /\*/.test(c))) tr.dataset.pin = "";
     for (const [h, cell, url] of row) {
       const td = tr.insertCell();
       // (#474) a RANK cell's hover reads its position, then what each of its flags means
-      if (h === "RANK") {
+      if (h === "RANK" && cell) {
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);
         td.title = ["rank " + n + " in this table", ...[...marks].filter((f) => flags[f]).map((f) => f + " " + flags[f])].join("\n");
       }
