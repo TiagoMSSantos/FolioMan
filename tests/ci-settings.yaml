@@ -5311,6 +5311,50 @@ buy_heuristic:
                                  #  `git checkout -- .screen_snapshots.jsonl` put it back. The other state files were restored (cmp).
                                  #  REVERT RULE: drop the three rows, the three FACTORS entries and `stamp_fair_yields` with its two call sites; journal
                                  #  lines already written read back.
+                                 #── (#531) MEASURED 2026-10-10 — SHARE TURNOVER (IBBOTSON POPULARITY) AS A FUND FACTOR: DEAD, NO SHADOW ──
+                                 #  WHAT: one FUND_FACTORS row, `low_turnover` = −(shares traded in the 365 days ending at the cutoff) ÷ the as-of
+                                 #  `shares_ttm`, so high = UNPOPULAR. Summed over calendar days, not bars, so a 1mo, 1wk or 1d series reads the same
+                                 #  year (#117). Only the listing's OWN volume counts (paired before `apply_proxy`), so a (#327) donor never lends
+                                 #  volume. None unless that record covers the whole year with volume on every bar, or with no share count.
+                                 #  FUND_FACTORS 49 -> 50, so every Šidák band tightens again. Not stamped live: nothing weighs it.
+                                 #  WHY: sweep 25 (2026-10-10, "find assets that grow above average over 20+ years"). Of 13 ideas it was the only
+                                 #  new one buildable from cache: 1192/1213 long-history series carry volume. The rest map to closed or graded lanes:
+                                 #  founder ownership (hand data), Glassdoor (paid), country GDP growth (Ritter: ~0), equal weight and Arnott top dogs
+                                 #  (size, `small_pct` #409), country CAPE (#415), CKL (#416), incremental ROIC (profitability), patient capital
+                                 #  (#518), lifecycle leverage (sizing, not selection), small-cap-value funds (CORE is broad-index by design).
+                                 #  Evidence for: Ibbotson-Chen-Kim-Hu (FAJ 2013), low-turnover quartile beat high by >7pp/yr, 1972-2013, 3,000
+                                 #  largest US, equal weight; Ibbotson-Idzorek 2014 frame it as popularity. Against: Hou-Xue-Zhang 2020 find 95 of
+                                 #  102 liquidity variables insignificant value-weighted; Ben-Rephael-Kadan-Wohl 2015 find the premium gone outside
+                                 #  the smallest stocks since the 1990s. Prior: right side but weak, and likely size or cheapness by another name.
+                                 #  NOT `growth_turnover_weight` (zeroed 2026-07-02): that reads ABSOLUTE € turnover and rewarded the other end.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at both ->
+                                 #  CANDIDATE, anything else -> DEAD. Measure only: no weight, no rank change either way.
+                                 #  UNLOCK, ALSO BEFORE THE RUN (the user's call): CANDIDATE -> `low_turnover` joins the (#415) forward shadow,
+                                 #  `track::FACTORS` 8 -> 9, stamped live as −(avg_turnover_eur ÷ price_eur × 252) ÷ shares_out, graded under the
+                                 #  unchanged bar (12 monthly lines AND 12 chained links), earliest ~2027-10/11, a re-grade only, never a ship.
+                                 #  DEAD -> no shadow code; this receipt is the whole record.
+                                 #  shortcut: an ADR's volume counts ADSs and `shares_ttm` ordinary shares, so a ratio other than 1 (#425) mis-ranks
+                                 #  it by that ratio, as `mcap` does. The pool is US filers bar a handful.
+                                 #  RUNS: `backtest {12,8} universe fund pit`, FOLIOMAN_CONFIG=tests/ci-settings.yaml, root dotfiles and .sec_cache
+                                 #  restored from one tar before each run (tar --diff clean after). No separate control build: the six fixture goldens
+                                 #  move ONLY by the new rows and the 49 -> 50 count line, so every other row of the arm IS the control. Fund-facts
+                                 #  fallback 310 both runs. 12y: windows scored 2815 (= #523). 8y: 6246 (#523 read 6244).
+                                 #  THE POND DRIFTED SINCE (#523): the 12y AUC sample is 41/8, not 63/12, and the controls moved with it.
+                                 #    AUC            12y (w/l)     8y (w/l)       8y held book
+                                 #    low_turnover   0.49 (41/8)   0.59 (78/18)   +13.2%/yr n=93   DEAD, opposite sides and under 0.10 at both
+                                 #    small_pct      0.44 (41/8)   0.52 (78/18)   +13.2%/yr n=93   today's control; (#409) read 0.70/0.67
+                                 #    fcf_ev_yield   0.60 (41/8)   0.24 (78/18)   +13.2%/yr n=92   today's control; (#523) read 0.38/0.36
+                                 #    peg_yield      0.62 (41/8)   0.28 (73/18)   +12.2%/yr n=90   the shipped tilt; (#523) read 0.54/0.38
+                                 #  (growth_score baseline, 8y held book: +9.9%/yr n=291.)
+                                 #  VERDICT: DEAD. Low-turnover winners and losers sit 0.2 turns/yr apart at 12y and 0.1 at 8y, on medians of ~2 turns/yr.
+                                 #  The 8y held-out TEST edge, −169.5, equals the price-only baseline to the decimal, so the factor adds nothing there.
+                                 #  The 12y +23.3 equals fcf_ev_yield's: a small gated pool holds one SET whatever the order. Its held book is
+                                 #  small_pct's to the row. Read as Ben-Rephael-Kadan-Wohl predicted: on a pool of S&P names the popularity premium
+                                 #  is not there. Per the unlock above, no shadow line and no live stamp.
+                                 #  RECORDED, NOT ACTED ON: today's controls flip sides between 12y and 8y (small_pct 0.44/0.52, peg 0.62/0.28), so
+                                 #  the (#409) small_pct CANDIDATE does not reproduce on this pond. Weights are closed; that is a note for the track
+                                 #  read (~2027-09), not a change.
+                                 #  REVERT RULE: drop the row, the field, `low_turnover` and its call site; the goldens move back by the same lines.
                                  #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
                                  #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
                                  #  "hedged", so the screen funnel names it). ETF-scoped. Substrings hedg/hdg/heur/hchf/husd/hgbp catch the glued

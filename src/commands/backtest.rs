@@ -1320,6 +1320,8 @@ pub async fn run(args: Vec<String>) {
                 SPLIT_RESTATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             let (dates, closes) = (chart.dates, chart.closes);
+            // (#531) the listing's own volume, paired before `apply_proxy` can glue donor years under it
+            let own_volume: Vec<_> = dates.iter().copied().zip(chart.volumes).collect();
             // (#327) the listing's OWN first bar, read before anything older can be glued under it. Everything
             // before it on the spliced series is the donor's, and `own_first` is what keeps the walk from
             // standing in 1999 and buying a fund that listed in 2019.
@@ -1465,6 +1467,7 @@ pub async fn run(args: Vec<String>) {
                             f.sgr_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, core::sgr_pct(f), p));
                             f.exp_neg = core::ey_cagr(f.eps_growth, picks::perf_pct(&quote, "5Y").map(|c| core::cagr(c, 5.0)));
                             if let Some(p) = px { picks::stamp_fair_yields(f, p) } // (#523) the FAIR family, as fetch.rs stamps it
+                            f.low_turnover = low_turnover(&own_volume, dates[i], f.shares_ttm); // (#531)
                         }
                         // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                         // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -2493,7 +2496,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 49] = [
+const FUND_FACTORS: [&str; 50] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2531,6 +2534,7 @@ const FUND_FACTORS: [&str; 49] = [
     "lynch_yield", "sgr_yield", "exp_neg", // (#416) PEG over EPS growth, over ROE·retention, and de-rating; 41 -> 44
     "op_rd", "discipline", // (#417) Ball et al. R&D-adjusted OP ÷ assets, EBITDA growth minus asset growth; 44 -> 46
     "fair_yield", "oe_fair_yield", "fcf_cap_yield", // (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49
+    "low_turnover",         // (#531) Ibbotson-Chen-Kim-Hu 2013 popularity, share turnover negated; 49 -> 50
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -3825,6 +3829,26 @@ fn discover_backtest_proxies(series: &[(&str, i32, Vec<i32>, Vec<f64>)]) -> BTre
         .collect()
 }
 
+/// (#531) Share turnover, NEGATED so high = unpopular (Ibbotson-Chen-Kim-Hu 2013): minus the shares
+/// traded in the 365 days ending at `at`, over the as-of share count. Summed over calendar days, not
+/// bars, so a monthly, weekly or daily series reads the same year (#117). `own` is the listing's own
+/// (date, volume) record, so a (#327) donor's years never lend volume. None unless that record covers
+/// the whole year with volume on every bar, since one unreported bar would read as quiet trading.
+/// shortcut: an ADR's volume counts ADSs and `shares_ttm` the ordinary shares, so a ratio other than 1
+/// (#425) mis-ranks it by that ratio, as `mcap` does.
+fn low_turnover(own: &[(chrono::NaiveDate, f64)], at: chrono::NaiveDate, shares: Option<f64>) -> Option<f64> {
+    let sh = shares.filter(|s| *s > 0.0)?;
+    let from = at - chrono::Duration::days(365);
+    if own.first()?.0 > from {
+        return None;
+    }
+    let year = &own[own.partition_point(|(d, _)| *d <= from)..own.partition_point(|(d, _)| *d <= at)];
+    if year.is_empty() || !year.iter().all(|(_, v)| *v > 0.0) {
+        return None;
+    }
+    Some(-year.iter().map(|(_, v)| v).sum::<f64>() / sh)
+}
+
 /// (#327) Apply a configured proxy pair to ONE backtest series, and re-prove it first.
 ///
 /// The map is only a candidate list — live `screen` built it from today's trails, and taking that on trust at a
@@ -4470,6 +4494,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("fair_yield", |f| f.fair_yield), // (#523)
         ("oe_fair_yield", |f| f.oe_fair_yield),
         ("fcf_cap_yield", |f| f.fcf_cap_yield),
+        ("low_turnover", |f| f.low_turnover), // (#531)
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
@@ -6442,6 +6467,27 @@ fn exit_probe(
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+
+    /// (#531) twelve monthly bars of 10 shares over 120 shares outstanding is one full turn a year. The
+    /// bar dated exactly a year back sits outside the window; a record that starts inside the year, a
+    /// bar with no volume, or no share count reads None.
+    #[test]
+    fn low_turnover_sums_the_trailing_year_of_own_volume() {
+        let m = |y, mo| NaiveDate::from_ymd_opt(y, mo, 1).unwrap();
+        let own: Vec<_> = (0..13).map(|k| (m(2023 + k / 12, (k % 12) as u32 + 1), 10.0)).collect();
+        let at = m(2024, 1);
+        assert_eq!(low_turnover(&own, at, Some(120.0)), Some(-1.0));
+        assert_eq!(low_turnover(&own, at, Some(60.0)), Some(-2.0));
+        assert_eq!(low_turnover(&own[1..], at, Some(120.0)), None); // starts inside the year
+        assert_eq!(low_turnover(&own, at, None), None);
+        assert_eq!(low_turnover(&own, at, Some(0.0)), None);
+        let mut gap = own.clone();
+        gap[6].1 = 0.0;
+        assert_eq!(low_turnover(&gap, at, Some(120.0)), None);
+        gap[6].1 = 10.0;
+        gap[0].1 = 0.0; // the excluded bar a year back does not count
+        assert_eq!(low_turnover(&gap, at, Some(120.0)), Some(-1.0));
+    }
 
     /// (#117) `walk_params`, OFF — the arm that ships, and the only thing keeping every golden still.
     /// The fallback must come back untouched no matter what the dates say, so this hands it a daily

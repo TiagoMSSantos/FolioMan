@@ -4079,6 +4079,9 @@ pub struct FundFactors {
     pub fair_yield: Option<f64>,
     pub oe_fair_yield: Option<f64>,
     pub fcf_cap_yield: Option<f64>,
+    // (#531) Ibbotson et al. 2013 popularity: minus a year's shares traded over the as-of share count
+    // (high = UNPOPULAR). Needs the price series' volume, so only the backtest fills it. PROBE-ONLY
+    pub low_turnover: Option<f64>,
     pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
@@ -4525,6 +4528,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         fair_yield: None, // (#523) need a price too
         oe_fair_yield: None,
         fcf_cap_yield: None,
+        low_turnover: None, // (#531) needs the volume series
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5287,6 +5291,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "fair_yield" => f.fair_yield,                     // (#523) FAIR ÷ price: measured, unweighted
         "oe_fair_yield" => f.oe_fair_yield,               // (#523) FAIR-OE ÷ price: measured, unweighted
         "fcf_cap_yield" => f.fcf_cap_yield,               // (#523) 3y-median FCF ÷ cap: measured, unweighted
+        "low_turnover" => f.low_turnover,                 // (#531) −a year's share turnover: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6199,6 +6204,7 @@ mod tests {
             fair_yield: Some(47.0),
             oe_fair_yield: Some(48.0),
             fcf_cap_yield: Some(49.0),
+            low_turnover: Some(50.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6250,6 +6256,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "fair_yield"), Some(47.0)); // (#523)
         assert_eq!(select_fund_factor(&f, "oe_fair_yield"), Some(48.0));
         assert_eq!(select_fund_factor(&f, "fcf_cap_yield"), Some(49.0));
+        assert_eq!(select_fund_factor(&f, "low_turnover"), Some(50.0)); // (#531)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
