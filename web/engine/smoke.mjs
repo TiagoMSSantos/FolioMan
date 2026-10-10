@@ -25,6 +25,7 @@ try {
   // (#486) `bonds`, from FRED. (#500) `young`, built by screen alone like the three shadow tables.
   // (#515) `upcoming`, Nasdaq's calendar. (#525) `reits`, the side-priced SIGIs.
   // (#530) The three CAGR floors are graded: the engine echoes the upload's, as screen writes CI's.
+  // (#538) `social_cagr_floor` too: the Social table's, off `social_heuristic` over `buy_heuristic`.
   const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);

@@ -47,6 +47,8 @@ pub struct Settings {
     #[serde(default)]
     pub buy_heuristic: BuyHeuristic, // tunable gates/weights/caps for the picks score
     #[serde(default)]
+    pub social_heuristic: serde_yaml::Value, // (#538) the Social table's own heuristic, as written: `half_life_days` (0 = OFF, the DEFAULT), `mcap_pivot_eur`, `runup_cap_pct`, `loud_penalty`, plus any `buy_heuristic` key as an override for the Social table only (an unset one inherits). Read it through `Settings::social`; see `heuristics::social`
+    #[serde(default)]
     pub anchor_windows: BTreeMap<String, i64>, // per-horizon ±days averaged around the anchor date; missing label = built-in default (see core::default_anchor_half)
     #[serde(default)]
     pub history_proxy: BTreeMap<String, String>, // young listing -> older SAME-strategy, SAME-currency twin (e.g. VUAA.DE: SXR8.DE); the twin's closes are rebased+prepended so the young wrapper is scored on the strategy's proven history (marked ~ in the table). User-curated only — a wrong twin silently corrupts CAGR
@@ -57,6 +59,13 @@ pub struct Settings {
     #[serde(default)]
     pub sizing: Sizing, // (P5) risk budget for the `size` table — class split and the two concentration caps
     pub urls: Urls,
+}
+
+impl Settings {
+    /// (#538) `social_heuristic:` resolved over `buy_heuristic`. `load` already checked it resolves.
+    pub fn social(&self) -> Result<crate::heuristics::social::SocialHeuristic, String> {
+        crate::heuristics::social::resolve(&self.buy_heuristic, &self.social_heuristic)
+    }
 }
 
 /// (P5) THE RISK BUDGET behind the `size` table. Separate from `buy_heuristic` on purpose: nothing
@@ -1509,10 +1518,13 @@ pub fn load() -> Settings {
              give it a knob.",
         );
     }
-    let s = match serde_yaml::from_value(merged) {
+    let s: Settings = match serde_yaml::from_value(merged) {
         Ok(s) => s,
         Err(e) => config_fatal(&path, &format!("invalid over tests/ci-settings.yaml: {e}")),
     };
+    if let Err(e) = s.social() {
+        config_fatal(&path, &e); // (#538) a typo'd social_heuristic key fails here, not mid-screen
+    }
     // (round 113) QA tripwire: the measured edge lives in specific validated knob values, and the
     // overlay wins the merge silently — a leftover experiment serves an UNVALIDATED ranking with no
     // trace. Name every moved knob once per process, on stderr so tables and receipts stay clean.

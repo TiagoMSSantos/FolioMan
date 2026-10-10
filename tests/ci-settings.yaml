@@ -20116,6 +20116,19 @@ buy_heuristic:
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
   growth_require_peg: true       # require a PEG to score a name. The growth_score reads PEG (1/PEG x 100) and the gate rejects PEG > growth_max_peg, so a missing PEG is a free pass. This knob forces a missing PEG to fail the gate. Reads `fund.eps_never_reported` (filer-level, never as-of), NOT `peg_yield.is_none()` — the cohort is filers whose 10-K states no per-share element at all, 8 of 509 cached US names, seven of them now FIXED by the XBRL-instance fallback. Residue today: ARES alone. false = off
 
+# (#538) USER DECISION 2026-10-10: a second buy heuristic, SOC, ranks the Social table alone. SOC =
+# breadth (sources naming the ticker) x fresh (newest mention, halved every half_life_days) x material
+# (1 / (1 + log10(mcap / mcap_pivot_eur)) above the pivot) x unpriced (1 - 1M run-up / runup_cap_pct,
+# times loud_penalty when Reddit or Benzinga buzz is a source). Hand-set priors, graded only by the
+# `track` row `soct` (SOC top 10 vs the 20y top 10 of the same table); nothing here reaches BUY NOW, a
+# lane, CORE, another table or the backtest. Any buy_heuristic key may be set below to override it for
+# the Social table's SCORE/MISSES and page floor; unset keys inherit buy_heuristic. half_life_days 0 = off.
+social_heuristic:
+  half_life_days: 30
+  mcap_pivot_eur: 2000000000
+  runup_cap_pct: 50
+  loud_penalty: 0.5
+
 # --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
 # How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources
 # (coingecko_markets + sp500_csv URLs below). Bigger = more to scan = slower (one history

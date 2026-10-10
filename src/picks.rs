@@ -8,6 +8,7 @@
 
 use crate::config::{BuyHeuristic, Widths};
 use crate::core::{self, Quote, HORIZONS};
+use crate::heuristics::social::{self, SocBook, SocialHeuristic};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -5522,16 +5523,35 @@ const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "score8y", "in
 /// (#525) Each row also gains SCORE and MISSES right after its NAME, the rows sort by [`rank_key`] and
 /// RANK is renumbered to the new order. (#537) `pool` is the whole priced pool, where a young fund finds
 /// the older same-index fund whose score it borrows.
-pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], pool: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap, us: &dyn Fn(&str) -> String) {
+pub fn stamp_shadow_cols(
+    payload: &mut serde_json::Value,
+    quotes: &[Quote],
+    pool: &[Quote],
+    w: &Widths,
+    tuning: &BuyHeuristic,
+    soc: &SocialHeuristic,
+    fund_pe: &FundPeMap,
+    us: &dyn Fn(&str) -> String,
+) -> SocBook {
     let cols: Vec<&ColSpec> = lane_columns(w, HIDE_STOCK).into_iter().filter(|c| !HIDE_SHADOW.contains(&c.key)).collect();
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q))); // the exact ticker wins over a twin
+    let asof = payload["generated"].as_str().and_then(|g| g.get(..10)).and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+    let mut book = SocBook::default();
     for table in ["attention", "berkshire", "social", "young", "reits"] {
+        // (#538) the Social table reads `social_heuristic` over `buy_heuristic`; every other table the original
+        let (tuning, soc_on) = if table == "social" { (&soc.buy, soc.on()) } else { (tuning, false) };
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
-        let mut keyed: Vec<(RankKey, serde_json::Value)> = Vec::new();
+        let mut keyed: Vec<(RankKey, f64, (String, Option<f64>), serde_json::Value)> = Vec::new();
         for mut row in std::mem::take(rows) {
             let Some(cells) = row.as_array_mut() else { continue };
-            let quote = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).and_then(|t| by.get(t)).copied();
+            let text = |h: &str| cells.iter().find(|c| c[0] == h).and_then(|c| c[1].as_str()).unwrap_or_default().to_string();
+            let ticker = text("TICKER");
+            let quote = by.get(ticker.as_str()).copied();
+            let soc_score = soc_on.then(|| {
+                let mcap = quote.and_then(|q| q.shares_out.zip(q.price_eur)).map(|(n, p)| n * p);
+                social::score(&text("SOURCES"), &text("NEWEST"), mcap, quote.and_then(|q| q.mom_pct), asof, soc).unwrap_or(0.0)
+            });
             for c in &cols {
                 let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, None, "", tuning, fund_pe));
                 cells.push(serde_json::json!([c.hdr, cell]));
@@ -5539,10 +5559,26 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], pool
             let (key, score, misses) = rank_key(quote, tuning, pool);
             let at = cells.iter().position(|c| c[0] == "NAME").map_or(cells.len(), |i| i + 1);
             cells.splice(at..at, [serde_json::json!(["SCORE", score]), serde_json::json!(["MISSES", misses])]);
-            keyed.push((key, row));
+            if let Some(v) = soc_score {
+                cells.insert(at, serde_json::json!(["SOC", format!("{v:.2}")]));
+            }
+            let journal = quote.map_or((ticker, None), |q| (q.ticker.clone(), q.price_eur));
+            keyed.push((key, soc_score.unwrap_or_default(), journal, row));
         }
         keyed.sort_by(|a, b| rank_cmp(&a.0, &b.0));
-        for (i, (_, mut row)) in keyed.into_iter().enumerate() {
+        if soc_on {
+            // (#538) both orders stay visible: RANK-20Y is the 20y position, RANK the SOC one (ties keep 20y order)
+            book.old = keyed.iter().take(social::BOOK).map(|k| k.2.clone()).collect();
+            for (i, (.., row)) in keyed.iter_mut().enumerate() {
+                if let Some(cells) = row.as_array_mut() {
+                    let at = cells.iter().position(|c| c[0] == "RANK").map_or(0, |i| i + 1);
+                    cells.insert(at, serde_json::json!(["RANK-20Y", (i + 1).to_string()]));
+                }
+            }
+            keyed.sort_by(|a, b| b.1.total_cmp(&a.1));
+            book.new = keyed.iter().take(social::BOOK).map(|k| k.2.clone()).collect();
+        }
+        for (i, (.., mut row)) in keyed.into_iter().enumerate() {
             if let Some(n) = row.as_array_mut().and_then(|c| c.iter_mut().find(|c| c[0] == "RANK")) {
                 n[1] = (i + 1).to_string().into();
             }
@@ -5553,7 +5589,12 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], pool
         }
         payload["help"][table]["SCORE"] = RANK_SCORE_HELP.into();
         payload["help"][table]["MISSES"] = RANK_MISSES_HELP.into();
+        if soc_on {
+            payload["help"][table]["SOC"] = social::SOC_HELP.into();
+            payload["help"][table]["RANK-20Y"] = social::RANK_20Y_HELP.into();
+        }
     }
+    book
 }
 
 /// (#461) A stock row the pool holds on a European line (`APC.DE`, `TSFA.F`) with an n/a cell takes that
@@ -11083,7 +11124,8 @@ mod tests {
             "stocks": [[["TICKER", "HOOD"]]],
             "help": {"lanes": {"SECTOR": "the sector"}},
         });
-        stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &BuyHeuristic::default(), &FundPeMap::new(), &us);
+        let off = social::resolve(&BuyHeuristic::default(), &serde_yaml::Value::Null).unwrap();
+        assert_eq!(stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &BuyHeuristic::default(), &off, &FundPeMap::new(), &us), SocBook::default(), "(#538) OFF journals nothing");
         // (#525) no NAME cell here, so SCORE and MISSES go last; (#537) a stub has no turnover and no record
         let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "2: no-turnover, history"])];
         let [rs, rm] = refused();
@@ -11094,6 +11136,52 @@ mod tests {
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
         assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
         assert!(p.get("attention").is_none(), "an absent table stays absent");
+    }
+
+    /// (#538) With SOC on, the Social table ranks by SOC and keeps the 20y position in RANK-20Y; the
+    /// journal gets both tops. `social_heuristic` overrides reach the Social table's SCORE and MISSES
+    /// and nothing else: every other table comes out byte-identical to a run without the section.
+    #[test]
+    fn soc_ranks_the_social_table_and_touches_nothing_else() {
+        let good = |t: &str, cum8: f64, shares: f64| {
+            let mut q = Quote::stub(t, "€100.00", "", t);
+            q.instrument_type = "EQUITY".into();
+            (q.range_pct, q.avg_turnover_eur, q.age_years) = (95.0, Some(3.0e9), Some(12.0));
+            (q.price_eur, q.shares_out, q.mom_pct) = (Some(100.0), Some(shares), Some(0.0));
+            q.perf = legs(&[("1Y", 10.0), ("5Y", 40.0), ("8Y", cum8)]);
+            q
+        };
+        let quotes = [good("BIG", 400.0, 3.0e10), good("SMALL", 250.0, 1.0e7)];
+        let row = |t: &str| serde_json::json!([["RANK", "0"], ["TICKER", t], ["NAME", t], ["SOURCES", "ARK; insiders; hand list"], ["NEWEST", "2026-10-10"]]);
+        let fresh = || serde_json::json!({"generated": "2026-10-10T18:00:00Z", "social": [row("BIG"), row("SMALL")], "attention": [row("BIG"), row("SMALL")], "help": {"lanes": {}}});
+        let (w, d) = (Widths { columns: vec!["ticker".into()], ..Widths::default() }, BuyHeuristic::default());
+        let k = |yaml: &str| social::resolve(&d, &serde_yaml::from_str(yaml).unwrap()).unwrap();
+        let stamp = |k: &SocialHeuristic| {
+            let mut p = fresh();
+            let book = stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &d, k, &FundPeMap::new(), &|t: &str| t.to_string());
+            (p, book)
+        };
+        let (off, _) = stamp(&k("{}"));
+        let (on, book) = stamp(&k("half_life_days: 30"));
+        let cell = |r: &serde_json::Value, h: &str| r.as_array().unwrap().iter().find(|c| c[0] == h).map(|c| c[1].clone()).unwrap_or_default();
+        let heads: Vec<&str> = on["social"][0].as_array().unwrap().iter().map(|c| c[0].as_str().unwrap()).collect();
+        assert_eq!(heads, ["RANK", "RANK-20Y", "TICKER", "NAME", "SOC", "SCORE", "MISSES", "SOURCES", "NEWEST"]);
+        let order = |p: &serde_json::Value, h: &str| p["social"].as_array().unwrap().iter().map(|r| format!("{}:{}:{}", cell(r, "TICKER"), cell(r, "RANK"), cell(r, h))).collect::<Vec<_>>();
+        assert_eq!(order(&off, "TICKER"), ["\"BIG\":\"1\":\"BIG\"", "\"SMALL\":\"2\":\"SMALL\""], "the 20y order puts the bigger CAGR first");
+        assert_eq!(order(&on, "RANK-20Y"), ["\"SMALL\":\"1\":\"2\"", "\"BIG\":\"2\":\"1\""], "SOC puts the €1B name over the €3T one");
+        assert_eq!(cell(&on["social"][0], "SOC"), "3.00");
+        assert_eq!(book.new, [("SMALL".to_string(), Some(100.0)), ("BIG".to_string(), Some(100.0))]);
+        assert_eq!(book.old, [("BIG".to_string(), Some(100.0)), ("SMALL".to_string(), Some(100.0))]);
+        assert_eq!(on["help"]["social"]["SOC"], social::SOC_HELP);
+        assert!(off["help"]["social"].get("SOC").is_none() && off["social"][0].as_array().unwrap().len() == 7, "OFF adds no cell");
+        // an override moves the Social SCORE alone
+        let (over, _) = stamp(&k("half_life_days: 30\ngrowth_min_cagr: 1000"));
+        assert!(cell(&over["social"][0], "MISSES").as_str().unwrap().contains("cagr"), "{}", over["social"]);
+        assert_eq!(cell(&on["social"][0], "MISSES"), "0");
+        for p in [&on, &over] {
+            assert_eq!(p["attention"], off["attention"]);
+            assert_eq!(p["help"]["attention"], off["help"]["attention"]);
+        }
     }
 
     /// (#525) Every shadow table and the page's CORE copy rank alike: passing rows by score, then by
@@ -11123,7 +11211,7 @@ mod tests {
         let tables: Vec<serde_json::Value> = ["FRESH", "NOPE", "LEVX", "BARE", "TWOG", "ONELO", "ONEG", "WEAK", "STRONG", "NOPE2"].map(row).into();
         let mut p = serde_json::json!({"reits": tables, "help": {"lanes": {}}});
         let (w, d) = (Widths { columns: vec!["ticker".into()], ..Widths::default() }, BuyHeuristic::default());
-        stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &d, &FundPeMap::new(), &|t: &str| t.to_string());
+        stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &d, &social::resolve(&d, &serde_yaml::Value::Null).unwrap(), &FundPeMap::new(), &|t: &str| t.to_string());
         let rows = p["reits"].as_array().unwrap();
         let order: Vec<&str> = rows.iter().map(|r| r[1][1].as_str().unwrap()).collect();
         assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "FRESH", "TWOG", "BARE", "LEVX", "NOPE", "NOPE2"], "no score sorts after every ʷ score");

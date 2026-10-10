@@ -2244,6 +2244,9 @@ pub async fn run(args: Vec<String>) {
         nupl,
         &crate::commands::size::fund_sectors(&mix), // (#293) the same look-through `size` caps by
     );
+    // (#538) the Social table's own heuristic, and the two orders' tops it journals
+    let soc = settings.social().expect("config::load resolved social_heuristic");
+    let mut soc_book = crate::heuristics::social::SocBook::default();
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
         crate::picks::stamp_buy(&mut top, &sized_now);
@@ -2260,11 +2263,12 @@ pub async fn run(args: Vec<String>) {
         top["cagr_floor"] = serde_json::json!(settings.buy_heuristic.growth_min_cagr);
         top["reit_cagr_floor"] = serde_json::json!(settings.reit_min_cagr);
         top["page_min_cagr"] = serde_json::json!(settings.page_min_cagr); // (#526) the page hides rows under it
+        top["social_cagr_floor"] = serde_json::json!(soc.buy.growth_min_cagr); // (#538) the Social table greys under its own
         top["bonds"] = serde_json::json!(bonds);
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
-        crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
+        soc_book = crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &quotes, &settings.widths, &settings.buy_heuristic, &soc, &fund_pe, &fetch::us_symbol);
         crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);
         crate::picks::stamp_site(&mut top, &quotes, &fetch::us_symbol); // (#469) after every table is set
         crate::picks::stamp_site(&mut top, &shadow_extra, &fetch::us_symbol);
@@ -2368,12 +2372,16 @@ pub async fn run(args: Vec<String>) {
         carry: Vec::new(),
         // (#500) the Young table's names, with today's close
         young: crate::picks::young(&quotes).into_iter().map(|q| (q.ticker.clone(), q.price_eur)).collect(),
+        // (#538) the Social table's SOC top and 20y top, each with today's close; empty while SOC is off
+        soc_new: soc_book.new,
+        soc_old: soc_book.old,
     };
     // (#337) and today's close for every name last month's line grades that this line does not price,
     // so each cohort can be graded month to month the way (#336) chains the book
     line.fac = crate::commands::track::fac_journal(&line.peg, &quotes); // (#415)
     line.carry = crate::commands::track::carry(prior.as_ref(), &line, &|t| {
-        quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur)
+        // (#538) a SOC book name may be one only the side fetch priced
+        quotes.iter().chain(&shadow_extra).find(|q| q.ticker == t).and_then(|q| q.price_eur)
     });
     crate::commands::track::append_snapshot(&line);
 
@@ -4906,7 +4914,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -4950,7 +4958,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -4995,7 +5003,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -5048,7 +5056,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -5081,7 +5089,7 @@ mod tests {
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(),
         };
         let journal = vec![
             snap(

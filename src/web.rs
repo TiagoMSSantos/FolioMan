@@ -120,6 +120,7 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     top["cagr_floor"] = serde_json::json!(bh.growth_min_cagr);
     top["reit_cagr_floor"] = serde_json::json!(s.reit_min_cagr);
     top["page_min_cagr"] = serde_json::json!(s.page_min_cagr);
+    top["social_cagr_floor"] = serde_json::json!(s.social().map_err(|e| format!("settings.yaml: {e}"))?.buy.growth_min_cagr); // (#538)
     // only when there is something to say, so a pool that holds every pin stays byte-equal to `screen`
     if !(twins.is_empty() && missing.is_empty()) {
         top["pins"] = serde_json::json!({ "twins": twins, "missing": missing });
@@ -302,6 +303,7 @@ mod tests {
         v["cagr_floor"] = serde_json::json!(s.buy_heuristic.growth_min_cagr);
         v["reit_cagr_floor"] = serde_json::json!(s.reit_min_cagr);
         v["page_min_cagr"] = serde_json::json!(s.page_min_cagr);
+        v["social_cagr_floor"] = serde_json::json!(s.social().unwrap().buy.growth_min_cagr);
         v
     }
 

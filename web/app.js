@@ -320,7 +320,7 @@ function render(data, prev) {
     .getElementById("core")
     .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
   // (#502) (#525) per-table CAGR floors; (#530) an upload's engine output carries its own
-  if (typeof data.cagr_floor === "number") for (const id of SHADOW) floors[id] = id === "reits" ? data.reit_cagr_floor : data.cagr_floor;
+  if (typeof data.cagr_floor === "number") for (const id of SHADOW) floors[id] = id === "reits" ? data.reit_cagr_floor : id === "social" ? (data.social_cagr_floor ?? data.cagr_floor) : data.cagr_floor; // (#538) social: its own
   if (typeof data.page_min_cagr === "number") minCagr = data.page_min_cagr; // (#526)
   // (#438) Only CI's payload carries it: an upload's engine output has no key, so CI's table stays.
   if (data.attention) {

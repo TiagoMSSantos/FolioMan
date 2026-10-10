@@ -141,6 +141,14 @@ pub struct Snapshot {
     /// [`young_section`] grades the set against the book the line bought. Same serde contract as `sized`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub young: Vec<(String, Option<f64>)>,
+    /// (#538) THE SOC SHADOW: `(ticker, close EUR)` for the page's Social table's top
+    /// `heuristics::social::BOOK` under the social-arbitrage order (`soc_new`) and under the 20y order of
+    /// the same table (`soc_old`). [`soc_section`] grades the first against the second. Empty while
+    /// `social_heuristic.half_life_days` is 0. Same serde contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub soc_new: Vec<(String, Option<f64>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub soc_old: Vec<(String, Option<f64>)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -213,6 +221,8 @@ pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&s
         let lanes = lanes.chain(snap.carry.iter_mut().map(|(t, p)| (&*t, p)));
         // (#500) and the young shadow, same shape
         let lanes = lanes.chain(snap.young.iter_mut().map(|(t, p)| (&*t, p)));
+        // (#538) and both SOC books
+        let lanes = lanes.chain(snap.soc_new.iter_mut().chain(snap.soc_old.iter_mut()).map(|(t, p)| (&*t, p)));
         for (ticker, px) in lanes.chain(snap.near.iter_mut().map(|(t, p, _)| (&*t, p))) {
             let factor = factor_since(ticker, then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
@@ -380,6 +390,7 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
                 // (#335) a name that left the book is in no other list that line wrote
                 .chain(s.exit.iter().map(|(t, ..)| t))
                 .chain(s.young.iter().map(|(t, _)| t)) // (#500)
+                .chain(s.soc_new.iter().chain(&s.soc_old).map(|(t, _)| t)) // (#538)
         })
         .cloned()
         .chain(std::iter::once("^GSPC".to_string()))
@@ -1265,6 +1276,38 @@ fn young_section(
     )
 }
 
+/// (#538) THE SOC SHADOW: the Social table's top under the social-arbitrage order against its top under
+/// the 20y order, equal-weight, both from the same line. Asks whether SOC picks the better names on prices
+/// that did not exist when it ranked. No backtest can: there is no point-in-time history of the sources.
+fn soc_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let body = verdict_rows(snaps, today, px_now, spx_now, &|s| vec![("soct SOC top minus 20y top", equal(&s.soc_old), equal(&s.soc_new))], 26, None);
+    let journalled = snaps.iter().filter(|s| !s.soc_new.is_empty()).count();
+    if body.is_empty() {
+        return format!(
+            "\n  SOC shadow: nothing gradeable yet. A line needs a day of age and priced SOC names, and only\n  \
+             {journalled} of {} journalled run(s) carry them. The record starts the run AFTER one is journalled\n  \
+             and cannot be backdated.",
+            snaps.len()
+        );
+    }
+    format!(
+        "\n  SOC shadow (#538) — the page's Social table's top {} under the social-arbitrage score (SOC) held\n  \
+         equal-weight against its top {} under the 20y score, both off the same line. One line a month.\n  \
+         Pre-registered: `soct` flags REOPEN SIGNAL at {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained links, each\n  \
+         with mean AND median above 0. A flag only keeps SOC as the Social table's order; it never reaches BUY\n  \
+         NOW or a lane without a new decision. EUR seat, price-only. NOT advice. Journalled on {journalled} of {}\n  \
+         run(s).{body}",
+        crate::heuristics::social::BOOK,
+        crate::heuristics::social::BOOK,
+        snaps.len()
+    )
+}
+
 /// (#338) A link's close for `t`, off the later line's own journal: `rows` for the names it ranks, (#335)
 /// `exit` for the ones its book dropped, (#337) `carry` for every other name the earlier line graded.
 /// One price source for every chained reading, the book's included. A non-positive close is no price.
@@ -1531,6 +1574,7 @@ pub async fn run(args: Vec<String>) {
     println!("{}", ladder_section(&snaps, today, &px_now, spx_now)); // (#335)
     println!("{}", exit_section(&snaps, today, &px_now, spx_now));
     println!("{}", young_section(&snaps, today, &px_now, spx_now)); // (#500)
+    println!("{}", soc_section(&snaps, today, &px_now, spx_now)); // (#538)
     println!("{}", chain_section(&snaps)); // (#336)
     if push {
         let delivered = fetch::push(
@@ -1560,7 +1604,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(),
         }
     }
 
@@ -2113,6 +2157,29 @@ mod tests {
         // young holds Y1 (+200%) and Y2 (0%) = +100%; the book A, B = +10%
         assert!(row.contains(" 1 line(s)") && row.contains("+90.0pp"), "{row}");
         assert!(out.contains("(2 so far)") && out.contains("Journalled on 1 of 1 run(s)"), "{out}");
+    }
+
+    /// (#538) The `soct` row holds the SOC top equal-weight against the 20y top of the same Social table;
+    /// a line with neither list grades nothing, and an empty pair is never written to the journal.
+    #[test]
+    fn soc_section_grades_the_soc_top_against_the_20y_top() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let px = |t: &str| Some(match t { "S1" => 300.0, "S2" => 100.0, _ => 110.0 });
+        let bare = snap("2026-01-01", Some(100.0), &[("A", Some(100.0))]);
+        assert!(soc_section(std::slice::from_ref(&bare), today, &px, Some(100.0)).contains("nothing gradeable yet"));
+        let line = serde_json::to_string(&bare).unwrap();
+        assert!(!line.contains("soc_new") && !line.contains("soc_old"), "{line}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&line).unwrap().soc_new, Vec::new(), "an old line parses");
+        let s = Snapshot {
+            soc_new: vec![("S1".into(), Some(100.0)), ("S2".into(), Some(100.0))],
+            soc_old: vec![("O1".into(), Some(100.0)), ("O2".into(), Some(100.0))],
+            ..bare
+        };
+        let out = soc_section(&[s], today, &px, Some(100.0));
+        let row = out.lines().find(|l| l.trim_start().starts_with("soct SOC top minus 20y top")).unwrap_or_default();
+        // SOC holds S1 (+200%) and S2 (0%) = +100%; the 20y top O1, O2 = +10%
+        assert!(row.contains(" 1 line(s)") && row.contains("+90.0pp"), "{row}");
+        assert!(out.contains("Journalled on 1 of 1"), "{out}");
     }
 
     /// (#285) The MOMENTUM-lane grade: `snap.rows` cut at [`BOOK`], which is what every assertion
