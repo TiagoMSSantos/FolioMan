@@ -1090,8 +1090,8 @@ widths:
     - sector      # (#447) GICS sector (stocks only) — the book's industry concentration
     - price       # current close (EUR)
     - mcap        # (#395) market value € — stocks: newest-FY diluted shares × price; crypto: circulating supply × price; ETFs show AUM instead
-    - cagr        # whole-life CAGR (%/yr since listing) — display only; the growth rank scores `leg`, not this
-    - trcagr      # (#526) CAGR with the dividends paid added back (n/a under 6 months); the page's `page_min_cagr` floor reads it
+    # - cagr      # whole-life price CAGR (%/yr since listing) — display only; the growth rank scores `leg`, not this. (#530) hidden: TR-CAGR is the page's one return column
+    - trcagr      # (#526) CAGR with the dividends paid added back (ⁱ = plain change under 6 months, #530); the page's grey line and `page_min_cagr` floor read it
     # - leg         # the CAGR the growth rank DOES score: the 20/8/5Y ladder rung, capped at long_trend_cap
     - yrs         # real listing age in years — also picks the rung above (≥20y→20Y, ≥8y→8Y, else 5Y)
     # (#362) the three intraday columns stay hidden: showing ANY of them makes `wants_intraday` spend

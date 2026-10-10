@@ -3661,7 +3661,7 @@ const COLUMNS: &[ColSpec] = &[
     // display only; ranking uses the fixed-horizon ladder — see `leg`
     ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); n/a = no usable price history" },
     ColSpec { key: "leg", hdr: "LEG", width: 8, right: true, help: "The long-run %/yr the growth rank actually scores: the 20Y window, else 8Y, else 5Y, whichever the record allows, after the score's cap" },
-    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "CAGR with the dividends paid added back: a lower bound on total return. Equals CAGR for accumulating funds and non-payers" },
+    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "Average yearly price growth since listing with the dividends paid added back: a lower bound on total return. Equals the price CAGR for accumulating funds and non-payers. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); n/a = no usable price history" },
     ColSpec { key: "1h", hdr: "1H", width: 7, right: true, help: "Price change over the last hourly bar" },
     ColSpec { key: "6h", hdr: "6H", width: 7, right: true, help: "Price change over the last 6 hourly bars" },
     ColSpec { key: "12h", hdr: "12H", width: 7, right: true, help: "Price change over the last 12 hourly bars" },
@@ -3918,7 +3918,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "leg" => long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years).map_or("n/a".to_string(), |(c, y)| {
             format!("{:+.0}%", capped_trend(long_cagr_from(quote, tuning, c, y), tuning))
         }),
-        "trcagr" => quote.tr_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        "trcagr" => trcagr_cell(quote),
         // real listing age in years. NOT the span of the ranked leg — though it determines it, since
         // the ladder is 20Y -> 8Y -> 5Y on availability: ≥20y ranks on 20Y, ≥8y on 8Y, else 5Y. A
         // "+16%/yr over 20" and a "+16%/yr over 5" are NOT the same conviction, so pairing this with
@@ -5993,7 +5993,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
 /// terminal prints it. It reaches the page as a blank header over a mostly-blank column, which is
 /// honest: on the published run there is no broker portfolio to read, so it is empty by construction.
 pub(crate) const HOLD_CORE_COLS: [&str; 14] =
-    ["", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM", "TOP10%", "TD-1Y", "TD-5Y"];
+    ["", "NAME", "TICKER", "MARKET", "TR-CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM", "TOP10%", "TD-1Y", "TD-5Y"];
 
 /// (#465) TOP10% / TD-1Y / TD-5Y, one spelling for the lane tables and CORE. TD-5Y averages the
 /// newest 5 full years and reads n/a under 3, so one odd launch year never prints as a record.
@@ -6022,7 +6022,7 @@ pub(crate) fn hold_core_cells(q: &Quote, owned: &Owned) -> Vec<String> {
         truncate(&q.name, 44),
         truncate(&q.ticker, 9),
         truncate(&q.market, 9),
-        cagr_cell(q), // (#507) the lane tables' cell, ⁱ included
+        trcagr_cell(q), // (#507) the lane tables' cell, ⁱ included; (#530) TR-CAGR, the page's one return column
         q.age_years.map_or("—".to_string(), |a| format!("{a:.1}")), // 1 decimal, as in the screen table
         q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%")),
         turnover_cell(q.aum_shown()),
@@ -6041,6 +6041,16 @@ fn cagr_cell(q: &Quote) -> String {
     match (q.life_cagr, q.young_ret_pct) {
         (Some(v), _) => format!("{v:+.0}%"),
         (None, Some(v)) => format!("{v:+.0}%ⁱ"),
+        _ => "n/a".to_string(),
+    }
+}
+
+/// (#530) The TR-CAGR cell: the dividend-added CAGR, else under 6 months (no whole-life CAGR) the CAGR
+/// cell's ⁱ change since listing, since a payout that young adds nothing yet; else n/a. Display only.
+fn trcagr_cell(q: &Quote) -> String {
+    match (q.tr_cagr, q.life_cagr) {
+        (Some(v), _) => format!("{v:+.0}%"),
+        (None, None) => cagr_cell(q),
         _ => "n/a".to_string(),
     }
 }
@@ -11214,7 +11224,7 @@ mod tests {
         for h in HOLD_CORE_COLS {
             assert!(!nominal["core"][h].is_empty(), "{h:?}");
         }
-        assert_eq!(nominal["core"]["CAGR"], nominal["lanes"]["CAGR"], "a shared header keeps the lane's text");
+        assert_eq!(nominal["core"]["TR-CAGR"], nominal["lanes"]["TR-CAGR"], "a shared header keeps the lane's text");
         assert_ne!(nominal["core"]["NAME"], nominal["lanes"]["NAME"], "CORE prints the raw name");
         assert!(!nominal["lanes"].values().any(|t| *t == nominal["core"][""]), "the flag column has its own line");
         let heads: Vec<&str> = infl[0].iter().map(|(h, _)| h.as_str()).collect();
@@ -11253,7 +11263,7 @@ mod tests {
     #[test]
     fn hold_core_cells_are_the_printed_cells() {
         let mut q = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
-        (q.top10, q.td_years) = (Some(17.4), vec![0.2, 0.0, -0.1, 0.1]);
+        (q.top10, q.td_years, q.tr_cagr) = (Some(17.4), vec![0.2, 0.0, -0.1, 0.1], q.life_cagr); // (#530) Acc: TR = price
         let owned = Owned { stocks: ["vwce".to_string()].into(), ..Default::default() };
         assert_eq!(
             hold_core_cells(&q, &owned),
@@ -11262,7 +11272,7 @@ mod tests {
         assert_eq!(hold_core_cells(&q, &Owned::default())[0], "", "no broker overlay -> no marker");
         // every optional leg empty: a missing number prints its fallback, it never blanks a column
         let mut bare = q.clone();
-        bare.life_cagr = None;
+        (bare.life_cagr, bare.tr_cagr) = (None, None);
         bare.age_years = None;
         bare.expense_ratio = None;
         bare.aum_eur = None;
@@ -11729,8 +11739,13 @@ mod tests {
         assert_eq!(cc("cagr", &q, 0.0, None, ""), "n/a");
         q.young_ret_pct = Some(41.6);
         assert_eq!(cc("cagr", &q, 0.0, None, ""), "+42%ⁱ", "(#507) under 6 months reads since listing");
+        assert_eq!(cc("trcagr", &q, 0.0, None, ""), "+42%ⁱ", "(#530) and so does TR-CAGR, the page's only return column");
         q.life_cagr = Some(19.4);
         assert_eq!(cc("cagr", &q, 0.0, None, ""), "+19%", "life_cagr wins, no mark");
+        assert_eq!(cc("trcagr", &q, 0.0, None, ""), "n/a", "a whole-life CAGR with no TR figure is not passed off as one");
+        q.tr_cagr = Some(21.4);
+        assert_eq!(cc("trcagr", &q, 0.0, None, ""), "+21%");
+        q.tr_cagr = None;
         (q.life_cagr, q.young_ret_pct) = (None, None);
         q.age_years = Some(11.0);
         assert_eq!(cc("yrs", &q, 0.0, None, ""), "11.0"); // 1 decimal: "8" for a 7.7y record contradicted its own blank 8Y

@@ -23,10 +23,9 @@ try {
   // (#440) `berkshire` likewise, from SEC's 13F filings. (#444) `social`, from Dataroma, YouTube and a hand list.
   // (#456) `exposure`, from Yahoo's fund holdings, which the engine does not carry.
   // (#486) `bonds`, from FRED. (#500) `young`, built by screen alone like the three shadow tables.
-  // (#502) `cagr_floor`, the floor the page cuts those shadow tables at. (#515) `upcoming`, Nasdaq's calendar.
-  // (#525) `reits` (side-priced SIGIs) and `reit_cagr_floor`, the REIT table's grey line.
-  // (#526) `page_min_cagr`, the total-return CAGR under which the page hides a row.
-  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "cagr_floor", "upcoming", "reits", "reit_cagr_floor", "page_min_cagr"];
+  // (#515) `upcoming`, Nasdaq's calendar. (#525) `reits`, the side-priced SIGIs.
+  // (#530) The three CAGR floors are graded: the engine echoes the upload's, as screen writes CI's.
+  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);
   const drift = Object.keys(want).filter((k) => !["generated", ...ci].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));

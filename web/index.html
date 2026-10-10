@@ -39,8 +39,8 @@
     </select></label>
     · <label>filter <input id="filter" type="search" placeholder="ticker or name" size="16"></label>
     <!-- (#525) The tables under the three lanes show their 20 best-ranked rows until this is ticked; a filter
-         query shows every match. A row under its table's CAGR floor is greyed, never hidden. -->
-    · <label title="CORE, Attention, Berkshire, Social, Young, REITs and IPOs show their top 20 rows; tick to list them all. Greyed rows have a CAGR under the table's floor. Rows whose total-return CAGR is under page_min_cagr stay hidden until ticked (or found with the filter)"><input id="allrows" type="checkbox"> show all rows (incl. under the CAGR floor)</label>
+         query shows every match. A row under its table's CAGR floor (read off TR-CAGR, #530) is greyed, never hidden. -->
+    · <label title="CORE, Attention, Berkshire, Social, Young, REITs and IPOs show their top 20 rows; tick to list them all. Greyed rows have a TR-CAGR under the table's floor. Rows whose total-return CAGR is under page_min_cagr stay hidden until ticked (or found with the filter)"><input id="allrows" type="checkbox"> show all rows (incl. under the CAGR floor)</label>
   </p>
   <!-- (#392) Re-rank this run's pool under your own settings.yaml, in this tab: engine/ is the same
        Rust ranking compiled to wasm. Shown only when the deploy shipped it. -->
@@ -168,7 +168,7 @@
     over 20/10/5 years was 5.1/4.9/−0.2% for VNQ (US REITs) and 3.2/0.3/−6.9% for XDER (European), against
     11.1/15.7/12.6% for SPY. The SIGIs (Atrium BIRE, ORES Portugal, Ciagest) on Euronext Access Lisbon barely
     trade (Atrium BIRE once in 14 months, ORES Portugal 15 days in five years), so their dividend yields
-    are quoted on prices few have paid and the turnover gate refuses them. A row is greyed when its CAGR is under
+    are quoted on prices few have paid and the turnover gate refuses them. A row is greyed when its TR-CAGR is under
     <code>reit_min_cagr</code> (display only). An uploaded settings.yaml does not change this table.
   </details>
   <div id="reits"></div>

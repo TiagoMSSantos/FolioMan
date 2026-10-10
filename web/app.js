@@ -75,18 +75,20 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // NAME holds the query, so a name the chooser hid can still be found. An empty query is the cut alone.
 // (#502) The shadow tables mark a row whose CAGR is under the stock lane's floor (`growth_min_cagr`); (#525) the
 // REITs table's floor is `reit_min_cagr`. The row is greyed, never hidden (it hid until #525), and an n/a CAGR
-// is not marked. CI's payload alone carries the floors, so an upload keeps CI's.
+// is not marked. (#530) The CAGR read is TR-CAGR, the page's one return column; the floors ride in every
+// payload, an upload's included (they stayed CI's until then).
 // (#507) An ⁱ CAGR is the plain change since listing (under 6 months), so its bar is the floor compounded
 // over the row's YRS: (1 + floor/100)^YRS − 1. A day-0 listing's bar is 0, so it is unmarked unless it fell.
 // (#525) Every table below the lanes but Inflation and Bonds shows its top TOP rows (by `data-rank`, the
 // payload's order, which ranks by SCORE then gates missed) until "show all rows" is ticked or a query is set.
 // (#526) The shadow tables and CORE also hide a row whose total-return CAGR is under `page_min_cagr`: the
-// TR-CAGR cell (n/a under 6 months, so never ⁱ), else CAGR with its ⁱ bar. The top TOP counts only the rows
-// kept, "show all rows" or a query shows the rest greyed, and a pinned row is never hidden.
+// TR-CAGR cell (ⁱ under 6 months since #530, with its bar), else a CAGR cell a settings file still lists.
+// The top TOP counts only the rows kept, "show all rows" or a query shows the rest greyed, and a pinned
+// row is never hidden.
 const SHADOW = ["attention", "berkshire", "social", "young", "reits"];
 const TOP = 20;
 const floors = {};
-let minCagr = 0; // (#526) CI's payload only, like the floors
+let minCagr = 0; // (#526) the payload's, like the floors
 const bar = (cell, yrs, f) => (cell.endsWith("ⁱ") ? ((1 + f / 100) ** (+yrs || 0) - 1) * 100 : f);
 console.assert(
   Math.abs(bar("+5%ⁱ", "0.5", 19) - 9.087) < 1e-3 && bar("+0%ⁱ", "0.0", 19) === 0 && bar("+5%", "0.5", 19) === 19,
@@ -104,7 +106,7 @@ function apply(n) {
     const cap = LANES.includes(id) ? n : all || id === "exposure" ? Infinity : TOP;
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
     const cols = heads.flatMap((h, i) => (["TICKER", "NAME"].includes(h) ? [i] : []));
-    const c = SHADOW.includes(id) ? heads.indexOf("CAGR") : -1;
+    const c = SHADOW.includes(id) ? heads.indexOf("TR-CAGR") : -1;
     const at = (tr, h) => tr.cells[heads.indexOf(h)]?.textContent;
     const rows = [...t.tBodies[0].rows];
     const floored = SHADOW.includes(id) || id === "core";
@@ -317,7 +319,7 @@ function render(data, prev) {
   document
     .getElementById("core")
     .replaceChildren(table(data.core, "(no CORE fund qualified)", help.core, fresh("core")));
-  // (#502) (#525) per-table CAGR floors, CI's payload only
+  // (#502) (#525) per-table CAGR floors; (#530) an upload's engine output carries its own
   if (typeof data.cagr_floor === "number") for (const id of SHADOW) floors[id] = id === "reits" ? data.reit_cagr_floor : data.cagr_floor;
   if (typeof data.page_min_cagr === "number") minCagr = data.page_min_cagr; // (#526)
   // (#438) Only CI's payload carries it: an upload's engine output has no key, so CI's table stays.

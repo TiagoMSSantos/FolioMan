@@ -116,6 +116,10 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     // (#469) every re-ranked row's quote carries its own site, so the exact ticker finds it
     picks::stamp_site(&mut top, &u.quotes, &|t: &str| t.to_string());
     top["generated"] = u.generated.into();
+    // (#530) the upload's floors, which `screen` writes beside its rows: without them the page kept CI's
+    top["cagr_floor"] = serde_json::json!(bh.growth_min_cagr);
+    top["reit_cagr_floor"] = serde_json::json!(s.reit_min_cagr);
+    top["page_min_cagr"] = serde_json::json!(s.page_min_cagr);
     // only when there is something to say, so a pool that holds every pin stays byte-equal to `screen`
     if !(twins.is_empty() && missing.is_empty()) {
         top["pins"] = serde_json::json!({ "twins": twins, "missing": missing });
@@ -295,6 +299,9 @@ mod tests {
         picks::stamp_buy(&mut v, &picks::buy_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new()));
         picks::stamp_index(&mut v, quotes);
         v["generated"] = serde_json::Value::Null;
+        v["cagr_floor"] = serde_json::json!(s.buy_heuristic.growth_min_cagr);
+        v["reit_cagr_floor"] = serde_json::json!(s.reit_min_cagr);
+        v["page_min_cagr"] = serde_json::json!(s.page_min_cagr);
         v
     }
 
@@ -318,6 +325,19 @@ mod tests {
         assert_eq!(engine("", &q), direct(&q, &[], 25), "an empty upload IS CI's config");
         // a bare `buy_heuristic:` names no knob, so it moves nothing (the null-safe merge arm)
         assert_eq!(engine("buy_heuristic:\n", &q), engine("", &q));
+    }
+
+    /// (#530) The page cuts and greys on the floors the payload carries, so an upload's floors must ride
+    /// in it: before, the engine left them out and an uploaded `page_min_cagr: 21` hid nothing new.
+    #[test]
+    fn the_engine_echoes_the_uploads_cagr_floors() {
+        let q = pool();
+        let ci = engine("", &q);
+        let ci_s: Settings = serde_yaml::from_str(CI).expect("the CI config parses");
+        assert_eq!(ci["page_min_cagr"], serde_json::json!(ci_s.page_min_cagr));
+        let up = engine("page_min_cagr: 21.0\nreit_min_cagr: 3.0\nbuy_heuristic:\n  growth_min_cagr: 7.0\n", &q);
+        assert_eq!((&up["page_min_cagr"], &up["reit_cagr_floor"], &up["cagr_floor"]), (&serde_json::json!(21.0), &serde_json::json!(3.0), &serde_json::json!(7.0)));
+        assert_ne!(ci["page_min_cagr"], up["page_min_cagr"], "not vacuous: CI's floor is not 21");
     }
 
     /// (#461) The US twins ride in universe.json, so the engine fills the n/a cells `screen` fills, with
