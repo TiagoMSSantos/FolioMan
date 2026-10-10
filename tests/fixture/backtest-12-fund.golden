@@ -99,7 +99,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     fcf_cap_yield         winners n=1    med      4.10   losers n=6    med      2.99   gap      1.11   AUC  1.00
     low_turnover          winners n=1    med     -2.15   losers n=6    med     -1.23   gap     -0.92   AUC  0.00
     composite             winners n=1    med     38.29   losers n=5    med     23.78   gap     14.51   AUC  1.00
-    (34 of 51 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (34 of 52 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -332,6 +332,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   fcf_cap_yield  TEST edge +87.7 (w 0.249)  OOS +0.26 | -0.50
   low_turnover   TEST edge +87.7 (w 0.249)  OOS +0.54 | -0.70
   rnd_growth     TEST edge +87.7 (w 0.249)  OOS +0.54 | -0.70
+  low_dro        TEST edge +87.7 (w 0.249)  OOS +0.54 | -0.70
   composite      TEST edge +87.7 (w 0.249)  OOS +0.26 | -0.50
   -> no factor beats price-only with both OOS halves + — keep growth_fund_weight 0. SHIP NOTHING.
 
@@ -459,7 +460,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   oe_fair_yield  book -1.5%/yr  excess -13.1  win 0%  worst -17.9  OOS -11.0/-15.1   (n=11)
   fcf_cap_yield  book -1.5%/yr  excess -13.1  win 0%  worst -17.9  OOS -11.0/-15.1   (n=11)
   low_turnover   book -1.5%/yr  excess -13.1  win 0%  worst -17.9  OOS -11.0/-15.1   (n=11)
-  no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0, op_rd n=0, rnd_growth n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
+  no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0, op_rd n=0, rnd_growth n=0, low_dro n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
   (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.
    every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,
    which is DERIVED (EBIT ÷ equity+net debt), not the premium `FundRow::roic` that never populates.)

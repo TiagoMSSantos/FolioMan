@@ -4085,6 +4085,9 @@ pub struct FundFactors {
     // (#531) Ibbotson et al. 2013 popularity: minus a year's shares traded over the as-of share count
     // (high = UNPOPULAR). Needs the price series' volume, so only the backtest fills it. PROBE-ONLY
     pub low_turnover: Option<f64>,
+    // (#533) Wang 2019 (JFE 133(2)) receivables days NEGATED: −receivables ÷ revenue × 365 (high = collects
+    // fast). `fund_factors` fills it raw; the backtest's same-date pass demeans it within the sector. PROBE-ONLY
+    pub low_dro: Option<f64>,
     pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
@@ -4540,6 +4543,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         oe_fair_yield: None,
         fcf_cap_yield: None,
         low_turnover: None, // (#531) needs the volume series
+        // (#533) a bank's or insurer's receivables are loans, not trade credit, so its row reads None
+        low_dro: now.filter(|r| !r.financial).and_then(|r| r.rec_margin).map(|m| -m * 3.65),
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5304,6 +5309,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "oe_fair_yield" => f.oe_fair_yield,               // (#523) FAIR-OE ÷ price: measured, unweighted
         "fcf_cap_yield" => f.fcf_cap_yield,               // (#523) 3y-median FCF ÷ cap: measured, unweighted
         "low_turnover" => f.low_turnover,                 // (#531) −a year's share turnover: measured, unweighted
+        "low_dro" => f.low_dro,                           // (#533) −receivables days, sector-demeaned: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6218,6 +6224,7 @@ mod tests {
             oe_fair_yield: Some(48.0),
             fcf_cap_yield: Some(49.0),
             low_turnover: Some(50.0),
+            low_dro: Some(52.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6271,6 +6278,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "fcf_cap_yield"), Some(49.0));
         assert_eq!(select_fund_factor(&f, "low_turnover"), Some(50.0)); // (#531)
         assert_eq!(select_fund_factor(&f, "rnd_growth"), Some(51.0)); // (#532)
+        assert_eq!(select_fund_factor(&f, "low_dro"), Some(52.0)); // (#533)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -7013,6 +7021,24 @@ mod tests {
         assert_eq!(g(&[r(2020, 100.0, None), r(2023, 200.0, Some(8.0))]), None);
         assert_eq!(g(&[r(2020, 0.0, Some(10.0)), r(2023, 200.0, Some(8.0))]), None);
         assert_eq!(g(&[r(2021, 100.0, Some(10.0)), r(2023, 200.0, Some(8.0))]), None); // filed 2022-02: inside the 3y
+    }
+
+    /// (#533) `low_dro` is receivables days negated: receivables at 20% of revenue are 73 days, so −73.
+    /// No receivables tag, or a financial row, is None.
+    #[test]
+    fn low_dro_is_negated_receivables_days() {
+        let r = |rec: Option<f64>, financial: bool| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            rec_margin: rec,
+            financial,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let d = |row: FundRow| fund_factors(&[row], cutoff, 5).low_dro;
+        assert!((d(r(Some(20.0), false)).unwrap() + 73.0).abs() < 1e-9);
+        assert_eq!(d(r(None, false)), None);
+        assert_eq!(d(r(Some(20.0), true)), None);
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of

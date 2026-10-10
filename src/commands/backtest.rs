@@ -2496,7 +2496,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 51] = [
+const FUND_FACTORS: [&str; 52] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2536,6 +2536,7 @@ const FUND_FACTORS: [&str; 51] = [
     "fair_yield", "oe_fair_yield", "fcf_cap_yield", // (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49
     "low_turnover",         // (#531) Ibbotson-Chen-Kim-Hu 2013 popularity, share turnover negated; 49 -> 50
     "rnd_growth",           // (#532) Arnott et al. 2026 fundamental growth, the R&D leg: 3y ΔR&D ÷ old revenue; 50 -> 51
+    "low_dro",              // (#533) Wang 2019 CCC spread, the receivables leg: −receivables days, sector-demeaned; 51 -> 52
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -3636,6 +3637,9 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// thread count). A leg with fewer than 2 names at a date ranks nothing; a name needs ≥2 ranked legs.
 /// (#409) Market cap ranks the same way as a fifth column, alone, into `small_pct` = 100 − its
 /// percentile, so the smallest name at a cutoff reads 100. It never enters the composite.
+/// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
+/// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
+/// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read.
 /// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
 fn stamp_cohort_ranks(samples: &mut [Sample]) {
     let legs: [fn(&core::FundFactors) -> Option<f64>; 5] =
@@ -3660,6 +3664,23 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             let pcts: Vec<f64> = ranked[..4].iter().flatten().copied().collect();
             f.value_composite = (pcts.len() >= 2).then(|| pcts.iter().sum::<f64>() / pcts.len() as f64);
             f.small_pct = ranked[4].map(|p| 100.0 - p);
+        }
+        let mut by_sector: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+        for s in day.iter() {
+            if let (Some(sec), Some(v)) = (&s.quote.sector, s.fund.as_ref().and_then(|f| f.low_dro)) {
+                by_sector.entry(sec.clone()).or_default().push(v);
+            }
+        }
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            (v[(v.len() - 1) / 2] + v[v.len() / 2]) / 2.0
+        };
+        let medians: std::collections::BTreeMap<String, f64> = by_sector.into_iter().map(|(k, v)| (k, median(v))).collect();
+        for s in day.iter_mut() {
+            let m = s.quote.sector.as_ref().and_then(|k| medians.get(k)).copied();
+            if let Some(f) = s.fund.as_mut() {
+                f.low_dro = f.low_dro.zip(m).map(|(v, m)| v - m);
+            }
         }
     }
 }
@@ -4497,6 +4518,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("fcf_cap_yield", |f| f.fcf_cap_yield),
         ("low_turnover", |f| f.low_turnover), // (#531)
         ("rnd_growth", |f| f.rnd_growth), // (#532)
+        ("low_dro", |f| f.low_dro), // (#533)
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
@@ -6722,6 +6744,37 @@ mod tests {
         ];
         assert_eq!(stamped(vec![x(), y(), z(), w()]), want);
         assert_eq!(stamped(vec![z(), x(), y(), w()]), want);
+    }
+
+    /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads
+    /// +20/0/−30; Energy −40 alone reads 0; a Tech name at another date is its own cohort; no sector is None.
+    #[test]
+    fn stamp_cohort_ranks_demeans_low_dro_within_date_and_sector() {
+        use crate::core::FundFactors;
+        let row = |d: u32, t: &str, sector: Option<&str>, dro: f64| {
+            let mut q = Quote::stub(t, "1", "", t);
+            q.sector = sector.map(str::to_string);
+            Sample {
+                date: ymd(2010, 1, d),
+                realized: 0.0,
+                relative: 0.0,
+                quote: Arc::new(q),
+                fund: Some(FundFactors { low_dro: Some(dro), ..Default::default() }),
+                trail: Vec::new(),
+            }
+        };
+        let mut v = vec![
+            row(1, "A", Some("Tech"), -10.0),
+            row(1, "B", Some("Tech"), -30.0),
+            row(1, "C", Some("Tech"), -60.0),
+            row(1, "D", Some("Energy"), -40.0),
+            row(1, "E", None, -5.0),
+            row(2, "F", Some("Tech"), -99.0),
+            row(2, "G", Some("Tech"), -1.0),
+        ];
+        stamp_cohort_ranks(&mut v);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().unwrap().low_dro).collect();
+        assert_eq!(got, vec![Some(20.0), Some(0.0), Some(-30.0), Some(0.0), None, Some(-49.0), Some(49.0)]);
     }
 
     /// (#328) A stock at one cutoff with a chosen 5Y leg and GICS label — the only inputs the sector

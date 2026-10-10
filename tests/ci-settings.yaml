@@ -5413,6 +5413,52 @@ buy_heuristic:
                                  #  12 chained links, each mean AND median > 0). Earliest ~2027-10/11.
                                  #  REVERT RULE: drop the row, the field, its arm and the FACTORS entry; the goldens move back by the same lines, and
                                  #  journal lines already written read back.
+                                 #── (#533) MEASURED 2026-10-10 — RECEIVABLES DAYS (WANG 2019 CCC SPREAD, THE DRO LEG) AS A FUND FACTOR: DEAD ──
+                                 #  WHAT: one FUND_FACTORS row, `low_dro` = −`rec_margin` × 3.65, receivables days negated (high = collects fast), from
+                                 #  the as-of SEC row; None with no receivables tag or on a `financial` row (a bank's receivables are loans). The
+                                 #  backtest's same-date pass (`stamp_cohort_ranks`) then subtracts the median of that date's same-sector names; a
+                                 #  name with no sector reads None. FUND_FACTORS 51 -> 52, so every Šidák band tightens again. It fills live raw
+                                 #  (the same `fund_factors`), but nothing reads it.
+                                 #  WHY: sweep 27 (2026-10-10, "find assets that grow above average over 20+ years"). The one new, cache-buildable
+                                 #  lead. Wang, JFE 133(2) 2019, "The cash conversion cycle spread": US 1976-2015, low-minus-high CCC earns 5-7%/yr
+                                 #  FF5 alpha, in both halves (1976-95, 1996-2015), in the two largest size quintiles (VW 0.32%/mo, t 3.18), for up
+                                 #  to 3 years. Table 10, industry-adjusted (FF48 median) components: DRO VW 0.50%/mo (t 3.26), DIO 0.38 (t 2.37),
+                                 #  DPO 0.04 (t 0.28); the operating cycle (DIO + DRO) 0.53. So DRO alone carries most of the VW spread, and it is
+                                 #  the only leg the cache holds: `rec_margin` (#412, ~73% coverage) fed only Beneish's DSRI as a YoY ratio, never
+                                 #  as a level. Out of sample: 47 markets 1993-2018 (JBF 2022) "mild", 0.28-0.73%/mo EW; China none (PBFJ 2022).
+                                 #  The rest of the sweep maps to closed or graded lanes: DIO and DPO NEED-DATA (no inventory or payables tag; a
+                                 #  `_factsN` bump starves names ~1 run), Cohen-Diether-Malloy R&D ability failed replication, Soliman's Δ asset
+                                 #  turnover is `discipline` (#417), acquirers are `goodwill` (#412), the Coffee Can is a gate over `rev_stability`
+                                 #  and `roic` (gates closed), Bessembinder's traits are sweep 12, LTG reversal, pension underfunding and TFP
+                                 #  NEED-DATA, farmland is an allocation call.
+                                 #  Prior: right side (> 0.5) by Wang. Against: the 2014-26 winners in this pond are software and platforms, and
+                                 #  the pool reads quality backwards; the sector demean is there so the row grades the firm, not the industry.
+                                 #  shortcut: today's GICS (11 sectors, #95) stands in for Wang's FF48 history.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at both ->
+                                 #  CANDIDATE, anything else -> DEAD. A 12y n/a is DEAD by the bar. Measure only: no weight, no rank change.
+                                 #  UNLOCK, ALSO BEFORE THE RUN (the user's call): CANDIDATE -> `low_dro` joins the (#415) forward shadow,
+                                 #  `track::FACTORS` 9 -> 10, sector-demeaned on the live cohort, graded under the unchanged bar (12 monthly lines
+                                 #  AND 12 chained links), a re-grade only, never a ship. DEAD -> no shadow code; this receipt is the whole record.
+                                 #  RUNS: `backtest {12,8} universe fund pit`, FOLIOMAN_CONFIG=tests/ci-settings.yaml, root dotfiles and .sec_cache
+                                 #  restored from #532's tar before each run (tar --diff clean after). The six fixture goldens move ONLY by the 51 -> 52
+                                 #  count lines, `low_dro n=0` in the no-book list and one held-out TEST-edge row, so every other row IS the control,
+                                 #  and every control below equals #532's to the digit. Fund-facts fallback 310 both runs. Windows scored 2815 / 6246.
+                                 #    AUC            12y (w/l)     8y (w/l)       held book 12y / 8y
+                                 #    low_dro        0.25 (36/4)   0.48 (73/12)   +14.8%/yr n=39 / +13.8%/yr n=82   DEAD: 8y inside 0.40-0.60
+                                 #    rnd_growth     0.40 (5/4)    0.33 (21/8)    +13.4%/yr n=8  / +11.1%/yr n=27   = #532
+                                 #    rnd_yield      0.31 (17/5)   0.29 (34/9)    +14.2%/yr n=21 / +12.7%/yr n=41   = #532
+                                 #    peg_yield      0.62 (41/8)   0.28 (73/18)   +13.6%/yr n=48 / +12.2%/yr n=90   the shipped tilt, = #532
+                                 #    fcf_ev_yield   0.60 (41/8)   0.24 (78/18)   +13.6%/yr n=48 / +13.2%/yr n=92   = #532
+                                 #    small_pct      0.44 (41/8)   0.52 (78/18)   +13.6%/yr n=48 / +13.2%/yr n=93   = #532
+                                 #  VERDICT: DEAD by the bar. The 12y reading is the WRONG side for Wang (slow collectors with the winners: losers'
+                                 #  median +3.35 days faster than their sector, winners' 0.00), and it rests on 4 losers. At 8y, on 12 losers, both
+                                 #  medians are 0.00 and the AUC is 0.48: no signal. The held-out TEST edge is +47.4 at 12y (fcf_ev_yield +23.3) and
+                                 #  −169.5 at 8y, equal to rnd_yield's to the decimal, so the row adds nothing there. The top-by-low_dro books
+                                 #  (+14.8 / +13.8%/yr) beat the 12y / 8y PEG tilt books (+13.6 / +12.2) but carry the 8y worst at −18.6 against −16.4,
+                                 #  and a held book is not the bar. Read as the international papers predicted: on large caps after ~2002 the
+                                 #  receivables leg is mild to absent. Per the unlock, no shadow line and no live stamp.
+                                 #  REVERT RULE: drop the row, the field, its arm and the demean block in `stamp_cohort_ranks`; the goldens move back
+                                 #  by the same lines.
                                  #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
                                  #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
                                  #  "hedged", so the screen funnel names it). ETF-scoped. Substrings hedg/hdg/heur/hchf/husd/hgbp catch the glued
