@@ -21189,6 +21189,11 @@ urls:
   # skipped. Ranks keep 14 days in `.appstore_ranks.json`; no tip until a week of them exists. Asked
   # 2026-10-07 for more social sources than the hand list. REVERT: delete this line.
   appstore_chart: "https://rss.marketingtools.apple.com/api/v2/us/apps/top-free/100/apps.json"
+  # (#536) Benzinga's weekly "5 stocks investors couldn't stop buzzing about" (keyless): the author page
+  # links the newest article, whose JSON-LD names its tickers; each pooled one is a social tip (Buzz,
+  # the existing x1.05). Older than 8 days adds nothing. Asked 2026-10-10 for what people talk about
+  # right now. REVERT: delete this line.
+  benzinga_buzz: "https://www.benzinga.com/author/rishabh-mishra"
   # (#520) Japan FSA's EDINET API v2: Berkshire's large-holding reports (filer E35979, National
   # Indemnity) add its Japan stakes (Mitsubishi 8058.T, Mitsui 8031.T, Itochu 8001.T, Marubeni 8002.T,
   # Sumitomo 8053.T...) to the Berkshire table, which a 13F never lists. Display only: no mark, no score.

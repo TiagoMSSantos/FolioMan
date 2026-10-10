@@ -919,6 +919,10 @@ pub struct Urls {
     // is a social tip (`fetch::app_climbs`). EMPTY is the off switch, like `nasdaq_ipo`; CI sets it.
     #[serde(default)]
     pub appstore_chart: String,
+    // (#536) A Benzinga author page whose newest "stocks investors couldn't stop buzzing about" article
+    // names this week's tickers (`fetch::buzz_tips`). EMPTY is the off switch, like `appstore_chart`.
+    #[serde(default)]
+    pub benzinga_buzz: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.

@@ -89,6 +89,17 @@ async fn get_text(client: &Client, url: &str) -> Option<String> {
     client.get(url).send().await.ok()?.text().await.ok()
 }
 
+/// [`get_text`] under another User-Agent: Dataroma's Mod_Security (406) and (#536) Benzinga (403)
+/// refuse the shared client's bare "Mozilla/5.0"; the contact agent passes.
+#[mutants::skip] // (#536) network shell; its two callers' parsers carry the tests
+async fn get_text_as(client: &Client, url: &str, agent: &str) -> Option<String> {
+    if offline() {
+        return None;
+    }
+    throttle().await;
+    client.get(url).header(reqwest::header::USER_AGENT, agent).send().await.ok()?.text().await.ok()
+}
+
 async fn post_json(client: &Client, url: &str, body: &Value) -> Option<Value> {
     post_json_with(client, url, body, &[]).await
 }
@@ -3041,7 +3052,9 @@ async fn fetch_edinet_brk(client: &Client, urls: &Urls) -> Vec<BrkRow> {
 // superinvestor rows score, through `Quote::super_buyers` and `growth_superinvestor_boost`; (#473) the
 // video and hand-list rows too, through `Quote::social_tip` and the smaller `growth_social_boost`. (#444) One table for every source of "people say they are buying it":
 // - YouTube: a pooled equity named in a title or description of the newest ~15 Dumb Money Live uploads
-//   (keyless RSS, about one week).
+//   (keyless RSS, about one week). (#536) Named means its full name or a hand alias
+//   (`src/buy-heuristics/social-aliases.json`: brands and products, `[]` mutes a name that is a common
+//   word), capitalised, outside the description's link lines; see [`soc_hits`].
 // - Superinvestors: Dataroma's last-quarter buys (13F-based, so 45+ days old), kept when at least
 //   [`SOC_MIN_BUYERS`] of its ~80 tracked managers bought. (#470) When Dataroma lists none (it answers
 //   GitHub's runners with nothing), the same managers' own 13Fs on SEC EDGAR, see [`fetch_sec_superinvestors`].
@@ -3049,8 +3062,12 @@ async fn fetch_edinet_brk(client: &Client, urls: &Urls) -> Vec<BrkRow> {
 // - (#475) New 13D/13G stakes: the same managers' original SCHEDULE 13D/13G filings of the last
 //   [`SOC_STAKE_DAYS`], one more buyer each. ARK's net buys and openinsider's cluster buys of a pooled
 //   stock are tips, like a video. Four more channels' videos pool with Dumb Money Live's.
+// - (#536) Benzinga's weekly "stocks investors couldn't stop buzzing about" tickers, and ApeWisdom's
+//   loudest names beside its surges.
 
 const SOC_PICKS: &str = include_str!("buy-heuristics/social-arbitrage-trading.json");
+/// (#536) US ticker -> extra names a video may call it by; `[]` mutes its own name.
+const SOC_ALIASES: &str = include_str!("buy-heuristics/social-aliases.json");
 
 /// (#444) Dataroma buyers a stock needs to list: 8 kept 13 of the top 100 on 2026-10-03, 5 kept 46.
 const SOC_MIN_BUYERS: u32 = 8;
@@ -3085,6 +3102,8 @@ enum TipKind {
     Trends,
     /// (#516) a developer climbing Apple's US top-free chart
     AppStore,
+    /// (#536) named by Benzinga's weekly buzz article
+    Buzz,
 }
 
 /// (#475) Look-back of each newer source: a new 13D/13G stake, then an ARK net buy.
@@ -3094,6 +3113,12 @@ const ARK_FUNDS: [&str; 6] = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF", "ARKX"];
 /// (#483) A Reddit/4chan surge: this many mentions in the last 24h, and this many times the 24h before.
 const SOC_APE_MIN: u64 = 10;
 const SOC_APE_JUMP: u64 = 3;
+/// (#536) ...or this many mentions whatever the day before: the steady loud names (ASTS 134, MU 76).
+const SOC_APE_LOUD: u64 = 50;
+/// (#536) Slang counted as a ticker: "0DTE" options reads as DTE Energy.
+const SOC_APE_DENY: [&str; 1] = ["DTE"];
+/// (#536) A Benzinga buzz article older than this is last week's.
+const SOC_BUZZ_DAYS: i64 = 8;
 /// (#483) Hacker News look-back; the 100-point floor rides in `urls.hn_stories`.
 const SOC_HN_DAYS: i64 = 7;
 
@@ -3112,6 +3137,8 @@ pub struct SocRow {
     trends: bool,
     /// (#516) its developer climbed the App Store chart
     app: bool,
+    /// (#536) in Benzinga's weekly buzz article
+    buzz: bool,
     hn: usize,
     videos: usize,
     hand: bool,
@@ -3123,6 +3150,7 @@ pub struct SocRow {
 
 /// (#443) The feed's entries, newest first as YouTube lists them: (published day, title, title + " " +
 /// description, (#455) its watch link or ""), entities decoded. An entry missing a title or date is skipped.
+/// (#536) A description line holding a link is dropped: "Instagram: https://..." is boilerplate, not talk.
 fn soc_videos(xml: &str) -> Vec<(String, String, String, String)> {
     let field = |e: &str, tag: &str| {
         regex::Regex::new(&format!(r"(?s)<{tag}>(.*?)</{tag}>"))
@@ -3136,7 +3164,9 @@ fn soc_videos(xml: &str) -> Vec<(String, String, String, String)> {
         .captures_iter(xml)
         .filter_map(|e| {
             let (title, day) = (field(&e[1], "title")?, field(&e[1], "published")?.get(..10)?.to_string());
-            let text = format!("{title} {}", field(&e[1], "media:description").unwrap_or_default());
+            let about = field(&e[1], "media:description").unwrap_or_default();
+            let about: Vec<&str> = about.lines().filter(|l| !l.contains("http://") && !l.contains("https://")).collect();
+            let text = format!("{title} {}", about.join("\n"));
             let url = link.captures(&e[1]).map_or(String::new(), |c| c[1].replace("&amp;", "&"));
             Some((day, title, text, url))
         })
@@ -3506,9 +3536,10 @@ fn insider_clusters(html: &str) -> Vec<SocTip> {
 }
 
 /// (#483) ApeWisdom's most-mentioned stocks -> one tip per surge: [`SOC_APE_MIN`]+ mentions over the
-/// last 24h and [`SOC_APE_JUMP`]x the 24h before (a name new to the list counts as 1 before). A 1-2
-/// letter ticker is skipped: "IT", "ES" and "CD" are counted off ordinary words.
-fn ape_surges(v: &Value, today: &str) -> Vec<SocTip> {
+/// last 24h and [`SOC_APE_JUMP`]x the 24h before (a name new to the list counts as 1 before), (#536) or
+/// [`SOC_APE_LOUD`]+ mentions however many the day before. A 1-2 letter ticker is skipped: "IT", "ES"
+/// and "CD" are counted off ordinary words; so is [`SOC_APE_DENY`].
+fn ape_tips(v: &Value, today: &str) -> Vec<SocTip> {
     v["results"]
         .as_array()
         .into_iter()
@@ -3516,12 +3547,17 @@ fn ape_surges(v: &Value, today: &str) -> Vec<SocTip> {
         .filter_map(|r| {
             let (us, now) = (r["ticker"].as_str()?, r["mentions"].as_u64()?);
             let before = r["mentions_24h_ago"].as_u64().unwrap_or(0);
-            (us.len() >= 3 && now >= SOC_APE_MIN && now >= SOC_APE_JUMP * before.max(1)).then(|| SocTip {
+            let surge = now >= SOC_APE_MIN && now >= SOC_APE_JUMP * before.max(1);
+            (us.len() >= 3 && !SOC_APE_DENY.contains(&us) && (surge || now >= SOC_APE_LOUD)).then(|| SocTip {
                 us: us.replace('.', "-"),
                 name: r["name"].as_str().unwrap_or_default().to_string(),
                 kind: TipKind::Reddit,
                 day: today.to_string(),
-                why: format!("Reddit/4chan mentions {now} vs {before} a day before"),
+                why: if surge {
+                    format!("Reddit/4chan mentions {now} vs {before} a day before")
+                } else {
+                    format!("Reddit/4chan mentions {now} in 24h (one of the most-talked-about)")
+                },
                 link: format!("https://apewisdom.io/stocks/{us}/"),
             })
         })
@@ -3529,9 +3565,9 @@ fn ape_surges(v: &Value, today: &str) -> Vec<SocTip> {
 }
 
 /// (#483) Google Trends' daily US RSS -> one tip per trend whose whole title, case-blind, is a pooled
-/// stock: its ticker (3+ letters, as RXO trended) or its [`soc_key`] (`nvidia`). A title naming
-/// anything else ("united states") matches nothing.
-fn trend_hits(xml: &str, today: &str, eu: &HashMap<String, String>, quotes: &[Quote]) -> Vec<SocTip> {
+/// stock: its ticker (3+ letters, as RXO trended) or (#536) one of its [`soc_names`] (`nvidia`, `gta`).
+/// A title naming anything else ("united states") matches nothing.
+fn trend_hits(xml: &str, today: &str, aliases: &BTreeMap<String, Vec<String>>, eu: &HashMap<String, String>, quotes: &[Quote]) -> Vec<SocTip> {
     let field = |e: &str, tag: &str| regex::Regex::new(&format!(r"(?s)<{tag}>(.*?)</{tag}>")).expect("literal regex").captures(e).map(|c| c[1].trim().replace("&amp;", "&"));
     regex::Regex::new(r"(?s)<item>(.*?)</item>")
         .expect("literal regex")
@@ -3543,7 +3579,8 @@ fn trend_hits(xml: &str, today: &str, eu: &HashMap<String, String>, quotes: &[Qu
                 .then(|| soc_quote(&title.to_uppercase(), eu, quotes))
                 .flatten()
                 .filter(stock);
-            let q = by_ticker.or_else(|| quotes.iter().filter(stock).find(|q| soc_key(&q.name).is_some_and(|k| k.eq_ignore_ascii_case(&title))))?;
+            let key = app_name(&title);
+            let q = by_ticker.or_else(|| quotes.iter().filter(stock).find(|q| soc_names(q, aliases, eu).contains(&key)))?;
             let traffic = field(&c[1], "ht:approx_traffic").map_or(String::new(), |t| format!(", {t} searches"));
             Some(SocTip {
                 us: q.ticker.clone(),
@@ -3583,12 +3620,20 @@ fn app_chart(v: &Value) -> BTreeMap<String, u32> {
 /// (#516) A company name as the chart and the pool both spell it: lowercase words, legal suffixes,
 /// one-letter words and punctuation dropped (`Spotify Technology S.A.` == `Spotify`).
 fn app_name(name: &str) -> String {
+    soc_words(name).into_iter().map(|(w, _)| w).collect::<Vec<_>>().join(" ")
+}
+
+/// (#536) A text's words as [`app_name`] cuts them, lowercased, each with whether it held a capital
+/// (`Micron`, `iPhone`, `NVIDIA`).
+fn soc_words(text: &str) -> Vec<(String, bool)> {
     const NOISE: [&str; 21] = [
         "inc", "incorporated", "llc", "ltd", "limited", "plc", "corp", "corporation", "co", "company", "holdings", "holding", "group", "the", "sa", "nv", "ag", "se",
         "technologies", "technology", "financial",
     ];
-    let lower = name.to_lowercase();
-    lower.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 1 && !NOISE.contains(w)).collect::<Vec<_>>().join(" ")
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(|w| (w.to_lowercase(), w.chars().any(char::is_uppercase)))
+        .filter(|(w, _)| w.len() > 1 && !NOISE.contains(&w.as_str()))
+        .collect()
 }
 
 /// (#516) Pooled stocks whose developer climbed the chart (see [`APP_CLIMB`]), from `history`
@@ -3616,6 +3661,46 @@ fn app_climbs(history: &BTreeMap<String, BTreeMap<String, u32>>, today: NaiveDat
                 day: day.clone(),
                 why: was.map_or(format!("App Store US top free #{rank} (new this week)"), |w| format!("App Store US top free #{rank} (was #{w})")),
                 link: "https://apps.apple.com/us/charts/iphone/top-free-apps/36".to_string(),
+            })
+        })
+        .collect()
+}
+
+/// (#536) The newest "stocks investors couldn't stop buzzing about" article an author page links.
+fn buzz_link(html: &str) -> Option<String> {
+    let href = regex::Regex::new(r#"href="([^"]*couldnt-stop-buzzing[^"]*)""#).expect("literal regex").captures(html)?[1].to_string();
+    Some(if href.starts_with('/') { format!("https://www.benzinga.com{href}") } else { href })
+}
+
+/// (#536) A buzz article -> one tip per ticker its JSON-LD `NewsArticle` mentions, when published in
+/// the last [`SOC_BUZZ_DAYS`]. A page without one (moved, blocked) gives nothing.
+fn buzz_tips(html: &str, today: NaiveDate) -> Vec<SocTip> {
+    let script = regex::Regex::new(r#"(?s)<script[^>]*application/ld\+json[^>]*>(.*?)</script>"#).expect("literal regex");
+    let article = script
+        .captures_iter(html)
+        .filter_map(|c| serde_json::from_str::<Value>(&c[1]).ok())
+        .flat_map(|v| match v {
+            Value::Array(a) => a,
+            v if v["@graph"].is_array() => v["@graph"].as_array().cloned().unwrap_or_default(),
+            v => vec![v],
+        })
+        .find(|v| v["@type"] == "NewsArticle");
+    let Some(a) = article else { return Vec::new() };
+    let day = a["datePublished"].as_str().and_then(|d| NaiveDate::parse_from_str(d.get(..10)?, "%Y-%m-%d").ok());
+    let Some(day) = day.filter(|d| (today - *d).num_days() <= SOC_BUZZ_DAYS) else { return Vec::new() };
+    let (why, link) = (a["headline"].as_str().unwrap_or_default(), a["url"].as_str().unwrap_or_default());
+    a["mentions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            Some(SocTip {
+                us: m["tickerSymbol"].as_str()?.replace('.', "-"),
+                name: m["name"].as_str().unwrap_or_default().to_string(),
+                kind: TipKind::Buzz,
+                day: day.to_string(),
+                why: why.to_string(),
+                link: link.to_string(),
             })
         })
         .collect()
@@ -3661,28 +3746,42 @@ async fn fetch_sup_stakes(client: &Client, urls: &Urls, today: chrono::NaiveDate
 /// (#475) A day: the search window ends today, so an older answer misses the newest filings.
 const SUP_STAKE_TTL: StdDuration = StdDuration::from_secs(24 * 3600);
 
-/// (#443) The word a name is matched on: its first, cut at whitespace, `,` or `.` (`Amazon.com, Inc.` ->
-/// `Amazon`), and only with 4+ letters, so `AT&T`-style stubs never match.
-fn soc_key(name: &str) -> Option<&str> {
-    let w = name.split(|c: char| c.is_whitespace() || c == ',' || c == '.').next()?;
-    (w.chars().count() >= 4).then_some(w)
+/// (#536) The [`app_name`]s a quote is matched on: its own (only with 4+ letters, so `IBM Corp` and
+/// `AT&T` stubs never match; a (#443) first word alone marked GE, GD and GM off "General") and its
+/// [`SOC_ALIASES`], found through the Xetra twin as [`soc_quote`] does. An empty alias list mutes it.
+fn soc_names(q: &Quote, aliases: &BTreeMap<String, Vec<String>>, eu: &HashMap<String, String>) -> Vec<String> {
+    let alias = aliases.iter().find(|(us, _)| **us == q.ticker || eu.get(*us) == Some(&q.ticker)).map(|(_, a)| a);
+    if alias.is_some_and(Vec::is_empty) {
+        return Vec::new();
+    }
+    let own = app_name(&q.name);
+    let own = (own.chars().filter(|c| c.is_alphanumeric()).count() >= 4).then_some(own);
+    own.into_iter().chain(alias.into_iter().flatten().map(|a| app_name(a))).filter(|n| !n.is_empty()).collect()
 }
 
-/// (#443) Every pooled equity whose [`soc_key`] is a whole word of a video's text, in its exact case: a
-/// case-blind match read the boilerplate's "strategy" and "best" as MSTR and BBY. Each as (quote, videos
-/// naming it, the newest one's day, title and (#455) link).
-/// shortcut: a first word shared by several names ("First", "General") marks them all; a hand alias map
-/// if a false hit ever shows on the page.
+/// (#536) Whether `name` (an [`app_name`]) runs as consecutive `words` whose first held a capital:
+/// "Micron's" and "General Motors" name, prose's "the best buy" does not.
+fn soc_named(name: &str, words: &[(String, bool)]) -> bool {
+    let want: Vec<&str> = name.split(' ').collect();
+    words.windows(want.len()).any(|w| w[0].1 && w.iter().zip(&want).all(|((a, _), b)| a == b))
+}
+
+/// (#443) Every pooled equity one of whose [`soc_names`] a video's text [`soc_named`]. Each as (quote,
+/// videos naming it, the newest one's day, title and (#455) link).
 #[allow(clippy::type_complexity)]
-fn soc_hits<'a>(videos: &[(String, String, String, String)], quotes: &'a [Quote]) -> Vec<(&'a Quote, usize, String, String, String)> {
-    let word = regex::Regex::new(r"[A-Za-z][A-Za-z0-9&'-]+").expect("literal regex");
-    let words: Vec<HashSet<&str>> = videos.iter().map(|(_, _, t, _)| word.find_iter(t).map(|m| m.as_str()).collect()).collect();
+fn soc_hits<'a>(
+    videos: &[(String, String, String, String)],
+    quotes: &'a [Quote],
+    aliases: &BTreeMap<String, Vec<String>>,
+    eu: &HashMap<String, String>,
+) -> Vec<(&'a Quote, usize, String, String, String)> {
+    let words: Vec<Vec<(String, bool)>> = videos.iter().map(|(_, _, t, _)| soc_words(t)).collect();
     quotes
         .iter()
         .filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY"))
         .filter_map(|q| {
-            let key = soc_key(&q.name)?;
-            let named: Vec<usize> = (0..videos.len()).filter(|&i| words[i].contains(key)).collect();
+            let names = soc_names(q, aliases, eu);
+            let named: Vec<usize> = (0..videos.len()).filter(|&i| names.iter().any(|n| soc_named(n, &words[i]))).collect();
             let newest = named.iter().max_by(|&&a, &&b| videos[a].0.cmp(&videos[b].0))?;
             let (day, title, _, link) = &videos[*newest];
             Some((q, named.len(), day.clone(), title.clone(), link.clone()))
@@ -3725,7 +3824,9 @@ fn soc_merge(
         r.link = format!("https://www.dataroma.com/m/stock.php?sym={}", sym.replace('-', ".")); // back to Dataroma's dot
     }
     // (#475) before the videos and the hand list, so their WHY wins; among these the later kind wins
-    for t in tips.iter().filter(|t| t.kind == TipKind::Stake || soc_quote(&t.us, eu, quotes).is_some()) {
+    // (#536) a pooled STOCK: ApeWisdom's loudest list always holds SPY
+    let stock = |t: &SocTip| soc_quote(&t.us, eu, quotes).is_some_and(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY"));
+    for t in tips.iter().filter(|t| t.kind == TipKind::Stake || stock(t)) {
         let r = soc_row(&mut rows, &t.us, &t.name, eu, quotes);
         match t.kind {
             TipKind::Stake => r.stakes += 1,
@@ -3734,6 +3835,7 @@ fn soc_merge(
             TipKind::Reddit => r.reddit = true,
             TipKind::Trends => r.trends = true,
             TipKind::AppStore => r.app = true,
+            TipKind::Buzz => r.buzz = true,
         }
         r.newest = r.newest.clone().max(t.day.clone());
         (r.why, r.link) = (t.why.clone(), t.link.clone());
@@ -3763,7 +3865,7 @@ fn soc_merge(
         }
     }
     let sources = |r: &SocRow| {
-        [r.buyers != 0, r.stakes != 0, r.ark, r.insiders, r.reddit, r.trends, r.app, r.hn != 0, r.videos != 0, r.hand].into_iter().filter(|&b| b).count()
+        [r.buyers != 0, r.stakes != 0, r.ark, r.insiders, r.reddit, r.trends, r.app, r.buzz, r.hn != 0, r.videos != 0, r.hand].into_iter().filter(|&b| b).count()
     };
     rows.sort_by(|a, b| {
         sources(b)
@@ -3784,7 +3886,7 @@ pub fn stamp_social(quotes: &mut [Quote], rows: &[SocRow]) {
         let row = rows.iter().find(|r| r.ticker == q.ticker);
         q.social = row.is_some();
         q.super_buyers = row.map_or(0, |r| r.buyers + r.stakes);
-        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand || r.ark || r.insiders || r.reddit || r.trends || r.app || r.hn > 0);
+        q.social_tip = row.is_some_and(|r| r.videos > 0 || r.hand || r.ark || r.insiders || r.reddit || r.trends || r.app || r.buzz || r.hn > 0);
     }
 }
 
@@ -3815,6 +3917,9 @@ fn soc_table(rows: &[SocRow], supers: &str) -> Value {
             }
             if r.app {
                 sources.push("App Store".to_string());
+            }
+            if r.buzz {
+                sources.push("Benzinga buzz".to_string());
             }
             if r.hn > 0 {
                 sources.push(format!("HN ×{}", r.hn));
@@ -3850,18 +3955,7 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
     for feed in std::iter::once(&urls.youtube_feed).chain(&urls.youtube_more_feeds) {
         videos.extend(get_text(client, feed).await.map(|x| soc_videos(&x)).unwrap_or_default());
     }
-    // Dataroma's Mod_Security answers the shared client's bare "Mozilla/5.0" with a 406; the contact agent passes.
-    let supers = if offline() {
-        None
-    } else {
-        throttle().await;
-        let resp = client.get(&urls.dataroma_buys).header(reqwest::header::USER_AGENT, &urls.sec_user_agent).send().await.ok();
-        match resp {
-            Some(r) => r.text().await.ok(),
-            None => None,
-        }
-    };
-    let mut supers = supers.map(|x| soc_superinvestors(&x)).unwrap_or_default();
+    let mut supers = get_text_as(client, &urls.dataroma_buys, &urls.sec_user_agent).await.map(|x| soc_superinvestors(&x)).unwrap_or_default();
     let mut label = "superinvestors";
     if supers.1.is_empty() {
         supers = fetch_sec_superinvestors(client, urls).await;
@@ -3879,8 +3973,14 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
     tips.extend(ark_buys(&funds));
     tips.extend(get_text(client, &urls.openinsider_clusters).await.map(|x| insider_clusters(&x)).unwrap_or_default());
     let day = today.to_string();
-    tips.extend(get_json(client, &urls.apewisdom).await.map(|v| ape_surges(&v, &day)).unwrap_or_default());
-    tips.extend(get_text(client, &urls.google_trends_rss).await.map(|x| trend_hits(&x, &day, &eu, quotes)).unwrap_or_default());
+    let aliases: BTreeMap<String, Vec<String>> = serde_json::from_str(SOC_ALIASES).expect("src/buy-heuristics/social-aliases.json parses");
+    tips.extend(get_json(client, &urls.apewisdom).await.map(|v| ape_tips(&v, &day)).unwrap_or_default());
+    tips.extend(get_text(client, &urls.google_trends_rss).await.map(|x| trend_hits(&x, &day, &aliases, &eu, quotes)).unwrap_or_default());
+    if !urls.benzinga_buzz.is_empty() {
+        if let Some(article) = get_text_as(client, &urls.benzinga_buzz, &urls.sec_user_agent).await.and_then(|x| buzz_link(&x)) {
+            tips.extend(get_text_as(client, &article, &urls.sec_user_agent).await.map(|x| buzz_tips(&x, today)).unwrap_or_default());
+        }
+    }
     if !urls.appstore_chart.is_empty() {
         let path = crate::config::data_path(APPSTORE_RANKS_PATH);
         let mut ranks: BTreeMap<String, BTreeMap<String, u32>> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
@@ -3895,10 +3995,10 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
     }
     let hn_since = (chrono::Utc::now() - chrono::Duration::days(SOC_HN_DAYS)).timestamp().to_string();
     let stories = get_json(client, &urls.hn_stories.replace("{since}", &hn_since)).await.map(|v| hn_stories(&v)).unwrap_or_default();
-    let rows = soc_merge(&soc_hits(&videos, quotes), &soc_hits(&stories, quotes), &supers, &picks, &tips, &eu, quotes);
+    let rows = soc_merge(&soc_hits(&videos, quotes, &aliases, &eu), &soc_hits(&stories, quotes, &aliases, &eu), &supers, &picks, &tips, &eu, quotes);
     stamp_social(quotes, &rows);
     eprintln!(
-        "fetch: social arbitrage: {} videos, {} HN stories, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider/Reddit/Trends/App Store tips, {} hand picks -> {} rows",
+        "fetch: social arbitrage: {} videos, {} HN stories, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider/Reddit/Trends/App Store/Benzinga tips, {} hand picks -> {} rows",
         videos.len(),
         stories.len(),
         supers.1.len(),
@@ -12087,6 +12187,69 @@ pub(crate) mod tests {
         );
     }
 
+    /// (#536) A name hits as a capitalised run of its words: GM's full name never marks GE, a possessive
+    /// still names, prose's lower case does not, a muted name never hits, an alias does, and a
+    /// description's link line is gone before matching.
+    #[test]
+    fn soc_hits_match_capitalised_full_names_and_aliases() {
+        let q = |t: &str, name: &str| Quote { instrument_type: "EQUITY".to_string(), name: name.to_string(), ..Quote::stub(t, "€1", "", t) };
+        let quotes = [
+            q("GM", "General Motors Company"),
+            q("GE", "General Electric Company"),
+            q("MU", "Micron Technology, Inc."),
+            q("BBY", "Best Buy Co., Inc."),
+            q("TGT", "Target Corporation"),
+            q("TTWO", "Take-Two Interactive Software, Inc."),
+            q("META", "Meta Platforms, Inc."),
+            q("AAPL", "Apple Inc."),
+        ];
+        let entry = |title: &str, about: &str| format!("<entry><title>{title}</title><published>2026-10-09T00:00:00+00:00</published><media:description>{about}</media:description></entry>");
+        let xml = [
+            entry("General Motors earnings", "Micron's Customers are waiting\nthe best buy and my price target"),
+            entry("GTA VI is late", "Instagram: https://instagram.com/x\nThe new iPhone"),
+            entry("Best Buy", ""),
+        ]
+        .concat();
+        let videos = soc_videos(&xml);
+        assert!(!videos[1].2.contains("Instagram"), "a link line is dropped");
+        let aliases = BTreeMap::from([("BBY".to_string(), vec![]), ("TGT".to_string(), vec![]), ("TTWO".to_string(), vec!["GTA".to_string()]), ("META".to_string(), vec!["Instagram".to_string()]), ("AAPL".to_string(), vec!["iPhone".to_string()])]);
+        let got: Vec<(&str, usize)> = soc_hits(&videos, &quotes, &aliases, &HashMap::new()).iter().map(|(q, n, ..)| (q.ticker.as_str(), *n)).collect();
+        assert_eq!(got, [("GM", 1), ("MU", 1), ("TTWO", 1), ("AAPL", 1)]);
+        assert!(!soc_named("best buy", &soc_words("the best buy")));
+        assert!(soc_named("best buy", &soc_words("a Best Buy deal")));
+    }
+
+    /// (#536) The alias file parses, keys are upper-case tickers, and no alias names two tickers.
+    #[test]
+    fn soc_aliases_are_unique_per_ticker() {
+        let aliases: BTreeMap<String, Vec<String>> = serde_json::from_str(SOC_ALIASES).expect("social-aliases.json parses");
+        assert!(aliases.keys().all(|k| !k.is_empty() && *k == k.to_uppercase()));
+        let mut seen = HashSet::new();
+        assert!(aliases.values().flatten().all(|a| !app_name(a).is_empty() && seen.insert(app_name(a))), "an alias is empty or names two tickers");
+    }
+
+    /// (#536) The author page's newest buzz article, absolute or site-relative; its JSON-LD mentions
+    /// become tips only while fresh.
+    #[test]
+    fn buzz_tips_read_a_fresh_articles_mentions() {
+        let page = r#"<a href="/news/1">x</a><a href="/markets/equities/26/10/1/spacex-micron-and-more-5-stocks-investors-couldnt-stop-buzzing-about-this-week">y</a>"#;
+        assert_eq!(buzz_link(page).as_deref(), Some("https://www.benzinga.com/markets/equities/26/10/1/spacex-micron-and-more-5-stocks-investors-couldnt-stop-buzzing-about-this-week"));
+        assert_eq!(buzz_link(r#"<a href="https://www.benzinga.com/a-couldnt-stop-buzzing-b">"#).as_deref(), Some("https://www.benzinga.com/a-couldnt-stop-buzzing-b"));
+        assert_eq!(buzz_link("<html>moved</html>"), None);
+        let article = r#"<script type="application/ld+json">{"@type":"Organization","name":"Benzinga"}</script>
+            <script id="page-structured-data" type="application/ld+json">{"@type":"NewsArticle","headline":"SpaceX, Micron: 5 Stocks","datePublished":"2026-10-10T08:58:29.000-04:00","url":"https://www.benzinga.com/a","mentions":[{"@type":"Corporation","name":"SPCX","tickerSymbol":"SPCX"},{"@type":"Corporation","name":"BRK.B","tickerSymbol":"BRK.B"},{"@type":"Thing","name":"no symbol"}]}</script>"#;
+        let day = |d: &str| NaiveDate::parse_from_str(d, "%Y-%m-%d").expect("date");
+        let got = buzz_tips(article, day("2026-10-12"));
+        let short: Vec<(&str, &str, &str, &str)> = got.iter().map(|t| (t.us.as_str(), t.day.as_str(), t.why.as_str(), t.link.as_str())).collect();
+        assert_eq!(short, [("SPCX", "2026-10-10", "SpaceX, Micron: 5 Stocks", "https://www.benzinga.com/a"), ("BRK-B", "2026-10-10", "SpaceX, Micron: 5 Stocks", "https://www.benzinga.com/a")]);
+        assert_eq!(got[0].kind, TipKind::Buzz);
+        assert_eq!(buzz_tips(article, day("2026-10-18")).len(), 2, "8 days is still this week's");
+        assert!(buzz_tips(article, day("2026-10-19")).is_empty(), "9 days is last week's");
+        let graph = r#"<script type="application/ld+json">{"@graph":[{"@type":"NewsArticle","datePublished":"2026-10-10","mentions":[{"tickerSymbol":"MU"}]}]}</script>"#;
+        assert_eq!(buzz_tips(graph, day("2026-10-10")).len(), 1);
+        assert!(buzz_tips("<script type=\"application/ld+json\">{not json</script>", day("2026-10-10")).is_empty());
+    }
+
     #[test]
     fn soc_superinvestors_keep_eight_buyers_and_dash_the_class() {
         let row = |sym: &str, name: &str, n: u32| {
@@ -12121,14 +12284,16 @@ pub(crate) mod tests {
             v("2026-09-30", "Amazon again, IBM, Tesla and Meta"),
             v("2026-09-27", "Robinhoods and Tesla"),
         ];
-        let hits = soc_hits(&videos, &quotes);
-        // a 3-letter key (IBM) never matches, a 4-letter one (Meta) does; case-blind would add MSTR
+        let aliases: BTreeMap<String, Vec<String>> = serde_json::from_str(SOC_ALIASES).expect("aliases parse");
+        let eu = HashMap::from([("AMZN".to_string(), "AMZ.DE".to_string()), ("HOOD".to_string(), String::new())]);
+        let hits = soc_hits(&videos, &quotes, &aliases, &eu);
+        // (#536) Amazon and Robinhood only through their aliases (AMZN's via the Xetra twin), Meta too; a
+        // 3-letter name (IBM) never matches; MSTR is muted, "Robinhoods" is another word
         let got: Vec<(&str, usize, &str)> = hits.iter().map(|(q, n, d, _, _)| (q.ticker.as_str(), *n, d.as_str())).collect();
         assert_eq!(got, [("HOOD", 1, "2026-09-29"), ("AMZ.DE", 2, "2026-09-30"), ("TSLA", 2, "2026-09-30"), ("META", 1, "2026-09-30")]);
         let supers = ("2026-Q2".to_string(), [("AMZN", "Amazon", 10), ("MSFT", "Microsoft", 12), ("BRK-B", "Berkshire", 9)].map(|(t, n, b)| (t.to_string(), n.to_string(), b)).to_vec());
         let pick = |t: &str, d: &str| SocPick { ticker: t.into(), date: d.into(), said: "said".into(), source: "url".into() };
         let picks = [pick("AMZN", "2026-09-29"), pick("HOOD", "2026-10-01"), pick("XYZ", "2026-09-01"), pick("ABC", "2026-09-01")];
-        let eu = HashMap::from([("AMZN".to_string(), "AMZ.DE".to_string()), ("HOOD".to_string(), String::new())]);
         let rows = soc_merge(&hits, &[], &supers, &picks, &[], &eu, &quotes);
         let order: Vec<&str> = rows.iter().map(|r| r.ticker.as_str()).collect();
         assert_eq!(order, ["AMZ.DE", "HOOD", "MSFT", "BRK-B", "TSLA", "META", "ABC", "XYZ"]);
@@ -12206,12 +12371,12 @@ pub(crate) mod tests {
     }
 
     /// (#483) A surge needs both the volume and the jump; a list newcomer counts as 1 before; a 1-2
-    /// letter ticker is a word, not a stock.
+    /// letter ticker is a word, not a stock. (#536) A loud name tips without the jump; DTE never does.
     #[test]
-    fn ape_surges_need_volume_and_a_jump() {
+    fn ape_tips_need_a_jump_or_the_loudest_volume() {
         let r = |t: &str, now: u64, before: Value| serde_json::json!({"ticker": t, "name": format!("{t} Co"), "mentions": now, "mentions_24h_ago": before});
-        let v = serde_json::json!({"results": [r("MU", 63, 23.into()), r("VST", 38, 1.into()), r("NEW", 10, Value::Null), r("IT", 40, 1.into()), r("LOW", 9, 0.into()), r("BRK.B", 30, 10.into()), r("EDGE", 11, 4.into())]});
-        let got = ape_surges(&v, "2026-10-05");
+        let v = serde_json::json!({"results": [r("MU", 63, 23.into()), r("VST", 38, 1.into()), r("NEW", 10, Value::Null), r("IT", 40, 1.into()), r("LOW", 9, 0.into()), r("BRK.B", 30, 10.into()), r("EDGE", 11, 4.into()), r("DTE", 80, 1.into()), r("PLTR", 49, 40.into()), r("ASTS", 134, 120.into())]});
+        let got = ape_tips(&v, "2026-10-05");
         let short: Vec<(&str, &str, &str)> = got.iter().map(|t| (t.us.as_str(), t.why.as_str(), t.link.as_str())).collect();
         assert_eq!(
             short,
@@ -12219,22 +12384,25 @@ pub(crate) mod tests {
                 ("VST", "Reddit/4chan mentions 38 vs 1 a day before", "https://apewisdom.io/stocks/VST/"),
                 ("NEW", "Reddit/4chan mentions 10 vs 0 a day before", "https://apewisdom.io/stocks/NEW/"),
                 ("BRK-B", "Reddit/4chan mentions 30 vs 10 a day before", "https://apewisdom.io/stocks/BRK.B/"),
+                ("ASTS", "Reddit/4chan mentions 134 in 24h (one of the most-talked-about)", "https://apewisdom.io/stocks/ASTS/"),
             ]
         );
         assert_eq!((got[0].kind, got[0].name.as_str(), got[0].day.as_str()), (TipKind::Reddit, "VST Co", "2026-10-05"));
-        assert!(ape_surges(&serde_json::json!({}), "d").is_empty());
+        assert!(ape_tips(&serde_json::json!({}), "d").is_empty());
     }
 
     /// (#483) A trend is a stock only when its WHOLE title is a pooled stock's ticker (3+ letters, the
-    /// Xetra twin found through `eu`) or its match word, case-blind; a fund never is.
+    /// Xetra twin found through `eu`) or (#536) one of its names, case-blind: the full one ("united" alone
+    /// no longer reads as United Airlines) or an alias ("GTA 6" is Take-Two). A fund never is.
     #[test]
     fn trend_hits_match_whole_titles_on_stocks() {
         let q = |t: &str, name: &str, kind: &str| Quote { instrument_type: kind.to_string(), name: name.to_string(), ..Quote::stub(t, "€1", "", t) };
-        let quotes = [q("RXO", "RXO, Inc.", "EQUITY"), q("NVDA", "NVIDIA Corporation", "EQUITY"), q("UAL", "United Airlines Holdings", "EQUITY"), q("AB", "AllianceBernstein", "EQUITY"), q("MSF.DE", "Microsoft Corporation", "EQUITY"), q("SPY", "SPDR S&P 500", "ETF")];
+        let quotes = [q("RXO", "RXO, Inc.", "EQUITY"), q("NVDA", "NVIDIA Corporation", "EQUITY"), q("UAL", "United Airlines Holdings", "EQUITY"), q("AB", "AllianceBernstein", "EQUITY"), q("MSF.DE", "Microsoft Corporation", "EQUITY"), q("SPY", "SPDR S&P 500", "ETF"), q("TTWO", "Take-Two Interactive Software", "EQUITY")];
         let eu = HashMap::from([("MSFT".to_string(), "MSF.DE".to_string())]);
         let item = |t: &str, traffic: &str| format!("<item><title>{t}</title><ht:approx_traffic>{traffic}</ht:approx_traffic><link>x</link></item>");
-        let xml = [item("rxo", "500+"), item("Nvidia", "2000+"), item("united states", "5000+"), item("ab", "200+"), item("msft", "100+"), item("spy", "100+"), "<item><title> united </title></item>".to_string()].concat();
-        let got = trend_hits(&xml, "2026-10-05", &eu, &quotes);
+        let xml = [item("rxo", "500+"), item("Nvidia", "2000+"), item("united states", "5000+"), item("ab", "200+"), item("msft", "100+"), item("spy", "100+"), "<item><title> united </title></item>".to_string(), item("GTA 6", "1000+"), "<item><title> United Airlines </title></item>".to_string()].concat();
+        let aliases: BTreeMap<String, Vec<String>> = serde_json::from_str(SOC_ALIASES).expect("aliases parse");
+        let got = trend_hits(&xml, "2026-10-05", &aliases, &eu, &quotes);
         let short: Vec<(&str, &str, TipKind)> = got.iter().map(|t| (t.us.as_str(), t.why.as_str(), t.kind)).collect();
         assert_eq!(
             short,
@@ -12242,11 +12410,12 @@ pub(crate) mod tests {
                 ("RXO", "US daily search trend \"rxo\", 500+ searches", TipKind::Trends),
                 ("NVDA", "US daily search trend \"Nvidia\", 2000+ searches", TipKind::Trends),
                 ("MSF.DE", "US daily search trend \"msft\", 100+ searches", TipKind::Trends),
-                ("UAL", "US daily search trend \"united\"", TipKind::Trends),
+                ("TTWO", "US daily search trend \"GTA 6\", 1000+ searches", TipKind::Trends),
+                ("UAL", "US daily search trend \"United Airlines\"", TipKind::Trends),
             ]
         );
         assert_eq!((got[0].name.as_str(), got[0].day.as_str()), ("RXO, Inc.", "2026-10-05"));
-        assert_eq!(got[3].link, "https://trends.google.com/trends/explore?geo=US&date=now%207-d&q=united");
+        assert_eq!(got[4].link, "https://trends.google.com/trends/explore?geo=US&date=now%207-d&q=United+Airlines");
     }
 
     /// (#516) Each developer's best chart rank, counted over every row (one without a developer still
@@ -12321,9 +12490,9 @@ pub(crate) mod tests {
     #[test]
     fn soc_merge_adds_the_crowd_lanes() {
         let q = |t: &str, name: &str| Quote { instrument_type: "EQUITY".to_string(), name: name.to_string(), ..Quote::stub(t, "€1", "", t) };
-        let mut quotes = [q("VST", "Vistra Corp."), q("RXO", "RXO, Inc."), q("NVDA", "Nvidia Corporation"), q("AMD", "Advanced Micro"), q("HOOD", "Robinhood Markets")];
+        let mut quotes = [q("VST", "Vistra Corp."), q("RXO", "RXO, Inc."), q("NVDA", "Nvidia Corporation"), q("AMD", "Advanced Micro"), q("HOOD", "Robinhood Markets"), Quote { instrument_type: "ETF".to_string(), ..Quote::stub("SPY", "€1", "", "SPY") }];
         let tip = |us: &str, kind: TipKind, why: &str| SocTip { us: us.into(), name: us.into(), kind, day: "2026-10-05".into(), why: why.into(), link: format!("l/{why}") };
-        let tips = [tip("VST", TipKind::Reddit, "r"), tip("NVDA", TipKind::Reddit, "r2"), tip("RXO", TipKind::Trends, "t"), tip("RXO", TipKind::AppStore, "a"), tip("HOOD", TipKind::AppStore, "a2")];
+        let tips = [tip("VST", TipKind::Reddit, "r"), tip("NVDA", TipKind::Reddit, "r2"), tip("RXO", TipKind::Trends, "t"), tip("RXO", TipKind::AppStore, "a"), tip("HOOD", TipKind::AppStore, "a2"), tip("AMD", TipKind::Buzz, "b"), tip("SPY", TipKind::Reddit, "fund")];
         let hn = [(&quotes[2], 3, "2026-10-04".to_string(), "story".to_string(), "hn/1".to_string()), (&quotes[3], 1, "2026-10-03".to_string(), "amd story".to_string(), "hn/2".to_string())];
         let videos = [(&quotes[2], 1, "2026-10-01".to_string(), "video".to_string(), "yt/1".to_string())];
         let supers = ("2026-Q2".to_string(), vec![]);
@@ -12336,16 +12505,17 @@ pub(crate) mod tests {
             cells,
             [
                 ("NVDA", "Reddit; HN ×3; YouTube ×1", "2026-10-05", "video"),
+                ("AMD", "Benzinga buzz; HN ×1", "2026-10-05", "amd story"),
                 ("RXO", "Google Trends; App Store", "2026-10-05", "a"),
-                ("AMD", "HN ×1", "2026-10-03", "amd story"),
                 ("HOOD", "App Store", "2026-10-05", "a2"),
                 ("VST", "Reddit", "2026-10-05", "r"),
             ]
         );
-        assert_eq!(table[2][5], serde_json::json!(["WHY", "amd story", "hn/2"]));
+        assert_eq!(table[1][5], serde_json::json!(["WHY", "amd story", "hn/2"]));
         let rows: Vec<SocRow> = rows.into_iter().map(|r| SocRow { videos: 0, ..r }).collect();
         stamp_social(&mut quotes, &rows);
-        assert_eq!(quotes.map(|q| q.social_tip), [true, true, true, true, true], "each crowd lane alone is a tip");
+        // (#536) a pooled fund's tip adds no row
+        assert_eq!(quotes.map(|q| q.social_tip), [true, true, true, true, true, false], "each crowd lane alone is a tip");
     }
 
     #[test]
@@ -12437,13 +12607,14 @@ pub(crate) mod tests {
     #[test]
     fn stamp_social_marks_equities_only() {
         let q = |t: &str, kind: &str, was: bool| Quote { instrument_type: kind.to_string(), social: was, ..Quote::stub(t, "€1", "", t) };
-        let mut quotes = [q("AMZ.DE", "EQUITY", false), q("SPY", "ETF", false), q("HOOD", "equity", true), q("COF", "EQUITY", false), q("MSF.DE", "EQUITY", false)];
+        let mut quotes = [q("AMZ.DE", "EQUITY", false), q("SPY", "ETF", false), q("HOOD", "equity", true), q("COF", "EQUITY", false), q("MSF.DE", "EQUITY", false), q("TTWO", "EQUITY", false)];
         let row = |t: &str, buyers: u32, videos: usize, hand: bool| SocRow { ticker: t.into(), buyers, videos, hand, ..Default::default() };
-        stamp_social(&mut quotes, &[row("AMZ.DE", 0, 2, false), row("SPY", 9, 1, true), row("COF", 9, 0, true), row("MSF.DE", 14, 0, false)]);
-        assert_eq!(quotes.clone().map(|q| q.social), [true, false, false, true, true]);
+        stamp_social(&mut quotes, &[row("AMZ.DE", 0, 2, false), row("SPY", 9, 1, true), row("COF", 9, 0, true), row("MSF.DE", 14, 0, false), SocRow { ticker: "TTWO".into(), buzz: true, ..Default::default() }]);
+        assert_eq!(quotes.clone().map(|q| q.social), [true, false, false, true, true, true]);
         // (#472) the buyer count rides alone; (#473) a video or the hand list sets the tip, buyers never do
-        assert_eq!(quotes.clone().map(|q| q.super_buyers), [0, 0, 0, 9, 14]);
-        assert_eq!(quotes.map(|q| q.social_tip), [true, false, false, true, false]);
+        assert_eq!(quotes.clone().map(|q| q.super_buyers), [0, 0, 0, 9, 14, 0]);
+        // (#536) Benzinga's buzz alone is a tip
+        assert_eq!(quotes.map(|q| q.social_tip), [true, false, false, true, false, true]);
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
