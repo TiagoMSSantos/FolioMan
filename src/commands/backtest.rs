@@ -2496,7 +2496,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 50] = [
+const FUND_FACTORS: [&str; 51] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2535,6 +2535,7 @@ const FUND_FACTORS: [&str; 50] = [
     "op_rd", "discipline", // (#417) Ball et al. R&D-adjusted OP ÷ assets, EBITDA growth minus asset growth; 44 -> 46
     "fair_yield", "oe_fair_yield", "fcf_cap_yield", // (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49
     "low_turnover",         // (#531) Ibbotson-Chen-Kim-Hu 2013 popularity, share turnover negated; 49 -> 50
+    "rnd_growth",           // (#532) Arnott et al. 2026 fundamental growth, the R&D leg: 3y ΔR&D ÷ old revenue; 50 -> 51
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4495,6 +4496,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("oe_fair_yield", |f| f.oe_fair_yield),
         ("fcf_cap_yield", |f| f.fcf_cap_yield),
         ("low_turnover", |f| f.low_turnover), // (#531)
+        ("rnd_growth", |f| f.rnd_growth), // (#532)
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();

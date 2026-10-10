@@ -791,12 +791,14 @@ const PEG_HEADER: &str =
     "  DATE            AGE    N  LADDER CHEAP  LADDER RICH    PIN CHEAP     PIN RICH   PIN-LADDER";
 
 /// (#415) The factors the shadow journals, each with its verdict label (a `&'static str` because
-/// [`Pairs`] borrows its labels). High is the good end for all eight: seven are yields, and `mscore` is
+/// [`Pairs`] borrows its labels). High is the good end for the first eight: seven are yields, and `mscore` is
 /// the Beneish M-score NEGATED, so its top half is the half LEAST like a manipulator. (#416) added the
 /// two PEG-family CANDIDATEs, the same earnings yield over EPS growth and over ROE · retention. (#523)
 /// added the page's FAIR family (FAIR ÷ price, FAIR-OE ÷ price, 3y-median FCF ÷ cap), journalled from
-/// day one rather than after a backtest verdict, so the forward clock runs alongside it.
-pub(crate) const FACTORS: [(&str, &str); 8] = [
+/// day one rather than after a backtest verdict, so the forward clock runs alongside it. (#532) added
+/// `rnd_growth`, the one row whose backtest CANDIDATE read the LOW end winning: its top half is the
+/// RA hypothesis (R&D growers win), so its row tests that claim forward against the backtest.
+pub(crate) const FACTORS: [(&str, &str); 9] = [
     ("rnd_yield", "rnd_yield top minus peg cheap"),
     ("int_yield", "int_yield top minus peg cheap"),
     ("mscore", "mscore top minus peg cheap"),
@@ -805,6 +807,7 @@ pub(crate) const FACTORS: [(&str, &str); 8] = [
     ("fair_yield", "fair_yield top minus peg cheap"),
     ("oe_fair_yield", "oe_fair_yield top minus peg cheap"),
     ("fcf_cap_yield", "fcf_cap_yield top minus peg cheap"),
+    ("rnd_growth", "rnd_growth top minus peg cheap"),
 ];
 
 /// (#415) The `fac` journal for one run: every [`FACTORS`] value the (#332) cohort's names carry, read
@@ -2019,6 +2022,7 @@ mod tests {
             mscore: Some(-2.0),
             sgr_yield: Some(3.0), // (#416)
             fcf_cap_yield: Some(5.0), // (#523)
+            rnd_growth: Some(6.0),    // (#532)
             ..Default::default()
         };
         let quotes = [
@@ -2036,6 +2040,7 @@ mod tests {
                 ("A".to_string(), "mscore".to_string(), -2.0),
                 ("A".to_string(), "sgr_yield".to_string(), 3.0),
                 ("A".to_string(), "fcf_cap_yield".to_string(), 5.0),
+                ("A".to_string(), "rnd_growth".to_string(), 6.0),
                 ("B".to_string(), "brk".to_string(), 1.0),
                 ("B".to_string(), "brkh".to_string(), 1.0),
             ]

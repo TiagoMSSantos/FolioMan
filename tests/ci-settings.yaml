@@ -5355,6 +5355,64 @@ buy_heuristic:
                                  #  the (#409) small_pct CANDIDATE does not reproduce on this pond. Weights are closed; that is a note for the track
                                  #  read (~2027-09), not a change.
                                  #  REVERT RULE: drop the row, the field, `low_turnover` and its call site; the goldens move back by the same lines.
+                                 #── (#532) MEASURED 2026-10-10 — 3Y R&D GROWTH (RA "FUNDAMENTAL GROWTH") AS A FUND FACTOR: CANDIDATE ON THE LOW SIDE, SHADOW ──
+                                 #  WHAT: one FUND_FACTORS row, `rnd_growth` = (R&D now − R&D 3y back) ÷ the revenue 3y back × 100, from two as-of
+                                 #  SEC rows (R&D total = `rnd_margin` × `revenue` ÷ 100, as `rnd_ttm` reads it). High = R&D growing. None when either
+                                 #  end has no R&D, the old revenue is not positive, or no row is filed 3y back. FUND_FACTORS 50 -> 51, so every Šidák
+                                 #  band tightens again. It fills live too (the same `fund_factors`), but nothing reads it.
+                                 #  WHY: sweep 26 (2026-10-10, "find assets that grow above average over 20+ years"). The one new, cache-buildable
+                                 #  lead. Arnott-Brightman-Harvey-Nguyen-Shakernia, FAJ 82(2) 2026: of eight fundamental-growth legs (5y Δ ÷ sales
+                                 #  5y back, US top 1,000, 1969-2024) only R&D growth survives FF5+UMD, alpha 4.1%/yr, t 4.52 (sales 0.1%, GP 0.6%,
+                                 #  t 1.75; book, assets, dividends, buybacks negative). Their Fig B1: 3y, 4y and 5y lookbacks perform alike.
+                                 #  Eberhart-Maxwell-Siddique (JF 2004): 8,313 unexpected R&D increases, 1951-2001, earn positive long-run abnormal
+                                 #  returns and operating performance. The rest of the sweep maps to closed or graded lanes: sales growth is
+                                 #  `rev_cagr`, capex growth is `asset_growth`, the composite and growth-magnitude weighting are weights (closed),
+                                 #  RA's slow-and-expensive quadrant is the PEG gate, their NLP rewrite filter is Lazy Prices, S&P additions are
+                                 #  overextension; demographics and industry concentration NEED-DATA (#95); customer concentration, split drift and
+                                 #  superstar firms have no stable premium. NOT `rnd_yield` (#410): that is the R&D LEVEL over market cap.
+                                 #  Prior: right side, since `rnd_yield` was this pool's strongest row (0.97/0.86 at #410). Against: RA's R&D leg
+                                 #  loads RMW −0.19 and HML −0.28, so it lives in unprofitable growth names, and this pool reads profitability
+                                 #  backwards. Internationally only Japan is significant; the UK and Europe ex-UK are not.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at both ->
+                                 #  CANDIDATE, anything else -> DEAD. A 12y n/a (no coverage) is DEAD by the bar. Measure only: no weight, no rank
+                                 #  change either way.
+                                 #  UNLOCK, ALSO BEFORE THE RUN (the user's call): CANDIDATE -> `rnd_growth` joins the (#415) forward shadow,
+                                 #  `track::FACTORS` 8 -> 9 (no stamp code: `fetch` fills it), graded under the unchanged bar (12 monthly lines AND 12
+                                 #  chained links), earliest ~2027-10/11, a re-grade only, never a ship. DEAD -> no shadow code; this receipt is the
+                                 #  whole record.
+                                 #  shortcut: company totals, not RA's per share, since two filings' share counts straddle splits (#424); 3y, not
+                                 #  `FUND_LOOKBACK_YRS` (5), since a 5y reach predates XBRL at 12y (`rev_cagr` reads n/a there).
+                                 #  RUNS: `backtest {12,8} universe fund pit`, FOLIOMAN_CONFIG=tests/ci-settings.yaml, root dotfiles and .sec_cache
+                                 #  restored from one tar before each run (tar --diff clean after). No separate control build: the six fixture goldens
+                                 #  move ONLY by the new held-book row, the 50 -> 51 count lines and `rnd_growth n=0` in the no-book list, so every
+                                 #  other row of the arm IS the control. Fund-facts fallback 310 both runs. 12y: windows scored 2815 (= #531). 8y: 6246
+                                 #  (= #531).
+                                 #    AUC            12y (w/l)     8y (w/l)       8y held book
+                                 #    rnd_growth     0.40 (5/4)    0.33 (21/8)    +11.1%/yr n=27   CANDIDATE by the letter, LOW end winning
+                                 #    rnd_yield      0.31 (17/5)   0.29 (34/9)    +12.7%/yr n=41   today's control; (#410) read 0.97/0.86
+                                 #    peg_yield      0.62 (41/8)   0.28 (73/18)   +12.2%/yr n=90   the shipped tilt, = #531
+                                 #    fcf_ev_yield   0.60 (41/8)   0.24 (78/18)   +13.2%/yr n=92   = #531
+                                 #    small_pct      0.44 (41/8)   0.52 (78/18)   +13.2%/yr n=93   = #531
+                                 #  (growth_score baseline, held book: 12y +9.4%/yr n=228, 8y +9.9%/yr n=291.)
+                                 #  VERDICT: CANDIDATE by the letter, on the side the prior did NOT expect: R&D growers sit with the LOSERS at both
+                                 #  horizons. Medians, winners vs losers: 12y 1.01 vs 2.66, 8y 1.18 vs 5.89. It is weak: the 12y AUC is 8/20 pairs on
+                                 #  5 winners and 4 losers, so it meets |AUC-0.5| >= 0.10 exactly at the edge. The held book disagrees with the AUC:
+                                 #  top-by-rnd_growth reads +13.4%/yr n=8 at 12y (baseline +9.4) and +11.1%/yr n=27 at 8y with a 27% win rate and
+                                 #  −0.6 excess. The held-out TEST edge is −88.3 at 12y (price-only +23.3) and −140.1 at 8y (rnd_yield −169.5).
+                                 #  So it is not a tilt in either direction. Read with the control: `rnd_yield`, this pool's strongest row at #410
+                                 #  (0.97/0.86), now reads 0.31/0.29. The whole R&D family flipped on today's pond, so the flip is the POND
+                                 #  (probe-edge drift since #523), not proof that R&D growth hurts. RA's RMW −0.19 loading fits too: their R&D growers
+                                 #  are unprofitable names, and this pool's winners are profitable ones.
+                                 #  SHADOW (the pre-registered unlock): `track::FACTORS` 8 -> 9, ("rnd_growth", "rnd_growth top minus peg cheap"). No
+                                 #  sign flip after the run: the journal writes the raw value, and the row grades the TOP half, so it tests RA's claim
+                                 #  (R&D growers win) forward against this backtest's reading. A REOPEN SIGNAL there contradicts the backtest and
+                                 #  earns a re-grade only, never a ship. LIVE COVERAGE (2026-10-10 PEG cohort, 26 names, via `check` with a temporary
+                                 #  print, state files restored from the tar after): rnd_growth 17/26, exactly the 17 that carry rnd_yield (ANX.PA, CF,
+                                 #  EME, FLXK.L, LYBK.DE, ORLY, SMH.L, TRGP, XLKS.L none; no ETF carries it). Range −1.9 (HOOD) to +41.4 (NVD.DE).
+                                 #  Twelve rows now read at once, so the (#415) chance-clear caveat widens again. Bar unchanged (12 monthly lines AND
+                                 #  12 chained links, each mean AND median > 0). Earliest ~2027-10/11.
+                                 #  REVERT RULE: drop the row, the field, its arm and the FACTORS entry; the goldens move back by the same lines, and
+                                 #  journal lines already written read back.
                                  #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
                                  #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
                                  #  "hedged", so the screen funnel names it). ETF-scoped. Substrings hedg/hdg/heur/hchf/husd/hgbp catch the glued

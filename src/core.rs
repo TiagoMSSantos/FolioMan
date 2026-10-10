@@ -4068,6 +4068,9 @@ pub struct FundFactors {
     pub payout_ttm: Option<f64>,     // (#410) as-of net payout level, reporting currency; negative = net issuer
     pub rnd_yield: Option<f64>,      // (#410) R&D ÷ market cap, % (high = R&D-rich). PROBE-ONLY, None live
     pub payout_yield: Option<f64>,   // (#410) net payout ÷ market cap, %, sign kept. PROBE-ONLY, None live
+    // (#532) Arnott et al. 2026 "Fundamental Growth" / Eberhart-Maxwell-Siddique 2004: the 3y change in R&D
+    // over the revenue 3y back, % (high = R&D growing). Two as-of rows, no price, so it fills live too. PROBE-ONLY
+    pub rnd_growth: Option<f64>,
     // (#416) THE PEG GROWTH TERM, MEASURED THREE OTHER WAYS. The shipped `peg_yield` multiplies by a PRICE
     // CAGR, so a re-rating counts as growth. All three need a price, so the backtest fills them; the
     // live enrich stamps the two CANDIDATEs for the (#415) shadow only, weighted nowhere.
@@ -4523,6 +4526,14 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         payout_ttm: now.and_then(|r| Some(r.payout_margin? * r.revenue? / 100.0)),
         rnd_yield: None,
         payout_yield: None,
+        // (#532) shortcut: company totals, not RA's per share, since two filings' share counts straddle splits
+        // (#424); and 3y, not `yrs`, because a 5y reach predates XBRL at 12y (rev_cagr reads n/a there). RA's
+        // Fig B1 finds 3y and 5y alike. Missing R&D at either end is None: the AUC grades R&D filers only.
+        rnd_growth: fund_as_of(rows, cutoff - Duration::days(3 * 365)).and_then(|old| {
+            let rnd = |r: &FundRow| Some(r.rnd_margin? * r.revenue? / 100.0);
+            let base = old.revenue.filter(|v| *v > 0.0)?;
+            Some((rnd(now?)? - rnd(old)?) / base * 100.0)
+        }),
         lynch_yield: None, // (#416) all three need a price
         sgr_yield: None,
         fair_yield: None, // (#523) need a price too
@@ -5283,6 +5294,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "small_pct" => f.small_pct,                       // (#409) same-date size percentile, high = small
         "rnd_yield" => f.rnd_yield,                       // (#410) R&D ÷ market cap: measured, unweighted
         "payout_yield" => f.payout_yield,                 // (#410) net payout ÷ market cap, sign kept
+        "rnd_growth" => f.rnd_growth,                     // (#532) 3y ΔR&D ÷ old revenue: measured, unweighted
         "lynch_yield" => f.lynch_yield,                   // (#416) earnings_yield · EPS CAGR: measured, unweighted
         "sgr_yield" => f.sgr_yield,                       // (#416) earnings_yield · ROE · retention: measured, unweighted
         "exp_neg" => f.exp_neg,                           // (#416) earnings-yield CAGR (multiple contraction): measured, unweighted
@@ -6199,6 +6211,7 @@ mod tests {
             payout_ttm: Some(110.0),
             rnd_yield: Some(33.0),
             payout_yield: Some(34.0),
+            rnd_growth: Some(51.0),
             lynch_yield: Some(42.0),
             sgr_yield: Some(43.0),
             fair_yield: Some(47.0),
@@ -6257,6 +6270,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "oe_fair_yield"), Some(48.0));
         assert_eq!(select_fund_factor(&f, "fcf_cap_yield"), Some(49.0));
         assert_eq!(select_fund_factor(&f, "low_turnover"), Some(50.0)); // (#531)
+        assert_eq!(select_fund_factor(&f, "rnd_growth"), Some(51.0)); // (#532)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -6980,6 +6994,25 @@ mod tests {
         assert_eq!(fund_factors(&[r(2019, Some(0.0), 500.0), r(2024, Some(2000.0), 500.0)], cutoff, 5).asset_growth, None);
         // and the look-ahead guard: with no row old enough to anchor the lookback there is no growth
         assert_eq!(fund_factors(&[r(2024, Some(2000.0), 500.0)], cutoff, 5).asset_growth, None);
+    }
+
+    /// (#532) `rnd_growth` is the R&D change over 3 years on the revenue 3 years back: R&D 10 on revenue
+    /// 100, then 16 on 200, reads +6. No old R&D, a non-positive old revenue, or no row 3y back is None.
+    #[test]
+    fn rnd_growth_is_three_year_rnd_change_over_old_revenue() {
+        let r = |y: i32, rev: f64, rnd: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(rev),
+            rnd_margin: rnd,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let g = |rows: &[FundRow]| fund_factors(rows, cutoff, 5).rnd_growth;
+        assert!((g(&[r(2020, 100.0, Some(10.0)), r(2023, 200.0, Some(8.0))]).unwrap() - 6.0).abs() < 1e-9);
+        assert_eq!(g(&[r(2020, 100.0, None), r(2023, 200.0, Some(8.0))]), None);
+        assert_eq!(g(&[r(2020, 0.0, Some(10.0)), r(2023, 200.0, Some(8.0))]), None);
+        assert_eq!(g(&[r(2021, 100.0, Some(10.0)), r(2023, 200.0, Some(8.0))]), None); // filed 2022-02: inside the 3y
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of
