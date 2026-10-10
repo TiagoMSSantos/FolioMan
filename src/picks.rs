@@ -2899,13 +2899,13 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     Some(fails)
 }
 
-/// (#476) Switch off the knob behind one of [`gate_failures`]' tags. `young`/`history` move to the 2Y
-/// rung, the `history` notch in [`gate_notches`]. `artifact` has no knob: a repriced bar is not a price
-/// history, so it stays failed.
+/// (#476) Switch off the knob behind one of [`gate_failures`]' tags. `young`/`history` move to the
+/// 1Y rung ((#537), the 2Y one before: a 1-2y record read — on the page). `artifact` has no knob: a
+/// repriced bar is not a price history, so it stays failed.
 fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
     const OFF: f64 = f64::NEG_INFINITY;
     match tag {
-        "young" | "history" => (t.growth_min_age_years, t.growth_min_leg_years) = (0.0, t.growth_min_leg_years.min(2.0)),
+        "young" | "history" => (t.growth_min_age_years, t.growth_min_leg_years) = (0.0, t.growth_min_leg_years.min(1.0)),
         "aum" => t.growth_min_aum_etf = 0.0,
         "range" => (t.growth_min_range_pct, t.growth_min_range_pct_crypto) = (OFF, OFF),
         "range8y" => (t.growth_min_range_pct_8y, t.growth_min_range_pct_8y_crypto) = (0.0, 0.0),
@@ -2934,7 +2934,7 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
     }
 }
 
-/// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 2Y rung
+/// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 1Y rung
 /// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
 fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<&'static str>, Vec<(&'static str, String, bool)>)> {
     let (mut t, mut tags) = (tuning.clone(), Vec::new());
@@ -3076,15 +3076,7 @@ pub fn bridge_hint_lines(
             if !fails.iter().any(|(g, _, _)| *g == "history" || *g == "young") {
                 return None; // only a missing long record is what a twin can repair
             }
-            let twin = pool
-                .iter()
-                .filter(|t| {
-                    t.ticker != q.ticker
-                        && quote_is_etf(t)
-                        && t.benchmark.as_deref() == Some(bench)
-                        && long_leg_fixed(t, tuning.fixed_cagr_years, tuning.growth_min_leg_years).is_some() // twin must HAVE the record
-                })
-                .max_by(|a, b| a.age_years.unwrap_or(0.0).total_cmp(&b.age_years.unwrap_or(0.0)))?;
+            let twin = index_twin(q, pool, tuning)?;
             // the twin cleared `long_leg_fixed` above, so this is Some for every twin that got here.
             let twin_cagr = long_cagr_pct(twin, tuning)?;
             considered += 1;
@@ -3105,6 +3097,20 @@ pub fn bridge_hint_lines(
     hits.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.total_cmp(&a.1)));
     hits.truncate(BRIDGE_HINT_MAX);
     (hits.into_iter().map(|(_, _, line)| line).collect(), considered)
+}
+
+/// The oldest ETF in `pool` tracking `q`'s benchmark (exact `==`) that HAS the long record: the twin
+/// [`bridge_hint_lines`] suggests and (#537) the page's SCORE borrows for a fund too young to rank.
+fn index_twin<'a>(q: &Quote, pool: &'a [Quote], tuning: &BuyHeuristic) -> Option<&'a Quote> {
+    let bench = q.benchmark.as_deref()?;
+    pool.iter()
+        .filter(|t| {
+            t.ticker != q.ticker
+                && quote_is_etf(t)
+                && t.benchmark.as_deref() == Some(bench)
+                && long_leg_fixed(t, tuning.fixed_cagr_years, tuning.growth_min_leg_years).is_some() // twin must HAVE the record
+        })
+        .max_by(|a, b| a.age_years.unwrap_or(0.0).total_cmp(&b.age_years.unwrap_or(0.0)))
 }
 
 /// Ceiling on the discovery lane's output. ~2000 ETFs sit behind the `history` gate, so an uncapped
@@ -5416,8 +5422,8 @@ pub fn reit_rows(quotes: &[Quote], sigis: &[(String, String)]) -> serde_json::Va
 /// (#525) A row's order key in every page table but the lanes and the IPOs: (class, gates missed, score),
 /// where class 0 passes every gate, 1 fails some, 2 is refused ([`refusal_reason`]) and 3 has no quote or
 /// no 1-year record. A failing row's score is the one it would get with its gates waived ([`waived`]).
-/// (#526) A failing row with no score even then (a record under the 2Y rung) is class 2, after every
-/// scored one, so refused is 3 and unscorable 4.
+/// (#526) A failing row with no score even then is class 2, after every scored one, so refused is 3 and
+/// unscorable 4. (#537) Short and unknown records join class 1 instead: see [`rank_key`].
 pub(crate) type RankKey = (u8, usize, f64);
 
 /// (#525) Passing rows first by score, then failing rows by fewest gates missed and their waived score,
@@ -5429,29 +5435,66 @@ pub(crate) fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
 /// (#535) Help for the page CORE table's RANK cell, which carries the terminal's flag column.
 const CORE_RANK_HELP: &str = "Position in this table, by the buy heuristic (SCORE, then MISSES); o = you already hold it, never on the page, which reads no broker account";
 /// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
-const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then the — ones, then refused, then n/a";
-const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each); refused = a kind the screen never buys (leveraged, commodity, hedged, no turnover); n/a = not priced, or no 1-year record";
+const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund tracking the same index (MISSES names it); ʷⁱ = under a year listed, scored on its change since listing, not annualised (weeks of data are noise); — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then the — ones, then refused, then n/a";
+const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each); no-turnover = no trading volume served, scored at the turnover floor; refused = a kind the screen never buys (leveraged, commodity, hedged, stablecoin); n/a = not priced, or no record at all";
 
-/// (#525) A row's [`RankKey`] and its SCORE and MISSES cells.
-pub(crate) fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic) -> (RankKey, String, String) {
+/// (#525) A row's [`RankKey`] and its SCORE and MISSES cells. (#537) Every rankable row gets a score:
+/// a fund too young for the 5Y rung borrows the score of its [`index_twin`] in `pool` (`ʷ~`), a record
+/// under a year scores its change since listing in the 1Y slot (`ʷⁱ`), and a name with no turnover
+/// served scores at the floor (`no-turnover`, liquidity bonus 0). All three are class 1. Display only.
+pub(crate) fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKey, String, String) {
     const NONE: f64 = f64::NEG_INFINITY;
     let na = ((4, 0, NONE), "—".to_string(), "n/a".to_string());
     let Some(q) = q else { return na };
-    if let Some(why) = refusal_reason(q) {
-        return ((3, 0, NONE), "—".to_string(), format!("refused: {why}"));
+    let (mut own, mut tags_s) = (q.clone(), Vec::<String>::new());
+    match refusal_reason(q) {
+        Some("no-turnover") => {
+            own.avg_turnover_eur = Some(turnover_floor(q, tuning)); // passes the floor, ln(max(v/1e9, 1)) = 0
+            tags_s.push("no-turnover".to_string());
+        }
+        Some(why) => return ((3, 0, NONE), "—".to_string(), format!("refused: {why}")),
+        None => {}
     }
-    let Some((t, mut tags, left)) = waived(q, tuning) else { return na };
-    for f in &left {
-        if !tags.contains(&f.0) {
-            tags.push(f.0); // (#526) `history` waived and still failing is one gate, not two
+    let mut w = waived(&own, tuning);
+    let twin = match &w {
+        Some((_, tags, _)) if quote_is_etf(q) && tags.iter().any(|g| matches!(*g, "history" | "young")) => index_twin(q, pool, tuning),
+        _ => None,
+    };
+    // ponytail: the twin may quote another currency; prefer a same-currency twin if a pair reads wrong.
+    if let (Some(tw), Some((_, tags, _))) = (twin, &w) {
+        let ((class, _, s), _, _) = rank_key(Some(tw), tuning, &[]);
+        if class <= 1 {
+            tags_s.extend(tags.iter().map(|g| if matches!(*g, "history" | "young") { format!("{g} ~{}", tw.ticker) } else { g.to_string() }));
+            return ((1, tags_s.len(), s), format!("{s:.1}ʷ~"), format!("{}: {}", tags_s.len(), tags_s.join(", ")));
         }
     }
-    let score = if left.is_empty() { growth_score(q, &t) } else { None };
-    match (tags.len(), score) {
+    // ponytail: on a weeks-old line the change since listing is noise; the ⁱ says so, nothing shrinks it.
+    let mut mark = "";
+    let since = own.young_ret_pct.or_else(|| Some(((1.0 + own.life_cagr? / 100.0).powf(own.age_years?) - 1.0) * 100.0));
+    if let (None, Some(p), false) = (perf_pct(&own, "1Y"), since, own.age_years.is_some_and(|a| a >= 1.0)) {
+        let i = HORIZONS.iter().position(|(l, _)| *l == "1Y").expect("1Y is a horizon");
+        let set = |legs: &mut Vec<Option<(String, f64)>>| {
+            legs.resize(legs.len().max(i + 1), None);
+            legs[i] = Some((String::new(), p)); // cumulative, never annualised
+        };
+        set(&mut own.perf);
+        if !own.perf_nominal.is_empty() {
+            set(&mut own.perf_nominal);
+        }
+        (w, mark) = (waived(&own, tuning), "ⁱ");
+    }
+    let Some((t, tags, left)) = w else { return na };
+    for g in tags.iter().chain(left.iter().map(|f| &f.0)) {
+        if !tags_s.iter().any(|s| s == g) {
+            tags_s.push(g.to_string()); // (#526) `history` waived and still failing is one gate, not two
+        }
+    }
+    let score = if left.is_empty() { growth_score(&own, &t) } else { None };
+    match (tags_s.len(), score) {
         (0, Some(s)) => ((0, 0, s), format!("{s:.1}"), "0".to_string()),
         (0, None) => na,
-        (n, Some(s)) => ((1, n, s), format!("{s:.1}ʷ"), format!("{n}: {}", tags.join(", "))),
-        (n, None) => ((2, n, NONE), "—".to_string(), format!("{n}: {}", tags.join(", "))),
+        (n, Some(s)) => ((1, n, s), format!("{s:.1}ʷ{mark}"), format!("{n}: {}", tags_s.join(", "))),
+        (n, None) => ((2, n, NONE), "—".to_string(), format!("{n}: {}", tags_s.join(", "))),
     }
 }
 
@@ -5477,8 +5520,9 @@ const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "score8y", "in
 /// stands for (`us`, [`crate::fetch::us_symbol`] on CI): Berkshire files AAPL, the pond holds APC.DE. A row
 /// the screen did not price reads n/a in every column, so the table stays rectangular. Display only.
 /// (#525) Each row also gains SCORE and MISSES right after its NAME, the rows sort by [`rank_key`] and
-/// RANK is renumbered to the new order.
-pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap, us: &dyn Fn(&str) -> String) {
+/// RANK is renumbered to the new order. (#537) `pool` is the whole priced pool, where a young fund finds
+/// the older same-index fund whose score it borrows.
+pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], pool: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap, us: &dyn Fn(&str) -> String) {
     let cols: Vec<&ColSpec> = lane_columns(w, HIDE_STOCK).into_iter().filter(|c| !HIDE_SHADOW.contains(&c.key)).collect();
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q))); // the exact ticker wins over a twin
@@ -5492,7 +5536,7 @@ pub fn stamp_shadow_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &
                 let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, None, "", tuning, fund_pe));
                 cells.push(serde_json::json!([c.hdr, cell]));
             }
-            let (key, score, misses) = rank_key(quote, tuning);
+            let (key, score, misses) = rank_key(quote, tuning, pool);
             let at = cells.iter().position(|c| c[0] == "NAME").map_or(cells.len(), |i| i + 1);
             cells.splice(at..at, [serde_json::json!(["SCORE", score]), serde_json::json!(["MISSES", misses])]);
             keyed.push((key, row));
@@ -6067,9 +6111,9 @@ fn trcagr_cell(q: &Quote) -> String {
 /// parity with the terminal is then a property of there being one list, not of two calls agreeing.
 /// (#525) The page's copy is ranked like the shadow tables ([`rank_key`]), with SCORE and MISSES after
 /// TICKER; the terminal block and the sizing list keep `cores` in its sleeve order. (#535) The flag
-/// column becomes RANK there: the position, then `o` when held.
-pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned, tuning: &BuyHeuristic) -> Vec<Vec<(String, String)>> {
-    let mut keyed: Vec<_> = cores.iter().map(|q| (rank_key(Some(q), tuning), q)).collect();
+/// column becomes RANK there: the position, then `o` when held. (#537) `pool` lends young funds a twin.
+pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned, tuning: &BuyHeuristic, pool: &[Quote]) -> Vec<Vec<(String, String)>> {
+    let mut keyed: Vec<_> = cores.iter().map(|q| (rank_key(Some(q), tuning, pool), q)).collect();
     keyed.sort_by(|a, b| rank_cmp(&a.0 .0, &b.0 .0));
     keyed
         .into_iter()
@@ -6496,7 +6540,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // (#250) the CORE shortlist, built ONCE here because both the page and the terminal block below
     // read it. Same gate that decides whether the block prints decides whether the page carries it.
     let cores = if ctx.show_hold_core { hold_core_list(quotes) } else { Vec::new() };
-    let core_rows = hold_core_web_rows(&cores, ctx.owned, tuning);
+    let core_rows = hold_core_web_rows(&cores, ctx.owned, tuning, quotes);
     if let Some(sink) = ctx.web_out {
         let mut top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation, &core_rows);
         top.degraded = ctx.web_degraded.to_vec();
@@ -11039,9 +11083,9 @@ mod tests {
             "stocks": [[["TICKER", "HOOD"]]],
             "help": {"lanes": {"SECTOR": "the sector"}},
         });
-        stamp_shadow_cols(&mut p, &quotes, &w, &BuyHeuristic::default(), &FundPeMap::new(), &us);
-        // (#525) no NAME cell here, so SCORE and MISSES go last; a stub has no turnover, so it is refused
-        let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: no-turnover"])];
+        stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &BuyHeuristic::default(), &FundPeMap::new(), &us);
+        // (#525) no NAME cell here, so SCORE and MISSES go last; (#537) a stub has no turnover and no record
+        let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "2: no-turnover, history"])];
         let [rs, rm] = refused();
         assert_eq!(p["berkshire"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], rs, rm]), "a US filing finds its Xetra twin");
         assert_eq!(p["berkshire"][1], serde_json::json!([["RANK", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
@@ -11070,32 +11114,90 @@ mod tests {
         (one.range_pct, one_lo.range_pct, two.range_pct) = (75.0, 75.0, 75.0);
         let mut lev = good("LEVX", 300.0);
         lev.name = "Some 3x Daily Leveraged ETP".into();
-        let mut fresh = good("FRESH", 300.0); // (#526) a 1.5y record: no score even at the 2Y rung
+        let mut fresh = good("FRESH", 300.0); // (#537) a 1.5y record scores on the 1Y rung
         (fresh.age_years, fresh.perf) = (Some(1.5), legs(&[("1Y", 10.0)]));
-        let quotes = [strong, weak, one, one_lo, two, lev, fresh];
+        let mut bare = good("BARE", 300.0); // no record at all: no score even waived
+        (bare.age_years, bare.perf) = (None, Vec::new());
+        let quotes = [strong, weak, one, one_lo, two, lev, fresh, bare];
         let row = |t: &str| serde_json::json!([["RANK", "0"], ["TICKER", t], ["NAME", t], ["X", "x"]]);
-        let tables: Vec<serde_json::Value> = ["FRESH", "NOPE", "LEVX", "TWOG", "ONELO", "ONEG", "WEAK", "STRONG", "NOPE2"].map(row).into();
+        let tables: Vec<serde_json::Value> = ["FRESH", "NOPE", "LEVX", "BARE", "TWOG", "ONELO", "ONEG", "WEAK", "STRONG", "NOPE2"].map(row).into();
         let mut p = serde_json::json!({"reits": tables, "help": {"lanes": {}}});
         let (w, d) = (Widths { columns: vec!["ticker".into()], ..Widths::default() }, BuyHeuristic::default());
-        stamp_shadow_cols(&mut p, &quotes, &w, &d, &FundPeMap::new(), &|t: &str| t.to_string());
+        stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &d, &FundPeMap::new(), &|t: &str| t.to_string());
         let rows = p["reits"].as_array().unwrap();
         let order: Vec<&str> = rows.iter().map(|r| r[1][1].as_str().unwrap()).collect();
-        assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "TWOG", "FRESH", "LEVX", "NOPE", "NOPE2"], "no score sorts after every ʷ score");
+        assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "FRESH", "TWOG", "BARE", "LEVX", "NOPE", "NOPE2"], "no score sorts after every ʷ score");
         let s = growth_score(&quotes[0], &d).unwrap();
         assert_eq!(rows[0], serde_json::json!([["RANK", "1"], ["TICKER", "STRONG"], ["NAME", "STRONG"], ["SCORE", format!("{s:.1}")], ["MISSES", "0"], ["X", "x"]]));
         assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range"]));
         assert!(rows[2][3][1].as_str().unwrap().ends_with('ʷ'), "a failing row prints its waived score");
-        assert_eq!(rows[4][4], serde_json::json!(["MISSES", "2: range, cagr"]));
-        assert_eq!(rows[5].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history"])], "a gate waived and still failing counts once");
-        assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
-        assert_eq!(rows[8].as_array().unwrap()[..1], [serde_json::json!(["RANK", "9"])]);
+        assert!(rows[4][3][1].as_str().unwrap().ends_with('ʷ'), "(#537) a 1-2y record scores on the 1Y rung");
+        assert_eq!(rows[5][4], serde_json::json!(["MISSES", "2: range, cagr"]));
+        assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history"])], "a gate waived and still failing counts once");
+        assert_eq!(rows[7].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
+        assert_eq!(rows[9].as_array().unwrap()[..1], [serde_json::json!(["RANK", "10"])]);
         assert_eq!(p["help"]["reits"]["MISSES"], RANK_MISSES_HELP);
         // CORE: the same order on a copy, SCORE and MISSES after TICKER
         let cores = [&quotes[5], &quotes[1], &quotes[0]];
-        let web = hold_core_web_rows(&cores, &Owned::default(), &d);
+        let web = hold_core_web_rows(&cores, &Owned::default(), &d, &[]);
         assert_eq!(web.iter().map(|r| r[2].1.as_str()).collect::<Vec<_>>(), ["STRONG", "WEAK", "LEVX"]);
         assert_eq!(web.iter().map(|r| (r[0].0.as_str(), r[0].1.as_str())).collect::<Vec<_>>(), [("RANK", "1"), ("RANK", "2"), ("RANK", "3")], "(#535)");
         assert_eq!(cores.map(|q| q.ticker.as_str()), ["LEVX", "WEAK", "STRONG"]);
+    }
+
+    /// (#537) Every rankable page row scores: a 1-2y record on the 1Y rung, a younger one on its change
+    /// since listing (cumulative, never annualised), a young fund on its oldest same-index twin, a name
+    /// with no turnover at the floor. Hedged stays refused, no quote stays n/a.
+    #[test]
+    fn rank_key_fills_short_and_unknown_records() {
+        let d = BuyHeuristic::default();
+        let base = |t: &str, age: f64| {
+            let mut q = Quote::stub(t, "€100.00", "", t);
+            q.instrument_type = "EQUITY".into();
+            (q.range_pct, q.avg_turnover_eur, q.age_years) = (95.0, Some(3.0e9), Some(age));
+            q
+        };
+        let mut y15 = base("Y15", 1.5);
+        y15.perf = legs(&[("1Y", 30.0)]);
+        let (k15, s15, m15) = rank_key(Some(&y15), &d, &[]);
+        assert!(k15.0 == 1 && s15.ends_with('ʷ'), "the 1Y rung: {s15} {m15}");
+        // +30% in 0.3y scores as a 1Y rung of +30% at the same age, not as +140%/yr
+        for (age, young, life) in [(0.3, Some(30.0), None), (0.6, None, Some((1.3f64.powf(1.0 / 0.6) - 1.0) * 100.0))] {
+            let mut q = base("YNG", age);
+            (q.young_ret_pct, q.life_cagr) = (young, life);
+            let mut hand = base("YNG", age);
+            hand.perf = legs(&[("1Y", 30.0)]);
+            let ((c, _, s), cell, _) = rank_key(Some(&q), &d, &[]);
+            let (_, want, _) = rank_key(Some(&hand), &d, &[]);
+            assert_eq!((c, cell), (1, format!("{want}ⁱ")), "age {age}: {s}");
+        }
+        // a young fund borrows the score of the oldest fund on its exact benchmark
+        let etf = |t: &str, age: f64| {
+            let mut q = base(t, age);
+            (q.instrument_type, q.benchmark) = ("ETF".into(), Some("msci world".into()));
+            q
+        };
+        let (mut old, mut older, mut kid) = (etf("OLD", 9.0), etf("OLDER", 15.0), etf("KID", 0.5));
+        old.perf = legs(&[("1Y", 10.0), ("5Y", 60.0), ("8Y", 120.0)]);
+        older.perf = legs(&[("1Y", 12.0), ("5Y", 70.0), ("8Y", 130.0)]);
+        kid.young_ret_pct = Some(5.0);
+        let pool = [old, older.clone(), kid.clone()];
+        let ((c, _, s), cell, misses) = rank_key(Some(&kid), &d, &pool);
+        let ((_, _, twin), _, _) = rank_key(Some(&older), &d, &[]);
+        assert_eq!((c, s, cell), (1, twin, format!("{twin:.1}ʷ~")));
+        assert!(misses.contains("history ~OLDER"), "{misses}");
+        assert!(rank_key(Some(&kid), &d, &[]).1.ends_with('ⁱ'), "no twin in the pool: its own since-listing change");
+        // no turnover scores at the floor, where the liquidity bonus is 0
+        assert!(turnover_floor(&y15, &d) <= 1e9, "ln(max(floor/1e9, 1)) = 0");
+        let (mut thin, mut floored) = (y15.clone(), y15.clone());
+        (thin.avg_turnover_eur, floored.avg_turnover_eur) = (None, Some(turnover_floor(&y15, &d)));
+        let ((c, _, s), _, misses) = rank_key(Some(&thin), &d, &[]);
+        assert_eq!((c, s), (1, rank_key(Some(&floored), &d, &[]).0 .2));
+        assert!(misses.starts_with("2: no-turnover, "), "{misses}");
+        let mut hedged = etf("HDG", 9.0);
+        hedged.name = "World UCITS ETF EUR Hedged".into();
+        assert_eq!(rank_key(Some(&hedged), &d, &pool).2, "refused: hedged");
+        assert_eq!(rank_key(None, &d, &pool).2, "n/a");
     }
 
     /// (#525) The REITs table: a Real Estate sector stock, a fund named for property, then a SIGI the
@@ -11299,7 +11401,7 @@ mod tests {
         assert_eq!(hold_core_cells(&bare, &Owned::default())[4], "-12%ⁱ", "(#507) a young fund reads since listing too");
         // the page rows carry the printer's own column names, in the printer's order
         // (#525) plus SCORE and MISSES after TICKER
-        let rows = hold_core_web_rows(&[&q], &Owned::default(), &BuyHeuristic::default());
+        let rows = hold_core_web_rows(&[&q], &Owned::default(), &BuyHeuristic::default(), &[]);
         assert_eq!(rows.len(), 1);
         let mut heads = HOLD_CORE_COLS.to_vec();
         heads[0] = "RANK"; // (#535)
@@ -11308,7 +11410,7 @@ mod tests {
         let mut cells = hold_core_cells(&q, &Owned::default());
         cells.drain(..3);
         assert_eq!(rows[0][5..].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(), cells);
-        assert!(hold_core_web_rows(&[], &Owned::default(), &BuyHeuristic::default()).is_empty(), "no cores -> no rows");
+        assert!(hold_core_web_rows(&[], &Owned::default(), &BuyHeuristic::default(), &[]).is_empty(), "no cores -> no rows");
     }
 
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + the per-tier cap, and the

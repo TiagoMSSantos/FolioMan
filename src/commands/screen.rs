@@ -651,7 +651,7 @@ fn exposure_rows(
     top.sort_by(|a, b| (b.1 .0 + b.1 .1).total_cmp(&(a.1 .0 + a.1 .1)).then_with(|| a.0.cmp(&b.0)));
     // a name finds its quote by home symbol, else by its exact ticker, which wins over a twin
     let by: HashMap<String, &Quote> = quotes.iter().map(|q| (home(&q.ticker), q)).chain(quotes.iter().map(|q| (q.ticker.clone(), q))).collect();
-    let mut ranked: Vec<_> = top.into_iter().take(10).map(|(sym, v)| (picks::rank_key(by.get(&sym).copied(), tuning), sym, v)).collect();
+    let mut ranked: Vec<_> = top.into_iter().take(10).map(|(sym, v)| (picks::rank_key(by.get(&sym).copied(), tuning, quotes), sym, v)).collect();
     ranked.sort_by(|a, b| picks::rank_cmp(&a.0 .0, &b.0 .0));
     for (i, ((_, score, misses), sym, (direct, via, n))) in ranked.into_iter().enumerate() {
         let held = if n == 1 { "1 fund".to_string() } else { format!("{n} funds") };
@@ -2264,7 +2264,7 @@ pub async fn run(args: Vec<String>) {
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
-        crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
+        crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &fetch::us_symbol);
         crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);
         crate::picks::stamp_site(&mut top, &quotes, &fetch::us_symbol); // (#469) after every table is set
         crate::picks::stamp_site(&mut top, &shadow_extra, &fetch::us_symbol);
@@ -4341,8 +4341,8 @@ mod tests {
                 " | currency | EUR |  |  | 8.9% | ",
                 " | one bet | 2 funds |  |  | 50.0% | A.L B.L share top-10 holdings AAPL ASML.AS NVDA S3 S4",
                 " | one bet | ? |  |  | 20.0% | too few holdings served to group: BLIND.L",
-                "1 | name | NVDA | — | refused: no-turnover | 22.0% | 10.0% direct + 2 funds",
-                "2 | name | NOSEC | — | refused: no-turnover | 10.0% | direct",
+                "1 | name | NVDA | — | 2: no-turnover, history | 22.0% | 10.0% direct + 2 funds",
+                "2 | name | NOSEC | — | 2: no-turnover, history | 10.0% | direct",
                 "3 | name | S4 | — | refused: leveraged | 3.5% | via 2 funds",
                 "4 | name | AAPL | — | n/a | 5.0% | via 2 funds",
                 "5 | name | ASML.AS | — | n/a | 5.0% | via 2 funds",
