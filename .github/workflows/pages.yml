@@ -497,3 +497,22 @@ jobs:
               gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
             done
           done
+          # (#553) CATCH-ALL, EVERY WORKFLOW: a run that finished 2+ days ago is deleted, whatever made it.
+          # The per-workflow sweeps above, in ci.yml and in codeql.yml each name their own workflow, so one
+          # added later leaked: 21 Probe, 11 Mutation census, 7 phantom `dynamic/dependabot` and a Renovate
+          # run had piled up by 2026-10-11. This lives HERE because the cron is the only clock that always
+          # ticks: ci.yml's sweep fires on a human push only (the journal push is GITHUB_TOKEN's, which
+          # triggers nothing). A census or probe log is read once and acted on; a receipt keeps its numbers,
+          # and a census re-dispatched with the same inputs on the same commit prints the same list.
+          # Runs of a still-OPEN PR are its review verdict (#402) and are never touched; once the PR closes,
+          # merged or not, its runs go too, failed ones included. REST `status: completed` covers cancelled,
+          # failed and skipped; an in-flight run is never listed. The 2 days count from the finish.
+          cutoff=$(date -u -d '2 days ago' +%FT%TZ)
+          open=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --limit 200 --json headRefName -q '[.[].headRefName]')
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&created=%3C$cutoff" \
+              | jq -r --arg cutoff "$cutoff" --argjson open "$open" '.workflow_runs[]
+                  | select(.status == "completed" and .updated_at < $cutoff)
+                  | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))
+                  | .id'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done

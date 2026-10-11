@@ -734,13 +734,13 @@ jobs:
   # (#346) The cancelled pass also sweeps Mutation census, and ONLY that pass does. A cancelled census
   # (a queued dispatch superseded by a newer one, or one stopped by hand) holds no verdict. A completed
   # one is evidence: receipts in tests/ci-settings.yaml cite census runs by ID, and each run's step
-  # summary is the missed list a PROOF RULE is checked against. Never add census to the completed pass.
+  # summary is the missed list a PROOF RULE is checked against. Never add census to the completed pass
+  # here: (#553) pages.yml's catch-all deletes a census run 2 days after it finishes, time enough to read it.
   #
   # (#355) Only the NEWEST completed census of a slice (same files, regex and exclude) is the evidence
-  # the next round is checked against. An older run of the same slice is superseded: once a round has
-  # recorded its proof, delete it BY HAND (the receipt keeps its numbers; only the link dies). Still
-  # never swept from here: a run's dispatch inputs are not in the runs API, so a sweep cannot tell one
-  # slice from another. Pruned 2026-09-26, 14 runs -> 5, one per slice.
+  # the next round is checked against; the by-hand prune this asked for is gone since (#553): every census
+  # run goes 2 days after it ends (the receipt keeps its numbers; only the link dies, and a re-dispatch with
+  # the same inputs on the same commit prints the same list).
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -751,9 +751,9 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # (#402) Completed PR runs are spared: a PR's checks are its review verdict, and the daily
-          # journal push fired this sweep before anyone had read them. (#429) pr-cleanup.yml deletes a
-          # merged PR's passed runs; prune by hand only a run that was still in flight at the merge.
+          # (#402) Completed PR runs are spared: a PR's checks are its review verdict, and any push to
+          # main fired this sweep before anyone had read them. (#429) pr-cleanup.yml deletes a
+          # merged PR's passed runs; (#553) pages.yml's catch-all takes the rest 2 days after the PR closes.
           for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId,event -q '.[] | select(.event != "pull_request") | .databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done

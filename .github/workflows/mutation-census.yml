@@ -43,6 +43,8 @@ name: Mutation census
 # that no run had ever graded. Each catch-up's receipt in tests/ci-settings.yaml names the head it
 # graded (LAST GRADED SHA); the next round dispatches `since: <that SHA>`. Still manual: a survivor
 # needs a round to triage it, so a schedule would only publish lists nobody reads.
+# (#553) pages.yml's catch-all deletes a census run 2 days after it finishes: read its missed list (step
+# summary) before then, or re-dispatch the same inputs on the same commit for the same list.
 # The checkout stays shallow: a diff of two trees needs no history, and GitHub serves a fetch by SHA —
 # by the FULL SHA only: run 36752309351 dispatched `4a8b8ff` and every shard read "couldn't find remote ref".
 # The fetch failing is a hard exit, not a fallthrough — without the diff this grades whole files.

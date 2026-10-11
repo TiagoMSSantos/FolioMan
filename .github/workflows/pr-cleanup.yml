@@ -1,6 +1,7 @@
 # (#429) Once a PR merges, its PASSED runs on the head branch are deleted. (#402) spares PR runs in
 # ci.yml's cleanup-runs because a PR's checks are its review verdict; after the merge that verdict is
-# spent. FAILED runs stay as evidence. This workflow's own runs are swept by cleanup-runs.
+# spent. FAILED runs stay as evidence until (#553) pages.yml's catch-all takes them, 2 days after they
+# finish. This workflow's own runs are swept by cleanup-runs.
 # Same-repo heads only: a fork's head_ref can be `main`, and `--branch main` would hit main's runs.
 name: PR cleanup
 

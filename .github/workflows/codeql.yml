@@ -111,8 +111,9 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # (#402) Completed PR runs are spared: a PR's checks are its review verdict, and the daily
-          # journal push fired this sweep before anyone had read them. Prune a merged PR's runs by hand.
+          # (#402) Completed PR runs are spared: a PR's checks are its review verdict, and any push to
+          # main fired this sweep before anyone had read them. (#553) pages.yml's catch-all takes them
+          # 2 days after the PR closes.
           for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow codeql.yml --status completed --limit 200 --json databaseId,event -q '.[] | select(.event != "pull_request") | .databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done

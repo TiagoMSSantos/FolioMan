@@ -5,6 +5,7 @@ name: Probe
 # tests/network.rs, which prints only the lines the gate votes on, and never with `pit`. This prints the
 # whole report — every fund factor's AUC, the held-book and survival rows — for a factor or knob probe.
 # Read it with `gh run view <id> --log`, and check `windows scored` on every horizon before grading.
+# Read it within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes.
 #
 # MANUAL ONLY and READ-ONLY: it saves no cache, so a probe can never change what Pages or the gate read.
 on:
