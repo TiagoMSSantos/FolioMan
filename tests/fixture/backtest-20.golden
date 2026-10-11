@@ -244,6 +244,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   SECTOR CENSUS (#557): 0 of 40 top-10 stock slots carry a GICS sector, the only ones growth_sector_cap 0 can judge
   top-10 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   vs Série E best case (top-10): beat 100% of 22 windows (22) at 4.5%/yr   median book 5.64× vs 2.41×
+  RANKED top-10 (#558, weights 10..1)  excess +3.6 (med +1.9) pts/yr   worst -2.5
   top-15 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   top-20 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   top-25 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
