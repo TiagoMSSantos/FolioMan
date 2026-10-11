@@ -1401,10 +1401,11 @@ sizing:
                       #   (#321) ROUND 104 widened it to 25, again no worse. The book buys
                       #   min(this, ranked non-coin), so it is a CEILING: live supply, not this number, sets
                       #   the row count. Read the (#317) and (#321) receipts. 0 is read as 1.
-  head_weight: 2.0    # (#322) ROUND 105 — each of that book's first five names (`size::HEAD`, the backtest's
-                      #   rank-1 / 2-5 slice boundary) weighs 2 shares against a later name's 1, so on 24 names
-                      #   the head holds 6.6% each and the rest 3.3%. Coins untouched. 1.0 = the flat (#313)
-                      #   book and the code default. Read the (#322) receipt. Anything not above 0 is read as 1.
+  head_weight: 4.0    # (#322) ROUND 105 — each of that book's first five names (`size::HEAD`, the backtest's
+                      #   rank-1 / 2-5 slice boundary) weighs this many shares against a later name's 1. (#558)
+                      #   raised it 2 -> 4: on 24 names the head holds 9.7% each (48.7% of gross) and the rest
+                      #   2.4%. Coins untouched. 1.0 = the flat (#313) book and the code default. Read the (#322)
+                      #   and (#558) receipts. Anything not above 0 is read as 1.
   head_skip_commodity: true  # (#495) USER DECISION 2026-10-06: a `c` commodity-price name (GICS Energy/Materials,
                       #   or a miner/oil/uranium-named fund) never takes one of those five double shares. It
                       #   moves to just after the head, still bought at a tail share. On the day MPC (refiner,
@@ -1412,6 +1413,57 @@ sizing:
                       #   (#44)'s 0.8 damp already docks, and a damp cannot stop a rank-5 name from doubling.
                       #   JUDGEMENT, BACKTEST-BLIND (stub quotes carry no sector), goldens identical. track's
                       #   rank ladder still grades score order. REVERT: false.
+  #── (#558) RE-GRADED 2026-10-11 — 24 GATE ARMS AND 30 WEIGHT ARMS ON BOTH LANES; head_weight 2 -> 4 SHIPPED ──
+  #  Same standing ask: more good assets to buy now and hold 20+ years, most profit. WHY NOW. Most gate and weight
+  #  grades in this file predate (#424) (split look-ahead) and (#426) (core EPS), so they were measured on biased data.
+  #  RUN: probe.yml at 95ec243, years "20 12 8", args "universe fund pit" and "universe fund" (6 cells), one knob
+  #  per arm, 7 waves, each with its own no-knob control per lane. CI is deterministic: every wave's controls are
+  #  byte-identical to the first wave's, and a duplicate control read 0.0 in every cell. Universe `windows scored`
+  #  are identical within each lane, except two void arms (growth_min_fcf_margin 0 and dividend_weight 1 moved the
+  #  stress count by 4-11 windows; both lose anyway).
+  #  ARMS, fixed before any read (shipped value in brackets):
+  #    gates    growth_max_above_ma 125/100/80 [150]   growth_overext_cap 130/80/60 [100]   growth_min_range_pct 85/90 [80]
+  #             growth_min_5y_pct 60/90/105 [75]   growth_min_net_margin 5/10 [0]   growth_maxdd_cap 90/83/75 [off]
+  #             growth_min_interest_cover 2/5/8 [off]   growth_min_fcf_margin -10/0/5 [off]   growth_min_cagr 17/21 [19]
+  #    weights  x0, x0.5 and x2 of growth_trend_weight, growth_accel_weight, growth_accel_beta (and 2 = x2),
+  #             growth_underwater_weight, growth_fund_weight, quality_weight, sharpe_weight, dividend_weight,
+  #             growth_proximity_weight and head_weight (0/1/4 around the shipped 2)
+  #  BARS (pre-registered, USER). GATE: in all 6 cells, top-10 median excess >= control - 0.1 AND worst window
+  #  >= control - 0.5; the winner is the largest minimum median gain. WEIGHT: in all 6 cells, SIZED excess
+  #  >= control - 0.1, SIZED worst >= control - 0.5 and top-10 median >= control - 0.1, AND the 20y DCA
+  #  `SIZED never-sell` row on both lanes >= control; the winner is the largest minimum SIZED gain.
+  #  CONTROL (top-10 med / worst | SIZED excess / worst): pit 20y -0.0/-10.0|+0.7/-10.0, 12y +2.0/-6.4|+3.1/-6.4,
+  #  8y +2.7/-17.1|+3.1/-17.1; fund 20y +4.9/-0.9|+5.4/-0.9, 12y +5.4/-7.8|+5.7/-7.8, 8y +5.2/-10.3|+5.6/-10.3.
+  #  DCA SIZED never-sell 20y: pit +3.2, fund +5.1.
+  #  GATES: no arm has a positive minimum median gain. Only growth_overext_cap 130 and 80 qualify (min 0.0): both
+  #  lift the same one cell (fund 12y med +0.7/+0.6) from opposite sides of 100, and both cut SIZED there, so it is
+  #  one bucket's churn. Tightening growth_max_above_ma lifts sums (+2.2/+2.6) but costs worst windows (pit 12y -7.1
+  #  and -10.7 at 100 and 80). growth_min_5y_pct 105 lifts SIZED (min +0.1) but drops pit 12y median -0.6. The
+  #  never-graded P1b/P1c floors (interest cover, FCF margin) fail or are inert. Admission stays closed.
+  #  WEIGHTS: growth_underwater_weight is inert (0.0 in every cell at 0, 0.15 and 0.6); sharpe_weight at 0.025 and
+  #  0.1 too. growth_accel_weight 0 and growth_accel_beta 2 lift pit 20y median +1.4/+1.0 but lose SIZED in 5 cells.
+  #  head_weight is the one lever with a monotone read: 0 and 1 both cost SIZED -0.3 (sum -1.2), and 4 is:
+  #    cell      SIZED control   head_weight 4   top-10 med / worst windows
+  #    pit 20y   +0.7            +0.7            unchanged in every cell
+  #    pit 12y   +3.1            +3.2
+  #    pit  8y   +3.1            +3.2
+  #    fund 20y  +5.4            +5.6
+  #    fund 12y  +5.7            +5.9
+  #    fund  8y  +5.6            +5.7
+  #    DCA 20y   pit +3.2 -> +3.3, fund +5.1 -> +5.3
+  #  VERDICT: head_weight 4 is the only weight arm that qualifies with a positive sum (min 0.0, sum +0.7, the largest
+  #  of the min-0.0 qualifiers). SHIPPED 2 -> 4 (USER DECISION 2026-10-11).
+  #  HONEST EDGES. (a) Concentration: the top five go from 33% to 48.7% of gross, 9.7% each, above `max_name_pct` 8,
+  #  which does not bind on this book. (b) The gain is +0.1 to +0.2 pts/yr per cell on one-decimal rows. (c) One rung
+  #  past 2 graded, on purpose: (#322) graded 2 alone, and no 3/6 grid ran after this read. (d) Like (#322) it is
+  #  in-sample: the prior (rank 2-5 beats 6-10) and the bar share the pool. (e) BUY% and `size` move live;
+  #  `head_weight` is fingerprinted, so BUY NOW warns "settings changed since" until the next backtest journals.
+  #  REVERT: (#322)'s rule, unchanged: revert to 2 when, over >= 6 monthly journal lines carrying the tilted book,
+  #  `track`'s flat twin beats the executed book on their mean; `6-10 minus 1-5` above 0 re-opens it too.
+  #  (#558) STEP 2, WEB SWEEP 30 (portfolio construction, weighting, sell/rebalance, DCA): no new buy lever; every
+  #  idea maps to an existing receipt. One tax-model gap, NOT a heuristic change and NOT shipped: PT Lei 31/2024
+  #  (Art. 43 n.º5 CIRS) excludes 10/20/30% of a gain held >2y/>=5y/>=8y (25.2/22.4/19.6% on 28%), while
+  #  `cgt_hold_schedule` ships [] and `switch_edge` charges the flat rate. Confirm with an accountant before wiring it.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
