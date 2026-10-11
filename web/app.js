@@ -68,8 +68,8 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // (#249) SCOPED TO THE THREE LANES, and that is load-bearing: a bare `tbody` selector also matches
 // the inflation table, so `?top=1` would publish the USA row and hide the EU one — the deflator, on
 // the view most likely to be bookmarked. (#438) The Attention table was cut too; (#441) the Berkshire table
-// was not, since the default N of 3 hid 11 of 14. (#525) Every table under the lanes now ranks its own rows
-// and takes a fixed cut of TOP instead, so N stays the lanes' alone.
+// was not, since the default N of 3 hid 11 of 14. (#525) Every table under the lanes ranks its own rows.
+// (#539) N cuts every asset table, lanes and those below alike; Exposure stays whole and `all` is no cut.
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
 // (#445) A filter query overrides the cut in every table but inflation and (#486) bonds: a row shows iff its TICKER or
 // NAME holds the query, so a name the chooser hid can still be found. An empty query is the cut alone.
@@ -79,14 +79,12 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // payload, an upload's included (they stayed CI's until then).
 // (#507) An ⁱ CAGR is the plain change since listing (under 6 months), so its bar is the floor compounded
 // over the row's YRS: (1 + floor/100)^YRS − 1. A day-0 listing's bar is 0, so it is unmarked unless it fell.
-// (#525) Every table below the lanes but Inflation and Bonds shows its top TOP rows (by `data-rank`, the
-// payload's order, which ranks by SCORE then gates missed) until "show all rows" is ticked or a query is set.
+// (#525) The cut reads `data-rank`, the payload's order, which ranks by SCORE then gates missed.
 // (#526) The shadow tables and CORE also hide a row whose total-return CAGR is under `page_min_cagr`: the
 // TR-CAGR cell (ⁱ under 6 months since #530, with its bar), else a CAGR cell a settings file still lists.
-// The top TOP counts only the rows kept, "show all rows" or a query shows the rest greyed, and a pinned
-// row is never hidden.
+// The top N counts only the rows kept; (#539) the box or a query shows the floored rest greyed, and a
+// pinned row is never hidden.
 const SHADOW = ["attention", "berkshire", "social", "young", "reits"];
-const TOP = 20;
 const floors = {};
 let minCagr = 0; // (#526) the payload's, like the floors
 const bar = (cell, yrs, f) => (cell.endsWith("ⁱ") ? ((1 + f / 100) ** (+yrs || 0) - 1) * 100 : f);
@@ -103,7 +101,7 @@ function apply(n) {
   for (const t of document.querySelectorAll(".scroll table")) {
     if (t.closest("#inflation, #bonds")) continue;
     const id = t.closest("div[id]").id;
-    const cap = LANES.includes(id) ? n : all || id === "exposure" ? Infinity : TOP;
+    const cap = id === "exposure" ? Infinity : n;
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
     const cols = heads.flatMap((h, i) => (["TICKER", "NAME"].includes(h) ? [i] : []));
     const c = SHADOW.includes(id) ? heads.indexOf("TR-CAGR") : -1;
@@ -245,19 +243,22 @@ console.assert(
 // wants ten rows every morning bookmarks the URL that gives them. Clamped and truncated because the
 // query string is user input — `?top=abc`, `?top=0`, `?top=3.7` and `?top=999` must all land on an
 // option that exists, or `sel.value` silently becomes "" and apply(0) blanks every table.
+// (#539) The options run to the longest LANE only, then `all` (`?top=all`), which lifts every cut.
+const topN = (v) => (v === "all" ? Infinity : +v);
 function chooser(max, dflt) {
-  const box = document.getElementById("topn-box");
   const sel = document.getElementById("topn");
   sel.replaceChildren(); // (#392) an upload renders again, with its own row counts
   for (let i = 1; i <= max; i++) sel.add(new Option(i));
-  const want = Math.trunc(+new URLSearchParams(location.search).get("top")) || dflt;
-  sel.value = Math.min(Math.max(want, 1), max);
+  sel.add(new Option("all"));
+  const top = new URLSearchParams(location.search).get("top");
+  const want = Math.trunc(+top) || dflt;
+  sel.value = top === "all" ? "all" : Math.min(Math.max(want, 1), max);
   sel.onchange = () => {
-    apply(+sel.value);
+    apply(topN(sel.value));
     remember("top", sel.value);
   };
-  box.hidden = max <= 1; // one row everywhere: nothing to choose, so don't offer a choice
-  apply(+sel.value);
+  document.getElementById("topn-box").hidden = false; // (#539) `all` is a choice even at one row
+  apply(topN(sel.value));
 }
 
 const stamp = (t) => new Date(t).toISOString().replace("T", " ").replace(".000Z", "Z");
@@ -424,7 +425,7 @@ viewSel.onchange = () => {
   remember("view", viewSel.value);
 };
 document.getElementById("filter").oninput = document.getElementById("allrows").onchange = () =>
-  apply(+document.getElementById("topn").value);
+  apply(topN(document.getElementById("topn").value));
 
 // (#401) prev.json is best effort: missing, unreadable or undated is no marks, never an error.
 function load() {

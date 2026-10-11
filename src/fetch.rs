@@ -7719,8 +7719,9 @@ fn usd_cell(x: f64) -> String {
     }
 }
 
-/// (#524) The page's Upcoming table: upcoming soonest first, then filed by filing day, then
-/// confidential by the reported month. A real figure wins; a press figure fills a missing one, marked
+/// (#524) The page's Upcoming table. (#539) Ritter-style: rows with a ttm revenue rank first, profitable
+/// before loss-making, then the larger revenue; the rest keep the calendar order (upcoming soonest first,
+/// then filed by filing day, then confidential by the reported month). A real figure wins; a press figure fills a missing one, marked
 /// ` r`; anything else reads n/a. (#527) Ratios read the trailing twelve months (`ttm`) and value the
 /// company at the middle of its range; REV-YoY compares the latest interim with the year before when
 /// the S-1 has one.
@@ -7728,6 +7729,13 @@ fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
     let rank = |d: &IpoDeal| ["upcoming", "filed", "confidential"].iter().position(|s| *s == d.status).unwrap_or(3);
     let key = |d: &IpoDeal| (rank(d), if d.status == "confidential" { d.rep_expected.clone() } else { d.day.clone() }, d.name.clone());
     deals.sort_by_key(key);
+    // ponytail: no growth term, since an S-1's tiny base reads as huge growth (NSCALE: +1252%); add a
+    // Rule-of-40 tiebreak if the young track ever grades IPO quality.
+    let fig = |d: &IpoDeal| ttm(d.figs.rev, d.figs.i_rev).filter(|r| *r > 0.0).map(|r| (ttm(d.figs.net, d.figs.i_net).is_some_and(|n| n > 0.0), r));
+    deals.sort_by(|a, b| match (fig(a), fig(b)) {
+        (Some((pa, ra)), Some((pb, rb))) => pb.cmp(&pa).then(rb.total_cmp(&ra)),
+        (fa, fb) => fb.is_some().cmp(&fa.is_some()),
+    });
     let na = || "n/a".to_string();
     let or_na = |s: &str| if s.is_empty() { na() } else { s.to_string() };
     let pct = |x: f64| format!("{:.1}%", x * 100.0);
@@ -15092,8 +15100,8 @@ pub(crate) mod tests {
         assert_eq!(fts_s1_cik(&v, "OpenAI"), None);
     }
 
-    /// (#524) Watch rows join their Nasdaq deal or stand alone as confidential; the table orders by
-    /// status then day, real figures beat press ones (` r`), a missing one reads n/a.
+    /// (#524) Watch rows join their Nasdaq deal or stand alone as confidential; with one row of figures the
+    /// rest order by status then day, real figures beat press ones (` r`), a missing one reads n/a.
     #[test]
     fn ipo_web_rows_merge_watch_rows_and_mark_press_figures() {
         let csv = "name,expected,reported_valuation_usd,reported_raise_usd,source\n\
@@ -15144,6 +15152,30 @@ pub(crate) mod tests {
         assert_eq!(usd_cell(12e3), "$12K");
         assert_eq!(usd_cell(1e6), "$1.0M");
         assert_eq!(["P/S@MID", "P/E@MID", "INTERIM", "GROSS%", "LEADS", "INDUSTRY"].map(|h| cell(0, h)), ["97.0x", "loss", "n/a", "n/a", "n/a", "n/a"]);
+    }
+
+    /// (#539) Rows with a ttm revenue rank first: profitable (ttm net > 0, so break-even is not) before
+    /// loss-making, then the larger revenue. A zero revenue or no figures keeps the calendar order, last.
+    #[test]
+    fn ipo_web_rows_rank_profit_then_revenue() {
+        let deal = |status, name: &str, day: &str, rev: Option<f64>, net: Option<f64>| IpoDeal { status, name: name.into(), day: day.into(), figs: S1Figs { rev, net, ..S1Figs::default() }, ..IpoDeal::default() };
+        let mut turn = deal("filed", "Turn", "2026-08-09", Some(40e6), Some(-2e6));
+        turn.figs.i_rev = Some([20e6, 10e6]);
+        turn.figs.i_net = Some([3e6, -1e6]);
+        let deals = vec![
+            deal("upcoming", "Bare", "2026-10-01", None, None),
+            deal("upcoming", "Big loss", "2026-10-02", Some(500e6), Some(-50e6)),
+            deal("upcoming", "Zero rev", "2026-10-03", Some(0.0), Some(9e6)),
+            deal("filed", "Small loss", "2026-08-01", Some(30e6), Some(-5e6)),
+            deal("filed", "Even", "2026-08-02", Some(200e6), Some(0.0)),
+            deal("filed", "Small profit", "2026-08-03", Some(100e6), Some(1e6)),
+            deal("filed", "Later bare", "2026-08-05", None, None),
+            turn,
+        ];
+        let rows = ipo_web_rows(deals);
+        let col = |h: &str| rows.as_array().unwrap().iter().map(|r| r.as_array().unwrap().iter().find(|c| c[0] == h).unwrap()[1].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(col("NAME"), ["Small profit", "Turn", "Big loss", "Even", "Small loss", "Bare", "Zero rev", "Later bare"]);
+        assert_eq!(col("RANK"), ["1", "2", "3", "4", "5", "6", "7", "8"]);
     }
 
     /// (#527) Oura's S-1/A (2026-09-21), trimmed: fiscal year to September, nine-month interim first.

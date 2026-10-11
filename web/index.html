@@ -25,11 +25,10 @@
   <p class="sub" id="since" hidden></p>
   <p class="stale" id="stale" role="alert" hidden></p>
   <p class="stale" id="degraded" role="alert" hidden></p>
-  <!-- (#143) One control for all three lanes. Its options are built from the payload, never
-       hardcoded, so it can never offer an N with no rows behind it and it follows `top_picks`
-       automatically. Hidden entirely when there is nothing to choose. -->
+  <!-- (#143) Its options are built from the payload, never hardcoded, so it follows `top_picks`
+       automatically. (#539) It cuts every asset table; the options run to the longest lane, then `all`. -->
   <p class="topn" id="topn-box" hidden>
-    <label>show top <select id="topn"></select> rows per table</label>
+    <label>show top <select id="topn"></select> rows per asset table</label>
   </p>
   <!-- (#445) Column groups for the three ranked tables; RANK NAME TICKER BUY% always show. A phone
        opens on `overview`, a wide screen on `all`; `?view=` overrides either. -->
@@ -38,9 +37,9 @@
       <option>all</option><option>overview</option><option>returns</option><option>risk</option><option>value</option><option>cash</option>
     </select></label>
     · <label>filter <input id="filter" type="search" placeholder="ticker or name" size="16"></label>
-    <!-- (#525) The tables under the three lanes show their 20 best-ranked rows until this is ticked; a filter
-         query shows every match. A row under its table's CAGR floor (read off TR-CAGR, #530) is greyed, never hidden. -->
-    · <label title="CORE, Attention, Berkshire, Social, Young, REITs and IPOs show their top 20 rows; tick to list them all. Greyed rows have a TR-CAGR under the table's floor. Rows whose total-return CAGR is under page_min_cagr stay hidden until ticked (or found with the filter)"><input id="allrows" type="checkbox"> show all rows (incl. under the CAGR floor)</label>
+    <!-- (#539) Ticked, the rows under page_min_cagr show too; a filter query shows every match. A row under
+         its table's CAGR floor (read off TR-CAGR, #530) is greyed, never hidden. -->
+    · <label title="Greyed rows have a TR-CAGR under the table's floor. Rows whose total-return CAGR is under page_min_cagr stay hidden until ticked (or found with the filter)"><input id="allrows" type="checkbox"> show rows under the CAGR floor</label>
   </p>
   <!-- (#392) Re-rank this run's pool under your own settings.yaml, in this tab: engine/ is the same
        Rust ranking compiled to wasm. Shown only when the deploy shipped it. -->
@@ -68,8 +67,7 @@
   <!-- (#250) The buy-and-hold CORE shortlist, which `screen` has computed and printed below its three
        rankings all along and this page never carried. It is NOT a fourth ranking: the tables above
        rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
-       appear there however good a 20-year hold they are. The top-N chooser does not cut it; (#525) the
-       20-row cut of the tables below does — see `apply()`. -->
+       appear there however good a 20-year hold they are. (#539) The top-N chooser cuts it — see `apply()`. -->
   <h2 title="Broad, cheap, physical, accumulating index funds to hold forever, ranked by buy score here; the rankings above bury these at 0 by design. NOT advice" id="h-core">CORE — one fund forever</h2>
   <div id="core"></div>
   <details class="note" id="hold">
@@ -184,7 +182,8 @@
     watched company with no public S-1 reads <code>confidential</code>; its date and amounts are the press's,
     marked <code>r</code>, and give way to the real ones once filed. The figures from FY to EQUITY are read
     from the S-1's summary financial table, the last full fiscal year and the newest balance sheet; n/a
-    where the table could not be read. The ratios (P/S, P/E and the margins) read the trailing twelve months
+    where the table could not be read. Rows rank by the S-1: profitable ones first, then by trailing
+    revenue; rows with no figures follow in calendar order. The ratios (P/S, P/E and the margins) read the trailing twelve months
     when the table has an interim period, and value the company at the middle of its range. Underwriters
     and auditor come from Nasdaq, the industry from EDGAR. There is no share price yet, so nothing here is scored or journalled;
     the day one prices it joins the Young table above. Expected dates often slip, and a deal can be pulled.
