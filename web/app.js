@@ -38,7 +38,7 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
     if (row.some(([h, c]) => h === "RANK" && /\*/.test(c))) tr.dataset.pin = "";
     for (const [h, cell, url, tip] of row) {
       const td = tr.insertCell();
-      if (tip) td.title = tip; // (#542) a REPORTS cell's hover: the description and last annual report, as text
+      if (tip) td.title = tip; // (#542) a REPORTS cell's hover: the description and last annual report; (#543) a MISSES cell's: each missed gate's value vs its bar. Text only
       // (#474) a RANK cell's hover reads its position, then what each of its flags means
       if (h === "RANK" && cell) {
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);

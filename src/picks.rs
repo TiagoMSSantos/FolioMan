@@ -2937,16 +2937,18 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
 
 /// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 1Y rung
 /// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
-fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<&'static str>, Vec<(&'static str, String, bool)>)> {
-    let (mut t, mut tags) = (tuning.clone(), Vec::new());
+/// (#543) Each waived tag keeps the why its first failing round printed, for the MISSES hover.
+fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<(&'static str, String)>, Vec<(&'static str, String, bool)>)> {
+    let (mut t, mut tags) = (tuning.clone(), Vec::<(&'static str, String)>::new());
     loop {
         let fails = gate_failures(quote, &t)?;
-        let new: Vec<&str> = fails.iter().map(|f| f.0).filter(|g| *g != "artifact" && !tags.contains(g)).collect();
+        let new: Vec<(&'static str, String)> =
+            fails.iter().filter(|f| f.0 != "artifact" && !tags.iter().any(|g| g.0 == f.0)).map(|f| (f.0, f.1.clone())).collect();
         if new.is_empty() {
             return Some((t, tags, fails));
         }
         for g in new {
-            waive_gate(&mut t, g);
+            waive_gate(&mut t, g.0);
             tags.push(g);
         }
     }
@@ -2957,7 +2959,7 @@ fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<&'s
 /// score walkthrough. `score` is the displayed score under a tuning. Display only: nothing ranks it.
 fn what_if_lines(quote: &Quote, tuning: &BuyHeuristic, class: &[f64], score: impl Fn(&BuyHeuristic) -> Option<f64>) -> String {
     let Some((t, tags, left)) = waived(quote, tuning) else { return String::new() };
-    let tags = tags.join(", ");
+    let tags = tags.iter().map(|g| g.0).collect::<Vec<_>>().join(", ");
     if !left.is_empty() {
         let why: Vec<String> = left.iter().map(|(g, why, _)| format!("{g}: {why}")).collect();
         return format!("\n  what if: even with {tags} waived it cannot rank — {}", why.join("; "));
@@ -5454,36 +5456,48 @@ pub(crate) fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
 const CORE_RANK_HELP: &str = "Position in this table, by the buy heuristic (SCORE, then MISSES); o = you already hold it, never on the page, which reads no broker account";
 /// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
 const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund tracking the same index (MISSES names it); ʷⁱ = under a year listed, scored on its change since listing, not annualised (weeks of data are noise); — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then the — ones, then refused, then n/a";
-const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each); no-turnover = no trading volume served, scored at the turnover floor; refused = a kind the screen never buys (leveraged, commodity, hedged, stablecoin); n/a = not priced, or no record at all";
+const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each; hover the cell, on desktop, for each missed gate's value against what the buy heuristic needs); no-turnover = no trading volume served, scored at the turnover floor; refused = a kind the screen never buys (leveraged, commodity, hedged, stablecoin); n/a = not priced, or no record at all";
 
 /// (#525) A row's [`RankKey`] and its SCORE and MISSES cells. (#537) Every rankable row gets a score:
 /// a fund too young for the 5Y rung borrows the score of its [`index_twin`] in `pool` (`ʷ~`), a record
 /// under a year scores its change since listing in the 1Y slot (`ʷⁱ`), and a name with no turnover
 /// served scores at the floor (`no-turnover`, liquidity bonus 0). All three are class 1. Display only.
 pub(crate) fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKey, String, String) {
+    let (key, score, misses, _) = rank_row(q, tuning, pool);
+    (key, score, misses)
+}
+
+/// (#543) [`rank_key`] plus the MISSES cell's hover: one `gate: value (need X)` line per gate it
+/// counts, in its order, each the [`gate_failures`] text. Empty when nothing is missed.
+fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKey, String, String, String) {
     const NONE: f64 = f64::NEG_INFINITY;
-    let na = ((4, 0, NONE), "—".to_string(), "n/a".to_string());
+    let na = ((4, 0, NONE), "—".to_string(), "n/a".to_string(), String::new());
     let Some(q) = q else { return na };
-    let (mut own, mut tags_s) = (q.clone(), Vec::<String>::new());
+    let (mut own, mut tags_s, mut lines) = (q.clone(), Vec::<String>::new(), Vec::<String>::new());
     match refusal_reason(q) {
         Some("no-turnover") => {
             own.avg_turnover_eur = Some(turnover_floor(q, tuning)); // passes the floor, ln(max(v/1e9, 1)) = 0
             tags_s.push("no-turnover".to_string());
+            lines.push("no-turnover: no trading volume served, scored at the turnover floor".to_string());
         }
-        Some(why) => return ((3, 0, NONE), "—".to_string(), format!("refused: {why}")),
+        Some(why) => return ((3, 0, NONE), "—".to_string(), format!("refused: {why}"), String::new()),
         None => {}
     }
     let mut w = waived(&own, tuning);
     let twin = match &w {
-        Some((_, tags, _)) if quote_is_etf(q) && tags.iter().any(|g| matches!(*g, "history" | "young")) => index_twin(q, pool, tuning),
+        Some((_, tags, _)) if quote_is_etf(q) && tags.iter().any(|g| matches!(g.0, "history" | "young")) => index_twin(q, pool, tuning),
         _ => None,
     };
     // ponytail: the twin may quote another currency; prefer a same-currency twin if a pair reads wrong.
     if let (Some(tw), Some((_, tags, _))) = (twin, &w) {
         let ((class, _, s), _, _) = rank_key(Some(tw), tuning, &[]);
         if class <= 1 {
-            tags_s.extend(tags.iter().map(|g| if matches!(*g, "history" | "young") { format!("{g} ~{}", tw.ticker) } else { g.to_string() }));
-            return ((1, tags_s.len(), s), format!("{s:.1}ʷ~"), format!("{}: {}", tags_s.len(), tags_s.join(", ")));
+            for (g, why) in tags {
+                let borrowed = matches!(*g, "history" | "young");
+                tags_s.push(if borrowed { format!("{g} ~{}", tw.ticker) } else { g.to_string() });
+                lines.push(if borrowed { format!("{g}: {why} (score borrowed from {})", tw.ticker) } else { format!("{g}: {why}") });
+            }
+            return ((1, tags_s.len(), s), format!("{s:.1}ʷ~"), format!("{}: {}", tags_s.len(), tags_s.join(", ")), lines.join("\n"));
         }
     }
     // ponytail: on a weeks-old line the change since listing is noise; the ⁱ says so, nothing shrinks it.
@@ -5502,17 +5516,19 @@ pub(crate) fn rank_key(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote])
         (w, mark) = (waived(&own, tuning), "ⁱ");
     }
     let Some((t, tags, left)) = w else { return na };
-    for g in tags.iter().chain(left.iter().map(|f| &f.0)) {
+    for (g, why) in tags.iter().map(|g| (g.0, &g.1)).chain(left.iter().map(|f| (f.0, &f.1))) {
         if !tags_s.iter().any(|s| s == g) {
             tags_s.push(g.to_string()); // (#526) `history` waived and still failing is one gate, not two
+            lines.push(format!("{g}: {why}"));
         }
     }
     let score = if left.is_empty() { growth_score(&own, &t) } else { None };
+    let hover = lines.join("\n");
     match (tags_s.len(), score) {
-        (0, Some(s)) => ((0, 0, s), format!("{s:.1}"), "0".to_string()),
+        (0, Some(s)) => ((0, 0, s), format!("{s:.1}"), "0".to_string(), hover),
         (0, None) => na,
-        (n, Some(s)) => ((1, n, s), format!("{s:.1}ʷ{mark}"), format!("{n}: {}", tags_s.join(", "))),
-        (n, None) => ((2, n, NONE), "—".to_string(), format!("{n}: {}", tags_s.join(", "))),
+        (n, Some(s)) => ((1, n, s), format!("{s:.1}ʷ{mark}"), format!("{n}: {}", tags_s.join(", ")), hover),
+        (n, None) => ((2, n, NONE), "—".to_string(), format!("{n}: {}", tags_s.join(", ")), hover),
     }
 }
 
@@ -5573,9 +5589,11 @@ pub fn stamp_shadow_cols(
                 let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, None, "", tuning, fund_pe));
                 cells.push(serde_json::json!([c.hdr, cell]));
             }
-            let (key, score, misses) = rank_key(quote, tuning, pool);
+            let (key, score, misses, hover) = rank_row(quote, tuning, pool);
             let at = cells.iter().position(|c| c[0] == "NAME").map_or(cells.len(), |i| i + 1);
-            cells.splice(at..at, [serde_json::json!(["SCORE", score]), serde_json::json!(["MISSES", misses])]);
+            // (#543) the hover rides as the 4th element, after a null link, as REPORTS' does (#542)
+            let misses = if hover.is_empty() { serde_json::json!(["MISSES", misses]) } else { serde_json::json!(["MISSES", misses, null, hover]) };
+            cells.splice(at..at, [serde_json::json!(["SCORE", score]), misses]);
             if let Some(v) = soc_score {
                 cells.insert(at, serde_json::json!(["SOC", format!("{v:.2}")]));
             }
@@ -11267,7 +11285,7 @@ mod tests {
         let off = social::resolve(&BuyHeuristic::default(), &serde_yaml::Value::Null).unwrap();
         assert_eq!(stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &BuyHeuristic::default(), &off, &FundPeMap::new(), &us), SocBook::default(), "(#538) OFF journals nothing");
         // (#525) no NAME cell here, so SCORE and MISSES go last; (#537) a stub has no turnover and no record
-        let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "2: no-turnover, history"])];
+        let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "2: no-turnover, history", null, NO_RECORD_HOVER])];
         let [rs, rm] = refused();
         assert_eq!(p["berkshire"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], rs, rm]), "a US filing finds its Xetra twin");
         assert_eq!(p["berkshire"][1], serde_json::json!([["RANK", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
@@ -11358,11 +11376,11 @@ mod tests {
         assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "FRESH", "TWOG", "BARE", "LEVX", "NOPE", "NOPE2"], "no score sorts after every ʷ score");
         let s = growth_score(&quotes[0], &d).unwrap();
         assert_eq!(rows[0], serde_json::json!([["RANK", "1"], ["TICKER", "STRONG"], ["NAME", "STRONG"], ["SCORE", format!("{s:.1}")], ["MISSES", "0"], ["X", "x"]]));
-        assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range"]));
+        assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range", null, "range: 75% in range (need ≥80%)"]), "(#543) the hover reads value vs need");
         assert!(rows[2][3][1].as_str().unwrap().ends_with('ʷ'), "a failing row prints its waived score");
         assert!(rows[4][3][1].as_str().unwrap().ends_with('ʷ'), "(#537) a 1-2y record scores on the 1Y rung");
-        assert_eq!(rows[5][4], serde_json::json!(["MISSES", "2: range, cagr"]));
-        assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history"])], "a gate waived and still failing counts once");
+        assert_eq!(rows[5][4][1], "2: range, cagr");
+        assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history", null, "history: no 5y+ record to rank"])], "a gate waived and still failing counts once, in the hover too");
         assert_eq!(rows[7].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
         assert_eq!(rows[9].as_array().unwrap()[..1], [serde_json::json!(["RANK", "10"])]);
         assert_eq!(p["help"]["reits"]["MISSES"], RANK_MISSES_HELP);
@@ -11428,6 +11446,49 @@ mod tests {
         hedged.name = "World UCITS ETF EUR Hedged".into();
         assert_eq!(rank_key(Some(&hedged), &d, &pool).2, "refused: hedged");
         assert_eq!(rank_key(None, &d, &pool).2, "n/a");
+    }
+
+    /// (#543) The hover of [`stamp_shadow_cols_append_the_stock_columns_by_ticker_or_twin`]'s stubs.
+    const NO_RECORD_HOVER: &str = "no-turnover: no trading volume served, scored at the turnover floor\nhistory: no 5y+ record to rank";
+
+    /// (#543) The MISSES hover has one `gate: value (need X)` line per gate the cell counts, in its order,
+    /// each the gate's own text; a borrowed score names its twin; refused, n/a and 0 misses carry none.
+    #[test]
+    fn rank_row_hover_lists_each_missed_gate_value_vs_need() {
+        let d = BuyHeuristic::default();
+        let mut q = Quote::stub("Q", "€100.00", "", "Q");
+        q.instrument_type = "EQUITY".into();
+        (q.range_pct, q.avg_turnover_eur, q.age_years) = (95.0, Some(3.0e9), Some(9.0));
+        q.perf = legs(&[("1Y", -20.0), ("5Y", 5.0), ("8Y", 10.0)]);
+        let (_, _, misses, hover) = rank_row(Some(&q), &d, &[]);
+        let fails = gate_failures(&q, &d).unwrap();
+        let first = format!("{}: {}", fails[0].0, fails[0].1);
+        assert!(fails[0].1.contains("need") || fails[0].1.contains("floor") || fails[0].1.contains("cap"), "{first}");
+        assert_eq!(hover.lines().next(), Some(first.as_str()), "the gate's own value-vs-need text: {hover}");
+        let tags: Vec<&str> = misses.split_once(": ").unwrap().1.split(", ").collect();
+        let heads: Vec<&str> = hover.lines().map(|l| l.split_once(": ").unwrap().0).collect();
+        assert_eq!(heads, tags, "one line per counted gate, same order");
+        let mut thin = q.clone();
+        thin.avg_turnover_eur = None;
+        assert!(rank_row(Some(&thin), &d, &[]).3.starts_with("no-turnover: no trading volume served"));
+        let etf = |t: &str, age: f64| {
+            let mut e = q.clone();
+            (e.ticker, e.instrument_type, e.benchmark, e.age_years, e.perf) = (t.into(), "ETF".into(), Some("msci world".into()), Some(age), vec![]);
+            e
+        };
+        let (mut old, mut kid) = (etf("OLD", 15.0), etf("KID", 0.5));
+        old.perf = legs(&[("1Y", 12.0), ("5Y", 70.0), ("8Y", 130.0)]);
+        kid.young_ret_pct = Some(5.0);
+        let pool = [old.clone(), kid.clone()];
+        let (.., misses, hover) = rank_row(Some(&kid), &d, &pool);
+        assert!(misses.contains("~OLD") && hover.contains("(score borrowed from OLD)"), "{misses} | {hover}");
+        let mut hedged = old.clone();
+        hedged.name = "World UCITS ETF EUR Hedged".into();
+        for r in [Some(&q), Some(&thin), Some(&old), Some(&kid), Some(&hedged), None] {
+            let (_, _, misses, hover) = rank_row(r, &d, &pool);
+            let counted = misses.split_once(": ").filter(|_| !misses.starts_with("refused")).map_or(0, |(n, _)| n.parse::<usize>().unwrap());
+            assert_eq!(hover.lines().count(), counted, "{misses} | {hover}");
+        }
     }
 
     /// (#525) The REITs table: a Real Estate sector stock, a fund named for property, then a SIGI the
