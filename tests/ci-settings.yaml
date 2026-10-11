@@ -19312,6 +19312,18 @@ buy_heuristic:
   #  The gate sweep still prints `->off ... TOO TIGHT` (12y n=34 +388.5 vs shipped +282.5); per (#266) that flag is spent.
   #  A RE-OPEN of 2.0 needs a NEW pre-registered bar (e.g. a finer grid 1.9 / 2.0 / 2.1 / 2.25 to test the plateau, or a
   #  forward-track grade), never a re-read of these runs.
+  #── (#552) PRE-REGISTERED 2026-10-11 — FINER growth_max_peg GRID, 1.7 TO 2.3 ──
+  #  WHY: Apple (APC.DE) fails ONE gate live, `peg: PEG 1.67 (ceiling 1.60)`, and has sat in the `peg` near-miss journal
+  #  every day since 2026-09-21 (with ASML, MPWR, FTNT, 1YD.DE, ANET, KEYS). Amazon is NOT a PEG case: it also fails
+  #  cagr (15.1%/yr < 19%) and 5Y+ (+63% < 75%), so no rung here admits it; Microsoft fails four gates. (#551) left 2.0
+  #  as a lone pass; this grid asks whether the region above Apple's PEG holds up when sampled densely.
+  #  ARMS, written before any run (#165): growth_max_peg 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3 against a FRESH 1.6 control
+  #  in the same batch (never the (#551) control), each `backtest {12,8} universe fund pit` on probe.yml. 20y not run.
+  #  BAR (USER DECISION, replaces (#551)'s plateau clause): a rung PASSES if Ship Rule v2 PRIMARY holds at 12y AND 8y vs
+  #  the control (top-10 excess, mean AND median, up or held) with the worst window and h2h guards intact. No neighbour
+  #  is required, so a lone pass ships; with seven arms that pass may be noise, and the receipt says so if it happens.
+  #  Of the passing rungs ship the LARGEST (USER DECISION, as in (#551)). No passer -> 1.6 stays, REFUSED with the curve.
+  #  A run with thin `windows scored` is re-dispatched, not graded.
   growth_max_peg_etf: 2.0      # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
