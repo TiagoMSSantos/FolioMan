@@ -10953,6 +10953,13 @@ pub(crate) mod tests {
         };
         assert_eq!(got(&facts(true)), (day("2026-06-30"), day("2026-07-23"), 185.67, 132.41, Some(39.07), Some(44.93)));
         assert_eq!(got(&facts(false)), (day("2025-12-31"), day("2026-02-04"), 164.71, 91.45, Some(52.40), Some(27.85)));
+        // (#546) a newer 9M OCF span with no capex beside it is skipped, not picked and then dropped to the FY
+        let mut lone = facts(true);
+        lone["NetCashProvidedByUsedInOperatingActivities"]["units"]["USD"]
+            .as_array_mut()
+            .unwrap()
+            .push(fact("2026-01-01", "2026-09-30", "10-Q", "2026-10-28", 130.0));
+        assert_eq!(got(&lone), got(&facts(true)));
         assert!(cash_ttm(&facts(true), &US_GAAP_TAGS, "USD", day("2024-12-31")).is_none(), "no fiscal year at that end");
     }
 
