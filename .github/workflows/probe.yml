@@ -20,6 +20,10 @@ on:
       knobs:
         description: "(#550) ci-settings overrides for this run only, space-separated key=value (numbers only)"
         default: ""
+      bless:
+        description: "(#554) re-bless tests/fixture/*.golden instead of a backtest; uploads them as an artifact"
+        type: boolean
+        default: false
 
 # No concurrency group (#550): a probe saves no cache, so arms dispatched together run in parallel.
 # A shared group kept one run going and one pending, and a third dispatch silently cancelled the pending one.
@@ -40,7 +44,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: folioman-gate   # backtest-gate's release deps; it stays the only writer
+          # backtest-gate's release deps, or (#554) integration-tests' debug deps for a bless; each keeps
+          # its own single writer.
+          shared-key: ${{ inputs.bless && 'folioman-test' || 'folioman-gate' }}
           save-if: false
       # The three restores below MUST stay identical to backtest-gate's in ci.yml (the path list is
       # hashed into the cache version, and any difference silently misses).
@@ -70,6 +76,7 @@ jobs:
           key: folioman-longhist-${{ github.run_id }}
           restore-keys: folioman-longhist-
       - name: backtest
+        if: ${{ !inputs.bless }}
         env:
           FOLIOMAN_CONFIG: tests/ci-settings.yaml
           YEARS: ${{ inputs.years }}
@@ -96,3 +103,16 @@ jobs:
             ./target/release/folioman backtest "$y" "${args[@]}"
             echo "::endgroup::"
           done
+      # (#554) A knob ship moves a frozen-data golden, and the CI log prints only its FIRST changed line.
+      # This writes every `*report_is_pinned` golden at the dispatched commit, in the debug profile
+      # integration-tests checks them in, and uploads them: download, review the diff, commit. Each
+      # pinned test writes its own file; the invariance tests that only READ a golden are not run.
+      - name: bless goldens
+        if: inputs.bless
+        run: FOLIOMAN_BLESS=1 FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test backtest_fixture -- report_is_pinned --nocapture
+      - uses: actions/upload-artifact@v7
+        if: inputs.bless
+        with:
+          name: goldens
+          path: tests/fixture/*.golden
+          retention-days: 2
