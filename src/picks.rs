@@ -10553,10 +10553,10 @@ mod tests {
         assert!(b.contains("Berkshire Hathaway holds it (its newest 13F filing): ×1.20."), "{b}");
         assert!(b.contains("6 superinvestors bought it last quarter: ×1.10 per 3 buyers = ×1.210."), "{b}");
         assert!(b.contains("Social tip: the Social table names it"), "{b}");
-        assert!(b.contains("Bonuses and the capex penalty multiply it by ×1.525."), "{b}");
+        assert!(b.contains("Bonuses, the capex penalty and the PEG taper multiply it by ×1.525."), "{b}");
         let only = ex(&Quote { social_tip: true, ..q.clone() }, &all);
         assert!(!only.contains("Berkshire Hathaway holds") && !only.contains("superinvestors bought"), "×1.00 parts are not printed");
-        assert!(!s.contains("Bonuses and the capex penalty multiply"), "{s}");
+        assert!(!s.contains("Bonuses, the capex penalty and the PEG taper multiply"), "{s}");
     }
 
     #[test]
