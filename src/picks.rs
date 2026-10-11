@@ -14629,7 +14629,8 @@ mod tests {
         // The gates the per-knob grid (2026-07-30) shipped. Moving one is a measurement, never an edit:
         // re-run the stress grid, write the receipt, THEN update these numbers.
         assert_eq!(tuning.growth_min_cagr, 19.0, "shipped CAGR gate moved — re-measure, then update this pin");
-        assert_eq!(tuning.growth_max_peg, 1.6, "shipped PEG ceiling moved — re-measure, then update this pin");
+        // (#552) 1.6 -> 2.0: the largest rung of a 1.7-2.3 grid passing PRIMARY and guards.
+        assert_eq!(tuning.growth_max_peg, 2.0, "shipped PEG ceiling moved — re-measure, then update this pin");
         assert_eq!(tuning.growth_min_range_pct, 80.0, "80 is settled (70 and 50 both measured worse)");
         assert_eq!(tuning.growth_min_1y_pct, -0.3, "(#457) lowest floor with live and fixture books identical to 0.0; removing it crashes the lane edge -31%");
         assert_eq!(tuning.growth_min_leg_years, 5.0, "the 2Y rung ships only once the grid clears it — receipt beside the knob");
