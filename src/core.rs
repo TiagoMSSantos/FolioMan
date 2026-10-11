@@ -3907,6 +3907,27 @@ pub struct FundRow {
     // (earnings_yield / peg_yield / ebitda_yield / P/E) is only meaningful once BOTH sides sit in this
     // currency — a EUR EPS over a USD ADR close is the Item 16 trap, off by the whole FX rate.
     pub currency: Option<String>,
+    pub cash_ttm: Option<CashTtm>, // (#545) the newest row only: see `CashTtm`
+}
+
+/// (#545) Operating cash flow and capex over the trailing twelve months, built from the newest 10-Q
+/// (`fetch::cash_ttm`), plus the latest quarter alone. `filed` is that 10-Q's filing date, the
+/// point-in-time guard in `fund_factors`. A filer with no newer 10-Q (or a 20-F filer) reads its FY lines.
+/// Feeds the CAPEX/OCF column and the `growth_capex_ocf_*` penalty; reporting currency, raw units.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CashTtm {
+    pub end: NaiveDate,
+    pub filed: NaiveDate,
+    pub ocf: f64,
+    pub capex: f64,
+    pub q_ocf: Option<f64>,
+    pub q_capex: Option<f64>,
+}
+
+/// (#545) TTM capex as % of TTM operating cash flow; +inf when OCF <= 0 (every capex dollar is funded
+/// from elsewhere). One definition for the CAPEX/OCF cell and the penalty.
+pub fn capex_ocf(c: &CashTtm) -> f64 {
+    if c.ocf > 0.0 { c.capex / c.ocf * 100.0 } else { f64::INFINITY }
 }
 
 /// Negated sample standard deviation, the stability factors' shared arithmetic. ≥3 values or None:
@@ -4121,6 +4142,9 @@ pub struct FundFactors {
     pub filed: Option<NaiveDate>,
     pub period_end: Option<NaiveDate>,
     pub currency: Option<String>,
+    // (#545) the as-of row's TTM cash lines, kept only when their 10-Q was filed by the cutoff: they ride
+    // the NEWEST row alone, so a backtest window never reads them. Display and the capex penalty only
+    pub cash_ttm: Option<CashTtm>,
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -4569,6 +4593,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         filed: now.map(|r| r.filed),
         period_end: now.map(|r| r.period_end),
         currency: now.and_then(|r| r.currency.clone()),
+        cash_ttm: now.and_then(|r| r.cash_ttm.clone()).filter(|c| c.filed <= cutoff),
     }
 }
 
@@ -6189,6 +6214,7 @@ mod tests {
             quality: Some(18.0),
             roic: Some(22.0),
             financial: false,
+            cash_ttm: None,
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             core_factor: None,
@@ -10345,6 +10371,7 @@ mod tests {
         let row = |y: i32, filed: NaiveDate, k: f64| FundRow {
             filed,
             financial: false,
+            cash_ttm: None,
             period_end: ymd(y, 12, 31),
             revenue: Some(1000.0 * k),
             gross_margin: Some(40.0 + k),
@@ -10388,6 +10415,19 @@ mod tests {
                 assert_eq!(full, serde_json::to_string(&fund_factors(&seen, cutoff, yrs)).unwrap(), "{cutoff} {yrs}y");
             }
         }
+    }
+
+    /// (#545) The TTM cash line rides the newest row but carries its own 10-Q filing date: a cutoff
+    /// between the 10-K and that 10-Q sees the row and must not see the TTM.
+    #[test]
+    fn fund_factors_hides_a_cash_ttm_filed_after_the_cutoff() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let cash = CashTtm { end: ymd(2026, 6, 30), filed: ymd(2026, 7, 23), ocf: 185.67, capex: 132.41, q_ocf: None, q_capex: None };
+        let rows = [FundRow { filed: ymd(2026, 2, 4), period_end: ymd(2025, 12, 31), revenue: Some(400.0), cash_ttm: Some(cash.clone()), ..Default::default() }];
+        assert_eq!(fund_factors(&rows, ymd(2026, 7, 22), 5).cash_ttm, None);
+        assert_eq!(fund_factors(&rows, ymd(2026, 7, 23), 5).cash_ttm, Some(cash.clone()));
+        assert_eq!(capex_ocf(&cash).round(), 71.0);
+        assert_eq!(capex_ocf(&CashTtm { ocf: 0.0, ..cash }), f64::INFINITY, "no cash in: an infinite share");
     }
 
     /// (#529) The two one-line as-of reads the walk also joins: insider trades and the FX rate. Each must

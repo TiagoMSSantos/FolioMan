@@ -1119,6 +1119,7 @@ widths:
     # -- business
     - roic        # (#447) operating profit ÷ (equity + net debt) (stocks only)
     - fcf         # (#447) free cash flow % of revenue (stocks only) — do profits turn into cash
+    - capex       # (#545) capex ÷ operating cash flow, trailing 12 months from the 10-Qs (SEC stocks); above growth_capex_ocf_max scores × growth_capex_ocf_penalty
     - opm         # (#463) operating margin % (stocks only) — pricing power before interest and tax
     - net         # newest complete-FY net margin % (stocks only) — profitability quality
     - roe         # trailing return-on-equity (needs FMP key; else n/a) — quality
@@ -19860,6 +19861,17 @@ buy_heuristic:
                                  #   superinvestor step on purpose. All three boosts multiply: AMZ.DE (11 buyers + hand
                                  #   list) earns x1.33 x 1.05. Same contract: backtest-blind, graded forward by track's
                                  #   `soc` row; return it to 1.0 if that row reads negative.
+  growth_capex_ocf_max: 70       # (#545) USER DECISION 2026-10-11 (the user's numbers, over the "ship it off" answer): a
+                                 #   stock whose trailing-twelve-month capex is above 70% of its operating cash flow
+                                 #   scores x0.80. Above 100% the business burns cash before a dividend or a buyback;
+                                 #   70% leaves the cushion. TTM, not one quarter: Q2 cash flow runs weak (Alphabet to
+                                 #   2026-06-30: one quarter 115%, two 95%, three 79%, four 71%), so a shorter window
+                                 #   charges a name by calendar month. Alphabet (71%) is penalised on the day it ships.
+                                 #   BACKTEST-BLIND: the TTM is never replayed point-in-time, so no sweep can grade it.
+                                 #   The annual cousin growth_min_fcf_margin reads AUC 0.53 at 8y (near coin-flip).
+                                 #   Return growth_capex_ocf_penalty to 1.0 if the forward record reads it negative.
+  growth_capex_ocf_penalty: 0.80 # (#545) the multiplier above growth_capex_ocf_max. A bank, an insurer, a non-SEC name
+                                 #   and a name with no 10-Q cash lines carry no TTM and stay x1.0.
   growth_etf_one_per_index: true # (#494) USER DECISION 2026-10-06: one fund per benchmark index. The 2026-10-06 book
                                  #   held six Nasdaq-100 lines at 3.2% each (19.2%, more than any stock) and five US or
                                  #   world-IT lines (16%), only because several issuers list each index, so 18 ETF slots

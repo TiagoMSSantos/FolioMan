@@ -1305,7 +1305,7 @@ struct ScoreParts {
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
-    holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one; 1.0 otherwise / knobs off / every backtest quote
+    holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one × (#545) growth_capex_ocf_penalty above growth_capex_ocf_max; 1.0 otherwise / knobs off / every backtest quote
     score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
@@ -1913,8 +1913,8 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     } else {
         1.0
     };
-    let (brk_boost, super_boost, social_boost) = holder_boosts(quote, tuning);
-    let holder_boost = brk_boost * super_boost * social_boost;
+    let (brk_boost, super_boost, social_boost, capex_damp) = holder_boosts(quote, tuning);
+    let holder_boost = brk_boost * super_boost * social_boost * capex_damp;
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
     // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
@@ -1968,14 +1968,22 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
 /// (#472) the 13F nudge as (Berkshire, superinvestors, social tip): the user's call, not a measured edge.
 /// Every flag is false on a backtest quote, so this is backtest-blind like the docks; the track
 /// `brkh`/`soc` rows grade it forward. (#477) one definition for the score and the walkthrough that
-/// splits it per source.
-fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64) {
+/// splits it per source. (#545) The 4th factor is the capex penalty: `growth_capex_ocf_penalty` when
+/// TTM capex tops `growth_capex_ocf_max`% of operating cash flow. No TTM (a bank, a non-SEC name, every
+/// backtest quote) stays x1.0, so it is backtest-blind the same way.
+fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64, f64) {
     let brk = if quote.brk_held { tuning.growth_brk_held_boost } else { 1.0 };
     // (#473) one superinvestor step per `growth_superinvestor_step` buyers, rounded down; `powi(0)` is an
     // exact 1.0, so a name under one step and the knob at 1.0 both stay byte-identical
     let sup = tuning.growth_superinvestor_boost.powi((quote.super_buyers / tuning.growth_superinvestor_step.max(1)) as i32);
     let soc = if quote.social_tip { tuning.growth_social_boost } else { 1.0 };
-    (brk, sup, soc)
+    let capex = quote
+        .fund
+        .as_ref()
+        .and_then(|f| f.cash_ttm.as_ref())
+        .filter(|c| core::capex_ocf(c) > tuning.growth_capex_ocf_max)
+        .map_or(1.0, |_| tuning.growth_capex_ocf_penalty);
+    (brk, sup, soc, capex)
 }
 
 /// (#144) `base` and the multiplier stack -> the ranked score. The ONE definition of that composition:
@@ -3420,8 +3428,8 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     // (#472) and the 13F nudge, (#473) with the social one, printed only on a flagged name with a knob set;
     // (#477) one plain line per source that bites
     let holder_frag = if p.holder_boost != 1.0 {
-        s.push_str(&format!("  bonuses      = Berkshire × superinvestors × social tip     = {:.3}\n", p.holder_boost));
-        let (brk, sup, soc) = holder_boosts(quote, tuning);
+        s.push_str(&format!("  bonuses      = Berkshire × superinvestors × social × capex = {:.3}\n", p.holder_boost));
+        let (brk, sup, soc, capex) = holder_boosts(quote, tuning);
         if brk != 1.0 {
             say(&mut s, &format!("Berkshire Hathaway holds it (its newest 13F filing): ×{brk:.2}."));
         }
@@ -3431,6 +3439,11 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         }
         if soc != 1.0 {
             say(&mut s, &format!("Social tip: the Social table names it (ARK buys, insider buying, big stake filings, videos or the hand list): ×{soc:.2}."));
+        }
+        if capex != 1.0 {
+            let r = quote.fund.as_ref().and_then(|f| f.cash_ttm.as_ref()).map_or(f64::INFINITY, core::capex_ocf);
+            let r = if r.is_finite() { format!("{r:.0}%") } else { "more than all".to_string() };
+            say(&mut s, &format!("Capex is {r} of operating cash flow (TTM, above {:.0}%): ×{capex:.2}.", tuning.growth_capex_ocf_max));
         }
         format!(" × {:.3}", p.holder_boost)
     } else {
@@ -3494,7 +3507,7 @@ fn in_short(p: &ScoreParts, tuning: &BuyHeuristic) -> String {
         }
     }
     if p.holder_boost != 1.0 {
-        s.push_str(&format!("    · Bonuses multiply it by ×{:.3}.\n", p.holder_boost));
+        s.push_str(&format!("    · Bonuses and the capex penalty multiply it by ×{:.3}.\n", p.holder_boost));
     }
     s
 }
@@ -3704,11 +3717,13 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity, or on assets where equity is negative or under 1/20th of assets (heavy buyback filers)" },
     // (#447) the balance sheet, stocks only, off `quote.fund` (filed statements). Display only: never scored
     ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings; n/a = no SEC filing carries the lines (most non-US companies); — = a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies); — = a bank or insurer" },
+    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue, from the last annual report; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies); — = a bank or insurer" },
+    // (#545) the trailing twelve months from the 10-Qs, not the annual report: AI build-outs move capex inside a year
+    ColSpec { key: "capex", hdr: "CAPEX/OCF", width: 9, right: true, help: "Stocks: capital expenditure ÷ operating cash flow over the trailing twelve months (the last annual report plus the 10-Q quarters since); above 100% the business spends more than it brings in. Above growth_capex_ocf_max the score is multiplied by growth_capex_ocf_penalty; hover for the TTM and the latest quarter alone; burn = operating cash flow at or below 0; n/a = no SEC 10-Q cash lines (most non-US companies); — = a bank or insurer" },
     ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; — = a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
-    ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
+    ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow (last annual report) ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
     ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; n/a = under 2 years of FCF filed. Banks and insurers (ᵇ), whose cash flow is deposits and loans: book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE; n/a at ROE ≤ 2.5% or a loss. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
     ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn, n/a and ᵇ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
@@ -4044,11 +4059,11 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // (#447) balance sheet, stocks only. ND/EBITDA needs a positive EBITDA: dividing by a loss flips
         // the sign and reads as net cash
-        "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" | "earn" | "fcfy" | "ps" | "evebitda" if stock_only_na => "—".to_string(),
+        "roic" | "fcf" | "capex" | "nde" | "icov" | "sector" | "ins" | "earn" | "fcfy" | "ps" | "evebitda" if stock_only_na => "—".to_string(),
         // (#478) a bank's interest is its cost of goods: no operating profit, EBITDA or invested capital
         // (#522) ...and its free cash flow is deposit and loan flow, so the whole FCF family goes with it
         // (#540) ...except FAIR, MOS% and FAIR-CAP, which read a book-value FAIR off P/E and ROE
-        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcfy" | "fcf5y" | "fair_oe" | "mos_oe" | "impl_g"
+        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcfy" | "fcf5y" | "fair_oe" | "mos_oe" | "impl_g" | "capex"
             if quote.fund.as_ref().is_some_and(|f| f.financial) =>
         {
             "—".to_string()
@@ -4066,6 +4081,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "ins" => quote.insider_90d.map_or("n/a".to_string(), |(b, s)| format!("{b}/{s}")),
         "roic" => quote.fund.as_ref().and_then(|f| f.roic).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "fcf" => quote.fund.as_ref().and_then(|f| f.fcf_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "capex" => quote.fund.as_ref().and_then(|f| f.cash_ttm.as_ref()).map(core::capex_ocf).map_or("n/a".to_string(), |r| {
+            if r.is_finite() { format!("{r:.0}%") } else { "burn".to_string() }
+        }),
         "nde" => quote
             .fund
             .as_ref()
@@ -4710,11 +4728,11 @@ fn dcf_raw(g_pct: f64) -> f64 {
 // stops being the terminal's row.
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
 const HIDE_ETF: &[&str] =
-    &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "nde", "icov", "sector", "ins",
+    &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "capex", "nde", "icov", "sector", "ins",
     "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "target", "short",
     "fair_oe", "mos_oe", "fair_cap", "impl_g"];
 const HIDE_CRYPTO: &[&str] = &[
-    "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
+    "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "capex", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
     "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g", "reports",
 ];
@@ -5679,6 +5697,13 @@ pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn
                     cell.extend(q.and_then(|q| reports_tip(q)).map(Into::into)); // (#542) the hover
                 }
             }
+            // (#545) CAPEX/OCF: the TTM figures and the latest quarter alone, after a null link
+            if let Some(cell) = cells.iter_mut().find(|c| c[0] == "CAPEX/OCF").and_then(serde_json::Value::as_array_mut) {
+                if let Some(tip) = q.and_then(|q| capex_tip(q)) {
+                    cell.truncate(2);
+                    cell.extend([serde_json::Value::Null, tip.into()]);
+                }
+            }
             let Some(site) = q.and_then(|q| q.profile.site.clone()).filter(|u| u.starts_with("https://")) else { continue };
             if let Some(name) = cells.iter_mut().find(|c| c[0] == "NAME").and_then(serde_json::Value::as_array_mut) {
                 name.truncate(2);
@@ -5700,6 +5725,23 @@ fn reports_link(q: Option<&Quote>, named: &str) -> (&'static str, String) {
     // RFC 3986 unreserved bytes pass, every other byte is %XX: the wasm build carries no url crate
     let enc: String = query.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
     ("search", format!("https://www.google.com/search?q={enc}"))
+}
+
+/// (#545) The CAPEX/OCF hover: the TTM operating cash flow and capex in the filer's currency, then the
+/// latest quarter alone, which runs noisier (Q2 is seasonally weak). None with no TTM.
+fn capex_tip(q: &Quote) -> Option<String> {
+    let f = q.fund.as_ref()?;
+    let c = f.cash_ttm.as_ref().filter(|_| !f.financial)?;
+    let cur = f.currency.as_deref().map_or(String::new(), |c| format!("{c} "));
+    let pair = |ocf: f64, capex: f64| {
+        let r = if ocf > 0.0 { format!("{:.0}%", capex / ocf * 100.0) } else { "burn".to_string() };
+        format!("operating cash flow {cur}{}, capex {cur}{} ({r})", core::humanize(ocf), core::humanize(capex))
+    };
+    let mut tip = format!("Twelve months to {}, filed {}: {}", c.end, c.filed, pair(c.ocf, c.capex));
+    if let Some((o, k)) = c.q_ocf.zip(c.q_capex) {
+        tip.push_str(&format!("\nQuarter to {}: {}", c.end, pair(o, k)));
+    }
+    Some(tip)
 }
 
 /// (#542) The REPORTS hover: the company's description, then the as-of annual report's figures in
@@ -8137,7 +8179,7 @@ mod tests {
             assert!(near(implied_growth(1.0 / dcf_raw(g)), g), "{g}");
         }
         assert_eq!([implied_growth(0.0), implied_growth(-0.05), implied_growth(5.0), implied_growth(1e-9)], [None; 4]);
-        for k in ["roic", "fcf", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "target", "short"] {
+        for k in ["roic", "fcf", "capex", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "target", "short"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }
@@ -10491,10 +10533,10 @@ mod tests {
         assert!(b.contains("Berkshire Hathaway holds it (its newest 13F filing): ×1.20."), "{b}");
         assert!(b.contains("6 superinvestors bought it last quarter: ×1.10 per 3 buyers = ×1.210."), "{b}");
         assert!(b.contains("Social tip: the Social table names it"), "{b}");
-        assert!(b.contains("Bonuses multiply it by ×1.525."), "{b}");
+        assert!(b.contains("Bonuses and the capex penalty multiply it by ×1.525."), "{b}");
         let only = ex(&Quote { social_tip: true, ..q.clone() }, &all);
         assert!(!only.contains("Berkshire Hathaway holds") && !only.contains("superinvestors bought"), "×1.00 parts are not printed");
-        assert!(!s.contains("Bonuses multiply"), "{s}");
+        assert!(!s.contains("Bonuses and the capex penalty multiply"), "{s}");
     }
 
     #[test]
@@ -12645,6 +12687,47 @@ mod tests {
         // ...and the knob is what selects it: same parts, knob off, back to the damped branch.
         p.base = 8.0;
         assert_eq!(compose_score(&p, &neg), compose_score(&p, &plain), "a POSITIVE base ignores the knob entirely");
+    }
+
+    /// (#545) the capex penalty: above the bar (71% at 70) or an OCF burn takes the knob, at or under it,
+    /// no TTM, or the knob off stays x1.0; the cell and the hover read the same TTM.
+    #[test]
+    fn capex_over_ocf_takes_the_penalty_and_prints() {
+        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let cash = |ocf: f64, capex: f64| core::CashTtm { end: day("2026-06-30"), filed: day("2026-07-23"), ocf, capex, q_ocf: Some(39.07e9), q_capex: Some(44.93e9) };
+        let with = |c: Option<core::CashTtm>| {
+            let mut q = gate_fixture();
+            q.fund = Some(core::FundFactors { cash_ttm: c, currency: Some("USD".into()), ..q.fund.clone().unwrap_or_default() });
+            q
+        };
+        let t = BuyHeuristic { growth_capex_ocf_max: 70.0, growth_capex_ocf_penalty: 0.8, ..BuyHeuristic::default() };
+        let damp = |q: &Quote, t: &BuyHeuristic| holder_boosts(q, t).3;
+        assert_eq!(damp(&with(Some(cash(185.67e9, 132.41e9))), &t), 0.8, "71% > 70%");
+        assert_eq!(damp(&with(Some(cash(100.0, 69.0))), &t), 1.0);
+        assert_eq!(damp(&with(Some(cash(100.0, 70.0))), &t), 1.0, "the bar itself passes");
+        assert_eq!(damp(&with(Some(cash(-5.0, 1.0))), &t), 0.8, "a burn is above any bar");
+        assert_eq!(damp(&with(None), &t), 1.0);
+        assert_eq!(damp(&with(Some(cash(-5.0, 1.0))), &BuyHeuristic::default()), 1.0, "the code default is off");
+        let q = with(Some(cash(185.67e9, 132.41e9)));
+        let base = score_parts(&q, &BuyHeuristic::default()).expect("the fixture clears the gates");
+        let hit = score_parts(&q, &t).expect("the fixture clears the gates");
+        assert_eq!(hit.holder_boost, 0.8);
+        assert!(hit.score < base.score, "a penalty lowers the score");
+        let cell = |q: &Quote| col_cell("capex", q, 0.0, None, "", &t, &FundPeMap::new());
+        assert_eq!(cell(&q), "71%");
+        assert_eq!(cell(&with(Some(cash(0.0, 1.0)))), "burn");
+        assert_eq!(cell(&with(None)), "n/a");
+        let mut bank = q.clone();
+        if let Some(f) = bank.fund.as_mut() {
+            f.financial = true;
+        }
+        assert_eq!(cell(&bank), "—");
+        assert_eq!(capex_tip(&bank), None);
+        assert_eq!(capex_tip(&q).as_deref(), Some("Twelve months to 2026-06-30, filed 2026-07-23: operating cash flow USD 185.7B, capex USD 132.4B (71%)\nQuarter to 2026-06-30: operating cash flow USD 39.1B, capex USD 44.9B (115%)"));
+        let mut p = serde_json::json!({"stocks": [[["TICKER", q.ticker.clone()], ["CAPEX/OCF", "71%"]]]});
+        stamp_site(&mut p, std::slice::from_ref(&q), &|t: &str| t.to_string());
+        assert_eq!(p["stocks"][0][1][3], capex_tip(&q).unwrap().as_str(), "the tip rides as the 4th element");
+        assert!(explain_growth_score(&q, &t, 0.0).expect("the fixture clears the gates").contains("Capex is 71% of operating cash flow (TTM, above 70%): ×0.80."));
     }
 
     /// (#472) each 13F flag earns its own knob, (#473) the superinvestor one once per step of buyers and
