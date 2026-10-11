@@ -1357,7 +1357,8 @@ fn scap_section(
             SCAP_LABELS.iter().enumerate().map(|(i, l)| (*l, top.clone(), capped_rows(s, i + 1))).collect()
         },
         28,
-        None,
+        // (#557) the backtest winner under the pre-registered bar (see ci-settings `growth_sector_cap`)
+        Some(SCAP_LABELS[4]),
     );
     let journalled = snaps.iter().filter(|s| !s.sector.is_empty()).count();
     if body.is_empty() {
@@ -2275,6 +2276,8 @@ mod tests {
         // the top 10 holds T2 (-50%) and nine flat names = -5%; cap 1 swaps T2 for R (+200%) = +20%
         assert!(row("scap1 sector cap 1 minus top").contains("mean   +25.0pp"), "{out}");
         assert!(row("scap2 sector cap 2 minus top").contains("mean    +0.0pp"), "{out}");
+        assert!(row("scap1 sector cap 1 minus top").ends_with("inform only"), "{out}");
+        assert!(row("scap5 sector cap 5 minus top").ends_with("needs 12 lines"), "{out}");
         assert!(out.contains("Journalled on 1 of 1"), "{out}");
     }
 

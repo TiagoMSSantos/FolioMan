@@ -13219,6 +13219,28 @@ buy_heuristic:
                                  #   ladder and DCA book, ahead of `growth_corr_cap`, and prints a SECTOR CENSUS line (how many
                                  #   top-10 stock slots carry a sector the cap can judge). `track` grades caps 1..5 forward off
                                  #   each line's `sector` tags (the `scapK` rows). The knob stays 0: nothing live moves.
+                                 #   (#557) GRADED 2026-10-11 at 702fd31: probe.yml, years "20 12 8", args "universe fund pit"
+                                 #   and "universe fund", knobs growth_sector_cap=1..5 plus a no-knob control per lane.
+                                 #   `windows scored` is identical across arms on each lane. BAR (pre-registered, USER): a k
+                                 #   qualifies only if, in all 6 cells, its top-10 MEDIAN excess >= control - 0.1 AND its worst
+                                 #   window >= control. Among qualifiers, the largest minimum worst-window gain wins, and a tie
+                                 #   goes to the larger k. If none qualifies, off wins. Top-10 median excess / worst window
+                                 #   (pts/yr; "=" means identical to control; x marks a failed cell):
+                                 #     cell      control      k1            k2           k3           k4           k5
+                                 #     pit 20y   -0.0/-10.0   +0.4/-10.0    -0.0/-10.0   +1.4/-10.0   =            =
+                                 #     pit 12y   +2.0/-6.4    +1.4x/-17.0x  +2.2/-6.4    +2.4/-6.4    =            =
+                                 #     pit  8y   +2.7/-17.1   +2.6/-17.1    +2.7/-17.1   +2.7/-17.1   =            =
+                                 #     fund 20y  +4.9/-0.9    +5.0/-0.9     +5.2/-0.9    +5.1/-0.9    +5.4/-0.9    +4.9/-0.9
+                                 #     fund 12y  +5.4/-7.8    +5.5/-7.8     +5.4/-7.8    +5.6/-7.8    +5.6/-7.8    +5.4/-7.8
+                                 #     fund  8y  +5.2/-10.3   +4.3x/-12.3x  +4.6x/-10.3  +5.4/-10.3   +5.3/-10.3   +5.2/-10.3
+                                 #   SECTOR CENSUS (control): pit lane 84/113, 156/207, 213/271 top-10 stock slots tagged (74-79%;
+                                 #   delisted ever-members carry no sector and are never capped); fund lane 99%+.
+                                 #   VERDICT: k1 and k2 fail. k3, k4 and k5 qualify, and none lifts a worst window in any cell
+                                 #   (minimum gain 0.0 for all three), so the tie goes to k5. k5 is the bar's winner, but it is
+                                 #   indistinguishable from off: it matches the control in every pit cell, and moves only the fund
+                                 #   20y mean, by a tenth of a point. k3 is the profit-best qualifier (median >= control in all 6
+                                 #   cells, +1.4 on pit 20y), but the bar ranks qualifiers by risk, and no cap bought any risk. KEPT 0 (USER
+                                 #   DECISION). `track` decides on scap5; scap1..4 inform.
   growth_gate_on_tr_cagr: false  # (#99) MEASURED 2026-09-13 AND REFUSED, (#303) at the end of this block. Held OFF,
                                  # the price-only bar every golden and every gate receipt in this file
                                  # was measured under. Read with `growth_min_cagr` and `use_adjusted_close`.
