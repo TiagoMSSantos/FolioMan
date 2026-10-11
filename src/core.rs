@@ -230,6 +230,8 @@ pub struct Profile {
     pub sector: Option<String>,    // (#481) Nasdaq's sector, read by the SECTOR cell only when the universe CSV has none
     #[serde(default)]
     pub index: Option<String>,     // (#490) justETF's index name, read by the INDEX cell only when BF has no benchmark
+    #[serde(default)]
+    pub cik: Option<String>,       // (#540) the SEC CIK, 10 digits, for the REPORTS link; None = not an SEC filer
 }
 
 // (#473) serde's skip test for a count: universe.json carries `super_buyers` on the flagged names alone.

@@ -1833,7 +1833,18 @@ async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
             }
         }
     }
-    let map = CIK_MAP.get_or_init(|| {
+    cik_map().get(&us_symbol(ticker)).cloned()
+}
+
+/// (#540) The cached CIK for the page's REPORTS link, no request: the `_tickers` file [`sec_cik`]
+/// refreshes daily, read through the same Xetra->US alias. None for a non-SEC filer. Call it after the
+/// fetch: the map is read from disk once, so a first read before [`sec_cik`]'s refresh stays stale all run.
+pub fn cached_cik(ticker: &str) -> Option<String> {
+    cik_map().get(&us_symbol(ticker)).cloned()
+}
+
+fn cik_map() -> &'static HashMap<String, String> {
+    CIK_MAP.get_or_init(|| {
         let mut m = HashMap::new();
         let parsed = std::fs::read_to_string(sec_cache_path("_tickers")).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
         if let Some(obj) = parsed.as_ref().and_then(|v| v.as_object()) {
@@ -1844,8 +1855,7 @@ async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
             }
         }
         m
-    });
-    map.get(&us_symbol(ticker)).cloned()
+    })
 }
 
 /// (EU listing) A Xetra twin's US symbol, else the ticker upper-cased. [`sec_cik`] keys on it, and
@@ -13508,6 +13518,8 @@ pub(crate) mod tests {
         // a genuinely non-US name still misses — the alias must not become a catch-all
         assert_eq!(sec_cik(&client, &urls, "NOSUCH.DE").await, None);
         assert_eq!(sec_cik(&client, &urls, "").await, None);
+        // (#540) the REPORTS link reads the same map with no client
+        assert_eq!((cached_cik("abea.de").as_deref(), cached_cik("NOSUCH.DE")), (Some("0001652044"), None));
     }
 
     /// `fetch_sec_facts_rows`' SHELL — the disk cache, the CIK gate and the two `then_some` guards.

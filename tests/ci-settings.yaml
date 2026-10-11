@@ -1129,6 +1129,7 @@ widths:
     - fair_cap    # (#522) intrinsic equity value of the whole company, FAIR × shares, beside MCAP; Bitcoin its realized cap (display only)
     - impl_g      # (#522) reverse DCF: the yearly FCF growth (10y, then 2.5%, at 9%) the price already assumes (display only)
     - target      # (#489) consensus analyst target vs price, 3+ analysts (stocks only; display only)
+    - reports     # (#540) annual/quarterly reports link: the EDGAR page for an SEC filer, else a Google search (display only)
     - ps          # (#462) market value ÷ revenue (stocks only) — the value ratio a loss-maker still has
     - evebitda    # (#462) (market value + net debt) ÷ EBITDA (stocks only) — the whole business's price, debt included
     - ter         # ETF expense ratio %/yr — the one cost that compounds against a 40y hold (Börse Frankfurt, then FMP, then Yahoo; ETFs only)

@@ -299,6 +299,7 @@ mod tests {
         // (#403) the BUY% `screen` stamps from its own sized book, with its real look-through map
         picks::stamp_buy(&mut v, &picks::buy_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new()));
         picks::stamp_index(&mut v, quotes);
+        picks::stamp_site(&mut v, quotes, &|t: &str| t.to_string()); // (#540) the REPORTS links, as `screen` stamps them
         v["generated"] = serde_json::Value::Null;
         v["cagr_floor"] = serde_json::json!(s.buy_heuristic.growth_min_cagr);
         v["reit_cagr_floor"] = serde_json::json!(s.reit_min_cagr);

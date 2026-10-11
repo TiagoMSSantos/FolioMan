@@ -2210,6 +2210,11 @@ pub async fn run(args: Vec<String>) {
         quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF")).map(|q| q.ticker.clone()).collect();
     let figi_key = std::env::var("OPENFIGI_API_KEY").ok().filter(|k| !k.is_empty());
     let aliases = fetch::fetch_listing_aliases(&client, &settings.urls, figi_key.as_deref(), &isin_of, &etfs).await;
+    // (#540) the REPORTS link's EDGAR CIK, off the map the SEC fetch already cached (no request); it rides
+    // universe.json to the page engine like `site`. Funds skip it: a UCITS symbol can collide with a US ticker
+    for q in quotes.iter_mut().chain(shadow_extra.iter_mut()).filter(|q| !q.instrument_type.eq_ignore_ascii_case("ETF")) {
+        q.profile.cik = fetch::cached_cik(&q.ticker);
+    }
     let _ = std::fs::write(
         crate::config::data_path(".screen_universe.json"),
         crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded, &aliases, &twins),

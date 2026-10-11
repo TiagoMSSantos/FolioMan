@@ -3708,15 +3708,17 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; n/a = under 2 years of FCF filed; — = a bank or insurer, whose cash flow is deposits and loans. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
-    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn and n/a as FAIR. ETFs and Bitcoin: the same against their FAIR" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; n/a = under 2 years of FCF filed. Banks and insurers (ᵇ), whose cash flow is deposits and loans: book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE; n/a at ROE ≤ 2.5% or a loss. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
+    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn, n/a and ᵇ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#522) the FAIR pair on owner earnings, the whole-company value, and the reverse DCF. Display only
-    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; n/a for non-US stocks (no stock-pay line); burn, n/a and — as FAIR" },
+    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; n/a for non-US stocks (no stock-pay line); burn and n/a as FAIR; — = a bank or insurer" },
     ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Stocks: margin of safety on FAIR-OE, FAIR-OE ÷ price − 1; burn, n/a and — as FAIR-OE" },
-    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn, n/a and — as FAIR" },
-    ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Stocks: the growth the price already assumes, a reverse DCF: how fast free cash flow (FAIR's base) must grow each year for 10 years, then 2.5% forever at 9%, for the price to be fair. Set it beside FCF-5Y: below = the price asks less than the record; burn, n/a and — as FAIR" },
+    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn, n/a and ᵇ as FAIR" },
+    ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Stocks: the growth the price already assumes, a reverse DCF: how fast free cash flow (FAIR's base) must grow each year for 10 years, then 2.5% forever at 9%, for the price to be fair. Set it beside FCF-5Y: below = the price asks less than the record; burn and n/a as FAIR; — = a bank or insurer" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
+    // (#540) display only: the link is stamped by `stamp_site`, off `profile.cik`
+    ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report)" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
     ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
@@ -4043,8 +4045,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "roic" | "fcf" | "nde" | "icov" | "sector" | "ins" | "earn" | "fcfy" | "ps" | "evebitda" if stock_only_na => "—".to_string(),
         // (#478) a bank's interest is its cost of goods: no operating profit, EBITDA or invested capital
         // (#522) ...and its free cash flow is deposit and loan flow, so the whole FCF family goes with it
-        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcfy" | "fcf5y" | "fair" | "mos" | "fair_oe" | "mos_oe"
-        | "fair_cap" | "impl_g"
+        // (#540) ...except FAIR, MOS% and FAIR-CAP, which read a book-value FAIR off P/E and ROE
+        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcfy" | "fcf5y" | "fair_oe" | "mos_oe" | "impl_g"
             if quote.fund.as_ref().is_some_and(|f| f.financial) =>
         {
             "—".to_string()
@@ -4117,6 +4119,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#522) each cell against its own base: FCF-5Y this year's FCF, the FAIR family the 3-year median
         "fcf5y" | "fair" | "mos" | "fair_oe" | "mos_oe" | "fair_cap" | "impl_g"
             if !stock_only_na
+                && !quote.fund.as_ref().is_some_and(|f| f.financial)
                 && quote
                     .fund
                     .as_ref()
@@ -4162,6 +4165,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "mscore" | "sbc" if stock_only_na => "—".to_string(),
         "mscore" => quote.fund.as_ref().and_then(|f| f.mscore).map_or("n/a".to_string(), |v| format!("{:.2}", -v)),
         "sbc" => quote.fund.as_ref().and_then(|f| f.sbc).map_or("n/a".to_string(), |v| format!("{:.1}%", -v)),
+        "reports" => if quote.profile.cik.is_some() { "SEC" } else { "search" }.to_string(), // (#540)
         "buyback" | "target" | "short" if stock_only_na => "—".to_string(),
         // (#489) fewer than 3 analysts is one bank's opinion, not a consensus
         "target" => quote.profile.target_pct.filter(|_| quote.profile.analysts.is_some_and(|n| n >= 3)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
@@ -4585,13 +4589,25 @@ fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, S
 }
 
 /// (#484) FAIR ÷ price for a stock: base ÷ cap × [`dcf_multiple`] at FCF-5Y, with the short-span marker.
-/// (#522) The base is `fcf_base`, the 3-year median margin; a bank or insurer (#478) reads None, its FCF
-/// being deposit and loan flow (COF read +607%). None on a burn, no cap, or no rate.
+/// (#522) The base is `fcf_base`, the 3-year median margin; a bank or insurer (#478) has no usable FCF
+/// (deposit and loan flow: COF read +607%), so (#540) it reads [`bank_fair_ratio`] instead. None on a
+/// burn, no cap, or no rate.
 pub fn stock_fair_ratio(q: &Quote) -> Option<(f64, String)> {
     if q.fund.as_ref().is_some_and(|f| f.financial) {
-        return None;
+        return bank_fair_ratio(q);
     }
     fair_on(q, |f| f.fcf_base).or_else(|| q.ep_fair.clone())
+}
+
+/// (#540) A bank's or insurer's FAIR ÷ price, the justified price-to-book: book × (ROE − g) ÷ (r − g) at
+/// FAIR's own 9% and 2.5%, book per share = EPS ÷ ROE. Over the price that is (1 ÷ P/E) × (1 − g ÷ ROE) ÷
+/// (r − g), so it reads the P/E and ROE cells alone. None on a loss or ROE ≤ g (no value above book to earn).
+/// ponytail: today's ROE is held forever, no fade toward r; fade it over 10 years if banks misprice.
+pub fn bank_fair_ratio(q: &Quote) -> Option<(f64, String)> {
+    let (r, g) = (9.0, 2.5); // percent, `dcf_raw`'s rate and terminal growth (1.025 - 1.0 misses 0.025 by a bit)
+    let roe = q.roe.filter(|v| *v > g)?;
+    let pe = q.pe_ratio.filter(|v| *v > 0.0)?;
+    Some((1.0 / pe * (1.0 - g / roe) / ((r - g) / 100.0), "ᵇ".to_string()))
 }
 
 /// (#522) FAIR-OE ÷ price: [`stock_fair_ratio`] on owner earnings (FCF − stock-based comp). SEC filers only:
@@ -4698,7 +4714,7 @@ const HIDE_ETF: &[&str] =
 const HIDE_CRYPTO: &[&str] = &[
     "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
-    "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g",
+    "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g", "reports",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -5042,6 +5058,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
             (h.to_string(), text)
         })
         .chain([("SCORE".to_string(), RANK_SCORE_HELP.to_string()), ("MISSES".to_string(), RANK_MISSES_HELP.to_string())])
+        .chain([("REPORTS".to_string(), lanes["REPORTS"].clone())]) // (#540) page only, like SCORE
         .collect();
     let inflation = inflation
         .first()
@@ -5633,13 +5650,37 @@ pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default();
-            let Some(site) = by.get(t).and_then(|q| q.profile.site.clone()).filter(|u| u.starts_with("https://")) else { continue };
+            let q = by.get(t);
+            // (#540) REPORTS: a found row links its EDGAR page or a search on its name; an unfound one
+            // keeps an earlier pass's link (screen stamps the pool, then the side-fetched names)
+            let named = cells.iter().find(|c| c[0] == "NAME").and_then(|c| c[1].as_str()).unwrap_or(t).to_string();
+            if let Some(cell) = cells.iter_mut().find(|c| c[0] == "REPORTS").and_then(serde_json::Value::as_array_mut) {
+                if q.is_some() || cell.len() < 3 {
+                    let (label, url) = reports_link(q.copied(), &named);
+                    *cell = vec!["REPORTS".into(), label.into(), url.into()];
+                }
+            }
+            let Some(site) = q.and_then(|q| q.profile.site.clone()).filter(|u| u.starts_with("https://")) else { continue };
             if let Some(name) = cells.iter_mut().find(|c| c[0] == "NAME").and_then(serde_json::Value::as_array_mut) {
                 name.truncate(2);
                 name.push(site.into());
             }
         }
     }
+}
+
+/// (#540) The REPORTS cell, label and link: SEC and the EDGAR company page for an SEC filer, else search
+/// and a Google search on the name (the quote's, or the row's NAME text when unpriced: its cell read n/a)
+/// for its investor-relations reports, a fund's for its factsheet, KID and annual report.
+fn reports_link(q: Option<&Quote>, named: &str) -> (&'static str, String) {
+    if let Some(cik) = q.and_then(|q| q.profile.cik.as_deref()) {
+        return ("SEC", format!("https://www.sec.gov/edgar/browse/?CIK={cik}"));
+    }
+    let what = if q.is_some_and(|q| q.instrument_type.eq_ignore_ascii_case("ETF")) { "factsheet KID annual report" } else { "investor relations annual report" };
+    let query = format!("\"{}\" {what}", q.map_or(named, |q| q.name.as_str()));
+    // RFC 3986 unreserved bytes pass, every other byte is %XX: the wasm build carries no url crate
+    let enc: String = query.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    ("search", format!("https://www.google.com/search?q={enc}"))
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -6163,6 +6204,7 @@ pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned, tuning: &BuyHe
             let mut row: Vec<(String, String)> = HOLD_CORE_COLS.iter().map(|h| (*h).to_string()).zip(hold_core_cells(q, owned)).collect();
             row[0] = ("RANK".to_string(), format!("{}{}", i + 1, row[0].1)); // (#535) position, then the `o` flag
             row.splice(3..3, [("SCORE".to_string(), score), ("MISSES".to_string(), misses)]);
+            row.push(("REPORTS".to_string(), "search".to_string())); // (#540) a fund has no CIK; `stamp_site` links it
             row
         })
         .collect()
@@ -7988,12 +8030,23 @@ mod tests {
         st.fund.as_mut().unwrap().cap_fund = cap;
         st.fund.as_mut().unwrap().oe_base = Some(-1.0);
         assert_eq!((cc("fair_oe", &st, 0.0, None, ""), cc("fair", &st, 0.0, None, "")), ("burn".to_string(), "€44.27".to_string()), "SBC can burn alone");
-        // (#478) a bank's FCF is deposit flow: the whole family reads —, and feeds no look-through
-        st.fund.as_mut().unwrap().financial = true;
-        for k in ["fcfy", "fcf5y", "fair", "mos", "fair_oe", "mos_oe", "fair_cap", "impl_g"] {
+        // (#478) a bank's FCF is deposit flow: the FCF family reads —; (#540) FAIR, MOS% and FAIR-CAP read
+        // book × (ROE − g) ÷ (r − g) off P/E and ROE instead, a negative FCF base never printing burn
+        let (fcf_base, pe, roe) = (st.fund.as_ref().unwrap().fcf_base, st.pe_ratio, st.roe);
+        (st.fund.as_mut().unwrap().financial, st.fund.as_mut().unwrap().fcf_base) = (true, Some(-1.0));
+        for k in ["fcfy", "fcf5y", "fair_oe", "mos_oe", "impl_g"] {
             assert_eq!(cc(k, &st, 0.0, None, ""), "—", "{k} on a bank");
         }
-        assert_eq!(stock_fair_ratio(&st), None);
+        assert_eq!((cc("fair", &st, 0.0, None, ""), stock_fair_ratio(&st)), ("n/a".to_string(), None), "no P/E or ROE");
+        (st.pe_ratio, st.roe) = (Some(10.0), Some(15.0));
+        let fair = (cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, ""), cc("fair_cap", &st, 0.0, None, ""));
+        assert_eq!(fair, ("€64.10ᵇ".to_string(), "+28%ᵇ".to_string(), "€51.3Bᵇ".to_string()), "0.1 × (1 − 2.5/15) ÷ 6.5% = 1.282 × €50");
+        assert_eq!(stock_fair_ratio(&st), bank_fair_ratio(&st));
+        st.roe = Some(2.5);
+        assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "ROE at g earns nothing over book");
+        (st.pe_ratio, st.roe) = (Some(-5.0), Some(15.0));
+        assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "a loss");
+        (st.pe_ratio, st.roe, st.fund.as_mut().unwrap().fcf_base) = (pe, roe, fcf_base);
         let f = st.fund.as_mut().unwrap();
         (f.financial, f.fcf_ttm, f.oe_base) = (false, Some(20.0), None);
         st.shares_out = None;
@@ -11074,6 +11127,37 @@ mod tests {
         }
     }
 
+    /// (#540) REPORTS links the EDGAR page on a CIK (a Xetra twin's too), else a Google search on the
+    /// quote's name, a fund's with its own keywords, an unpriced row's on its NAME text. A later pass
+    /// keeps the links of rows it cannot find and replaces those it can.
+    #[test]
+    fn stamp_site_links_reports_to_edgar_or_a_search() {
+        let mut aapl = Quote::stub("APC.DE", "€1", "", "Apple Inc.");
+        aapl.profile.cik = Some("0000320193".into());
+        let mut etf = Quote::stub("VWCE.DE", "€1", "", "Vanguard FTSE All-World");
+        etf.instrument_type = "ETF".into();
+        let quotes = [aapl, Quote::stub("SAP.DE", "€1", "", "SAP SE"), etf];
+        let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
+        let row = |t: &str| serde_json::json!([["TICKER", t], ["NAME", "R&D Co"], ["REPORTS", "x"]]);
+        let mut p = serde_json::json!({"stocks": [row("APC.DE"), row("SAP.DE")], "etfs": [row("VWCE.DE")], "berkshire": [row("AAPL"), row("ZZZ")]});
+        stamp_site(&mut p, &quotes, &us);
+        let (sec, g) = ("https://www.sec.gov/edgar/browse/?CIK=0000320193", "https://www.google.com/search?q=");
+        assert_eq!(p["stocks"][0][2], serde_json::json!(["REPORTS", "SEC", sec]));
+        assert_eq!(p["berkshire"][1][2][1], "search", "an unpriced row's n/a gives way");
+        assert_eq!(p["berkshire"][0][2][2], sec, "a US filing finds its Xetra twin");
+        assert_eq!(p["stocks"][1][2][2], format!("{g}%22SAP%20SE%22%20investor%20relations%20annual%20report"));
+        assert_eq!(p["etfs"][0][2][2], format!("{g}%22Vanguard%20FTSE%20All-World%22%20factsheet%20KID%20annual%20report"));
+        assert_eq!(p["berkshire"][1][2][2], format!("{g}%22R%26D%20Co%22%20investor%20relations%20annual%20report"), "unpriced: the NAME text");
+        let before = p.clone();
+        stamp_site(&mut p, &[], &us);
+        assert_eq!(p, before, "an unfound row keeps its link");
+        let mut sap = Quote::stub("SAP.DE", "€1", "", "SAP SE");
+        sap.profile.cik = Some("0001000184".into());
+        stamp_site(&mut p, &[sap], &us);
+        assert_eq!(p["stocks"][1][2], serde_json::json!(["REPORTS", "SEC", "https://www.sec.gov/edgar/browse/?CIK=0001000184"]), "a found row is replaced");
+        assert_eq!(p["stocks"][0][2][2], sec);
+    }
+
     /// (#500) Young = an equity listed under 5 years: fastest revenue growth first, a missing or NaN
     /// figure last (ticker order among them), never dropped; a fund, an old stock or an unknown age is out.
     #[test]
@@ -11496,9 +11580,11 @@ mod tests {
         let mut heads = HOLD_CORE_COLS.to_vec();
         heads[0] = "RANK"; // (#535)
         heads.splice(3..3, ["SCORE", "MISSES"]);
+        heads.push("REPORTS"); // (#540) page only, linked by stamp_site
         assert_eq!(rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(), heads);
         let mut cells = hold_core_cells(&q, &Owned::default());
         cells.drain(..3);
+        cells.push("search".to_string());
         assert_eq!(rows[0][5..].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(), cells);
         assert!(hold_core_web_rows(&[], &Owned::default(), &BuyHeuristic::default(), &[]).is_empty(), "no cores -> no rows");
     }
