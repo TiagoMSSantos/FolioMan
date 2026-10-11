@@ -13207,6 +13207,12 @@ buy_heuristic:
                                  #   3 is the value to try first if someone makes that choice; it is a
                                  #   judgement, not a measurement, and must not acquire a receipt that
                                  #   implies otherwise.
+                                 #   (#556) RE-ASKED 2026-10-11, after (#552) let Apple, Applied Materials and Broadcom in: 5 of the 9
+                                 #   ranked stocks are IT (4 of them semiconductors, plus SMH.L in the ETF lane), about 40% of the page's
+                                 #   equal-weight BUY%. Cap 3 would drop Broadcom and NVIDIA, and cap 4 only NVIDIA. With 9 passers
+                                 #   nothing refills, so the table shortens. KEPT OFF (USER DECISION): still ungradeable, and a judgement
+                                 #   cut of the highest-CAGR names fights the 20-year max-profit goal. A re-ask needs the portfolio-level
+                                 #   measurement above first, not a probe.yml run.
   growth_gate_on_tr_cagr: false  # (#99) MEASURED 2026-09-13 AND REFUSED, (#303) at the end of this block. Held OFF,
                                  # the price-only bar every golden and every gate receipt in this file
                                  # was measured under. Read with `growth_min_cagr` and `use_adjusted_close`.
