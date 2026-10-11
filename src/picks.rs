@@ -1305,7 +1305,7 @@ struct ScoreParts {
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
-    holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one × (#545) growth_capex_ocf_penalty above growth_capex_ocf_max; 1.0 otherwise / knobs off / every backtest quote
+    holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one × (#545) growth_capex_ocf_penalty above growth_capex_ocf_max × (#550) (growth_max_peg / PEG)^growth_peg_taper_k above the ceiling; 1.0 otherwise / knobs off / every backtest quote
     score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
@@ -1622,7 +1622,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if tuning.growth_max_peg > 0.0 {
         let bar = 100.0 / tuning.growth_max_peg; // PEG 2.0 -> reject peg_yield < 50
         match ff.and_then(|f| f.peg_yield) {
-            Some(p) if p < bar => return None, // pricier than the ceiling for the growth it delivers
+            // pricier than the ceiling for the growth it delivers; (#550) under a taper it is kept and
+            // docked in `holder_boosts` instead
+            Some(p) if p < bar && peg_walled(tuning) => return None,
             // peg_yield None-outs loss-makers AND negative growth alike, so None is ambiguous. Split it
             // on the one case we can actually identify: negative EPS is not "missing data", it is a name
             // with no earnings to be cheap against, and letting the most expensive cohort walk through a
@@ -1913,8 +1915,8 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     } else {
         1.0
     };
-    let (brk_boost, super_boost, social_boost, capex_damp) = holder_boosts(quote, tuning);
-    let holder_boost = brk_boost * super_boost * social_boost * capex_damp;
+    let (brk_boost, super_boost, social_boost, capex_damp, peg_taper) = holder_boosts(quote, tuning);
+    let holder_boost = brk_boost * super_boost * social_boost * capex_damp * peg_taper;
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
     // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
@@ -1970,8 +1972,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
 /// `brkh`/`soc` rows grade it forward. (#477) one definition for the score and the walkthrough that
 /// splits it per source. (#545) The 4th factor is the capex penalty: `growth_capex_ocf_penalty` when
 /// TTM capex tops `growth_capex_ocf_max`% of operating cash flow. No TTM (a bank, a non-SEC name, every
-/// backtest quote) stays x1.0, so it is backtest-blind the same way.
-fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64, f64) {
+/// backtest quote) stays x1.0, so it is backtest-blind the same way. (#550) The 5th is the PEG taper,
+/// (growth_max_peg / PEG)^growth_peg_taper_k above the ceiling, and it is NOT backtest-blind: peg_yield
+/// fills on `fund` runs, so this one is graded. Below the ceiling, off, or with no PEG it is an exact 1.0.
+fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64, f64, f64) {
     let brk = if quote.brk_held { tuning.growth_brk_held_boost } else { 1.0 };
     // (#473) one superinvestor step per `growth_superinvestor_step` buyers, rounded down; `powi(0)` is an
     // exact 1.0, so a name under one step and the knob at 1.0 both stay byte-identical
@@ -1983,7 +1987,20 @@ fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64, f64) {
         .and_then(|f| f.cash_ttm.as_ref())
         .filter(|c| core::capex_ocf(c) > tuning.growth_capex_ocf_max)
         .map_or(1.0, |_| tuning.growth_capex_ocf_penalty);
-    (brk, sup, soc, capex)
+    // peg_yield × ceiling / 100 = ceiling / PEG; capped at 1.0 so a name under the ceiling gains nothing.
+    // The max_peg guard is load-bearing: at 0 that ratio is 0, and 0^k would zero every name.
+    let peg_taper = if tuning.growth_max_peg > 0.0 && !peg_walled(tuning) {
+        quote.fund.as_ref().and_then(|f| f.peg_yield).map_or(1.0, |p| (p * tuning.growth_max_peg / 100.0).min(1.0).powf(tuning.growth_peg_taper_k))
+    } else {
+        1.0
+    };
+    (brk, sup, soc, capex, peg_taper)
+}
+
+/// (#550) true = `growth_max_peg` is a hard wall (the default); false = a taper starts there. One reader
+/// for the gate in `score_parts` and its reason in the fails list, so the two cannot disagree.
+fn peg_walled(tuning: &BuyHeuristic) -> bool {
+    tuning.growth_peg_taper_k <= 0.0
 }
 
 /// (#144) `base` and the multiplier stack -> the ranked score. The ONE definition of that composition:
@@ -2841,7 +2858,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     if tuning.growth_max_peg > 0.0 {
         let bar = 100.0 / tuning.growth_max_peg;
         match ff.and_then(|f| f.peg_yield) {
-            Some(p) if p < bar => {
+            Some(p) if p < bar && peg_walled(tuning) => {
                 let peg = 100.0 / p; // p > 0 always: peg_yield is None unless BOTH factors are positive
                 // RELATIVE margin (50% over), not the flat +0.5 this used to carry. PEG is a MULTIPLE and
                 // the ceiling's measured range is 1.25..3.0, so a fixed 0.5 meant "40% over" at the bottom
@@ -3428,8 +3445,8 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     // (#472) and the 13F nudge, (#473) with the social one, printed only on a flagged name with a knob set;
     // (#477) one plain line per source that bites
     let holder_frag = if p.holder_boost != 1.0 {
-        s.push_str(&format!("  bonuses      = Berkshire × superinvestors × social × capex = {:.3}\n", p.holder_boost));
-        let (brk, sup, soc, capex) = holder_boosts(quote, tuning);
+        s.push_str(&format!("  bonuses      = Berkshire × superinvestors × social × capex × PEG taper = {:.3}\n", p.holder_boost));
+        let (brk, sup, soc, capex, peg_taper) = holder_boosts(quote, tuning);
         if brk != 1.0 {
             say(&mut s, &format!("Berkshire Hathaway holds it (its newest 13F filing): ×{brk:.2}."));
         }
@@ -3444,6 +3461,9 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
             let r = quote.fund.as_ref().and_then(|f| f.cash_ttm.as_ref()).map_or(f64::INFINITY, core::capex_ocf);
             let r = if r.is_finite() { format!("{r:.0}%") } else { "more than all".to_string() };
             say(&mut s, &format!("Capex is {r} of operating cash flow (TTM, above {:.0}%): ×{capex:.2}.", tuning.growth_capex_ocf_max));
+        }
+        if peg_taper != 1.0 {
+            say(&mut s, &format!("PEG above the {:.2} ceiling: ×{peg_taper:.2} ((ceiling ÷ PEG)^{}).", tuning.growth_max_peg, tuning.growth_peg_taper_k));
         }
         format!(" × {:.3}", p.holder_boost)
     } else {
@@ -3507,7 +3527,7 @@ fn in_short(p: &ScoreParts, tuning: &BuyHeuristic) -> String {
         }
     }
     if p.holder_boost != 1.0 {
-        s.push_str(&format!("    · Bonuses and the capex penalty multiply it by ×{:.3}.\n", p.holder_boost));
+        s.push_str(&format!("    · Bonuses, the capex penalty and the PEG taper multiply it by ×{:.3}.\n", p.holder_boost));
     }
     s
 }
@@ -12728,6 +12748,37 @@ mod tests {
         stamp_site(&mut p, std::slice::from_ref(&q), &|t: &str| t.to_string());
         assert_eq!(p["stocks"][0][1][3], capex_tip(&q).unwrap().as_str(), "the tip rides as the 4th element");
         assert!(explain_growth_score(&q, &t, 0.0).expect("the fixture clears the gates").contains("Capex is 71% of operating cash flow (TTM, above 70%): ×0.80."));
+    }
+
+    /// (#550) the soft PEG ceiling: with a taper, a name over `growth_max_peg` scores at (ceiling ÷ PEG)^k
+    /// of its walled-off score instead of being rejected, and drops out of the fails list; k = 0 is the
+    /// wall, a name under the ceiling and a ceiling of 0 stay x1.0, and a loss-maker is still rejected.
+    #[test]
+    fn peg_taper_docks_a_name_over_the_ceiling_instead_of_rejecting_it() {
+        let with = |peg_yield: Option<f64>, eps_ttm: Option<f64>| {
+            let mut q = gate_fixture();
+            q.fund = Some(core::FundFactors { peg_yield, eps_ttm, ..Default::default() });
+            q
+        };
+        let wall = BuyHeuristic { growth_max_peg: 1.6, ..BuyHeuristic::default() };
+        let k2 = BuyHeuristic { growth_peg_taper_k: 2.0, ..wall.clone() };
+        let taper = |q: &Quote, t: &BuyHeuristic| holder_boosts(q, t).4;
+        let dear = with(Some(31.25), Some(5.0)); // PEG 3.2, twice the ceiling
+        assert!(score_parts(&dear, &wall).is_none(), "k = 0 is the hard wall");
+        assert!((taper(&dear, &k2) - 0.25).abs() < 1e-12, "(1.6 / 3.2)^2");
+        assert!((taper(&dear, &BuyHeuristic { growth_peg_taper_k: 4.0, ..wall.clone() }) - 0.0625).abs() < 1e-12);
+        let docked = score_parts(&dear, &k2).expect("a taper keeps the name");
+        let free = score_parts(&dear, &BuyHeuristic::default()).expect("no ceiling at all");
+        assert_eq!(docked.holder_boost, 0.25, "the taper rides in the holder multiplier");
+        assert!(docked.score < free.score, "and docks the score");
+        assert_eq!(taper(&with(Some(100.0), Some(5.0)), &k2), 1.0, "PEG 1.0 is under the ceiling: no bonus");
+        assert_eq!(taper(&dear, &BuyHeuristic { growth_max_peg: 0.0, ..k2.clone() }), 1.0, "no ceiling, nothing to taper from");
+        assert_eq!(taper(&with(None, Some(5.0)), &k2), 1.0, "no PEG passes untouched");
+        assert!(score_parts(&with(None, Some(-1.0)), &k2).is_none(), "a loss-maker has no PEG to taper");
+        let peg_fail = |t: &BuyHeuristic| gate_failures(&dear, t).expect("assessable").iter().any(|f| f.0 == "peg");
+        assert!(peg_fail(&wall));
+        assert!(!peg_fail(&k2), "a tapered name is not a gate failure");
+        assert!(explain_growth_score(&dear, &k2, 0.0).expect("kept").contains("PEG above the 1.60 ceiling: ×0.25 ((ceiling ÷ PEG)^2)."));
     }
 
     /// (#472) each 13F flag earns its own knob, (#473) the superinvestor one once per step of buyers and

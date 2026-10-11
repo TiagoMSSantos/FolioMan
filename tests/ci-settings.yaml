@@ -19246,6 +19246,23 @@ buy_heuristic:
   #  1YD.DE Broadcom (PEG 1.67), AP2.DE Applied Materials (1.71), PAR.DE Parker-Hannifin (1.72), FTNT
   #  Fortinet (2.22), plus 5AP.DE and MPWR above the 2.4 near-miss band. Three of them would have
   #  entered a 13-name cleared pool at any rung >= 1.75, and the ladder says the book is worse for it.
+  growth_peg_taper_k: 0.0        # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
+  #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
+  #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
+  #── (#550) PENDING 2026-10-11 — TAPER INSTEAD OF WALL ABOVE growth_max_peg ──
+  #  WHY A NEW MECHANISM AND NOT THE (#266) LADDER AGAIN: (#266) refused LOOSENING the wall because a looser ceiling admits
+  #  dear names that rank TOO HIGH and evict better ones, and wrote that re-arming needs a new mechanism. The taper lets the
+  #  same names in BELOW the names they used to evict, in proportion to how dear they are. Loss-makers are still rejected.
+  #  WHERE: `picks::holder_boosts` 5th factor beside the (#545) capex penalty (never on a negative score), and `peg_walled`
+  #  guards both the gate in `score_parts` and its reason in `gate_failures`. GRADEABLE: peg_yield fills on `fund` runs.
+  #  ARMS, written before any run (#165): k = 1, 2, 4 against the control k = 0, each `backtest {12,8} universe fund pit` on
+  #  probe.yml (`knobs: growth_peg_taper_k=<k>`). The value brake (growth_value_floor_pct 40) stays on in every arm.
+  #  BAR: ship the best k if Ship Rule v2 PRIMARY holds at 12y AND 8y vs the control (top-10 excess, mean AND median, up
+  #  or held) with the worst window and h2h guards intact. A winner at k = 4 is a grid edge: ship it, note it, extend to
+  #  6 / 8 as a follow-up. No arm passes -> 0 stays, receipt reads REFUSED. A run with thin `windows scored` is re-dispatched,
+  #  not graded. 20y is not run: (#266) found every PEG arm byte-identical there.
+  #  VERDICT: pending the probe runs.
+  #  REVERT RULE: set 0.0; the code is then byte-identical to the wall.
   growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
