@@ -2504,7 +2504,7 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
-const FUND_FACTORS: [&str; 52] = [
+const FUND_FACTORS: [&str; 53] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
@@ -2545,6 +2545,7 @@ const FUND_FACTORS: [&str; 52] = [
     "low_turnover",         // (#531) Ibbotson-Chen-Kim-Hu 2013 popularity, share turnover negated; 49 -> 50
     "rnd_growth",           // (#532) Arnott et al. 2026 fundamental growth, the R&D leg: 3y ΔR&D ÷ old revenue; 50 -> 51
     "low_dro",              // (#533) Wang 2019 CCC spread, the receivables leg: −receivables days, sector-demeaned; 51 -> 52
+    "capex_light",          // (#549) −capex ÷ OCF, annual, raw: the (#545) column's question asked point-in-time; 52 -> 53
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -4527,6 +4528,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("low_turnover", |f| f.low_turnover), // (#531)
         ("rnd_growth", |f| f.rnd_growth), // (#532)
         ("low_dro", |f| f.low_dro), // (#533)
+        ("capex_light", |f| f.capex_light), // (#549)
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
@@ -4717,6 +4719,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("interest_cover", |f| f.interest_cover),
         ("net_cash_rev", |f| f.net_cash_rev),
         ("margin_stability", |f| f.margin_stability), // (round 109) reject the most-cyclical margins
+        ("capex_light", |f| f.capex_light), // (#549) reject the most capex-heavy: (#545)'s penalty, point-in-time
     ];
     let mut shown = false;
     for (name, get) in survival {

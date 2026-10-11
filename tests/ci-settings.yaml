@@ -5495,6 +5495,27 @@ buy_heuristic:
                                  #  above). The exposure sector row already reads their FundMix (IT 45.1% is real). Only the currency and name rows
                                  #  read "?". Their top-10 overlap is ~4-5 names, under the (#510) bar of 7, so full holdings would not merge them.
                                  #  Nothing reopens before the forward-record review (~2027-09, #415 bar).
+                                 #── (#549) PENDING 2026-10-11 — ANNUAL CAPEX ÷ OCF ("CAPITAL-LIGHT") AS A FUND FACTOR ──
+                                 #  WHAT: one FUND_FACTORS row, `capex_light` = −(ocf_margin − fcf_margin) ÷ ocf_margin × 100, capex ÷ operating cash
+                                 #  flow negated (high = capital-light; NVDA's ~5% reads −5), from the as-of SEC row. None on a `financial` row, with
+                                 #  OCF <= 0, or with either leg missing: the (#545) column's rules. RAW, not sector-demeaned, because a live boost
+                                 #  or the (#545) penalty would be raw too. Also in the held-book list and the survival list (reject the bottom P% =
+                                 #  drop the most capex-heavy, which is (#545)'s penalty asked point-in-time). FUND_FACTORS 52 -> 53, so every Šidák
+                                 #  band tightens again. It fills live raw (the same `fund_factors`), but nothing reads it.
+                                 #  WHY: the user asked (2026-10-11) whether a very LOW capex ÷ OCF should RAISE a stock's rank (NVDA 5%), and offered
+                                 #  NET% instead. NET% is refused on record (net_margin AUC 0.40 / 0.48; cf_assets 0.42 / 0.44), and ROIC already
+                                 #  pays capital efficiency. The TTM column is backtest-blind (#545), so its ANNUAL twin is the only gradeable form.
+                                 #  Prior: weak. The pool reads profitability backwards, and capex-heavy winners (AMZN, hyperscalers) sit in it.
+                                 #  BAR, WRITTEN BEFORE THE RUN (#165): AUC > 0.5 at 12y AND 8y, |AUC-0.5| >= 0.10 at both -> CANDIDATE-LOW: offer a
+                                 #  `growth_capex_light_boost` knob, default 1.0, the user decides. AUC < 0.5 at both, same margin -> CANDIDATE-HIGH:
+                                 #  recommend returning growth_capex_ocf_penalty to 1.0, since capex-heavy names then WIN. Anything else, or a 12y n/a,
+                                 #  -> DEAD: this receipt is the whole record. A run with `windows scored` far under the (#533) 2815 / 6246 is thin and
+                                 #  is re-dispatched, not graded.
+                                 #  RUN: `gh workflow run probe.yml` (#548), defaults `12 8` and `universe fund pit`, FOLIOMAN_CONFIG=ci-settings.
+                                 #  The six goldens move ONLY by the 52 -> 53 count lines, one held-out TEST-edge row and `capex_light n=0` in the
+                                 #  no-book list (the fixture rows carry no OCF tag).
+                                 #  VERDICT: pending the probe run.
+                                 #  REVERT RULE: drop the row, the field, its arm and both list entries; the goldens move back by the same lines.
                                  #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
                                  #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
                                  #  "hedged", so the screen funnel names it). ETF-scoped. Substrings hedg/hdg/heur/hchf/husd/hgbp catch the glued

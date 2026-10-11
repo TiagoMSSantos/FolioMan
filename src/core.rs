@@ -4113,6 +4113,9 @@ pub struct FundFactors {
     // (#533) Wang 2019 (JFE 133(2)) receivables days NEGATED: −receivables ÷ revenue × 365 (high = collects
     // fast). `fund_factors` fills it raw; the backtest's same-date pass demeans it within the sector. PROBE-ONLY
     pub low_dro: Option<f64>,
+    // (#549) capex ÷ operating cash flow NEGATED, % (high = capital-light: NVDA's ~5% reads −5). The ANNUAL
+    // twin of (#545)'s TTM CAPEX/OCF column, raw, so its AUC grades a boost or that column's penalty. PROBE-ONLY
+    pub capex_light: Option<f64>,
     pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
@@ -4578,6 +4581,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         low_turnover: None, // (#531) needs the volume series
         // (#533) a bank's or insurer's receivables are loans, not trade credit, so its row reads None
         low_dro: now.filter(|r| !r.financial).and_then(|r| r.rec_margin).map(|m| -m * 3.65),
+        // (#549) the (#545) column's rule: a financial row and a cash-burning one (OCF <= 0) read None
+        capex_light: now
+            .filter(|r| !r.financial)
+            .and_then(|r| Some((r.ocf_margin.filter(|o| *o > 0.0)?, r.fcf_margin?)))
+            .map(|(o, f)| -(o - f) / o * 100.0),
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5347,6 +5355,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "fcf_cap_yield" => f.fcf_cap_yield,               // (#523) 3y-median FCF ÷ cap: measured, unweighted
         "low_turnover" => f.low_turnover,                 // (#531) −a year's share turnover: measured, unweighted
         "low_dro" => f.low_dro,                           // (#533) −receivables days, sector-demeaned: measured, unweighted
+        "capex_light" => f.capex_light,                   // (#549) −capex ÷ OCF, annual, raw: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6263,6 +6272,7 @@ mod tests {
             fcf_cap_yield: Some(49.0),
             low_turnover: Some(50.0),
             low_dro: Some(52.0),
+            capex_light: Some(53.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6320,6 +6330,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "low_turnover"), Some(50.0)); // (#531)
         assert_eq!(select_fund_factor(&f, "rnd_growth"), Some(51.0)); // (#532)
         assert_eq!(select_fund_factor(&f, "low_dro"), Some(52.0)); // (#533)
+        assert_eq!(select_fund_factor(&f, "capex_light"), Some(53.0)); // (#549)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -7080,6 +7091,29 @@ mod tests {
         assert!((d(r(Some(20.0), false)).unwrap() + 73.0).abs() < 1e-9);
         assert_eq!(d(r(None, false)), None);
         assert_eq!(d(r(Some(20.0), true)), None);
+    }
+
+    /// (#549) `capex_light` is capex ÷ OCF negated: OCF 20% and FCF 19% of revenue spend 1 of 20 on capex,
+    /// so −5 (NVDA's shape). OCF at zero or below, a missing leg, or a financial row is None.
+    #[test]
+    fn capex_light_is_negated_capex_over_ocf() {
+        let r = |ocf: Option<f64>, fcf: Option<f64>, financial: bool| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            ocf_margin: ocf,
+            fcf_margin: fcf,
+            financial,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let c = |row: FundRow| fund_factors(&[row], cutoff, 5).capex_light;
+        assert!((c(r(Some(20.0), Some(19.0), false)).unwrap() + 5.0).abs() < 1e-9);
+        assert!((c(r(Some(10.0), Some(-5.0), false)).unwrap() + 150.0).abs() < 1e-9, "capex past OCF reads below −100");
+        assert_eq!(c(r(Some(0.0), Some(-5.0), false)), None);
+        assert_eq!(c(r(Some(-3.0), Some(-5.0), false)), None);
+        assert_eq!(c(r(None, Some(19.0), false)), None);
+        assert_eq!(c(r(Some(20.0), None, false)), None);
+        assert_eq!(c(r(Some(20.0), Some(19.0), true)), None);
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of
