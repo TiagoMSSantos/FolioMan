@@ -2831,6 +2831,15 @@ fn corr_cap_rung<T: Clone>(rows: &[T], trails: &[&[f64]], n: usize, cap: f64) ->
     core::decorrelate_keep(trails, n, cap).into_iter().map(|i| rows[i].clone()).collect()
 }
 
+/// (#558) The RANKED ruler's terminal multiple: the book's `k` multiples in score order, rank `r`
+/// (1-based) weighted `(k + 1 - r) / (k(k+1)/2)`, so a full top-10 weighs 10..1 over 55 and a thinner
+/// pool renormalises over the names it has. Unlike the equal-weight book it is NOT set-invariant
+/// ((#149)): a reorder inside the basket moves it, which is the point. Pure for the reason above.
+fn ranked_multiple(m: &[f64]) -> f64 {
+    let k = m.len() as f64;
+    m.iter().enumerate().map(|(r, x)| (k - r as f64) * x).sum::<f64>() / (k * (k + 1.0) / 2.0)
+}
+
 /// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
 /// `years`, and does that beat holding ^GSPC over the SAME window? Per pick, excess = its annualized
 /// return minus what ^GSPC did from the same cutoff. Top-N per ~6mo bucket; report mean pick/SPY CAGR,
@@ -2962,6 +2971,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         let (mut zeros, mut held) = (0usize, 0usize);
         let mut zero_names: Vec<String> = Vec::new(); // (#zeros) names ≤−90% at top-10 -> union across horizons = true distinct death count
         let mut multiples: Vec<f64> = Vec::new();
+        let mut ranked: Vec<f64> = Vec::new(); // (#558) per bucket: rank-weighted book minus bench, pts/yr
         for (b, v) in &by_bucket {
             let mut vv = v.clone();
             vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
@@ -2993,6 +3003,11 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             book.push(ann((book_cum - 1.0) * 100.0, years));
             spy.push(ann((spy_cum - 1.0) * 100.0, years));
             excess.push(*book.last().unwrap() - *spy.last().unwrap());
+            if n == VERDICT_TOP {
+                // the bench takes the same rank weights, so a name's own-window index leg stays paired with it
+                let w = |r: Vec<f64>| ann((ranked_multiple(&r) - 1.0) * 100.0, years);
+                ranked.push(w(p.iter().map(|x| 1.0 + x.1 / 100.0).collect()) - w(p.iter().map(|x| 1.0 + x.2 / 100.0).collect()));
+            }
             zeros += p.iter().filter(|x| x.1 <= -90.0).count();
             if n == 10 {
                 zero_names.extend(p.iter().filter(|x| x.1 <= -90.0).map(|x| format!("{}@b{b}({:.0}%)", x.3, x.1)));
@@ -3040,6 +3055,14 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
                 crate::core::serie_e_best_pct(),
                 median(multiples.clone()),
                 crate::core::serie_e_multiple(years as f64)
+            );
+            // (#558) the same buckets, weighted 10..1 by rank: a ruler that sees a reorder inside the book.
+            // Never lead with `markers::VERDICT_ROW` (#466); the gate keeps reading the equal-weight row.
+            println!(
+                "  RANKED top-{n} (#558, weights {n}..1)  excess {:+.1} (med {:+.1}) pts/yr   worst {:+.1}",
+                mean(&ranked),
+                median(ranked.clone()),
+                ranked.iter().cloned().fold(f64::INFINITY, f64::min)
             );
         }
     }
@@ -6523,6 +6546,17 @@ fn exit_probe(
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+
+    /// (#558) rank r of k weighs (k+1-r)/(k(k+1)/2): of two names the first counts twice the second, a
+    /// reorder moves the multiple, and a full ten weighs 10..1 over 55 (sum of i*(11-i) is 220).
+    #[test]
+    fn ranked_multiple_weights_rank_linearly() {
+        assert!((ranked_multiple(&[3.0, 1.0]) - 7.0 / 3.0).abs() < 1e-12);
+        assert!((ranked_multiple(&[1.0, 3.0]) - 5.0 / 3.0).abs() < 1e-12);
+        assert_eq!(ranked_multiple(&[2.0]), 2.0);
+        let ten: Vec<f64> = (1..=10).map(f64::from).collect();
+        assert!((ranked_multiple(&ten) - 4.0).abs() < 1e-12);
+    }
 
     /// (#531) twelve monthly bars of 10 shares over 120 shares outstanding is one full turn a year. The
     /// bar dated exactly a year back sits outside the window; a record that starts inside the year, a
