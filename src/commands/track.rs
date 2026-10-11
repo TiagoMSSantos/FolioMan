@@ -1322,7 +1322,7 @@ fn soc_section(
 /// a tight cap can grade a book shorter than ten; journal the deeper ranked list if that ever bites.
 fn capped_rows(snap: &Snapshot, cap: usize) -> Rows<'_> {
     let sector = |t: &str| snap.sector.iter().find(|(x, _)| x == t).map(|(_, s)| s.as_str());
-    crate::picks::sector_cap(equal(&snap.rows), cap, |(t, ..)| sector(*t)).into_iter().take(BOOK).collect()
+    crate::picks::sector_cap(equal(&snap.rows), cap, |(t, ..)| sector(t)).into_iter().take(BOOK).collect()
 }
 
 /// (#557) One label per graded `growth_sector_cap`, k = index + 1.
@@ -1373,8 +1373,8 @@ fn scap_section(
          stocks per GICS sector; funds, coins and untagged names pass) held equal-weight against the uncapped\n  \
          top {BOOK} of the same line. One line a month. Pre-registered: a row flags REOPEN SIGNAL at\n  \
          {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained links, each with mean AND median above 0. A flag reopens\n  \
-         the knob as a decision; it never moves it. EUR seat, price-only. NOT advice. Journalled on {journalled}\n  \
-         of {} run(s).{body}",
+         the knob as a decision; it never moves it. EUR seat, price-only. NOT advice.\n  \
+         Journalled on {journalled} of {} run(s).{body}",
         snaps.len()
     )
 }

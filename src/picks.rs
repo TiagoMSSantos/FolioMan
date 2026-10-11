@@ -4511,7 +4511,7 @@ pub(crate) fn sector_cap<'a, T>(rows: Vec<T>, cap: usize, sector: impl Fn(&T) ->
 /// journal (`render`'s top-n). (#101) shipped it as a `lane_split` display trim, which BUY% bought back
 /// as a `b` row, so no value of the knob changed a buy. Stocks only; a pinned ticker bypasses it.
 fn cap_book<'a>(picks: Vec<(&'a Quote, f64)>, cap: usize, pinned: &HashSet<&str>) -> Vec<(&'a Quote, f64)> {
-    sector_cap(picks, cap, |(q, _)| if pinned.contains(q.ticker.as_str()) { None } else { stock_sector(*q) })
+    sector_cap(picks, cap, |(q, _)| if pinned.contains(q.ticker.as_str()) { None } else { stock_sector(q) })
 }
 
 /// Print ONE lane's ranked picks SPLIT per asset class (stocks / [tech stocks] / ETFs / crypto) so a
