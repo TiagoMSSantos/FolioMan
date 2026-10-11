@@ -11225,6 +11225,8 @@ mod tests {
         });
         assert_eq!(reports_tip(&q).as_deref(), Some("Apple makes phones.\n\nFY2025 annual report, filed 2025-10-31: revenue USD 400.0B, net income USD 100.0B, free cash flow USD 98.8B, net cash USD 30.0B"));
         q.profile.about = None;
+        q.fund = Some(core::FundFactors { net_debt: Some(0.0), ..Default::default() });
+        assert_eq!(reports_tip(&q).as_deref(), Some("Last annual report: net debt 0"), "debt equal to cash is not net cash");
         q.fund = Some(core::FundFactors { net_debt: Some(2e6), ..Default::default() });
         assert_eq!(reports_tip(&q).as_deref(), Some("Last annual report: net debt 2.0M"));
         let mut p = serde_json::json!({"stocks": [[["TICKER", "AAPL"], ["REPORTS", "x"]]]});
