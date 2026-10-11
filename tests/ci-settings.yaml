@@ -19893,6 +19893,12 @@ buy_heuristic:
                                  #   Return growth_capex_ocf_penalty to 1.0 if the forward record reads it negative.
   growth_capex_ocf_penalty: 0.80 # (#545) the multiplier above growth_capex_ocf_max. A bank, an insurer, a non-SEC name
                                  #   and a name with no 10-Q cash lines carry no TTM and stay x1.0.
+                                 #   n/a CENSUS 2026-10-11 (live data.json, 8e784fc): 330 names, 127 n/a. 23 have no SEC
+                                 #   filing (no 10-Q source, by design). 104 are SEC names whose `_facts22` was bridged
+                                 #   from `_facts21` and carries no `cash_ttm` yet; 20 of 24 replayed compute fine, so
+                                 #   they self-heal as the budget refetches, faster under (#547)'s daily TTL. 4 are
+                                 #   structural (NEE, DTE, APP, BABA): capex sits in an extension namespace companyfacts
+                                 #   never serves. No code change.
   growth_etf_one_per_index: true # (#494) USER DECISION 2026-10-06: one fund per benchmark index. The 2026-10-06 book
                                  #   held six Nasdaq-100 lines at 3.2% each (19.2%, more than any stock) and five US or
                                  #   world-IT lines (16%), only because several issuers list each index, so 18 ETF slots
