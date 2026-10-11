@@ -20175,6 +20175,12 @@ fetch_requests_per_second: 60.0
 # facts cache (backtest-gate's fund leg: ~517 companyfacts GETs) went over, and each refused filer fell
 # back to older cached rows or to none. 8 leaves headroom under the cap; 0 disables it (don't).
 sec_requests_per_second: 8.0
+# (#547) USER DECISION 2026-10-11: the SEC pair (`_facts22`, `_ttmeps4`) refreshes DAILY, 24-47 hours
+# staggered per ticker, down from (#84)'s 30-43 days — a 10-Q used to reach P/E, PEG, FCF and CAPEX/OCF
+# up to 43 days late, now within two. Cost: ~960 SEC names x 2 files = ~1,300 GETs/day, ~22 a run at the
+# throttled */5 Pages cron, against SEC_FETCH_BUDGET's 600 per run; SEC has no daily cap, only the pacer
+# above. The user's ceiling is "max daily, never the whole API allowance", so FMP (250/day key cap, 7d),
+# Eulerpool (30d) and the rest stay where they are. Code constant, not a knob (src/fetch.rs sec_cache_ttl).
 
 # Worker threads for the CPU-bound half of `backtest` — the per-ticker walk, the knob sweeps and the
 # `tune` search. NOT the two knobs above: those size in-flight NETWORK requests and want to be far

@@ -687,7 +687,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // waste FMP's 250/day free budget on no-op calls): P/E + ROE for EQUITIES only, expense ratio for
     // ETFs only, nothing for crypto/FX. Each is disk-cached + budget-capped, so a wide `screen` can't
     // blow the limit and a daily `check` of your holdings reads free from cache. (#84) The TTL is
-    // WEEKLY on the FMP files and ~30 days staggered on the SEC pair — this line used to say "weekly
+    // WEEKLY on the FMP files and (#547) 24-47 hours staggered on the SEC pair — this line used to say "weekly
     // TTL" of both, and the SEC half had no expiry whatsoever; see `evict_stale_sec_caches`.
     let is_etf = chart.instrument_type.eq_ignore_ascii_case("ETF");
     let is_equity = chart.instrument_type.eq_ignore_ascii_case("EQUITY");
@@ -1472,24 +1472,25 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 /// `{ticker}_facts22` holds ANNUAL rows and is genuinely append-only, but "append-only" is not
 /// "complete": each filer's newest fiscal year appears once a year and never reached a warm cache.
 ///
-/// 30 DAYS, NOT THE 7 THE FMP PATH USES, and the difference is the budget. `SEC_FETCH_BUDGET` is 600
-/// per run against two files for every equity in the universe, so a weekly sweep of a wide `screen`
-/// would exceed it and degrade the tail to n/a. Both quantities move on a QUARTERLY cadence anyway,
-/// so 30 days is the slowest refresh that still cannot miss a quarter.
-const LIVE_SEC_TTL_DAYS: u64 = 30;
+/// (#547) A DAY, down from (#84)'s 30, because a filing used to reach the P/E, PEG, FCF and CAPEX/OCF
+/// columns up to 43 days late. The budget holds it: Pages carries ~960 SEC names x these two files,
+/// and at 24-47 hours that is ~1,300 GETs a day against `SEC_FETCH_BUDGET`'s 600 per run at the
+/// throttled */5 cron's ~50-90 runs a day, so ~22 a run. SEC has no daily cap, only the ~10 req/s the
+/// (#423) pacer already keeps under. A filing now lands within two days.
+const LIVE_SEC_TTL_HOURS: u64 = 24;
 
-/// (#84) Days of per-ticker spread added to [`LIVE_SEC_TTL_DAYS`], and it is load-bearing rather than
-/// polish. Without it the first run after this ships evicts the WHOLE warm universe at once, refetches
-/// as much of it as the budget allows, and stamps every survivor with the same mtime — which
-/// re-synchronises the herd permanently, so one run in every thirty is degraded forever. Spreading the
-/// expiry over a fortnight turns that into a steady trickle of roughly a thirtieth of the names.
-const LIVE_SEC_JITTER_DAYS: u64 = 14;
+/// (#84) Hours of per-ticker spread added to [`LIVE_SEC_TTL_HOURS`], and it is load-bearing rather than
+/// polish. Without it every name written in one run expires in one run, which refetches as much of
+/// the universe as the budget allows and stamps every survivor with the same mtime — re-synchronising
+/// the herd permanently, so a few runs a day spend the whole budget and the other SEC reads (REV-YoY,
+/// Form 4) go n/a on those pages. Spreading the expiry over a day turns that into a steady trickle.
+const LIVE_SEC_JITTER_HOURS: u64 = 24;
 
 /// (#84) The staggered TTL for one ticker. Byte-sum, not a hasher: it only has to be deterministic and
 /// roughly even across the alphabet, and a plain sum is something a reader can evaluate by hand.
 fn sec_cache_ttl(ticker: &str) -> StdDuration {
-    let jitter = ticker.bytes().map(u64::from).sum::<u64>() % LIVE_SEC_JITTER_DAYS;
-    StdDuration::from_secs((LIVE_SEC_TTL_DAYS + jitter) * 24 * 3600)
+    let jitter = ticker.bytes().map(u64::from).sum::<u64>() % LIVE_SEC_JITTER_HOURS;
+    StdDuration::from_secs((LIVE_SEC_TTL_HOURS + jitter) * 3600)
 }
 
 /// (#84) LIVE-path only, exactly like [`evict_if_stale`]'s other callers, and for the same reason: the
@@ -9876,15 +9877,16 @@ pub(crate) mod tests {
                 .write(true)
                 .open(&p)
                 .expect("reopen to age")
-                .set_modified(SystemTime::now() - StdDuration::from_secs(5 * 24 * 3600))
+                // (#547) 30 hours: inside SECSPLIT's 39h TTL (24 + 615 % 24), and always a past UTC date
+                .set_modified(SystemTime::now() - StdDuration::from_secs(30 * 3600))
                 .expect("backdate mtime");
             p
         };
         let today = chrono::Utc::now().date_naive();
         let (ttm, facts) = (aged("_ttmeps4"), aged("_facts22"));
-        evict_stale_sec_caches("SECSPLIT", &[(today - chrono::Duration::days(10), 2.0)]);
+        evict_stale_sec_caches("SECSPLIT", &[(today - chrono::Duration::days(3), 2.0)]);
         assert!(ttm.exists(), "a split before the roll was written is already in it");
-        evict_stale_sec_caches("SECSPLIT", &[(today - chrono::Duration::days(2), 2.0)]);
+        evict_stale_sec_caches("SECSPLIT", &[(today, 2.0)]);
         assert!(!ttm.exists(), "a split after the roll re-bases the close under it");
         assert!(facts.exists(), "rows carry `filed` and are restated on read, never evicted by a split");
         let _ = std::fs::remove_file(&facts);
@@ -10002,60 +10004,61 @@ pub(crate) mod tests {
     }
 
     /// (#84) `sec_cache_ttl` is arithmetic with no I/O, so it is pinned to the SECOND — every mutant on
-    /// `(30 + jitter) * 24 * 3600` lands somewhere absurd and the exact values below name it: `30 + 24 +
-    /// 3600` is about an hour, `%` mutated to `/` makes the jitter unbounded (a long ticker's byte sum
-    /// over 14 is in the dozens of days), and `+` mutated to `-` or `*` breaks the floor.
+    /// `(24 + jitter) * 3600` lands somewhere absurd and the exact values below name it: `24 + 3600` is
+    /// about an hour, `%` mutated to `/` makes the jitter unbounded (a long ticker's byte sum over 24 is
+    /// in the dozens of hours), and `+` mutated to `-` or `*` breaks the floor.
     ///
-    /// The floor is the assertion that matters. A TTL below 30 days does not produce a wrong number —
-    /// it produces a correct one that refetches the SEC universe too often, and `SEC_FETCH_BUDGET` is
-    /// 600 against two files per equity, so the tail of a wide `screen` silently degrades to n/a.
-    /// The ceiling matters for the opposite reason: past ~43 days a TTM roll can miss a whole quarter.
+    /// The floor is the assertion that matters. (#547) A TTL below a day does not produce a wrong number —
+    /// it produces a correct one that refetches the SEC universe more than daily, the cap the user set,
+    /// and `SEC_FETCH_BUDGET` is 600 against two files per equity. The ceiling matters for the opposite
+    /// reason: past two days a new 10-Q waits for no good reason.
     #[test]
-    fn the_sec_cache_ttl_is_a_staggered_month() {
+    fn the_sec_cache_ttl_is_a_staggered_day() {
         let day = 24 * 3600;
-        // hand-checkable: 'A'+'A' = 130, 130 % 14 = 4 -> 34 days. 'A'+'B' = 131 -> 5 -> 35 days.
-        assert_eq!(sec_cache_ttl("AA"), StdDuration::from_secs(34 * day));
-        assert_eq!(sec_cache_ttl("AB"), StdDuration::from_secs(35 * day), "one byte apart is one day apart");
+        let hour = 3600;
+        // hand-checkable: 'A'+'A' = 130, 130 % 24 = 10 -> 34 hours. 'A'+'B' = 131 -> 11 -> 35 hours.
+        assert_eq!(sec_cache_ttl("AA"), StdDuration::from_secs(34 * hour));
+        assert_eq!(sec_cache_ttl("AB"), StdDuration::from_secs(35 * hour), "one byte apart is one hour apart");
         assert_eq!(sec_cache_ttl("BA"), sec_cache_ttl("AB"), "a byte SUM, so an anagram shares its slot");
         // the whole range, over tickers real enough to be representative
         let names = ["AAPL", "MSFT", "NVDA", "BRK-B", "V", "JPM", "XOM", "TPL", "ODFL", "ZZZZZZZZ"];
         let ttls: Vec<u64> = names.iter().map(|t| sec_cache_ttl(t).as_secs()).collect();
         for (t, secs) in names.iter().zip(&ttls) {
-            assert!(*secs >= 30 * day, "{t}: never under a month — a shorter TTL burns the fetch budget");
-            assert!(*secs <= 43 * day, "{t}: never over 30+13 days — past that a TTM roll misses a quarter");
-            assert_eq!(secs % day, 0, "{t}: whole days, so the unit is what the constants say it is");
+            assert!(*secs >= day, "{t}: never under a day — a shorter TTL refetches more than daily");
+            assert!(*secs < 2 * day, "{t}: never two days or more — a new 10-Q waits for nothing");
+            assert_eq!(secs % hour, 0, "{t}: whole hours, so the unit is what the constants say it is");
         }
         // and it must actually SPREAD: a constant TTL re-synchronises the universe on one run forever
         let distinct: std::collections::HashSet<u64> = ttls.iter().copied().collect();
-        assert!(distinct.len() >= 5, "10 tickers must not collapse onto 4 or fewer expiry days: {ttls:?}");
+        assert!(distinct.len() >= 5, "10 tickers must not collapse onto 4 or fewer expiry hours: {ttls:?}");
     }
 
     /// (#84) The eviction itself, on real files. Both SEC caches used to have NO expiry at all, so the
     /// live P/E denominator was whatever this box first fetched, forever.
     ///
-    /// Ages are set with `set_modified` rather than waiting a month. 60 days is past every ticker's
-    /// staggered TTL and 5 days is inside all of them, so the two assertions hold whatever jitter
+    /// Ages are set with `set_modified` rather than waiting a day. 60 days is past every ticker's
+    /// staggered TTL and (#547) 5 hours is inside all of them, so the two assertions hold whatever jitter
     /// `SECEVICT` happens to draw — the arithmetic is pinned by the test above, not smuggled in here.
     #[test]
     fn stale_sec_caches_are_evicted_and_the_instance_cache_is_not() {
         std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
-        let aged = |suffix: &str, days: u64| {
+        let aged = |suffix: &str, hours: u64| {
             let p = sec_cache_path(&format!("SECEVICT{suffix}"));
             std::fs::write(&p, "[]").expect("seed sec cache");
             std::fs::OpenOptions::new()
                 .write(true)
                 .open(&p)
                 .expect("reopen to age")
-                .set_modified(SystemTime::now() - StdDuration::from_secs(days * 24 * 3600))
+                .set_modified(SystemTime::now() - StdDuration::from_secs(hours * 3600))
                 .expect("backdate mtime");
             p
         };
-        let facts = aged("_facts22", 60);
-        let ttmeps = aged("_ttmeps4", 60);
+        let facts = aged("_facts22", 60 * 24);
+        let ttmeps = aged("_ttmeps4", 60 * 24);
         // `_inst4` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB, and (#385)
         // `fetch_sec_instance_eps` refetches it when the next 10-K lands. A clock here would re-download
         // the largest fetch in this file for nothing, so "evict every SEC file" is a real regression.
-        let inst = aged("_inst4", 60);
+        let inst = aged("_inst4", 60 * 24);
         evict_stale_sec_caches("SECEVICT", &[]);
         assert!(!facts.exists(), "60 days is past every staggered TTL — the newest fiscal year must refresh");
         let aside = sec_cache_path("SECEVICT_facts22stale");
@@ -10067,7 +10070,7 @@ pub(crate) mod tests {
         let fresh_facts = aged("_facts22", 5);
         let fresh_ttmeps = aged("_ttmeps4", 5);
         evict_stale_sec_caches("SECEVICT", &[]);
-        assert!(fresh_facts.exists(), "5 days is inside every TTL — evicting here refetches the world each run");
+        assert!(fresh_facts.exists(), "5 hours is inside every TTL — evicting here refetches the world each run");
         assert!(fresh_ttmeps.exists());
         // a ticker with nothing on disk must be a silent no-op, not a panic: SEC cannot resolve a CIK
         // for most non-US names, so this is the common case on a mixed universe.
