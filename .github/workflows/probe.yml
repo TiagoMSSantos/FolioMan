@@ -1,0 +1,84 @@
+name: Probe
+
+# (#548) A `backtest` run graded on CI, not on the local PC (USER DECISION 2026-10-11: CI runs what CI
+# already runs). ci.yml's backtest-gate runs the same binary on the same caches, but through
+# tests/network.rs, which prints only the lines the gate votes on, and never with `pit`. This prints the
+# whole report — every fund factor's AUC, the held-book and survival rows — for a factor or knob probe.
+# Read it with `gh run view <id> --log`, and check `windows scored` on every horizon before grading.
+#
+# MANUAL ONLY and READ-ONLY: it saves no cache, so a probe can never change what Pages or the gate read.
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: "backtest horizons, one run each (space-separated)"
+        default: "12 8"
+      args:
+        description: "backtest args after the horizon"
+        default: "universe fund pit"
+
+concurrency:
+  group: probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# Copied from ci.yml's top-level env; they MUST stay identical, or rust-cache computes a key of its own
+# (see mutation-census.yml).
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: folioman-gate   # backtest-gate's release deps; it stays the only writer
+          save-if: false
+      # The three restores below MUST stay identical to backtest-gate's in ci.yml (the path list is
+      # hashed into the cache version, and any difference silently misses).
+      - name: Restore Pages' fetch caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            .sec_cache
+            .isin_cache.json
+            .venue_isins.json
+            .regulatory_isins.json
+            .fund_facts_cache.json
+            .holdings_cache.json
+            .eu_listing_cache.json
+          key: folioman-fetch-${{ github.run_id }}
+          restore-keys: folioman-fetch-
+      - name: Restore Pages' IPO cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ipo_cache.json
+          key: folioman-ipo2-${{ github.run_id }}
+          restore-keys: folioman-ipo2-
+      - name: Restore the gate's history cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .long_history_cache.json
+          key: folioman-longhist-${{ github.run_id }}
+          restore-keys: folioman-longhist-
+      - name: backtest
+        env:
+          FOLIOMAN_CONFIG: tests/ci-settings.yaml
+          YEARS: ${{ inputs.years }}
+          ARGS: ${{ inputs.args }}
+        # Inputs reach the shell only through env and `read -ra`, never as interpolated script text.
+        run: |
+          read -ra years <<< "$YEARS"
+          read -ra args <<< "$ARGS"
+          cargo build --locked --release
+          for y in "${years[@]}"; do
+            echo "::group::backtest $y ${args[*]}"
+            ./target/release/folioman backtest "$y" "${args[@]}"
+            echo "::endgroup::"
+          done
