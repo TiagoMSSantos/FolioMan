@@ -1464,6 +1464,33 @@ sizing:
   #  idea maps to an existing receipt. One tax-model gap, NOT a heuristic change and NOT shipped: PT Lei 31/2024
   #  (Art. 43 n.º5 CIRS) excludes 10/20/30% of a gain held >2y/>=5y/>=8y (25.2/22.4/19.6% on 28%), while
   #  `cgt_hold_schedule` ships [] and `switch_edge` charges the flat rate. Confirm with an accountant before wiring it.
+  #  (#558) STEP 3, RANKED RULER (backtest's `RANKED top-10` row: the same top-10 book weighted 10..1 by score rank,
+  #  an extra ruler, not a gate). REFUSED: growth_min_cagr 15 (USER DECISION 2026-10-11); nothing shipped.
+  #  RUN: probe.yml at 04994a0 (wave 1) and 5e222f5 (waves 2-5), head_weight 4 in every arm and control, same 6 cells
+  #  and per-wave controls (all 5 byte-identical). ARMS: the GATE SWEEP loosen notches growth_min_cagr 15,
+  #  growth_min_range_pct 70, growth_max_above_ma 0 (off), growth_min_leg_years 2, growth_min_1y_pct -10.3 and
+  #  min_avg_turnover_eur 0 (max_1m_drop_pct ships off, so it has no notch), plus step 1's 27 non-head weight arms.
+  #  Void: growth_trend_weight 0 and growth_fund_weight 0 moved the fund-lane window count (9008/5063); both lose.
+  #  BAR (pre-registered, USER): in all 6 cells, RANKED median >= control - 0.1 AND RANKED worst >= control - 0.5;
+  #  the winner is the largest minimum median gain.
+  #  CONTROL (RANKED med / worst): pit 20y +0.4/-11.2, 12y +3.1/-8.4, 8y +2.1/-17.1; fund 20y +5.0/-0.5,
+  #  12y +6.3/-7.8, 8y +5.9/-10.3.
+  #  RESULT: one arm has a positive minimum, growth_min_cagr 19 -> 15 (min +0.1, sum +3.8):
+  #    cell      RANKED med   top-10 med   SIZED excess   (gains vs control)
+  #    pit 20y   +1.0         +1.3         +0.5
+  #    pit 12y   +0.1         +1.1         -0.5
+  #    pit  8y   +0.9         -0.4         -0.4           (worst windows +9.9 / +9.6 / +7.3)
+  #    fund 20y  +0.5         +0.0         +0.2
+  #    fund 12y  +0.5         +1.0         +0.2
+  #    fund  8y  +0.8         +1.0         +0.0
+  #    DCA 20y   pit +0.5, fund +0.2
+  #  It fails the step-1 GATE and WEIGHT bars on the books that are bought (top-10 pit 8y -0.4; SIZED pit 12y -0.5,
+  #  8y -0.4), and the knob's own record already refuses it ((#135), (#175), (#52); see (#313)). Qualifiers at a
+  #  minimum of 0.0 or -0.1, so no winner: growth_min_range_pct 70, growth_fund_weight 0.035, quality_weight 0 and
+  #  0.075, sharpe_weight 0.025 and 0.1, dividend_weight 0.25, growth_proximity_weight 2; inert (0.0 everywhere):
+  #  min_avg_turnover_eur 0 and growth_underwater_weight 0/0.15/0.6. Every other arm fails (worst min -1.7,
+  #  growth_min_leg_years 2). Under head_weight 4, dividend_weight 0 now passes the WEIGHT bar, but only at min 0.0.
+  #  RE-OPEN: the same 6-cell read with a positive minimum gain on the RANKED row AND the SIZED row.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
