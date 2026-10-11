@@ -654,7 +654,7 @@ impl Default for BuyHeuristic {
             growth_min_age_years: 0.0,     // (#33) off by default; ci-settings ships 0.0 TOO — deliberately, to keep early winners visible and let trust_factor dock them instead (backtest-blind either way, so no grid can settle it)
             growth_min_aum_etf: 0.0,       // (AUM) off by default; ci-settings ships 100M (backtest-blind ETF closure-risk gate)
             growth_max_peg: 0.0,           // (#37) off by default. MEASURABLE (peg_yield is filled in the backtest) -> validate on `backtest universe fund pit` before shipping a value. (#266) ci-settings ships 1.6 and the 2.0 this line used to suggest is MEASURED WORSE: the {1.75, 2.0, 2.5} ladder fails PRIMARY monotonically at 12y and 8y. Read that receipt before proposing a value here
-            growth_peg_taper_k: 0.0,       // (#550) 0 = OFF: growth_max_peg stays a hard wall
+            growth_peg_taper_k: 0.0,       // (#550) 0 = OFF: growth_max_peg stays a hard wall. k = 1/2/4 REFUSED 2026-10-11 on one 8y median tick; read the receipt before re-arming
             growth_max_peg_etf: 0.0,       // (#37 funds) off by default. ci-settings ships 2.0 — the value that keeps the concentrated growth funds and cuts the broad expensive ones; see the knob doc for why it is not the equity 1.6
             growth_require_peg: false,     // (V) off by default. Only meaningful alongside growth_max_peg — it closes the hole where a filer with NO per-share data walks past that ceiling untested
             growth_min_net_margin: 0.0,    // (#38) off by default. Set 10.0 to reject NET% < 10. Measurable too — and likely to cut low-margin INDUSTRIES rather than bad names, so measure before believing it
