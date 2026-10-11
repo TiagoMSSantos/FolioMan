@@ -1864,7 +1864,7 @@ pub async fn run(args: Vec<String>) {
         sweep_fund_factor(&samples, tuning, years); // (G) which factor pays THROUGH the growth lane, held-out
     }
     if holders {
-        report_holder_cohorts(&samples, &holder_txs, years);
+        report_holder_cohorts(&samples, &holder_txs, years, tuning);
     }
     report_risk_lane(&samples, tuning.split_purge_months); // closes-derived risk stats, standalone — no fundamentals needed
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
@@ -2269,7 +2269,7 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
 
 /// (#518) The `holders` report: [`holder_cohorts`] printed with its caveats. Report only, no knob reads it.
 #[mutants::skip] // printing only; `holder_cohorts` carries the test
-fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>, years: i64) {
+fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>, years: i64, tuning: &BuyHeuristic) {
     println!("\n── (#518) HOLDERS: do Berkshire's and the superinvestors' adds pick winners? ({years}y forward, stocks) ──");
     println!("  excess = forward return minus the same-cutoff stock peer mean; hit = excess > 0. Each cohort is");
     println!("  read against the stock samples outside it. A sample is flagged by the moves FILED in the 135 days");
@@ -2277,16 +2277,24 @@ fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::Hol
     println!("  CAVEATS: 13F XML starts 2013-Q2, so a 20y leg is blind and early 12y cutoffs see little; the 83");
     println!("  managers were picked in 2026, so survivor bias flatters their rows; cutoffs overlap, so n counts");
     println!("  samples, not independent bets. Read mean AND hit: a hit rate up with the mean down dilutes.");
-    println!(
-        "  {:<36} {:>6} {:>8} {:>8} {:>6} | {:>6} {:>8} {:>8} {:>6}",
-        "cohort", "n", "mean", "median", "hit%", "rest n", "mean", "median", "hit%"
-    );
-    for (name, a, b) in holder_cohorts(samples, txs) {
+    let table = |samples: &[Sample]| {
         println!(
-            "  {name:<36} {:>6} {:>+8.2} {:>+8.2} {:>6.1} | {:>6} {:>+8.2} {:>+8.2} {:>6.1}",
-            a.n, a.mean, a.median, a.hit, b.n, b.mean, b.median, b.hit
+            "  {:<36} {:>6} {:>8} {:>8} {:>6} | {:>6} {:>8} {:>8} {:>6}",
+            "cohort", "n", "mean", "median", "hit%", "rest n", "mean", "median", "hit%"
         );
-    }
+        for (name, a, b) in holder_cohorts(samples, txs) {
+            println!(
+                "  {name:<36} {:>6} {:>+8.2} {:>+8.2} {:>6.1} | {:>6} {:>+8.2} {:>+8.2} {:>6.1}",
+                a.n, a.mean, a.median, a.hit, b.n, b.mean, b.median, b.hit
+            );
+        }
+    };
+    table(samples);
+    // (#544) The boosts only multiply names the gates already pass, so the row that grades a boost is
+    // flagged passers against the OTHER passers, not against every stock.
+    let passed: Vec<Sample> = samples.iter().filter(|s| growth_score(&s.quote, tuning).is_some()).cloned().collect();
+    println!("  (#544) among stocks the buy gates pass (rest = the other passers): the row each boost answers to.");
+    table(&passed);
 }
 
 /// (G) Probe each as-of fundamental factor STANDALONE against the same peer-relative forward return:
