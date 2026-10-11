@@ -16,6 +16,9 @@ on:
       args:
         description: "backtest args after the horizon"
         default: "universe fund pit"
+      knobs:
+        description: "(#550) ci-settings overrides for this run only, space-separated key=value (numbers only)"
+        default: ""
 
 concurrency:
   group: probe
@@ -72,10 +75,22 @@ jobs:
           FOLIOMAN_CONFIG: tests/ci-settings.yaml
           YEARS: ${{ inputs.years }}
           ARGS: ${{ inputs.args }}
+          KNOBS: ${{ inputs.knobs }}
         # Inputs reach the shell only through env and `read -ra`, never as interpolated script text.
         run: |
           read -ra years <<< "$YEARS"
           read -ra args <<< "$ARGS"
+          read -ra knobs <<< "$KNOBS"
+          # (#550) an arm edits the checked-out yaml in place: each key must already sit on exactly one
+          # `  key:` line and the value must be a plain number, so a typo fails the run instead of grading
+          # the control under an arm's name.
+          for kv in "${knobs[@]}"; do
+            k=${kv%%=*}; v=${kv#*=}
+            [[ $kv == *=* && $k =~ ^[a-z0-9_]+$ && $v =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || { echo "::error::bad knob '$kv'"; exit 1; }
+            [[ $(grep -c "^  $k: " tests/ci-settings.yaml) == 1 ]] || { echo "::error::'$k' is not one ci-settings line"; exit 1; }
+            sed -i -E "s/^(  $k: )[^ ]+/\1$v/" tests/ci-settings.yaml
+            grep "^  $k: " tests/ci-settings.yaml | cut -c1-80
+          done
           cargo build --locked --release
           for y in "${years[@]}"; do
             echo "::group::backtest $y ${args[*]}"
