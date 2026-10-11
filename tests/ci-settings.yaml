@@ -1106,57 +1106,65 @@ widths:
     - 5y          # % vs 5 years ago
     - 8y          # % vs 8 years ago
     - 20y         # % vs 20 years ago
-    - vol         # daily-return stdev (~1y) — risk / "normal swing"
-    - maxdd       # worst peak-to-trough drop on the ~10y daily chart — pain endured
-    - win5y       # (#447) % of rolling 5y windows that ended up — how often patience paid
-    - worst5y     # (#447) worst rolling 5y price change — the wrong-moment buyer's 5 years
-    - uw          # (#447) longest stretch below a prior high, years — how LONG the MAXDD lasted
-    - r2          # log-trend steadiness 0..1 — smooth compounder vs lumpy
-    - abv-ma      # % above the 200wk SMA — overextension / blow-off gauge
-    - pe          # trailing P/E (SEC filings first, FMP fallback; else n/a)
-    - peg         # price ÷ annual EPS ÷ long CAGR — valuation-vs-growth (<1 cheap for its growth); (#400) not the P/E cell ÷ CAGR, which is TTM
-    - mvrv        # crypto market cap ÷ realized cap (CoinMetrics) — no earnings term, a P/B analogue (<1 = below holders' cost basis)
-    - roe         # trailing return-on-equity (needs FMP key; else n/a) — quality
-    - roic        # (#447) operating profit ÷ (equity + net debt) (stocks only)
-    - fcf         # (#447) free cash flow % of revenue (stocks only) — do profits turn into cash
-    - nde         # (#447) net debt ÷ EBITDA (stocks only); <0 = net cash, >3 = stretched
-    - icov        # (#447) operating profit ÷ interest expense (stocks only); <2 = distress risk
-    - fcfy        # (#462) free cash flow ÷ market value (stocks only) — the cash yield a buyer gets
-    - fair        # (#484) 2-stage DCF fair price: FCF grows at FCF-5Y (0-15%) 10y, then 2.5%, at 9%; ETFs (#521) their top-10 holdings' FAIR weight-averaged, Bitcoin its realized price (price ÷ MVRV); display only
-    - mos         # (#484) margin of safety, FAIR ÷ price − 1 (stocks, ETFs, Bitcoin; display only)
-    - fair_oe     # (#522) FAIR on owner earnings, FCF − stock-based pay (SEC stocks; display only)
-    - mos_oe      # (#522) margin of safety on FAIR-OE (display only)
-    - fair_cap    # (#522) intrinsic equity value of the whole company, FAIR × shares, beside MCAP; Bitcoin its realized cap (display only)
-    - impl_g      # (#522) reverse DCF: the yearly FCF growth (10y, then 2.5%, at 9%) the price already assumes (display only)
-    - target      # (#489) consensus analyst target vs price, 3+ analysts (stocks only; display only)
-    - reports     # (#540) annual/quarterly reports link: the EDGAR page for an SEC filer, else a Google search (display only)
-    - ps          # (#462) market value ÷ revenue (stocks only) — the value ratio a loss-maker still has
-    - evebitda    # (#462) (market value + net debt) ÷ EBITDA (stocks only) — the whole business's price, debt included
+    # (#541) after the lead columns, the order a 20y buy-and-hold reads: fund, business, price, survival, ride, recent, housekeeping
+    # -- fund (the ETF table; stock lanes hide these)
     - ter         # ETF expense ratio %/yr — the one cost that compounds against a 40y hold (Börse Frankfurt, then FMP, then Yahoo; ETFs only)
+    - td5y        # (#465) mean yearly tracking difference over the last 5 full years, n/a under 3 (ETFs only)
+    - td1y        # (#465) newest full-year tracking difference vs the index, trackingdifferences.com (ETFs only)
     - aum         # ETF fund size (EUR-approx, Börse Frankfurt) — sub-€100M funds risk liquidation/merge (ETFs only)
+    - dom         # ETF legal domicile from the ISIN: IE keeps more US dividends than LU (ETFs only)
     - use         # ETF share class: Acc/Dist — Dist payouts taxed yearly; Acc compounds tax-deferred (ETFs only)
     - repl        # ETF replication: Swap/Full/Opt — counterparty structure; swap-based US funds dodge dividend WHT (ETFs only)
-    - dom         # ETF legal domicile from the ISIN: IE keeps more US dividends than LU (ETFs only)
     - top10       # (#465) % of the fund in its 10 biggest holdings: concentration risk (ETFs only)
-    - td1y        # (#465) newest full-year tracking difference vs the index, trackingdifferences.com (ETFs only)
-    - td5y        # (#465) mean yearly tracking difference over the last 5 full years, n/a under 3 (ETFs only)
-    - rev-yoy     # newest complete-FY revenue growth vs prior FY (stocks only; report pipeline, top rows enriched)
+    # -- business
+    - roic        # (#447) operating profit ÷ (equity + net debt) (stocks only)
+    - fcf         # (#447) free cash flow % of revenue (stocks only) — do profits turn into cash
+    - opm         # (#463) operating margin % (stocks only) — pricing power before interest and tax
+    - net         # newest complete-FY net margin % (stocks only) — profitability quality
+    - roe         # trailing return-on-equity (needs FMP key; else n/a) — quality
     - rev5y       # (#463) revenue CAGR over the last 5 filed years (stocks only) — proven top-line compounding
     - fcf5y       # (#484) free-cash-flow CAGR over the last 5 filed years, both ends positive (stocks only)
-    - eps-yoy     # newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
-    - net         # newest complete-FY net margin % (stocks only) — profitability quality
-    - opm         # (#463) operating margin % (stocks only) — pricing power before interest and tax
-    - mtrend      # (#463) operating margin now minus a year earlier, pp (stocks only) — widening or shrinking
+    # -- price, closed by the entry-timing pair
+    - mos         # (#484) margin of safety, FAIR ÷ price − 1 (stocks, ETFs, Bitcoin; display only)
+    - fair        # (#484) 2-stage DCF fair price: FCF grows at FCF-5Y (0-15%) 10y, then 2.5%, at 9%; ETFs (#521) their top-10 holdings' FAIR weight-averaged, Bitcoin its realized price (price ÷ MVRV); display only
+    - mvrv        # crypto market cap ÷ realized cap (CoinMetrics) — no earnings term, a P/B analogue (<1 = below holders' cost basis)
+    - impl_g      # (#522) reverse DCF: the yearly FCF growth (10y, then 2.5%, at 9%) the price already assumes (display only)
+    - fcfy        # (#462) free cash flow ÷ market value (stocks only) — the cash yield a buyer gets
+    - pe          # trailing P/E (SEC filings first, FMP fallback; else n/a)
+    - peg         # price ÷ annual EPS ÷ long CAGR — valuation-vs-growth (<1 cheap for its growth); (#400) not the P/E cell ÷ CAGR, which is TTM
+    - ps          # (#462) market value ÷ revenue (stocks only) — the value ratio a loss-maker still has
+    - evebitda    # (#462) (market value + net debt) ÷ EBITDA (stocks only) — the whole business's price, debt included
+    - mos_oe      # (#522) margin of safety on FAIR-OE (display only)
+    - fair_oe     # (#522) FAIR on owner earnings, FCF − stock-based pay (SEC stocks; display only)
+    - fair_cap    # (#522) intrinsic equity value of the whole company, FAIR × shares, beside MCAP; Bitcoin its realized cap (display only)
+    - target      # (#489) consensus analyst target vs price, 3+ analysts (stocks only; display only)
+    - off-hi      # % below its OFF-HI high
+    # - upside      # room back to that high (NOT a forecast)
+    - abv-ma      # % above the 200wk SMA — overextension / blow-off gauge
+    # -- survival
+    - nde         # (#447) net debt ÷ EBITDA (stocks only); <0 = net cash, >3 = stretched
+    - icov        # (#447) operating profit ÷ interest expense (stocks only); <2 = distress risk
     - mscore      # (#464) Beneish M-score (stocks only) — above -1.78 = accounting red flag
     - sbc         # (#464) stock-based pay % of revenue (stocks only) — dilution GAAP leaves out
-    - div         # trailing-1Y dividend yield
     - buyback     # newest complete-FY share-count change, sign-flipped: + = buying back, − = diluting (stocks only)
-    - off-hi      # % below its OFF-HI high
     - short       # (#489) FINRA short shares ÷ shares outstanding (stocks only; display only)
+    # -- ride
+    - maxdd       # worst peak-to-trough drop on the ~10y daily chart — pain endured
+    - worst5y     # (#447) worst rolling 5y price change — the wrong-moment buyer's 5 years
+    - win5y       # (#447) % of rolling 5y windows that ended up — how often patience paid
+    - uw          # (#447) longest stretch below a prior high, years — how LONG the MAXDD lasted
+    - vol         # daily-return stdev (~1y) — risk / "normal swing"
+    - r2          # log-trend steadiness 0..1 — smooth compounder vs lumpy
+    # -- recent: one fiscal year, noise on a 20y hold
+    - rev-yoy     # newest complete-FY revenue growth vs prior FY (stocks only; report pipeline, top rows enriched)
+    - eps-yoy     # newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
+    - mtrend      # (#463) operating margin now minus a year earlier, pp (stocks only) — widening or shrinking
+    # -- housekeeping
+    - div         # trailing-1Y dividend yield
     - ins         # (#448) insider open-market buys/sales, last 90 days, SEC Form 4 (printed stock rows)
     - earn        # (#449) next earnings date, MM-DD (printed stock rows)
-    # - upside      # room back to that high (NOT a forecast)
     - turnover    # avg daily turnover (EUR) — liquidity
+    - reports     # (#540) annual/quarterly reports link: the EDGAR page for an SEC filer, else a Google search (display only)
     - score       # the growth ranking score
     - score8y     # the 8-year growth ranking score
 
