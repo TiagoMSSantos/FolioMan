@@ -38,8 +38,9 @@
     </select></label>
     · <label>filter <input id="filter" type="search" placeholder="ticker or name" size="16"></label>
     <!-- (#539) Ticked, the rows under page_min_cagr show too; a filter query shows every match. A row under
-         its table's CAGR floor (read off TR-CAGR, #530) is greyed, never hidden. -->
-    · <label title="Greyed rows have a TR-CAGR under the table's floor. Rows whose total-return CAGR is under page_min_cagr stay hidden until ticked (or found with the filter)"><input id="allrows" type="checkbox"> show rows under the CAGR floor</label>
+         its table's CAGR floor (read off TR-CAGR, #530) is greyed, never hidden. (#555) The label names the
+         hide bar, page_min_cagr, filled from the payload by app.js; the grey floor is only in the tooltip. -->
+    · <label id="allrows-label" title="Rows whose TR-CAGR is under page_min_cagr stay hidden until ticked (or found with the filter). Greyed rows are under their table's floor and always show."><input id="allrows" type="checkbox"> show rows under <span id="mincagr">5</span>%/yr</label>
   </p>
   <!-- (#392) Re-rank this run's pool under your own settings.yaml, in this tab: engine/ is the same
        Rust ranking compiled to wasm. Shown only when the deploy shipped it. -->
