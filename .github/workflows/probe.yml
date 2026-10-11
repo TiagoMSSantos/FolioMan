@@ -20,10 +20,8 @@ on:
         description: "(#550) ci-settings overrides for this run only, space-separated key=value (numbers only)"
         default: ""
 
-concurrency:
-  group: probe
-  cancel-in-progress: false
-
+# No concurrency group (#550): a probe saves no cache, so arms dispatched together run in parallel.
+# A shared group kept one run going and one pending, and a third dispatch silently cancelled the pending one.
 permissions:
   contents: read
 
