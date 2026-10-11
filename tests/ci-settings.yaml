@@ -5495,7 +5495,7 @@ buy_heuristic:
                                  #  above). The exposure sector row already reads their FundMix (IT 45.1% is real). Only the currency and name rows
                                  #  read "?". Their top-10 overlap is ~4-5 names, under the (#510) bar of 7, so full holdings would not merge them.
                                  #  Nothing reopens before the forward-record review (~2027-09, #415 bar).
-                                 #── (#549) PENDING 2026-10-11 — ANNUAL CAPEX ÷ OCF ("CAPITAL-LIGHT") AS A FUND FACTOR ──
+                                 #── (#549) MEASURED 2026-10-11 — ANNUAL CAPEX ÷ OCF ("CAPITAL-LIGHT") AS A FUND FACTOR: DEAD ──
                                  #  WHAT: one FUND_FACTORS row, `capex_light` = −(ocf_margin − fcf_margin) ÷ ocf_margin × 100, capex ÷ operating cash
                                  #  flow negated (high = capital-light; NVDA's ~5% reads −5), from the as-of SEC row. None on a `financial` row, with
                                  #  OCF <= 0, or with either leg missing: the (#545) column's rules. RAW, not sector-demeaned, because a live boost
@@ -5514,7 +5514,17 @@ buy_heuristic:
                                  #  RUN: `gh workflow run probe.yml` (#548), defaults `12 8` and `universe fund pit`, FOLIOMAN_CONFIG=ci-settings.
                                  #  The six goldens move ONLY by the 52 -> 53 count lines, one held-out TEST-edge row and `capex_light n=0` in the
                                  #  no-book list (the fixture rows carry no OCF tag).
-                                 #  VERDICT: pending the probe run.
+                                 #  VERDICT: DEAD by the bar. probe.yml run 38141452554 on b8e221f, windows scored 2783 / 6179 (#533: 2815 / 6246), and
+                                 #  every control equals #533's to the digit (low_dro 0.25 / 0.48, peg_yield 0.62 / 0.28, held books +14.8 / +13.8).
+                                 #    AUC            12y (w/l)     8y (w/l)       held book 12y / 8y
+                                 #    capex_light    0.48 (41/8)   0.46 (84/16)   +13.6%/yr n=48 / +13.0%/yr n=97   DEAD: both inside 0.40-0.60
+                                 #    fcf_margin     0.55 (41/8)   0.53 (85/20)   +13.6%/yr n=48 / +12.8%/yr n=102  control
+                                 #    net_margin     0.49 (41/8)   0.51 (85/20)   -                                 control
+                                 #  Medians: 12y winners capex 13.9% of OCF, losers 13.5%; 8y winners 18.4%, losers 12.8%. The winners spend slightly
+                                 #  MORE, the wrong side for a boost, but too thin for CANDIDATE-HIGH. Survival reject 25% by capex_light: 12y book
+                                 #  +9.2 -> +9.4%/yr, 8y +9.7 -> +10.0%/yr, worst unchanged, the size fcf_margin's own reject moves (a gate, not the bar).
+                                 #  So no `growth_capex_light_boost` knob, and the (#545) penalty stays the user's judgement under its own forward-record
+                                 #  revert rule: this run neither backs it nor refutes it. NVDA's low capex is already paid through ROIC.
                                  #  REVERT RULE: drop the row, the field, its arm and both list entries; the goldens move back by the same lines.
                                  #── (#418) MEASURED 2026-09-30 — GROWTH LANE REFUSES CURRENCY-HEDGED ETFS; PAYLOAD CONTRACTS GATE THE PAGES DEPLOY ──
                                  #  WHAT: `picks::is_hedged_etf`, a structural refusal beside the commodity-ETC one (score_parts + refusal_reason
