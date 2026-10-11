@@ -1421,7 +1421,7 @@ sizing:
 #
 # WHY IT LOOKED RIGHT. Every concentration constraint in this tool is STOCK-ONLY, in all four places it
 # appears: the (#41) redundancy skip, the (#75) value brake and (#101) `growth_sector_cap` (all three in
-# `picks::lane_split`), and `max_sector_pct` here. (#41) justifies the exemption as "the ETF lane is
+# `picks::lane_split` then; the sector cap moved to `picks::render` in (#557)), and `max_sector_pct` here. (#41) justifies the exemption as "the ETF lane is
 # diversified by construction" — true INSIDE a fund, false ACROSS three funds sharing seven names. And
 # `size_weights` is the one lane where such a knob could ship LIVE rather than off-by-default, because
 # `config::Sizing` is the local house rules' documented exception to "every new knob defaults to current behaviour".
@@ -13213,6 +13213,12 @@ buy_heuristic:
                                  #   nothing refills, so the table shortens. KEPT OFF (USER DECISION): still ungradeable, and a judgement
                                  #   cut of the highest-CAGR names fights the 20-year max-profit goal. A re-ask needs the portfolio-level
                                  #   measurement above first, not a probe.yml run.
+                                 #   (#557) MADE GRADEABLE 2026-10-11. The trim moved out of `lane_split` into `picks::render`
+                                 #   (`cap_book`), ahead of the tables, BUY% and the journal: as a display trim, BUY% still bought
+                                 #   every name it hid (a `b` row). The backtest runs the same `picks::sector_cap` on its top-N
+                                 #   ladder and DCA book, ahead of `growth_corr_cap`, and prints a SECTOR CENSUS line (how many
+                                 #   top-10 stock slots carry a sector the cap can judge). `track` grades caps 1..5 forward off
+                                 #   each line's `sector` tags (the `scapK` rows). The knob stays 0: nothing live moves.
   growth_gate_on_tr_cagr: false  # (#99) MEASURED 2026-09-13 AND REFUSED, (#303) at the end of this block. Held OFF,
                                  # the price-only bar every golden and every gate receipt in this file
                                  # was measured under. Read with `growth_min_cagr` and `use_adjusted_close`.

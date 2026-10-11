@@ -149,6 +149,11 @@ pub struct Snapshot {
     pub soc_new: Vec<(String, Option<f64>)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub soc_old: Vec<(String, Option<f64>)>,
+    /// (#557) `(ticker, GICS sector)` for each stock in `rows` that carries one (`picks::stock_sector`).
+    /// No prices: [`scap_section`] rebuilds the sector-capped books off `rows`' own closes, so every cap
+    /// is graded from one line. Same serde contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sector: Vec<(String, String)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -393,6 +398,8 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
                 .chain(s.soc_new.iter().chain(&s.soc_old).map(|(t, _)| t)) // (#538)
         })
         .cloned()
+        // (#557) a capped book refills from past `rows.take(BOOK)`
+        .chain(snaps.iter().flat_map(|s| (1..=SCAP_LABELS.len()).flat_map(move |k| capped_rows(s, k)).map(|(t, ..)| t.to_string())))
         .chain(std::iter::once("^GSPC".to_string()))
         .collect();
     tickers.sort();
@@ -1308,6 +1315,70 @@ fn soc_section(
     )
 }
 
+/// (#557) The top-[`BOOK`] of `snap.rows` under `growth_sector_cap = cap`, rebuilt off the line's own
+/// `sector` tags by the same `picks::sector_cap` that trims the live book. A row with no tag is kept,
+/// as the live cap keeps it.
+/// ponytail: only the journalled `rows` (the top `top_picks`, 12-25 deep) can refill a dropped slot, so
+/// a tight cap can grade a book shorter than ten; journal the deeper ranked list if that ever bites.
+fn capped_rows(snap: &Snapshot, cap: usize) -> Rows<'_> {
+    let sector = |t: &str| snap.sector.iter().find(|(x, _)| x == t).map(|(_, s)| s.as_str());
+    crate::picks::sector_cap(equal(&snap.rows), cap, |(t, ..)| sector(*t)).into_iter().take(BOOK).collect()
+}
+
+/// (#557) One label per graded `growth_sector_cap`, k = index + 1.
+const SCAP_LABELS: [&str; 5] = [
+    "scap1 sector cap 1 minus top",
+    "scap2 sector cap 2 minus top",
+    "scap3 sector cap 3 minus top",
+    "scap4 sector cap 4 minus top",
+    "scap5 sector cap 5 minus top",
+];
+
+/// (#557) THE SECTOR CAP SHADOW: each line's top-[`BOOK`] rebuilt under `growth_sector_cap` 1..5 against
+/// the uncapped top-[`BOOK`] of the same line, equal-weight. The backtest grades the cap in-sample; this
+/// grades it on prices that did not exist when it ranked. A line without sector tags (every line before
+/// (#557)) grades nothing, because an uncapped twin would read as a zero gap.
+fn scap_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let body = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| {
+            if s.sector.is_empty() {
+                return Vec::new();
+            }
+            let top: Rows = equal(&s.rows).into_iter().take(BOOK).collect();
+            SCAP_LABELS.iter().enumerate().map(|(i, l)| (*l, top.clone(), capped_rows(s, i + 1))).collect()
+        },
+        28,
+        None,
+    );
+    let journalled = snaps.iter().filter(|s| !s.sector.is_empty()).count();
+    if body.is_empty() {
+        return format!(
+            "\n  Sector cap shadow: nothing gradeable yet. A line needs a day of age and sector tags, and only\n  \
+             {journalled} of {} journalled run(s) carry them. The record starts the run AFTER one is journalled\n  \
+             and cannot be backdated.",
+            snaps.len()
+        );
+    }
+    format!(
+        "\n  Sector cap shadow (#557) — each line's top {BOOK} rebuilt under growth_sector_cap 1..5 (at most k\n  \
+         stocks per GICS sector; funds, coins and untagged names pass) held equal-weight against the uncapped\n  \
+         top {BOOK} of the same line. One line a month. Pre-registered: a row flags REOPEN SIGNAL at\n  \
+         {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained links, each with mean AND median above 0. A flag reopens\n  \
+         the knob as a decision; it never moves it. EUR seat, price-only. NOT advice. Journalled on {journalled}\n  \
+         of {} run(s).{body}",
+        snaps.len()
+    )
+}
+
 /// (#338) A link's close for `t`, off the later line's own journal: `rows` for the names it ranks, (#335)
 /// `exit` for the ones its book dropped, (#337) `carry` for every other name the earlier line graded.
 /// One price source for every chained reading, the book's included. A non-positive close is no price.
@@ -1575,6 +1646,7 @@ pub async fn run(args: Vec<String>) {
     println!("{}", exit_section(&snaps, today, &px_now, spx_now));
     println!("{}", young_section(&snaps, today, &px_now, spx_now)); // (#500)
     println!("{}", soc_section(&snaps, today, &px_now, spx_now)); // (#538)
+    println!("{}", scap_section(&snaps, today, &px_now, spx_now)); // (#557)
     println!("{}", chain_section(&snaps)); // (#336)
     if push {
         let delivered = fetch::push(
@@ -1604,7 +1676,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(),
         }
     }
 
@@ -2179,6 +2251,30 @@ mod tests {
         let row = out.lines().find(|l| l.trim_start().starts_with("soct SOC top minus 20y top")).unwrap_or_default();
         // SOC holds S1 (+200%) and S2 (0%) = +100%; the 20y top O1, O2 = +10%
         assert!(row.contains(" 1 line(s)") && row.contains("+90.0pp"), "{row}");
+        assert!(out.contains("Journalled on 1 of 1"), "{out}");
+    }
+
+    /// (#557) Each `scapK` row rebuilds the top-[`BOOK`] under sector cap K off the line's own tags: at
+    /// cap 1 the second tech name gives its slot to the untagged 11th row, at cap 2 nothing moves. A
+    /// line without tags grades nothing, and the refill row is priced by `track`.
+    #[test]
+    fn scap_section_grades_each_sector_cap_against_the_uncapped_top() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let px = |t: &str| Some(match t { "T2" => 50.0, "R" => 300.0, _ => 100.0 });
+        let mut rows: Vec<(String, Option<f64>)> = ["T1", "T2", "A", "B", "C", "D", "E", "F", "G", "H", "R"].iter().map(|t| (t.to_string(), Some(100.0))).collect();
+        rows.push(("Z".into(), Some(100.0)));
+        let bare = Snapshot { rows, ..snap("2026-01-01", Some(100.0), &[]) };
+        assert!(scap_section(std::slice::from_ref(&bare), today, &px, Some(100.0)).contains("nothing gradeable yet"));
+        let line = serde_json::to_string(&bare).unwrap();
+        assert!(!line.contains("sector"), "{line}");
+        let s = Snapshot { sector: vec![("T1".into(), "Information Technology".into()), ("T2".into(), "Information Technology".into())], ..bare };
+        assert!(fetch_set(std::slice::from_ref(&s)).contains(&"R".to_string()), "the refill row is priced");
+        assert!(!fetch_set(std::slice::from_ref(&s)).contains(&"Z".to_string()), "a row no capped book holds is not");
+        let out = scap_section(&[s], today, &px, Some(100.0));
+        let row = |l: &str| out.lines().find(|x| x.trim_start().starts_with(l)).unwrap_or_default().to_string();
+        // the top 10 holds T2 (-50%) and nine flat names = -5%; cap 1 swaps T2 for R (+200%) = +20%
+        assert!(row("scap1 sector cap 1 minus top").contains("mean   +25.0pp"), "{out}");
+        assert!(row("scap2 sector cap 2 minus top").contains("mean    +0.0pp"), "{out}");
         assert!(out.contains("Journalled on 1 of 1"), "{out}");
     }
 

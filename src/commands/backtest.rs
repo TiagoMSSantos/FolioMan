@@ -2888,7 +2888,8 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // six survivors. `report_vs_benchmark` returns `()` and only prints, so no unit test can reach
     // the guard either ((#75)). An unobservable branch is not an optimisation, it is dead weight the
     // suite has to pretend to cover — so it is not written.
-    let mut trail_of: std::collections::BTreeMap<i32, std::collections::HashMap<&str, &[f64]>> = Default::default();
+    // (#557) keyed to the whole Sample, not just its trail: the graded sector cap reads `quote.sector` too.
+    let mut sample_of: std::collections::BTreeMap<i32, std::collections::HashMap<&str, &Sample>> = Default::default();
     // (#144) TWO PASSES, because a rank normalisation is CROSS-SECTIONAL and the pool a name is ranked
     // against must be its OWN cutoff window. Ranking a 1998 name against a 2015 one would be lookahead
     // of the plainest kind, so the grouping is not a convenience — it is the correctness condition.
@@ -2912,7 +2913,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         for (s, scored) in group.iter().zip(picks::growth_scores_ranked(&quotes, tuning)) {
             let Some(score) = scored else { continue };
             let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
-            trail_of.entry(*b).or_default().insert(s.quote.ticker.as_str(), s.trail.as_slice());
+            sample_of.entry(*b).or_default().insert(s.quote.ticker.as_str(), *s);
             // RAW cumulative % (annualize the BOOK, not per-name)
             rows.push((*b, score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
         }
@@ -2955,6 +2956,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // −100% zeros, and a name that goes to 0 contributes its full weight lost (1/N), not its scary CAGR.
     // Also count "zeros ridden" (names ≤−90% you must hold through) to show the no-sell tail you survive.
     let mut m10: Option<f64> = None; // top-10 mean terminal multiple, feeds the after-tax footer below
+    let mut census: Vec<(usize, usize)> = Vec::new(); // (#557) per bucket: top-10 (stock slots, of them tagged)
     for &n in TOP_LADDER {
         let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
         let (mut zeros, mut held) = (0usize, 0usize);
@@ -2963,6 +2965,11 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         for (b, v) in &by_bucket {
             let mut vv = v.clone();
             vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
+            let sample = |t: &str| sample_of.get(b).and_then(|m| m.get(t)).copied();
+            // (#557) the graded twin of the live `picks::cap_book`, through the same `sector_cap`, so a
+            // capped name refills from below. Identity at the shipped 0. Like the corr skip below, it
+            // leaves `rank_slice_stats` and `book_deciles` untrimmed, so their h2h GUARD is vacuous here.
+            let vv = picks::sector_cap(vv, tuning.growth_sector_cap, |x| sample(x.3.as_str()).and_then(|s| picks::stock_sector(&s.quote)));
             // (#140) the graded redundancy skip. At the shipped `growth_corr_cap: 0.0` this is the
             // identity and every number below is unchanged; armed, it rebuilds THIS rung from the
             // ranked list, dropping a name that duplicates a bet already in the book and refilling
@@ -2970,9 +2977,12 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             // `book_deciles` below still read the untrimmed `by_bucket`, so the rank-1 h2h GUARD is
             // measured on the same cohort either way and cannot move for this knob — a vacuous pass,
             // and the receipt must say so rather than bank it as evidence.
-            let trails: Vec<&[f64]> =
-                vv.iter().map(|x| trail_of.get(b).and_then(|m| m.get(x.3.as_str())).copied().unwrap_or(&[])).collect();
+            let trails: Vec<&[f64]> = vv.iter().map(|x| sample(x.3.as_str()).map_or(&[][..], |s| s.trail.as_slice())).collect();
             let p = corr_cap_rung(&vv, &trails, n, tuning.growth_corr_cap);
+            if n == VERDICT_TOP {
+                let stocks: Vec<&Sample> = p.iter().filter_map(|x| sample(x.3.as_str())).filter(|s| picks::asset_class(&s.quote) == 2).collect();
+                census.push((stocks.len(), stocks.iter().filter_map(|s| picks::stock_sector(&s.quote)).count()));
+            }
             let take = p.len();
             if take == 0 {
                 continue;
@@ -2993,6 +3003,16 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             // (#466) Never lead with `markers::VERDICT_ROW`: this prints BEFORE the book row, so a
             // `top-10 zero names` spelling was the line the gate parsed, found no `excess`, and red.
             println!("  zero names in top-10 ({years}y): {}", zero_names.join(", "));
+        }
+        if n == VERDICT_TOP {
+            // (#557) the cap judges only these tagged slots. `sector_of` is TODAY's GICS label, and `pit`'s
+            // delisted ever-members carry none, so on that lane the cap can see less of the book.
+            println!(
+                "  SECTOR CENSUS (#557): {} of {} top-{n} stock slots carry a GICS sector, the only ones growth_sector_cap {} can judge",
+                census.iter().map(|c| c.1).sum::<usize>(),
+                census.iter().map(|c| c.0).sum::<usize>(),
+                tuning.growth_sector_cap
+            );
         }
         let m = excess.len();
         if m == 0 {
@@ -4373,6 +4393,7 @@ fn report_roll(
     let alive = |s: &Sample, d, end| series.get(s.quote.ticker.as_str()).is_some_and(|x| priced_at_both(x, d, end));
     let top10 = |d, end| -> Option<Vec<(&str, f64)>> {
         let v: Vec<&Sample> = ranked.get(&d)?.0.iter().copied().filter(|s| alive(s, d, end)).collect();
+        let v = picks::sector_cap(v, tuning.growth_sector_cap, |s| picks::stock_sector(&s.quote)); // (#557)
         let trails: Vec<&[f64]> = v.iter().map(|s| s.trail.as_slice()).collect();
         let p = corr_cap_rung(&v, &trails, VERDICT_TOP, tuning.growth_corr_cap);
         Some(p.iter().map(|s| (s.quote.ticker.as_str(), 1.0 / p.len() as f64)).collect())
