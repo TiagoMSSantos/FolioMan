@@ -18974,7 +18974,8 @@ buy_heuristic:
                                  #   tickers and nothing filters them out), but because ~11y of coin history leaves zero
                                  #   cutoffs with a scored forward window: 20y-s 0/4633, 12y-s 0/11758, 8y-s 18/20575 with 0
                                  #   growth-scored. Judgment gate validated by live-screen eyeball. 0 = off.
-  growth_max_peg: 1.6            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
+  growth_max_peg: 2.0            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
+                                 #   (#552) 1.6 -> 2.0 on 2026-10-11: the largest rung of a 1.7-2.3 grid passing PRIMARY + guards.
                                  #   (#424) reads split-restated EPS since 2026-09-30: 51 more 8y fund cutoffs fail it.
                                  #   (#425) RE-GRADED, kept: ->off TOO TIGHT at 8y (+178.2 vs +151.6), SPLIT at 12y (median -10.0).
                                  #   (reads like the column and like the request), APPLIED to `fund.peg_yield` — which is
@@ -19324,6 +19325,26 @@ buy_heuristic:
   #  is required, so a lone pass ships; with seven arms that pass may be noise, and the receipt says so if it happens.
   #  Of the passing rungs ship the LARGEST (USER DECISION, as in (#551)). No passer -> 1.6 stays, REFUSED with the curve.
   #  A run with thin `windows scored` is re-dispatched, not graded.
+  #  VERDICT: SHIPPED 2.0. 1.9 and 2.0 pass; 2.1 is the largest PRIMARY passer but breaks the (#160) 12y h2h not-worse
+  #  clause (6/18 vs the control's 7/18), and 1.8 breaks it at 8y (11/26 vs 12/26), so 2.0 is the largest full pass. It
+  #  replicates (#551)'s lone 2.0 pass and has a passing neighbour (1.9), so it also clears the (#551) plateau bar.
+  #  Probe runs 38149584056 (1.6 control), 38149587075 (1.7), 38149589748 (1.8), 38149592669 (1.9), 38149595585 (2.0),
+  #  38149598566 (2.1), 38149601106 (2.2), 38149603856 (2.3); each echoed its own knob line, and windows scored were 2783
+  #  at 12y and 6179 at 8y in all eight.
+  #    rung        top-10 12y   top-10 8y    worst 12/8    8y med pool   h2h 6-10 12y|8y   verdict vs control
+  #    1.6 CTRL    +2.6|+1.4    +2.7|+2.7    -6.4/-17.1    6             7/18 | 12/26
+  #    1.7         +2.5|+1.4    +2.7|+2.6    -6.4/-17.1    6             7/18 | 12/26      fails 12y mean, 8y median
+  #    1.8         +2.6|+1.4    +2.7|+2.7    -6.4/-17.1    7             7/18 | 11/26      PRIMARY held, 8y h2h worse
+  #    1.9         +2.6|+2.0    +2.8|+2.7    -6.4/-17.1    7             7/18 | 12/26      PASSES
+  #    2.0         +2.6|+2.0    +2.7|+2.7    -6.4/-17.1    7             7/18 | 12/26      PASSES (12y median up) - SHIPPED
+  #    2.1         +2.7|+2.0    +2.8|+2.7    -6.4/-17.1    7             6/18 | 12/26      PRIMARY up, 12y h2h worse
+  #    2.2         +2.7|+2.0    +2.8|+2.6    -6.4/-17.1    7             6/18 | 12/26      fails 8y median
+  #    2.3         +2.7|+2.0    +2.8|+2.6    -6.4/-17.1    7             6/18 | 12/26      fails 8y median
+  #  The control's own 6-10 tally sits below the absolute 50% at both horizons (39% / 46%), so, as in (#551), the guard is
+  #  graded on its not-worse clause. Names this admits live (PEG 1.6-2.0): Apple 1.67 and the other one-gate PEG near
+  #  misses below 2.0. Amazon (PEG 3.01, plus cagr and 5Y+) and Microsoft (four gates) stay out.
+  #  REVERT RULE: if the (#421) backtest leg on the push reds, or the forward peg-notch track grades the 1.6-2.0 cohort
+  #  negative over 12 monthly lines, put 1.6 back.
   growth_max_peg_etf: 2.0      # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
