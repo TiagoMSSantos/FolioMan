@@ -3718,7 +3718,7 @@ const COLUMNS: &[ColSpec] = &[
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
     // (#540) display only: the link is stamped by `stamp_site`, off `profile.cik`
-    ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report)" },
+    ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report). Hover (desktop) for the company's description and its last annual report's revenue, net income, free cash flow and net debt" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
     ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
@@ -5658,6 +5658,7 @@ pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn
                 if q.is_some() || cell.len() < 3 {
                     let (label, url) = reports_link(q.copied(), &named);
                     *cell = vec!["REPORTS".into(), label.into(), url.into()];
+                    cell.extend(q.and_then(|q| reports_tip(q)).map(Into::into)); // (#542) the hover
                 }
             }
             let Some(site) = q.and_then(|q| q.profile.site.clone()).filter(|u| u.starts_with("https://")) else { continue };
@@ -5681,6 +5682,33 @@ fn reports_link(q: Option<&Quote>, named: &str) -> (&'static str, String) {
     // RFC 3986 unreserved bytes pass, every other byte is %XX: the wasm build carries no url crate
     let enc: String = query.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
     ("search", format!("https://www.google.com/search?q={enc}"))
+}
+
+/// (#542) The REPORTS hover: the company's description, then the as-of annual report's figures in
+/// its reporting currency (net income = net margin of revenue; net debt below 0 reads net cash). A
+/// missing piece is skipped, nothing at all = None.
+fn reports_tip(q: &Quote) -> Option<String> {
+    let f = q.fund.as_ref();
+    let cur = f.and_then(|f| f.currency.as_deref()).map_or(String::new(), |c| format!("{c} "));
+    let money = |name: &str, v: Option<f64>| v.map(|v| format!("{name} {cur}{}", core::humanize(v)));
+    let figures: Vec<String> = [
+        money("revenue", f.and_then(|f| f.revenue_ttm)),
+        money("net income", f.and_then(|f| Some(f.net_margin? * f.revenue_ttm? / 100.0))),
+        money("free cash flow", f.and_then(|f| f.fcf_ttm)),
+        f.and_then(|f| f.net_debt).and_then(|d| money(if d < 0.0 { "net cash" } else { "net debt" }, Some(d.abs()))),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let report = (!figures.is_empty()).then(|| {
+        let head = match f.and_then(|f| f.period_end.zip(f.filed)) {
+            Some((end, filed)) => format!("FY{} annual report, filed {filed}", end.format("%Y")),
+            None => "Last annual report".to_string(),
+        };
+        format!("{head}: {}", figures.join(", "))
+    });
+    let tip: Vec<String> = [q.profile.about.clone(), report].into_iter().flatten().collect();
+    (!tip.is_empty()).then(|| tip.join("\n\n"))
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -11156,6 +11184,34 @@ mod tests {
         stamp_site(&mut p, &[sap], &us);
         assert_eq!(p["stocks"][1][2], serde_json::json!(["REPORTS", "SEC", "https://www.sec.gov/edgar/browse/?CIK=0001000184"]), "a found row is replaced");
         assert_eq!(p["stocks"][0][2][2], sec);
+    }
+
+    /// (#542) `reports_tip`: description, then the annual report's figures in its currency; net debt
+    /// below 0 reads net cash; a missing piece is skipped; nothing = no 4th REPORTS element.
+    #[test]
+    fn reports_tip_reads_the_description_and_last_annual_report() {
+        let mut q = Quote::stub("AAPL", "€1", "", "Apple Inc.");
+        assert_eq!(reports_tip(&q), None);
+        q.profile.about = Some("Apple makes phones.".into());
+        assert_eq!(reports_tip(&q).as_deref(), Some("Apple makes phones."));
+        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
+        q.fund = Some(core::FundFactors {
+            revenue_ttm: Some(400e9),
+            net_margin: Some(25.0),
+            fcf_ttm: Some(98.8e9),
+            net_debt: Some(-30e9),
+            period_end: day("2025-09-27"),
+            filed: day("2025-10-31"),
+            currency: Some("USD".into()),
+            ..Default::default()
+        });
+        assert_eq!(reports_tip(&q).as_deref(), Some("Apple makes phones.\n\nFY2025 annual report, filed 2025-10-31: revenue USD 400.0B, net income USD 100.0B, free cash flow USD 98.8B, net cash USD 30.0B"));
+        q.profile.about = None;
+        q.fund = Some(core::FundFactors { net_debt: Some(2e6), ..Default::default() });
+        assert_eq!(reports_tip(&q).as_deref(), Some("Last annual report: net debt 2.0M"));
+        let mut p = serde_json::json!({"stocks": [[["TICKER", "AAPL"], ["REPORTS", "x"]]]});
+        stamp_site(&mut p, &[q], &|t: &str| t.to_string());
+        assert_eq!(p["stocks"][0][1][3], "Last annual report: net debt 2.0M", "the tip rides as the 4th element");
     }
 
     /// (#500) Young = an equity listed under 5 years: fastest revenue growth first, a missing or NaN

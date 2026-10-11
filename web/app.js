@@ -36,8 +36,9 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
     // (#397) a pinned row (`*` in its RANK cell) shows at every N: an uploaded watchlist always shows
     // (#535) a `b` row does not: N cuts it like any row, so ?top=1 shows one name
     if (row.some(([h, c]) => h === "RANK" && /\*/.test(c))) tr.dataset.pin = "";
-    for (const [h, cell, url] of row) {
+    for (const [h, cell, url, tip] of row) {
       const td = tr.insertCell();
+      if (tip) td.title = tip; // (#542) a REPORTS cell's hover: the description and last annual report, as text
       // (#474) a RANK cell's hover reads its position, then what each of its flags means
       if (h === "RANK" && cell) {
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);

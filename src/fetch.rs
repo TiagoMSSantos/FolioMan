@@ -2033,7 +2033,20 @@ fn profile_of(company: &Value, target: &Value, summary: &Value, short: Option<f6
     let close = summary.pointer("/data/summaryData/PreviousClose/value").and_then(nasdaq_number).filter(|c| *c > 0.0);
     let target_pct = consensus.and_then(|c| c["priceTarget"].as_f64()).filter(|t| *t > 0.0).zip(close).map(|(t, c)| (t / c - 1.0) * 100.0);
     let sector = company.pointer("/data/Sector/value").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
-    core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts), sector, ..Default::default() }
+    let about = company.pointer("/data/CompanyDescription/value").and_then(Value::as_str).and_then(trim_about);
+    core::Profile { site, short_shares: short, target_pct, analysts: (analysts > 0).then_some(analysts), sector, about, ..Default::default() }
+}
+
+/// (#542) A company description cut for a hover: its first 300 chars, ended at the last ". " a capital
+/// follows ("Co. (" runs on), else cut there with "…". Blank = None.
+fn trim_about(text: &str) -> Option<String> {
+    let text = text.trim();
+    let head: String = text.chars().take(300).collect();
+    if head.len() == text.len() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    let end = head.match_indices(". ").filter(|(i, _)| head[i + 2..].starts_with(|c: char| c.is_uppercase())).last();
+    Some(end.map_or_else(|| format!("{}…", head.trim_end()), |(i, _)| head[..=i].to_string()))
 }
 
 /// (#469) A home page as https: http upgraded, a bare host given the scheme, blank = None.
@@ -2140,6 +2153,7 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
                 target_pct: fresh.target_pct.or(old.target_pct),
                 analysts: fresh.analysts.or(old.analysts),
                 sector: fresh.sector.or(old.sector),
+                about: fresh.about.or(old.about),
                 ..Default::default()
             };
             if row.1.site.is_none() {
@@ -11135,6 +11149,23 @@ pub(crate) mod tests {
         assert_eq!(profile_of(&Value::Null, &Value::Null, &Value::Null, None), core::Profile::default());
         let sector = |v: &str| profile_of(&serde_json::json!({"data": {"Sector": {"value": v}}}), &Value::Null, &Value::Null, None).sector;
         assert_eq!((sector("Industrials").as_deref(), sector(" ")), (Some("Industrials"), None), "(#481) blank reads None");
+    }
+
+    /// (#542) `trim_about`: a short text whole, a long one at its last sentence end inside 300 chars
+    /// ("Co. (" is no end), no end at all hard-cut with "…", blank None; `profile_of` reads it.
+    #[test]
+    fn trim_about_cuts_at_a_sentence() {
+        assert_eq!(trim_about(" Short one. Two. ").as_deref(), Some("Short one. Two."));
+        let long = format!("Apple makes phones. Today it leads with iPhone and Mac. {}", "More words here. ".repeat(20));
+        let cut = trim_about(&long).unwrap();
+        assert!(cut.ends_with("words here.") && cut.chars().count() <= 300, "{cut}");
+        let jpm = format!("JPMorgan Chase & Co. (JPM) is a bank. {}", "X".repeat(300));
+        assert_eq!(trim_about(&jpm).as_deref(), Some("JPMorgan Chase & Co. (JPM) is a bank."));
+        let run = "é".repeat(400);
+        assert_eq!(trim_about(&run), Some(format!("{}…", "é".repeat(300))), "char-safe hard cut");
+        assert_eq!(trim_about("  "), None);
+        let about = profile_of(&serde_json::json!({"data": {"CompanyDescription": {"value": "A co. Makes things."}}}), &Value::Null, &Value::Null, None).about;
+        assert_eq!(about.as_deref(), Some("A co. Makes things."));
     }
 
     /// (#471) The top hit's URL and Wikidata id (none on a page without one); the preferred P856 wins

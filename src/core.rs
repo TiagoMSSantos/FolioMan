@@ -232,6 +232,8 @@ pub struct Profile {
     pub index: Option<String>,     // (#490) justETF's index name, read by the INDEX cell only when BF has no benchmark
     #[serde(default)]
     pub cik: Option<String>,       // (#540) the SEC CIK, 10 digits, for the REPORTS link; None = not an SEC filer
+    #[serde(default)]
+    pub about: Option<String>,     // (#542) Nasdaq's company description, cut to ~2 sentences, for the REPORTS hover
 }
 
 // (#473) serde's skip test for a count: universe.json carries `super_buyers` on the flagged names alone.
@@ -4114,6 +4116,11 @@ pub struct FundFactors {
     // one-source rule exists to prevent. After the XBRL-instance fallback this is ARES alone: it tags
     // no per-share and no weighted-average element in the filing itself, so no source has it.
     pub eps_never_reported: bool,
+    // (#542) DISPLAY ONLY, the as-of annual row's filing date, fiscal year end and reporting currency:
+    // the REPORTS hover names the report its figures come from. Never scored.
+    pub filed: Option<NaiveDate>,
+    pub period_end: Option<NaiveDate>,
+    pub currency: Option<String>,
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -4559,6 +4566,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
+        filed: now.map(|r| r.filed),
+        period_end: now.map(|r| r.period_end),
+        currency: now.and_then(|r| r.currency.clone()),
     }
 }
 
@@ -6234,6 +6244,9 @@ mod tests {
             fcf_base: None,
             oe_base: None,
             eps_never_reported: false,
+            filed: None,
+            period_end: None,
+            currency: None,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
         assert_eq!(select_fund_factor(&f, "margin_trend"), Some(5.0));
