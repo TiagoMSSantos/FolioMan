@@ -19278,7 +19278,21 @@ buy_heuristic:
   #  The refusal rests on a one-decimal median tick. A RE-OPEN must pre-register a different bar (the worst
   #  window, or a rank-slice grade) BEFORE re-running; it must not re-read these runs under a looser one.
   #  REVERT RULE: set 0.0; the code is then byte-identical to the wall.
-  growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
+  #── (#551) PRE-REGISTERED 2026-10-11 — RE-GRADE THE growth_max_peg VALUE, BOTH SIDES OF 1.6 ──
+  #  WHY THE (#266) LADDER IS OWED AGAIN: it ran 2026-09-08, before (#331) gave the PEG denominator its own window and
+  #  (#424) restated EPS for splits, so it priced a PEG that no longer exists. Its control read 12y +3.9|+4.0, 8y +5.3|+5.4;
+  #  the (#550) control read 12y +2.6|+1.4, 8y +2.7|+2.7. Nothing BELOW 1.6 has been graded under the current definition
+  #  ((#37)'s [1.5, 4.0] sweep priced the old one; (#425) checked 1.6 against off only).
+  #  ARMS, written before any run (#165): growth_max_peg 1.0, 1.2, 1.4, 1.5, 1.75, 2.0, 2.5 against a FRESH 1.6 control
+  #  dispatched in the same batch (never the (#550) k = 0 run), each `backtest {12,8} universe fund pit` on probe.yml
+  #  (`knobs: growth_max_peg=<x>`). growth_peg_taper_k stays 0 (the wall) in every arm. 20y is not run (PEG arms are
+  #  byte-identical there per (#266)).
+  #  BAR: a rung PASSES if Ship Rule v2 PRIMARY holds at 12y AND 8y vs the control (top-10 excess, mean AND median, up or
+  #  held) with the worst window and h2h guards intact, AND at least one ADJACENT rung also passes ((#126): with eight
+  #  arms a lone spike is noise). Of the passing rungs ship the LARGEST (USER DECISION: the one that lets the most names
+  #  appear). 2.5 passing is a grid edge: ship it, note it, extend to 3.0+ as a follow-up. No passer -> 1.6 stays,
+  #  receipt reads REFUSED with the full curve. A run with thin `windows scored` is re-dispatched, not graded.
+  growth_max_peg_etf: 2.0       # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
                                  #   picks::lane_split, not a gate in growth_score, and the asymmetry is forced by data:
