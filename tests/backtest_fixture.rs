@@ -612,7 +612,9 @@ fn backtest_fund_report_is_gain_invariant() {
     // (#491) except the two sweep rows that price GAAP net income raw, on purpose: they must move.
     // (#566) Same for every `roe` row (the held-book factor table and the factor TEST row): it reads raw
     // ROE (`core::select_fund_factor`), so it moves once growth_gate_soft puts the gain filer in the book.
-    let cooked = |r: &str| r.lines().filter(|l| !["net_margin ", "roe_raw ", "roe "].iter().any(|k| l.trim_start().starts_with(k))).collect::<Vec<_>>().join("\n");
+    // `margin_stability` is −std of that raw net margin, so it moves with them. Every EPS-fed row
+    // (accrual_gap, lynch, PEG, FAIR) reads the stripped EPS, and roic/noa/book divide NI by ROE: still pinned.
+    let cooked = |r: &str| r.lines().filter(|l| !["net_margin ", "roe_raw ", "roe ", "margin_stability "].iter().any(|k| l.trim_start().starts_with(k))).collect::<Vec<_>>().join("\n");
     let got = report_at(&cfg, &["12", "fund"], None);
     assert_ne!(cooked(&want), want, "the raw rows the filter drops must exist");
     let (got, want) = (cooked(&got), cooked(&want));
