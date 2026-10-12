@@ -245,6 +245,49 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   top-10 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   vs Série E best case (top-10): beat 100% of 22 windows (22) at 4.5%/yr   median book 5.64× vs 2.41×
   RANKED top-10 (#558, weights 10..1)  excess +3.6 (med +1.9) pts/yr   worst -2.5
+  BOOK b3942 empty
+  BOOK b3945 empty
+  BOOK b3948 empty
+  BOOK b3951 empty
+  BOOK b3954 empty
+  BOOK b3957 empty
+  BOOK b3960 empty
+  BOOK b3963 empty
+  BOOK b3966 empty
+  BOOK b3969 empty
+  BOOK b3972 empty
+  BOOK b3975 empty
+  BOOK b3978 empty
+  BOOK b3981 empty
+  BOOK b3984 empty
+  BOOK b3985 empty
+  BOOK b3986 empty
+  BOOK b3987 -0.4 pts/yr | INTC +476% NWL +60%
+  BOOK b3988 empty
+  BOOK b3989 empty
+  BOOK b3990 +0.3 pts/yr | INTC +272%
+  BOOK b3991 +9.7 pts/yr | TECH +1859%
+  BOOK b3992 +8.8 pts/yr | TECH +1459%
+  BOOK b3993 +10.3 pts/yr | TECH +1774%
+  BOOK b3994 +10.0 pts/yr | TECH +1658%
+  BOOK b3995 +8.7 pts/yr | TECH +1262%
+  BOOK b3996 +4.9 pts/yr | CCL +88% M +15% TECH +1459%
+  BOOK b3997 empty
+  BOOK b3998 +10.2 pts/yr | TECH +1275%
+  BOOK b3999 +6.4 pts/yr | TECH +1147% COF +114%
+  BOOK b4000 +9.8 pts/yr | BIIB +1291%
+  BOOK b4001 +1.4 pts/yr | JBL +68% ASML +789% COF +50%
+  BOOK b4002 +0.0 pts/yr | COF +157% BIIB +443%
+  BOOK b4003 empty
+  BOOK b4004 +3.6 pts/yr | TECH +1471% BIIB +278% DGX +290%
+  BOOK b4005 +0.2 pts/yr | DGX +352%
+  BOOK b4006 +0.7 pts/yr | CHRW +407%
+  BOOK b4007 +2.0 pts/yr | TECH +756% CHRW +317%
+  BOOK b4008 -0.6 pts/yr | TECH +590% BIIB +264% DGX +202% CHRW +315%
+  BOOK b4009 -2.4 pts/yr | BIIB +199% DGX +247%
+  BOOK b4010 -2.0 pts/yr | DGX +242%
+  BOOK b4011 -2.2 pts/yr | DGX +226% CHRW +292%
+  BOOK b4012 -2.3 pts/yr | CHRW +306% DGX +278% GRMN +548% EGL.LS +30%
   top-15 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   top-20 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   top-25 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds

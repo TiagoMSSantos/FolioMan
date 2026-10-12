@@ -237,6 +237,45 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   top-10 book +2.7%/yr  vs S&P500 +7.3%/yr  ->  excess -4.6 (med -2.7) pts/yr   win 14% of 21   worst -17.0   OOS -0.8/-8.1   rode 0 zeros/31 holds
   vs Série E best case (top-10): beat 33% of 21 windows (7) at 4.5%/yr   median book 1.32× vs 1.70×
   RANKED top-10 (#558, weights 10..1)  excess -4.5 (med -2.7) pts/yr   worst -17.0
+  BOOK b3987 empty
+  BOOK b3990 empty
+  BOOK b3992 empty
+  BOOK b3993 empty
+  BOOK b3994 empty
+  BOOK b3995 empty
+  BOOK b3996 -1.4 pts/yr | M -16%
+  BOOK b3997 empty
+  BOOK b3998 empty
+  BOOK b3999 -1.1 pts/yr | COF -12%
+  BOOK b4000 empty
+  BOOK b4001 +0.7 pts/yr | ASML +76% COF -12%
+  BOOK b4002 -2.7 pts/yr | COF +4%
+  BOOK b4003 empty
+  BOOK b4004 empty
+  BOOK b4005 empty
+  BOOK b4006 empty
+  BOOK b4007 empty
+  BOOK b4008 +4.3 pts/yr | BIIB +366% DGX +55%
+  BOOK b4009 +5.3 pts/yr | BIIB +382% DGX +110%
+  BOOK b4010 -0.4 pts/yr | DGX +93%
+  BOOK b4011 -0.0 pts/yr | DGX +111%
+  BOOK b4012 -2.7 pts/yr | DGX +114% EGL.LS -0%
+  BOOK b4013 -10.0 pts/yr | EGL.LS -40%
+  BOOK b4014 -6.3 pts/yr | CHRW +47% EGL.LS -66%
+  BOOK b4015 -7.4 pts/yr | CHRW +49% EGL.LS -67%
+  BOOK b4016 -6.8 pts/yr | CHRW +26%
+  BOOK b4017 empty
+  BOOK b4018 empty
+  BOOK b4019 empty
+  BOOK b4020 empty
+  BOOK b4021 -7.0 pts/yr | CHRW +36%
+  BOOK b4022 -3.0 pts/yr | WYNN -33% CHRW +18% EW +511%
+  BOOK b4023 -0.4 pts/yr | BIIB +104% EW +407%
+  BOOK b4024 -8.3 pts/yr | BIIB +60%
+  BOOK b4025 -2.7 pts/yr | EW +363% BIIB +26%
+  BOOK b4026 -17.0 pts/yr | BIIB -45%
+  BOOK b4027 -15.3 pts/yr | BIIB -37%
+  BOOK b4028 -15.2 pts/yr | BIIB -34%
   top-15 book +2.7%/yr  vs S&P500 +7.3%/yr  ->  excess -4.6 (med -2.7) pts/yr   win 14% of 21   worst -17.0   OOS -0.8/-8.1   rode 0 zeros/31 holds
   top-20 book +2.7%/yr  vs S&P500 +7.3%/yr  ->  excess -4.6 (med -2.7) pts/yr   win 14% of 21   worst -17.0   OOS -0.8/-8.1   rode 0 zeros/31 holds
   top-25 book +2.7%/yr  vs S&P500 +7.3%/yr  ->  excess -4.6 (med -2.7) pts/yr   win 14% of 21   worst -17.0   OOS -0.8/-8.1   rode 0 zeros/31 holds

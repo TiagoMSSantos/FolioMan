@@ -373,6 +373,65 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   top-10 book +8.2%/yr  vs S&P500 +6.2%/yr  ->  excess +2.0 (med +0.4) pts/yr   win 53% of 34   worst -17.9   OOS +9.5/-5.5   rode 0 zeros/71 holds
   vs Série E best case (top-10): beat 68% of 34 windows (23) at 4.5%/yr   median book 2.79× vs 1.70×
   RANKED top-10 (#558, weights 10..1)  excess +2.2 (med +1.2) pts/yr   worst -18.9
+  BOOK b3942 empty
+  BOOK b3945 empty
+  BOOK b3948 empty
+  BOOK b3951 empty
+  BOOK b3954 empty
+  BOOK b3957 empty
+  BOOK b3960 empty
+  BOOK b3963 empty
+  BOOK b3966 empty
+  BOOK b3969 empty
+  BOOK b3972 empty
+  BOOK b3975 empty
+  BOOK b3978 empty
+  BOOK b3981 empty
+  BOOK b3984 empty
+  BOOK b3985 empty
+  BOOK b3986 empty
+  BOOK b3987 +0.9 pts/yr | INTC +379% NWL +24%
+  BOOK b3988 empty
+  BOOK b3989 empty
+  BOOK b3990 +2.2 pts/yr | INTC +236%
+  BOOK b3991 +16.4 pts/yr | TECH +1237%
+  BOOK b3992 +15.9 pts/yr | TECH +1011%
+  BOOK b3993 +21.9 pts/yr | TECH +1134%
+  BOOK b3994 +19.9 pts/yr | TECH +846%
+  BOOK b3995 +16.5 pts/yr | TECH +605%
+  BOOK b3996 +9.1 pts/yr | CCL +11% M -16% TECH +556%
+  BOOK b3997 empty
+  BOOK b3998 +14.0 pts/yr | TECH +396%
+  BOOK b3999 +8.7 pts/yr | TECH +334% COF -12%
+  BOOK b4000 +17.2 pts/yr | BIIB +528%
+  BOOK b4001 -0.6 pts/yr | JBL -24% ASML +76% COF -12%
+  BOOK b4002 +5.7 pts/yr | COF +4% BIIB +345%
+  BOOK b4003 empty
+  BOOK b4004 +4.8 pts/yr | TECH +210% BIIB +423% DGX +52%
+  BOOK b4005 -0.8 pts/yr | DGX +102%
+  BOOK b4006 +4.7 pts/yr | CHRW +231%
+  BOOK b4007 +4.9 pts/yr | TECH +191% CHRW +242%
+  BOOK b4008 +4.1 pts/yr | TECH +132% BIIB +366% DGX +55% CHRW +261%
+  BOOK b4009 +5.3 pts/yr | BIIB +382% DGX +110%
+  BOOK b4010 -0.4 pts/yr | DGX +93%
+  BOOK b4011 +0.0 pts/yr | DGX +111% CHRW +114%
+  BOOK b4012 -1.7 pts/yr | CHRW +98% DGX +114% GRMN +102% EGL.LS -0%
+  BOOK b4013 -3.4 pts/yr | GRMN +31% CHRW +110% EGL.LS -40%
+  BOOK b4014 -1.2 pts/yr | GRMN +38% ELV +241% CHRW +47% EGL.LS -66%
+  BOOK b4015 -3.7 pts/yr | CHRW +49% EGL.LS -67% ELV +243% WYNN -5% GRMN -6%
+  BOOK b4016 -7.0 pts/yr | GRMN +34% WYNN -17% CHRW +26%
+  BOOK b4017 empty
+  BOOK b4018 empty
+  BOOK b4019 empty
+  BOOK b4020 empty
+  BOOK b4021 -0.6 pts/yr | CHRW +36% EW +580% WBD -31%
+  BOOK b4022 -11.2 pts/yr | CHRW +18% WBD -29%
+  BOOK b4023 -9.1 pts/yr | BIIB +104% WBD -39%
+  BOOK b4024 -12.4 pts/yr | BIIB +60% WBD -63%
+  BOOK b4025 -2.7 pts/yr | EW +363% BIIB +26%
+  BOOK b4026 -17.0 pts/yr | BIIB -45%
+  BOOK b4027 -17.9 pts/yr | WBD -71% BIIB -37%
+  BOOK b4028 -15.3 pts/yr | BIIB -34% WBD -34%
   top-15 book +8.2%/yr  vs S&P500 +6.2%/yr  ->  excess +2.0 (med +0.4) pts/yr   win 53% of 34   worst -17.9   OOS +9.5/-5.5   rode 0 zeros/71 holds
   top-20 book +8.2%/yr  vs S&P500 +6.2%/yr  ->  excess +2.0 (med +0.4) pts/yr   win 53% of 34   worst -17.9   OOS +9.5/-5.5   rode 0 zeros/71 holds
   top-25 book +8.2%/yr  vs S&P500 +6.2%/yr  ->  excess +2.0 (med +0.4) pts/yr   win 53% of 34   worst -17.9   OOS +9.5/-5.5   rode 0 zeros/71 holds
