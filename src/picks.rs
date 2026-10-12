@@ -1306,6 +1306,7 @@ struct ScoreParts {
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
     holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one × (#545) growth_capex_ocf_penalty above growth_capex_ocf_max × (#550) (growth_max_peg / PEG)^growth_peg_taper_k above the ceiling; 1.0 otherwise / knobs off / every backtest quote
+    gate_soft: f64,    // (#563) f^n, n = knob gates waived to score this name ([`waived`]); 1.0 = it cleared every gate, or `growth_gate_soft` is 0 and it never got here
     score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
@@ -1353,7 +1354,7 @@ pub(crate) fn accel_raw(return_1y: f64, long_cagr: f64, tuning: &BuyHeuristic) -
 /// and not be crashing this month. The P/E value tilt (E) still damps a nosebleed valuation, so a
 /// blow-off top is penalised, not rewarded. `None` if it fails a gate. **NOT advice** — a ranking.
 /// Returns the full per-term [`ScoreParts`]; [`growth_score`] is the scalar wrapper most callers use.
-fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
+fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let crypto = is_currency_quoted(&quote.ticker);
 
     // ---- GATES (reuse the cheap exclusions; the rest are the on-sale lane's mirror) ----
@@ -1961,10 +1962,28 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base_offset, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, score: 0.0,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, gate_soft: 1.0, score: 0.0,
     };
     parts.score = compose_score(&parts, tuning);
     Some(parts)
+}
+
+/// (#563) [`score_parts_hard`], with `growth_gate_soft` armed: a name the knob gates refuse is scored
+/// with exactly the gates it fails waived ([`waived`], the same what-if the MISSES column shows) and
+/// docked f^n, n = gates waived. At the shipped 0.0 nothing reaches `waived`, so the lane is bit for bit.
+/// What `waived` cannot lift (a structural refusal, no turnover, the repriced-bar artifact) stays `None`.
+fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
+    let hard = score_parts_hard(quote, tuning);
+    if hard.is_some() || tuning.growth_gate_soft == 0.0 {
+        return hard;
+    }
+    // ponytail: clones the tuning and re-runs the gates per FAILING quote, only while the knob is armed;
+    // precompute per pool if a probe arm slows. The walkthrough prints no x f^n line yet; add it if this ships.
+    let (open, tags, _) = waived(quote, tuning)?;
+    let mut p = score_parts_hard(quote, &open)?;
+    p.gate_soft = tuning.growth_gate_soft.powi(tags.len() as i32);
+    p.score = compose_score(&p, tuning);
+    Some(p)
 }
 
 /// (#472) the 13F nudge as (Berkshire, superinvestors, social tip): the user's call, not a measured edge.
@@ -2011,13 +2030,16 @@ fn peg_walled(tuning: &BuyHeuristic) -> bool {
 /// float multiplication does not re-associate, and a golden is a bit-comparison. Reordering a single
 /// factor here would move the shipped lane.
 fn compose_score(p: &ScoreParts, tuning: &BuyHeuristic) -> f64 {
-    if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
+    let s = if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
         p.base + p.liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
     } else if tuning.growth_geomean_fold {
         p.base * combine_damps(&[p.trust, p.overext_damp, p.proximity, p.value]) * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost + p.liq_bonus
     } else {
         p.base * p.proximity * p.value * p.damp * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost + p.liq_bonus
-    }
+    };
+    // (#563) the soft-gate dock LAST, on the whole score: dividing a negative one keeps it pushing down.
+    // At 1.0 both `*` and `/` are exact, so a name that cleared its gates keeps its bits.
+    if base_is_negative(s) { s / p.gate_soft } else { s * p.gate_soft }
 }
 
 /// (#144) (#86)'s sign test, split out and SKIPPED for exactly the reason `config::compute_threads`
@@ -12455,6 +12477,49 @@ mod tests {
         let off = gates_off(&t);
         assert!(growth_score(&q, &off).is_some(), "every knob gate waived -> it scores");
         assert_eq!(gate_failures(&q, &off).map(|f| f.len()), Some(0));
+    }
+
+    /// (#563) `growth_gate_soft`: 0 keeps every gate hard; at f a failer scores its waived score x f^n,
+    /// n = gates waived, and 1 is the waived score itself. A passer never moves and a structural refusal
+    /// never scores, at any f.
+    #[test]
+    fn gate_soft_docks_a_failer_by_f_to_the_n() {
+        let t = BuyHeuristic::default();
+        let soft = |q: &Quote, f: f64| growth_score(q, &BuyHeuristic { growth_gate_soft: f, ..t.clone() });
+        let mut q = gate_fixture();
+        q.range_pct = 20.0; // under the range floor
+        q.perf = legs(&[("1M", -30.0), ("1Y", 20.0), ("5Y", 200.0)]); // a 1M knife on the passer's legs
+        let (open, tags, _) = waived(&q, &t).expect("an assessable failer");
+        assert!(tags.len() >= 2, "the fixture fails several gates, so n is not 1: {tags:?}");
+        let full = growth_score(&q, &open).expect("it scores with its gates waived");
+        assert!(full > 0.0, "a positive score, so the dock is a multiply here");
+        assert_eq!(soft(&q, 0.0), None, "f = 0 is the hard gate");
+        assert_eq!(soft(&q, 1.0), Some(full), "f = 1 is the waived score");
+        assert_eq!(soft(&q, 0.5), Some(full * 0.5f64.powi(tags.len() as i32)), "one 0.5 per gate waived");
+
+        let pass = gate_fixture();
+        let shipped = growth_score(&pass, &t).expect("the fixture clears the gates");
+        for f in [0.1, 0.6, 1.0] {
+            assert_eq!(soft(&pass, f), Some(shipped), "a passer is never docked (f = {f})");
+        }
+        let mut lev = gate_fixture();
+        lev.name = "ProShares Ultra S&P500".into();
+        lev.range_pct = 20.0;
+        assert_eq!(soft(&lev, 1.0), None, "a structural refusal has no knob to waive");
+    }
+
+    /// (#563) The dock multiplies a positive score and DIVIDES a negative one, so it always pushes down.
+    #[test]
+    fn gate_soft_dock_always_pushes_down() {
+        let mut p = score_parts(&gate_fixture(), &BuyHeuristic::default()).expect("the fixture clears the gates");
+        assert_eq!(p.gate_soft, 1.0, "a passer carries no dock");
+        let neg = BuyHeuristic { growth_allow_negative_scores: true, ..BuyHeuristic::default() };
+        (p.base, p.liq_bonus) = (8.0, 2.0);
+        let up = compose_score(&p, &neg);
+        p.gate_soft = 0.25;
+        assert_eq!(compose_score(&p, &neg), up * 0.25);
+        p.base = -8.0;
+        assert_eq!(compose_score(&p, &neg), (-8.0 + 2.0) / 0.25, "a negative score sinks further, never toward 0");
     }
 
     /// (#328) A gate-clearing STOCK with a GICS label and a chosen 5Y leg — the only two inputs the
