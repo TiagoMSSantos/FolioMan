@@ -95,7 +95,8 @@ const MIN_VERDICT_TICKERS: usize = 500;
 ///   nothing at all, forever, silently.
 /// - `n=`, `peer-relative`, and the three `growth_*_->off` labels — the gate re-probe WARN just
 ///   stops firing.
-/// - `top-10 `, `excess`, `tuning adds`, `early rho`, `late rho` — panic only under `forced`.
+/// - `top-10 `, `excess`, (#565) `passer lift`, `passer OOS early`, `passer OOS late` — panic only under `forced`.
+///   `tuning adds`, `early rho`, `late rho` still print over the whole crowd; CI no longer asserts on them.
 /// - `->  edge` and (#565) `->  passer edge` — the only two that are hard unconditionally.
 ///
 /// So the honest place to enforce them is OFFLINE, against the golden, where there is no network to
@@ -113,6 +114,10 @@ pub mod markers {
     /// (#565) The edge over gate passers only, the crowd `->  edge` graded before `growth_gate_soft`. The CI
     /// ship rule asserts on this one; `->  edge` still prints and still must exist.
     pub const PASSER_EDGE: &str = "->  passer edge";
+    /// (#565) [`TUNING_ADDS`] and the OOS halves, over the same gate passers. The CI ship rule asserts on these.
+    pub const PASSER_LIFT: &str = "passer lift";
+    pub const PASSER_EARLY: &str = "passer OOS early";
+    pub const PASSER_LATE: &str = "passer OOS late";
     /// (#120) The held-book row SHIP RULE v2 grades — the [`super::VERDICT_TOP`] rung of the top-N
     /// ladder, not a fixed 3. Was `"top-3 "`; moving the basket without moving this would have left
     /// the gate asserting on a row the verdict no longer reports, which is the quietest possible
@@ -158,6 +163,9 @@ pub const GATE_MARKERS: &[&str] = &[
     markers::WINDOWS_SCORED,
     markers::LANE_EDGE,
     markers::PASSER_EDGE,
+    markers::PASSER_LIFT,
+    markers::PASSER_EARLY,
+    markers::PASSER_LATE,
     markers::VERDICT_ROW,
     markers::EXCESS,
     markers::TUNING_ADDS,
@@ -6531,11 +6539,6 @@ fn report_lane(
         "  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts{}",
         annualized_edge_tag(tuning.print_edge_annualized, top, bot, years)
     );
-    // (#565) the same halves over the windows that clear every gate, the crowd the line above graded before
-    // `growth_gate_soft`. Armed, docked failers join `scored` (stress 20y: 370 -> 4922 windows), so the line
-    // above grades a different crowd; a passer's own score is bit-identical either way. CI grades this one.
-    let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
-    println!("  gate passers only  ->  passer edge {:+.1} pts", lane_metrics(samples, scorer, &hard).1);
     // (Item 5) bootstrap band: is that point edge distinguishable from 0 given overlapping-sample noise?
     let block = bootstrap_block(years, tuning);
     if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000, 5.0, 95.0, block) {
@@ -6745,6 +6748,22 @@ fn report_lane(
         scored[mid].0.date,
         split_rho(&scored[..early]),
         split_rho(&scored[mid..])
+    );
+    // (#565) edge, null-model lift and OOS halves again over the windows that clear every gate: the crowd the
+    // lines above graded before `growth_gate_soft`. Armed, docked failers join `scored` (stress 20y: 370 -> 4922
+    // windows), so those lines grade a different crowd; a passer's own score is bit-identical either way. CI
+    // grades this line.
+    let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
+    let passers: Vec<(&Sample, f64)> = samples.iter().filter_map(|s| scorer(&s.quote, &hard).map(|v| (s, v))).collect();
+    let (p_top, p_bot) = edge_halves(&passers);
+    let p_mid = passers.len() / 2;
+    let p_early = purged_cut(&passers, p_mid, tuning.split_purge_months, |p| p.0.date);
+    println!(
+        "  gate passers only  ->  passer edge {:+.1} pts  ->  passer lift {:+.1} pts  |  passer OOS early {}  |  passer OOS late {}",
+        p_top - p_bot,
+        p_top - p_bot - null_edge,
+        split_rho(&passers[..p_early]),
+        split_rho(&passers[p_mid..])
     );
 
     // (Item 30) regime slices: the edge within each chronological quarter of the scored sample.

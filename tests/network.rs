@@ -727,8 +727,9 @@ fn backtest_edge_holds() {
         // (#57) null model: the shipped tuning vs the SAME code with the tuning off. Assertable where
         // the raw edge is not — both arms score the same samples over the same window, so market drift
         // cancels out of the delta. A knob edit that ranks no better than no tuning at all leaves the
-        // `edge > 0` check above perfectly green.
-        match num_after(growth, markers::TUNING_ADDS) {
+        // `edge > 0` check above perfectly green. (#565) passers only, like the edge: the crowd's `tuning adds`
+        // pays for the docked failers (stress 20y -911.9 at growth_gate_soft 0.6, CI 38290905221).
+        match num_after(growth, markers::PASSER_LIFT) {
             Some(lift) => {
                 assert!(
                     lift > 0.0,
@@ -739,7 +740,7 @@ fn backtest_edge_holds() {
                 eprintln!("backtest-gate {leg} null-model lift {lift:+.1} pts");
             }
             None if forced => panic!(
-                "{leg}: GROWTH completed but printed no `tuning adds` line — the null-model A/B was skipped"
+                "{leg}: GROWTH completed but printed no `passer lift` — the null-model A/B was skipped"
             ),
             None => eprintln!("backtest-gate {leg} — no null-model line parsed"),
         }
@@ -806,7 +807,8 @@ fn backtest_edge_holds() {
             }
         }
         // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
-        match (num_after(growth, markers::EARLY_RHO), num_after(growth, markers::LATE_RHO)) {
+        // (#565) passers only: the crowd halves read the dock, which does not sort failers (rho about -0.05).
+        match (num_after(growth, markers::PASSER_EARLY), num_after(growth, markers::PASSER_LATE)) {
             (Some(early), Some(late)) => {
                 assert!(
                     !(early < 0.0 && late < 0.0),
@@ -817,7 +819,7 @@ fn backtest_edge_holds() {
             // same reasoning as the top-10 arm: the split is unconditional once >=4 windows scored, so
             // in CI a missing rho is a renamed line disarming the generalization check, not thin data.
             _ if forced => panic!(
-                "{leg}: GROWTH completed but printed no `early rho`/`late rho` — the out-of-sample check was skipped"
+                "{leg}: GROWTH completed but printed no `passer OOS early`/`passer OOS late` — the out-of-sample check was skipped"
             ),
             _ => {}
         }

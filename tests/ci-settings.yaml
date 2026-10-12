@@ -19625,7 +19625,14 @@ buy_heuristic:
   #    top-50       +0.7 -> +3.4  +2.6 -> +2.4  +2.7 -> +2.8  +3.4 -> +4.6  +3.8 -> +4.0  +3.9 -> +4.5
   #  Unit pins: tests of what the GATES admit (the 158 fixture pin, notch/proxy books) run on `shipped_hard()`, since
   #  armed every fixture sample scores (500); one new pin holds that 500.
-  #  REVERT RULE: growth_gate_soft 0.0 makes both edge lines identical again.
+  #  SECOND MISS, SAME CAUSE (CI 38290905221 on 264d718): the passer edge held (20y +703.6), then the (#57) null-model
+  #  A/B went red: "the shipped tuning adds only -911.9 pts". `tuning adds` is the crowd edge minus the null arm's,
+  #  so it pays for the failers too. The OOS halves (`early rho` / `late rho`) read the same crowd; at 0.6 they sat at
+  #  -0.11 / +0.02 (stress 20y), one tick from red. All three CI rules on the crowd now read ONE passers-only line:
+  #  `gate passers only  ->  passer edge X  ->  passer lift Y  |  passer OOS early A  |  passer OOS late B`. The crowd
+  #  lines still print; CI no longer asserts on them. Checked every assert in `backtest_edge_holds`: Série E, SIZED
+  #  DCA and the top-10 row grade the BOOK and pass at 0.6 on the (#564) runs (SIZED +5.5, Série E 98%).
+  #  REVERT RULE: growth_gate_soft 0.0 makes each crowd line equal its passer twin again.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
