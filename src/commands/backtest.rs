@@ -3542,16 +3542,18 @@ fn random_books(pond: &BTreeMap<i32, Vec<(f64, f64)>>, n: usize, years: i64) -> 
         .collect()
 }
 
-/// (#560) The `rivals` report: seven top-10 books and a random one on the SAME pond, the non-crypto
-/// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
-/// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
-#[mutants::skip] // printing; `rival_excess`, `random_books`, `rank_pct`, `momentum_12_1` and `rival_wins` carry the tests
-fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+/// (#560) Every [`RIVALS`] book's per-bucket excess, and the pond (realized %, bench %) per bucket that
+/// rival (e) draws from. `scorer` is `picks::growth_scores_ranked` in the report, a stand-in in tests;
+/// `shipped` keys row 0, `open` (the gates-off tuning) keys row 1 and decides who is in the pond.
+fn rival_books(
+    samples: &[Sample],
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    years: i64,
+    scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>,
+    shipped: &BuyHeuristic,
+    open: &BuyHeuristic,
+) -> (Vec<Vec<f64>>, BTreeMap<i32, Vec<(f64, f64)>>) {
     let (bd, bc) = bench;
-    if bd.len() < 2 {
-        return;
-    }
-    let off = picks::gates_off(tuning);
     let mut by_cutoff: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
     for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
         by_cutoff.entry(bucket(s.date)).or_default().push(s);
@@ -3560,10 +3562,9 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
     let mut pond: BTreeMap<i32, Vec<(f64, f64)>> = BTreeMap::new();
     for (b, group) in &by_cutoff {
         let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
-        let shipped = picks::growth_scores_ranked(&quotes, tuning);
-        let open = picks::growth_scores_ranked(&quotes, &off);
+        let (sh, op) = (scorer(&quotes, shipped), scorer(&quotes, open));
         let mut rows: Vec<([Option<f64>; 7], f64, f64, &str)> = Vec::new();
-        for ((s, sh), op) in group.iter().zip(shipped).zip(open) {
+        for ((s, sh), op) in group.iter().zip(sh).zip(op) {
             let (Some(op), Some(bench_r)) = (op, benchmark_fwd(bd, bc, s.date, years)) else { continue };
             let f = s.fund.as_ref();
             let keys = [
@@ -3591,6 +3592,18 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
         }
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
+    (books, pond)
+}
+
+/// (#560) The `rivals` report: seven top-10 books and a random one on the SAME pond, the non-crypto
+/// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
+/// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
+#[mutants::skip] // printing; `rival_books` and its helpers carry the tests
+fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    if bench.0.len() < 2 {
+        return;
+    }
+    let (books, pond) = rival_books(samples, bench, years, picks::growth_scores_ranked, tuning, &picks::gates_off(tuning));
     let pond_sizes: Vec<f64> = pond.values().map(|p| p.len() as f64).collect();
     println!(
         "\n── RIVALS (#560): equal-weight top-{VERDICT_TOP} books on one pond, HOLD {years}y no-sell, excess vs the index ──\n  pond: {} bucket(s) where the shipped lane holds a name, median {:.0} scoreable names each",
@@ -7961,6 +7974,43 @@ mod tests {
         let draws = random_books(&two, 1, 1);
         assert_eq!(draws, random_books(&two, 1, 1), "seeded: the same pond draws the same books");
         assert!(draws.iter().any(|d| d.0 > 50.0) && draws.iter().any(|d| d.0 < 50.0), "both names get drawn");
+    }
+
+    /// (#560) `rival_books` on a stand-in scorer (shipped = `range_pct`, open adds `avg_turnover_eur`).
+    /// 2010: S1 is in both lanes, S2 only gates-off, N1 in neither, the coin never. 2011: only the open
+    /// lane scores, so the bucket sits out. 2012: no index window, so nobody is in it. Index +10%.
+    #[test]
+    fn rival_books_key_each_book_on_one_pond() {
+        use crate::core::FundFactors;
+        let (a, b, c) = (ymd(2010, 1, 5), ymd(2011, 1, 6), ymd(2012, 1, 7));
+        let bench = (vec![a, b, c], vec![100.0, 110.0, 110.0]);
+        let with = |mut s: Sample, f: FundFactors, one_year: Option<f64>| {
+            let mut q = (*s.quote).clone();
+            q.perf = crate::core::HORIZONS.iter().map(|(l, _)| one_year.filter(|_| *l == "1Y").map(|v| ("x".to_string(), v))).collect();
+            s.quote = Arc::new(q);
+            s.fund = Some(f);
+            s
+        };
+        let samples = vec![
+            with(swap_sample(a, "S1", 5.0, 0.0, 30.0), FundFactors { quality: Some(1.0), earnings_yield: Some(4.0), ..Default::default() }, Some(15.0)),
+            with(swap_sample(a, "S2", -1.0, 3.0, 10.0), FundFactors { roe: Some(9.0), rev_cagr: Some(12.0), ..Default::default() }, None),
+            swap_sample(a, "N1", -1.0, 0.0, 999.0),
+            swap_sample(a, "BTC-EUR", 100.0, 100.0, 1000.0),
+            swap_sample(b, "O1", -1.0, 3.0, 50.0),
+            swap_sample(c, "S3", 5.0, 0.0, 70.0),
+        ];
+        let shipped = BuyHeuristic { quality_weight: 0.0, ..BuyHeuristic::default() };
+        let open = BuyHeuristic { quality_weight: 1.0, ..BuyHeuristic::default() };
+        let (books, pond) = rival_books(&samples, &bench, 1, swap_scorer, &shipped, &open);
+        // S1 alone: +30 vs +10 -> 20. S1 + S2: +20 -> 10. S2 alone: 0.
+        let want: [&[f64]; 7] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0]];
+        for (i, (got, want)) in books.iter().zip(want).enumerate() {
+            assert_eq!(got.len(), want.len(), "book {i}: {got:?}");
+            assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-9), "book {i}: {got:?} vs {want:?}");
+        }
+        assert_eq!(pond.keys().copied().collect::<Vec<_>>(), vec![bucket(a)], "2011 has no shipped name, 2012 no window");
+        let round = |p: &(f64, f64)| (p.0.round(), p.1.round());
+        assert_eq!(pond[&bucket(a)].iter().map(round).collect::<Vec<_>>(), vec![(30.0, 10.0), (10.0, 10.0)], "N1 and the coin stay out");
     }
 
     /// (#518) Each cohort splits the STOCK samples on the flags at their own cutoff; a coin is never
