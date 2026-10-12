@@ -19525,7 +19525,7 @@ buy_heuristic:
   #  1YD.DE Broadcom (PEG 1.67), AP2.DE Applied Materials (1.71), PAR.DE Parker-Hannifin (1.72), FTNT
   #  Fortinet (2.22), plus 5AP.DE and MPWR above the 2.4 near-miss band. Three of them would have
   #  entered a 13-name cleared pool at any rung >= 1.75, and the ladder says the book is worse for it.
-  growth_gate_soft: 0.6          # (#564) SHIPPED 0.6. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
+  growth_gate_soft: 0.6          # (#564) SHIPPED 0.6; (#565) CI grades the passer edge. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
   #  knob gates with exactly those gates waived (the MISSES what-if) and docks it f^n, n = gates waived; f = 1 is the (#560)
   #  gates-off book. Structural refusals, no turnover and the repriced-bar artifact stay hard at any f. All three tables.
   #── (#563) PRE-REGISTERED 2026-10-12 — EVERY GATE SOFT AT ONCE, COUNT-BASED ──
@@ -19606,7 +19606,27 @@ buy_heuristic:
   #  dropped names average below the added ones in every cell (pit 20y +319% vs +510%, stress 20y +847% vs
   #  +1016%). Each arm adds more names than it drops, because the control's books hold fewer than 10 names.
   #  UNGRADED, as in (#563): the ETF table and coins ride on the stocks verdict.
-  growth_peg_taper_k: 0.0        # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
+  #── (#565) 2026-10-12 — THE CI EDGE RULE GRADES GATE PASSERS ONLY ──
+  #  WHAT HAPPENED: the (#564) bar left out the standing CI ship rule (`backtest_edge_holds`, lane `->  edge` > 0).
+  #  The 0.6 push (9d74bef, CI 38283951134) went red on it: "20y: GROWTH validated edge COLLAPSED to -806.4 pts".
+  #  WHY THE RULE MOVES: the lane edge halves EVERY scored window by score. At f = 0 that is the gate passers; armed,
+  #  the docked failers join, so the crowd grows (stress 20y 370 -> 4922 windows, pit 20y 121 -> 2268) and the
+  #  rule stops asking the question it was written for. `score_parts` returns a passer's score untouched at any f,
+  #  so the passers-only edge at f = 0.6 is the control's, bit for bit (stress 20y +703.5). `report_lane` now prints
+  #  `gate passers only  ->  passer edge`, and CI asserts > 0 on that. `->  edge` still prints and must still exist.
+  #  WHAT THE OLD LINE SAYS AT f = 0.6, KEPT ON RECORD: across the whole crowd the dock does not sort failers. Stress
+  #  20y top half -413.3 vs bottom half +413.3 (edge -826.7, Spearman -0.05); pit 20y edge -76.0 (Spearman +0.02).
+  #  How many gates a name fails says nothing about its return. A dock that sorts failers is a new receipt.
+  #  WHAT GUARDS THE FAILER TAIL INSTEAD: the top-10 row (SHIP RULE v2) and the books. Zero-filled pts/yr, the
+  #  top-N row x booked / calendar buckets, f = 0 -> 0.6 (#564 runs):
+  #    top-N        pit 20y       pit 12y       pit 8y        stress 20y    stress 12y    stress 8y
+  #    top-10       +0.6 -> +1.8  +2.5 -> +3.0  +2.6 -> +3.4  +3.6 -> +4.3  +3.9 -> +4.3  +3.9 -> +4.3
+  #    top-25 page  +0.7 -> +3.7  +2.6 -> +2.6  +2.7 -> +2.8  +3.4 -> +4.3  +3.8 -> +4.2  +3.9 -> +4.4
+  #    top-50       +0.7 -> +3.4  +2.6 -> +2.4  +2.7 -> +2.8  +3.4 -> +4.6  +3.8 -> +4.0  +3.9 -> +4.5
+  #  Unit pins: tests of what the GATES admit (the 158 fixture pin, notch/proxy books) run on `shipped_hard()`, since
+  #  armed every fixture sample scores (500); one new pin holds that 500.
+  #  REVERT RULE: growth_gate_soft 0.0 makes both edge lines identical again.
+  growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
   #── (#550) REFUSED 2026-10-11 — TAPER INSTEAD OF WALL ABOVE growth_max_peg ──

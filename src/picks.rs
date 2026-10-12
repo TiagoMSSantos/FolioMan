@@ -14851,7 +14851,11 @@ mod tests {
         assert!(growth_score(&strong, &tuning).is_some(), "a 25%/yr cheap compounder must still rank");
         let mut mediocre = gate_fixture();
         mediocre.perf = legs(&[("1M", 2.0), ("1Y", 12.0), ("5Y", 80.0)]); // 12.5%/yr — fine, but not 19
-        assert!(growth_score(&mediocre, &tuning).is_none(), "a sub-gate compounder must be cut");
+        // (#565) shipped soft: the hard gates still cut it, and armed it ranks, docked below the cheap compounder.
+        assert_eq!(tuning.growth_gate_soft, 0.6, "(#564) the only rung clearing 6 of 6 zero-filled cells; re-measure, then update this pin");
+        let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
+        assert!(growth_score(&mediocre, &hard).is_none(), "a sub-gate compounder must be cut by the hard gates");
+        assert!(growth_score(&mediocre, &tuning) < growth_score(&strong, &tuning), "a docked failer must rank below a passer");
     }
 
     /// (QA) GROWTH SCORE TERMS: every weight/cap knob that had no test of its own. Each pair moves ONE

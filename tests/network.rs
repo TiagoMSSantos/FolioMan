@@ -682,7 +682,12 @@ fn backtest_edge_holds() {
         // the top-vs-bottom-half validated edge. Anchored on the headline's own `->  edge`, not a bare
         // "edge": the word recurs in the ablation, the era table and the entry-state block, so a bare
         // marker reads whichever one happens to come first if the headline is ever missing.
-        let edge = num_after(growth, markers::LANE_EDGE).expect("a completed GROWTH run prints its headline edge");
+        assert!(num_after(growth, markers::LANE_EDGE).is_some(), "a completed GROWTH run prints its headline edge");
+        // (#565) graded on gate passers only. With `growth_gate_soft` armed the headline also halves the
+        // docked failers (stress 20y: 370 -> 4922 windows) and stops asking the question this rule was
+        // written for. A passer's score is bit-identical at any f, so this is that question, unchanged.
+        // What it cannot see is the failer tail; the top-10 row below grades the book that tail reaches.
+        let edge = num_after(growth, markers::PASSER_EDGE).expect("a completed GROWTH run prints its passer edge");
         assert!(
             edge > 0.0,
             "{leg}: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117 at 12y) — a \

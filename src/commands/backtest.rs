@@ -96,7 +96,7 @@ const MIN_VERDICT_TICKERS: usize = 500;
 /// - `n=`, `peer-relative`, and the three `growth_*_->off` labels — the gate re-probe WARN just
 ///   stops firing.
 /// - `top-10 `, `excess`, `tuning adds`, `early rho`, `late rho` — panic only under `forced`.
-/// - `->  edge` — the only one that is hard unconditionally (`.expect`).
+/// - `->  edge` and (#565) `->  passer edge` — the only two that are hard unconditionally.
 ///
 /// So the honest place to enforce them is OFFLINE, against the golden, where there is no network to
 /// blame for their absence: `tests/backtest_fixture.rs::gate_markers_are_all_in_the_golden`. Both
@@ -110,6 +110,9 @@ pub mod markers {
     pub const GROWTH_SECTION: &str = "── GROWTH";
     pub const WINDOWS_SCORED: &str = "windows scored:";
     pub const LANE_EDGE: &str = "->  edge";
+    /// (#565) The edge over gate passers only, the crowd `->  edge` graded before `growth_gate_soft`. The CI
+    /// ship rule asserts on this one; `->  edge` still prints and still must exist.
+    pub const PASSER_EDGE: &str = "->  passer edge";
     /// (#120) The held-book row SHIP RULE v2 grades — the [`super::VERDICT_TOP`] rung of the top-N
     /// ladder, not a fixed 3. Was `"top-3 "`; moving the basket without moving this would have left
     /// the gate asserting on a row the verdict no longer reports, which is the quietest possible
@@ -154,6 +157,7 @@ pub const GATE_MARKERS: &[&str] = &[
     markers::GROWTH_SECTION,
     markers::WINDOWS_SCORED,
     markers::LANE_EDGE,
+    markers::PASSER_EDGE,
     markers::VERDICT_ROW,
     markers::EXCESS,
     markers::TUNING_ADDS,
@@ -6527,6 +6531,11 @@ fn report_lane(
         "  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts{}",
         annualized_edge_tag(tuning.print_edge_annualized, top, bot, years)
     );
+    // (#565) the same halves over the windows that clear every gate, the crowd the line above graded before
+    // `growth_gate_soft`. Armed, docked failers join `scored` (stress 20y: 370 -> 4922 windows), so the line
+    // above grades a different crowd; a passer's own score is bit-identical either way. CI grades this one.
+    let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
+    println!("  gate passers only  ->  passer edge {:+.1} pts", lane_metrics(samples, scorer, &hard).1);
     // (Item 5) bootstrap band: is that point edge distinguishable from 0 given overlapping-sample noise?
     let block = bootstrap_block(years, tuning);
     if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000, 5.0, 95.0, block) {
@@ -10461,12 +10470,19 @@ mod tests {
         s.buy_heuristic
     }
 
+    /// (#565) [`shipped_tuning`] with every gate hard. At the shipped `growth_gate_soft` 0.6 all 500 fixture
+    /// samples score, so a test of what the GATES admit (notch cohorts, the 158 pin) would go inert on it.
+    /// A passer scores bit-identically at any f, so this is the shipped tuning's own passer crowd.
+    fn shipped_hard() -> BuyHeuristic {
+        BuyHeuristic { growth_gate_soft: 0.0, ..shipped_tuning() }
+    }
+
     /// (#324) The shipped tuning on the synthetic world: `cleared` holds only cleared names, each union row adds
     /// exactly what its notch newly admits (the GATE SWEEP's rule, counted independently here), notches that admit
     /// nothing print no row, and with no benchmark there is no book.
     #[test]
     fn notch_books_add_each_notch_cohort_to_the_cleared_book() {
-        let (samples, tuning) = (synthetic_samples(), shipped_tuning());
+        let (samples, tuning) = (synthetic_samples(), shipped_hard());
         let (dates, _) = synthetic_universe();
         let bench = (dates.clone(), (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect());
         let rows = notch_books(&samples, &bench, 12, &tuning);
@@ -10668,7 +10684,7 @@ mod tests {
     /// the guard is asked about the names the splice added and nothing else.
     #[test]
     fn proxy_books_split_the_cleared_book_by_provenance() {
-        let (mut samples, tuning) = (synthetic_samples(), shipped_tuning());
+        let (mut samples, tuning) = (synthetic_samples(), shipped_hard());
         let (dates, _) = synthetic_universe();
         let bench = (dates.clone(), (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect());
 
@@ -10914,8 +10930,10 @@ mod tests {
     #[test]
     fn shipped_tuning_scores_fixture_unchanged() {
         let samples = synthetic_samples();
-        let tuning = shipped_tuning();
+        let tuning = shipped_hard();
         let gated = |t: &BuyHeuristic| samples.iter().filter(|s| growth_score(&s.quote, t).is_some()).count();
+        // (#565) SOFT PIN: armed, every fixture sample scores (docked by f^n). The pins below grade the passers.
+        assert_eq!(gated(&shipped_tuning()), 500, "the shipped growth_gate_soft no longer scores every fixture sample");
 
         // GATE PIN. Moves when a knob changes what passes: re-validate with a live `backtest universe`
         // (both OOS halves positive) BEFORE moving it, exactly as the ci-settings receipts require.
@@ -10940,7 +10958,7 @@ mod tests {
 
         // The pin above is only worth having if it CAN move — a count nothing perturbs is a test that
         // passes forever. Raising the CAGR floor past two of the five compounders must drop it.
-        let mut tighter = shipped_tuning();
+        let mut tighter = shipped_hard();
         tighter.growth_min_cagr = 25.0;
         assert!(
             gated(&tighter) < gated(&tuning),
