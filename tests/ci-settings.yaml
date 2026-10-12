@@ -1616,6 +1616,12 @@ sizing:
   #  OPEN: two designs (momentum, 1Y off) now beat the book and stall on the same 21-program pit DCA median.
   #  Whether that median tie stays a veto has to be decided BEFORE the next test, never after one.
   #  cagr (4/6 in the screen) is the other stage-2 candidate and is not run yet.
+  #  RULE PRE-REGISTERED 2026-10-12, before any further test: from now on the 20y DCA VETOES only when a
+  #  lane's `never-sell vs index DCA` mean OR median FALLS by >= 0.2 pts/yr against the same-batch control.
+  #  A tie passes. The book bar is unchanged: 5 of 6 cells, mean AND median >= +0.2. NOT RETROACTIVE: both
+  #  refusals above would pass this rule, and that was known when it was chosen. CI grids are deterministic
+  #  ((#558)), so re-running today's commit only reproduces today's numbers. Re-asking momentum or 1Y off
+  #  needs a run on a moved pond, i.e. new data, graded under this rule.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
