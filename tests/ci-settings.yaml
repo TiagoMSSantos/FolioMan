@@ -1551,6 +1551,12 @@ sizing:
   #  at pit 20y (+0.6/-0.0 vs +2.2/+1.8) and stress 20y (+5.4/+4.9 vs +5.7/+5.0). At 20y the score's ranking
   #  does worse than drawing 10 names at random from its own pond.
   #  NOTHING SHIPS from this report. Next: the 20y DCA re-grade of momentum 12-1, then the soft-gate grill.
+  #  DCA RE-GRADE BUILT: at 20y, `rivals` adds a `mom12-1` lane to the (#311) DCA block, between top-10 and
+  #  SIZED. Each month ranks `month_pool` by 12-1 momentum over the names the gates-off score keys (the rivals
+  #  pond), then takes the top 10 still priced at the program's end, equal-weight. BAR (pre-registered before
+  #  the runs): momentum's `never-sell vs index DCA` mean AND median clear the top-10 lane's by >= 0.2 pts/yr
+  #  in BOTH pit and stress 20y. Its `roll` and `Série E` lines are read, not graded.
+  #  DCA VERDICT: pending.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of

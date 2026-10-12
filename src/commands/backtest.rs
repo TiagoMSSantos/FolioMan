@@ -1921,7 +1921,7 @@ pub async fn run(args: Vec<String>) {
         let legs: Vec<String> = tiers.iter().zip(&spill).map(|(t, (w, _))| format!("{} {:.0}%", name(*t), w * 100.0)).collect();
         println!("  {:<28} (#308) the remainder above earns the spill's index legs, price-only: {}", "", legs.join(" · "));
     }
-    let roll = report_roll(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
+    let roll = report_roll(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill, rivals);
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -3494,6 +3494,21 @@ fn momentum_12_1(q: &Quote) -> Option<f64> {
     Some(((1.0 + r1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0)
 }
 
+/// (#560) The momentum 12-1 rival's order over one month's pool: the names the gates-off score keys (`open`,
+/// the `rivals` pond), highest momentum first. The pool is ticker-ordered and the sort stable, so a tie ranks
+/// by ticker.
+fn momentum_ranked<'a>(pool: &[&'a Sample], open: &[Option<f64>]) -> Vec<&'a Sample> {
+    let mut v: Vec<(f64, &Sample)> = pool.iter().zip(open).filter(|x| x.1.is_some()).filter_map(|(s, _)| Some((momentum_12_1(&s.quote)?, *s))).collect();
+    v.sort_by(|a, b| b.0.total_cmp(&a.0));
+    v.into_iter().map(|x| x.1).collect()
+}
+
+/// (#560) The first `n` names as an equal-weight book, the weights [`book_multiple`] reads.
+fn equal_top<'a>(ranked: impl Iterator<Item = &'a Sample>, n: usize) -> Vec<(&'a str, f64)> {
+    let v: Vec<&str> = ranked.take(n).map(|s| s.quote.ticker.as_str()).collect();
+    v.iter().map(|t| (*t, 1.0 / v.len() as f64)).collect()
+}
+
 /// (#560) Each value's percentile in its column: the share of present values strictly below it, so
 /// ties share a rank. `None` stays `None`.
 fn rank_pct(xs: &[Option<f64>]) -> Vec<Option<f64>> {
@@ -4638,6 +4653,8 @@ fn dca_program<B>(
 /// ranked names still priced at its end, the same filter in both arms. A month with no such name puts the
 /// whole € on the legs, as BUY NOW does: its picks and trackers always sum to gross. Top-10 is a reading. SIZED is the
 /// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
+/// (#560) `rivals` adds the momentum 12-1 rival's lane on the same months: the DCA re-grade a rival that beats
+/// the top-10 ruler owes before anything ships.
 #[allow(clippy::too_many_arguments)]
 fn report_roll(
     samples: &[Sample],
@@ -4649,10 +4666,12 @@ fn report_roll(
     sz: &config::Sizing,
     top: usize,
     spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
+    rivals: bool,
 ) -> Option<f64> {
     if books.is_empty() {
         return None;
     }
+    let open = picks::gates_off(tuning);
     let base = tuning.capital_gains_tax_pct / 100.0;
     let legs = if spill.is_empty() { vec![(1.0, bench)] } else { spill.to_vec() };
     // one program per entry bucket the `years` SIZED row grades: the era its pond is on file, so a start whose
@@ -4665,8 +4684,9 @@ fn report_roll(
         .iter()
         .flat_map(|s| (0..DCA_MONTHS).flat_map(|m| [m, m + ROLL_MONTHS]).filter_map(move |m| s.checked_add_months(chrono::Months::new(m))))
         .collect();
-    // per month: the ladder's pool (growth-gated, value brake) in rank order, and the SIZED pool by growth score
-    let ranked: BTreeMap<chrono::NaiveDate, (Vec<&Sample>, Vec<&Sample>)> = months
+    // per month: the ladder's pool (growth-gated, value brake) in rank order, the SIZED pool by growth score, and
+    // under `rivals` the momentum 12-1 order
+    let ranked: BTreeMap<chrono::NaiveDate, (Vec<&Sample>, Vec<&Sample>, Vec<&Sample>)> = months
         .into_par_iter()
         .map(|d| {
             let pool = month_pool(books, d);
@@ -4681,7 +4701,8 @@ fn report_roll(
             kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
             let mut sized: Vec<(f64, &Sample)> = pool.iter().filter_map(|s| Some((growth_score(&s.quote, tuning)?, *s))).collect();
             sized.sort_by(|a, b| b.0.total_cmp(&a.0));
-            (d, (kept.iter().map(|x| by_tk[x.3.as_str()]).collect(), sized.into_iter().map(|x| x.1).collect()))
+            let mom = if rivals { momentum_ranked(&pool, &picks::growth_scores_ranked(&quotes, &open)) } else { Vec::new() };
+            (d, (kept.iter().map(|x| by_tk[x.3.as_str()]).collect(), sized.into_iter().map(|x| x.1).collect(), mom))
         })
         .collect();
     let alive = |s: &Sample, d, end| series.get(s.quote.ticker.as_str()).is_some_and(|x| priced_at_both(x, d, end));
@@ -4696,6 +4717,7 @@ fn report_roll(
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
         Some(crate::commands::size::sized_book(&q, tuning, sz, None, &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), w / 100.0)).collect())
     };
+    let mom = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP)) };
     let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs);
     let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);
     let top_programs: BTreeMap<i32, Dca> =
@@ -4735,6 +4757,10 @@ fn report_roll(
         Some(d)
     };
     lane("top-10", top_programs);
+    if rivals {
+        let programs = starts.par_iter().filter_map(|s| Some((bucket(*s), dca_program(*s, mom, value, index, base, &tuning.cgt_hold_schedule)?))).collect();
+        lane("mom12-1", programs);
+    }
     lane("SIZED", sized_programs)
 }
 
@@ -8011,6 +8037,25 @@ mod tests {
         assert_eq!(pond.keys().copied().collect::<Vec<_>>(), vec![bucket(a)], "2011 has no shipped name, 2012 no window");
         let round = |p: &(f64, f64)| (p.0.round(), p.1.round());
         assert_eq!(pond[&bucket(a)].iter().map(round).collect::<Vec<_>>(), vec![(30.0, 10.0), (10.0, 10.0)], "N1 and the coin stay out");
+    }
+
+    /// (#560) The DCA lane's momentum order keys only names the gates-off score keys and that carry a 1Y,
+    /// highest 12-1 first, a tie in pool (ticker) order; the top `n` split one euro equally.
+    #[test]
+    fn momentum_dca_book_ranks_the_open_pond() {
+        let s = |tk: &str, one_year: Option<f64>| {
+            let mut q = Quote::stub(tk, "1", "", tk);
+            q.perf = crate::core::HORIZONS.iter().map(|(l, _)| one_year.filter(|_| *l == "1Y").map(|v| ("x".to_string(), v))).collect();
+            Sample { quote: Arc::new(q), ..sample(ymd(2020, 6, 1), 0.0) }
+        };
+        let pool = [s("A", Some(10.0)), s("B", Some(30.0)), s("C", Some(10.0)), s("D", None), s("E", Some(99.0))];
+        let refs: Vec<&Sample> = pool.iter().collect();
+        let order = momentum_ranked(&refs, &[Some(1.0), Some(1.0), Some(1.0), Some(1.0), None]);
+        let tickers: Vec<&str> = order.iter().map(|x| x.quote.ticker.as_str()).collect();
+        assert_eq!(tickers, ["B", "A", "C"], "E is outside the pond, D has no 1Y, A ties C and goes first");
+        assert_eq!(equal_top(order.iter().copied(), 2), vec![("B", 0.5), ("A", 0.5)]);
+        assert_eq!(equal_top(order.iter().copied(), 9).len(), 3);
+        assert!(equal_top(std::iter::empty(), 10).is_empty());
     }
 
     /// (#518) Each cohort splits the STOCK samples on the flags at their own cutoff; a coin is never
