@@ -1491,6 +1491,21 @@ sizing:
   #  min_avg_turnover_eur 0 and growth_underwater_weight 0/0.15/0.6. Every other arm fails (worst min -1.7,
   #  growth_min_leg_years 2). Under head_weight 4, dividend_weight 0 now passes the WEIGHT bar, but only at min 0.0.
   #  RE-OPEN: the same 6-cell read with a positive minimum gain on the RANKED row AND the SIZED row.
+  #── (#559) WEB SWEEP 31 (DATA SOURCES) -> FEC CORPORATE-PAC BREADTH, STAGE 1: A REPORT, NO KNOB ──
+  #  WHY: the book holds every gate passer (#558), so only new DATA can move what it buys. Sweep 31's lead:
+  #  Cooper-Gulen-Ovtchinnikov (2010), firms whose PACs fund more candidates earn more. Keyless FEC bulk files
+  #  run from the 1980s, so all 6 cells are gradable. The LDA lobbying lead is blocked (Akamai refuses the API).
+  #  CENSUS (2026-10-12): a corporate PAC covers 14% of the growth names in 2004 and 37% in 2024, the controls 10/10.
+  #  So this can only split the PAC firms; it cannot reach most growth names.
+  #  BUILT: `backtest <y> universe fund pit|stress pac`. Breadth = the distinct candidates a firm's ORG_TP C PACs
+  #  gave a net positive 24K sum, in the newest cycle that ended 90 days before the cutoff. A firm matches a stock
+  #  only when its name key EQUALS the stock's SEC current or former name key; src/buy-heuristics/pac-aliases.json
+  #  maps or mutes the misses. Cache: `.fec_cache`, saved only by a probe.yml `pac` run (key `folioman-fec-`).
+  #  BAR (pre-registered, USER DECISION 2026-10-12): within the PAC firms, the top breadth tercile (cut per cutoff
+  #  date) beats the other two on median excess AND hit%, in all 6 cells (pit + stress x 20/12/8y), with n >= 30
+  #  a side. Before any cohort number is read, hand-check the report's 50 audit lines: precision must be >= 95%.
+  #  Anything less is refused and recorded. A PASS only opens a grill for a door knob; nothing ships from stage 1.
+  #  VERDICT: pending (no probe yet).
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of

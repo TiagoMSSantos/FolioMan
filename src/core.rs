@@ -4,7 +4,7 @@
 
 use chrono::{Datelike, Duration, NaiveDate};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// label -> calendar days back. `Quote.perf` is a Vec aligned to THIS order, so anything reading a
 /// leg must go through `picks::perf_pct` (label lookup) — a raw `perf[i]` breaks silently when a
@@ -4235,6 +4235,89 @@ pub fn holder_flags(txs: &[HolderTx], cutoff: NaiveDate) -> HolderFlags {
     f
 }
 
+/// (#559) A company name reduced to the words both the FEC and the SEC spell alike: upper case, `&` read
+/// as AND, parentheticals and SEC state tags (`/DE/`) dropped, `.` and `'` closed up, other punctuation a
+/// space, cut at the first PAC word (a committee name or a connected-org field that carries one), and the
+/// legal-form words removed. The crosswalk matches on EQUAL keys only.
+pub fn pac_name_key(name: &str) -> String {
+    const PAC: [&str; 4] = ["PAC", "POLITICAL", "EMPLOYEE", "EMPLOYEES"];
+    const FORM: [&str; 21] = [
+        "INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY", "COMPANIES", "LTD", "LIMITED", "PLC",
+        "LLC", "LP", "NV", "SA", "AG", "THE", "DE", "HOLDINGS", "HOLDING", "GROUP", "AND",
+    ];
+    let up = name.to_uppercase().replace('&', " AND ");
+    let mut bare = String::new();
+    let mut depth = 0u32;
+    for c in up.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => bare.push(c),
+            _ => {}
+        }
+    }
+    let unslashed: Vec<&str> = bare.split('/').step_by(2).collect();
+    let words: String = unslashed
+        .join(" ")
+        .chars()
+        .filter(|c| !matches!(c, '.' | '\''))
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect();
+    words
+        .split_whitespace()
+        .take_while(|w| !PAC.contains(w))
+        .filter(|w| !FORM.contains(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// (#559) One cycle's Cooper-Gulen-Ovtchinnikov breadth per corporation: the candidates its PACs gave a
+/// net positive sum (`24K` gifts, memo rows skipped, refunds netted), summed over every PAC whose key is
+/// the same. `cm` = the committee master, `pas2` = committee-to-candidate gifts, both pipe-delimited.
+/// Keyed by [`pac_name_key`] -> (the first raw name seen, the count); every ORG_TP `C` org is listed,
+/// a PAC that gave nothing at 0.
+pub fn pac_cycle_breadth(cm: &str, pas2: &str) -> HashMap<String, (String, u32)> {
+    let mut org_of: HashMap<&str, String> = HashMap::new();
+    let mut out: HashMap<String, (String, u32)> = HashMap::new();
+    for f in cm.lines().map(|l| l.split('|').collect::<Vec<_>>()) {
+        if f.len() < 14 || f[12] != "C" {
+            continue;
+        }
+        let raw = if f[13].trim().is_empty() { f[1] } else { f[13] }.trim();
+        let key = pac_name_key(raw);
+        if key.is_empty() {
+            continue;
+        }
+        out.entry(key.clone()).or_insert_with(|| (raw.to_string(), 0));
+        org_of.insert(f[0], key);
+    }
+    let mut net: HashMap<(&str, &str), f64> = HashMap::new();
+    for f in pas2.lines().map(|l| l.split('|').collect::<Vec<_>>()) {
+        if f.len() < 20 || f[5] != "24K" || f[19] == "X" || f[16].is_empty() {
+            continue;
+        }
+        let (Some(key), Ok(amt)) = (org_of.get(f[0]), f[14].trim().parse::<f64>()) else { continue };
+        *net.entry((key.as_str(), f[16])).or_default() += amt;
+    }
+    for ((key, _), _) in net.into_iter().filter(|(_, amt)| *amt > 0.0) {
+        if let Some(e) = out.get_mut(key) {
+            e.1 += 1;
+        }
+    }
+    out
+}
+
+/// (#559) The FEC posts a cycle's last quarter weeks after the year ends; 90 days stands in for that lag.
+pub const PAC_LAG_DAYS: i64 = 90;
+
+/// (#559) The newest two-year cycle (named by its even year) that had ended [`PAC_LAG_DAYS`] before
+/// `cutoff`: 2005-03-31 reads the 2004 cycle, a day earlier the 2002 one.
+pub fn pac_cycle(cutoff: NaiveDate) -> i32 {
+    let ready = cutoff - Duration::days(PAC_LAG_DAYS);
+    let y = if (ready.month(), ready.day()) == (12, 31) { ready.year() } else { ready.year() - 1 };
+    y - y.rem_euclid(2)
+}
+
 /// (Item 3) A per-name blend of the available as-of factors for the `"composite"` `growth_fund_factor`.
 /// shortcut: a plain mean of the factors present — they're all growth-%/points of similar magnitude, so
 /// averaging is a defensible first cut. CEILING: a true cross-sectional rank-normalisation (0..1 across
@@ -7819,6 +7902,72 @@ mod tests {
         assert_eq!(holder_flags(&sold, cutoff), HolderFlags { brk_add: false, adders: 3, net: 1 });
         // a cutoff before every filing reads all zero
         assert_eq!(holder_flags(&txs, d("2019-01-01")), HolderFlags::default());
+    }
+
+    /// (#559) The FEC and SEC spellings of one firm reduce to the same key; the PAC words end it.
+    #[test]
+    fn pac_name_key_matches_fec_and_sec_spellings() {
+        let k = pac_name_key;
+        assert_eq!(k("Apple Inc. /CA/"), "APPLE");
+        assert_eq!(k("PROCTER & GAMBLE COMPANY, THE"), "PROCTER GAMBLE");
+        assert_eq!(k("Procter and Gamble Co"), "PROCTER GAMBLE");
+        assert_eq!(k("MCDONALD'S CORPORATION (MCDONALD'S)"), "MCDONALDS");
+        assert_eq!(k("AMAZON.COM, INC."), "AMAZONCOM");
+        assert_eq!(k("BEAZER HOMES USA INC POLITICAL ACTION COMMITT"), "BEAZER HOMES USA");
+        assert_eq!(k("ELI LILLY AND COMPANY EMPLOYEES PAC"), "ELI LILLY");
+        assert_eq!(k("GOLDMAN SACHS GROUP INC"), "GOLDMAN SACHS");
+        assert_eq!(k("PAC"), "");
+    }
+
+    /// (#559) Breadth = distinct candidates with a net positive sum, pooled over a firm's PACs: memo rows,
+    /// non-24K rows, refunds and non-corporate committees all fall out; a giftless corporate PAC reads 0.
+    #[test]
+    fn pac_cycle_breadth_counts_net_positive_candidates() {
+        // cm: [0] id, [1] name, [12] ORG_TP, [13] connected org; 15 fields
+        let cm_row = |id: &str, name: &str, tp: &str, org: &str| {
+            format!("{id}|{name}|||||||||||{tp}|{org}|")
+        };
+        let cm = [
+            cm_row("C1", "ACME PAC", "C", "ACME CORP"),
+            cm_row("C2", "ACME EMPLOYEES FUND", "C", "Acme Corporation"), // same firm, second PAC
+            cm_row("C3", "WIDGET INC POLITICAL ACTION COMMITTEE", "C", ""), // blank org: committee name
+            cm_row("C4", "TEACHERS PAC", "L", "TEACHERS UNION"),          // labour: not a corporation
+            "C5|SHORT PAC|||||||||||C|SHORT CO".to_string(),             // 14 fields: just long enough
+        ]
+        .join("\n");
+        // pas2: [0] committee, [5] type, [14] amount, [16] candidate, [19] memo; 22 fields
+        let gift = |id: &str, tp: &str, amt: &str, cand: &str, memo: &str| {
+            let mut f = [""; 22];
+            (f[0], f[5], f[14], f[16], f[19]) = (id, tp, amt, cand, memo);
+            f.join("|")
+        };
+        let pas2 = [
+            gift("C1", "24K", "1000", "H1", ""),
+            gift("C2", "24K", "500", "H1", ""),  // same candidate via the other PAC: still one
+            gift("C1", "24K", "1000", "H2", ""),
+            gift("C2", "24K", "-1000", "H2", ""), // refunded in full: net 0, out
+            gift("C1", "24K", "800", "H3", "X"),  // memo: out
+            gift("C1", "24E", "800", "H4", ""),   // independent expenditure: out
+            gift("C4", "24K", "900", "H5", ""),   // labour PAC: out
+            gift("C1", "24K", "250.50", "S6", ""),
+            ["C5", "", "", "", "", "24K", "", "", "", "", "", "", "", "", "100", "", "H7", "", "", ""].join("|"), // 20 fields
+        ]
+        .join("\n");
+        let b = pac_cycle_breadth(&cm, &pas2);
+        assert_eq!(b.get("ACME"), Some(&("ACME CORP".to_string(), 2))); // H1 + S6
+        assert_eq!(b.get("WIDGET"), Some(&("WIDGET INC POLITICAL ACTION COMMITTEE".to_string(), 0)));
+        assert_eq!(b.get("SHORT"), Some(&("SHORT CO".to_string(), 1)));
+        assert_eq!(b.len(), 3);
+    }
+
+    /// (#559) A cutoff reads the newest cycle that ended [`PAC_LAG_DAYS`] before it.
+    #[test]
+    fn pac_cycle_waits_out_the_filing_lag() {
+        let d = |s: &str| s.parse::<NaiveDate>().expect("date");
+        assert_eq!(pac_cycle(d("2005-03-31")), 2004); // 90 days back is 2004-12-31: the cycle has ended
+        assert_eq!(pac_cycle(d("2005-03-30")), 2002);
+        assert_eq!(pac_cycle(d("2006-12-31")), 2004); // odd and even years both floor to the even year
+        assert_eq!(pac_cycle(d("2008-01-01")), 2006);
     }
 
     /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.

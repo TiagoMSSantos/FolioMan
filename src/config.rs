@@ -1012,6 +1012,11 @@ pub struct Urls {
     // its S-1/F-1 goes public. The quoted name is appended as `q`.
     #[serde(default = "default_sec_fts_s1_url")]
     pub sec_fts_s1: String,
+    // (#559) FEC bulk downloads, one zip per cycle and file: `cm` (committee master) and `pas2`
+    // (committee-to-candidate gifts) for the `backtest … pac` breadth cohort. Keyless. {year} = the
+    // cycle's even year, {file} = e.g. `pas204`.
+    #[serde(default = "default_fec_bulk_url")]
+    pub fec_bulk: String,
     // (#524) Hand-kept CSV of big IPOs the press reports before any public filing (Anthropic filed
     // confidentially): they join the Upcoming table as `confidential` rows. A disk path. EMPTY is the off
     // switch; CI sets it.
@@ -1075,6 +1080,11 @@ fn default_nasdaq_ipo_overview_url() -> String {
 /// (#527) Default Nasdaq IPO deal experts: `data.tableModel.rows[{expertName, role}]`.
 fn default_nasdaq_ipo_experts_url() -> String {
     "https://api.nasdaq.com/api/ipo/experts/?dealId={id}".to_string()
+}
+
+/// (#559) The FEC bulk-file layout; the host 302s to its S3 mirror, which reqwest follows.
+fn default_fec_bulk_url() -> String {
+    "https://www.fec.gov/files/bulk-downloads/{year}/{file}.zip".to_string()
 }
 
 /// (#524) Original and amended S-1/F-1 both match `forms`; the caller reads the newest from submissions.
@@ -2965,6 +2975,7 @@ mod tests {
             (default_fundamentals_history_url(), "https://financialmodelingprep.com/", &["{ticker}", "{key}"][..]),
             (default_fund_expense_url(), "https://financialmodelingprep.com/", &["{ticker}", "{key}"][..]),
             (default_bf_etf_search_url(), "https://api.boerse-frankfurt.de/", &[][..]),
+            (default_fec_bulk_url(), "https://www.fec.gov/", &["{year}", "{file}"][..]),
         ] {
             assert!(url.starts_with(host), "{url}");
             for t in tokens {

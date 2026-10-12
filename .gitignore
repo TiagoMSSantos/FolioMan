@@ -33,6 +33,8 @@ config/settings.yaml
 # ...except the fixture's frozen SEC rows (#364): without them `backtest 12 fund` has no offline pin, and
 # the shipped growth_fund_weight tilt is graded by nothing. Same no-leading-slash trap as the caches below.
 !tests/fixture/.sec_cache
+# (#559) FEC bulk breadth per cycle + SEC former names; only probe.yml's `pac` arm restores it
+.fec_cache/
 
 # screen run-to-run gate state (EXIT-review footer)
 .screen_state.json

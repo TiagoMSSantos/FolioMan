@@ -3470,6 +3470,163 @@ pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<Strin
     by_ticker
 }
 
+// ── (#559) FEC corporate-PAC breadth, for `backtest … pac` only ───────────────────────────────────
+// Keyless bulk files, one cm + pas2 zip per two-year cycle, reduced to breadth per firm and cached
+// forever in `.fec_cache` (a closed cycle's file only changes by late amendments). Firms are matched
+// to pond stocks by an EQUAL `core::pac_name_key` against the SEC current and former names.
+
+/// (#559) Raw FEC org name (as an audit line prints it) -> the US ticker it is, or `""` to mute a false
+/// match. Keys are normalized on read, so any spelling of the name works.
+const PAC_ALIASES: &str = include_str!("buy-heuristics/pac-aliases.json");
+/// (#559) SEC submissions GETs one `pac` run may spend on names, on top of what the run spent before.
+pub const PAC_FETCH_BUDGET: usize = 4000;
+
+/// (#559) What `backtest … pac` grades: the cycles that loaded, ticker -> cycle -> breadth (a matched
+/// firm whose PAC gave nothing reads 0; a stock with no matched PAC is absent), one audit line per match.
+#[derive(Default)]
+pub struct PacData {
+    pub cycles: std::collections::BTreeSet<i32>,
+    pub breadth: HashMap<String, BTreeMap<i32, u32>>,
+    pub audit: Vec<String>,
+}
+
+/// (#559) The first file in a zip, read as Latin-1 (the FEC's encoding: each byte is its own char).
+fn unzip_latin1(bytes: &[u8]) -> Option<String> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    let mut raw = Vec::new();
+    std::io::Read::read_to_end(&mut zip.by_index(0).ok()?, &mut raw).ok()?;
+    Some(raw.into_iter().map(char::from).collect())
+}
+
+/// (#559) A filer's current name and every former one, from its submissions JSON.
+fn sec_names(v: &Value) -> Vec<String> {
+    let former = v["formerNames"].as_array().into_iter().flatten().map(|f| &f["name"]);
+    std::iter::once(&v["name"]).chain(former).filter_map(Value::as_str).map(str::to_string).collect()
+}
+
+/// (#559) One cycle's [`core::pac_cycle_breadth`], cached forever, and only when it holds firms. None =
+/// offline, or a file the FEC did not serve.
+#[mutants::skip] // (#559) async network shell; `core::pac_cycle_breadth` and `unzip_latin1` carry the tests
+async fn fec_cycle(client: &Client, urls: &Urls, cycle: i32) -> Option<HashMap<String, (String, u32)>> {
+    let path = crate::config::data_path(".fec_cache").join(format!("breadth_{cycle}_v1.json"));
+    if let Some(b) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+        return Some(b);
+    }
+    if offline() {
+        return None;
+    }
+    let get = |file: String| {
+        let url = urls.fec_bulk.replace("{year}", &cycle.to_string()).replace("{file}", &file);
+        async move {
+            throttle().await;
+            let r = client.get(&url).timeout(StdDuration::from_secs(300)).send().await.ok()?.error_for_status().ok()?;
+            r.bytes().await.ok()
+        }
+    };
+    let yy = cycle.rem_euclid(100);
+    let (cm, pas2) = (get(format!("cm{yy:02}")).await?, get(format!("pas2{yy:02}")).await?);
+    let b = tokio::task::spawn_blocking(move || Some(core::pac_cycle_breadth(&unzip_latin1(&cm)?, &unzip_latin1(&pas2)?)))
+        .await
+        .ok()??;
+    if b.is_empty() {
+        return None;
+    }
+    cache_write(&path, serde_json::to_string(&b).unwrap_or_default());
+    Some(b)
+}
+
+/// (#559) Cycle -> FEC firms crossed onto tickers. `names` = ticker -> its SEC names; `aliases` (keys
+/// already [`core::pac_name_key`]ed) map a key to a ticker, or mute it with `""`. Audit lines read
+/// `cycle | FEC name | ticker | SEC name`, sorted.
+pub fn pac_crosswalk(
+    cycles: &BTreeMap<i32, HashMap<String, (String, u32)>>,
+    names: &[(String, Vec<String>)],
+    aliases: &BTreeMap<String, String>,
+) -> (HashMap<String, BTreeMap<i32, u32>>, Vec<String>) {
+    let mut by_key: HashMap<String, Vec<(&str, &str)>> = HashMap::new();
+    for (t, ns) in names {
+        for n in ns {
+            let k = core::pac_name_key(n);
+            let e = by_key.entry(k).or_default();
+            if !e.iter().any(|(x, _)| *x == t.as_str()) {
+                e.push((t.as_str(), n.as_str()));
+            }
+        }
+    }
+    let (mut breadth, mut audit): (HashMap<String, BTreeMap<i32, u32>>, Vec<String>) = Default::default();
+    for (cycle, orgs) in cycles {
+        for (key, (raw, n)) in orgs {
+            let hits = match aliases.get(key) {
+                Some(t) if t.is_empty() => continue,
+                Some(t) => vec![(t.as_str(), "(alias)")],
+                None => by_key.get(key).cloned().unwrap_or_default(),
+            };
+            for (t, sec) in hits {
+                // ponytail: two FEC keys on one ticker keep the larger count, not the union of their
+                // candidates; pool the candidate sets if the audit shows firms split across keys.
+                let e = breadth.entry(t.to_string()).or_default().entry(*cycle).or_insert(0);
+                *e = (*e).max(*n);
+                audit.push(format!("{cycle} | {raw} | {t} | {sec}"));
+            }
+        }
+    }
+    audit.sort();
+    (breadth, audit)
+}
+
+/// (#559) The PAC record for `tickers` over cycles `first..=last`: each cycle by [`fec_cycle`], each
+/// stock's SEC names from its submissions (one GET per CIK, cached forever when it names anything,
+/// inside [`PAC_FETCH_BUDGET`]), crossed by [`pac_crosswalk`]. A stock with no CIK (non-US, delisted)
+/// cannot match.
+#[mutants::skip] // (#559) async network shell; the pure helpers above carry the tests
+pub async fn fetch_pac_history(client: &Client, urls: &Urls, tickers: &[String], first: i32, last: i32) -> PacData {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut cycles = BTreeMap::new();
+    for c in (first..=last).step_by(2) {
+        if let Some(b) = fec_cycle(client, urls, c).await {
+            cycles.insert(c, b);
+        }
+    }
+    let cap = SEC_FETCHES.load(Relaxed) + PAC_FETCH_BUDGET;
+    let mut names: Vec<(String, Vec<String>)> = stream::iter(tickers.iter().cloned())
+        .map(|t| async move {
+            let cik = sec_cik(client, urls, &t).await?;
+            let path = crate::config::data_path(".fec_cache").join(format!("names_{cik}.json"));
+            if let Some(n) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()) {
+                return Some((t, n));
+            }
+            if SEC_FETCHES.fetch_add(1, Relaxed) >= cap {
+                return None;
+            }
+            let n = sec_names(&sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), &urls.sec_user_agent).await?);
+            if n.is_empty() {
+                return None;
+            }
+            cache_write(&path, serde_json::to_string(&n).unwrap_or_default());
+            Some((t, n))
+        })
+        .buffer_unordered(fetch_concurrency())
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
+    names.sort();
+    let aliases: BTreeMap<String, String> = serde_json::from_str::<BTreeMap<String, String>>(PAC_ALIASES)
+        .expect("src/buy-heuristics/pac-aliases.json parses")
+        .into_iter()
+        .map(|(k, v)| (core::pac_name_key(&k), v))
+        .collect();
+    let (breadth, audit) = pac_crosswalk(&cycles, &names, &aliases);
+    eprintln!(
+        "fetch: pac: {} of {} FEC cycles {first}-{last} loaded; {} of {} stocks named by SEC; {} matched a corporate PAC",
+        cycles.len(),
+        (last - first) / 2 + 1,
+        names.len(),
+        tickers.len(),
+        breadth.len()
+    );
+    PacData { cycles: cycles.into_keys().collect(), breadth, audit }
+}
+
 /// (#475) One manager's EDGAR full-text search answer -> its ORIGINAL SCHEDULE 13D/13G filings, one per
 /// subject stock: the display name with a ticker whose CIK is not the filer's. An amendment is an old
 /// stake, and a filer's own stock (Berkshire on Berkshire) is no buy.
@@ -11828,6 +11985,69 @@ pub(crate) mod tests {
         assert_eq!(kept, ["brk", "three"]);
     }
 
+    /// (#559) FEC zips are Latin-1: every byte is its own char, a broken zip is None.
+    #[test]
+    fn unzip_latin1_reads_the_first_file_byte_per_char() {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        w.start_file("cm.txt", zip::write::SimpleFileOptions::default()).expect("zip entry");
+        std::io::Write::write_all(&mut w, b"C1|NESTL\xc9|C").expect("zip body");
+        let zipped = w.finish().expect("zip").into_inner();
+        assert_eq!(unzip_latin1(&zipped).as_deref(), Some("C1|NESTL\u{c9}|C"));
+        assert_eq!(unzip_latin1(b"not a zip"), None);
+    }
+
+    /// (#559) The submissions JSON's current name, then each former one; a filer with none reads one.
+    #[test]
+    fn sec_names_lists_current_then_former() {
+        let v = serde_json::json!({"name": "Alphabet Inc.", "formerNames": [{"name": "Google Inc.", "from": "2004"}]});
+        assert_eq!(sec_names(&v), ["Alphabet Inc.", "Google Inc."]);
+        assert_eq!(sec_names(&serde_json::json!({"name": "Apple Inc."})), ["Apple Inc."]);
+        assert!(sec_names(&serde_json::json!({})).is_empty());
+    }
+
+    /// (#559) Equal keys cross FEC firms onto tickers through current AND former SEC names; a share-class
+    /// twin takes the same count, two keys on one ticker keep the larger, an alias maps or mutes, and an
+    /// unmatched firm is absent.
+    #[test]
+    fn pac_crosswalk_matches_equal_keys_and_honours_aliases() {
+        let org = |raw: &str, n: u32| (core::pac_name_key(raw), (raw.to_string(), n));
+        let cycles: BTreeMap<i32, HashMap<String, (String, u32)>> = [
+            (2004, [org("ACME CORP", 5), org("OLDCO INC", 3), org("BOGUS LLC", 9), org("NOMATCH CORP", 2), org("OTHER INC", 4)]
+                .into_iter()
+                .collect::<HashMap<_, _>>()),
+            (2006, [org("ACME CORP", 0)].into_iter().collect::<HashMap<_, _>>()),
+        ]
+        .into_iter()
+        .collect();
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let names = vec![
+            ("ACM".to_string(), s(&["Acme Corp /DE/", "Oldco Inc"])),
+            ("ACMB".to_string(), s(&["Acme Corporation"])),
+            ("BOG".to_string(), s(&["Bogus LLC"])),
+        ];
+        let aliases: BTreeMap<String, String> =
+            [("BOGUS", ""), ("NOMATCH", "NMT")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let (breadth, audit) = pac_crosswalk(&cycles, &names, &aliases);
+        let row = |pairs: &[(i32, u32)]| pairs.iter().copied().collect::<BTreeMap<i32, u32>>();
+        assert_eq!(breadth.get("ACM"), Some(&row(&[(2004, 5), (2006, 0)])));
+        assert_eq!(breadth.get("ACMB"), Some(&row(&[(2004, 5), (2006, 0)])));
+        assert_eq!(breadth.get("NMT"), Some(&row(&[(2004, 2)])));
+        assert_eq!(breadth.len(), 3, "BOG muted, OTHER unmatched");
+        assert_eq!(
+            audit,
+            [
+                "2004 | ACME CORP | ACM | Acme Corp /DE/",
+                "2004 | ACME CORP | ACMB | Acme Corporation",
+                "2004 | NOMATCH CORP | NMT | (alias)",
+                "2004 | OLDCO INC | ACM | Oldco Inc",
+                "2006 | ACME CORP | ACM | Acme Corp /DE/",
+                "2006 | ACME CORP | ACMB | Acme Corporation",
+            ]
+        );
+        // the shipped alias file parses as the fetcher reads it
+        assert!(serde_json::from_str::<BTreeMap<String, String>>(PAC_ALIASES).is_ok());
+    }
+
     /// (#436) The newest five DISTINCT report dates, every filing of each: an amendment does not cost
     /// the window a quarter.
     #[test]
@@ -13545,7 +13765,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 54] = [
+        const FIELDS: [&str; 55] = [
             "openfigi_mapping", "fred",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -13557,7 +13777,7 @@ pub(crate) mod tests {
             "trackingdifferences", "nasdaq_profile", "nasdaq_target", "nasdaq_summary", "finra_short",
             "wikipedia_search", "wikidata_entity", "sec_fts", "ark_trades", "openinsider_clusters",
             "apewisdom", "google_trends_rss", "hn_stories", "nasdaq_ipo_overview", "sec_fts_s1",
-            "nasdaq_ipo_experts",
+            "nasdaq_ipo_experts", "fec_bulk",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\nyoutube_more_feeds: [\"{base}\"]\n")); // the two non-String fields

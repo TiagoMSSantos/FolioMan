@@ -697,6 +697,7 @@ struct Args {
     tune: bool,
     insider: bool,
     holders: bool,
+    pac: bool,
     halflife: bool,
     stress: bool,
     pit: bool,
@@ -717,6 +718,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("tune") => a_.tune = true,
             _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) also pull SEC Form-4 net buys
             _ if a.eq_ignore_ascii_case("holders") => a_.holders = true, // (#518) grade the 13F-holder boosts
+            _ if a.eq_ignore_ascii_case("pac") => a_.pac = true, // (#559) grade FEC corporate-PAC breadth
             _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
             _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
             _ if a.eq_ignore_ascii_case("pit") => a_.pit = true, // (PIT) score each cutoff against the index AS IT WAS
@@ -1053,7 +1055,7 @@ pub async fn run(args: Vec<String>) {
     let anchor_windows =
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
-    let Args { years, wide, long, fund, tune, insider, holders, halflife, stress, pit, mut tickers } = parse_args(&args);
+    let Args { years, wide, long, fund, tune, insider, holders, pac, halflife, stress, pit, mut tickers } = parse_args(&args);
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
     // mutate the process environment.
     if fmp_key_missing(fund, &crate::config::fund_source(), std::env::var("FMP_API_KEY").ok()) {
@@ -1866,6 +1868,9 @@ pub async fn run(args: Vec<String>) {
     if holders {
         report_holder_cohorts(&samples, &holder_txs, years, tuning);
     }
+    if pac {
+        report_pac(&client, &settings.urls, &samples, years, tuning).await;
+    }
     report_risk_lane(&samples, tuning.split_purge_months); // closes-derived risk stats, standalone — no fundamentals needed
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
     // (survivorship-clean), matched to the sample cadence. realized is untouched by de-mean.
@@ -2277,24 +2282,113 @@ fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::Hol
     println!("  CAVEATS: 13F XML starts 2013-Q2, so a 20y leg is blind and early 12y cutoffs see little; the 83");
     println!("  managers were picked in 2026, so survivor bias flatters their rows; cutoffs overlap, so n counts");
     println!("  samples, not independent bets. Read mean AND hit: a hit rate up with the mean down dilutes.");
-    let table = |samples: &[Sample]| {
-        println!(
-            "  {:<36} {:>6} {:>8} {:>8} {:>6} | {:>6} {:>8} {:>8} {:>6}",
-            "cohort", "n", "mean", "median", "hit%", "rest n", "mean", "median", "hit%"
-        );
-        for (name, a, b) in holder_cohorts(samples, txs) {
-            println!(
-                "  {name:<36} {:>6} {:>+8.2} {:>+8.2} {:>6.1} | {:>6} {:>+8.2} {:>+8.2} {:>6.1}",
-                a.n, a.mean, a.median, a.hit, b.n, b.mean, b.median, b.hit
-            );
-        }
-    };
-    table(samples);
+    print_cohorts(&holder_cohorts(samples, txs));
     // (#544) The boosts only multiply names the gates already pass, so the row that grades a boost is
     // flagged passers against the OTHER passers, not against every stock.
     let passed: Vec<Sample> = samples.iter().filter(|s| growth_score(&s.quote, tuning).is_some()).cloned().collect();
     println!("  (#544) among stocks the buy gates pass (rest = the other passers): the row each boost answers to.");
-    table(&passed);
+    print_cohorts(&holder_cohorts(&passed, txs));
+}
+
+/// (#518) One cohort table: each row's flagged side against the rest.
+#[mutants::skip] // printing only
+fn print_cohorts(rows: &[(&str, CohortSide, CohortSide)]) {
+    println!(
+        "  {:<36} {:>6} {:>8} {:>8} {:>6} | {:>6} {:>8} {:>8} {:>6}",
+        "cohort", "n", "mean", "median", "hit%", "rest n", "mean", "median", "hit%"
+    );
+    for (name, a, b) in rows {
+        println!(
+            "  {name:<36} {:>6} {:>+8.2} {:>+8.2} {:>6.1} | {:>6} {:>+8.2} {:>+8.2} {:>6.1}",
+            a.n, a.mean, a.median, a.hit, b.n, b.mean, b.median, b.hit
+        );
+    }
+}
+
+/// (#559) The `pac` cohorts, on stock samples whose cutoff's [`core::pac_cycle`] loaded. Row 1, the
+/// pre-registered bar: among stocks with a matched corporate PAC that cycle, the top breadth tercile
+/// against the other PAC firms. The tercile is cut per cutoff date: breadth above zero and at least the
+/// value two-thirds up that date's sorted list (fewer than 3 PAC firms on a date: none on top). Row 2,
+/// info only: any matched corporate PAC against none.
+fn pac_cohorts(samples: &[Sample], pac: &fetch::PacData) -> [(&'static str, CohortSide, CohortSide); 2] {
+    let mut by_date: BTreeMap<chrono::NaiveDate, Vec<(Option<u32>, f64)>> = BTreeMap::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) == 2) {
+        let cycle = core::pac_cycle(s.date);
+        if pac.cycles.contains(&cycle) {
+            let b = pac.breadth.get(&s.quote.ticker).and_then(|m| m.get(&cycle)).copied();
+            by_date.entry(s.date).or_default().push((b, s.relative));
+        }
+    }
+    let (mut top, mut rest, mut any, mut none) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for rows in by_date.values() {
+        let mut bs: Vec<u32> = rows.iter().filter_map(|r| r.0).collect();
+        bs.sort_unstable();
+        let line = bs.get(bs.len() * 2 / 3).copied().filter(|_| bs.len() >= 3);
+        for &(b, x) in rows {
+            let Some(b) = b else {
+                none.push(x);
+                continue;
+            };
+            any.push(x);
+            if line.is_some_and(|l| b > 0 && b >= l) {
+                top.push(x);
+            } else {
+                rest.push(x);
+            }
+        }
+    }
+    [
+        ("PAC breadth top tercile (the bar)", cohort_side(top), cohort_side(rest)),
+        ("any corporate PAC (info)", cohort_side(any), cohort_side(none)),
+    ]
+}
+
+/// (#559) Samples each side of the bar needs before its verdict counts.
+const PAC_MIN_N: usize = 30;
+
+/// (#559) The pre-registered bar for one cell: n >= [`PAC_MIN_N`] on each side, and the top tercile
+/// higher on median excess AND on hit rate.
+fn pac_pass(top: &CohortSide, rest: &CohortSide) -> bool {
+    top.n >= PAC_MIN_N && rest.n >= PAC_MIN_N && top.median > rest.median && top.hit > rest.hit
+}
+
+/// (#559) The `pac` report: the FEC fetch, the crosswalk audit, [`pac_cohorts`] with its verdict, and
+/// the gate passers as info. Report only, no knob reads it.
+#[mutants::skip] // network + printing; `pac_cohorts` and `pac_pass` carry the tests
+async fn report_pac(client: &reqwest::Client, urls: &config::Urls, samples: &[Sample], years: i64, tuning: &BuyHeuristic) {
+    let stocks: Vec<String> = samples
+        .iter()
+        .filter(|s| picks::asset_class(&s.quote) == 2)
+        .map(|s| s.quote.ticker.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let (Some(lo), Some(hi)) = (samples.iter().map(|s| s.date).min(), samples.iter().map(|s| s.date).max()) else { return };
+    let pac = fetch::fetch_pac_history(client, urls, &stocks, core::pac_cycle(lo), core::pac_cycle(hi)).await;
+    println!("\n── (#559) PAC BREADTH: do firms whose PACs fund the most candidates beat the other PAC firms? ({years}y forward, stocks) ──");
+    println!("  breadth = candidates a firm's corporate PACs gave a net positive sum (FEC 24K gifts) in the newest");
+    println!("  two-year cycle that ended {} days before the cutoff. Cycles loaded: {:?}.", core::PAC_LAG_DAYS, pac.cycles);
+    println!("  CAVEATS: FEC files are as-amended, not as-filed; a firm matches only by its SEC current or former");
+    println!("  name, so delisted names (no CIK: most of the stress lane's losers) and renamed PACs are missed; PAC");
+    println!("  firms skew large and mature; cutoffs overlap, so n counts samples, not independent bets.");
+    println!(
+        "  crosswalk: {} stocks matched over {} audit lines; 50 evenly spaced (cycle | FEC name | ticker | SEC name):",
+        pac.breadth.len(),
+        pac.audit.len()
+    );
+    for line in pac.audit.iter().step_by((pac.audit.len() / 50).max(1)).take(50) {
+        println!("    {line}");
+    }
+    let rows = pac_cohorts(samples, &pac);
+    print_cohorts(&rows);
+    let (_, top, rest) = &rows[0];
+    println!(
+        "  VERDICT ({years}y): {} (bar: n >= {PAC_MIN_N} each side, top tercile higher on median AND hit%)",
+        if pac_pass(top, rest) { "PASS" } else { "FAIL" }
+    );
+    let passed: Vec<Sample> = samples.iter().filter(|s| growth_score(&s.quote, tuning).is_some()).cloned().collect();
+    println!("  among stocks the buy gates pass (info, no verdict):");
+    print_cohorts(&pac_cohorts(&passed, &pac));
 }
 
 /// (G) Probe each as-of fundamental factor STANDALONE against the same peer-relative forward return:
@@ -7601,6 +7695,7 @@ mod tests {
         assert!(p("tune").tune);
         assert!(p("insider").insider);
         assert!(p("holders").holders);
+        assert!(p("pac").pac);
         assert!(p("halflife").halflife);
         assert!(p("stress").stress);
         assert!(p("pit").pit, "`pit` must set pit — lose it and the point-in-time run is a plain one that says it isn't");
@@ -7635,7 +7730,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders halflife stress pit");
+        let all = p("8 universe long fund tune insider holders pac halflife stress pit");
         assert_eq!(
             all,
             Args {
@@ -7646,6 +7741,7 @@ mod tests {
                 tune: true,
                 insider: true,
                 holders: true,
+                pac: true,
                 halflife: true,
                 stress: true,
                 pit: true,
@@ -7678,6 +7774,54 @@ mod tests {
         assert_eq!(rows[1].1, CohortSide { n: 3, mean: 5.0 / 3.0, median: 2.0, hit: 200.0 / 3.0 });
         assert_eq!(rows[1].2, CohortSide { n: 2, mean: -1.0, median: -1.0, hit: 0.0 }, "a zero excess is no hit");
         assert!(cohort_side(Vec::new()).mean.is_nan());
+    }
+
+    /// (#559) The tercile is cut per cutoff date among the PAC firms: the line is the value two-thirds up
+    /// the sorted list, ties at it count as top, a zero breadth never does, and a date with fewer than 3
+    /// PAC firms puts none on top. Coins and cutoffs whose cycle did not load are out.
+    #[test]
+    fn pac_cohorts_cut_terciles_per_cutoff_date() {
+        let at = |tk: &str, (y, m): (i32, u32), rel: f64| Sample {
+            relative: rel,
+            quote: Arc::new(Quote::stub(tk, "1", "", tk)),
+            ..sample(ymd(y, m, 1), 0.0)
+        };
+        let pac = fetch::PacData {
+            cycles: [2004].into(),
+            breadth: [("A", (2004, 10)), ("B", (2004, 5)), ("C", (2004, 1)), ("Z", (2004, 0)), ("Y", (2004, 0)), ("X", (2004, 0)), ("OLD", (2002, 9))]
+                .into_iter()
+                .map(|(t, (c, b))| (t.to_string(), BTreeMap::from([(c, b)])))
+                .collect(),
+            audit: Vec::new(),
+        };
+        let (d1, d2, d4) = ((2005, 6), (2005, 7), (2005, 8)); // all read the 2004 cycle
+        let pool = [
+            // d1: breadths 0,1,5,10 -> the line is 5: A and B on top
+            at("A", d1, 3.0), at("B", d1, 1.0), at("C", d1, -1.0), at("Z", d1, -2.0),
+            at("N", d1, 0.5), at("OLD", d1, 4.0), at("BTC-USD", d1, 9.0), // no PAC, a 2002-only PAC, a coin
+            // d2: exactly 3 PAC firms, 0,5,10 -> the line is 10: A alone on top
+            at("A", d2, 2.0), at("B", d2, -3.0), at("Z", d2, 5.0),
+            // d4: all zero -> the line is 0, and zero is never top
+            at("Z", d4, 1.0), at("Y", d4, 1.5), at("X", d4, -0.5),
+            at("A", (2003, 6), 7.0), // reads the 2002 cycle, which did not load: out
+        ];
+        let rows = pac_cohorts(&pool, &pac);
+        assert_eq!(rows.iter().map(|r| (r.1.n, r.2.n)).collect::<Vec<_>>(), [(3, 7), (10, 2)]);
+        assert_eq!((rows[0].1.median, rows[0].1.hit), (2.0, 100.0));
+        assert_eq!((rows[0].2.median, rows[0].2.hit), (-0.5, 300.0 / 7.0));
+    }
+
+    /// (#559) The bar: n >= 30 on BOTH sides, and strictly higher median AND hit rate; a tie fails.
+    #[test]
+    fn pac_pass_needs_both_stats_higher_and_thirty_a_side() {
+        let side = |n, median, hit| CohortSide { n, mean: 0.0, median, hit };
+        let rest = side(30, 0.0, 50.0);
+        assert!(pac_pass(&side(30, 1.0, 55.0), &rest));
+        assert!(!pac_pass(&side(29, 1.0, 55.0), &rest));
+        assert!(!pac_pass(&side(30, 1.0, 55.0), &side(29, 0.0, 50.0)));
+        assert!(!pac_pass(&side(30, 1.0, 50.0), &rest), "hit tie");
+        assert!(!pac_pass(&side(30, 0.0, 55.0), &rest), "median tie");
+        assert!(!pac_pass(&side(30, -1.0, 99.0), &rest), "hit up, median down");
     }
 
     /// The verdict journal's OTHER half — the merge and the horizon pick, which had no test caller

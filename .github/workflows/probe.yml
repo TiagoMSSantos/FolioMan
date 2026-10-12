@@ -7,7 +7,8 @@ name: Probe
 # Read it with `gh run view <id> --log`, and check `windows scored` on every horizon before grading.
 # Read it within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes.
 #
-# MANUAL ONLY and READ-ONLY: it saves no cache, so a probe can never change what Pages or the gate read.
+# MANUAL ONLY, and it never writes a cache Pages or the gate read. The one cache it saves is (#559)'s
+# `folioman-fec-`, which only a `pac` probe fills and nothing else restores.
 on:
   workflow_dispatch:
     inputs:
@@ -25,7 +26,7 @@ on:
         type: boolean
         default: false
 
-# No concurrency group (#550): a probe saves no cache, so arms dispatched together run in parallel.
+# No concurrency group (#550): a probe saves no shared cache (each FEC save is keyed on its own run id), so arms dispatched together run in parallel.
 # A shared group kept one run going and one pending, and a third dispatch silently cancelled the pending one.
 permissions:
   contents: read
@@ -75,6 +76,14 @@ jobs:
           path: .long_history_cache.json
           key: folioman-longhist-${{ github.run_id }}
           restore-keys: folioman-longhist-
+      # (#559) FEC bulk breadth per cycle + SEC former names, for `backtest … pac` only.
+      - name: Restore the FEC cache
+        if: ${{ contains(inputs.args, 'pac') }}
+        uses: actions/cache/restore@v6
+        with:
+          path: .fec_cache
+          key: folioman-fec-${{ github.run_id }}
+          restore-keys: folioman-fec-
       - name: backtest
         if: ${{ !inputs.bless }}
         env:
@@ -103,6 +112,12 @@ jobs:
             ./target/release/folioman backtest "$y" "${args[@]}"
             echo "::endgroup::"
           done
+      - name: Save the FEC cache
+        if: ${{ !cancelled() && contains(inputs.args, 'pac') }}
+        uses: actions/cache/save@v6
+        with:
+          path: .fec_cache
+          key: folioman-fec-${{ github.run_id }}
       # (#554) A knob ship moves a frozen-data golden, and the CI log prints only its FIRST changed line.
       # This writes every `*report_is_pinned` golden at the dispatched commit, in the debug profile
       # integration-tests checks them in, and uploads them: download, review the diff, commit. Each
