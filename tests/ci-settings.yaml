@@ -1595,8 +1595,27 @@ sizing:
   #  every one of those grids graded the lane edge or the admits' forward peer-relative return, never the
   #  top-10 book row against a same-batch control. The book is saturated (5-7 passers for 10 slots), so the
   #  waived names fill empty slots (pit 20y holds 113 -> 144) instead of displacing ranked ones.
-  #  NEXT: stage 2 for 1Y+ and cagr. 1Y+ already clears the 5-of-6 ship bar as a plain waive, so its first
-  #  rung is a knob, not a taper. Nothing ships from this block.
+  #  STAGE 2, 1Y+ FLOOR LADDER (no code; 10 probe.yml runs 38234761510..38234867506 at 4361b3e; windows =
+  #  control in every run; the control and `off` reproduce the screen's rows to the decimal). Top-10 delta vs
+  #  the same-batch control, mean / median pts/yr, against the (#560) ship bar (both >= +0.2 in >= 5 of 6):
+  #              pit 20      pit 12      pit 8       stress 20   stress 12   stress 8    cells
+  #    -10       -0.3/ 0.0   -0.2/-0.5   +0.2/ 0.0   +0.2/+0.4   +0.2/+0.7   +0.1/-0.2   2/6
+  #    -25       +0.3/+1.3    0.0/+0.4   +0.4/-0.1   +0.4/+1.1   +0.3/+0.9   +0.4/+0.1   3/6
+  #    -50       +0.5/+1.2   +0.2/+0.8   +0.6/-0.1   +0.3/+1.1   +0.4/+1.0   +0.3/+0.1   4/6
+  #    off       +0.5/+1.2   +0.5/+0.9   +1.1/+0.3   +0.3/+1.1   +0.6/+1.3   +0.6/+0.7   6/6  BEATS
+  #  Monotone: the looser the floor, the better the book. 20y DCA `never-sell vs index DCA`, mean (median):
+  #    pit     control +3.1 (+3.1) | -10 +3.1 (+3.2) | -25 +3.2 (+3.3) | -50 +3.2 (+3.1) | off +3.3 (+3.1)
+  #    stress  control +5.2 (+5.6) | -10 +5.5 (+5.9) | -25 +5.6 (+6.0) | -50 +5.6 (+5.9) | off +5.6 (+5.9)
+  #  VERDICT: 1Y+ OFF BEATS THE BOOK BAR AND IS NOT CLEARED on the 20y DCA. The pit median ties (+3.1) and
+  #  the mean gain is only +0.2. That is the tie that refused (#560)'s momentum, whose pit mean gain was +0.8.
+  #  The same bar applies, so NOTHING SHIPS and growth_min_1y_pct stays -0.3.
+  #  Caveats: (a) the control's GATE SWEEP prices the 20y -10 admits at fwd peer-relative -335.9 | -490.2
+  #  (n=30). Those names trail the pond, yet the book rises, because a saturated book takes them into empty
+  #  slots instead of swapping out ranked names. (b) At 12y/8y `off` grades one more bucket than the control
+  #  (37 vs 36, 45 vs 44), so part of those two cells is composition. The 20y cells have equal n and still gain.
+  #  OPEN: two designs (momentum, 1Y off) now beat the book and stall on the same 21-program pit DCA median.
+  #  Whether that median tie stays a veto has to be decided BEFORE the next test, never after one.
+  #  cagr (4/6 in the screen) is the other stage-2 candidate and is not run yet.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
