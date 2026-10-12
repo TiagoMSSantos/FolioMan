@@ -698,6 +698,7 @@ struct Args {
     insider: bool,
     holders: bool,
     pac: bool,
+    rivals: bool,
     halflife: bool,
     stress: bool,
     pit: bool,
@@ -719,6 +720,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) also pull SEC Form-4 net buys
             _ if a.eq_ignore_ascii_case("holders") => a_.holders = true, // (#518) grade the 13F-holder boosts
             _ if a.eq_ignore_ascii_case("pac") => a_.pac = true, // (#559) grade FEC corporate-PAC breadth
+            _ if a.eq_ignore_ascii_case("rivals") => a_.rivals = true, // (#560) rival books on the same pond
             _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
             _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
             _ if a.eq_ignore_ascii_case("pit") => a_.pit = true, // (PIT) score each cutoff against the index AS IT WAS
@@ -1055,7 +1057,7 @@ pub async fn run(args: Vec<String>) {
     let anchor_windows =
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
-    let Args { years, wide, long, fund, tune, insider, holders, pac, halflife, stress, pit, mut tickers } = parse_args(&args);
+    let Args { years, wide, long, fund, tune, insider, holders, pac, rivals, halflife, stress, pit, mut tickers } = parse_args(&args);
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
     // mutate the process environment.
     if fmp_key_missing(fund, &crate::config::fund_source(), std::env::var("FMP_API_KEY").ok()) {
@@ -1880,6 +1882,9 @@ pub async fn run(args: Vec<String>) {
     // (#326) the fetch itself moved UP, to just after the walk: the regime valve needs the index series
     // before anything scores a sample. `bench` is still the same series, used by every report below.
     report_vs_benchmark(&samples, &bench, years, tuning);
+    if rivals {
+        report_rivals(&samples, &bench, years, tuning);
+    }
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
@@ -3457,6 +3462,165 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
     let never = ((1.0 + (m - 1.0) * (1.0 - t_hold)).powf(1.0 / y) - 1.0) * 100.0;
     let rot = (m.powf(1.0 / y) - 1.0) * (1.0 - t_rot) * 100.0;
     (never, rot)
+}
+
+/// (#560) The `rivals` books, in print order. Row 0 is the shipped score picked by the same plain
+/// top-10 as every rival, so the comparison is like for like; the real shipped row (value trim, caps)
+/// prints above it in `report_vs_benchmark` and is what the 6-cell tally reads. (e), the random pond,
+/// prints last from [`random_books`].
+const RIVALS: [&str; 7] = [
+    "shipped (plain top-10)",
+    "(d) gates-off shipped",
+    "(a) momentum 12-1",
+    "(b) quality (ROE fallback)",
+    "(c) value E/P",
+    "(f) revenue CAGR",
+    "(g) momentum x quality",
+];
+
+/// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
+const RIVAL_TIE: f64 = 0.2;
+
+/// (#560) One cell's win: the rival's mean AND median excess both clear shipped by [`RIVAL_TIE`].
+fn rival_wins(d_mean: f64, d_median: f64) -> bool {
+    d_mean >= RIVAL_TIE && d_median >= RIVAL_TIE
+}
+
+/// (#560) 12-1 momentum, %: the trailing year net of its last month, the same formula as the growth
+/// score's `mom121` term. A missing 1M reads 0; a missing 1Y has no momentum.
+fn momentum_12_1(q: &Quote) -> Option<f64> {
+    let r1y = picks::perf_pct(q, "1Y")?;
+    let r1m = picks::perf_pct(q, "1M").unwrap_or(0.0);
+    Some(((1.0 + r1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0)
+}
+
+/// (#560) Each value's percentile in its column: the share of present values strictly below it, so
+/// ties share a rank. `None` stays `None`.
+fn rank_pct(xs: &[Option<f64>]) -> Vec<Option<f64>> {
+    let present: Vec<f64> = xs.iter().flatten().copied().collect();
+    let n = present.len() as f64;
+    xs.iter().map(|x| x.map(|v| present.iter().filter(|p| **p < v).count() as f64 / n)).collect()
+}
+
+/// (#560) An equal-weight book of (realized %, bench %) picks as its excess over the index, pts/yr,
+/// annualised the way the shipped top-N row does it. `None` for an empty book.
+fn book_excess(picks: &[(f64, f64)], years: i64) -> Option<f64> {
+    if picks.is_empty() {
+        return None;
+    }
+    let cum = |f: fn(&(f64, f64)) -> f64| picks.iter().map(|p| 1.0 + f(p) / 100.0).sum::<f64>() / picks.len() as f64;
+    Some(ann((cum(|p| p.0) - 1.0) * 100.0, years) - ann((cum(|p| p.1) - 1.0) * 100.0, years))
+}
+
+/// (#560) One bucket's top-`n` book by key, as [`book_excess`]. Rows are (key, realized %, bench %,
+/// ticker); highest key first, ties by ticker so the book is deterministic, and one slot per ticker (a
+/// name scored at two cutoffs in one bucket is one holding). Rows without the key sit out.
+fn rival_excess(rows: &[(Option<f64>, f64, f64, &str)], n: usize, years: i64) -> Option<f64> {
+    let mut keyed: Vec<(f64, f64, f64, &str)> = rows.iter().filter_map(|r| r.0.map(|k| (k, r.1, r.2, r.3))).collect();
+    keyed.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.3.cmp(b.3)));
+    let mut seen = HashSet::new();
+    let book: Vec<(f64, f64)> = keyed.into_iter().filter(|r| seen.insert(r.3)).take(n).map(|r| (r.1, r.2)).collect();
+    book_excess(&book, years)
+}
+
+/// (#560) Rival (e): [`PLACEBO_DRAWS`] seeded draws of `n` names per bucket from the pond, with
+/// replacement like the (#329) placebo. Per draw: (mean, median) excess across buckets.
+fn random_books(pond: &BTreeMap<i32, Vec<(f64, f64)>>, n: usize, years: i64) -> Vec<(f64, f64)> {
+    let mut state = PLACEBO_SEED;
+    (0..PLACEBO_DRAWS)
+        .map(|_| {
+            let xs: Vec<f64> = pond
+                .values()
+                .filter(|p| !p.is_empty())
+                .filter_map(|p| {
+                    let book: Vec<(f64, f64)> = (0..n).map(|_| p[(next_rand(&mut state) % p.len() as u64) as usize]).collect();
+                    book_excess(&book, years)
+                })
+                .collect();
+            (xs.iter().sum::<f64>() / xs.len().max(1) as f64, median(xs))
+        })
+        .collect()
+}
+
+/// (#560) The `rivals` report: seven top-10 books and a random one on the SAME pond, the non-crypto
+/// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
+/// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
+#[mutants::skip] // printing; `rival_excess`, `random_books`, `rank_pct`, `momentum_12_1` and `rival_wins` carry the tests
+fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    if bd.len() < 2 {
+        return;
+    }
+    let off = picks::gates_off(tuning);
+    let mut by_cutoff: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        by_cutoff.entry(bucket(s.date)).or_default().push(s);
+    }
+    let mut books: Vec<Vec<f64>> = vec![Vec::new(); RIVALS.len()];
+    let mut pond: BTreeMap<i32, Vec<(f64, f64)>> = BTreeMap::new();
+    for (b, group) in &by_cutoff {
+        let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
+        let shipped = picks::growth_scores_ranked(&quotes, tuning);
+        let open = picks::growth_scores_ranked(&quotes, &off);
+        let mut rows: Vec<([Option<f64>; 7], f64, f64, &str)> = Vec::new();
+        for ((s, sh), op) in group.iter().zip(shipped).zip(open) {
+            let (Some(op), Some(bench_r)) = (op, benchmark_fwd(bd, bc, s.date, years)) else { continue };
+            let f = s.fund.as_ref();
+            let keys = [
+                sh,
+                Some(op),
+                momentum_12_1(&s.quote),
+                f.and_then(|f| f.quality.or(f.roe)),
+                f.and_then(|f| f.earnings_yield),
+                f.and_then(|f| f.rev_cagr),
+                None,
+            ];
+            rows.push((keys, s.realized, bench_r, s.quote.ticker.as_str()));
+        }
+        if !rows.iter().any(|r| r.0[0].is_some()) {
+            continue; // the shipped lane holds nobody here, so its row has no window to compare
+        }
+        let col = |i: usize| rank_pct(&rows.iter().map(|r| r.0[i]).collect::<Vec<_>>());
+        let (mom, qual) = (col(2), col(3));
+        for (r, (m, q)) in rows.iter_mut().zip(mom.into_iter().zip(qual)) {
+            r.0[6] = m.zip(q).map(|(m, q)| (m + q) / 2.0);
+        }
+        for (i, book) in books.iter_mut().enumerate() {
+            let keyed: Vec<(Option<f64>, f64, f64, &str)> = rows.iter().map(|r| (r.0[i], r.1, r.2, r.3)).collect();
+            book.extend(rival_excess(&keyed, VERDICT_TOP, years));
+        }
+        pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
+    }
+    let pond_sizes: Vec<f64> = pond.values().map(|p| p.len() as f64).collect();
+    println!(
+        "\n── RIVALS (#560): equal-weight top-{VERDICT_TOP} books on one pond, HOLD {years}y no-sell, excess vs the index ──\n  pond: {} bucket(s) where the shipped lane holds a name, median {:.0} scoreable names each",
+        pond.len(),
+        median(pond_sizes)
+    );
+    let stats = |xs: &[f64]| (xs.iter().sum::<f64>() / xs.len().max(1) as f64, median(xs.to_vec()));
+    let (ship_mean, ship_med) = stats(&books[0]);
+    for (name, xs) in RIVALS.iter().zip(&books) {
+        let (mean, med) = stats(xs);
+        let win = xs.iter().filter(|x| **x > 0.0).count() as f64 / xs.len().max(1) as f64 * 100.0;
+        let worst = xs.iter().copied().fold(f64::INFINITY, f64::min);
+        let tag = if rival_wins(mean - ship_mean, med - ship_med) { "AHEAD" } else { "-" };
+        println!(
+            "  {name:<27} n {:>3}  excess {mean:+.1} (med {med:+.1}) pts/yr  win {win:.0}%  worst {worst:+.1}  vs plain shipped {:+.1}/{:+.1} {tag}",
+            xs.len(),
+            mean - ship_mean,
+            med - ship_med
+        );
+    }
+    let draws = random_books(&pond, VERDICT_TOP, years);
+    let mut means: Vec<f64> = draws.iter().map(|d| d.0).collect();
+    let mut meds: Vec<f64> = draws.iter().map(|d| d.1).collect();
+    let (p95_mean, p95_med) = (percentile95(&mut means).unwrap_or(f64::NAN), percentile95(&mut meds).unwrap_or(f64::NAN));
+    println!(
+        "  (e) random pond x{PLACEBO_DRAWS}         excess {:+.1} (med {:+.1}) pts/yr  p95 {p95_mean:+.1} (med {p95_med:+.1})  plain shipped {} the p95",
+        median(means),
+        median(meds),
+        if ship_mean > p95_mean && ship_med > p95_med { "ABOVE" } else { "NOT above" }
+    );
 }
 
 /// (#106) The per-bucket terminal multiples of an equal-weight top-`n` book and of the same bucket's
@@ -7696,6 +7860,7 @@ mod tests {
         assert!(p("insider").insider);
         assert!(p("holders").holders);
         assert!(p("pac").pac);
+        assert!(p("rivals").rivals);
         assert!(p("halflife").halflife);
         assert!(p("stress").stress);
         assert!(p("pit").pit, "`pit` must set pit — lose it and the point-in-time run is a plain one that says it isn't");
@@ -7730,7 +7895,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac halflife stress pit");
+        let all = p("8 universe long fund tune insider holders pac rivals halflife stress pit");
         assert_eq!(
             all,
             Args {
@@ -7742,12 +7907,60 @@ mod tests {
                 insider: true,
                 holders: true,
                 pac: true,
+                rivals: true,
                 halflife: true,
                 stress: true,
                 pit: true,
                 tickers: vec![]
             }
         );
+    }
+
+    /// (#560) The rival books' arithmetic: the tie band, the 12-1 formula, rank ties, the book's dedupe and
+    /// ticker tie-break, and a seeded random pond.
+    #[test]
+    fn rival_books_pick_rank_and_draw_as_documented() {
+        assert!(rival_wins(0.2, 0.2), "a gap AT the tie band is a win");
+        assert!(!rival_wins(0.19, 5.0) && !rival_wins(5.0, 0.19), "mean AND median must both clear");
+
+        let quote = |pairs: &[(&str, f64)]| {
+            let mut q = Quote::stub("M", "1", "", "M");
+            q.perf = crate::core::HORIZONS
+                .iter()
+                .map(|(l, _)| pairs.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
+                .collect();
+            q
+        };
+        let mom = |pairs: &[(&str, f64)]| momentum_12_1(&quote(pairs));
+        assert!((mom(&[("1Y", 20.0), ("1M", 10.0)]).unwrap() - (1.2 / 1.1 - 1.0) * 100.0).abs() < 1e-9);
+        assert_eq!(mom(&[("1Y", 20.0)]), Some(20.0), "a missing 1M nets nothing out");
+        assert_eq!(mom(&[("1M", 5.0)]), None, "no 1Y, no momentum");
+        assert!((mom(&[("1Y", 20.0), ("1M", -100.0)]).unwrap() - 11_900.0).abs() < 1e-6, "a wiped month is floored at 1%");
+
+        assert_eq!(rank_pct(&[Some(3.0), None, Some(1.0), Some(3.0)]), vec![Some(1.0 / 3.0), None, Some(0.0), Some(1.0 / 3.0)]);
+
+        assert_eq!(book_excess(&[], 1), None);
+        // years 1: the book doubles (+100%), the index gains 50% -> +50 pts
+        assert!((book_excess(&[(300.0, 100.0), (-100.0, 0.0)], 1).unwrap() - 50.0).abs() < 1e-9);
+        let rows = [
+            (Some(9.0), 300.0, 100.0, "C"),
+            (Some(8.0), -50.0, 0.0, "C"), // the same name again: one holding, so B/A refill
+            (Some(5.0), 100.0, 0.0, "B"),
+            (Some(5.0), 0.0, 0.0, "A"), // ties B on key, wins on ticker
+            (None, 1000.0, 0.0, "Z"),   // no key: never in this book
+        ];
+        // C + A: (4 + 1)/2 = 2.5x vs (2 + 1)/2 = 1.5x -> +150 - +50
+        assert!((rival_excess(&rows, 2, 1).unwrap() - 100.0).abs() < 1e-9);
+        assert_eq!(rival_excess(&[(None, 1.0, 1.0, "Z")], 2, 1), None);
+
+        let flat: BTreeMap<i32, Vec<(f64, f64)>> = [(1, vec![(100.0, 0.0); 3]), (2, vec![(100.0, 0.0)]), (3, vec![])].into();
+        let draws = random_books(&flat, 10, 1);
+        assert_eq!(draws.len(), PLACEBO_DRAWS);
+        assert!(draws.iter().all(|d| (d.0 - 100.0).abs() < 1e-9 && (d.1 - 100.0).abs() < 1e-9), "every draw of a flat pond is that pond");
+        let two: BTreeMap<i32, Vec<(f64, f64)>> = [(1, vec![(100.0, 0.0), (0.0, 0.0)])].into();
+        let draws = random_books(&two, 1, 1);
+        assert_eq!(draws, random_books(&two, 1, 1), "seeded: the same pond draws the same books");
+        assert!(draws.iter().any(|d| d.0 > 50.0) && draws.iter().any(|d| d.0 < 50.0), "both names get drawn");
     }
 
     /// (#518) Each cohort splits the STOCK samples on the flags at their own cutoff; a coin is never

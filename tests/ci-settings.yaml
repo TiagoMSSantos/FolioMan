@@ -1515,6 +1515,20 @@ sizing:
   #  The widest givers lose on BOTH stats in all 6 cells. Any PAC vs none is mixed: ahead on pit, behind on stress.
   #  Read: in this pond, breadth marks the mature incumbents that the growth lane already ranks low.
   #  RE-OPEN: only a new cut of the same data (e.g. breadth growth, not level) with its own pre-registered bar.
+  #── (#560) RIVAL BOOKS: IS THE SHIPPED GROWTH SCORE BETTER THAN A SIMPLE RULE ON THE SAME POND? ──
+  #  WHY: ~60 one-knob and one-source tweaks lost on our rulers, but the design was never graded against plain
+  #  rival rules. If a one-line rule beats it, the next step is that rule, not another knob.
+  #  BUILT: `backtest <y> universe fund pit|stress rivals`, report-only. Pond = every non-crypto sample the
+  #  gates-off scorer can score with a benchmark window, in buckets where the shipped lane holds a name. Each book
+  #  is an equal-weight top-10 per bucket (ties by ticker, one holding per ticker): plain shipped (the in-report
+  #  control), (d) shipped score with every knob gate waived (`picks::gates_off`), (a) momentum 12-1, (b) quality
+  #  (ROE fallback), (c) E/P, (f) revenue CAGR, (g) mean rank percentile of (a) and (b), and (e) 200 seeded random
+  #  10-name books from the pond (mean, median, p95).
+  #  BAR (pre-registered, USER DECISION 2026-10-12): a rival BEATS shipped when its mean AND median excess are
+  #  higher in >= 5 of 6 cells (pit + stress x 20/12/8y); a gap under 0.2 pts/yr is a tie. Shipped under the
+  #  random p95 in >= 3 cells is recorded as "the score is not earning its keep". A winner gets a 20y DCA (#311)
+  #  re-grade before anything ships; the soft-gate grill follows the verdict either way.
+  #  VERDICT: pending (probe runs not yet dispatched).
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of

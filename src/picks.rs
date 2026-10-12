@@ -2960,6 +2960,23 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
     }
 }
 
+/// (#560) `tuning` with EVERY knob gate waived at once: the shipped score with no fence, the backtest's
+/// `rivals` book (d). What stays is what has no knob: the leveraged/commodity/hedged/stablecoin
+/// refusals, the repriced-bar artifact, and a score's own inputs (a long leg, now down to the 1Y rung,
+/// and a 1Y return).
+#[cfg(not(target_family = "wasm"))] // its one reader (backtest) is native-only
+pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
+    let mut t = tuning.clone();
+    for tag in [
+        "young", "aum", "range", "range8y", "cagr", "1Y+", "1M-knife", "5Y+", "8Y+", "20Y+", "liquidity", "stretch",
+        "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "margin", "swing", "dilution", "cover", "fcf",
+        "netcash", "maxdd",
+    ] {
+        waive_gate(&mut t, tag);
+    }
+    t
+}
+
 /// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 1Y rung
 /// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
 /// (#543) Each waived tag keeps the why its first failing round printed, for the MISSES hover.
@@ -12424,6 +12441,20 @@ mod tests {
         q.range_pct = 90.0;
         q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
         q
+    }
+
+    /// (#560) A name failing several knob gates at once scores under `gates_off`, and nothing but the
+    /// unwaivable artifact is left in its `gate_failures`.
+    #[test]
+    fn gates_off_waives_every_knob_gate() {
+        let t = BuyHeuristic::default();
+        let mut q = gate_fixture();
+        q.range_pct = 20.0;
+        q.perf = legs(&[("1M", -30.0), ("1Y", -40.0), ("5Y", -10.0)]);
+        assert!(growth_score(&q, &t).is_none(), "the fixture must fail the shipped gates");
+        let off = gates_off(&t);
+        assert!(growth_score(&q, &off).is_some(), "every knob gate waived -> it scores");
+        assert_eq!(gate_failures(&q, &off).map(|f| f.len()), Some(0));
     }
 
     /// (#328) A gate-clearing STOCK with a GICS label and a chosen 5Y leg — the only two inputs the
