@@ -1622,6 +1622,18 @@ sizing:
   #  refusals above would pass this rule, and that was known when it was chosen. CI grids are deterministic
   #  ((#558)), so re-running today's commit only reproduces today's numbers. Re-asking momentum or 1Y off
   #  needs a run on a moved pond, i.e. new data, graded under this rule.
+  #  STAGE 2, CAGR FLOOR LADDER (pre-registered 2026-10-12, before the runs). This is a knob ladder with no
+  #  code. A taper gets built only if no rung ships AND the numbers show more admits than free slots: in a
+  #  saturated book a taper and a lower floor buy the same names.
+  #  ARMS: growth_min_cagr 15 / 10 / 5 / off (-1e9), plus a same-batch control at 19, on pit + stress
+  #  x 20/12/8. The one knob moves both legs (the long rung and whole-life). growth_min_cagr_etf is already 0
+  #  and the backtest carries no coins, so the screen's `cagr` arm was this knob alone.
+  #  BAR, per rung:
+  #    - 5 of 6 cells with mean AND median both >= +0.2 against the control;
+  #    - VETO when either lane's 20y DCA mean OR median falls by >= 0.2 (the rule above).
+  #  If several rungs pass, the one with the most cells ships; on equal cells, the one closest to 19.
+  #  The old 15..22 sweep (the growth_min_cagr line) graded the rank-1 objective, never this book row.
+  #  VERDICT: pending.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
