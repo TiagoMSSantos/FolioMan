@@ -1556,7 +1556,16 @@ sizing:
   #  pond), then takes the top 10 still priced at the program's end, equal-weight. BAR (pre-registered before
   #  the runs): momentum's `never-sell vs index DCA` mean AND median clear the top-10 lane's by >= 0.2 pts/yr
   #  in BOTH pit and stress 20y. Its `roll` and `Série E` lines are read, not graded.
-  #  DCA VERDICT: pending.
+  #  DCA VERDICT (2026-10-12, probes 38230421048 pit + 38230433442 stress at a449514; windows 1119 / 2541 =
+  #  control): NOT CLEARED. `never-sell vs index DCA`, after tax, money-weighted, mean (median) pts/yr, worst:
+  #    pit 20y     top-10 +3.1 (+3.1) +1.6 of 21    mom12-1 +3.9 (+3.1) +2.0    -> mean +0.8, median 0.0: TIE
+  #    stress 20y  top-10 +5.2 (+5.6) +1.6 of 39    mom12-1 +8.1 (+8.9) +3.3    -> +2.9 / +3.3: clears
+  #  The pit median ties, so the both-lanes bar fails. Read-only: momentum's never-sell is +10.4 vs +9.6 %/yr
+  #  (pit) and +14.2 vs +11.2 (stress), every program beats the Série E best case in both books, and on
+  #  stress its 10y roll is the only lane that beats its own never-sell (+0.9, 82% of 39); pit's roll is -1.7.
+  #  MOMENTUM 12-1 DOES NOT SHIP. It stays the strongest rival on file: it leads on the mean in every 20y DCA
+  #  lane and loses no median. Re-ask it on a longer pit record (21 programs today) or as a soft term inside
+  #  the growth score, never as a swap of the book on this evidence.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
