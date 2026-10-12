@@ -19525,7 +19525,7 @@ buy_heuristic:
   #  1YD.DE Broadcom (PEG 1.67), AP2.DE Applied Materials (1.71), PAR.DE Parker-Hannifin (1.72), FTNT
   #  Fortinet (2.22), plus 5AP.DE and MPWR above the 2.4 near-miss band. Three of them would have
   #  entered a 13-name cleared pool at any rung >= 1.75, and the ladder says the book is worse for it.
-  growth_gate_soft: 0.0          # (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
+  growth_gate_soft: 0.6          # (#564) SHIPPED 0.6. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
   #  knob gates with exactly those gates waived (the MISSES what-if) and docks it f^n, n = gates waived; f = 1 is the (#560)
   #  gates-off book. Structural refusals, no turnover and the repriced-bar artifact stay hard at any f. All three tables.
   #── (#563) PRE-REGISTERED 2026-10-12 — EVERY GATE SOFT AT ONCE, COUNT-BASED ──
@@ -19582,6 +19582,30 @@ buy_heuristic:
   #  tally is void.
   #  REPORT ONLY (not graded): the control's top-10 names each arm drops, with their cumulative %, vs the names
   #  it adds in their place.
+  #  VERDICT: f = 0.6 SHIPS, at 6 of 6 cells with no veto; 0 -> 0.6. f = 1 clears 5 but VETO 1 fires (pit 8y shared
+  #  -0.24|-0.40); 0.1 / 0.3 clear 2 / 3. Probe runs at ddf9d6f: pit 38280944665 (ctl) 38280957980 (0.1) 38280970270
+  #  (0.3) 38280983063 (0.6) 38280996230 (1); stress 38281008496 (ctl) 38281021213 38281035075 38281047838
+  #  38281061360. Windows scored match (#563) in every arm except stress f = 0.6 20y (2537 of 2541). SANITY held in
+  #  all 60 horizon logs, and the control rows reproduce (#563)'s. Calendar buckets pit 22/38/46, stress 59/75/83;
+  #  the control books pit 21/36/44, stress 39/54/62; every arm books all of them.
+  #    zero-filled top-10 mean|median   pit 20y     pit 12y     pit 8y      stress 20y  stress 12y  stress 8y   cells
+  #    f = 0 (control)                  +0.5|+0.0   +2.5|+1.4   +2.6|+2.6   +3.6|+2.6   +3.9|+3.2   +3.9|+2.8   -
+  #    f = 0.1                          +1.5|+1.2   +2.4|+2.0   +2.7|+2.4   +4.3|+4.3   +4.0|+5.3   +4.0|+4.1   2
+  #    f = 0.3                          +2.4|+2.1   +2.7|+2.9   +2.8|+2.3   +4.3|+4.3   +4.0|+5.6   +4.0|+4.1   3
+  #    f = 0.6                          +1.8|+1.4   +3.0|+3.3   +3.5|+3.5   +4.3|+4.3   +4.3|+5.7   +4.3|+4.3   6
+  #    f = 1                            +2.8|+2.4   +2.9|+2.9   +2.7|+2.5   +4.8|+4.2   +4.7|+4.6   +5.0|+4.6   5
+  #  Shared buckets, f = 0.6 minus control, mean|median: pit +1.1|+1.3, +0.2|+1.1, +0.5|+0.6; stress +0.3|+0.2,
+  #  +0.8|+1.2, +0.9|+0.4. The 20y DCA at f = 0.6: pit +3.4|+3.3 vs +3.1|+3.1, stress +5.4|+5.8 vs +5.2|+5.6.
+  #  COST, NOT GRADED: the worst window. Pit improves at every horizon (20y -10.0 -> -1.8, 12y -6.4 -> -6.2,
+  #  8y -17.1 -> -5.7). Stress worsens at every horizon in every arm (-0.9 -> -4.4, -7.8 -> -9.7, -10.3 -> -13.6),
+  #  because a bucket the control left in the index now holds a book, and some of those books trail the S&P500.
+  #  NAMES at f = 0.6 (shared buckets, best cumulative % x buckets): the dropped names include good ones, but the
+  #  names that replace them did better. Pit 20y drops DHR +2978%x3 and PGR +695%, and adds UNH +5981%, NVDA +5637%
+  #  and AZO +4024%x4. Pit 12y drops AVGO +3937% and CMG +871%x6, and adds NFLX +6798%x2 and AMZN +2668%x3. Stress
+  #  20y drops ORLY +4823% and APH +4785%x3, and adds AMZN +7078% and SBUX +5705%. Over the shared buckets the
+  #  dropped names average below the added ones in every cell (pit 20y +319% vs +510%, stress 20y +847% vs
+  #  +1016%). Each arm adds more names than it drops, because the control's books hold fewer than 10 names.
+  #  UNGRADED, as in (#563): the ETF table and coins ride on the stocks verdict.
   growth_peg_taper_k: 0.0        # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
