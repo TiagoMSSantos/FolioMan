@@ -15,6 +15,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     held book     vs ≥10×    winners (n=21   ): recall 24%   capture 21%
   vs null model (tuning off): rho -0.12  edge -44.7 pts  ->  tuning adds +70.4 pts
   out-of-sample (split 2007-02-01): early rho +0.12  |  late rho +0.00
+  gate passers only  ->  passer edge +25.8 pts  ->  passer lift +70.4 pts  |  passer OOS early +0.12  |  passer OOS late +0.00
   edge by era (chronological quarters):
     1993-12-01 .. 2001-11-01  n=62     edge +53.6 pts
     2001-12-01 .. 2007-02-01  n=62     edge +46.6 pts
@@ -59,6 +60,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
   vs null model (tuning off): rho -0.14  edge +4.5 pts  ->  tuning adds +15.2 pts
   out-of-sample (split 2009-02-01): early rho -0.04  |  late rho +0.11
+  gate passers only  ->  passer edge +35.5 pts  ->  passer lift +31.0 pts  |  passer OOS early +0.62  |  passer OOS late -0.01
   edge by era (chronological quarters):
     1993-12-01 .. 2005-01-01  n=193    edge -51.2 pts
     2005-01-01 .. 2009-02-01  n=194    edge -2.2 pts
