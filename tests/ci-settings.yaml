@@ -1505,7 +1505,16 @@ sizing:
   #  date) beats the other two on median excess AND hit%, in all 6 cells (pit + stress x 20/12/8y), with n >= 30
   #  a side. Before any cohort number is read, hand-check the report's 50 audit lines: precision must be >= 95%.
   #  Anything less is refused and recorded. A PASS only opens a grill for a door knob; nothing ships from stage 1.
-  #  VERDICT: pending (no probe yet).
+  #  VERDICT (2026-10-12, probe runs 38219441509 pit + 38219448721 stress): REFUSED, and reversed. The audit
+  #  passed first: 50/50 correct on the pit 20y lines and 50/50 on the stress 20y lines, former names included
+  #  (NATIONSBANK -> BAC, CHASE MANHATTAN -> JPM). PAC firms matched: 184-283 per cell. Top tercile vs the rest
+  #  (n, median excess, hit%):
+  #    pit 20y     387 -422.0 16.0%  vs  761 -337.3 25.5%      stress 20y   504 -917.4  7.5%  vs 1006 -750.8 16.5%
+  #    pit 12y     920 -101.9 26.8%  vs 1708  -80.2 34.5%      stress 12y  1088 -250.1 12.2%  vs 2084 -193.5 24.0%
+  #    pit  8y    1263  -38.2 33.2%  vs 2348  -31.5 39.7%      stress  8y  1467 -105.6 17.6%  vs 2798  -76.3 30.7%
+  #  The widest givers lose on BOTH stats in all 6 cells. Any PAC vs none is mixed: ahead on pit, behind on stress.
+  #  Read: in this pond, breadth marks the mature incumbents that the growth lane already ranks low.
+  #  RE-OPEN: only a new cut of the same data (e.g. breadth growth, not level) with its own pre-registered bar.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
