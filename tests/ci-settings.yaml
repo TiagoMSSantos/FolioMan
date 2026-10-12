@@ -1633,7 +1633,26 @@ sizing:
   #    - VETO when either lane's 20y DCA mean OR median falls by >= 0.2 (the rule above).
   #  If several rungs pass, the one with the most cells ships; on equal cells, the one closest to 19.
   #  The old 15..22 sweep (the growth_min_cagr line) graded the rank-1 objective, never this book row.
-  #  VERDICT: pending.
+  #  RESULT (2026-10-12, 10 probe.yml runs 38249353796..38249541312 at 24abd34; windows = control in every
+  #  run; the control and `off` reproduce the screen's rows to the decimal). Top-10 delta vs control,
+  #  mean / median pts/yr:
+  #              pit 20      pit 12      pit 8       stress 20   stress 12   stress 8    cells
+  #    15        +0.3/+1.3   -0.4/+1.1   -0.6/-0.4   +0.4/ 0.0   +0.7/+1.0   +0.5/+0.8   3/6
+  #    10        +1.3/+1.9   -0.6/+0.7   -0.9/+0.4   +0.4/+0.5   +0.8/+1.3   +0.8/+1.4   4/6
+  #    5         +1.5/+1.9    0.0/+0.6    0.0/+0.7   +0.2/+0.4   +0.4/+1.5   +0.1/+0.8   3/6
+  #    off       +1.4/+2.1   -0.2/+0.2   -0.2/+0.5   +0.2/+0.4   +0.4/+1.5   +0.2/+0.5   4/6
+  #  20y DCA `never-sell vs index DCA`, mean (median); no rung drops, so the veto never fires:
+  #    pit     control +3.1 (+3.1) | 15 +3.4 (+3.7) | 10 +3.2 (+3.2) | 5 +3.3 (+3.2) | off +3.1 (+3.1)
+  #    stress  control +5.2 (+5.6) | 15 +5.7 (+6.6) | 10 +6.0 (+6.8) | 5 +5.9 (+6.3) | off +5.8 (+6.1)
+  #  VERDICT: NO RUNG CLEARS THE BOOK BAR, so NOTHING SHIPS and growth_min_cagr stays 19.
+  #  Every rung fails pit 12y and pit 8y on the MEAN while the median rises: more names beat the index, by
+  #  less. That is the "win rate up, excess down" dilution of a 1/N book. Not monotone either: 10 and off
+  #  both score 4/6, and 5 scores 3/6.
+  #  NO TAPER: holds per bucket stay under the 10 slots in every arm (pit 8y off 417/46 = 9.1, stress 8y
+  #  off 532/68 = 7.8). So admits only fill empty slots, and a taper would buy the same names as the floor.
+  #  Caveats: (a) pit 8y worst window -17.1 -> -5.2 (off) / -4.9 (5), but stress 8y at 5 worsens -10.3 -> -19.9;
+  #  (b) loose rungs grade more buckets at 12y/8y (38 vs 36, 46 vs 44), so part of each cell is composition.
+  #  STAGE 2 IS CLOSED for both screen passers. Neither lever ships on this ruler; re-ask only on a moved pond.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -15819,6 +15838,9 @@ buy_heuristic:
                                  #   missed the discharge, and built a whole plan around re-running a ladder that already existed
                                  #   (caught before the redundant arms ran — but only just).
                                  #   If this gate is ever re-laddered, update THIS line too, not only the block below.
+                                 #   RE-LADDERED 2026-10-12 on the top-10 BOOK bar ((#561) stage 2): 15/10/5/off score 3/4/3/4
+                                 #   of 6 cells against the 5-of-6 bar, so nothing ships and 19 stays. Every rung lowers the pit
+                                 #   12y/8y mean.
                                  #   Pair-checked with growth_max_peg 1.6
                                  #   (knob-K12 grid): interaction nil — king byte-identical to this arm solo, 12y-s +215.1 h2h 69%,
                                  #   8y-s +71.8 h2h 57%. The pair IS the new ship baseline.
