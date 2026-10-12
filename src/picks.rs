@@ -9520,6 +9520,14 @@ mod tests {
     // (C) max drawdown: worst peak-to-trough
     assert!((core::max_drawdown_pct(&[100.0, 50.0, 75.0]) - 50.0).abs() < 1e-9);
     assert_eq!(core::max_drawdown_pct(&[1.0, 2.0, 3.0]), 0.0); // monotone up -> never down
+    // (#566) a lone bad print 10x+ off both neighbours is skipped, down (XMEM.L) or up (PRIJ.L); exactly 10x
+    // counts, a two-bar crash counts, and an edge bar has one neighbour so it always counts
+    assert_eq!(core::max_drawdown_pct(&[1857.5, 30.7, 2089.5, 2012.0]), (2089.5 - 2012.0) / 2089.5 * 100.0);
+    assert_eq!(core::max_drawdown_pct(&[2735.0, 556677.0, 2724.5]), (2735.0 - 2724.5) / 2735.0 * 100.0);
+    assert_eq!(core::max_drawdown_pct(&[100.0, 10.0, 100.0]), 90.0);
+    assert_eq!(core::max_drawdown_pct(&[1.0, 10.0, 1.0]), 90.0);
+    assert_eq!(core::max_drawdown_pct(&[100.0, 5.0, 5.0, 100.0]), 95.0);
+    assert_eq!(core::max_drawdown_pct(&[100.0, 5.0]), 95.0);
     // (B) risk_bonus: same CAGR, the lower-volatility name earns a bigger Sharpe-ish bonus
     assert!(risk_bonus(&{ let mut x = quote(5.0, &[]); x.volatility_pct = Some(1.0); x }, 20.0, tuning.sharpe_weight, tuning.calmar_weight, &tuning)
         > risk_bonus(&{ let mut x = quote(5.0, &[]); x.volatility_pct = Some(4.0); x }, 20.0, tuning.sharpe_weight, tuning.calmar_weight, &tuning));

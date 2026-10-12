@@ -927,9 +927,18 @@ pub fn trend_cagr(closes: &[f64], cadence: usize) -> Option<f64> {
 /// (C) Worst peak-to-trough decline (%) ever seen in the series — the deepest pain a holder endured.
 /// One forward pass tracking the running peak. 0 for empty / never-down. Feeds the Calmar
 /// (return-per-worst-pain) reward: a name that compounds hard with a SHALLOW max drawdown is durable.
+/// (#566) A lone bar more than 10x off BOTH neighbours is a bad print (a GBp/GBP slip), not a price, and is
+/// skipped: XMEM.L's 30.7 between 1857 and 2089 read -99% and tripped the wipeout refusal. A real crash
+/// takes more than one bar, so every clean series keeps its bits. The first and last bars stand.
 pub fn max_drawdown_pct(closes: &[f64]) -> f64 {
     let (mut peak, mut worst) = (f64::MIN, 0.0_f64);
-    for &c in closes {
+    for (i, &c) in closes.iter().enumerate() {
+        if i > 0 && i + 1 < closes.len() {
+            let (a, b) = (closes[i - 1], closes[i + 1]);
+            if c > 10.0 * a.max(b) || 10.0 * c < a.min(b) {
+                continue;
+            }
+        }
         if c > peak {
             peak = c;
         }
