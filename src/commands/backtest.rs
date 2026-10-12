@@ -3016,11 +3016,15 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         }
         by_cutoff.entry(bucket(s.date)).or_default().push(s);
     }
+    // (#564) every bucket with a benchmark window, scored or not: the BOOK lines below print the ones no
+    // name reached as `empty`, so two arms can be graded over the same calendar (an empty one = the index).
+    let mut calendar = std::collections::BTreeSet::new();
     for (b, group) in &by_cutoff {
         let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
         for (s, scored) in group.iter().zip(picks::growth_scores_ranked(&quotes, tuning)) {
-            let Some(score) = scored else { continue };
             let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+            calendar.insert(*b);
+            let Some(score) = scored else { continue };
             sample_of.entry(*b).or_default().insert(s.quote.ticker.as_str(), *s);
             // RAW cumulative % (annualize the BOOK, not per-name)
             rows.push((*b, score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
@@ -3065,6 +3069,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // Also count "zeros ridden" (names ≤−90% you must hold through) to show the no-sell tail you survive.
     let mut m10: Option<f64> = None; // top-10 mean terminal multiple, feeds the after-tax footer below
     let mut census: Vec<(usize, usize)> = Vec::new(); // (#557) per bucket: top-10 (stock slots, of them tagged)
+    let mut book_lines = std::collections::BTreeMap::new(); // (#564) per bucket: the verdict book, names + cum %
     for &n in TOP_LADDER {
         let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
         let (mut zeros, mut held) = (0usize, 0usize);
@@ -3106,6 +3111,9 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
                 // the bench takes the same rank weights, so a name's own-window index leg stays paired with it
                 let w = |r: Vec<f64>| ann((ranked_multiple(&r) - 1.0) * 100.0, years);
                 ranked.push(w(p.iter().map(|x| 1.0 + x.1 / 100.0).collect()) - w(p.iter().map(|x| 1.0 + x.2 / 100.0).collect()));
+                // (#564) never spell `markers::EXCESS`, `COHORT_N` or `TICKERS` here: the gate parses those words.
+                let names: Vec<String> = p.iter().map(|x| format!("{} {:+.0}%", x.3, x.1)).collect();
+                book_lines.insert(*b, format!("  BOOK b{b} {:+.1} pts/yr | {}", excess.last().unwrap(), names.join(" ")));
             }
             zeros += p.iter().filter(|x| x.1 <= -90.0).count();
             if n == 10 {
@@ -3163,6 +3171,11 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
                 median(ranked.clone()),
                 ranked.iter().cloned().fold(f64::INFINITY, f64::min)
             );
+            // (#564) one line per calendar bucket, `empty` where no name was booked (the index you'd buy
+            // instead), so an admission arm and its control are graded over the same buckets offline.
+            for b in &calendar {
+                println!("{}", book_lines.get(b).cloned().unwrap_or_else(|| format!("  BOOK b{b} empty")));
+            }
         }
     }
     // (#106) (round 3 §4) the DISTRIBUTION behind the ladder above. Every row printed so far quotes a
