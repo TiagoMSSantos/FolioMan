@@ -712,7 +712,8 @@ fn momentum_factor(quote: &Quote, bounce: f64, knife: f64) -> f64 {
 ///
 /// note: cheap name match; tighten the list if a legit name ever trips it.
 const LEVERAGED_MARKERS: &[&str] =
-    &["2x", "3x", " short", "inverse", "leverag", "bear ", "proshares ultra", "direxion"];
+    // (#566) "bull 2"/"bull 3"/"bull x": XACT Bull 2 (XACT-BULL-2.ST, 2x OMXS30) ranked at growth_gate_soft 0.6
+    &["2x", "3x", " short", "inverse", "leverag", "bear ", "bull 2", "bull 3", "bull x", "proshares ultra", "direxion"];
 
 fn is_leveraged(name: &str) -> bool {
     let n = name.to_lowercase();
@@ -878,7 +879,13 @@ const PEGGED: &[&str] = &[
     "USDT", "USDC", "DAI", "TUSD", "FDUSD", "PYUSD", "USDE", "BUSD", "USDP", "GUSD", "USDD", "FRAX",
     "USDF", // FolgoryUSD — dollar token (VOL ~0), surfaced #11 crypto
     "XAUT", "PAXG", // gold-backed — a metal peg, not a compounding asset
+    "RLUSD", "BFUSD", "GHO", "OUSD", // (#566) dollar tokens that ranked at growth_gate_soft 0.6
 ];
+
+/// (#566) A coin whose daily swing is under this (%) is pegged whatever its ticker: the live VOL column
+/// read 0.0-0.1% on every dollar token, and the calmest real coin (WBT) 2.8%. Catches the next new
+/// stablecoin `PEGGED` has not listed yet.
+const PEG_MAX_VOL: f64 = 0.5;
 
 fn is_stablecoin(ticker: &str) -> bool {
     PEGGED.contains(&underlying(ticker))
@@ -888,7 +895,8 @@ fn is_stablecoin(ticker: &str) -> bool {
 /// Crypto.com, LEO Bitfinex, KCS KuCoin, HT Huobi, FTT FTX, BGB Bitget, MX MEXC). Their value is one
 /// company's fee discounts and buy-backs, so the coin carries that company's custody, solvency and
 /// regulatory risk on top of crypto's own: FTT went to ~0 with FTX in November 2022 (sweep 14).
-const EXCHANGE_TOKENS: &[&str] = &["BNB", "GT", "OKB", "CRO", "LEO", "KCS", "HT", "FTT", "BGB", "MX"];
+/// (#566) WBT WhiteBIT.
+const EXCHANGE_TOKENS: &[&str] = &["BNB", "GT", "OKB", "CRO", "LEO", "KCS", "HT", "FTT", "BGB", "MX", "WBT"];
 
 fn is_exchange_token(ticker: &str) -> bool {
     is_currency_quoted(ticker) && EXCHANGE_TOKENS.contains(&underlying(ticker))
@@ -1358,17 +1366,10 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     let crypto = is_currency_quoted(&quote.ticker);
 
     // ---- GATES (reuse the cheap exclusions; the rest are the on-sale lane's mirror) ----
-    if is_leveraged(&quote.name) {
-        return None; // leveraged/inverse decays -> never a long-term hold
-    }
-    if is_commodity_etf(quote) {
-        return None; // physical commodity/metal ETC -> no cashflow, doesn't compound (not this lane's thesis)
-    }
-    if is_hedged_etf(quote) {
-        return None; // (#418) currency-hedge carry, not compounding
-    }
-    if crypto && is_stablecoin(&quote.ticker) {
-        return None; // pegged $1 -> no growth
+    // leveraged/inverse decays, a commodity ETC has no cashflow, (#418) a hedge is carry, a peg can't
+    // grow, (#566) a -99% drawdown is a total loss: [`refusal_reason`], one list for both fns
+    if refusal_reason(quote).is_some() {
+        return None;
     }
     // (#20) UNKNOWN turnover -> excluded from the growth lane, full stop (independent of any floor). The
     // lane's thesis is a deep-liquid, multi-decade-holdable compounder (it even pays a liquidity BONUS),
@@ -2674,7 +2675,7 @@ pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) ->
 ///
 /// Exists for the screen's gate funnel: a tally whose denominator doesn't reconcile
 /// (`scanned = refused + failed + ranked`) can't be trusted to aim a knob at anything. `gate_failures`
-/// calls this as its own early-out rather than re-testing the same five conditions, so the funnel's
+/// calls this as its own early-out rather than re-testing the same conditions, so the funnel's
 /// refused bucket and the ranking's refusal cannot disagree.
 ///
 /// NOT exhaustive of `None`: `gate_failures` also bails on a missing 1Y leg, one line further down and
@@ -2691,8 +2692,13 @@ pub fn refusal_reason(quote: &Quote) -> Option<&'static str> {
     if is_hedged_etf(quote) {
         return Some("hedged");
     }
-    if is_currency_quoted(&quote.ticker) && is_stablecoin(&quote.ticker) {
+    if is_currency_quoted(&quote.ticker) && (is_stablecoin(&quote.ticker) || quote.volatility_pct.is_some_and(|v| v < PEG_MAX_VOL)) {
         return Some("stablecoin");
+    }
+    // (#566) a -99% worst drawdown (it prints as -99%) is a total loss, not a dip to buy: GRAM-USD and
+    // NIGHT-USD ranked #1 on a spliced series at growth_gate_soft 0.6. Every class, no knob.
+    if quote.max_drawdown_pct >= 98.5 {
+        return Some("wipeout");
     }
     if quote.avg_turnover_eur.is_none() {
         return Some("no-turnover");
@@ -2949,7 +2955,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
 
 /// (#476) Switch off the knob behind one of [`gate_failures`]' tags. `young`/`history` move to the
 /// 1Y rung ((#537), the 2Y one before: a 1-2y record read — on the page). `artifact` has no knob: a
-/// repriced bar is not a price history, so it stays failed.
+/// repriced bar is not a price history, so it stays failed. Neither has `exchange`: see [`UNWAIVABLE`].
 fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
     const OFF: f64 = f64::NEG_INFINITY;
     match tag {
@@ -2969,7 +2975,6 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
         "volatile" => (t.growth_max_vol, t.growth_max_vol_crypto) = (0.0, 0.0),
         "spike" => t.growth_max_daily_1m = 0.0,
         "mvrv" => t.crypto_max_mvrv = 0.0,
-        "exchange" => t.growth_refuse_exchange_tokens = false,
         "peg" => (t.growth_max_peg, t.growth_require_peg) = (0.0, false),
         "margin" => t.growth_min_net_margin = 0.0,
         "swing" => t.growth_max_margin_swing = 0.0,
@@ -2984,20 +2989,24 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
 
 /// (#560) `tuning` with EVERY knob gate waived at once: the shipped score with no fence, the backtest's
 /// `rivals` book (d). What stays is what has no knob: the leveraged/commodity/hedged/stablecoin
-/// refusals, the repriced-bar artifact, and a score's own inputs (a long leg, now down to the 1Y rung,
-/// and a 1Y return).
+/// refusals, the repriced-bar artifact, the exchange-token refusal, and a score's own inputs (a long
+/// leg, now down to the 1Y rung, and a 1Y return).
 #[cfg(not(target_family = "wasm"))] // its one reader (backtest) is native-only
 pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
     let mut t = tuning.clone();
     for tag in [
         "young", "aum", "range", "range8y", "cagr", "1Y+", "1M-knife", "5Y+", "8Y+", "20Y+", "liquidity", "stretch",
-        "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "margin", "swing", "dilution", "cover", "fcf",
+        "lifetime", "volatile", "spike", "mvrv", "peg", "margin", "swing", "dilution", "cover", "fcf",
         "netcash", "maxdd",
     ] {
         waive_gate(&mut t, tag);
     }
     t
 }
+
+/// (#566) Tags no waiver lifts. `exchange` has a knob, but growth_gate_soft 0.6 waived it and seven
+/// exchange tokens (BNB, GT, LEO, BGB, OKB, KCS, WBT) ranked: the (#511) refusal is the user's call, not a gate.
+const UNWAIVABLE: [&str; 2] = ["artifact", "exchange"];
 
 /// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 1Y rung
 /// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
@@ -3007,7 +3016,7 @@ fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<(&'
     loop {
         let fails = gate_failures(quote, &t)?;
         let new: Vec<(&'static str, String)> =
-            fails.iter().filter(|f| f.0 != "artifact" && !tags.iter().any(|g| g.0 == f.0)).map(|f| (f.0, f.1.clone())).collect();
+            fails.iter().filter(|f| !UNWAIVABLE.contains(&f.0) && !tags.iter().any(|g| g.0 == f.0)).map(|f| (f.0, f.1.clone())).collect();
         if new.is_empty() {
             return Some((t, tags, fails));
         }
@@ -14192,12 +14201,26 @@ mod tests {
         deep.max_drawdown_pct = 95.0;
         let mut stretched = gate_fixture();
         stretched.above_ma_pct = 400.0;
+        // (#566) the four live rows growth_gate_soft 0.6 let in: a 2x fund named Bull, a dollar token no
+        // list names (caught by its VOL), a -99% spliced coin, an exchange token
+        let mut bull = gate_fixture();
+        bull.name = "XACT Bull 2 ETF".into();
+        let mut peg_vol = gate_fixture();
+        peg_vol.ticker = "NEWUSD-USD".into();
+        peg_vol.instrument_type = "CRYPTOCURRENCY".into();
+        peg_vol.volatility_pct = Some(0.1);
+        let mut wipeout = peg_vol.clone();
+        wipeout.ticker = "GRAM-USD".into();
+        (wipeout.volatility_pct, wipeout.max_drawdown_pct) = (Some(3.0), 99.0);
+        let mut wbt = peg_vol.clone();
+        wbt.ticker = "WBT-USD".into();
+        wbt.volatility_pct = Some(3.0);
 
         let cases: &[(&str, &Quote)] = &[
             ("clean", &clean), ("leveraged", &leveraged), ("commodity", &commodity),
             ("hedged", &hedged), ("stablecoin", &stable), ("no-turnover", &no_turnover), ("no-1y", &no_1y),
             ("no-history", &no_history), ("artifact", &artifact), ("deep drawdown", &deep),
-            ("stretched", &stretched),
+            ("stretched", &stretched), ("bull", &bull), ("peg by vol", &peg_vol), ("wipeout", &wipeout), ("wbt", &wbt),
         ];
         // knob sets chosen to move the fence ACROSS the fixture, so both verdicts flip inside the grid
         let tunings: &[(&str, BuyHeuristic)] = &[
@@ -14230,6 +14253,28 @@ mod tests {
         assert_eq!(refusal_reason(&hedged), Some("hedged"));
         assert_eq!(refusal_reason(&stable), Some("stablecoin"));
         assert_eq!(refusal_reason(&no_turnover), Some("no-turnover"));
+        assert_eq!(refusal_reason(&bull), Some("leveraged"));
+        assert_eq!(refusal_reason(&peg_vol), Some("stablecoin"));
+        assert_eq!(refusal_reason(&wipeout), Some("wipeout"));
+        assert_eq!(refusal_reason(&deep), None, "a -95% drawdown is a gate (maxdd), not a wipeout");
+        let edge = |dd: f64, vol: f64| {
+            let mut q = peg_vol.clone();
+            (q.max_drawdown_pct, q.volatility_pct) = (dd, Some(vol));
+            refusal_reason(&q)
+        };
+        assert_eq!(edge(98.5, 3.0), Some("wipeout"), "-98.5% prints as -99%: refused");
+        assert_eq!(edge(98.4, PEG_MAX_VOL), None, "a coin swinging exactly PEG_MAX_VOL is not a peg");
+        // (#566) no waiver lifts any of them: at growth_gate_soft 0.6 and 1 they still never score, and
+        // the exchange token keeps its unwaivable tag (the refusal is off by default; ci-settings arms it)
+        let ex = BuyHeuristic { growth_refuse_exchange_tokens: true, ..d.clone() };
+        for f in [0.6, 1.0] {
+            let soft = BuyHeuristic { growth_gate_soft: f, ..ex.clone() };
+            for (qname, q) in [("bull", &bull), ("peg by vol", &peg_vol), ("wipeout", &wipeout), ("wbt", &wbt)] {
+                assert_eq!(growth_score(q, &soft), None, "{qname} ranked at growth_gate_soft {f}");
+            }
+        }
+        assert!(is_exchange_token("WBT-USD"));
+        assert!(waived(&wbt, &ex).is_some_and(|(_, _, left)| left.iter().any(|(g, ..)| *g == "exchange")));
         // the missing-1Y bail is NOT structural: gate_failures refuses it, refusal_reason does not —
         // which is exactly how the funnel tells the two apart (see refusal_reason's doc).
         assert_eq!(refusal_reason(&no_1y), None);
@@ -14387,7 +14432,7 @@ mod tests {
             // (#476) every gate the why box waives really is switched off: only a repriced bar, or a
             // history too short even for the 2Y rung, may still fail; anything else must then rank
             if let Some((wt, _, left)) = waived(&q, &t) {
-                assert!(left.iter().all(|(g, ..)| matches!(*g, "artifact" | "history")), "draw {i}: waiving left {left:?}");
+                assert!(left.iter().all(|(g, ..)| matches!(*g, "artifact" | "exchange" | "history")), "draw {i}: waiving left {left:?}");
                 assert_eq!(left.is_empty(), growth_score(&q, &wt).is_some(), "draw {i}: waived {left:?}");
                 rescued += usize::from(left.is_empty() && !ranks);
             }
