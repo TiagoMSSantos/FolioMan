@@ -712,8 +712,9 @@ fn momentum_factor(quote: &Quote, bounce: f64, knife: f64) -> f64 {
 ///
 /// note: cheap name match; tighten the list if a legit name ever trips it.
 const LEVERAGED_MARKERS: &[&str] =
-    // (#566) "bull 2"/"bull 3"/"bull x": XACT Bull 2 (XACT-BULL-2.ST, 2x OMXS30) ranked at growth_gate_soft 0.6
-    &["2x", "3x", " short", "inverse", "leverag", "bear ", "bull 2", "bull 3", "bull x", "proshares ultra", "direxion"];
+    // (#566) "bull 2"/"bull 3"/"bull x": XACT Bull 2 (XACT-BULL-2.ST, 2x OMXS30) ranked at growth_gate_soft 0.6.
+    // "xact bull": plain XACT Bull (XACT-BULL.ST) is 1.5x OMXS30 and names no factor; issuer-qualified like "direxion".
+    &["2x", "3x", " short", "inverse", "leverag", "bear ", "bull 2", "bull 3", "bull x", "xact bull", "proshares ultra", "direxion"];
 
 fn is_leveraged(name: &str) -> bool {
     let n = name.to_lowercase();
@@ -14208,10 +14209,10 @@ mod tests {
         deep.max_drawdown_pct = 95.0;
         let mut stretched = gate_fixture();
         stretched.above_ma_pct = 400.0;
-        // (#566) the four live rows growth_gate_soft 0.6 let in: a 2x fund named Bull, a dollar token no
+        // (#566) the four live rows growth_gate_soft 0.6 let in: a 1.5x fund named Bull, a dollar token no
         // list names (caught by its VOL), a -99% spliced coin, an exchange token
         let mut bull = gate_fixture();
-        bull.name = "XACT Bull 2 ETF".into();
+        bull.name = "XACT Bull ETF".into();
         let mut peg_vol = gate_fixture();
         peg_vol.ticker = "NEWUSD-USD".into();
         peg_vol.instrument_type = "CRYPTOCURRENCY".into();
