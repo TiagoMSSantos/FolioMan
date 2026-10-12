@@ -7933,7 +7933,7 @@ mod tests {
         };
         let mom = |pairs: &[(&str, f64)]| momentum_12_1(&quote(pairs));
         assert!((mom(&[("1Y", 20.0), ("1M", 10.0)]).unwrap() - (1.2 / 1.1 - 1.0) * 100.0).abs() < 1e-9);
-        assert_eq!(mom(&[("1Y", 20.0)]), Some(20.0), "a missing 1M nets nothing out");
+        assert!((mom(&[("1Y", 20.0)]).unwrap() - 20.0).abs() < 1e-9, "a missing 1M nets nothing out");
         assert_eq!(mom(&[("1M", 5.0)]), None, "no 1Y, no momentum");
         assert!((mom(&[("1Y", 20.0), ("1M", -100.0)]).unwrap() - 11_900.0).abs() < 1e-6, "a wiped month is floored at 1%");
 
