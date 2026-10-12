@@ -884,8 +884,15 @@ const PEGGED: &[&str] = &[
 
 /// (#566) A coin whose daily swing is under this (%) is pegged whatever its ticker: the live VOL column
 /// read 0.0-0.1% on every dollar token, and the calmest real coin (WBT) 2.8%. Catches the next new
-/// stablecoin `PEGGED` has not listed yet.
+/// stablecoin `PEGGED` has not listed yet. It must ALSO trade near one unit ([`is_pegged`]): a smooth
+/// synthetic series swings under 0.5%/day too, and a peg is a price, not just a calm chart.
 const PEG_MAX_VOL: f64 = 0.5;
+
+/// (#566) Calm AND priced at about one dollar/euro. `close_native` is live-only (the backtest never
+/// fills it), so on that path only the `PEGGED` list refuses — its pool holds no unlisted peg.
+fn is_pegged(quote: &Quote) -> bool {
+    quote.volatility_pct.is_some_and(|v| v < PEG_MAX_VOL) && quote.close_native.is_some_and(|p| (0.7..1.4).contains(&p))
+}
 
 fn is_stablecoin(ticker: &str) -> bool {
     PEGGED.contains(&underlying(ticker))
@@ -2692,7 +2699,7 @@ pub fn refusal_reason(quote: &Quote) -> Option<&'static str> {
     if is_hedged_etf(quote) {
         return Some("hedged");
     }
-    if is_currency_quoted(&quote.ticker) && (is_stablecoin(&quote.ticker) || quote.volatility_pct.is_some_and(|v| v < PEG_MAX_VOL)) {
+    if is_currency_quoted(&quote.ticker) && (is_stablecoin(&quote.ticker) || is_pegged(quote)) {
         return Some("stablecoin");
     }
     // (#566) a -99% worst drawdown (it prints as -99%) is a total loss, not a dip to buy: GRAM-USD and
@@ -14208,7 +14215,7 @@ mod tests {
         let mut peg_vol = gate_fixture();
         peg_vol.ticker = "NEWUSD-USD".into();
         peg_vol.instrument_type = "CRYPTOCURRENCY".into();
-        peg_vol.volatility_pct = Some(0.1);
+        (peg_vol.volatility_pct, peg_vol.close_native) = (Some(0.1), Some(1.0));
         let mut wipeout = peg_vol.clone();
         wipeout.ticker = "GRAM-USD".into();
         (wipeout.volatility_pct, wipeout.max_drawdown_pct) = (Some(3.0), 99.0);
@@ -14264,6 +14271,9 @@ mod tests {
         };
         assert_eq!(edge(98.5, 3.0), Some("wipeout"), "-98.5% prints as -99%: refused");
         assert_eq!(edge(98.4, PEG_MAX_VOL), None, "a coin swinging exactly PEG_MAX_VOL is not a peg");
+        let mut off_peg = peg_vol.clone();
+        off_peg.close_native = Some(100.0);
+        assert_eq!(refusal_reason(&off_peg), None, "calm but far from one unit (a smooth synthetic series) is not a peg");
         // (#566) no waiver lifts any of them: at growth_gate_soft 0.6 and 1 they still never score, and
         // the exchange token keeps its unwaivable tag (the refusal is off by default; ci-settings arms it)
         let ex = BuyHeuristic { growth_refuse_exchange_tokens: true, ..d.clone() };
