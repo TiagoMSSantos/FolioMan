@@ -691,6 +691,8 @@ const STRESS_TICKERS: &[&str] = &[
     "C", "AIG", "NOK", "BIIB", "CCL", "NCLH", "F", "WBD",
     // bankrupt / failed -> series ends near 0 (the gold correction; skipped if Yahoo drops them)
     "BBBYQ", "FRCB", "SIVBQ", "SBNY", "WEWKQ",
+    // (#566) collapsed coins, so the BOOK crypto lines grade against the losers too
+    "FTT-USD", "LUNC-USD", "LUNA1-USD", "CEL-USD",
 ];
 
 /// Everything the command line says, and nothing it doesn't. Split out of [`run`] purely so it can be
@@ -2845,6 +2847,41 @@ fn ann(cum_pct: f64, years: i64) -> f64 {
     ((1.0 + cum_pct / 100.0).max(0.0).powf(1.0 / years as f64) - 1.0) * 100.0
 }
 
+/// (#566) The (#564) BOOK lines once per asset class (`picks::asset_class`: 2 stock, 1 ETF, 0 crypto),
+/// each the class's own top-`n` equal-weight hold, so every class gets its own verdict. A class that
+/// booked nobody in any bucket prints nothing; a bucket where it booked nobody prints `empty`, the index
+/// you'd hold instead. `class_of(bucket, ticker)`.
+// ponytail: skips the sector and corr caps the main book runs; both are the identity at their shipped 0.
+fn class_book_lines(
+    by_bucket: &BTreeMap<i32, Vec<(f64, f64, f64, String)>>,
+    calendar: &std::collections::BTreeSet<i32>,
+    class_of: impl Fn(i32, &str) -> Option<u8>,
+    n: usize,
+    years: i64,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (c, label) in [(2, "stock"), (1, "etf"), (0, "crypto")] {
+        let book = |b: i32| {
+            let mut p: Vec<_> = by_bucket.get(&b)?.iter().filter(|x| class_of(b, &x.3) == Some(c)).collect();
+            if p.is_empty() {
+                return None;
+            }
+            p.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); // score desc, like the main book
+            p.truncate(n);
+            let cum = |f: fn(&(f64, f64, f64, String)) -> f64| p.iter().map(|&x| 1.0 + f(x) / 100.0).sum::<f64>() / p.len() as f64;
+            let excess = ann((cum(|x| x.1) - 1.0) * 100.0, years) - ann((cum(|x| x.2) - 1.0) * 100.0, years);
+            let names: Vec<String> = p.iter().map(|x| format!("{} {:+.0}%", x.3, x.1)).collect();
+            Some(format!("  BOOK {label} b{b} {excess:+.1} pts/yr | {}", names.join(" ")))
+        };
+        let lines: Vec<(bool, String)> =
+            calendar.iter().map(|&b| book(b).map_or_else(|| (false, format!("  BOOK {label} b{b} empty")), |l| (true, l))).collect();
+        if lines.iter().any(|l| l.0) {
+            out.extend(lines.into_iter().map(|l| l.1));
+        }
+    }
+    out
+}
+
 /// Cumulative % return of a benchmark series held `years` from the first session on/after `from`. `None`
 /// if `from` predates the series or no full forward window remains — mirrors the ticker walk (line ~208).
 fn benchmark_fwd(dates: &[chrono::NaiveDate], closes: &[f64], from: chrono::NaiveDate, years: i64) -> Option<f64> {
@@ -3022,8 +3059,10 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // before, so `value_floor_trim`'s per-bucket Vec is element-for-element what it was — which
     // matters because the rank sort below is STABLE and a reordered tie would silently rebuild a book.
     let mut by_cutoff: std::collections::BTreeMap<i32, Vec<&Sample>> = Default::default();
+    let mut coins: std::collections::BTreeMap<i32, Vec<&Sample>> = Default::default(); // (#566) the BOOK crypto lines only
     for s in samples {
         if picks::asset_class(&s.quote) == 0 {
+            coins.entry(bucket(s.date)).or_default().push(s);
             continue; // crypto: a coin isn't an S&P500-comparable hold
         }
         by_cutoff.entry(bucket(s.date)).or_default().push(s);
@@ -3188,6 +3227,22 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             for b in &calendar {
                 println!("{}", book_lines.get(b).cloned().unwrap_or_else(|| format!("  BOOK b{b} empty")));
             }
+            // (#566) coins never join the book above, so their line ranks them as their own cohort, untrimmed
+            // (no P/E for the value floor), over the same calendar
+            let mut all = by_bucket.clone();
+            let mut coin_names = std::collections::HashSet::new();
+            for (b, group) in &coins {
+                let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
+                for (s, scored) in group.iter().zip(picks::growth_scores_ranked(&quotes, tuning)) {
+                    let (Some(score), Some(bench_r)) = (scored, benchmark_fwd(bd, bc, s.date, years)) else { continue };
+                    all.entry(*b).or_default().push((score, s.realized, bench_r, s.quote.ticker.clone()));
+                    coin_names.insert(s.quote.ticker.as_str());
+                }
+            }
+            let class_of = |b: i32, t: &str| {
+                if coin_names.contains(t) { Some(0) } else { sample_of.get(&b).and_then(|m| m.get(t)).map(|s| picks::asset_class(&s.quote)) }
+            };
+            class_book_lines(&all, &calendar, class_of, n, years).iter().for_each(|l| println!("{l}"));
         }
     }
     // (#106) (round 3 §4) the DISTRIBUTION behind the ladder above. Every row printed so far quotes a
@@ -7525,6 +7580,22 @@ mod tests {
         // An unjudgeable pair (empty trail) never blocks — unjudgeable is not a verdict.
         let blind: Vec<&[f64]> = vec![&up, &[], &down];
         assert_eq!(corr_cap_rung(&rows, &blind, 2, 0.4), vec!["A", "TWIN"]);
+    }
+
+    /// (#566) Each class books its own top-n: a higher-scored name of another class never takes its slot,
+    /// a bucket it missed reads `empty`, and a class absent from every bucket prints no line at all.
+    #[test]
+    fn class_book_lines_grades_each_class_alone() {
+        let row = |s: f64, r: f64, bench: f64, t: &str| (s, r, bench, t.to_string());
+        let by_bucket = BTreeMap::from([(1, vec![row(5.0, -50.0, 0.0, "B"), row(9.0, 100.0, 0.0, "A"), row(7.0, 20.0, 10.0, "C")])]);
+        let calendar = std::collections::BTreeSet::from([1, 2]);
+        let class_of = |_: i32, t: &str| Some(if t == "C" { 0 } else { 2 });
+        assert_eq!(
+            class_book_lines(&by_bucket, &calendar, class_of, 1, 1),
+            ["  BOOK stock b1 +100.0 pts/yr | A +100%", "  BOOK stock b2 empty", "  BOOK crypto b1 +10.0 pts/yr | C +20%", "  BOOK crypto b2 empty"]
+        );
+        // n = 2: the equal-weight multiple (2.0 + 0.5) / 2 over 2 years
+        assert_eq!(class_book_lines(&by_bucket, &calendar, class_of, 2, 2)[0], "  BOOK stock b1 +11.8 pts/yr | A +100% B -50%");
     }
 
     #[test]

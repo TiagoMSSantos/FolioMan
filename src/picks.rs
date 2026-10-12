@@ -1322,6 +1322,7 @@ struct ScoreParts {
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
     holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one × (#545) growth_capex_ocf_penalty above growth_capex_ocf_max × (#550) (growth_max_peg / PEG)^growth_peg_taper_k above the ceiling; 1.0 otherwise / knobs off / every backtest quote
+    leg_dock: f64,     // (#566) growth_leg_dock^k, k = [`missing_legs`]; 1.0 when the knob is off
     gate_soft: f64,    // (#563) f^n, n = knob gates waived to score this name ([`waived`]); 1.0 = it cleared every gate, or `growth_gate_soft` is 0 and it never got here
     score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
@@ -1844,13 +1845,12 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // the boundary rather than in a comment — (#48)'s reasoning verbatim. No shipped value moves: at
     // w = 0.0 the term is 1.0, and the whole 0.25..1.0 ladder keeps `value` in [0.5, 1.5].
     let value = (1.0 + tuning.growth_value_weight * (value_raw - 1.0)).max(0.0);
-    let trust = trust_factor(
-        quote,
-        crypto,
-        tuning.fixed_cagr_years,
-        tuning.growth_trust_ladder,
-        tuning.growth_trust_young,
-    ); // (A) equities need a 10Y leg (the pinned window when fixed_cagr_years is set); crypto: only 5Y. (#47) or the graded 20/8/5 ladder, (#49) with the 2Y/1Y rungs under it
+    // (#566) with growth_leg_dock on, the leg dock replaces this charge
+    let (trust, leg_dock) = if tuning.growth_leg_dock > 0.0 {
+        (1.0, tuning.growth_leg_dock.powi(missing_legs(quote)))
+    } else {
+        (trust_factor(quote, crypto, tuning.fixed_cagr_years, tuning.growth_trust_ladder, tuning.growth_trust_young), 1.0)
+    }; // (A) equities need a 10Y leg (the pinned window when fixed_cagr_years is set); crypto: only 5Y. (#47) or the graded 20/8/5 ladder, (#49) with the 2Y/1Y rungs under it
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
     // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
     // generic brake the P/E tilt can't provide for crypto/ETFs (no earnings) — works on price alone.
@@ -1971,7 +1971,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base_offset, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, gate_soft: 1.0, score: 0.0,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, leg_dock, gate_soft: 1.0, score: 0.0,
     };
     parts.score = compose_score(&parts, tuning);
     Some(parts)
@@ -1990,7 +1990,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // precompute per pool if a probe arm slows. The walkthrough prints no x f^n line yet; add it if this ships.
     let (open, tags, _) = waived(quote, tuning)?;
     let mut p = score_parts_hard(quote, &open)?;
-    p.gate_soft = tuning.growth_gate_soft.powi(tags.len() as i32);
+    // (#566) with the leg dock on, a short record pays p^k instead, so its record gates leave the n
+    let n = tags.iter().filter(|g| !(tuning.growth_leg_dock > 0.0 && matches!(g.0, "history" | "young"))).count();
+    p.gate_soft = tuning.growth_gate_soft.powi(n as i32);
     p.score = compose_score(&p, tuning);
     Some(p)
 }
@@ -2048,7 +2050,18 @@ fn compose_score(p: &ScoreParts, tuning: &BuyHeuristic) -> f64 {
     };
     // (#563) the soft-gate dock LAST, on the whole score: dividing a negative one keeps it pushing down.
     // At 1.0 both `*` and `/` are exact, so a name that cleared its gates keeps its bits.
-    if base_is_negative(s) { s / p.gate_soft } else { s * p.gate_soft }
+    // (#566) the leg dock rides with it; `x * 1.0` is exact, so off keeps the bits too.
+    let d = p.gate_soft * p.leg_dock;
+    if base_is_negative(s) { s / d } else { s * d }
+}
+
+/// (#566) The six legs the leg dock counts, shortest first. No 12Y leg exists ([`core::HORIZONS`]).
+const DOCK_LEGS: [&str; 6] = ["1Y", "2Y", "5Y", "8Y", "10Y", "20Y"];
+
+/// (#566) How many [`DOCK_LEGS`] lie beyond the longest leg `quote` has: 0 with a 20Y leg, 6 with none.
+/// Counted from the longest present leg, so a gap below it (a fixture quirk) is not charged.
+fn missing_legs(quote: &Quote) -> i32 {
+    DOCK_LEGS.iter().rev().position(|h| perf_pct(quote, h).is_some()).unwrap_or(DOCK_LEGS.len()) as i32
 }
 
 /// (#144) (#86)'s sign test, split out and SKIPPED for exactly the reason `config::compute_threads`
@@ -12537,6 +12550,40 @@ mod tests {
         assert_eq!(compose_score(&p, &neg), up * 0.25);
         p.base = -8.0;
         assert_eq!(compose_score(&p, &neg), (-8.0 + 2.0) / 0.25, "a negative score sinks further, never toward 0");
+    }
+
+    /// (#566) `growth_leg_dock`: p^k, k = legs past the longest one; it replaces the trust charge and the
+    /// record gates' share of f^n, and leaves the lane alone at 0.
+    #[test]
+    fn leg_dock_charges_each_missing_leg_once() {
+        let mut q = gate_fixture();
+        q.perf = legs(&[("1Y", 20.0), ("5Y", 200.0)]);
+        assert_eq!(missing_legs(&q), 3, "8Y, 10Y, 20Y missing; the absent 2Y below 5Y is not charged");
+        q.perf = legs(&[("1Y", 20.0), ("20Y", 900.0)]);
+        assert_eq!(missing_legs(&q), 0);
+        q.perf = legs(&[("1M", 2.0)]);
+        assert_eq!(missing_legs(&q), 6, "no yearly leg at all");
+
+        let d = BuyHeuristic::default();
+        let off = score_parts(&gate_fixture(), &d).expect("the fixture clears the gates");
+        assert_eq!(off.leg_dock, 1.0, "off: no dock");
+        let on = score_parts(&gate_fixture(), &BuyHeuristic { growth_leg_dock: 0.5, ..d.clone() }).expect("still clears");
+        assert_eq!((on.trust, on.leg_dock), (1.0, 0.5f64.powi(missing_legs(&gate_fixture()))), "trust off, p^k on");
+        let (score, dock) = (on.score, on.leg_dock);
+        let mut undocked = on;
+        undocked.leg_dock = 1.0;
+        assert_eq!(score, compose_score(&undocked, &d) * dock, "compose_score multiplies the dock in once");
+
+        // a failer on the record gate alone: armed, `history` leaves n and p^k charges the short record
+        let mut young = gate_fixture();
+        young.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("2Y", 44.0)]);
+        let soft = BuyHeuristic { growth_gate_soft: 0.6, ..d.clone() };
+        let (_, tags, _) = waived(&young, &soft).expect("assessable");
+        assert!(tags.iter().any(|g| g.0 == "history"), "the fixture must fail the record gate: {tags:?}");
+        let n_rest = tags.iter().filter(|g| !matches!(g.0, "history" | "young")).count() as i32;
+        let p = score_parts(&young, &BuyHeuristic { growth_leg_dock: 0.5, ..soft.clone() }).expect("scores");
+        assert_eq!((p.gate_soft, p.leg_dock), (0.6f64.powi(n_rest), 0.5f64.powi(4)));
+        assert_eq!(score_parts(&young, &soft).expect("scores").gate_soft, 0.6f64.powi(tags.len() as i32), "off: history still counts");
     }
 
     /// (#328) A gate-clearing STOCK with a GICS label and a chosen 5Y leg — the only two inputs the
