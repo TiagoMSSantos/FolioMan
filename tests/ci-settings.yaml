@@ -1528,7 +1528,29 @@ sizing:
   #  higher in >= 5 of 6 cells (pit + stress x 20/12/8y); a gap under 0.2 pts/yr is a tie. Shipped under the
   #  random p95 in >= 3 cells is recorded as "the score is not earning its keep". A winner gets a 20y DCA (#311)
   #  re-grade before anything ships; the soft-gate grill follows the verdict either way.
-  #  VERDICT: pending (probe runs not yet dispatched).
+  #  VERDICT (2026-10-12, probe runs 38225844923 pit + 38225857607 stress, at 92fb920): MOMENTUM 12-1 BEATS
+  #  SHIPPED, and the shipped score is NOT EARNING ITS KEEP against random books from its own pond. Windows
+  #  scored: pit 1119/2783/6182 (= control), stress 2537/5082/9034 (20y 4 under the 2541 control: pond drift).
+  #  Excess mean (median) pts/yr, worst window; `shipped` is the real top-10 row (value trim on), the AHEAD
+  #  tag is the report's own unrounded test against its plain top-10 control on the same pond:
+  #    cell        shipped            (a) momentum 12-1         (d) gates-off             (e) random p95  shipped>p95
+  #    pit 20y     +0.6 (-0.0) -10.0  +4.1 (+3.1) -5.9 AHEAD    +2.7 (+2.3) -3.8 AHEAD    +3.5 (+2.8)     no
+  #    pit 12y     +2.6 (+2.0)  -6.4  +2.7 (+2.7) -9.0 -        +3.2 (+3.2) -5.8 AHEAD    +2.1 (+2.5)     no
+  #    pit  8y     +2.7 (+2.7) -17.1  +3.7 (+2.9) -7.3 AHEAD    +2.6 (+2.5) -5.4 -        +1.4 (+1.5)     YES
+  #    stress 20y  +5.4 (+4.9)  -0.9  +7.3 (+8.1) +0.7 AHEAD    +6.4 (+5.4) +0.7 AHEAD    +6.6 (+6.0)     no
+  #    stress 12y  +5.4 (+5.4)  -7.8  +8.4 (+8.0) -4.3 AHEAD    +6.8 (+6.6) -4.3 AHEAD    +6.2 (+6.0)     no
+  #    stress  8y  +5.2 (+5.1) -10.3 +10.3 (+9.8) -6.8 AHEAD    +6.6 (+5.3) -2.8 -        +5.7 (+5.0)     no
+  #  (a) momentum: 5 of 6 on the plain control (pit 12y ties on the mean). On the real row 4 are clear and pit
+  #  8y's median gap prints +0.2, the tie edge, at 1-decimal precision. Either reading moves it to the 20y DCA
+  #  (#311) re-grade, the pre-registered next step for a winner. Its worst window beats shipped in 5 of 6.
+  #  (d) gates-off: 4 of 6 on the plain control, NOT a beat (on the real row 4 clear + stress 8y median +0.2 at
+  #  the tie edge). Its worst window beats shipped in all 6 cells: the gates cost tail safety, not buy it.
+  #  (b) quality, (c) E/P, (f) revenue CAGR, (g) momentum x quality: the fund keys reach no 20y bucket and only
+  #  0-18 at 12y/8y, so none can reach 5 of 6. Read-only where n > 0: E/P loses everywhere, (g) leads at stress 8y.
+  #  Random pond: shipped sits under the random p95 in 5 of 6 cells, and under the random book's mean AND median
+  #  at pit 20y (+0.6/-0.0 vs +2.2/+1.8) and stress 20y (+5.4/+4.9 vs +5.7/+5.0). At 20y the score's ranking
+  #  does worse than drawing 10 names at random from its own pond.
+  #  NOTHING SHIPS from this report. Next: the 20y DCA re-grade of momentum 12-1, then the soft-gate grill.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
