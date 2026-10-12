@@ -1566,6 +1566,37 @@ sizing:
   #  MOMENTUM 12-1 DOES NOT SHIP. It stays the strongest rival on file: it leads on the mean in every 20y DCA
   #  lane and loses no median. Re-ask it on a longer pit record (21 programs today) or as a soft term inside
   #  the growth score, never as a swap of the book on this evidence.
+  #── (#561) SOFT-GATE SCREEN: WHICH HARD GATE COSTS THE SHIPPED BOOK THE MOST? ──
+  #  WHY: (#560) put shipped under the random-pond p95 in 5 of 6 cells, and its gates-off twin had a better
+  #  worst window in all 6. So: grade each binding gate ALONE before building any taper. STAGE 1 (this
+  #  block) waives one gate per arm through probe.yml `knobs=`, with no code. A gate that passes gets a
+  #  stage-2 taper (the ranking falls off past the bad value instead of a cliff), and the taper must clear
+  #  the (#560) 5-of-6 ship bar.
+  #  ARMS = the 6 gates the GATE SWEEP shows binding (missed wealth, pit 20y top 1%): range 58%, cagr (+life)
+  #  29%, history 11%, 1Y+ 1.1%, 5Y+ 0.9%, stretch. The knob values are `picks::waive_gate`'s: range/1Y+/5Y+/cagr
+  #  -1e9 (+ growth_min_cagr_etf 0), history age 0 + leg 1, stretch 0.
+  #  SCREEN BAR (pre-registered before the runs): against a SAME-BATCH control, the arm's top-10 mean AND
+  #  median both rise >= 0.2 pts/yr in >= 4 of the 6 cells (pit + stress x 20/12/8).
+  #  RESULT (2026-10-12, 14 probe.yml runs 38233509540..38233616033 at cc539b8; windows 1119/2783/6182 and
+  #  2541/5082/9034 in every run): the first `top-10 ` row, mean / median delta vs control, pts/yr:
+  #              pit 20      pit 12      pit 8       stress 20   stress 12   stress 8    cells
+  #    control   +0.6/-0.0   +2.6/+2.0   +2.7/+2.7   +5.4/+4.9   +5.4/+5.4   +5.2/+5.1
+  #    range     +0.7/ 0.0    0.0/ 0.0    0.0/ 0.0   +0.2/ 0.0    0.0/ 0.0    0.0/+0.3   0/6
+  #    cagr      +1.4/+2.1   -0.2/+0.2   -0.2/+0.5   +0.2/+0.4   +0.4/+1.5   +0.2/+0.5   4/6  PASS (2 cells on the 0.2 edge)
+  #    history   -0.3/-0.1   -1.0/-1.5   -0.3/-0.8   +0.4/+0.7   +0.7/+1.5   +0.8/+0.5   3/6
+  #    1Y+       +0.5/+1.2   +0.5/+0.9   +1.1/+0.3   +0.3/+1.1   +0.6/+1.3   +0.6/+0.7   6/6  PASS
+  #    5Y+       -0.2/+0.3   -0.6/-0.3   -0.6/-0.4   +0.1/-0.2    0.0/+0.2   -0.1/+0.1   0/6
+  #    stretch   +0.1/+0.2   -0.4/-0.2   -0.4/-0.1   +0.1/+0.3   +0.4/+0.7   +0.3/-0.1   1/6
+  #  Worst window, pit 20/12/8: control -10.0/-6.4/-17.1, 1Y+ -7.7/-4.6/-3.5, cagr -3.9/-4.6/-5.2.
+  #  20y DCA `never-sell vs index DCA` (read, not graded): control pit +3.1 (+3.1), stress +5.2 (+5.6);
+  #  1Y+ +3.3 (+3.1) / +5.6 (+5.9); cagr +3.1 (+3.1) / +5.8 (+6.1). Both pit medians tie, as (#560)'s momentum did.
+  #  READ: range, despite 58% of the missed wealth, moves almost nothing in the book: what it fences out does
+  #  not reach the top 10. 1Y+ is the surprise. The (#457) block says loosening it is "measured dead", but
+  #  every one of those grids graded the lane edge or the admits' forward peer-relative return, never the
+  #  top-10 book row against a same-batch control. The book is saturated (5-7 passers for 10 slots), so the
+  #  waived names fill empty slots (pit 20y holds 113 -> 144) instead of displacing ranked ones.
+  #  NEXT: stage 2 for 1Y+ and cagr. 1Y+ already clears the 5-of-6 ship bar as a plain waive, so its first
+  #  rung is a knob, not a taper. Nothing ships from this block.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
