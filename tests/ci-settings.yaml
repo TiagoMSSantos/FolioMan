@@ -19540,7 +19540,30 @@ buy_heuristic:
   #  TIE-BREAK: most cells, then the smallest f.
   #  UNGRADED: the ETF table (0 of 14 graded ETF samples at 20y) and coins (outside the backtest). They ride on the
   #  stocks verdict, by the user's call.
-  #  RESULT: pending.
+  #  VERDICT: REFUSED by the letter, 0 stays. The best rung is f = 0.6 at 3 of 6 cells (every pit cell, no stress
+  #  cell); 0.1 / 0.3 / 1 score 1 / 1 / 2. No veto fired, since the 20y DCA never drops 0.2. Probe runs at 5ad9b59:
+  #  pit 38265547324 (ctl) 38265563520 (0.1) 38265578967 (0.3) 38265593342 (0.6) 38265607288 (1); stress
+  #  38265621885 (ctl) 38265636947 38265651506 38265666514 38265682230. Windows scored 1119/2783/6182 pit and
+  #  2541/5082/9034 stress in every arm except stress f = 0.1 8y (9023).
+  #    top-10 excess mean|median   pit 20y     pit 12y     pit 8y      stress 20y  stress 12y  stress 8y   cells
+  #    f = 0 (control)             +0.6|-0.0   +2.6|+2.0   +2.7|+2.7   +5.4|+4.9   +5.4|+5.4   +5.2|+5.1   -
+  #    f = 0.1                     +1.5|+1.2   +2.4|+2.0   +2.6|+2.4   +4.2|+4.3   +4.0|+5.3   +4.0|+4.1   1
+  #    f = 0.3                     +2.4|+2.0   +2.7|+2.8   +2.8|+2.3   +4.3|+4.3   +4.0|+5.6   +4.0|+4.1   1
+  #    f = 0.6                     +1.8|+1.4   +3.0|+3.3   +3.4|+3.5   +4.3|+4.3   +4.3|+5.7   +4.3|+4.3   3
+  #    f = 1                       +2.8|+2.3   +2.9|+2.9   +2.7|+2.5   +4.8|+4.2   +4.7|+4.6   +5.0|+4.6   2
+  #  20y never-sell vs index DCA mean|median: pit ctl +3.1|+3.1, 0.1 +3.0|+3.0, 0.3 +3.4|+3.3, 0.6 +3.4|+3.3,
+  #  1 +3.8|+3.1; stress ctl +5.2|+5.6, 0.1 +5.3|+5.8, 0.3 +5.3|+5.9, 0.6 +5.4|+5.8, 1 +6.2|+7.1.
+  #  Pit 8y worst window: ctl -17.1, 0.1/0.3 -10.4, 0.6 -5.7, 1 -4.8.
+  #  POOL CENSUS: the knob did what WHY asked. Pit median gated pool 5/6/7 (ctl, VACUOUS) -> 87/151/181 at f = 0.6,
+  #  0 buckets saturated; stress 11/10/11 -> 17/97/134.
+  #  CAVEAT, NOT A RE-GRADE: the stress control holds a book in only 39 of 59 buckets at 20y (54 of 75 at 12y, 62 of
+  #  83 at 8y); every soft arm fills all of them. The top-10 row averages over the buckets that hold a book, so the
+  #  stress "loss" compares 59 buckets against the control's 39, and the 20 added ones carry a stronger S&P500
+  #  (+7.7 vs +7.2%/yr). Back-of-envelope at stress 20y f = 0.1: if the 39 shared buckets kept +5.4, the 20 added
+  #  ones average about +1.9 excess, i.e. better than the index the control falls back to. The DCA line, which also
+  #  counts more buckets, rises in every stress arm. Pit coverage barely moves (21->22, 36->38, 44->46), and pit is
+  #  where every rung but 0.1 gains. Grading this fairly needs a ruler that scores an empty bucket as the index
+  #  (zero excess) or grades only the shared buckets, PRE-REGISTERED as its own receipt before any re-run.
   growth_peg_taper_k: 0.0        # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
