@@ -1566,6 +1566,15 @@ sizing:
   #  MOMENTUM 12-1 DOES NOT SHIP. It stays the strongest rival on file: it leads on the mean in every 20y DCA
   #  lane and loses no median. Re-ask it on a longer pit record (21 programs today) or as a soft term inside
   #  the growth score, never as a swap of the book on this evidence.
+  #  (#571) RIVALS (h) TR LIFE CAGR, (i) THE SAME, 10Y+ ONLY. PRE-REGISTERED 2026-10-13, before the runs.
+  #  WHY: the user asks whether ranking on the page's TR-CAGR (asset life) column beats the score. (#570) did
+  #  not test that: its knob only moved the cagr-life pass bar. No rival above ranks on a long-run CAGR.
+  #  BUILT: (h) keys `tr_cagr`, set as of each cutoff by `core::tr_life_cagr`, so no look-ahead. (i) keys it
+  #  only for names with a 10Y leg (a backtest quote has no `age_years`), so a 2-year 80%/yr run cannot lead.
+  #  BAR: the (#560) bar above, against the real shipped row: mean AND median both >= +0.2 pts/yr in >= 5 of 6
+  #  cells (pit + stress x 20/12/8y). Read in the control arm of the (#571) beta batch, at shipped settings.
+  #  A beat ships NOTHING. It opens a design question for the user (TR-life as a score term or a gate).
+  #  The forward ruler is price-only, so it leans AGAINST (h)/(i): their dividend lift is not paid back.
   #── (#561) SOFT-GATE SCREEN: WHICH HARD GATE COSTS THE SHIPPED BOOK THE MOST? ──
   #  WHY: (#560) put shipped under the random-pond p95 in 5 of 6 cells, and its gates-off twin had a better
   #  worst window in all 6. So: grade each binding gate ALONE before building any taper. STAGE 1 (this
@@ -17031,6 +17040,24 @@ buy_heuristic:
                                  #   WHAT THIS CLOSES. β was the last unswept factor of the score's CAGR slope, and it is at its
                                  #   optimum. The -0.35 arithmetic may not be cited as an unaddressed defect again without citing this
                                  #   ladder. NO KNOB WAS CHANGED: src/ and tests/fixture/ are byte-identical across this round.
+                                 #
+                                 #   ══ (#571) RE-ASKED UNDER SOFT 0.8. PRE-REGISTERED 2026-10-13, before the runs. ══
+                                 #   WHY THE (#130) CLOSE DOES NOT COVER IT. (#130) ran under HARD gates, where every ranked
+                                 #   stock cleared cagr-life (19/yr), so the slope only ordered names at CAGR >= 19. (#566)'s
+                                 #   growth_gate_soft 0.8 now ranks stocks that fail it, docked x0.8. At a fixed 1Y the -0.35 slope
+                                 #   lifts a 6/yr name with 1Y 30 to 12.9 over a 30/yr name with 1Y 30 at 4.5, before the dock.
+                                 #   The soft x beta pair was never graded, and (#130)'s total-derivative argument assumed
+                                 #   d(1Y)/d(CAGR) ~ 1 on a pool that no longer holds.
+                                 #   ARMS (probe.yml knobs=, no code): b03 = 0.3 (slope 0), b00 = 0.0 (slope +0.15), each against a
+                                 #   same-batch control. Lanes: `universe fund pit` 1/2/5/8/12/20y, `universe fund stress` 1/2/5 and
+                                 #   8/12/20y, all with `rivals`.
+                                 #   RULER: (#566)'s paired per-class BOOK ruler. A cell counts at >= 10 buckets. Win = paired mean
+                                 #   AND median diff >= +0.2 pts/yr. Veto = either <= -0.2.
+                                 #   SHIP RULE: stocks win >= 2/3 of their counted cells with no veto; no veto in any counted etf or
+                                 #   crypto cell (beta moves every class); and the `backtest_edge_holds` asserts hold on the arm's
+                                 #   8/12/20y logs. If both arms pass, the one with more cells won ships; a tie ships b03.
+                                 #   CAVEAT kept from (#130): at beta = 0 more names saturate growth_accel_cap 50, so b00 is not a
+                                 #   pure slope read. Fail both -> beta stays 1.0 and the soft-gate slope question closes.
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
   growth_smoothness_weight: 0.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
                                  #   straight-line compounder over the equal-CAGR rollercoaster. Reconstructed in backtest_quote,
