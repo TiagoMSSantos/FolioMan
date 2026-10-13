@@ -19700,6 +19700,11 @@ buy_heuristic:
   growth_leg_dock: 0.0          # (#566) REFUSED (receipt above): only 0.85 passed stocks, below the plain 0.8 rung. p > 0 docks a score x p^k, k = how many of the 1Y/2Y/5Y/8Y/10Y/20Y
   #  legs lie past the name's longest one, and REPLACES both record-length charges: trust_factor reads 1.0 and a waived
   #  history/young gate leaves growth_gate_soft's n. Graded per class on the `BOOK stock|etf|crypto b<bucket>` lines.
+  growth_soft_life_hard: 0.0    # (#568) UNMEASURED, probe pending. 1 = a stock under the whole-life CAGR floor (`cagr-life`)
+  #  stays hard while growth_gate_soft softens its other gates. 0 = cagr-life is waivable like every other knob gate.
+  #  PRE-REGISTERED 2026-10-13, before any run: arms base (growth_gate_soft 0), ctl (shipped), life (this knob 1), one batch at
+  #  one commit; pit 1 2 5 8 12 20 + stress `1 2 5` | `8 12 20`, `universe fund`. Stock BOOK cells on the (#566) paired ruler.
+  #  Ships only if life passes vs base AND vs ctl (2/3 of counted cells won, no veto) and the backtest_edge_holds lines hold.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.

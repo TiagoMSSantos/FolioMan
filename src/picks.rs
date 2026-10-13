@@ -1988,6 +1988,11 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if hard.is_some() || f == 0.0 {
         return hard;
     }
+    // (#568) armed, a stock under the whole-life CAGR floor stays hard; checked before `waived`, whose
+    // `cagr` waiver switches the same `growth_min_cagr` floor off for the life leg too
+    if tuning.growth_soft_life_hard > 0.0 && gate_failures(quote, tuning)?.iter().any(|g| g.0 == "cagr-life") {
+        return None;
+    }
     // ponytail: clones the tuning and re-runs the gates per FAILING quote, only while the knob is armed;
     // precompute per pool if a probe arm slows. The walkthrough prints no x f^n line yet; add it if this ships.
     let (open, tags, _) = waived(quote, tuning)?;
@@ -12554,6 +12559,28 @@ mod tests {
         lev.name = "ProShares Ultra S&P500".into();
         lev.range_pct = 20.0;
         assert_eq!(soft(&lev, 1.0), None, "a structural refusal has no knob to waive");
+    }
+
+    /// (#568) `growth_soft_life_hard` keeps a stock under the whole-life CAGR floor out at any f, and
+    /// leaves every other failer and every passer where `growth_gate_soft` puts them.
+    #[test]
+    fn soft_life_hard_keeps_a_cagr_life_failer_hard() {
+        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..BuyHeuristic::default() };
+        let armed = BuyHeuristic { growth_soft_life_hard: 1.0, ..soft.clone() };
+        let mut life = gate_fixture();
+        life.life_cagr = Some(soft.growth_min_cagr - 5.0); // positive, so only the floor fires, not `lifetime`
+        let fails = gate_failures(&life, &soft).expect("an assessable failer");
+        assert!(fails.iter().any(|g| g.0 == "cagr-life"), "the fixture fails the life leg: {fails:?}");
+        assert!(growth_score(&life, &soft).is_some(), "off, cagr-life is waived like any other gate");
+        assert_eq!(growth_score(&life, &armed), None, "armed, a cagr-life failer stays hard");
+        let mut range = gate_fixture();
+        range.range_pct = 20.0;
+        let fails = gate_failures(&range, &soft).expect("an assessable failer");
+        assert!(!fails.is_empty() && fails.iter().all(|g| g.0 != "cagr-life"), "a failer of other gates only: {fails:?}");
+        assert!(growth_score(&range, &armed).is_some(), "armed, a failer of other gates still scores");
+        assert_eq!(growth_score(&range, &armed), growth_score(&range, &soft), "and scores as before");
+        let pass = gate_fixture();
+        assert_eq!(growth_score(&pass, &armed), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
     }
 
     /// (#563) The dock multiplies a positive score and DIVIDES a negative one, so it always pushes down.
