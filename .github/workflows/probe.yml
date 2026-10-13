@@ -98,10 +98,10 @@ jobs:
           read -ra knobs <<< "$KNOBS"
           # (#550) an arm edits the checked-out yaml in place: each key must already sit on exactly one
           # `  key:` line and the value must be a plain number, so a typo fails the run instead of grading
-          # the control under an arm's name.
+          # the control under an arm's name. (#570) `true`/`false` too, for the bool knobs.
           for kv in "${knobs[@]}"; do
             k=${kv%%=*}; v=${kv#*=}
-            [[ $kv == *=* && $k =~ ^[a-z0-9_]+$ && $v =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || { echo "::error::bad knob '$kv'"; exit 1; }
+            [[ $kv == *=* && $k =~ ^[a-z0-9_]+$ && $v =~ ^(-?[0-9]+(\.[0-9]+)?|true|false)$ ]] || { echo "::error::bad knob '$kv'"; exit 1; }
             [[ $(grep -c "^  $k: " tests/ci-settings.yaml) == 1 ]] || { echo "::error::'$k' is not one ci-settings line"; exit 1; }
             sed -i -E "s/^(  $k: )[^ ]+/\1$v/" tests/ci-settings.yaml
             grep "^  $k: " tests/ci-settings.yaml | cut -c1-80

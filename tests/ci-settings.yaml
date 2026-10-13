@@ -13565,6 +13565,16 @@ buy_heuristic:
                                  #   ^SP500TR blocker in `use_adjusted_close`'s receipt). Nothing ships; nothing to revert.
                                  #   DISCHARGED by (#304), end of `use_adjusted_close`'s receipt: the blocker was stale, both
                                  #   legs were graded on total return, and the flag was REFUSED there too.
+                                 #   (#570) RE-ASK PRE-REGISTERED 2026-10-13: (#303)/(#304) graded HARD gates on the old
+                                 #   ruler. Under soft 0.8, the uplift no longer admits payers; it un-docks the ones whose
+                                 #   dividends lift them over the cagr-life bar (x0.8 per fail). That mechanism is unmeasured.
+                                 #   Arms in one batch at one HEAD: ctl = this file; tr = this line true (probe.yml now
+                                 #   takes true/false). Lanes: pit 1-20y, stress 1 2 5 | 8 12 20. Ruler: (#566) paired,
+                                 #   per class, vs ctl. A cell counts at >= 10 buckets. Win = mean AND paired median >= +0.2.
+                                 #   Veto = either <= -0.2. SHIP only if stock cells won >= 2/3 with no veto, no veto in a
+                                 #   counted etf/crypto cell, and the backtest_edge_holds lines hold on tr's 8/12/20 logs.
+                                 #   Else this stays false. Edge (a) above still holds: forward returns are price-only, so
+                                 #   the ruler leans AGAINST this knob, and a pass is conservative.
   backtest_calendar_cadence: false # (#117) MEASURED 2026-08-22 AND REFUSED. Held at false, which is
                                  #   the fixed 12/36/6 bar-count triple (and the daily path's
                                  #   252/750/126) that every golden in tests/fixture and every fitted
