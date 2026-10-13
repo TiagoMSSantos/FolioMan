@@ -1983,7 +1983,9 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
 /// What `waived` cannot lift (a structural refusal, no turnover, the repriced-bar artifact) stays `None`.
 fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let hard = score_parts_hard(quote, tuning);
-    if hard.is_some() || tuning.growth_gate_soft == 0.0 {
+    // (#566) stocks only: ETFs and coins failed the per-class ruler, so they stay hard at any f
+    let f = if asset_class(quote) == 2 { tuning.growth_gate_soft } else { 0.0 };
+    if hard.is_some() || f == 0.0 {
         return hard;
     }
     // ponytail: clones the tuning and re-runs the gates per FAILING quote, only while the knob is armed;
@@ -1992,7 +1994,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let mut p = score_parts_hard(quote, &open)?;
     // (#566) with the leg dock on, a short record pays p^k instead, so its record gates leave the n
     let n = tags.iter().filter(|g| !(tuning.growth_leg_dock > 0.0 && matches!(g.0, "history" | "young"))).count();
-    p.gate_soft = tuning.growth_gate_soft.powi(n as i32);
+    p.gate_soft = f.powi(n as i32);
     p.score = compose_score(&p, tuning);
     Some(p)
 }
@@ -12534,6 +12536,14 @@ mod tests {
         assert_eq!(soft(&q, 0.0), None, "f = 0 is the hard gate");
         assert_eq!(soft(&q, 1.0), Some(full), "f = 1 is the waived score");
         assert_eq!(soft(&q, 0.5), Some(full * 0.5f64.powi(tags.len() as i32)), "one 0.5 per gate waived");
+        // (#566) the knob arms stocks only: the same failer as a coin stays hard at f = 1
+        let mut coin = q.clone();
+        coin.ticker = "ZZZ-USD".into();
+        coin.instrument_type = "CRYPTOCURRENCY".into();
+        assert_eq!(asset_class(&coin), 0);
+        let (coin_open, _, _) = waived(&coin, &t).expect("an assessable coin failer");
+        assert!(growth_score(&coin, &coin_open).is_some(), "the coin scores with its own gates waived");
+        assert_eq!(soft(&coin, 1.0), None, "growth_gate_soft leaves a coin hard");
 
         let pass = gate_fixture();
         let shipped = growth_score(&pass, &t).expect("the fixture clears the gates");
@@ -14962,8 +14972,8 @@ mod tests {
         assert!(growth_score(&strong, &tuning).is_some(), "a 25%/yr cheap compounder must still rank");
         let mut mediocre = gate_fixture();
         mediocre.perf = legs(&[("1M", 2.0), ("1Y", 12.0), ("5Y", 80.0)]); // 12.5%/yr — fine, but not 19
-        // (#565) shipped soft: the hard gates still cut it, and armed it ranks, docked below the cheap compounder.
-        assert_eq!(tuning.growth_gate_soft, 0.6, "(#564) the only rung clearing 6 of 6 zero-filled cells; re-measure, then update this pin");
+        // (#566) shipped soft for stocks: the hard gates still cut it, and armed it ranks, docked below the cheap compounder.
+        assert_eq!(tuning.growth_gate_soft, 0.8, "(#566) the only stock rung clearing 10 of 10 paired cells; re-measure, then update this pin");
         let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
         assert!(growth_score(&mediocre, &hard).is_none(), "a sub-gate compounder must be cut by the hard gates");
         assert!(growth_score(&mediocre, &tuning) < growth_score(&strong, &tuning), "a docked failer must rank below a passer");

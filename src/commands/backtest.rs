@@ -10560,8 +10560,9 @@ mod tests {
         s.buy_heuristic
     }
 
-    /// (#565) [`shipped_tuning`] with every gate hard. At the shipped `growth_gate_soft` 0.6 all 500 fixture
-    /// samples score, so a test of what the GATES admit (notch cohorts, the 158 pin) would go inert on it.
+    /// (#565) [`shipped_tuning`] with every gate hard. At `growth_gate_soft` 0.6 all 500 fixture samples
+    /// score, so a test of what the GATES admit (notch cohorts, the 158 pin) would go inert on it. (#566)
+    /// arms stocks only, at 0.8; every fixture name is a stock, so this still matters.
     /// A passer scores bit-identically at any f, so this is the shipped tuning's own passer crowd.
     fn shipped_hard() -> BuyHeuristic {
         BuyHeuristic { growth_gate_soft: 0.0, ..shipped_tuning() }
@@ -11022,7 +11023,8 @@ mod tests {
         let samples = synthetic_samples();
         let tuning = shipped_hard();
         let gated = |t: &BuyHeuristic| samples.iter().filter(|s| growth_score(&s.quote, t).is_some()).count();
-        // (#565) SOFT PIN: armed, every fixture sample scores (docked by f^n). The pins below grade the passers.
+        // (#565) SOFT PIN: armed, every fixture sample scores (docked by f^n). Every fixture name is a stock,
+        // the one class (#566) arms. The pins below grade the passers.
         assert_eq!(gated(&shipped_tuning()), 500, "the shipped growth_gate_soft no longer scores every fixture sample");
 
         // GATE PIN. Moves when a knob changes what passes: re-validate with a live `backtest universe`

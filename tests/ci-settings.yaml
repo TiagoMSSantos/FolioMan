@@ -19525,7 +19525,7 @@ buy_heuristic:
   #  1YD.DE Broadcom (PEG 1.67), AP2.DE Applied Materials (1.71), PAR.DE Parker-Hannifin (1.72), FTNT
   #  Fortinet (2.22), plus 5AP.DE and MPWR above the 2.4 near-miss band. Three of them would have
   #  entered a 13-name cleared pool at any rung >= 1.75, and the ladder says the book is worse for it.
-  growth_gate_soft: 0.6          # (#564) SHIPPED 0.6; (#565) CI grades the passer edge. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
+  growth_gate_soft: 0.8          # (#566) SHIPPED 0.8, STOCKS ONLY (`picks::asset_class` 2); ETFs and coins hard at any f (receipt below); (#564) shipped 0.6; (#565) CI grades the passer edge. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
   #  knob gates with exactly those gates waived (the MISSES what-if) and docks it f^n, n = gates waived; f = 1 is the (#560)
   #  gates-off book. Structural refusals, no turnover and the repriced-bar artifact stay hard at any f. All three tables.
   #── (#563) PRE-REGISTERED 2026-10-12 — EVERY GATE SOFT AT ONCE, COUNT-BASED ──
@@ -19633,7 +19633,44 @@ buy_heuristic:
   #  lines still print; CI no longer asserts on them. Checked every assert in `backtest_edge_holds`: Série E, SIZED
   #  DCA and the top-10 row grade the BOOK and pass at 0.6 on the (#564) runs (SIZED +5.5, Série E 98%).
   #  REVERT RULE: growth_gate_soft 0.0 makes each crowd line equal its passer twin again.
-  growth_leg_dock: 0.0          # (#566) OFF, NOT YET GRADED. p > 0 docks a score x p^k, k = how many of the 1Y/2Y/5Y/8Y/10Y/20Y
+  #── (#566) PRE-REGISTERED 2026-10-12, GRADED 2026-10-13: EACH ASSET CLASS ALONE, EVERY HORIZON ──
+  #  WHY: (#564) graded the stock book only, and ETFs and coins rode on it. Live at 0.6 the page grew from 16 names to 88
+  #  rows, many of them coins and ETFs no receipt had graded.
+  #  RULER: the per-class `BOOK stock|etf|crypto b<bucket>` lines. Each is the class's OWN top-10, ranked within the class,
+  #  so one class's knob cannot move another's line. Zero-filled as in (#564): an empty bucket is 0, you hold the index.
+  #  A cell is class x horizon x lane, counted when either arm books >= 10 buckets. Per cell, d = (mean of arm - base,
+  #  median over buckets of (arm - base) on the SAME bucket). WIN = both >= +0.2; VETO = either <= -0.2. A class passes
+  #  with wins >= 2/3 of its counted cells and no veto. A class that fails goes back to hard gates.
+  #  WHY PAIRED (USER DECISION, set before the stock grid below ran): the first tally took median(arm) - median(base).
+  #  When BASE books nothing in many buckets, its zeros sit mid-distribution and that difference reads noise. Pit 1y
+  #  stocks: the arm beat base on 7 of 13 buckets (paired median +1.7) yet read -1.3. Pit 1y coins: the arm lost on 8 of
+  #  13 (paired -9.9) yet read +33, because 2019-21 moonshots (one bucket +1568 pts/yr) filled base's empty buckets.
+  #  ARMS at 94a4cf6, `backtest 1 2 5 8 12 20 universe fund pit|stress`. BASE = growth_gate_soft 0. Each arm softens
+  #  every class (the knob was class-blind then); each class is graded on its own lines. Pit: 38357104134 (base)
+  #  38357114847 (0.6) 38365697314 (0.3) 38365708496 (0.45) 38365720467 (0.8). Stress: 38357157588 (base) 38357167945
+  #  (0.6) 38365732168 (0.3) 38365743655 (0.45) 38365755709 (0.8). Dock arms, 0.6 plus growth_leg_dock 0.5 / 0.7 /
+  #  0.85: pit 38357125943 38357136850 38357147245, stress 38357177861 38357187400 38357196701 (20y re-run
+  #  38363378647). Stress 0.8 hit the 60-min job cap AFTER its last BOOK line. Windows are identical across arms.
+  #  VERDICT, stocks (wins / 10 counted cells; 5y is thin everywhere):
+  #    0.3  6, VETO pit 8y (median -0.70)       0.45  8, VETO pit 8y (-0.55)        0.6  8, VETO stress 1y (-0.30)
+  #    0.8  10, PASS. pit 20y +2.34|+1.85, 12y +0.59|+1.15, 8y +0.74|+0.35, 2y +4.51|+4.70, 1y +2.04|+1.80;
+  #         stress 20y +0.95|+1.30, 12y +0.44|+0.70, 8y +0.67|+1.20, 2y +9.88|+4.60, 1y +10.11|+0.50.
+  #    dock 0.5 / 0.7 / 0.85: 7, 8, 7; only 0.85 passes (no veto). It moves every hard passer's score, ungraded.
+  #  VERDICT, ETFs: FAIL at every arm, vetoed at every counted cell. BASE books no ETF at 12y/20y; the arms' ETFs hold
+  #  -0.2 to -2.2 (mean) at 8-20y and -3.6 to -5.9 at 2y. Worse as f rises.
+  #  VERDICT, coins: FAIL at every arm on the paired ruler, 0/4 counted (1y/2y, both lanes): 1y mean +175 but paired
+  #  median -9.9 (0.6) / -7.5 (0.8); 2y -2.3 / -6.0. The mean is the 2019-21 moonshots in buckets base left empty. On the
+  #  recent buckets where base held coins, the soft book was worse on 5 of 6.
+  #  PICK (pre-registered): the passing stock arm with the most wins: 0.8. ETFs and coins: hard (`score_parts` arms stocks
+  #  only). growth_leg_dock stays off.
+  #  CI BOOK: not graded by any arm in this exact mix (stocks 0.8, the rest hard). Passer lines are identical in every arm.
+  #  The all-soft 0.8 arm passed every book assert at stress 8/12y (top-10 +4.6/+4.4, Série E 94%/96%); stress 20y
+  #  printed top-10 +4.5 and Série E 100% before the cap cut its SIZED line. backtest-gate grades the real mix.
+  #  CAVEATS: 0.8 is the grid's top rung, and wins rise with f (6, 8, 8, 10). f = 1 is the (#560) gates-off book. Coin
+  #  cells are survivorship-thin: of the dead coins in STRESS_TICKERS, CEL-USD and LUNC-USD booked, FTT-USD and LUNA1-USD
+  #  never printed. Exchange tokens, pegs, wipeouts (MAXDD <= -99%) and leveraged funds stay refused at any f.
+  #  RE-OPEN: stocks at 0.9 / 1.0 on this ruler (pre-register first). ETFs/coins need a new mechanism, not a looser bar.
+  growth_leg_dock: 0.0          # (#566) REFUSED (receipt above): only 0.85 passed stocks, below the plain 0.8 rung. p > 0 docks a score x p^k, k = how many of the 1Y/2Y/5Y/8Y/10Y/20Y
   #  legs lie past the name's longest one, and REPLACES both record-length charges: trust_factor reads 1.0 and a waived
   #  history/young gate leaves growth_gate_soft's n. Graded per class on the `BOOK stock|etf|crypto b<bucket>` lines.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
