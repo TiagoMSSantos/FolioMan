@@ -246,7 +246,9 @@ jobs:
   # nothing to do with the commit. Naming the targets keeps the number deterministic.
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # (#566) 30 -> 60: the soft gates (#564) score every failer through the full gate list, waiver and
+    # dock, so the instrumented fund-lane goldens went from ~3 to ~20 min (34bfee8 cancelled twice at 30).
+    timeout-minutes: 60
     env:
       # (#171) The same pin unit-tests, integration-tests and the mutation gate now carry: ONE config
       # regime for every job that runs tests, so a knob is live or inert everywhere at once instead of
@@ -328,7 +330,9 @@ jobs:
   # at the checked-in, secret-free fixture.
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # (#566) 25 -> 45: the debug fund-lane goldens went from ~3 to ~19 min once the soft gates (#564)
+    # scored every failer (34bfee8 cancelled twice at 25, every finished test green).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -337,7 +341,7 @@ jobs:
       - name: integration + live API drift nets (skip-on-throttle, fail-on-drift)
         # `--test '*'` also picks up backtest_edge_holds, which no longer carries #[ignore]. It
         # green-skips HERE — debug profile, and a runner has no persisted .long_history_cache.json —
-        # which is what keeps this job inside 25 min. The backtest-gate job below forces it to run.
+        # which is what keeps this job inside 45 min. The backtest-gate job below forces it to run.
         # The same glob is what runs backtest_fixture (the frozen-data golden pin, ~24s in debug, and
         # the only end-to-end net over real data). Do NOT replace this glob with an explicit list: a
         # new tests/*.rs file joins no job on its own, so the glob is the thing that keeps them wired.
