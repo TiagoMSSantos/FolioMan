@@ -19525,7 +19525,7 @@ buy_heuristic:
   #  1YD.DE Broadcom (PEG 1.67), AP2.DE Applied Materials (1.71), PAR.DE Parker-Hannifin (1.72), FTNT
   #  Fortinet (2.22), plus 5AP.DE and MPWR above the 2.4 near-miss band. Three of them would have
   #  entered a 13-name cleared pool at any rung >= 1.75, and the ladder says the book is worse for it.
-  growth_gate_soft: 0.8          # (#566) SHIPPED 0.8, STOCKS ONLY (`picks::asset_class` 2); ETFs and coins hard at any f (receipt below); (#564) shipped 0.6; (#565) CI grades the passer edge. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
+  growth_gate_soft: 0.8          # (#566) SHIPPED 0.8, STOCKS ONLY (`picks::asset_class` 2); ETFs and coins hard at any f (receipt below); (#567) 0.9 / 1.0 refused; (#564) shipped 0.6; (#565) CI grades the passer edge. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
   #  knob gates with exactly those gates waived (the MISSES what-if) and docks it f^n, n = gates waived; f = 1 is the (#560)
   #  gates-off book. Structural refusals, no turnover and the repriced-bar artifact stay hard at any f. All three tables.
   #── (#563) PRE-REGISTERED 2026-10-12 — EVERY GATE SOFT AT ONCE, COUNT-BASED ──
@@ -19670,6 +19670,33 @@ buy_heuristic:
   #  cells are survivorship-thin: of the dead coins in STRESS_TICKERS, CEL-USD and LUNC-USD booked, FTT-USD and LUNA1-USD
   #  never printed. Exchange tokens, pegs, wipeouts (MAXDD <= -99%) and leveraged funds stay refused at any f.
   #  RE-OPEN: stocks at 0.9 / 1.0 on this ruler (pre-register first). ETFs/coins need a new mechanism, not a looser bar.
+  #── (#567) REFUSED 2026-10-13 — STOCKS ABOVE 0.8: 0.9 AND 1.0 ──
+  #  WHY: the (#566) RE-OPEN. 0.8 was the grid's top rung and stock wins rose with f, so the peak might lie above it.
+  #  ARMS, written before any run, at 14e71bb: base (growth_gate_soft 0), ctl (shipped 0.8, no knobs), 0.9, 1.0. Same
+  #  ruler, stock lines only. Pit 1-20y in one run; stress split 1 2 5 | 8 12 20 to stay under the 60-min cap.
+  #  BAR (USER DECISION): an arm qualifies if it passes vs base (the (#566) bar) AND, paired against the same-batch 0.8,
+  #  wins >= 2/3 of the counted stock cells with no veto. Most head-to-head wins ships; a tie ships 0.9. Else 0.8 stays.
+  #  RUNS: pit 38398521040 (base) 38398535113 (0.8) 38398548579 (0.9) 38398560960 (1.0); stress 1-5y 38398575161
+  #  38398588916 38398602113 38398616153; stress 8-20y 38398630484 38398643173 38398655871 38398669477. Windows scored
+  #  are identical across arms: pit 1119/2779/6163/794/5955/8093, stress 2541/5078/9015/861/6298/8487 (20/12/8/5/2/1y).
+  #  ETF and coin BOOK lines are byte-identical in all four arms, so the stocks-only arming held.
+  #  VERDICT: REFUSED, 0.8 stays. Neither arm clears either gate.
+  #    vs base: 0.8 10/10 PASS (reproduces (#566) to 0.02); 0.9 9/10 and 1.0 9/10, both VETO pit 8y (median -0.30/-1.35).
+  #    vs 0.8, d = mean|paired median   0.9              1.0       (W = win, V = veto; 5y thin in every arm)
+  #      pit 20y                        +0.09|+0.15      -0.08|+0.05
+  #      pit 12y                        -0.22|-0.05 V    -0.14|-0.10
+  #      pit 8y                         -0.14|-0.25 V    -0.53|-0.20 V
+  #      pit 2y                         -0.23|+0.00 V    -1.35|-0.10 V
+  #      pit 1y                         +2.00|+0.90 W    +3.78|+0.50 W
+  #      stress 20y                     -0.01|+0.00      +0.16|+0.00
+  #      stress 12y                     +0.13|+0.00      +0.19|+0.00
+  #      stress 8y                      +0.23|+0.00      +0.27|+0.00
+  #      stress 2y                      -1.68|-2.30 V    -1.47|-0.80 V
+  #      stress 1y                      +3.54|+0.00      +7.80|+3.00 W
+  #    head-to-head: 0.9 1/10, VETO pit 12y, 8y, 2y, stress 2y; 1.0 2/10, VETO pit 8y, 2y, stress 2y.
+  #  READING: past 0.8 the 8-20y books barely move (stress paired medians 0.00, pit within +-0.25). Only 1y gains,
+  #  and pit 8y and both 2y cells lose. 0.8 is now an interior peak of 0.3 / 0.45 / 0.6 / 0.8 / 0.9 / 1.0.
+  #  RE-OPEN: none on f. A stock re-ask needs a different mechanism (e.g. per-gate f), pre-registered first.
   growth_leg_dock: 0.0          # (#566) REFUSED (receipt above): only 0.85 passed stocks, below the plain 0.8 rung. p > 0 docks a score x p^k, k = how many of the 1Y/2Y/5Y/8Y/10Y/20Y
   #  legs lie past the name's longest one, and REPLACES both record-length charges: trust_factor reads 1.0 and a waived
   #  history/young gate leaves growth_gate_soft's n. Graded per class on the `BOOK stock|etf|crypto b<bucket>` lines.
