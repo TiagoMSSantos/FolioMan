@@ -1575,6 +1575,21 @@ sizing:
   #  cells (pit + stress x 20/12/8y). Read in the control arm of the (#571) beta batch, at shipped settings.
   #  A beat ships NOTHING. It opens a design question for the user (TR-life as a score term or a gate).
   #  The forward ruler is price-only, so it leans AGAINST (h)/(i): their dividend lift is not paid back.
+  #  VERDICT (2026-10-13, ctl probes 38463746799 pit + 38463789870/38463832022 stress at db069d5; windows
+  #  1119/2779/6163 and 2541/5078/9015 in all three arms): NEITHER BEATS SHIPPED. Mean (median) pts/yr vs the
+  #  real shipped top-10 row:
+  #    cell        shipped       (h) TR life      delta            (i) 10Y+         delta
+  #    pit 20y     +2.9 (+2.1)   +4.2 (+3.7)      +1.3/+1.6  WIN   +3.0 (+2.7)      +0.1/+0.6
+  #    pit 12y     +3.0 (+3.2)   +3.7 (+3.8)      +0.7/+0.6  WIN   +4.5 (+3.8)      +1.5/+0.6  WIN
+  #    pit  8y     +3.3 (+2.9)   +4.6 (+4.9)      +1.3/+2.0  WIN   +5.6 (+5.1)      +2.3/+2.2  WIN
+  #    stress 20y  +4.5 (+4.6)   +4.7 (+4.5)      +0.2/-0.1        +3.7 (+3.5)      -0.8/-1.1
+  #    stress 12y  +4.4 (+5.6)   +4.4 (+6.3)      -0.0/+0.7        +3.6 (+3.9)      -0.8/-1.7
+  #    stress  8y  +4.6 (+4.3)   +5.4 (+5.9)      +0.8/+1.6  WIN   +4.5 (+5.0)      -0.1/+0.7
+  #  (h) 4 of 6, (i) 2 of 6, against the bar of 5. Read-only: (h) leads all three pit cells, the lane without
+  #  survivor bias, and ties stress 12/20y. It loses badly at 1y/2y (pit -5.4/-9.8 mean vs plain shipped), so
+  #  long-run CAGR alone is no timing signal. The 10Y+ filter does not help: it drops the young compounders.
+  #  NOTHING SHIPS. (h) is now the second rival on file after (#560)'s momentum. Re-ask it as a score term
+  #  (not a book swap) with its own pre-registered bar, or on a longer pit record.
   #── (#561) SOFT-GATE SCREEN: WHICH HARD GATE COSTS THE SHIPPED BOOK THE MOST? ──
   #  WHY: (#560) put shipped under the random-pond p95 in 5 of 6 cells, and its gates-off twin had a better
   #  worst window in all 6. So: grade each binding gate ALONE before building any taper. STAGE 1 (this
@@ -17058,6 +17073,21 @@ buy_heuristic:
                                  #   8/12/20y logs. If both arms pass, the one with more cells won ships; a tie ships b03.
                                  #   CAVEAT kept from (#130): at beta = 0 more names saturate growth_accel_cap 50, so b00 is not a
                                  #   pure slope read. Fail both -> beta stays 1.0 and the soft-gate slope question closes.
+                                 #   VERDICT (2026-10-13, 9 probes 38463746799..38463861501 at db069d5; beta echo in every arm log,
+                                 #   windows and BOOK line counts = control on every horizon): REFUSED, BOTH ARMS. Stocks won 0/10
+                                 #   cells, vetoed in 8: pit 20/2/1y and stress 20/12/8/2/1y. Real shipped top-10 mean (median):
+                                 #       cell        ctl            b03 (0.3)      b00 (0.0)
+                                 #       pit 20y     +2.9 (+2.1)    +2.2 (+1.4)    +2.2 (+1.6)
+                                 #       pit 12y     +3.0 (+3.2)    +2.9 (+3.4)    +3.0 (+3.6)
+                                 #       pit  8y     +3.3 (+2.9)    +3.5 (+3.8)    +3.6 (+3.6)
+                                 #       stress 20y  +4.5 (+4.6)    +4.1 (+4.3)    +4.2 (+4.3)
+                                 #       stress 12y  +4.4 (+5.6)    +3.9 (+4.9)    +3.9 (+4.8)
+                                 #       stress  8y  +4.6 (+4.3)    +4.1 (+4.8)    +4.1 (+4.3)
+                                 #   Only pit 8y gains on mean AND median. The worst losses are short: stress 2y paired mean -3.7 (b03) / -5.1 (b00).
+                                 #   READ: under soft 0.8, as under hard gates in (#130), the CAGR subtraction earns its place. The
+                                 #   1Y-minus-own-CAGR residual ranks better than raw 1Y. A low-CAGR name that outranks a fast
+                                 #   compounder on the same 1Y is the residual working as built, not a defect. beta stays 1.0, and
+                                 #   the soft-gate slope question is CLOSED. Do not re-ask beta without a new mechanism.
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
   growth_smoothness_weight: 0.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
                                  #   straight-line compounder over the equal-CAGR rollercoaster. Reconstructed in backtest_quote,
