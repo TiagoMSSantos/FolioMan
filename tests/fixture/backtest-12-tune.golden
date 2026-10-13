@@ -1,17 +1,26 @@
 
 ══ TUNE — growth lane, honest out-of-sample (889 train / 382 test cutoffs, 500 draws) ══
-  shipped default      TEST: rho +0.16  edge +224.2  terciles +78.5/+28.8/-110.6 monotone
+  shipped default      TEST: rho +0.16  edge +81.5  terciles +102.2/-2.2/-91.5 monotone
   inert on this sample (skipped, kept at default): growth_fund_weight
-  search winner       TRAIN: rho +0.09  edge +6.0
-  search winner        TEST: rho +0.16  edge +203.9  terciles +71.0/+0.7/-75.0 monotone   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
+  search winner       TRAIN: rho +0.13  edge +54.2
+  search winner        TEST: rho +0.15  edge +97.4  terciles +56.7/+24.6/-72.9 monotone   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
   weights (searched dims only):
-    growth_trend_weight    0.050
-    long_trend_cap         30.901
-    growth_accel_weight    0.655
-    growth_accel_cap       72.057
-    sharpe_weight          0.814
-    calmar_weight          2.662
-    growth_overext_floor   0.415
-    growth_mom121_weight   0.440
-  -> winner does NOT beat the default on the held-out TEST edge (+203.9 vs +224.2); the shipped knobs already generalise. SHIP NOTHING.
+    growth_trend_weight    0.035
+    long_trend_cap         33.677
+    growth_accel_weight    0.785
+    growth_accel_cap       76.164
+    sharpe_weight          1.733
+    calmar_weight          0.138
+    growth_overext_floor   0.245
+    growth_mom121_weight   0.410
+  -> winner BEATS the default on TEST (+97.4 vs +81.5). Paste the weights into settings.yaml, then re-run plain `backtest universe` to confirm.
+  parsimony (winner, each weight -> 0, TEST edge Δ vs +97.4):
+    growth_trend_weight    edge +103.1 Δ+5.7
+    long_trend_cap         edge +97.4 Δ+0.0
+    growth_accel_weight    edge +169.0 Δ+71.6
+    growth_accel_cap       edge +169.0 Δ+71.6
+    sharpe_weight          edge +109.5 Δ+12.1
+    calmar_weight          edge +102.3 Δ+4.9
+    growth_overext_floor   edge +129.6 Δ+32.2
+    growth_mom121_weight   edge +86.7 Δ-10.7
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
