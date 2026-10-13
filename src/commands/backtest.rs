@@ -568,6 +568,9 @@ fn stamp_asset_class(
     quote.name = name.to_string();
     quote.instrument_type =
         if etf_set.contains(&quote.ticker) { "ETF".to_string() } else { instrument_type.to_string() };
+    // (#569) last writer of name and type, so stamp here; cleared first so the derive reads them live
+    quote.name_class = None;
+    quote.name_class = Some(picks::name_class(quote));
     // (#95) TODAY's GICS label, and there is no as-of one to substitute — no feed this tool reads
     // carries GICS history. It is not cosmetic: `picks::is_commodity` reads `sector` and drives
     // `commodity_damp`, so a name reclassified since is damped on a fact from after the decision.

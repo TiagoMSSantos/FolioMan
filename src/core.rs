@@ -366,6 +366,12 @@ pub struct Quote {
     /// of them is the wide edit that reds the mutation gate. `Quote` carries no serde, so this field
     /// shifts no golden, no cache and no journaled fingerprint.
     pub growth_sector_floor: Option<f64>,
+    /// (#569) `picks::name_class` stamped once, as (is ETF, name refusal), by the backtest's
+    /// `stamp_asset_class` after it sets the name and type. None = derive live (every other quote). Soft
+    /// scoring re-reads these ~15 times per failing stock, and each read lowercased and scanned the name:
+    /// ~60% of a fund backtest's wall time. Not serialized, so the page payload is unchanged.
+    #[serde(skip)]
+    pub name_class: Option<(bool, Option<&'static str>)>,
     pub sector: Option<String>,        // (#44) GICS sector, joined from the constituents CSVs (`fetch::sector_map`) — the sole input to the commodity flag/damp for stocks. Set on BOTH `screen` paths (the universe fetch and, since the explain mismatch, the explicit-args one). None for ETFs/crypto (funds carry no GICS; their path is name tokens), for `check` (its growth table is explicitly "derived from the table above — no extra fetch", a contract worth more than the flag), and for `check`. CORRECTED (#95): the claim that this is None "in the BACKTEST pool -> `is_commodity` false there -> damp ×1.0 -> validated edge untouched" is FALSE and has been since `stamp_asset_class` started stamping it — the same class of stale claim the `sharpe_cap_etf` receipt corrected on 2026-08-02. The damp IS live in the walk, on TODAY's label at every cutoff; `backtest_drop_lookahead_sector` is the knob that makes the old sentence true again
     pub aum_eur: Option<f64>,          // (AUM) fund size from the Börse Frankfurt universe payload, EUR-approximate (BF mixes fund currencies; ±FX is immaterial vs the order-of-magnitude gate). ETFs/ETPs only; None = not a fund / not in BF / backtest -> gate inert
     pub ter_fallback: Option<f64>,     // Yahoo quoteSummary TER (%) for funds with NO BF facts (venue/regulatory-only rows). Read ONLY via ter_shown() for display + H/CORE — kept out of expense_ratio because ter_damp SCORES that field (a merged run moved live ranks; scoring lane closed)
@@ -414,6 +420,7 @@ impl Quote {
     pub fn stub(ticker: &str, price: &str, head: &str, name: &str) -> Quote {
         Quote {
             growth_sector_floor: None, // (#328) stamped per run by the caller, never fetched
+            name_class: None,
             ticker: ticker.to_string(),
             price: price.to_string(),
             dip: String::new(),

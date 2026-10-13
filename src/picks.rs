@@ -838,8 +838,27 @@ fn is_noneur_etf(quote: &Quote) -> bool {
 /// Is this quote a pooled fund? Prefer Yahoo's own `instrumentType` ("ETF"), which is present even
 /// when the name string isn't a giveaway (ETF shortNames like "ISHARES III PLC ISHRS CORE MSCI"
 /// carry no marker). Falls back to the name-substring guess for rows with no meta (backtest stubs).
+/// (#569) A stamped `name_class` answers without re-reading the name.
 pub(crate) fn quote_is_etf(quote: &Quote) -> bool {
-    quote.instrument_type.eq_ignore_ascii_case("ETF") || is_etf(&quote.name)
+    quote.name_class.map_or_else(|| quote.instrument_type.eq_ignore_ascii_case("ETF") || is_etf(&quote.name), |c| c.0)
+}
+
+/// (#569) What `Quote::name_class` stamps: the two reads that depend on the name and type alone.
+pub(crate) fn name_class(quote: &Quote) -> (bool, Option<&'static str>) {
+    (quote_is_etf(quote), name_refusal(quote))
+}
+
+/// The name-only head of `refusal_reason`, in its order.
+fn name_refusal(quote: &Quote) -> Option<&'static str> {
+    if is_leveraged(&quote.name) {
+        Some("leveraged")
+    } else if is_commodity_etf(quote) {
+        Some("commodity")
+    } else if is_hedged_etf(quote) {
+        Some("hedged")
+    } else {
+        None
+    }
 }
 
 /// Underlying of a currency-quoted ticker: strips a trailing `-EUR`/`-USD` (crypto twins like
@@ -1993,9 +2012,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if tuning.growth_soft_life_hard > 0.0 && gate_failures(quote, tuning)?.iter().any(|g| g.0 == "cagr-life") {
         return None;
     }
-    // ponytail: clones the tuning and re-runs the gates per FAILING quote, only while the knob is armed;
+    // ponytail: clones the tuning and re-runs the gates (tags only) per FAILING quote while the knob is armed;
     // precompute per pool if a probe arm slows. The walkthrough prints no x f^n line yet; add it if this ships.
-    let (open, tags, _) = waived(quote, tuning)?;
+    let (open, tags, _) = waived(quote, tuning, false)?;
     let mut p = score_parts_hard(quote, &open)?;
     // (#566) with the leg dock on, a short record pays p^k instead, so its record gates leave the n
     let n = tags.iter().filter(|g| !(tuning.growth_leg_dock > 0.0 && matches!(g.0, "history" | "young"))).count();
@@ -2711,14 +2730,8 @@ pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) ->
 /// `Some`-less — i.e. the funnel reads "refused with no structural reason" as the missing-1Y case, which
 /// is exact because these are the only two ways out.
 pub fn refusal_reason(quote: &Quote) -> Option<&'static str> {
-    if is_leveraged(&quote.name) {
-        return Some("leveraged");
-    }
-    if is_commodity_etf(quote) {
-        return Some("commodity");
-    }
-    if is_hedged_etf(quote) {
-        return Some("hedged");
+    if let Some(why) = quote.name_class.map_or_else(|| name_refusal(quote), |c| c.1) {
+        return Some(why);
     }
     if is_currency_quoted(&quote.ticker) && (is_stablecoin(&quote.ticker) || is_pegged(quote)) {
         return Some("stablecoin");
@@ -2741,6 +2754,18 @@ pub fn refusal_reason(quote: &Quote) -> Option<&'static str> {
 /// the near-miss tail above and `check`'s held-name gate review, so a held name that would no longer
 /// rank gets flagged with the same wording the screen tail uses.
 pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'static str, String, bool)>> {
+    gate_fails(quote, tuning, true)
+}
+
+/// [`gate_failures`]; `why` false leaves every reason empty, for a reader that wants the tags alone.
+fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'static str, String, bool)>> {
+    // (#569) soft scoring runs this twice per failing stock and reads only the tags: formatting the
+    // reasons was ~half a fund backtest's wall time. Shadowing `format!` keeps each reason line as-is.
+    macro_rules! format {
+        ($($a:tt)*) => {
+            if why { ::std::format!($($a)*) } else { String::new() }
+        };
+    }
     let crypto = is_currency_quoted(&quote.ticker);
     // not a near-miss CANDIDATE: structural rejects / missing data have nothing to "almost pass"
     if refusal_reason(quote).is_some() {
@@ -3039,10 +3064,11 @@ const UNWAIVABLE: [&str; 2] = ["artifact", "exchange"];
 /// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 1Y rung
 /// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
 /// (#543) Each waived tag keeps the why its first failing round printed, for the MISSES hover.
-fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<(&'static str, String)>, Vec<(&'static str, String, bool)>)> {
+/// `why` false skips the reason strings (see [`gate_fails`]).
+fn waived(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<(BuyHeuristic, Vec<(&'static str, String)>, Vec<(&'static str, String, bool)>)> {
     let (mut t, mut tags) = (tuning.clone(), Vec::<(&'static str, String)>::new());
     loop {
-        let fails = gate_failures(quote, &t)?;
+        let fails = gate_fails(quote, &t, why)?;
         let new: Vec<(&'static str, String)> =
             fails.iter().filter(|f| !UNWAIVABLE.contains(&f.0) && !tags.iter().any(|g| g.0 == f.0)).map(|f| (f.0, f.1.clone())).collect();
         if new.is_empty() {
@@ -3059,7 +3085,7 @@ fn waived(quote: &Quote, tuning: &BuyHeuristic) -> Option<(BuyHeuristic, Vec<(&'
 /// place it would take among `class` (the scores today's ranking gave its own asset class), then the
 /// score walkthrough. `score` is the displayed score under a tuning. Display only: nothing ranks it.
 fn what_if_lines(quote: &Quote, tuning: &BuyHeuristic, class: &[f64], score: impl Fn(&BuyHeuristic) -> Option<f64>) -> String {
-    let Some((t, tags, left)) = waived(quote, tuning) else { return String::new() };
+    let Some((t, tags, left)) = waived(quote, tuning, true) else { return String::new() };
     let tags = tags.iter().map(|g| g.0).collect::<Vec<_>>().join(", ");
     if !left.is_empty() {
         let why: Vec<String> = left.iter().map(|(g, why, _)| format!("{g}: {why}")).collect();
@@ -5607,7 +5633,7 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
         Some(why) => return ((3, 0, NONE), "—".to_string(), format!("refused: {why}"), String::new()),
         None => {}
     }
-    let mut w = waived(&own, tuning);
+    let mut w = waived(&own, tuning, true);
     let twin = match &w {
         Some((_, tags, _)) if quote_is_etf(q) && tags.iter().any(|g| matches!(g.0, "history" | "young")) => index_twin(q, pool, tuning),
         _ => None,
@@ -5637,7 +5663,7 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
         if !own.perf_nominal.is_empty() {
             set(&mut own.perf_nominal);
         }
-        (w, mark) = (waived(&own, tuning), "ⁱ");
+        (w, mark) = (waived(&own, tuning, true), "ⁱ");
     }
     let Some((t, tags, left)) = w else { return na };
     for (g, why) in tags.iter().map(|g| (g.0, &g.1)).chain(left.iter().map(|f| (f.0, &f.1))) {
@@ -8393,6 +8419,7 @@ mod tests {
         }
         Quote {
             growth_sector_floor: None,
+            name_class: None,
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
             perf_nominal: Vec::new(), // (#88) empty = score on `perf`, which is what every fixture here means
@@ -12534,7 +12561,7 @@ mod tests {
         let mut q = gate_fixture();
         q.range_pct = 20.0; // under the range floor
         q.perf = legs(&[("1M", -30.0), ("1Y", 20.0), ("5Y", 200.0)]); // a 1M knife on the passer's legs
-        let (open, tags, _) = waived(&q, &t).expect("an assessable failer");
+        let (open, tags, _) = waived(&q, &t, true).expect("an assessable failer");
         assert!(tags.len() >= 2, "the fixture fails several gates, so n is not 1: {tags:?}");
         let full = growth_score(&q, &open).expect("it scores with its gates waived");
         assert!(full > 0.0, "a positive score, so the dock is a multiply here");
@@ -12546,7 +12573,7 @@ mod tests {
         coin.ticker = "ZZZ-USD".into();
         coin.instrument_type = "CRYPTOCURRENCY".into();
         assert_eq!(asset_class(&coin), 0);
-        let (coin_open, _, _) = waived(&coin, &t).expect("an assessable coin failer");
+        let (coin_open, _, _) = waived(&coin, &t, true).expect("an assessable coin failer");
         assert!(growth_score(&coin, &coin_open).is_some(), "the coin scores with its own gates waived");
         assert_eq!(soft(&coin, 1.0), None, "growth_gate_soft leaves a coin hard");
 
@@ -12559,6 +12586,38 @@ mod tests {
         lev.name = "ProShares Ultra S&P500".into();
         lev.range_pct = 20.0;
         assert_eq!(soft(&lev, 1.0), None, "a structural refusal has no knob to waive");
+    }
+
+    /// (#569) The soft scorer's tags-only read: the same gates, tags and near-miss flags, every reason empty.
+    #[test]
+    fn gate_fails_without_why_keeps_the_tags() {
+        let t = BuyHeuristic::default();
+        let mut q = gate_fixture();
+        q.range_pct = 20.0;
+        q.perf = legs(&[("1M", -30.0), ("1Y", 20.0), ("5Y", 200.0)]);
+        let full = gate_failures(&q, &t).expect("assessable");
+        assert!(full.len() >= 2 && full.iter().all(|f| !f.1.is_empty()), "{full:?}");
+        let bare = gate_fails(&q, &t, false).expect("assessable");
+        assert_eq!(bare, full.iter().map(|f| (f.0, String::new(), f.2)).collect::<Vec<_>>());
+    }
+
+    /// (#569) `name_class` derives each name read the live predicates make, and a stamped quote answers
+    /// from the stamp: a deliberately wrong stamp is what both readers return.
+    #[test]
+    fn name_class_stamp_is_what_the_readers_return() {
+        for (name, kind, want) in [
+            ("Apple Inc.", "EQUITY", (false, None)),
+            ("Amundi MSCI World UCITS ETF Acc", "", (true, None)),
+            ("GraniteShares 2x Short NVD", "ETF", (true, Some("leveraged"))),
+            ("Xtrackers IE Physical Gold ETC", "ETF", (true, Some("commodity"))),
+            ("iShares S&P 500 EUR Hedged UCITS ETF", "ETF", (true, Some("hedged"))),
+        ] {
+            let mut q = Quote::stub("T", "€1", "", name);
+            q.instrument_type = kind.into();
+            assert_eq!(name_class(&q), want, "{name}");
+            q.name_class = Some((!want.0, Some("stamped")));
+            assert_eq!((quote_is_etf(&q), refusal_reason(&q)), (!want.0, Some("stamped")), "{name}");
+        }
     }
 
     /// (#568) `growth_soft_life_hard` keeps a stock under the whole-life CAGR floor out at any f, and
@@ -12623,7 +12682,7 @@ mod tests {
         let mut young = gate_fixture();
         young.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("2Y", 44.0)]);
         let soft = BuyHeuristic { growth_gate_soft: 0.6, ..d.clone() };
-        let (_, tags, _) = waived(&young, &soft).expect("assessable");
+        let (_, tags, _) = waived(&young, &soft, true).expect("assessable");
         assert!(tags.iter().any(|g| g.0 == "history"), "the fixture must fail the record gate: {tags:?}");
         let n_rest = tags.iter().filter(|g| !matches!(g.0, "history" | "young")).count() as i32;
         let p = score_parts(&young, &BuyHeuristic { growth_leg_dock: 0.5, ..soft.clone() }).expect("scores");
@@ -14377,7 +14436,7 @@ mod tests {
             }
         }
         assert!(is_exchange_token("WBT-USD"));
-        assert!(waived(&wbt, &ex).is_some_and(|(_, _, left)| left.iter().any(|(g, ..)| *g == "exchange")));
+        assert!(waived(&wbt, &ex, true).is_some_and(|(_, _, left)| left.iter().any(|(g, ..)| *g == "exchange")));
         // the missing-1Y bail is NOT structural: gate_failures refuses it, refusal_reason does not —
         // which is exactly how the funnel tells the two apart (see refusal_reason's doc).
         assert_eq!(refusal_reason(&no_1y), None);
@@ -14534,7 +14593,7 @@ mod tests {
                 "draw {i}: gate_failures {fails:?}, scorer ranks={ranks} — the mirror drifted from score_parts");
             // (#476) every gate the why box waives really is switched off: only a repriced bar, or a
             // history too short even for the 2Y rung, may still fail; anything else must then rank
-            if let Some((wt, _, left)) = waived(&q, &t) {
+            if let Some((wt, _, left)) = waived(&q, &t, true) {
                 assert!(left.iter().all(|(g, ..)| matches!(*g, "artifact" | "exchange" | "history")), "draw {i}: waiving left {left:?}");
                 assert_eq!(left.is_empty(), growth_score(&q, &wt).is_some(), "draw {i}: waived {left:?}");
                 rescued += usize::from(left.is_empty() && !ranks);
