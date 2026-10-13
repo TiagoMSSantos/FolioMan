@@ -3550,8 +3550,9 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 /// (#560) The `rivals` books, in print order. Row 0 is the shipped score picked by the same plain
 /// top-10 as every rival, so the comparison is like for like; the real shipped row (value trim, caps)
 /// prints above it in `report_vs_benchmark` and is what the 6-cell tally reads. (e), the random pond,
-/// prints last from [`random_books`].
-const RIVALS: [&str; 7] = [
+/// prints last from [`random_books`]. (#571) (h)/(i) rank on `tr_cagr`, the TR-CAGR column's as-of number;
+/// (i) keeps only names with a 10Y leg, since `age_years` is None on a backtest quote.
+const RIVALS: [&str; 9] = [
     "shipped (plain top-10)",
     "(d) gates-off shipped",
     "(a) momentum 12-1",
@@ -3559,6 +3560,8 @@ const RIVALS: [&str; 7] = [
     "(c) value E/P",
     "(f) revenue CAGR",
     "(g) momentum x quality",
+    "(h) TR life CAGR",
+    "(i) TR life CAGR, 10Y+",
 ];
 
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
@@ -3661,7 +3664,7 @@ fn rival_books(
     for (b, group) in &by_cutoff {
         let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
         let (sh, op) = (scorer(&quotes, shipped), scorer(&quotes, open));
-        let mut rows: Vec<([Option<f64>; 7], f64, f64, &str)> = Vec::new();
+        let mut rows: Vec<([Option<f64>; 9], f64, f64, &str)> = Vec::new();
         for ((s, sh), op) in group.iter().zip(sh).zip(op) {
             let (Some(op), Some(bench_r)) = (op, benchmark_fwd(bd, bc, s.date, years)) else { continue };
             let f = s.fund.as_ref();
@@ -3673,6 +3676,8 @@ fn rival_books(
                 f.and_then(|f| f.earnings_yield),
                 f.and_then(|f| f.rev_cagr),
                 None,
+                s.quote.tr_cagr,
+                s.quote.tr_cagr.filter(|_| picks::perf_pct(&s.quote, "10Y").is_some()),
             ];
             rows.push((keys, s.realized, bench_r, s.quote.ticker.as_str()));
         }
@@ -3693,7 +3698,7 @@ fn rival_books(
     (books, pond)
 }
 
-/// (#560) The `rivals` report: seven top-10 books and a random one on the SAME pond, the non-crypto
+/// (#560) The `rivals` report: nine top-10 books and a random one on the SAME pond, the non-crypto
 /// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
 /// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
 #[mutants::skip] // printing; `rival_books` and its helpers carry the tests
@@ -8127,6 +8132,7 @@ mod tests {
         let bench = (vec![a, b, c], vec![100.0, 110.0, 110.0]);
         let with = |mut s: Sample, f: FundFactors, one_year: Option<f64>| {
             let mut q = (*s.quote).clone();
+            q.tr_cagr = (s.quote.ticker == "S2").then_some(50.0); // (#571) S2 alone keys (h); no 10Y leg, so (i) is empty
             q.perf = crate::core::HORIZONS.iter().map(|(l, _)| one_year.filter(|_| *l == "1Y").map(|v| ("x".to_string(), v))).collect();
             s.quote = Arc::new(q);
             s.fund = Some(f);
@@ -8144,7 +8150,8 @@ mod tests {
         let open = BuyHeuristic { quality_weight: 1.0, ..BuyHeuristic::default() };
         let (books, pond) = rival_books(&samples, &bench, 1, swap_scorer, &shipped, &open);
         // S1 alone: +30 vs +10 -> 20. S1 + S2: +20 -> 10. S2 alone: 0.
-        let want: [&[f64]; 7] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0]];
+        let want: [&[f64]; 9] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[]];
+        assert_eq!(books.len(), RIVALS.len());
         for (i, (got, want)) in books.iter().zip(want).enumerate() {
             assert_eq!(got.len(), want.len(), "book {i}: {got:?}");
             assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-9), "book {i}: {got:?} vs {want:?}");
