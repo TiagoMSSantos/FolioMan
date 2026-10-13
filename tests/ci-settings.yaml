@@ -19700,11 +19700,19 @@ buy_heuristic:
   growth_leg_dock: 0.0          # (#566) REFUSED (receipt above): only 0.85 passed stocks, below the plain 0.8 rung. p > 0 docks a score x p^k, k = how many of the 1Y/2Y/5Y/8Y/10Y/20Y
   #  legs lie past the name's longest one, and REPLACES both record-length charges: trust_factor reads 1.0 and a waived
   #  history/young gate leaves growth_gate_soft's n. Graded per class on the `BOOK stock|etf|crypto b<bucket>` lines.
-  growth_soft_life_hard: 0.0    # (#568) UNMEASURED, probe pending. 1 = a stock under the whole-life CAGR floor (`cagr-life`)
+  growth_soft_life_hard: 0.0    # (#568) REFUSED 2026-10-13. 1 = a stock under the whole-life CAGR floor (`cagr-life`)
   #  stays hard while growth_gate_soft softens its other gates. 0 = cagr-life is waivable like every other knob gate.
   #  PRE-REGISTERED 2026-10-13, before any run: arms base (growth_gate_soft 0), ctl (shipped), life (this knob 1), one batch at
   #  one commit; pit 1 2 5 8 12 20 + stress `1 2 5` | `8 12 20`, `universe fund`. Stock BOOK cells on the (#566) paired ruler.
   #  Ships only if life passes vs base AND vs ctl (2/3 of counted cells won, no veto) and the backtest_edge_holds lines hold.
+  #  Graded at 078da92, runs 38444968875..38445087520 (pit base/ctl/life 38444968875/38444983655/38444999259; stress
+  #  `1 2 5` 38445014956/38445030161/38445043899, `8 12 20` 38445059050/38445073719/38445087520). Windows identical across
+  #  arms at every horizon; ETF + crypto BOOK lines md5-identical. ctl reproduced (#566): 10/10 vs base.
+  #  life vs base: 6/10, VETO pit 1y (d mean +0.50 | median -0.50). life vs ctl: 3/10, VETO pit 2y (-0.86 | 0.00) and pit 1y
+  #  (-1.51 | 0.00); wins only pit 8y/12y, stress 12y. Mean d vs ctl is positive at 8-20y (stress 12y +1.23), but stress
+  #  8/12/20y books run empty in 15 of 59-83 buckets (44/59, 60/75, 68/83 vs 59/75/83), so the paired median reads 0.
+  #  So a hard life floor loses the 1-2y books and empties stress buckets. The knob stays 0. Do not re-ask
+  #  without a mechanism that keeps the stress books full.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
