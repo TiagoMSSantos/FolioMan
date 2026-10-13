@@ -13575,6 +13575,22 @@ buy_heuristic:
                                  #   counted etf/crypto cell, and the backtest_edge_holds lines hold on tr's 8/12/20 logs.
                                  #   Else this stays false. Edge (a) above still holds: forward returns are price-only, so
                                  #   the ruler leans AGAINST this knob, and a pass is conservative.
+                                 #   (#570) MEASURED 2026-10-13 AT d4bee8f AND REFUSED. Runs: pit ctl 38459227970,
+                                 #   tr 38459241589; stress 1 2 5 ctl 38459254845, tr 38459268078; stress 8 12 20
+                                 #   ctl 38459281430, tr 38459295034. The tr logs echo the flag true. Windows scored and
+                                 #   BOOK line counts are equal per horizon (+-1 window). Stocks won 0/10 cells, with two
+                                 #   vetoes (d = mean | paired median vs ctl):
+                                 #     pit 12y -0.23|+0.00 VETO, pit 8y -0.13|+0.00, pit 20y +0.00|+0.00, pit 2y +0.10|+0.00,
+                                 #     pit 1y +1.36|+0.00, stress 2y -0.32|+0.00 VETO, stress 20/12/8y -0.02/-0.00/-0.01,
+                                 #     stress 1y +0.10|+0.00. The 5y cells are thin (5 buckets). Every etf/crypto cell is
+                                 #     thin (< 10 buckets).
+                                 #   Mechanism: un-docking ranks payers above non-payers. At pit 8y and 12y it trades AMZN
+                                 #   and DGX for EGL.LS, SEM.LS and PRU in 3 buckets each. The names dropped made +226% and
+                                 #   +710% cumulative (+6.1 and +7.0/yr vs the index). Their replacements made -7% and -5%
+                                 #   (-6.1 and -7.4/yr). The pit 1y gain is a median-zero mean: AMAT/QCOM/STX in for
+                                 #   CAT/TXN/VRTX on 7 of 13 buckets. The flag stays false. Do not re-ask it under soft
+                                 #   gates. The price-only lean (edge a) is at most the payers' yield, ~3-6/yr for these
+                                 #   three. It cannot close the ~12-14/yr gap between the names swapped.
   backtest_calendar_cadence: false # (#117) MEASURED 2026-08-22 AND REFUSED. Held at false, which is
                                  #   the fixed 12/36/6 bar-count triple (and the daily path's
                                  #   252/750/126) that every golden in tests/fixture and every fitted
