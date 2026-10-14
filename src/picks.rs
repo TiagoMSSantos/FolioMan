@@ -3107,7 +3107,6 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
 /// `rivals` book (d). What stays is what has no knob: the leveraged/commodity/hedged/stablecoin
 /// refusals, the repriced-bar artifact, the exchange-token refusal, and a score's own inputs (a long
 /// leg, now down to the 1Y rung, and a 1Y return).
-#[cfg(not(target_family = "wasm"))] // its one reader (backtest) is native-only
 pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
     let mut t = tuning.clone();
     for tag in [
@@ -5287,6 +5286,7 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
         ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
         ("s", "the Social Arbitrage trading table names it — superinvestor buyers (13F buys plus new 13D/13G stakes) score × growth_superinvestor_boost once per growth_superinvestor_step of them, an ARK, insider, video or hand-list row × growth_social_boost (1.0 = off)"),
         ("b", "bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score; page only, and (#535) the page's N cuts it like any other row"),
+        ("m", "bought by the book for its momentum 12-1 (trailing year net of the last month), not its score: growth_momentum_interleave alternates the score book with the momentum order of the gates-off stock pond, so it prints after the book name before it; SCORE is its score with every gate waived when it fails one; page only"),
 ];
 
 /// (#400) The page's column glossary, keyed per table because one header can mean two things: 2Y is a
@@ -5462,6 +5462,9 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
 /// (#403) The BUY NOW book as `(ticker, % of gross)`: [`sized_book`] over the rows `render` returned (its
 /// top-n slice, coins riding free), in book order. ONE spelling for `screen`'s journal and buy list and the
 /// page engine's BUY% column (non-negotiable #4), so the page cannot size another book than the terminal.
+/// (#584) Under `growth_momentum_interleave` and `sizing.equal_weight_book` the book alternates with the
+/// momentum 12-1 order of the whole pool's gates-off stocks ([`momentum_order`], [`sized_splice`]), so it can
+/// fund a stock `render` never ranked; [`stamp_momentum`] gives such a name its page row.
 pub(crate) fn buy_book(
     ranked: &[String],
     quotes: &[Quote],
@@ -5471,7 +5474,11 @@ pub(crate) fn buy_book(
     funds: &HashMap<String, (&'static str, f64)>,
 ) -> Vec<(String, f64)> {
     let rows: Vec<&Quote> = ranked.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect();
-    sized_book(&rows, tuning, sz, nupl, funds).iter().map(|&(q, _, w, _)| (q.ticker.clone(), w)).collect()
+    let book: Vec<(&Quote, f64)> = sized_book(&rows, tuning, sz, nupl, funds).into_iter().map(|r| (r.0, r.2)).collect();
+    if tuning.growth_momentum_interleave && sz.equal_weight_book {
+        return sized_splice(&book, &momentum_order(quotes, tuning), false, sz).into_iter().map(|(t, w)| (t.to_string(), w)).collect();
+    }
+    book.into_iter().map(|(q, w)| (q.ticker.clone(), w)).collect()
 }
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
@@ -5493,6 +5500,64 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
         }
     }
     payload["help"]["lanes"]["BUY%"] = BUY_HELP.into();
+}
+
+/// (#584) A page row's TICKER cell.
+fn row_ticker(row: &serde_json::Value) -> Option<&str> {
+    row.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str()
+}
+
+/// (#584) Move a RANK cell's leading number up by `by`, its flags kept, and return the new number.
+fn shift_rank(row: &mut serde_json::Value, by: usize) -> usize {
+    let Some(cell) = row.as_array_mut().and_then(|c| c.iter_mut().find(|c| c[0] == "RANK")) else { return 0 };
+    let s = cell[1].as_str().unwrap_or_default().to_string();
+    let n = s.chars().take_while(char::is_ascii_digit).count();
+    let rank = s[..n].parse::<usize>().unwrap_or(0) + by;
+    cell[1] = format!("{rank}{}", &s[n..]).into();
+    rank
+}
+
+/// (#584) The Stocks table's rows for the names the blended book ([`buy_book`]) buys for momentum alone: a sized
+/// stock no lane shows gets a row flagged `m` right after the shown sized name before it in book order (first
+/// when none is), and every later RANK moves down, so the RANK cell counts the merged order as `b` rows do.
+/// SCORE is the shipped score, or with every gate waived ([`gates_off`]) when the name fails one. Stamped
+/// before [`stamp_buy`], so the row carries its BUY%. A book without such names changes nothing.
+pub fn stamp_momentum(payload: &mut serde_json::Value, sized: &[(String, f64)], quotes: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
+    let lane = |l: &str| -> Vec<String> { payload[l].as_array().into_iter().flatten().filter_map(row_ticker).map(str::to_string).collect() };
+    let stocks = lane("stocks");
+    let shown: Vec<String> = [lane("etfs"), lane("crypto")].concat();
+    let open = gates_off(tuning);
+    let mut prev: Option<&str> = None;
+    let mut ins: Vec<(Option<&str>, &Quote, f64)> = Vec::new();
+    for (t, _) in sized {
+        if stocks.contains(t) {
+            prev = Some(t.as_str());
+            continue;
+        }
+        let Some(q) = quotes.iter().find(|q| &q.ticker == t && asset_class(q) == 2).filter(|_| !shown.contains(t)) else { continue };
+        let Some(score) = growth_score(q, tuning).or_else(|| growth_score(q, &open)) else { continue };
+        ins.push((prev, q, score));
+    }
+    let Some(rows) = payload.get_mut("stocks").and_then(serde_json::Value::as_array_mut).filter(|_| !ins.is_empty()) else { return };
+    let (cols, t8) = (lane_columns(w, HIDE_STOCK), tuning_8y(tuning));
+    let place = |after: Option<&str>, out: &mut Vec<serde_json::Value>, rank: &mut usize, shift: &mut usize| {
+        for (_, q, score) in ins.iter().filter(|i| i.0 == after) {
+            (*rank, *shift) = (*rank + 1, *shift + 1);
+            let mark = rank_mark(*rank - 1, q, &HashSet::new(), &Owned::default(), tuning) + "m";
+            out.push(serde_json::json!(row_cells(&cols, q, *score, growth_score(&as_8y_window(q), &t8), &mark, tuning, fund_pe)));
+        }
+    };
+    let (mut out, mut rank, mut shift) = (Vec::new(), 0, 0);
+    place(None, &mut out, &mut rank, &mut shift);
+    for mut row in std::mem::take(rows) {
+        rank = shift_rank(&mut row, shift);
+        let t = row_ticker(&row).map(str::to_string);
+        out.push(row);
+        if t.is_some() {
+            place(t.as_deref(), &mut out, &mut rank, &mut shift);
+        }
+    }
+    *rows = out;
 }
 
 /// (#446) What the page's INDEX header means, set by [`stamp_index`].
@@ -7393,6 +7458,70 @@ pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize, head: f64) -> Vec
 /// rank-slice boundary (rank 1 / 2-5 / 6-10), where on the point-in-time pool ranks 1-5 out-earned 6-10 at
 /// every horizon. shortcut: a const, not a knob — one boundary was graded; make it a knob when a second is.
 pub(crate) const HEAD: usize = 5;
+
+/// (#584) The backtest blend's shipped half: rival (j)'s top-10 slots filled by the shipped order before momentum
+/// fills the rest, and the `after` splice's momentum run after the [`HEAD`].
+pub(crate) const BLEND_HALF: usize = 5;
+
+/// (#560) 12-1 momentum, %: the trailing year net of its last month, the same formula as the growth
+/// score's `mom121` term. A missing 1M reads 0; a missing 1Y has no momentum.
+pub(crate) fn momentum_12_1(q: &Quote) -> Option<f64> {
+    let r1y = perf_pct(q, "1Y")?;
+    let r1m = perf_pct(q, "1M").unwrap_or(0.0);
+    Some(((1.0 + r1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0)
+}
+
+/// (#584) The momentum half of the blended book: the stocks the gates-off score keys ([`gates_off`], the
+/// backtest's `rivals` pond), highest momentum 12-1 first, a tie by ticker so the order never depends on the
+/// pool's.
+pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> Vec<&'a Quote> {
+    let open = gates_off(tuning);
+    let mut v: Vec<(f64, &Quote)> =
+        quotes.iter().filter(|q| asset_class(q) == 2 && growth_score(q, &open).is_some()).filter_map(|q| Some((momentum_12_1(q)?, q))).collect();
+    v.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.ticker.cmp(&b.1.ticker)));
+    v.into_iter().map(|x| x.1).collect()
+}
+
+/// (#584) The blended book's order: `sized` is [`sized_book`]'s order, `mom` the momentum 12-1 order. `after`
+/// keeps the first [`HEAD`] shipped names, then [`BLEND_HALF`] momentum names, then the shipped rest; else one
+/// of each in turn, shipped first (`growth_momentum_interleave`). A name already placed is skipped, a side that
+/// runs dry hands its slot to the other, and the order stops at `n`.
+pub(crate) fn splice_order<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, n: usize) -> Vec<T> {
+    let (mut s, mut m) = (sized.iter().copied(), mom.iter().copied());
+    let mut out: Vec<T> = Vec::new();
+    while out.len() < n {
+        let i = out.len();
+        let from_m = if after { (HEAD..HEAD + BLEND_HALF).contains(&i) } else { i % 2 == 1 };
+        let (a, b) = if from_m { (&mut m, &mut s) } else { (&mut s, &mut m) };
+        let Some(t) = a.find(|t| !out.contains(t)).or_else(|| b.find(|t| !out.contains(t))) else { break };
+        out.push(t);
+    }
+    out
+}
+
+/// (#584) The blended book's weights, the (#313) equal-weight book. `book` is [`sized_book`]'s rows `(quote,
+/// weight %)`, one per issuer, `mom` the momentum order, its coins dropped (the crypto budget is `sized_book`'s).
+/// Only non-coin rows are spliced, since the head counts only them; coins go first and keep their weight. A
+/// momentum twin of an issuer already placed ([`first_per_issuer`]'s key) is dropped before [`splice_order`], so
+/// its slot goes to the next momentum name. Then a commodity leaves the head as `sized_book` parks it, and
+/// [`equal_weights`] re-splits the non-coin rows with the head share. Weights in %.
+pub(crate) fn sized_splice<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, sz: &crate::config::Sizing) -> Vec<(&'a str, f64)> {
+    let coin = |q: &Quote| asset_class(q) == 0;
+    let (coins, book): (Vec<(&Quote, f64)>, Vec<(&Quote, f64)>) = book.iter().copied().partition(|r| coin(r.0));
+    let held: HashMap<String, &str> = book.iter().map(|r| (r.0.name.to_lowercase(), r.0.ticker.as_str())).collect();
+    let mut seen = HashSet::new();
+    let mom: Vec<&Quote> = mom.iter().copied().filter(|q| !coin(q)).filter(|q| q.name.is_empty() || (held.get(&q.name.to_lowercase()).is_none_or(|t| *t == q.ticker) && seen.insert(q.name.to_lowercase()))).collect();
+    let rows: HashMap<&str, (&Quote, f64)> = mom.iter().map(|q| (*q, 0.0)).chain(book.iter().copied()).map(|r| (r.0.ticker.as_str(), r)).collect();
+    let (s, m): (Vec<&str>, Vec<&str>) = (book.iter().map(|r| r.0.ticker.as_str()).collect(), mom.iter().map(|q| q.ticker.as_str()).collect());
+    let order: Vec<(&Quote, f64)> = coins.into_iter().chain(splice_order(&s, &m, after, sz.book_cut()).into_iter().map(|t| rows[t])).collect();
+    let order: Vec<(&Quote, f64)> = if sz.head_skip_commodity {
+        head_skip(&order.iter().map(|r| (coin(r.0), is_commodity(r.0))).collect::<Vec<_>>()).into_iter().map(|i| order[i]).collect()
+    } else {
+        order
+    };
+    let eq = equal_weights(&order.iter().map(|r| (coin(r.0), r.1)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
+    order.into_iter().zip(eq).filter_map(|(r, w)| Some((r.0.ticker.as_str(), w?))).collect()
+}
 
 /// (#495) The book order `Sizing::head_skip_commodity` funds. Rows are `(is_coin, is_commodity)` in score order; a
 /// commodity name that would land among the first [`HEAD`] non-coin rows is parked right after them, in its own
@@ -12784,6 +12913,69 @@ mod tests {
         let off = gates_off(&t);
         assert!(growth_score(&q, &off).is_some(), "every knob gate waived -> it scores");
         assert_eq!(gate_failures(&q, &off).map(|f| f.len()), Some(0));
+    }
+
+    /// (#584) Three stocks for the blend: AAA and BBB clear the shipped gates on the fixture's legs, CCC fails the
+    /// range floor but scores gates-off and carries the highest momentum 12-1.
+    fn blend_fixture() -> Vec<Quote> {
+        let q = |t: &str, name: &str, y1: f64, range: f64| {
+            let mut q = gate_fixture();
+            (q.ticker, q.name, q.range_pct, q.volatility_pct) = (t.into(), name.into(), range, Some(2.0));
+            q.perf = legs(&[("1M", 2.0), ("1Y", y1), ("5Y", 200.0)]);
+            q
+        };
+        vec![q("BBB", "Beta Corp", 20.0, 90.0), q("AAA", "Alpha Corp", 20.0, 90.0), q("CCC", "Gamma Corp", 60.0, 20.0)]
+    }
+
+    /// (#584) The momentum half: gates-off stocks only (a coin never), highest momentum 12-1 first, a tie by ticker.
+    #[test]
+    fn momentum_order_ranks_gates_off_stocks_by_momentum() {
+        let t = BuyHeuristic::default();
+        let mut quotes = blend_fixture();
+        assert!(growth_score(&quotes[2], &t).is_none(), "CCC must fail the shipped gates");
+        let mut coin = gate_fixture();
+        (coin.ticker, coin.perf) = ("ZZZ-USD".into(), legs(&[("1M", 2.0), ("1Y", 900.0), ("5Y", 200.0)]));
+        quotes.push(coin);
+        let got: Vec<&str> = momentum_order(&quotes, &t).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, ["CCC", "AAA", "BBB"]);
+    }
+
+    /// (#584) `growth_momentum_interleave` with the equal-weight book funds shipped 1, momentum 1, shipped 2 ...;
+    /// knob off, or the vol-target book, is the shipped book alone.
+    #[test]
+    fn buy_book_interleaves_momentum_into_the_equal_weight_book() {
+        let quotes = blend_fixture();
+        let ranked = ["AAA".to_string(), "BBB".to_string()];
+        let ew = crate::config::Sizing { equal_weight_book: true, ..crate::config::Sizing::default() };
+        let on = BuyHeuristic::default();
+        assert!(on.growth_momentum_interleave, "the shipped default");
+        let off = BuyHeuristic { growth_momentum_interleave: false, ..on.clone() };
+        let names = |b: Vec<(String, f64)>| b.into_iter().map(|r| r.0).collect::<Vec<_>>();
+        let got = buy_book(&ranked, &quotes, &on, &ew, None, &HashMap::new());
+        assert_eq!(names(got.clone()), ["AAA", "CCC", "BBB"]);
+        assert!(got.iter().all(|r| (r.1 - 100.0 / 3.0).abs() < 1e-9), "equal weights, in %: {got:?}");
+        assert_eq!(names(buy_book(&ranked, &quotes, &off, &ew, None, &HashMap::new())), ["AAA", "BBB"]);
+        assert_eq!(names(buy_book(&ranked, &quotes, &on, &crate::config::Sizing::default(), None, &HashMap::new())), ["AAA", "BBB"]);
+    }
+
+    /// (#584) A momentum-only name gets a Stocks row flagged `m` after the shown sized name before it, and the later
+    /// RANK moves down; a book every lane already shows leaves the payload alone.
+    #[test]
+    fn stamp_momentum_rows_the_momentum_only_names() {
+        let quotes = blend_fixture();
+        let t = BuyHeuristic::default();
+        let base = serde_json::json!({"stocks": [[["RANK", "1"], ["TICKER", "AAA"]], [["RANK", "2"], ["TICKER", "BBB"]]]});
+        let book = |ts: &[&str]| ts.iter().map(|t| (t.to_string(), 10.0)).collect::<Vec<_>>();
+        let mut p = base.clone();
+        stamp_momentum(&mut p, &book(&["AAA", "BBB"]), &quotes, &Widths::default(), &t, &FundPeMap::new());
+        assert_eq!(p, base, "nothing to insert");
+        stamp_momentum(&mut p, &book(&["AAA", "CCC", "BBB"]), &quotes, &Widths::default(), &t, &FundPeMap::new());
+        let rows = p["stocks"].as_array().unwrap();
+        let cell = |i: usize, c: &str| rows[i].as_array().unwrap().iter().find(|x| x[0] == c).map(|x| x[1].as_str().unwrap().to_string());
+        assert_eq!((0..3).map(|i| cell(i, "TICKER").unwrap()).collect::<Vec<_>>(), ["AAA", "CCC", "BBB"]);
+        let m = cell(1, "RANK").unwrap();
+        assert!(m.starts_with('2') && m.ends_with('m'), "{m}");
+        assert_eq!([cell(0, "RANK"), cell(2, "RANK")], [Some("1".to_string()), Some("3".to_string())]);
     }
 
     /// (#563) `growth_gate_soft`: 0 keeps every gate hard; at f a failer scores its waived score x f^n,

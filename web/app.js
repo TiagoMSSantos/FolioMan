@@ -192,8 +192,9 @@ function stick() {
 // (#461) $ marks a value read off the US line. (#504) ‡ marks a year-to-date REV-YoY.
 // (#505) a superscript digit marks a short-span rate (³ = 3 filed years), ᵈ a 200-day ABV-MA. (#507) ⁱ a since-listing CAGR.
 // (#525) ʷ a SCORE the row would get with its failed gates waived. (#576) ˢ a stock's soft-docked SCORE.
+// (#584) m a stock the book buys for its momentum 12-1.
 // null is a missing cell, which sorts last in either direction; (#506) so do "loss" and "burn", no ratio.
-const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†‡#!xHbc*owWs$⁰¹²³⁴⁵⁶⁷⁸⁹ᵈⁱʷˢ]*$/;
+const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†‡#!xHbmc*owWs$⁰¹²³⁴⁵⁶⁷⁸⁹ᵈⁱʷˢ]*$/;
 function key(cell) {
   if (["", "n/a", "—", "loss", "burn"].includes(cell)) return null;
   const m = NUM.exec(cell);

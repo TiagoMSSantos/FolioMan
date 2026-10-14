@@ -13533,6 +13533,14 @@ buy_heuristic:
                                  #   index, not the GEO word, and this sleeve's family count moved with it.
                                  #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
                                  #   `hold_family_key_benchmark` reverts this to 3 in the same change.
+  growth_momentum_interleave: true # (#584) SHIPPED: BUY NOW alternates the shipped book with the momentum
+                                 #   12-1 order of the gates-off stock pond (S1 M1 S2 M2 ... through the book
+                                 #   cut). Graded by the SIZED-blend DCA lanes: interleave +0.2/-0.1 pit and
+                                 #   +0.7/+0.6 stress vs SIZED, beating `after` (see the SIZED RESULT block
+                                 #   of the (#584) receipt). The page flags the momentum rows `m`, and `track`
+                                 #   grades `mblend` (blend top vs shipped-only top) forward, pre-registered
+                                 #   to print REVERT SIGNAL at 12+ lines and 12+ links, mean AND median < 0.
+                                 #   false reverts to the shipped-only book.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the

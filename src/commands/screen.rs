@@ -2254,6 +2254,9 @@ pub async fn run(args: Vec<String>) {
     let mut soc_book = crate::heuristics::social::SocBook::default();
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
+        // (#580) the Braked table reads the shipped rows, before (#584) momentum rows join them
+        let braked = crate::picks::braked_rows(&top["stocks"], &quotes, &settings.tickers, &settings.buy_heuristic);
+        crate::picks::stamp_momentum(&mut top, &sized_now, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe);
         crate::picks::stamp_buy(&mut top, &sized_now);
         crate::picks::stamp_index(&mut top, &quotes); // (#446) the ETF rows' INDEX, after BUY%
         top["exposure"] = exposure_rows(&sized_now, &quotes, &holdings, &mix, &fetch::us_symbol, &settings.buy_heuristic);
@@ -2261,7 +2264,6 @@ pub async fn run(args: Vec<String>) {
         top["berkshire"] = berkshire;
         top["social"] = social;
         top["young"] = crate::picks::young_rows(&quotes); // (#500)
-        let braked = crate::picks::braked_rows(&top["stocks"], &quotes, &settings.tickers, &settings.buy_heuristic);
         top["braked"] = braked; // (#580)
         top["reits"] = crate::picks::reit_rows(&quotes, &sigis); // (#525)
         top["upcoming"] = upcoming;
@@ -2287,21 +2289,28 @@ pub async fn run(args: Vec<String>) {
     let notches = notch_cohorts(&quotes, &settings.tickers, &settings.buy_heuristic);
     // (#335) last month's graded line, read BEFORE today's append: `exit` and (#337) `carry` diff against it
     let prior = crate::commands::track::journal_prior(&run_date);
+    // (#584) the blended book's momentum names join the journalled rows in the book's interleaved order, so
+    // `track` prices and grades the book that was bought; `shipped` keeps the shipped-only order beside it
+    let blend = settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book;
+    let journal_rows: Vec<String> = if blend {
+        let mom: Vec<&str> = sized_now.iter().map(|(t, _)| t.as_str()).filter(|t| !ranked_now.iter().any(|r| r == t)).collect();
+        picks::splice_order(&ranked_now.iter().map(String::as_str).collect::<Vec<_>>(), &mom, false, usize::MAX).into_iter().map(str::to_string).collect()
+    } else {
+        ranked_now.clone()
+    };
+    let px = |t: &String| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur));
     let mut line = crate::commands::track::Snapshot {
         date: run_date.clone(),
         spx: spx.first().and_then(|q| q.price_eur),
         spx_off_hi,
-        rows: ranked_now
-            .iter()
-            .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
-            .collect(),
+        rows: journal_rows.iter().map(px).collect(),
         // (round 34) parallel per-name AUM so the fund-flow footer can accrue an AUM history. Uses
         // `aum_shown()` (BF `aum_eur` ∨ Yahoo `aum_fallback`) — the SAME value the table's AUM column
         // prints, so the journal matches what the user sees, and BF's intermittent universe
         // enrichment doesn't starve the signal. Non-funds carry None and never produce a reading.
         // shortcut: aum_shown source is stable within a user's consistent monthly full-runs; a rare
         // cross-source switch could blip one reading — split into per-source fields only if observed.
-        aum: ranked_now
+        aum: journal_rows
             .iter()
             .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.aum_shown())))
             .collect(),
@@ -2384,12 +2393,14 @@ pub async fn run(args: Vec<String>) {
         soc_old: soc_book.old,
         // (#557) each unpinned stock row's GICS sector, so `track` rebuilds the book under every
         // growth_sector_cap the way `picks::render` would cap it (a pin passes the cap there too)
-        sector: ranked_now
+        sector: journal_rows
             .iter()
             .filter(|t| !settings.tickers.contains(t))
             .filter_map(|t| quotes.iter().find(|q| &q.ticker == t))
             .filter_map(|q| Some((q.ticker.clone(), picks::stock_sector(q)?.to_string())))
             .collect(),
+        // (#584) the shipped-only order, `track`'s `mblend` lane; empty with the blend off
+        shipped: if blend { ranked_now.iter().map(px).collect() } else { Vec::new() },
     };
     // (#337) and today's close for every name last month's line grades that this line does not price,
     // so each cohort can be graded month to month the way (#336) chains the book
@@ -4929,7 +4940,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -4973,7 +4984,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -5018,7 +5029,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -5071,7 +5082,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -5104,7 +5115,7 @@ mod tests {
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(),
         };
         let journal = vec![
             snap(

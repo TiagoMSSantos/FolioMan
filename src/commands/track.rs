@@ -154,6 +154,11 @@ pub struct Snapshot {
     /// is graded from one line. Same serde contract as `sized`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sector: Vec<(String, String)>,
+    /// (#584) `(ticker, close EUR)` for the shipped-only ranked order (`growth_momentum_interleave` off), on
+    /// lines where the blend put momentum names into `rows`. [`mblend_section`] grades `rows` against it.
+    /// Empty with the blend off. Same serde contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shipped: Vec<(String, Option<f64>)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -396,6 +401,7 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
                 .chain(s.exit.iter().map(|(t, ..)| t))
                 .chain(s.young.iter().map(|(t, _)| t)) // (#500)
                 .chain(s.soc_new.iter().chain(&s.soc_old).map(|(t, _)| t)) // (#538)
+                .chain(s.shipped.iter().take(BOOK).map(|(t, _)| t)) // (#584)
         })
         .cloned()
         // (#557) a capped book refills from past `rows.take(BOOK)`
@@ -1315,6 +1321,47 @@ fn soc_section(
     )
 }
 
+/// (#584) THE BLEND SHADOW: each line's blended book against the shipped-only book of the same line, the
+/// first [`BOOK`] non-coin names of `rows` and of `shipped`, equal-weight. The backtest graded the blend
+/// in-sample (see ci-settings `growth_momentum_interleave`); this grades it on prices that did not exist
+/// when it ranked. The flag reads REVERT, since the blend is what ships.
+fn mblend_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let top = |r: &[(String, Option<f64>)]| -> Rows { equal(r).into_iter().filter(|(t, ..)| !crate::picks::is_currency_quoted(t)).take(BOOK).collect() };
+    let body = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| if s.shipped.is_empty() { Vec::new() } else { vec![("mblend shipped top minus blend top", top(&s.rows), top(&s.shipped))] },
+        34,
+        None,
+    )
+    .replace("REOPEN SIGNAL", "REVERT SIGNAL");
+    let journalled = snaps.iter().filter(|s| !s.shipped.is_empty()).count();
+    if body.is_empty() {
+        return format!(
+            "\n  Blend shadow: nothing gradeable yet. A line needs a day of age and a shipped-only order, and only\n  \
+             {journalled} of {} journalled run(s) carry one. The record starts the run AFTER one is journalled\n  \
+             and cannot be backdated.",
+            snaps.len()
+        );
+    }
+    format!(
+        "\n  Blend shadow (#584) — each line's book, the shipped order interleaved with momentum 12-1 stocks, against\n  \
+         the shipped-only order of the same line: the first {BOOK} non-coin names of each, equal-weight. One line a\n  \
+         month. Pre-registered: `mblend` flags REVERT SIGNAL at {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained\n  \
+         links, each with mean AND median above 0 (the blend trailing). A flag only prints; turning\n  \
+         growth_momentum_interleave off is a decision. EUR seat, price-only. NOT advice. Journalled on\n  \
+         {journalled} of {} run(s).{body}",
+        snaps.len()
+    )
+}
+
 /// (#557) The top-[`BOOK`] of `snap.rows` under `growth_sector_cap = cap`, rebuilt off the line's own
 /// `sector` tags by the same `picks::sector_cap` that trims the live book. A row with no tag is kept,
 /// as the live cap keeps it.
@@ -1648,6 +1695,7 @@ pub async fn run(args: Vec<String>) {
     println!("{}", young_section(&snaps, today, &px_now, spx_now)); // (#500)
     println!("{}", soc_section(&snaps, today, &px_now, spx_now)); // (#538)
     println!("{}", scap_section(&snaps, today, &px_now, spx_now)); // (#557)
+    println!("{}", mblend_section(&snaps, today, &px_now, spx_now)); // (#584)
     println!("{}", chain_section(&snaps)); // (#336)
     if push {
         let delivered = fetch::push(
@@ -1677,7 +1725,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(),
         }
     }
 
@@ -2253,6 +2301,27 @@ mod tests {
         // SOC holds S1 (+200%) and S2 (0%) = +100%; the 20y top O1, O2 = +10%
         assert!(row.contains(" 1 line(s)") && row.contains("+90.0pp"), "{row}");
         assert!(out.contains("Journalled on 1 of 1"), "{out}");
+    }
+
+    /// (#584) `mblend` grades the shipped-only top against the blended top, coins out; a line without a
+    /// `shipped` order grades nothing and an old line parses; the flag reads REVERT, never REOPEN.
+    #[test]
+    fn mblend_section_grades_the_shipped_top_against_the_blended_top() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let px = |t: &str| Some(match t { "M1" => 300.0, "S2" => 50.0, _ => 100.0 });
+        let bare = snap("2026-01-01", Some(100.0), &[("BTC-EUR", Some(100.0)), ("S1", Some(100.0)), ("M1", Some(100.0))]);
+        assert!(mblend_section(std::slice::from_ref(&bare), today, &px, Some(100.0)).contains("nothing gradeable yet"));
+        let line = serde_json::to_string(&bare).unwrap();
+        assert!(!line.contains("shipped"), "{line}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&line).unwrap().shipped, Vec::new(), "an old line parses");
+        let s = Snapshot { shipped: vec![("BTC-EUR".into(), Some(100.0)), ("S1".into(), Some(100.0)), ("S2".into(), Some(100.0))], ..bare };
+        assert!(fetch_set(std::slice::from_ref(&s)).contains(&"S2".to_string()), "the shipped order is priced");
+        let out = mblend_section(&[s], today, &px, Some(100.0));
+        let row = out.lines().find(|l| l.trim_start().starts_with("mblend shipped top minus blend top")).unwrap_or_default();
+        // the blend holds S1 (0%) and M1 (+200%) = +100%; shipped holds S1 and S2 (-50%) = -25%
+        assert!(row.contains(" 1 line(s)") && row.contains("-125.0pp"), "{row}");
+        assert!(!out.contains("REOPEN"), "{out}");
+        assert!(out.contains("1 of 1 run(s)"), "{out}");
     }
 
     /// (#557) Each `scapK` row rebuilds the top-[`BOOK`] under sector cap K off the line's own tags: at

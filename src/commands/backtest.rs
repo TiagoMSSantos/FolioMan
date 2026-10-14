@@ -3571,9 +3571,6 @@ const RIVALS: [&str; 10] = [
     "(j) 5 shipped + 5 momentum",
 ];
 
-/// (#584) Rival (j)'s shipped half: slots filled by the plain shipped order before momentum fills the rest.
-const BLEND_HALF: usize = 5;
-
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
 const RIVAL_TIE: f64 = 0.2;
 
@@ -3582,19 +3579,11 @@ fn rival_wins(d_mean: f64, d_median: f64) -> bool {
     d_mean >= RIVAL_TIE && d_median >= RIVAL_TIE
 }
 
-/// (#560) 12-1 momentum, %: the trailing year net of its last month, the same formula as the growth
-/// score's `mom121` term. A missing 1M reads 0; a missing 1Y has no momentum.
-fn momentum_12_1(q: &Quote) -> Option<f64> {
-    let r1y = picks::perf_pct(q, "1Y")?;
-    let r1m = picks::perf_pct(q, "1M").unwrap_or(0.0);
-    Some(((1.0 + r1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0)
-}
-
 /// (#560) The momentum 12-1 rival's order over one month's pool: the names the gates-off score keys (`open`,
 /// the `rivals` pond), highest momentum first. The pool is ticker-ordered and the sort stable, so a tie ranks
 /// by ticker.
 fn momentum_ranked<'a>(pool: &[&'a Sample], open: &[Option<f64>]) -> Vec<&'a Sample> {
-    let mut v: Vec<(f64, &Sample)> = pool.iter().zip(open).filter(|x| x.1.is_some()).filter_map(|(s, _)| Some((momentum_12_1(&s.quote)?, *s))).collect();
+    let mut v: Vec<(f64, &Sample)> = pool.iter().zip(open).filter(|x| x.1.is_some()).filter_map(|(s, _)| Some((picks::momentum_12_1(&s.quote)?, *s))).collect();
     v.sort_by(|a, b| b.0.total_cmp(&a.0));
     v.into_iter().map(|x| x.1).collect()
 }
@@ -3610,48 +3599,6 @@ fn equal_top<'a>(ranked: impl Iterator<Item = &'a Sample>, n: usize) -> Vec<(&'a
 fn blend_top<'a>(head: Vec<&'a Sample>, fill: impl Iterator<Item = &'a Sample>, n: usize) -> Vec<(&'a str, f64)> {
     let mut seen: HashSet<&'a str> = head.iter().map(|&s| s.quote.ticker.as_str()).collect();
     equal_top(head.into_iter().chain(fill.filter(move |&s| seen.insert(s.quote.ticker.as_str()))), n)
-}
-
-/// (#584) The SIZED blend's book order: `sized` is `size::sized_book`'s order, `mom` the momentum 12-1 order.
-/// `after` keeps the first [`picks::HEAD`] shipped names, then [`BLEND_HALF`] momentum names, then the shipped
-/// rest; else one of each in turn, shipped first. A name already placed is skipped, a side that runs dry hands
-/// its slot to the other, and the order stops at `n`.
-fn splice_order<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, n: usize) -> Vec<T> {
-    let (mut s, mut m) = (sized.iter().copied(), mom.iter().copied());
-    let mut out: Vec<T> = Vec::new();
-    while out.len() < n {
-        let i = out.len();
-        let from_m = if after { (picks::HEAD..picks::HEAD + BLEND_HALF).contains(&i) } else { i % 2 == 1 };
-        let (a, b) = if from_m { (&mut m, &mut s) } else { (&mut s, &mut m) };
-        let Some(t) = a.find(|t| !out.contains(t)).or_else(|| b.find(|t| !out.contains(t))) else { break };
-        out.push(t);
-    }
-    out
-}
-
-/// (#584) The SIZED blend's weights, the (#313) equal-weight book as CI ships it. `book` is `size::sized_book`'s
-/// rows `(quote, weight %)`, one per issuer, `mom` the momentum order, its coins dropped (the crypto budget is
-/// `sized_book`'s). Only non-coin rows are spliced, since the head counts only them; coins go first and keep
-/// their weight. A momentum twin of an issuer already placed (`picks::first_per_issuer`'s key) is dropped before
-/// [`splice_order`], so its slot goes to the next momentum name. Then a commodity leaves the head as `sized_book`
-/// parks it, and `picks::equal_weights` re-splits the non-coin rows with the head share. Fractions, as
-/// [`book_multiple`] reads them.
-fn sized_splice<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, sz: &config::Sizing) -> Vec<(&'a str, f64)> {
-    let coin = |q: &Quote| picks::asset_class(q) == 0;
-    let (coins, book): (Vec<(&Quote, f64)>, Vec<(&Quote, f64)>) = book.iter().copied().partition(|r| coin(r.0));
-    let held: HashMap<String, &str> = book.iter().map(|r| (r.0.name.to_lowercase(), r.0.ticker.as_str())).collect();
-    let mut seen = HashSet::new();
-    let mom: Vec<&Quote> = mom.iter().copied().filter(|q| !coin(q)).filter(|q| q.name.is_empty() || (held.get(&q.name.to_lowercase()).is_none_or(|t| *t == q.ticker) && seen.insert(q.name.to_lowercase()))).collect();
-    let rows: HashMap<&str, (&Quote, f64)> = mom.iter().map(|q| (*q, 0.0)).chain(book.iter().copied()).map(|r| (r.0.ticker.as_str(), r)).collect();
-    let (s, m): (Vec<&str>, Vec<&str>) = (book.iter().map(|r| r.0.ticker.as_str()).collect(), mom.iter().map(|q| q.ticker.as_str()).collect());
-    let order: Vec<(&Quote, f64)> = coins.into_iter().chain(splice_order(&s, &m, after, sz.book_cut()).into_iter().map(|t| rows[t])).collect();
-    let order: Vec<(&Quote, f64)> = if sz.head_skip_commodity {
-        picks::head_skip(&order.iter().map(|r| (coin(r.0), picks::is_commodity(r.0))).collect::<Vec<_>>()).into_iter().map(|i| order[i]).collect()
-    } else {
-        order
-    };
-    let eq = picks::equal_weights(&order.iter().map(|r| (coin(r.0), r.1)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
-    order.into_iter().zip(eq).filter_map(|(r, w)| Some((r.0.ticker.as_str(), w? / 100.0))).collect()
 }
 
 /// (#560) Each value's percentile in its column: the share of present values strictly below it, so
@@ -3746,7 +3693,7 @@ fn rival_books(
             let keys = [
                 sh,
                 Some(op),
-                momentum_12_1(&s.quote),
+                picks::momentum_12_1(&s.quote),
                 f.and_then(|f| f.quality.or(f.roe)),
                 f.and_then(|f| f.earnings_yield),
                 f.and_then(|f| f.rev_cagr),
@@ -3768,7 +3715,7 @@ fn rival_books(
         for (i, book) in books.iter_mut().take(9).enumerate() {
             book.extend(rival_excess(&keyed(i), VERDICT_TOP, years)); // the nine keyed rows; (j) blends two of them
         }
-        books[9].extend(blend_excess(&keyed(0), &keyed(2), BLEND_HALF, VERDICT_TOP, years));
+        books[9].extend(blend_excess(&keyed(0), &keyed(2), picks::BLEND_HALF, VERDICT_TOP, years));
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
@@ -4948,8 +4895,8 @@ fn dca_program<B>(
 /// whole € on the legs, as BUY NOW does: its picks and trackers always sum to gross. Top-10 is a reading. SIZED is the
 /// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
 /// (#560) `rivals` adds the momentum 12-1 rival's lane on the same months: the DCA re-grade a rival that beats
-/// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's first [`BLEND_HALF`]
-/// names, then momentum's; then the SIZED book with momentum spliced in ([`sized_splice`]), after its head and
+/// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's first [`picks::BLEND_HALF`]
+/// names, then momentum's; then the SIZED book with momentum spliced in ([`picks::sized_splice`]), after its head and
 /// interleaved, the two ways a shipped blend could order BUY NOW.
 #[allow(clippy::too_many_arguments)]
 fn report_roll(
@@ -5015,14 +4962,14 @@ fn report_roll(
     };
     let mom = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP)) };
     let blend = |d, end| -> Option<Vec<(&str, f64)>> {
-        Some(blend_top(capped(d, end, BLEND_HALF)?, ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP))
+        Some(blend_top(capped(d, end, picks::BLEND_HALF)?, ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP))
     };
     // (#584) the SIZED book with momentum names spliced in, `after` its head or interleaved
     let sized_blend = |d: chrono::NaiveDate, end: chrono::NaiveDate, after: bool| -> Option<Vec<(&str, f64)>> {
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
         let book: Vec<(&Quote, f64)> = crate::commands::size::sized_book(&q, tuning, sz, None, &Default::default()).into_iter().map(|r| (r.0, r.2)).collect();
         let mom: Vec<&Quote> = ranked.get(&d)?.2.iter().filter(|s| alive(s, d, end)).map(|s| s.quote.as_ref()).collect();
-        Some(sized_splice(&book, &mom, after, sz))
+        Some(picks::sized_splice(&book, &mom, after, sz).into_iter().map(|(t, w)| (t, w / 100.0)).collect())
     };
     let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs);
     let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);
@@ -8405,7 +8352,7 @@ mod tests {
                 .collect();
             q
         };
-        let mom = |pairs: &[(&str, f64)]| momentum_12_1(&quote(pairs));
+        let mom = |pairs: &[(&str, f64)]| picks::momentum_12_1(&quote(pairs));
         assert!((mom(&[("1Y", 20.0), ("1M", 10.0)]).unwrap() - (1.2 / 1.1 - 1.0) * 100.0).abs() < 1e-9);
         assert!((mom(&[("1Y", 20.0)]).unwrap() - 20.0).abs() < 1e-9, "a missing 1M nets nothing out");
         assert_eq!(mom(&[("1M", 5.0)]), None, "no 1Y, no momentum");
@@ -8509,24 +8456,24 @@ mod tests {
         // (#584) SIZED splice: after the head, S6 (held by momentum too) moves up to a momentum slot; interleaved,
         // a held name is skipped and a dry side hands its slot over
         let sh = ["S1", "S2", "S3", "S4", "S5", "S6"];
-        assert_eq!(splice_order(&sh, &["M1", "S6", "M2"], true, 9), ["S1", "S2", "S3", "S4", "S5", "M1", "S6", "M2"]);
-        assert_eq!(splice_order(&sh, &["M1"], true, 7), ["S1", "S2", "S3", "S4", "S5", "M1", "S6"]);
+        assert_eq!(picks::splice_order(&sh, &["M1", "S6", "M2"], true, 9), ["S1", "S2", "S3", "S4", "S5", "M1", "S6", "M2"]);
+        assert_eq!(picks::splice_order(&sh, &["M1"], true, 7), ["S1", "S2", "S3", "S4", "S5", "M1", "S6"]);
         let m6 = ["M1", "M2", "M3", "M4", "M5", "M6"];
-        assert_eq!(splice_order(&sh, &m6, true, 11), ["S1", "S2", "S3", "S4", "S5", "M1", "M2", "M3", "M4", "M5", "S6"], "BLEND_HALF momentum slots, then shipped");
-        assert_eq!(splice_order(&["A", "B", "C"], &["B", "X"], false, 9), ["A", "B", "C", "X"]);
-        assert_eq!(splice_order(&["A", "B", "C"], &["X", "Y"], false, 3), ["A", "X", "B"]);
+        assert_eq!(picks::splice_order(&sh, &m6, true, 11), ["S1", "S2", "S3", "S4", "S5", "M1", "M2", "M3", "M4", "M5", "S6"], "BLEND_HALF momentum slots, then shipped");
+        assert_eq!(picks::splice_order(&["A", "B", "C"], &["B", "X"], false, 9), ["A", "B", "C", "X"]);
+        assert_eq!(picks::splice_order(&["A", "B", "C"], &["X", "Y"], false, 3), ["A", "X", "B"]);
         // the weights: momentum twin Z (A's issuer) drops so X takes its slot, the cut drops B; then the first HEAD
         // rows take the head share
         let (a, b, x) = (Quote::stub("A", "1", "", "Acme"), Quote::stub("B", "1", "", "Beta"), Quote::stub("X", "1", "", "Xeno"));
         let z = Quote::stub("Z", "1", "", "Acme");
         let sz = config::Sizing { book_names: 2, head_weight: 3.0, ..Default::default() };
-        assert_eq!(sized_splice(&[(&a, 50.0), (&b, 50.0)], &[&z, &x], false, &sz), vec![("A", 0.5), ("X", 0.5)]);
+        assert_eq!(picks::sized_splice(&[(&a, 50.0), (&b, 50.0)], &[&z, &x], false, &sz), vec![("A", 50.0), ("X", 50.0)]);
         let sz = config::Sizing { book_names: 6, ..sz };
         let six: Vec<Quote> = ["P", "Q", "R", "S", "T", "U"].iter().map(|t| Quote::stub(t, "1", "", t)).collect();
         let book: Vec<(&Quote, f64)> = six[..5].iter().map(|q| (q, 0.0)).collect();
-        let got = sized_splice(&book, &[&six[5]], true, &sz);
+        let got = picks::sized_splice(&book, &[&six[5]], true, &sz);
         assert_eq!(got.iter().map(|r| r.0).collect::<Vec<_>>(), ["P", "Q", "R", "S", "T", "U"]);
-        assert_eq!(got.iter().map(|r| (r.1 * 16.0).round()).collect::<Vec<_>>(), [3.0, 3.0, 3.0, 3.0, 3.0, 1.0], "5 heads x 3 + 1 tail = 16 shares");
+        assert_eq!(got.iter().map(|r| (r.1 * 0.16).round()).collect::<Vec<_>>(), [3.0, 3.0, 3.0, 3.0, 3.0, 1.0], "5 heads x 3 + 1 tail = 16 shares");
         // a coin keeps its weight and takes no head slot, a momentum coin is dropped; a commodity head name is parked behind the head
         let mut oil = Quote::stub("P", "1", "", "P");
         oil.sector = Some("Energy".into());
@@ -8534,9 +8481,9 @@ mod tests {
         let book: Vec<(&Quote, f64)> = std::iter::once((&btc, 5.0)).chain(std::iter::once((&oil, 0.0))).chain(six[1..5].iter().map(|q| (q, 0.0))).collect();
         let sz = config::Sizing { head_skip_commodity: true, ..sz };
         let eth = Quote::stub("ETH-EUR", "1", "", "Ethereum");
-        let got = sized_splice(&book, &[&eth, &six[5]], true, &sz);
+        let got = picks::sized_splice(&book, &[&eth, &six[5]], true, &sz);
         assert_eq!(got.iter().map(|r| r.0).collect::<Vec<_>>(), ["BTC-EUR", "Q", "R", "S", "T", "U", "P"]);
-        assert_eq!(got.iter().map(|r| (r.1 * 1600.0).round()).collect::<Vec<_>>(), [80.0, 285.0, 285.0, 285.0, 285.0, 285.0, 95.0], "95% left: 3/16 each head, 1/16 P");
+        assert_eq!(got.iter().map(|r| (r.1 * 16.0).round()).collect::<Vec<_>>(), [80.0, 285.0, 285.0, 285.0, 285.0, 285.0, 95.0], "95% left: 3/16 each head, 1/16 P");
     }
 
     /// (#518) Each cohort splits the STOCK samples on the flags at their own cutoff; a coin is never
