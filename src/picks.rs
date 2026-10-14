@@ -3278,7 +3278,8 @@ fn index_twin<'a>(q: &Quote, pool: &'a [Quote], tuning: &BuyHeuristic) -> Option
                 && t.benchmark.as_deref() == Some(bench)
                 && long_leg_fixed(t, tuning.fixed_cagr_years, tuning.growth_min_leg_years).is_some() // twin must HAVE the record
         })
-        .max_by(|a, b| a.age_years.unwrap_or(0.0).total_cmp(&b.age_years.unwrap_or(0.0)))
+        // (#578) an age tie goes to the lower ticker: `max_by` alone keeps the LAST max, so the pick followed pool order
+        .max_by(|a, b| a.age_years.unwrap_or(0.0).total_cmp(&b.age_years.unwrap_or(0.0)).then_with(|| b.ticker.cmp(&a.ticker)))
 }
 
 /// Ceiling on the discovery lane's output. ~2000 ETFs sit behind the `history` gate, so an uncapped
@@ -11717,6 +11718,12 @@ mod tests {
         let ((_, _, twin), _, _) = rank_key(Some(&older), &d, &[]);
         assert_eq!((c, s, cell), (1, twin, format!("{twin:.1}ʷ~")));
         assert!(misses.contains("history ~OLDER"), "{misses}");
+        // (#578) an age tie picks the same twin in either pool order (the page engine's reversed-pool smoke check)
+        let (mut tie_a, mut tie_b) = (etf("TWA", 15.0), etf("TWB", 15.0));
+        (tie_a.perf, tie_b.perf) = (older.perf.clone(), legs(&[("1Y", 30.0), ("5Y", 90.0), ("8Y", 160.0)]));
+        for tied in [[tie_a.clone(), tie_b.clone(), kid.clone()], [tie_b, tie_a, kid.clone()]] {
+            assert!(rank_key(Some(&kid), &d, &tied).2.contains("history ~TWA"), "{:?}", rank_key(Some(&kid), &d, &tied));
+        }
         assert_eq!(rank_key(Some(&pool[0]), &d, &pool), rank_key(Some(&pool[0]), &d, &[]), "a fund with its own record never borrows its twin's score");
         assert!(rank_key(Some(&kid), &d, &[]).1.ends_with('ⁱ'), "no twin in the pool: its own since-listing change");
         // no turnover scores at the floor, where the liquidity bonus is 0
