@@ -989,6 +989,14 @@ pub fn earnings_backed(quote: &Quote) -> bool {
     }
 }
 
+/// (#579) How far a steady compounder at `cagr` %/yr sits above its own trailing mean over the
+/// `LONG_MA_SESSIONS` window, in %: price / mean = rT / (1 − e^(−rT)), r = ln(1 + g), T in years.
+/// 0 for a flat or falling rate (such a name sits at or below its mean).
+pub fn steady_above_ma_pct(cagr: f64) -> f64 {
+    let rt = (1.0 + cagr / 100.0).ln() * crate::config::LONG_MA_SESSIONS as f64 / 252.0;
+    if rt > 0.0 { (rt / (1.0 - (-rt).exp()) - 1.0) * 100.0 } else { 0.0 }
+}
+
 /// The growth lane's per-rung CUMULATIVE-return floors: `(perf label, near-miss tag, floor %)`.
 /// ONE definition, read by BOTH `score_parts` and `gate_failures` — those two must agree or a name is
 /// silently dropped from the ranking while the tail claims it passes (see picks.rs:745). Sharing the
@@ -1342,7 +1350,8 @@ struct ScoreParts {
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
     trust: f64,        // (A) history-completeness damp
-    overext: f64,      // min(above_ma_pct, overext_cap)
+    overext: f64,      // min(above_ma_pct − overext_expected, overext_cap), floored at 0
+    overext_expected: f64, // (#579) the steady-compounder stretch subtracted first; 0 unless growth_overext_trend_adjust
     overext_cap: f64,  // the class's overextension cap
     overext_floor: f64, // (#577) the floor the brake used: growth_overext_floor, or growth_overext_backed_floor when armed and `earnings_backed`
     overext_damp: f64, // 1 − (overext/cap)×(1−floor)
@@ -1899,7 +1908,12 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     //  +108.9->+80.5 and flipped OOS-late negative: high-CAGR stretched names revert too. Hard brake stays.)
     // (#4) per-class cap: crypto rides far above its long SMA normally, so it gets its own (looser) cap.
     let overext_cap = if crypto { tuning.growth_overext_cap_crypto } else { tuning.growth_overext_cap };
-    let overext = quote.above_ma_pct.min(overext_cap);
+    // (#579) armed, a stock brakes only on the stretch above its own 8Y pace (0 = raw stretch)
+    let overext_expected = match perf_pct(quote, "8Y") {
+        Some(c) if tuning.growth_overext_trend_adjust && asset_class(quote) == 2 => steady_above_ma_pct(core::cagr(c, 8.0)),
+        _ => 0.0,
+    };
+    let overext = (quote.above_ma_pct - overext_expected).max(0.0).min(overext_cap);
     // (#577) armed, an earnings-backed stock brakes to its own floor: its profits kept pace with the run
     let overext_floor = if tuning.growth_overext_backed_floor > 0.0 && earnings_backed(quote) {
         tuning.growth_overext_backed_floor
@@ -2018,7 +2032,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base_offset, tr_life, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_floor, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, leg_dock, gate_soft: 1.0, score: 0.0,
+        overext_cap, overext_expected, overext_floor, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, leg_dock, gate_soft: 1.0, score: 0.0,
     };
     parts.score = compose_score(&parts, tuning);
     Some(parts)
@@ -3537,18 +3551,28 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     if p.overext_cap > 0.0 {
         s.push_str(&format!("  overext_damp = 1 − (min(above_MA,cap)/cap)×(1−floor)    = 1 − ({:.1}/{:.0})×(1−{:.2}) = {:.3}\n",
             p.overext, p.overext_cap, p.overext_floor, p.overext_damp));
-        if p.overext > 0.0 {
+        if p.overext_expected > 0.0 {
+            s.push_str(&format!("    trend-adjusted: above_MA {:.1}% − steady pace of 8y {:.1}%/yr {:.1}% = {:.1}% braked\n",
+                quote.above_ma_pct, perf_pct(quote, "8Y").map_or(0.0, |c| core::cagr(c, 8.0)), p.overext_expected, p.overext));
             say(&mut s, &format!(
-                "Ran-too-far brake: the price is {:.1}% above its ~200-week average (full brake at {:.0}%). \
-                 Prices far above it often fall back, so the score is cut, at most to ×{:.2}.",
-                p.overext, p.overext_cap, p.overext_floor));
+                "Ran-too-far brake: a steady climber at its own 8-year pace sits {:.0}% above its ~200-week average anyway, \
+                 so only the stretch beyond that is cut (full brake {:.0}% beyond it, at most to ×{:.2}).",
+                p.overext_expected, p.overext_cap, p.overext_floor));
+        }
+        if p.overext > 0.0 {
+            if p.overext_expected == 0.0 {
+                say(&mut s, &format!(
+                    "Ran-too-far brake: the price is {:.1}% above its ~200-week average (full brake at {:.0}%). \
+                     Prices far above it often fall back, so the score is cut, at most to ×{:.2}.",
+                    p.overext, p.overext_cap, p.overext_floor));
+            }
             if p.overext_floor != tuning.growth_overext_floor {
                 s.push_str(&format!("    earnings-backed: EPS 5y {:.1}%/yr ≥ price 5y {:.1}%/yr, floor {:.2} (not {:.2})\n",
                     quote.fund.as_ref().and_then(|f| f.eps_growth).unwrap_or(0.0),
                     perf_pct(quote, "5Y").map_or(0.0, |c| core::cagr(c, 5.0)), p.overext_floor, tuning.growth_overext_floor));
                 say(&mut s, "Its profits grew at least as fast as its price over 5 years (the P/E did not rise), so the brake cuts less.");
             }
-        } else {
+        } else if p.overext_expected == 0.0 {
             say(&mut s, "Ran-too-far brake: the price is not above its ~200-week average, so no cut.");
         }
     } else {
@@ -12817,6 +12841,51 @@ mod tests {
         let says = |q: &Quote, t: &BuyHeuristic| explain_growth_score(q, t, 0.0).unwrap_or_default().contains("earnings-backed");
         assert!(says(&backed, &armed), "the walkthrough prints the waiver");
         assert!(!says(&backed, &off) && !says(&q(None), &armed), "and only when it fires");
+    }
+
+    /// (#579) `growth_overext_trend_adjust`: armed, a stock brakes only on the stretch above its own 8Y
+    /// steady pace; under the pace it is not braked at all. No 8Y leg, an ETF, or off: the raw stretch.
+    #[test]
+    fn trend_adjusted_brake() {
+        assert_eq!(steady_above_ma_pct(0.0), 0.0, "flat: no pace");
+        assert_eq!(steady_above_ma_pct(-5.0), 0.0, "falling: no pace");
+        assert!((steady_above_ma_pct(20.0) - 40.5).abs() < 0.01, "{}", steady_above_ma_pct(20.0));
+        assert!((steady_above_ma_pct(50.0) - 101.15).abs() < 0.01, "{}", steady_above_ma_pct(50.0));
+
+        let off = gates_off(&BuyHeuristic::default());
+        let armed = BuyHeuristic { growth_overext_trend_adjust: true, ..off.clone() };
+        let pace = steady_above_ma_pct(20.0);
+        let q = |above: f64| {
+            let mut q = gate_fixture();
+            q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", (1.2f64.powi(8) - 1.0) * 100.0)]);
+            q.above_ma_pct = above;
+            q
+        };
+        let damp = |q: &Quote, t: &BuyHeuristic| score_parts_hard(q, t).map(|p| (p.overext_expected, p.overext, p.overext_damp));
+        let raw = |above: f64| Some((0.0, above, 1.0 - above / 100.0 * (1.0 - 0.05)));
+        let over = q(pace + 30.0);
+        let (exp, excess, d) = damp(&over, &armed).unwrap();
+        assert!((exp - pace).abs() < 1e-9 && (excess - 30.0).abs() < 1e-9, "{exp} {excess}");
+        assert_eq!(d, 1.0 - excess / 100.0 * (1.0 - 0.05), "the stretch beyond the pace is braked");
+        assert_eq!(damp(&over, &off), raw(pace + 30.0), "off, the raw stretch");
+        let (_, excess, d) = damp(&q(pace - 5.0), &armed).unwrap();
+        assert_eq!((excess, d), (0.0, 1.0), "under its pace: no brake");
+        let (_, excess, _) = damp(&q(pace + 500.0), &armed).unwrap();
+        assert_eq!(excess, 100.0, "the cap still bounds the excess");
+
+        let mut no_leg = q(60.0);
+        no_leg.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
+        assert_eq!(damp(&no_leg, &armed), raw(60.0), "no 8Y leg -> the raw stretch");
+        let mut etf = q(60.0);
+        etf.instrument_type = "ETF".into();
+        assert_eq!(damp(&etf, &armed), raw(60.0), "stocks only");
+
+        let says = |q: &Quote, t: &BuyHeuristic| explain_growth_score(q, t, 0.0).unwrap_or_default().contains("trend-adjusted");
+        assert!(says(&over, &armed) && says(&q(pace - 5.0), &armed), "the walkthrough prints the pace");
+        assert!(!says(&over, &off) && !says(&no_leg, &armed), "and only when it is subtracted");
+        let ex = |q: &Quote, t: &BuyHeuristic| explain_growth_score(q, t, 0.0).unwrap_or_default();
+        assert!(ex(&over, &off).contains("Prices far above it often fall back"), "off, the raw sentence");
+        assert!(!ex(&over, &armed).contains("Prices far above it") && ex(&over, &armed).contains("own 8-year pace"), "armed, the pace sentence");
     }
 
     /// (#576) The Stocks table's MISSES cell, the shadow tables' ˢ cell and the walkthrough's soft-dock

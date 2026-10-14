@@ -20024,6 +20024,32 @@ buy_heuristic:
   #  It lifts stretched names whose earnings merely kept up, and those crowd out the strongest names.
   #  Do not re-ask a brake waiver keyed on EPS-vs-price growth. A re-open needs a mechanism that reaches NVDA's
   #  windows (its EPS chain lags price at the start of each run), or the forward `track` from ~2027-09.
+  growth_overext_trend_adjust: false # (#579) true = a STOCK's overextension brake reads only the stretch ABOVE what
+  #  its own 8Y price CAGR explains: excess = max(0, above_MA - picks::steady_above_ma_pct(8Y CAGR)), where a steady
+  #  compounder at g %/yr sits rT/(1-e^-rT) - 1 above its 200-week mean (r = ln(1+g), T = 1000/252 years): 6%/yr +12%,
+  #  20%/yr +41%, 50%/yr +101%. The cap 100 and floor 0.05 then apply to the excess. No 8Y leg, funds and coins = the
+  #  raw stretch. false = off, the shipped lane bit for bit.
+  #── (#579) PRE-REGISTERED 2026-10-14, before any run — TREND-ADJUSTED BRAKE ──
+  #  WHY: the owner asks why NVDA (TR-CAGR +59%, net margin 55.6%, PEG 0.84, 0 misses) is out while GE (+6%), First
+  #  Solar (+1%), Delta (+8%) and loss-making Bloom Energy rank. The brake reads ~95% above the 200wk SMA as a blow-off,
+  #  but a steady compounder at NVDA's own 8Y pace sits that far above its mean anyway. The offline fixture note in
+  #  backtest.rs (`price/MA settles near rate²`) already says the brake ranks the SLOWER compounders higher in a
+  #  persistence world. This arm brakes only the stretch a name's own pace does not explain. (#577) refused an EPS-keyed
+  #  waiver because it did not reach NVDA's windows; this one keys on price alone, so it does.
+  #  ARM: true against ctl (false). Runs per arm: pit `1 2 5 8 12 20`, stress `1 2 5`, stress `8 12 20`, all
+  #  `universe fund` (6 runs).
+  #  BAR, the (#576)/(#577) NOT-WORSE checks vs ctl, all four:
+  #    1. no counted stock BOOK cell drops by 0.2 or more on the mean or on the paired median ((#566) per-class ruler);
+  #    2. no counted ETF or crypto BOOK cell shows a veto;
+  #    3. relative rank-1 guard: in every pit and stress 8/12/20 cell, '#1 beat the 11-20 book' is at most 5 points under ctl;
+  #    4. zeros guard: 'rode N zeros' does not rise in any 8/12/20 cell.
+  #  SHIP: all four pass -> flip to true in a follow-up commit (goldens re-blessed). Any fail -> stays false. A run whose
+  #  `windows scored` differs from ctl is re-dispatched, not graded.
+  #  CAVEATS: an older CAGR-conditional FLOOR (picks.rs, "brake elite compounders less") cut wide edge +108.9 -> +80.5 on
+  #  the pre-(#566) ruler; this arm subtracts a pace rather than moving the floor, but the risk is the same: high-CAGR
+  #  stretched names revert too. Every stock with a positive 8Y CAGR is eased a little, the crowding that sank
+  #  (#574)/(#575). Pre-2008 high-CAGR blow-offs ((#64) AIG/NOK/C) are eased most. NVDA 2017-18 (159-277% above vs a pace
+  #  of ~+70..+100%) still brakes, partly. Survivorship (today's pond); the forward record cannot grade it before ~2027-09.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
