@@ -716,6 +716,7 @@ struct Args {
     holders: bool,
     pac: bool,
     rivals: bool,
+    winners: bool,
     halflife: bool,
     stress: bool,
     pit: bool,
@@ -738,6 +739,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("holders") => a_.holders = true, // (#518) grade the 13F-holder boosts
             _ if a.eq_ignore_ascii_case("pac") => a_.pac = true, // (#559) grade FEC corporate-PAC breadth
             _ if a.eq_ignore_ascii_case("rivals") => a_.rivals = true, // (#560) rival books on the same pond
+            _ if a.eq_ignore_ascii_case("winners") => a_.winners = true, // (#583) where the top-10 book loses each window's winners
             _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
             _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
             _ if a.eq_ignore_ascii_case("pit") => a_.pit = true, // (PIT) score each cutoff against the index AS IT WAS
@@ -1074,7 +1076,7 @@ pub async fn run(args: Vec<String>) {
     let anchor_windows =
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
-    let Args { years, wide, long, fund, tune, insider, holders, pac, rivals, halflife, stress, pit, mut tickers } = parse_args(&args);
+    let Args { years, wide, long, fund, tune, insider, holders, pac, rivals, winners, halflife, stress, pit, mut tickers } = parse_args(&args);
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
     // mutate the process environment.
     if fmp_key_missing(fund, &crate::config::fund_source(), std::env::var("FMP_API_KEY").ok()) {
@@ -1901,6 +1903,9 @@ pub async fn run(args: Vec<String>) {
     report_vs_benchmark(&samples, &bench, years, tuning);
     if rivals {
         report_rivals(&samples, &bench, years, tuning);
+    }
+    if winners {
+        report_winners(&samples, &bench, years, tuning);
     }
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
@@ -3737,6 +3742,136 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
         median(meds),
         if ship_mean > p95_mean && ship_med > p95_med { "ABOVE" } else { "NOT above" }
     );
+}
+
+/// (#583) The `winners` report's rows, in print order. [`winner_leaks`] files every stock under exactly one.
+const LEAK_KINDS: [&str; 7] = [
+    "held (in the top-10 book)",
+    "refused (no score)",
+    "value floor (PEG trim)",
+    "brake alone",
+    "gate dock alone",
+    "brake + dock",
+    "score blind",
+];
+
+/// (#583) A window's winners: its top this-many % of stocks by real forward return. Pre-registered.
+const WINNER_TOP_PCT: f64 = 5.0;
+
+/// (#583) One [`LEAK_KINDS`] row: every filed stock's excess over its window's book (pts/yr), the
+/// winners' alone, and how many winners carried each gate tag.
+#[derive(Debug, Default, PartialEq)]
+struct Leak {
+    all: Vec<f64>,
+    winners: Vec<f64>,
+    tags: BTreeMap<&'static str, usize>,
+}
+
+/// (#583) Files each window's stocks by what keeps them out of the shipped top-10 book. The book is the
+/// shipped lane's: the scored rows, the (#75) value trim, the top [`VERDICT_TOP`] by score, and the cut
+/// is its 10th score. A stock outside it is refused (no score), trimmed, or a what-if on its OWN score
+/// against that cut with every other name held still: the brake off (`growth_overext_cap` 0), the soft
+/// dock off (`growth_gate_soft` 1), or both. Still under the cut with both off, or already at it and
+/// out on the stable sort's order, it is score blind. Winners are the top `top_pct`% of the window's
+/// stocks by realized %, ties at the bar included. Groups are (quote, realized %, PEG yield) per bucket.
+/// Report only.
+// ponytail: skips the sector and corr caps the main book runs; both are the identity at their shipped 0.
+fn winner_leaks(groups: &BTreeMap<i32, Vec<(&Quote, f64, Option<f64>)>>, years: i64, top_pct: f64, tuning: &BuyHeuristic) -> [Leak; 7] {
+    let mut out: [Leak; 7] = Default::default();
+    let brake = BuyHeuristic { growth_overext_cap: 0.0, ..tuning.clone() };
+    let dock = BuyHeuristic { growth_gate_soft: 1.0, ..tuning.clone() };
+    let both = BuyHeuristic { growth_gate_soft: 1.0, ..brake.clone() };
+    for (b, group) in groups {
+        let quotes: Vec<&Quote> = group.iter().map(|g| g.0).collect();
+        let [sh, br, dk, bo] = [tuning, &brake, &dock, &both].map(|t| picks::growth_scores_ranked(&quotes, t));
+        let rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> =
+            group.iter().zip(&sh).filter_map(|(g, s)| Some((*b, (*s)?, g.1, 0.0, g.0.ticker.clone(), g.2))).collect();
+        let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(b).unwrap_or_default();
+        let survived: HashSet<String> = kept.iter().map(|r| r.3.clone()).collect();
+        kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); // score desc, stable like the shipped book
+        kept.truncate(VERDICT_TOP);
+        if kept.is_empty() {
+            continue;
+        }
+        let cut = kept.get(VERDICT_TOP - 1).map_or(f64::NEG_INFINITY, |r| r.0);
+        let book = ann((kept.iter().map(|r| 1.0 + r.1 / 100.0).sum::<f64>() / kept.len() as f64 - 1.0) * 100.0, years);
+        let held: HashSet<&str> = kept.iter().map(|r| r.3.as_str()).collect();
+        let stocks: Vec<usize> = (0..group.len()).filter(|&i| picks::asset_class(group[i].0) == 2).collect();
+        let mut fwd: Vec<f64> = stocks.iter().map(|&i| group[i].1).collect();
+        fwd.sort_by(|x, y| y.total_cmp(x));
+        let k = ((fwd.len() as f64 * top_pct / 100.0).ceil() as usize).max(1);
+        let Some(&bar) = fwd.get(k - 1) else { continue };
+        let reach = |s: Option<f64>| s.is_some_and(|s| s >= cut);
+        for i in stocks {
+            let (q, realized, _) = group[i];
+            let kind = if held.contains(q.ticker.as_str()) {
+                0
+            } else if sh[i].is_none() {
+                1
+            } else if !survived.contains(&q.ticker) {
+                2
+            } else if reach(sh[i]) {
+                6 // at the cut, out on the sort's order
+            } else if reach(br[i]) {
+                3
+            } else if reach(dk[i]) {
+                4
+            } else if reach(bo[i]) {
+                5
+            } else {
+                6
+            };
+            let leak = &mut out[kind];
+            let excess = ann(realized, years) - book;
+            leak.all.push(excess);
+            if realized >= bar {
+                leak.winners.push(excess);
+                match picks::gate_failures(q, tuning) {
+                    None => *leak.tags.entry(picks::refusal_reason(q).unwrap_or("unassessable")).or_default() += 1,
+                    Some(f) => {
+                        for g in f {
+                            *leak.tags.entry(g.0).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// (#583) The `winners` report: where each window's top-5% stocks went, on the shipped book's pond (the
+/// non-crypto samples with an index window). Report only; the reading lives in the (#583) receipt.
+#[mutants::skip] // printing; `winner_leaks` carries the test
+fn report_winners(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    if bd.len() < 2 {
+        return;
+    }
+    let mut groups: BTreeMap<i32, Vec<(&Quote, f64, Option<f64>)>> = BTreeMap::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0 && benchmark_fwd(bd, bc, s.date, years).is_some()) {
+        groups.entry(bucket(s.date)).or_default().push((s.quote.as_ref(), s.realized, s.fund.as_ref().and_then(|f| f.peg_yield)));
+    }
+    let leaks = winner_leaks(&groups, years, WINNER_TOP_PCT, tuning);
+    let total = leaks.iter().map(|l| l.winners.len()).sum::<usize>().max(1);
+    println!(
+        "\n── WINNERS (#583): each window's top {WINNER_TOP_PCT:.0}% stocks by real forward return, filed by what keeps them out of the shipped top-{VERDICT_TOP} book; gap = own CAGR minus the window's book, pts/yr, HOLD {years}y ──"
+    );
+    let stats = |xs: &[f64]| (xs.iter().sum::<f64>() / xs.len().max(1) as f64, median(xs.to_vec()));
+    for (name, l) in LEAK_KINDS.iter().zip(&leaks) {
+        let ((wm, wd), (am, ad)) = (stats(&l.winners), stats(&l.all));
+        let beat = l.all.iter().filter(|x| **x > 0.0).count() as f64 / l.all.len().max(1) as f64 * 100.0;
+        let mut tags: Vec<(&str, usize)> = l.tags.iter().map(|(t, n)| (*t, *n)).collect();
+        tags.sort_by(|a, b| b.1.cmp(&a.1));
+        let tags: Vec<String> = tags.iter().take(6).map(|(t, n)| format!("{t} {n}")).collect();
+        println!(
+            "  {name:<26} winners {:>4} ({:>3.0}%) gap {wm:+.1} (med {wd:+.1}) | all {:>5} gap {am:+.1} (med {ad:+.1}) beat book {beat:.0}% | {}",
+            l.winners.len(),
+            l.winners.len() as f64 / total as f64 * 100.0,
+            l.all.len(),
+            tags.join(", ")
+        );
+    }
 }
 
 /// (#106) The per-bucket terminal multiples of an equal-weight top-`n` book and of the same bucket's
@@ -8020,6 +8155,7 @@ mod tests {
         assert!(p("holders").holders);
         assert!(p("pac").pac);
         assert!(p("rivals").rivals);
+        assert!(p("winners").winners);
         assert!(p("halflife").halflife);
         assert!(p("stress").stress);
         assert!(p("pit").pit, "`pit` must set pit — lose it and the point-in-time run is a plain one that says it isn't");
@@ -8054,7 +8190,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals halflife stress pit");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit");
         assert_eq!(
             all,
             Args {
@@ -8067,11 +8203,101 @@ mod tests {
                 holders: true,
                 pac: true,
                 rivals: true,
+                winners: true,
                 halflife: true,
                 stress: true,
                 pit: true,
                 tickers: vec![]
             }
+        );
+    }
+
+    /// (#583) Every stock lands in exactly one leak row, and only winners carry tags. Bucket 1 holds a
+    /// clean top-10 (C0..C9, C1/C2 dear-ish but over the PEG floor), a clean C10 at the cut that loses on
+    /// sort order, and one leaker per row; bucket 2 books nobody, so it files nothing.
+    #[test]
+    fn winner_leaks_file_each_stock_by_what_keeps_it_out() {
+        let legs = |pairs: &[(&str, f64)]| -> Vec<Option<(String, f64)>> {
+            crate::core::HORIZONS
+                .iter()
+                .map(|(l, _)| pairs.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
+                .collect()
+        };
+        let t = BuyHeuristic { growth_gate_soft: 0.8, growth_min_age_years: 10.0, growth_value_floor_pct: 40.0, ..Default::default() };
+        let q = |tk: &str| {
+            let mut q = Quote::stub(tk, "€100.00", "", "Test Corp");
+            q.instrument_type = "EQUITY".into();
+            q.avg_turnover_eur = Some(1e9);
+            q.range_pct = 90.0;
+            q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
+            q
+        };
+        let clean: Vec<Quote> = (0..11).map(|i| q(&format!("C{i}"))).collect();
+        let mut refused = q("REF");
+        refused.avg_turnover_eur = None;
+        let mut brk = q("BRK");
+        brk.above_ma_pct = 96.0;
+        let mut dock = q("DOCK");
+        dock.age_years = Some(5.0);
+        let mut both = q("BOTH");
+        (both.age_years, both.above_ma_pct) = (Some(5.0), 96.0);
+        let mut blind = q("BLIND");
+        (blind.range_pct, blind.above_ma_pct) = (50.0, 96.0);
+        let val = q("VAL");
+        let mut fund = q("FUND");
+        (fund.instrument_type, fund.range_pct) = ("ETF".into(), 50.0);
+        let mut ref2 = q("REF2");
+        ref2.avg_turnover_eur = None;
+
+        // preconditions: each leaker reaches the cut (a clean name's score) only with its own relief
+        let brake = BuyHeuristic { growth_overext_cap: 0.0, ..t.clone() };
+        let relief = BuyHeuristic { growth_gate_soft: 1.0, ..t.clone() };
+        let free = BuyHeuristic { growth_gate_soft: 1.0, ..brake.clone() };
+        let cut = growth_score(&clean[0], &t).expect("a clean name scores");
+        let at = |x: &Quote, t: &BuyHeuristic| growth_score(x, t).is_some_and(|s| s >= cut);
+        assert_eq!(picks::refusal_reason(&refused), Some("no-turnover"));
+        assert!(growth_score(&refused, &free).is_none() && growth_score(&fund, &t).is_none());
+        assert_eq!(picks::gate_failures(&brk, &t).map(|f| f.len()), Some(0), "the brake is a score factor, not a gate");
+        assert!(growth_score(&brk, &t).is_some_and(|s| s < cut));
+        assert_eq!(growth_score(&brk, &brake), Some(cut), "brake off, BRK scores exactly the cut");
+        for (x, dock_alone) in [(&dock, true), (&both, false)] {
+            assert!(growth_score(x, &t).is_some_and(|s| s < cut) && !at(x, &brake));
+            assert_eq!(at(x, &relief), dock_alone);
+            assert_eq!(growth_score(x, &free), Some(cut));
+        }
+        assert!(growth_score(&blind, &t).is_some() && !at(&blind, &free), "still under the cut with both off");
+
+        let mut b1: Vec<(&Quote, f64, Option<f64>)> = clean.iter().zip([1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -50.0]).map(|(c, r)| (c, r, None)).collect();
+        (b1[1].2, b1[2].2) = (Some(5.0), Some(5.0));
+        b1.extend([
+            (&refused, 900.0, None),
+            (&brk, 800.0, None),
+            (&dock, 700.0, None),
+            (&both, 600.0, None),
+            (&blind, 500.0, None),
+            (&val, 400.0, Some(1.0)), // under the 40th-pct PEG floor of [1, 5, 5]
+            (&fund, 5000.0, None),    // not a stock, so never filed and never a winner
+        ]);
+        let groups = BTreeMap::from([(1, b1), (2, vec![(&ref2, 999.0, None)])]);
+        // 17 stocks, top 40% -> 7 winners down to VAL's 400; the book's multiple is (11 + 9) / 10 = 2, +100%
+        let got = winner_leaks(&groups, 1, 40.0, &t);
+        let tags = |xs: &[&'static str]| xs.iter().map(|x| (*x, 1)).collect::<BTreeMap<_, _>>();
+        let leak = |all: Vec<f64>, winners: Vec<f64>, tags: BTreeMap<&'static str, usize>| Leak { all, winners, tags };
+        let mut held = vec![900.0];
+        held.extend([-100.0; 9]);
+        let blind_tags: Vec<&'static str> = picks::gate_failures(&blind, &t).expect("assessable").iter().map(|g| g.0).collect();
+        assert!(!blind_tags.is_empty());
+        assert_eq!(
+            got,
+            [
+                leak(held, vec![900.0], tags(&[])),
+                leak(vec![800.0], vec![800.0], tags(&["no-turnover"])),
+                leak(vec![300.0], vec![300.0], tags(&[])),
+                leak(vec![700.0], vec![700.0], tags(&[])),
+                leak(vec![600.0], vec![600.0], tags(&["young"])),
+                leak(vec![500.0], vec![500.0], tags(&["young"])),
+                leak(vec![-150.0, 400.0], vec![400.0], tags(&blind_tags)),
+            ]
         );
     }
 
