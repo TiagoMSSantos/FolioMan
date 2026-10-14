@@ -3605,6 +3605,13 @@ fn equal_top<'a>(ranked: impl Iterator<Item = &'a Sample>, n: usize) -> Vec<(&'a
     v.iter().map(|t| (*t, 1.0 / v.len() as f64)).collect()
 }
 
+/// (#584) The blend's DCA book: `head` (the shipped half), then `fill`'s names not already held, up to `n`,
+/// equal weight as [`equal_top`].
+fn blend_top<'a>(head: Vec<&'a Sample>, fill: impl Iterator<Item = &'a Sample>, n: usize) -> Vec<(&'a str, f64)> {
+    let mut seen: HashSet<&'a str> = head.iter().map(|&s| s.quote.ticker.as_str()).collect();
+    equal_top(head.into_iter().chain(fill.filter(move |&s| seen.insert(s.quote.ticker.as_str()))), n)
+}
+
 /// (#560) Each value's percentile in its column: the share of present values strictly below it, so
 /// ties share a rank. `None` stays `None`.
 fn rank_pct(xs: &[Option<f64>]) -> Vec<Option<f64>> {
@@ -4899,7 +4906,8 @@ fn dca_program<B>(
 /// whole € on the legs, as BUY NOW does: its picks and trackers always sum to gross. Top-10 is a reading. SIZED is the
 /// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
 /// (#560) `rivals` adds the momentum 12-1 rival's lane on the same months: the DCA re-grade a rival that beats
-/// the top-10 ruler owes before anything ships.
+/// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's first [`BLEND_HALF`]
+/// names, then momentum's.
 #[allow(clippy::too_many_arguments)]
 fn report_roll(
     samples: &[Sample],
@@ -4951,18 +4959,21 @@ fn report_roll(
         })
         .collect();
     let alive = |s: &Sample, d, end| series.get(s.quote.ticker.as_str()).is_some_and(|x| priced_at_both(x, d, end));
-    let top10 = |d, end| -> Option<Vec<(&str, f64)>> {
+    let capped = |d: chrono::NaiveDate, end: chrono::NaiveDate, n: usize| -> Option<Vec<&Sample>> {
         let v: Vec<&Sample> = ranked.get(&d)?.0.iter().copied().filter(|s| alive(s, d, end)).collect();
         let v = picks::sector_cap(v, tuning.growth_sector_cap, |s| picks::stock_sector(&s.quote)); // (#557)
         let trails: Vec<&[f64]> = v.iter().map(|s| s.trail.as_slice()).collect();
-        let p = corr_cap_rung(&v, &trails, VERDICT_TOP, tuning.growth_corr_cap);
-        Some(p.iter().map(|s| (s.quote.ticker.as_str(), 1.0 / p.len() as f64)).collect())
+        Some(corr_cap_rung(&v, &trails, n, tuning.growth_corr_cap))
     };
+    let top10 = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(capped(d, end, VERDICT_TOP)?.into_iter(), VERDICT_TOP)) };
     let sized = |d, end| -> Option<Vec<(&str, f64)>> {
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
         Some(crate::commands::size::sized_book(&q, tuning, sz, None, &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), w / 100.0)).collect())
     };
     let mom = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP)) };
+    let blend = |d, end| -> Option<Vec<(&str, f64)>> {
+        Some(blend_top(capped(d, end, BLEND_HALF)?, ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP))
+    };
     let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs);
     let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);
     let top_programs: BTreeMap<i32, Dca> =
@@ -5005,6 +5016,8 @@ fn report_roll(
     if rivals {
         let programs = starts.par_iter().filter_map(|s| Some((bucket(*s), dca_program(*s, mom, value, index, base, &tuning.cgt_hold_schedule)?))).collect();
         lane("mom12-1", programs);
+        let programs = starts.par_iter().filter_map(|s| Some((bucket(*s), dca_program(*s, blend, value, index, base, &tuning.cgt_hold_schedule)?))).collect();
+        lane("blend", programs);
     }
     lane("SIZED", sized_programs)
 }
@@ -8435,6 +8448,10 @@ mod tests {
         assert_eq!(equal_top(order.iter().copied(), 2), vec![("B", 0.5), ("A", 0.5)]);
         assert_eq!(equal_top(order.iter().copied(), 9).len(), 3);
         assert!(equal_top(std::iter::empty(), 10).is_empty());
+        // (#584) the blend: B and A first, A again is held, C fills; an empty head leaves every slot to `fill`
+        let third = 1.0 / 3.0;
+        assert_eq!(blend_top(vec![&pool[1], &pool[0]], [&pool[0], &pool[2], &pool[3]].into_iter(), 3), vec![("B", third), ("A", third), ("C", third)]);
+        assert_eq!(blend_top(Vec::new(), [&pool[2]].into_iter(), 3), vec![("C", 1.0)]);
     }
 
     /// (#518) Each cohort splits the STOCK samples on the flags at their own cutoff; a coin is never
