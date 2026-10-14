@@ -14950,6 +14950,26 @@ buy_heuristic:
                                  #   which is the only reason that divergence is a footnote here instead of a shipped regression.
                                  #   DO NOT RE-RUN THIS LADDER. Seven arms x three horizons happened; this is their verdict. The
                                  #   knob is now pinned at 0.0 in `validated_tilt_pin` (config.rs) — the first pin it has ever had.
+                                 #   (#573) RE-RUN 2026-10-14 ON USER REQUEST, under the (#566) paired per-class ruler with soft 0.8 for
+                                 #   stocks (which (#73) predates). REFUSED IN ALL SIX ARMS; the knob stays 0.0. Arms N = 1, 2, 5, 8, 12, 20
+                                 #   via probe.yml knobs=life_cagr_max_years=N at 71df122, in two batches of 12, each with its own control
+                                 #   (control BOOK lines byte-identical across the batches at every horizon). Same caches in all 24 runs.
+                                 #   Pre-registered in chat before the first run: the (#572) bar (stocks win >= 2/3 of counted cells, no
+                                 #   veto; no counted ETF or crypto veto), plus a RELATIVE rank-1 guard: '#1 beat the 11-20 book' must not
+                                 #   fall more than 5 points below the control in any 8/12/20 cell.
+                                 #   STOCKS (wins/counted, vetoes): N=1 0/10, vetoes pit 12y (mean -0.44), pit 8y, pit 2y (-3.71), stress
+                                 #   12y. N=2 0/10, vetoes pit 20y, pit 12y, pit 8y, pit 2y, stress 20y, stress 2y. N=5 1/10 (stress 1y),
+                                 #   vetoes pit 12y (-0.39), pit 8y. N=8 0/10, vetoes pit 12y (-0.52), pit 8y (-0.20). N=12 0/10, no veto,
+                                 #   every |d| <= 0.24. N=20 0/10, inert: 8 of 10 cells move by at most 0.01, as (#73) found.
+                                 #   RANK-1 h2h (ctl pit 20/12/8 36/45/46%): N=1 27/37/39, N=2 32/37/37, N=5 36/37/33, N=8 32/37/35,
+                                 #   N=12 41/37/37, N=20 36/45/41. Every arm except N=20 breaks the relative guard. N=12 is the closest
+                                 #   miss, the arm that windows out old 1990s glory: it leaves the book mean flat and loses 8-9 points of
+                                 #   rank-1 h2h at pit 12y and 8y. Short N (1/2/5) turns the 19% whole-life bar into a momentum bar; it
+                                 #   moves the most cells and hurts the 8-12y books most. ETF/crypto: no counted cell in any arm.
+                                 #   Wikidata blip (live fetch, not a cache): "Wikidata EU listings unavailable" hit three batch-B
+                                 #   runs (pit ctl 1y, pit N=12 1y, stress ctl 8y: 5655 vs 5698 tickers, windows 8965 vs 9015). BOOK lines
+                                 #   did not move, because those names never reach the held book. Read the 'fetch: Wikidata' line before
+                                 #   blaming a knob for a windows shift.
   # (#100 / finding C8) RE-TEST THIS AFTER growth_accel_beta (#98), NOT BEFORE. At 0 a 25-year-old name
   #   is judged on a full-cycle 20Y CAGR dragged through every crash and a 6-year-old on a bull-only 5Y
   #   CAGR, and the two are then ranked head to head — so the ladder is a comparability defect, not only
@@ -17123,7 +17143,7 @@ buy_heuristic:
                                  #   a3 38524955723, a4 38524966237, a5 38524977142. stress 8 12 20: ctl 38524987677, a1 38524998415,
                                  #   a2 38525008612, a3 38525018691, a4 38525029731, a5 38525040436. Knob echo matched every arm; BOOK
                                  #   counts equal to ctl at every horizon. Windows equal to ctl except 2y (+-1..3 of ~6000) and a5 stress
-                                 #   8y 8965 vs 9015: the penalty pushed bases under the max(0) floor, the soft TR-6 gate of caveat (3).
+                                 #   8y 8965 vs 9015: a live Wikidata EU-listings blip in that run, NOT the penalty (traced in (#573)).
                                  #   STOCKS (wins/counted, vetoes): a1 0/10, veto pit 12y (mean -0.38). a2 1/10 (pit 1y), vetoes pit 20y
                                  #   (mean -1.00), pit 12y, pit 2y, stress 2y (median -3.60), stress 1y. a3 0/10, veto pit 12y. a4 1/10,
                                  #   the same five vetoes as a2. a5 0/10, no veto, no win: every cell within +-0.17, five of ten exactly
