@@ -17117,6 +17117,29 @@ buy_heuristic:
                                  #   can move; only CI backtest-gate grades it after a ship. (3) With growth_allow_negative_scores false
                                  #   a base pushed below 0 leaves the table, so penalty 1.0 also acts as a soft TR-6 gate. (4) The
                                  #   forward ruler is price-only, so it leans AGAINST this term: the dividend lift is not paid back.
+                                 #   VERDICT 2026-10-14: ALL FIVE ARMS REFUSED; weight and penalty stay 0.0, the term stays off.
+                                 #   Runs at ef80064, 18/18 success. pit: ctl 38524863344, a1 38524874027, a2 38524883966, a3 38524894267,
+                                 #   a4 38524904752, a5 38524914824. stress 1 2 5: ctl 38524925265, a1 38524935019, a2 38524944612,
+                                 #   a3 38524955723, a4 38524966237, a5 38524977142. stress 8 12 20: ctl 38524987677, a1 38524998415,
+                                 #   a2 38525008612, a3 38525018691, a4 38525029731, a5 38525040436. Knob echo matched every arm; BOOK
+                                 #   counts equal to ctl at every horizon. Windows equal to ctl except 2y (+-1..3 of ~6000) and a5 stress
+                                 #   8y 8965 vs 9015: the penalty pushed bases under the max(0) floor, the soft TR-6 gate of caveat (3).
+                                 #   STOCKS (wins/counted, vetoes): a1 0/10, veto pit 12y (mean -0.38). a2 1/10 (pit 1y), vetoes pit 20y
+                                 #   (mean -1.00), pit 12y, pit 2y, stress 2y (median -3.60), stress 1y. a3 0/10, veto pit 12y. a4 1/10,
+                                 #   the same five vetoes as a2. a5 0/10, no veto, no win: every cell within +-0.17, five of ten exactly
+                                 #   0.00. The gates already bar most sub-6% TR names, so the penalty has almost nothing to dock.
+                                 #   ETF and crypto: no counted cell in any arm (all under 10 buckets), so no veto is possible there.
+                                 #   Shipped top-10 at 20y pit, excess mean (median): ctl +2.9 (+2.1), a1 +2.7 (+2.1), a2 +1.9 (+1.7),
+                                 #   a3 +2.8 (+2.2), a4 +1.9 (+1.8), a5 +2.9 (+2.3). The `backtest_edge_holds` read was not needed.
+                                 #   RANK-1 GUARD: vacuous, as predicted from the (#571) logs. ctl's `#1 beat the 11-20 book` is under 50%
+                                 #   in all six cells (pit 20/12/8y 36/45/46%, stress 38/40/44% at 8/12/20y), so no cell could trip it.
+                                 #   Read anyway: the weight arms lowered it in most cells (pit 12y 45 -> 34% in a1-a4; stress 8y
+                                 #   38 -> 30% in a2/a4). The rank-1 slice mean worsened too (pit 8y -0.2 -> -2.1 in a1/a3, pit 12y
+                                 #   -2.7 -> -3.6). That is the (#3k) winner's curse again: the extra TR-life weight lifts names whose
+                                 #   long record is already in the price. Caveat (1) came true.
+                                 #   READING: (#571) rival (h) beat the book as a whole-book SWAP. Blended into the score, the same number
+                                 #   reorders the top of a gated table and loses. Do not re-ask a TR-life term (either slope, any pivot)
+                                 #   without a new mechanism, such as a capped TR or a TR-minus-leg residual.
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
   growth_smoothness_weight: 0.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
                                  #   straight-line compounder over the equal-CAGR rollercoaster. Reconstructed in backtest_quote,
