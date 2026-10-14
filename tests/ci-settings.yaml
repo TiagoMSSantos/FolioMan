@@ -19970,6 +19970,28 @@ buy_heuristic:
   #  admits on today's page are not what drags the replay; the f^n dock is already charging them. Do not re-ask a
   #  hard life floor or a hard loss rule without a mechanism that keeps the #1 slot; the forward `track` grades the
   #  live soft admits from ~2027-09.
+  growth_soft_drop_misses: 0    # (#582) k > 0 = a STOCK that misses k or more knob gates (the n growth_gate_soft's f^n
+  #  docks; `cagr` and `cagr-life` count 2) gets no score and leaves the table. 0 = off, the shipped lane bit for bit.
+  #── (#582) PRE-REGISTERED 2026-10-14, before any run — DROP A STOCK THAT MISSES TOO MANY GATES ──
+  #  WHY: the owner asks again why NVDA (0 misses) is out while J.B. Hunt (4 misses), Delta (3) and Visa (3) rank. Each
+  #  miss docks x0.8, so four misses still keep x0.41 of the score. (#576) tested floors on single gates (life CAGR,
+  #  loss) and (#567) the dock's size; a cap on the miss COUNT has never been graded. Live page (data.json 2026-10-14
+  #  16:50Z), 26 Stocks rows: 3 miss 0, 9 miss 1, 10 miss 2, 3 miss 3 (MSFT, DAL, Visa), 1 misses 4 (JBHT). Cap 4 drops
+  #  1 row, cap 3 drops 4, cap 2 drops 14 (8 of the 10 two-miss rows are the `cagr` + `cagr-life` pair).
+  #  ARMS: growth_soft_drop_misses = 2, 3, 4 against ctl (0). Runs per arm: pit `1 2 5 8 12 20`, stress `1 2 5`,
+  #  stress `8 12 20`, all `universe fund` (4 arms x 3 = 12 runs). Owner's choices: arms 2/3/4, the dock's own count.
+  #  BAR, the (#576)-(#581) NOT-WORSE checks vs ctl; an arm ships only if all four hold:
+  #    1. no counted stock BOOK cell drops by 0.2 or more on the mean or on the paired median ((#566) per-class ruler);
+  #    2. no counted ETF or crypto BOOK cell shows a veto;
+  #    3. relative rank-1 guard: in every pit and stress 8/12/20 cell, '#1 beat the 11-20 book' is at most 5 points under ctl;
+  #    4. zeros guard: 'rode N zeros' does not rise in any 8/12/20 cell (a tight cap can empty buckets, the (#568) failure).
+  #  TIE-BREAK: several arms pass -> the most stock cells won; tied -> the tighter cap (2 before 3 before 4). SHIP -> the
+  #  value goes live in a follow-up commit (goldens re-blessed). No arm passes -> 0 stays.
+  #  A hard knob lowers `windows scored` itself ((#576): 1-3 windows at 1-5y), so pool parity is read on the `tickers:`
+  #  count beside `cutoffs with a forward window`; a pair whose pool differs is re-dispatched, not graded.
+  #  CAVEATS: a miss is a gate, not a verdict: `cagr` + `cagr-life` double-count a slow compounder, and a Xetra twin can
+  #  miss `liquidity` its US listing passes. Survivorship (today's pond); the forward record cannot grade it before
+  #  ~2027-09.
   growth_overext_backed_floor: 0.0 # (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock
   #  (`picks::earnings_backed`: 5y chained EPS CAGR, as-of in the backtest, at least the 5y price CAGR, so the P/E did
   #  not expand over the run), in place of growth_overext_floor 0.05. Either number missing = the normal brake (funds,

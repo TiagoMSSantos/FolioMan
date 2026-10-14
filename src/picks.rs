@@ -2074,6 +2074,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let mut p = score_parts_hard(quote, &open)?;
     // (#566) with the leg dock on, a short record pays p^k instead, so its record gates leave the n
     let n = tags.iter().filter(|g| !(tuning.growth_leg_dock > 0.0 && matches!(g.0, "history" | "young"))).count();
+    // (#582) armed, k or more misses keep the stock out, as under hard gates
+    if tuning.growth_soft_drop_misses > 0 && n >= tuning.growth_soft_drop_misses as usize {
+        return None;
+    }
     p.gate_soft = f.powi(n as i32);
     p.score = compose_score(&p, tuning);
     Some(p)
@@ -12911,6 +12915,26 @@ mod tests {
         assert_eq!(growth_score(&bare, &armed), growth_score(&bare, &soft), "no fundamentals at all pass");
         let hard_loss = BuyHeuristic { growth_hard_loss: true, ..BuyHeuristic::default() };
         assert_eq!(growth_score(&pass, &hard_loss), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
+    }
+
+    /// (#582) `growth_soft_drop_misses`: armed at k, a stock missing k or more gates gets no score; one
+    /// miss fewer docks in exactly as before, and off (0) any count docks in.
+    #[test]
+    fn soft_drop_misses_keeps_a_many_gate_failer_out() {
+        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..BuyHeuristic::default() };
+        let drop = |k: u32| BuyHeuristic { growth_soft_drop_misses: k, ..soft.clone() };
+        let mut q = gate_fixture();
+        q.range_pct = 20.0; // under the range floor: one miss
+        q.life_cagr = Some(3.0); // under growth_min_cagr: `cagr-life`, a second miss
+        let n = waived(&q, &soft, false).expect("the fixture waives").1.len();
+        assert_eq!(n, 2, "the fixture misses two gates");
+        let docked = growth_score(&q, &soft);
+        assert!(docked.is_some(), "off, a two-gate failer docks in");
+        assert_eq!(growth_score(&q, &drop(2)), None, "armed at 2, two misses stay out");
+        assert_eq!(growth_score(&q, &drop(1)), None, "and at 1");
+        assert_eq!(growth_score(&q, &drop(3)), docked, "at 3, two misses dock in as before");
+        let pass = gate_fixture();
+        assert_eq!(growth_score(&pass, &drop(1)), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
     }
 
     /// (#577) `growth_overext_backed_floor`: armed, a stock whose 5y EPS CAGR is at least its 5y price
