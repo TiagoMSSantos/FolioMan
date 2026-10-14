@@ -3862,7 +3862,7 @@ fn report_winners(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)
         let ((wm, wd), (am, ad)) = (stats(&l.winners), stats(&l.all));
         let beat = l.all.iter().filter(|x| **x > 0.0).count() as f64 / l.all.len().max(1) as f64 * 100.0;
         let mut tags: Vec<(&str, usize)> = l.tags.iter().map(|(t, n)| (*t, *n)).collect();
-        tags.sort_by(|a, b| b.1.cmp(&a.1));
+        tags.sort_by_key(|a| std::cmp::Reverse(a.1));
         let tags: Vec<String> = tags.iter().take(6).map(|(t, n)| format!("{t} {n}")).collect();
         println!(
             "  {name:<26} winners {:>4} ({:>3.0}%) gap {wm:+.1} (med {wd:+.1}) | all {:>5} gap {am:+.1} (med {ad:+.1}) beat book {beat:.0}% | {}",
