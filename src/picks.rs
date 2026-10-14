@@ -1326,7 +1326,8 @@ struct ScoreParts {
     record_years: f64, // (#133) the long leg `long_leg_fixed` FOUND, in years — carried, never re-derived (non-negotiable #4). Display only: the penalty row is unreadable without the leg it is short of
     record_term: f64,  // (#133) −growth_record_weight × max(0, growth_record_full_years − long_years); 0 when the weight is 0 (default) or the leg is already full
     base_offset: f64,  // (#150) growth_base_offset — a CONSTANT, the twelfth additive term. Carried as a FIELD rather than folded into the sum so `TERM_DIMS` covers it and `growth_scores_ranked`'s recomposition cannot drop it
-    base: f64,         // sum of the twelve terms above
+    tr_life: f64,      // (#572) the thirteenth: growth_tr_life_weight × (tr_cagr − pivot) above the pivot, growth_tr_life_penalty × (tr_cagr − pivot) below it; 0 when tr_cagr is None or both slopes are 0
+    base: f64,         // sum of the thirteen terms above
     proximity: f64,    // (#48) 1 + growth_proximity_weight × (range_pct/100 − 1); = range_pct/100 at the shipped w=1
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
@@ -1832,6 +1833,15 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // — a term that ranks purely by the multiplier stack. That is the whole knob. 0.0 (default) makes
     // it exactly 0.0 and the sum below is the shipped one term for term.
     let base_offset = tuning.growth_base_offset;
+    // (#572) WHOLE-LIFE TOTAL-RETURN CAGR, kinked at the pivot: paid `w` per point above it, docked `p`
+    // per point below it. The price leg above stays THE growth number — this rides on top of it, which
+    // is the difference from the refused (#3j) `use_life_cagr` swap. Uncapped, like (#571) rival (h).
+    // `tr_cagr` is filled at fetch and in `backtest_quote` over the same as-of slice, so train==serve.
+    // None (under 6mo of history) -> 0. Both slopes 0 (default) -> exactly 0.0, the shipped sum.
+    let tr_life = quote.tr_cagr.map_or(0.0, |tr| {
+        let d = tr - tuning.growth_tr_life_pivot;
+        tuning.growth_tr_life_weight * d.max(0.0) + tuning.growth_tr_life_penalty * d.min(0.0)
+    });
     let base = trend_term
         + accel_term
         + risk_reward
@@ -1843,7 +1853,8 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
         + underwater
         + er_term
         + record_term
-        + base_offset;
+        + base_offset
+        + tr_life;
     let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     // (Item 20) dial the P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
     // swing (default, unchanged); 0.0 = off (shipped). On-sale `buy_score` keeps full value_factor.
@@ -1989,7 +2000,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // reach it instead of writing a second copy of this stack.
     let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
-        fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base_offset, base, proximity, value_raw, value, trust, overext,
+        fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base_offset, tr_life, base, proximity, value_raw, value, trust, overext,
         overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, leg_dock, gate_soft: 1.0, score: 0.0,
     };
     parts.score = compose_score(&parts, tuning);
@@ -2173,11 +2184,12 @@ fn inv_norm_tail(q: f64, sign: f64) -> f64 {
 ///     penalty into a rank position;
 ///   - `liq_bonus` lands OUTSIDE the multiplier stack, where `score_parts` already records that a
 ///     constant is genuinely rank-inert.
-/// `term_dims_sum_to_base` pins the "exactly `base`" claim — if a THIRTEENTH additive term is ever
+/// `term_dims_sum_to_base` pins the "exactly `base`" claim — if a further additive term is ever
 /// added to `base` and not to this list, that test fails, which is the feature. (#150) added the
-/// twelfth (`base_offset`) and this is the mechanism that caught it needing to be here.
+/// twelfth (`base_offset`) and this is the mechanism that caught it needing to be here; (#572) the
+/// thirteenth (`tr_life`).
 type TermDim = (&'static str, fn(&ScoreParts) -> f64, fn(&mut ScoreParts, f64));
-const TERM_DIMS: [TermDim; 12] = [
+const TERM_DIMS: [TermDim; 13] = [
     ("trend_term", |p| p.trend_term, |p, v| p.trend_term = v),
     ("accel_term", |p| p.accel_term, |p, v| p.accel_term = v),
     ("risk_reward", |p| p.risk_reward, |p, v| p.risk_reward = v),
@@ -2196,6 +2208,8 @@ const TERM_DIMS: [TermDim; 12] = [
     // `growth_rank_normalise` is armed, which is exactly the landmine `term_dims_sum_to_base` exists
     // to catch.
     ("base_offset", |p| p.base_offset, |p, v| p.base_offset = v),
+    // (#572) the thirteenth.
+    ("tr_life", |p| p.tr_life, |p, v| p.tr_life = v),
 ];
 
 /// (#144) CROSS-SECTIONAL rank normalisation of the growth score — the two-pass twin of
@@ -3454,6 +3468,21 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         say(&mut s, &plain(true, p.er_term,
             "Expected yearly return if bought today: dividends + profit growth + buybacks ± a change in valuation",
             "no estimate (it needs company filings)"));
+    }
+    // (#572) same (#105) treatment: printed only when a slope is armed, so the default breakdown is
+    // byte-identical to the one every golden was blessed on.
+    if tuning.growth_tr_life_weight != 0.0 || tuning.growth_tr_life_penalty != 0.0 {
+        s.push_str(&format!(
+            "    tr_life  = (TR life CAGR − {:.1}) × {:.2} above | × {:.2} below = {:.2}   (TR life {})\n",
+            tuning.growth_tr_life_pivot,
+            tuning.growth_tr_life_weight,
+            tuning.growth_tr_life_penalty,
+            p.tr_life,
+            quote.tr_cagr.map_or_else(|| "n/a".to_string(), |v| format!("{v:.2}%/yr"))
+        ));
+        say(&mut s, &plain(true, p.tr_life,
+            &format!("Whole-life yearly total return (price plus dividends) against a {:.0}%/yr bar: paid above it, docked below it", tuning.growth_tr_life_pivot),
+            "no usable history (under 6 months)"));
     }
     // (#133) same (#105) treatment: printed only when it bites, so a run at the default weight 0
     // renders the byte-identical breakdown every golden was blessed on. The row spells out the leg
@@ -8466,7 +8495,7 @@ mod tests {
             capped_cagr: None,     // (#3l) default off; the capped-window arm sets it via config
             life_return_pct: None,     // (perf_fill) display-only; the fill asserts set it explicitly
             trail_monthly: Vec::new(), // (#41) no trail -> unjudgeable -> the redundancy skip never blocks
-            tr_cagr: None,         // (TR-CAGR) display-only; never scored
+            tr_cagr: None,         // (TR-CAGR) display-only unless (#572) tr_life is armed
             history_proxied: false, // display-only marker; never scored
             aum_eur: None,          // (AUM) fund-size gate inert by default; its tests set it explicitly
             ter_fallback: None,     // Yahoo facts fallback pair — display/H-CORE only; their tests set them explicitly
@@ -10614,12 +10643,15 @@ mod tests {
             explain_growth_score(q, t, s + bump).expect("a scoring row explains")
         };
         let base = ex(&q, &d, 0.0);
-        for quiet in ["×CAGR", "exp.ret  =", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "bonuses      =", "crypto NUPL", "brake off"] {
+        for quiet in ["×CAGR", "exp.ret  =", "tr_life  =", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "bonuses      =", "crypto NUPL", "brake off"] {
             assert!(!base.contains(quiet), "default must not print {quiet:?}:\n{base}");
         }
         assert!(base.contains("overext_damp = 1 − ("), "{base}");
         assert!(ex(&q, &BuyHeuristic { growth_accel_beta: 0.5, ..d.clone() }, 0.0).contains("0.50×CAGR"));
         assert!(ex(&q, &BuyHeuristic { growth_er_weight: 1.0, ..d.clone() }, 0.0).contains("exp.ret  ="));
+        // (#572) either slope alone arms the row
+        assert!(ex(&q, &BuyHeuristic { growth_tr_life_weight: 0.5, ..d.clone() }, 0.0).contains("tr_life  ="));
+        assert!(ex(&q, &BuyHeuristic { growth_tr_life_penalty: 0.5, ..d.clone() }, 0.0).contains("tr_life  ="));
         assert!(ex(&q, &BuyHeuristic { growth_overext_cap: 0.0, ..d.clone() }, 0.0).contains("brake off, cap 0"));
         let mut ter = q.clone();
         ter.expense_ratio = Some(0.2);
@@ -12906,6 +12938,34 @@ mod tests {
         let neg = score_parts(&q, &BuyHeuristic { growth_base_offset: -c, ..d.clone() }).expect("still clears");
         assert!(neg.score < off.score, "a negative offset must dock a positive-base name");
         assert!(neg.base > 0.0, "the fixture's base must stay positive at -3.0, or this test is measuring (#86)'s inversion instead");
+    }
+
+    /// (#572) The TR-life term is a KINK at the pivot: `w × (tr − pivot)` above it, `p × (tr − pivot)`
+    /// below it, 0 at the pivot and 0 when `tr_cagr` is None. Pinned to the exact amounts so a mutant
+    /// that swaps the slopes, flips a sign or drops the term from `base` dies here.
+    #[test]
+    fn tr_life_term_is_kinked_at_the_pivot() {
+        let d = BuyHeuristic::default();
+        assert_eq!((d.growth_tr_life_weight, d.growth_tr_life_penalty, d.growth_tr_life_pivot), (0.0, 0.0, 6.0), "the DEFAULT must be off");
+        let at = |tr: Option<f64>, t: &BuyHeuristic| {
+            let mut q = gate_fixture();
+            q.tr_cagr = tr;
+            score_parts(&q, t).expect("the fixture clears the gates")
+        };
+        let off = at(Some(20.0), &d);
+        assert_eq!(off.tr_life, 0.0, "at the default the term must be exactly 0.0");
+        let t = BuyHeuristic { growth_tr_life_weight: 0.5, growth_tr_life_penalty: 2.0, ..d.clone() };
+        let hi = at(Some(20.0), &t);
+        assert_eq!(hi.tr_life, 0.5 * 14.0, "above the pivot it pays the weight slope");
+        assert!((hi.base - (off.base + 7.0)).abs() < 1e-12, "the term must land in `base`: {} vs {}", hi.base, off.base + 7.0);
+        assert!(hi.score > off.score, "a paid term must lift the score");
+        assert_eq!(at(Some(4.0), &t).tr_life, -2.0 * 2.0, "below the pivot it docks the penalty slope");
+        assert_eq!(at(Some(6.0), &t).tr_life, 0.0, "exactly at the pivot it is 0");
+        assert_eq!(at(None, &t).tr_life, 0.0, "no TR history -> 0, never a penalty");
+        // the pivot is a knob, not a literal: moving it moves the kink.
+        let t8 = BuyHeuristic { growth_tr_life_pivot: 8.0, ..t.clone() };
+        assert_eq!(at(Some(7.0), &t8).tr_life, -2.0, "below a moved pivot it docks");
+        assert_eq!(at(Some(9.0), &t8).tr_life, 0.5, "above a moved pivot it pays");
     }
 
     /// (#150) The twelfth term must be in `TERM_DIMS`, or `growth_scores_ranked` recomputes `base`
