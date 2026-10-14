@@ -85,7 +85,7 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // TR-CAGR cell (ⁱ under 6 months since #530, with its bar), else a CAGR cell a settings file still lists.
 // The top N counts only the rows kept; (#539) the box or a query shows the floored rest greyed, and a
 // pinned row is never hidden.
-const SHADOW = ["attention", "berkshire", "social", "young", "reits"];
+const SHADOW = ["attention", "berkshire", "social", "young", "braked", "reits"];
 const floors = {};
 let minCagr = 0; // (#526) the payload's, like the floors
 const bar = (cell, yrs, f) => (cell.endsWith("ⁱ") ? ((1 + f / 100) ** (+yrs || 0) - 1) * 100 : f);
@@ -136,7 +136,7 @@ const VIEW = {
   "FCF-YLD": "value cash", "P/S": "value", "EV/EBITDA": "value",
 };
 function view(v) {
-  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social, #young, #reits) table")) {
+  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social, #young, #braked, #reits) table")) {
     const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && !VIEW[th.textContent].split(" ").includes(v));
     for (const tr of t.rows) [...tr.cells].forEach((c, i) => (c.hidden = hide[i]));
   }
@@ -347,6 +347,10 @@ function render(data, prev) {
   if (data.young) {
     document.getElementById("young").replaceChildren(table(data.young, "(no stock listed under 5 years)", help.young));
   }
+  // (#580) CI's payload only, like the shadow tables above
+  if (data.braked) {
+    document.getElementById("braked").replaceChildren(table(data.braked, "(no stock kept out by the brake alone)", help.braked));
+  }
   // (#515) CI's payload only; not a shadow table, so no stock columns and no CAGR cut
   // (#525) CI's payload only, like the shadow tables above
   if (data.reits) {
@@ -377,7 +381,7 @@ function render(data, prev) {
   chooser(Math.max(1, ...sizes), secondShortest(sizes));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "reits", "upcoming"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, help);
@@ -408,6 +412,7 @@ function glossary(data, help) {
     ["Berkshire holdings", "berkshire", [data.berkshire]],
     ["Social Arbitrage trading", "social", [data.social]],
     ["Young", "young", [data.young]],
+    ["Braked", "braked", [data.braked]],
     ["REITs and SIGIs", "reits", [data.reits]],
     ["Upcoming IPOs", "upcoming", [data.upcoming]],
   ]) {

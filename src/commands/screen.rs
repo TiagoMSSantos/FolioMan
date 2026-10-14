@@ -2261,6 +2261,8 @@ pub async fn run(args: Vec<String>) {
         top["berkshire"] = berkshire;
         top["social"] = social;
         top["young"] = crate::picks::young_rows(&quotes); // (#500)
+        let braked = crate::picks::braked_rows(&top["stocks"], &quotes, &settings.tickers, &settings.buy_heuristic);
+        top["braked"] = braked; // (#580)
         top["reits"] = crate::picks::reit_rows(&quotes, &sigis); // (#525)
         top["upcoming"] = upcoming;
         // (#502) the page greys (#525: no longer hides) shadow rows under the stock lane's CAGR floor,
@@ -2271,7 +2273,7 @@ pub async fn run(args: Vec<String>) {
         top["social_cagr_floor"] = serde_json::json!(soc.buy.growth_min_cagr); // (#538) the Social table greys under its own
         top["bonds"] = serde_json::json!(bonds);
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
-        let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["reits"]], &quotes, &fetch::us_symbol);
+        let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["braked"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
         soc_book = crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &quotes, &settings.widths, &settings.buy_heuristic, &soc, &fund_pe, &fetch::us_symbol);
         crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);

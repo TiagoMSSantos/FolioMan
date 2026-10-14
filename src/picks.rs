@@ -5363,6 +5363,15 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("TICKER", ticker),
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
     ]);
+    // (#580) the Braked table: `braked_rows`, then the stock columns like Young
+    let braked = fixed(&[
+        num,
+        ("TICKER", ticker),
+        ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
+        ("NO-BRAKE", "The buy score with the ran-too-far brake switched off (growth_overext_cap 0), every other rule unchanged. It is at or above TABLE-CUT, so the brake alone keeps the stock out of the Stocks table"),
+        ("TABLE-CUT", "The lowest SCORE in the Stocks table, pinned rows aside: what a stock needs to be listed there"),
+        ("BRAKE", "The ran-too-far brake's multiplier, and how far the price sits above its own 200-WEEK average (the ABV-MA column is the 200-day one). The multiplier falls from ×1 at the average to ×growth_overext_floor at growth_overext_cap above it, and enters the score through a geometric mean with the trust factor, so the score drops by less than the multiplier"),
+    ]);
     // (#525) the REITs table: `reit_rows`, then the stock columns like Young
     let reits = fixed(&[
         num,
@@ -5432,6 +5441,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("berkshire", berkshire),
         ("social", social),
         ("young", young),
+        ("braked", braked),
         ("reits", reits),
         ("upcoming", upcoming),
         ("exposure", exposure),
@@ -5666,6 +5676,50 @@ pub fn young_rows(quotes: &[Quote]) -> serde_json::Value {
         .collect()
 }
 
+/// (#580) The page's Braked table: the stocks that pass every growth gate, sit outside the Stocks table
+/// (`stocks`, the payload's lane rows), score under its lowest score (pinned rows aside: a pin ignores
+/// the cut) and would clear it with the overextension brake off (`growth_overext_cap` 0), so the
+/// brake alone keeps them out. Best brake-off score first, one row per company; [`stamp_shadow_cols`]
+/// adds SCORE, MISSES and the stock columns. Display only: nothing here ranks, buys or journals.
+pub fn braked_rows(stocks: &serde_json::Value, quotes: &[Quote], pinned: &[String], tuning: &BuyHeuristic) -> serde_json::Value {
+    let shown: Vec<&str> = stocks
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str())
+        .collect();
+    let by: HashMap<&str, &Quote> = quotes.iter().map(|q| (q.ticker.as_str(), q)).collect();
+    let cut = shown
+        .iter()
+        .filter(|t| !pinned.iter().any(|p| p == *t))
+        .filter_map(|t| growth_score(by.get(t)?, tuning))
+        .fold(f64::INFINITY, f64::min);
+    let free = BuyHeuristic { growth_overext_cap: 0.0, ..tuning.clone() };
+    // score_parts_hard: a soft admit misses a gate, so it is never a brake-only miss
+    let mut rows: Vec<(&Quote, ScoreParts, f64)> = quotes
+        .iter()
+        .filter(|q| asset_class(q) == 2 && !shown.contains(&q.ticker.as_str()))
+        .filter_map(|q| Some((q, score_parts_hard(q, tuning)?, score_parts_hard(q, &free)?.score)))
+        .filter(|(_, p, nb)| p.score < cut && *nb >= cut)
+        .collect();
+    rows.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+    let mut names = HashSet::new();
+    rows.retain(|(q, ..)| names.insert(q.name.to_lowercase()));
+    rows.iter()
+        .enumerate()
+        .map(|(i, (q, p, nb))| {
+            serde_json::json!([
+                ["RANK", (i + 1).to_string()],
+                ["TICKER", q.ticker],
+                ["NAME", q.name],
+                ["NO-BRAKE", format!("{nb:.1}")],
+                ["TABLE-CUT", format!("{cut:.1}")],
+                ["BRAKE", format!("×{:.2} at {:+.0}%", p.overext_damp, q.above_ma_pct)],
+            ])
+        })
+        .collect()
+}
+
 /// (#525) Name tokens that make a fund a real-estate fund for the REITs table, matched lower-case.
 const REIT_TOKENS: &[&str] = &["real estate", "reit", "propert", "epra", "nareit", "immobil"];
 
@@ -5840,7 +5894,7 @@ pub fn stamp_shadow_cols(
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q))); // the exact ticker wins over a twin
     let asof = payload["generated"].as_str().and_then(|g| g.get(..10)).and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
     let mut book = SocBook::default();
-    for table in ["attention", "berkshire", "social", "young", "reits"] {
+    for table in ["attention", "berkshire", "social", "young", "braked", "reits"] {
         // (#538) the Social table reads `social_heuristic` over `buy_heuristic`; every other table the original
         let (tuning, soc_on) = if table == "social" { (&soc.buy, soc.on()) } else { (tuning, false) };
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
@@ -5909,7 +5963,7 @@ pub fn stamp_shadow_cols(
 /// builders, so the twins ride in universe.json.
 pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Quote>, w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
     let cols = lane_columns(w, HIDE_STOCK);
-    for table in ["stocks", "attention", "berkshire", "social", "young", "reits"] {
+    for table in ["stocks", "attention", "berkshire", "social", "young", "braked", "reits"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default().to_string();
@@ -5933,7 +5987,7 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
 pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn(&str) -> String) {
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q)));
-    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young", "reits"] {
+    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young", "braked", "reits"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default();
@@ -11566,6 +11620,48 @@ mod tests {
         assert_eq!(young_rows(&quotes).as_array().map(Vec::len), Some(4));
         assert_eq!(young_line(&quotes, 2), "young (<5y listed, shadow, NOT ranked): 4 stock(s), by revenue growth: FAST +175%, SLOW +5%");
         assert!(young_line(&quotes, 9).ends_with("SLOW +5%, NAN n/a, NONE n/a"), "{}", young_line(&quotes, 9));
+    }
+
+    /// (#580) Braked = a gate-passing stock outside the Stocks table, under its lowest unpinned score and
+    /// at or over it with the brake off; best brake-off score first, one row per company.
+    #[test]
+    fn braked_rows_list_the_brake_only_misses() {
+        let t = gates_off(&BuyHeuristic::default());
+        let q = |tk: &str, name: &str, above: f64, range: f64| {
+            let mut q = gate_fixture();
+            (q.ticker, q.name, q.above_ma_pct, q.range_pct) = (tk.into(), name.into(), above, range);
+            q
+        };
+        let mut fund = q("FUND", "Fund", 96.0, 90.0);
+        fund.instrument_type = "ETF".into();
+        let quotes = [
+            q("TOP", "Top Co", 0.0, 90.0),     // in the table: its score is the cut
+            q("PIN", "Pin Co", 96.0, 90.0),    // in the table, pinned: under the cut, so it must not set it
+            q("NVD.F", "NVIDIA", 96.0, 90.0),  // the same company on a second venue
+            q("NVD.DE", "Nvidia", 96.0, 90.0), // braked: brake off, it scores exactly the cut
+            q("WEAK", "Weak Co", 96.0, 50.0),  // braked, but under the cut even with the brake off
+            q("HIGH", "High Co", 0.0, 90.0),   // out of the table at the cut itself, not under it
+            fund,                              // stocks only
+        ];
+        let score = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).expect("the fixture scores");
+        let free = BuyHeuristic { growth_overext_cap: 0.0, ..t.clone() };
+        let cut = score(&quotes[0], &t);
+        assert!(score(&quotes[3], &t) < cut && score(&quotes[3], &free) == cut && score(&quotes[4], &free) < cut);
+        let stocks = serde_json::json!([[["RANK", "1"], ["TICKER", "TOP"]], [["RANK", "2"], ["TICKER", "PIN"]]]);
+        let got = braked_rows(&stocks, &quotes, &["PIN".to_string()], &t);
+        let cut = format!("{cut:.1}");
+        assert_eq!(
+            got,
+            serde_json::json!([[
+                ["RANK", "1"],
+                ["TICKER", "NVD.DE"],
+                ["NAME", "Nvidia"],
+                ["NO-BRAKE", cut],
+                ["TABLE-CUT", cut],
+                ["BRAKE", "×0.09 at +96%"]
+            ]])
+        );
+        assert_eq!(braked_rows(&serde_json::json!([]), &quotes, &[], &t), serde_json::json!([]), "no table, no cut");
     }
 
     /// (#517) The Wikidata pond keeps a name under 5 years old AND trading €500K+/day; either unknown drops it.

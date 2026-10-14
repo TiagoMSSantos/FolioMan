@@ -19,7 +19,7 @@
   <nav class="sub" aria-label="sections">
     <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
-    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
+    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Braked</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
   </nav>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
@@ -154,6 +154,20 @@
     learn whether keeping young stocks out costs money. An uploaded settings.yaml does not change this table.
   </details>
   <div id="young"></div>
+
+  <!-- (#580) stocks that pass every gate and miss the Stocks table only because of the ran-too-far brake. -->
+  <h2 title="Stocks that pass every buy gate but are kept out of the Stocks table by the ran-too-far brake alone: with the brake off they would score high enough to be listed" id="h-braked">Braked out (pass every gate, held out by the brake) — shadow, NOT a buy signal</h2>
+  <details class="note" id="braked-note">
+    <summary>about this table</summary>
+    The Stocks table brakes a stock that has risen far above its own 200-week average: the further above,
+    the lower its score, down to a small fraction at 100% above. A stock here passes every buy gate (MISSES 0),
+    and its score with the brake switched off (NO-BRAKE) is at or above the lowest score in the Stocks table
+    (TABLE-CUT), so the brake is the only thing keeping it out. BRAKE is the multiplier and the stretch it read.
+    The brake stays because every easing of it tried so far lost money on history: a weaker brake, a higher
+    floor, a floor for earnings-backed stocks and a trend-adjusted stretch were all refused. This table only
+    shows what the brake costs today. An uploaded settings.yaml does not change it.
+  </details>
+  <div id="braked"></div>
 
   <!-- (#525) REIT stocks, REIT funds and Portuguese SIGIs, ranked like the other shadow tables. -->
   <h2 title="Real-estate stocks (REITs), real-estate funds and Portuguese SIGIs, best buy score first. Shown for comparison; nothing here changes BUY% or the rankings above" id="h-reits">REITs and SIGIs — shadow, NOT a buy signal</h2>
