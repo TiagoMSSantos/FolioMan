@@ -1758,6 +1758,20 @@ sizing:
   #  worst program pit +2.2 -> +2.0, stress flat.
   #  VERDICT: (j) PASSES BOTH PRE-REGISTERED BARS (book 5 of 6, DCA no veto). Still report-only: how to ship a
   #  two-signal book (screen table, page engine, BUY NOW, SIZED) is the owner's design call, not this receipt's.
+  #  SHIP DESIGN (owner, 2026-10-14): the blend enters the ranked stock book (`render`'s cut), so the tables, BUY%,
+  #  journal and BUY NOW all follow it; momentum rows get flag `m`. SIZED is the (#311) ship bar and top-10 only a
+  #  reading, so a SIZED-blend DCA grade comes first. Owner's call on the order (head weight 4 vs 1): grade both.
+  #  SIZED LANES BUILT: `S+after` and `S+inter` in the (#311) block under `rivals`. Each takes the SIZED lane's
+  #  book (`size::sized_book`, 25 names, first 5 at weight 4 on CI) and splices in the gates-off pond's momentum
+  #  12-1 names (`sized_splice`): `S+after` = shipped 1-5, momentum 1-5, shipped 6+; `S+inter` = S1 M1 S2 M2 ...
+  #  A momentum name already held keeps its first slot, an issuer twin of a held name is dropped, momentum coins
+  #  are dropped, a commodity leaves the head as shipped (#495), then the same equal-weight split re-weights.
+  #  PRE-REGISTERED 2026-10-14, before any run. Two probe.yml runs, `universe fund pit|stress rivals` at 20y,
+  #  shipped settings. Graded on the 20y `never-sell vs index DCA` row against the SIZED lane of the same run.
+  #  CLEARS: on BOTH lanes neither mean nor median falls by >= 0.2 pts/yr vs SIZED (the 2026-10-12 rule; a tie
+  #  passes), AND its `beat Série E` share stays >= 90% (tests/network.rs SERIE_E_DCA_FLOOR). If both clear,
+  #  the winner is the larger sum of the four mean/median deltas; a tie within 0.2 goes to `S+after` (smaller
+  #  move off the shipped head). If neither clears, nothing ships.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of

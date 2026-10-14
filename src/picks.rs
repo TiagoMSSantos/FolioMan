@@ -815,7 +815,7 @@ const COMMODITY_FUND_TOKENS: &[&str] = &["oil", "gas", "energy", "uranium", "lit
 /// (#44) Does this row's growth depend on a commodity price? GICS sector for stocks, name tokens for
 /// funds. Unknown sector (crypto, `check`, `screen TICKER…`, the backtest pool) -> false, the same
 /// missing-data stance every gate here takes.
-fn is_commodity(quote: &Quote) -> bool {
+pub(crate) fn is_commodity(quote: &Quote) -> bool {
     quote.sector.as_deref().is_some_and(|s| COMMODITY_SECTORS.iter().any(|c| s.eq_ignore_ascii_case(c)))
         || (quote_is_etf(quote) && {
             let n = quote.name.to_lowercase();
