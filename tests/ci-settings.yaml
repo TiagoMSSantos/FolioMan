@@ -1678,6 +1678,43 @@ sizing:
   #  Caveats: (a) pit 8y worst window -17.1 -> -5.2 (off) / -4.9 (5), but stress 8y at 5 worsens -10.3 -> -19.9;
   #  (b) loose rungs grade more buckets at 12y/8y (38 vs 36, 46 vs 44), so part of each cell is composition.
   #  STAGE 2 IS CLOSED for both screen passers. Neither lever ships on this ruler; re-ask only on a moved pond.
+  #── (#583) WINNERS REPORT: WHERE DOES THE TOP-10 BOOK LOSE EACH WINDOW'S BEST STOCKS? ──
+  #  WHY: the owner asks why strong compounders (NVDA) sit out while weak soft admits rank. Every gate and
+  #  brake test since (#572) was refused, so before another knob: which rule keeps the winners out, and
+  #  does the same rule keep out more losers than winners?
+  #  BUILT: `backtest <y> universe fund pit|stress winners`, report-only. Winners = each window's top 5% of
+  #  stocks by real forward return (WINNER_TOP_PCT). Each stock is filed under exactly one kind, read off four
+  #  tunings (shipped, brake off, dock off, both off) against the window's 10th shipped score: held / refused /
+  #  value floor (PEG trim) / brake alone / gate dock alone / brake + dock / score blind (under the cut with
+  #  both off). `gap` = own CAGR minus the window's book CAGR, pts/yr. `all` = every stock of that kind, the
+  #  cost side: what releasing the whole kind would buy.
+  #  RUNS 2026-10-14 at cf85aed: pit 38619488958, stress 38619503398, shipped settings, 8/12/20y. Windows
+  #  scored match the (#582) control (pit 6163/2779/1119, stress 9015/5078/2541). Winners are 5.3-5.7% of
+  #  stocks (5% plus ties).
+  #  SHARE OF WINNERS by kind, pit 8/12/20 | stress 8/12/20:
+  #    held 8/13/10 | 8/10/16   refused 1/1/2 | 6/6/6   value floor 15/8/0 | 13/5/0   brake 9/10/18 | 6/7/11
+  #    dock 15/16/17 | 8/8/8    brake+dock 9/7/10 | 6/6/5   score blind 43/45/42 | 52/58/54
+  #  COST SIDE, all-stock gap mean / beat-book %, pit 8/12/20 | stress 8/12/20 (held is the yardstick: its
+  #  mean is negative too, since the mean of CAGRs sits under the CAGR of an equal-weight book):
+  #    held        -4.1/42 -4.6/37 -4.1/34 | -3.1/39 -2.9/38 -2.5/33
+  #    dock alone  -3.2/40 -4.0/34 -4.2/28 | -4.8/33 -6.2/23 -5.5/21
+  #    brake alone -4.6/31 -5.1/28 -4.6/25 | -5.1/34 -5.9/29 -5.0/26
+  #    brake+dock  -4.6/32 -5.4/26 -6.7/26 | -5.7/28 -6.3/22 -5.8/18
+  #    value floor -6.8/24 -6.0/23   n/a   | -5.4/28 -6.0/25   n/a
+  #    score blind -5.9/32 -6.0/29 -4.2/31 | -5.8/31 -6.3/26 -4.9/25
+  #    refused    -10.8/20 -9.5/18 -6.8/25 | -4.3/33 -4.4/34 +0.6/50 (n 76)
+  #  READING: (1) The biggest leak is not a gate. 42-58% of the winners score under the cut even with the brake
+  #  and the dock off. Their tags are cagr, cagr-life, 5Y+, range: weak past returns before a strong future, so
+  #  no past-return rule finds them. (2) Every gate kind keeps out more losers than winners. Each kind's
+  #  all-stock gap sits under held in 31 of 34 cells; the exceptions are pit dock alone at 8y (-3.2 vs -4.1) and
+  #  12y (-4.0 vs -4.6), each with a LOWER beat-book rate (40 vs 42%, 34 vs 37%), and stress 20y refused (n 76,
+  #  thin). The dock costs most in stress (beat-book 21-33%). So the brake, the PEG trim and the dock each
+  #  earn their keep in this replay, which matches the (#574)-(#582) refusals. (3) The (#127) block in the same
+  #  logs agrees: most top-1% misses fail 2+ gates at once, and loosening one gate reaches at most 27% of the
+  #  missed wealth.
+  #  NEXT: the blind half needs a different ranking signal, not a looser gate. The only signal that beat the
+  #  book on this pond is (#560) momentum 12-1 (5/6, failed on the DCA tie), so it is tested as a blend with
+  #  the shipped book next, under its own pre-registered bar.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
