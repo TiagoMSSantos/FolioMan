@@ -1772,6 +1772,16 @@ sizing:
   #  passes), AND its `beat Série E` share stays >= 90% (tests/network.rs SERIE_E_DCA_FLOOR). If both clear,
   #  the winner is the larger sum of the four mean/median deltas; a tie within 0.2 goes to `S+after` (smaller
   #  move off the shipped head). If neither clears, nothing ships.
+  #  SIZED RESULT (2026-10-14, probes 38634084397 pit + 38634099276 stress at 57c5c71, 20y; windows 1119 /
+  #  2541; the `top-10`, `mom12-1`, `blend` and `SIZED` rows reproduce the ef11b8f run to the decimal).
+  #  20y `never-sell vs index DCA`, mean (median) pts/yr, beat Série E share:
+  #    pit     SIZED +3.4 (+3.1) 100% | S+after +3.5 (+3.1) 100% -> +0.1/+0.0 | S+inter +3.6 (+3.0) 100% -> +0.2/-0.1
+  #    stress  SIZED +5.5 (+5.9)  98% | S+after +5.6 (+6.0)  98% -> +0.1/+0.1 | S+inter +6.2 (+6.5)  98% -> +0.7/+0.6
+  #  BOTH CLEAR (no delta at or below -0.2, Série E 98-100%). Delta sums: S+after +0.3, S+inter +1.4, more than
+  #  0.2 apart. Win 100% of 22 / 59 programs and the worst program (pit +2.3, stress +0.6) are the same in every
+  #  SIZED lane. VERDICT: `S+inter` WINS; the live ship interleaves momentum 12-1 through the stock book.
+  #  Note the gain sits in stress (+0.7/+0.6); pit is a tie (+0.2/-0.1), so the case is "no worse on pit, better
+  #  under stress", not a pit edge.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
