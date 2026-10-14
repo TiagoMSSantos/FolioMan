@@ -2023,8 +2023,15 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if tuning.growth_soft_life_hard > 0.0 && gate_failures(quote, tuning)?.iter().any(|g| g.0 == "cagr-life") {
         return None;
     }
+    // (#576) armed, a stock under the life floor or losing money stays hard; missing data passes
+    if tuning.growth_hard_life_floor > 0.0 && life_leg_cagr(quote).is_some_and(|c| c < tuning.growth_hard_life_floor) {
+        return None;
+    }
+    if tuning.growth_hard_loss && quote.fund.as_ref().and_then(|f| f.eps_ttm).is_some_and(|e| e <= 0.0) {
+        return None;
+    }
     // ponytail: clones the tuning and re-runs the gates (tags only) per FAILING quote while the knob is armed;
-    // precompute per pool if a probe arm slows. The walkthrough prints no x f^n line yet; add it if this ships.
+    // precompute per pool if a probe arm slows. (#576) the walkthrough prints the f^n as its soft dock line.
     let (open, tags, _) = waived(quote, tuning, false)?;
     let mut p = score_parts_hard(quote, &open)?;
     // (#566) with the leg dock on, a short record pays p^k instead, so its record gates leave the n
@@ -3600,11 +3607,27 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         String::new()
     };
+    // (#576) the soft-gate and leg docks multiply the WHOLE score last (`compose_score`), so the SCORE line
+    // wraps the product in brackets; a name that cleared its gates with the leg dock off keeps its old line
+    let dock = p.gate_soft * p.leg_dock;
+    let (open, dock_frag) = if dock != 1.0 {
+        let tags = waived(quote, tuning, false).map(|w| w.1.iter().map(|g| g.0).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+        s.push_str(&format!("  soft dock    = gate_soft × leg_dock                     = {:.3} × {:.3} = {dock:.3}\n", p.gate_soft, p.leg_dock));
+        if p.gate_soft != 1.0 {
+            say(&mut s, &format!("Missed gates ({tags}): each one cuts the whole score by ×{:.2} instead of keeping the name out.", tuning.growth_gate_soft));
+        }
+        if p.leg_dock != 1.0 {
+            say(&mut s, &format!("Short record: ×{:.2} for each 1Y/2Y/5Y/8Y/10Y/20Y leg past its longest one.", tuning.growth_leg_dock));
+        }
+        ("(", format!("){} {dock:.3}", if base_is_negative(p.score) { " ÷" } else { " ×" }))
+    } else {
+        ("", String::new())
+    };
     if tuning.growth_geomean_fold {
-        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {open}{:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2}{dock_frag} = {:.2}\n",
             p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
     } else {
-        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {open}{:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2}{dock_frag} = {:.2}\n",
             p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     }
     if (displayed - p.score).abs() > 1e-6 {
@@ -3917,6 +3940,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
+    // (#576) stocks only: under growth_gate_soft a stock that fails gates still ranks, docked per gate
+    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Stocks: how many buy gates the row fails, and which (0 = it passes all). A stock that misses gates still ranks, its SCORE cut by growth_gate_soft once per gate missed; the why box prints each gate's value against its bar" },
     // DIAGNOSTIC: the long-CAGR window (and the trust leg) pinned to 8Y. Never ranked on, and scored WITHOUT
     // the 8Y CAGR admission floor so every row carries a comparable number
     ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true, help: "The same score on an 8-year window, for comparison; never ranked on. † = under 8 years of record, so it is the full-history score" },
@@ -3927,7 +3952,7 @@ const COLUMNS: &[ColSpec] = &[
 /// div/abv-ma by listing them in `widths.columns`.
 const DEFAULT_COLUMNS: &[&str] = &[
     "rank", "name", "ticker", "market", "price", "cagr", "leg", "yrs", "1h", "6h", "12h", "1d", "1w", "1m", "1y",
-    "2y", "5y", "8y", "10y", "20y", "maxdd", "off-hi", "upside", "turnover", "score", "score8y",
+    "2y", "5y", "8y", "10y", "20y", "maxdd", "off-hi", "upside", "turnover", "score", "misses", "score8y",
 ];
 
 /// Resolve `widths.columns` (config) to the ordered `ColSpec`s to print. Empty config -> `DEFAULT_COLUMNS`;
@@ -4337,6 +4362,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "mscore" => quote.fund.as_ref().and_then(|f| f.mscore).map_or("n/a".to_string(), |v| format!("{:.2}", -v)),
         "sbc" => quote.fund.as_ref().and_then(|f| f.sbc).map_or("n/a".to_string(), |v| format!("{:.1}%", -v)),
         "reports" => if quote.profile.cik.is_some() { "SEC" } else { "search" }.to_string(), // (#540)
+        "misses" => lane_misses(quote, tuning),
         "buyback" | "target" | "short" if stock_only_na => "—".to_string(),
         // (#489) fewer than 3 analysts is one bank's opinion, not a consensus
         "target" => quote.profile.target_pct.filter(|_| quote.profile.analysts.is_some_and(|n| n >= 3)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
@@ -4887,12 +4913,13 @@ fn dcf_raw(g_pct: f64) -> f64 {
 // builds the same three tables and a page that hides a different column set is a page that quietly
 // stops being the terminal's row.
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
+// (#576) `misses` in both: ETFs and coins score hard at any growth_gate_soft, so a ranked row always reads 0
 const HIDE_ETF: &[&str] =
-    &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "capex", "nde", "icov", "sector", "ins",
+    &["misses", "pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "capex", "nde", "icov", "sector", "ins",
     "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "target", "short",
     "fair_oe", "mos_oe", "fair_cap", "impl_g"];
 const HIDE_CRYPTO: &[&str] = &[
-    "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "capex", "nde",
+    "misses", "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "capex", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
     "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g", "reports",
 ];
@@ -5634,7 +5661,7 @@ pub(crate) fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
 /// (#535) Help for the page CORE table's RANK cell, which carries the terminal's flag column.
 const CORE_RANK_HELP: &str = "Position in this table, by the buy heuristic (SCORE, then MISSES); o = you already hold it, never on the page, which reads no broker account";
 /// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
-const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund tracking the same index (MISSES names it); ʷⁱ = under a year listed, scored on its change since listing, not annualised (weeks of data are noise); — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the ʷ score, then the — ones, then refused, then n/a";
+const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ˢ = a stock that misses gates but still scores: its real score, cut by growth_gate_soft once per gate missed, so it can rank in the Stocks table; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund tracking the same index (MISSES names it); ʷⁱ = under a year listed, scored on its change since listing, not annualised (weeks of data are noise); — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the score with those gates switched off, then the — ones, then refused, then n/a";
 const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each; hover the cell, on desktop, for each missed gate's value against what the buy heuristic needs); no-turnover = no trading volume served, scored at the turnover floor; refused = a kind the screen never buys (leveraged, commodity, hedged, stablecoin); n/a = not priced, or no record at all";
 
 /// (#525) A row's [`RankKey`] and its SCORE and MISSES cells. (#537) Every rankable row gets a score:
@@ -5706,8 +5733,23 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
     match (tags_s.len(), score) {
         (0, Some(s)) => ((0, 0, s), format!("{s:.1}"), "0".to_string(), hover),
         (0, None) => na,
-        (n, Some(s)) => ((1, n, s), format!("{s:.1}ʷ{mark}"), format!("{n}: {}", tags_s.join(", ")), hover),
+        // (#576) a stock growth_gate_soft scores anyway prints the score it really ranks on, docked, as ˢ;
+        // the key keeps the waived score, so the row order is the pre-(#576) one
+        (n, Some(s)) => {
+            let cell = growth_score(q, tuning).map_or_else(|| format!("{s:.1}ʷ{mark}"), |r| format!("{r:.1}ˢ"));
+            ((1, n, s), cell, format!("{n}: {}", tags_s.join(", ")), hover)
+        }
         (n, None) => ((2, n, NONE), "—".to_string(), format!("{n}: {}", tags_s.join(", ")), hover),
+    }
+}
+
+/// (#576) A lane row's MISSES cell: the gates [`waived`] lifts for it, the n that `score_parts` docks
+/// growth_gate_soft^n by. "0" = it cleared every gate; "refused" = a pinned row no waiver can score.
+fn lane_misses(quote: &Quote, tuning: &BuyHeuristic) -> String {
+    match waived(quote, tuning, false) {
+        Some((_, tags, _)) if !tags.is_empty() => format!("{}: {}", tags.len(), tags.iter().map(|g| g.0).collect::<Vec<_>>().join(", ")),
+        Some(_) => "0".to_string(),
+        None => "refused".to_string(),
     }
 }
 
@@ -5725,7 +5767,7 @@ pub fn young_line(quotes: &[Quote], n: usize) -> String {
 /// (#458) Columns the shadow tables leave out: their own TICKER/NAME already lead the row, RANK/SCORE/S-8Y
 /// rank a lane these rows are not in, and INS-B/S/EARN are fetched for printed stocks only, so they would
 /// read n/a on nearly every shadow row.
-const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "score8y", "ins", "earn"];
+const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "misses", "score8y", "ins", "earn"];
 
 /// (#458) The stocks table's columns appended to each shadow table (Attention, Berkshire, Social), after
 /// the table's own cells, through the same [`col_cell`] the lanes print with, and each header's lane help
@@ -7939,7 +7981,7 @@ mod tests {
         // empty config -> the canonical default layout (rank..score), and cagr/maxdd are shown by default
         let def = active_columns(&[]);
         assert_eq!(def.first().unwrap().key, "rank");
-        assert_eq!(def.last().unwrap().key, "score8y"); // the 8Y-pinned read sits right after SCORE
+        assert_eq!(def.last().unwrap().key, "score8y"); // the 8Y-pinned read sits right after SCORE and (#576) MISSES
         assert_eq!(def.len(), DEFAULT_COLUMNS.len());
         assert!(def.iter().any(|c| c.key == "cagr") && def.iter().any(|c| c.key == "maxdd"));
         // every default key resolves to a real ColSpec (guards a typo in DEFAULT_COLUMNS)
@@ -12672,6 +12714,78 @@ mod tests {
         assert_eq!(growth_score(&range, &armed), growth_score(&range, &soft), "and scores as before");
         let pass = gate_fixture();
         assert_eq!(growth_score(&pass, &armed), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
+    }
+
+    /// (#576) `growth_hard_life_floor` / `growth_hard_loss`: armed, a stock under the floor or with EPS
+    /// <= 0 stays out of the soft path; at the floor, above it, with a profit or with no EPS figure it
+    /// docks in exactly as before, and off (0 / false) neither knob reads anything.
+    #[test]
+    fn hard_life_floor_and_loss_keep_a_failer_hard() {
+        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..BuyHeuristic::default() };
+        let floor = |v: f64| BuyHeuristic { growth_hard_life_floor: v, ..soft.clone() };
+        let mut life = gate_fixture();
+        life.life_cagr = Some(3.0); // positive and under growth_min_cagr 8: a cagr-life failer, not `lifetime`
+        let docked = growth_score(&life, &soft);
+        assert!(docked.is_some(), "off, a cagr-life failer docks in");
+        assert_eq!(growth_score(&life, &floor(6.0)), None, "armed, a stock under the floor stays hard");
+        assert_eq!(growth_score(&life, &floor(3.0)), docked, "at the floor it docks in as before");
+        assert_eq!(growth_score(&life, &floor(2.0)), docked, "above it too");
+        life.life_cagr = Some(-2.0);
+        assert!(growth_score(&life, &floor(0.0)).is_some(), "floor 0 is off, even for a shrinking life");
+        let pass = gate_fixture();
+        assert_eq!(growth_score(&pass, &floor(1e9)), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
+
+        let armed = BuyHeuristic { growth_hard_loss: true, ..soft.clone() };
+        let loss = |eps: Option<f64>| {
+            let mut q = gate_fixture();
+            q.range_pct = 20.0; // under the range floor: a soft failer
+            q.fund = Some(crate::core::FundFactors { eps_ttm: eps, ..Default::default() });
+            q
+        };
+        for eps in [Some(0.0), Some(-1.0)] {
+            assert!(growth_score(&loss(eps), &soft).is_some(), "off, a loss-maker docks in ({eps:?})");
+            assert_eq!(growth_score(&loss(eps), &armed), None, "armed, EPS {eps:?} stays hard");
+        }
+        for eps in [Some(0.1), None] {
+            assert!(growth_score(&loss(eps), &armed).is_some(), "a profit or no EPS figure docks in ({eps:?})");
+            assert_eq!(growth_score(&loss(eps), &armed), growth_score(&loss(eps), &soft), "and scores as before ({eps:?})");
+        }
+        let bare = Quote { fund: None, ..loss(None) };
+        assert_eq!(growth_score(&bare, &armed), growth_score(&bare, &soft), "no fundamentals at all pass");
+        let hard_loss = BuyHeuristic { growth_hard_loss: true, ..BuyHeuristic::default() };
+        assert_eq!(growth_score(&pass, &hard_loss), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
+    }
+
+    /// (#576) The Stocks table's MISSES cell, the shadow tables' ˢ cell and the walkthrough's soft-dock
+    /// line all read the same n gates `score_parts` docks for.
+    #[test]
+    fn soft_dock_is_printed_where_it_ranks() {
+        let t = BuyHeuristic::default();
+        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..t.clone() };
+        let mut range = gate_fixture();
+        range.range_pct = 20.0;
+        let mut lev = gate_fixture();
+        lev.name = "ProShares Ultra S&P500".into();
+        assert_eq!(lane_misses(&gate_fixture(), &soft), "0");
+        assert_eq!(lane_misses(&range, &soft), "1: range");
+        assert_eq!(lane_misses(&lev, &soft), "refused");
+        assert_eq!(col_cell("misses", &range, 0.0, None, "", &soft, &HashMap::new()), "1: range", "the column prints it");
+
+        let docked = growth_score(&range, &soft).expect("soft, a range failer scores");
+        let (key, cell, misses, _) = rank_row(Some(&range), &soft, &[]);
+        assert_eq!((cell, misses.as_str()), (format!("{docked:.1}ˢ"), "1: range"));
+        let (hard_key, hard_cell, _, _) = rank_row(Some(&range), &t, &[]);
+        assert_eq!(hard_cell, format!("{:.1}ʷ", hard_key.2), "hard, the waived score is not buyable");
+        assert_eq!(key, hard_key, "the row order is the waived score's, as before");
+
+        let ex = |q: &Quote, t: &BuyHeuristic| explain_growth_score(q, t, growth_score(q, t).unwrap()).unwrap();
+        let s = ex(&range, &soft);
+        assert!(s.contains("  soft dock    = gate_soft × leg_dock                     = 0.800 × 1.000 = 0.800\n"), "{s}");
+        assert!(s.contains("        Missed gates (range): each one cuts the whole score by ×0.80 instead of keeping the name out.\n"), "{s}");
+        assert!(s.contains("SCORE = (") && s.contains(&format!(") × 0.800 = {docked:.2}\n")), "{s}");
+        assert!(!s.contains("Short record:"), "{s}");
+        let p = ex(&gate_fixture(), &soft);
+        assert!(!p.contains("soft dock") && !p.contains("SCORE = ("), "a passer keeps its old line: {p}");
     }
 
     /// (#563) The dock multiplies a positive score and DIVIDES a negative one, so it always pushes down.
