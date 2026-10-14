@@ -19264,6 +19264,36 @@ buy_heuristic:
                                  #   NOTHING CHANGED THIS ROUND. The rule was fixed before the runs: revert only if the gate is worse
                                  #   at BOTH ends, keep if it trades short holds for long ones, and neither fired — there is no
                                  #   above-floor long-hold gap to trade against. 150 stands on (#64)'s evidence, undisturbed.
+                                 #   (#574) 2026-10-14 STRETCH + BRAKE LADDER UNDER THE (#566) RULER, ON USER REQUEST ("did a test add
+                                 #   NVDA to top rank?"). REFUSED IN ALL FIVE ARMS; this gate stays 150 and growth_overext_floor 0.05.
+                                 #   WHY: shipped soft 0.8 already ranks NVDA #1 whenever it is admitted (pit 8y b4004/b4016), but in
+                                 #   2017 H1 - 2018 H2 it passes the 8Y CAGR floor while sitting 159-277% above its 200wk SMA, so it
+                                 #   takes this gate's x0.8 AND the maxed brake (sqrt(0.05) = x0.224). Neither had been re-graded
+                                 #   since the hard-gate rulers ((#64) graded, (#558) only tightened). Arms via probe.yml knobs= at
+                                 #   5883fc2, 18 runs, one control: m300 (this gate 300), moff (this gate 0), f02 / f05
+                                 #   (growth_overext_floor 0.2 / 0.5), j (gate 0 + floor 0.5). Pre-registered in chat before the first
+                                 #   run: the (#573) bar (stocks win >= 2/3 of counted cells, no veto; no counted ETF or crypto veto;
+                                 #   relative rank-1 guard, '#1 beat the 11-20 book' no more than 5 points under the control in any
+                                 #   8/12/20 cell) plus a zeros guard (top-10 'rode N zeros' must not rise in any 8/12/20 cell).
+                                 #   STOCKS (wins/10, vetoes): m300 0/10 and moff 0/10, both inert, every NVDA bucket and rank equal
+                                 #   to the control. UNDER SOFT THIS GATE ALONE IS NOT BINDING: the brake stacked under it already
+                                 #   sinks those names. f02 1/10, vetoes pit 12y (-0.33), pit 8y (-0.38), pit 2y, pit 1y. f05 3/10,
+                                 #   no veto. j 3/10, veto pit 8y.
+                                 #   RANK-1 h2h (ctl pit 20/12/8 36/45/46%, stress 12y 40%): f02 36/39/46, f05 32/39/37, j 32/39/37
+                                 #   with stress 12y 33. f02, f05 and j all break the relative guard. ZEROS: j pit 20y 8 vs 7 breaks
+                                 #   it; the other arms are equal or lower everywhere.
+                                 #   WHAT THE BRAKE BUYS: f05/j admit NVDA in b4035-b4037 (2017 H2 - 2018 H2, fwd +2829..+4012%),
+                                 #   and those pit 8y buckets jump -0.2/-4.7/+2.8 -> +12.4/+5.9/+11.8 pts/yr. The 8y cell still
+                                 #   does not win: the same looser brake also admits other stretched names (ALGN -20/-28/-59% in
+                                 #   those same three buckets), pushes NVDA's old rank-1 slots (b4004, b4016) down to 4, and adds it
+                                 #   at rank 7 in b4012/b4013 (fwd +17% / +0%). Pit 20y top-10 win falls 82% -> 73%. A brake keyed on
+                                 #   stretch cannot tell the 2017 NVDA from the (#64) blow-offs (AIG/NOK/C). DO NOT re-run a plain
+                                 #   floor or this gate's value.
+                                 #   pit moff 2y scored 5761 windows vs 5960 (j, the same gate 0, scored 5960); no fetch-error
+                                 #   line differs from the control. Unexplained, outside every guard cell, and moff is inert anyway.
+                                 #   The free gate sweep prints 'admits 0 new names (gate not binding on this sample)' for soft
+                                 #   stock gates: under soft 0.8 nothing is ever 'admitted', so that label is not an inertness
+                                 #   reading. Grade a soft stock gate with a knobs= probe, as here.
   # (#138) 2026-08-25 — THIS GATE NOW SHIPS OFF (0.0). It carried 84.0 from (#26) until then; the
   # receipt for the change is at the END of this block, after (#74). The (#26) head text below is
   # left as originally written and describes the gate as it behaved while it was armed.
