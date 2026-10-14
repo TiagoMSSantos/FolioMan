@@ -401,11 +401,12 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
                 .chain(s.exit.iter().map(|(t, ..)| t))
                 .chain(s.young.iter().map(|(t, _)| t)) // (#500)
                 .chain(s.soc_new.iter().chain(&s.soc_old).map(|(t, _)| t)) // (#538)
-                .chain(s.shipped.iter().take(BOOK).map(|(t, _)| t)) // (#584)
         })
         .cloned()
         // (#557) a capped book refills from past `rows.take(BOOK)`
         .chain(snaps.iter().flat_map(|s| (1..=SCAP_LABELS.len()).flat_map(move |k| capped_rows(s, k)).map(|(t, ..)| t.to_string())))
+        // (#584) both blend-shadow books skip coins, so either can reach past `rows.take(BOOK)`
+        .chain(snaps.iter().flat_map(|s| mblend_top(&s.rows).into_iter().chain(mblend_top(&s.shipped)).map(|(t, ..)| t.to_string())))
         .chain(std::iter::once("^GSPC".to_string()))
         .collect();
     tickers.sort();
@@ -1321,6 +1322,11 @@ fn soc_section(
     )
 }
 
+/// (#584) the first [`BOOK`] non-coin names of `rows`, equal-weight: the book either side of the blend shadow.
+fn mblend_top(rows: &[(String, Option<f64>)]) -> Rows<'_> {
+    equal(rows).into_iter().filter(|(t, ..)| !crate::picks::is_currency_quoted(t)).take(BOOK).collect()
+}
+
 /// (#584) THE BLEND SHADOW: each line's blended book against the shipped-only book of the same line, the
 /// first [`BOOK`] non-coin names of `rows` and of `shipped`, equal-weight. The backtest graded the blend
 /// in-sample (see ci-settings `growth_momentum_interleave`); this grades it on prices that did not exist
@@ -1331,13 +1337,12 @@ fn mblend_section(
     px_now: &dyn Fn(&str) -> Option<f64>,
     spx_now: Option<f64>,
 ) -> String {
-    let top = |r: &[(String, Option<f64>)]| -> Rows { equal(r).into_iter().filter(|(t, ..)| !crate::picks::is_currency_quoted(t)).take(BOOK).collect() };
     let body = verdict_rows(
         snaps,
         today,
         px_now,
         spx_now,
-        &|s| if s.shipped.is_empty() { Vec::new() } else { vec![("mblend shipped top minus blend top", top(&s.rows), top(&s.shipped))] },
+        &|s| if s.shipped.is_empty() { Vec::new() } else { vec![("mblend shipped top minus blend top", mblend_top(&s.rows), mblend_top(&s.shipped))] },
         34,
         None,
     )
