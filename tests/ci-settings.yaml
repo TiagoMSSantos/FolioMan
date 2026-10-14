@@ -20075,7 +20075,7 @@ buy_heuristic:
   #  in the backtest) skips both the overextension brake and the growth_max_above_ma +150% stretch gate
   #  (`picks::peg_waived`). No PEG (loss-maker, no filings, every fund and coin) = braked and gated as before. 0.0 = off,
   #  the shipped lane bit for bit.
-  #── (#581) PRE-REGISTERED 2026-10-14, before any run — PEG-KEYED BRAKE AND STRETCH WAIVER ──
+  #── (#581) REFUSED 2026-10-14 (pre-registered before any run) — PEG-KEYED BRAKE AND STRETCH WAIVER ──
   #  WHY: the owner asks again why NVDA (PEG 0.84, TR-CAGR +59%, 0 misses) is out while GE (PEG 1.53), J.B. Hunt
   #  (2.98) and Delta (2.35) rank. (#579) eased every positive-pace stock and crowded the book with old blow-offs
   #  (CSCO 2000, KSS, AES); it never reached NVDA, whose 2017-18 windows fail the stretch GATE. This arm eases only a
@@ -20096,6 +20096,25 @@ buy_heuristic:
   #  -125 pts forward, and some were cheap on PEG. PEG divides by the PRICE CAGR (`long_cagr_pct`), so a stock that ran
   #  hard reads cheaper for it: the waiver partly rewards the run it forgives. Survivorship (today's pond); the forward
   #  record cannot grade it before ~2027-09.
+  #  VERDICT 2026-10-14: REFUSED, bar 1 fails. The knob stays 0.0. Probe runs at c58e12e: pit 38594692446 (ctl) /
+  #  38594709917 (1.0), stress 8-20y 38594759336 / 38594775752, stress 1-5y 38597174759 / 38597192649. The first stress
+  #  1-5y pair (38594726776 / 38594741265) read different POOLS (the arm 5658 tickers vs 5700, a Wikidata blip; windows
+  #  8453 vs 8493 at 1y), so it was re-dispatched, not graded. Knob echo matches the arm. Every graded pair has the same
+  #  `windows scored` (pit 8101/5961/813/6163/2779/1119, stress 8493/6302/880/9015/5078/2541).
+  #    bar 1 VETO in 3 counted stock cells (mean; paired medians +0.00): pit 2y +6.30 -> +1.00 (-5.30), pit 1y +0.63 ->
+  #          -2.18 (-2.82), stress 8y -0.22. pit/stress 20y are byte-identical (no PEG before 2009), pit 12y +0.06,
+  #          pit 8y -0.05, stress 12y -0.08. Gains at stress 1y +14.33 and 2y +3.94, none a WIN: stocks win 0/10.
+  #    bar 2 pass: the knob is stock-only, so every ETF and crypto cell is +0.00.
+  #    bar 3 pass ('#1 beat the 11-20 book'): pit 8y 46% -> 41% (-4.3 points), stress 12y 40% -> 35% (-4.2); the
+  #          other four cells hold.
+  #    bar 4 pass: zeros hold at pit (13/15/7) and stress (3/5/2).
+  #  READING: the waiver does not reach NVDA either. Its stock book slots read 1 -> 1 (pit 1y), 1 -> 0 (pit 2y), 0 -> 1
+  #  (stress 1y) and unchanged at 8/12/20y, so it does not lift NVDA's 2017-18 windows into the long books. What it
+  #  lets in are low-PEG names at a cyclical peak, the CAVEAT come true: SMCI, PHM, DHI, BLDR, URI, FIX, DECK, WSM at 1-2y;
+  #  DAL, UAL, STX, ROST, HII at 8-12y. Out go AAPL, MSFT, ADBE, NTAP, IT, CTSH, FFIV, INTU. In the newest pit 1y window
+  #  the ctl book (KLAC, AMD, LRCX, NVDA +292%) books +35.1 pts/yr; the arm swaps in VST, JBL, PHM, DECK, BX, APO, PGR
+  #  and books +4.7. Floor (#574), cap (#575), EPS-backed waiver (#577), own-pace (#579) and PEG-keyed waiver (#581) are
+  #  all graded now. Do not re-ask a valuation-keyed brake waiver; a re-open needs the forward `track` (~2027-09).
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
