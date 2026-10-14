@@ -1715,6 +1715,24 @@ sizing:
   #  NEXT: the blind half needs a different ranking signal, not a looser gate. The only signal that beat the
   #  book on this pond is (#560) momentum 12-1 (5/6, failed on the DCA tie), so it is tested as a blend with
   #  the shipped book next, under its own pre-registered bar.
+  #── (#584) BLEND: HALF THE BOOK FROM THE SHIPPED SCORE, HALF FROM MOMENTUM 12-1 ──
+  #  WHY: (#583) found 42-58% of each window's winners score under the cut with every gate off, so no gate
+  #  loosening reaches them. The only signal that beat the book on this pond is (#560) momentum 12-1 (5/6,
+  #  failed on the 20y pit DCA median tie). A blend keeps the shipped half, adds a signal that ranks the blind
+  #  names differently, and halves each signal's misses if their errors are not the same names.
+  #  BUILT: rivals row (j) `blend_excess`, report-only. Per window: the plain shipped top-5 (row 0's order),
+  #  then the gates-off pond's best momentum 12-1 names (row (a)'s pond) not already held, up to 10 names,
+  #  equal weight, ties by ticker. If a name is in both, the next momentum name takes the slot.
+  #  PRE-REGISTERED 2026-10-14, before any run. Two probe.yml runs, `universe fund pit|stress rivals` at
+  #  8/12/20y, shipped settings.
+  #  BAR: grade (j) against the REAL shipped top-10 row (`report_vs_benchmark`), as (#571) did. A cell wins
+  #  when mean AND median excess both beat shipped by >= +0.2 pts/yr (RIVAL_TIE). It must win >= 5 of 6
+  #  cells. A beat ships NOTHING yet; it earns a 20y DCA re-grade (a blend lane beside `mom12-1` in the (#311)
+  #  block), judged by the 2026-10-12 rule: a veto only if either lane's `never-sell vs index DCA` mean OR
+  #  median falls by >= 0.2 against shipped. A tie passes. Under 5 of 6, the blend is refused.
+  #  Caveats: (a) the shipped half is the PLAIN score order, without the real row's value trim and caps, so
+  #  (j) vs the real row also carries row 0 vs the real row; (b) in a thin bucket the shipped side holds
+  #  under 5 names and momentum fills the rest, so the blend leans more on momentum there.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of

@@ -3556,8 +3556,9 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 /// top-10 as every rival, so the comparison is like for like; the real shipped row (value trim, caps)
 /// prints above it in `report_vs_benchmark` and is what the 6-cell tally reads. (e), the random pond,
 /// prints last from [`random_books`]. (#571) (h)/(i) rank on `tr_cagr`, the TR-CAGR column's as-of number;
-/// (i) keeps only names with a 10Y leg, since `age_years` is None on a backtest quote.
-const RIVALS: [&str; 9] = [
+/// (i) keeps only names with a 10Y leg, since `age_years` is None on a backtest quote. (#584) (j) is
+/// [`blend_excess`] over rows 0 and (a): half the book from each.
+const RIVALS: [&str; 10] = [
     "shipped (plain top-10)",
     "(d) gates-off shipped",
     "(a) momentum 12-1",
@@ -3567,7 +3568,11 @@ const RIVALS: [&str; 9] = [
     "(g) momentum x quality",
     "(h) TR life CAGR",
     "(i) TR life CAGR, 10Y+",
+    "(j) 5 shipped + 5 momentum",
 ];
+
+/// (#584) Rival (j)'s shipped half: slots filled by the plain shipped order before momentum fills the rest.
+const BLEND_HALF: usize = 5;
 
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
 const RIVAL_TIE: f64 = 0.2;
@@ -3622,10 +3627,26 @@ fn book_excess(picks: &[(f64, f64)], years: i64) -> Option<f64> {
 /// ticker); highest key first, ties by ticker so the book is deterministic, and one slot per ticker (a
 /// name scored at two cutoffs in one bucket is one holding). Rows without the key sit out.
 fn rival_excess(rows: &[(Option<f64>, f64, f64, &str)], n: usize, years: i64) -> Option<f64> {
+    let mut seen = HashSet::new();
+    let book: Vec<(f64, f64)> = key_order(rows).into_iter().filter(|r| seen.insert(r.3)).take(n).map(|r| (r.1, r.2)).collect();
+    book_excess(&book, years)
+}
+
+/// (#560) The rows that carry a key, highest key first, ties by ticker.
+fn key_order<'a>(rows: &[(Option<f64>, f64, f64, &'a str)]) -> Vec<(f64, f64, f64, &'a str)> {
     let mut keyed: Vec<(f64, f64, f64, &str)> = rows.iter().filter_map(|r| r.0.map(|k| (k, r.1, r.2, r.3))).collect();
     keyed.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.3.cmp(b.3)));
+    keyed
+}
+
+/// (#584) Rival (j): the `first` key's top `half` names, then the `second` key's best names not already
+/// held, up to `n` in all, as one equal-weight book. Both sides order and dedupe as [`rival_excess`]; a
+/// thin first side leaves its slots to the second.
+fn blend_excess(first: &[(Option<f64>, f64, f64, &str)], second: &[(Option<f64>, f64, f64, &str)], half: usize, n: usize, years: i64) -> Option<f64> {
     let mut seen = HashSet::new();
-    let book: Vec<(f64, f64)> = keyed.into_iter().filter(|r| seen.insert(r.3)).take(n).map(|r| (r.1, r.2)).collect();
+    let mut book: Vec<(f64, f64)> = key_order(first).into_iter().filter(|r| seen.insert(r.3)).take(half).map(|r| (r.1, r.2)).collect();
+    let rest = n.saturating_sub(book.len());
+    book.extend(key_order(second).into_iter().filter(|r| seen.insert(r.3)).take(rest).map(|r| (r.1, r.2)));
     book_excess(&book, years)
 }
 
@@ -3694,16 +3715,17 @@ fn rival_books(
         for (r, (m, q)) in rows.iter_mut().zip(mom.into_iter().zip(qual)) {
             r.0[6] = m.zip(q).map(|(m, q)| (m + q) / 2.0);
         }
-        for (i, book) in books.iter_mut().enumerate() {
-            let keyed: Vec<(Option<f64>, f64, f64, &str)> = rows.iter().map(|r| (r.0[i], r.1, r.2, r.3)).collect();
-            book.extend(rival_excess(&keyed, VERDICT_TOP, years));
+        let keyed = |i: usize| rows.iter().map(|r| (r.0[i], r.1, r.2, r.3)).collect::<Vec<_>>();
+        for (i, book) in books.iter_mut().take(9).enumerate() {
+            book.extend(rival_excess(&keyed(i), VERDICT_TOP, years)); // the nine keyed rows; (j) blends two of them
         }
+        books[9].extend(blend_excess(&keyed(0), &keyed(2), BLEND_HALF, VERDICT_TOP, years));
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
 }
 
-/// (#560) The `rivals` report: nine top-10 books and a random one on the SAME pond, the non-crypto
+/// (#560) The `rivals` report: ten top-10 books and a random one on the SAME pond, the non-crypto
 /// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
 /// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
 #[mutants::skip] // printing; `rival_books` and its helpers carry the tests
@@ -8338,6 +8360,15 @@ mod tests {
         assert!((rival_excess(&rows, 2, 1).unwrap() - 100.0).abs() < 1e-9);
         assert_eq!(rival_excess(&[(None, 1.0, 1.0, "Z")], 2, 1), None);
 
+        // (#584) blend: A, B from `first`; A again is held, D beats E on ticker, C never gets a slot
+        let first = [(Some(3.0), 100.0, 0.0, "A"), (Some(2.0), 0.0, 0.0, "B"), (Some(1.0), 900.0, 0.0, "C"), (None, 5000.0, 0.0, "Z")];
+        let second = [(Some(9.0), 100.0, 0.0, "A"), (Some(1.0), -100.0, 0.0, "E"), (Some(1.0), 300.0, 0.0, "D"), (Some(0.5), 900.0, 0.0, "C")];
+        // A + B + D: (2 + 1 + 4)/3 -> +133.3
+        assert!((blend_excess(&first, &second, 2, 3, 1).unwrap() - 400.0 / 3.0).abs() < 1e-9);
+        // a thin first side: A alone, then D and E fill -> (2 + 4 + 0)/3 -> +100
+        assert!((blend_excess(&first[..1], &second, 2, 3, 1).unwrap() - 100.0).abs() < 1e-9);
+        assert_eq!(blend_excess(&first[3..], &[], 2, 3, 1), None, "no keyed name on either side, no book");
+
         let flat: BTreeMap<i32, Vec<(f64, f64)>> = [(1, vec![(100.0, 0.0); 3]), (2, vec![(100.0, 0.0)]), (3, vec![])].into();
         let draws = random_books(&flat, 10, 1);
         assert_eq!(draws.len(), PLACEBO_DRAWS);
@@ -8376,7 +8407,7 @@ mod tests {
         let open = BuyHeuristic { quality_weight: 1.0, ..BuyHeuristic::default() };
         let (books, pond) = rival_books(&samples, &bench, 1, swap_scorer, &shipped, &open);
         // S1 alone: +30 vs +10 -> 20. S1 + S2: +20 -> 10. S2 alone: 0.
-        let want: [&[f64]; 9] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[]];
+        let want: [&[f64]; 10] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[], &[20.0]];
         assert_eq!(books.len(), RIVALS.len());
         for (i, (got, want)) in books.iter().zip(want).enumerate() {
             assert_eq!(got.len(), want.len(), "book {i}: {got:?}");
