@@ -19972,7 +19972,7 @@ buy_heuristic:
   #  live soft admits from ~2027-09.
   growth_soft_drop_misses: 0    # (#582) k > 0 = a STOCK that misses k or more knob gates (the n growth_gate_soft's f^n
   #  docks; `cagr` and `cagr-life` count 2) gets no score and leaves the table. 0 = off, the shipped lane bit for bit.
-  #── (#582) PRE-REGISTERED 2026-10-14, before any run — DROP A STOCK THAT MISSES TOO MANY GATES ──
+  #── (#582) REFUSED 2026-10-14 (pre-registered before any run) — DROP A STOCK THAT MISSES TOO MANY GATES ──
   #  WHY: the owner asks again why NVDA (0 misses) is out while J.B. Hunt (4 misses), Delta (3) and Visa (3) rank. Each
   #  miss docks x0.8, so four misses still keep x0.41 of the score. (#576) tested floors on single gates (life CAGR,
   #  loss) and (#567) the dock's size; a cap on the miss COUNT has never been graded. Live page (data.json 2026-10-14
@@ -19992,6 +19992,28 @@ buy_heuristic:
   #  CAVEATS: a miss is a gate, not a verdict: `cagr` + `cagr-life` double-count a slow compounder, and a Xetra twin can
   #  miss `liquidity` its US listing passes. Survivorship (today's pond); the forward record cannot grade it before
   #  ~2027-09.
+  #  VERDICT 2026-10-14: REFUSED, no arm passes all four bars. The knob stays 0. Probe runs at 335217e: pit
+  #  38607334828 (ctl) / 38607350276 (2) / 38607365901 (3) / 38607380460 (4); stress 1-5y 38607397892 / 38607416788 /
+  #  38607434287 / 38607449784; stress 8-20y 38607466432 / 38607481297 / 38607496683 / 38607513880. Knob echo matches
+  #  every arm. Pools match (tickers 6265 pit / 5700 stress in every arm; cutoffs within 4, the #581 jitter). Every arm
+  #  has the same `windows scored` (pit 8101/5961/813/6163/2779/1119, stress 8493/6302/880/9015/5078/2541).
+  #    cap 2: bar 1 VETO in 7 stock cells (mean|paired median): pit 20y -0.78|-0.35, 12y -0.10|-0.55, 8y -0.26|-0.30,
+  #          2y -2.00|-0.30, 1y +1.62|-0.60, stress 20y -0.24|-0.60, 2y -0.24|+0.60. Bar 3 fails at pit 8y (46% -> 39%)
+  #          and stress 20y (44% -> 32%). Wins 2/10 (stress 12y, 1y).
+  #    cap 3: bars 1, 2 and 4 pass (worst stock cell pit 2y -0.10|+0.00; every paired median +0.00). Bar 3 FAILS at pit
+  #          12y: '#1 beat the 11-20 book' 17/38 (44.7%) -> 14/36 (38.9%), -5.8 points against the 5 allowed. Means rise
+  #          at stress 12y +0.94, 8y +0.50, 2y +2.53, 1y +3.85, pit 1y +1.78, but no cell is a WIN: stocks win 0/10.
+  #    cap 4: bar 1 VETO in 5 stock cells (mean): pit 20y -0.38, 12y -0.27, 8y -0.23, stress 20y -0.24, 8y -0.27. Bar 3
+  #          fails at pit 20y (36% -> 29%). Wins 0/10.
+  #    bar 2 (all arms): the knob is stock-only, so every ETF and crypto cell is +0.00. Bar 4 (all arms): zeros never
+  #          rise (pit ctl 13/15/7, stress ctl 3/5/2).
+  #  READING: in stress, a cap empties the old many-miss blue chips from the book (GE, HON, IBM, MMM, IP, DD, EXC, ETR,
+  #  8-15 slots each) and AZO, APH, ROP, ORLY, AMZN, QCOM fill in. Pit at 8-20y swaps CCU, MCK, ORLY, CTSH, INTU, ALL
+  #  for QCOM, MCO, COF, MTG, MS, SBUX, a reshuffle with no edge. Cap 2 hits the slow compounders through the
+  #  `cagr` + `cagr-life` double count (the CAVEAT) and loses the most. A cap does not reach NVDA: its stock book slots
+  #  are 3 -> 2 (pit 8y, 12y under cap 3), 0 -> 1 (stress 1y, 2y) and unchanged elsewhere. The brake keeps NVDA out,
+  #  not a weak rival. Cap 3 is the near miss (bar 3 only); a re-open needs the forward `track` (~2027-09), not a
+  #  re-run of this grid.
   growth_overext_backed_floor: 0.0 # (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock
   #  (`picks::earnings_backed`: 5y chained EPS CAGR, as-of in the backtest, at least the 5y price CAGR, so the P/E did
   #  not expand over the run), in place of growth_overext_floor 0.05. Either number missing = the normal brake (funds,
