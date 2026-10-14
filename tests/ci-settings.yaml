@@ -19970,6 +19970,33 @@ buy_heuristic:
   #  admits on today's page are not what drags the replay; the f^n dock is already charging them. Do not re-ask a
   #  hard life floor or a hard loss rule without a mechanism that keeps the #1 slot; the forward `track` grades the
   #  live soft admits from ~2027-09.
+  growth_overext_backed_floor: 0.0 # (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock
+  #  (`picks::earnings_backed`: 5y chained EPS CAGR, as-of in the backtest, at least the 5y price CAGR, so the P/E did
+  #  not expand over the run), in place of growth_overext_floor 0.05. Either number missing = the normal brake (funds,
+  #  coins, a loss year in the EPS chain, no 5Y leg). 0.0 = off, the shipped lane bit for bit.
+  #── (#577) PRE-REGISTERED 2026-10-14, before any run — EARNINGS-BACKED BRAKE ──
+  #  WHY: on the live page (data.json 2026-10-14) NVDA has the highest base of any stock and every quality number the
+  #  bottom Stocks rows lack (TR-CAGR +59%, ROE +70%, net margin 55.6%, PEG 0.84, 0 misses), yet it scores 6.6 under the
+  #  cutoff ~11.4. The only cut that keeps it out is the ran-too-far brake: ~95% above its 200wk SMA -> x~0.1. Over the
+  #  last 5 years its EPS compounded ~95%/yr against a price ~55%/yr, so the run is profits, not a re-rating. The owner
+  #  asks whether such a stock should be braked like a parabolic re-rating. (#574)/(#575) refused easing the brake for
+  #  everyone (gate ladder, floors 0.2/0.5, cap 150-300); this eases it only where the P/E did not expand.
+  #  RULE (strict, owner's pick): backed = eps_growth >= core::cagr(5Y price %, 5). The hard +150% stretch gate, the cap
+  #  100, trust and every other term are unchanged. The walkthrough prints an `earnings-backed:` line when it fires.
+  #  ARMS: floor 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0 against ctl (0.0). Two batches, each with its own ctl:
+  #  batch 1 = ctl + 0.2..0.6 (18 runs), batch 2 = ctl + 0.7..1.0 (15 runs); both ctls must match (drift check).
+  #  Runs per arm: pit `1 2 5 8 12 20`, stress `1 2 5`, stress `8 12 20`, all `universe fund`.
+  #  BAR, the (#576) NOT-WORSE checks vs ctl, all four:
+  #    1. no counted stock BOOK cell drops by 0.2 or more on the mean or on the paired median ((#566) per-class ruler);
+  #    2. no counted ETF or crypto BOOK cell shows a veto;
+  #    3. relative rank-1 guard: in every pit and stress 8/12/20 cell, '#1 beat the 11-20 book' is at most 5 points under ctl;
+  #    4. zeros guard: 'rode N zeros' does not rise in any 8/12/20 cell.
+  #  SHIP: the highest passing floor, and only if every lower floor also passes (a floor that wins alone between two
+  #  failures is noise). No floor passes -> the knob stays 0.0. A run whose `windows scored` differs from ctl is
+  #  re-dispatched, not graded.
+  #  CAVEATS: the strict rule does NOT fire for NVDA in 2017-18 (as-of EPS 5y +22..+40%/yr vs price +62..+78%/yr), so the
+  #  replay may barely move and a pass may be a near-null; survivorship (the pond is today's listings); EPS is as-of 10-K
+  #  data and absent before a name's first filing; the forward record cannot grade it before ~2027-09.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
