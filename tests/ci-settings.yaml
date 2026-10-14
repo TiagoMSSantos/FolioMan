@@ -19129,6 +19129,27 @@ buy_heuristic:
                                  #   h2h by 27pp. They are different levers on one ramp: the floor sets how deep the penalty
                                  #   goes at saturation, the cap sets how much of the admitted range is saturated at all.
                                  #   Do not cite one knob's rank-blindness as the other's.
+                                 #   (#575) 2026-10-14 CAP LADDER UNDER THE (#566) RULER, ON USER REQUEST ("change ran-too-far
+                                 #   brake then, make it not decrease rank so much"). REFUSED IN ALL THREE ARMS; the cap stays
+                                 #   100. WHY: live NVDA (base 29.15, the page's highest) is out of the stock table only because
+                                 #   of this brake (x0.068 at +98% above the 200wk SMA). (#574) had refused a looser FLOOR; a
+                                 #   higher CAP had never been graded on this ruler ((#558) cap 130 was a hard-gate-era tie).
+                                 #   Arms via probe.yml knobs= at fea352e, 13 runs: c150 / c200 / c300, floor 0.05 and the
+                                 #   crypto cap 100 untouched. The first stress 8/12/20 control scored 9026/5082 windows against
+                                 #   9015/5078 for all three arms and the (#574) control; it was re-run and read 9015/5078/2541,
+                                 #   and that re-run is the control used. Pre-registered before dispatch: the (#574) bar.
+                                 #   STOCKS (wins/10, vetoes): c150 0/10, vetoes pit 20y/8y/2y, stress 8y. c200 3/10 (pit 2y/1y,
+                                 #   stress 2y), vetoes pit 8y (-0.35|-0.10), stress 8y (-0.27). c300 1/10, vetoes pit
+                                 #   12y/8y/2y/1y, stress 8y. Every arm vetoes pit 8y and stress 8y. No ETF or crypto cell counted.
+                                 #   RANK-1 h2h (ctl pit 20/12/8 36/45/46%, stress 20/12/8 44/40/38%): c150 breaks pit 20y (27)
+                                 #   and 12y (39); c200 breaks stress 20y (34); c300 breaks pit 12y (39) and stress 20y (38).
+                                 #   ZEROS (pit 20y ctl 7): c300 reads 8 and breaks it.
+                                 #   NVDA: no arm admits it in b4035-b4037 (2017 H2 - 2018 H2). Back then it sat 159-277% above
+                                 #   the SMA, so even cap 300 still docks it hard. What the higher cap does lift is the
+                                 #   moderately stretched names, and they push NVDA's rank-1 slots b4004/b4016 (pit 8y) down to
+                                 #   rank 2-4. c200 also admits ALGN in b4035 (rank 9, fwd -20%). A higher cap wins only at
+                                 #   1-2y. The brake earns its keep in the 8y+ cells and in NVDA's own rank. With (#574), both ends of the
+                                 #   ramp (floor and cap) are graded. DO NOT re-run a cap or floor value to rank NVDA.
   growth_max_above_ma: 150.0     # (#24) HARD gate above the brake: reject equities >150% above the 200wk SMA (crypto exempt).
                                  #   Past the brake cap the damp saturates, so a +486% blow-off (WDC 2026-07) scored like a +100%
                                  #   name; the brake can floor it but never remove it. Same-batch triple 2026-07-03:
