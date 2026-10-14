@@ -989,6 +989,13 @@ pub fn earnings_backed(quote: &Quote) -> bool {
     }
 }
 
+/// (#581) A stock priced at or under `growth_overext_peg_waive` PEG (`fund.peg_yield` = 100/PEG, as-of in the
+/// backtest): armed, the stretch gate and the overextension brake pass it. No PEG (a loss-maker, no
+/// filings, every fund and coin) = not waived. Off at 0: the bar 100/0 is infinite.
+pub fn peg_waived(quote: &Quote, tuning: &BuyHeuristic) -> bool {
+    quote.fund.as_ref().and_then(|f| f.peg_yield).is_some_and(|p| p >= 100.0 / tuning.growth_overext_peg_waive)
+}
+
 /// (#579) How far a steady compounder at `cagr` %/yr sits above its own trailing mean over the
 /// `LONG_MA_SESSIONS` window, in %: price / mean = rT / (1 − e^(−rT)), r = ln(1 + g), T in years.
 /// 0 for a flat or falling rate (such a name sits at or below its mean).
@@ -1562,7 +1569,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // BEAT the field (round 4). Distinct signals: an ugly past (low R²) is fine; an extreme present
     // stretch is not. 100 measured edge-flat (+106.9), so the ceiling sits at 150, ABOVE the brake cap:
     // moderately-stretched names stay (flagged `!`), only the blow-off tail is cut. 0 = off.
-    if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
+    if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma && !peg_waived(quote, tuning) {
         return None;
     }
     // (#25) LIFETIME-UPTREND gate: the ranked CAGR uses the longest 20Y/10Y/5Y leg, so a name that
@@ -1920,10 +1927,10 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     } else {
         tuning.growth_overext_floor
     };
-    let overext_damp = if overext_cap > 0.0 {
+    let overext_damp = if overext_cap > 0.0 && !peg_waived(quote, tuning) {
         1.0 - (overext / overext_cap) * (1.0 - overext_floor) // 1.0 at trend .. floor at the cap
     } else {
-        1.0 // cap 0 = brake disabled
+        1.0 // cap 0 = brake disabled; (#581) armed, a cheap-for-its-growth stock is not braked
     };
     // (L) liquidity tilt, added OUTSIDE the brake so a parabolic stretch can't crush it: deep-liquid
     // mega-caps are easier to hold/exit over decades and harder to manipulate, a real quality the
@@ -2938,7 +2945,7 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     if turnover < turn_floor {
         fails.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, turn_floor / 1e3), turnover >= turn_floor * 0.5));
     }
-    if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
+    if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma && !peg_waived(quote, tuning) {
         fails.push(("stretch", format!("+{:.0}% above 200wk SMA (ceiling +{:.0}%)", quote.above_ma_pct, tuning.growth_max_above_ma), quote.above_ma_pct <= tuning.growth_max_above_ma + 25.0));
     }
     if !crypto && tuning.growth_require_lifetime_uptrend {
@@ -12982,6 +12989,33 @@ mod tests {
         let ex = |q: &Quote, t: &BuyHeuristic| explain_growth_score(q, t, 0.0).unwrap_or_default();
         assert!(ex(&over, &off).contains("Prices far above it often fall back"), "off, the raw sentence");
         assert!(!ex(&over, &armed).contains("Prices far above it") && ex(&over, &armed).contains("own 8-year pace"), "armed, the pace sentence");
+    }
+
+    /// (#581) `growth_overext_peg_waive`: armed, a stock at or under the PEG ceiling skips the brake and the
+    /// stretch gate; over it, with no PEG, or off: both apply.
+    #[test]
+    fn peg_waives_brake_and_stretch_gate() {
+        let off = BuyHeuristic { growth_max_above_ma: 150.0, ..gates_off(&BuyHeuristic::default()) };
+        let armed = BuyHeuristic { growth_overext_peg_waive: 2.0, ..off.clone() };
+        let q = |above: f64, peg_yield: Option<f64>| {
+            let mut q = gate_fixture();
+            q.above_ma_pct = above;
+            q.fund = Some(core::FundFactors { peg_yield, ..Default::default() });
+            q
+        };
+        let damp = |q: &Quote, t: &BuyHeuristic| score_parts_hard(q, t).map(|p| p.overext_damp);
+        let braked = Some(1.0 - 0.96 * (1.0 - 0.05));
+        assert_eq!(damp(&q(96.0, Some(50.0)), &armed), Some(1.0), "PEG 2.0, at the ceiling: no brake");
+        assert_eq!(damp(&q(96.0, Some(49.0)), &armed), braked, "PEG 2.04: braked");
+        assert_eq!(damp(&q(96.0, None), &armed), braked, "no PEG: braked");
+        assert_eq!(damp(&q(96.0, Some(50.0)), &off), braked, "off: braked");
+
+        let stretch = |q: &Quote, t: &BuyHeuristic| gate_failures(q, t).is_some_and(|f| f.iter().any(|g| g.0 == "stretch"));
+        let (cheap, dear) = (q(200.0, Some(50.0)), q(200.0, Some(49.0)));
+        assert_eq!(damp(&cheap, &off), None, "off: the +150% gate");
+        assert!(stretch(&cheap, &off) && stretch(&dear, &armed) && !stretch(&cheap, &armed), "gate_failures agrees");
+        assert_eq!(damp(&cheap, &armed), Some(1.0), "armed: the gate and the brake are waived");
+        assert_eq!(damp(&dear, &armed), None, "armed, PEG over the ceiling: gated");
     }
 
     /// (#576) The Stocks table's MISSES cell, the shadow tables' ˢ cell and the walkthrough's soft-dock
