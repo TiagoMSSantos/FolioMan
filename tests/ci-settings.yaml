@@ -20050,6 +20050,27 @@ buy_heuristic:
   #  stretched names revert too. Every stock with a positive 8Y CAGR is eased a little, the crowding that sank
   #  (#574)/(#575). Pre-2008 high-CAGR blow-offs ((#64) AIG/NOK/C) are eased most. NVDA 2017-18 (159-277% above vs a pace
   #  of ~+70..+100%) still brakes, partly. Survivorship (today's pond); the forward record cannot grade it before ~2027-09.
+  #  VERDICT 2026-10-14: REFUSED, bars 1 and 3 fail. The knob stays false. Probe runs at 6d57cdf: pit 38581635961 (ctl) /
+  #  38581651838 (true), stress 1-5y 38581669776 / 38581686022, stress 8-20y 38584034501 / 38584053051. The first stress
+  #  8-20y pair (38581703056 / 38581718782) read different POOLS (cutoffs 22722 vs 22690 at 8y, before any score), so ctl
+  #  printed 9026/5082 windows; it was re-dispatched, not graded. Knob echo matches the arm. Every graded pair has the same
+  #  `windows scored` (pit 8101/5961/811/6163/2779/1119, stress 8493/6302/878/9015/5078/2541).
+  #    bar 1 VETO in 4 counted stock cells (mean; paired medians +0.00): pit 20y +2.87 -> +2.25 (-0.63), stress 20y -0.22,
+  #          stress 12y -0.36, stress 8y -0.53. pit 8y -0.07 and pit 12y +0.00 hold. Wins only at 1-2y: pit 1y +1.23,
+  #          pit 2y +0.35, stress 1y +4.14, stress 2y +0.47; none reaches a WIN (paired medians +0.00), so stocks win 0/10.
+  #    bar 2 pass: the knob is stock-only, so every ETF and crypto cell is +0.00.
+  #    bar 3 FAIL in 3 cells ('#1 beat the 11-20 book'): pit 12y 45% -> 39%, stress 20y 44% -> 38%, stress 12y 40% -> 33%.
+  #          pit 20y 36 -> 32, pit 8y 46 -> 41 and stress 8y 38 -> 39 are inside 5 points.
+  #    bar 4 pass: zeros fall at pit (13/15/7 -> 9/12/6) and hold at stress (3/5/2).
+  #  READING: the arm does not reach NVDA. NVDA's book slots move by one at most (pit 1y 1 -> 2, pit 20y 2 -> 1, stress 1y
+  #  0 -> 1): its 2008-16 windows fail the CAGR floor and its 2017-18 windows the +150% stretch gate, which reads the raw
+  #  stretch. What the arm does move is 40 of the pit 20y book slots, 67 at 12y and 80 at 8y. In come old high-8Y-pace
+  #  names: CSCO, SBUX, COF, KSS, AES, GILD, NOV. Out go DGX, BSX, MCO, GLW, MAR, INTU, JBL, PRU. At 20y the admits
+  #  return a median +215% against +278% for the names they evict. It is the CAVEAT come true: a stretched name with a
+  #  high 8Y pace reverts too (CSCO 2000, KSS, AES), and easing every positive-pace stock crowds the book the way
+  #  (#574)/(#575) did. Short horizons gain because a 1-2y window still rides the run.
+  #  Do not re-ask "subtract the name's own pace from the brake". A re-open needs the forward `track` (~2027-09), or a
+  #  mechanism that tells a blow-off from a compounder by something other than its past price pace.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
