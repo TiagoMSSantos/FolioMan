@@ -40,8 +40,16 @@ try {
   rev.initSync({ module: wasm });
   const u = JSON.parse(universe);
   u.quotes.reverse();
-  if (rev.screen("", JSON.stringify(u)) !== raw) {
-    console.error("the engine's rank depends on pool order");
+  const back = rev.screen("", JSON.stringify(u));
+  if (back !== raw) {
+    // (#576) name the keys that moved, as the parity leg does: the bare line left nothing to chase
+    const r = JSON.parse(back);
+    const moved = Object.keys({ ...got, ...r }).filter((k) => JSON.stringify(got[k]) !== JSON.stringify(r[k]));
+    console.error("the engine's rank depends on pool order, on: " + moved.join(", "));
+    for (const k of moved.filter((k) => Array.isArray(got[k]))) {
+      const i = got[k].findIndex((row, j) => JSON.stringify(row) !== JSON.stringify(r[k]?.[j]));
+      if (i >= 0) console.error(`  ${k}[${i}]: ${JSON.stringify(got[k][i]).slice(0, 300)}\n  reversed: ${JSON.stringify(r[k]?.[i]).slice(0, 300)}`);
+    }
     process.exit(1);
   }
   console.log(`order-free over ${u.quotes.length} quotes`);

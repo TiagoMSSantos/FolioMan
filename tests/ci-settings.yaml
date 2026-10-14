@@ -19947,6 +19947,29 @@ buy_heuristic:
   #  CAVEATS: survivorship (the pond is today's listings, so a dead loss-maker never enters the replay); EPS is as-of
   #  10-K data and absent before a name's first filing, so it passes there; the forward record cannot grade any of this
   #  before ~2027-09.
+  #  VERDICT 2026-10-14: REFUSED IN ALL FIVE ARMS. Both knobs stay off (0.0 / false). Probe runs 38561566490-38561791490
+  #  (18 runs at a31e412, pit 1/2/5/8/12/20 and stress 1/2/5 + 8/12/20 per arm). Knob echoes match every arm. `windows
+  #  scored` is identical to ctl at 8/12/20 in every arm (pit 6163/2779/1119, stress 9015/5078/2541). At 1-5y a hard knob
+  #  moves it by 1-3 windows (pit loss 5y 808 vs 809; stress 1y l10/ll6/loss 8492 vs 8489; stress 5y l6/loss 875 vs 876;
+  #  stress 2y loss 6300 vs 6301): the count is samples the lane scores, so a hard floor lowers it itself. Not re-dispatched.
+  #    arm        bar 1 (stock BOOK d mean|median)            bar 3 rank-1 h2h (ctl -> arm)          verdict
+  #    life 3     VETO pit 12y (-0.22)                         pit 20y 36 -> 29                       refused
+  #    life 6     VETO pit 20y (-0.30|-0.05)                   pit 20y 36 -> 29, pit 12y 45 -> 38     refused
+  #    life 10    pass: mean +0.30..+0.91 in 9/10 cells         pit 12y 45 -> 38, pit 8y 46 -> 40,     refused
+  #               (pit 8y +0.48, stress 12y +0.91, stress 8y    stress 20y 44 -> 37
+  #               +0.63), pit 20y -0.03; medians +0.00
+  #    loss       VETO stress 2y (-1.97), stress 1y (-3.42)    holds                                  refused
+  #    loss+life 6 VETO pit 20y, stress 2y (-1.97), 1y (-2.93)  pit 20y 36 -> 29, pit 12y 45 -> 38     refused
+  #  Bar 2 holds everywhere (no ETF or crypto cell counted: 0/0). Bar 4 holds everywhere: no arm adds a zero (pit ctl
+  #  13/15/7 at 8/12/20, life 10 12/15/7; stress 3/5/2 in every arm), so unlike (#568) these low floors do not empty books.
+  #  READING: `growth_hard_loss` is exactly inert in pit at every horizon and in stress 8/12/20 (d +0.00): an EPS <= 0
+  #  stock almost never reaches a soft-0.8 book in the replay, and where it does (stress 1-2y) dropping it costs 2-3
+  #  points. Life 10 is the near miss: it lifts the stock BOOK mean in 9 of 10 cells and adds no zero, but the names it
+  #  lets in instead put a weaker #1 on top (rank-1 h2h 6-7 points under ctl in three cells), and its stress 20y worst
+  #  window falls -4.4 -> -10.0. A floor under 10 does not lift the book at all. So the weak and the loss-making soft
+  #  admits on today's page are not what drags the replay; the f^n dock is already charging them. Do not re-ask a
+  #  hard life floor or a hard loss rule without a mechanism that keeps the #1 slot; the forward `track` grades the
+  #  live soft admits from ~2027-09.
   growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
