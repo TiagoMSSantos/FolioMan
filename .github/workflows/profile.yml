@@ -1,0 +1,99 @@
+name: Profile
+
+# (#594) Where the fund walk spends its CPU. The six fund goldens are most of coverage's test time, and
+# coverage is the CI wall; backtest-gate's release 8y fund leg is ~111s of CPU. No local build may run, so
+# the profile runs here: perf samples `backtest 12 fund` over a fresh copy of the frozen fixture, offline
+# (the run backtest_fund_report_is_pinned diffs), once at the dev profile (coverage's code without its
+# counters) and once at release (backtest-gate's). The log prints the top self and inclusive frames; the
+# `profile` artifact keeps every folded stack (`root;...;leaf count`) for what the log can't answer.
+# Read both within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes.
+#
+# MANUAL ONLY. No rust-cache on purpose: the cold build costs minutes, and a cache saved here would take
+# room in the repo's 10 GB from the fetch caches Pages and the gate restore.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # RUSTFLAGS replaces .cargo/config.toml's build.rustflags, so it restates target-cpu. Frame pointers let
+  # perf walk whole call chains cheaply; the golden check below shows they move no number.
+  RUSTFLAGS: "-C target-cpu=x86-64-v3 -C force-frame-pointers=yes"
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: install perf
+        # The runner kernel's own tools package, else the newest Azure one if the index lacks that kernel.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q "linux-tools-$(uname -r)" || sudo apt-get install -y -q linux-tools-azure
+          perfs=(/usr/lib/linux-tools/*/perf)
+          sudo ln -sf "${perfs[0]}" /usr/local/bin/perf
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          perf --version
+      - name: profile backtest 12 fund (dev, release)
+        run: |
+          cat > "$RUNNER_TEMP/fold.py" <<'EOF'
+          import collections, gzip, re, sys
+
+          stacks, frames = collections.Counter(), []
+          for line in sys.stdin:
+              cols = line.split(None, 1)
+              if len(cols) == 2:
+                  frames.append(re.sub(r"::h[0-9a-f]{16}$", "", cols[1].strip()))
+              elif frames:
+                  stacks[";".join(reversed(frames))] += 1
+                  frames = []
+          if frames:
+              stacks[";".join(reversed(frames))] += 1
+          with gzip.open(sys.argv[1], "wt") as f:
+              for k, v in stacks.most_common():
+                  f.write("%s %d\n" % (k, v))
+          total = sum(stacks.values())
+          leaf, incl = collections.Counter(), collections.Counter()
+          for k, v in stacks.items():
+              fs = k.split(";")
+              leaf[fs[-1]] += v
+              for s in set(fs):
+                  incl[s] += v
+          own = collections.Counter({s: v for s, v in incl.items() if s.startswith("folioman::")})
+          print("samples", total)
+          for title, c in (("self", leaf), ("inclusive", incl), ("inclusive, folioman:: frames", own)):
+              print("--- top %s ---" % title)
+              for s, v in c.most_common(50):
+                  print("%5.1f%% %s" % (100.0 * v / max(total, 1), s[:160]))
+          EOF
+          golden=tests/fixture/backtest-12-fund.golden
+          for p in dev release; do
+            cargo build --locked --profile "$p"
+            bin=target/release/folioman hz=999
+            if [ "$p" = dev ]; then bin=target/debug/folioman hz=199; fi
+            # A fresh copy per run, as fixture_copy does: what one run banked in its data root must not
+            # reach the next.
+            rm -rf "$RUNNER_TEMP/fx"
+            cp -r tests/fixture "$RUNNER_TEMP/fx"
+            s=$SECONDS
+            FOLIOMAN_CONFIG="$RUNNER_TEMP/fx/config/settings.yaml" FOLIOMAN_OFFLINE=1 \
+              perf record -q -e cpu-clock -F "$hz" -g -o "$p.data" -- "$bin" backtest 12 fund > "$p.out" 2> "$p.err"
+            echo "=== $p: $((SECONDS - s))s under perf at $hz Hz"
+            # The golden's own normalization (backtest_fixture.rs `normalize`): data-root lines out,
+            # trailing blanks trimmed, stdout then stderr.
+            if cat "$p.out" "$p.err" | grep -vF "$RUNNER_TEMP" | sed 's/[[:space:]]*$//' | cmp -s - <(cat "$golden"; echo); then
+              echo "output = $golden"
+            else
+              echo "::warning::$p output differs from $golden"
+              tail -n 5 "$p.err"
+            fi
+            perf script -i "$p.data" -F ip,sym --no-inline | python3 -I "$RUNNER_TEMP/fold.py" "$p.folded.gz"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: profile
+          path: "*.folded.gz"
