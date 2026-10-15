@@ -80,16 +80,22 @@ jobs:
             rm -rf "$RUNNER_TEMP/fx"
             cp -r tests/fixture "$RUNNER_TEMP/fx"
             s=$SECONDS
+            # The program's streams go to files INSIDE the sampled shell, which execs it. Redirected out
+            # here they also caught perf's own warnings (kallsyms, relocation), which made run
+            # 38757728933's golden check differ. perf's lines stay in this log. $0-$2 are the inner shell's.
+            # shellcheck disable=SC2016
             FOLIOMAN_CONFIG="$RUNNER_TEMP/fx/config/settings.yaml" FOLIOMAN_OFFLINE=1 \
-              perf record -q -e cpu-clock -F "$hz" -g -o "$p.data" -- "$bin" backtest 12 fund > "$p.out" 2> "$p.err"
+              perf record -q -e cpu-clock -F "$hz" -g -o "$p.data" -- \
+              sh -c 'exec "$0" backtest 12 fund > "$1" 2> "$2"' "$bin" "$p.out" "$p.err"
             echo "=== $p: $((SECONDS - s))s under perf at $hz Hz"
             # The golden's own normalization (backtest_fixture.rs `normalize`): data-root lines out,
-            # trailing blanks trimmed, stdout then stderr.
-            if cat "$p.out" "$p.err" | grep -vF "$RUNNER_TEMP" | sed 's/[[:space:]]*$//' | cmp -s - <(cat "$golden"; echo); then
+            # trailing blanks trimmed, stdout then stderr. A miss prints the first differing lines.
+            cat "$p.out" "$p.err" | grep -vF "$RUNNER_TEMP" | sed 's/[[:space:]]*$//' > "$p.norm"
+            if cmp -s "$p.norm" <(cat "$golden"; echo); then
               echo "output = $golden"
             else
               echo "::warning::$p output differs from $golden"
-              tail -n 5 "$p.err"
+              diff <(cat "$golden"; echo) "$p.norm" | head -n 20 || true
             fi
             perf script -i "$p.data" -F ip,sym --no-inline | python3 -I "$RUNNER_TEMP/fold.py" "$p.folded.gz"
           done
