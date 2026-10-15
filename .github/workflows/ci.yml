@@ -50,7 +50,7 @@ permissions:
 # PROVEN on 51ce484 (run 36229693691, attempt 2 warm): all four compile 1 crate, not 132. Compile
 # time against run 36228243075: build 32.8s -> 15.2s, unit-tests 33.6 -> 20.2, unit-tests-configless
 # 47.2 -> 23.5, integration-tests 35.2 -> 22.4. CI's wall clock does not move, because the gate is
-# the tail; runner minutes do, and so does the mutants gate's start (it `needs` integration-tests).
+# the tail; runner minutes do.
 # (#354) Third-party actions are pinned to a commit SHA, the tag it was cut from in the trailing
 # comment, and .github/dependabot.yml bumps them in one grouped PR a month. A moving tag runs
 # whatever its owner pushes next, and pages.yml runs rust-cache beside `pages: write` and
@@ -454,40 +454,17 @@ jobs:
   # green whether the goldens would have caught it or not. The fixture leg graded nothing. Now the
   # timeout is derived from the measured baseline, and the fixture's growth moves it along.
   #
-  # `needs:` is what made that skip safe, and it stays: a red tree fails fast there, not here. It was an assumption before, and jobs run in parallel,
-  # so it was false: on 04a74e4 the killing suite panicked in 5 tests and this gate still reported
-  # "7 caught, 0 missed" and went GREEN. cargo-mutants scores a mutant CAUGHT when the suite FAILS, so
-  # a suite that fails unconditionally catches everything, and --baseline skip removes the one check
-  # that would have refused to grade. A vacuous pass is indistinguishable from a real one — the same
-  # failure class the --list guard below already argues against.
-  #
-  # These two jobs cover exactly the two targets graded, at zero build cost: --lib from unit-tests
-  # (same FOLIOMAN_CONFIG=tests/ci-settings.yaml this job now pins — (#171); it read "same config-less
-  # env" while both were unconfigured, and the pin has to move on BOTH or this proxy-for-a-baseline
-  # stops holding), and --test backtest_fixture from integration-tests (that
-  # target sets FOLIOMAN_CONFIG on the child it spawns, so both jobs run it identically). Gating on
-  # integration-tests does NOT couple this blocking gate to network weather: tests/network.rs skips
-  # green on any environmental failure and never fails a probe.
-  #
-  # AND IT STOPS AT TWO. A verdict here can only be wrong in three ways, all already covered: the tree
-  # doesn't compile (unit-tests reds, since cargo test has to build it), --lib is red (unit-tests), or
-  # backtest_fixture is red (integration-tests runs --test '*'). Nothing else reaches a verdict. build
-  # compiles the bin alone — strictly less than unit-tests already compiles. coverage runs --lib again
-  # plus --test cli, which is not in the killing suite. lint, audit, actionlint and cleanup-runs cannot
-  # make a mutant's verdict wrong at all.
-  #
-  # The reason to stop is not runtime — every one of those finishes inside integration-tests' ~1m20s,
-  # so adding them would be nearly free. It is that `needs` SKIPS a job on failure instead of failing
-  # it, so each extra dependency is one more way to LOSE the grade on a push. audit is the sharpest
-  # case: it reds on third-party advisories published by someone else, which would silently stop this
-  # gate from grading your commit.
-  #
-  # (#427) closed a residual this block used to document: the `needs:` jobs prove the suite green
-  # under the `test` profile, not the `mutants` profile this job grades with. The baseline now proves
-  # it under the grading profile itself.
+  # (#588) No `needs:`. Under the old `--baseline skip` this gate had to wait for unit-tests and
+  # integration-tests: cargo-mutants scores a mutant CAUGHT when the suite FAILS, and on 04a74e4,
+  # with no wait, the killing suite panicked in 5 tests while this gate reported "7 caught, 0
+  # missed" and went GREEN. Since (#427) the baseline runs here, under the grading profile itself,
+  # and a red baseline grades nothing: cargo-mutants exits 4 before testing any mutant, and the
+  # step's no-verdict checks red the job. So the wait bought no safety. It cost wall clock: on run
+  # 38696660757 integration-tests took 400s and this gate 433s after it, 837s in all, where coverage
+  # (564s) is the tail without the wait. And `needs` SKIPS a job on failure instead of failing it,
+  # so a red dependency used to lose the grade on a push.
   mutants:
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests]
     # 20 is the CEILING THE GATE IS DESIGNED AROUND, not a guess at how long it takes. Measured
     # capacity at that ceiling has fallen with every crate growth — 24 mutants, then ~13, now ~7 (see
     # the BUDGET block for all three); anything larger is sharded down rather than run into the timeout.
@@ -519,13 +496,11 @@ jobs:
           # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a
           # branch's first push, where there is no "before" — the step below falls back to HEAD^.
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          # (#171) Same pin as unit-tests, and it MUST track it. Under the old `--baseline skip` a suite
-          # red here graded every mutant CAUGHT and went vacuously green; the stand-in for the missing
-          # baseline was `needs: [unit-tests]` having run the same suite. That proxy held only while
-          # the two ran the same suite in the SAME config regime. Before (#171) both
-          # were config-less and it held by accident; now both pin the fixture and it holds on purpose.
-          # Bonus, not the reason: a knob reading its shipped value makes its branch observable, so
-          # mutants of a config-gated path become killable instead of unkillable-by-construction.
+          # (#171) Same pin as unit-tests. It once had to match: `needs: [unit-tests]` running the
+          # same suite in the same config regime stood in for the skipped baseline. (#427) runs the
+          # baseline here and (#588) dropped the `needs:`, so that reason is gone. The one that
+          # stays: a knob reading its shipped value makes its branch observable, so mutants of a
+          # config-gated path become killable instead of unkillable-by-construction.
           FOLIOMAN_CONFIG: tests/ci-settings.yaml
           # THE load-bearing setting in this job, and it is an OVERRIDE: Swatinem/rust-cache exports
           # CARGO_INCREMENTAL=0 to keep its cache small, which is right for every other job here and

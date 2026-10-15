@@ -63,6 +63,16 @@ lto = "off"
 # backtest's hot loop is `f64`, which is not instrumented at all.
 overflow-checks = true
 
+# (#588) Dependencies at opt-level 2 under `dev`, folioman itself still at 0. Every CI test job builds
+# on `dev` (unit-tests, unit-tests-configless, integration-tests, coverage), and the slowest tests
+# replay history through dependency code: the backtest fixture ran 247.8s with unoptimised
+# dependencies and 83.3s with optimised ones (mutation census baseline, see ci.yml's (#427) line).
+# The price is a slower cold dependency build, paid once per cache key. The crate stays at 0, so
+# coverage instruments the same code and a debugger still sees every local. `[profile.mutants]`
+# inherits this; the mutants gate in ci.yml also sets it for its own profile by hand.
+[profile.dev.package."*"]
+opt-level = 2
+
 # Killing-suite profile for `cargo mutants`. The report pin (tests/backtest_fixture.rs) replays 200
 # tickers of history six times, which at `dev`'s opt-level 0 costs 38s per mutant against an 11s
 # rebuild — the mutation run is then 80% arithmetic that optimises away for free. `opt-level = 2`
