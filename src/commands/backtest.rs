@@ -3581,9 +3581,10 @@ fn rival_wins(d_mean: f64, d_median: f64) -> bool {
 
 /// (#560) The momentum 12-1 rival's order over one month's pool: the names the gates-off score keys (`open`,
 /// the `rivals` pond), highest momentum first. The pool is ticker-ordered and the sort stable, so a tie ranks
-/// by ticker.
-fn momentum_ranked<'a>(pool: &[&'a Sample], open: &[Option<f64>]) -> Vec<&'a Sample> {
-    let mut v: Vec<(f64, &Sample)> = pool.iter().zip(open).filter(|x| x.1.is_some()).filter_map(|(s, _)| Some((picks::momentum_12_1(&s.quote)?, *s))).collect();
+/// by ticker. (#585) A name `picks::misses_ok` skips under `tuning` sits out.
+fn momentum_ranked<'a>(pool: &[&'a Sample], open: &[Option<f64>], tuning: &BuyHeuristic) -> Vec<&'a Sample> {
+    let mut v: Vec<(f64, &Sample)> =
+        pool.iter().zip(open).filter(|x| x.1.is_some() && picks::misses_ok(&x.0.quote, tuning)).filter_map(|(s, _)| Some((picks::momentum_12_1(&s.quote)?, *s))).collect();
     v.sort_by(|a, b| b.0.total_cmp(&a.0));
     v.into_iter().map(|x| x.1).collect()
 }
@@ -3687,6 +3688,7 @@ fn rival_books(
         let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
         let (sh, op) = (scorer(&quotes, shipped), scorer(&quotes, open));
         let mut rows: Vec<([Option<f64>; 9], f64, f64, &str)> = Vec::new();
+        let mut ok: Vec<bool> = Vec::new(); // (#585) rival (j)'s momentum side, `picks::misses_ok`
         for ((s, sh), op) in group.iter().zip(sh).zip(op) {
             let (Some(op), Some(bench_r)) = (op, benchmark_fwd(bd, bc, s.date, years)) else { continue };
             let f = s.fund.as_ref();
@@ -3702,6 +3704,7 @@ fn rival_books(
                 s.quote.tr_cagr.filter(|_| picks::perf_pct(&s.quote, "10Y").is_some()),
             ];
             rows.push((keys, s.realized, bench_r, s.quote.ticker.as_str()));
+            ok.push(picks::misses_ok(&s.quote, shipped));
         }
         if !rows.iter().any(|r| r.0[0].is_some()) {
             continue; // the shipped lane holds nobody here, so its row has no window to compare
@@ -3715,7 +3718,8 @@ fn rival_books(
         for (i, book) in books.iter_mut().take(9).enumerate() {
             book.extend(rival_excess(&keyed(i), VERDICT_TOP, years)); // the nine keyed rows; (j) blends two of them
         }
-        books[9].extend(blend_excess(&keyed(0), &keyed(2), picks::BLEND_HALF, VERDICT_TOP, years));
+        let capped: Vec<_> = rows.iter().zip(&ok).map(|(r, ok)| (r.0[2].filter(|_| *ok), r.1, r.2, r.3)).collect();
+        books[9].extend(blend_excess(&keyed(0), &capped, picks::BLEND_HALF, VERDICT_TOP, years));
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
@@ -4944,7 +4948,7 @@ fn report_roll(
             kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
             let mut sized: Vec<(f64, &Sample)> = pool.iter().filter_map(|s| Some((growth_score(&s.quote, tuning)?, *s))).collect();
             sized.sort_by(|a, b| b.0.total_cmp(&a.0));
-            let mom = if rivals { momentum_ranked(&pool, &picks::growth_scores_ranked(&quotes, &open)) } else { Vec::new() };
+            let mom = if rivals { momentum_ranked(&pool, &picks::growth_scores_ranked(&quotes, &open), tuning) } else { Vec::new() };
             (d, (kept.iter().map(|x| by_tk[x.3.as_str()]).collect(), sized.into_iter().map(|x| x.1).collect(), mom))
         })
         .collect();
@@ -8443,7 +8447,7 @@ mod tests {
         };
         let pool = [s("A", Some(10.0)), s("B", Some(30.0)), s("C", Some(10.0)), s("D", None), s("E", Some(99.0))];
         let refs: Vec<&Sample> = pool.iter().collect();
-        let order = momentum_ranked(&refs, &[Some(1.0), Some(1.0), Some(1.0), Some(1.0), None]);
+        let order = momentum_ranked(&refs, &[Some(1.0), Some(1.0), Some(1.0), Some(1.0), None], &BuyHeuristic::default());
         let tickers: Vec<&str> = order.iter().map(|x| x.quote.ticker.as_str()).collect();
         assert_eq!(tickers, ["B", "A", "C"], "E is outside the pond, D has no 1Y, A ties C and goes first");
         assert_eq!(equal_top(order.iter().copied(), 2), vec![("B", 0.5), ("A", 0.5)]);

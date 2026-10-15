@@ -3119,6 +3119,14 @@ pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
     t
 }
 
+/// (#585) Whether a momentum-half candidate stays a candidate under `growth_momentum_miss_cap`: it misses fewer
+/// gates than the cap (the MISSES count, [`waived`]'s tags), or the cap is 0 (off). A name `waived` refuses
+/// passes, since the gates-off pond already decides who is in it.
+pub(crate) fn misses_ok(q: &Quote, tuning: &BuyHeuristic) -> bool {
+    let cap = tuning.growth_momentum_miss_cap;
+    cap == 0 || waived(q, tuning, false).is_none_or(|w| w.1.len() < cap)
+}
+
 /// (#566) Tags no waiver lifts. `exchange` has a knob, but growth_gate_soft 0.6 waived it and seven
 /// exchange tokens (BNB, GT, LEO, BGB, OKB, KCS, WBT) ranked: the (#511) refusal is the user's call, not a gate.
 const UNWAIVABLE: [&str; 2] = ["artifact", "exchange"];
@@ -5481,6 +5489,20 @@ pub(crate) fn buy_book(
     book.into_iter().map(|(q, w)| (q.ticker.clone(), w)).collect()
 }
 
+/// (#585) The tickers [`buy_book`] funds with `growth_momentum_interleave` off: the score half of the blend, so
+/// [`stamp_momentum`] and the journal can tell a momentum pick from a score pick.
+pub(crate) fn shipped_book(
+    ranked: &[String],
+    quotes: &[Quote],
+    tuning: &BuyHeuristic,
+    sz: &crate::config::Sizing,
+    nupl: Option<f64>,
+    funds: &HashMap<String, (&'static str, f64)>,
+) -> Vec<String> {
+    let off = BuyHeuristic { growth_momentum_interleave: false, ..tuning.clone() };
+    buy_book(ranked, quotes, &off, sz, nupl, funds).into_iter().map(|r| r.0).collect()
+}
+
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
 /// the column is there.
 const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list across stocks and ETFs by score, its first five names weighted `sizing.head_weight` (8 on CI) against 1 for each later one (a `c` commodity-price name never takes one of the five when `sizing.head_skip_commodity` is on, as on CI), coins at their crypto budget. Blank = the book does not fund this row. NOT advice";
@@ -5508,11 +5530,11 @@ fn row_ticker(row: &serde_json::Value) -> Option<&str> {
 }
 
 /// (#584) Move a RANK cell's leading number up by `by`, its flags kept, and return the new number.
-fn shift_rank(row: &mut serde_json::Value, by: usize) -> usize {
+fn shift_rank(row: &mut serde_json::Value, by: isize) -> usize {
     let Some(cell) = row.as_array_mut().and_then(|c| c.iter_mut().find(|c| c[0] == "RANK")) else { return 0 };
     let s = cell[1].as_str().unwrap_or_default().to_string();
     let n = s.chars().take_while(char::is_ascii_digit).count();
-    let rank = s[..n].parse::<usize>().unwrap_or(0) + by;
+    let rank = s[..n].parse::<usize>().unwrap_or(0).saturating_add_signed(by);
     cell[1] = format!("{rank}{}", &s[n..]).into();
     rank
 }
@@ -5522,7 +5544,20 @@ fn shift_rank(row: &mut serde_json::Value, by: usize) -> usize {
 /// when none is), and every later RANK moves down, so the RANK cell counts the merged order as `b` rows do.
 /// SCORE is the shipped score, or with every gate waived ([`gates_off`]) when the name fails one. Stamped
 /// before [`stamp_buy`], so the row carries its BUY%. A book without such names changes nothing.
-pub fn stamp_momentum(payload: &mut serde_json::Value, sized: &[(String, f64)], quotes: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
+/// (#585) `shipped` is the shipped-only book ([`buy_book`], interleave off): a sized name the Stocks table
+/// already shows but that book does not fund (MTE.DE ranked 35, bought as momentum pick 2) is bought for its
+/// momentum too, so its row moves to its book place with `m` rather than printing at its score rank.
+/// ponytail: a name the shipped book funds past the blend's score half but momentum places is not moved; a
+/// splice that reports which side placed each name fixes it, if the page ever shows one.
+pub fn stamp_momentum(
+    payload: &mut serde_json::Value,
+    sized: &[(String, f64)],
+    shipped: &[String],
+    quotes: &[Quote],
+    w: &Widths,
+    tuning: &BuyHeuristic,
+    fund_pe: &FundPeMap,
+) {
     let lane = |l: &str| -> Vec<String> { payload[l].as_array().into_iter().flatten().filter_map(row_ticker).map(str::to_string).collect() };
     let stocks = lane("stocks");
     let shown: Vec<String> = [lane("etfs"), lane("crypto")].concat();
@@ -5530,7 +5565,7 @@ pub fn stamp_momentum(payload: &mut serde_json::Value, sized: &[(String, f64)], 
     let mut prev: Option<&str> = None;
     let mut ins: Vec<(Option<&str>, &Quote, f64)> = Vec::new();
     for (t, _) in sized {
-        if stocks.contains(t) {
+        if stocks.contains(t) && shipped.contains(t) {
             prev = Some(t.as_str());
             continue;
         }
@@ -5540,7 +5575,7 @@ pub fn stamp_momentum(payload: &mut serde_json::Value, sized: &[(String, f64)], 
     }
     let Some(rows) = payload.get_mut("stocks").and_then(serde_json::Value::as_array_mut).filter(|_| !ins.is_empty()) else { return };
     let (cols, t8) = (lane_columns(w, HIDE_STOCK), tuning_8y(tuning));
-    let place = |after: Option<&str>, out: &mut Vec<serde_json::Value>, rank: &mut usize, shift: &mut usize| {
+    let place = |after: Option<&str>, out: &mut Vec<serde_json::Value>, rank: &mut usize, shift: &mut isize| {
         for (_, q, score) in ins.iter().filter(|i| i.0 == after) {
             (*rank, *shift) = (*rank + 1, *shift + 1);
             let mark = rank_mark(*rank - 1, q, &HashSet::new(), &Owned::default(), tuning) + "m";
@@ -5550,8 +5585,12 @@ pub fn stamp_momentum(payload: &mut serde_json::Value, sized: &[(String, f64)], 
     let (mut out, mut rank, mut shift) = (Vec::new(), 0, 0);
     place(None, &mut out, &mut rank, &mut shift);
     for mut row in std::mem::take(rows) {
-        rank = shift_rank(&mut row, shift);
         let t = row_ticker(&row).map(str::to_string);
+        if t.as_ref().is_some_and(|t| ins.iter().any(|i| &i.1.ticker == t)) {
+            shift -= 1; // (#585) moved to its book place, so the rows under it move up
+            continue;
+        }
+        rank = shift_rank(&mut row, shift);
         out.push(row);
         if t.is_some() {
             place(t.as_deref(), &mut out, &mut rank, &mut shift);
@@ -7473,11 +7512,11 @@ pub(crate) fn momentum_12_1(q: &Quote) -> Option<f64> {
 
 /// (#584) The momentum half of the blended book: the stocks the gates-off score keys ([`gates_off`], the
 /// backtest's `rivals` pond), highest momentum 12-1 first, a tie by ticker so the order never depends on the
-/// pool's.
+/// pool's. (#585) A name [`misses_ok`] skips is not in it.
 pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> Vec<&'a Quote> {
     let open = gates_off(tuning);
     let mut v: Vec<(f64, &Quote)> =
-        quotes.iter().filter(|q| asset_class(q) == 2 && growth_score(q, &open).is_some()).filter_map(|q| Some((momentum_12_1(q)?, q))).collect();
+        quotes.iter().filter(|q| asset_class(q) == 2 && growth_score(q, &open).is_some() && misses_ok(q, tuning)).filter_map(|q| Some((momentum_12_1(q)?, q))).collect();
     v.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.ticker.cmp(&b.1.ticker)));
     v.into_iter().map(|x| x.1).collect()
 }
@@ -12938,6 +12977,13 @@ mod tests {
         quotes.push(coin);
         let got: Vec<&str> = momentum_order(&quotes, &t).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, ["CCC", "AAA", "BBB"]);
+        // (#585) growth_momentum_miss_cap: CCC misses n gates, so a cap of n skips it and n + 1 keeps it
+        let n = waived(&quotes[2], &t, false).unwrap().1.len();
+        assert!(n >= 1, "CCC misses the range floor at least");
+        let cap = |c: usize| BuyHeuristic { growth_momentum_miss_cap: c, ..t.clone() };
+        assert!(!misses_ok(&quotes[2], &cap(n)) && misses_ok(&quotes[2], &cap(n + 1)) && misses_ok(&quotes[0], &cap(1)));
+        let got: Vec<&str> = momentum_order(&quotes, &cap(n)).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, ["AAA", "BBB"]);
     }
 
     /// (#584) `growth_momentum_interleave` with the equal-weight book funds shipped 1, momentum 1, shipped 2 ...;
@@ -12956,6 +13002,7 @@ mod tests {
         assert!(got.iter().all(|r| (r.1 - 100.0 / 3.0).abs() < 1e-9), "equal weights, in %: {got:?}");
         assert_eq!(names(buy_book(&ranked, &quotes, &off, &ew, None, &HashMap::new())), ["AAA", "BBB"]);
         assert_eq!(names(buy_book(&ranked, &quotes, &on, &crate::config::Sizing::default(), None, &HashMap::new())), ["AAA", "BBB"]);
+        assert_eq!(shipped_book(&ranked, &quotes, &on, &ew, None, &HashMap::new()), ["AAA", "BBB"], "(#585) the score half");
     }
 
     /// (#584) A momentum-only name gets a Stocks row flagged `m` after the shown sized name before it, and the later
@@ -12967,15 +13014,31 @@ mod tests {
         let base = serde_json::json!({"stocks": [[["RANK", "1"], ["TICKER", "AAA"]], [["RANK", "2"], ["TICKER", "BBB"]]]});
         let book = |ts: &[&str]| ts.iter().map(|t| (t.to_string(), 10.0)).collect::<Vec<_>>();
         let mut p = base.clone();
-        stamp_momentum(&mut p, &book(&["AAA", "BBB"]), &quotes, &Widths::default(), &t, &FundPeMap::new());
+        let shipped = ["AAA".to_string(), "BBB".to_string()];
+        stamp_momentum(&mut p, &book(&["AAA", "BBB"]), &shipped, &quotes, &Widths::default(), &t, &FundPeMap::new());
         assert_eq!(p, base, "nothing to insert");
-        stamp_momentum(&mut p, &book(&["AAA", "CCC", "BBB"]), &quotes, &Widths::default(), &t, &FundPeMap::new());
+        stamp_momentum(&mut p, &book(&["AAA", "CCC", "BBB"]), &shipped, &quotes, &Widths::default(), &t, &FundPeMap::new());
         let rows = p["stocks"].as_array().unwrap();
         let cell = |i: usize, c: &str| rows[i].as_array().unwrap().iter().find(|x| x[0] == c).map(|x| x[1].as_str().unwrap().to_string());
         assert_eq!((0..3).map(|i| cell(i, "TICKER").unwrap()).collect::<Vec<_>>(), ["AAA", "CCC", "BBB"]);
         let m = cell(1, "RANK").unwrap();
         assert!(m.starts_with('2') && m.ends_with('m'), "{m}");
         assert_eq!([cell(0, "RANK"), cell(2, "RANK")], [Some("1".to_string()), Some("3".to_string())]);
+        // (#585) a row the lane already shows but only momentum funds (MTE.DE at rank 35) moves to its book place
+        let mut p = serde_json::json!({"stocks": [[["RANK", "1"], ["TICKER", "AAA"]], [["RANK", "2"], ["TICKER", "BBB"]], [["RANK", "3"], ["TICKER", "CCC"]], [["RANK", "4"], ["TICKER", "DDD"]]]});
+        stamp_momentum(&mut p, &book(&["AAA", "CCC", "BBB"]), &shipped, &quotes, &Widths::default(), &t, &FundPeMap::new());
+        let rows = p["stocks"].as_array().unwrap();
+        let cell = |i: usize, c: &str| rows[i].as_array().unwrap().iter().find(|x| x[0] == c).map(|x| x[1].as_str().unwrap().to_string());
+        assert_eq!((0..4).map(|i| cell(i, "TICKER").unwrap()).collect::<Vec<_>>(), ["AAA", "CCC", "BBB", "DDD"]);
+        let m = cell(1, "RANK").unwrap();
+        assert!(m.starts_with('2') && m.ends_with('m'), "{m}");
+        assert_eq!([cell(0, "RANK"), cell(2, "RANK"), cell(3, "RANK")], ["1", "3", "4"].map(|r| Some(r.to_string())));
+        // and a lane row the shipped book funds keeps its place
+        let mut p = serde_json::json!({"stocks": [[["RANK", "1"], ["TICKER", "AAA"]], [["RANK", "2"], ["TICKER", "BBB"]], [["RANK", "3"], ["TICKER", "CCC"]]]});
+        let all = ["AAA".to_string(), "BBB".to_string(), "CCC".to_string()];
+        let before = p.clone();
+        stamp_momentum(&mut p, &book(&["AAA", "CCC", "BBB"]), &all, &quotes, &Widths::default(), &t, &FundPeMap::new());
+        assert_eq!(p, before);
     }
 
     /// (#563) `growth_gate_soft`: 0 keeps every gate hard; at f a failer scores its waived score x f^n,

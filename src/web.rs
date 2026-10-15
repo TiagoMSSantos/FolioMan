@@ -110,7 +110,8 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     // upload that turns it on gets no BUY% column rather than a wrong one.
     if s.sizing.equal_weight_book {
         let book = picks::buy_book(&ranked, &u.quotes, bh, &s.sizing, u.nupl, &HashMap::new());
-        picks::stamp_momentum(&mut top, &book, &u.quotes, &s.widths, bh, &u.fund_pe); // (#584)
+        let shipped = picks::shipped_book(&ranked, &u.quotes, bh, &s.sizing, u.nupl, &HashMap::new()); // (#585)
+        picks::stamp_momentum(&mut top, &book, &shipped, &u.quotes, &s.widths, bh, &u.fund_pe); // (#584)
         picks::stamp_buy(&mut top, &book);
     }
     picks::stamp_index(&mut top, &u.quotes); // (#446) after BUY%, which it sits beside
@@ -300,7 +301,8 @@ mod tests {
         let mut v: serde_json::Value = serde_json::from_str(&out.into_inner()).expect("render built the payload");
         // (#403) the BUY% `screen` stamps from its own sized book, with its real look-through map
         let book = picks::buy_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new());
-        picks::stamp_momentum(&mut v, &book, quotes, &s.widths, &s.buy_heuristic, &FundPeMap::new()); // (#584)
+        let shipped = picks::shipped_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new());
+        picks::stamp_momentum(&mut v, &book, &shipped, quotes, &s.widths, &s.buy_heuristic, &FundPeMap::new()); // (#584)
         picks::stamp_buy(&mut v, &book);
         picks::stamp_index(&mut v, quotes);
         picks::stamp_site(&mut v, quotes, &|t: &str| t.to_string()); // (#540) the REPORTS links, as `screen` stamps them

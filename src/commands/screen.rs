@@ -2241,14 +2241,10 @@ pub async fn run(args: Vec<String>) {
     // same-day rerun adds nothing); a failed append warns inside and never fails the screen.
     // (#295) the executed book is bound here, not built inline below, so the buy list printed after the
     // state write shows the same rows this journals. The field's comment says why it is `sized_book`.
-    let sized_now = crate::picks::buy_book(
-        &ranked_now,
-        &quotes,
-        &settings.buy_heuristic,
-        &settings.sizing,
-        nupl,
-        &crate::commands::size::fund_sectors(&mix), // (#293) the same look-through `size` caps by
-    );
+    let fund_sectors = crate::commands::size::fund_sectors(&mix); // (#293) the same look-through `size` caps by
+    let sized_now = crate::picks::buy_book(&ranked_now, &quotes, &settings.buy_heuristic, &settings.sizing, nupl, &fund_sectors);
+    // (#585) the score half of that book: a sized name outside it was bought for its momentum
+    let shipped_now = crate::picks::shipped_book(&ranked_now, &quotes, &settings.buy_heuristic, &settings.sizing, nupl, &fund_sectors);
     // (#538) the Social table's own heuristic, and the two orders' tops it journals
     let soc = settings.social().expect("config::load resolved social_heuristic");
     let mut soc_book = crate::heuristics::social::SocBook::default();
@@ -2256,7 +2252,7 @@ pub async fn run(args: Vec<String>) {
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
         // (#580) the Braked table reads the shipped rows, before (#584) momentum rows join them
         let braked = crate::picks::braked_rows(&top["stocks"], &quotes, &settings.tickers, &settings.buy_heuristic);
-        crate::picks::stamp_momentum(&mut top, &sized_now, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe);
+        crate::picks::stamp_momentum(&mut top, &sized_now, &shipped_now, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe);
         crate::picks::stamp_buy(&mut top, &sized_now);
         crate::picks::stamp_index(&mut top, &quotes); // (#446) the ETF rows' INDEX, after BUY%
         top["exposure"] = exposure_rows(&sized_now, &quotes, &holdings, &mix, &fetch::us_symbol, &settings.buy_heuristic);
@@ -2293,7 +2289,7 @@ pub async fn run(args: Vec<String>) {
     // `track` prices and grades the book that was bought; `shipped` keeps the shipped-only order beside it
     let blend = settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book;
     let journal_rows: Vec<String> = if blend {
-        let mom: Vec<&str> = sized_now.iter().map(|(t, _)| t.as_str()).filter(|t| !ranked_now.iter().any(|r| r == t)).collect();
+        let mom: Vec<&str> = sized_now.iter().map(|(t, _)| t.as_str()).filter(|t| !shipped_now.iter().any(|r| r == t)).collect();
         picks::splice_order(&ranked_now.iter().map(String::as_str).collect::<Vec<_>>(), &mom, false, usize::MAX).into_iter().map(str::to_string).collect()
     } else {
         ranked_now.clone()

@@ -13585,6 +13585,9 @@ buy_heuristic:
                                  #   grades `mblend` (blend top vs shipped-only top) forward, pre-registered
                                  #   to print REVERT SIGNAL at 12+ lines and 12+ links, mean AND median < 0.
                                  #   false reverts to the shipped-only book.
+  growth_momentum_miss_cap: 0    # (#585) UNGRADED until its probe: a momentum-half candidate that
+                                 #   misses this many buy gates or more is skipped, its slot to the next
+                                 #   momentum name. 0 = off, the (#584) blend as graded.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the
