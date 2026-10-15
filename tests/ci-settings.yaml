@@ -1616,6 +1616,36 @@ sizing:
   #  TR life lifts the blend at pit 8y/12y and stress 8y, but in no 20y cell, the horizon the screen is
   #  for (pit 20y median -0.4). NOTHING SHIPS, and no DCA lane is earned. Don't re-ask (h) as the blend's
   #  other half on this record.
+  #  (#599) SCORE-WEIGHT A/B, 9 ARMS, KNOB-ONLY. PRE-REGISTERED 2026-10-15 19:55 UTC, before the runs.
+  #  WHY: the (#598) controls' WEIGHT SWEEP (#334) block read dividend x0 positive on both stats in 5 of 6
+  #  cells, accel x2 in 4 of 6, proximity x2 and quality x2 at pit only. That sweep grades the plain score
+  #  book. The live book is the (#584) blend, and a weight moves only its score half.
+  #  ARMS at 1444c29, no code push: dividend_weight 0 / 0.25 (live 0.5), growth_accel_weight 1.0 / 0.75
+  #  (0.50), growth_proximity_weight 2.0 (1.0), quality_weight 0.30 (0.15), growth_trend_weight 0 (0.15),
+  #  sharpe_weight 0 (0.05), dividend 0 + accel 1.0. 20 runs: control + 9 arms x pit/stress, 8/12/20y, rivals.
+  #  BAR (#587's): rival (j) arm minus control, mean AND median >= +0.2 pts/yr in >= 5 of 6 cells, and the
+  #  20y DCA S+inter not down by more than 0.2 (mean or median) in either lane. PREDICTED: 10-15% any passes.
+  #  RESULT: REFUSED, all 9 arms. Controls 38797863628 pit, 38797876364 stress; arms 38797890237-38798124895.
+  #  Windows match control in every arm (pit 6163/2779/1119, stress 9015/5078/2541), except stress dividend
+  #  0.25 at 8y (9004: live-data drift; its 8y deltas read +0.0). (j) control, mean (median) pts/yr: pit 8y
+  #  +4.7 (+4.4), 12y +3.9 (+3.6), 20y +5.6 (+4.6); stress 8y +6.2 (+5.8), 12y +5.8 (+6.9), 20y +5.6 (+5.5).
+  #  (j) arm minus control, mean/median (harmed = mean or median down 0.2 or more):
+  #    arm              pit 8y    12y       20y       | stress 8y 12y       20y        cells  harmed
+  #    dividend 0       -0.1/-0.2 +0.1/+0.7 +0.2/+0.0 | +0.1/+0.3 +0.0/+0.0 +0.0/+0.0   0/6    1/6
+  #    dividend 0.25    -0.1/-0.1 +0.0/+0.0 +0.1/+0.0 | +0.0/+0.0 +0.0/+0.0 +0.0/+0.0   0/6    0/6
+  #    accel 1.0        -0.1/-0.9 +0.0/+0.7 +0.1/+0.2 | +0.0/+0.0 +0.0/-0.7 +0.0/-0.2   0/6    3/6
+  #    accel 0.75       -0.1/-0.2 +0.0/+0.7 +0.1/+0.2 | -0.1/-0.6 -0.1/-0.6 +0.0/+0.0   0/6    3/6
+  #    proximity 2.0    +0.0/-0.2 +0.0/+0.7 +0.1/+0.0 | -0.1/-0.2 -0.1/-0.7 -0.1/-0.2   0/6    4/6
+  #    quality 0.30     +0.0/+0.0 +0.0/+0.0 +0.0/+0.0 | -0.1/-0.2 -0.1/-0.6 +0.0/+0.0   0/6    2/6
+  #    trend 0          -0.1/-0.1 +0.0/+0.8 +0.3/+0.6 | -0.2/+0.0 -0.1/-0.7 +0.1/-0.2   1/6    3/6
+  #    sharpe 0         +0.0/+0.0 +0.0/+0.0 +0.0/+0.0 | +0.0/+0.0 +0.0/+0.0 +0.0/+0.0   0/6    0/6
+  #    div 0 + acc 1.0  -0.2/-0.9 +0.1/+0.7 +0.1/+0.2 | +0.0/+0.0 +0.0/-0.7 +0.0/-0.2   0/6    3/6
+  #  20y DCA S+inter, arm minus control: no veto in any arm. Largest: div 0 + acc 1.0 pit +0.5/+0.4, stress
+  #  +0.1/+0.1. Lowest: proximity 2.0 pit -0.1/+0.0, stress +0.0/-0.1.
+  #  READ: (j) moves about half as far as the plain shipped row (accel 1.0: shipped pit 8y -0.7/-1.1 and 20y
+  #  +0.6/+1.1, (j) -0.1/-0.9 and +0.1/+0.2). Pit 12y's median jumps +0.7 in every arm that moves the book:
+  #  n38, a thin median that steps on one swap. Only trend 0 wins a cell (pit 20y), and it harms 3. The weights
+  #  are not the lever. All six keep their shipped values. Don't re-ask a weight on the blend's (j) row.
   #── (#561) SOFT-GATE SCREEN: WHICH HARD GATE COSTS THE SHIPPED BOOK THE MOST? ──
   #  WHY: (#560) put shipped under the random-pond p95 in 5 of 6 cells, and its gates-off twin had a better
   #  worst window in all 6. So: grade each binding gate ALONE before building any taper. STAGE 1 (this
@@ -3285,6 +3315,7 @@ buy_heuristic:
                                  #
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
+                                 #   (#599) 2.0 REFUSED on rival (j): 0/6 cells, harmed 4/6. Receipt: the (#599) block.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
   print_acquisition_hazard: false # (#112 / round 3 §9) UNMEASURED, and unmeasurABLE from this data —
                                  # which is the point. Ships OFF, which is the caveat block every
@@ -15778,6 +15809,7 @@ buy_heuristic:
   #   is not a claim the backtest is entitled to refuse.
   #   So: 0.5 stays. If it is ever revisited, the number to beat is above and the argument to beat is the
   #   truthfulness one, not the edge one.
+  #   (#599) 0 and 0.25 REFUSED on rival (j): 0/6 cells each (0.25 inert). Receipt: the (#599) block.
   onsale_dividend_weight: 0.0    # [FOIL] (#61) ON-SALE lane's own yield weight. ZEROED, and this is the
                                  #   largest single measured improvement in the file. Split from the growth
                                  #   lane for the same reason `onsale_sharpe_weight` was split from
@@ -15953,6 +15985,7 @@ buy_heuristic:
   #   `onsale_dividend_weight` already use — that split was made on exactly this evidence, "growth
   #   wants 0.15 but on-sale wants 0"), THEN grade the split arm on the new book. Splitting first would
   #   ship a knob on the one metric this file keeps catching out.
+  #   (#599) 0.30 REFUSED on rival (j): 0/6 cells, harmed 2/6. Receipt: the (#599) block.
   quality_cap: 40.0              # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
   # (#42) "why does Apple print n/m as ROE" — asked 2026-07-27. The answer was a display rule reading the
   #   WRONG AXIS, and chasing it found the score doing the same thing. Two thresholds existed for one
@@ -16796,6 +16829,7 @@ buy_heuristic:
                                  #   so this is a partial view of ONE slope — sweeping accel independently of
                                  #   `growth_accel_beta` is still open. Full receipt: the (#178) block on
                                  #   `growth_value_weight`.
+                                 #   (#599) 0 REFUSED on rival (j): 1/6 cells (pit 20y), harmed 3/6. Receipt: the (#599) block.
   growth_accel_weight: 0.50      # SCORE: reward per pt the last year outpaced the long CAGR.
                                  #   (#137) P0b arm 2 — RE-SWEPT ON THE POINT-IN-TIME POOL 2026-08-25. NO-SHIP; 0.50 STANDS.
                                  #   This discharges the PIT half of the DEBT block for `growth_accel_weight`, the LAST of the five
@@ -17193,6 +17227,7 @@ buy_heuristic:
                                  #   (200-354 lines once the drift WARNING is stripped). The 0 was taken as false
                                  #   and the checksums believed. Settle a same-or-different question with `md5sum`
                                  #   or `diff -q`, never with a piped line count.
+                                 #   (#599) 0.75 and 1.0 REFUSED on rival (j): 0/6 cells, harmed 3/6 each. Receipt: the (#599) block.
   growth_accel_beta: 1.0         # (#98) UNMEASURED — an unfitted judgement value, shipping 1.0, which is
                                  #   the original `clamp(1Y − long_cagr, 0, cap)` expression BIT FOR BIT
                                  #   (multiplying by 1.0 is exact in IEEE, so this is not an approximation
@@ -21397,6 +21432,7 @@ buy_heuristic:
                                  #   than up (20y 11-20 63% -> 58%, 8y 11-20 58% -> 55%, 8y 6-10 flat at 68%).
                                  #   Nothing bought, so nothing to trade for the loss. REFUSED, DEAD PERMANENTLY
                                  #   — a refusal on the survivor-flattered lane is binding. 0.05 STANDS.
+                                 #   (#599) 0 REFUSED on rival (j): inert, every cell +0.0/+0.0. Receipt: the (#599) block.
   onsale_sharpe_weight: 0.0      # [FOIL] (B) ON-SALE lane's own Sharpe weight, split from growth because the shared knob conflicted:
                                  #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
                                  #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)
