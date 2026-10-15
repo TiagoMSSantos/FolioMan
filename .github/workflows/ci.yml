@@ -669,8 +669,10 @@ jobs:
           #
           # (#596) Serial now (`-j 1`), so the two-worker formula above no longer applies. f6bd520
           # (cold, -j 2): list 16s, baseline 130s build + 26s test, ~33s per mutant (build + test).
-          # Warm and serial, with a guessed ~45s baseline build: 16 + 45 + 26 + 6 x 33 = ~285s for a
-          # full budget. Re-read it from the first warm run's outcomes.json.
+          # Measured serial: 1386557 built cold and saved the cache (298s job). 8997ea8 restored it on a
+          # full key match: list ~8s, baseline 32s build + 26s test (1 `Compiling` line, was 154), each
+          # mutant ~5-11s build + ~9s test, so the full budget of 6 took a 166s step and a 177s job, level
+          # with backtest-gate (176s). The key hashes Cargo.lock: re-read this after a lock bump lands.
           #
           # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
           # arguments, and quoting it would pass one empty argument in the common case where no shard
