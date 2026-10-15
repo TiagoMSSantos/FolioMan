@@ -3573,8 +3573,10 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 /// prints last from [`random_books`]. (#571) (h)/(i) rank on `tr_cagr`, the TR-CAGR column's as-of number;
 /// (i) keeps only names with a 10Y leg, since `age_years` is None on a backtest quote. (#584) (j) is
 /// [`blend_excess`] over row 0 and the momentum side (`picks::momentum_keys`), split by
-/// `growth_momentum_slots`; (#598) (k) is the same blend with (h) in place of row 0.
-const RIVALS: [&str; 11] = [
+/// `growth_momentum_slots`; (#598) (k) is the same blend with (h) in place of row 0. (#600) (l) ranks the pond
+/// on one key, [`rank_sum`] of row 1 and the momentum key; (m) and (n) are (j) with one half [`double_sort`]ed:
+/// (m) keeps the momentum-best half of row 0's top names, (n) the row-1-best half of the momentum side's.
+const RIVALS: [&str; 14] = [
     "shipped (plain top-10)",
     "(d) gates-off shipped",
     "(a) momentum 12-1",
@@ -3586,6 +3588,9 @@ const RIVALS: [&str; 11] = [
     "(i) TR life CAGR, 10Y+",
     "(j) 5 shipped + 5 momentum",
     "(k) 5 TR life + 5 momentum",
+    "(l) integrated score + mom",
+    "(m) (j), score half by mom",
+    "(n) (j), mom half by score",
 ];
 
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
@@ -3666,6 +3671,25 @@ fn blend_excess(first: &[(Option<f64>, f64, f64, &str)], second: &[(Option<f64>,
     book_excess(&book, years)
 }
 
+/// (#600) The best `k` tickers by key, ordered and deduped as [`rival_excess`], none of them from `skip`.
+fn top_names<'a>(rows: &[(Option<f64>, f64, f64, &'a str)], k: usize, skip: &HashSet<&'a str>) -> HashSet<&'a str> {
+    let mut seen = skip.clone();
+    key_order(rows).into_iter().map(|r| r.3).filter(|&t| seen.insert(t)).take(k).collect()
+}
+
+/// (#600) A double sort's second key: `then`, the same rows' other key, kept only on the best `2 * k` tickers
+/// by `by` outside `skip` ([`top_names`]), so a top-`k` take holds `then`'s best half of `by`'s top `2 * k`.
+fn double_sort(by: &[(Option<f64>, f64, f64, &str)], then: &[Option<f64>], k: usize, skip: &HashSet<&str>) -> Vec<Option<f64>> {
+    let top = top_names(by, 2 * k, skip);
+    by.iter().zip(then).map(|(r, t)| t.filter(|_| top.contains(r.3))).collect()
+}
+
+/// (#600) Rival (l)'s key: a row's [`rank_pct`] in `a` plus its rank in `b`, so the order is the mean
+/// percentile's. A row missing either has none.
+fn rank_sum(a: &[Option<f64>], b: &[Option<f64>]) -> Vec<Option<f64>> {
+    rank_pct(a).into_iter().zip(rank_pct(b)).map(|(a, b)| a.zip(b).map(|(a, b)| a + b)).collect()
+}
+
 /// (#560) Rival (e): [`PLACEBO_DRAWS`] seeded draws of `n` names per bucket from the pond, with
 /// replacement like the (#329) placebo. Per draw: (mean, median) excess across buckets.
 fn random_books(pond: &BTreeMap<i32, Vec<(f64, f64)>>, n: usize, years: i64) -> Vec<(f64, f64)> {
@@ -3741,12 +3765,21 @@ fn rival_books(
         let half = VERDICT_TOP.saturating_sub(shipped.growth_momentum_slots);
         books[9].extend(blend_excess(&keyed(0), &capped, half, VERDICT_TOP, years));
         books[10].extend(blend_excess(&keyed(7), &capped, half, VERDICT_TOP, years)); // (#598) (k): (h) in place of row 0
+        // (#600) (l): the pond on one blended key; (m)/(n): (j) with its row-0 or its momentum half double-sorted
+        let open_keys: Vec<Option<f64>> = rows.iter().map(|r| r.0[1]).collect();
+        let mom: Vec<Option<f64>> = capped.iter().map(|c| c.0).collect();
+        let rekey = |keys: Vec<Option<f64>>| rows.iter().zip(keys).map(|(r, k)| (k, r.1, r.2, r.3)).collect::<Vec<_>>();
+        books[11].extend(rival_excess(&rekey(rank_sum(&open_keys, &mom)), VERDICT_TOP, years));
+        books[12].extend(blend_excess(&rekey(double_sort(&keyed(0), &mom, half, &HashSet::new())), &capped, half, VERDICT_TOP, years));
+        let held = top_names(&keyed(0), half, &HashSet::new());
+        let fill = rekey(double_sort(&capped, &open_keys, VERDICT_TOP.saturating_sub(held.len()), &held));
+        books[13].extend(blend_excess(&keyed(0), &fill, half, VERDICT_TOP, years));
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
 }
 
-/// (#560) The `rivals` report: eleven top-10 books and a random one on the SAME pond, the non-crypto
+/// (#560) The `rivals` report: fourteen top-10 books and a random one on the SAME pond, the non-crypto
 /// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
 /// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
 #[mutants::skip] // printing; `rival_books` and its helpers carry the tests
@@ -8415,6 +8448,15 @@ mod tests {
         // a thin first side: A alone, then D and E fill -> (2 + 4 + 0)/3 -> +100
         assert!((blend_excess(&first[..1], &second, 2, 3, 1).unwrap() - 100.0).abs() < 1e-9);
         assert_eq!(blend_excess(&first[3..], &[], 2, 3, 1), None, "no keyed name on either side, no book");
+        // (#600) `first`'s top 2 x 1 keyed names are A and B (Z has no key), so C loses its `then` key; skipping
+        // A, the top 2 x 2 run out at B and C. (l)'s key: 3 is above 1 of 2, 2 above 1 of 3.
+        let none = HashSet::new();
+        assert_eq!(top_names(&first, 2, &none), HashSet::from(["A", "B"]));
+        assert_eq!(top_names(&first, 2, &HashSet::from(["A"])), HashSet::from(["B", "C"]), "a skipped name is no pick");
+        let then = [Some(1.0), Some(2.0), Some(3.0), Some(4.0)];
+        assert_eq!(double_sort(&first, &then, 1, &none), [Some(1.0), Some(2.0), None, None]);
+        assert_eq!(double_sort(&first, &then, 2, &HashSet::from(["A"])), [None, Some(2.0), Some(3.0), None]);
+        assert_eq!(rank_sum(&[Some(3.0), Some(1.0), None], &[Some(1.0), Some(2.0), Some(5.0)]), [Some(0.5), Some(1.0 / 3.0), None]);
 
         let flat: BTreeMap<i32, Vec<(f64, f64)>> = [(1, vec![(100.0, 0.0); 3]), (2, vec![(100.0, 0.0)]), (3, vec![])].into();
         let draws = random_books(&flat, 10, 1);
@@ -8454,7 +8496,8 @@ mod tests {
         let open = BuyHeuristic { quality_weight: 1.0, ..BuyHeuristic::default() };
         let (books, pond) = rival_books(&samples, &bench, 1, swap_scorer, &shipped, &open);
         // S1 alone: +30 vs +10 -> 20. S1 + S2: +20 -> 10. S2 alone: 0. (#598) (k): S2 by TR life, then S1 by momentum.
-        let want: [&[f64]; 11] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[], &[20.0], &[10.0]];
+        // (#600) (l)/(m)/(n): S2 has no 1Y, so no momentum key, and S1 is alone in all three.
+        let want: [&[f64]; 14] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[], &[20.0], &[10.0], &[20.0], &[20.0], &[20.0]];
         assert_eq!(books.len(), RIVALS.len());
         for (i, (got, want)) in books.iter().zip(want).enumerate() {
             assert_eq!(got.len(), want.len(), "book {i}: {got:?}");
