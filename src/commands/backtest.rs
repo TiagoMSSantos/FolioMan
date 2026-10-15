@@ -3572,8 +3572,9 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 /// prints above it in `report_vs_benchmark` and is what the 6-cell tally reads. (e), the random pond,
 /// prints last from [`random_books`]. (#571) (h)/(i) rank on `tr_cagr`, the TR-CAGR column's as-of number;
 /// (i) keeps only names with a 10Y leg, since `age_years` is None on a backtest quote. (#584) (j) is
-/// [`blend_excess`] over rows 0 and (a): half the book from each.
-const RIVALS: [&str; 10] = [
+/// [`blend_excess`] over row 0 and the momentum side (`picks::momentum_keys`), split by
+/// `growth_momentum_slots`; (#598) (k) is the same blend with (h) in place of row 0.
+const RIVALS: [&str; 11] = [
     "shipped (plain top-10)",
     "(d) gates-off shipped",
     "(a) momentum 12-1",
@@ -3584,6 +3585,7 @@ const RIVALS: [&str; 10] = [
     "(h) TR life CAGR",
     "(i) TR life CAGR, 10Y+",
     "(j) 5 shipped + 5 momentum",
+    "(k) 5 TR life + 5 momentum",
 ];
 
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
@@ -3736,13 +3738,15 @@ fn rival_books(
             book.extend(rival_excess(&keyed(i), VERDICT_TOP, years)); // the nine keyed rows; (j) blends two of them
         }
         let capped: Vec<_> = rows.iter().zip(picks::momentum_keys(&picked, shipped)).map(|(r, k)| (k, r.1, r.2, r.3)).collect();
-        books[9].extend(blend_excess(&keyed(0), &capped, VERDICT_TOP.saturating_sub(shipped.growth_momentum_slots), VERDICT_TOP, years));
+        let half = VERDICT_TOP.saturating_sub(shipped.growth_momentum_slots);
+        books[9].extend(blend_excess(&keyed(0), &capped, half, VERDICT_TOP, years));
+        books[10].extend(blend_excess(&keyed(7), &capped, half, VERDICT_TOP, years)); // (#598) (k): (h) in place of row 0
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
 }
 
-/// (#560) The `rivals` report: ten top-10 books and a random one on the SAME pond, the non-crypto
+/// (#560) The `rivals` report: eleven top-10 books and a random one on the SAME pond, the non-crypto
 /// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
 /// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
 #[mutants::skip] // printing; `rival_books` and its helpers carry the tests
@@ -8449,8 +8453,8 @@ mod tests {
         let shipped = BuyHeuristic { quality_weight: 0.0, ..BuyHeuristic::default() };
         let open = BuyHeuristic { quality_weight: 1.0, ..BuyHeuristic::default() };
         let (books, pond) = rival_books(&samples, &bench, 1, swap_scorer, &shipped, &open);
-        // S1 alone: +30 vs +10 -> 20. S1 + S2: +20 -> 10. S2 alone: 0.
-        let want: [&[f64]; 10] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[], &[20.0]];
+        // S1 alone: +30 vs +10 -> 20. S1 + S2: +20 -> 10. S2 alone: 0. (#598) (k): S2 by TR life, then S1 by momentum.
+        let want: [&[f64]; 11] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[], &[20.0], &[10.0]];
         assert_eq!(books.len(), RIVALS.len());
         for (i, (got, want)) in books.iter().zip(want).enumerate() {
             assert_eq!(got.len(), want.len(), "book {i}: {got:?}");

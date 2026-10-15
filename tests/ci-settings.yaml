@@ -1592,6 +1592,17 @@ sizing:
   #  long-run CAGR alone is no timing signal. The 10Y+ filter does not help: it drops the young compounders.
   #  NOTHING SHIPS. (h) is now the second rival on file after (#560)'s momentum. Re-ask it as a score term
   #  (not a book swap) with its own pre-registered bar, or on a longer pit record.
+  #  (#598) RIVAL (k) 5 TR LIFE + 5 MOMENTUM. PRE-REGISTERED 2026-10-15, before the runs.
+  #  WHY: (#597) closed the momentum share (3/7/10 of 10 slots refused). (h) above led all three pit cells
+  #  as a whole book, so: does it beat the shipped score as the OTHER half of the live (#584) blend?
+  #  BUILT: (k) is (j)'s `blend_excess` with (h)'s order in place of row 0. (h)'s top names fill 10 minus
+  #  growth_momentum_slots slots (5 today), then (j)'s momentum side (12-7, `picks::momentum_keys`) fills
+  #  the rest, equal-weight. Both halves rank the gates-off pond, so no name needs to pass a growth gate.
+  #  Report only: the page is untouched.
+  #  BAR: (k) against (j), the same run's row (no knob arm): mean AND median both >= +0.2 pts/yr in >= 5
+  #  of 6 cells (pit + stress x 20/12/8y). 2 probe runs at shipped settings. A beat ships NOTHING: it earns
+  #  a 20y DCA lane for (k), graded drop-only against S+inter in both lanes, before any page change is asked.
+  #  PREDICTED: refused. (h) did not beat shipped at stress 12y/20y above, and half of each book is shared.
   #── (#561) SOFT-GATE SCREEN: WHICH HARD GATE COSTS THE SHIPPED BOOK THE MOST? ──
   #  WHY: (#560) put shipped under the random-pond p95 in 5 of 6 cells, and its gates-off twin had a better
   #  worst window in all 6. So: grade each binding gate ALONE before building any taper. STAGE 1 (this
