@@ -43,7 +43,7 @@
 
 use crate::config::BuyHeuristic;
 use crate::core::Quote;
-use crate::picks::{buy_score, growth_score};
+use crate::picks::{buy_score, fund_fill, growth_score};
 use crate::{config, core, fetch, picks};
 use chrono::Datelike;
 use futures::stream::{self, StreamExt};
@@ -2707,10 +2707,25 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
         };
         let mut won = default.clone();
         let mut best = f64::NEG_INFINITY;
+        // (#595) Only growth_fund_weight moves between the draws, and the score reads it once, as
+        // `weight × fund_fill`. A row whose fill is 0 (a factor at or below 0, or none at the shipped
+        // neutral of 0) scores the same at every drawn weight: w × ±0.0 is the same ±0.0 for any w in
+        // [0, 0.5). So those rows are scored once, at weight 0, and only the rest per draw. Same rows,
+        // same order, same floats, so every number below is unchanged. The draws were ~90% of a fund
+        // run's CPU (profile.yml run 38757728933), and most rows carry no positive factor: no
+        // fundamentals, an ETF, a coin.
+        let zero = BuyHeuristic { growth_fund_weight: 0.0, ..default.clone() };
+        let fixed: Vec<Option<Option<f64>>> =
+            train.iter().map(|s| (fund_fill(&s.quote, &zero) == 0.0).then(|| growth_score(&s.quote, &zero))).collect();
         for _ in 0..200 {
             let mut t = default.clone();
             t.growth_fund_weight = next() * 0.5;
-            let (rho, edge) = lane_metrics(train, growth_score, &t);
+            let scored: Vec<(&Sample, f64)> = train
+                .iter()
+                .zip(fixed.iter())
+                .filter_map(|(s, &f)| f.unwrap_or_else(|| growth_score(&s.quote, &t)).map(|v| (s, v)))
+                .collect();
+            let (rho, edge) = scored_metrics(&scored);
             if rho.unwrap_or(0.0) > 0.0 && edge > best {
                 best = edge;
                 won = t;
@@ -5666,12 +5681,19 @@ fn lane_metrics(
 ) -> (Option<f64>, f64) {
     let scored: Vec<(&Sample, f64)> =
         samples.iter().filter_map(|s| scorer(&s.quote, tuning).map(|v| (s, v))).collect();
+    scored_metrics(&scored)
+}
+
+/// (#595) [`lane_metrics`] past the scoring: (rho, edge) over the rows that scored, in sample order.
+/// The fund sweep scores most of its rows once per factor, and ranks them here exactly as
+/// `lane_metrics` would.
+fn scored_metrics(scored: &[(&Sample, f64)]) -> (Option<f64>, f64) {
     if scored.len() < 4 {
         return (None, 0.0);
     }
     let sc: Vec<f64> = scored.iter().map(|(_, v)| *v).collect();
     let rels: Vec<f64> = scored.iter().map(|(s, _)| s.relative).collect();
-    let (t, b) = edge_halves(&scored);
+    let (t, b) = edge_halves(scored);
     (core::spearman(&sc, &rels), t - b)
 }
 

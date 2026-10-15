@@ -1164,6 +1164,14 @@ fn missing_fundamental(quote: &Quote, tuning: &BuyHeuristic, neutral: f64) -> f6
     neutral
 }
 
+/// (#595) What the primary fund tilt pays per point of `growth_fund_weight`: the as-of factor, else the
+/// [`missing_fundamental`] fill, clamped to [0, cap]. The score reads the weight nowhere else, so a row
+/// where this is 0 scores the same at every weight. The fund sweep leans on that to score such rows
+/// once per factor instead of once per drawn weight.
+pub(crate) fn fund_fill(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    quote.fund_factor.unwrap_or(missing_fundamental(quote, tuning, tuning.growth_fund_neutral)).clamp(0.0, tuning.growth_fund_cap)
+}
+
 /// (#87) Could this row have an income statement at all? Crypto and ETFs could not: a coin has no
 /// filer and a basket's fundamentals are its holdings', not its own. Everything else could, so a
 /// `None` there is a COVERAGE gap — a non-US filer, or a name past the 600-call SEC budget — and is
@@ -1808,11 +1816,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // (#87) both fills now route through `missing_fundamental`, which is where the "no data" versus
     // "no such thing" split lives. At the shipped defaults it returns 0.0 and `t.neutral` respectively
     // — the two literals this used to write inline — so the lane is byte-identical.
-    let fund = tuning.growth_fund_weight
-        * quote
-            .fund_factor
-            .unwrap_or(missing_fundamental(quote, tuning, tuning.growth_fund_neutral))
-            .clamp(0.0, tuning.growth_fund_cap)
+    let fund = tuning.growth_fund_weight * fund_fill(quote, tuning)
         + tuning
             .growth_fund_extra
             .iter()
