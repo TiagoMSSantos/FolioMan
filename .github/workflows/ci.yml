@@ -279,7 +279,7 @@ jobs:
       # 2026-07-13 and was never moved, while actual coverage drifted to 73.13% — eleven points of
       # slack, i.e. ~2000 covered lines could have been deleted with the gate still green. A floor
       # that is not re-measured stops being a floor. Measure it the way this job does before moving it:
-      #   FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo llvm-cov --locked --lib --test cli --test backtest_fixture --summary-only
+      #   CARGO_PROFILE_DEV_OPT_LEVEL=2 FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo llvm-cov --locked --lib --test cli --test backtest_fixture --summary-only
       # ((#171) that spelling reproduces THIS job's env, which is now the same pin every other test job
       # carries; it read /nonexistent/none.yaml back when this job was config-less. Either way it has to
       # be spelled out — config/settings.yaml is gitignored, so a local run with one present measures a
@@ -294,6 +294,14 @@ jobs:
         with:
           shared-key: folioman-coverage   # instrumented build — kept apart from folioman-test
       - name: coverage — lib + integration + binary dispatch (floor-gated)
+        env:
+          # (#591) The crate at opt-level 2, as in integration-tests (see there): the instrumented
+          # fund-lane goldens were 499s of this job's 598s at 0 (0c5394f), and this job was the
+          # wall. Counters go in at MIR level, before LLVM optimises, so the same tree should measure
+          # the same lines: the first run's per-file table is diffed against 0c5394f's (lines
+          # 43533/46262, 94.10%), and a moved count takes this env back out. Step level for the same
+          # cache reason as there.
+          CARGO_PROFILE_DEV_OPT_LEVEL: "2"
         run: |
           # collect + HTML + the floor gate in one shot; --fail-under-lines is the LAST check, so the
           # HTML/profdata are already written when it trips. Capture its exit (|| guards `set -e`) so the
@@ -349,11 +357,22 @@ jobs:
           shared-key: folioman-test   # (#353) the ONLY writer: it builds every dependency a test job needs
       - name: integration + live API drift nets (skip-on-throttle, fail-on-drift)
         # `--test '*'` also picks up backtest_edge_holds, which no longer carries #[ignore]. It
-        # green-skips HERE — debug profile, and a runner has no persisted .long_history_cache.json —
-        # which is what keeps this job inside 45 min. The backtest-gate job below forces it to run.
-        # The same glob is what runs backtest_fixture (the frozen-data golden pin, ~24s in debug, and
-        # the only end-to-end net over real data). Do NOT replace this glob with an explicit list: a
-        # new tests/*.rs file joins no job on its own, so the glob is the thing that keeps them wired.
+        # green-skips HERE — debug assertions are on, and a runner has no persisted
+        # .long_history_cache.json — which is what keeps this job inside 45 min. The backtest-gate job
+        # below forces it to run. The same glob is what runs backtest_fixture (the frozen-data golden
+        # pin, and the only end-to-end net over real data). Do NOT replace this glob with an explicit
+        # list: a new tests/*.rs file joins no job on its own, so the glob is the thing that keeps them
+        # wired.
+        env:
+          # (#591) folioman's own code at opt-level 2, as its dependencies already are (Cargo.toml's
+          # dev package."*" override). The fund-lane goldens are CPU-bound in that code: on 0c5394f
+          # backtest_fixture took 404s of this job's 441s at 0, seven fund runs packed on 4 vCPUs.
+          # Debug assertions, overflow checks and debuginfo stay on. The goldens are their own check:
+          # Rust never contracts or reorders float math, so a byte an opt-level moved would red them;
+          # they were blessed at 0, and `cargo t` (profile mutants) runs them at 2. STEP level on
+          # purpose: rust-cache hashes job-level CARGO_* env into its key, this job is folioman-test's
+          # only writer, and the dependency artifacts it saves do not change.
+          CARGO_PROFILE_DEV_OPT_LEVEL: "2"
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test '*' -- --nocapture
 
   # Walk-forward gate. Runs the REAL `backtest {20,12,8} universe` over the live universe and checks the

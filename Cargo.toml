@@ -67,8 +67,9 @@ overflow-checks = true
 # on `dev` (unit-tests, unit-tests-configless, integration-tests, coverage), and the slowest tests
 # replay history through dependency code: the backtest fixture ran 247.8s with unoptimised
 # dependencies and 83.3s with optimised ones (mutation census baseline, see ci.yml's (#427) line).
-# The price is a slower cold dependency build, paid once per cache key. The crate stays at 0, so
-# coverage instruments the same code and a debugger still sees every local. `[profile.mutants]`
+# The price is a slower cold dependency build, paid once per cache key. The crate stays at 0 here, so
+# a debugger still sees every local. (#591) CI's integration-tests and coverage raise the crate to 2 by
+# step env (CARGO_PROFILE_DEV_OPT_LEVEL), for their CPU-bound fund-lane goldens. `[profile.mutants]`
 # inherits this; the mutants gate in ci.yml also sets it for its own profile by hand.
 [profile.dev.package."*"]
 opt-level = 2
