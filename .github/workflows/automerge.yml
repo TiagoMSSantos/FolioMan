@@ -1,0 +1,97 @@
+# (#589) Merges the bot PRs in the owner's auto-merge scope once every check on the PR is green:
+# Dependabot's `actions` and `cargo` groups (.github/dependabot.yml) and the Renovate app's
+# web/engine lock maintenance and wasm-bindgen pair (.github/renovate.json5). The cargo-mutants PR
+# is never on the list: (#354) a census dispatch must re-prove the gate on a new version first.
+#
+# A night cron, not workflow_run (it fires once, so a held merge would never retry) and not
+# Renovate's own automerge (it cannot see whether main is busy, and it skips Dependabot). It merges
+# only while no CI, CodeQL, probe or census run is in flight on main, so a bot push never cancels an
+# owner run (cancel-in-progress per ref) or lands inside a probe batch; a held merge retries on the
+# next tick. One merge per tick, so the next tick sees that merge's main CI.
+#
+# It holds while main's newest finished CI run is red. No finished run at all (the (#553) 2-day
+# sweep deletes them) is not a hold. Pages is not read: each Pages run deletes the ones before it,
+# red ones too, and its reds are the morning's network, not the code (pages.yml's header).
+#
+# It never checks out or runs PR code. RENOVATE_TOKEN, a fine-grained PAT on this repo (Contents,
+# Pull requests and Workflows read/write; Workflows to merge an actions bump), makes the merge: a
+# push made with GITHUB_TOKEN would start no CI, CodeQL or Pages run on main. If the PAT expires,
+# the run reds and nothing merges. Convert a PR to draft to hold it.
+name: automerge
+
+on:
+  schedule:
+    - cron: "41 0,2,4 * * *"   # UTC nights, clear of CodeQL's Monday 04:17
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "report what would merge, merge nothing"
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: automerge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+      statuses: read
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - name: Merge one green, aged bot PR
+        env:
+          MERGE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          api() { gh api "repos/${GH_REPO}/$1"; }
+          for wf in ci.yml codeql.yml probe.yml mutation-census.yml; do
+            busy=$(api "actions/workflows/${wf}/runs?branch=main&per_page=30" \
+              | jq '[.workflow_runs[] | select(.status != "completed")] | length')
+            if [ "${busy}" -ne 0 ]; then echo "${wf}: ${busy} run(s) in flight on main, next tick"; exit 0; fi
+          done
+          last=$(api "actions/workflows/ci.yml/runs?branch=main&status=completed&per_page=30" \
+            | jq -r '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")][0].conclusion // "none"')
+          if [ "${last}" != success ] && [ "${last}" != none ]; then echo "ci.yml: last main run is ${last}, holding"; exit 0; fi
+          need='["build","lint","wasm","audit","actionlint","unit-tests","unit-tests-configless","coverage","integration-tests","backtest-gate","mutants","Analyze (rust)"]'
+          gh pr list --base main --state open --limit 50 \
+            --json number,author,headRefName,headRefOid,isDraft,isCrossRepository,mergeable \
+            --jq '.[] | select((.isDraft | not) and (.isCrossRepository | not) and .mergeable == "MERGEABLE"
+                and (.author.login == "app/renovate" or .author.login == "app/dependabot")
+                and (.headRefName | test("^(dependabot/github_actions/actions-[0-9a-f]+|dependabot/cargo/cargo-[0-9a-f]+|renovate/lock-file-maintenance|renovate/rust-wasm-bindgen-monorepo)$")))
+              | "\(.number) \(.headRefOid)"' |
+          while read -r pr sha; do
+            # Supply-chain delay: the head commit is 3 days old, so a bad release has time to be
+            # yanked. A refreshed head restarts the clock. `made` is read apart from the arithmetic,
+            # where a failed call would count as age 0 and pass.
+            made=$(api "commits/${sha}" | jq -e '.commit.committer.date | fromdate')
+            age=$(( $(date +%s) - made ))
+            if [ "${age}" -lt 259200 ]; then echo "#${pr}: head is $(( age / 3600 ))h old"; continue; fi
+            # Every check run finished green, and each CI job plus CodeQL's rust leg ran (not skipped).
+            if ! api "commits/${sha}/check-runs?per_page=100" | jq -e --argjson need "${need}" '
+                .check_runs as $r
+                | ($r | all(.status == "completed" and (.conclusion | IN("success", "skipped", "neutral"))))
+                  and ($need | all(. as $n | $r | any(.name == $n and .conclusion == "success")))' > /dev/null; then
+              echo "#${pr}: checks not all green"; continue
+            fi
+            # No commit status, or all green: a head with none reads `pending` with total_count 0.
+            if ! api "commits/${sha}/status" | jq -e '.total_count == 0 or .state == "success"' > /dev/null; then
+              echo "#${pr}: commit status not green"; continue
+            fi
+            if [ "${DRY_RUN}" = true ]; then echo "would merge #${pr} at ${sha}"; exit 0; fi
+            # --match-head-commit: a push to the PR after these checks aborts the merge.
+            GH_TOKEN="${MERGE_TOKEN}" gh pr merge "${pr}" --rebase --match-head-commit "${sha}"
+            echo "merged #${pr} at ${sha}"
+            exit 0
+          done

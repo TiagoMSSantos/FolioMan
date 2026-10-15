@@ -158,6 +158,15 @@ jobs:
         with:
           shared-key: folioman-wasm   # (#353) its own key and its only writer: wasm artifacts serve no other job
       - run: cargo check --locked --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
+      # (#589) The wasm-bindgen pair's bot PR only (automerge.yml merges it): build the engine and run
+      # the pinned CLI, as pages.yml does after the merge, where every step is continue-on-error and a
+      # crate/CLI mismatch would only hide the page's engine. Renovate's regex moves this pin in the
+      # same PR as pages.yml's and web/engine/Cargo.toml's.
+      - if: github.head_ref == 'renovate/rust-wasm-bindgen-monorepo'
+        run: |
+          cargo install --locked wasm-bindgen-cli --version 0.2.129
+          cargo build --locked --release --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
+          wasm-bindgen --target web --out-dir "${RUNNER_TEMP}/engine" target/wasm32-unknown-unknown/release/folioman_engine.wasm
 
   # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
   # sit on a dependency with a known CVE. Audits the COMMITTED Cargo.lock — the exact resolution

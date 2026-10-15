@@ -1,28 +1,35 @@
-// (#402) Renovate, self-hosted by .github/workflows/renovate.yml, for the pins Dependabot cannot see.
+// (#402) Renovate, the hosted Mend app (PRs by app/renovate), for the pins Dependabot cannot see.
 // Dependabot (.github/dependabot.yml) keeps every `uses:` pin and the root Cargo.toml/Cargo.lock;
 // Renovate stays off both, because two bots on one file open the same bump twice. What is left here:
 //
 // - web/engine/Cargo.lock: the page engine's own lock, which never joins folioman's (#392).
-// - the wasm-bindgen PAIR: `wasm-bindgen = "=0.2.125"` in web/engine/Cargo.toml and pages.yml's
-//   `cargo install --locked wasm-bindgen-cli --version 0.2.125`. The CLI refuses a module built by any
-//   other version, so both must move in ONE PR, and they do with no rule here: both crates' source is
-//   the wasm-bindgen repo, so config:recommended's monorepo group already joins them. CI only
-//   `cargo check`s the engine; the CLI and smoke.mjs run in pages.yml after the merge, where a break
-//   costs the upload control, never the deploy.
+// - the wasm-bindgen PAIR: `wasm-bindgen = "=0.2.129"` in web/engine/Cargo.toml and the CLI pin
+//   `cargo install --locked wasm-bindgen-cli --version 0.2.129` in pages.yml and ci.yml's wasm job.
+//   The CLI refuses a module built by any other version, so all of them move in ONE PR, with no rule
+//   here: both crates' source is the wasm-bindgen repo, so config:recommended's monorepo group
+//   already joins them, and the regex below finds the CLI pin in every workflow. (#589) On that PR
+//   ci.yml's wasm job builds the engine and runs the CLI. smoke.mjs needs a live screen, so it runs
+//   only in pages.yml after the merge, where a break costs the upload control, never the deploy.
 // - cargo-mutants@X.Y.Z in ci.yml and mutation-census.yml (x2): one depName, so one PR. (#354) Merge
 //   it only after a census dispatch re-proves the gate on the new version.
 //
-// Nothing automerges: every PR here waits for a human.
+// (#589) .github/workflows/automerge.yml merges the lock-maintenance and wasm-bindgen PRs (and
+// Dependabot's two groups) once every check on the PR is green and its head is 3 days old. The
+// cargo-mutants PR is never on its list. Do NOT set `automerge` here: two mergers would race. The
+// self-hosted renovate.yml, a second copy of this bot, is gone.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:recommended"],
   enabledManagers: ["cargo", "custom.regex"],
   includePaths: ["web/engine/**", ".github/workflows/**"],
-  // The workflow's monthly cron IS the schedule. lockFileMaintenance's own default ("before 4am on
-  // monday") would skip nearly every run on the 1st, which is how a config reads as enabled and never
-  // opens a PR.
-  lockFileMaintenance: { enabled: true, schedule: ["at any time"] },
-  // config:recommended caps new PRs at 2 an hour, which on one run a month defers the rest a month.
+  // (#589) Weekly, all of Monday (UTC). "at any time" opened about two lock PRs a day, each one a PR
+  // CI run plus a main CI, CodeQL and Pages run. The default, "before 4am on monday", is a 4-hour
+  // window the hosted app's runs can miss.
+  lockFileMaintenance: { enabled: true, schedule: ["* * * * 1"] },
+  // Leave an open PR alone outside its schedule, so a mid-week refresh never restarts
+  // automerge.yml's 3-day clock. Only lock maintenance has a schedule here, so nothing else waits.
+  updateNotScheduled: false,
+  // config:recommended caps new PRs at 2 an hour, which would defer the rest of a crowded run.
   prHourlyLimit: 0,
   customManagers: [
     {

@@ -14,11 +14,12 @@ updates:
   # month, so it always compiles and needs no API work. Most direct deps are 0.x, where Dependabot
   # files a breaking 0.12 -> 0.13 as "minor", so a minor+patch group would still let API breaks in;
   # crossing a range stays a hand edit. CI runs on the PR. Replaced the dead renovate.json, whose
-  # lockFileMaintenance never ran (Renovate was never installed on the repo).
+  # lockFileMaintenance never ran (Renovate was not installed on the repo then).
   #
-  # (#402) Renovate now runs self-hosted (.github/workflows/renovate.yml) for what this file cannot
-  # see: web/engine's Cargo.lock, the wasm-bindgen crate+CLI pair and cargo-mutants. It stays off
-  # every ecosystem here, so the two never open the same bump.
+  # (#402) Renovate, the hosted Mend app, covers what this file cannot see: web/engine's Cargo.lock,
+  # the wasm-bindgen crate+CLI pair and cargo-mutants. It stays off every ecosystem here, so the two
+  # never open the same bump. (#589) automerge.yml merges both groups here once every check on the
+  # PR is green and its head is 3 days old.
   - package-ecosystem: cargo
     directory: /
     schedule:
