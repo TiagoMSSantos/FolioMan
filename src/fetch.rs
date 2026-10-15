@@ -4619,9 +4619,12 @@ const US_GAAP_TAGS: FactTags = FactTags {
     pretax: &["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
               "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
     // deposit interest, a bank's expense total, an insurer's claims and premiums: any one of them marks a
-    // filer whose interest is its cost of goods, where pretax + interest is not an operating profit
+    // filer whose interest is its cost of goods, where pretax + interest is not an operating profit.
+    // (#601) The P&C pair: PGR filed its premiums and claims only under them until 2022, and under the 5%
+    // rule its investment income alone no longer marked 2007-2019.
     fin: &["InterestExpenseDeposits", "NoninterestExpense", "PolicyholderBenefitsAndClaimsIncurredNet",
-           "InterestAndDividendIncomeOperating", "PremiumsEarnedNet"],
+           "InterestAndDividendIncomeOperating", "PremiumsEarnedNet", "PremiumsEarnedNetPropertyAndCasualty",
+           "IncurredClaimsPropertyCasualtyAndLiability"],
     dep: &["Depreciation"],
     amort: &["AmortizationOfIntangibleAssets"],
 };
@@ -4898,12 +4901,27 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // (#478) a bank or insurer line marks only the periods within two years of a fact on it: NUE filed
     // one in 2008-2011 and HRB in 2010-2015 (its bank years), and a forever flag left OP%, INT-COV,
     // EBITDA and ROIC n/a for every year after. Any unit, any form, as the old whole-filer check read.
+    // (#601) And only a fact worth 5% of the revenue of the year nearest its end, annualized over its own
+    // span (a 10-Q quarter x4). ORLY files InterestAndDividendIncomeOperating at under 0.05% of revenue
+    // and HP its captive insurer's premiums at 4.5%, and the mark hid their ROIC and FAIR and skipped the
+    // (#545) TTM cash. Of the 78 cached filers whose newest year was marked, 9 un-mark (ORLY, BRO, TPG,
+    // HP, DE, MKTX, VTR, APTV, DGX) and 69 stay marked, every bank and insurer among them. VICI stays
+    // marked: its lease income is filed as interest, ~70% of revenue. No revenue, or 0, keeps the old rule.
     let fin_ends: Vec<NaiveDate> = tags
         .fin
         .iter()
         .filter_map(|t| g.get(t)?.get("units")?.as_object())
         .flat_map(|u| u.values().filter_map(Value::as_array).flatten())
-        .filter_map(|x| NaiveDate::parse_from_str(x.get("end")?.as_str()?, "%Y-%m-%d").ok())
+        .filter_map(|x| {
+            let date = |k: &str| NaiveDate::parse_from_str(x.get(k)?.as_str()?, "%Y-%m-%d").ok();
+            let end = date("end")?;
+            let days = date("start").map_or(365, |s| (end - s).num_days().max(1));
+            let val = x.get("val")?.as_f64()?.abs() * 365.0 / days as f64;
+            let near = rev.range(..=end).next_back().into_iter().chain(rev.range(end..).next())
+                .min_by_key(|(e, _)| (**e - end).num_days().abs())
+                .map_or(0.0, |(_, (_, r, _))| r.abs());
+            (near == 0.0 || val >= 0.05 * near).then_some(end)
+        })
         .collect();
     let financial = |end: NaiveDate| fin_ends.iter().any(|f| (*f - end).num_days().abs() <= 730);
     for (&end, &(filed, p, _)) in pretax.iter().filter(|(end, _)| !financial(**end)) {
@@ -10817,26 +10835,29 @@ pub(crate) mod tests {
         assert_eq!((r.op_margin, r.interest_cover), (Some(25.0), Some(5.0)), "EBIT 20 + 5 on revenue 100, cover 25 / 5");
         assert_eq!(r.pretax_margin, Some(20.0), "(#426) and pretax itself is carried, as a margin");
         assert_eq!(row(&[int, ("OperatingIncomeLoss", 30.0)]).op_margin, Some(30.0), "a real op tag wins");
-        assert_eq!(row(&[int, ("InterestExpenseDeposits", 1.0)]).op_margin, None, "a bank's interest is its cost");
+        assert_eq!(row(&[int, ("InterestExpenseDeposits", 10.0)]).op_margin, None, "a bank's interest is its cost");
         assert_eq!(row(&[]).op_margin, Some(20.0), "no interest line: pretax alone");
     }
 
     /// (#478) NUE filed a bank marker in 2008-2011 and HRB in its bank years: only a fact within two
     /// years of the period blocks the EBIT fallback and marks the row a bank, either side of it.
+    /// (#601) And only a fact worth 5% of the nearest year's revenue, a 10-Q quarter annualized.
     #[test]
     fn a_bank_marker_only_marks_the_periods_near_it() {
         use serde_json::json;
         let line = |v: f64| json!({"units": {"USD": [{"start": "2025-01-01", "end": "2025-12-31", "val": v, "form": "10-K", "filed": "2026-02-01"}]}});
         let pretax = "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest";
-        let row = |marker_end: &str| {
+        let row = |start: &str, end: &str, val: f64| {
             let g = json!({"Revenues": line(100.0), pretax: line(20.0), "InterestAndDividendIncomeOperating":
-                {"units": {"USD": [{"start": "2008-01-01", "end": marker_end, "val": 1.0, "form": "10-Q", "filed": "2011-08-01"}]}}});
+                {"units": {"USD": [{"start": start, "end": end, "val": val, "form": "10-Q", "filed": "2011-08-01"}]}}});
             let r = parse_sec_facts(&json!({"facts": {"us-gaap": g}})).remove(0);
             (r.op_margin, r.financial)
         };
-        assert_eq!(row("2023-12-31"), (Some(20.0), false), "731 days back: an old bank line, not a bank");
-        assert_eq!(row("2024-01-01"), (None, true), "730 days back still marks it");
-        assert_eq!(row("2027-12-31"), (None, true), "a marker AFTER the period counts too");
+        assert_eq!(row("2023-01-01", "2023-12-31", 10.0), (Some(20.0), false), "731 days back: an old bank line, not a bank");
+        assert_eq!(row("2023-01-02", "2024-01-01", 10.0), (None, true), "730 days back still marks it");
+        assert_eq!(row("2027-01-01", "2027-12-31", 10.0), (None, true), "a marker AFTER the period counts too");
+        assert_eq!(row("2025-01-01", "2025-12-31", 4.5), (Some(20.0), false), "(#601) HP's 4.5% of revenue: a side line");
+        assert_eq!(row("2025-10-01", "2025-12-31", 2.0), (None, true), "(#601) a quarter's 2 is 8 a year");
     }
 
     /// (#478) the tags MCO, KR, CVX and UDR file instead of the usual names fill their cells
