@@ -5481,16 +5481,29 @@ pub(crate) fn buy_book(
     nupl: Option<f64>,
     funds: &HashMap<String, (&'static str, f64)>,
 ) -> Vec<(String, f64)> {
+    book_sides(ranked, quotes, tuning, sz, nupl, funds).into_iter().map(|r| (r.0, r.1)).collect()
+}
+
+/// (#585) [`buy_book`] with each row's side: true when the blend's momentum half placed it.
+fn book_sides(
+    ranked: &[String],
+    quotes: &[Quote],
+    tuning: &BuyHeuristic,
+    sz: &crate::config::Sizing,
+    nupl: Option<f64>,
+    funds: &HashMap<String, (&'static str, f64)>,
+) -> Vec<(String, f64, bool)> {
     let rows: Vec<&Quote> = ranked.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect();
     let book: Vec<(&Quote, f64)> = sized_book(&rows, tuning, sz, nupl, funds).into_iter().map(|r| (r.0, r.2)).collect();
     if tuning.growth_momentum_interleave && sz.equal_weight_book {
-        return sized_splice(&book, &momentum_order(quotes, tuning), false, sz).into_iter().map(|(t, w)| (t.to_string(), w)).collect();
+        return sized_splice_sides(&book, &momentum_order(quotes, tuning), false, sz).into_iter().map(|(t, w, m)| (t.to_string(), w, m)).collect();
     }
-    book.into_iter().map(|(q, w)| (q.ticker.clone(), w)).collect()
+    book.into_iter().map(|(q, w)| (q.ticker.clone(), w, false)).collect()
 }
 
-/// (#585) The tickers [`buy_book`] funds with `growth_momentum_interleave` off: the score half of the blend, so
-/// [`stamp_momentum`] and the journal can tell a momentum pick from a score pick.
+/// (#585) The tickers [`buy_book`] funds from its score side, so [`stamp_momentum`] and the journal can tell a
+/// momentum pick from a score pick. A name the shipped order also holds but a momentum slot reached first
+/// (MTE.DE) is momentum's.
 pub(crate) fn shipped_book(
     ranked: &[String],
     quotes: &[Quote],
@@ -5499,8 +5512,7 @@ pub(crate) fn shipped_book(
     nupl: Option<f64>,
     funds: &HashMap<String, (&'static str, f64)>,
 ) -> Vec<String> {
-    let off = BuyHeuristic { growth_momentum_interleave: false, ..tuning.clone() };
-    buy_book(ranked, quotes, &off, sz, nupl, funds).into_iter().map(|r| r.0).collect()
+    book_sides(ranked, quotes, tuning, sz, nupl, funds).into_iter().filter(|r| !r.2).map(|r| r.0).collect()
 }
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
@@ -5544,11 +5556,9 @@ fn shift_rank(row: &mut serde_json::Value, by: isize) -> usize {
 /// when none is), and every later RANK moves down, so the RANK cell counts the merged order as `b` rows do.
 /// SCORE is the shipped score, or with every gate waived ([`gates_off`]) when the name fails one. Stamped
 /// before [`stamp_buy`], so the row carries its BUY%. A book without such names changes nothing.
-/// (#585) `shipped` is the shipped-only book ([`buy_book`], interleave off): a sized name the Stocks table
-/// already shows but that book does not fund (MTE.DE ranked 35, bought as momentum pick 2) is bought for its
-/// momentum too, so its row moves to its book place with `m` rather than printing at its score rank.
-/// ponytail: a name the shipped book funds past the blend's score half but momentum places is not moved; a
-/// splice that reports which side placed each name fixes it, if the page ever shows one.
+/// (#585) `shipped` is the book's score side ([`shipped_book`]): a sized name the Stocks table already shows
+/// but a momentum slot placed (MTE.DE ranked 35, bought as momentum pick 2) is bought for its momentum, so
+/// its row moves to its book place with `m` rather than printing at its score rank.
 pub fn stamp_momentum(
     payload: &mut serde_json::Value,
     sized: &[(String, f64)],
@@ -7526,13 +7536,21 @@ pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> 
 /// of each in turn, shipped first (`growth_momentum_interleave`). A name already placed is skipped, a side that
 /// runs dry hands its slot to the other, and the order stops at `n`.
 pub(crate) fn splice_order<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, n: usize) -> Vec<T> {
+    splice_sides(sized, mom, after, n).into_iter().map(|x| x.0).collect()
+}
+
+/// (#585) [`splice_order`] with each name's side: true when a momentum slot placed it, or a dry shipped side
+/// handed its slot to momentum. A name both sides hold belongs to the side that reached it first (MTE.DE,
+/// shipped rank 35, placed as momentum pick 2).
+pub(crate) fn splice_sides<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, n: usize) -> Vec<(T, bool)> {
     let (mut s, mut m) = (sized.iter().copied(), mom.iter().copied());
-    let mut out: Vec<T> = Vec::new();
+    let mut out: Vec<(T, bool)> = Vec::new();
     while out.len() < n {
         let i = out.len();
         let from_m = if after { (HEAD..HEAD + BLEND_HALF).contains(&i) } else { i % 2 == 1 };
+        let fresh = |t: &T| !out.iter().any(|o| o.0 == *t);
         let (a, b) = if from_m { (&mut m, &mut s) } else { (&mut s, &mut m) };
-        let Some(t) = a.find(|t| !out.contains(t)).or_else(|| b.find(|t| !out.contains(t))) else { break };
+        let Some(t) = a.find(fresh).map(|t| (t, from_m)).or_else(|| b.find(fresh).map(|t| (t, !from_m))) else { break };
         out.push(t);
     }
     out
@@ -7545,6 +7563,11 @@ pub(crate) fn splice_order<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: b
 /// its slot goes to the next momentum name. Then a commodity leaves the head as `sized_book` parks it, and
 /// [`equal_weights`] re-splits the non-coin rows with the head share. Weights in %.
 pub(crate) fn sized_splice<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, sz: &crate::config::Sizing) -> Vec<(&'a str, f64)> {
+    sized_splice_sides(book, mom, after, sz).into_iter().map(|r| (r.0, r.1)).collect()
+}
+
+/// (#585) [`sized_splice`] with each row's [`splice_sides`] side (a coin is never momentum's).
+fn sized_splice_sides<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, sz: &crate::config::Sizing) -> Vec<(&'a str, f64, bool)> {
     let coin = |q: &Quote| asset_class(q) == 0;
     let (coins, book): (Vec<(&Quote, f64)>, Vec<(&Quote, f64)>) = book.iter().copied().partition(|r| coin(r.0));
     let held: HashMap<String, &str> = book.iter().map(|r| (r.0.name.to_lowercase(), r.0.ticker.as_str())).collect();
@@ -7552,14 +7575,15 @@ pub(crate) fn sized_splice<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], aft
     let mom: Vec<&Quote> = mom.iter().copied().filter(|q| !coin(q)).filter(|q| q.name.is_empty() || (held.get(&q.name.to_lowercase()).is_none_or(|t| *t == q.ticker) && seen.insert(q.name.to_lowercase()))).collect();
     let rows: HashMap<&str, (&Quote, f64)> = mom.iter().map(|q| (*q, 0.0)).chain(book.iter().copied()).map(|r| (r.0.ticker.as_str(), r)).collect();
     let (s, m): (Vec<&str>, Vec<&str>) = (book.iter().map(|r| r.0.ticker.as_str()).collect(), mom.iter().map(|q| q.ticker.as_str()).collect());
-    let order: Vec<(&Quote, f64)> = coins.into_iter().chain(splice_order(&s, &m, after, sz.book_cut()).into_iter().map(|t| rows[t])).collect();
-    let order: Vec<(&Quote, f64)> = if sz.head_skip_commodity {
+    let spliced = splice_sides(&s, &m, after, sz.book_cut()).into_iter().map(|(t, by_m)| (rows[t].0, rows[t].1, by_m));
+    let order: Vec<(&Quote, f64, bool)> = coins.into_iter().map(|r| (r.0, r.1, false)).chain(spliced).collect();
+    let order: Vec<(&Quote, f64, bool)> = if sz.head_skip_commodity {
         head_skip(&order.iter().map(|r| (coin(r.0), is_commodity(r.0))).collect::<Vec<_>>()).into_iter().map(|i| order[i]).collect()
     } else {
         order
     };
     let eq = equal_weights(&order.iter().map(|r| (coin(r.0), r.1)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
-    order.into_iter().zip(eq).filter_map(|(r, w)| Some((r.0.ticker.as_str(), w?))).collect()
+    order.into_iter().zip(eq).filter_map(|(r, w)| Some((r.0.ticker.as_str(), w?, r.2))).collect()
 }
 
 /// (#495) The book order `Sizing::head_skip_commodity` funds. Rows are `(is_coin, is_commodity)` in score order; a
@@ -13003,6 +13027,12 @@ mod tests {
         assert_eq!(names(buy_book(&ranked, &quotes, &off, &ew, None, &HashMap::new())), ["AAA", "BBB"]);
         assert_eq!(names(buy_book(&ranked, &quotes, &on, &crate::config::Sizing::default(), None, &HashMap::new())), ["AAA", "BBB"]);
         assert_eq!(shipped_book(&ranked, &quotes, &on, &ew, None, &HashMap::new()), ["AAA", "BBB"], "(#585) the score half");
+        // (#585) with CCC capped out, momentum's first pick is BBB, which the score side also holds: the momentum
+        // slot reaches it first, so it is momentum's (the MTE.DE case) and the score side funds AAA alone
+        let ccc = quotes.iter().find(|q| q.ticker == "CCC").unwrap();
+        let capped = BuyHeuristic { growth_momentum_miss_cap: waived(ccc, &on, false).unwrap().1.len(), ..on.clone() };
+        assert_eq!(names(buy_book(&ranked, &quotes, &capped, &ew, None, &HashMap::new())), ["AAA", "BBB"]);
+        assert_eq!(shipped_book(&ranked, &quotes, &capped, &ew, None, &HashMap::new()), ["AAA"]);
     }
 
     /// (#584) A momentum-only name gets a Stocks row flagged `m` after the shown sized name before it, and the later

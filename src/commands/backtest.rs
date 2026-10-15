@@ -8466,6 +8466,11 @@ mod tests {
         assert_eq!(picks::splice_order(&sh, &m6, true, 11), ["S1", "S2", "S3", "S4", "S5", "M1", "M2", "M3", "M4", "M5", "S6"], "BLEND_HALF momentum slots, then shipped");
         assert_eq!(picks::splice_order(&["A", "B", "C"], &["B", "X"], false, 9), ["A", "B", "C", "X"]);
         assert_eq!(picks::splice_order(&["A", "B", "C"], &["X", "Y"], false, 3), ["A", "X", "B"]);
+        // (#585) the side that placed each name: B is both sides', momentum reaches it first; a dry side's slot
+        // goes to the other side's name, flagged as that side's
+        assert_eq!(picks::splice_sides(&["A", "B", "C"], &["B", "X"], false, 9), [("A", false), ("B", true), ("C", false), ("X", true)]);
+        assert_eq!(picks::splice_sides(&["A"], &["X", "Y"], false, 3), [("A", false), ("X", true), ("Y", true)]);
+        assert_eq!(picks::splice_sides(&["A", "B"], &[], false, 2), [("A", false), ("B", false)]);
         // the weights: momentum twin Z (A's issuer) drops so X takes its slot, the cut drops B; then the first HEAD
         // rows take the head share
         let (a, b, x) = (Quote::stub("A", "1", "", "Acme"), Quote::stub("B", "1", "", "Beta"), Quote::stub("X", "1", "", "Xeno"));
