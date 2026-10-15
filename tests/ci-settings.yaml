@@ -1814,6 +1814,18 @@ sizing:
   #  move live; `head_weight` is fingerprinted, so BUY NOW warns "settings changed since" until the next backtest
   #  journals. REVERT: to 4 on (#322)'s rule (over >= 6 monthly journal lines carrying the tilted book, `track`'s
   #  flat twin beats the executed book on their mean), or when `6-10 minus 1-5` reads above 0.
+  #  RUNGS 10-20 (2026-10-15, user asked; probes at 37dc6c1, control = the shipped 8, same bar; 14 runs
+  #  38685637192..38685755292, pit/stress alternating, control then 10/12/14/16/18/20). Windows 1119 / 2541 in
+  #  every run; the control reproduces the rung-8 arm above to the decimal (pit +3.9 (+3.2), stress +6.4 (+6.8)).
+  #    head_weight   pit            stress         vs 8 (pit | stress)
+  #    10            +3.9 (+3.3)    +6.4 (+6.9)     0.0/+0.1 |  0.0/+0.1
+  #    12, 14        +4.0 (+3.4)    +6.5 (+6.9)    +0.1/+0.2 | +0.1/+0.1
+  #    16            +4.1 (+3.4)    +6.5 (+6.9)    +0.2/+0.2 | +0.1/+0.1
+  #    18, 20        +4.1 (+3.5)    +6.5 (+6.9)    +0.2/+0.3 | +0.1/+0.1
+  #  Série E share, win 100% and both worst programs (+2.2 / +0.6) unmoved. VERDICT: REFUSED, head_weight stays 8.
+  #  No rung reaches +0.2 on the stress mean; stress is flat at +6.5 from 12 up, and pit creeps +0.1 per ~4
+  #  rungs while the head climbs from 67.8% (8) to 84% of gross (20, ~17% a name). The curve has flattened;
+  #  grading past 20 is a 5-name book, not a weight.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
