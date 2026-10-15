@@ -372,14 +372,14 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
 ── SECTOR BOOK (#328): what a top-1-per-GICS-sector door would add to the cleared book, every name equal-weight, held 20y ──
   cleared      n=544    book +13.3%/yr  excess +5.8  win 88%  worst -3.3  OOS +4.3/+7.2  top10 +4.5/-3.3
   (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. `excess`/`bar` are the UNCAPPED book; (#330) the `ship` verdict decides and is read at top10 (excess/worst), the published basket — excess >= that column's `bar`, the p95 of 200 same-n refused cohorts entered at the cohort's own ranks, AND worst >= cleared -1.0, at 20y, 12y and 8y. `inert` = the door's names never reach the published basket)
-  all entries (SIZED)          book +12.4%/yr  excess +5.0  win 88%  worst -3.3  OOS +4.0/+5.8   (windows 43, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
+  all entries (SIZED)          book +12.0%/yr  excess +4.6  win 86%  worst -3.3  OOS +3.9/+5.2   (windows 43, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── DCA ROLL-AFTER-10y (#311): 96 equal monthly buys into that month's screen, all sold at 20y; the roll sells each lot at 10y, pays 28% on the gain, re-buys that month's screen; vs never-sell, after tax, money-weighted ──
   top-10  roll +10.9%/yr  vs never-sell +11.1%/yr  ->  -0.2 (med -0.4) pts/yr   win 35% of 43   worst -4.9   OOS -0.1/-0.3
   top-10  never-sell +11.1%/yr  vs index DCA +5.9%/yr  ->  +5.1 (med +4.4) pts/yr   win 100% of 43   worst +1.2   OOS +5.9/+4.3
   top-10  beat Série E best case: 100% of 43 programs (43), after tax vs 4.5%/yr
-  SIZED   roll +10.8%/yr  vs never-sell +11.0%/yr  ->  -0.2 (med -0.5) pts/yr   win 28% of 43   worst -4.2   OOS +0.1/-0.6
-  SIZED   never-sell +11.0%/yr  vs index DCA +5.9%/yr  ->  +5.0 (med +4.3) pts/yr   win 100% of 43   worst +1.1   OOS +5.5/+4.6
+  SIZED   roll +10.8%/yr  vs never-sell +10.8%/yr  ->  -0.0 (med -0.5) pts/yr   win 40% of 43   worst -3.8   OOS +0.2/-0.3
+  SIZED   never-sell +10.8%/yr  vs index DCA +5.9%/yr  ->  +4.8 (med +4.2) pts/yr   win 100% of 43   worst +1.1   OOS +5.4/+4.3
   SIZED   beat Série E best case: 100% of 43 programs (43), after tax vs 4.5%/yr
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 20y ──
