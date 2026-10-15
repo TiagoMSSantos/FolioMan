@@ -1603,6 +1603,19 @@ sizing:
   #  of 6 cells (pit + stress x 20/12/8y). 2 probe runs at shipped settings. A beat ships NOTHING: it earns
   #  a 20y DCA lane for (k), graded drop-only against S+inter in both lanes, before any page change is asked.
   #  PREDICTED: refused. (h) did not beat shipped at stress 12y/20y above, and half of each book is shared.
+  #  RESULT, probe on 8997ea8 (runs 38788103783 pit, 38788117510 stress): REFUSED, 3 of 6 cells. Windows
+  #  1119/2779/6163 and 2541/5078/9015, and every shipped/(h)/(j) row matches (#597)'s control exactly.
+  #  Mean (median) pts/yr:
+  #    cell        (j) live blend   (k) TR life + mom   delta
+  #    pit 20y     +5.6 (+4.6)      +5.8 (+4.2)         +0.2/-0.4
+  #    pit 12y     +3.9 (+3.6)      +4.9 (+4.4)         +1.0/+0.8  WIN
+  #    pit  8y     +4.7 (+4.4)      +5.6 (+5.5)         +0.9/+1.1  WIN
+  #    stress 20y  +5.6 (+5.5)      +5.7 (+5.7)         +0.1/+0.2
+  #    stress 12y  +5.8 (+6.9)      +5.5 (+6.9)         -0.3/+0.0
+  #    stress  8y  +6.2 (+5.8)      +6.7 (+7.0)         +0.5/+1.2  WIN
+  #  TR life lifts the blend at pit 8y/12y and stress 8y, but in no 20y cell, the horizon the screen is
+  #  for (pit 20y median -0.4). NOTHING SHIPS, and no DCA lane is earned. Don't re-ask (h) as the blend's
+  #  other half on this record.
   #── (#561) SOFT-GATE SCREEN: WHICH HARD GATE COSTS THE SHIPPED BOOK THE MOST? ──
   #  WHY: (#560) put shipped under the random-pond p95 in 5 of 6 cells, and its gates-off twin had a better
   #  worst window in all 6. So: grade each binding gate ALONE before building any taper. STAGE 1 (this
