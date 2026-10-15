@@ -517,10 +517,32 @@ jobs:
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-mutants@27.1.0
+      # (#596) Did this push change src/? The cache step's save-if reads the answer, and an action's
+      # inputs are fixed when its main step runs, so the answer must exist before rust-cache does.
+      # An unreadable "before" (a branch's first push, a force push) counts as a change.
+      - name: src changed? (the cache step's save-if)
+        id: src
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if git diff --quiet "${BEFORE}" HEAD -- src 2>/dev/null; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: folioman-test   # same warm cache as the test jobs
-          save-if: false   # (#353) integration-tests is the key's only writer
+          # (#596) A key of its own, written by this job alone ((#353): one writer per key). The gate
+          # builds in the checkout's target/ (CARGO_TARGET_DIR below), so this restores dependencies
+          # already built at the mutants profile; folioman-test holds dev/release ones it can't use.
+          # Saved only by a main push that changed src/. One that didn't (a bot's lock-only merge, a
+          # YAML edit) exits at "no mutants" before building, and saving then would file the old
+          # lock's dependencies under the new lock's key, which an exact hit never saves again.
+          # ponytail: a src push with no mutants in its diff (comments only) right after a lock bump
+          # can still do that; the cost is rebuilding the bumped crates each run until the next bump.
+          # Upgrade: decide save-if from a `cargo mutants --list` run before this step.
+          shared-key: folioman-mutants
+          save-if: ${{ github.ref == 'refs/heads/main' && steps.src.outputs.changed == 'true' }}
       - name: mutation gate — changed code must be covered by the suite
         env:
           # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a
@@ -544,19 +566,26 @@ jobs:
           # series). Incremental IS working; the local figure simply does not transfer, and the gap
           # widens as the crate grows.
           #
-          # Safe here specifically because the trees are throwaway. An interrupted run can leave a
-          # corrupted incremental cache (`rust-lld: undefined hidden symbol: anon...llvm...` on the
-          # next build, seen locally), but copy mode builds in scratch dirs and rust-cache never
-          # saves incremental dirs, so nothing outlives the job. Do NOT set this on a job that runs
-          # --in-place, where the poisoned cache is the checkout itself.
+          # Safe here specifically because nothing incremental outlives the job. An interrupted run
+          # can leave a corrupted incremental cache (`rust-lld: undefined hidden symbol:
+          # anon...llvm...` on the next build, seen locally). Since (#596) it sits in the checkout's
+          # target/mutants/incremental, but rust-cache's save deletes incremental/ and folioman's own
+          # artifacts before it uploads, keeping only dependencies. Do NOT set this on a job that
+          # runs --in-place, where the poisoned cache is the checkout itself.
           CARGO_INCREMENTAL: 1
           # (#345) Cargo's own env override of `[profile.mutants]`, as in mutation-census.yml: Cargo.toml
           # and the local `cargo t` stay at opt-level 2. At 2 the compiler WAS this job (see BUDGET).
           # The census A/B proved the verdict does not move: run 36174288986 at 0 against 36172539508
           # at 2, the same 2363 mutants, sorted caught/missed/timeout/unviable files byte-identical
           # (2219/27/0/117), wall clock 1h54m -> 21m. Step-level on purpose: set on the job, it would
-          # enter rust-cache's key hash and split this job off the shared cache.
+          # enter rust-cache's key hash (moot since (#596) gave this job a key of its own).
           CARGO_PROFILE_MUTANTS_OPT_LEVEL: 0
+          # (#596) The gate's one scratch tree (`-j 1` below) builds into the checkout's target/.
+          # rust-cache restored it by tar, with the mtimes cargo's freshness check compares, so the
+          # dependencies come up Fresh and only folioman compiles; a registry crate's fingerprint
+          # doesn't depend on the tree's path. On f6bd520, cold, the baseline built 154 crates in
+          # 130s, and the second tree paid 151s more to grade one mutant.
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           set -euo pipefail
           if [ -z "${BASE}" ] || [ "${BASE}" = "0000000000000000000000000000000000000000" ] \
@@ -608,8 +637,8 @@ jobs:
           # from local timings and were cancelled. Read the Build/Test phase durations out of
           # mutants.out/outcomes.json on the run's artifact; every number below came from there.
           #
-          # CURRENT, (#345) opt-level 0, from census run 36174288986: 2379 mutants under these same
-          # flags (-j 2, --copy-target=false, incremental on), so the sample is the whole run:
+          # CURRENT, (#345) opt-level 0, from census run 36174288986: 2379 mutants under the gate's
+          # flags then (-j 2, --copy-target=false, incremental on), so the sample is the whole run:
           #
           #   COLD build per tree      49.6s median, 65.6s max    first mutant in each of the 2 trees
           #   build per mutant          6.4s mean, 5.5s median
@@ -638,6 +667,11 @@ jobs:
           # one baseline plus a slower cold tree. BUDGET stays 6 until a code push's outcomes.json says
           # otherwise.
           #
+          # (#596) Serial now (`-j 1`), so the two-worker formula above no longer applies. f6bd520
+          # (cold, -j 2): list 16s, baseline 130s build + 26s test, ~33s per mutant (build + test).
+          # Warm and serial, with a guessed ~45s baseline build: 16 + 45 + 26 + 6 x 33 = ~285s for a
+          # full budget. Re-read it from the first warm run's outcomes.json.
+          #
           # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
           # arguments, and quoting it would pass one empty argument in the common case where no shard
           # is wanted. `"${SHARD[@]}"` expands to nothing at all when empty, and needs no splitting.
@@ -662,17 +696,20 @@ jobs:
           #
           # Copy mode gives each parallel job its own tree, which is what makes `-j` legal at all.
           #
-          # `--copy-target=false` because copying it BUYS NOTHING HERE. cargo-mutants builds each
-          # tree at a fresh scratch path, and cargo keys its fingerprints on absolute paths, so a
-          # copied target/ is rebuilt from cold anyway. Measured on the same 14 mutants: 719s of
-          # total build with the copy, 750s without — 4%, against copying the whole target/ (12G on
-          # the dev box) twice. Skipping it also retires the ENOSPC risk that `-j` would otherwise
-          # add on a runner with ~14G free, and ENOSPC mid-run grades nothing at all.
+          # `--copy-target=false` because copying it BUYS NOTHING HERE. A copied target/ is rebuilt
+          # from cold anyway: cargo-mutants stamps every copied file with the copy's time, so cargo
+          # reads each dependency as newer than what was built on it (StaleDependency). Measured on
+          # the same 14 mutants: 719s of total build with the copy, 750s without — 4%, against
+          # copying the whole target/ (12G on the dev box) twice. Skipping it also retires the
+          # ENOSPC risk that `-j` would otherwise add on a runner with ~14G free, and ENOSPC mid-run
+          # grades nothing at all. (#596) gets the warm dependencies without a copy: CARGO_TARGET_DIR
+          # points the tree at the restored target/.
           #
-          # `-j 2`: `--jobserver` (default true, capped at NCPUS) keeps the two child cargos from
-          # oversubscribing the runner's 4 vCPUs. Two is enough because one cargo cannot saturate
-          # four cores on a single crate's codegen — measured locally, `-j 2` more than halved the
-          # per-mutant wall clock even after paying a second tree's cold start.
+          # `-j 1` since (#596). The one tree uses the warm target/. A second would either share it
+          # (cargo locks a target dir, so the two would take turns) or pay the cold dependency build
+          # again: on f6bd520 tree 1 spent 151s cold to grade one mutant while tree 0 graded four.
+          # It was `-j 2` while the fixture was small: measured locally, two trees more than halved
+          # the per-mutant wall clock even after paying the second tree's cold start.
           #
           # THE GATE MUST ALWAYS PRODUCE A VERDICT, and until now it could fail to. Run 31328239009
           # was killed by timeout-minutes while holding a complete, PASSING mutants.out (24 caught,
@@ -701,7 +738,7 @@ jobs:
           # default has no skip. If only a fund golden kills it, the fix is a lib test, not a revert.
           rc=0
           timeout --signal=INT --kill-after=60s 17m \
-            cargo mutants "${SHARD[@]}" --in-diff push.diff -j 2 --copy-target=false \
+            cargo mutants "${SHARD[@]}" --in-diff push.diff -j 1 --copy-target=false \
               --profile mutants -- --lib --test backtest_fixture \
               -- --skip backtest_fund_report --skip backtest_8y_fund_samples || rc=$?
           # THE FILES ARE THE VERDICT, not the exit code: under `timeout` the code conflates
