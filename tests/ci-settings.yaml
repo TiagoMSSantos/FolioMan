@@ -13596,9 +13596,11 @@ buy_heuristic:
                                  #   Windows identical to control (pit 6163/2779/1119, stress
                                  #   9015/5078/2541). The many-miss momentum names are part of what the
                                  #   half earns: skipping them lowers the stress book. 0 = off, kept.
-  growth_momentum_keep_age: false # (#586) UNGRADED until its probe: the momentum half keeps the
-                                 #   age gates (young, history, 5Y+) the gates-off pond waives. false =
-                                 #   off, the (#584) pond as graded.
+  growth_momentum_keep_age: 0    # (#586) UNGRADED until its probe: the momentum half keeps gates
+                                 #   the gates-off pond waives. 1 = history (no 5y+ leg; `young` is
+                                 #   dead at growth_min_age_years 0.0), graded on a no-harm bar as the
+                                 #   young-table policy; 2 = history + 5Y+ (the 5Y return floor),
+                                 #   graded on the win bar. 0 = off, the (#584) pond as graded.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the
