@@ -4900,7 +4900,8 @@ fn dca_program<B>(
 /// ranked names still priced at its end, the same filter in both arms. A month with no such name puts the
 /// whole € on the legs, as BUY NOW does: its picks and trackers always sum to gross. Top-10 is a reading. SIZED is the
 /// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
-/// (#560) `rivals` adds the momentum 12-1 rival's lane on the same months: the DCA re-grade a rival that beats
+/// (#560) `rivals` adds the momentum rival's lane on the same months (`mom12-1`, named for its (#560) key; since
+/// (#587) it follows `growth_momentum_key`): the DCA re-grade a rival that beats
 /// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's first [`picks::BLEND_HALF`]
 /// names, then momentum's; then the SIZED book with momentum spliced in ([`picks::sized_splice`]), after its head and
 /// interleaved, the two ways a shipped blend could order BUY NOW.

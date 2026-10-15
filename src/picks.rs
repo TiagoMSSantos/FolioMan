@@ -5299,7 +5299,7 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
         ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
         ("s", "the Social Arbitrage trading table names it — superinvestor buyers (13F buys plus new 13D/13G stakes) score × growth_superinvestor_boost once per growth_superinvestor_step of them, an ARK, insider, video or hand-list row × growth_social_boost (1.0 = off)"),
         ("b", "bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score; page only, and (#535) the page's N cuts it like any other row"),
-        ("m", "bought by the book for its momentum 12-1 (trailing year net of the last month), not its score: growth_momentum_interleave alternates the score book with the momentum order of the gates-off stock pond, so it prints after the book name before it; SCORE is its score with every gate waived when it fails one; page only"),
+        ("m", "bought by the book for its momentum (growth_momentum_key, 12-7 by default: the trailing year net of its last six months), not its score: growth_momentum_interleave alternates the score book with the momentum order of the gates-off stock pond, so it prints after the book name before it; SCORE is its score with every gate waived when it fails one; page only"),
 ];
 
 /// (#400) The page's column glossary, keyed per table because one header can mean two things: 2Y is a
@@ -5476,7 +5476,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
 /// top-n slice, coins riding free), in book order. ONE spelling for `screen`'s journal and buy list and the
 /// page engine's BUY% column (non-negotiable #4), so the page cannot size another book than the terminal.
 /// (#584) Under `growth_momentum_interleave` and `sizing.equal_weight_book` the book alternates with the
-/// momentum 12-1 order of the whole pool's gates-off stocks ([`momentum_order`], [`sized_splice`]), so it can
+/// momentum order of the whole pool's gates-off stocks ([`momentum_order`], [`sized_splice`]), so it can
 /// fund a stock `render` never ranked; [`stamp_momentum`] gives such a name its page row.
 pub(crate) fn buy_book(
     ranked: &[String],
@@ -7552,7 +7552,7 @@ pub(crate) fn momentum_keys(qs: &[&Quote], tuning: &BuyHeuristic) -> Vec<Option<
 }
 
 /// (#584) The momentum half of the blended book: the stocks the gates-off score keys ([`gates_off`], the
-/// backtest's `rivals` pond), highest [`momentum_keys`] first (momentum 12-1 by default), a tie by ticker so the
+/// backtest's `rivals` pond), highest [`momentum_keys`] first (12-7 by default since (#587)), a tie by ticker so the
 /// order never depends on the pool's. (#585) A name [`misses_ok`] skips is not in it.
 pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> Vec<&'a Quote> {
     let open = gates_off(tuning);
@@ -7562,7 +7562,7 @@ pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> 
     v.into_iter().map(|x| x.1).collect()
 }
 
-/// (#584) The blended book's order: `sized` is [`sized_book`]'s order, `mom` the momentum 12-1 order. `after`
+/// (#584) The blended book's order: `sized` is [`sized_book`]'s order, `mom` the [`momentum_order`]. `after`
 /// keeps the first [`HEAD`] shipped names, then [`BLEND_HALF`] momentum names, then the shipped rest; else one
 /// of each in turn, shipped first (`growth_momentum_interleave`). A name already placed is skipped, a side that
 /// runs dry hands its slot to the other, and the order stops at `n`.

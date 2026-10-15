@@ -1357,7 +1357,7 @@ fn mblend_section(
         );
     }
     format!(
-        "\n  Blend shadow (#584) — each line's book, the shipped order interleaved with momentum 12-1 stocks, against\n  \
+        "\n  Blend shadow (#584) — each line's book, the shipped order interleaved with momentum stocks, against\n  \
          the shipped-only order of the same line: the first {BOOK} non-coin names of each, equal-weight. One line a\n  \
          month. Pre-registered: `mblend` flags REVERT SIGNAL at {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained\n  \
          links, each with mean AND median above 0 (the blend trailing). A flag only prints; turning\n  \
