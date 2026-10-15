@@ -13608,6 +13608,14 @@ buy_heuristic:
                                  #   stress -0.4/-0.6 VETO
                                  #   Windows identical to control. The short-history momentum names
                                  #   (SNDK, 1.7 years) are part of what the half earns. 0 = off, kept.
+  growth_momentum_key: 0         # (#587) UNGRADED: the momentum half's sort key (live book, backtest
+                                 #   `momentum_ranked`, rival (j)'s second side). 0 = momentum 12-1, the
+                                 #   (#584) order. 1 = 12-7, the year net of its last six months
+                                 #   (Novy-Marx 2012). 2 = rank-sum of 12-1 and value, the negated
+                                 #   13-60-month return (Asness-Moskowitz-Pedersen 2013), each a
+                                 #   percentile among the candidates; no 5Y leg = the middle rank.
+                                 #   Bar: rival (j) mean AND median >= +0.2 in >= 5/6 cells, and 20y
+                                 #   DCA S+inter not down > 0.2 (mean or median) in either lane.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the

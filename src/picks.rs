@@ -7520,18 +7520,44 @@ pub(crate) const BLEND_HALF: usize = 5;
 /// (#560) 12-1 momentum, %: the trailing year net of its last month, the same formula as the growth
 /// score's `mom121` term. A missing 1M reads 0; a missing 1Y has no momentum.
 pub(crate) fn momentum_12_1(q: &Quote) -> Option<f64> {
-    let r1y = perf_pct(q, "1Y")?;
-    let r1m = perf_pct(q, "1M").unwrap_or(0.0);
-    Some(((1.0 + r1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0)
+    net_return(q, "1Y", "1M")
+}
+
+/// (#587) The `long` leg's return net of its last `short` one, %: a missing `short` reads 0, a missing `long`
+/// has none, and a wiped `short` is floored at 1%.
+fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {
+    let r = perf_pct(q, long)?;
+    let s = perf_pct(q, short).unwrap_or(0.0);
+    Some(((1.0 + r / 100.0) / (1.0 + s / 100.0).max(0.01) - 1.0) * 100.0)
+}
+
+/// (#587) The momentum half's sort keys over one candidate set, in input order, highest first. A name
+/// [`misses_ok`] skips, or with no 1Y, has none. `growth_momentum_key` 0 = momentum 12-1; 1 = 12-7, the year net
+/// of its last six months; 2 = the 12-1 percentile plus the value percentile, value being the 13-60-month
+/// return (the five years net of the last one) negated, each among the keyed names (`core::ranks` over n + 1),
+/// and a name with no 5Y leg at the middle.
+pub(crate) fn momentum_keys(qs: &[&Quote], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
+    let short = if tuning.growth_momentum_key == 1 { "6M" } else { "1M" };
+    let mom: Vec<Option<f64>> = qs.iter().map(|q| net_return(q, "1Y", short).filter(|_| misses_ok(q, tuning))).collect();
+    if tuning.growth_momentum_key != 2 {
+        return mom;
+    }
+    let value: Vec<Option<f64>> = qs.iter().zip(&mom).map(|(q, m)| m.and(net_return(q, "5Y", "1Y")).map(|r| -r)).collect();
+    let pct = |xs: &[Option<f64>]| {
+        let present: Vec<f64> = xs.iter().flatten().copied().collect();
+        let mut r = crate::core::ranks(&present).into_iter().map(|r| r / (present.len() as f64 + 1.0));
+        xs.iter().map(|x| x.and_then(|_| r.next())).collect::<Vec<_>>()
+    };
+    pct(&mom).into_iter().zip(pct(&value)).map(|(m, v)| Some(m? + v.unwrap_or(0.5))).collect()
 }
 
 /// (#584) The momentum half of the blended book: the stocks the gates-off score keys ([`gates_off`], the
-/// backtest's `rivals` pond), highest momentum 12-1 first, a tie by ticker so the order never depends on the
-/// pool's. (#585) A name [`misses_ok`] skips is not in it.
+/// backtest's `rivals` pond), highest [`momentum_keys`] first (momentum 12-1 by default), a tie by ticker so the
+/// order never depends on the pool's. (#585) A name [`misses_ok`] skips is not in it.
 pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> Vec<&'a Quote> {
     let open = gates_off(tuning);
-    let mut v: Vec<(f64, &Quote)> =
-        quotes.iter().filter(|q| asset_class(q) == 2 && growth_score(q, &open).is_some() && misses_ok(q, tuning)).filter_map(|q| Some((momentum_12_1(q)?, q))).collect();
+    let pond: Vec<&Quote> = quotes.iter().filter(|q| asset_class(q) == 2 && growth_score(q, &open).is_some()).collect();
+    let mut v: Vec<(f64, &Quote)> = momentum_keys(&pond, tuning).into_iter().zip(pond).filter_map(|(k, q)| Some((k?, q))).collect();
     v.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.ticker.cmp(&b.1.ticker)));
     v.into_iter().map(|x| x.1).collect()
 }
@@ -13030,6 +13056,35 @@ mod tests {
         let got = |m: usize| momentum_order(&quotes, &age(m)).iter().map(|q| q.ticker.as_str()).collect::<Vec<_>>();
         assert_eq!(got(2), ["CCC", "AAA", "BBB"]);
         assert_eq!(got(1), ["DDD", "CCC", "AAA", "BBB"]);
+    }
+
+    /// (#587) `growth_momentum_key`: 0 = 12-1, 1 = 12-7, 2 = the 12-1 percentile plus the value percentile (the
+    /// negated 13-60-month return; no 5Y leg = the middle). A name with no 1Y has no key in any mode.
+    #[test]
+    fn momentum_keys_follow_the_key_knob() {
+        let q = |t: &str, perf: &[(&str, f64)]| {
+            let mut q = gate_fixture();
+            (q.ticker, q.perf) = (t.into(), legs(perf));
+            q
+        };
+        let quotes = [
+            q("AAA", &[("1M", 0.0), ("6M", 50.0), ("1Y", 60.0), ("5Y", 300.0)]),
+            q("BBB", &[("1M", 10.0), ("6M", 0.0), ("1Y", 32.0), ("5Y", 32.0)]),
+            q("CCC", &[("1M", 0.0), ("6M", 0.0), ("1Y", 10.0)]),
+            q("DDD", &[("1M", 0.0), ("6M", 0.0)]),
+        ];
+        let refs: Vec<&Quote> = quotes.iter().collect();
+        let keys = |k: usize| momentum_keys(&refs, &BuyHeuristic { growth_momentum_key: k, ..BuyHeuristic::default() });
+        let near = |got: Vec<Option<f64>>, want: [Option<f64>; 4]| {
+            got.len() == 4 && got.iter().zip(want).all(|(g, w)| match (g, w) {
+                (Some(g), Some(w)) => (g - w).abs() < 1e-9,
+                (g, w) => g.is_none() && w.is_none(),
+            })
+        };
+        assert!(near(keys(0), [Some(60.0), Some(20.0), Some(10.0), None]), "{:?}", keys(0));
+        assert!(near(keys(1), [Some(20.0 / 3.0), Some(32.0), Some(10.0), None]), "{:?}", keys(1));
+        // 12-1 percentiles 3/4, 2/4, 1/4; value: AAA's 13-60 return +150% ranks under BBB's 0, so 1/3 and 2/3, CCC 0.5
+        assert!(near(keys(2), [Some(0.75 + 1.0 / 3.0), Some(0.5 + 2.0 / 3.0), Some(0.75), None]), "{:?}", keys(2));
     }
 
     /// (#584) `growth_momentum_interleave` with the equal-weight book funds shipped 1, momentum 1, shipped 2 ...;

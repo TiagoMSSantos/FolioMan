@@ -3581,10 +3581,12 @@ fn rival_wins(d_mean: f64, d_median: f64) -> bool {
 
 /// (#560) The momentum 12-1 rival's order over one month's pool: the names the gates-off score keys (`open`,
 /// the `rivals` pond), highest momentum first. The pool is ticker-ordered and the sort stable, so a tie ranks
-/// by ticker. (#585) A name `picks::misses_ok` skips under `tuning` sits out.
+/// by ticker. (#585) A name `picks::misses_ok` skips under `tuning` sits out. (#587) The key is
+/// `picks::momentum_keys` over the pond.
 fn momentum_ranked<'a>(pool: &[&'a Sample], open: &[Option<f64>], tuning: &BuyHeuristic) -> Vec<&'a Sample> {
-    let mut v: Vec<(f64, &Sample)> =
-        pool.iter().zip(open).filter(|x| x.1.is_some() && picks::misses_ok(&x.0.quote, tuning)).filter_map(|(s, _)| Some((picks::momentum_12_1(&s.quote)?, *s))).collect();
+    let pond: Vec<&Sample> = pool.iter().zip(open).filter(|x| x.1.is_some()).map(|x| *x.0).collect();
+    let qs: Vec<&Quote> = pond.iter().map(|s| s.quote.as_ref()).collect();
+    let mut v: Vec<(f64, &Sample)> = picks::momentum_keys(&qs, tuning).into_iter().zip(pond).filter_map(|(k, s)| Some((k?, s))).collect();
     v.sort_by(|a, b| b.0.total_cmp(&a.0));
     v.into_iter().map(|x| x.1).collect()
 }
@@ -3688,7 +3690,7 @@ fn rival_books(
         let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
         let (sh, op) = (scorer(&quotes, shipped), scorer(&quotes, open));
         let mut rows: Vec<([Option<f64>; 9], f64, f64, &str)> = Vec::new();
-        let mut ok: Vec<bool> = Vec::new(); // (#585) rival (j)'s momentum side, `picks::misses_ok`
+        let mut picked: Vec<&Quote> = Vec::new(); // (#585)/(#587) rival (j)'s momentum side, `picks::momentum_keys`
         for ((s, sh), op) in group.iter().zip(sh).zip(op) {
             let (Some(op), Some(bench_r)) = (op, benchmark_fwd(bd, bc, s.date, years)) else { continue };
             let f = s.fund.as_ref();
@@ -3704,7 +3706,7 @@ fn rival_books(
                 s.quote.tr_cagr.filter(|_| picks::perf_pct(&s.quote, "10Y").is_some()),
             ];
             rows.push((keys, s.realized, bench_r, s.quote.ticker.as_str()));
-            ok.push(picks::misses_ok(&s.quote, shipped));
+            picked.push(s.quote.as_ref());
         }
         if !rows.iter().any(|r| r.0[0].is_some()) {
             continue; // the shipped lane holds nobody here, so its row has no window to compare
@@ -3718,7 +3720,7 @@ fn rival_books(
         for (i, book) in books.iter_mut().take(9).enumerate() {
             book.extend(rival_excess(&keyed(i), VERDICT_TOP, years)); // the nine keyed rows; (j) blends two of them
         }
-        let capped: Vec<_> = rows.iter().zip(&ok).map(|(r, ok)| (r.0[2].filter(|_| *ok), r.1, r.2, r.3)).collect();
+        let capped: Vec<_> = rows.iter().zip(picks::momentum_keys(&picked, shipped)).map(|(r, k)| (k, r.1, r.2, r.3)).collect();
         books[9].extend(blend_excess(&keyed(0), &capped, picks::BLEND_HALF, VERDICT_TOP, years));
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
