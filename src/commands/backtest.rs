@@ -3736,7 +3736,7 @@ fn rival_books(
             book.extend(rival_excess(&keyed(i), VERDICT_TOP, years)); // the nine keyed rows; (j) blends two of them
         }
         let capped: Vec<_> = rows.iter().zip(picks::momentum_keys(&picked, shipped)).map(|(r, k)| (k, r.1, r.2, r.3)).collect();
-        books[9].extend(blend_excess(&keyed(0), &capped, picks::BLEND_HALF, VERDICT_TOP, years));
+        books[9].extend(blend_excess(&keyed(0), &capped, VERDICT_TOP.saturating_sub(shipped.growth_momentum_slots), VERDICT_TOP, years));
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
@@ -4917,9 +4917,9 @@ fn dca_program<B>(
 /// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
 /// (#560) `rivals` adds the momentum rival's lane on the same months (`mom12-1`, named for its (#560) key; since
 /// (#587) it follows `growth_momentum_key`): the DCA re-grade a rival that beats
-/// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's first [`picks::BLEND_HALF`]
-/// names, then momentum's; then the SIZED book with momentum spliced in ([`picks::sized_splice`]), after its head and
-/// interleaved, the two ways a shipped blend could order BUY NOW.
+/// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's first 10 minus
+/// `growth_momentum_slots` names, then momentum's; then the SIZED book with momentum spliced in
+/// ([`picks::sized_splice`]), after its head and interleaved, the two ways a shipped blend could order BUY NOW.
 #[allow(clippy::too_many_arguments)]
 fn report_roll(
     samples: &[Sample],
@@ -4984,14 +4984,14 @@ fn report_roll(
     };
     let mom = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP)) };
     let blend = |d, end| -> Option<Vec<(&str, f64)>> {
-        Some(blend_top(capped(d, end, picks::BLEND_HALF)?, ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP))
+        Some(blend_top(capped(d, end, VERDICT_TOP.saturating_sub(tuning.growth_momentum_slots))?, ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP))
     };
     // (#584) the SIZED book with momentum names spliced in, `after` its head or interleaved
     let sized_blend = |d: chrono::NaiveDate, end: chrono::NaiveDate, after: bool| -> Option<Vec<(&str, f64)>> {
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
         let book: Vec<(&Quote, f64)> = crate::commands::size::sized_book(&q, tuning, sz, None, &Default::default()).into_iter().map(|r| (r.0, r.2)).collect();
         let mom: Vec<&Quote> = ranked.get(&d)?.2.iter().filter(|s| alive(s, d, end)).map(|s| s.quote.as_ref()).collect();
-        Some(picks::sized_splice(&book, &mom, after, sz).into_iter().map(|(t, w)| (t, w / 100.0)).collect())
+        Some(picks::sized_splice(&book, &mom, after, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w)| (t, w / 100.0)).collect())
     };
     let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs);
     let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);
@@ -8485,27 +8485,34 @@ mod tests {
         // (#584) SIZED splice: after the head, S6 (held by momentum too) moves up to a momentum slot; interleaved,
         // a held name is skipped and a dry side hands its slot over
         let sh = ["S1", "S2", "S3", "S4", "S5", "S6"];
-        assert_eq!(picks::splice_order(&sh, &["M1", "S6", "M2"], true, 9), ["S1", "S2", "S3", "S4", "S5", "M1", "S6", "M2"]);
-        assert_eq!(picks::splice_order(&sh, &["M1"], true, 7), ["S1", "S2", "S3", "S4", "S5", "M1", "S6"]);
+        assert_eq!(picks::splice_order(&sh, &["M1", "S6", "M2"], true, 5, 9), ["S1", "S2", "S3", "S4", "S5", "M1", "S6", "M2"]);
+        assert_eq!(picks::splice_order(&sh, &["M1"], true, 5, 7), ["S1", "S2", "S3", "S4", "S5", "M1", "S6"]);
         let m6 = ["M1", "M2", "M3", "M4", "M5", "M6"];
-        assert_eq!(picks::splice_order(&sh, &m6, true, 11), ["S1", "S2", "S3", "S4", "S5", "M1", "M2", "M3", "M4", "M5", "S6"], "BLEND_HALF momentum slots, then shipped");
-        assert_eq!(picks::splice_order(&["A", "B", "C"], &["B", "X"], false, 9), ["A", "B", "C", "X"]);
-        assert_eq!(picks::splice_order(&["A", "B", "C"], &["X", "Y"], false, 3), ["A", "X", "B"]);
+        assert_eq!(picks::splice_order(&sh, &m6, true, 5, 11), ["S1", "S2", "S3", "S4", "S5", "M1", "M2", "M3", "M4", "M5", "S6"], "`slots` momentum slots after the head, then shipped");
+        assert_eq!(picks::splice_order(&["A", "B", "C"], &["B", "X"], false, 5, 9), ["A", "B", "C", "X"]);
+        assert_eq!(picks::splice_order(&["A", "B", "C"], &["X", "Y"], false, 5, 3), ["A", "X", "B"]);
         // (#585) the side that placed each name: B is both sides', momentum reaches it first; a dry side's slot
         // goes to the other side's name, flagged as that side's
-        assert_eq!(picks::splice_sides(&["A", "B", "C"], &["B", "X"], false, 9), [("A", false), ("B", true), ("C", false), ("X", true)]);
-        assert_eq!(picks::splice_sides(&["A"], &["X", "Y"], false, 3), [("A", false), ("X", true), ("Y", true)]);
-        assert_eq!(picks::splice_sides(&["A", "B"], &[], false, 2), [("A", false), ("B", false)]);
+        assert_eq!(picks::splice_sides(&["A", "B", "C"], &["B", "X"], false, 5, 9), [("A", false), ("B", true), ("C", false), ("X", true)]);
+        assert_eq!(picks::splice_sides(&["A"], &["X", "Y"], false, 5, 3), [("A", false), ("X", true), ("Y", true)]);
+        assert_eq!(picks::splice_sides(&["A", "B"], &[], false, 5, 2), [("A", false), ("B", false)]);
+        // (#597) `slots` of every 10 go to momentum, spread evenly; 5 is the (#584) alternation
+        let (s9, m9) = (["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"], ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9"]);
+        assert_eq!(picks::splice_order(&s9, &m9, false, 7, 10), ["S1", "M1", "M2", "S2", "M3", "M4", "S3", "M5", "M6", "M7"]);
+        assert_eq!(picks::splice_order(&s9, &m9, false, 3, 10), ["S1", "S2", "S3", "M1", "S4", "S5", "M2", "S6", "S7", "M3"]);
+        assert_eq!(picks::splice_order(&s9, &m9, false, 10, 3), ["M1", "M2", "M3"]);
+        assert_eq!(picks::splice_order(&s9, &m9, false, 0, 3), ["S1", "S2", "S3"]);
+        assert!((0..1000).all(|i| picks::momentum_slot(i, 5) == (i % 2 == 1)), "5 = the (#584) alternation");
         // the weights: momentum twin Z (A's issuer) drops so X takes its slot, the cut drops B; then the first HEAD
         // rows take the head share
         let (a, b, x) = (Quote::stub("A", "1", "", "Acme"), Quote::stub("B", "1", "", "Beta"), Quote::stub("X", "1", "", "Xeno"));
         let z = Quote::stub("Z", "1", "", "Acme");
         let sz = config::Sizing { book_names: 2, head_weight: 3.0, ..Default::default() };
-        assert_eq!(picks::sized_splice(&[(&a, 50.0), (&b, 50.0)], &[&z, &x], false, &sz), vec![("A", 50.0), ("X", 50.0)]);
+        assert_eq!(picks::sized_splice(&[(&a, 50.0), (&b, 50.0)], &[&z, &x], false, 5, &sz), vec![("A", 50.0), ("X", 50.0)]);
         let sz = config::Sizing { book_names: 6, ..sz };
         let six: Vec<Quote> = ["P", "Q", "R", "S", "T", "U"].iter().map(|t| Quote::stub(t, "1", "", t)).collect();
         let book: Vec<(&Quote, f64)> = six[..5].iter().map(|q| (q, 0.0)).collect();
-        let got = picks::sized_splice(&book, &[&six[5]], true, &sz);
+        let got = picks::sized_splice(&book, &[&six[5]], true, 5, &sz);
         assert_eq!(got.iter().map(|r| r.0).collect::<Vec<_>>(), ["P", "Q", "R", "S", "T", "U"]);
         assert_eq!(got.iter().map(|r| (r.1 * 0.16).round()).collect::<Vec<_>>(), [3.0, 3.0, 3.0, 3.0, 3.0, 1.0], "5 heads x 3 + 1 tail = 16 shares");
         // a coin keeps its weight and takes no head slot, a momentum coin is dropped; a commodity head name is parked behind the head
@@ -8515,7 +8522,7 @@ mod tests {
         let book: Vec<(&Quote, f64)> = std::iter::once((&btc, 5.0)).chain(std::iter::once((&oil, 0.0))).chain(six[1..5].iter().map(|q| (q, 0.0))).collect();
         let sz = config::Sizing { head_skip_commodity: true, ..sz };
         let eth = Quote::stub("ETH-EUR", "1", "", "Ethereum");
-        let got = picks::sized_splice(&book, &[&eth, &six[5]], true, &sz);
+        let got = picks::sized_splice(&book, &[&eth, &six[5]], true, 5, &sz);
         assert_eq!(got.iter().map(|r| r.0).collect::<Vec<_>>(), ["BTC-EUR", "Q", "R", "S", "T", "U", "P"]);
         assert_eq!(got.iter().map(|r| (r.1 * 16.0).round()).collect::<Vec<_>>(), [80.0, 285.0, 285.0, 285.0, 285.0, 285.0, 95.0], "95% left: 3/16 each head, 1/16 P");
     }

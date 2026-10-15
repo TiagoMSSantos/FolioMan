@@ -13631,6 +13631,19 @@ buy_heuristic:
                                  #   4/6 (pit 8y -1.5/-0.6, stress 8y -0.4/-1.1), no veto.
                                  #   0 = momentum 12-1, the (#584) order: the revert value. `track`'s
                                  #   `mblend` keeps grading the blend forward.
+  growth_momentum_slots: 5       # (#597) UNGRADED: of every 10 slots in the interleaved book, how many
+                                 #   the momentum order fills, spread evenly (`picks::momentum_slot`;
+                                 #   7 = S M M S M M S M M M). Rival (j) and the DCA `blend` lane take
+                                 #   10 minus this from the shipped top-10 ((j)'s label keeps its (#584)
+                                 #   "5 shipped + 5 momentum" name), and the `after` splice runs this
+                                 #   many momentum names after the head (it replaces BLEND_HALF). Why:
+                                 #   at 20y the shipped top-10 sits under the random-pick p95 (pit +2.9
+                                 #   vs +3.7), and in 20y DCA momentum alone beats the blend in stress
+                                 #   (+7.3/+8.6 vs S+inter +7.0/+7.8). Arms 3, 7, 10 vs control 5 (probe,
+                                 #   universe fund pit/stress rivals, 8/12/20y). Bar as (#587): rival
+                                 #   (j) mean AND median >= +0.2 in >= 5/6 cells, and 20y DCA S+inter
+                                 #   not down > 0.2 (mean or median) in either lane. 5 = the (#584)
+                                 #   alternation, bit for bit.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the

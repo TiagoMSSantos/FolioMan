@@ -5505,7 +5505,7 @@ fn book_sides(
     let rows: Vec<&Quote> = ranked.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect();
     let book: Vec<(&Quote, f64)> = sized_book(&rows, tuning, sz, nupl, funds).into_iter().map(|r| (r.0, r.2)).collect();
     if tuning.growth_momentum_interleave && sz.equal_weight_book {
-        return sized_splice_sides(&book, &momentum_order(quotes, tuning), false, sz).into_iter().map(|(t, w, m)| (t.to_string(), w, m)).collect();
+        return sized_splice_sides(&book, &momentum_order(quotes, tuning), false, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w, m)| (t.to_string(), w, m)).collect();
     }
     book.into_iter().map(|(q, w)| (q.ticker.clone(), w, false)).collect()
 }
@@ -7517,9 +7517,12 @@ pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize, head: f64) -> Vec
 /// every horizon. shortcut: a const, not a knob — one boundary was graded; make it a knob when a second is.
 pub(crate) const HEAD: usize = 5;
 
-/// (#584) The backtest blend's shipped half: rival (j)'s top-10 slots filled by the shipped order before momentum
-/// fills the rest, and the `after` splice's momentum run after the [`HEAD`].
-pub(crate) const BLEND_HALF: usize = 5;
+/// (#597) Whether slot `i` (0-based) of the interleaved book is momentum's: `slots` of every 10, spread evenly
+/// (`growth_momentum_slots`). 5 is the (#584) alternation, shipped first; 7 reads S M M S M M S M M M, and 3
+/// reads S S S M S S M S S M.
+pub(crate) fn momentum_slot(i: usize, slots: usize) -> bool {
+    (i + 1) * slots / 10 > i * slots / 10
+}
 
 /// (#560) 12-1 momentum, %: the trailing year net of its last month, the same formula as the growth
 /// score's `mom121` term. A missing 1M reads 0; a missing 1Y has no momentum.
@@ -7567,22 +7570,23 @@ pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> 
 }
 
 /// (#584) The blended book's order: `sized` is [`sized_book`]'s order, `mom` the [`momentum_order`]. `after`
-/// keeps the first [`HEAD`] shipped names, then [`BLEND_HALF`] momentum names, then the shipped rest; else one
-/// of each in turn, shipped first (`growth_momentum_interleave`). A name already placed is skipped, a side that
-/// runs dry hands its slot to the other, and the order stops at `n`.
-pub(crate) fn splice_order<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, n: usize) -> Vec<T> {
-    splice_sides(sized, mom, after, n).into_iter().map(|x| x.0).collect()
+/// keeps the first [`HEAD`] shipped names, then `slots` momentum names, then the shipped rest; else momentum
+/// fills `slots` of every 10 slots, spread by [`momentum_slot`] (`growth_momentum_interleave`; 5 = one of each
+/// in turn, shipped first). A name already placed is skipped, a side that runs dry hands its slot to the other,
+/// and the order stops at `n`.
+pub(crate) fn splice_order<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, slots: usize, n: usize) -> Vec<T> {
+    splice_sides(sized, mom, after, slots, n).into_iter().map(|x| x.0).collect()
 }
 
 /// (#585) [`splice_order`] with each name's side: true when a momentum slot placed it, or a dry shipped side
 /// handed its slot to momentum. A name both sides hold belongs to the side that reached it first (MTE.DE,
 /// shipped rank 35, placed as momentum pick 2).
-pub(crate) fn splice_sides<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, n: usize) -> Vec<(T, bool)> {
+pub(crate) fn splice_sides<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: bool, slots: usize, n: usize) -> Vec<(T, bool)> {
     let (mut s, mut m) = (sized.iter().copied(), mom.iter().copied());
     let mut out: Vec<(T, bool)> = Vec::new();
     while out.len() < n {
         let i = out.len();
-        let from_m = if after { (HEAD..HEAD + BLEND_HALF).contains(&i) } else { i % 2 == 1 };
+        let from_m = if after { (HEAD..HEAD + slots).contains(&i) } else { momentum_slot(i, slots) };
         let fresh = |t: &T| !out.iter().any(|o| o.0 == *t);
         let (a, b) = if from_m { (&mut m, &mut s) } else { (&mut s, &mut m) };
         let Some(t) = a.find(fresh).map(|t| (t, from_m)).or_else(|| b.find(fresh).map(|t| (t, !from_m))) else { break };
@@ -7597,12 +7601,12 @@ pub(crate) fn splice_sides<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: b
 /// momentum twin of an issuer already placed ([`first_per_issuer`]'s key) is dropped before [`splice_order`], so
 /// its slot goes to the next momentum name. Then a commodity leaves the head as `sized_book` parks it, and
 /// [`equal_weights`] re-splits the non-coin rows with the head share. Weights in %.
-pub(crate) fn sized_splice<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, sz: &crate::config::Sizing) -> Vec<(&'a str, f64)> {
-    sized_splice_sides(book, mom, after, sz).into_iter().map(|r| (r.0, r.1)).collect()
+pub(crate) fn sized_splice<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, slots: usize, sz: &crate::config::Sizing) -> Vec<(&'a str, f64)> {
+    sized_splice_sides(book, mom, after, slots, sz).into_iter().map(|r| (r.0, r.1)).collect()
 }
 
 /// (#585) [`sized_splice`] with each row's [`splice_sides`] side (a coin is never momentum's).
-fn sized_splice_sides<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, sz: &crate::config::Sizing) -> Vec<(&'a str, f64, bool)> {
+fn sized_splice_sides<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, slots: usize, sz: &crate::config::Sizing) -> Vec<(&'a str, f64, bool)> {
     let coin = |q: &Quote| asset_class(q) == 0;
     let (coins, book): (Vec<(&Quote, f64)>, Vec<(&Quote, f64)>) = book.iter().copied().partition(|r| coin(r.0));
     let held: HashMap<String, &str> = book.iter().map(|r| (r.0.name.to_lowercase(), r.0.ticker.as_str())).collect();
@@ -7610,7 +7614,7 @@ fn sized_splice_sides<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: b
     let mom: Vec<&Quote> = mom.iter().copied().filter(|q| !coin(q)).filter(|q| q.name.is_empty() || (held.get(&q.name.to_lowercase()).is_none_or(|t| *t == q.ticker) && seen.insert(q.name.to_lowercase()))).collect();
     let rows: HashMap<&str, (&Quote, f64)> = mom.iter().map(|q| (*q, 0.0)).chain(book.iter().copied()).map(|r| (r.0.ticker.as_str(), r)).collect();
     let (s, m): (Vec<&str>, Vec<&str>) = (book.iter().map(|r| r.0.ticker.as_str()).collect(), mom.iter().map(|q| q.ticker.as_str()).collect());
-    let spliced = splice_sides(&s, &m, after, sz.book_cut()).into_iter().map(|(t, by_m)| (rows[t].0, rows[t].1, by_m));
+    let spliced = splice_sides(&s, &m, after, slots, sz.book_cut()).into_iter().map(|(t, by_m)| (rows[t].0, rows[t].1, by_m));
     let order: Vec<(&Quote, f64, bool)> = coins.into_iter().map(|r| (r.0, r.1, false)).chain(spliced).collect();
     let order: Vec<(&Quote, f64, bool)> = if sz.head_skip_commodity {
         head_skip(&order.iter().map(|r| (coin(r.0), is_commodity(r.0))).collect::<Vec<_>>()).into_iter().map(|i| order[i]).collect()

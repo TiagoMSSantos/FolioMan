@@ -2290,7 +2290,7 @@ pub async fn run(args: Vec<String>) {
     let blend = settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book;
     let journal_rows: Vec<String> = if blend {
         let mom: Vec<&str> = sized_now.iter().map(|(t, _)| t.as_str()).filter(|t| !shipped_now.iter().any(|r| r == t)).collect();
-        picks::splice_order(&ranked_now.iter().map(String::as_str).collect::<Vec<_>>(), &mom, false, usize::MAX).into_iter().map(str::to_string).collect()
+        picks::splice_order(&ranked_now.iter().map(String::as_str).collect::<Vec<_>>(), &mom, false, settings.buy_heuristic.growth_momentum_slots, usize::MAX).into_iter().map(str::to_string).collect()
     } else {
         ranked_now.clone()
     };
