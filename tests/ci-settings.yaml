@@ -13585,9 +13585,17 @@ buy_heuristic:
                                  #   grades `mblend` (blend top vs shipped-only top) forward, pre-registered
                                  #   to print REVERT SIGNAL at 12+ lines and 12+ links, mean AND median < 0.
                                  #   false reverts to the shipped-only book.
-  growth_momentum_miss_cap: 0    # (#585) UNGRADED until its probe: a momentum-half candidate that
-                                 #   misses this many buy gates or more is skipped, its slot to the next
-                                 #   momentum name. 0 = off, the (#584) blend as graded.
+  growth_momentum_miss_cap: 0    # (#585) REFUSED 3/3 (probe on 178c06d, universe fund pit/stress
+                                 #   rivals, 8/12/20y): a momentum-half candidate that misses this many
+                                 #   buy gates or more is skipped, its slot to the next momentum name.
+                                 #   Bar: rival (j) mean AND median >= +0.2 in >= 5/6 cells, and 20y DCA
+                                 #   S+inter not down > 0.2 (mean or median) in either lane.
+                                 #   cap 3: cells 0/6 (pit 8y -0.7/-0.7), stress DCA -0.5/-0.8 VETO
+                                 #   cap 4: cells 1/6 (pit 20y +0.6/+0.7), stress DCA -0.3/-0.8 VETO
+                                 #   cap 5: cells 0/6, stress DCA -0.2/-0.5 VETO
+                                 #   Windows identical to control (pit 6163/2779/1119, stress
+                                 #   9015/5078/2541). The many-miss momentum names are part of what the
+                                 #   half earns: skipping them lowers the stress book. 0 = off, kept.
   growth_momentum_keep_age: false # (#586) UNGRADED until its probe: the momentum half keeps the
                                  #   age gates (young, history, 5Y+) the gates-off pond waives. false =
                                  #   off, the (#584) pond as graded.
