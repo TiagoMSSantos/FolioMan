@@ -279,7 +279,7 @@ jobs:
       # 2026-07-13 and was never moved, while actual coverage drifted to 73.13% — eleven points of
       # slack, i.e. ~2000 covered lines could have been deleted with the gate still green. A floor
       # that is not re-measured stops being a floor. Measure it the way this job does before moving it:
-      #   CARGO_PROFILE_DEV_OPT_LEVEL=2 FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo llvm-cov --locked --lib --test cli --test backtest_fixture --summary-only
+      #   CARGO_INCREMENTAL=1 CARGO_PROFILE_DEV_OPT_LEVEL=2 FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo llvm-cov --locked --lib --test cli --test backtest_fixture --summary-only
       # ((#171) that spelling reproduces THIS job's env, which is now the same pin every other test job
       # carries; it read /nonexistent/none.yaml back when this job was config-less. Either way it has to
       # be spelled out — config/settings.yaml is gitignored, so a local run with one present measures a
@@ -297,11 +297,20 @@ jobs:
         env:
           # (#591) The crate at opt-level 2, as in integration-tests (see there): the instrumented
           # fund-lane goldens were 499s of this job's 598s at 0 (0c5394f), and this job was the
-          # wall. Counters go in at MIR level, before LLVM optimises, so the same tree should measure
-          # the same lines: the first run's per-file table is diffed against 0c5394f's (lines
-          # 43533/46262, 94.10%), and a moved count takes this env back out. Step level for the same
-          # cache reason as there.
+          # wall. Opt-level 2 alone took the job to 302s (d46eb1e, run 38738363157) but MOVED the
+          # per-file table against 0c5394f's: fetch.rs's two never-called `_live` async fns (12
+          # lines) left the report instead of reading uncovered, and in five commands files
+          # (accounts, alert, check, screen, track) the outer fn of `async fn run` counted as
+          # unexecuted in the summary, though the HTML still shows its line run. Lines 43528/46250.
           CARGO_PROFILE_DEV_OPT_LEVEL: "2"
+          # (#592) Every fn that moved is an async fn whose outer body is a tiny leaf. Only an
+          # optimised NON-incremental build lets rustc infer such a body cross-crate-inlinable, and
+          # only that build runs the MIR inliner. Incremental turns both off and leaves LLVM at O2.
+          # This overrides rust-cache's exported 0 for this step only (the step's log header shows
+          # which value won); rust-cache drops incremental/ before it saves. The table is diffed
+          # against 0c5394f's again (lines 43533/46262, 94.10%), and a moved count takes both env
+          # lines out. Step level for the same cache reason as integration-tests.
+          CARGO_INCREMENTAL: "1"
         run: |
           # collect + HTML + the floor gate in one shot; --fail-under-lines is the LAST check, so the
           # HTML/profdata are already written when it trips. Capture its exit (|| guards `set -e`) so the
