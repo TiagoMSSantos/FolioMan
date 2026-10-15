@@ -669,10 +669,20 @@ jobs:
           # of the measured suite (the log prints "Auto-set test timeout"). The fixed 90 it replaces was
           # sized to a ~25s fixture and hid every fixture-reaching mutant once the fixture outgrew it.
           # A TIMEOUT is not a MISSED, so too tight a cap hides a survivor rather than reddening the gate.
+          #
+          # (#590) The gate skips the six fund-lane goldens (`backtest_fund_report*` and
+          # `backtest_8y_fund_samples*`); integration-tests and coverage still run them on every push.
+          # They were ~93% of the fixture's thread time. On 392547b the baseline built in 127s and
+          # tested in 354.7s (lib 8.9s, fixture 345.6s), so this job was CI's tail (wall 652s, with
+          # integration-tests done at ~351s), and the auto-set timeout (5x the baseline, ~30 min)
+          # outlived the 17m wrapper. Figures above that price the full fixture predate this. If a push
+          # reds here with a MISSED, re-grade that one mutant on mutation-census.yml, whose `tests`
+          # default has no skip. If only a fund golden kills it, the fix is a lib test, not a revert.
           rc=0
           timeout --signal=INT --kill-after=60s 17m \
             cargo mutants "${SHARD[@]}" --in-diff push.diff -j 2 --copy-target=false \
-              --profile mutants -- --lib --test backtest_fixture || rc=$?
+              --profile mutants -- --lib --test backtest_fixture \
+              -- --skip backtest_fund_report --skip backtest_8y_fund_samples || rc=$?
           # THE FILES ARE THE VERDICT, not the exit code: under `timeout` the code conflates
           # "mutants survived" (2), "interrupted" (124) and any internal error, so it is reported
           # for diagnosis and nothing is decided from it.
