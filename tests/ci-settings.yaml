@@ -1402,11 +1402,12 @@ sizing:
                       #   (#321) ROUND 104 widened it to 25, again no worse. The book buys
                       #   min(this, ranked non-coin), so it is a CEILING: live supply, not this number, sets
                       #   the row count. Read the (#317) and (#321) receipts. 0 is read as 1.
-  head_weight: 4.0    # (#322) ROUND 105 — each of that book's first five names (`size::HEAD`, the backtest's
+  head_weight: 8.0    # (#322) ROUND 105 — each of that book's first five names (`size::HEAD`, the backtest's
                       #   rank-1 / 2-5 slice boundary) weighs this many shares against a later name's 1. (#558)
-                      #   raised it 2 -> 4: on 24 names the head holds 9.7% each (48.7% of gross) and the rest
-                      #   2.4%. Coins untouched. 1.0 = the flat (#313) book and the code default. Read the (#322)
-                      #   and (#558) receipts. Anything not above 0 is read as 1.
+                      #   raised it 2 -> 4; (#584) C raised it 4 -> 8 under the momentum interleave: on 24 names
+                      #   the head holds 13.6% each (67.8% of gross) and the rest 1.7%. Coins untouched. 1.0 = the
+                      #   flat (#313) book and the code default. Read the (#322), (#558) and (#584) HEAD WEIGHT
+                      #   receipts. Anything not above 0 is read as 1.
   head_skip_commodity: true  # (#495) USER DECISION 2026-10-06: a `c` commodity-price name (GICS Energy/Materials,
                       #   or a miner/oil/uranium-named fund) never takes one of those five double shares. It
                       #   moves to just after the head, still bought at a tail share. On the day MPC (refiner,
@@ -1795,6 +1796,24 @@ sizing:
   #  Série E share, win 100% and the stress worst (+0.6) are unmoved; the pit worst falls +2.3 -> +2.1 -> +1.7.
   #  VERDICT: REFUSED, head_weight stays 4. The read is monotone the other way: less head weight costs on every
   #  mean, so at the head the order pays, even if the h2h cannot see it. No rung above 4 was graded.
+  #  RUNG 6 / 8 (2026-10-15, user asked to grade past 4; probes at c35ca99, same bar, same grid; pit 38684753221 /
+  #  38684771410 / 38684790107, stress 38684762030 / 38684780878 / 38684800022 for control / 6 / 8). Windows
+  #  1119 / 2541 in every run. Today's control: pit +3.6 (+3.0), stress +6.2 (+6.6); the stress median is +0.1
+  #  off yesterday's control on the same windows, which is the drift floor of this read.
+  #    head_weight   pit            stress         vs control (pit | stress)
+  #    6             +3.8 (+3.1)    +6.3 (+6.8)    +0.2/+0.1 | +0.1/+0.2   misses (two deltas under 0.2)
+  #    8             +3.9 (+3.2)    +6.4 (+6.8)    +0.3/+0.2 | +0.2/+0.2   CLEARS
+  #  Série E share, win 100% and the stress worst (+0.6) unmoved; the pit worst +2.3 -> +2.2 at both rungs.
+  #  VERDICT: 8 CLEARS the pre-registered bar. SHIPPED 4 -> 8 (USER DECISION 2026-10-15).
+  #  HONEST EDGES. (a) The margin IS the bar: three of four deltas are exactly +0.2 on one-decimal rows, and the
+  #  control itself moved +0.1 overnight. (b) Concentration: the head goes from 48.7% to 67.8% of gross, 13.6%
+  #  per name; the equal-weight book sits outside `max_name_pct` by design, so nothing clamps it. Under the
+  #  interleave the head is S1 M1 S2 M2 S3: two of the five are momentum names (on 2026-10-15 SNDK and WDC,
+  #  both storage). (c) In-sample, like (#322) and (#558): the prior and the bar share the pool, and the curve
+  #  was chased one rung past where (#558) stopped. (d) No rung above 8 graded, on purpose. (e) BUY% and `size`
+  #  move live; `head_weight` is fingerprinted, so BUY NOW warns "settings changed since" until the next backtest
+  #  journals. REVERT: to 4 on (#322)'s rule (over >= 6 monthly journal lines carrying the tilted book, `track`'s
+  #  flat twin beats the executed book on their mean), or when `6-10 minus 1-5` reads above 0.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of

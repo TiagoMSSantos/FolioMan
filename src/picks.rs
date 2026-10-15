@@ -5483,7 +5483,7 @@ pub(crate) fn buy_book(
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
 /// the column is there.
-const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list across stocks and ETFs by score, its first five names weighted `sizing.head_weight` (4 on CI) against 1 for each later one (a `c` commodity-price name never takes one of the five when `sizing.head_skip_commodity` is on, as on CI), coins at their crypto budget. Blank = the book does not fund this row. NOT advice";
+const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list across stocks and ETFs by score, its first five names weighted `sizing.head_weight` (8 on CI) against 1 for each later one (a `c` commodity-price name never takes one of the five when `sizing.head_skip_commodity` is on, as on CI), coins at their crypto budget. Blank = the book does not fund this row. NOT advice";
 
 /// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
@@ -15697,8 +15697,8 @@ mod tests {
         );
         assert_eq!(
             raw["sizing"]["head_weight"].as_f64(),
-            Some(4.0),
-            "(#558) the book's top five weigh 4x; (#322)'s 2x raised, no worse in any of 6 SIZED cells"
+            Some(8.0),
+            "(#584) the book's top five weigh 8x; (#558)'s 4x raised, +0.2 or more on both 20y S+inter DCA lanes"
         );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
