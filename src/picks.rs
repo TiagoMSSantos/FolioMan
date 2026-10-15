@@ -3120,11 +3120,16 @@ pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
 }
 
 /// (#585) Whether a momentum-half candidate stays a candidate under `growth_momentum_miss_cap`: it misses fewer
-/// gates than the cap (the MISSES count, [`waived`]'s tags), or the cap is 0 (off). A name `waived` refuses
-/// passes, since the gates-off pond already decides who is in it.
+/// gates than the cap (the MISSES count, [`waived`]'s tags), or the cap is 0 (off). (#586) Under
+/// `growth_momentum_keep_age` it must also miss none of the age gates. A name `waived` refuses passes, since
+/// the gates-off pond already decides who is in it.
 pub(crate) fn misses_ok(q: &Quote, tuning: &BuyHeuristic) -> bool {
-    let cap = tuning.growth_momentum_miss_cap;
-    cap == 0 || waived(q, tuning, false).is_none_or(|w| w.1.len() < cap)
+    let (cap, age) = (tuning.growth_momentum_miss_cap, tuning.growth_momentum_keep_age);
+    if cap == 0 && !age {
+        return true;
+    }
+    let aged = |g: &(&str, String)| matches!(g.0, "young" | "history" | "5Y+");
+    waived(q, tuning, false).is_none_or(|w| (cap == 0 || w.1.len() < cap) && !(age && w.1.iter().any(aged)))
 }
 
 /// (#566) Tags no waiver lifts. `exchange` has a knob, but growth_gate_soft 0.6 waived it and seven
@@ -13008,6 +13013,16 @@ mod tests {
         assert!(!misses_ok(&quotes[2], &cap(n)) && misses_ok(&quotes[2], &cap(n + 1)) && misses_ok(&quotes[0], &cap(1)));
         let got: Vec<&str> = momentum_order(&quotes, &cap(n)).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, ["AAA", "BBB"]);
+        // (#586) growth_momentum_keep_age: DDD misses the 5Y floor, so the age gates skip it; CCC misses none
+        let mut ddd = quotes[1].clone();
+        (ddd.ticker, ddd.name, ddd.perf) = ("DDD".into(), "Delta Corp".into(), legs(&[("1M", 2.0), ("1Y", 90.0), ("5Y", -40.0)]));
+        assert!(waived(&ddd, &t, false).unwrap().1.iter().any(|g| g.0 == "5Y+"), "DDD must miss the 5Y floor");
+        quotes.push(ddd);
+        let age = BuyHeuristic { growth_momentum_keep_age: true, ..t.clone() };
+        assert!(misses_ok(&quotes[4], &cap(99)) && !misses_ok(&quotes[4], &age) && misses_ok(&quotes[2], &age));
+        assert!(!misses_ok(&quotes[4], &BuyHeuristic { growth_momentum_miss_cap: 99, ..age.clone() }));
+        let got: Vec<&str> = momentum_order(&quotes, &age).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, ["CCC", "AAA", "BBB"]);
     }
 
     /// (#584) `growth_momentum_interleave` with the equal-weight book funds shipped 1, momentum 1, shipped 2 ...;
