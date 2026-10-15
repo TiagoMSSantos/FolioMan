@@ -1662,6 +1662,18 @@ sizing:
   #  earns a 20y DCA lane, graded drop-only against S+inter in both lanes, before any page change is asked.
   #  PREDICTED: all three refused; (l) ~10%, (m) ~7%, (n) ~5%. (#322) ROUND 105's rank slices read ranks 2-5
   #  beating ranks 6-10 at 20y/12y/8y, and (m)/(n) trade some of a half's top names for its middle ones.
+  #  RESULT, probe on 66747ca (runs 38807703075 pit, 38807719164 stress): REFUSED, all three, 0 of 6 cells
+  #  each. Windows 1119/2779/6163 and 2541/5078/9015; the (j) and shipped rows match (#599)'s control
+  #  exactly. Row minus (j), mean/median pts/yr (harmed = mean or median down 0.2 or more):
+  #    row              pit 8y    12y       20y       | stress 8y 12y       20y        cells  harmed
+  #    (l) one rank-sum -1.9/-1.3 -1.3/-0.8 -2.6/-2.5 | -1.0/-0.8 -1.1/-1.2 -0.7/-1.1   0/6    6/6
+  #    (m) score x 12-7 -0.3/+0.1 -0.4/+0.4 -0.1/-0.3 | +0.0/+0.0 -0.2/-0.1 -0.1/-0.5   0/6    5/6
+  #    (n) mom x score  -1.3/-0.8 -0.7/-0.2 -2.4/-2.2 | -0.6/-0.2 -0.7/-0.1 -0.8/-0.4   0/6    6/6
+  #  READ: the one integrated key (l) lands on the plain shipped row (pit 20y +3.0 vs +2.9), far under (j):
+  #  it picks names middling on both signals. (n) costs the most: re-sorting momentum's top by the score
+  #  drops the strongest 12-7 names, and they carry the half's edge (pit 20y -2.4). (m) is flat to harmed.
+  #  The long-only integration result does not carry to this book. NOTHING SHIPS, no DCA lane is earned.
+  #  Don't re-ask a composite or a double sort of score and momentum on this record.
   #── (#561) SOFT-GATE SCREEN: WHICH HARD GATE COSTS THE SHIPPED BOOK THE MOST? ──
   #  WHY: (#560) put shipped under the random-pond p95 in 5 of 6 cells, and its gates-off twin had a better
   #  worst window in all 6. So: grade each binding gate ALONE before building any taper. STAGE 1 (this
