@@ -3630,11 +3630,21 @@ fn equal_top<'a>(ranked: impl Iterator<Item = &'a Sample>, n: usize) -> Vec<(&'a
     v.iter().map(|t| (*t, 1.0 / v.len() as f64)).collect()
 }
 
-/// (#584) The blend's DCA book: `head` (the shipped half), then `fill`'s names not already held, up to `n`,
-/// equal weight as [`equal_top`].
-fn blend_top<'a>(head: Vec<&'a Sample>, fill: impl Iterator<Item = &'a Sample>, n: usize) -> Vec<(&'a str, f64)> {
-    let mut seen: HashSet<&'a str> = head.iter().map(|&s| s.quote.ticker.as_str()).collect();
-    equal_top(head.into_iter().chain(fill.filter(move |&s| seen.insert(s.quote.ticker.as_str()))), n)
+/// (#630) The blend's book as the page builds it: [`picks::splice_sides`] over the whole `shipped` order and
+/// `fill`'s, `slots` of every 10 places momentum's (`growth_momentum_slots`), up to `n`; true = momentum's. A name
+/// both sides hold is placed once, by the side that reaches it first, and the other side moves on to its next.
+/// `shipped` needs only its first `n` names: no side reads more than `n`, so a longer list changes nothing.
+fn blend_sides<'a>(shipped: &[&'a Sample], fill: impl Iterator<Item = &'a Sample>, slots: usize, n: usize) -> Vec<(&'a str, bool)> {
+    let s: Vec<&str> = shipped.iter().map(|&s| s.quote.ticker.as_str()).collect();
+    let m: Vec<&str> = fill.map(|s| s.quote.ticker.as_str()).collect();
+    picks::splice_sides(&s, &m, false, slots, n)
+}
+
+/// (#584) The blend's DCA book: [`blend_sides`]' names at equal weight, as [`equal_top`]. (#630) Was `shipped`'s
+/// top `n - slots` names, then `fill`'s not already held.
+fn blend_top<'a>(shipped: Vec<&'a Sample>, fill: impl Iterator<Item = &'a Sample>, slots: usize, n: usize) -> Vec<(&'a str, f64)> {
+    let book = blend_sides(&shipped, fill, slots, n);
+    book.iter().map(|b| (b.0, 1.0 / book.len() as f64)).collect()
 }
 
 /// (#560) Each value's percentile in its column: the share of present values strictly below it, so
@@ -3671,14 +3681,18 @@ fn key_order<'a>(rows: &[(Option<f64>, f64, f64, &'a str)]) -> Vec<(f64, f64, f6
     keyed
 }
 
-/// (#584) Rival (j): the `first` key's top `half` names, then the `second` key's best names not already
-/// held, up to `n` in all, as one equal-weight book. Both sides order and dedupe as [`rival_excess`]; a
-/// thin first side leaves its slots to the second.
+/// (#584) Rival (j): the `first` key's names and the `second` key's, spliced as the page's BUY NOW book is
+/// ([`blend_sides`]), up to `n` in all, as one equal-weight book. Both sides order and dedupe as
+/// [`rival_excess`]; `n - half` of every 10 places are the `second` key's, a name both hold goes to the side
+/// that reaches it first, and a thin side leaves its slots to the other. (#630) Was `first`'s top `half`
+/// names, then the `second` key's not already held.
 fn blend_excess(first: &[(Option<f64>, f64, f64, &str)], second: &[(Option<f64>, f64, f64, &str)], half: usize, n: usize, years: i64) -> Option<f64> {
-    let mut seen = HashSet::new();
-    let mut book: Vec<(f64, f64)> = key_order(first).into_iter().filter(|r| seen.insert(r.3)).take(half).map(|r| (r.1, r.2)).collect();
-    let rest = n.saturating_sub(book.len());
-    book.extend(key_order(second).into_iter().filter(|r| seen.insert(r.3)).take(rest).map(|r| (r.1, r.2)));
+    let (a, b) = (key_order(first), key_order(second));
+    let (s, m): (Vec<&str>, Vec<&str>) = (a.iter().map(|r| r.3).collect(), b.iter().map(|r| r.3).collect());
+    let book: Vec<(f64, f64)> = picks::splice_sides(&s, &m, false, n.saturating_sub(half), n)
+        .into_iter()
+        .filter_map(|(t, by_m)| (if by_m { &b } else { &a }).iter().find(|r| r.3 == t).map(|r| (r.1, r.2)))
+        .collect();
     book_excess(&book, years)
 }
 
@@ -3935,10 +3949,12 @@ fn winner_bar(mut fwd: Vec<f64>, top_pct: f64) -> Option<f64> {
 }
 
 /// (#606) The winners the shipped BLEND holds. Per bucket, each ticker's latest cutoff. The score half is the
-/// top `VERDICT_TOP - growth_momentum_slots` after the (#75) value trim; the momentum half fills from
-/// [`momentum_ranked`] over the `open` pond, as the 20y DCA `blend` lane does. Winners are the top `top_pct`%
-/// stocks by realized %, as in [`winner_leaks`]. Returns the filled book slots, and per held winner its
-/// [score half, momentum half] slot counts. A config that loses winners from either half reads here.
+/// score order after the (#75) value trim; the momentum half fills from [`momentum_ranked`] over the `open`
+/// pond. (#630) [`blend_sides`] splices them as the page and the 20y DCA `blend` lane do, `growth_momentum_slots`
+/// of every 10 places the momentum half's, where it was the top `VERDICT_TOP - growth_momentum_slots` score names
+/// then momentum's. Winners are the top `top_pct`% stocks by realized %, as in [`winner_leaks`]. Returns the
+/// filled book slots, and per held winner its [score half, momentum half] slot counts, a slot counting for the
+/// side that placed it. A config that loses winners from either half reads here.
 // shortcut: skips the sector and corr caps the DCA lane runs; both are the identity at their shipped 0.
 fn blend_winners<'a>(
     groups: &BTreeMap<i32, Vec<&'a Sample>>,
@@ -3957,14 +3973,13 @@ fn blend_winners<'a>(
             pool.iter().zip(scorer(&quotes, tuning)).filter_map(|(s, sc)| Some((0, sc?, 0.0, 0.0, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)))).collect();
         let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(&0).unwrap_or_default();
         kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); // score desc, stable like the shipped book
-        let head: Vec<&'a Sample> = kept.iter().take(VERDICT_TOP.saturating_sub(tuning.growth_momentum_slots)).map(|r| by_tk[r.3.as_str()]).collect();
-        let n_head = head.len();
-        let book = blend_top(head, momentum_ranked(&pool, &scorer(&quotes, open), tuning).into_iter(), VERDICT_TOP);
+        let shipped: Vec<&'a Sample> = kept.iter().map(|r| by_tk[r.3.as_str()]).collect();
+        let book = blend_sides(&shipped, momentum_ranked(&pool, &scorer(&quotes, open), tuning).into_iter(), tuning.growth_momentum_slots, VERDICT_TOP);
         slots += book.len();
-        for (i, (t, _)) in book.into_iter().enumerate() {
+        for (t, by_m) in book {
             let s = by_tk[t];
             if picks::asset_class(&s.quote) == 2 && s.realized >= bar {
-                held.entry(t).or_default()[usize::from(i >= n_head)] += 1;
+                held.entry(t).or_default()[usize::from(by_m)] += 1;
             }
         }
     }
@@ -5022,8 +5037,9 @@ fn dca_program<B>(
 /// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
 /// (#560) `rivals` adds the momentum rival's lane on the same months (`mom12-1`, named for its (#560) key; since
 /// (#587) it follows `growth_momentum_key`): the DCA re-grade a rival that beats
-/// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's first 10 minus
-/// `growth_momentum_slots` names, then momentum's; then the SIZED book with momentum spliced in
+/// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's order spliced with
+/// momentum's as the page does ([`blend_top`]; (#630) it was the lane's first 10 minus `growth_momentum_slots`
+/// names, then momentum's); then the SIZED book with momentum spliced in
 /// ([`picks::sized_splice`]), after its head and interleaved, the two ways a shipped blend could order BUY NOW.
 #[allow(clippy::too_many_arguments)]
 fn report_roll(
@@ -5089,7 +5105,7 @@ fn report_roll(
     };
     let mom = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP)) };
     let blend = |d, end| -> Option<Vec<(&str, f64)>> {
-        Some(blend_top(capped(d, end, VERDICT_TOP.saturating_sub(tuning.growth_momentum_slots))?, ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP))
+        Some(blend_top(capped(d, end, VERDICT_TOP)?, ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), tuning.growth_momentum_slots, VERDICT_TOP))
     };
     // (#584) the SIZED book with momentum names spliced in, `after` its head or interleaved
     let sized_blend = |d: chrono::NaiveDate, end: chrono::NaiveDate, after: bool| -> Option<Vec<(&str, f64)>> {
@@ -8475,6 +8491,8 @@ mod tests {
     /// gives way to the latest; S1 (score half) and M1 (first momentum slot, exactly at the bar) are held winners;
     /// N1 is a winner neither half holds; (#607) the ETF E1 out-ranks M2 on momentum and still takes no slot, as
     /// live. Bucket 2 has no stock, so it books nothing. Bucket 3's score half is empty, so momentum fills every slot.
+    /// (#630) Bucket 4, 5 slots: momentum's #2 is the score half's #4, so S4 is held as momentum's, and S6 enters the
+    /// book in place of M6, momentum's #6, which the head-then-fill book held.
     #[test]
     fn blend_winners_split_held_winners_by_half() {
         assert_eq!(winner_bar(vec![10.0, 40.0, 30.0, 20.0], 50.0), Some(30.0));
@@ -8510,6 +8528,27 @@ mod tests {
         let (slots, held) = blend_winners(&groups, 50.0, swap_scorer, &shipped, &open);
         assert_eq!(slots, 7);
         assert_eq!(held, BTreeMap::from([("M1", [0, 1]), ("S1", [1, 0]), ("T1", [0, 1])]));
+        // (#630) 12 stocks, bar S4's 800 (a tie at the bar holds): the book is S1 M1 S2 S4 S3 M3 S5 M4 S6 M5, M6 (900) out
+        let d = ymd(2013, 1, 8);
+        let b4 = [
+            s(d, "S1", 7.0, 0.0, None, 1.0),
+            s(d, "S2", 6.0, 0.0, None, 2.0),
+            s(d, "S3", 5.0, 0.0, None, 3.0),
+            s(d, "S4", 4.0, 0.0, Some(40.0), 800.0),
+            s(d, "S5", 3.0, 0.0, None, 5.0),
+            s(d, "S6", 2.0, 0.0, None, 1000.0),
+            s(d, "S7", 1.0, 0.0, None, 7.0),
+            s(d, "M1", -1.0, 3.0, Some(50.0), 8.0),
+            s(d, "M3", -1.0, 3.0, Some(30.0), 9.0),
+            s(d, "M4", -1.0, 3.0, Some(20.0), 10.0),
+            s(d, "M5", -1.0, 3.0, Some(15.0), 11.0),
+            s(d, "M6", -1.0, 3.0, Some(10.0), 900.0),
+        ];
+        let five = BuyHeuristic { growth_momentum_slots: 5, ..shipped };
+        let open = BuyHeuristic { quality_weight: 1.0, ..five.clone() };
+        let (slots, held) = blend_winners(&BTreeMap::from([(bucket(d), b4.iter().collect::<Vec<_>>())]), 25.0, swap_scorer, &five, &open);
+        assert_eq!(slots, 10);
+        assert_eq!(held, BTreeMap::from([("S4", [0, 1]), ("S6", [1, 0])]));
     }
 
     /// (#560) The rival books' arithmetic: the tie band, the 12-1 formula, rank ties, the book's dedupe and
@@ -8549,14 +8588,36 @@ mod tests {
         assert!((rival_excess(&rows, 2, 1).unwrap() - 100.0).abs() < 1e-9);
         assert_eq!(rival_excess(&[(None, 1.0, 1.0, "Z")], 2, 1), None);
 
-        // (#584) blend: A, B from `first`; A again is held, D beats E on ticker, C never gets a slot
+        // (#584) blend: `first` keys A, B, C (Z has no key); `second` keys A, then D before E on ticker, then C
         let first = [(Some(3.0), 100.0, 0.0, "A"), (Some(2.0), 0.0, 0.0, "B"), (Some(1.0), 900.0, 0.0, "C"), (None, 5000.0, 0.0, "Z")];
         let second = [(Some(9.0), 100.0, 0.0, "A"), (Some(1.0), -100.0, 0.0, "E"), (Some(1.0), 300.0, 0.0, "D"), (Some(0.5), 900.0, 0.0, "C")];
-        // A + B + D: (2 + 1 + 4)/3 -> +133.3
-        assert!((blend_excess(&first, &second, 2, 3, 1).unwrap() - 400.0 / 3.0).abs() < 1e-9);
-        // a thin first side: A alone, then D and E fill -> (2 + 4 + 0)/3 -> +100
-        assert!((blend_excess(&first[..1], &second, 2, 3, 1).unwrap() - 100.0).abs() < 1e-9);
-        assert_eq!(blend_excess(&first[3..], &[], 2, 3, 1), None, "no keyed name on either side, no book");
+        // (#630) 5 of 10 places are `second`'s, as the page splices: A, D (`second`'s A is held), B, E, C -> (2 + 4 + 1 + 0 + 10)/5 -> +240
+        assert!((blend_excess(&first, &second, 5, 10, 1).unwrap() - 240.0).abs() < 1e-9);
+        // a thin first side: A alone, its other places go to `second`: D, E, C -> (2 + 4 + 0 + 10)/4 -> +300
+        assert!((blend_excess(&first[..1], &second, 5, 10, 1).unwrap() - 300.0).abs() < 1e-9);
+        // `rise`'s #2 is `ship`'s #4, S4: it books on `rise`'s own row (+90) and `ship` runs on, so S6 enters and M6 does not.
+        // The book S1 M1 S2 S4 S3 M3 S5 M4 S6 M5 -> 2.12x against an index at 1.1x -> +102 (head-then-fill had +47)
+        let ship = [
+            (Some(7.0), 0.0, 100.0, "S1"),
+            (Some(6.0), 0.0, 0.0, "S2"),
+            (Some(5.0), 0.0, 0.0, "S3"),
+            (Some(4.0), 40.0, 0.0, "S4"),
+            (Some(3.0), 0.0, 0.0, "S5"),
+            (Some(2.0), 1000.0, 0.0, "S6"),
+            (Some(1.0), 700.0, 0.0, "S7"),
+        ];
+        let rise = [
+            (Some(9.0), 0.0, 0.0, "M1"),
+            (Some(8.0), 90.0, 0.0, "S4"),
+            (Some(7.0), 0.0, 0.0, "M3"),
+            (Some(6.0), 0.0, 0.0, "M4"),
+            (Some(5.0), 30.0, 0.0, "M5"),
+            (Some(4.0), 500.0, 0.0, "M6"),
+        ];
+        assert!((blend_excess(&ship, &rise, 5, 10, 1).unwrap() - 102.0).abs() < 1e-9);
+        // a thin `rise`, M1 alone: its other places go to `ship`, which runs on to S7 -> 3.175x against 1.125x -> +205 (head-then-fill had -10)
+        assert!((blend_excess(&ship, &rise[..1], 5, 10, 1).unwrap() - 205.0).abs() < 1e-9);
+        assert_eq!(blend_excess(&first[3..], &[], 5, 10, 1), None, "no keyed name on either side, no book");
         // (#600) `first`'s top 2 x 1 keyed names are A and B (Z has no key), so C loses its `then` key; skipping
         // A, the top 2 x 2 run out at B and C. (l)'s key: 3 is above 1 of 2, 2 above 1 of 3.
         let none = HashSet::new();
@@ -8634,10 +8695,18 @@ mod tests {
         assert_eq!(equal_top(order.iter().copied(), 2), vec![("B", 0.5), ("A", 0.5)]);
         assert_eq!(equal_top(order.iter().copied(), 9).len(), 3);
         assert!(equal_top(std::iter::empty(), 10).is_empty());
-        // (#584) the blend: B and A first, A again is held, C fills; an empty head leaves every slot to `fill`
+        // (#584) the blend: B first, then A as `fill`'s; shipped's A is held, so C, `fill`'s next, takes the third place;
+        // an empty shipped side leaves every place to `fill`
         let third = 1.0 / 3.0;
-        assert_eq!(blend_top(vec![&pool[1], &pool[0]], [&pool[0], &pool[2], &pool[3]].into_iter(), 3), vec![("B", third), ("A", third), ("C", third)]);
-        assert_eq!(blend_top(Vec::new(), [&pool[2]].into_iter(), 3), vec![("C", 1.0)]);
+        assert_eq!(blend_top(vec![&pool[1], &pool[0]], [&pool[0], &pool[2], &pool[3]].into_iter(), 5, 3), vec![("B", third), ("A", third), ("C", third)]);
+        assert_eq!(blend_top(Vec::new(), [&pool[2]].into_iter(), 5, 3), vec![("C", 1.0)]);
+        // (#630) the collision: `fill`'s #2 is shipped's #4, so S4 books as `fill`'s, shipped's S6 enters the book and `fill`'s M6 does not
+        let p: Vec<Sample> = ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "M1", "M3", "M4", "M5", "M6"].iter().map(|&t| s(t, None)).collect();
+        let ship: Vec<&Sample> = p[..7].iter().collect();
+        let rise = [7, 3, 8, 9, 10, 11].map(|i| &p[i]);
+        let want = [("S1", false), ("M1", true), ("S2", false), ("S4", true), ("S3", false), ("M3", true), ("S5", false), ("M4", true), ("S6", false), ("M5", true)];
+        assert_eq!(blend_sides(&ship, rise.into_iter(), 5, 10), want);
+        assert_eq!(blend_top(ship, rise.into_iter(), 5, 10), want.map(|w| (w.0, 0.1)));
         // (#584) SIZED splice: after the head, S6 (held by momentum too) moves up to a momentum slot; interleaved,
         // a held name is skipped and a dry side hands its slot over
         let sh = ["S1", "S2", "S3", "S4", "S5", "S6"];

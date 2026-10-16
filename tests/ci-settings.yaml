@@ -13848,7 +13848,7 @@ buy_heuristic:
                                  #   rivals, 8/12/20y): of every 10 slots in the interleaved book, how
                                  #   many the momentum order fills, spread evenly
                                  #   (`picks::momentum_slot`; 7 = S M M S M M S M M M). Rival (j) and
-                                 #   the DCA `blend` lane take 10 minus this from the shipped top-10
+                                 #   the DCA `blend` lane took 10 minus this from the shipped top-10
                                  #   ((j)'s label keeps its (#584) "5 shipped + 5 momentum" name), and
                                  #   the `after` splice runs this many momentum names after the head
                                  #   (it replaced BLEND_HALF). Why tried: at 20y the shipped top-10
@@ -13872,7 +13872,18 @@ buy_heuristic:
                                  #   name, and stress 10 (only momentum rows moved) misses at 12y and
                                  #   20y, so no pit reading could lift it past 4/6. 5 = the (#584)
                                  #   alternation, bit for bit, kept.
-  growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
+                                 #   (#630) INSTRUMENT: rival (j)/(k)/(m)/(n), the 20y DCA `blend`
+                                 #   lane and WINNERS HELD now hold the page's book
+                                 #   (`picks::splice_sides`, `after` off, this many of every 10
+                                 #   places momentum's): a name both sides hold books once, placed
+                                 #   by the side that reaches it first, and the other side runs on
+                                 #   to its next name. Until (#630) each took the shipped top 10
+                                 #   minus this, then momentum's names not already held, so only
+                                 #   momentum ran on. Every verdict graded before (#630) stands on
+                                 #   the old book; the (#606) WINNERS HELD floors and the (j) bars
+                                 #   were pre-registered on it. S+inter, S+after and SIZED are
+                                 #   unchanged (`picks::sized_splice`).
+  growth_sector_cap: 0          # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the
                                  # backtest CANNOT grade it: see below.
