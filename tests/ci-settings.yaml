@@ -1798,6 +1798,34 @@ sizing:
   #  NEXT: the blind half needs a different ranking signal, not a looser gate. The only signal that beat the
   #  book on this pond is (#560) momentum 12-1 (5/6, failed on the DCA tie), so it is tested as a blend with
   #  the shipped book next, under its own pre-registered bar.
+  #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
+  #  PRE-REGISTERED 2026-10-16, before any reading.
+  #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.
+  #  Every bar so far grades mean and median excess. A config can pass them all and still swap the window's
+  #  best names for middling ones, and nothing graded the names.
+  #  BUILT: a `WINNERS HELD (#606):` line under `winners`. The book is the shipped blend, as the 20y DCA
+  #  `blend` lane builds it: the top 10 - growth_momentum_slots names by score after the (#75) value trim,
+  #  then the gates-off pond's best 12-7 names not already held, up to 10. Sector and corr caps are skipped
+  #  (both off at their shipped 0). Each ticker counts once per bucket, at its latest cutoff. A winner is a
+  #  stock in its window's top 5% by real forward return, ties at the bar included (WINNER_TOP_PCT, as
+  #  (#583)). ETFs fill slots and never count, so a random stock book reads ~5%. The line prints the share,
+  #  the slots, the score-half and momentum-half counts, and each held winner with its window count.
+  #  Caveat: the backtest momentum half can hold ETFs; the live `momentum_order` keeps stocks only.
+  #  CI: the backtest gate runs every leg (20y, 12y, 8y, 8y fund) with `winners`. Under
+  #  FOLIOMAN_BACKTEST_GATE a missing line panics, and each leg asserts share >= WINNERS_HELD_FLOOR
+  #  (tests/network.rs). The floors are 0 until the first CI reading.
+  #  FLOOR RULE (fixed now): the first CI reading on the (#606) push minus 2 pts, rounded down to a whole
+  #  point. The 8y fund leg shares the 8y floor, set off the lower of the two 8y readings. Raise a floor when
+  #  a round lifts its reading; never lower one to get green. A ship that lowers a reading justifies its new
+  #  floor here.
+  #  PROBE VETO (every arm from now on): pass `winners` in probe.yml args (`universe fund pit rivals winners`
+  #  and the same with `stress`, years "8 12 20"). An arm whose share falls under its same-batch control by
+  #  >= 2.0 pts in any cell (pit + stress x 20/12/8y) is vetoed, beside the 20y DCA veto. Its receipt lists
+  #  the winners the control holds and the arm drops.
+  #  WHY 2.0: the cells hold ~220-830 slots (pit 22/38/46 and stress 59/75/83 buckets at 20/12/8y, the (#600)
+  #  runs). An arm that swaps a fifth of the slots at random moves the share ~1.3 pts (1 sd) at pit 20y and
+  #  under 1 pt elsewhere, and probes are deterministic within a batch. Dropping one winner held in 5 pit
+  #  20y windows costs 2.3 pts and trips the veto on purpose: that is the loss the owner asked to catch.
   #── (#584) BLEND: HALF THE BOOK FROM THE SHIPPED SCORE, HALF FROM MOMENTUM 12-1 ──
   #  WHY: (#583) found 42-58% of each window's winners score under the cut with every gate off, so no gate
   #  loosening reaches them. The only signal that beat the book on this pond is (#560) momentum 12-1 (5/6,

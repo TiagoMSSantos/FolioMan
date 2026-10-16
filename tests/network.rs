@@ -613,7 +613,7 @@ fn backtest_edge_holds() {
     fn grade_horizon(years: i64, fund: bool, forced: bool) -> bool {
         let leg = if fund { format!("{years}y fund") } else { format!("{years}y") };
         let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
-            .args(["backtest", &years.to_string(), "universe"])
+            .args(["backtest", &years.to_string(), "universe", "winners"]) // (#606) `winners` prints the held-winners line
             .args(fund.then_some("fund"))
             .env("FOLIOMAN_UNIVERSE_SNAPSHOT", UNIVERSE)
             // pin the child to the committed fixture. Without it a local run scores with the gitignored
@@ -767,6 +767,28 @@ fn backtest_edge_holds() {
                 markers::SERIE_E
             ),
             None => eprintln!("backtest-gate {leg} — no Série E row parsed"),
+        }
+        // (#606) the shipped blend's held winners: the share of its book slots that hold one of the window's top-5%
+        // stocks by real forward return (a random book reads ~5%). A RATCHET like Série E's: a config or code change
+        // that drops the window's best names from either half reds here, even when every average above passes.
+        // Floors stay 0 until the first CI reading on the (#606) push; the (#606) receipt pre-registers the rule.
+        const WINNERS_HELD_FLOOR: [(i64, f64); 3] = [(20, 0.0), (12, 0.0), (8, 0.0)];
+        let floor = WINNERS_HELD_FLOOR.iter().find(|f| f.0 == years).map_or(0.0, |f| f.1);
+        match num_after(growth, markers::WINNERS_HELD) {
+            Some(share) => {
+                assert!(
+                    share >= floor,
+                    "{leg}: only {share:.1}% of the shipped blend's book slots hold a window winner, under the ratchet \
+                     floor {floor:.1}% — the change drops the best stocks. Fix the change, or measure and justify a \
+                     new floor in the (#606) receipt"
+                );
+                eprintln!("backtest-gate {leg} winners held {share:.1}% (floor {floor:.1}%)");
+            }
+            None if forced => panic!(
+                "{leg}: GROWTH completed but printed no `{}` line — the held-winners ratchet was skipped",
+                markers::WINNERS_HELD
+            ),
+            None => eprintln!("backtest-gate {leg} — no held-winners line parsed"),
         }
         // (#316) the book BUY NOW buys, graded the way it is bought: monthly, held 20y, after tax. Two ratchets on the
         // SIZED DCA rows, which print at 20y only: never-sell over the same € into the index (pts/yr), and the share of
