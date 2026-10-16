@@ -2182,6 +2182,9 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
 const TD_CACHE_PATH: &str = ".td_cache.json";
 /// (#465) TD is published once a year, so a month-old answer is as good as today's.
 const TD_CACHE_DAYS: i64 = 30;
+/// (#626) The wait between `enrich_etf_cells`' page reads: one a second. A lib test waits 0: its stub server
+/// needs no pacing, and its nine reads were most of the 9.1 s lib run, paid again by every graded mutant.
+const PAGE_PACE_MS: u64 = if cfg!(test) { 0 } else { 1000 };
 /// (#479) `{ISIN: ["YYYY-MM-DD", [USE, REPL, TOP10%, INDEX], [TER %, AUM]]}` from justETF, for the printed funds with a gap.
 /// Refetched on the TD cache's month: a fund's share class and replication don't move in a month.
 /// (#490) A 3-cell file from before INDEX fails to parse once, so every gap row refetches.
@@ -2380,7 +2383,7 @@ pub async fn enrich_etf_cells(
         if !cache.get(isin).is_some_and(|(d, _)| fresh(d)) && !offline() {
             // a small hobby site: one page a second, and only the 2xx answer is believed
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
-            pace = 1000;
+            pace = PAGE_PACE_MS;
             match client.get(urls.trackingdifferences.replace("{isin}", isin)).send().await {
                 Ok(r) if r.status().is_success() => {
                     if let Ok(html) = r.text().await {
@@ -2395,7 +2398,7 @@ pub async fn enrich_etf_cells(
         let gap = q.use_of_profits.is_none() || q.replication.is_none() || q.top10.is_none() || q.benchmark.is_none();
         if gap && !je.get(isin).is_some_and(|(d, ..)| fresh(d)) && !offline() {
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
-            pace = 1000;
+            pace = PAGE_PACE_MS;
             if let Some(row) = justetf_row(client, urls, isin, today).await {
                 je.insert(isin.clone(), row);
             }
@@ -2414,7 +2417,7 @@ pub async fn enrich_etf_cells(
         let Some(isin) = isins.get(&q.ticker) else { continue };
         if !je.get(isin).is_some_and(|(d, ..)| fresh(d)) && !offline() {
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
-            pace = 1000;
+            pace = PAGE_PACE_MS;
             if let Some(row) = justetf_row(client, urls, isin, today).await {
                 je.insert(isin.clone(), row);
             }
