@@ -1866,6 +1866,22 @@ sizing:
   #  their order and an ETF's slot goes to the next stock (or stays empty when the pond runs out), so per
   #  bucket the held winners can only rise and the slots only fall. The share holds or rises in every cell,
   #  and the (#606) floors, set on pre-fix readings, stand.
+  #  RESULT (2026-10-16): PASS, so the blend stays shipped. CI 38859182523, CodeQL and Pages on ec70dc7 are
+  #  green, and the gate's winners shares read 13.9/11.7/12.7/12.4 again, so the (#606) floors stand. Probes
+  #  on ec70dc7: pit 38860082541, stress 38860094684. Windows match the controls, and every row the fix must
+  #  not touch reads the same to the decimal.
+  #    BOOK, (j) minus the real top-10, mean/median pts/yr; all 6 cells win:
+  #      pit     20y +2.7/+2.5   12y +0.9/+0.4   8y +1.5/+1.4
+  #      stress  20y +1.1/+0.8   12y +1.4/+1.3   8y +1.8/+1.8
+  #    DCA, 20y S+inter minus SIZED; both lanes pass:
+  #      pit     +5.2 (med +4.4) - +3.7 (+3.3) = +1.5/+1.1, Série E 100% of 22
+  #      stress  +7.0 (med +7.8) - +5.5 (+5.7) = +1.5/+2.1, Série E 98% of 59
+  #  The prediction held. The fix moved (j) by +0.2/+0.3 at most (stress 8y, +6.2(+5.8) -> +6.4(+6.1)), and
+  #  nothing moved at 20y: (j), the four DCA momentum lanes and WINNERS HELD read the same to the decimal.
+  #  WINNERS HELD is unchanged in every cell (same share, slots and names), so the stocks that took any ETF's
+  #  slots added no winner. (k)-(n) moved 0.6 at most ((l) stress 8y median +5.0 -> +5.6). On the fixed
+  #  ruler their bars read as before: (k) - (j) wins 3/6 cells (no 20y cell), (l), (m) and (n) 0/6 each.
+  #  The live `momentum_order` filtered stocks before it called `momentum_keys`, so the page is unchanged.
   #── (#584) BLEND: HALF THE BOOK FROM THE SHIPPED SCORE, HALF FROM MOMENTUM 12-1 ──
   #  WHY: (#583) found 42-58% of each window's winners score under the cut with every gate off, so no gate
   #  loosening reaches them. The only signal that beat the book on this pond is (#560) momentum 12-1 (5/6,
