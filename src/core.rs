@@ -5291,9 +5291,13 @@ pub fn income_snapshot(annual: &[AnnualReport]) -> Option<(Option<f64>, Option<f
 }
 
 /// Percent change between two values, None unless both are present and the base is non-zero.
+/// (#602) A negative base (a loss year) is measured over its size: EPS -2 -> -1 is +50%, -1 -> -3 is
+/// -200% and -1 -> +1 is +200%. `c / p - 1` flipped all three (-50%, +200%, -200%), in the EPS-YoY
+/// column and in the fund sweep's `eps_yoy` candidate.
 pub fn yoy_pct(now: Option<f64>, prior: Option<f64>) -> Option<f64> {
     match (now, prior) {
-        (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
+        (Some(c), Some(p)) if p > 0.0 => Some((c / p - 1.0) * 100.0),
+        (Some(c), Some(p)) if p < 0.0 => Some((c - p) / -p * 100.0),
         _ => None,
     }
 }
@@ -5318,10 +5322,7 @@ pub fn eps_yoy_split_safe(
         (Some(c), Some(p)) if p > 0.0 => ((c / p - 1.0) * 100.0).abs() > 40.0,
         _ => false,
     };
-    match (eps, prior_eps) {
-        (Some(c), Some(p)) if p != 0.0 && !split => Some((c / p - 1.0) * 100.0),
-        _ => None,
-    }
+    yoy_pct(eps, prior_eps).filter(|_| !split)
 }
 
 /// Compact number for money-scale displays: 2.34T / 391.0B / 25.6M / 1.5K, plain below. Tier on |v|,
@@ -6894,6 +6895,7 @@ mod tests {
         assert_eq!(eps_yoy_split_safe(Some(2.0), Some(1.0), Some(100.0), Some(0.0)), Some(100.0));
         assert_eq!(eps_yoy_split_safe(Some(2.0), Some(1.0), Some(60.0), Some(100.0)), Some(100.0));
         assert_eq!(eps_yoy_split_safe(Some(2.0), Some(1.0), Some(200.0), Some(100.0)), None, "a 2:1 split is");
+        assert_eq!(eps_yoy_split_safe(Some(-1.0), Some(-2.0), None, None), Some(50.0), "(#602) a loss halving is growth");
     }
 
     /// `eps_growth` spans `yrs` years, so its split guard walks CONSECUTIVE rows instead of testing the
@@ -7748,6 +7750,9 @@ mod tests {
         assert_eq!(peg_yield(Some(0.0), Some(10.0), 100.0), None, "zero earnings is not cheap");
         assert_eq!(peg_yield_from_pe(0.0, Some(10.0)), None);
         assert_eq!(yoy_pct(Some(5.0), Some(0.0)), None);
+        assert_eq!(yoy_pct(Some(-1.0), Some(-2.0)), Some(50.0), "(#602) a loss halving is growth, not a collapse");
+        assert_eq!(yoy_pct(Some(-3.0), Some(-1.0)), Some(-200.0), "and a loss tripling is a fall");
+        assert_eq!(yoy_pct(Some(1.0), Some(-1.0)), Some(200.0), "a turn to profit");
         let f = FundFactors { gross_margin: Some(3.0), op_margin: Some(4.0), ..Default::default() };
         assert_eq!(select_fund_factor(&f, "gross_margin"), Some(3.0));
         assert_eq!(select_fund_factor(&f, "op_margin"), Some(4.0));
