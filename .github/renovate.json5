@@ -13,10 +13,11 @@
 // - cargo-mutants@X.Y.Z in ci.yml and mutation-census.yml (x2): one depName, so one PR. (#354) Merge
 //   it only after a census dispatch re-proves the gate on the new version.
 //
-// (#589) .github/workflows/automerge.yml merges the lock-maintenance and wasm-bindgen PRs (and
-// Dependabot's two groups) once every check on the PR is green and its head is 3 days old. The
-// cargo-mutants PR is never on its list. Do NOT set `automerge` here: two mergers would race. The
-// self-hosted renovate.yml, a second copy of this bot, is gone.
+// (#589) .github/workflows/automerge.yml merges the lock-maintenance and wasm-bindgen PRs once
+// every check on the PR is green and its head is 3 days old. (#610) Dependabot's two groups merge
+// once green: their cooldown is the delay. The cargo-mutants PR is never on its list. Do NOT set
+// `automerge` here: two mergers would race. The self-hosted renovate.yml, a second copy of this
+// bot, is gone.
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:recommended"],

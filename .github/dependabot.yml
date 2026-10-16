@@ -7,6 +7,8 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 3
     groups:
       actions:
         patterns: ["*"]
@@ -19,11 +21,14 @@ updates:
   # (#402) Renovate, the hosted Mend app, covers what this file cannot see: web/engine's Cargo.lock,
   # the wasm-bindgen crate+CLI pair and cargo-mutants. It stays off every ecosystem here, so the two
   # never open the same bump. (#589) automerge.yml merges both groups here once every check on the
-  # PR is green and its head is 3 days old.
+  # PR is green. (#610) `cooldown` is their supply-chain delay: Dependabot proposes only versions
+  # out 3 days. That is its default, pinned so a change of default cannot drop it.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 3
     versioning-strategy: lockfile-only
     groups:
       cargo:

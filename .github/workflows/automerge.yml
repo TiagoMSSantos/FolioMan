@@ -3,11 +3,14 @@
 # web/engine lock maintenance and wasm-bindgen pair (.github/renovate.json5). The cargo-mutants PR
 # is never on the list: (#354) a census dispatch must re-prove the gate on a new version first.
 #
-# A night cron, not workflow_run (it fires once, so a held merge would never retry) and not
-# Renovate's own automerge (it cannot see whether main is busy, and it skips Dependabot). It merges
-# only while no CI, CodeQL, probe or census run is in flight on main, so a bot push never cancels an
-# owner run (cancel-in-progress per ref) or lands inside a probe batch; a held merge retries on the
-# next tick. One merge per tick, so the next tick sees that merge's main CI.
+# (#610) It runs when a CI, CodeQL, probe or census run completes, so a PR merges about a minute
+# after its last check goes green, and a merge held by a busy main retries when the run holding it
+# ends. An hourly cron backs that up: a young Renovate head has no event to wait on, and GitHub can
+# drop scheduled runs under load. It reads nothing from the event: each run lists the PRs itself.
+# Not Renovate's own automerge (it cannot see whether main is busy, and it skips Dependabot). It
+# merges only while no CI, CodeQL, probe or census run is in flight on main, so a bot push never
+# cancels an owner run (cancel-in-progress per ref) or lands inside a probe batch. One merge per
+# run, so the next run sees that merge's main CI.
 #
 # It holds while main's newest finished CI run is red. No finished run at all (the (#553) 2-day
 # sweep deletes them) is not a hold. Pages is not read: each Pages run deletes the ones before it,
@@ -20,8 +23,11 @@
 name: automerge
 
 on:
+  workflow_run:
+    workflows: [CI, CodeQL, Probe, Mutation census]
+    types: [completed]
   schedule:
-    - cron: "41 0,2,4 * * *"   # UTC nights, clear of CodeQL's Monday 04:17
+    - cron: "41 * * * *"   # hourly, off the top of the hour, when GitHub's load peaks
   workflow_dispatch:
     inputs:
       dry_run:
@@ -50,7 +56,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DRY_RUN: ${{ inputs.dry_run }}
     steps:
-      - name: Merge one green, aged bot PR
+      - name: Merge one green bot PR
         env:
           MERGE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
         run: |
@@ -67,17 +73,29 @@ jobs:
           need='["build","lint","wasm","audit","actionlint","unit-tests","unit-tests-configless","coverage","integration-tests","backtest-gate","mutants","Analyze (rust)"]'
           gh pr list --base main --state open --limit 50 \
             --json number,author,headRefName,headRefOid,isDraft,isCrossRepository,mergeable \
-            --jq '.[] | select((.isDraft | not) and (.isCrossRepository | not) and .mergeable == "MERGEABLE"
+            --jq '.[] | select((.isDraft | not) and (.isCrossRepository | not)
                 and (.author.login == "app/renovate" or .author.login == "app/dependabot")
                 and (.headRefName | test("^(dependabot/github_actions/actions-[0-9a-f]+|dependabot/cargo/cargo-[0-9a-f]+|renovate/lock-file-maintenance|renovate/rust-wasm-bindgen-monorepo)$")))
-              | "\(.number) \(.headRefOid)"' |
-          while read -r pr sha; do
-            # Supply-chain delay: the head commit is 3 days old, so a bad release has time to be
-            # yanked. A refreshed head restarts the clock. `made` is read apart from the arithmetic,
-            # where a failed call would count as age 0 and pass.
-            made=$(api "commits/${sha}" | jq -e '.commit.committer.date | fromdate')
-            age=$(( $(date +%s) - made ))
-            if [ "${age}" -lt 259200 ]; then echo "#${pr}: head is $(( age / 3600 ))h old"; continue; fi
+              | "\(.number) \(.headRefOid) \(.headRefName) \(.mergeable)"' |
+          while read -r pr sha ref mergeable; do
+            # (#610) GitHub works out mergeability lazily, and a push to main resets it. The list call
+            # starts the check, so an UNKNOWN PR is read once more; it used to drop out silently, and
+            # the second PR of a pair waited for the next run.
+            if [ "${mergeable}" = UNKNOWN ]; then
+              sleep 20
+              mergeable=$(gh pr view "${pr}" --json mergeable --jq .mergeable)
+            fi
+            if [ "${mergeable}" != MERGEABLE ]; then echo "#${pr}: mergeable is ${mergeable}"; continue; fi
+            # Supply-chain delay: a Renovate head is 3 days old, so a bad release has time to be
+            # yanked. A refreshed head restarts the clock. (#610) Dependabot PRs skip this: their
+            # cooldown (.github/dependabot.yml) proposes only versions out 3 days. Renovate sets no
+            # release age, and one would not cover lock maintenance's `cargo update`. `made` is read
+            # apart from the arithmetic, where a failed call would count as age 0 and pass.
+            if [[ ${ref} == renovate/* ]]; then
+              made=$(api "commits/${sha}" | jq -e '.commit.committer.date | fromdate')
+              age=$(( $(date +%s) - made ))
+              if [ "${age}" -lt 259200 ]; then echo "#${pr}: head is $(( age / 3600 ))h old"; continue; fi
+            fi
             # Every check run finished green, and each CI job plus CodeQL's rust leg ran (not skipped).
             if ! api "commits/${sha}/check-runs?per_page=100" | jq -e --argjson need "${need}" '
                 .check_runs as $r
