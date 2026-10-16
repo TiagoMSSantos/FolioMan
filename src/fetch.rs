@@ -3199,6 +3199,32 @@ fn soc_videos(xml: &str) -> Vec<(String, String, String, String)> {
         .collect()
 }
 
+/// (#604) Where [`KeptFeeds`] lives between runs.
+const YOUTUBE_FEEDS_PATH: &str = ".youtube_feeds.json";
+/// (#604) A kept answer older than this stops counting, so a dead channel's names fade out.
+const YOUTUBE_KEEP_DAYS: i64 = 14;
+/// (#604) Each YouTube channel's last answer with videos: feed URL -> (day fetched, its [`soc_videos`]).
+type KeptFeeds = BTreeMap<String, (String, Vec<(String, String, String, String)>)>;
+
+/// (#604) A channel's videos this run: its fresh answer, banked in `kept` under `today`, or on a miss the
+/// banked copy while it is at most [`YOUTUBE_KEEP_DAYS`] old. YouTube's RSS gave the 2026-10-16 01:21 Pages
+/// run 30 videos from 13 channels (a channel that answers gives 15; the rest got 404 or 500, as did 10 of
+/// 12 tries by hand that hour), and [`get_text`] hands back the error page, which parses to no videos. So
+/// each channel that missed dropped its names' `s` flag and (#473) `growth_social_boost`: META (FB2A.DE,
+/// 19 videos) left the Stocks table, and MTE.DE, WDC, COHR, DWD.DE and 3V64.DE scored 5% lower.
+fn kept_videos(
+    kept: &mut KeptFeeds,
+    feed: &str,
+    fresh: Vec<(String, String, String, String)>,
+    today: chrono::NaiveDate,
+) -> Vec<(String, String, String, String)> {
+    if !fresh.is_empty() {
+        kept.insert(feed.to_string(), (today.to_string(), fresh));
+    }
+    let oldest = (today - chrono::Duration::days(YOUTUBE_KEEP_DAYS)).to_string();
+    kept.get(feed).filter(|(day, _)| *day >= oldest).map(|(_, v)| v.clone()).unwrap_or_default()
+}
+
 /// (#444) Dataroma's buys page -> (quarter as `2026-Q2`, [(Yahoo symbol, name, buyers)]) for every row
 /// with [`SOC_MIN_BUYERS`]+ buyers. Its share-class dot is Yahoo's dash (`BRK.B` -> `BRK-B`).
 fn soc_superinvestors(html: &str) -> (String, Vec<(String, String, u32)>) {
@@ -4134,9 +4160,17 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let mut videos = Vec::new();
+    let today = chrono::Utc::now().date_naive();
+    let yt_path = crate::config::data_path(YOUTUBE_FEEDS_PATH);
+    let mut kept: KeptFeeds = std::fs::read_to_string(&yt_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let (mut videos, mut answered) = (Vec::new(), 0);
     for feed in std::iter::once(&urls.youtube_feed).chain(&urls.youtube_more_feeds) {
-        videos.extend(get_text(client, feed).await.map(|x| soc_videos(&x)).unwrap_or_default());
+        let fresh = get_text(client, feed).await.map(|x| soc_videos(&x)).unwrap_or_default();
+        answered += usize::from(!fresh.is_empty());
+        videos.extend(kept_videos(&mut kept, feed, fresh, today));
+    }
+    if answered > 0 {
+        let _ = std::fs::write(&yt_path, serde_json::to_string(&kept).unwrap_or_default());
     }
     let mut supers = get_text_as(client, &urls.dataroma_buys, &urls.sec_user_agent).await.map(|x| soc_superinvestors(&x)).unwrap_or_default();
     let mut label = "superinvestors";
@@ -4144,7 +4178,6 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
         supers = fetch_sec_superinvestors(client, urls).await;
         label = "superinvestors (SEC 13F)";
     }
-    let today = chrono::Utc::now().date_naive();
     let mut tips = fetch_sup_stakes(client, urls, today).await;
     let stakes = tips.len();
     let since = (today - chrono::Duration::days(SOC_ARK_DAYS)).to_string();
@@ -4181,8 +4214,9 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
     let rows = soc_merge(&soc_hits(&videos, quotes, &aliases, &eu), &soc_hits(&stories, quotes, &aliases, &eu), &supers, &picks, &tips, &eu, quotes);
     stamp_social(quotes, &rows);
     eprintln!(
-        "fetch: social arbitrage: {} videos, {} HN stories, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider/Reddit/Trends/App Store/Benzinga tips, {} hand picks -> {} rows",
+        "fetch: social arbitrage: {} videos ({answered}/{} YouTube channels fresh), {} HN stories, {} {label} buys ({}), {stakes} 13D/G stakes, {} ARK/insider/Reddit/Trends/App Store/Benzinga tips, {} hand picks -> {} rows",
         videos.len(),
+        1 + urls.youtube_more_feeds.len(),
         stories.len(),
         supers.1.len(),
         supers.0,
@@ -12604,6 +12638,22 @@ pub(crate) mod tests {
                 ("2026-09-28".into(), "Bare".into(), "Bare ".into(), String::new()),
             ]
         );
+    }
+
+    /// (#604) A fresh answer is banked and served; a miss serves the bank up to `YOUTUBE_KEEP_DAYS` old,
+    /// then nothing; a channel never seen serves nothing; a later fresh answer replaces the bank.
+    #[test]
+    fn kept_videos_bank_fresh_and_serve_a_miss_until_stale() {
+        let day = |d: u32| NaiveDate::from_ymd_opt(2026, 10, d).unwrap();
+        let v = |t: &str| vec![("2026-10-01".to_string(), t.to_string(), t.to_string(), String::new())];
+        let mut kept = KeptFeeds::new();
+        assert_eq!(kept_videos(&mut kept, "a", v("old"), day(2)), v("old"));
+        assert_eq!(kept_videos(&mut kept, "a", vec![], day(2)), v("old"), "a miss serves the bank");
+        assert_eq!(kept_videos(&mut kept, "a", vec![], day(16)), v("old"), "14 days old still counts");
+        assert!(kept_videos(&mut kept, "a", vec![], day(17)).is_empty(), "15 days old is stale");
+        assert!(kept_videos(&mut kept, "b", vec![], day(2)).is_empty(), "a channel never seen");
+        assert_eq!(kept_videos(&mut kept, "a", v("new"), day(17)), v("new"));
+        assert_eq!(kept["a"].0, "2026-10-17");
     }
 
     /// (#536) A name hits as a capitalised run of its words: GM's full name never marks GE, a possessive

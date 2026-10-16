@@ -170,6 +170,15 @@ jobs:
           key: folioman-appstore-${{ github.run_id }}
           restore-keys: folioman-appstore-
 
+      # (#604) Each YouTube channel's last feed with videos, served for 14 days when the channel's RSS
+      # answers 404/500 (most tries on 2026-10-16), so a miss stops dropping its names' `s` boost.
+      - name: Restore YouTube feeds cache
+        uses: actions/cache@v6
+        with:
+          path: .youtube_feeds.json
+          key: folioman-youtube-${{ github.run_id }}
+          restore-keys: folioman-youtube-
+
       # (#520) Berkshire's EDINET reports and the day range already scanned: a past day's list never
       # changes, so without this every run would restart the 2020-08 backfill.
       - name: Restore EDINET cache

@@ -87,6 +87,8 @@ config/settings.yaml
 .wikidata_listings.json
 # (#516) 14 days of App Store chart ranks; restored by its own cache step in pages.yml
 .appstore_ranks.json
+# (#604) each YouTube channel's last feed with videos, served 14 days; its own cache step in pages.yml
+.youtube_feeds.json
 # (#520) Berkshire's EDINET reports + the scanned day range; restored by its own cache step in pages.yml
 .edinet_brk.json
 # (#519) Eulerpool annual FCF (30 days) + market cap (1 day) per non-US stock; its own cache step in pages.yml
