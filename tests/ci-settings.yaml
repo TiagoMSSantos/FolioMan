@@ -1810,7 +1810,8 @@ sizing:
   #  stock in its window's top 5% by real forward return, ties at the bar included (WINNER_TOP_PCT, as
   #  (#583)). ETFs fill slots and never count, so a random stock book reads ~5%. The line prints the share,
   #  the slots, the score-half and momentum-half counts, and each held winner with its window count.
-  #  Caveat: the backtest momentum half can hold ETFs; the live `momentum_order` keeps stocks only.
+  #  Caveat, fixed by (#607): the backtest momentum half could hold ETFs; the live `momentum_order` keeps
+  #  stocks only.
   #  CI: the backtest gate runs every leg (20y, 12y, 8y, 8y fund) with `winners`. Under
   #  FOLIOMAN_BACKTEST_GATE a missing line panics, and each leg asserts share >= WINNERS_HELD_FLOOR
   #  (tests/network.rs). The floors were 0 until the first CI reading (FLOORS SET below).
@@ -1840,6 +1841,31 @@ sizing:
   #  UNH, TSCO, ODFL, NVDA, DHR, ASML and AMZN and gains IDXX. Pit trades evenly (12y drops ORLY, EOG and
   #  COR.LS, gains SBUX, MA, INTU, GILD, CRM, AZO, APH and AMZN). The 2.0 bar stays as pre-registered: moving
   #  it after one reading would fit the bar to one arm.
+  #── (#607) THE BACKTEST'S MOMENTUM HALF HOLDS STOCKS ONLY, AS THE LIVE BOOK DOES ──
+  #  PRE-REGISTERED 2026-10-16, before the post-fix runs.
+  #  FOUND: the live `picks::momentum_order` keys stocks only. The backtest's `momentum_ranked` (the 20y DCA
+  #  lanes mom12-1, blend, S+after and S+inter, and the (#606) WINNERS HELD line) and rival (j)'s momentum side
+  #  (so (j), (k), (l), (m) and (n)) keyed the whole gates-off pond, ETFs included. So the (#584)/(#587) ships
+  #  and the (#585)/(#586)/(#597)/(#598)/(#600) refusals graded a momentum half the page never buys. Rival (a)
+  #  keys `momentum_12_1` itself and is unchanged.
+  #  FIX: `picks::momentum_keys` gives a fund or coin no key. The live pond is stocks already, so the page is
+  #  byte-identical. No knob: a backtest that buys what the page buys is not a choice.
+  #  RE-GRADE of the shipped blend, shipped settings, on the fix SHA: 2 probe.yml runs, `universe fund
+  #  pit|stress rivals winners`, years 8 12 20. The (#584) bars:
+  #    BOOK: (j) against the REAL shipped top-10 row (`report_vs_benchmark`). A cell wins when mean AND median
+  #    beat it by >= +0.2 pts/yr. It must win >= 5 of 6 cells.
+  #    DCA: 20y `S+inter` against `SIZED` of the same run, on both lanes. Neither mean nor median may fall by
+  #    >= 0.2 pts/yr, and its `beat Série E` share must stay >= 90%.
+  #  PASS = the blend stays shipped. FAIL = the owner decides on a revert (`growth_momentum_interleave: false`);
+  #  nothing live changes without that call. (k)-(n) move too; they stay refused and are not re-graded here.
+  #  CONTROL: the (#606) demo controls (pre-fix, same day, on 6b3e71a). Windows must match. Only momentum-side
+  #  rows may move: the top-10 book, the rivals' shipped row and (a)-(i), SIZED and the top-10 DCA lane must
+  #  read the same to the decimal.
+  #  PREDICTION: most momentum slots hold stocks already (an ETF's 12-7 return rarely tops a single stock's),
+  #  so (j) and S+inter move under 0.5 pts/yr and both bars still pass (~85%). WINNERS HELD: the stocks keep
+  #  their order and an ETF's slot goes to the next stock (or stays empty when the pond runs out), so per
+  #  bucket the held winners can only rise and the slots only fall. The share holds or rises in every cell,
+  #  and the (#606) floors, set on pre-fix readings, stand.
   #── (#584) BLEND: HALF THE BOOK FROM THE SHIPPED SCORE, HALF FROM MOMENTUM 12-1 ──
   #  WHY: (#583) found 42-58% of each window's winners score under the cut with every gate off, so no gate
   #  loosening reaches them. The only signal that beat the book on this pond is (#560) momentum 12-1 (5/6,

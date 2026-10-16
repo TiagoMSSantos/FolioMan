@@ -7539,13 +7539,14 @@ fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {
 }
 
 /// (#587) The momentum half's sort keys over one candidate set, in input order, highest first. A name
-/// [`misses_ok`] skips, or with no 1Y, has none. `growth_momentum_key` 0 = momentum 12-1; 1 = 12-7, the year net
+/// [`misses_ok`] skips, or with no 1Y, has none; (#607) so has a fund or coin, so the backtest's momentum side
+/// holds stocks only, as the live book's. `growth_momentum_key` 0 = momentum 12-1; 1 = 12-7, the year net
 /// of its last six months; 2 = the 12-1 percentile plus the value percentile, value being the 13-60-month
 /// return (the five years net of the last one) negated, each among the keyed names (`core::ranks` over n + 1),
 /// and a name with no 5Y leg at the middle.
 pub(crate) fn momentum_keys(qs: &[&Quote], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
     let short = if tuning.growth_momentum_key == 1 { "6M" } else { "1M" };
-    let mom: Vec<Option<f64>> = qs.iter().map(|q| net_return(q, "1Y", short).filter(|_| misses_ok(q, tuning))).collect();
+    let mom: Vec<Option<f64>> = qs.iter().map(|q| net_return(q, "1Y", short).filter(|_| asset_class(q) == 2 && misses_ok(q, tuning))).collect();
     if tuning.growth_momentum_key != 2 {
         return mom;
     }

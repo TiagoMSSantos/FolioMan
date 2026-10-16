@@ -3607,7 +3607,7 @@ fn rival_wins(d_mean: f64, d_median: f64) -> bool {
 /// (#560) The momentum 12-1 rival's order over one month's pool: the names the gates-off score keys (`open`,
 /// the `rivals` pond), highest momentum first. The pool is ticker-ordered and the sort stable, so a tie ranks
 /// by ticker. (#585) A name `picks::misses_ok` skips under `tuning` sits out. (#587) The key is
-/// `picks::momentum_keys` over the pond.
+/// `picks::momentum_keys` over the pond, so (#607) it ranks stocks only, as the live `picks::momentum_order`.
 fn momentum_ranked<'a>(pool: &[&'a Sample], open: &[Option<f64>], tuning: &BuyHeuristic) -> Vec<&'a Sample> {
     let pond: Vec<&Sample> = pool.iter().zip(open).filter(|x| x.1.is_some()).map(|x| *x.0).collect();
     let qs: Vec<&Quote> = pond.iter().map(|s| s.quote.as_ref()).collect();
@@ -8463,8 +8463,8 @@ mod tests {
 
     /// (#606) The blend's held winners, with 8 momentum slots so the score half is 2. Bucket 1: a stale S1 row
     /// gives way to the latest; S1 (score half) and M1 (first momentum slot, exactly at the bar) are held winners;
-    /// N1 is a winner neither half holds; the ETF E1 fills a slot and never counts. Bucket 2 has no stock, so it
-    /// books nothing. Bucket 3's score half is empty, so momentum fills every slot.
+    /// N1 is a winner neither half holds; (#607) the ETF E1 out-ranks M2 on momentum and still takes no slot, as
+    /// live. Bucket 2 has no stock, so it books nothing. Bucket 3's score half is empty, so momentum fills every slot.
     #[test]
     fn blend_winners_split_held_winners_by_half() {
         assert_eq!(winner_bar(vec![10.0, 40.0, 30.0, 20.0], 50.0), Some(30.0));
@@ -8496,9 +8496,9 @@ mod tests {
         let groups = BTreeMap::from([(bucket(a), b1.iter().collect()), (bucket(b), vec![&e2]), (bucket(c), b3.iter().collect())]);
         let shipped = BuyHeuristic { quality_weight: 0.0, growth_momentum_slots: 8, ..BuyHeuristic::default() };
         let open = BuyHeuristic { quality_weight: 1.0, ..shipped.clone() };
-        // bucket 1: 6 stocks, top 50% down to M1's 90; the book is S1 S2 | M1 E1 M2 S3. Bucket 3: bar T1's 30, book T1 T2
+        // bucket 1: 6 stocks, top 50% down to M1's 90; the book is S1 S2 | M1 M2 S3. Bucket 3: bar T1's 30, book T1 T2
         let (slots, held) = blend_winners(&groups, 50.0, swap_scorer, &shipped, &open);
-        assert_eq!(slots, 8);
+        assert_eq!(slots, 7);
         assert_eq!(held, BTreeMap::from([("M1", [0, 1]), ("S1", [1, 0]), ("T1", [0, 1])]));
     }
 
