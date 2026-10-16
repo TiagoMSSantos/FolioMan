@@ -13201,10 +13201,12 @@ mod tests {
         q
     }
 
-    /// (#560) A name failing several knob gates at once scores under `gates_off`, and nothing but the
-    /// unwaivable artifact is left in its `gate_failures`.
+    /// (#560) A falling name failing several knob gates at once (range, cagr, 1Y+, 1M-knife and the 5Y+ rung on
+    /// the default tuning) scores under `gates_off`, and nothing is left in its `gate_failures`. (#634) It covers
+    /// THOSE gates only, so it carries no claim about the rest: `gates_off_lists_every_tag_gate_fails_pushes` is
+    /// what pins that the list names every tag `gate_fails` pushes.
     #[test]
-    fn gates_off_waives_every_knob_gate() {
+    fn gates_off_waives_the_gates_a_falling_name_fails() {
         let t = BuyHeuristic::default();
         let mut q = gate_fixture();
         q.range_pct = 20.0;
@@ -13213,6 +13215,52 @@ mod tests {
         let off = gates_off(&t);
         assert!(growth_score(&q, &off).is_some(), "every knob gate waived -> it scores");
         assert_eq!(gate_failures(&q, &off).map(|f| f.len()), Some(0));
+    }
+
+    /// (#634) `gates_off` is a hand-kept array and `waive_gate` ends in a silent catch-all arm: a gate that keeps
+    /// its knob and its `fails.push` tag but never joins the array is waived by nothing, so `gates_off` still
+    /// fences it and the momentum half drops every name that gate fails, with no error anywhere. This reads the
+    /// production half of this file (everything before the test module, which spells the needle itself and would
+    /// count itself) for every tag `gate_fails` pushes as a literal, and demands each is listed by `gates_off`,
+    /// held by [`UNWAIVABLE`], or is `cagr-life`, which shares `cagr`'s arm. It then demands every listed tag, and
+    /// that alias, has an arm in `waive_gate`: a listed tag with no arm waives nothing either.
+    ///
+    /// Only literal push sites are seen, 23 distinct tags today (`aum` spans lines, so the needle's tail is read past
+    /// whitespace). `young` (a closure), `history` (a vec literal) and the `5Y+`/`8Y+`/`20Y+` rungs (a tag fed by
+    /// `long_leg_floors`) are not literal sites; the `LABELS` list of
+    /// `gate_failures_agrees_with_the_scorer_on_random_draws` is the cover for those. The floor on the count is
+    /// what stops a reformat that hides the sites (a renamed `fails`, a macro) from passing as an empty set.
+    #[test]
+    fn gates_off_lists_every_tag_gate_fails_pushes() {
+        fn body<'a>(src: &'a str, from: &str) -> &'a str {
+            let rest = &src[src.find(from).unwrap_or_else(|| panic!("(#634) `{from}` moved: re-point this scan"))..];
+            &rest[..rest.find("\n}\n").unwrap_or(rest.len())]
+        }
+        let prod = include_str!("picks.rs").split("#[cfg(test)]").next().unwrap_or_default();
+        let mut pushed = std::collections::BTreeSet::new();
+        for (at, needle) in prod.match_indices("fails.push((") {
+            if let Some(tag) = prod[at + needle.len()..].trim_start().strip_prefix('"').and_then(|r| r.split('"').next()) {
+                pushed.insert(tag);
+            }
+        }
+        let n = pushed.len();
+        assert!(
+            n >= 23,
+            "(#634) the scan found {n} distinct pushed tags, 23 stand today: a reformat hid the push sites; re-point this scan before trusting it"
+        );
+        let listed: std::collections::BTreeSet<&str> = body(prod, "fn gates_off(").split('"').skip(1).step_by(2).collect();
+        let unlisted: Vec<&str> =
+            pushed.iter().copied().filter(|t| !listed.contains(t) && !UNWAIVABLE.contains(t) && *t != "cagr-life").collect();
+        assert!(
+            unlisted.is_empty(),
+            "(#634) gate_fails pushes {unlisted:?}, which `gates_off` does not list and UNWAIVABLE does not hold: the knob stays armed and the momentum half drops every name it fails; list it and add a waive_gate arm, or hold it in UNWAIVABLE"
+        );
+        let arms = body(prod, "fn waive_gate(");
+        let armless: Vec<&str> = listed.iter().copied().chain(["cagr-life"]).filter(|t| !arms.contains(&format!("\"{t}\""))).collect();
+        assert!(
+            armless.is_empty(),
+            "(#634) `gates_off` lists {armless:?} but waive_gate has no arm naming it, so the catch-all arm waives nothing; add the arm"
+        );
     }
 
     /// (#584) Three stocks for the blend: AAA and BBB clear the shipped gates on the fixture's legs, CCC fails the
@@ -16090,6 +16138,28 @@ mod tests {
             raw["sizing"]["head_weight"].as_f64(),
             Some(8.0),
             "(#584) the book's top five weigh 8x; (#558)'s 4x raised, +0.2 or more on both 20y S+inter DCA lanes"
+        );
+
+        // (#633) The momentum half of that book, and the value brake. The asserts above stop at the score and its
+        // gates, so the fixture could slide to a revert value (key 0, interleave false, brake 0.0) or another slot
+        // share with every one of them green. Each value is what the fixture parses to. The code default differs
+        // for the value brake alone (0.0, off, on purpose: see its config.rs default), so only the fixture carries
+        // that one.
+        assert_eq!(
+            tuning.growth_momentum_key, 1,
+            "(#587) 12-7 shipped (392547b); 0 = 12-1 is the revert, the rank-sum key (2) was refused there and the beta-hedged and residual keys (3, 4) in (#609); re-measure, then update this pin"
+        );
+        assert_eq!(
+            tuning.growth_momentum_slots, 5,
+            "(#597) 3, 7 and 10 refused (0/6, 0/6, 1/6 cells); 5 is the (#584) alternation; re-measure, then update this pin"
+        );
+        assert!(
+            tuning.growth_momentum_interleave,
+            "(#584) shipped (944885f): BUY NOW alternates the shipped book with the momentum order, and false reverts it to the shipped-only book; re-measure, then update this pin"
+        );
+        assert_eq!(
+            tuning.growth_value_floor_pct, 40.0,
+            "(#126) shipped 40.0 and (#265) kept it; A2 in the (#180) grid re-refused 40 -> 0, so lifting the brake is a refused question; re-measure, then update this pin"
         );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
