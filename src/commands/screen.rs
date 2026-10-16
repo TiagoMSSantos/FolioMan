@@ -1918,6 +1918,19 @@ pub async fn run(args: Vec<String>) {
     filled.extend(shadow_pool(&[&attention, &berkshire, &social], &quotes, &fetch::us_symbol));
     // (#500) and the Young table's, which sorts on the REV-YoY this fills
     filled.extend(crate::picks::young(&quotes).into_iter().map(|q| q.ticker.clone()));
+    // (#603) and the blended book's momentum half, which `stamp_momentum` gives page rows: the score top above
+    // misses most of it, so FLEX, VRT, TER, GLW.DE and AMC.DE printed MCAP, NET%, REV-YoY, EPS-YoY, BUYBK,
+    // SHORT% and TARGET% n/a, and AMC.DE its 8Y/20Y (the US-twin fill below). INS-B/S and EARN stay
+    // `targets`-only, as for the shadow tables.
+    // shortcut: the order's first `book_cut` names hold every name a momentum slot can reach unless an issuer
+    // twin is skipped ahead of one; widen if an `m` row reads n/a again
+    let mom: std::collections::HashSet<String> = if settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book {
+        let order = crate::picks::momentum_order(&quotes, &settings.buy_heuristic);
+        order.into_iter().take(settings.sizing.book_cut()).map(|q| q.ticker.clone()).collect()
+    } else {
+        Default::default()
+    };
+    filled.extend(mom.iter().cloned());
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
     // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
     fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
@@ -1937,7 +1950,7 @@ pub async fn run(args: Vec<String>) {
     let swapped: Vec<(String, String)> = quotes
         .iter()
         .map(|q| (q.ticker.clone(), fetch::us_symbol(&q.ticker)))
-        .filter(|(eu, us)| !us.eq_ignore_ascii_case(eu) && (targets.contains(eu) || shown.contains(eu) || shown.contains(us)))
+        .filter(|(eu, us)| !us.eq_ignore_ascii_case(eu) && (targets.contains(eu) || mom.contains(eu) || shown.contains(eu) || shown.contains(us)))
         .collect();
     let us_lines: Vec<String> = swapped.iter().map(|(_, us)| us.clone()).collect();
     let twins: std::collections::HashMap<String, Quote> = swapped
