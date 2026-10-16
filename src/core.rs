@@ -215,7 +215,7 @@ pub struct Stats8 {
 }
 
 /// (#469) Company facts for the page only: the NAME link and the SHORT%/TARGET% cells. DISPLAY-ONLY,
-/// filled by `fetch::enrich_profile` (stocks) and `fetch::enrich_etf_cells` (funds' `site`, (#479) USE/REPL), never scored.
+/// filled by `fetch::enrich_profile` (stocks) and `fetch::enrich_etf_cells` (funds' `site`, (#479) USE/REPL, (#621) TER/AUM), never scored.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Profile {
     pub site: Option<String>,      // https home page: Nasdaq's CompanyUrl for a stock, the justETF profile for a fund
@@ -234,6 +234,10 @@ pub struct Profile {
     pub cik: Option<String>,       // (#540) the SEC CIK, 10 digits, for the REPORTS link; None = not an SEC filer
     #[serde(default)]
     pub about: Option<String>,     // (#542) Nasdaq's company description, cut to ~2 sentences, for the REPORTS hover
+    #[serde(default)]
+    pub ter: Option<f64>,          // (#621) justETF's TER in %, read by the TER cells only when neither BF nor Yahoo has one; never by a gate or the score
+    #[serde(default)]
+    pub aum: Option<f64>,          // (#621) justETF's fund size in EUR, read by the AUM cells only when neither BF nor Yahoo has one; never by a gate or the score
 }
 
 // (#473) serde's skip test for a count: universe.json carries `super_buyers` on the flagged names alone.

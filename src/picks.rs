@@ -3957,7 +3957,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback; loss = earnings at or below 0" },
     // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
     // exactly equal the TTM-based P/E cell ÷ CAGR. (#426) Nor its EPS: the PEG's is core, gains stripped
-    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap. Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
+    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap; loss = earnings at or below 0. Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
     // (#45) CRYPTO's valuation cell, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that
     // column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is
     // a P/B analogue
@@ -3974,7 +3974,7 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow (last annual report) ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; n/a = under 2 years of FCF filed. Banks and insurers (ᵇ), whose cash flow is deposits and loans: book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE; n/a at ROE ≤ 2.5% or a loss. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; n/a = no FCF-5Y rate to grow it by (under 2 years of FCF filed, or a burn at the old end of the span). Banks and insurers (ᵇ), whose cash flow is deposits and loans: book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE; n/a at ROE ≤ 2.5% or a loss. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
     ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn, n/a and ᵇ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#522) the FAIR pair on owner earnings, the whole-company value, and the reverse DCF. Display only
     ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; n/a for non-US stocks (no stock-pay line); burn and n/a as FAIR; — = a bank or insurer" },
@@ -4010,8 +4010,8 @@ const COLUMNS: &[ColSpec] = &[
     // (#489) display only
     ColSpec { key: "short", hdr: "SHORT%", width: 7, right: true, help: "Stocks: shares sold short as % of shares outstanding, from FINRA's newest twice-monthly settlement (US listings; a Xetra twin reads its US parent). High short interest has historically come before weaker returns; n/a = no FINRA position" },
     // (#448)/(#449) display only, the printed stock rows
-    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage, or a row the screen did not print (only printed stocks are fetched)" },
-    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Nasdaq. The price often jumps on the day; n/a = no date published yet, or a row the screen did not print (only printed stocks are fetched)" },
+    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage, or a row outside the score top and the pinned tickers (only those are fetched)" },
+    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Nasdaq. The price often jumps on the day; n/a = no date published yet, or a row outside the score top and the pinned tickers (only those are fetched)" },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
@@ -4262,8 +4262,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // is CLOSE to this but not equal, and is furthest off for mid-ramp growers. Two columns, two
         // jobs — the fix is not to make them agree, it is to keep P/E true.
         //
-        // `n/a` here is not missing data. It is the gate saying it cannot price this name — loss-maker,
-        // non-positive growth, or no long leg — and `gate_failures` names that case in words.
+        // `n/a` here is not missing data. It is the gate saying it cannot price this name — non-positive
+        // growth or no long leg (a loss-maker reads `loss`, #624) — and `gate_failures` names that case in words.
         "peg" if is_crypto => "—".to_string(),
         // (#37 funds) the ETF leg of the same cell. A fund has no per-share EPS, so its PEG is built
         // from the look-through equity-book P/E (`parse_fund_pe`) over the SAME `long_cagr_pct` the
@@ -4287,6 +4287,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             let cached = fp.is_some_and(|f| f.as_of.is_some());
             format!("{:.2}{}{}", 100.0 / p, if borrowed { "~" } else { "" }, if cached { "°" } else { "" })
         }),
+        // (#624) a loss-maker has no PEG for the reason it has no P/E: "loss" says the filing was read, as the P/E cell does (#506)
+        "peg" if quote.fund.as_ref().is_some_and(|f| f.peg_yield.is_none() && f.eps_ttm.is_some_and(|e| e <= 0.0)) => "loss".to_string(),
         "peg" => quote
             .fund
             .as_ref()
@@ -4359,11 +4361,15 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
         // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
         "ter" if etf_only_na => "—".to_string(),
-        "ter" => quote.ter_shown().map_or("n/a".to_string(), |v| format!("{v:.2}%")),
+        // (#621) justETF's figure fills a cell no other source sizes; the gates keep reading `ter_shown`/`aum_shown`
+        "ter" => quote.ter_shown().or(quote.profile.ter).map_or("n/a".to_string(), |v| format!("{v:.2}%")),
         // ETF fund size (EUR-approximate). Small funds get liquidated/merged — a forced taxable exit
         // mid-hold. "—" for stocks/crypto (not funds); "n/a" for an ETF BF's payload didn't cover.
         "aum" if etf_only_na => "—".to_string(),
-        "aum" => turnover_cell(quote.aum_shown()),
+        "aum" => turnover_cell(quote.aum_shown().or(quote.profile.aum)),
+        // (#622) a fund has no market value: the mixed REIT table prints funds beside stocks and has no AUM
+        // column, so MCAP reads the fund size there, as the column's help says (the ETF lane hides MCAP)
+        "mcap" if is_etf => turnover_cell(quote.aum_shown().or(quote.profile.aum)),
         "mcap" => turnover_cell(quote.shares_out.zip(quote.price_eur).map(|(n, p)| n * p)),
         // ETF share class + replication tokens (BF keyData). Display-only — the price-only CAGR already
         // prices the Dist payout drag, so these inform the BUY (which listing), never the ranking.
@@ -4386,6 +4392,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // (#463) the 5y fund_factors levels the live enrich already fills
         "rev5y" | "opm" | "mtrend" | "fcf5y" if stock_only_na => "—".to_string(),
+        // (#622) company cash-flow cells: a fund has none, so the dash replaces an n/a that means "exists but
+        // not served". A coin's realized cap is a real FAIR-CAP, so that one cell dashes for funds only.
+        "fair_oe" | "mos_oe" | "impl_g" if stock_only_na => "—".to_string(),
+        "fair_cap" if is_etf => "—".to_string(),
         // (#506) a cash burn today has no growth rate and no DCF value; "burn" says so where "n/a" hid it
         // (#522) each cell against its own base: FCF-5Y this year's FCF, the FAIR family the 3-year median
         "fcf5y" | "fair" | "mos" | "fair_oe" | "mos_oe" | "fair_cap" | "impl_g"
@@ -5859,7 +5869,7 @@ const REIT_TOKENS: &[&str] = &["real estate", "reit", "propert", "epra", "nareit
 
 /// (#525) A pool row's place in the REITs table, if any: a stock whose GICS sector is Real Estate, or a
 /// fund whose name carries one of [`REIT_TOKENS`].
-fn reit_kind(q: &Quote) -> Option<&'static str> {
+pub(crate) fn reit_kind(q: &Quote) -> Option<&'static str> {
     let name = q.name.to_lowercase();
     if q.instrument_type.eq_ignore_ascii_case("EQUITY") && q.sector.as_deref().is_some_and(|s| s.contains("Real Estate")) {
         Some("stock")
@@ -6683,10 +6693,13 @@ pub(crate) fn hold_core_cells(q: &Quote, owned: &Owned) -> Vec<String> {
         truncate(&q.market, 9),
         trcagr_cell(q), // (#507) the lane tables' cell, ⁱ included; (#530) TR-CAGR, the page's one return column
         q.age_years.map_or("—".to_string(), |a| format!("{a:.1}")), // 1 decimal, as in the screen table
-        q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%")),
-        turnover_cell(q.aum_shown()),
-        q.use_of_profits.unwrap_or("—").to_string(),
-        q.replication.unwrap_or("—").to_string(),
+        // (#621) justETF's TER and size when BF and Yahoo have none, as the generic cells do; display only
+        q.ter_shown().or(q.profile.ter).map_or("n/a".to_string(), |t| format!("{t:.2}%")),
+        turnover_cell(q.aum_shown().or(q.profile.aum)),
+        // (#620) BF's token first, else justETF's, as the lane tables already do: a fund outside BF's venue
+        // list printed "—" here although its justETF page names both. Display only.
+        q.use_of_profits.or(q.profile.use_class.as_deref()).unwrap_or("—").to_string(),
+        q.replication.or(q.profile.repl.as_deref()).unwrap_or("—").to_string(),
         q.domicile.as_deref().unwrap_or("n/a").to_string(),
         fund_cell("top10", q),
         fund_cell("td1y", q),
@@ -12395,6 +12408,75 @@ mod tests {
         assert!(hold_core_web_rows(&[], &Owned::default(), &BuyHeuristic::default(), &[]).is_empty(), "no cores -> no rows");
     }
 
+    /// (#620) A CORE fund BF's venue list does not cover reads USE/REPL from justETF's profile page, the
+    /// way the lane tables do; BF's token still wins when it has one, and no source at all stays "—".
+    #[test]
+    fn hold_core_use_and_repl_fall_back_to_justetf() {
+        let use_repl = |q: &Quote| hold_core_cells(q, &Owned::default())[8..10].to_vec(); // the USE and REPL cells
+        let mut q = core_etf("MUSA.PA", "Amundi MSCI USA Swap UCITS ETF", 2e9, 0.15);
+        (q.use_of_profits, q.replication) = (None, None);
+        assert_eq!(use_repl(&q), ["—", "—"], "no source -> the dash");
+        (q.profile.use_class, q.profile.repl) = (Some("Dist".into()), Some("Swap".into()));
+        assert_eq!(use_repl(&q), ["Dist", "Swap"], "justETF fills the dash");
+        (q.use_of_profits, q.replication) = (Some("Acc"), Some("Opt"));
+        assert_eq!(use_repl(&q), ["Acc", "Opt"], "BF wins when it has a token");
+    }
+
+    /// (#621) A fund no other source sizes prints justETF's TER and fund size, in the CORE row and the generic
+    /// cells alike; BF's or Yahoo's figure wins when there is one, and the gates' `ter_shown`/`aum_shown` never see it.
+    #[test]
+    fn justetf_ter_and_aum_fill_the_cells_only_when_nothing_else_reports() {
+        // the CORE row's TER and AUM cells, then the generic ones
+        let ter_aum = |q: &Quote| {
+            let c = hold_core_cells(q, &Owned::default());
+            vec![c[6].clone(), c[7].clone(), cc("ter", q, 0.0, None, ""), cc("aum", q, 0.0, None, "")]
+        };
+        let mut q = core_etf("MUSA.PA", "Amundi MSCI USA Swap UCITS ETF", 2e9, 0.15);
+        (q.expense_ratio, q.aum_eur) = (None, None);
+        assert_eq!(ter_aum(&q), ["n/a", "n/a", "n/a", "n/a"], "no source -> n/a");
+        (q.profile.ter, q.profile.aum) = (Some(0.2), Some(4.02e9));
+        assert_eq!(ter_aum(&q), ["0.20%", "€4.0B", "0.20%", "€4.0B"], "justETF fills the n/a");
+        assert_eq!((q.ter_shown(), q.aum_shown()), (None, None), "the gates never see it");
+        (q.ter_fallback, q.aum_fallback) = (Some(0.5), Some(3e9));
+        assert_eq!(ter_aum(&q), ["0.50%", "€3.0B", "0.50%", "€3.0B"], "Yahoo's figure wins");
+        (q.expense_ratio, q.aum_eur) = (Some(0.1), Some(2e9));
+        assert_eq!(ter_aum(&q), ["0.10%", "€2.0B", "0.10%", "€2.0B"], "BF's figure wins");
+    }
+
+    /// (#622) A fund in a mixed table (the REITs print funds beside stocks) reads its size under MCAP and a
+    /// dash under the company-only cash-flow cells; a stock keeps n/a for a figure it lacks, a coin its FAIR-CAP.
+    #[test]
+    fn a_fund_row_reads_its_size_under_mcap_and_dashes_the_company_only_cells() {
+        let cells = |q: &Quote| ["mcap", "fair_cap", "fair_oe", "mos_oe", "impl_g"].map(|k| cc(k, q, 0.0, None, ""));
+        let mut q = core_etf("MUSA.PA", "Amundi MSCI USA Swap UCITS ETF", 2e9, 0.15);
+        assert_eq!(cells(&q), ["€2.0B", "—", "—", "—", "—"], "a fund has a size and no company figures");
+        (q.aum_eur, q.profile.aum) = (None, Some(5e8));
+        assert_eq!(cells(&q)[0], "€500M", "justETF's size fills it");
+        q.profile.aum = None;
+        assert_eq!(cells(&q)[0], "n/a", "no fund size published");
+        let stock = Quote::stub("AAA", "€12.34", "", "Alpha");
+        assert_eq!(cells(&stock), ["n/a"; 5], "a stock keeps n/a for a figure it lacks");
+        let mut coin = Quote::stub("X-EUR", "€1", "", "Coin");
+        (coin.mvrv, coin.shares_out, coin.price_eur) = (Some(2.0), Some(2.0e7), Some(60000.0));
+        assert_eq!(cells(&coin), ["€1.2T", "€600.0B", "—", "—", "—"], "a coin keeps its realized cap under FAIR-CAP");
+    }
+
+    /// (#624) A loss-maker's PEG reads "loss", as its P/E does; a PEG the gate priced still prints, and a profit
+    /// with no growth to divide by, or no EPS filed, stays n/a.
+    #[test]
+    fn a_loss_makers_peg_reads_loss() {
+        let mut q = Quote::stub("AAA", "€12.34", "", "Alpha");
+        let mut peg = |peg_yield: Option<f64>, eps_ttm: Option<f64>| {
+            q.fund = Some(core::FundFactors { peg_yield, eps_ttm, ..Default::default() });
+            cc("peg", &q, 0.0, None, "")
+        };
+        assert_eq!(peg(None, Some(-1.0)), "loss");
+        assert_eq!(peg(None, Some(0.0)), "loss", "zero earnings is no profit either");
+        assert_eq!(peg(None, Some(0.1)), "n/a", "a profit with no growth to divide by");
+        assert_eq!(peg(None, None), "n/a", "no EPS filed");
+        assert_eq!(peg(Some(40.0), Some(-1.0)), "2.50", "a priced PEG still prints");
+    }
+
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + the per-tier cap, and the
     /// `print_hold_core` block over it (owned marker, empty-tier-0 hint, pinned near-miss reason). Pure.
     #[test]
@@ -12915,7 +12997,8 @@ mod tests {
         // The old cell moved 0.53 -> 2.00 across this same flip; a cell that still moves is re-deriving.
         let on_life = BuyHeuristic { use_life_cagr: true, ..BuyHeuristic::default() };
         assert_eq!(col_cell("peg", &peg, 0.0, None, "", &on_life, &HashMap::new()), "2.50");
-        // no peg_yield -> n/a. NOT "missing data": the gate declined to price it (loss-maker / no growth).
+        // no peg_yield -> n/a. NOT "missing data": the gate declined to price it (no growth / no long leg;
+        // a loss-maker reads "loss", see `a_loss_makers_peg_reads_loss`).
         peg.fund = Some(core::FundFactors { peg_yield: None, ..Default::default() });
         assert_eq!(cc("peg", &peg, 0.0, None, ""), "n/a");
         assert_eq!(cc("leg", &Quote::stub("N", "€1", "", "No legs"), 0.0, None, ""), "n/a");

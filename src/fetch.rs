@@ -2182,11 +2182,14 @@ pub async fn enrich_profile(client: &Client, urls: &Urls, quotes: &mut [core::Qu
 const TD_CACHE_PATH: &str = ".td_cache.json";
 /// (#465) TD is published once a year, so a month-old answer is as good as today's.
 const TD_CACHE_DAYS: i64 = 30;
-/// (#479) `{ISIN: ["YYYY-MM-DD", [USE, REPL, TOP10%, INDEX]]}` from justETF, for the printed funds with a gap.
+/// (#479) `{ISIN: ["YYYY-MM-DD", [USE, REPL, TOP10%, INDEX], [TER %, AUM]]}` from justETF, for the printed funds with a gap.
 /// Refetched on the TD cache's month: a fund's share class and replication don't move in a month.
 /// (#490) A 3-cell file from before INDEX fails to parse once, so every gap row refetches.
+/// (#621) So does a file from before the `[TER %, AUM]` pair, which `parse_justetf_facts` reads off the same page.
 const JUSTETF_CELLS_CACHE_PATH: &str = ".justetf_cells_cache.json";
 type JustEtfCells = (Option<String>, Option<String>, Option<f64>, Option<String>);
+/// (#621) A cache row: the day it was read, its cells, and its `[TER %, AUM]` pair. An alias, so the map's type stays under clippy's complexity cap.
+type JustEtfRow = (String, JustEtfCells, (Option<f64>, Option<f64>));
 
 /// (#479) DISPLAY ONLY: (USE, REPL, TOP10%) off a justETF profile page, in Börse Frankfurt's tokens
 /// so a cell reads the same whichever source filled it. Physical funds carry the method in a second
@@ -2311,12 +2314,28 @@ async fn enrich_eulerpool_fcf(
     ratios.into_iter().map(|(t, (r, _))| (t, r)).collect()
 }
 
+/// (#479) One justETF profile page as a cache row. Only a 2xx answer is believed, so a refusal reads again next run.
+async fn justetf_row(client: &Client, urls: &Urls, isin: &str, today: chrono::NaiveDate) -> Option<JustEtfRow> {
+    match client.get(urls.justetf_profile.replace("{isin}", isin)).send().await {
+        Ok(r) if r.status().is_success() => {
+            let html = r.text().await.ok()?;
+            Some((today.to_string(), parse_justetf_cells(&html), parse_justetf_facts(&html)))
+        }
+        _ => {
+            eprintln!("justetf: profile refused {isin}");
+            None
+        }
+    }
+}
+
 /// (#465) DISPLAY ONLY: TOP10% (the `holdings` the fund P/E already fetched) and the TD-1Y/TD-5Y
 /// series on the funds in `syms`, the printed ETF + CORE rows, then copied to every other listing of
 /// the same fund name, since the ETF table prints each venue. The ISIN comes from inverting
 /// `.isin_cache.json`, so a fund the BF/venue pipeline never resolved reads n/a. (#479) A fund still
 /// missing USE, REPL or TOP10% reads its justETF page; the tokens land on `profile`, never on the
-/// scored `use_of_profits`/`replication`, so no rank moves.
+/// scored `use_of_profits`/`replication`, so no rank moves. (#621) The same page's TER and fund size
+/// land on `profile.ter`/`profile.aum`, for the cells of a fund no other source sizes. (#623) So do
+/// those of an unsized real-estate fund past `syms`: the REITs table prints its size under MCAP.
 pub async fn enrich_etf_cells(
     client: &Client,
     urls: &Urls,
@@ -2333,7 +2352,7 @@ pub async fn enrich_etf_cells(
         .collect();
     let mut cache: HashMap<String, (String, Vec<f64>)> =
         read(TD_CACHE_PATH).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let mut je: HashMap<String, (String, JustEtfCells)> =
+    let mut je: HashMap<String, JustEtfRow> =
         read(JUSTETF_CELLS_CACHE_PATH).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let today = chrono::Local::now().date_naive();
     let fresh = |d: &str| cache_age_days(d, today).is_some_and(|a| a < TD_CACHE_DAYS);
@@ -2374,21 +2393,34 @@ pub async fn enrich_etf_cells(
         q.td_years = cache.get(isin).map(|(_, t)| t.clone()).unwrap_or_default();
         // (#490) no BF benchmark: the INDEX cell would read — and its ×N undercount the book's bet
         let gap = q.use_of_profits.is_none() || q.replication.is_none() || q.top10.is_none() || q.benchmark.is_none();
-        if gap && !je.get(isin).is_some_and(|(d, _)| fresh(d)) && !offline() {
+        if gap && !je.get(isin).is_some_and(|(d, ..)| fresh(d)) && !offline() {
             tokio::time::sleep(StdDuration::from_millis(pace)).await;
             pace = 1000;
-            match client.get(urls.justetf_profile.replace("{isin}", isin)).send().await {
-                Ok(r) if r.status().is_success() => {
-                    if let Ok(html) = r.text().await {
-                        je.insert(isin.clone(), (today.to_string(), parse_justetf_cells(&html)));
-                    }
-                }
-                _ => eprintln!("justetf: profile refused {isin}"),
+            if let Some(row) = justetf_row(client, urls, isin, today).await {
+                je.insert(isin.clone(), row);
             }
         }
-        if let Some((_, (use_class, repl, top10, index))) = je.get(isin) {
+        if let Some((_, (use_class, repl, top10, index), (ter, aum))) = je.get(isin) {
             (q.profile.use_class, q.profile.repl, q.top10) = (use_class.clone(), repl.clone(), q.top10.or(*top10));
             q.profile.index = index.as_ref().map(|v| v.replace("&amp;", "&")); // decoded here, so a cached row reads clean too
+            // (#621) the page's TER and fund size land on `profile` too, never on `ter_fallback`/`aum_fallback`: this
+            // runs after `hold_core_list` picked its funds, and the render picks them again off `aum_shown()`
+            (q.profile.ter, q.profile.aum) = (*ter, *aum);
+        }
+    }
+    // (#623) The REITs table prints real-estate funds past `syms`, with the fund size under MCAP. One no other
+    // source sizes reads its justETF page for that and nothing else: no TD page, no holdings, no USE/REPL.
+    for q in quotes.iter_mut().filter(|q| !syms.contains(&q.ticker) && q.aum_shown().is_none() && crate::picks::reit_kind(q) == Some("ETF")) {
+        let Some(isin) = isins.get(&q.ticker) else { continue };
+        if !je.get(isin).is_some_and(|(d, ..)| fresh(d)) && !offline() {
+            tokio::time::sleep(StdDuration::from_millis(pace)).await;
+            pace = 1000;
+            if let Some(row) = justetf_row(client, urls, isin, today).await {
+                je.insert(isin.clone(), row);
+            }
+        }
+        if let Some((.., (ter, aum))) = je.get(isin) {
+            (q.profile.ter, q.profile.aum) = (*ter, *aum);
         }
     }
     let _ = std::fs::write(crate::config::data_path(TD_CACHE_PATH), serde_json::to_string(&cache).unwrap_or_default());
@@ -11819,12 +11851,16 @@ pub(crate) mod tests {
     /// ZZTDA lacks USE only and ZZTDD TOP10% only, so both read their page; ZZTDB is served off a fresh
     /// row; ZZTDE has every cell, so its routed page is never read; ZZTDF's page 404s and is not cached.
     /// (#490) ZZTDI has every cell but no BF benchmark, so it reads its page for the index name.
+    /// (#621) The page's TER and fund size land on `profile` (ZZTDA, its twin, ZZTDB's cached row) and
+    /// leave `ter_shown`/`aum_shown`, which the CORE gates read, empty. (#623) ZZTDJ is a real-estate
+    /// fund past `syms` with no size, so it reads its page for TER and size alone; ZZTDK is sized by BF,
+    /// ZZTDL is no real-estate fund and ZZTDM has a fresh cached row, so none of those reads a page.
     #[tokio::test]
     async fn enrich_etf_cells_stamps_printed_funds_and_their_listings() {
         let page = |d: &'static str| -> &'static str { Box::leak(format!("tdChart=x;name:'TD (%)',data:[{d}]").into_boxed_str()) };
         // B is routed so a wrongful refetch of its fresh row would show; E is not, so it answers 404
         let je_page = |use_: &str, top10: &str| -> &'static str {
-            Box::leak(format!(r#"tl_etf-basics_value_replication">Synthetic< tl_etf-basics_value_distribution-policy">{use_}< tl_etf-holdings_top-holdings_weight">{top10}% tl_etf-basics_value_index-name">Nasdaq 100®<"#).into_boxed_str())
+            Box::leak(format!(r#"tl_etf-basics_value_replication">Synthetic< tl_etf-basics_value_distribution-policy">{use_}< tl_etf-holdings_top-holdings_weight">{top10}% tl_etf-basics_value_index-name">Nasdaq 100®< etf-basics_row_fund-size"> <div> EUR 4,020 m </div> </tr> tl_etf-basics_value_ter">0.20% p.a.<"#).into_boxed_str())
         };
         let routes = vec![
             ("je/ZZISINA", je_page("Accumulating", "55.5")),
@@ -11832,6 +11868,10 @@ pub(crate) mod tests {
             ("je/ZZISIND", je_page("Accumulating", "30")),
             ("je/ZZISINE", je_page("Accumulating", "77")),
             ("je/ZZISINI", je_page("Accumulating", "88")),
+            ("je/ZZISINJ", je_page("Accumulating", "20")),
+            ("je/ZZISINK", je_page("Accumulating", "20")),
+            ("je/ZZISINL", je_page("Accumulating", "20")),
+            ("je/ZZISINM", je_page("Accumulating", "20")),
             ("ZZISINA", page("0.3,-0.2,")),
             ("ZZISINB", page("9.9,")),
             ("ZZISIND", page("0.5,")),
@@ -11840,12 +11880,12 @@ pub(crate) mod tests {
         let mut urls = stub_urls(&base);
         urls.trackingdifferences = format!("{base}{{isin}}");
         urls.justetf_profile = format!("{base}je/{{isin}}");
-        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE", "ZZISINF": "ZZTDF", "ZZISING": "ZZTDG", "ZZISINH": "ZZTDH", "ZZISINI": "ZZTDI"});
+        let isin_cache = serde_json::json!({"ZZISINA": "ZZTDA", "ZZISINB": "ZZTDB", "ZZISIND": "ZZTDD", "ZZISINE": "ZZTDE", "ZZISINF": "ZZTDF", "ZZISING": "ZZTDG", "ZZISINH": "ZZTDH", "ZZISINI": "ZZTDI", "ZZISINJ": "ZZTDJ", "ZZISINK": "ZZTDK", "ZZISINL": "ZZTDL", "ZZISINM": "ZZTDM"});
         std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), isin_cache.to_string()).expect("seed isin cache");
         let ago = |n: i64| (chrono::Local::now().date_naive() - chrono::Duration::days(n)).to_string();
         let td = serde_json::json!({"ZZISINB": [ago(0), [0.1]], "ZZISIND": [ago(30), [0.2]], "ZZISINE": [ago(40), [0.7]]});
         std::fs::write(crate::config::data_path(TD_CACHE_PATH), td.to_string()).expect("seed td cache");
-        let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0, "S&amp;P 500"]]});
+        let je = serde_json::json!({"ZZISINB": [ago(0), [null, "Opt", 12.0, "S&amp;P 500"], [null, 7.5e8]], "ZZISINM": [ago(0), [null, null, null, null], [null, 6.0e8]]});
         std::fs::write(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH), je.to_string()).expect("seed justetf cache");
         let mut quotes: Vec<core::Quote> =
             ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDA2", "ZZTDD", "ZZTDE", "ZZTDF", "ZZTDG", "ZZTDH", "ZZTDI"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
@@ -11857,6 +11897,13 @@ pub(crate) mod tests {
             (q.use_of_profits, q.replication, q.benchmark) = (Some("Dist"), Some("Full"), Some("bf".into()));
         }
         quotes[9].benchmark = None;
+        // (#623) funds the REITs table prints past `syms`: a stub has no instrument type, so these say ETF
+        for (t, name) in [("ZZTDJ", "Zz Property J"), ("ZZTDK", "Zz Property K"), ("ZZTDL", "Zz Bond L"), ("ZZTDM", "Zz Property M")] {
+            let mut q = core::Quote::stub(t, "1.00", "", name);
+            q.instrument_type = "ETF".into();
+            quotes.push(q);
+        }
+        quotes[11].aum_eur = Some(5e8);
         let syms: Vec<String> = ["ZZTDA", "ZZTDB", "ZZTDC", "ZZTDD", "ZZTDE", "ZZTDF", "ZZTDI"].iter().map(|t| t.to_string()).collect();
         let holdings = HashMap::from([
             ("ZZTDA".to_string(), vec![("X".to_string(), 0.25), ("Y".to_string(), 0.15)]),
@@ -11889,6 +11936,17 @@ pub(crate) mod tests {
         assert_eq!(cells(&quotes[1]), (None, Some("Opt".into()), Some(12.0)), "a fresh row is served, not refetched");
         assert_eq!(cells(&quotes[4]), (Some("Acc".into()), Some("Swap".into()), Some(30.0)), "a gap in TOP10% alone reads the page");
         assert_eq!(cells(&quotes[5]), (None, None, Some(50.0)), "no gap, no justETF read");
+        // (#621) TER and fund size land on profile; the fields the CORE gates read stay empty
+        let facts = |q: &core::Quote| (q.profile.ter, q.profile.aum, q.ter_shown(), q.aum_shown());
+        assert_eq!(facts(&quotes[0]), (Some(0.2), Some(4.02e9), None, None));
+        assert_eq!(facts(&quotes[3]), facts(&quotes[0]), "same fund name copies them too");
+        assert_eq!(facts(&quotes[1]), (None, Some(7.5e8), None, None), "a fresh row is served, not refetched");
+        assert_eq!(facts(&quotes[5]), (None, None, None, None), "no gap, no justETF read");
+        // (#623) the REITs table's unsized fund reads its page; a sized one, a plain fund and a fresh row do not
+        assert_eq!(facts(&quotes[10]), (Some(0.2), Some(4.02e9), None, None));
+        assert_eq!(facts(&quotes[11]), (None, None, None, Some(5e8)), "a BF-sized fund is left alone");
+        assert_eq!(facts(&quotes[12]), (None, None, None, None), "no real-estate name, no read");
+        assert_eq!(facts(&quotes[13]), (None, Some(6.0e8), None, None), "a fresh row is served, not refetched");
         // (#490) the index name lands on profile, never on the BF benchmark the CORE family key reads
         assert_eq!((quotes[0].profile.index.as_deref(), quotes[0].benchmark.as_deref()), (Some("Nasdaq 100®"), Some("bf")));
         assert_eq!(quotes[1].profile.index.as_deref(), Some("S&P 500"), "the page's escaped ampersand, decoded off a cached row");
@@ -11896,6 +11954,7 @@ pub(crate) mod tests {
         assert_eq!(quotes[0].replication, Some("Full"), "the scored BF field is never touched");
         let saved = std::fs::read_to_string(crate::config::data_path(JUSTETF_CELLS_CACHE_PATH)).expect("justetf cache");
         assert!(saved.contains("ZZISIND") && !saved.contains("ZZISINE") && !saved.contains("ZZISINF"), "{saved}");
+        assert!(saved.contains("ZZISINJ") && !saved.contains("ZZISINK") && !saved.contains("ZZISINL"), "{saved}");
     }
 
     /// (#448) A `filingDate` cell before the day ends the walk; on the day, garbled or missing does not.
