@@ -13798,6 +13798,18 @@ buy_heuristic:
                                  #   4/6 (pit 8y -1.5/-0.6, stress 8y -0.4/-1.1), no veto.
                                  #   0 = momentum 12-1, the (#584) order: the revert value. `track`'s
                                  #   `mblend` keeps grading the blend forward.
+                                 #   (#609) PRE-REGISTERED, before the runs: 3 = beta-hedged 12-7, each
+                                 #   name's months 7-12 back net of beta times the market (the pond's
+                                 #   equal-weight mean month; beta fit over the name's trail, up to 36
+                                 #   months); 4 = residual momentum (Blitz, Huij and Martens 2011): that
+                                 #   window's regression residuals, alpha out too, over the residuals'
+                                 #   sd. Why tried: web sweep 34's one momentum lead (`picks::
+                                 #   residual_momentum`). Probes: universe fund pit/stress rivals
+                                 #   winners, 8/12/20y, control vs each arm. Bar as (#587): rival (j)
+                                 #   arm - control mean AND median >= +0.2 in >= 5/6 cells; 20y DCA
+                                 #   S+inter not down > 0.2 (mean or median) in either lane; WINNERS
+                                 #   HELD not under control by >= 2.0 in any cell. Predicted ~5% each:
+                                 #   hedging the market out demotes the fat-tail winners 20y lives on.
   growth_momentum_slots: 5       # (#597) REFUSED 3/3 (probe on 1386557, universe fund pit/stress
                                  #   rivals, 8/12/20y): of every 10 slots in the interleaved book, how
                                  #   many the momentum order fills, spread evenly

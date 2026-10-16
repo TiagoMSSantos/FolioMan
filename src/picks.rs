@@ -7543,10 +7543,14 @@ fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {
 /// holds stocks only, as the live book's. `growth_momentum_key` 0 = momentum 12-1; 1 = 12-7, the year net
 /// of its last six months; 2 = the 12-1 percentile plus the value percentile, value being the 13-60-month
 /// return (the five years net of the last one) negated, each among the keyed names (`core::ranks` over n + 1),
-/// and a name with no 5Y leg at the middle.
-pub(crate) fn momentum_keys(qs: &[&Quote], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
+/// and a name with no 5Y leg at the middle. (#609) 3 and 4 read `trails`, each name's trailing monthly returns
+/// (newest last, in `qs` order): see [`residual_momentum`].
+pub(crate) fn momentum_keys(qs: &[&Quote], trails: &[&[f64]], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
     let short = if tuning.growth_momentum_key == 1 { "6M" } else { "1M" };
     let mom: Vec<Option<f64>> = qs.iter().map(|q| net_return(q, "1Y", short).filter(|_| asset_class(q) == 2 && misses_ok(q, tuning))).collect();
+    if tuning.growth_momentum_key >= 3 {
+        return residual_momentum(&mom, trails, tuning.growth_momentum_key == 4);
+    }
     if tuning.growth_momentum_key != 2 {
         return mom;
     }
@@ -7559,13 +7563,44 @@ pub(crate) fn momentum_keys(qs: &[&Quote], tuning: &BuyHeuristic) -> Vec<Option<
     pct(&mom).into_iter().zip(pct(&value)).map(|(m, v)| Some(m? + v.unwrap_or(0.5))).collect()
 }
 
+/// (#609) Keys 3 and 4 of [`momentum_keys`]: each name `mom` keys, regressed on the market, the equal-weight
+/// mean return, month by month, of the keyed names that have that month. Trails align on their newest month
+/// and beta is fit over the whole trail (up to 36 months). 3 = beta-hedged 12-7: months 7-12 back of the
+/// return net of beta times the market. 4 = residual momentum (Blitz, Huij and Martens 2011): that window's
+/// regression residuals (alpha out too) over the residuals' sd. Under 12 months, or a market with no
+/// variance, has no key.
+/// shortcut: months align by position, so a skipped bad close or the live trail's partial last month
+/// shifts a name's window by one month; the market is the pond, not an index, and live EUR lines mix FX in.
+fn residual_momentum(mom: &[Option<f64>], trails: &[&[f64]], blitz: bool) -> Vec<Option<f64>> {
+    let rev: Vec<Vec<f64>> = trails.iter().map(|t| t.iter().rev().copied().collect()).collect();
+    let keyed: Vec<&Vec<f64>> = rev.iter().zip(mom).filter(|r| r.1.is_some()).map(|r| r.0).collect();
+    let len = keyed.iter().map(|x| x.len()).max().unwrap_or(0);
+    let market: Vec<f64> = (0..len)
+        .map(|k| {
+            let v: Vec<f64> = keyed.iter().filter_map(|x| x.get(k).copied()).collect();
+            v.iter().sum::<f64>() / v.len() as f64
+        })
+        .collect();
+    let key = |x: &[f64]| -> Option<f64> {
+        let (mk, n) = (&market[..x.len()], x.len() as f64);
+        let (xbar, mbar) = (x.iter().sum::<f64>() / n, mk.iter().sum::<f64>() / n);
+        let beta = x.iter().zip(mk).map(|(a, b)| a * (b - mbar)).sum::<f64>() / mk.iter().map(|b| b * (b - mbar)).sum::<f64>();
+        let alpha = if blitz { xbar - beta * mbar } else { 0.0 };
+        let e: Vec<f64> = x.iter().zip(mk).map(|(a, b)| a - alpha - beta * b).collect();
+        let sd = if blitz { (e.iter().map(|v| v * v).sum::<f64>() / n).sqrt() } else { 1.0 };
+        Some(e.get(6..12)?.iter().sum::<f64>() / sd).filter(|k| k.is_finite())
+    };
+    rev.iter().zip(mom).map(|(x, m)| m.and_then(|_| key(x.as_slice()))).collect()
+}
+
 /// (#584) The momentum half of the blended book: the stocks the gates-off score keys ([`gates_off`], the
 /// backtest's `rivals` pond), highest [`momentum_keys`] first (12-7 by default since (#587)), a tie by ticker so the
 /// order never depends on the pool's. (#585) A name [`misses_ok`] skips is not in it.
 pub(crate) fn momentum_order<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> Vec<&'a Quote> {
     let open = gates_off(tuning);
     let pond: Vec<&Quote> = quotes.iter().filter(|q| asset_class(q) == 2 && growth_score(q, &open).is_some()).collect();
-    let mut v: Vec<(f64, &Quote)> = momentum_keys(&pond, tuning).into_iter().zip(pond).filter_map(|(k, q)| Some((k?, q))).collect();
+    let trails: Vec<&[f64]> = pond.iter().map(|q| q.trail_monthly.as_slice()).collect();
+    let mut v: Vec<(f64, &Quote)> = momentum_keys(&pond, &trails, tuning).into_iter().zip(pond).filter_map(|(k, q)| Some((k?, q))).collect();
     v.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.ticker.cmp(&b.1.ticker)));
     v.into_iter().map(|x| x.1).collect()
 }
@@ -13083,7 +13118,13 @@ mod tests {
             q("DDD", &[("1M", 0.0), ("6M", 0.0)]),
         ];
         let refs: Vec<&Quote> = quotes.iter().collect();
-        let keys = |k: usize| momentum_keys(&refs, &BuyHeuristic { growth_momentum_key: k, ..BuyHeuristic::default() });
+        // (#609) trails, newest last. DDD has no 1Y, so its trail stays out of the market; CCC's 11 months are too
+        // few for a key of its own, but they are in the market.
+        let a = [3.0, -1.0, 4.0, 1.0, -5.0, 9.0, 2.0, -6.0, 5.0, 3.0, -5.0, 8.0, 9.0, 7.0];
+        let b = [2.0, 7.0, -1.0, 8.0, 2.0, -8.0, 1.0, 8.0, 2.0, 8.0, -4.0, 5.0];
+        let c = [1.0, 4.0, -2.0, 1.0, 3.0, 5.0, -6.0, 2.0, 0.0, 9.0, 1.0];
+        let trails: [&[f64]; 4] = [&a, &b, &c, &[50.0; 13]];
+        let keys = |k: usize| momentum_keys(&refs, &trails, &BuyHeuristic { growth_momentum_key: k, ..BuyHeuristic::default() });
         let near = |got: Vec<Option<f64>>, want: [Option<f64>; 4]| {
             got.len() == 4 && got.iter().zip(want).all(|(g, w)| match (g, w) {
                 (Some(g), Some(w)) => (g - w).abs() < 1e-9,
@@ -13094,6 +13135,15 @@ mod tests {
         assert!(near(keys(1), [Some(20.0 / 3.0), Some(32.0), Some(10.0), None]), "{:?}", keys(1));
         // 12-1 percentiles 3/4, 2/4, 1/4; value: AAA's 13-60 return +150% ranks under BBB's 0, so 1/3 and 2/3, CCC 0.5
         assert!(near(keys(2), [Some(0.75 + 1.0 / 3.0), Some(0.5 + 2.0 / 3.0), Some(0.75), None]), "{:?}", keys(2));
+        // 3 = beta-hedged 12-7, 4 = residual momentum, over the AAA/BBB/CCC market (hand-computed off the same sums)
+        assert!(near(keys(3), [Some(-10.070204152), Some(0.4400866492), None, None]), "{:?}", keys(3));
+        assert!(near(keys(4), [Some(-0.9506881824), Some(0.3399020431), None, None]), "{:?}", keys(4));
+        // a market with no variance (AAA and BBB mirror each other, CCC has no trail) keys nobody, not NaN first
+        let up: Vec<f64> = (0..12).map(|m| m as f64).collect();
+        let down: Vec<f64> = up.iter().map(|x| -x).collect();
+        let mirror: [&[f64]; 4] = [&up, &down, &[], &[]];
+        let flat = |k: usize| momentum_keys(&refs, &mirror, &BuyHeuristic { growth_momentum_key: k, ..BuyHeuristic::default() });
+        assert!(near(flat(3), [None; 4]) && near(flat(4), [None; 4]), "{:?} {:?}", flat(3), flat(4));
     }
 
     /// (#584) `growth_momentum_interleave` with the equal-weight book funds shipped 1, momentum 1, shipped 2 ...;
