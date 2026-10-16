@@ -3664,7 +3664,7 @@ pub fn pac_crosswalk(
                 None => by_key.get(key).cloned().unwrap_or_default(),
             };
             for (t, sec) in hits {
-                // ponytail: two FEC keys on one ticker keep the larger count, not the union of their
+                // shortcut: two FEC keys on one ticker keep the larger count, not the union of their
                 // candidates; pool the candidate sets if the audit shows firms split across keys.
                 let e = breadth.entry(t.to_string()).or_default().entry(*cycle).or_insert(0);
                 *e = (*e).max(*n);
@@ -5154,7 +5154,7 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// year earlier. The quarter alone = that span − the longest shorter span sharing its start. No newer
 /// 10-Q (a 20-F filer files none) -> the fiscal year itself, its quarter = FY − the 9-month YTD.
 /// Pure -> unit-tested on Alphabet's 2026 figures.
-/// ponytail: the first tag listed wins per span, so a filer that switches capex tag mid-year can mix
+/// shortcut: the first tag listed wins per span, so a filer that switches capex tag mid-year can mix
 /// tags across the three spans; `collect` has the same ceiling.
 fn cash_ttm(g: &Value, tags: &FactTags, money: &str, fy_end: NaiveDate) -> Option<core::CashTtm> {
     // (start, end) -> (tag index, earliest filed, value)
@@ -7992,7 +7992,7 @@ fn s1_text(html: &str) -> String {
 /// comes before "year(s) ended". An income row counts only with one number per year. (#527) Gross
 /// profit, operating income and operating cash flow are read the same way, and so is the interim pair
 /// (latest interim year, the year before) of every income row.
-/// ponytail: a label/column heuristic over free HTML, n/a on any miss; read Inline XBRL instead once
+/// shortcut: a label/column heuristic over free HTML, n/a on any miss; read Inline XBRL instead once
 /// filers tag their S-1 statements.
 fn s1_figures(html: &str) -> S1Figs {
     let t = s1_text(html);
@@ -8151,7 +8151,7 @@ fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
     let rank = |d: &IpoDeal| ["upcoming", "filed", "confidential"].iter().position(|s| *s == d.status).unwrap_or(3);
     let key = |d: &IpoDeal| (rank(d), if d.status == "confidential" { d.rep_expected.clone() } else { d.day.clone() }, d.name.clone());
     deals.sort_by_key(key);
-    // ponytail: no growth term, since an S-1's tiny base reads as huge growth (NSCALE: +1252%); add a
+    // shortcut: no growth term, since an S-1's tiny base reads as huge growth (NSCALE: +1252%); add a
     // Rule-of-40 tiebreak if the young track ever grades IPO quality.
     let fig = |d: &IpoDeal| ttm(d.figs.rev, d.figs.i_rev).filter(|r| *r > 0.0).map(|r| (ttm(d.figs.net, d.figs.i_net).is_some_and(|n| n > 0.0), r));
     deals.sort_by(|a, b| match (fig(a), fig(b)) {

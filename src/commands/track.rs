@@ -1370,7 +1370,7 @@ fn mblend_section(
 /// (#557) The top-[`BOOK`] of `snap.rows` under `growth_sector_cap = cap`, rebuilt off the line's own
 /// `sector` tags by the same `picks::sector_cap` that trims the live book. A row with no tag is kept,
 /// as the live cap keeps it.
-/// ponytail: only the journalled `rows` (the top `top_picks`, 12-25 deep) can refill a dropped slot, so
+/// shortcut: only the journalled `rows` (the top `top_picks`, 12-25 deep) can refill a dropped slot, so
 /// a tight cap can grade a book shorter than ten; journal the deeper ranked list if that ever bites.
 fn capped_rows(snap: &Snapshot, cap: usize) -> Rows<'_> {
     let sector = |t: &str| snap.sector.iter().find(|(x, _)| x == t).map(|(_, s)| s.as_str());

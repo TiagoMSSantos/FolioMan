@@ -2883,7 +2883,7 @@ fn ann(cum_pct: f64, years: i64) -> f64 {
 /// each the class's own top-`n` equal-weight hold, so every class gets its own verdict. A class that
 /// booked nobody in any bucket prints nothing; a bucket where it booked nobody prints `empty`, the index
 /// you'd hold instead. `class_of(bucket, ticker)`.
-// ponytail: skips the sector and corr caps the main book runs; both are the identity at their shipped 0.
+// shortcut: skips the sector and corr caps the main book runs; both are the identity at their shipped 0.
 fn class_book_lines(
     by_bucket: &BTreeMap<i32, Vec<(f64, f64, f64, String)>>,
     calendar: &std::collections::BTreeSet<i32>,
@@ -3864,7 +3864,7 @@ struct Leak {
 /// out on the stable sort's order, it is score blind. Winners are the top `top_pct`% of the window's
 /// stocks by realized %, ties at the bar included. Groups are (quote, realized %, PEG yield) per bucket.
 /// Report only.
-// ponytail: skips the sector and corr caps the main book runs; both are the identity at their shipped 0.
+// shortcut: skips the sector and corr caps the main book runs; both are the identity at their shipped 0.
 fn winner_leaks(groups: &BTreeMap<i32, Vec<(&Quote, f64, Option<f64>)>>, years: i64, top_pct: f64, tuning: &BuyHeuristic) -> [Leak; 7] {
     let mut out: [Leak; 7] = Default::default();
     let brake = BuyHeuristic { growth_overext_cap: 0.0, ..tuning.clone() };
@@ -3939,7 +3939,7 @@ fn winner_bar(mut fwd: Vec<f64>, top_pct: f64) -> Option<f64> {
 /// [`momentum_ranked`] over the `open` pond, as the 20y DCA `blend` lane does. Winners are the top `top_pct`%
 /// stocks by realized %, as in [`winner_leaks`]. Returns the filled book slots, and per held winner its
 /// [score half, momentum half] slot counts. A config that loses winners from either half reads here.
-// ponytail: skips the sector and corr caps the DCA lane runs; both are the identity at their shipped 0.
+// shortcut: skips the sector and corr caps the DCA lane runs; both are the identity at their shipped 0.
 fn blend_winners<'a>(
     groups: &BTreeMap<i32, Vec<&'a Sample>>,
     top_pct: f64,

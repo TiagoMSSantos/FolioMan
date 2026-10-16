@@ -2072,7 +2072,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if tuning.growth_hard_loss && quote.fund.as_ref().and_then(|f| f.eps_ttm).is_some_and(|e| e <= 0.0) {
         return None;
     }
-    // ponytail: clones the tuning and re-runs the gates (tags only) per FAILING quote while the knob is armed;
+    // shortcut: clones the tuning and re-runs the gates (tags only) per FAILING quote while the knob is armed;
     // precompute per pool if a probe arm slows. (#576) the walkthrough prints the f^n as its soft dock line.
     let (open, tags, _) = waived(quote, tuning, false)?;
     let mut p = score_parts_hard(quote, &open)?;
@@ -4893,7 +4893,7 @@ pub fn stock_fair_ratio(q: &Quote) -> Option<(f64, String)> {
 /// (#540) A bank's or insurer's FAIR ÷ price, the justified price-to-book: book × (ROE − g) ÷ (r − g) at
 /// FAIR's own 9% and 2.5%, book per share = EPS ÷ ROE. Over the price that is (1 ÷ P/E) × (1 − g ÷ ROE) ÷
 /// (r − g), so it reads the P/E and ROE cells alone. None on a loss or ROE ≤ g (no value above book to earn).
-/// ponytail: today's ROE is held forever, no fade toward r; fade it over 10 years if banks misprice.
+/// shortcut: today's ROE is held forever, no fade toward r; fade it over 10 years if banks misprice.
 pub fn bank_fair_ratio(q: &Quote) -> Option<(f64, String)> {
     let (r, g) = (9.0, 2.5); // percent, `dcf_raw`'s rate and terminal growth (1.025 - 1.0 misses 0.025 by a bit)
     let roe = q.roe.filter(|v| *v > g)?;
@@ -4948,7 +4948,7 @@ pub fn implied_growth(fcf_yield: f64) -> Option<f64> {
 /// (#519) [`stock_fair_ratio`] for a stock SEC never filed: Eulerpool's annual `(period, fcf)` and its market
 /// cap, both in millions of the reporting currency, so no FX step. Same rate rule as `core::fund_factors`:
 /// the row 5 years back, both ends positive, else (no such row) the oldest row 2+ years back with its span
-/// marker. None on a burn, no cap, or no rate. ponytail: newest FY, not TTM, and an EU burn reads n/a, not
+/// marker. None on a burn, no cap, or no rate. shortcut: newest FY, not TTM, and an EU burn reads n/a, not
 /// "burn" (the cell's burn arm reads `fund`); stamp the burn too if a non-US row ever needs telling apart.
 /// A bank's FCF carries deposit flows (BCP.LS read 12×): a sector skip if the column ever gets trusted.
 pub fn ep_fair_ratio(fcf: &[(String, f64)], mcap: f64) -> Option<(f64, String)> {
@@ -4967,7 +4967,7 @@ pub fn ep_fair_ratio(fcf: &[(String, f64)], mcap: f64) -> Option<(f64, String)> 
 }
 
 /// (#521) An ETF's FAIR ÷ price: its top holdings' own ratios, weight-averaged over the ones that have one.
-/// None when those cover under half the listed weight. ponytail: top-10 only (~35% of a broad index) and
+/// None when those cover under half the listed weight. shortcut: top-10 only (~35% of a broad index) and
 /// non-US holdings mostly file no SEC FCF, so EU-heavy funds read n/a; full holdings if the column earns it.
 pub fn look_through_fair(top: &[(String, f64)], ratios: &HashMap<String, f64>) -> Option<f64> {
     let total: f64 = top.iter().map(|(_, w)| w).sum();
@@ -5940,7 +5940,7 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
         Some((_, tags, _)) if quote_is_etf(q) && tags.iter().any(|g| matches!(g.0, "history" | "young")) => index_twin(q, pool, tuning),
         _ => None,
     };
-    // ponytail: the twin may quote another currency; prefer a same-currency twin if a pair reads wrong.
+    // shortcut: the twin may quote another currency; prefer a same-currency twin if a pair reads wrong.
     if let (Some(tw), Some((_, tags, _))) = (twin, &w) {
         let ((class, _, s), _, _) = rank_key(Some(tw), tuning, &[]);
         if class <= 1 {
@@ -5952,7 +5952,7 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
             return ((1, tags_s.len(), s), format!("{s:.1}ʷ~"), format!("{}: {}", tags_s.len(), tags_s.join(", ")), lines.join("\n"));
         }
     }
-    // ponytail: on a weeks-old line the change since listing is noise; the ⁱ says so, nothing shrinks it.
+    // shortcut: on a weeks-old line the change since listing is noise; the ⁱ says so, nothing shrinks it.
     let mut mark = "";
     let since = own.young_ret_pct.or_else(|| Some(((1.0 + own.life_cagr? / 100.0).powf(own.age_years?) - 1.0) * 100.0));
     if let (None, Some(p), false) = (perf_pct(&own, "1Y"), since, own.age_years.is_some_and(|a| a >= 1.0)) {

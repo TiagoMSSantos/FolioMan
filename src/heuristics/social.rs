@@ -17,7 +17,7 @@
 //!   The loud sources (`Reddit`, `Benzinga buzz`) multiply it by `loud_penalty`, because a crowd that
 //!   is already talking is the market noticing.
 //!
-//! ponytail: every prior here is hand-set, never fitted, and only track `soct` grades it (SOC top 10 vs
+//! shortcut: every prior here is hand-set, never fitted, and only track `soct` grades it (SOC top 10 vs
 //! the same table's 20y top 10, forward). Refit them only from that row.
 //!
 //! CONFIG: the top-level `social_heuristic:` section. Its four SOC keys default to OFF (half_life_days
@@ -114,9 +114,9 @@ pub fn score(sources: &str, newest: &str, mcap_eur: Option<f64>, mom_pct: Option
         return None;
     }
     let entries: Vec<&str> = sources.split("; ").map(str::trim).filter(|e| !e.is_empty()).collect();
-    // ponytail: an unknown date reads half fresh, a neutral guess; fix the source if many rows hit it
+    // shortcut: an unknown date reads half fresh, a neutral guess; fix the source if many rows hit it
     let fresh = asof.zip(newest_day(newest)).map_or(0.5, |(a, d)| 0.5f64.powf((a - d).num_days().max(0) as f64 / k.half_life_days));
-    // ponytail: an unknown market cap reads as 10× the pivot (material 0.5), a neutral guess
+    // shortcut: an unknown market cap reads as 10× the pivot (material 0.5), a neutral guess
     let pivot = k.mcap_pivot_eur.max(1.0);
     let mcap = mcap_eur.filter(|m| *m > 0.0).unwrap_or(pivot * 10.0);
     let material = 1.0 / (1.0 + (mcap / pivot).log10().max(0.0));

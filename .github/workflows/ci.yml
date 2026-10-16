@@ -538,7 +538,7 @@ jobs:
           # Saved only by a main push that changed src/. One that didn't (a bot's lock-only merge, a
           # YAML edit) exits at "no mutants" before building, and saving then would file the old
           # lock's dependencies under the new lock's key, which an exact hit never saves again.
-          # ponytail: a src push with no mutants in its diff (comments only) right after a lock bump
+          # shortcut: a src push with no mutants in its diff (comments only) right after a lock bump
           # can still do that; the cost is rebuilding the bumped crates each run until the next bump.
           # Upgrade: decide save-if from a `cargo mutants --list` run before this step.
           shared-key: folioman-mutants
