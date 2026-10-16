@@ -546,3 +546,13 @@ jobs:
                   | group_by(.workflow_id)[] | sort_by(.created_at) | reverse | .[20:][] | .id'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
+          # (#612) DEPENDABOT, NEWEST PER JOB: Dependabot Updates (dynamic, no workflow file) keeps the
+          # newest finished run of each job, its title minus " - Update #N": `cargo in /.` is the monthly
+          # version check, `cargo in / for serde_json, tokio` one PR's refresh. A newer run of the same job
+          # replaces the older log, and a red newest run stays on screen. One run in total would drop the
+          # other ecosystem's last log.
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" \
+              --jq '.workflow_runs[] | select(.path == "dynamic/dependabot/dependabot-updates")' \
+              | jq -rs 'group_by(.display_title | sub(" - Update #[0-9]+$"; ""))[] | sort_by(.created_at) | reverse | .[1:][] | .id'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
