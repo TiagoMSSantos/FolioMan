@@ -5751,6 +5751,27 @@ buy_heuristic:
                                  #  >= 10 bp/yr over the trailing 5 years. Re-check off `https://www.trackingdifferences.com/ETF/ISIN/{ISIN}`: the
                                  #  per-year TD sits in the `tdChart` block (`categories:[years]` … `name:'TD (%)'` … `data:[…]`).
                                  #  REVERT RULE: none — a measurement, not a value.
+                                 #── (#615) MEASURED 2026-10-16 — TD-DOMINATED TWIN GUARD ON CORE, RECORD ONLY, NO CODE (OWNER) ──
+                                 #  WHAT: the (#414) REOPEN WHEN re-checked on the live page (99 CORE rows). Rule weighed: a fund is DOMINATED
+                                 #  when a twin with the same `family_key` AND the same dom_rank bucket beats it on TD by >= 10 bp/yr mean over
+                                 #  >= 3 shared years, the fund worse in >= n-1 of them (a tie is not worse) and in both latest 2; a fund with
+                                 #  no TD never flags or dominates (#5). A per-fund flag computed before the sort keeps `hold_core_cmp` a total
+                                 #  order (a pairwise "TD if gap >= 10 bp, else TER" is not transitive); the bucket clause keeps (#235) closed.
+                                 #  CENSUS: 13 indices hold >= 2 funds. ONE flip: MSCI EM, HEMA.MI (TER 0.15) trails IEMA.L (0.18) by 34 bp/yr
+                                 #  over 2021-25 (gaps +0.4/+0.4/+0.4/0.0/+0.5, 2025 first), 4/5 years, the latest 2 worse. HEMA's own ISIN
+                                 #  IE000KCS7J59 carries no TD row (Acc class launched 2022-06): those years are its sister class IE00B5SSQT16's.
+                                 #  Euro Stoxx 50: SC0D (IE) trails XESC (LU) by 20 bp, across buckets, so no flag. MSCI World: UETW vs SPPW
+                                 #  (20 bp, 3/5, 2025 better) is the noise case that must not flip, and does not. Noise flips: zero.
+                                 #  HISTORY: the rule flips no EM head at either (#414) split. Train 2016-20: IEMA trails the HSBC class by 14 bp
+                                 #  but in 3/5 years (2019-20 ties); train 2017-21: 2 bp. The HSBC class then trailed by 30-34 bp/yr of forward
+                                 #  TD (2022 and 2021 splits), so bar part (i) cannot be met by this rule; it needs a bar of its own.
+                                 #  VERDICT: RECORD ONLY (owner, 2026-10-16): one EM seat, ~0.3%/yr, ungraded on history, n = 1. A build needs
+                                 #  the per-ISIN comparison table of the (#465) HTML (a new cache field: `td_years` parses `tdChart` only) and a
+                                 #  sister-class key (same index table + issuer + replication, name minus Acc/Dist/currency tokens, hedged out).
+                                 #  SIDE FINDING, not fixed: (#388) `switch_lines` targets the lowest `ter_shown()` twin, so an IEMA.L lot is told
+                                 #  to switch to HEMA.MI. The fix needs the same sister key.
+                                 #  REOPEN WHEN: a fund's OWN ISIN carries >= 3 TD years and the rule flags it, or a second index flags.
+                                 #  REVERT RULE: none — a measurement, not a value.
                                  #── (#415) BUILT 2026-09-29 — FACTOR FORWARD SHADOW: RND/INT/MSCORE VS PEG, JOURNAL ONLY, NO SCORE MOVES ──
                                  #  WHAT: every `screen` line now journals `fac` = (ticker, factor, value) for the (#332) PEG cohort (ranked book +
                                  #  notch names) and three factors: (#410) rnd_yield, (#413) int_yield, (#412) mscore (negated, so high = good for all
