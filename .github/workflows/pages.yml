@@ -537,9 +537,10 @@ jobs:
           done
           # (#562) COUNT CAP, PER WORKFLOW: keep the 20 newest completed runs of each workflow and delete
           # the rest, even when they are younger than 2 days. The cap only bites where runs pile up: a
-          # 10-arm probe batch made 67 runs on 2026-10-11. ci/codeql/pages already keep ~1 each through
-          # their own sweeps, which stay as they are. One probe batch (<= 10 runs) still fits under 20,
-          # so its logs survive until they are tallied. Open-PR runs are exempt and are not counted.
+          # 10-arm probe batch made 67 runs on 2026-10-11. ci/codeql/pages and (#611) automerge already
+          # keep ~1 each through their own sweeps, which stay as they are. One probe batch (<= 10 runs)
+          # still fits under 20, so its logs survive until they are tallied. Open-PR runs are exempt and
+          # are not counted.
           for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" --jq '.workflow_runs[]' \
               | jq -rs --argjson open "$open" '[.[] | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))]
                   | group_by(.workflow_id)[] | sort_by(.created_at) | reverse | .[20:][] | .id'); do

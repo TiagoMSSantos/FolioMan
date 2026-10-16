@@ -113,3 +113,25 @@ jobs:
             echo "merged #${pr} at ${sha}"
             exit 0
           done
+
+  # (#611) Each run deletes this workflow's older finished runs, red and cancelled ones too, as
+  # pages.yml's (#399) sweep does for Pages. It fires on every CI, CodeQL, probe and census finish
+  # plus hourly, 20-40 times a day, nearly all no-ops ("in flight on main, next tick"), so it sat at
+  # pages.yml's (#562) 20-run cap. A red run's log lives until the next run starts; while its cause
+  # lasts (an expired PAT) each later run reds the same way, so the newest run still shows it. A
+  # merge's record is the PR itself. Its own job, so the merge job's token stays read-only. The
+  # concurrency group runs one at a time, and `completed` never lists this run or a pending one.
+  cleanup-runs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for status in completed cancelled; do
+            for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow automerge.yml --status "$status" --limit 200 --json databaseId -q '.[].databaseId'); do
+              gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+            done
+          done
