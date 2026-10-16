@@ -609,7 +609,8 @@ fn backtest_edge_holds() {
     /// cold cache, spawn failure) stays green even in CI, but a STRUCTURAL skip — the run completed
     /// and a block the gate greps for simply isn't there — is a report change that silently disarms
     /// half the gate, so under the force flag (i.e. CI) it panics instead of printing a note nobody
-    /// reads. A laptop still skips green on all of them.
+    /// reads. (#632) So does a child that panicked outside src/fetch.rs. A laptop still skips green on
+    /// all of them.
     fn grade_horizon(years: i64, fund: bool, forced: bool) -> bool {
         let leg = if fund { format!("{years}y fund") } else { format!("{years}y") };
         let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
@@ -630,8 +631,23 @@ fn backtest_edge_holds() {
         };
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
-            eprintln!("backtest-gate {leg} SKIPPED — nonzero exit {}; stderr tail: {}", out.status, err.lines().last().unwrap_or(""));
-            return false; // a mid-fetch crash is environmental here; lint/unit/build jobs catch real code breakage offline
+            // (#632) a panic prints `thread '…' panicked at src/x.rs:L:C:`, its message on the next line.
+            // One outside src/fetch.rs is a code bug on data the fixture never reaches, not an outage, yet
+            // it used to skip green like one: a crash on the wide universe quietly disarmed the gate.
+            let mut lines = err.lines();
+            let site = lines.by_ref().find_map(|l| l.split_once(" panicked at ").map(|(_, at)| at));
+            let why = match site {
+                Some(at) => format!("panicked at {at} {}", lines.next().unwrap_or("")),
+                None => format!("stderr tail: {}", err.lines().last().unwrap_or("")),
+            };
+            if forced && site.is_some_and(|at| at.starts_with("src/") && !at.starts_with("src/fetch.rs")) {
+                panic!(
+                    "{leg}: the backtest child {why}. Under FOLIOMAN_BACKTEST_GATE a crash outside the fetch \
+                     layer is a code bug on real data, not an outage"
+                );
+            }
+            eprintln!("backtest-gate {leg} SKIPPED — nonzero exit {}; {why}", out.status);
+            return false; // an outage or a fetch-layer crash is environmental; a laptop skips every crash green
         }
         // search stdout AND stderr — robust to whichever stream the report/diagnostics land on.
         let stdout = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
@@ -690,7 +706,7 @@ fn backtest_edge_holds() {
         let edge = num_after(growth, markers::PASSER_EDGE).expect("a completed GROWTH run prints its passer edge");
         assert!(
             edge > 0.0,
-            "{leg}: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117 at 12y) — a \
+            "{leg}: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy ~+212 at 12y, CI 2026-10-15) — a \
              scoring-code change or a default-tuning edit broke the walk-forward edge; fix it before merging"
         );
         // (SHIP RULE v2) the metric the screen footer actually quotes. The lane edge above grades the
