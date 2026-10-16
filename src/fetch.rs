@@ -225,6 +225,11 @@ pub struct Chart {
     pub splits: Vec<(NaiveDate, f64)>,
 }
 
+/// (#631) The wait before a failed request's retry in `chart_json`, `coinmetrics_get` and the two Euronext
+/// posts: 400 ms. A lib test waits 0: its stub venues fail on purpose, and one test,
+/// `a_venue_outage_never_shrinks_the_stored_universe`, waited six times (2.4 s), paid again by every graded mutant.
+const RETRY_PAUSE_MS: u64 = if cfg!(test) { 0 } else { 400 };
+
 async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Value> {
     let url = urls.yahoo_chart.replace("{ticker}", ticker).replace("{range}", range);
     // Fallback retry. The global `throttle()` pacer now spaces launches so the fan-out shouldn't 429 in
@@ -239,7 +244,7 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
             }
         }
         if attempt == 0 {
-            tokio::time::sleep(StdDuration::from_millis(400)).await;
+            tokio::time::sleep(StdDuration::from_millis(RETRY_PAUSE_MS)).await;
         }
     }
     None
@@ -5831,7 +5836,7 @@ async fn coinmetrics_get(client: &Client, url: &str) -> Result<Value, String> {
                 }
             }
         }
-        tokio::time::sleep(StdDuration::from_millis(400)).await;
+        tokio::time::sleep(StdDuration::from_millis(RETRY_PAUSE_MS)).await;
     }
     Err(last)
 }
@@ -7491,7 +7496,7 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
             }
         }
         if attempt == 0 {
-            tokio::time::sleep(StdDuration::from_millis(400)).await;
+            tokio::time::sleep(StdDuration::from_millis(RETRY_PAUSE_MS)).await;
         }
     }
     eprintln!("fetch: Euronext Lisbon failed after 2 attempts (last status: {last_status}) — Lisbon stocks absent from the screen");
@@ -7571,7 +7576,7 @@ async fn euronext_track_page(client: &Client, urls: &Urls, start: usize, len: us
             }
         }
         if attempt == 0 {
-            tokio::time::sleep(StdDuration::from_millis(400)).await;
+            tokio::time::sleep(StdDuration::from_millis(RETRY_PAUSE_MS)).await;
         }
     }
     (None, last_status)
