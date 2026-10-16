@@ -21,6 +21,7 @@
 //! (#359) slice (brokers + small commands) is receipted that way — by hand, not per push. Logic worth
 //! grading on every push still belongs in a `--lib` test.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -142,6 +143,28 @@ fn isolated_cmd(name: &str, overlay: &str, files: &[(&str, &str)]) -> Command {
 /// the isolation works — a dot-file appearing here is one that is not appearing in the repo.
 fn isolated_root(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_TARGET_TMPDIR")).join(name)
+}
+
+fn repo_file(path: &str) -> String {
+    let full = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+    std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{}: {e}", full.display()))
+}
+
+/// The top-level page-payload keys a source file stamps with `top["k"] = …`: screen's, over the payload
+/// the shared builder made, or the page engine's (src/web.rs), over its own.
+fn stamped_keys(path: &str) -> BTreeSet<String> {
+    repo_file(path)
+        .split("top[\"")
+        .skip(1)
+        .filter_map(|s| s.split_once('"').filter(|(_, rest)| rest.starts_with("] = ")).map(|(k, _)| k.to_string()))
+        .collect()
+}
+
+/// Whether `src` reads `data.<key>` as a whole name: `data.social` must not pass on `data.social_cagr_floor`.
+fn reads_data_key(src: &str, key: &str) -> bool {
+    let name = |c: char| c == '_' || c.is_ascii_alphanumeric();
+    let pat = format!("data.{key}");
+    src.match_indices(&pat).any(|(i, _)| !src[..i].ends_with(name) && !src[i + pat.len()..].starts_with(name))
 }
 
 /// Spelled out so `run_isolated`'s call sites don't all carry a bare `None` that needs a turbofish.
@@ -295,6 +318,16 @@ fn sim_without_journal_says_so() {
     assert!(stdout.contains("No journal yet"), "empty-journal hint missing: {stdout}");
 }
 
+/// (#627) A settings file that does not parse must stop the run, not let it rank on code defaults: `config::load`
+/// exits 1 through `config_fatal`, naming the file (a panic would exit 101). Invalid YAML fails before the
+/// shared base is parsed, so the case costs nothing; `sim` carries it because it loads the config first.
+#[test]
+fn sim_with_unparseable_settings_exits_1_naming_the_file() {
+    let (code, _, stderr) = run_isolated("sim-bad-settings", "buy_heuristic: [\n", &[], &["sim"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("cannot use config") && stderr.contains("settings.yaml"), "file not named: {stderr}");
+}
+
 /// `track` grades journaled books against today's prices, so offline it has nothing to grade — and the
 /// contract under test is that it says so instead of printing an empty table as if it were a result.
 #[test]
@@ -388,6 +421,28 @@ fn screen_ranks_and_journals_offline() {
         isolated_root("screen-offline").join(".screen_snapshots.jsonl").is_file(),
         "screen must journal its ranking — and into the DATA ROOT, not the repo: {stdout}"
     );
+    // (#627) The page payload: every key screen stamps past the shared builder lands in it and the page reads it.
+    // The keys the engine never makes are exactly smoke.mjs's exempt list, which only Pages runs, after the
+    // merge: a key missing there reds the publish, and a misspelt one loses its table from the page.
+    let payload: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(isolated_root("screen-offline").join(".screen_web.json")).expect("screen writes the page payload"),
+    )
+    .expect("the payload parses");
+    let (stamped, engine) = (stamped_keys("src/commands/screen.rs"), stamped_keys("src/web.rs"));
+    let app = repo_file("web/app.js");
+    for k in &stamped {
+        assert!(payload.get(k).is_some(), "payload lacks `{k}`");
+        assert!(reads_data_key(&app, k), "web/app.js never reads data.{k}: the page drops what screen writes");
+    }
+    // (#530) the keys both stamp are the CAGR floors the page greys or hides rows under
+    for k in stamped.intersection(&engine) {
+        assert!(payload[k].is_number(), "`{k}` must be a number: {}", payload[k]);
+    }
+    let smoke = repo_file("web/engine/smoke.mjs");
+    let line = smoke.lines().find(|l| l.trim_start().starts_with("const ci = [")).expect("smoke.mjs lists its CI-only keys");
+    let ci: BTreeSet<String> = line.split('"').skip(1).step_by(2).map(str::to_string).collect();
+    let screen_only: BTreeSet<String> = stamped.difference(&engine).cloned().collect();
+    assert_eq!(ci, screen_only, "smoke.mjs's `ci` list must name exactly the keys only screen stamps");
 }
 
 /// A run that priced nothing must record nothing. The dip journal is a dedup ledger: an entry written
