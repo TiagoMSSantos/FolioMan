@@ -21870,6 +21870,39 @@ prefer_eu_listing: true
 # five rows. Nothing in buy_heuristic was re-fitted, no golden moves, and the backtest cannot see
 # any of this — it hardcodes false and `the_backtest_never_reads_the_venue_knob` enforces that.
 
+# (#608) SHIPPED 2026-10-16 — a row the swap above moved onto a European line keeps that line's
+# ticker, price, EUR close, turnover and listing facts, and takes every series-derived field (legs,
+# life CAGR, age, trend, drawdown, MA stretch, momentum) from its US line, the series the backtest
+# grades. The skew (#191) printed is the reason: life CAGR NVD.DE 58.9 vs NVDA 35.8, LLY.DE 37.5 vs
+# 14.1, MTE.DE 31.6 vs MU 17.3, APC.DE 28.1 vs AAPL 21.2, same companies on the same day.
+#
+# NOT what (#191) refused. It refused turning the swap OFF ("off loses KLA.DE and prints NVIDIA
+# twice") and bridging a twin's history onto its US line (the (#37) skew). This keeps the swap, so
+# the row is still the line a EUR investor buys, and scores one whole USD series, no splice. Its
+# condition for reopening the venue question, "first widening what the gates admit", is met: since
+# the (#564) soft gates the Stocks table prints 37 rows, not 5.
+#
+# PREDICTION, written before the flip: the published engine re-ranked the 2026-10-16T07:46Z
+# universe.json with the 63 published US twins' series swapped in; its control run matched the live
+# data.json exactly.
+#   Stocks 37 -> 39 rows. BUY book 25 names / 94% in both arms. ETFs, CORE, crypto unchanged. No
+#   company printed twice.
+#   BUY%: ARM 1.6 -> 12.4 (rank 7 -> 5), ABEC.DE 12.4 -> 1.6 (rank 3 -> 9; its EUR-line life CAGR
+#   was the lift). Book out: TER, FIX, AP2.DE, DWD.DE. Book in: LU2.DE, KEYS, CIE1.DE, 1ZB.DE.
+#   Table in: NVD.DE (rank 29, 27.7y, 0 misses), KLA.DE (rank 30, 46.0y), CIE1.DE, LU2.DE, GCP.DE.
+#   Table out: TER, FIX, 3V64.DE. Cells: APC.DE life CAGR 28 -> 21, MTE.DE 31 -> 17, MSF.DE 18 -> 23.
+#   Not simulated: the ~200 other swapped lines whose US series universe.json does not carry (some
+#   sit in the Young table on a short Xetra record), so the live page can differ from this.
+#
+# UNGRADEABLE by the backtest, like the swap: it never reads this knob and already grades the US
+# lines. The live check is the Pages stderr line `screen: (#608) N of M European lines scored on
+# their US series` and each twin row's CAGR cells against its US line.
+# COST: ~270 more Yahoo fetches a run, plus the US tickers' own SEC files (~+20% SEC GETs a day,
+# inside the 600-per-run budget; the first run fetches them cold).
+# REVERT RULE: set `false` if the SEC budget still starves REV-YoY or Form 4 cells after the first
+# cold run, or a swapped row prints a US series that is not its own company's (a wrong `us_symbol`).
+eu_listing_us_series: true
+
 # `screen` SECTOR FILTER — which type of companies/ETFs to fetch. Case-insensitive substring
 # keywords matched against a stock's GICS sector AND an ETF's fund name. Empty list (or omitted) =
 # fetch ALL sectors (the default). Stocks are filtered BEFORE fetch (by their GICS sector, so other
