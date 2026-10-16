@@ -13798,18 +13798,31 @@ buy_heuristic:
                                  #   4/6 (pit 8y -1.5/-0.6, stress 8y -0.4/-1.1), no veto.
                                  #   0 = momentum 12-1, the (#584) order: the revert value. `track`'s
                                  #   `mblend` keeps grading the blend forward.
-                                 #   (#609) PRE-REGISTERED, before the runs: 3 = beta-hedged 12-7, each
-                                 #   name's months 7-12 back net of beta times the market (the pond's
+                                 #   (#609) REFUSED 2/2 (probe on f290e80, universe fund pit/stress
+                                 #   rivals winners, 8/12/20y): 3 = beta-hedged 12-7, each name's
+                                 #   months 7-12 back net of beta times the market (the pond's
                                  #   equal-weight mean month; beta fit over the name's trail, up to 36
                                  #   months); 4 = residual momentum (Blitz, Huij and Martens 2011): that
                                  #   window's regression residuals, alpha out too, over the residuals'
-                                 #   sd. Why tried: web sweep 34's one momentum lead (`picks::
-                                 #   residual_momentum`). Probes: universe fund pit/stress rivals
-                                 #   winners, 8/12/20y, control vs each arm. Bar as (#587): rival (j)
-                                 #   arm - control mean AND median >= +0.2 in >= 5/6 cells; 20y DCA
-                                 #   S+inter not down > 0.2 (mean or median) in either lane; WINNERS
-                                 #   HELD not under control by >= 2.0 in any cell. Predicted ~5% each:
-                                 #   hedging the market out demotes the fat-tail winners 20y lives on.
+                                 #   sd (`picks::residual_momentum`). Why tried: web sweep 34's one
+                                 #   momentum lead. Bar as (#587), pre-registered: rival (j) arm -
+                                 #   control mean AND median >= +0.2 in >= 5/6 cells; 20y DCA S+inter
+                                 #   not down > 0.2 (mean or median) in either lane; WINNERS HELD not
+                                 #   under control by >= 2.0 in any cell. (j) delta, mean/median:
+                                 #   3: pit 8y -1.3/-1.8, 12y -1.3/-1.4, 20y -2.5/-1.8; stress 8y
+                                 #   -0.9/-0.1, 12y -1.3/-1.4, 20y -1.1/-1.1. cells 0/6, harmed 6/6.
+                                 #   20y DCA S+inter: pit +5.2 -> +3.9 (-1.3/-0.8), stress +7.0 -> +6.1
+                                 #   (-0.9/-0.8): VETO in both lanes. WINNERS HELD VETO in 3 cells (pit
+                                 #   8y 8.9% -> 6.5%, stress 12y 12.7% -> 9.7%, 20y 13.9% -> 10.5%).
+                                 #   4: pit 8y -1.5/-1.8, 12y -0.6/-0.8, 20y -3.4/-2.3; stress 8y
+                                 #   -2.2/-2.0, 12y -1.9/-2.6, 20y -1.5/-1.7. cells 0/6, harmed 6/6.
+                                 #   20y DCA S+inter: pit +5.2 -> +3.3 (-1.9/-1.5), stress +7.0 -> +5.6
+                                 #   (-1.4/-1.4): VETO in both lanes. WINNERS HELD VETO in all 6 cells
+                                 #   (worst stress 12y 12.7% -> 7.8%, pit 20y 7.7% -> 5.0%).
+                                 #   Windows identical to control; no row the key cannot reach moved.
+                                 #   As predicted: hedging the market out demotes the fat-tail winners
+                                 #   20y lives on, so the raw key's market exposure is part of what the
+                                 #   momentum half earns. 1 stays; 3 and 4 stay as recorded arms.
   growth_momentum_slots: 5       # (#597) REFUSED 3/3 (probe on 1386557, universe fund pit/stress
                                  #   rivals, 8/12/20y): of every 10 slots in the interleaved book, how
                                  #   many the momentum order fills, spread evenly
