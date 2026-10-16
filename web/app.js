@@ -193,8 +193,10 @@ function stick() {
 // (#505) a superscript digit marks a short-span rate (³ = 3 filed years), ᵈ a 200-day ABV-MA. (#507) ⁱ a since-listing CAGR.
 // (#525) ʷ a SCORE the row would get with its failed gates waived. (#576) ˢ a stock's soft-docked SCORE.
 // (#584) m a stock the book buys for its momentum, not its score.
+// (#625) pp closes a MARGIN-TREND (`+3.8pp`), ᵇ a bank's FAIR, MOS% and FAIR-CAP, e an exchange token's RANK,
+// ° a fund PEG on a cached P/E; the first two sorted as text after every number. A lib test reads this line.
 // null is a missing cell, which sorts last in either direction; (#506) so do "loss" and "burn", no ratio.
-const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†‡#!xHbmc*owWs$⁰¹²³⁴⁵⁶⁷⁸⁹ᵈⁱʷˢ]*$/;
+const NUM = /^≈?([+-]?)€?([\d,]*\.?\d+)([KMBT]?)[%~†‡#!xHbmc*owWs$⁰¹²³⁴⁵⁶⁷⁸⁹ᵈⁱʷˢpᵇe°]*$/;
 function key(cell) {
   if (["", "n/a", "—", "loss", "burn"].includes(cell)) return null;
   const m = NUM.exec(cell);
@@ -202,7 +204,7 @@ function key(cell) {
 }
 console.assert(
   key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
-    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("3#wWs") === 3 && key("+17.7%$") === 17.7 && key("+6.1%‡") === 6.1 && key("+12.3%³") === 12.3 && key("-4%ᵈ") === -4 && key("+42%ⁱ") === 42 && key("14.2ʷ") === 14.2 && key("4.1ˢ") === 4.1 && key("€51.20²") === 51.2 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null && key("loss") === null && key("burn") === null,
+    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("3#wWs") === 3 && key("+17.7%$") === 17.7 && key("+6.1%‡") === 6.1 && key("+12.3%³") === 12.3 && key("-4%ᵈ") === -4 && key("+42%ⁱ") === 42 && key("14.2ʷ") === 14.2 && key("4.1ˢ") === 4.1 && key("€51.20²") === 51.2 && key("+3.8pp") === 3.8 && key("€64.10ᵇ") === 64.1 && key("+28%ᵇ") === 28 && key("€51.3Bᵇ") === 51.3e9 && key("12e") === 12 && key("18.52~°") === 18.52 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null && key("loss") === null && key("burn") === null,
   "sort key misreads a cell shape",
 );
 // (#526) TR-CAGR wins over the price CAGR; n/a or no TR-CAGR column falls back to it, ⁱ bar and all.

@@ -11328,6 +11328,39 @@ mod tests {
         assert_eq!(rank_mark(0, &all, &pinned, &held, &t), "1*#!cx~o");
     }
 
+    /// (#625) The page sorts a column by `key()` in web/app.js, which reads a cell as a number only when its `NUM`
+    /// pattern matches the WHOLE cell: a trailing mark its class lacks sorts the cell as text, after every number in
+    /// either direction. MARGIN-TREND's `pp` and a bank's `ᵇ` did, CI green, because app.js's own self-test runs in a
+    /// browser only. So the page's pattern, read off app.js, must take every RANK flag and each marked cell.
+    #[test]
+    fn page_sort_key_reads_every_marked_cell_as_a_number() {
+        let js = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/app.js")).expect("web/app.js");
+        let pat = js.lines().find_map(|l| l.strip_prefix("const NUM = /")?.strip_suffix("/;")).expect("app.js keeps `const NUM = /…/;`");
+        let num = regex::Regex::new(pat).expect("NUM compiles as a Rust regex");
+        for (flag, _) in RANK_FLAGS {
+            assert!(num.is_match(&format!("12{flag}")), "RANK flag {flag} sorts as text");
+        }
+        let mut co = Quote::stub("CO", "€50", "", "Co");
+        co.fund = Some(core::FundFactors { margin_trend: Some(3.84), ..Default::default() });
+        let mut bank = Quote::stub("BK", "€50", "", "Bank Co");
+        (bank.price_eur, bank.shares_out, bank.pe_ratio, bank.roe) = (Some(50.0), Some(8e8), Some(10.0), Some(15.0));
+        bank.fund = Some(core::FundFactors { financial: true, ..Default::default() });
+        let mut etf = core_etf("F.L", "Broad UCITS ETF Acc", 5e9, 0.07);
+        etf.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        let cached = FundPe { pe: 25.0, from: Some("G.L".to_string()), as_of: chrono::NaiveDate::from_ymd_opt(2026, 10, 1) };
+        let pe: FundPeMap = [("F.L".to_string(), cached)].into_iter().collect();
+        let cells = [
+            (cc("mtrend", &co, 0.0, None, ""), "pp"),
+            (cc("fair", &bank, 0.0, None, ""), "ᵇ"),
+            (cc("mos", &bank, 0.0, None, ""), "ᵇ"),
+            (cc("fair_cap", &bank, 0.0, None, ""), "ᵇ"),
+            (col_cell("peg", &etf, 0.0, None, "", &BuyHeuristic::default(), &pe), "~°"),
+        ];
+        for (cell, mark) in cells {
+            assert!(cell.ends_with(mark) && num.is_match(&cell), "{cell:?} must end in {mark} and sort as a number");
+        }
+    }
+
     /// (#79) The S-8Y tuning makes exactly three changes and inherits everything else. Asserted on
     /// the struct rather than on a printed cell, because a printed S-8Y is a number either way: drop
     /// the 8-year pin and it silently becomes a SECOND COPY of SCORE, drop a floor and it reverts to
