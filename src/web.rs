@@ -492,4 +492,66 @@ mod tests {
         let back: Quote = serde_json::from_str(&json).expect("de");
         assert_eq!((back.use_of_profits, back.replication), (Some("Acc"), Some("Opt")));
     }
+
+    /// (#629) A stock whose 20Y leg compounds at `cagr` %/yr, in `sector`, carrying a stale door stamp for
+    /// `load` to overwrite. Its 8Y leg stays `winner()`'s, so every such name pinned to that leg reads one number.
+    fn compounder(ticker: &str, sector: Option<&str>, cagr: f64) -> Quote {
+        let mut q = winner();
+        (q.ticker, q.name, q.sector) = (ticker.into(), format!("{ticker} Corp"), sector.map(String::from));
+        let leg = core::HORIZONS.iter().position(|(h, _)| *h == "20Y").expect("20Y is a horizon");
+        q.perf[leg] = Some(("x".to_string(), ((1.0 + cagr / 100.0).powi(20) - 1.0) * 100.0));
+        q.growth_sector_floor = Some(1.0);
+        q
+    }
+
+    /// (#629) What `load` stamps on each quote under `overlay`, in millionths of a point, after checking it
+    /// equals the replay `screen` runs on the same input (the sector-door lines in commands/screen.rs).
+    fn door_stamps(overlay: &str, universe: &str) -> Vec<Option<i64>> {
+        let (s, loaded) = load(overlay, universe).expect("the upload loads");
+        let mut want: Universe = serde_json::from_str(universe).expect("the snapshot parses");
+        let bh = &s.buy_heuristic;
+        let floors = match want.spx.as_ref().and_then(|b| picks::long_cagr_pct(b, bh)) {
+            Some(bc) => picks::sector_floors(&want.quotes.iter().collect::<Vec<_>>(), bh, picks::SECTOR_DOOR_K, bc),
+            None => Default::default(),
+        };
+        picks::stamp_sector_floors(&mut want.quotes, &floors);
+        let stamps = |u: &Universe| -> Vec<Option<f64>> { u.quotes.iter().map(|q| q.growth_sector_floor).collect() };
+        assert_eq!(stamps(&loaded), stamps(&want), "load stamps what screen stamps");
+        stamps(&loaded).into_iter().map(|f| f.map(|x| (x * 1e6).round() as i64)).collect()
+    }
+
+    /// (#629) The MISSES cell `screen` prints for the three pinned names under `overlay`.
+    fn door_misses(overlay: &str, universe: &str) -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(&screen(overlay, universe).expect("ranks")).expect("JSON");
+        ["IND1.DE", "IND2.DE", "UTL1.DE"].into_iter().map(|t| cell(&v, "stocks", t, "MISSES")).collect()
+    }
+
+    /// (#629) `load` replays the (#328) sector door from the UPLOAD's knobs and the index leg, as `screen` does
+    /// after its fetch. The shipped door is 0 and `direct()` stamps no floors, so every parity test above stays
+    /// green with the replay deleted, skipped, or run on CI's knobs instead of the upload's. Here the index
+    /// compounds at 14, Industrials' leader at 18, Utilities' at 12, and a stale stamp of 1.0 rides in on
+    /// every row, so a missing or misplaced replay shows in the floors and in who misses.
+    #[test]
+    fn the_engine_replays_the_sector_door_under_the_upload() {
+        let mut stale = winner(); // no sector: a stamp on it must be cleared, not kept
+        stale.growth_sector_floor = Some(1.0);
+        let cast = [compounder("IND1.DE", Some("Industrials"), 18.0), compounder("IND2.DE", Some("Industrials"), 16.0), compounder("UTL1.DE", Some("Utilities"), 12.0), stale];
+        let bare = universe(&cast);
+        let mut indexed: Universe = serde_json::from_str(&bare).expect("the snapshot parses");
+        indexed.spx = Some(compounder("^GSPC", None, 14.0));
+        let uni = serde_json::to_string(&indexed).expect("the snapshot serialises");
+        let pins = "tickers: [IND1.DE, IND2.DE, UTL1.DE]\n";
+        let armed = format!("{pins}buy_heuristic:\n  growth_sector_leaders: 1\n");
+        let shut = format!("{pins}buy_heuristic:\n  growth_sector_leaders: 0\n");
+        let eight = format!("{pins}buy_heuristic:\n  growth_sector_leaders: 1\n  fixed_cagr_years: 8\n");
+        // Industrials' leader sets the floor its peer shares, Utilities' 12 is lifted to the index's 14, the sectorless row is cleared
+        let tuned: [Option<i64>; 4] = [Some(18_000_000), Some(18_000_000), Some(14_000_000), None];
+        assert_eq!(door_stamps(&armed, &uni), tuned, "armed: each sector's leader CAGR, floored at the index; stale stamps overwritten");
+        assert_eq!(door_stamps(&shut, &uni), tuned, "door at 0: stamped all the same, the knob only decides whether the stamp is read");
+        let e = (core::cagr(400.0, 8.0) * 1e6).round() as i64;
+        assert_eq!(door_stamps(&eight, &uni), [Some(e), Some(e), Some(e), None], "the upload's fixed_cagr_years picks the leg: the replay runs after the merge");
+        assert_eq!(door_stamps(&armed, &bare), [None::<i64>; 4], "no index leg: no door, and the stale stamps are cleared");
+        assert_eq!(door_misses(&armed, &uni), ["0", "1: cagr", "1: cagr"], "armed: only the leader clears the floor it set");
+        assert_eq!(door_misses(&shut, &uni), ["1: cagr", "1: cagr", "1: cagr"], "door at 0: all three miss the shipped 19, so arming flips IND1.DE alone");
+    }
 }
