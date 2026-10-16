@@ -21338,6 +21338,27 @@ buy_heuristic:
                                  #   backtest quote. Graded FORWARD by the track `brkh` and `soc` rows; if either reads
                                  #   negative once it has its 12 links, return its knob to 1.0. Never applied to a
                                  #   negative score (the (#86) branch takes no multiplier).
+                                 #   (#614) GRADED 2026-10-16: FAILS the owner's (#544) rule. Pre-registered before the run:
+                                 #   population = the SCORED set (owner 2026-10-16: "among the stocks that score, soft admits
+                                 #   too"); at n >= 30 the `Berkshire holds` row must beat the rest on mean AND median, else
+                                 #   propose 1.0; n < 30 = thin, keep; 8y primary. Probe on 89f6e3d, `universe fund pit
+                                 #   holders`, 8 and 12y; windows 6163 / 2779, as the pit control. Excess = forward return
+                                 #   minus the same-cutoff stock peer mean, in pts. A sample is in the row when the newest
+                                 #   HOLDER_BRK_HELD record filed in the 135 days before its cutoff holds the name: the W
+                                 #   cohort. The score term stays backtest-blind (flags false on every quote); this grades
+                                 #   the names the boost lifts.
+                                 #   8y: W n 163, mean -4.68, median -32.60, hit 36.8 | rest n 7243, +1.35, -45.04, 35.6.
+                                 #   Median and hit up, mean down: the (#518) dilution caveat. FAIL on the mean.
+                                 #   12y: n 20, thin (cutoffs 2013-14 only): -197.75 / -229.72 vs +3.24 / -107.40.
+                                 #   Hard passers only, 8y: n 13, +142.66 / +156.63 vs 317, +16.89 / -31.28 (thin). Derived,
+                                 #   not pre-registered: the other 150 W samples are soft admits, mean about -17.4 vs +0.6.
+                                 #   Both biases flatter the row (the 83 managers were picked in 2026; x1.20 was set knowing
+                                 #   Berkshire's record), so a FAIL is the informative side. n counts overlapping samples of
+                                 #   a few names, not independent bets.
+                                 #   Side reading, same table, not pre-registered: `8+ added` (growth_superinvestor_boost's
+                                 #   listing rule) passes at 8y, n 55: +88.06 / +45.57 vs +0.57 / -45.61; 12y n 14, thin.
+                                 #   CONSEQUENCE: propose 1.0. A live-page change that reverses the 2026-10-05 USER DECISION,
+                                 #   so the OWNER decides; the value stays 1.20 until then.
   growth_superinvestor_boost: 1.10  # (#472) see growth_brk_held_boost directly above. (#473) USER DECISION 2026-10-05:
                                  #   x1.10 once per growth_superinvestor_step buyers, rounded down, counted from zero,
                                  #   no cap. Dataroma lists 8+ buyers, so the smallest boost is x1.21; live counts on
