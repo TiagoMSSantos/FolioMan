@@ -67,7 +67,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     margin_trend          winners n=35   med     -0.09   losers n=17   med      0.84   gap     -0.92   AUC  0.33
     eps_growth            winners n=10   med     11.85   losers n=3    med     24.13   gap    -12.28   AUC  0.20
     rev_yoy               winners n=44   med     11.11   losers n=17   med      5.61   gap      5.50   AUC  0.56
-    eps_yoy               winners n=57   med     12.45   losers n=20   med     32.65   gap    -20.21   AUC  0.38
+    eps_yoy               winners n=57   med     12.83   losers n=20   med     32.65   gap    -19.83   AUC  0.42
     net_margin            winners n=58   med     15.07   losers n=20   med     13.28   gap      1.78   AUC  0.57
     earnings_yield        winners n=51   med      4.31   losers n=20   med      3.27   gap      1.04   AUC  0.67
     peg_yield             winners n=51   med     62.82   losers n=20   med     55.89   gap      6.93   AUC  0.54
@@ -268,7 +268,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   margin_trend   n=136   rho -0.15  edge -64.6  OOS -0.14 | -0.15
   eps_growth     n=37    rho +0.05  edge -46.1  OOS -0.12 | +0.09
   rev_yoy        n=165   rho +0.08  edge +135.9  OOS +0.09 | +0.07
-  eps_yoy        n=212   rho -0.01  edge +21.3  OOS -0.02 | -0.00
+  eps_yoy        n=212   rho -0.04  edge +24.8  OOS -0.06 | -0.01
   net_margin     n=225   rho -0.03  edge -152.9  OOS +0.13 | -0.19
   quality(roe/roa) n=225   rho +0.03  edge +17.3  OOS +0.12 | -0.06
   roe_raw        n=225   rho +0.02  edge -2.9  OOS +0.11 | -0.05
