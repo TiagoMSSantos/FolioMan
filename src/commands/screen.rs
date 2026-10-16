@@ -1796,6 +1796,28 @@ pub async fn run(args: Vec<String>) {
             );
         }
     }
+    // (#608) score each European line the swap put in on its US series, the one the backtest graded
+    // (`eu_listing_us_series`'s doc). After the pond cut, so the pond still judges each name's own line.
+    if settings.eu_listing_us_series {
+        let swapped: Vec<(String, String)> = quotes
+            .iter()
+            .filter(|q| q.price != "err" && q.price != "no data")
+            .map(|q| (q.ticker.clone(), fetch::us_symbol(&q.ticker)))
+            .filter(|(eu, us)| !us.eq_ignore_ascii_case(eu))
+            .collect();
+        let us_lines: Vec<String> = swapped.iter().map(|(_, us)| us.clone()).collect();
+        let us_of: std::collections::HashMap<String, Quote> = swapped
+            .into_iter()
+            .map(|(eu, _)| eu)
+            .zip(fetch::quotes(
+                &client, &settings.urls, &fx_cache, &us_lines, settings.dip_days, settings.high_days, false, false,
+                &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
+            ).await)
+            .filter(|(_, q)| q.price != "err" && q.price != "no data")
+            .collect();
+        eprintln!("screen: (#608) {} of {} European lines scored on their US series, the rest on their own", us_of.len(), us_lines.len());
+        quotes = quotes.into_iter().map(|q| match us_of.get(&q.ticker) { Some(us) => fetch::adopt_us_series(q, us.clone()), None => q }).collect();
+    }
     // (#45) why the USE/REPL columns read n/a, bucketed by cause. Runs here because bf_meta is consulted
     // per-quote inside the fetch above, long after fetch_universe (where the other BF diagnostics print)
     // has returned — and because the ETF tagging it filters on is the loop directly above. Conditional,

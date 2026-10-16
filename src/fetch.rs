@@ -8840,6 +8840,41 @@ pub(crate) fn invert_eu(eu: &HashMap<String, String>) -> HashMap<String, String>
     eu.iter().filter(|(_, e)| !e.is_empty()).map(|(u, e)| (e.to_uppercase(), u.to_uppercase())).collect()
 }
 
+/// (#608) `own`, a European line, scored on `us`, its US line (`eu_listing_us_series`): the row keeps what
+/// describes the line it is bought on and takes every field the series computes from `us`, the line the
+/// backtest grades. The kept close and currency still price P/E and PEG through `price_in`, so the PEG
+/// now divides by the US CAGR, as in the backtest.
+pub(crate) fn adopt_us_series(own: Quote, us: Quote) -> Quote {
+    Quote {
+        ticker: own.ticker,
+        price: own.price,
+        name: own.name,
+        market: own.market,
+        instrument_type: own.instrument_type,
+        head: own.head,
+        news_block: own.news_block,
+        price_eur: own.price_eur,
+        close_native: own.close_native,
+        quote_currency: own.quote_currency,
+        last_close_date: own.last_close_date,
+        intraday: own.intraday,
+        avg_turnover_eur: own.avg_turnover_eur,
+        splits: own.splits,
+        sector: own.sector,
+        pe_ratio: own.pe_ratio,
+        roe: own.roe,
+        expense_ratio: own.expense_ratio,
+        aum_eur: own.aum_eur,
+        ter_fallback: own.ter_fallback,
+        aum_fallback: own.aum_fallback,
+        use_of_profits: own.use_of_profits,
+        replication: own.replication,
+        benchmark: own.benchmark,
+        domicile: own.domicile,
+        ..us
+    }
+}
+
 pub async fn fetch_universe(
     client: &Client,
     urls: &Urls,
@@ -9366,6 +9401,31 @@ pub(crate) mod tests {
         // silently reintroduced the bug this exists to fix.
         assert!(!inv.contains_key("NVDA"));
         assert!(invert_eu(&HashMap::new()).is_empty());
+    }
+
+    /// (#608) The row keeps the line the user buys and scores the line the backtest graded. Each side sets
+    /// every listing field to its own value and the whole row is compared, so a field on the wrong side of
+    /// `adopt_us_series`'s list fails here.
+    #[test]
+    fn adopt_us_series_keeps_the_listing_and_scores_the_us_series() {
+        let line = |ticker: &str, k: u32, s: &'static str| {
+            let mut q = core::Quote::stub(ticker, s, s, s);
+            let x = f64::from(k);
+            (q.instrument_type, q.news_block, q.quote_currency, q.sector) = (s.into(), s.into(), Some(s.into()), Some(s.into()));
+            (q.price_eur, q.close_native, q.avg_turnover_eur, q.pe_ratio, q.roe) = (Some(x), Some(x), Some(x), Some(x), Some(x));
+            (q.expense_ratio, q.aum_eur, q.ter_fallback, q.aum_fallback) = (Some(x), Some(x), Some(x), Some(x));
+            (q.use_of_profits, q.replication, q.benchmark, q.domicile) = (Some(s), Some(s), Some(s.into()), Some(s.into()));
+            q.last_close_date = NaiveDate::from_ymd_opt(2026, 10, k);
+            q.intraday = [Some(x); 3];
+            q.splits = vec![(NaiveDate::from_ymd_opt(2000, 1, k).unwrap(), x)];
+            (q.life_cagr, q.age_years) = (Some(x * 10.0), Some(x)); // series-derived: the US line's must win
+            q
+        };
+        let us = line("NVDA", 2, "us");
+        let mut want = line("NVD.DE", 1, "own");
+        (want.life_cagr, want.age_years) = (us.life_cagr, us.age_years);
+        let got = adopt_us_series(line("NVD.DE", 1, "own"), us);
+        assert_eq!(serde_json::to_value(&got).unwrap(), serde_json::to_value(&want).unwrap());
     }
 
     /// (#45) The MVRV staleness guard, on the exact shapes the live endpoint returns. `btc` is a
