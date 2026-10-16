@@ -771,8 +771,9 @@ fn backtest_edge_holds() {
         // (#606) the shipped blend's held winners: the share of its book slots that hold one of the window's top-5%
         // stocks by real forward return (a random book reads ~5%). A RATCHET like Série E's: a config or code change
         // that drops the window's best names from either half reds here, even when every average above passes.
-        // Floors stay 0 until the first CI reading on the (#606) push; the (#606) receipt pre-registers the rule.
-        const WINNERS_HELD_FLOOR: [(i64, f64); 3] = [(20, 0.0), (12, 0.0), (8, 0.0)];
+        // Floors = the first CI reading (6b3e71a: 20y 13.9, 12y 11.7, 8y 12.7, 8y fund 12.4) minus 2 pts, rounded
+        // down; the 8y fund leg shares 8y's, set off the lower reading. The (#606) receipt pre-registers the rule.
+        const WINNERS_HELD_FLOOR: [(i64, f64); 3] = [(20, 11.0), (12, 9.0), (8, 10.0)];
         let floor = WINNERS_HELD_FLOOR.iter().find(|f| f.0 == years).map_or(0.0, |f| f.1);
         match num_after(growth, markers::WINNERS_HELD) {
             Some(share) => {

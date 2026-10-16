@@ -1813,7 +1813,7 @@ sizing:
   #  Caveat: the backtest momentum half can hold ETFs; the live `momentum_order` keeps stocks only.
   #  CI: the backtest gate runs every leg (20y, 12y, 8y, 8y fund) with `winners`. Under
   #  FOLIOMAN_BACKTEST_GATE a missing line panics, and each leg asserts share >= WINNERS_HELD_FLOOR
-  #  (tests/network.rs). The floors are 0 until the first CI reading.
+  #  (tests/network.rs). The floors were 0 until the first CI reading (FLOORS SET below).
   #  FLOOR RULE (fixed now): the first CI reading on the (#606) push minus 2 pts, rounded down to a whole
   #  point. The 8y fund leg shares the 8y floor, set off the lower of the two 8y readings. Raise a floor when
   #  a round lifts its reading; never lower one to get green. A ship that lowers a reading justifies its new
@@ -1826,6 +1826,20 @@ sizing:
   #  runs). An arm that swaps a fifth of the slots at random moves the share ~1.3 pts (1 sd) at pit 20y and
   #  under 1 pt elsewhere, and probes are deterministic within a batch. Dropping one winner held in 5 pit
   #  20y windows costs 2.3 pts and trips the veto on purpose: that is the loss the owner asked to catch.
+  #  FLOORS SET (2026-10-16, CI 38857456863 on 6b3e71a, gate job 160s): readings 20y 13.9%, 12y 11.7%, 8y
+  #  12.7%, 8y fund 12.4%, so WINNERS_HELD_FLOOR is 20y 11, 12y 9 and 8y 10 (off the 8y fund's 12.4).
+  #  VETO DEMO (2026-10-16, probes on 6b3e71a: control pit 38858267798 / stress 38858279795, and
+  #  growth_momentum_slots=3 pit 38858291250 / stress 38858304840; windows identical). Winners held, control
+  #  -> s3, % of book slots:
+  #    pit     20y  7.7 ->  7.7 (+0.0)   12y  9.5 -> 10.8 (+1.3)   8y  8.9 ->  8.9 (+0.0)
+  #    stress  20y 13.9 -> 12.6 (-1.3)   12y 12.7 -> 11.7 (-1.0)   8y 12.4 -> 10.6 (-1.8)
+  #  The veto stays SILENT: no cell reaches -2.0 (stress 8y is the nearest). The older bars refuse s3 anyway,
+  #  as (#597) did: (j) 0/6 cells, harmed 5/6, and the 20y DCA S+inter veto on both lanes (pit -0.3/-0.3,
+  #  stress -0.2/-0.3). What the line adds is the names. Under stress 8y, s3 drops NFLX (3 windows), FFIV and
+  #  AXON (2 each), UNH, INCY, ILMN, FTNT and DXCM (top 8) and gains REGN and QCOM; under stress 20y it drops
+  #  UNH, TSCO, ODFL, NVDA, DHR, ASML and AMZN and gains IDXX. Pit trades evenly (12y drops ORLY, EOG and
+  #  COR.LS, gains SBUX, MA, INTU, GILD, CRM, AZO, APH and AMZN). The 2.0 bar stays as pre-registered: moving
+  #  it after one reading would fit the bar to one arm.
   #── (#584) BLEND: HALF THE BOOK FROM THE SHIPPED SCORE, HALF FROM MOMENTUM 12-1 ──
   #  WHY: (#583) found 42-58% of each window's winners score under the cut with every gate off, so no gate
   #  loosening reaches them. The only signal that beat the book on this pond is (#560) momentum 12-1 (5/6,
