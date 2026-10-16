@@ -3397,13 +3397,44 @@ fn holder_moves(mut filings: Vec<Brk13f>) -> Vec<(String, String, bool)> {
     moves
 }
 
-/// (#518) The CUSIPs worth an OpenFIGI ask: any Berkshire move, or three or more adders in
-/// [`core::holder_flags`]' window the day after one of its moves was filed (the count only rises then).
+/// (#614) Berkshire's 13F filings -> each quarter's holdings as (CUSIP, filing date, true), dated as
+/// [`holder_moves`] dates an add, and each CUSIP gone a quarter later as (CUSIP, that quarter's original,
+/// false). A holding needs no quarter before it, so the oldest quarter counts. Replays the live `W` flag
+/// ([`brk_holdings`] of the newest quarter). shortcut: an amendment filed after the next quarter's
+/// original re-reads its quarter's names as held; the live flag reads the newer quarter.
+fn holder_held(mut filings: Vec<Brk13f>) -> Vec<(String, String, bool)> {
+    filings.sort_by(|a, b| a.1.cmp(&b.1));
+    let (mut opened, mut shown) = (HashMap::new(), HashMap::new());
+    for (report, filed, _, held) in &filings {
+        opened.entry(report.clone()).or_insert_with(|| filed.clone());
+        for c in held.keys() {
+            shown.entry((report.clone(), c.clone())).or_insert_with(|| filed.clone());
+        }
+    }
+    let quarters = brk_fold(filings);
+    let (mut rows, mut prev): (Vec<_>, Option<&HashMap<String, (u64, u64)>>) = (Vec::new(), None);
+    for (report, cur) in &quarters {
+        rows.extend(cur.keys().map(|c| (c.clone(), shown[&(report.clone(), c.clone())].clone(), true)));
+        for c in prev.into_iter().flat_map(HashMap::keys).filter(|c| !cur.contains_key(*c)) {
+            rows.push((c.clone(), opened[report].clone(), false));
+        }
+        prev = Some(cur);
+    }
+    rows
+}
+
+/// (#518) The CUSIPs worth an OpenFIGI ask: any Berkshire move (#614) or holding, or three or more
+/// adders in [`core::holder_flags`]' window the day after one of its moves was filed (the count only
+/// rises then).
 fn holder_cusips(by_cusip: &HashMap<String, Vec<core::HolderTx>>) -> HashSet<String> {
     by_cusip
         .iter()
         .filter(|(_, txs)| {
-            txs.iter().any(|t| t.manager == core::HOLDER_BRK || core::holder_flags(txs, t.filed + chrono::Duration::days(1)).adders >= 3)
+            txs.iter().any(|t| {
+                t.manager == core::HOLDER_BRK
+                    || t.manager == core::HOLDER_BRK_HELD
+                    || core::holder_flags(txs, t.filed + chrono::Duration::days(1)).adders >= 3
+            })
         })
         .map(|(c, _)| c.clone())
         .collect()
@@ -3411,10 +3442,13 @@ fn holder_cusips(by_cusip: &HashMap<String, Vec<core::HolderTx>>) -> HashSet<Str
 
 /// (#518) Ticker -> every 13F move of Berkshire and the [`SOC_SEC_MANAGERS`] since [`HOLDER_SINCE`],
 /// plus Berkshire's Form 4 net trades, each dated by its filing. Berkshire is manager
-/// [`core::HOLDER_BRK`]. Each manager's filing list (submissions plus its older pages) is cached
+/// [`core::HOLDER_BRK`]. (#614) Plus Berkshire's [`holder_held`] records as [`core::HOLDER_BRK_HELD`].
+/// Each manager's filing list (submissions plus its older pages) is cached
 /// [`BRK_LIST_TTL`]; filings are cached forever by [`read_13f`] / [`read_brk_form4`]. A quarter whose
 /// original filing is unreadable is dropped, so its moves fold into the next quarter's; an unreadable
-/// amendment is skipped. Only [`holder_cusips`] are named by OpenFIGI.
+/// amendment is skipped. Only [`holder_cusips`] are named by OpenFIGI. (#614) Each ticker's records are
+/// sorted by filing date, an add first on a tie: two CUSIPs on one ticker (a re-CUSIP) merged in
+/// `HashMap` order, so a same-day add and exit read differently from run to run.
 #[mutants::skip] // (#518) async network shell; the pure helpers above carry the tests
 pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<String, Vec<core::HolderTx>> {
     use std::sync::atomic::Ordering::Relaxed;
@@ -3465,9 +3499,11 @@ pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<Strin
         }
         filings.retain(|f| !dead.contains(&f.0));
         read += usize::from(!filings.is_empty());
-        for (c, filed, add) in holder_moves(filings) {
+        let held = if brk { holder_held(filings.clone()) } else { Vec::new() };
+        let rows = holder_moves(filings).into_iter().map(|r| (m as u32, r)).chain(held.into_iter().map(|r| (core::HOLDER_BRK_HELD, r)));
+        for (manager, (c, filed, add)) in rows {
             if let Ok(filed) = NaiveDate::parse_from_str(&filed, "%Y-%m-%d") {
-                by_cusip.entry(c).or_default().push(core::HolderTx { filed, manager: m as u32, add });
+                by_cusip.entry(c).or_default().push(core::HolderTx { filed, manager, add });
             }
         }
         for (acc, doc, filed) in &l4 {
@@ -3481,14 +3517,18 @@ pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<Strin
     }
     let cusips = holder_cusips(&by_cusip);
     let ticker_of = cusip_tickers(client, urls, &cusips).await;
-    let moves: usize = by_cusip.values().map(Vec::len).sum();
+    let held = by_cusip.values().flatten().filter(|t| t.manager == core::HOLDER_BRK_HELD).count();
+    let moves = by_cusip.values().map(Vec::len).sum::<usize>() - held;
     for (c, txs) in by_cusip {
         if let Some((t, _)) = ticker_of.get(&c) {
             by_ticker.entry(t.clone()).or_default().extend(txs);
         }
     }
+    for txs in by_ticker.values_mut() {
+        txs.sort_by_key(|t| (t.filed, !t.add));
+    }
     eprintln!(
-        "fetch: holders: {read} of {} managers read since {HOLDER_SINCE}, {moves} 13F moves + {f4_moves} Berkshire Form 4s; {} CUSIPs asked, {} named -> {} tickers",
+        "fetch: holders: {read} of {} managers read since {HOLDER_SINCE}, {moves} 13F moves + {held} Berkshire holdings + {f4_moves} Berkshire Form 4s; {} CUSIPs asked, {} named -> {} tickers",
         ciks.len(),
         cusips.len(),
         cusips.iter().filter(|c| ticker_of.contains_key(*c)).count(),
@@ -12121,13 +12161,36 @@ pub(crate) mod tests {
         assert!(holder_moves(vec![f("2020-03-31", "2020-05-15", "", &[("A", 1)])]).is_empty());
     }
 
-    /// (#518) Berkshire's moves always; others only once three adders share the window.
+    /// (#614) Every quarter's holdings, the oldest included, dated as an add; a CUSIP gone a quarter
+    /// later reads false on that quarter's original, with the amendment listed first.
+    #[test]
+    fn holder_held_lists_each_quarters_holdings_and_exits() {
+        let held = |rows: &[(&str, u64)]| rows.iter().map(|(c, n)| (c.to_string(), (*n, 0))).collect::<HashMap<_, _>>();
+        let f = |r: &str, d: &str, a: &str, rows: &[(&str, u64)]| (r.to_string(), d.to_string(), a.to_string(), held(rows));
+        let filings = vec![
+            f("2020-06-30", "2020-11-16", "NEW HOLDINGS", &[("F", 70)]),
+            f("2020-03-31", "2020-05-15", "", &[("A", 100), ("C", 10)]),
+            f("2020-06-30", "2020-08-14", "", &[("A", 100)]),
+        ];
+        let mut rows = holder_held(filings);
+        rows.sort();
+        let m = |c: &str, d: &str, add: bool| (c.to_string(), d.to_string(), add);
+        assert_eq!(
+            rows,
+            [m("A", "2020-05-15", true), m("A", "2020-08-14", true), m("C", "2020-05-15", true), m("C", "2020-08-14", false), m("F", "2020-11-16", true)]
+        );
+        assert!(holder_held(Vec::new()).is_empty());
+    }
+
+    /// (#518) Berkshire's moves always (#614) and its holdings; others only once three adders share the
+    /// window.
     #[test]
     fn holder_cusips_keeps_berkshire_and_crowded_adds() {
         let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
         let tx = |filed: &str, manager: u32| core::HolderTx { filed: d(filed), manager, add: true };
         let by_cusip: HashMap<String, Vec<core::HolderTx>> = [
             ("brk", vec![tx("2020-01-01", core::HOLDER_BRK)]),
+            ("held", vec![tx("2020-01-01", core::HOLDER_BRK_HELD)]),
             ("three", vec![tx("2020-01-01", 1), tx("2020-02-01", 2), tx("2020-03-01", 3)]),
             ("two", vec![tx("2020-01-01", 1), tx("2020-02-01", 2)]),
             ("apart", vec![tx("2020-01-01", 1), tx("2020-02-01", 2), tx("2020-08-01", 3)]),
@@ -12137,7 +12200,7 @@ pub(crate) mod tests {
         .collect();
         let mut kept: Vec<String> = holder_cusips(&by_cusip).into_iter().collect();
         kept.sort();
-        assert_eq!(kept, ["brk", "three"]);
+        assert_eq!(kept, ["brk", "held", "three"]);
     }
 
     /// (#559) FEC zips are Latin-1: every byte is its own char, a broken zip is None.

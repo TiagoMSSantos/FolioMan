@@ -4211,6 +4211,9 @@ pub struct HolderTx {
 
 /// (#518) The manager id Berkshire's 13Fs and Form 4s carry.
 pub const HOLDER_BRK: u32 = 0;
+/// (#614) The id of Berkshire's HOLDINGS, not a manager: one record per CUSIP each 13F quarter holds
+/// (`add`) and per CUSIP gone the quarter after, so [`holder_flags`] replays the live `W` flag.
+pub const HOLDER_BRK_HELD: u32 = u32::MAX;
 /// (#518) How long a filed change counts: 13Fs land up to 45 days after the quarter, so 135 days keeps
 /// one quarter's filing plus the next quarter's, and a manager's newer change replaces its older one.
 pub const HOLDER_WINDOW_DAYS: i64 = 135;
@@ -4220,6 +4223,8 @@ pub const HOLDER_WINDOW_DAYS: i64 = 135;
 pub struct HolderFlags {
     /// Berkshire's newest change in the window is an add.
     pub brk_add: bool,
+    /// (#614) The newest [`HOLDER_BRK_HELD`] record in the window holds it.
+    pub brk_held: bool,
     /// Managers whose newest change in the window is an add.
     pub adders: u32,
     /// Those adders minus the managers whose newest change is a trim or exit.
@@ -4228,7 +4233,8 @@ pub struct HolderFlags {
 
 /// (#518) Each manager's NEWEST change filed in [cutoff - [`HOLDER_WINDOW_DAYS`], cutoff), counted. The
 /// filing date is the look-ahead guard, as in [`insider_net_buys`]: a 13F's report date is 45 days older
-/// than anyone could read it. On a same-day tie the first change listed stands.
+/// than anyone could read it. On a same-day tie the first change listed stands. A [`HOLDER_BRK_HELD`]
+/// record sets `brk_held` and is never an adder.
 pub fn holder_flags(txs: &[HolderTx], cutoff: NaiveDate) -> HolderFlags {
     let start = cutoff - Duration::days(HOLDER_WINDOW_DAYS);
     let mut newest: BTreeMap<u32, HolderTx> = BTreeMap::new();
@@ -4240,7 +4246,9 @@ pub fn holder_flags(txs: &[HolderTx], cutoff: NaiveDate) -> HolderFlags {
     }
     let mut f = HolderFlags::default();
     for t in newest.values() {
-        if t.add {
+        if t.manager == HOLDER_BRK_HELD {
+            f.brk_held = t.add;
+        } else if t.add {
             f.adders += 1;
             f.net += 1;
             f.brk_add |= t.manager == HOLDER_BRK;
@@ -7899,7 +7907,7 @@ mod tests {
 
     /// (#518) Newest change per manager inside [cutoff-135d, cutoff): the cutoff day and older changes are
     /// out, a newer trim cancels an older add, a same-day tie keeps the first listed, and only manager 0
-    /// marks Berkshire.
+    /// marks Berkshire. (#614) A holding record sets `brk_held` alone, never an adder.
     #[test]
     fn holder_flags_counts_each_managers_newest_change() {
         let d = |s: &str| s.parse::<NaiveDate>().expect("date");
@@ -7915,12 +7923,14 @@ mod tests {
             tx("2020-05-14", 5, true),
             tx("2020-06-01", 6, true),  // on the cutoff: out
             tx("2020-05-20", HOLDER_BRK, true),
+            tx("2020-02-14", HOLDER_BRK_HELD, true), // an older quarter's holding
         ];
-        assert_eq!(holder_flags(&txs, cutoff), HolderFlags { brk_add: true, adders: 4, net: 3 });
-        // Berkshire's newest change a sale: no brk_add, and the net drops by two
+        assert_eq!(holder_flags(&txs, cutoff), HolderFlags { brk_add: true, brk_held: true, adders: 4, net: 3 });
+        // Berkshire's newest change a sale: no brk_add, and the net drops by two; gone from the newer quarter
         let mut sold = txs.clone();
         sold.push(tx("2020-05-25", HOLDER_BRK, false));
-        assert_eq!(holder_flags(&sold, cutoff), HolderFlags { brk_add: false, adders: 3, net: 1 });
+        sold.push(tx("2020-05-15", HOLDER_BRK_HELD, false));
+        assert_eq!(holder_flags(&sold, cutoff), HolderFlags { brk_add: false, brk_held: false, adders: 3, net: 1 });
         // a cutoff before every filing reads all zero
         assert_eq!(holder_flags(&txs, d("2019-01-01")), HolderFlags::default());
     }

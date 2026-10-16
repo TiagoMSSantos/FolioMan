@@ -2276,13 +2276,14 @@ fn cohort_side(xs: Vec<f64>) -> CohortSide {
 
 /// (#518) The cohorts `backtest … holders` grades, each a test on [`core::holder_flags`]. The shipped
 /// superinvestor boost starts at the 8 buyers a stock needs to list (`fetch::SOC_MIN_BUYERS`); 3 is the
-/// boost's step, graded as the lower bar. The `W` boost reads Berkshire HOLDING a name, which no move
-/// list can replay; its add is the nearest gradeable row.
-const HOLDER_COHORTS: [(&str, fn(&core::HolderFlags) -> bool); 4] = [
+/// boost's step, graded as the lower bar. (#614) The `W` boost reads Berkshire HOLDING a name in its
+/// newest 13F: the last row replays it from the [`core::HOLDER_BRK_HELD`] records.
+const HOLDER_COHORTS: [(&str, fn(&core::HolderFlags) -> bool); 5] = [
     ("Berkshire added (13F or Form 4)", |f| f.brk_add),
     ("3+ superinvestors added", |f| f.adders >= 3),
     ("8+ added (the shipped listing rule)", |f| f.adders >= 8),
     ("net 3+ (adders minus trimmers)", |f| f.net >= 3),
+    ("Berkshire holds (newest 13F, the W)", |f| f.brk_held),
 ];
 
 /// (#518) Every [`HOLDER_COHORTS`] row as (name, the stock samples flagged at their cutoff, the stock
@@ -2314,9 +2315,14 @@ fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::Hol
     println!("  samples, not independent bets. Read mean AND hit: a hit rate up with the mean down dilutes.");
     print_cohorts(&holder_cohorts(samples, txs));
     // (#544) The boosts only multiply names the gates already pass, so the row that grades a boost is
-    // flagged passers against the OTHER passers, not against every stock.
+    // flagged passers against the OTHER passers, not against every stock. (#614) Since `growth_gate_soft`
+    // a docked failer scores too and the boosts multiply it as well, so both crowds print.
     let passed: Vec<Sample> = samples.iter().filter(|s| growth_score(&s.quote, tuning).is_some()).cloned().collect();
-    println!("  (#544) among stocks the buy gates pass (rest = the other passers): the row each boost answers to.");
+    println!("  (#544) among the stocks that score, soft admits too (rest = the other scored): what each boost multiplies.");
+    print_cohorts(&holder_cohorts(&passed, txs));
+    let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
+    let passed: Vec<Sample> = samples.iter().filter(|s| growth_score(&s.quote, &hard).is_some()).cloned().collect();
+    println!("  (#614) among the stocks that clear every gate (rest = the other hard passers):");
     print_cohorts(&holder_cohorts(&passed, txs));
 }
 
@@ -8678,15 +8684,16 @@ mod tests {
     }
 
     /// (#518) Each cohort splits the STOCK samples on the flags at their own cutoff; a coin is never
-    /// counted, a move filed after the cutoff never flags it.
+    /// counted, a move filed after the cutoff never flags it. (#614) A Berkshire holding flags the last
+    /// row alone; a holding gone the quarter after flags nothing.
     #[test]
     fn holder_cohorts_split_stocks_on_flags_at_the_cutoff() {
         let at = |tk: &str, rel: f64| Sample { relative: rel, quote: Arc::new(Quote::stub(tk, "1", "", tk)), ..sample(ymd(2020, 6, 1), 0.0) };
         let tx = |m: u32, add: bool| core::HolderTx { filed: ymd(2020, 5, 1), manager: m, add };
         let txs: HashMap<String, Vec<core::HolderTx>> = [
             ("B8", (0..8).map(|m| tx(m, true)).collect()),
-            ("A3", (1..4).map(|m| tx(m, true)).collect()),
-            ("MIX", vec![tx(1, true), tx(2, true), tx(3, true), tx(4, false)]),
+            ("A3", (1..4).map(|m| tx(m, true)).chain([tx(core::HOLDER_BRK_HELD, true)]).collect()),
+            ("MIX", vec![tx(1, true), tx(2, true), tx(3, true), tx(4, false), tx(core::HOLDER_BRK_HELD, false)]),
             ("LATE", (0..8).map(|m| tx(m, true)).collect()),
             ("BTC-USD", (0..8).map(|m| tx(m, true)).collect()),
         ]
@@ -8697,7 +8704,7 @@ mod tests {
         let pool = [at("B8", 4.0), at("A3", 2.0), at("MIX", -1.0), late, at("NONE", 0.0), at("BTC-USD", 9.0)];
         let rows = holder_cohorts(&pool, &txs);
         assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), HOLDER_COHORTS.map(|c| c.0));
-        assert_eq!(rows.iter().map(|r| (r.1.n, r.2.n)).collect::<Vec<_>>(), [(1, 4), (3, 2), (1, 4), (2, 3)]);
+        assert_eq!(rows.iter().map(|r| (r.1.n, r.2.n)).collect::<Vec<_>>(), [(1, 4), (3, 2), (1, 4), (2, 3), (1, 4)]);
         assert_eq!(rows[1].1, CohortSide { n: 3, mean: 5.0 / 3.0, median: 2.0, hit: 200.0 / 3.0 });
         assert_eq!(rows[1].2, CohortSide { n: 2, mean: -1.0, median: -1.0, hit: 0.0 }, "a zero excess is no hit");
         assert!(cohort_side(Vec::new()).mean.is_nan());
