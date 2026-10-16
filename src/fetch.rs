@@ -5400,11 +5400,50 @@ pub fn core_stripped() -> usize {
     CORE_STRIPPED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// (#382) Mapped CIK -> the predecessor filer's CIK, fetched ONLY when the mapped one parses zero rows.
-/// SEC's map moved XOM to ExxonMobil Holdings Corp, a 2026 holdco with no 10-K yet, while every annual
-/// report sits under Exxon Mobil Corp. The holdco's first 10-K yields rows and the pair goes dead on
-/// its own; an override would instead freeze XOM at FY2025, the (#379) trap.
-const SEC_PREDECESSOR_CIK: &[(&str, &str)] = &[("0002115436", "0000034088")];
+/// (#382) Mapped CIK -> the predecessor filer's CIK. SEC's map moved XOM to ExxonMobil Holdings Corp, a
+/// 2026 holdco with no 10-K yet, while every annual report sits under Exxon Mobil Corp; an override
+/// would instead freeze XOM at FY2025, the (#379) trap.
+/// (#613) Always fetched and merged (`merge_predecessor_rows`), not only on zero rows: a holdco or
+/// redomicile swap starts the new CIK's rows at its first 10-K, so GOOGL read from FY2015, AVGO FY2018,
+/// DIS FY2019, BLK FY2024 (live 5y growth None), and XOM goes the same way at the holdco's first 10-K.
+/// A chain is two pairs (AVGO: Broadcom Inc, Broadcom Ltd, Avago). FTI stays out: Technip is the
+/// accounting acquirer, so FMC's FY2013-15 would splice a fake ~+20%/yr onto TechnipFMC at 8y cutoffs.
+/// DD is in although Dow is the accounting acquirer: every graded DD-member cutoff predates DowDuPont's
+/// first 10-K (2018-02-15), and the earliest-filed rule keeps DuPont's own FY2015-16 over Dow's.
+const SEC_PREDECESSOR_CIK: &[(&str, &str)] = &[
+    ("0002115436", "0000034088"), // XOM: ExxonMobil Holdings <- Exxon Mobil Corp
+    ("0001652044", "0001288776"), // GOOGL/GOOG: Alphabet <- Google Inc
+    ("0001730168", "0001649338"), // AVGO: Broadcom Inc <- Broadcom Ltd
+    ("0001649338", "0001441634"), //   Broadcom Ltd <- Avago Technologies
+    ("0001613103", "0000064670"), // MDT: Medtronic plc <- Medtronic Inc
+    ("0001551182", "0000031277"), // ETN: Eaton plc <- Eaton Corp
+    ("0001571949", "0001174746"), // ICE: Intercontinental Exchange Inc <- IntercontinentalExchange Inc
+    ("0001739940", "0000701221"), // CI: Cigna Group <- old Cigna Corp
+    ("0002012383", "0001364742"), // BLK: BlackRock Inc (2024 holdco) <- BlackRock Finance Inc
+    ("0001585364", "0000820096"), // PRGO: Perrigo plc <- Perrigo Co
+    ("0001770450", "0000108772"), // XRX: Xerox Holdings <- Xerox Corp (still co-files)
+    ("0001744489", "0001001039"), // DIS: Walt Disney Co (2019) <- old Walt Disney Co
+    ("0001688568", "0000023082"), // DXC: DXC Technology <- Computer Sciences Corp
+    ("0001666700", "0000030554"), // DD: DuPont de Nemours <- EIDP (E. I. du Pont)
+];
+
+/// (#613) Folds a predecessor CIK's rows into the mapped CIK's. Only periods ending before the new CIK's
+/// first OWN fiscal year are taken (a row filed within a year of its period end, not a comparative), so
+/// a co-filer's later years (Xerox Corp after FY2018, EIDP as Corteva) never enter. On a shared period
+/// the earliest `filed` wins, a tie keeps the new CIK's row. Sorted by `period_end`, which `fund_as_of`'s
+/// last-wins tie needs. No own row (XOM's holdco today) takes every old row.
+fn merge_predecessor_rows(mut rows: Vec<core::FundRow>, old: Vec<core::FundRow>) -> Vec<core::FundRow> {
+    let first = rows.iter().filter(|r| (r.filed - r.period_end).num_days() < 365).map(|r| r.period_end).min();
+    for o in old.into_iter().filter(|o| first.is_none_or(|f| o.period_end < f)) {
+        match rows.iter_mut().find(|r| r.period_end == o.period_end) {
+            Some(r) if o.filed < r.filed => *r = o,
+            Some(_) => {}
+            None => rows.push(o),
+        }
+    }
+    rows.sort_by_key(|r| r.period_end);
+    rows
+}
 
 /// Annual `FundRow`s for a US ticker from SEC XBRL company-facts. DISK-CACHED as compact parsed rows
 /// (`.sec_cache/{ticker}_facts.json`) — NOT the multi-MB raw payload — append-only history, so the
@@ -5533,17 +5572,17 @@ async fn fetch_sec_facts_fresh(client: &Client, urls: &Urls, ticker: &str) -> Op
         return (!rows.is_empty()).then_some(rows); // cache hit -> no network, no budget spend
     }
     let cik = sec_cik(client, urls, ticker).await?; // non-US / unknown -> None
-    let old = SEC_PREDECESSOR_CIK.iter().find(|(new, _)| *new == cik).map(|(_, old)| *old);
+    // (#613) the mapped CIK, then each predecessor down the chain; a failed one returns None (no partial cache).
+    let chain = std::iter::successors(Some(cik.as_str()), |c| {
+        SEC_PREDECESSOR_CIK.iter().find(|(new, _)| new == c).map(|(_, old)| *old)
+    });
     let mut rows = Vec::new();
-    for cik in std::iter::once(cik.as_str()).chain(old) {
+    for cik in chain {
         if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
             return None;
         }
         let v = sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", cik), &urls.sec_user_agent).await?;
-        rows = parse_sec_facts(&v);
-        if !rows.is_empty() {
-            break;
-        }
+        rows = merge_predecessor_rows(rows, parse_sec_facts(&v));
     }
     if !rows.is_empty() {
         let serial: Vec<SecCacheRow> = rows
@@ -14183,6 +14222,68 @@ pub(crate) mod tests {
         assert_eq!(asked.try_iter().count(), 2, "holdco first, then the predecessor");
         let written = std::fs::read_to_string(sec_cache_path("XOM_facts22")).expect("cache written");
         assert!(written.contains("2025-12-31"), "{written}");
+    }
+
+    /// (#613) GOOGL's mapped CIK (Alphabet) has rows of its own, and the predecessor (Google Inc) is
+    /// fetched anyway: the cached history starts at Google Inc's years, not at Alphabet's first 10-K.
+    #[tokio::test]
+    async fn sec_facts_rows_merge_the_predecessor_years() {
+        seed_cik_map();
+        let _ = std::fs::remove_file(sec_cache_path("GOOGL_facts22"));
+        let (base, client, asked) = routed_stub(vec![
+            ("CIK0001652044", r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+                {"start": "2014-01-01", "end": "2014-12-31", "val": 2.0, "form": "10-K", "filed": "2016-02-11"},
+                {"start": "2015-01-01", "end": "2015-12-31", "val": 3.0, "form": "10-K", "filed": "2016-02-11"}
+            ]}}}}}"#),
+            ("CIK0001288776", r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+                {"start": "2013-01-01", "end": "2013-12-31", "val": 1.0, "form": "10-K", "filed": "2014-02-12"},
+                {"start": "2014-01-01", "end": "2014-12-31", "val": 1.5, "form": "10-K", "filed": "2015-02-06"}
+            ]}}}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.sec_companyfacts = format!("{base}CIK{{cik}}.json");
+        let got = fetch_sec_facts_rows(&client, &urls, "GOOGL").await.expect("merged rows");
+        let revs: Vec<_> = got.iter().map(|r| (r.period_end.to_string(), r.revenue)).collect();
+        let want = [("2013-12-31", 1.0), ("2014-12-31", 1.5), ("2015-12-31", 3.0)].map(|(d, v)| (d.to_string(), Some(v)));
+        assert_eq!(revs, want, "Google Inc's FY2013-14 as first filed, then Alphabet's own FY2015");
+        assert_eq!(asked.try_iter().count(), 2, "Alphabet first, then Google Inc");
+        let written = std::fs::read_to_string(sec_cache_path("GOOGL_facts22")).expect("cache written");
+        assert!(written.contains("2013-12-31"), "the merged history is cached: {written}");
+    }
+
+    /// (#613) The fold's three rules: old years before the new CIK's first OWN 10-K come in, a shared
+    /// period keeps the earlier filing (a tie keeps the new CIK's row), and an own year is never
+    /// replaced. A comparative filed exactly 365 days after its period end is not own.
+    #[test]
+    fn merge_predecessor_rows_takes_old_years_before_the_first_own_10k() {
+        let day = |d: &str| NaiveDate::parse_from_str(d, "%Y-%m-%d").expect("date");
+        let row = |end: &str, filed: &str, rev: f64| core::FundRow { period_end: day(end), filed: day(filed), revenue: Some(rev), ..Default::default() };
+        let revs = |rows: &[core::FundRow]| rows.iter().map(|r| (r.period_end.to_string(), r.revenue.unwrap_or(0.0))).collect::<Vec<_>>();
+        let want = |w: &[(&str, f64)]| w.iter().map(|(d, v)| (d.to_string(), *v)).collect::<Vec<_>>();
+        let new = vec![
+            row("2012-12-31", "2014-02-12", 9.0), // comparative, filed the same day as the old FY2012
+            row("2014-12-31", "2015-12-31", 2.0), // comparative, exactly 365 days on
+            row("2015-12-31", "2016-02-11", 3.0), // the first own 10-K
+        ];
+        let old = vec![
+            row("2011-12-31", "2012-01-26", 10.0), // before the first own year: in
+            row("2012-12-31", "2014-02-12", 11.0), // a tie on `filed`: the new row stays
+            row("2014-12-31", "2015-02-06", 12.0), // filed earlier: replaces the comparative
+            row("2015-12-31", "2016-01-01", 13.0), // the first own year itself, filed earlier: out
+            row("2016-12-31", "2017-02-01", 14.0), // after it: out
+        ];
+        let got = merge_predecessor_rows(new, old.clone());
+        assert_eq!(revs(&got), want(&[("2011-12-31", 10.0), ("2012-12-31", 9.0), ("2014-12-31", 12.0), ("2015-12-31", 3.0)]));
+        // XOM's holdco today: no rows of its own, so every old row comes in, sorted
+        let got = merge_predecessor_rows(Vec::new(), old.into_iter().rev().collect());
+        assert_eq!(revs(&got), want(&[("2011-12-31", 10.0), ("2012-12-31", 11.0), ("2014-12-31", 12.0), ("2015-12-31", 13.0), ("2016-12-31", 14.0)]));
+        // AVGO's chain, folded down it as `fetch_sec_facts_fresh` does: Broadcom Inc, Broadcom Ltd, Avago.
+        // The second fold's first own year is Broadcom Ltd's FY2016, so Avago fills FY2014-15 only.
+        let inc = vec![row("2017-10-29", "2018-12-21", 20.0), row("2018-11-04", "2018-12-21", 21.0)];
+        let ltd = vec![row("2015-11-01", "2016-12-23", 30.0), row("2016-10-30", "2016-12-23", 31.0), row("2017-10-29", "2017-12-21", 32.0)];
+        let avago = vec![row("2014-11-02", "2014-12-19", 40.0), row("2015-11-01", "2015-12-21", 41.0), row("2016-10-30", "2016-12-01", 42.0)];
+        let got = [ltd, avago].into_iter().fold(inc, merge_predecessor_rows);
+        assert_eq!(revs(&got), want(&[("2014-11-02", 40.0), ("2015-11-01", 41.0), ("2016-10-30", 31.0), ("2017-10-29", 32.0), ("2018-11-04", 21.0)]));
     }
 
     /// `yahoo_fund_facts_fill`'s CACHE lane — the whole function bar the fetch itself, and the lane a
