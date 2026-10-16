@@ -11361,6 +11361,52 @@ mod tests {
         }
     }
 
+    /// (#628) The glyph arms of `col_cell` and `rank_mark`, one row each. cargo-mutants does not mutate a string
+    /// literal, so `~` `°` `‡` `SEC` and `e` were graded by nothing: a cache-served PEG could print as fresh, or a
+    /// borrowed one lose its `~`, the only sign the gate read an index twin's P/E, and every job stayed green. Each row
+    /// pins the exact cell, with a bare row beside every glyph so one printed on every row fails too. The fund's marks
+    /// come off its real `FundPe`, the map `fund_peg_yield` reads, not off `earns_cache_mark`. The `°` legend line is
+    /// not here: `print_picks` builds it and is `println!` end to end.
+    #[test]
+    fn glyph_arms_print_what_their_input_earns() {
+        let t = BuyHeuristic::default();
+        // 5Y +61.051% = exactly 10 %/yr, so P/E 25 prints PEG 2.50 whatever else the row carries
+        let mut fund = Quote::stub("F.L", "€100.00", "", "F UCITS ETF");
+        fund.instrument_type = "ETF".into();
+        fund.perf = legs(&[("5Y", 61.051)]);
+        // one P/E, four provenances: measured this run, borrowed from a twin, served from cache, both
+        let (twin, day) = (Some("G.L"), chrono::NaiveDate::from_ymd_opt(2026, 10, 1));
+        let served = |from: Option<&str>, as_of| -> FundPeMap {
+            [("F.L".to_string(), FundPe { pe: 25.0, from: from.map(String::from), as_of })].into_iter().collect()
+        };
+        let (fresh, borrowed, cached, both) = (served(None, None), served(twin, None), served(None, day), served(twin, day));
+        let no_pe: FundPeMap = HashMap::new();
+        let stock = Quote::stub("S", "€1", "", "Co");
+        let ytd = Quote { rev_yoy: Some(65.5), rev_ytd: true, ..stock.clone() };
+        let full_year = Quote { rev_ytd: false, ..ytd.clone() };
+        let mut filer = stock.clone();
+        filer.profile.cik = Some("0000320193".into());
+        for (key, quote, pe, want) in [
+            ("peg", &fund, &fresh, "2.50"),
+            ("peg", &fund, &borrowed, "2.50~"),
+            ("peg", &fund, &cached, "2.50°"),
+            ("peg", &fund, &both, "2.50~°"),
+            ("rev-yoy", &ytd, &no_pe, "+65.5%‡"),
+            ("rev-yoy", &full_year, &no_pe, "+65.5%"),
+            ("reports", &filer, &no_pe, "SEC"),
+            ("reports", &stock, &no_pe, "search"),
+        ] {
+            assert_eq!(col_cell(key, quote, 0.0, None, "", &t, pe), want, "{key} {want}");
+        }
+        // `e` is an exchange token's alone: another coin, and a stock sharing the letters (GT is Goodyear), print the bare rank
+        let none: HashSet<&str> = HashSet::new();
+        let owned = Owned::default();
+        for (ticker, want) in [("BNB-EUR", "1e"), ("GT-USD", "1e"), ("BTC-EUR", "1"), ("GT", "1")] {
+            let q = Quote::stub(ticker, "€1", "", "Coin");
+            assert_eq!(rank_mark(0, &q, &none, &owned, &t), want, "{ticker}");
+        }
+    }
+
     /// (#79) The S-8Y tuning makes exactly three changes and inherits everything else. Asserted on
     /// the struct rather than on a printed cell, because a printed S-8Y is a number either way: drop
     /// the 8-year pin and it silently becomes a SECOND COPY of SCORE, drop a floor and it reverts to
