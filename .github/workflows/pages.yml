@@ -415,8 +415,8 @@ jobs:
   #
   # ONE COMMIT A DAY, and the cron needs no help to get there. `append_snapshot` returns early when
   # the journal's last line already carries today's date, so the first run of the day appends and this
-  # job pushes it; every later run of the ~288 writes nothing, and this job finds a clean diff and
-  # pushes nothing.
+  # job pushes it; every later run of the ~288 writes nothing, and this job finds the run's last line
+  # no newer than main's and pushes nothing.
   #
   # A SECOND JOB RATHER THAN A STEP IN `publish`, and the reason is the FMP key. Job-level permissions
   # REPLACE the workflow block, so this job holds `contents: write` and none of publish's
@@ -440,15 +440,25 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: screen-journal
+          path: run-journal
       - name: Commit today's line
         run: |
-          if git diff --quiet -- .screen_snapshots.jsonl; then
-            echo "journal unchanged — today's line was already recorded"
-            exit 0
-          fi
+          # (#605) APPEND THE RUN'S LAST LINE, NEVER COPY ITS FILE. The run's journal comes from its
+          # own checkout, which can be older than main: a queued run checks out the SHA it was
+          # triggered on, and a re-run reuses its original SHA. Copied whole, that file reverts every
+          # line main gained since. 210c9dc did it to 9379bd8's 2026-10-16 line (two runs queued on
+          # 32d2ec4); a failed run re-run a day later would have dropped whole days. Only a line dated
+          # after main's last one is new.
+          line=$(tail -n 1 run-journal/.screen_snapshots.jsonl)
           # The date comes from the line itself, not from `date`, so a run crossing midnight UTC
           # cannot label a snapshot with a day it was not taken on.
-          day=$(tail -n 1 .screen_snapshots.jsonl | jq -r .date)
+          day=$(jq -r .date <<<"$line")
+          last=$(tail -n 1 .screen_snapshots.jsonl | jq -r .date)
+          if [[ ! "$day" > "$last" ]]; then
+            echo "journal unchanged: main already ends at $last (this run's last line: $day)"
+            exit 0
+          fi
+          printf '%s\n' "$line" >> .screen_snapshots.jsonl
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .screen_snapshots.jsonl
