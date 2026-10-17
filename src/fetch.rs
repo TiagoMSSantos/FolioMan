@@ -1694,14 +1694,24 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
 }
 
 /// (#504) One companyfacts read for a filer whose REV-YoY is still None after the annual pipeline.
-/// shortcut: uncached, so ~a dozen 10-Q-only IPOs spend a budget slot each run; cache when SEC runs short.
+/// (#700) Cached for `sec_cache_ttl`, misses included. Uncached, the reads ran one after another in the
+/// income lane, which took 10s on run 39065461965 for the 11 names whose REV-YoY read `‡` and the n/a
+/// ones that paid the same GET. A new 10-Q now shows up to 47h late, in a display-only cell. A budget
+/// miss or a refused GET writes nothing, so the next run asks again.
 #[mutants::skip] // (#504) async network shell; `sec_ytd_rev_yoy` carries the tests
 async fn fetch_sec_ytd_rev_yoy(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    let cache = sec_cache_path(&format!("{ticker}_ytdrev1"));
+    evict_if_stale(&cache, sec_cache_ttl(ticker));
+    if let Some(yoy) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Option<f64>>(&s).ok()) {
+        return yoy;
+    }
     let cik = sec_cik(client, urls, ticker).await?;
     if SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= SEC_FETCH_BUDGET {
         return None;
     }
-    sec_ytd_rev_yoy(&sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent).await?)
+    let yoy = sec_ytd_rev_yoy(&sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent).await?);
+    let _ = std::fs::write(&cache, serde_json::to_string(&yoy).unwrap_or_default());
+    yoy
 }
 
 // ── (Item 4) SEC EDGAR insider (Form 4) lane ───────────────────────────────────────────────────────
@@ -12285,6 +12295,30 @@ pub(crate) mod tests {
         assert_eq!(edge("2025-01-11"), Some(50.0));
         assert_eq!(edge("2025-01-12"), None);
         assert_eq!(sec_ytd_rev_yoy(&json!({"facts": {}})), None, "no us-gaap block");
+    }
+
+    /// (#700) The YTD REV-YoY read answers from its cache, a miss included. AAPL resolves to a CIK, so
+    /// only the `null` on disk keeps it off the socket. Past `sec_cache_ttl`'s 47h ceiling the file goes.
+    #[tokio::test]
+    async fn sec_ytd_rev_yoy_serves_its_cache_misses_included() {
+        seed_cik_map();
+        let (base, client, requests) = recording_stub("{}");
+        let urls = stub_urls(&base);
+        let (hit, miss) = (sec_cache_path("ZZYTD_ytdrev1"), sec_cache_path("AAPL_ytdrev1"));
+        std::fs::write(&hit, "12.5").expect("seed a cached answer");
+        std::fs::write(&miss, "null").expect("seed a cached miss");
+        let got = (fetch_sec_ytd_rev_yoy(&client, &urls, "ZZYTD").await, fetch_sec_ytd_rev_yoy(&client, &urls, "AAPL").await);
+        let _ = std::fs::remove_file(&miss);
+        assert_eq!(got, (Some(12.5), None));
+        assert!(requests.try_recv().is_err(), "both answered from disk: no request");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&hit)
+            .expect("reopen to age")
+            .set_modified(SystemTime::now() - StdDuration::from_secs(48 * 3600))
+            .expect("backdate mtime");
+        assert_eq!(fetch_sec_ytd_rev_yoy(&client, &urls, "ZZYTD").await, None, "stale, and ZZYTD has no CIK");
+        assert!(!hit.exists(), "evicted");
     }
 
     /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost
