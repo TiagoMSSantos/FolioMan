@@ -62,11 +62,13 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       range       + cagr           1 winners     0.7% of the missed wealth   both near-miss:    0 ( 0.0%)
       -> exactly-2-gate winners hold 8.6% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:9% 3:5% 4:9% 5:10% 6:19% 7:7%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
+    rev_cagr              winners n=12   med      4.37   losers n=7    med     11.71   gap     -7.33   AUC  0.26
+    rev_accel             winners n=12   med      1.08   losers n=7    med     -2.44   gap      3.52   AUC  0.54
     gross_margin          winners n=32   med     67.84   losers n=7    med     40.40   gap     27.44   AUC  0.69
     op_margin             winners n=45   med     20.07   losers n=20   med     21.46   gap     -1.39   AUC  0.40
-    margin_trend          winners n=35   med     -0.09   losers n=17   med      0.84   gap     -0.92   AUC  0.33
-    eps_growth            winners n=10   med     11.85   losers n=3    med     24.13   gap    -12.28   AUC  0.20
-    rev_yoy               winners n=44   med     11.11   losers n=17   med      5.61   gap      5.50   AUC  0.56
+    margin_trend          winners n=44   med     -0.01   losers n=20   med      2.10   gap     -2.11   AUC  0.36
+    eps_growth            winners n=12   med     13.53   losers n=5    med     23.68   gap    -10.15   AUC  0.33
+    rev_yoy               winners n=57   med      9.51   losers n=20   med      5.23   gap      4.28   AUC  0.59
     eps_yoy               winners n=57   med     12.83   losers n=20   med     32.65   gap    -19.83   AUC  0.42
     net_margin            winners n=58   med     15.07   losers n=20   med     13.28   gap      1.78   AUC  0.57
     earnings_yield        winners n=51   med      4.31   losers n=20   med      3.27   gap      1.04   AUC  0.67
@@ -81,6 +83,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     net_cash_rev          winners n=57   med     10.20   losers n=20   med    -72.56   gap     82.76   AUC  0.89
     margin_stability      winners n=57   med     -2.19   losers n=20   med     -9.41   gap      7.23   AUC  0.83
     accrual_gap           winners n=58   med     -0.03   losers n=20   med      0.17   gap     -0.20   AUC  0.28
+    asset_growth          winners n=5    med     -1.26   losers n=1    med     -6.95   gap      5.69   AUC  0.80
     gp_assets             winners n=31   med     33.73   losers n=7    med     49.34   gap    -15.60   AUC  0.35
     cf_assets             winners n=57   med     11.39   losers n=20   med      7.45   gap      3.95   AUC  0.54
     rev_stability         winners n=44   med    -13.02   losers n=13   med     -9.65   gap     -3.37   AUC  0.51
@@ -91,15 +94,15 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     small_pct             winners n=58   med     66.67   losers n=20   med      0.00   gap     66.67   AUC  0.88
     noa                   winners n=56   med    -54.35   losers n=20   med    -74.56   gap     20.21   AUC  0.66
     op_leverage           winners n=44   med     55.23   losers n=20   med     44.46   gap     10.76   AUC  0.61
-    lynch_yield           winners n=8    med     91.60   losers n=3    med     65.64   gap     25.96   AUC  0.62
-    exp_neg               winners n=10   med      2.37   losers n=3    med     -7.40   gap      9.76   AUC  0.67
-    discipline            winners n=28   med      4.06   losers n=16   med      5.54   gap     -1.48   AUC  0.39
-    fair_yield            winners n=45   med    111.24   losers n=14   med    122.35   gap    -11.11   AUC  0.39
-    oe_fair_yield         winners n=45   med    111.24   losers n=14   med    122.35   gap    -11.11   AUC  0.39
-    fcf_cap_yield         winners n=51   med      4.49   losers n=19   med      4.26   gap      0.23   AUC  0.50
+    lynch_yield           winners n=8    med     91.60   losers n=5    med     65.64   gap     25.96   AUC  0.65
+    exp_neg               winners n=12   med     -2.70   losers n=5    med     -8.73   gap      6.03   AUC  0.72
+    discipline            winners n=36   med      2.56   losers n=19   med      3.25   gap     -0.68   AUC  0.46
+    fair_yield            winners n=46   med    110.86   losers n=14   med    118.90   gap     -8.03   AUC  0.44
+    oe_fair_yield         winners n=46   med    110.86   losers n=14   med    118.90   gap     -8.03   AUC  0.44
+    fcf_cap_yield         winners n=51   med      4.49   losers n=20   med      3.35   gap      1.14   AUC  0.56
     low_turnover          winners n=58   med     -1.62   losers n=20   med     -1.44   gap     -0.18   AUC  0.59
-    composite             winners n=41   med     20.74   losers n=17   med     17.11   gap      3.63   AUC  0.58
-    (37 of 53 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    composite             winners n=47   med     13.38   losers n=20   med     15.03   gap     -1.65   AUC  0.50
+    (40 of 53 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -261,13 +264,13 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   SEC requests this run: 0 sent, 0 refused (403/429/5xx/transport)
   split-restated tickers: 14 (filings put on the chart's split basis)
   core-stripped tickers: 0 (EPS with non-operating gains taken off)
-  revenue_cagr   n/a (only 0 cutoffs carry this factor)
-  revenue_accel  n/a (only 0 cutoffs carry this factor)
+  revenue_cagr   n=51    rho +0.11  edge +248.2  OOS +0.12 | +0.10
+  revenue_accel  n=51    rho +0.04  edge +56.8  OOS -0.11 | +0.20
   gross_margin   n=96    rho -0.11  edge +83.2  OOS -0.01 | -0.23
   op_margin      n=185   rho -0.22  edge -238.4  OOS -0.08 | -0.32
-  margin_trend   n=136   rho -0.15  edge -64.6  OOS -0.14 | -0.15
-  eps_growth     n=37    rho +0.05  edge -46.1  OOS -0.12 | +0.09
-  rev_yoy        n=165   rho +0.08  edge +135.9  OOS +0.09 | +0.07
+  margin_trend   n=183   rho -0.00  edge +82.7  OOS +0.01 | -0.01
+  eps_growth     n=42    rho +0.10  edge -21.2  OOS -0.04 | +0.16
+  rev_yoy        n=223   rho +0.16  edge +245.8  OOS +0.12 | +0.19
   eps_yoy        n=212   rho -0.04  edge +24.8  OOS -0.06 | -0.01
   net_margin     n=225   rho -0.03  edge -152.9  OOS +0.13 | -0.19
   quality(roe/roa) n=225   rho +0.03  edge +17.3  OOS +0.12 | -0.06
@@ -277,17 +280,17 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   ebitda_yield   n=132   rho +0.13  edge +215.2  OOS +0.09 | +0.19
   peg_yield      n=170   rho +0.15  edge +97.6  OOS +0.27 | +0.08
   buyback_yield  n=214   rho +0.06  edge -79.4  OOS +0.19 | -0.10
-  composite      n=162   rho -0.06  edge -158.8  OOS -0.02 | -0.09
+  composite      n=195   rho -0.06  edge -194.9  OOS +0.01 | -0.10
 
 ── FUND FACTOR SWEEP (growth_fund_weight searched per factor, held-out TEST) ──
   price-only baseline TEST edge +48.2 — a factor must beat this with both OOS halves +
-  rev_cagr       TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
-  rev_accel      TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
+  rev_cagr       TEST edge +94.7 (w 0.249)  OOS +0.18 | +0.15
+  rev_accel      TEST edge +80.4 (w 0.249)  OOS +0.18 | +0.15
   gross_margin   TEST edge +83.8 (w 0.477)  OOS +0.20 | +0.20
   op_margin      TEST edge +22.9 (w 0.193)  OOS +0.15 | +0.11
-  margin_trend   TEST edge +46.8 (w 0.249)  OOS +0.17 | +0.14
+  margin_trend   TEST edge +74.3 (w 0.249)  OOS +0.17 | +0.15
   eps_growth     TEST edge +88.4 (w 0.249)  OOS +0.18 | +0.16
-  rev_yoy        TEST edge +69.7 (w 0.249)  OOS +0.18 | +0.16
+  rev_yoy        TEST edge +110.7 (w 0.104)  OOS +0.19 | +0.16
   eps_yoy        TEST edge +48.2 (w 0.001)  OOS +0.18 | +0.14
   net_margin     TEST edge +48.2 (w 0.013)  OOS +0.18 | +0.14
   insider_net_buys_90d TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
@@ -321,19 +324,19 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   goodwill       TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
   org_cap        TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
   int_yield      TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
-  lynch_yield    TEST edge +94.6 (w 0.249)  OOS +0.18 | +0.18
+  lynch_yield    TEST edge +94.6 (w 0.249)  OOS +0.18 | +0.17
   sgr_yield      TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
   exp_neg        TEST edge +71.3 (w 0.249)  OOS +0.18 | +0.16
   op_rd          TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
-  discipline     TEST edge +49.6 (w 0.249)  OOS +0.16 | +0.12
-  fair_yield     TEST edge +46.2 (w 0.039)  OOS +0.17 | +0.15
-  oe_fair_yield  TEST edge +46.2 (w 0.039)  OOS +0.17 | +0.15
+  discipline     TEST edge +56.9 (w 0.249)  OOS +0.17 | +0.13
+  fair_yield     TEST edge +35.3 (w 0.025)  OOS +0.18 | +0.15
+  oe_fair_yield  TEST edge +35.3 (w 0.025)  OOS +0.18 | +0.15
   fcf_cap_yield  TEST edge +48.2 (w 0.001)  OOS +0.18 | +0.14
   low_turnover   TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
   rnd_growth     TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
   low_dro        TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
   capex_light    TEST edge +48.2 (w 0.249)  OOS +0.18 | +0.14
-  composite      TEST edge +48.2 (w 0.001)  OOS +0.18 | +0.14
+  composite      TEST edge +48.2 (w 0.025)  OOS +0.17 | +0.14
   -> WINNER: op_leverage. Set `growth_fund_factor: op_leverage` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm.
   -> validated growth_fund_weight for op_leverage: 0.118 (at growth_fund_cap 300)
 
@@ -547,8 +550,10 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   growth_score   book +13.1%/yr  excess +4.8  win 85%  worst -10.8  OOS +5.0/+4.7   [baseline, n=972]
   gross_margin   book +14.7%/yr  excess +3.1  win 89%  worst -1.4  OOS +2.5/+3.6   (n=93)
   op_margin      book +11.4%/yr  excess -0.2  win 44%  worst -3.5  OOS +1.5/-1.5   (n=179)
-  margin_trend   book +12.5%/yr  excess +0.7  win 71%  worst -3.7  OOS -0.1/+1.2   (n=130)
-  eps_growth     book +11.8%/yr  excess -0.1  win 67%  worst -3.8  OOS -3.8/+1.8   (n=32)
+  margin_trend   book +14.4%/yr  excess +2.9  win 100%  worst +0.5  OOS +1.9/+3.6   (n=177)
+  rev_cagr       book +13.1%/yr  excess +1.2  win 67%  worst -2.3  OOS -2.3/+3.0   (n=45)
+  rev_accel      book +12.4%/yr  excess +0.6  win 33%  worst -2.3  OOS -2.3/+2.0   (n=45)
+  eps_growth     book +12.9%/yr  excess +1.0  win 67%  worst -1.6  OOS -1.6/+2.3   (n=37)
   earnings_yield book +11.9%/yr  excess +0.3  win 33%  worst -1.0  OOS -0.1/+0.6   (n=197)
   ebitda_yield   book +10.8%/yr  excess -0.7  win 67%  worst -4.5  OOS -3.0/+1.0   (n=127)
   peg_yield      book +13.4%/yr  excess +1.8  win 89%  worst -0.3  OOS +1.4/+2.1   (n=163)
@@ -561,6 +566,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   net_cash_rev   book +14.3%/yr  excess +2.6  win 100%  worst +0.4  OOS +1.7/+3.4   (n=205)
   margin_stability book +13.3%/yr  excess +1.7  win 78%  worst -1.0  OOS +1.6/+1.8   (n=213)
   accrual_gap    book +10.2%/yr  excess -1.4  win 33%  worst -4.0  OOS -1.4/-1.5   (n=184)
+  asset_growth   book +13.2%/yr  excess +1.4  win 100%  worst +1.4  OOS -0.0/+1.4   (n=7)
   gp_assets      book +13.8%/yr  excess +2.2  win 78%  worst -1.4  OOS +0.8/+3.3   (n=91)
   cf_assets      book +10.9%/yr  excess -0.7  win 44%  worst -3.9  OOS -0.1/-1.1   (n=192)
   rev_stability  book +9.6%/yr  excess -2.2  win 14%  worst -5.0  OOS -1.1/-3.0   (n=146)
@@ -571,14 +577,14 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   small_pct      book +15.6%/yr  excess +3.9  win 100%  worst +1.2  OOS +3.0/+4.7   (n=207)
   noa            book +11.7%/yr  excess +0.1  win 56%  worst -0.9  OOS -0.0/+0.2   (n=203)
   op_leverage    book +15.7%/yr  excess +4.1  win 100%  worst +0.5  OOS +2.3/+5.6   (n=177)
-  lynch_yield    book +12.9%/yr  excess +1.0  win 67%  worst -2.6  OOS -2.6/+2.9   (n=23)
-  exp_neg        book +12.1%/yr  excess +0.3  win 67%  worst -3.8  OOS -3.8/+2.3   (n=32)
-  discipline     book +8.4%/yr  excess -3.5  win 29%  worst -8.8  OOS -5.1/-2.3   (n=99)
-  fair_yield     book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=134)
-  oe_fair_yield  book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=134)
-  fcf_cap_yield  book +11.3%/yr  excess -0.3  win 44%  worst -2.0  OOS -0.1/-0.4   (n=172)
+  lynch_yield    book +12.3%/yr  excess +0.4  win 67%  worst -2.6  OOS -2.6/+1.9   (n=25)
+  exp_neg        book +13.9%/yr  excess +2.1  win 67%  worst -1.6  OOS -1.6/+3.9   (n=37)
+  discipline     book +10.0%/yr  excess -1.6  win 33%  worst -4.6  OOS -1.7/-1.5   (n=132)
+  fair_yield     book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=135)
+  oe_fair_yield  book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=135)
+  fcf_cap_yield  book +11.1%/yr  excess -0.5  win 44%  worst -2.6  OOS -0.7/-0.5   (n=177)
   low_turnover   book +12.7%/yr  excess +1.1  win 67%  worst -4.2  OOS +2.0/+0.3   (n=209)
-  no book: rev_cagr n=0, rev_accel n=0, insider_net_buys_90d n=0, asset_growth n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0, op_rd n=0, rnd_growth n=0, low_dro n=0, capex_light n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
+  no book: insider_net_buys_90d n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0, op_rd n=0, rnd_growth n=0, low_dro n=0, capex_light n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
   (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.
    every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,
    which is DERIVED (EBIT ÷ equity+net debt), not the premium `FundRow::roic` that never populates.)
