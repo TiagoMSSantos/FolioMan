@@ -326,6 +326,19 @@ pub fn parse_chart_raw(raw: &RawValue, ticker: &str) -> Option<Chart> {
     parse_chart(&serde_json::from_str::<Value>(raw.get()).ok()?, ticker)
 }
 
+/// (#685) The exchange's own calendar date of a Yahoo stamp, not the UTC one. Yahoo stamps many
+/// European bars at LOCAL midnight, 22:00 or 23:00 UTC the day before, and the UTC date put 52% of
+/// the fixture's EU bars a day early: a January monthly bar landed on December 31st. The payload
+/// holds only today's `gmtoffset`, and a midnight from across a DST change reads exactly 23:00 by
+/// it, so that one stamp rolls to the next day. A flat cushion would push real late stamps
+/// (Frankfurt trades to 22:00, a crypto bar any minute) into tomorrow instead. `checked_add`
+/// because the payload is network input: an absurd stamp is no date, never an overflow panic.
+fn bar_date(secs: i64, gmtoffset: i64) -> Option<NaiveDate> {
+    let local = secs.checked_add(gmtoffset)?;
+    let local = if local.rem_euclid(86_400) == 82_800 { local + 3_600 } else { local };
+    Some(DateTime::from_timestamp(local, 0)?.date_naive())
+}
+
 /// Parse a Yahoo chart payload into aligned dates+closes (null closes dropped) + meta.
 ///
 /// `pub` for the network drift net, which health-probes the chart endpoint and then has to assert the
@@ -350,14 +363,16 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     };
     let vols_arr = quote0.get("volume").and_then(|v| v.as_array());
     let meta = result.get("meta").cloned().unwrap_or(Value::Null);
+    // (#685) every stamp below, bars and events alike, is dated on the exchange's calendar
+    let off = meta.get("gmtoffset").and_then(Value::as_i64).unwrap_or(0);
 
     let mut dates = Vec::new();
     let mut closes = Vec::new();
     let mut volumes = Vec::new();
     for (i, (t, c)) in ts.iter().zip(closes_arr).enumerate() {
         if let (Some(secs), Some(close)) = (t.as_i64(), c.as_f64()) {
-            if let Some(dt) = DateTime::from_timestamp(secs, 0) {
-                dates.push(dt.date_naive());
+            if let Some(date) = bar_date(secs, off) {
+                dates.push(date);
                 closes.push(close);
                 // volume parallel to closes; missing/null -> 0.0 (avg_turnover skips those days)
                 volumes.push(vols_arr.and_then(|a| a.get(i)).and_then(|v| v.as_f64()).unwrap_or(0.0));
@@ -383,7 +398,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
                 .filter_map(|d| {
                     let amount = d.get("amount")?.as_f64()?;
                     let secs = d.get("date")?.as_i64()?;
-                    Some((DateTime::from_timestamp(secs, 0)?.date_naive(), amount))
+                    Some((bar_date(secs, off)?, amount))
                 })
                 .collect()
         })
@@ -406,7 +421,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
                     let secs = s.get("date")?.as_i64()?;
                     let ratio = num / den;
                     (den > 0.0 && ratio > 0.0)
-                        .then(|| Some((DateTime::from_timestamp(secs, 0)?.date_naive(), ratio)))
+                        .then(|| Some((bar_date(secs, off)?, ratio)))
                         .flatten()
                 })
                 .collect()
@@ -8667,12 +8682,14 @@ fn eu_chart_ok(raw: &RawValue, max_weekly_rate: f64, max_flat_years: f64) -> boo
     let eur = v.pointer("/chart/result/0/meta/currency").and_then(Value::as_str) == Some("EUR");
     let ts = v.pointer("/chart/result/0/timestamp").and_then(Value::as_array);
     let cl = v.pointer("/chart/result/0/indicators/quote/0/close").and_then(Value::as_array);
+    // (#685) dated as `parse_chart` dates them, so the trims below cut where the quote path's do
+    let off = v.pointer("/chart/result/0/meta/gmtoffset").and_then(Value::as_i64).unwrap_or(0);
     let bars: Vec<(i64, NaiveDate, f64)> = ts.zip(cl).map_or_else(Vec::new, |(t, c)| {
         t.iter()
             .zip(c)
             .filter_map(|(t, c)| {
                 let secs = t.as_i64()?;
-                Some((secs, DateTime::from_timestamp(secs, 0)?.date_naive(), c.as_f64()?))
+                Some((secs, bar_date(secs, off)?, c.as_f64()?))
             })
             .collect()
     });
@@ -15436,6 +15453,48 @@ pub(crate) mod tests {
         } else {
             assert_eq!(spliced.divs, clean.divs, "no trim configured, nothing cut");
         }
+    }
+
+    /// (#685) Each case is a stamp shape from the fixture census: Xetra's local midnight, the same
+    /// midnight read by a winter offset (exactly 23:00, so it rolls), ET midnight read the same way, a
+    /// US open, and two real late stamps a flat cushion would have pushed into tomorrow.
+    #[test]
+    fn bar_date_is_the_exchange_calendar_day() {
+        let at = |(y, m, d): (i32, u32, u32), (h, mi, s): (u32, u32, u32)| {
+            NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(h, mi, s).unwrap().and_utc().timestamp()
+        };
+        let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d);
+        assert_eq!(bar_date(at((2024, 3, 31), (22, 0, 0)), 7200), day(2024, 4, 1), "Xetra midnight, CEST");
+        assert_eq!(bar_date(at((2024, 3, 31), (22, 0, 0)), 3600), day(2024, 4, 1), "the same, by a CET offset");
+        assert_eq!(bar_date(at((2024, 7, 1), (4, 0, 0)), -18000), day(2024, 7, 1), "ET midnight, by an EST offset");
+        assert_eq!(bar_date(at((2024, 7, 1), (13, 30, 0)), -14400), day(2024, 7, 1), "a US open");
+        assert_eq!(bar_date(at((2024, 1, 15), (21, 0, 0)), 3600), day(2024, 1, 15), "Frankfurt's 22:00 close");
+        assert_eq!(bar_date(at((2024, 1, 15), (23, 41, 17)), 0), day(2024, 1, 15), "a crypto bar at 23:41");
+        assert_eq!(bar_date(i64::MAX, 1), None, "an absurd stamp is no date, not a panic");
+    }
+
+    /// (#685) ...and `parse_chart` dates bars, dividends and splits by the payload's `gmtoffset`.
+    #[test]
+    fn parse_chart_dates_bars_and_events_on_the_exchange_calendar() {
+        // 22:00 UTC on the last day of March and of April: Xetra's midnight opening April and May
+        let (mar, apr) = (1_711_922_400, 1_714_514_400);
+        let body = serde_json::json!({"chart": {"result": [{
+            "timestamp": [mar, apr],
+            "indicators": {"quote": [{"close": [1.0, 1.01]}]},
+            "meta": {"currency": "EUR", "gmtoffset": 7200},
+            "events": {
+                "dividends": {"a": {"amount": 0.5, "date": mar}},
+                "splits": {
+                    "a": {"date": apr, "numerator": 2.0, "denominator": 1.0},
+                    "b": {"date": mar, "numerator": 2.0, "denominator": 0.0}
+                }
+            }
+        }]}});
+        let c = parse_chart(&body, "ZZTZ.DE").expect("chart");
+        let day = |m| NaiveDate::from_ymd_opt(2024, m, 1).unwrap();
+        assert_eq!(c.dates, [day(4), day(5)], "monthly bars open their own month");
+        assert_eq!(c.divs, [(day(4), 0.5)]);
+        assert_eq!(c.splits, [(day(5), 2.0)], "and a 2:0 split, which would divide by nothing, is gone");
     }
 
     /// (#81) The whole live quote assembly, which had no test at all, pinned at the one seam this
