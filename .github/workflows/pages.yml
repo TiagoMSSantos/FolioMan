@@ -74,7 +74,6 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url || steps.deploy-retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # The fetch caches, restored from the previous run. This is not a nicety: `resolve_eu_listings`
       # alone is documented at ~4 minutes cold, and the SEC facts cache is append-only history that
@@ -233,8 +232,34 @@ jobs:
           key: folioman-longhist-
           restore-keys: folioman-longhist-
 
+      # (#686) The binary, keyed on everything compiled into it. rust-cache keeps only the deps, so each
+      # cron run recompiled the crate (49-97s) for a tree the run before had built. rustc is in the key
+      # because a new runner image ships a new one, and this file is, so a changed build line rebuilds. An
+      # exact key only, no restore-keys: a stale binary never runs. Saved right after the build, so a red
+      # Screen still keeps it.
+      - name: Key the binary
+        id: bin-key
+        run: echo "key=folioman-bin-$(rustc -V | cut -d' ' -f2)-${{ hashFiles('src/**', 'Cargo.toml', 'Cargo.lock', '.cargo/config.toml', '.github/workflows/pages.yml') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the binary
+        id: bin
+        uses: actions/cache/restore@v6
+        with:
+          path: target/release/folioman
+          key: ${{ steps.bin-key.outputs.key }}
+      # Only on a miss: on a hit no build runs, and rust-cache's post step would save the empty target
+      # under its own key whenever its entry had been evicted, leaving every later build cold. So a push
+      # that moves web/engine alone builds the engine below without rust-cache: slower, never red.
+      - if: steps.bin.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Build
+        if: steps.bin.outputs.cache-hit != 'true'
         run: cargo build --release --locked
+      - name: Save the binary
+        if: steps.bin.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: target/release/folioman
+          key: ${{ steps.bin-key.outputs.key }}
 
       # The run itself. FMP_API_KEY reaches it through `env:` and nothing else — never an argument,
       # never echoed — and it is OPTIONAL: without it the value/quality tilts go neutral, which
