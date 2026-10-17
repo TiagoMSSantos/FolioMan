@@ -616,6 +616,10 @@ fn backtest_edge_holds() {
         let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
             .args(["backtest", &years.to_string(), "universe", "winners"]) // (#606) `winners` prints the held-winners line
             .args(fund.then_some("fund"))
+            // (#636) the 20y leg also prints the rival DCA lanes, for the `S+inter` read below. `rivals` only adds a
+            // section and lanes, and no parser here selects an added row, so each still reads the same first-match
+            // line with it as without.
+            .args((years == 20).then_some("rivals"))
             .env("FOLIOMAN_UNIVERSE_SNAPSHOT", UNIVERSE)
             // pin the child to the committed fixture. Without it a local run scores with the gitignored
             // config/settings.yaml overlay and the gate grades a PER-MACHINE tuning — green on your knobs
@@ -807,6 +811,28 @@ fn backtest_edge_holds() {
             ),
             None => eprintln!("backtest-gate {leg} — no held-winners line parsed"),
         }
+        // (#636) the same line by half, print-only until post-(#630) CI readings set floors. The sum above can hold
+        // while one half thins, so the halves print apart. Read off that one line, not `growth`: under `rivals` a
+        // `(m) (j), score half by mom` row prints above it, and `num_after` takes the first match. A missing line is
+        // the sum check's to report, so only a line without the three counts lands here.
+        if let Some(line) = growth.lines().find(|l| l.contains(markers::WINNERS_HELD)) {
+            let at = |m: &str| num_after(line, m);
+            match (at("% of "), at("score half "), at("momentum half ")) {
+                (Some(slots), Some(score), Some(momentum)) => {
+                    let pct = |n: f64| n / slots.max(1.0) * 100.0;
+                    let (s, m) = (pct(score), pct(momentum));
+                    eprintln!(
+                        "backtest-gate {leg} winners held by half: score {s:.1}% ({score:.0}) / momentum {m:.1}% ({momentum:.0}) \
+                         of {slots:.0} slots (print-only)"
+                    );
+                }
+                _ if forced => panic!(
+                    "{leg}: the `{}` line carries no `% of N` / `score half N` / `momentum half N` — the per-half winners read was skipped",
+                    markers::WINNERS_HELD
+                ),
+                _ => eprintln!("backtest-gate {leg} — no per-half winners parsed"),
+            }
+        }
         // (#316) the book BUY NOW buys, graded the way it is bought: monthly, held 20y, after tax. Two ratchets on the
         // SIZED DCA rows, which print at 20y only: never-sell over the same € into the index (pts/yr), and the share of
         // programs beating Série E's best case. Floors are the ship-day readings minus 1.0 pt/yr and minus 10 pts.
@@ -819,6 +845,7 @@ fn backtest_edge_holds() {
         if years == 20 {
             const SIZED_DCA_FLOOR: f64 = 4.4;
             const SERIE_E_DCA_FLOOR: f64 = 90.0;
+            const S_INTER_DCA: &str = "S+inter never-sell"; // (#636) the lane name is 7 wide: one space, not SIZED's three
             let row = |m: &str| growth.lines().find(|l| l.trim_start().starts_with(m));
             let x = row(markers::SIZED_DCA).and_then(|l| num_after(l, "->"));
             let share = row(markers::SERIE_E_DCA).and_then(|l| num_after(l, markers::SERIE_E_DCA));
@@ -843,6 +870,25 @@ fn backtest_edge_holds() {
                     markers::SERIE_E_DCA
                 ),
                 _ => eprintln!("backtest-gate 20y — no SIZED DCA rows parsed"),
+            }
+            // (#636) print-only until the first CI readings set a floor: what interleaving the momentum half into the
+            // SIZED book adds to its never-sell excess. SIZED never splices a momentum name, so it cannot see
+            // `growth_momentum_key`; `S+inter` can (probe, `growth_momentum_key: 3`: S+inter minus SIZED +1.5 -> +0.2 on
+            // the pit pond, +1.5 -> +0.6 on the stress pond). The median is the two rows' medians subtracted, not the
+            // median of the paired differences. A missing row means `rivals` left the args above or the lane was renamed.
+            let cols = |l: Option<&str>| Some((num_after(l?, "->")?, num_after(l?, "(med ")?));
+            match (cols(row(S_INTER_DCA)), cols(row(markers::SIZED_DCA))) {
+                (Some((sx, sm)), Some((zx, zm))) => eprintln!(
+                    "backtest-gate 20y S+inter minus SIZED DCA {:+.1} pts/yr (med {:+.1}); S+inter {sx:+.1} (med {sm:+.1}), \
+                     SIZED {zx:+.1} (med {zm:+.1}) (print-only)",
+                    sx - zx,
+                    sm - zm
+                ),
+                _ if forced => panic!(
+                    "20y: GROWTH completed but no `{S_INTER_DCA}` / `{}` row parsed — the S+inter read was skipped",
+                    markers::SIZED_DCA
+                ),
+                _ => eprintln!("backtest-gate 20y — no S+inter DCA row parsed"),
             }
         }
         // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
@@ -985,8 +1031,10 @@ fn backtest_edge_holds() {
         })
         .count();
     if graded == 0 {
-        // (#57) CI reaches here only if every leg skipped, and under the force flag every
-        // environmental skip has already been ruled out except a genuine outage. Printing a note and
+        // (#57) CI reaches here only if every leg skipped. (#636) The force flag does not rule those skips out: a
+        // spawn failure, a nonzero exit (bar a panic in src/ outside src/fetch.rs, #632), under 500 tickers, no
+        // ticker count, no GROWTH section and under 20 scored windows all return false and stay green even forced,
+        // so four of them in a row land here and this assert is all that reds them. Printing a note and
         // exiting 0 is the failure this file's own header blames for network-smoke silently rotting
         // twice: a month of throttling and the nightly gate stops gating with a green check mark.
         assert!(
