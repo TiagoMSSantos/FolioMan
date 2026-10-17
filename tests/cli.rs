@@ -244,9 +244,11 @@ fn screen_unknown_flag_exit_2() {
 
 #[test]
 fn report_crypto_prints_no_statement_offline() {
-    // `-` in the ticker (crypto/FX) short-circuits BEFORE any fetch (src/commands/report.rs), so
-    // this exercises report's binary dispatch + its only offline branch without touching the network.
-    let (code, stdout, _) = run(&["report", "BTC-USD"], None);
+    // (#671) A crypto/FX ticker skips only the statement fetch: the quote (and HICP) fetches run first
+    // (src/commands/report.rs), so under `run` this went ONLINE, in the "fully offline" coverage job
+    // too, and wrote its caches into the repo root. Isolated and offline: report's dispatch and its
+    // crypto branch, no socket.
+    let (code, stdout, _) = run_isolated("report-crypto", "{}\n", &[], &["report", "BTC-USD"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("no income statement (crypto/FX)"), "crypto guard missing: {stdout}");
 }
