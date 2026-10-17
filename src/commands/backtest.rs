@@ -2693,7 +2693,7 @@ const FUND_FACTORS: [&str; 53] = [
 #[mutants::skip]
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
     if samples.iter().filter(|s| s.fund.is_some()).count() < 8 {
-        return; // no as-of fundamentals (no FMP key / cold cache) -> report_fund_lane already said so
+        return; // no as-of fundamentals (cold SEC cache, or the FMP source with no key) -> report_fund_lane already said so
     }
     let cut = samples.len() * 7 / 10;
     // best held-out TEST (edge, OOS-early rho, OOS-late rho) when the growth fund tilt routes `factor`

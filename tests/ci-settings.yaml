@@ -18868,7 +18868,9 @@ buy_heuristic:
   #   2009, 651 in 2010), so at horizon 12 (cutoffs end 2014-07) rev_cagr/rev_accel STILL read 0 —
   #   cutoff-5y lands before the filings exist. eps_growth fills (n=265) only because it filters on
   #   period_end, and one filing carries several comparative years. `fund 5` clears the boundary
-  #   entirely (cutoffs to ~2021): rev_cagr n=2094, rev_accel n=2092.
+  #   entirely (cutoffs to ~2021): rev_cagr n=2094, rev_accel n=2092. (#676) THE BOUNDARY IS GONE:
+  #   `fund_factors` steps back by fiscal period, so the comparatives a later filing carries fill the
+  #   old years, and the frozen-fixture `fund 12` golden reads rev_cagr / rev_accel n=51.
   #   THE ANSWER TO "should REV-YoY / EPS-YoY / NET% raise growth_score", standalone probes, both runs:
   #                    fund 12 (n / rho / OOS)          fund 5 (n / rho / OOS)         verdict
   #     eps_growth      265  +0.09  +0.17|+0.05        1810  +0.13  +0.18|+0.09       BOTH halves + at BOTH
