@@ -1822,6 +1822,7 @@ pub async fn run(args: Vec<String>) {
             .filter(|(eu, us)| !us.eq_ignore_ascii_case(eu))
             .collect();
         let us_lines: Vec<String> = swapped.iter().map(|(_, us)| us.clone()).collect();
+        let sec0 = fetch::sec_stats().0; // (#699) the P/E and ROE reads of the US lines below
         let us_of: std::collections::HashMap<String, Quote> = swapped
             .into_iter()
             .map(|(eu, _)| eu)
@@ -1831,7 +1832,7 @@ pub async fn run(args: Vec<String>) {
             ).await)
             .filter(|(_, q)| q.price != "err" && q.price != "no data")
             .collect();
-        eprintln!("screen: (#608) {} of {} European lines scored on their US series, the rest on their own", us_of.len(), us_lines.len());
+        eprintln!("screen: (#608) {} of {} European lines scored on their US series, the rest on their own; {} SEC GETs", us_of.len(), us_lines.len(), fetch::sec_stats().0 - sec0);
         quotes = quotes.into_iter().map(|q| match us_of.get(&q.ticker) { Some(us) => fetch::adopt_us_series(q, us.clone()), None => q }).collect();
     }
     // (#45) why the USE/REPL columns read n/a, bucketed by cause. Runs here because bf_meta is consulted
@@ -1846,6 +1847,7 @@ pub async fn run(args: Vec<String>) {
     // FMP daily budget caps cold fetches; the rest serve from the disk cache, warming over runs.
     let mut fund_tilt_uncovered = false; // set below; joins the DEGRADED line at the end of the run
     if settings.buy_heuristic.growth_fund_weight > 0.0 {
+        let sec0 = fetch::sec_stats().0; // (#699)
         fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
         // the tilt fails SILENT (fetch errors -> factor None -> neutral): with the feed down every
         // stock quietly reverts to price-only ranks. Say what the tilt actually covered so a
@@ -1854,8 +1856,9 @@ pub async fn run(args: Vec<String>) {
         let covered =
             quotes.iter().filter(|q| q.instrument_type == "EQUITY" && q.fund_factor.is_some()).count();
         eprintln!(
-            "screen: fund tilt ({}): {covered} of {stocks} stocks carry the factor (SEC = US filers; uncovered names rank price-only)",
-            settings.buy_heuristic.growth_fund_factor
+            "screen: fund tilt ({}): {covered} of {stocks} stocks carry the factor (SEC = US filers; uncovered names rank price-only); {} SEC GETs",
+            settings.buy_heuristic.growth_fund_factor,
+            fetch::sec_stats().0 - sec0
         );
         fund_tilt_uncovered = covered == 0 && stocks > 0;
     }
@@ -2004,6 +2007,7 @@ pub async fn run(args: Vec<String>) {
     // 39063079997 still spent 4.1s on the income lane's SEC reads before the 6.1s fetch.
     let side_list = [&us_lines[..], &unpriced[..], &dropped[..]].concat();
     let lanes = std::time::Instant::now();
+    let sec0 = fetch::sec_stats().0; // (#699) the lanes' reads and the side fetch's, together
     let ((income, insider, profile, earnings), mut side) = tokio::join!(
         async {
             fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
@@ -2030,12 +2034,13 @@ pub async fn run(args: Vec<String>) {
     // (#687) These lanes print nothing on a good run, so the publish log showed their time as one silent
     // stretch (198s on run 39049240255). One line splits it.
     eprintln!(
-        "screen: lanes income {:.0}s | insider {:.0}s | profile {:.0}s | earnings {:.0}s | IPO {:.0}s, under the quotes",
+        "screen: lanes income {:.0}s | insider {:.0}s | profile {:.0}s | earnings {:.0}s | IPO {:.0}s, under the quotes; {} SEC GETs with the side fetch",
         income.as_secs_f64(),
         (insider - income).as_secs_f64(),
         (profile - insider).as_secs_f64(),
         (earnings - profile).as_secs_f64(),
-        ipo_took.as_secs_f64()
+        ipo_took.as_secs_f64(),
+        fetch::sec_stats().0 - sec0
     );
     eprintln!("{}", crate::picks::young_line(&quotes, 5)); // (#500) the page's Young table in one line
     let rest = side.split_off(us_lines.len());
@@ -3548,9 +3553,10 @@ pub async fn run(args: Vec<String>) {
     // (round 56) run diagnostics on stderr (stdout stays pipeable): the round-51/53 fetch caches
     // are otherwise invisible — the first sign of one silently breaking would be Yahoo 429s.
     let (calls, cache_hits, skips) = fetch::fetch_stats();
+    let (sec_sent, sec_refused) = fetch::sec_stats(); // (#699) SEC's 8/s gate holds its share of the calls
     let secs = started.elapsed().as_secs();
     eprintln!(
-        "screen: {calls} paced HTTP calls | monthly series: {cache_hits} cache hits, {skips} too-young skips | {}m{:02}s",
+        "screen: {calls} paced HTTP calls, {sec_sent} to SEC ({sec_refused} refused) | monthly series: {cache_hits} cache hits, {skips} too-young skips | {}m{:02}s",
         secs / 60,
         secs % 60
     );
