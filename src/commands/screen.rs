@@ -2280,7 +2280,7 @@ pub async fn run(args: Vec<String>) {
     // grade every past top-10 on prices that didn't exist when it ranked. One line per day (a
     // same-day rerun adds nothing); a failed append warns inside and never fails the screen.
     // (#295) the executed book is bound here, not built inline below, so the buy list printed after the
-    // state write shows the same rows this journals. The field's comment says why it is `sized_book`.
+    // state write shows the same rows this journals. The field's comment says why it is `buy_book`.
     let fund_sectors = crate::commands::size::fund_sectors(&mix); // (#293) the same look-through `size` caps by
     let sized_now = crate::picks::buy_book(&ranked_now, &quotes, &settings.buy_heuristic, &settings.sizing, nupl, &fund_sectors);
     // (#585) the score half of that book: a sized name outside it was bought for its momentum
@@ -2832,9 +2832,9 @@ pub async fn run(args: Vec<String>) {
         journal(&run_date, &[warn]);
     }
 
-    // (#295) THE BUY LIST: the book `size --picks` would fund off this run, picks plus the CORE trackers
-    // that take the remainder. Read off the state just built, not the file, so a failed write above
-    // cannot print yesterday's CORE.
+    // (#295) THE BUY LIST: `buy_book` off this run (#668: not `size --picks`, which skips the momentum
+    // splice), picks plus the CORE trackers that take the remainder. Read off the state just built, not
+    // the file, so a failed write above cannot print yesterday's CORE.
     let sized_tickers: Vec<String> = sized_now.iter().map(|(t, _)| t.clone()).collect();
     let buy_core = last_core(serde_json::to_string(&state).ok(), &sized_tickers, settings.sizing.spill_cut(), settings.sizing.spill_per_tier)
         .map(|(_, rows, _)| rows)

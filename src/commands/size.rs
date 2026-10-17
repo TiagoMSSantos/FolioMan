@@ -129,10 +129,12 @@ pub(crate) fn spill_split(rest: f64, tiers: &[Option<u8>]) -> Vec<f64> {
     tiers.iter().map(|t| rest * w(t) / sum).collect()
 }
 
-/// (#295) THE BUY LIST `screen` prints: the growth picks at the weights `sized_book` gave them, then the
-/// CORE trackers at their `spill_split` share of what the picks left. Until this round a `screen` run
+/// (#295) THE BUY LIST `screen` prints: the growth picks at the weights `picks::buy_book` gave them, then
+/// the CORE trackers at their `spill_split` share of what the picks left. Until this round a `screen` run
 /// ended on ranked tables and the book itself, ~40% of it trackers, printed only under `size --picks`.
-/// Pure; `screen::run` only prints it. `None` = nothing to buy, so a run with no book stays silent.
+/// (#668) `size --picks` is not this book: it re-sizes `.screen_state.json`'s ranked list through
+/// `sized_book` on fresh quotes, without `buy_book`'s (#584) momentum splice or the (#608) US-series
+/// scoring. Pure; `screen::run` only prints it. `None` = nothing to buy, so a run with no book stays silent.
 pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Option<String> {
     if sized.is_empty() && core.is_empty() {
         return None;
@@ -140,7 +142,7 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
     let book = buy_weights(sized, core);
     let trackers = book.len() - sized.len();
     let mut out = format!(
-        "BUY NOW — the 20-year book `size --picks` funds: {} pick(s) + {trackers} tracker(s), % of gross. NOT advice",
+        "BUY NOW — the 20-year book: {} pick(s) + {trackers} tracker(s), % of gross. NOT advice",
         sized.len(),
     );
     for (i, (t, w)) in book.iter().enumerate() {
@@ -324,8 +326,10 @@ pub async fn run(args: Vec<String>) {
 
     if sz.equal_weight_book {
         println!(
-            "Suggested sizes — (#313) equal-weight top-{}: coins at their crypto budget, the other names split the rest equally (READ-ONLY, NOT advice):\n",
-            sz.book_cut()
+            "Suggested sizes — (#313) equal-weight top-{}: coins at their crypto budget, the other names split the rest, the first {} at {}x a later name's share (READ-ONLY, NOT advice):\n",
+            sz.book_cut(),
+            HEAD,
+            sz.head_share(),
         );
     } else {
         println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
@@ -493,7 +497,7 @@ pub async fn run(args: Vec<String>) {
                 (q.ticker.clone(), key, q.price_eur, w)
             })
             .collect();
-        println!("\nAllocation gap — actual broker weights vs the SIZE% split (matched names only; NOT advice):");
+        println!("\nAllocation gap — actual broker weights vs the SIZE% split rescaled to 100% of the sized names (matched names only; NOT advice):");
         for line in allocation_gap_lines(&sized, &held) {
             println!("{line}");
         }
@@ -505,7 +509,10 @@ pub async fn run(args: Vec<String>) {
 /// share of the matched holdings' total EUR value — held names the sized list doesn't cover have no
 /// EUR price on this run, so they're excluded from the % math and said out loud instead of silently
 /// skewing the weights. A held name whose quote lost its EUR price (FX unknown) is flagged, never
-/// shown as "not held".
+/// shown as "not held". (#677) SUGG% is SIZE% rescaled over the sized list's own total, the base ACTUAL%
+/// already sums to 100 on. The vol-target book (`equal_weight_book` off, the code default) budgets each
+/// class and caps each name, leaving part of gross unallocated, so raw SIZE% read a book held exactly as
+/// sized as overweight on every row. The equal-weight book sums to 100, where the rescale moves nothing.
 fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(String, String, f64)]) -> Vec<String> {
     let mut qty: std::collections::HashMap<&str, f64> = Default::default();
     for (k, _, q) in held {
@@ -515,6 +522,7 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
         .iter()
         .filter_map(|(_, k, p, _)| Some(qty.get(k.as_str())? * (*p)?))
         .sum();
+    let book: f64 = sized.iter().map(|r| r.3).sum();
     let mut out = Vec::new();
     if total > 0.0 {
         out.push(format!("  {:<10} {:>10} {:>8} {:>8} {:>8}", "TICKER", "VALUE(EUR)", "ACTUAL%", "SUGG%", "GAP"));
@@ -526,6 +534,7 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
             }
             let v = q_held * p.unwrap_or(0.0);
             let actual = v / total * 100.0;
+            let sugg = sugg * 100.0 / book.max(f64::MIN_POSITIVE);
             let gap = actual - sugg;
             // (#292) the tags steer NEW money, never a sale. The backtest never trims a winner, and
             // selling one realises the tax the never-sell book defers (+1.1 pts/yr after tax at 20y).
@@ -894,7 +903,7 @@ pub(crate) mod tests {
             buy_list(&picks, &core).as_deref(),
             Some(
                 format!(
-                    "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 2 tracker(s), % of gross. NOT advice\n{head}\n  \
+                    "BUY NOW — the 20-year book: 2 pick(s) + 2 tracker(s), % of gross. NOT advice\n{head}\n  \
                      WEBN.DE     30.0%  all-world tracker\n  SPXS.L      60.0%  US tracker · swap"
                 )
                 .as_str()
@@ -904,7 +913,7 @@ pub(crate) mod tests {
             buy_list(&picks, &[]).as_deref(),
             Some(
                 format!(
-                    "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n{head}\n  \
+                    "BUY NOW — the 20-year book: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n{head}\n  \
                      (90.0% unallocated — no CORE tracker journalled to take it)"
                 )
                 .as_str()
@@ -917,7 +926,7 @@ pub(crate) mod tests {
         assert_eq!(
             buy_list(&full, &core).as_deref(),
             Some(
-                "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n  \
+                "BUY NOW — the 20-year book: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n  \
                  A.DE        60.0%  growth pick\n  B.DE        40.0%  growth pick"
             )
         );
@@ -1064,7 +1073,7 @@ pub(crate) mod tests {
         let sized = vec![
             s("EDGEHI", "s:hi", Some(20.0), 20.0), // 25.0 - 20 = +5.0 exactly -> NO tag
             s("EDGELO", "s:lo", Some(20.0), 30.0), // 25.0 - 30 = -5.0 exactly -> NO tag
-            s("DEEPLO", "s:deep", Some(20.0), 50.0), // 25.0 - 50 = -25.0 -> underweight
+            s("DEEPLO", "s:deep", Some(20.0), 40.0), // 25.0 - 40 = -15.0 -> underweight (SIZE% sums to 100)
             s("BIG", "s:big", Some(20.0), 10.0),   // 25.0 - 10 = +15.0 -> overweight
             s("GHOST", "s:ghost", None, 0.0),      // no price AND unheld -> "not held", not flagged
         ];
@@ -1088,5 +1097,16 @@ pub(crate) mod tests {
         assert_eq!(tag("DEEPLO"), "underweight: add new money", "{out:?}");
         assert_eq!(tag("BIG"), "overweight: let it run", "{out:?}");
         assert_eq!(tag("GHOST"), "not held", "unheld outranks unpriced: {out:?}");
+    }
+
+    /// (#677) A book that deploys 16% of gross over two names, held 50/50, is on target: SUGG% is each
+    /// name's share of the sized total, the base ACTUAL% uses. Read raw, both rows showed +42.0% overweight.
+    #[test]
+    fn allocation_gap_rescales_sugg_to_the_sized_total() {
+        let s = |d: &str, k: &str| (d.to_string(), k.to_string(), Some(10.0), 8.0);
+        let h = |k: &str| (k.to_string(), k.to_string(), 1.0);
+        let out = allocation_gap_lines(&[s("A", "s:a"), s("B", "s:b")], &[h("s:a"), h("s:b")]).join("\n");
+        assert!(out.contains("\n  A                  10    50.0%    50.0%    +0.0%\n  B "), "{out}");
+        assert!(out.ends_with("\n  B                  10    50.0%    50.0%    +0.0%"), "{out}");
     }
 }

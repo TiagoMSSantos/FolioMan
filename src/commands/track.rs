@@ -37,13 +37,13 @@ pub struct Snapshot {
     /// byte-identical to every line already on disk, and `default` keeps old lines readable.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub core: Vec<(String, Option<f64>)>,
-    /// (#286) THE EXECUTED BOOK: `(ticker, SIZE%)` exactly as `size` would fund that run — gate
+    /// (#286) THE EXECUTED BOOK: `(ticker, SIZE%)` exactly as that run's BUY NOW list funds it — gate
     /// failures already dropped, one row per issuer, weighted by score / volatility inside a class
     /// budget and then capped. `rows` is the RANKED list and `track` graded its top slice
     /// equal-weight, which is not the book anyone is told to buy: on the 2026-09-12 run the ranked
     /// 12 size to weights from 8.0% down to 1.8%, and two of them fall outside the graded ten
-    /// entirely. `screen::run` fills this from `size::sized_book`, the one spelling of that
-    /// pipeline.
+    /// entirely. `screen::run` fills this from `picks::buy_book`: `sized_book`, the one spelling of
+    /// that pipeline, plus the (#584) momentum splice, which `size --picks` does not run (#668).
     ///
     /// NO PRICE HERE, and that is not an omission. Every sized ticker is already in `rows` with that
     /// day's close; a second copy of the same price is the drift non-negotiable #4 exists to stop,
