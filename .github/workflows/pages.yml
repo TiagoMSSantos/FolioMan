@@ -326,7 +326,9 @@ jobs:
           # The shared multiplier gives this 4-core runner 32, which left the 60/s pacer at ~41/s.
           # Here, not in ci-settings: backtest-gate and the probes fetch live through the same knob.
           FOLIOMAN_FETCH_CONCURRENCY: 64
-        run: ./target/release/folioman screen
+        # (#698) bash's `time` adds the run's CPU seconds (user + sys) under its wall clock. The pacer
+        # holds most of that wall clock, so a slower run reads as network or as code from the log alone.
+        run: time ./target/release/folioman screen
 
       - name: Save fetch caches
         if: always()
