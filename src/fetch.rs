@@ -15598,6 +15598,26 @@ pub(crate) mod tests {
         assert!(q.price.ends_with('?'), "the price string says it is unconverted: {}", q.price);
     }
 
+    /// (#690) The quote fan-out's order, which the test below can't see: it pins one name in flight.
+    /// Name 0 waits on name 1 and name 1 on name 2, so they finish 2, 1, 0 and only the sort puts
+    /// them back.
+    #[tokio::test]
+    async fn the_unordered_fan_out_keeps_input_order() {
+        let (txs, rxs): (Vec<_>, Vec<_>) = (0..2).map(|_| tokio::sync::oneshot::channel::<()>()).unzip();
+        let waits = rxs.into_iter().map(Some).chain([None]);
+        let wakes = [None].into_iter().chain(txs.into_iter().map(Some));
+        let futs = waits.zip(wakes).enumerate().map(|(i, (wait, wake))| async move {
+            if let Some(rx) = wait {
+                rx.await.expect("the next name finished");
+            }
+            if let Some(tx) = wake {
+                tx.send(()).expect("the earlier name waits");
+            }
+            i
+        });
+        assert_eq!(in_input_order(futs, 3).await, [0, 1, 2], "names that finish last-first come back in input order");
+    }
+
     /// (#358) `quote_one`'s merge arithmetic, one scenario per ticker off a single routed stub, plus the
     /// dead-list pass in `quotes`. Tickers carry the pid because `.long_history_skip.json` outlives the
     /// binary in the scratch root: a young ticker an earlier run recorded there would skip the very
@@ -16366,6 +16386,20 @@ pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> O
     Some(chart)
 }
 
+/// (#690) Every future in `futs`, at most `width` in flight, outputs in input order.
+///
+/// `buffered` keeps input order too, but it counts a finished output against the window until every
+/// earlier one has landed, so one slow name at the head stops new launches. Runs 39054055282 (32 in
+/// flight) and 39056257294 (64) show it in the quote fan-out: the fastest 50-quote stretches took
+/// 0.78-0.83s, what the 60/s pacer allows, yet the median took 1.0s and the p90 1.6-1.8s at both
+/// widths, so doubling the window (#689) cut the ~5690-quote phase only from 137.9s to 131.6s.
+/// `buffer_unordered` refills a slot the moment its future ends, and the index puts each output back.
+async fn in_input_order<F: std::future::Future>(futs: impl Iterator<Item = F>, width: usize) -> Vec<F::Output> {
+    let mut out: Vec<(usize, F::Output)> = stream::iter(futs.enumerate()).map(|(i, fut)| async move { (i, fut.await) }).buffer_unordered(width).collect().await;
+    out.sort_unstable_by_key(|&(i, _)| i);
+    out.into_iter().map(|(_, v)| v).collect()
+}
+
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
 pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>, score_on_nominal: bool) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
@@ -16379,9 +16413,10 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
     let concurrency = fetch_concurrency();
     eprintln!("fetch: {total} quotes (≤{concurrency} concurrent)…");
     const PROGRESS_EVERY: usize = 50;
-    // `buffered` (ordered) caps concurrency yet preserves input order (`check` prints in that order).
-    let out: Vec<Quote> = stream::iter(tickers.iter())
-        .map(|tk| {
+    // (#690) caps concurrency yet preserves input order (`check` prints in that order), and a slow
+    // head no longer holds the window the way ordered `buffered` did.
+    let out: Vec<Quote> = in_input_order(
+        tickers.iter().map(|tk| {
             let done = &done;
             async move {
                 let quote = quote_one(client, urls, fx_cache, tk, dip_days, high_days, intraday, news, windows, infl, score_on_nominal).await;
@@ -16391,10 +16426,10 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
                 }
                 quote
             }
-        })
-        .buffered(concurrency)
-        .collect()
-        .await;
+        }),
+        concurrency,
+    )
+    .await;
     // No second re-fetch pass. The `throttle()` pacer caps the GLOBAL request rate (default 10/s)
     // independent of universe size, so the instantaneous load Yahoo sees is the same for 250 names or
     // 4000 — it just runs longer. That removes the burst-429s that used to drop valid names like NVDA
