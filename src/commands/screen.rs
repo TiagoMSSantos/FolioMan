@@ -1964,14 +1964,6 @@ pub async fn run(args: Vec<String>) {
         Default::default()
     };
     filled.extend(mom.iter().cloned());
-    let lanes = std::time::Instant::now();
-    fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
-    let income = lanes.elapsed();
-    // (#448) display only: the INS-B/S cell, last so the SEC fundamentals and the 13F lane spend the
-    // shared SEC budget first. (#693) The profile and earnings lanes spend none of it, so they run after it,
-    // and so does the side fetch that prices the twins and the side list.
-    fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
-    let insider = lanes.elapsed();
     // (#461) display only: the US line of every printed or shadow-table stock the pool holds on a European
     // line, so `stamp_us_twin` can fill the cells that line leaves n/a (often its 10Y/20Y legs)
     let shown: std::collections::HashSet<String> = [&attention, &berkshire, &social]
@@ -2006,18 +1998,26 @@ pub async fn run(args: Vec<String>) {
     // (#663) the names it grades that the universe has dropped since ride this fetch, so `exit` and `carry`
     // journal a close for them. Split off before the enrichment below: no table, stamp or SOC row sees them
     let dropped = dropped_graded(prior.as_ref(), explicit_args, &[&quotes, &stale], &unpriced);
-    // (#693) One fetch prices the US lines, the side list and the dropped names, under the profile and
-    // earnings lanes. Run 39061202492 made two fetches after the lanes, 3.8s and 3.0s, each held by its
-    // slowest few quotes. The fetch reads only the lists built above, and the lanes stamp only `quotes`.
+    // (#693) One fetch prices the US lines, the side list and the dropped names, under the lanes. Run
+    // 39061202492 made two fetches after the lanes, 3.8s and 3.0s, each held by its slowest few quotes. The
+    // fetch reads only the lists built above, and the lanes stamp only `quotes`. (#697) All four lanes: run
+    // 39063079997 still spent 4.1s on the income lane's SEC reads before the 6.1s fetch.
     let side_list = [&us_lines[..], &unpriced[..], &dropped[..]].concat();
-    let ((profile, earnings), mut side) = tokio::join!(
+    let lanes = std::time::Instant::now();
+    let ((income, insider, profile, earnings), mut side) = tokio::join!(
         async {
+            fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
+            let income = lanes.elapsed();
+            // (#448) display only: the INS-B/S cell, last so the SEC fundamentals and the 13F lane spend the
+            // shared SEC budget first. (#693) The profile and earnings lanes spend none of it.
+            fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
+            let insider = lanes.elapsed();
             // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
             fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
             let profile = lanes.elapsed();
             // (#449) display only: the EARN cell
             fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
-            (profile, lanes.elapsed())
+            (income, insider, profile, lanes.elapsed())
         },
         fetch::quotes(
             &client, &settings.urls, &fx_cache, &side_list, settings.dip_days, settings.high_days, false, false,
