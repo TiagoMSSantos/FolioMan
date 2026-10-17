@@ -2029,10 +2029,18 @@ fn next_earnings(v: &Value, today: NaiveDate) -> Option<NaiveDate> {
 /// ever show as a column of n/a.
 /// (#450) Off Nasdaq, not Yahoo's `calendarEvents`: on the Pages runner the Yahoo crumb handshake
 /// failed for every row, and Nasdaq needs no handshake.
+/// (#688) 4 in flight, not one at a time: back to back, the 25 GETs took 50s of the publish job (run
+/// 39053077118), ~2s each. `buffered` keeps target order, so each body lands on its own row.
 pub async fn enrich_earnings(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
     let today = chrono::Local::now().date_naive();
-    for q in quotes.iter_mut().filter(|q| targets.contains(&q.ticker)) {
-        match get_json(client, &urls.nasdaq_earnings.replace("{sym}", &us_symbol(&q.ticker))).await {
+    let rows: Vec<&mut core::Quote> = quotes.iter_mut().filter(|q| targets.contains(&q.ticker)).collect();
+    let bodies: Vec<Option<Value>> = stream::iter(rows.iter().map(|q| urls.nasdaq_earnings.replace("{sym}", &us_symbol(&q.ticker))))
+        .map(|url| async move { get_json(client, &url).await })
+        .buffered(4)
+        .collect()
+        .await;
+    for (q, v) in rows.into_iter().zip(bodies) {
+        match v {
             Some(v) => q.next_earnings = next_earnings(&v, today),
             None => eprintln!("earnings: Nasdaq refused {}", q.ticker),
         }
@@ -11692,22 +11700,25 @@ pub(crate) mod tests {
     }
 
     /// (#450) `enrich_earnings` stamps TARGETS only, through `urls.nasdaq_earnings`; a refused GET
-    /// leaves the row None.
+    /// leaves the row None. (#688) Two dated targets, so a body stamped on the wrong row fails.
     #[tokio::test]
     async fn enrich_earnings_stamps_targets_only() {
         seed_cik_map(); // `us_symbol` reads EU_TO_US, which only the seed may fill
         let (base, client, _) = routed_stub(vec![
             ("/ZZEARN/", r#"{"data": {"reportText": "is expected* to report earnings on  12/31/2099 before market open."}}"#),
+            ("/ZZEARNB/", r#"{"data": {"reportText": "is expected* to report earnings on  12/30/2099 after market close."}}"#),
             ("", "not json"),
         ]);
         let mut urls = stub_urls(&base);
         urls.nasdaq_earnings = format!("{base}{{sym}}/earnings-date");
-        let mut quotes: Vec<core::Quote> = ["ZZEARN", "ZZEARNOFF", "ZZREFUSED"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
-        let targets: HashSet<String> = ["ZZEARN", "ZZREFUSED"].iter().map(|t| t.to_string()).collect();
+        let mut quotes: Vec<core::Quote> =
+            ["ZZEARN", "ZZEARNOFF", "ZZREFUSED", "ZZEARNB"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        let targets: HashSet<String> = ["ZZEARN", "ZZREFUSED", "ZZEARNB"].iter().map(|t| t.to_string()).collect();
         enrich_earnings(&client, &urls, &mut quotes, &targets).await;
         assert_eq!(quotes[0].next_earnings, NaiveDate::from_ymd_opt(2099, 12, 31));
         assert_eq!(quotes[1].next_earnings, None, "not a target");
         assert_eq!(quotes[2].next_earnings, None, "a body that is not JSON");
+        assert_eq!(quotes[3].next_earnings, NaiveDate::from_ymd_opt(2099, 12, 30));
     }
 
     /// (#469) `profile_of`: http upgraded to https, a bare host given one, analysts summed, the target
