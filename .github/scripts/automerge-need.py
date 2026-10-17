@@ -26,7 +26,9 @@ EXEMPT = {"cleanup-runs"}  # main-only (`if: github.ref == 'refs/heads/main'`), 
 def jobs(path):
     """job key -> the lines of its block, for the 2-space keys under the column-0 `jobs:`."""
     out, key, inside = {}, None, False
-    for line in open(path).read().splitlines():
+    with open(path) as f:
+        lines = f.read().splitlines()
+    for line in lines:
         if re.match(r"jobs:\s*(#.*)?$", line):
             inside = True
         elif inside and line[:1] not in ("", " ", "#"):
@@ -64,7 +66,9 @@ def checks(path):
 
 def need(path):
     """automerge.yml's `need='[...]'` line, which must be there exactly once."""
-    found = re.findall(r"^\s*need='(\[.*\])'\s*$", open(path).read(), re.M)
+    with open(path) as f:
+        text = f.read()
+    found = re.findall(r"^\s*need='(\[.*\])'\s*$", text, re.M)
     if len(found) != 1:
         sys.exit(f"{path}: expected one need='[...]' line, found {len(found)}")
     return set(json.loads(found[0]))
