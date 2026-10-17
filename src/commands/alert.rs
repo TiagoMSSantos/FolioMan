@@ -45,12 +45,19 @@ fn apply_dip_state(set: &mut std::collections::BTreeSet<String>, ticker: &str, i
 }
 
 /// Persist the last pushed state; a failed write only risks a repeated ping next run — warn, don't die.
+/// (#669) Skipped like `run`, its one caller: the file write is reachable only through `--test cli`.
+#[mutants::skip]
 fn persist_entry_state(state: &str) {
     if std::fs::write(crate::config::data_path(ALERT_STATE_FILE), state).is_err() {
         eprintln!("WARNING: could not persist {ALERT_STATE_FILE} — the entry-state ping may repeat next run");
     }
 }
 
+/// (#669) `#[mutants::skip]` for the reason spelled out on `track::run`: a command entry point is
+/// reachable only through `--test cli`, which the gate does not run, so one edited line in here would
+/// red the gate on its own. The decisions it wires are `entry_flip_due`, `dip_ping_due` and
+/// `apply_dip_state`, pinned below.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();

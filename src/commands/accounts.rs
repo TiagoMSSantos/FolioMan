@@ -4,6 +4,10 @@
 
 use crate::{broker, fetch};
 
+/// (#669) `#[mutants::skip]` for the reason spelled out on `track::run`: a command entry point is
+/// reachable only through `--test cli`, which the gate does not run, so one edited line in here would
+/// red the gate on its own.
+#[mutants::skip]
 pub async fn run(_args: Vec<String>) {
     let client = fetch::client_long();
     let (t212, bnc, tr) = tokio::join!(
