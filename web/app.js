@@ -151,13 +151,22 @@ function remember(k, v) {
 }
 
 // (#445) A table as CSV, straight from the payload rows: every row and column, cells verbatim.
+// (#678) Except a cell a spreadsheet would run: one opening with = @ tab or CR, or with + or - and a ( | or !
+// in it (a function call or DDE needs one), gets a leading '. So a feed-supplied name cannot become a live
+// link. +9.9pp, -9%ᵈ and every other number shape hold none of those and stay verbatim.
+const inert = (f) => (/^[=@\t\r]|^[+-].*[(|!]/s.test(f) ? "'" + f : f);
 const csv = (rows) =>
   [rows[0].map(([h]) => h), ...rows.map((r) => r.map(([, c]) => c))]
-    .map((line) => line.map((f) => (/[",\n]/.test(String(f)) ? '"' + String(f).replaceAll('"', '""') + '"' : f)).join(","))
+    .map((line) => line.map((f) => inert(String(f))).map((f) => (/[",\n]/.test(f) ? '"' + f.replaceAll('"', '""') + '"' : f)).join(","))
     .join("\n") + "\n";
 console.assert(
   csv([[["A", "1"], ["B", "2"]]]) === "A,B\n1,2\n" && csv([[["N", 'x,"y"']]]) === 'N\n"x,""y"""\n',
   "csv misquotes a field",
+);
+console.assert(
+  csv([[["N", '=HYPERLINK("u","x")']]]) === `N\n"'=HYPERLINK(""u"",""x"")"\n` && csv([[["D", "-2+3+cmd|' /C calc'!A0"]]]) === "D\n'-2+3+cmd|' /C calc'!A0\n" &&
+    csv([[["M", "+9.9pp"], ["G", "-9%ᵈ"], ["P", "@SUM(A1)"]]]) === "M,G,P\n+9.9pp,-9%ᵈ,'@SUM(A1)\n",
+  "csv lets a formula cell run or escapes a number",
 );
 // (#445) One CSV link per section, in its h2, made once; a re-render (an upload) only swaps the rows.
 const sheets = {};
