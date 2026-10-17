@@ -12953,6 +12953,42 @@ mod tests {
         assert_eq!(out.len(), 2, "a NaN tie-break key must order, not panic");
     }
 
+    /// (#664) `ranked` ranks a score tie by TURNOVER, deepest first, then by TICKER, A to Z. The ticker
+    /// clause is (#421)'s, and no test read the order either `.then` gives, so deleting one, or reversing
+    /// it, left every test green. A constant scorer forces every pair past the score comparator; each fund
+    /// has its own name (the name dedup) and its own benchmark (the one-fund-per-index trim), so nothing
+    /// merges and all 11 rows come back. No turnover reads as 0, below any fund that has one. The 8 rows
+    /// tied on turnover leave `dedup_currency_twins` in HashMap order, random per run, so a deleted ticker
+    /// clause passes here by chance one run in 40320.
+    #[test]
+    fn ranked_breaks_a_score_tie_by_turnover_then_ticker() {
+        let fund = |t: &str, turnover: Option<f64>| Quote {
+            avg_turnover_eur: turnover,
+            benchmark: Some(format!("{t} Index")),
+            ..core_etf(t, &format!("{t} UCITS ETF"), 1e9, 0.10)
+        };
+        let quotes = [
+            fund("PPP.DE", Some(5e8)),
+            fund("AAA.DE", None),
+            fund("TTT.DE", Some(5e8)),
+            fund("CCC.DE", Some(1e9)),
+            fund("DDD.DE", Some(5e8)),
+            fund("ZZZ.DE", Some(5e8)),
+            fund("BBB.DE", Some(1e8)),
+            fund("KKK.DE", Some(5e8)),
+            fund("FFF.DE", Some(5e8)),
+            fund("MMM.DE", Some(5e8)),
+            fund("HHH.DE", Some(5e8)),
+        ];
+        let out = ranked(&quotes, &BuyHeuristic::default(), |_, _| Some(1.0), 0.0, &HashSet::new());
+        let order: Vec<&str> = out.iter().map(|(q, _)| q.ticker.as_str()).collect();
+        assert_eq!(
+            order,
+            ["CCC.DE", "DDD.DE", "FFF.DE", "HHH.DE", "KKK.DE", "MMM.DE", "PPP.DE", "TTT.DE", "ZZZ.DE", "BBB.DE", "AAA.DE"],
+            "(#664) a score tie ranks the deepest turnover first (none last), then the ticker A to Z: a clause deleted or reversed moves a row"
+        );
+    }
+
     /// (#494) `growth_etf_one_per_index` keeps the cheapest euro line per index, whatever its rank; a USD
     /// line cheaper still is not it. Another index, a fund with no index and a stock all pass; a pinned
     /// twin stays; off is the old table.
@@ -15758,6 +15794,141 @@ mod tests {
         assert!(seen.iter().all(|g| LABELS.contains(g)), "{seen:?}: a new gate label must join LABELS");
     }
 
+    /// (#665) Every damp `score_parts` reports is a penalty, so each must stay in [0, 1]: above 1 it
+    /// pays a premium for the very thing it is meant to dock, and a NaN or a negative value poisons the
+    /// ordering, because `compose_score` multiplies them straight into the score. The hand-built cases
+    /// pin each damp at a few chosen points and the goldens only walk the shipped path, so nothing swept
+    /// the mix of knob states, asset classes and data gaps that this test draws.
+    ///
+    /// 2000 seeded draws (`core::next_rand`, so a failure names a draw index that reproduces) perturb
+    /// `gate_fixture` across stocks, funds and coins. Every field a damp reads gets a realistic value;
+    /// on half the draws each of them may take an edge value instead (zero, negative, very large), and
+    /// each Option field is absent at its own rate on every draw. Each draw is scored under three
+    /// tunings: the code default, the shipped
+    /// `tests/ci-settings.yaml`, and an open one, the shipped tuning with `gates_off` plus
+    /// `growth_acc_drag` and `growth_leg_dock` switched on, because those two damps are the constant
+    /// 1.0 under the other two.
+    ///
+    /// For every `Some` result `score` is finite, and `trust`, `overext_damp`, `damp`, `ter_damp`,
+    /// `commodity_damp`, `fx_damp`, `acc_damp`, `leg_dock` and `gate_soft` each lie in [0, 1].
+    /// `proximity`, `value` and `holder_boost` are not asserted: they are knob-set multipliers that may
+    /// exceed 1 on purpose. The draws stay inside the data domain: no NaN or infinity, perf legs above
+    /// -100%, positive peg yields, and no TER below zero. Every TER source converts through
+    /// `fetch::ter_pct`, which returns None unless the ratio is positive and finite; fed a negative
+    /// one, `ter_damp` = (1 - t/100)^20 would climb above 1.
+    ///
+    /// Not vacuous by construction: each tuning must score at least 5% of the draws, and every damp
+    /// must fall below 1.0 in at least one scored draw.
+    #[test]
+    fn score_parts_keeps_every_damp_in_the_unit_interval_on_random_draws() {
+        const DRAWS: usize = 2000;
+        const FIELDS: [&str; 9] = [
+            "trust", "overext_damp", "damp", "ter_damp", "commodity_damp", "fx_damp", "acc_damp", "leg_dock", "gate_soft",
+        ];
+        // `wild` is drawn per quote: when set, each value has an even chance of coming from its edge list
+        struct Rng {
+            s: u64,
+            wild: bool,
+        }
+        impl Rng {
+            fn f(&mut self) -> f64 { (crate::core::next_rand(&mut self.s) >> 11) as f64 / (1u64 << 53) as f64 }
+            fn hit(&mut self, p: f64) -> bool { self.f() < p }
+            fn pick<T: Copy>(&mut self, grid: &[T]) -> T { grid[(self.f() * grid.len() as f64) as usize] }
+            /// a realistic value, or on a wild draw an edge one half the time
+            fn num(&mut self, real: &[f64], edge: &[f64]) -> f64 { if self.wild && self.hit(0.5) { self.pick(edge) } else { self.pick(real) } }
+            /// as `num`, or None with probability `none`
+            fn opt(&mut self, real: &[f64], edge: &[f64], none: f64) -> Option<f64> { if self.hit(none) { None } else { Some(self.num(real, edge)) } }
+        }
+        let yaml = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ci-settings.yaml"))
+            .expect("fixture readable");
+        let raw: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+        let shipped: BuyHeuristic = serde_yaml::from_value(raw["buy_heuristic"].clone())
+            .expect("fixture's buy_heuristic parses as BuyHeuristic (deny_unknown_fields catches typos)");
+        let open = BuyHeuristic { growth_acc_drag: true, growth_leg_dock: 0.9, ..gates_off(&shipped) };
+        let arms = [("default", BuyHeuristic::default()), ("shipped", shipped), ("open", open)];
+        let mut r = Rng { s: 0x9E37_79B9_7F4A_7C15, wild: false };
+        let (mut scored, mut below) = ([0usize; 3], [false; 9]);
+        for i in 0..DRAWS {
+            r.wild = r.hit(0.5);
+            let mut q = gate_fixture();
+            // a stock half the time, a fund or a coin a quarter each
+            let class = r.pick(&[0u8, 0, 1, 2]);
+            match class {
+                1 => { q.ticker = "FUND.DE".into(); q.instrument_type = "ETF".into(); }
+                2 => { q.ticker = "BTC-EUR".into(); q.instrument_type = "CRYPTOCURRENCY".into(); }
+                _ => {}
+            }
+            q.avg_turnover_eur = r.opt(&[1e6, 1e8, 1e9, 5e9], &[0.0, 1e12], 0.03);
+            q.age_years = r.opt(&[10.0, 25.0], &[0.0, 0.5, 100.0], 0.3);
+            q.aum_eur = r.opt(&[5e8, 2e9, 5e10], &[0.0, 1e13], 0.2);
+            q.range_pct = r.num(&[85.0, 90.0, 100.0], &[0.0, 50.0, 79.9]);
+            q.above_ma_pct = r.num(&[-20.0, 0.0, 20.0, 60.0, 100.0, 140.0], &[-90.0, 150.0, 1e4, 1e6]);
+            q.volatility_pct = r.opt(&[1.0, 2.0, 3.0], &[0.0, 50.0], 0.3);
+            q.max_drawdown_pct = r.num(&[10.0, 30.0, 60.0, 80.0], &[0.0, 98.4, 98.5, 1e6]);
+            q.pe_ratio = r.opt(&[8.0, 15.0, 25.0, 60.0], &[0.0, -5.0, 1e4], 0.4);
+            q.roe = r.opt(&[5.0, 15.0, 30.0], &[-50.0, 0.0, 1e4], 0.4);
+            // no 1D or 1W leg: that pair is the repriced-bar artifact refusal, which has its own test
+            let m1 = r.num(&[-8.0, 0.0, 2.0, 10.0], &[-99.9, -30.0, 1e6]);
+            let mut perf = vec![("1M", m1)];
+            for (leg, real, edge, none) in [
+                ("1Y", &[1.0, 5.0, 20.0, 60.0][..], &[-99.9, -0.3, 0.0, 1e6][..], 0.03),
+                ("2Y", &[10.0, 60.0][..], &[-99.9, 0.0][..], 0.6),
+                ("5Y", &[150.0, 200.0, 500.0, 2000.0][..], &[-99.9, 0.0, 74.0, 1e6][..], 0.1),
+                ("8Y", &[100.0, 400.0, 1500.0][..], &[-99.9, 0.0, 1e6][..], 0.6),
+                ("10Y", &[500.0, 900.0, 3000.0][..], &[-99.9, 0.0, 1e6][..], 0.5),
+                ("20Y", &[1500.0, 5000.0][..], &[-99.9, 0.0, 1e6][..], 0.75),
+            ] {
+                if let Some(v) = r.opt(real, edge, none) { perf.push((leg, v)); }
+            }
+            q.perf = legs(&perf);
+            if class == 1 {
+                // never below zero: see the doc comment
+                q.expense_ratio = r.opt(&[0.05, 0.07, 0.2, 0.5, 0.75], &[0.0, 4.99, 150.0], 0.15);
+                q.quote_currency = r.pick(&[None, Some("EUR"), Some("USD"), Some("GBp")]).map(String::from);
+                q.use_of_profits = r.pick(&[None, Some("Acc"), Some("Dist")]);
+            }
+            if class == 0 {
+                q.sector = r.pick(&[None, Some("Energy"), Some("Materials"), Some("Technology")]).map(String::from);
+                if r.hit(0.5) {
+                    q.fund = Some(crate::core::FundFactors {
+                        peg_yield: r.opt(&[10.0, 25.0, 50.0, 80.0, 120.0, 400.0], &[0.01, 1e4], 0.3),
+                        eps_ttm: r.opt(&[-1.0, 0.0, 5.0], &[-1e6, 1e6], 0.3),
+                        net_margin: r.opt(&[5.0, 10.0, 20.0], &[-100.0, 1e4], 0.3),
+                        margin_stability: r.opt(&[-8.0, -5.0, -1.0], &[-1e3, 0.0], 0.3),
+                        buyback_yield: r.opt(&[-6.0, -3.0, 1.0], &[-1e3, 1e3], 0.3),
+                        interest_cover: r.opt(&[2.0, 3.0, 20.0], &[0.0, 1e6], 0.3),
+                        fcf_margin: r.opt(&[-5.0, 0.0, 25.0], &[-1e3, 1e3], 0.3),
+                        net_cash_rev: r.opt(&[-30.0, -20.0, 10.0], &[-1e4, 1e4], 0.3),
+                        eps_never_reported: r.hit(0.1),
+                        ..crate::core::FundFactors::default()
+                    });
+                }
+            }
+            // a coin pays nothing; for the rest the first dividend window is a yield on a EUR 100 price
+            if class != 2 {
+                q.price_eur = Some(100.0);
+                q.div_eur = vec![r.opt(&[0.0, 1.0, 3.0, 8.0], &[100.0, 1e4], 0.3), None, None, None];
+            }
+            for (a, (arm, tuning)) in arms.iter().enumerate() {
+                let Some(p) = score_parts(&q, tuning) else { continue };
+                scored[a] += 1;
+                assert!(p.score.is_finite(), "draw {i}, {arm}: score {} is not finite for {q:?}", p.score);
+                let damps = [
+                    p.trust, p.overext_damp, p.damp, p.ter_damp, p.commodity_damp, p.fx_damp, p.acc_damp, p.leg_dock, p.gate_soft,
+                ];
+                for (k, x) in damps.into_iter().enumerate() {
+                    assert!((0.0..=1.0).contains(&x), "draw {i}, {arm}: {} = {x} leaves [0, 1] for {q:?}", FIELDS[k]);
+                    below[k] |= x < 1.0;
+                }
+            }
+        }
+        for (a, (arm, _)) in arms.iter().enumerate() {
+            assert!(scored[a] * 20 >= DRAWS, "{arm} scored {} of {DRAWS} draws: the sweep is vacuous", scored[a]);
+        }
+        let stuck: Vec<_> = FIELDS.iter().zip(below).filter(|(_, b)| !b).map(|(f, _)| *f).collect();
+        assert!(stuck.is_empty(), "{stuck:?} never fell below 1.0 in a scored draw: those damps are unswept");
+    }
+
     /// (P1) the four SURVIVAL gates. Nothing else in the suite arms them — they ship OFF, so the
     /// goldens walk straight past every line of them — and an unarmed gate is indistinguishable from
     /// a gate that rejects everything. Each case below pins one of the four claims the gates make:
@@ -16218,6 +16389,46 @@ mod tests {
         assert_eq!(
             tuning.growth_value_floor_pct, 40.0,
             "(#126) shipped 40.0 and (#265) kept it; A2 in the (#180) grid re-refused 40 -> 0, so lifting the brake is a refused question; re-measure, then update this pin"
+        );
+
+        // (#666) The CORE half of the book. Every pin above stops at the growth score and the book it feeds. The CORE
+        // sleeves are a separate lane that no golden and no backtest gate reaches: `backtest::stamp_asset_class`
+        // fills only name, instrument_type and sector, so every backtest quote dies on its TER leg. Eight knobs shape
+        // what that table prints, each value was read off a live `screen` diff, and the fixture could slide any of
+        // them to its revert value (0, 0.0, false) with every golden green. Each value is what the fixture parses
+        // to. The code default is the revert value for all eight; for the domicile penalty it is also the shipped
+        // value, so that pin keeps an armed probe line out of the fixture rather than catching a revert.
+        assert_eq!(
+            tuning.hold_sector_sleeve_aum, 90_000_000.0,
+            "(#273) the sector sleeve's own AUM floor, 1e9/11 taken down to 9e7 and paired with hold_per_tier_sector; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
+        );
+        assert!(
+            tuning.hold_issuer_share_class_codes,
+            "(#274) reads an issuer `1C` code as the accumulating class, false leaves a coded name n/a and refused; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
+        );
+        assert_eq!(
+            tuning.hold_us_swap_ter_credit, 0.10,
+            "(#233) a judgement value, not a fit: 15% treaty rate x ~1.2% yield less the swap spread; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
+        );
+        assert_eq!(
+            tuning.hold_domicile_penalty, 0.0,
+            "(#235) refused on its own pre-registered stop rule and ships off; any value above 0 retires the dom_rank bucket as a sort key; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
+        );
+        assert_eq!(
+            tuning.hold_per_tier_developed, 8,
+            "(#251) opened the developed sleeve at 4 and (#272) raised it to 8, the benchmark-index family count; 0 also holds the `global equity` arm inert; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
+        );
+        assert_eq!(
+            tuning.hold_per_tier_europe, 5,
+            "(#237) opened the Europe sleeve at 4 and (#272) raised it to 5, the benchmark-index family count; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
+        );
+        assert_eq!(
+            tuning.hold_per_tier_sector, 23,
+            "(#225) is the receipt on this key's own line, (#220)'s family-count rule re-read on a grown pond, and (#273) raised it 16 -> 23, the sector sleeve's family count and a pair with hold_sector_sleeve_aum; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
+        );
+        assert_eq!(
+            tuning.hold_per_tier_country, 17,
+            "(#234) is the receipt on this key's own line, 7 -> 9, the family count read off a census re-run, and (#283) raised it 16 -> 17, switzerland being the seventeenth family; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
         );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
