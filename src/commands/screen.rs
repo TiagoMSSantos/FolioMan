@@ -1770,7 +1770,14 @@ pub async fn run(args: Vec<String>) {
     // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display
     // cells nothing scores on. news off (screen never prints headlines).
     let intraday = picks::wants_intraday(&settings.widths.columns);
-    let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, intraday, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal).await;
+    // (#696) The 13F, Attention and Social Arbitrage sources read no quote, so they ride under the quote
+    // fetch. After it they took 19s of run 39063079997's screen. Their stamps stay where they were below.
+    let (mut quotes, (brk, brk_held, brk_holdings), attention, social_feeds) = tokio::join!(
+        fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, intraday, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal),
+        fetch::fetch_brk(&client, &settings.urls),
+        fetch::fetch_attention(&client, &settings.urls),
+        fetch::fetch_social(&client, &settings.urls),
+    );
     // anything from the Xetra ETF feed IS an ETF, even if Yahoo tags it EQUITY (structured products
     // like BNP Paribas Issuance) — force it so it can't leak into the stocks table past the sector filter
     for quote in &mut quotes {
@@ -1914,16 +1921,13 @@ pub async fn run(args: Vec<String>) {
     eprintln!("{}", journal_proxies(&quotes, &settings.buy_heuristic));
     // (#436) the `w`/(#442) `W` rank flags and the track `brk`/`brkh` shadow rows read it, and (#472)
     // `growth_brk_held_boost` scores it, so it is stamped ABOVE the pre-rank like the regime stamp
-    let (brk, brk_held, brk_holdings) = fetch::fetch_brk(&client, &settings.urls).await;
     fetch::stamp_brk(&mut quotes, &brk, &brk_held);
     // (#440) and the page's Berkshire table, (#442) every holding whether the pool ranks it or not
     let berkshire = fetch::brk_rows(&brk_holdings, &quotes);
-    // (#438) display only: the page's Attention table, carried to the payload below
-    let attention = fetch::fetch_attention(&client, &settings.urls).await;
     // (#444) the `s` rank flag, track's `soc` row and the page's Social Arbitrage trading table; (#472) its
     // superinvestor half also scores, through `growth_superinvestor_boost`, (#473) the rest through
     // `growth_social_boost`
-    let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
+    let social = fetch::social_table(social_feeds, &settings.urls, &mut quotes);
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);

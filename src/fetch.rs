@@ -4284,15 +4284,28 @@ fn soc_table(rows: &[SocRow], supers: &str) -> Value {
         .collect()
 }
 
-/// (#444) Stamp the `s` flag onto `quotes`, then the page's table. Fails soft: a source that does not
-/// answer (or FOLIOMAN_OFFLINE) just adds no rows, and the hand list needs no network.
+/// (#696) What [`fetch_social`] read off the network. No field looks at a quote, so `screen` fetches
+/// it beside the main quotes and [`social_table`] matches it against the pool afterwards.
+pub struct SocialFeeds {
+    today: NaiveDate,
+    videos: Vec<(String, String, String, String)>,
+    answered: usize,
+    supers: (String, Vec<(String, String, u32)>),
+    label: &'static str,
+    stakes: Vec<SocTip>,
+    funds: Vec<(&'static str, Value)>,
+    insider: Option<String>,
+    ape: Option<Value>,
+    trends: Option<String>,
+    buzz: Option<String>,
+    store: Option<Value>,
+    hn: Option<Value>,
+}
+
+/// (#444) Every source of the Social Arbitrage table. Fails soft: a source that does not answer (or
+/// FOLIOMAN_OFFLINE) just adds no rows.
 #[mutants::skip] // (#443) async network shell; the pure helpers above carry the tests
-pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) -> Value {
-    let picks: Vec<SocPick> = serde_json::from_str(SOC_PICKS).expect("src/buy-heuristics/social-arbitrage-trading.json parses");
-    let eu: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(EU_LISTING_CACHE_PATH))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+pub async fn fetch_social(client: &Client, urls: &Urls) -> SocialFeeds {
     let today = chrono::Utc::now().date_naive();
     let yt_path = crate::config::data_path(YOUTUBE_FEEDS_PATH);
     let mut kept: KeptFeeds = std::fs::read_to_string(&yt_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
@@ -4317,7 +4330,7 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
     let since = (today - chrono::Duration::days(SOC_ARK_DAYS)).to_string();
     let hn_since = (chrono::Utc::now() - chrono::Duration::days(SOC_HN_DAYS)).timestamp().to_string();
     let hn_url = urls.hn_stories.replace("{since}", &hn_since);
-    let (mut tips, funds, insider, ape, trends, buzz, store, hn) = tokio::join!(
+    let (stakes, funds, insider, ape, trends, buzz, store, hn) = tokio::join!(
         fetch_sup_stakes(client, urls, today),
         async {
             let mut funds = Vec::new();
@@ -4346,6 +4359,18 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
         },
         get_json(client, &hn_url),
     );
+    SocialFeeds { today, videos, answered, supers, label, stakes, funds, insider, ape, trends, buzz, store, hn }
+}
+
+/// (#444) Stamp the `s` flag onto `quotes`, then the page's table. The hand list needs no network.
+#[mutants::skip] // (#696) the quote half of `fetch_social`, file reads and writes; the pure helpers carry the tests
+pub fn social_table(feeds: SocialFeeds, urls: &Urls, quotes: &mut [Quote]) -> Value {
+    let SocialFeeds { today, videos, answered, supers, label, stakes: mut tips, funds, insider, ape, trends, buzz, store, hn } = feeds;
+    let picks: Vec<SocPick> = serde_json::from_str(SOC_PICKS).expect("src/buy-heuristics/social-arbitrage-trading.json parses");
+    let eu: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(EU_LISTING_CACHE_PATH))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     let stakes = tips.len();
     tips.extend(ark_buys(&funds));
     tips.extend(insider.map(|x| insider_clusters(&x)).unwrap_or_default());
@@ -4386,14 +4411,14 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
 /// (#472) The 13F flags for a command that ranks but prints no 13F table (`size`, `check`), so its book
 /// carries the same `growth_brk_held_boost`/`growth_superinvestor_boost`/(#473) `growth_social_boost`
 /// `screen` scores. No request while every knob is off.
-#[mutants::skip] // async network shell over `fetch_brk`/`fetch_social`
+#[mutants::skip] // async network shell over `fetch_brk`/`fetch_social`/`social_table`
 pub async fn stamp_13f(client: &Client, urls: &Urls, quotes: &mut [Quote], tuning: &crate::config::BuyHeuristic) {
     if tuning.growth_brk_held_boost == 1.0 && tuning.growth_superinvestor_boost == 1.0 && tuning.growth_social_boost == 1.0 {
         return;
     }
     let (bought, held, _) = fetch_brk(client, urls).await;
     stamp_brk(quotes, &bought, &held);
-    fetch_social(client, urls, quotes).await;
+    social_table(fetch_social(client, urls).await, urls, quotes);
 }
 
 // ── (#438) Wikipedia attention shadow ───────────────────────────────────────────────────────────────
