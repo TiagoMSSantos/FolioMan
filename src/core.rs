@@ -538,18 +538,6 @@ pub fn cagr(cumulative_pct: f64, years: f64) -> f64 {
     (factor.powf(1.0 / years) - 1.0) * 100.0
 }
 
-/// Whole-life endpoint CAGR (%): first close -> last close, annualized over the span of `dates`.
-/// `None` under 6 months of history or on a non-positive first close — a two-point measurement off an
-/// IPO week annualizes to a silly number, and a zero/negative first bar has no growth factor at all.
-///
-/// ONE definition for BOTH callers. The live fetch fills this from the merged (history-proxied)
-/// series, `backtest_quote` from its `[..=as_of]` slice, so anything ranking on it means the same
-/// thing in train and serve. The formula was inlined at the fetch site alone while the backtest left
-/// the field `None`; a second copy is how those two drift.
-///
-/// CAVEAT worth knowing before reading a backtest number off this: on the DAILY path the slice starts
-/// at the fetch window (~10y), so "life" there means "over the fetched window", not since listing.
-/// Only the MAX-monthly path (`backtest ... 12`, i.e. `years >= 8`) reaches the real listing date.
 /// (#41) Up to `k` trailing MONTH-over-MONTH returns (%), oldest first, newest last.
 ///
 /// ONE definition for BOTH callers, for the same reason `life_cagr` is: the live fetch hands this a
@@ -660,6 +648,18 @@ pub fn young_return(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
     (age_years(dates)? < 0.5 && first > 0.0).then(|| (last / first - 1.0) * 100.0)
 }
 
+/// Whole-life endpoint CAGR (%): first close -> last close, annualized over the span of `dates`.
+/// `None` under 6 months of history or on a non-positive first close — a two-point measurement off an
+/// IPO week annualizes to a silly number, and a zero/negative first bar has no growth factor at all.
+///
+/// ONE definition for BOTH callers. The live fetch fills this from the merged (history-proxied)
+/// series, `backtest_quote` from its `[..=as_of]` slice, so anything ranking on it means the same
+/// thing in train and serve. The formula was inlined at the fetch site alone while the backtest left
+/// the field `None`; a second copy is how those two drift.
+///
+/// CAVEAT worth knowing before reading a backtest number off this: on the DAILY path the slice starts
+/// at the fetch window (~10y), so "life" there means "over the fetched window", not since listing.
+/// Only the MAX-monthly path (`backtest ... 12`, i.e. `years >= 8`) reaches the real listing date.
 pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
     let age = age_years(dates)?;
     match (closes.first(), closes.last()) {
@@ -3865,7 +3865,7 @@ pub(crate) fn ranks(v: &[f64]) -> Vec<f64> {
 pub struct FundRow {
     pub filed: NaiveDate,
     pub financial: bool,               // (#478) a bank or insurer line filed within 2y of this period: EBIT-type ratios mean nothing here
-    pub period_end: NaiveDate,         // FMP period-end `date` — DISPLAY-ONLY (groups quarters by fiscal year in `report`). The as-of join (`fund_as_of`) keys on `filed`, never this, so it can't leak look-ahead into the backtest
+    pub period_end: NaiveDate,         // FMP period-end `date` — DISPLAY-ONLY (groups quarters by fiscal year in `report`). The as-of join (`fund_as_of`) keys on `filed` and reads this only to order two rows filed the same day (#673), so it can't leak look-ahead into the backtest
     pub revenue: Option<f64>,
     pub gross_margin: Option<f64>,    // % = grossProfit/revenue
     pub op_margin: Option<f64>,       // % = operatingIncome/revenue
@@ -3961,10 +3961,6 @@ fn neg_sample_std(vals: &[f64]) -> Option<f64> {
     })
 }
 
-/// As-of (point-in-time) join: the latest statement that was already FILED on or before `cutoff`.
-/// THE look-ahead guard for the fundamentals backtest — at a given cutoff a strategy could only have
-/// seen filings public by then. `None` if nothing was filed yet. O(n), order-independent (FMP returns
-/// newest-first; don't assume it). Compose it twice (cutoff and cutoff−Ny) to get as-of growth/trend.
 /// (#522) The middle value, the mean of the two middle ones on an even count; None when empty.
 pub fn median(mut v: Vec<f64>) -> Option<f64> {
     v.sort_by(f64::total_cmp);
@@ -3972,8 +3968,14 @@ pub fn median(mut v: Vec<f64>) -> Option<f64> {
     (n > 0).then(|| if n.is_multiple_of(2) { (v[n / 2 - 1] + v[n / 2]) / 2.0 } else { v[n / 2] })
 }
 
+/// As-of (point-in-time) join: the latest statement that was already FILED on or before `cutoff`.
+/// THE look-ahead guard for the fundamentals backtest — at a given cutoff a strategy could only have
+/// seen filings public by then. `None` if nothing was filed yet. O(n), order-independent (FMP returns
+/// newest-first; don't assume it). Compose it twice (cutoff and cutoff−Ny) to get as-of growth/trend.
 pub fn fund_as_of(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
-    rows.iter().filter(|r| r.filed <= cutoff).max_by_key(|r| r.filed)
+    // (#673) `max_by_key` keeps the LAST maximum, so two rows sharing a filing date (a first XBRL 10-K
+    // carries the year before) answered by slice order; the newest `period_end` now breaks that tie.
+    rows.iter().filter(|r| r.filed <= cutoff).max_by_key(|r| (r.filed, r.period_end))
 }
 
 /// As-of fundamental factors derived from filed statements at a cutoff — the backtest's fundamental
@@ -4717,24 +4719,6 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     }
 }
 
-/// (FX) The price to divide a filer's PER-SHARE figures by, expressed in the filer's REPORTING currency.
-///
-/// Returns `close_native` completely UNCHANGED when the listing already trades in that currency — the
-/// overwhelming case (every US 10-K filer) — so the validated earnings_yield / peg_yield path is
-/// bit-for-bit identical and no FX rate is fetched or applied at all. That exactness is the point: any
-/// drift here would move `scoring_regression_pin` and silently re-rank names the backtest already graded.
-///
-/// Only a genuine mismatch converts, and it routes through EUR because that is the one rate a Quote
-/// already carries: `price_eur / eur_per_reporting`. Going via `price_eur` also absorbs pence-quoted LSE
-/// listings for free — `price_eur` already has the GBp÷100 scale applied while `close_native` does not.
-///
-/// None when the mismatch can't be resolved, so a price-joined factor None-outs (neutral) instead of
-/// dividing EUR earnings by a USD price — a ~1.17x error that would look entirely plausible in the
-/// output. That is the Item 16 trap, and silence is the only safe failure here.
-///
-/// Rates are "EUR per 1 unit", the convention `fetch::eur_rate` already returns (and which already folds
-/// the GBp÷100 pence scale in), so EUR is only ever an intermediate hop — never a currency either side
-/// has to be in. Pure so the identity below is unit-tested rather than assumed.
 /// (FX) Convert only when BOTH currencies are known AND they differ. The empty half is the sharp edge:
 /// Yahoo occasionally omits `meta.currency`, and `"" != "USD"` would send a plain US name through a
 /// USD→EUR rate — an ~1.16x error on exactly the names this whole change promises not to touch. Unknown
@@ -4931,6 +4915,24 @@ pub fn strip_noncore(rows: &mut [FundRow]) -> usize {
     moved
 }
 
+/// (FX) The price to divide a filer's PER-SHARE figures by, expressed in the filer's REPORTING currency.
+///
+/// Returns `close_native` completely UNCHANGED when the listing already trades in that currency — the
+/// overwhelming case (every US 10-K filer) — so the validated earnings_yield / peg_yield path is
+/// bit-for-bit identical and no FX rate is fetched or applied at all. That exactness is the point: any
+/// drift here would move `scoring_regression_pin` and silently re-rank names the backtest already graded.
+///
+/// Only a genuine mismatch converts, and it routes through EUR because that is the one rate a Quote
+/// already carries: `price_eur / eur_per_reporting`. Going via `price_eur` also absorbs pence-quoted LSE
+/// listings for free — `price_eur` already has the GBp÷100 scale applied while `close_native` does not.
+///
+/// None when the mismatch can't be resolved, so a price-joined factor None-outs (neutral) instead of
+/// dividing EUR earnings by a USD price — a ~1.17x error that would look entirely plausible in the
+/// output. That is the Item 16 trap, and silence is the only safe failure here.
+///
+/// Rates are "EUR per 1 unit", the convention `fetch::eur_rate` already returns (and which already folds
+/// the GBp÷100 pence scale in), so EUR is only ever an intermediate hop — never a currency either side
+/// has to be in. Pure so the identity below is unit-tested rather than assumed.
 pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f64>, eur_to: Option<f64>) -> Option<f64> {
     if !needs_fx(from, to) {
         return Some(close_native); // same books -> EXACT: no rate, no multiply, no rounding
@@ -4939,6 +4941,16 @@ pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f
         (Some(a), Some(b)) if b > 0.0 && a > 0.0 => Some(close_native * a / b),
         _ => None, // unknown rate -> caller must drop the ratio, never guess it
     }
+}
+
+/// (#491) `quality_return` on core earnings: ROE, ROA and the net margin all divide the same net income,
+/// so each takes the row's `core_factor` (#426), the share the PEG's EPS keeps. A mark on a stake
+/// (Alphabet's SpaceX and Anthropic gains) or a tax release stops reading as quality of capital. No
+/// factor (a bank, an insurer, a loss year, no pretax line) scores as filed. Both lanes call this.
+pub fn core_quality(r: &FundRow) -> Option<f64> {
+    let f = core_factor(r).unwrap_or(1.0);
+    let core = |v: Option<f64>| v.map(|v| v * f);
+    quality_return(core(r.roe), core(r.roa), core(r.net_margin))
 }
 
 /// The quality-of-capital level to SCORE and DISPLAY: return on equity when equity is positive,
@@ -4973,16 +4985,6 @@ pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f
 /// land on a denominator that understates them. Nothing separates them from Colgate without sector
 /// data, which this path does not carry (`sector_matches` reads the NAME string, not a sector field).
 /// ROA understates them; it does not lie about them, which is the trade taken here.
-/// (#491) `quality_return` on core earnings: ROE, ROA and the net margin all divide the same net income,
-/// so each takes the row's `core_factor` (#426), the share the PEG's EPS keeps. A mark on a stake
-/// (Alphabet's SpaceX and Anthropic gains) or a tax release stops reading as quality of capital. No
-/// factor (a bank, an insurer, a loss year, no pretax line) scores as filed. Both lanes call this.
-pub fn core_quality(r: &FundRow) -> Option<f64> {
-    let f = core_factor(r).unwrap_or(1.0);
-    let core = |v: Option<f64>| v.map(|v| v * f);
-    quality_return(core(r.roe), core(r.roa), core(r.net_margin))
-}
-
 pub fn quality_return(roe: Option<f64>, roa: Option<f64>, net_margin: Option<f64>) -> Option<f64> {
     // Both tests answer "is equity a credible denominator". Unjudgeable never blocks: no ROA means the
     // multiplier can't be computed (the FMP path fills no ROA at all), so the sign test decides alone.
@@ -10633,6 +10635,18 @@ mod tests {
                 let full = serde_json::to_string(&fund_factors(&rows, cutoff, yrs)).unwrap();
                 assert_eq!(full, serde_json::to_string(&fund_factors(&seen, cutoff, yrs)).unwrap(), "{cutoff} {yrs}y");
             }
+        }
+    }
+
+    /// (#673) A filer's first XBRL 10-K carries the year before as a comparative, so FY2009 and FY2008 can
+    /// share one filing date. `max_by_key` keeps the LAST maximum, which made the answer whichever of the
+    /// two came later in the slice; the newest `period_end` must win in either order.
+    #[test]
+    fn fund_as_of_filed_tie_takes_newest_period_in_any_order() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let fy = |y: i32| FundRow { filed: ymd(2010, 2, 26), period_end: ymd(y, 12, 31), ..Default::default() };
+        for rows in [[fy(2009), fy(2008)], [fy(2008), fy(2009)]] {
+            assert_eq!(fund_as_of(&rows, ymd(2010, 3, 1)).map(|r| r.period_end), Some(ymd(2009, 12, 31)));
         }
     }
 
