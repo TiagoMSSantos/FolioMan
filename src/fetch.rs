@@ -9075,16 +9075,45 @@ pub async fn fetch_universe(
     sectors: &[String],
 ) -> (Vec<String>, std::collections::HashSet<String>, std::collections::HashMap<String, String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
+    let started = std::time::Instant::now();
+    // (Item 18) equity ponds = S&P 500 + any extra same-format constituent CSVs from config. Sequential
+    // (1–3 URLs, negligible vs the universe fan-out); a failed/empty CSV just drops its pond, never crashes.
+    // (Item 32) each pond is a CSV (Symbol first, sector col 3) OR a Wikipedia constituents page
+    // (the only maintained source for e.g. the S&P MidCap 400) — the URL's host picks the parser.
+    // (#691) The stocks leg shares no input with the ETF lists, so it runs under the venue lists below
+    // (one Euronext page takes ~18s server-side) instead of after the ETF bridge, where run 39058823268
+    // spent 7.4s on it.
+    let stocks = async {
+        let mut ponds = constituent_ponds(client, urls, sectors).await;
+        // (EU listing) Swap each constituent onto its Xetra twin BEFORE any chart is fetched, so every
+        // downstream reader — score, gates, tables, order glue — sees a genuine EU quote rather than a US
+        // series wearing a EU ticker. Capped first: the resolver then only ever prices names that actually
+        // enter the universe. Off by default; `prefer_eu_listing`'s doc carries what turning it on costs.
+        if prefer_eu_listing {
+            for pond in &mut ponds {
+                pond.truncate(cap);
+            }
+            let syms: Vec<String> = ponds.iter().flatten().map(|(s, _)| s.clone()).collect();
+            let eu = resolve_eu_listings(client, urls, &syms).await;
+            let swapped = eu_swap_tally(&syms, &eu);
+            eprintln!("fetch: EU listing swap — {swapped} of {} constituents on Xetra, {} kept on their US line", syms.len(), syms.len() - swapped);
+            ponds = ponds.into_iter().map(|p| swap_to_eu(p, &eu)).collect();
+        }
+        (ponds, started.elapsed())
+    };
     // Euronext + SIX ETF ISINs first (a few cheap requests) — deduped against each other here,
     // against BF's list inside fetch_xetra_etfs, then merged into the same ISIN->Yahoo bridge.
     // Each list is backed by its last-good copy on disk: a transient venue outage (Euronext 503'd
     // a whole run) must not silently shrink the universe — membership stays stable, the list
     // refreshes whenever the venue answers again.
-    let (euronext_isins, six_isins, regulatory_isins) = tokio::join!(
+    let (euronext_isins, six_isins, regulatory_isins, (ponds, stocks_took)) = tokio::join!(
         fetch_euronext_etf_isins(client, urls),
         fetch_six_etf_isins(client, urls),
         fetch_regulatory_etf_isins(client, urls),
+        stocks,
     );
+    let lists_took = started.elapsed();
+    let calls = fetch_stats().0;
     let mut store: HashMap<String, Vec<String>> = std::fs::read_to_string(crate::config::data_path(VENUE_ISINS_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -9123,25 +9152,16 @@ pub async fn fetch_universe(
         fetch_xetra_etfs(client, urls, cap, extra_isins, speculative_isins),
         fetch_euronext_lisbon(client, urls),
     );
-    // (Item 18) equity ponds = S&P 500 + any extra same-format constituent CSVs from config. Sequential
-    // (1–3 URLs, negligible vs the universe fan-out); a failed/empty CSV just drops its pond, never crashes.
-    // (Item 32) each pond is a CSV (Symbol first, sector col 3) OR a Wikipedia constituents page
-    // (the only maintained source for e.g. the S&P MidCap 400) — the URL's host picks the parser.
-    let mut ponds = constituent_ponds(client, urls, sectors).await;
-    // (EU listing) Swap each constituent onto its Xetra twin BEFORE any chart is fetched, so every
-    // downstream reader — score, gates, tables, order glue — sees a genuine EU quote rather than a US
-    // series wearing a EU ticker. Capped first: the resolver then only ever prices names that actually
-    // enter the universe. Off by default; `prefer_eu_listing`'s doc carries what turning it on costs.
-    if prefer_eu_listing {
-        for pond in &mut ponds {
-            pond.truncate(cap);
-        }
-        let syms: Vec<String> = ponds.iter().flatten().map(|(s, _)| s.clone()).collect();
-        let eu = resolve_eu_listings(client, urls, &syms).await;
-        let swapped = eu_swap_tally(&syms, &eu);
-        eprintln!("fetch: EU listing swap — {swapped} of {} constituents on Xetra, {} kept on their US line", syms.len(), syms.len() - swapped);
-        ponds = ponds.into_iter().map(|p| swap_to_eu(p, &eu)).collect();
-    }
+    // The universe prints nothing until the ETF bridge's summary line, so the publish log showed one
+    // silent 52s stretch. This line splits it. The paced calls are the bridge's Yahoo searches plus
+    // whatever the IPO lane, which runs under it, spent in the same time.
+    eprintln!(
+        "fetch: universe venue lists {:.0}s (stocks {:.0}s under them) | ETF bridge {:.0}s, {} paced calls meanwhile",
+        lists_took.as_secs_f64(),
+        stocks_took.as_secs_f64(),
+        (started.elapsed() - lists_took).as_secs_f64(),
+        fetch_stats().0 - calls
+    );
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
     // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form).
