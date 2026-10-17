@@ -2024,26 +2024,48 @@ fn next_earnings(v: &Value, today: NaiveDate) -> Option<NaiveDate> {
         .find(|d| *d >= today)
 }
 
-/// (#449) DISPLAY ONLY: the EARN cell, each printed stock row's next earnings date. ~25 uncached
-/// GETs a run; a refused one leaves n/a. shortcut: no cache, add a daily one if Nasdaq refusals
-/// ever show as a column of n/a.
+/// (#694) `{US symbol: [day asked, next earnings date or null]}`: the day's answers for `enrich_earnings`.
+/// It lives in `.sec_cache` because the publish job carries that directory run to run; a new path in
+/// that cache step would re-key it and refetch every SEC fact.
+const EARNINGS_CACHE: &str = "nasdaq_earnings";
+
+/// (#449) DISPLAY ONLY: the EARN cell, each printed stock row's next earnings date. ~25 GETs a day; a
+/// refused one leaves n/a.
 /// (#450) Off Nasdaq, not Yahoo's `calendarEvents`: on the Pages runner the Yahoo crumb handshake
 /// failed for every row, and Nasdaq needs no handshake.
 /// (#688) 4 in flight, not one at a time: back to back, the 25 GETs took 50s of the publish job (run
-/// 39053077118), ~2s each. `buffered` keeps target order, so each body lands on its own row.
+/// 39053077118), ~2s each. `buffered` keeps the symbol order, so each body lands on its own symbol.
+/// (#694) Asked once a day: run 39061202492 still spent 17s on them, and the page republished 28 times
+/// on 2026-10-16, each asking again for dates that rarely move within a day. A refusal is not cached,
+/// so the next run asks again, and a twin and its parent share one GET.
 pub async fn enrich_earnings(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
     let today = chrono::Local::now().date_naive();
+    let path = sec_cache_path(EARNINGS_CACHE);
+    let mut cache: HashMap<String, (NaiveDate, Option<NaiveDate>)> =
+        std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    cache.retain(|_, (day, _)| *day == today);
     let rows: Vec<&mut core::Quote> = quotes.iter_mut().filter(|q| targets.contains(&q.ticker)).collect();
-    let bodies: Vec<Option<Value>> = stream::iter(rows.iter().map(|q| urls.nasdaq_earnings.replace("{sym}", &us_symbol(&q.ticker))))
+    let mut due: Vec<String> = rows.iter().map(|q| us_symbol(&q.ticker)).filter(|s| !cache.contains_key(s)).collect();
+    due.sort();
+    due.dedup();
+    let bodies: Vec<Option<Value>> = stream::iter(due.iter().map(|s| urls.nasdaq_earnings.replace("{sym}", s)))
         .map(|url| async move { get_json(client, &url).await })
         .buffered(4)
         .collect()
         .await;
-    for (q, v) in rows.into_iter().zip(bodies) {
+    for (sym, v) in due.iter().zip(bodies) {
         match v {
-            Some(v) => q.next_earnings = next_earnings(&v, today),
-            None => eprintln!("earnings: Nasdaq refused {}", q.ticker),
+            Some(v) => {
+                cache.insert(sym.clone(), (today, next_earnings(&v, today)));
+            }
+            None => eprintln!("earnings: Nasdaq refused {sym}"),
         }
+    }
+    if !due.is_empty() {
+        cache_write(&path, serde_json::to_string(&cache).unwrap_or_default());
+    }
+    for q in rows {
+        q.next_earnings = cache.get(&us_symbol(&q.ticker)).and_then(|(_, d)| *d);
     }
 }
 
@@ -11757,9 +11779,13 @@ pub(crate) mod tests {
 
     /// (#450) `enrich_earnings` stamps TARGETS only, through `urls.nasdaq_earnings`; a refused GET
     /// leaves the row None. (#688) Two dated targets, so a body stamped on the wrong row fails.
+    /// (#694) Yesterday's row is asked again; a second run the same day stamps today's answers with
+    /// Nasdaq gone, and the refused name stays None.
     #[tokio::test]
     async fn enrich_earnings_stamps_targets_only() {
         seed_cik_map(); // `us_symbol` reads EU_TO_US, which only the seed may fill
+        let yesterday = chrono::Local::now().date_naive() - chrono::Duration::days(1);
+        cache_write(&sec_cache_path(EARNINGS_CACHE), format!(r#"{{"ZZEARN": ["{yesterday}", "2099-01-01"]}}"#));
         let (base, client, _) = routed_stub(vec![
             ("/ZZEARN/", r#"{"data": {"reportText": "is expected* to report earnings on  12/31/2099 before market open."}}"#),
             ("/ZZEARNB/", r#"{"data": {"reportText": "is expected* to report earnings on  12/30/2099 after market close."}}"#),
@@ -11775,6 +11801,12 @@ pub(crate) mod tests {
         assert_eq!(quotes[1].next_earnings, None, "not a target");
         assert_eq!(quotes[2].next_earnings, None, "a body that is not JSON");
         assert_eq!(quotes[3].next_earnings, NaiveDate::from_ymd_opt(2099, 12, 30));
+        urls.nasdaq_earnings = format!("{base}gone-{{sym}}");
+        let mut again: Vec<core::Quote> =
+            ["ZZEARN", "ZZEARNOFF", "ZZREFUSED", "ZZEARNB"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        enrich_earnings(&client, &urls, &mut again, &targets).await;
+        let got: Vec<_> = again.iter().map(|q| q.next_earnings).collect();
+        assert_eq!(got, [quotes[0].next_earnings, None, None, quotes[3].next_earnings], "today's answers, cached");
     }
 
     /// (#469) `profile_of`: http upgraded to https, a bare host given one, analysts summed, the target
