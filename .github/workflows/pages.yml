@@ -443,22 +443,12 @@ jobs:
           path: run-journal
       - name: Commit today's line
         run: |
-          # (#605) APPEND THE RUN'S LAST LINE, NEVER COPY ITS FILE. The run's journal comes from its
-          # own checkout, which can be older than main: a queued run checks out the SHA it was
-          # triggered on, and a re-run reuses its original SHA. Copied whole, that file reverts every
-          # line main gained since. 210c9dc did it to 9379bd8's 2026-10-16 line (two runs queued on
-          # 32d2ec4); a failed run re-run a day later would have dropped whole days. Only a line dated
-          # after main's last one is new.
-          line=$(tail -n 1 run-journal/.screen_snapshots.jsonl)
-          # The date comes from the line itself, not from `date`, so a run crossing midnight UTC
-          # cannot label a snapshot with a day it was not taken on.
-          day=$(jq -r .date <<<"$line")
-          last=$(tail -n 1 .screen_snapshots.jsonl | jq -r .date)
-          if [[ ! "$day" > "$last" ]]; then
-            echo "journal unchanged: main already ends at $last (this run's last line: $day)"
-            exit 0
-          fi
-          printf '%s\n' "$line" >> .screen_snapshots.jsonl
+          # (#605) Append the run's LAST line, never copy its file, and only when it is dated after
+          # main's last one: a queued or re-run job checks out an older SHA than main. (#637) That
+          # test is .github/scripts/journal-newer-line.sh, which the actionlint job runs on five
+          # journals. Sourced, not run: `day` below and the early `exit 0` of an unchanged journal
+          # are this step's own.
+          . .github/scripts/journal-newer-line.sh
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .screen_snapshots.jsonl

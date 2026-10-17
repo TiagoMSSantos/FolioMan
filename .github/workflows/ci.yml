@@ -134,6 +134,47 @@ jobs:
           if pool 200 1 | jq '.quotes[0].fund.shares_ttm = 716.4 | .quotes[0].close_native = 205' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a share count tagged in millions"; exit 1; fi
           if pool 200 1 | jq '.quotes[0].fund.core_factor = 1.5' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a core strip that added earnings"; exit 1; fi
           if pool 200 1 | jq 'del(.quotes[].fund.core_factor)' | jq -e -f web/universe-contracts.jq > /dev/null; then echo "contract passed a pool with no core factor"; exit 1; fi
+      # (#637) automerge.yml's `need` list is typed by hand and drifts both ways: a job added above and left
+      # out of it lets a bot PR merge while that job is red, and an entry no job reports (a rename) idles
+      # every bot PR for good. The script compares the two; the files as committed must pass, and each drift
+      # below must fail it with the culprit named (a crash names nothing, so it cannot pass for a refusal).
+      - name: Automerge waits on every CI job
+        run: |
+          cd .github/workflows
+          guard() { python3 -I ../scripts/automerge-need.py "$1" "$2" codeql.yml 2>&1; }
+          guard ci.yml automerge.yml
+          t=$(mktemp -d)
+          { cat ci.yml; printf '\n  zzz-new-gate:\n    runs-on: ubuntu-latest\n'; } > "$t/ci.yml"
+          if out=$(guard "$t/ci.yml" automerge.yml); then echo "guard passed a CI job automerge does not wait on"; exit 1; fi
+          grep -q zzz-new-gate <<<"$out" || { echo "guard failed without naming the new job: $out"; exit 1; }
+          sed 's/\(need=.\[\)"[^"]*"/\1"zzz-renamed"/' automerge.yml > "$t/automerge.yml"
+          if out=$(guard ci.yml "$t/automerge.yml"); then echo "guard passed a need entry no job reports"; exit 1; fi
+          grep -q zzz-renamed <<<"$out" || { echo "guard failed without naming the renamed entry: $out"; exit 1; }
+      # (#637) pages.yml's `record` job appends the run's last journal line only when it is dated after main's
+      # last one (#605). That test is .github/scripts/journal-newer-line.sh, which the job sources, so it runs
+      # here the same way (under `bash -e`) on throwaway journals: an edit that copies the run's file, appends
+      # a stale line, or lets an unchanged day fall through to the commit reds this step instead of silently
+      # reverting the forward record. The script is shellchecked here too: actionlint reads only `run:` bodies.
+      - name: Journal record appends only a newer line
+        run: |
+          shellcheck .github/scripts/journal-newer-line.sh
+          s=$PWD/.github/scripts/journal-newer-line.sh
+          t=$(mktemp -d)
+          j() { local a d; read -ra a <<<"$1"; for d in "${a[@]}"; do printf '{"date":"%s"}\n' "$d"; done; }
+          try() { # NAME "main dates" "run dates" "main dates after" "output"; main "-" = no file
+            mkdir -p "$t/$1/run-journal"; cd "$t/$1" || exit 1
+            [ "$2" = - ] || j "$2" > .screen_snapshots.jsonl
+            j "$3" > run-journal/.screen_snapshots.jsonl
+            got=$(bash -e -c '. "$0"; echo "day=$day"' "$s" 2>"$t/err") || { echo "$1: exited non-zero:"; cat "$t/err"; exit 1; }
+            [ "$got" = "$5" ] || { echo "$1: printed '$got', wanted '$5'; stderr:"; cat "$t/err"; exit 1; }
+            cmp -s .screen_snapshots.jsonl <(j "$4") || { echo "$1: main's journal is wrong:"; cat .screen_snapshots.jsonl; exit 1; }
+          }
+          try newer "2026-10-14 2026-10-15" "2026-10-10 2026-10-16" "2026-10-14 2026-10-15 2026-10-16" "day=2026-10-16"
+          try same "2026-10-14 2026-10-15 2026-10-16" "2026-10-10 2026-10-16" "2026-10-14 2026-10-15 2026-10-16" "journal unchanged: main already ends at 2026-10-16 (this run's last line: 2026-10-16)"
+          try older "2026-10-14 2026-10-15 2026-10-16" "2026-10-10 2026-10-15" "2026-10-14 2026-10-15 2026-10-16" "journal unchanged: main already ends at 2026-10-16 (this run's last line: 2026-10-15)"
+          try empty "" "2026-10-16" "2026-10-16" "day=2026-10-16"
+          try missing - "2026-10-16" "2026-10-16" "day=2026-10-16"
+          echo "journal record: newer, same, older, empty and missing main journals all behave"
 
   build:
     runs-on: ubuntu-latest
