@@ -319,7 +319,8 @@ pub async fn order(client: &Client, side: &str, ticker: &str, qty: f64) -> Resul
         .json(&json!({ "quantity": signed, "ticker": ticker }))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        // (#667) only a failed connect proves the order never left; see `order_error`
+        .map_err(|e| super::order_error("Trading212", e.is_connect(), e.to_string()))?;
     let status = resp.status();
     // the order may already be live at this point — a body-read failure must say so, not print
     // an empty confirmation.
@@ -330,6 +331,6 @@ pub async fn order(client: &Client, side: &str, ticker: &str, qty: f64) -> Resul
     if status.is_success() {
         Ok(format!("trading212 accepted: {body}"))
     } else {
-        Err(format!("trading212 {status}: {body}"))
+        Err(super::order_error("Trading212", status.is_client_error(), format!("trading212 {status}: {body}")))
     }
 }

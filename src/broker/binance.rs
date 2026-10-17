@@ -157,7 +157,8 @@ pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64, eur: boo
         .header("X-MBX-APIKEY", key)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        // (#667) only a failed connect proves the order never left; see `order_error`
+        .map_err(|e| super::order_error("Binance", e.is_connect(), e.to_string()))?;
     let status = resp.status();
     // the order may already be live at this point — a body-read failure must say so, not print
     // an empty confirmation.
@@ -174,7 +175,7 @@ pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64, eur: boo
             Ok(format!("binance answered {status} but no orderId in the response — VERIFY the order in the app: {body}"))
         }
     } else {
-        Err(format!("binance {status}: {body}"))
+        Err(super::order_error("Binance", status.is_client_error(), format!("binance {status}: {body}")))
     }
 }
 

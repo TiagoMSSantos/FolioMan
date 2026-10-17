@@ -16,6 +16,19 @@ pub(crate) fn env_var(k: &str) -> Result<String, String> {
     env::var(k).map_err(|_| format!("missing env var {k} (broker credential)"))
 }
 
+/// (#667) An order error the broker may not have refused. `trade` prints every `Err` as ORDER FAILED
+/// and exits 1, which reads as "nothing happened, retry". That holds only when `definite`: the
+/// connection never opened, or the broker answered a 4xx refusal. A request that died after it was
+/// written, or a 5xx (Binance documents its 5xx as "execution status UNKNOWN"), may have placed the
+/// order, and a reflex retry buys twice. Those errors say so and name the app to check.
+pub(crate) fn order_error(app: &str, definite: bool, msg: String) -> String {
+    if definite {
+        msg
+    } else {
+        format!("{msg} — the order MAY be live: check the {app} app before retrying")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,5 +43,15 @@ mod tests {
         assert!(err.contains("FOLIOMAN_NO_SUCH_BROKER_CREDENTIAL"), "must name the variable: {err}");
         // PATH is set in every environment this can run in, so the success arm is real too.
         assert!(env_var("PATH").is_ok());
+    }
+
+    /// (#667) a definite refusal passes through unchanged; anything else keeps the broker's words and
+    /// adds the doubt and the app, so a retry after ORDER FAILED is a check, not a reflex.
+    #[test]
+    fn an_order_error_past_connect_says_it_may_be_live() {
+        assert_eq!(order_error("Binance", true, "binance 400 Bad Request: {}".into()), "binance 400 Bad Request: {}");
+        let maybe = order_error("Binance", false, "binance 503 Service Unavailable: {}".into());
+        assert!(maybe.starts_with("binance 503 Service Unavailable: {}"), "{maybe}");
+        assert!(maybe.contains("MAY be live") && maybe.contains("Binance app"), "{maybe}");
     }
 }
