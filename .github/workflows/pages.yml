@@ -251,9 +251,15 @@ jobs:
       # that moves web/engine alone builds the engine below without rust-cache: slower, never red.
       - if: steps.bin.outputs.cache-hit != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # (#701) The crate at opt-level 1, its dependencies still at 3. An override for this package leaves
+      # their artifacts valid, so rust-cache still serves them. Run 39068294070 spent 62s of this step on
+      # the crate alone. Its Screen then used 28s of CPU in a 173s wall clock, and its 8799 paced calls
+      # need 147s at the 60/s pacer, so slower crate code mostly runs while the pacer waits. A cron run
+      # restores the binary and pays only that CPU. No result can move: Rust emits no fast-math flags at
+      # any opt-level (see .cargo/config.toml).
       - name: Build
         if: steps.bin.outputs.cache-hit != 'true'
-        run: cargo build --release --locked
+        run: cargo build --release --locked --config 'profile.release.package.folioman.opt-level=1'
       - name: Save the binary
         if: steps.bin.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
