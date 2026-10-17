@@ -1963,30 +1963,11 @@ pub async fn run(args: Vec<String>) {
     let lanes = std::time::Instant::now();
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
     let income = lanes.elapsed();
-    // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
-    fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
-    let profile = lanes.elapsed();
     // (#448) display only: the INS-B/S cell, last so the SEC fundamentals and the 13F lane spend the
-    // shared SEC budget first
+    // shared SEC budget first. (#693) The profile and earnings lanes spend none of it, so they run after it,
+    // and so does the side fetch that prices the twins and the side list.
     fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
     let insider = lanes.elapsed();
-    // (#449) display only: the EARN cell
-    fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
-    let earnings = lanes.elapsed();
-    // (#515) display only: this month's $1B+ US IPOs not priced yet, under the Young table. (#692) Run
-    // 39059819443 waited ~20s for it before the lanes above, which then took 19s more.
-    let (upcoming, ipo_took) = ipo.await.expect("the IPO lane panicked");
-    // (#687) These lanes print nothing on a good run, so the publish log showed their time as one silent
-    // stretch (198s on run 39049240255). One line splits it.
-    eprintln!(
-        "screen: lanes income {:.0}s | profile {:.0}s | insider {:.0}s | earnings {:.0}s | IPO {:.0}s, under the quotes",
-        income.as_secs_f64(),
-        (profile - income).as_secs_f64(),
-        (insider - profile).as_secs_f64(),
-        (earnings - insider).as_secs_f64(),
-        ipo_took.as_secs_f64()
-    );
-    eprintln!("{}", crate::picks::young_line(&quotes, 5)); // (#500) the page's Young table in one line
     // (#461) display only: the US line of every printed or shadow-table stock the pool holds on a European
     // line, so `stamp_us_twin` can fill the cells that line leaves n/a (often its 10Y/20Y legs)
     let shown: std::collections::HashSet<String> = [&attention, &berkshire, &social]
@@ -2000,15 +1981,6 @@ pub async fn run(args: Vec<String>) {
         .filter(|(eu, us)| !us.eq_ignore_ascii_case(eu) && (targets.contains(eu) || mom.contains(eu) || shown.contains(eu) || shown.contains(us)))
         .collect();
     let us_lines: Vec<String> = swapped.iter().map(|(_, us)| us.clone()).collect();
-    let twins: std::collections::HashMap<String, Quote> = swapped
-        .into_iter()
-        .map(|(eu, _)| eu)
-        .zip(fetch::quotes(
-            &client, &settings.urls, &fx_cache, &us_lines, settings.dip_days, settings.high_days, false, false,
-            &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
-        ).await)
-        .filter(|(_, q)| q.price != "err" && q.price != "no data")
-        .collect();
     // (#480) display only: the shadow-table names the pool holds on no line (a 13D/G stake in a small cap),
     // priced and filed like a pool stock so their row stops reading n/a. A side list, never `quotes`: no
     // rank, journal line or universe.json row sees them, and no `$` marks them, since it is their own line.
@@ -2030,14 +2002,49 @@ pub async fn run(args: Vec<String>) {
     // (#663) the names it grades that the universe has dropped since ride this fetch, so `exit` and `carry`
     // journal a close for them. Split off before the enrichment below: no table, stamp or SOC row sees them
     let dropped = dropped_graded(prior.as_ref(), explicit_args, &[&quotes, &stale], &unpriced);
-    let (dropped_px, mut shadow_extra): (Vec<Quote>, Vec<Quote>) = fetch::quotes(
-        &client, &settings.urls, &fx_cache, &[unpriced, dropped.clone()].concat(), settings.dip_days, settings.high_days, false, false,
-        &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
-    )
-    .await
-    .into_iter()
-    .filter(|q| q.price != "err" && q.price != "no data")
-    .partition(|q| dropped.contains(&q.ticker));
+    // (#693) One fetch prices the US lines, the side list and the dropped names, under the profile and
+    // earnings lanes. Run 39061202492 made two fetches after the lanes, 3.8s and 3.0s, each held by its
+    // slowest few quotes. The fetch reads only the lists built above, and the lanes stamp only `quotes`.
+    let side_list = [&us_lines[..], &unpriced[..], &dropped[..]].concat();
+    let ((profile, earnings), mut side) = tokio::join!(
+        async {
+            // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
+            fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
+            let profile = lanes.elapsed();
+            // (#449) display only: the EARN cell
+            fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
+            (profile, lanes.elapsed())
+        },
+        fetch::quotes(
+            &client, &settings.urls, &fx_cache, &side_list, settings.dip_days, settings.high_days, false, false,
+            &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
+        )
+    );
+    // (#515) display only: this month's $1B+ US IPOs not priced yet, under the Young table. (#692) Run
+    // 39059819443 waited ~20s for it before the lanes above, which then took 19s more.
+    let (upcoming, ipo_took) = ipo.await.expect("the IPO lane panicked");
+    // (#687) These lanes print nothing on a good run, so the publish log showed their time as one silent
+    // stretch (198s on run 39049240255). One line splits it.
+    eprintln!(
+        "screen: lanes income {:.0}s | insider {:.0}s | profile {:.0}s | earnings {:.0}s | IPO {:.0}s, under the quotes",
+        income.as_secs_f64(),
+        (insider - income).as_secs_f64(),
+        (profile - insider).as_secs_f64(),
+        (earnings - profile).as_secs_f64(),
+        ipo_took.as_secs_f64()
+    );
+    eprintln!("{}", crate::picks::young_line(&quotes, 5)); // (#500) the page's Young table in one line
+    let rest = side.split_off(us_lines.len());
+    let twins: std::collections::HashMap<String, Quote> = swapped
+        .into_iter()
+        .map(|(eu, _)| eu)
+        .zip(side)
+        .filter(|(_, q)| q.price != "err" && q.price != "no data")
+        .collect();
+    let (dropped_px, mut shadow_extra): (Vec<Quote>, Vec<Quote>) = rest
+        .into_iter()
+        .filter(|q| q.price != "err" && q.price != "no data")
+        .partition(|q| dropped.contains(&q.ticker));
     let extra_set: std::collections::HashSet<String> = shadow_extra.iter().map(|q| q.ticker.clone()).collect();
     fetch::enrich_fund_factor(&client, &settings.urls, &mut shadow_extra, &settings.buy_heuristic).await;
     fetch::enrich_income_stmt(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
