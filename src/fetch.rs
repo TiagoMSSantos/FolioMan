@@ -87,7 +87,10 @@ async fn get_text(client: &Client, url: &str) -> Option<String> {
         return None;
     }
     throttle().await;
-    client.get(url).send().await.ok()?.text().await.ok()
+    // (#683) Only a 2xx body is text: a 404 or 429 page used to arrive as data, and justETF's facts pass banked
+    // its blank parse over the last good TER/AUM.
+    // shortcut: a 200 consent or captcha page still parses to nothing; filter that parse if one shows up.
+    client.get(url).send().await.ok()?.error_for_status().ok()?.text().await.ok()
 }
 
 /// [`get_text`] under another User-Agent: Dataroma's Mod_Security (406) and (#536) Benzinga (403)
@@ -98,7 +101,7 @@ async fn get_text_as(client: &Client, url: &str, agent: &str) -> Option<String> 
         return None;
     }
     throttle().await;
-    client.get(url).header(reqwest::header::USER_AGENT, agent).send().await.ok()?.text().await.ok()
+    client.get(url).header(reqwest::header::USER_AGENT, agent).send().await.ok()?.error_for_status().ok()?.text().await.ok()
 }
 
 async fn post_json(client: &Client, url: &str, body: &Value) -> Option<Value> {
@@ -1895,8 +1898,8 @@ static EU_TO_US: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceL
 /// (#448) `since: Some(day)` is the page's live walk. It stops at the first Form 4 filed before `day`,
 /// so it costs the window's filings, not `SEC_FORM4_CAP`. It keeps its own `{ticker}_f4raw` cache, so
 /// the backtest's forever file is never cut short. A walk that ran to its end banks an EMPTY answer too:
-/// the caller evicts it weekly, so "no buys or sales" is a fact for a week, not forever. A walk cut by
-/// the budget or a failed Form 4 GET banks nothing, as before.
+/// the caller evicts it weekly, so "no buys or sales" is a fact for a week, not forever. (#684) A walk cut
+/// by the budget or a failed Form 4 GET banks nothing on either file, even after reading some rows.
 pub async fn fetch_insider_history(
     client: &Client,
     urls: &Urls,
@@ -1954,7 +1957,10 @@ pub async fn fetch_insider_history(
         }
     }
     let answered = !txns.is_empty() || (since.is_some() && !missed);
-    if answered {
+    // (#684) A walk cut by the budget or a failed GET answers this run with what it read but banks nothing:
+    // a partial list read back from disk passes for the whole history (forever on the backtest's file).
+    // shortcut: a Form 4 that always fails keeps its name due, so its walk is paid again every run.
+    if answered && !missed {
         let serial: Vec<(String, bool)> = txns.iter().map(|t| (t.date.format("%Y-%m-%d").to_string(), t.buy)).collect();
         if let Some(dir) = cache.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -6499,7 +6505,9 @@ fn write_fund_facts_cache(cache: &HashMap<String, (String, Option<f64>, Option<f
 /// (TER/AUM) The justETF half of `yahoo_fund_facts_fill`, run when Yahoo's handshake is dead. Resolves
 /// each symbol to its ISIN (justETF is ISIN-keyed; a symbol with no known ISIN is simply skipped) and
 /// records every answer in the shared cache, both-None included, so a fund justETF cannot serve costs
-/// one request rather than one per run.
+/// one request rather than one per run. (#683) An error page is no answer and is not recorded, like
+/// (#479)'s refused profile rows: a 429 no longer stamps a blank row over the last good TER/AUM, and an
+/// ISIN justETF answers 404 for is asked again next run.
 async fn justetf_fund_facts_fill(
     client: &Client,
     urls: &Urls,
@@ -7718,8 +7726,9 @@ pub async fn fetch_regulatory_etf_isins(client: &Client, urls: &Urls) -> Vec<Str
 /// place the `c` flag most needs to reconcile. These are small documents, so paying for them on a
 /// one-name query is cheap; the heavy CoinGecko/ETF/Lisbon legs stay skipped.
 ///
-/// (#372) An EMPTY pond warns like an unreachable one. `get_text` never reads the status, so a 404 or
-/// 429 page, or a reshaped CSV, arrived here as text, parsed to 0 rows and dropped ~500 stocks in silence.
+/// (#372) An EMPTY pond warns like an unreachable one. A 404 or 429 page, or a reshaped CSV, arrived here
+/// as text, parsed to 0 rows and dropped ~500 stocks in silence. (#683) `get_text` now reads a non-2xx as
+/// no answer; the empty-pond warning still covers a reshaped CSV.
 ///
 /// (#459) An entry not starting with `http` is read from DISK, like `membership_csv`: the hand-kept
 /// `tests/adr-pond.csv` (big US-listed ADRs no index CSV carries, e.g. TSMC) rides here.
@@ -8691,15 +8700,18 @@ const EU_MIN_YEARS: f64 = 5.0;
 /// years is what "five years" has to mean.
 const EU_MIN_BARS: usize = 60;
 
-/// One OpenFIGI POST: `jobs` in, one `data` array (or None) out per job, order preserved. `key` =
-/// (#397) the API key, which lifts the job cap to [`FIGI_KEYED_BATCH`].
+/// One OpenFIGI POST: `jobs` in, one `data` array (or None) out per job, order preserved, and nothing
+/// when the request fails or the reply is not an array. `key` = (#397) the API key, which lifts the job
+/// cap to [`FIGI_KEYED_BATCH`].
 async fn figi_batch(client: &Client, url: &str, key: Option<&str>, jobs: Vec<Value>) -> Vec<Option<Value>> {
     let n = jobs.len();
     let headers: Vec<(&str, &str)> = key.map(|k| ("X-OPENFIGI-APIKEY", k)).into_iter().collect();
-    let Some(v) = post_json_with(client, url, &Value::Array(jobs), &headers).await else {
-        return vec![None; n]; // transport error -> every job in this batch simply stays unresolved
+    // (#682) No answer, or one that is not an array, is no verdict on any job: answer for none. Every caller
+    // zips over this, so nothing is banked and the next run asks again.
+    // shortcut: a reshaped API retries every batch every run; count the failures if that ever shows up.
+    let Some(arr) = post_json_with(client, url, &Value::Array(jobs), &headers).await.and_then(|v| v.as_array().cloned()) else {
+        return Vec::new();
     };
-    let arr = v.as_array().cloned().unwrap_or_default();
     (0..n).map(|i| arr.get(i).and_then(|j| j.get("data")).cloned()).collect()
 }
 
@@ -11599,7 +11611,9 @@ pub(crate) mod tests {
     /// (#448) The live walk reads the Form 4s filed on or after `since`, and the first one filed before
     /// it ends the walk: the old filing's sale is never fetched. A finished walk banks its answer under
     /// `_f4raw`, an empty one too, and leaves the backtest's file alone. A failed Form 4 GET banks
-    /// nothing, so a refused request never reads as "no insider trades" for a week.
+    /// nothing, so a refused request never reads as "no insider trades" for a week. (#684) Nor does a
+    /// walk one failed GET cut short: it answers with the rows it read, and a banked part would pass
+    /// for the whole window.
     #[tokio::test]
     async fn insider_live_walk_stops_at_since_and_banks_its_answer() {
         seed_cik_map();
@@ -11624,6 +11638,19 @@ pub(crate) mod tests {
         let refused = fetch_insider_history(&client, &urls, "AAPL", day(1)).await;
         let refused_banked = live.exists();
         let _ = std::fs::remove_file(&live);
+        // (#684) both Form 4s inside the window; old.xml is unrouted, so its GET reads the stub's 404
+        let (base2, client2, _) = routed_stub(vec![
+            ("/320193/000032019326000002/new.xml", "<transactionDate><value>2026-06-29</value></transactionDate><transactionCode>P</transactionCode>"),
+            ("sub/", r#"{"filings": {"recent": {"form": ["4", "4"], "filingDate": ["2026-07-01", "2026-06-30"], "accessionNumber": ["0000320193-26-000002", "0000320193-26-000001"], "primaryDocument": ["new.xml", "old.xml"]}}}"#),
+        ]);
+        let mut urls2 = stub_urls(&base2);
+        urls2.sec_submissions = format!("{base2}sub/CIK{{cik}}.json");
+        urls2.sec_form4 = format!("{base2}{{cik}}/{{acc}}/{{doc}}");
+        let cut = fetch_insider_history(&client2, &urls2, "AAPL", NaiveDate::from_ymd_opt(2026, 6, 1)).await;
+        let cut_banked = live.exists();
+        let _ = std::fs::remove_file(&live);
+        assert_eq!(pairs(cut), Some(vec![("2026-06-29".to_string(), true)]), "(#684) a cut walk still answers this run with what it read");
+        assert!(!cut_banked, "(#684) but banks nothing: the unread old.xml would be missing from the banked history");
         assert_eq!(pairs(read), Some(vec![("2026-06-29".to_string(), true)]), "filed ON `since` is read; the older sale is not");
         assert_eq!(read_banked.as_deref(), Some(r#"[["2026-06-29",true]]"#));
         assert_eq!(pairs(empty), Some(vec![]), "a finished walk with no trades is an answer");
@@ -13761,6 +13788,13 @@ pub(crate) mod tests {
         assert_eq!(get_text(&client, &url).await.as_deref(), Some("ISIN,name\nIE00B4L5Y983,IWDA"));
     }
 
+    /// (#683) A non-2xx page is no body: the stub's 404 for an unrouted path reads as None, not "".
+    #[tokio::test]
+    async fn get_text_reads_a_404_as_no_answer() {
+        let (base, client, _) = routed_stub(vec![]);
+        assert_eq!(get_text(&client, &format!("{base}gone")).await, None);
+    }
+
     /// (PIT) The membership fetch, both legs: parse-and-cache, then serve-from-cache without a request.
     /// The second leg is the one worth a test — this cache has NO TTL, so "does it actually answer from
     /// disk" is the difference between one GET per machine and one GET per backtest run.
@@ -13851,22 +13885,22 @@ pub(crate) mod tests {
             json!({"idType": "TICKER", "idValue": "MSFT", "exchCode": "US"}),
         ];
         let out = figi_batch(&client, &url, None, jobs).await;
-        assert_eq!(out.len(), 3, "one slot per job, always");
+        assert_eq!(out.len(), 3, "an array reply answers one slot per job");
         assert_eq!(out[0].as_ref().expect("GOOGL data")[0]["shareClassFIGI"], "BBG009S39JY5");
         assert!(out[1].is_none(), "a warning row carries no data");
         assert_eq!(out[2].as_ref().expect("MSFT data")[0]["shareClassFIGI"], "BBG001S5N8V8");
     }
 
-    /// (#76) A dead endpoint must still answer one slot per job. Returning a SHORT vec instead would
-    /// misalign the `zip` in the caller and silently drop the tail of the batch.
+    /// (#682) A dead endpoint answers for no job. Every caller zips over the answers, so each banks
+    /// nothing and the next run asks again; (#76)'s one-None-per-job reply read as a "no twin" verdict
+    /// and was banked forever. Answers come all or none, so a short vec never shifts a later job.
     #[tokio::test]
-    async fn figi_batch_answers_none_per_job_when_the_endpoint_is_dead() {
+    async fn figi_batch_answers_no_job_when_the_endpoint_is_dead() {
         pin_throttle();
         // port 1 is privileged and unbound: refused instantly, no timeout to wait out
         let client = Client::builder().no_proxy().build().expect("test client");
         let out = figi_batch(&client, "http://127.0.0.1:1/", None, vec![serde_json::json!({}); 3]).await;
-        assert_eq!(out.len(), 3);
-        assert!(out.iter().all(Option::is_none));
+        assert!(out.is_empty(), "{out:?}");
     }
 
     /// (#76) The EU-listing cache, both branches. ONE test, two phases, because both own the same
@@ -13875,8 +13909,9 @@ pub(crate) mod tests {
     ///
     /// The dead port is the assertion in phase 1, not scaffolding: a fully cached call must consult
     /// OpenFIGI zero times, and the only way to prove "zero" is to make any call fail. Phase 2 then
-    /// pins the negative-caching rule the single-file design rests on — an unresolvable symbol is
-    /// remembered as the empty string rather than left absent, so it is asked about exactly once ever.
+    /// pins the negative-caching rule the single-file design rests on — a symbol OpenFIGI ANSWERS as
+    /// unresolvable is remembered as the empty string rather than left absent, so it is asked about
+    /// exactly once ever — and (#682) its other half: a dead endpoint is no answer, so nothing is banked.
     #[tokio::test]
     async fn resolve_eu_listings_serves_its_cache_and_remembers_misses() {
         pin_throttle();
@@ -13890,8 +13925,20 @@ pub(crate) mod tests {
         assert_eq!(got["GOOGL"], "ABEA.DE");
         assert_eq!(got["BRK-B"], "", "an empty value is a remembered miss, not a cache gap");
 
-        // 2. a new symbol the resolver cannot answer for -> remembered as a miss, previous answers kept
+        // 2a. (#682) a new symbol while OpenFIGI is down -> no verdict, so nothing is banked for it
         let got = resolve_eu_listings(&client, &urls, &["GOOGL".to_string(), "TSLA".to_string()]).await;
+        assert_eq!(got["GOOGL"], "ABEA.DE", "an unrelated lookup must not evict a known twin");
+        assert!(!got.contains_key("TSLA"), "(#682) a dead endpoint is no answer, so TSLA is asked again next run");
+        let on_disk: HashMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
+        assert!(!on_disk.contains_key("TSLA"), "and nothing about TSLA is persisted");
+
+        // 2b. OpenFIGI answers TSLA as unresolvable -> remembered as a miss, previous answers kept. GOOGL's
+        // chart re-check reads the stub's 404, which is no answer, so its swap stays.
+        let (base, client2, _) = routed_stub(vec![("figi", r#"[{"warning": "No identifier found."}]"#)]);
+        let mut urls2 = stub_urls(&base);
+        urls2.openfigi_mapping = format!("{base}figi");
+        let got = resolve_eu_listings(&client2, &urls2, &["GOOGL".to_string(), "TSLA".to_string()]).await;
         assert_eq!(got["GOOGL"], "ABEA.DE", "an unrelated lookup must not evict a known twin");
         assert_eq!(got["TSLA"], "");
         let on_disk: HashMap<String, String> =
