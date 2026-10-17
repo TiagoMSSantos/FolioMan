@@ -8337,20 +8337,25 @@ pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
         };
         months.push(v);
     }
-    let mut deals = Vec::new();
-    for mut d in ipo_deals(&months[..2], &months[2..]) {
-        if let Some(v) = get_json(client, &urls.nasdaq_ipo_experts.replace("{id}", &d.id)).await {
-            ipo_experts(&v, &mut d);
-        }
-        if ipo_admit(&mut d) {
-            deals.push(d);
-        }
-    }
-    for d in &mut deals {
-        if let Some(v) = get_json(client, &urls.nasdaq_ipo_overview.replace("{id}", &d.id)).await {
-            ipo_overview(&v, d);
-        }
-    }
+    // (#692) A deal's reads are its own, so four deals are read at a time, in calendar order, like
+    // (#688)'s earnings: run 39059819443 spent 185s on this lane, one read after another.
+    let mut deals: Vec<IpoDeal> = stream::iter(ipo_deals(&months[..2], &months[2..]))
+        .map(|mut d| async move {
+            if let Some(v) = get_json(client, &urls.nasdaq_ipo_experts.replace("{id}", &d.id)).await {
+                ipo_experts(&v, &mut d);
+            }
+            if !ipo_admit(&mut d) {
+                return None;
+            }
+            if let Some(v) = get_json(client, &urls.nasdaq_ipo_overview.replace("{id}", &d.id)).await {
+                ipo_overview(&v, &mut d);
+            }
+            Some(d)
+        })
+        .buffered(4)
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
     let ua = &urls.sec_user_agent;
     if !urls.ipo_watch.is_empty() {
         let Ok(csv) = std::fs::read_to_string(&urls.ipo_watch) else {
@@ -8367,27 +8372,31 @@ pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
             ipo_watch_merge(&mut deals, w, cik);
         }
     }
-    let mut kept = Vec::new();
-    for mut d in deals {
-        if !d.cik.is_empty() {
-            let cik = format!("{:0>10}", d.cik);
-            if let Some(sub) = sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), ua).await {
-                if s1_priced(&sub) {
-                    continue;
-                }
-                d.industry = sub["sicDescription"].as_str().unwrap_or("").to_string();
-                if let Some((form, day, acc, doc)) = s1_doc(&sub) {
-                    let url = urls.sec_form4.replace("{cik}", cik.trim_start_matches('0')).replace("{acc}", &acc.replace('-', "")).replace("{doc}", &doc);
-                    d.figs = s1_figures_cached(client, &url, &acc, ua).await.unwrap_or_default();
-                    if d.status == "confidential" {
-                        (d.status, d.day) = ("filed", day.clone());
+    let kept: Vec<IpoDeal> = stream::iter(deals)
+        .map(|mut d| async move {
+            if !d.cik.is_empty() {
+                let cik = format!("{:0>10}", d.cik);
+                if let Some(sub) = sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), ua).await {
+                    if s1_priced(&sub) {
+                        return None;
                     }
-                    d.filing = Some((form, day, url));
+                    d.industry = sub["sicDescription"].as_str().unwrap_or("").to_string();
+                    if let Some((form, day, acc, doc)) = s1_doc(&sub) {
+                        let url = urls.sec_form4.replace("{cik}", cik.trim_start_matches('0')).replace("{acc}", &acc.replace('-', "")).replace("{doc}", &doc);
+                        d.figs = s1_figures_cached(client, &url, &acc, ua).await.unwrap_or_default();
+                        if d.status == "confidential" {
+                            (d.status, d.day) = ("filed", day.clone());
+                        }
+                        d.filing = Some((form, day, url));
+                    }
                 }
             }
-        }
-        kept.push(d);
-    }
+            Some(d)
+        })
+        .buffered(4)
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
     ipo_web_rows(kept)
 }
 

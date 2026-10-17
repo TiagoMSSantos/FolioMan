@@ -1670,7 +1670,7 @@ pub async fn run(args: Vec<String>) {
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
     // (#687) The IPO lane reads no quote, so it runs under the universe and quote fetches instead of after
-    // them. It is awaited where it used to run, before the page needs its rows.
+    // them. (#692) It is awaited after the per-name lanes, which run while it ends.
     let ipo = tokio::spawn({
         let (client, urls) = (client.clone(), settings.urls.clone());
         async move {
@@ -1924,8 +1924,6 @@ pub async fn run(args: Vec<String>) {
     // superinvestor half also scores, through `growth_superinvestor_boost`, (#473) the rest through
     // `growth_social_boost`
     let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
-    // (#515) display only: this month's $1B+ US IPOs not priced yet, under the Young table
-    let (upcoming, ipo_took) = ipo.await.expect("the IPO lane panicked");
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
@@ -1974,6 +1972,10 @@ pub async fn run(args: Vec<String>) {
     let insider = lanes.elapsed();
     // (#449) display only: the EARN cell
     fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
+    let earnings = lanes.elapsed();
+    // (#515) display only: this month's $1B+ US IPOs not priced yet, under the Young table. (#692) Run
+    // 39059819443 waited ~20s for it before the lanes above, which then took 19s more.
+    let (upcoming, ipo_took) = ipo.await.expect("the IPO lane panicked");
     // (#687) These lanes print nothing on a good run, so the publish log showed their time as one silent
     // stretch (198s on run 39049240255). One line splits it.
     eprintln!(
@@ -1981,7 +1983,7 @@ pub async fn run(args: Vec<String>) {
         income.as_secs_f64(),
         (profile - income).as_secs_f64(),
         (insider - profile).as_secs_f64(),
-        (lanes.elapsed() - insider).as_secs_f64(),
+        (earnings - insider).as_secs_f64(),
         ipo_took.as_secs_f64()
     );
     eprintln!("{}", crate::picks::young_line(&quotes, 5)); // (#500) the page's Young table in one line
