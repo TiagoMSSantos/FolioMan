@@ -131,8 +131,10 @@
 //!   Fixturing the daily path means adding a cache to the fetch layer for tests alone, which is a
 //!   worse trade than the gap. `backtest 8` sits ON the boundary and pins the `MAX monthly` label, so
 //!   a change to the `years >= 8` threshold still reds.
-//! - these six pins cover the modes that run OFFLINE. `fund` and `insider` need live APIs and
-//!   `universe` needs a live index fetch, so none of the three is pinned.
+//! - `insider` needs live APIs and `universe` a live index fetch, so neither is pinned. (#672) `fund`
+//!   is, on frozen SEC rows ((#364), `backtest_fund_report_is_pinned` and its invariants below), but
+//!   the mutants gate skips those goldens ((#590), ci.yml's `--skip backtest_fund_report --skip
+//!   backtest_8y_fund_samples`), so code only the fund lane runs is ungraded there.
 //!
 //! Re-blessing after an INTENDED change:
 //!     FOLIOMAN_BLESS=1 cargo test --release --test backtest_fixture -- --nocapture

@@ -28,8 +28,9 @@ pub type FxCache = Arc<Mutex<HashMap<String, Option<f64>>>>;
 pub fn client() -> Client {
     Client::builder()
         .user_agent("Mozilla/5.0")
-        // 8s, not 3s: the 10y daily payload (~3652 pts) is ~25× the old monthly `max` body, and
-        // under the screen fan-out a tight 3s budget timed out big coins (BTC) into err stubs.
+        // 15s, not 3s: the 10y daily payload (~3652 pts) is ~25× the old monthly `max` body, and
+        // under the screen fan-out a tight 3s budget timed out big coins (BTC) into err stubs. The 8s
+        // that fixed it became 15s with the monthly full-history back-fill of the 20Y leg (c0d2094).
         .timeout(StdDuration::from_secs(15))
         .connect_timeout(StdDuration::from_secs(3))
         .gzip(true)
@@ -41,9 +42,9 @@ pub fn fx_cache() -> FxCache {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-/// Client for broker order APIs: longer timeout (orders aren't snappy quotes) and a cookie
-/// store (Trade Republic's login hands back a session cookie). Separate from `client()` so
-/// the read-only quote path stays on its tighter 8s budget.
+/// Client for the broker APIs (`trade`, `accounts`): `client()`'s 15s/3s timeouts plus a cookie
+/// store (Trade Republic's login hands back a session cookie). Separate from `client()` for the
+/// cookie store, so the read-only quote path never carries a broker session.
 pub fn client_long() -> Client {
     Client::builder()
         .user_agent("Mozilla/5.0")

@@ -877,9 +877,9 @@ fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &cor
 /// exactly today's 12/36/6, and a genuine daily one measures 252.0 and resolves to 252/756/126
 /// against today's 252/750/126.
 ///
-/// Pure, and deliberately so: `run` is a 900-line `-> ()` with no `#[mutants::skip]`, so logic left
-/// inline there is graded only through a golden — and a knob shipping OFF moves no golden, which
-/// would leave every mutant in this arm alive. Here the `--lib` tests below reach it directly.
+/// Pure, and deliberately so: `run` is a 900-line `-> ()` under `#[mutants::skip]` (#119; this said
+/// otherwise until (#672)), so logic left inline there is graded by no mutant, only through a golden
+/// — and a knob shipping OFF moves no golden. Here the `--lib` tests below reach it directly.
 fn walk_params(
     dates: &[chrono::NaiveDate],
     calendar: bool,
@@ -2679,10 +2679,11 @@ const FUND_FACTORS: [&str; 53] = [
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
-/// (#119) UNGRADEABLE BY THE MUTATION GATE — the fund lane needs a live `FMP_API_KEY`, and every
-/// golden runs offline by design (tests/backtest_fixture.rs:134), so no test in `--lib --test
-/// backtest_fixture` executes one line of this. `replace sweep_fund_factor with ()` is unkillable
-/// there, and skipping says so instead of arming the gate against the next edit.
+/// (#119) UNGRADEABLE BY THE MUTATION GATE — only the fund goldens run the fund lane (frozen SEC rows
+/// since (#364)), and the gate skips them ((#590), ci.yml's `--skip backtest_fund_report --skip
+/// backtest_8y_fund_samples`; (#672) this used to say the lane needs a live key), so no test the gate
+/// runs executes one line of this. `replace sweep_fund_factor with ()` is unkillable there, and
+/// skipping says so instead of arming the gate against the next edit.
 ///
 /// The arithmetic that WAS gradeable moved out rather than being skipped with it: `sidak_tail` and
 /// `bootstrap_block` are pure and tested. What stays here is the printing.
@@ -5176,10 +5177,9 @@ fn report_roll(
 ///
 /// Skipped because `replace report_book_by_factor with ()` is unkillable, not merely unkilled. It
 /// returns `()` and its entire effect is `println!`, so a test that called it could assert nothing a
-/// stub would fail; and the only mode that gets past the `s.fund` check is `fund`, which needs a live
-/// API and is therefore unpinned by design (`tests/backtest_fixture.rs`: the six goldens cover the
-/// modes that run OFFLINE). Measured in (#75)'s audit, where a comment correction inside this body was
-/// enough to drag it into `--in-diff` scope and red the gate on its own.
+/// stub would fail; and the only mode that gets past the `s.fund` check is `fund`, whose goldens the
+/// gate skips ((#672): see `sweep_fund_factor`). Measured in (#75)'s audit, where a comment correction
+/// inside this body was enough to drag it into `--in-diff` scope and red the gate on its own.
 #[mutants::skip]
 fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;

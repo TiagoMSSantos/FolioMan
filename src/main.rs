@@ -1,4 +1,4 @@
-//! folioman — review ETF/stock/crypto holdings. Read-only, never trades.
+//! folioman — review ETF/stock/crypto holdings. Read-only except `trade` (live orders, typed-`yes` gated).
 //!
 //!   folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon (1Y+ % real terms when inflation_adjust on; past prices nominal)
@@ -11,7 +11,7 @@
 //!   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
 //!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
-//!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money, confirmed)
+//!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; type `yes` to send)
 //!
 //! No TICKERS -> uses config/settings.yaml watchlist. Edit that file for defaults.
 //!
@@ -23,7 +23,7 @@
 use folioman::{commands, config};
 
 const USAGE: &str = "\
-folioman — review ETF/stock/crypto holdings. Read-only, never trades.
+folioman — review ETF/stock/crypto holdings. Read-only except `trade` (live orders, typed-`yes` gated).
 
   folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon (1Y+ % real terms when inflation_adjust on; past prices nominal)
@@ -37,7 +37,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
   folioman accounts              cash available + holdings per broker (read-only; env creds)
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; brokers:
-                                 trading212 | binance | tr — creds from env, confirmed y/N)
+                                 trading212 | binance | tr — creds from env; type `yes` to send)
 
 No TICKERS -> uses config/settings.yaml watchlist.";
 
