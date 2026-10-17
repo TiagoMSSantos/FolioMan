@@ -4282,10 +4282,11 @@ fn placebo_bars(
 }
 
 /// (#329) Nearest-rank p95 of a band, sorted in place. Split out by (#330) so both baskets read the
-/// same percentile from one definition instead of two copies that could drift apart.
+/// same percentile from one definition instead of two copies that could drift apart. (#651) Ranks over
+/// the band's own length; it read PLACEBO_DRAWS, which only every caller's band happened to match.
 fn percentile95(band: &mut [f64]) -> Option<f64> {
     band.sort_by(f64::total_cmp);
-    band.get(((PLACEBO_DRAWS as f64 * 0.95).ceil() as usize).max(1) - 1).copied()
+    band.get(((band.len() as f64 * 0.95).ceil() as usize).max(1) - 1).copied()
 }
 
 /// (#324) The pre-registered no-worse bar for one notch's union book against the cleared book at ONE horizon: excess
@@ -4546,6 +4547,7 @@ fn month_series(dates: &[chrono::NaiveDate], closes: &[f64]) -> (Vec<i32>, Vec<f
 ///
 /// `series` is (ticker, month keys, month returns) per name. Deterministic: best correlation, then the
 /// donor with the longest record, then ticker ascending — the same total order live discovery uses.
+/// (#650) Was a tuple compare that gave a full tie to the ticker sorting LAST.
 fn discover_backtest_proxies(series: &[(&str, i32, Vec<i32>, Vec<f64>)]) -> BTreeMap<String, String> {
     let gap = (picks::PROXY_MIN_AGE_GAP_YEARS * 12.0) as i32;
     // returns over the young listing's verify window, plus the last month key in it
@@ -4562,7 +4564,9 @@ fn discover_backtest_proxies(series: &[(&str, i32, Vec<i32>, Vec<f64>)]) -> BTre
             for d in series.iter().filter(|d| d.0 != young.0 && d.1 <= young.1 - gap) {
                 let (lo, hi) = (d.2.partition_point(|k| *k < young.1), d.2.partition_point(|k| *k <= end));
                 let Some(rho) = core::proxy_corr(&own, &d.3[lo..hi]) else { continue };
-                if best.is_none_or(|(r, f, t)| (rho, -d.1, d.0) > (r, -f, t)) {
+                if best.is_none_or(|(r, f, t)| {
+                    rho.total_cmp(&r).then(f.cmp(&d.1)).then(t.cmp(d.0)).is_gt()
+                }) {
                     best = Some((rho, d.1, d.0));
                 }
             }
@@ -11288,11 +11292,11 @@ mod tests {
     }
 
     /// (#340) What the census found unpinned in the discovery pass. Among LEGAL donors the higher rho
-    /// wins, a perfect tie goes to the longer record, and neither depends on the order the pool lists
-    /// them in. The age gap is exactly two years: a perfect twin 18 months older is refused. Only the
-    /// verify window is judged, so a listing that drifts after it keeps its pair. And overlap must be
-    /// real months inside that window: a donor delisted 20 months in has no 24 to lend, whatever it
-    /// traded before the young listing existed.
+    /// wins, a perfect tie goes to the longer record, (#650) a tie on both to the ticker that sorts first,
+    /// and none of it depends on the order the pool lists them in. The age gap is exactly two years: a
+    /// perfect twin 18 months older is refused. Only the verify window is judged, so a listing that
+    /// drifts after it keeps its pair. And overlap must be real months inside that window: a donor
+    /// delisted 20 months in has no 24 to lend, whatever it traded before the young listing existed.
     #[test]
     fn discover_backtest_proxies_ranks_donors_and_judges_only_the_window() {
         let pat = |k: usize| if k.is_multiple_of(3) { 4.0 } else { -1.0 };
@@ -11308,9 +11312,11 @@ mod tests {
         let oldest = entry("OLDEST", 2005, 1, 228, &pat);
         // the same record under a 2010 listing claim: an exact rho tie, so only age can break it
         let twin = ("TWIN", 2010 * 12 + 1, oldest.2.clone(), oldest.3.clone());
+        // (#650) the same record AND the same listing month: a full tie, so only the ticker can break it
+        let zed = ("ZED", oldest.1, oldest.2.clone(), oldest.3.clone());
         // NOISY (2016-01) clears every leg on a lower rho, and most of its record postdates YOUNG's listing.
         let noisy = entry("NOISY", 2016, 1, 96, &|k| pat(k) + if k.is_multiple_of(7) { 0.3 } else { 0.0 });
-        for donors in [[noisy.clone(), oldest.clone(), twin.clone()], [twin.clone(), oldest.clone(), noisy.clone()]] {
+        for donors in [[noisy.clone(), oldest.clone(), twin.clone(), zed.clone()], [zed, twin, oldest, noisy]] {
             let mut pool = vec![
                 entry("YOUNG", 2019, 1, 60, &pat),
                 entry("Y2", 2019, 1, 60, &alt),
@@ -11529,6 +11535,19 @@ mod tests {
         // made on the PRINTED goldens at one decimal, not on the bits.
         assert!((below.0 - all).abs() < 1e-9, "rank moves the basket reading, not the uncapped one: {} vs {all}", below.0);
         assert_ne!(below.1.to_bits(), top.to_bits(), "...while the basket reading is entirely rank's doing");
+    }
+
+    /// (#651) Nearest rank over the band it is handed, unsorted on the way in: 200 draws read the 190th
+    /// smallest, 20 the 19th (under PLACEBO_DRAWS' rank that was past the end, so None), one draw
+    /// itself, and an empty band nothing.
+    #[test]
+    fn percentile95_ranks_over_the_band_it_is_given() {
+        let mut full: Vec<f64> = (1..=PLACEBO_DRAWS).rev().map(|v| v as f64).collect();
+        assert_eq!(percentile95(&mut full), Some(190.0));
+        let mut short: Vec<f64> = (1..=20).rev().map(f64::from).collect();
+        assert_eq!(percentile95(&mut short), Some(19.0));
+        assert_eq!(percentile95(&mut [7.0]), Some(7.0));
+        assert_eq!(percentile95(&mut []), None);
     }
 
     /// (#330) THE CENTRAL CLAIM OF THE ROUND. A cohort that never outranks an incumbent changes nothing
