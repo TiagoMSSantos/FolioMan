@@ -2363,19 +2363,20 @@ pub async fn run(args: Vec<String>) {
         } else {
             Vec::new()
         },
-        // (#286) and the book those rows BECOME. `rows` is the ranked list; `size --picks` reads
-        // exactly that list back off `.screen_state.json` and funds something else out of it —
-        // gate failures dropped, one listing per issuer, weighted by score / volatility inside a
-        // class budget, then capped. Nothing recorded that, and nothing could recover it later:
-        // the weights depend on each name's volatility as of this run.
+        // (#286) and the book those rows BECOME. `rows` is the ranked list; BUY NOW funds something
+        // else out of it — gate failures dropped, one listing per issuer, weighted by score /
+        // volatility inside a class budget, then capped. Nothing recorded that, and nothing could
+        // recover it later: the weights depend on each name's volatility as of this run.
         //
-        // `size::sized_book` is called rather than reproduced. It is the ONE spelling of that
+        // `picks::buy_book` is called rather than reproduced. It is the ONE spelling of that
         // pipeline (non-negotiable #4) and it is pure — no fetch, no price, no state read — so this
         // costs a scoring pass over a dozen quotes and writes one field. `nupl` is the same value
         // `render` was handed above, so the crypto rows adjust exactly as the printed table does.
+        // (#668) `size --picks` funds another book: `sized_book` alone, on fresh quotes of
+        // `.screen_state.json`'s ranked list, without the (#584) momentum slots spliced in here.
         //
-        // Weights only; the price is already in `rows` for every one of these tickers, and
-        // `track::sized_rows` does the join.
+        // Weights only; the price is already in `rows` for every one of these tickers (`journal_rows`
+        // carries the momentum names), and `track::sized_rows` does the join.
         sized: sized_now.clone(),
         // (#324) and what each one-notch loosening would have added, with that day's close, so `track`
         // grades exactly the set a reopen would buy

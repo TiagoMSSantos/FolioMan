@@ -7751,9 +7751,9 @@ pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
 /// top-10 EQUAL-WEIGHT, which is not the book anyone is told to buy: gate failures are dropped, one
 /// row survives per issuer, and what is left is weighted by score / volatility inside a class budget
 /// and then capped. Journalling that needs ONE spelling of it (non-negotiable #4), not a copy in
-/// `screen` drifting against the original here. `size --picks` sizes the ranked list off
-/// `.screen_state.json`, so a screen run calling this on its own `ranked_now` quotes computes the
-/// same rows the user sees minutes later.
+/// `screen` drifting against the original here. `screen` reaches it through [`buy_book`], which (#584)
+/// splices the momentum order in after it. `size --picks` calls it alone, on fresh quotes of
+/// `.screen_state.json`'s ranked list, so the two books part wherever a momentum slot places a name (#668).
 ///
 /// `nupl` comes IN and `cfactor`/`btc_1y` are derived HERE, rather than each caller deriving them:
 /// two callers re-deriving a scoring input is exactly how the `cagr` column drifted off the score it
