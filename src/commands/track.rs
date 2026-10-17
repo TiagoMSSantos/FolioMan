@@ -1179,13 +1179,22 @@ pub(crate) fn exits(prev: Option<&Snapshot>, book_now: &[String], look: &dyn Fn(
 /// is out: every line carries `spx`. Sorted, one row per ticker; no `prev`, nothing to carry.
 pub(crate) fn carry(prev: Option<&Snapshot>, today: &Snapshot, look: &dyn Fn(&str) -> Option<f64>) -> Vec<(String, Option<f64>)> {
     let priced = |t: &str| today.rows.iter().any(|(x, _)| x == t) || today.exit.iter().any(|(x, ..)| x == t);
-    fetch_set(prev.map(std::slice::from_ref).unwrap_or_default())
+    unpriced_graded(prev, &priced)
         .into_iter()
-        .filter(|t| t != "^GSPC" && !priced(t))
         .map(|t| {
             let px = look(&t);
             (t, px)
         })
+        .collect()
+}
+
+/// (#663) Every ticker `prev`'s line grades ([`fetch_set`]) that `have` does not hold, the benchmark
+/// out, sorted: the names [`carry`] prices, and the ones `screen` fetches on a list of their own once
+/// the universe has dropped them. No `prev`, none.
+pub(crate) fn unpriced_graded(prev: Option<&Snapshot>, have: &dyn Fn(&str) -> bool) -> Vec<String> {
+    fetch_set(prev.map(std::slice::from_ref).unwrap_or_default())
+        .into_iter()
+        .filter(|t| t != "^GSPC" && !have(t))
         .collect()
 }
 

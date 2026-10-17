@@ -2000,14 +2000,19 @@ pub async fn run(args: Vec<String>) {
         ),
     };
     let unpriced: Vec<String> = shown.iter().chain(sigis.iter().map(|s| &s.0)).filter(|t| !covered.contains(*t)).cloned().collect();
-    let mut shadow_extra: Vec<Quote> = fetch::quotes(
-        &client, &settings.urls, &fx_cache, &unpriced, settings.dip_days, settings.high_days, false, false,
+    // (#335) last month's graded line, read BEFORE today's append: `exit` and (#337) `carry` diff against it
+    let prior = crate::commands::track::journal_prior(&run_date);
+    // (#663) the names it grades that the universe has dropped since ride this fetch, so `exit` and `carry`
+    // journal a close for them. Split off before the enrichment below: no table, stamp or SOC row sees them
+    let dropped = dropped_graded(prior.as_ref(), explicit_args, &[&quotes, &stale], &unpriced);
+    let (dropped_px, mut shadow_extra): (Vec<Quote>, Vec<Quote>) = fetch::quotes(
+        &client, &settings.urls, &fx_cache, &[unpriced, dropped.clone()].concat(), settings.dip_days, settings.high_days, false, false,
         &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
     )
     .await
     .into_iter()
     .filter(|q| q.price != "err" && q.price != "no data")
-    .collect();
+    .partition(|q| dropped.contains(&q.ticker));
     let extra_set: std::collections::HashSet<String> = shadow_extra.iter().map(|q| q.ticker.clone()).collect();
     fetch::enrich_fund_factor(&client, &settings.urls, &mut shadow_extra, &settings.buy_heuristic).await;
     fetch::enrich_income_stmt(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
@@ -2318,8 +2323,6 @@ pub async fn run(args: Vec<String>) {
     }
     // (#324) built here, not at the print below, so the journal records the rows the block prints
     let notches = notch_cohorts(&quotes, &settings.tickers, &settings.buy_heuristic);
-    // (#335) last month's graded line, read BEFORE today's append: `exit` and (#337) `carry` diff against it
-    let prior = crate::commands::track::journal_prior(&run_date);
     // (#584) the blended book's momentum names join the journalled rows in the book's interleaved order, so
     // `track` prices and grades the book that was bought; `shipped` keeps the shipped-only order beside it
     let blend = settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book;
@@ -2330,6 +2333,8 @@ pub async fn run(args: Vec<String>) {
         ranked_now.clone()
     };
     let px = |t: &String| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur));
+    // (#663) `exit` and `carry` read one close, off every list this run priced
+    let close = |t: &str| close_eur(&[&quotes, &shadow_extra, &dropped_px], t);
     let mut line = crate::commands::track::Snapshot {
         date: run_date.clone(),
         spx: spx.first().and_then(|q| q.price_eur),
@@ -2412,9 +2417,7 @@ pub async fn run(args: Vec<String>) {
         exit: {
             let admitted = picks::live_rank_scores(&quotes, &settings.buy_heuristic);
             let book: Vec<String> = sized_now.iter().map(|(t, _)| t.clone()).collect();
-            crate::commands::track::exits(prior.as_ref(), &book, &|t| {
-                (quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur), admitted.contains_key(t))
-            })
+            crate::commands::track::exits(prior.as_ref(), &book, &|t| (close(t), admitted.contains_key(t)))
         },
         carry: Vec::new(),
         // (#500) the Young table's names, with today's close
@@ -2436,10 +2439,8 @@ pub async fn run(args: Vec<String>) {
     // (#337) and today's close for every name last month's line grades that this line does not price,
     // so each cohort can be graded month to month the way (#336) chains the book
     line.fac = crate::commands::track::fac_journal(&line.peg, &quotes); // (#415)
-    line.carry = crate::commands::track::carry(prior.as_ref(), &line, &|t| {
-        // (#538) a SOC book name may be one only the side fetch priced
-        quotes.iter().chain(&shadow_extra).find(|q| q.ticker == t).and_then(|q| q.price_eur)
-    });
+    // (#538) a SOC book name may be one only the side fetch priced, (#663) a dropped one only its own list
+    line.carry = crate::commands::track::carry(prior.as_ref(), &line, &close);
     crate::commands::track::append_snapshot(&line);
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -3529,6 +3530,22 @@ pub async fn run(args: Vec<String>) {
     if let Some(nag) = net_nag(stamp.as_deref(), now_secs).filter(|_| std::env::var_os("GITHUB_ACTIONS").is_none()) {
         eprintln!("{nag}");
     }
+}
+
+/// (#663) The names last month's line grades (`prior`, via `track::unpriced_graded`) that this run holds
+/// on no list: not `fetched` (`quotes`, and the stale listings cut from it, which stay unpriced as before),
+/// not `queued` for the side fetch. The universe dropped them since, so `exit` and `carry` journalled each
+/// with no close and every chained link graded it unpriced: 6 exit and 17 carry ETFs on each October line.
+/// A named run (`screen NVDA`) fetches none: its `quotes` hold only the named tickers, so the whole line
+/// would read dropped.
+fn dropped_graded(prior: Option<&crate::commands::track::Snapshot>, named: bool, fetched: &[&[Quote]], queued: &[String]) -> Vec<String> {
+    let held = |t: &str| fetched.iter().flat_map(|l| l.iter()).any(|q| q.ticker == t) || queued.iter().any(|u| u == t);
+    crate::commands::track::unpriced_graded(prior.filter(|_| !named), &held)
+}
+
+/// (#663) Today's close in EUR for `t`, off the first list that holds it.
+fn close_eur(lists: &[&[Quote]], t: &str) -> Option<f64> {
+    lists.iter().flat_map(|l| l.iter()).find(|q| q.ticker == t).and_then(|q| q.price_eur)
 }
 
 /// (tests round 4) Stale drift-net nag. The live network probes are the only thing that catches a
@@ -5228,6 +5245,32 @@ mod tests {
             "one read, one restatement; found {restatements} calls to adjust_for_splits. Two would \
              still be correct (it is idempotent), but they mean two journals again."
         );
+    }
+
+    /// (#663) The side fetch is what last month's line grades and no list holds: a name on any fetched
+    /// list or queued for the shadow list is out, and so is the benchmark; a named run or no line fetches
+    /// none.
+    #[test]
+    fn dropped_graded_fetches_what_no_list_holds() {
+        use crate::commands::track::Snapshot;
+        let rows = ["HELD", "STALE", "QUEUED", "GONE"].map(|t| (t.to_string(), Some(1.0))).to_vec();
+        let prior = Snapshot { date: "2026-09-21".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), rows };
+        let fetched: [&[Quote]; 2] = [&[Quote::stub("HELD", "€1", "", "Held")], &[Quote::stub("STALE", "€1", "", "Stale")]];
+        let queued = ["QUEUED".to_string()];
+        assert_eq!(dropped_graded(Some(&prior), false, &fetched, &queued), ["GONE"]);
+        assert!(dropped_graded(Some(&prior), true, &fetched, &queued).is_empty(), "a named run holds only its names");
+        assert!(dropped_graded(None, false, &fetched, &queued).is_empty());
+    }
+
+    /// (#663) `exit` and `carry` read one close: the first list holding the ticker prices it, so a name
+    /// only the dropped list holds still reads its close.
+    #[test]
+    fn close_eur_reads_the_first_list_that_holds_the_ticker() {
+        let q = |t: &str, px: f64| Quote { price_eur: Some(px), ..Quote::stub(t, "€1", "", t) };
+        let (quotes, dropped) = ([q("A", 2.5)], [q("B", 4.0)]);
+        assert_eq!(close_eur(&[&quotes, &dropped], "A"), Some(2.5));
+        assert_eq!(close_eur(&[&quotes, &dropped], "B"), Some(4.0));
+        assert_eq!(close_eur(&[&quotes, &dropped], "Z"), None);
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
