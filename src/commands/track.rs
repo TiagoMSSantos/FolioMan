@@ -163,11 +163,16 @@ pub struct Snapshot {
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
 /// A write failure only costs one day of track record: warn, never fail the screen run.
+///
+/// (#662) Or with a LATER date: a clock behind the journal's last line would otherwise write an older
+/// line after a newer one, and every reader keys months off file order. ISO dates order as strings,
+/// the way the record job's newer-line guard compares them; `None` (no file, or an unparseable last
+/// line) orders below every date, so it still appends.
 pub fn append_snapshot(snap: &Snapshot) {
     let last_date = std::fs::read_to_string(crate::config::data_path(SNAPSHOT_FILE)).ok().and_then(|s| {
         s.lines().last().and_then(|l| serde_json::from_str::<Snapshot>(l).ok()).map(|s| s.date)
     });
-    if last_date.as_deref() == Some(snap.date.as_str()) {
+    if last_date.as_deref() >= Some(snap.date.as_str()) {
         return;
     }
     let appended = serde_json::to_string(snap).map(|json| {
@@ -233,6 +238,8 @@ pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&s
         let lanes = lanes.chain(snap.young.iter_mut().map(|(t, p)| (&*t, p)));
         // (#538) and both SOC books
         let lanes = lanes.chain(snap.soc_new.iter_mut().chain(snap.soc_old.iter_mut()).map(|(t, p)| (&*t, p)));
+        // (#660) and the (#584) shipped-only order, whose own closes price the blend shadow's shipped leg
+        let lanes = lanes.chain(snap.shipped.iter_mut().map(|(t, p)| (&*t, p)));
         for (ticker, px) in lanes.chain(snap.near.iter_mut().map(|(t, p, _)| (&*t, p))) {
             let factor = factor_since(ticker, then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
@@ -1578,6 +1585,8 @@ fn effective_trials(oldest_days: i64, newest_days: i64) -> f64 {
 ///
 /// Folds over `grade`, the same fn `verdict_stats` folds, so the set behind this note and the set
 /// behind the number it qualifies are the same set by construction rather than by a duplicated filter.
+/// (#661) Over the same BOOK too: it graded the equal-weight top-[`BOOK`] slice after (#322) moved the
+/// verdict to [`book_rows`], so a line whose sized book went unpriced was out of N and in this count.
 pub(crate) fn trials_note(
     snaps: &[Snapshot],
     today: chrono::NaiveDate,
@@ -1586,7 +1595,7 @@ pub(crate) fn trials_note(
 ) -> String {
     let ages: Vec<i64> = snaps
         .iter()
-        .filter_map(|s| grade(s, &equal(&s.rows), BOOK, today, px_now, spx_now))
+        .filter_map(|s| grade(s, &book_rows(s), usize::MAX, today, px_now, spx_now))
         .filter(|g| g.spy_pct.is_some())
         .map(|g| g.days)
         .collect();
@@ -2468,6 +2477,14 @@ mod tests {
         assert_eq!(adjust_for_splits(&mut young, &factor), 1, "{:?}", young[0].young);
         assert_eq!(young[0].young, vec![("AAA".into(), Some(10.0)), ("BBB".into(), Some(50.0))]);
 
+        // (#660) and the shipped-only order, which the blend shadow prices its shipped leg off
+        let mut shp = vec![snap("2024-06-01", Some(5000.0), &[])];
+        shp[0].shipped = vec![("AAA".into(), Some(100.0)), ("BBB".into(), Some(50.0))];
+        let restated = adjust_for_splits(&mut shp, &factor);
+        assert_eq!(restated, 1, "{:?}", shp[0].shipped);
+        assert_eq!(shp[0].shipped[0].1, Some(10.0));
+        assert_eq!(shp[0].shipped[1].1, Some(50.0));
+
         // (#323) and the near-miss tail, which `near_section` grades the same way
         let mut neared = vec![with_near(
             snap("2024-06-01", Some(5000.0), &[]),
@@ -3136,6 +3153,7 @@ mod tests {
             writeln!(f, "not json\n\n{{\"half\":").unwrap();
         }
         append_snapshot(&snap("2026-01-05", None, &[("C", Some(1.0))])); // an unparseable last line is no date
+        append_snapshot(&snap("2026-01-04", None, &[("D", Some(1.0))])); // (#662) a clock behind the journal: skipped
         let (snaps, corrupt) = read_snapshots();
         let _ = std::fs::remove_file(&path);
         let got: Vec<_> = snaps.iter().map(|s| (s.date.as_str(), s.rows[0].0.as_str())).collect();
@@ -3182,6 +3200,21 @@ mod tests {
         assert_eq!(trials_note(&[], today, &px, Some(105.0)), "");
         let unpriced = vec![snap("2026-06-16", Some(100.0), &[("MISSING", Some(100.0))])];
         assert_eq!(trials_note(&unpriced, today, &px, Some(105.0)), "");
+    }
+
+    /// (#661) ...and over the same BOOK: a line whose sized book is unpriced today is out of
+    /// `verdict_stats`' N, so it is out of this count, however well its equal-weight top ten priced.
+    #[test]
+    fn trials_note_counts_the_book_verdict_stats_grades() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| (t == "UP").then_some(110.0);
+        let rows = [("UP", Some(100.0)), ("GONE", Some(100.0))];
+        let line = with_sized(snap("2026-06-16", Some(100.0), &rows), &[("GONE", 1.0)]);
+        let gone = [line];
+        let (_, n, _) = verdict_stats(&gone, today, &px, Some(105.0));
+        assert_eq!(n, 0, "the bought name has no price today");
+        let note = trials_note(&gone, today, &px, Some(105.0));
+        assert_eq!(note, "", "the top-ten slice is not the book");
     }
 
     /// Snapshot JSONL round-trips (the journal format `screen` writes and `track` reads back),
