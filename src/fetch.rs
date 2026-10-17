@@ -1399,8 +1399,8 @@ fn parse_fund_row(v: &Value) -> Option<core::FundRow> {
         (Some(n), Some(r)) => Some(n / r * 100.0),
         _ => None,
     };
-    // period-end `date` is DISPLAY-ONLY (report's fiscal-year grouping); fall back to `filed` if FMP
-    // ever omits it. The as-of join keys on `filed`, so this never affects the backtest.
+    // period-end `date` is the fiscal year `report` groups by and `fund_factors` steps back by (#676); fall
+    // back to `filed` if FMP ever omits it. The as-of join itself still keys on `filed`.
     let period_end = v
         .get("date")
         .and_then(|x| x.as_str())
@@ -5512,8 +5512,11 @@ const SEC_PREDECESSOR_CIK: &[(&str, &str)] = &[
 /// (#613) Folds a predecessor CIK's rows into the mapped CIK's. Only periods ending before the new CIK's
 /// first OWN fiscal year are taken (a row filed within a year of its period end, not a comparative), so
 /// a co-filer's later years (Xerox Corp after FY2018, EIDP as Corteva) never enter. On a shared period
-/// the earliest `filed` wins, a tie keeps the new CIK's row. Sorted by `period_end`, which `fund_as_of`'s
-/// last-wins tie needs. No own row (XOM's holdco today) takes every old row.
+/// the earliest `filed` wins, a tie keeps the new CIK's row. Sorted by `period_end` because the readers
+/// that take `rows.last()` as the newest fiscal year need it (`fetch_fundamentals_sec`'s EPS fallback,
+/// `fetch_ratios_sec`, `enrich_fund_factor`'s currency, the report's currency). `fund_as_of` breaks a
+/// same-day tie on `period_end` itself (#673) and `fund_factors` finds an older year by `period_end`
+/// (#676), so neither reads the order. No own row (XOM's holdco today) takes every old row.
 fn merge_predecessor_rows(mut rows: Vec<core::FundRow>, old: Vec<core::FundRow>) -> Vec<core::FundRow> {
     let first = rows.iter().filter(|r| (r.filed - r.period_end).num_days() < 365).map(|r| r.period_end).min();
     for o in old.into_iter().filter(|o| first.is_none_or(|f| o.period_end < f)) {

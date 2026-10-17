@@ -1421,7 +1421,7 @@ pub async fn run(args: Vec<String>) {
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                         // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                         // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
-                        // fund_as_of(rows, cutoff - yrs*365)`). Passing the horizon meant `fund 12`
+                        // back(yrs)`, the row `yrs` fiscal years back). Passing the horizon meant `fund 12`
                         // demanded twelve years of filed statements before every cutoff — SEC XBRL
                         // starts ~2007 and a 12y run's cutoffs end 2014-07, so rev_cagr / rev_accel /
                         // eps_growth were None on EVERY sample and printed "n/a (only 0 cutoffs)".

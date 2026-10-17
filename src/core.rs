@@ -3865,7 +3865,7 @@ pub(crate) fn ranks(v: &[f64]) -> Vec<f64> {
 pub struct FundRow {
     pub filed: NaiveDate,
     pub financial: bool,               // (#478) a bank or insurer line filed within 2y of this period: EBIT-type ratios mean nothing here
-    pub period_end: NaiveDate,         // FMP period-end `date` — DISPLAY-ONLY (groups quarters by fiscal year in `report`). The as-of join (`fund_as_of`) keys on `filed` and reads this only to order two rows filed the same day (#673), so it can't leak look-ahead into the backtest
+    pub period_end: NaiveDate,         // fiscal period end (FMP `date`). `report` groups quarters by it and `fund_factors` (#676) steps back a fiscal year by it. The as-of join (`fund_as_of`) still keys on `filed`, reading this only to order two rows filed the same day (#673), and `fund_factors` reads a row only once it is filed by the cutoff, so it can't leak look-ahead into the backtest
     pub revenue: Option<f64>,
     pub gross_margin: Option<f64>,    // % = grossProfit/revenue
     pub op_margin: Option<f64>,       // % = operatingIncome/revenue
@@ -3971,7 +3971,8 @@ pub fn median(mut v: Vec<f64>) -> Option<f64> {
 /// As-of (point-in-time) join: the latest statement that was already FILED on or before `cutoff`.
 /// THE look-ahead guard for the fundamentals backtest — at a given cutoff a strategy could only have
 /// seen filings public by then. `None` if nothing was filed yet. O(n), order-independent (FMP returns
-/// newest-first; don't assume it). Compose it twice (cutoff and cutoff−Ny) to get as-of growth/trend.
+/// newest-first; don't assume it). As-of growth/trend take this row as `now` and find the older ones by
+/// fiscal period (`fund_factors`' `back(k)`, #676); stepping the cutoff back by FILING date drifts a year.
 pub fn fund_as_of(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
     // (#673) `max_by_key` keeps the LAST maximum, so two rows sharing a filing date (a first XBRL 10-K
     // carries the year before) answered by slice order; the newest `period_end` now breaks that tie.
@@ -4412,23 +4413,35 @@ pub fn capital_stock(rows: &[FundRow], cutoff: NaiveDate, delta: f64, flow: impl
     Some(newer.iter().rev().fold(oldest / (0.1 + delta), |k, f| (1.0 - delta) * k + f))
 }
 
-/// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. Every
-/// read goes through `fund_as_of` so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
+/// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. The
+/// as-of row `now` (`fund_as_of`) and every older row (`back(k)`, found by fiscal period, #676) are read
+/// only when filed by `cutoff`, so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
 /// growth needs a positive base to be meaningful, so a non-positive denominator -> None, never a
 /// garbage ratio. note: EPS CAGR only when both endpoints are positive (a sign flip isn't a CAGR).
 pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactors {
     let now = fund_as_of(rows, cutoff);
-    let long_ago = fund_as_of(rows, cutoff - Duration::days(yrs * 365));
-    let yr_ago = fund_as_of(rows, cutoff - Duration::days(365));
+    // (#676) `back(k)`: the statement k fiscal years before `now`, found by PERIOD END. Stepping back by FILING
+    // date (`fund_as_of(cutoff - k*365)`) lands a year off whenever filing dates drift: a late 10-K made `yr_ago`
+    // the same row as `now` (rev_1y read 0), and a drifting calendar made a 6-year span 5 or 7. The window is
+    // 45 days either side of the target; real period ends sit within 10 of it and nothing sits in 10-60. A row
+    // still has to be filed by `cutoff`; the latest filed wins, newest `period_end` on a tie (as `fund_as_of`).
+    let back = |k: i64| {
+        let target = now?.period_end - Duration::days(k * 365);
+        rows.iter()
+            .filter(|r| r.filed <= cutoff && (r.period_end - target).num_days().abs() <= 45)
+            .max_by_key(|r| (r.filed, r.period_end))
+    };
+    let long_ago = back(yrs);
+    let yr_ago = back(1);
     let grow = |a: Option<f64>, b: Option<f64>| match (a, b) {
         (Some(a), Some(b)) if b > 0.0 => Some((a / b - 1.0) * 100.0),
         _ => None,
     };
     let rev_cagr = grow(now.and_then(|r| r.revenue), long_ago.and_then(|r| r.revenue)).map(|c| cagr(c, yrs as f64));
-    // (#522) `fcf_base`/`oe_base`: the three as-of rows a year apart, one per fiscal year, median margin
+    // (#522) `fcf_base`/`oe_base`: the three rows a fiscal year apart, median margin. (#676) The windows
+    // are 91 days wide and 365 apart, so no row can fill two of them and the old `dedup_by_key` is gone.
     let margin_base = |m: fn(&FundRow) -> Option<f64>| {
-        let mut years: Vec<&FundRow> = [0, 365, 730].iter().filter_map(|d| fund_as_of(rows, cutoff - Duration::days(*d))).collect();
-        years.dedup_by_key(|r| r.period_end);
+        let years: Vec<&FundRow> = [0, 1, 2].iter().filter_map(|k| back(*k)).collect();
         Some(median(years.iter().filter_map(|r| m(r)).collect())? * now?.revenue? / 100.0)
     };
     let rev_1y = grow(now.and_then(|r| r.revenue), yr_ago.and_then(|r| r.revenue));
@@ -4682,7 +4695,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         // (#532) shortcut: company totals, not RA's per share, since two filings' share counts straddle splits
         // (#424); and 3y, not `yrs`, because a 5y reach predates XBRL at 12y (rev_cagr reads n/a there). RA's
         // Fig B1 finds 3y and 5y alike. Missing R&D at either end is None: the AUC grades R&D filers only.
-        rnd_growth: fund_as_of(rows, cutoff - Duration::days(3 * 365)).and_then(|old| {
+        rnd_growth: back(3).and_then(|old| {
             let rnd = |r: &FundRow| Some(r.rnd_margin? * r.revenue? / 100.0);
             let base = old.revenue.filter(|v| *v > 0.0)?;
             Some((rnd(now?)? - rnd(old)?) / base * 100.0)
@@ -7444,7 +7457,12 @@ mod tests {
         assert_eq!(fund_factors(&[r(None, Some(200.0))], cutoff, 5).fcf_ttm, None);
         assert_eq!(fund_factors(&[r(Some(10.0), None)], cutoff, 5).fcf_ttm, None);
         // (#484) FCF 20 now vs 10 five years back = +100% -> 14.9%/yr; a burn at either end -> None
-        let old = |fcf: f64| FundRow { filed: NaiveDate::from_ymd_opt(2019, 2, 1).unwrap(), ..r(Some(fcf), Some(100.0)) };
+        // (#676) the row 5y back is found by period end: 2023-12-31 less 1825 days is 2019-01-01
+        let old = |fcf: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(2019, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2018, 12, 31).unwrap(),
+            ..r(Some(fcf), Some(100.0))
+        };
         let g = |rows: &[FundRow]| fund_factors(rows, cutoff, 5).fcf_cagr.map(|g| (g * 10.0).round() / 10.0);
         assert_eq!(g(&[old(10.0), r(Some(10.0), Some(200.0))]), Some(14.9));
         assert_eq!(g(&[old(-10.0), r(Some(10.0), Some(200.0))]), None);
@@ -7836,11 +7854,14 @@ mod tests {
         // the split guard: a zero share base guards nothing, and a step of EXACTLY 40% is not a split
         assert_eq!(eg(&[c0(2.0), a(Some(0.0)), b(3.0, None, Some(100.0))]), endpoint);
         assert_eq!(eg(&[c0(2.0), a(Some(100.0)), b(3.0, None, Some(60.0))]), endpoint);
-        // the chain's window is (cutoff - (yrs+1)y, cutoff]: a row ON the far edge is out, one inside is in
-        let edge = FundRow { eps: Some(2.5), prior_eps: Some(2.0), ..row(d(2021, 9, 1), d(2021, 6, 2)) };
-        let inside = FundRow { eps: Some(2.5), prior_eps: Some(2.0), ..row(d(2022, 3, 1), d(2021, 12, 31)) };
-        assert_eq!(eg(&[edge, b(3.0, Some(2.5), None)]), Some(cagr((3.0 / 2.5 - 1.0) * 100.0, 2.0)), "edge row out -> endpoint");
-        assert_eq!(eg(&[inside, b(3.0, Some(2.5), None)]), Some(cagr((1.2 * 1.25 - 1.0) * 100.0, 2.0)), "inside -> chained");
+        // the chain's window is (cutoff - (yrs+1)y, cutoff]: a row ON the far edge is out, one inside is in.
+        // (#676) The endpoint read finds its 2y-back row by period end (B's 2023-12-31 less 730 days is
+        // 2021-12-31), so ONE row serves both: at 2024-06-01 it is inside the window, and at 2024-12-30
+        // (2021-12-31 + 1095 days) it sits on the far edge and is also the endpoint's base.
+        let early = FundRow { eps: Some(2.5), prior_eps: Some(2.0), ..row(d(2022, 3, 1), d(2021, 12, 31)) };
+        let on_edge = fund_factors(&[early.clone(), b(3.0, Some(2.5), None)], d(2024, 12, 30), 2).eps_growth;
+        assert_eq!(on_edge, Some(cagr((3.0 / 2.5 - 1.0) * 100.0, 2.0)), "edge row out -> endpoint");
+        assert_eq!(eg(&[early, b(3.0, Some(2.5), None)]), Some(cagr((1.2 * 1.25 - 1.0) * 100.0, 2.0)), "inside -> chained");
         // buyback's cross-filing fallback: a negative share base is no base
         let sh = |filed: NaiveDate, pe: NaiveDate, n: f64| FundRow { shares: Some(n), ..row(filed, pe) };
         let neg = [sh(d(2023, 3, 1), d(2022, 12, 31), -100.0), sh(d(2024, 3, 1), d(2023, 12, 31), -90.0)];
@@ -10179,11 +10200,12 @@ mod tests {
     // total_cmp, not partial_cmp().unwrap(): one NaN in a cohort must not panic the whole run.
     assert_eq!(pct_floor(vec![f64::NAN, 1.0, 2.0], 50.0), Some(2.0), "NaN sorts last and cannot panic");
     // fund_as_of point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
-    // (the look-ahead guard). Rows out of order on purpose to prove order-independence.
+    // (the look-ahead guard). Rows out of order on purpose to prove order-independence. (#676) Each row
+    // carries its fiscal year end, because `fund_factors` finds the row `yrs` back by period end.
     let frows = vec![
-        FundRow { filed: NaiveDate::from_ymd_opt(2022, 2, 1).unwrap(), revenue: Some(200.0), roe: Some(18.0), ..Default::default() },
-        FundRow { filed: NaiveDate::from_ymd_opt(2020, 2, 1).unwrap(), revenue: Some(100.0), ..Default::default() },
-        FundRow { filed: NaiveDate::from_ymd_opt(2021, 2, 1).unwrap(), revenue: Some(150.0), roe: Some(12.0), ..Default::default() },
+        FundRow { filed: NaiveDate::from_ymd_opt(2022, 2, 1).unwrap(), period_end: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), revenue: Some(200.0), roe: Some(18.0), ..Default::default() },
+        FundRow { filed: NaiveDate::from_ymd_opt(2020, 2, 1).unwrap(), period_end: NaiveDate::from_ymd_opt(2019, 12, 31).unwrap(), revenue: Some(100.0), ..Default::default() },
+        FundRow { filed: NaiveDate::from_ymd_opt(2021, 2, 1).unwrap(), period_end: NaiveDate::from_ymd_opt(2020, 12, 31).unwrap(), revenue: Some(150.0), roe: Some(12.0), ..Default::default() },
     ];
     // cutoff between the 2021 and 2022 filings -> sees 2021, NOT the unfiled 2022 (no look-ahead)
     assert_eq!(fund_as_of(&frows, NaiveDate::from_ymd_opt(2021, 6, 1).unwrap()).unwrap().revenue, Some(150.0));
@@ -10648,6 +10670,79 @@ mod tests {
         for rows in [[fy(2009), fy(2008)], [fy(2008), fy(2009)]] {
             assert_eq!(fund_as_of(&rows, ymd(2010, 3, 1)).map(|r| r.period_end), Some(ymd(2009, 12, 31)));
         }
+    }
+
+    /// (#676) Growth compares whole FISCAL years: the older row is found by `period_end` (within 45 days of
+    /// `now.period_end - k*365`), not by stepping the cutoff back by filing date. Planted as GOOG and NCLH
+    /// read. GOOG files in the first week of February and drifts a few days a year, so a 5-year filing-date
+    /// step landed on a 6-year span and a 1-year step skipped a year. NCLH's newest 10-K was a year old at
+    /// the cutoff, so the year-ago row WAS the as-of row and revenue growth read 0.
+    #[test]
+    fn fund_factors_compare_whole_fiscal_years() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let near = |got: Option<f64>, want: f64| assert!((got.unwrap() - want).abs() < 1e-9, "{got:?} vs {want}");
+        let fy = |end: NaiveDate, filed: NaiveDate, rev: f64| FundRow { period_end: end, filed, revenue: Some(rev), ..Default::default() };
+        let mut goog = [
+            fy(ymd(2017, 12, 31), ymd(2018, 2, 6), 5.0),
+            fy(ymd(2018, 12, 31), ymd(2019, 2, 5), 10.0),
+            fy(ymd(2019, 12, 31), ymd(2020, 2, 4), 20.0),
+            fy(ymd(2020, 12, 31), ymd(2021, 2, 3), 40.0),
+            fy(ymd(2021, 12, 31), ymd(2022, 2, 2), 80.0),
+            fy(ymd(2022, 12, 31), ymd(2023, 2, 3), 240.0),
+            fy(ymd(2023, 12, 31), ymd(2024, 1, 31), 320.0),
+        ];
+        // 5y back from FY2023 is FY2018 (10), not FY2017 (5: the filing-date step read 129.7%); 1y back is
+        // FY2022 (240), not FY2021 (80: it read 300%). One field on k = yrs, one on k = 1, so a `k * 365`
+        // that drifts is caught on the far step AND the near one.
+        let f = fund_factors(&goog, ymd(2024, 2, 1), 5);
+        near(f.rev_cagr, 100.0);
+        near(f.rev_yoy, (320.0 / 240.0 - 1.0) * 100.0);
+        near(f.rev_accel, (320.0 / 240.0 - 1.0) * 100.0 - 100.0);
+        // `rnd_growth` reaches three fiscal years back the same way: FY2020 (40), where a cutoff 3y back saw FY2019
+        goog[3].rnd_margin = Some(10.0);
+        goog[6].rnd_margin = Some(5.0);
+        near(fund_factors(&goog, ymd(2024, 2, 1), 5).rnd_growth, (5.0 * 320.0 / 100.0 - 10.0 * 40.0 / 100.0) / 40.0 * 100.0);
+        // NCLH: FY2022 filed 2023-02-28 is the as-of row at 2024-02-28 and cutoff - 365 days is that very
+        // day, so the filing-date step handed back `now` itself; FY2021 is the year before it
+        let nclh = [fy(ymd(2021, 12, 31), ymd(2022, 2, 25), 100.0), fy(ymd(2022, 12, 31), ymd(2023, 2, 28), 150.0)];
+        let f = fund_factors(&nclh, ymd(2024, 2, 28), 1);
+        near(f.rev_yoy, 50.0);
+        near(f.rev_cagr, 50.0);
+        // the window is 45 days either side of the target, edges inclusive: 2022-11-16 and 2023-02-14 are in,
+        // 2022-11-15 and 2023-02-15 are out (the only other row is `now`, a whole year off the target)
+        let now = fy(ymd(2023, 12, 31), ymd(2024, 2, 1), 200.0);
+        for (off, hit) in [(-46, false), (-45, true), (45, true), (46, false)] {
+            let rows = [now.clone(), fy(ymd(2022, 12, 31) + Duration::days(off), ymd(2023, 3, 1), 100.0)];
+            let got = fund_factors(&rows, ymd(2024, 3, 1), 5).rev_yoy;
+            assert_eq!(got.is_some(), hit, "{off} days off the target");
+            if hit {
+                near(got, 100.0);
+            }
+        }
+        // `filed <= cutoff` comes first and its edge is inclusive: a first XBRL 10-K carries the year before,
+        // filed the same day, and both are seen at that cutoff; a restatement of that year filed the day after
+        // is not
+        let (fy22, fy21) = (fy(ymd(2022, 12, 31), ymd(2023, 2, 10), 150.0), fy(ymd(2021, 12, 31), ymd(2023, 2, 10), 100.0));
+        let restated = fy(ymd(2021, 12, 31), ymd(2023, 2, 11), 1000.0);
+        near(fund_factors(&[fy22.clone(), fy21.clone()], ymd(2023, 2, 10), 1).rev_yoy, 50.0);
+        near(fund_factors(&[fy22, fy21, restated], ymd(2023, 2, 10), 1).rev_yoy, 50.0);
+        // inside the window the LATEST filing wins, even over a row nearer the target: a restated year
+        let restated = fy(ymd(2022, 12, 15), ymd(2023, 6, 1), 50.0);
+        let rows = [now.clone(), fy(ymd(2022, 12, 31), ymd(2023, 2, 1), 100.0), restated];
+        near(fund_factors(&rows, ymd(2024, 3, 1), 5).rev_yoy, 300.0);
+        // two rows filed the same day: the newest `period_end` wins, in either slice order
+        let (a, b) = (fy(ymd(2022, 12, 31), ymd(2023, 3, 1), 100.0), fy(ymd(2022, 12, 20), ymd(2023, 3, 1), 50.0));
+        for rows in [[now.clone(), a.clone(), b.clone()], [now.clone(), b, a]] {
+            near(fund_factors(&rows, ymd(2024, 3, 1), 5).rev_yoy, 100.0);
+        }
+        // `fcf_base` / `oe_base` take the median margin of `now` and the two fiscal years before it. Filings at
+        // 2022-03-20, 2023-03-30 and 2024-02-10 left a cutoff 1y back only FY2021 and 2y back nothing, so the
+        // filing-date step held two distinct rows and a median margin of 25, not 20
+        let m = |end: NaiveDate, filed: NaiveDate, margin: f64| FundRow { fcf_margin: Some(margin), ..fy(end, filed, 200.0) };
+        let rows = [m(ymd(2021, 12, 31), ymd(2022, 3, 20), 20.0), m(ymd(2022, 12, 31), ymd(2023, 3, 30), 10.0), m(ymd(2023, 12, 31), ymd(2024, 2, 10), 30.0)];
+        let f = fund_factors(&rows, ymd(2024, 3, 1), 5);
+        near(f.fcf_base, 20.0 * 200.0 / 100.0);
+        near(f.oe_base, 20.0 * 200.0 / 100.0);
     }
 
     /// (#545) The TTM cash line rides the newest row but carries its own 10-Q filing date: a cutoff
