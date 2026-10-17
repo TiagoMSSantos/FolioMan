@@ -288,6 +288,10 @@ jobs:
           EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
           # (#519) OPTIONAL: FAIR/MOS% on non-US stocks (Eulerpool FCF). Without it the lane logs one line, stays off.
           EULERPOOL_API_KEY: ${{ secrets.EULERPOOL_API_KEY }}
+          # (#689) 64 quote fetches in flight, the value the pacer note in ci-settings.yaml measured.
+          # The shared multiplier gives this 4-core runner 32, which left the 60/s pacer at ~41/s.
+          # Here, not in ci-settings: backtest-gate and the probes fetch live through the same knob.
+          FOLIOMAN_FETCH_CONCURRENCY: 64
         run: ./target/release/folioman screen
 
       - name: Save fetch caches

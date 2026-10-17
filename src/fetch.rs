@@ -4289,29 +4289,53 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
         supers = fetch_sec_superinvestors(client, urls).await;
         label = "superinvestors (SEC 13F)";
     }
-    let mut tips = fetch_sup_stakes(client, urls, today).await;
-    let stakes = tips.len();
+    // (#689) Each source below is its own host, so they run at once: one after another they took ~18s
+    // of the publish job. Within a host nothing changes (the six ARK GETs and Benzinga's two still go
+    // one at a time), so no server sees more load, and the tips still join in the old order.
     let since = (today - chrono::Duration::days(SOC_ARK_DAYS)).to_string();
-    let mut funds = Vec::new();
-    for fund in ARK_FUNDS {
-        let url = urls.ark_trades.replace("{fund}", fund).replace("{start}", &since).replace("{end}", &today.to_string());
-        funds.extend(get_json(client, &url).await.map(|v| (fund, v)));
-    }
+    let hn_since = (chrono::Utc::now() - chrono::Duration::days(SOC_HN_DAYS)).timestamp().to_string();
+    let hn_url = urls.hn_stories.replace("{since}", &hn_since);
+    let (mut tips, funds, insider, ape, trends, buzz, store, hn) = tokio::join!(
+        fetch_sup_stakes(client, urls, today),
+        async {
+            let mut funds = Vec::new();
+            for fund in ARK_FUNDS {
+                let url = urls.ark_trades.replace("{fund}", fund).replace("{start}", &since).replace("{end}", &today.to_string());
+                funds.extend(get_json(client, &url).await.map(|v| (fund, v)));
+            }
+            funds
+        },
+        get_text(client, &urls.openinsider_clusters),
+        get_json(client, &urls.apewisdom),
+        get_text(client, &urls.google_trends_rss),
+        async {
+            if urls.benzinga_buzz.is_empty() {
+                return None;
+            }
+            let article = get_text_as(client, &urls.benzinga_buzz, &urls.sec_user_agent).await.and_then(|x| buzz_link(&x))?;
+            get_text_as(client, &article, &urls.sec_user_agent).await
+        },
+        async {
+            if urls.appstore_chart.is_empty() {
+                None
+            } else {
+                get_json(client, &urls.appstore_chart).await
+            }
+        },
+        get_json(client, &hn_url),
+    );
+    let stakes = tips.len();
     tips.extend(ark_buys(&funds));
-    tips.extend(get_text(client, &urls.openinsider_clusters).await.map(|x| insider_clusters(&x)).unwrap_or_default());
+    tips.extend(insider.map(|x| insider_clusters(&x)).unwrap_or_default());
     let day = today.to_string();
     let aliases: BTreeMap<String, Vec<String>> = serde_json::from_str(SOC_ALIASES).expect("src/buy-heuristics/social-aliases.json parses");
-    tips.extend(get_json(client, &urls.apewisdom).await.map(|v| ape_tips(&v, &day)).unwrap_or_default());
-    tips.extend(get_text(client, &urls.google_trends_rss).await.map(|x| trend_hits(&x, &day, &aliases, &eu, quotes)).unwrap_or_default());
-    if !urls.benzinga_buzz.is_empty() {
-        if let Some(article) = get_text_as(client, &urls.benzinga_buzz, &urls.sec_user_agent).await.and_then(|x| buzz_link(&x)) {
-            tips.extend(get_text_as(client, &article, &urls.sec_user_agent).await.map(|x| buzz_tips(&x, today)).unwrap_or_default());
-        }
-    }
+    tips.extend(ape.map(|v| ape_tips(&v, &day)).unwrap_or_default());
+    tips.extend(trends.map(|x| trend_hits(&x, &day, &aliases, &eu, quotes)).unwrap_or_default());
+    tips.extend(buzz.map(|x| buzz_tips(&x, today)).unwrap_or_default());
     if !urls.appstore_chart.is_empty() {
         let path = crate::config::data_path(APPSTORE_RANKS_PATH);
         let mut ranks: BTreeMap<String, BTreeMap<String, u32>> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        if let Some(chart) = get_json(client, &urls.appstore_chart).await.map(|v| app_chart(&v)).filter(|c| !c.is_empty()) {
+        if let Some(chart) = store.map(|v| app_chart(&v)).filter(|c| !c.is_empty()) {
             ranks.insert(day.clone(), chart);
             ranks.retain(|d, _| *d >= (today - chrono::Duration::days(APP_KEEP_DAYS)).to_string());
             let _ = std::fs::write(&path, serde_json::to_string(&ranks).unwrap_or_default());
@@ -4320,8 +4344,7 @@ pub async fn fetch_social(client: &Client, urls: &Urls, quotes: &mut [Quote]) ->
         eprintln!("fetch: App Store chart: {} days of ranks (climbs need {APP_DAYS} before today), {} climbs", ranks.len(), climbs.len());
         tips.extend(climbs);
     }
-    let hn_since = (chrono::Utc::now() - chrono::Duration::days(SOC_HN_DAYS)).timestamp().to_string();
-    let stories = get_json(client, &urls.hn_stories.replace("{since}", &hn_since)).await.map(|v| hn_stories(&v)).unwrap_or_default();
+    let stories = hn.map(|v| hn_stories(&v)).unwrap_or_default();
     let rows = soc_merge(&soc_hits(&videos, quotes, &aliases, &eu), &soc_hits(&stories, quotes, &aliases, &eu), &supers, &picks, &tips, &eu, quotes);
     stamp_social(quotes, &rows);
     eprintln!(
@@ -10413,9 +10436,13 @@ pub(crate) mod tests {
     assert_eq!(h[1].1, md5_hex(&format!("{}https://x/y{}", h[0].1, salt))); // trace = md5(date+url+salt)
 
     // concurrency = cores × multiplier, both floored at 1 (a 0 anywhere can't stall the fan-out)
-    assert_eq!(concurrency_for(8, 8), 64);
-    assert_eq!(concurrency_for(4, 0), 4); // multiplier 0 -> treated as 1
-    assert_eq!(concurrency_for(0, 8), 8); // cores 0 -> treated as 1
+    assert_eq!(concurrency_for(8, 8, None), 64);
+    assert_eq!(concurrency_for(4, 0, None), 4); // multiplier 0 -> treated as 1
+    assert_eq!(concurrency_for(0, 8, None), 8); // cores 0 -> treated as 1
+    // (#689) a positive FOLIOMAN_FETCH_CONCURRENCY wins; 0 or a non-number falls back to the config
+    assert_eq!(concurrency_for(4, 8, Some("64")), 64);
+    assert_eq!(concurrency_for(4, 8, Some("0")), 32);
+    assert_eq!(concurrency_for(4, 8, Some("x")), 32);
 
     // throttle slot math: a request never launches in the past, and back-to-back claims at the same
     // instant come out ≥ interval apart (this is what turns a 64-wide burst into a paced stream).
@@ -16283,18 +16310,27 @@ pub(crate) mod tests {
 /// config and cached — the closure runs on the first fetch and never again, so all call sites stay
 /// signature-free. note: lazy global, no threading; bump the multiplier to scan faster or drop it
 /// if Yahoo tightens limits.
+///
+/// (#689) `FOLIOMAN_FETCH_CONCURRENCY=<n>` pins the value for one run. The Pages publish job sets
+/// 64, the value the pacer note in tests/ci-settings.yaml measured with 0 names lost: its 4-core
+/// runner got 32 from the multiplier, and its 5690 quotes ran at ~41 calls/s, under the 60/s pacer.
+/// The multiplier can't rise for it: backtest-gate and the probes fetch live through the same knob.
 static FETCH_CONCURRENCY: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
 
-/// Pure, testable core: cores × multiplier, each floored at 1 so a 0 in config (or no detectable
-/// cores) can't stall the fan-out to zero in-flight requests.
-fn concurrency_for(cores: usize, multiplier: usize) -> usize {
-    cores.max(1) * multiplier.max(1)
+/// Pure, testable core: a positive `pinned` (the env value) wins; else cores × multiplier, each
+/// floored at 1 so a 0 in config (or no detectable cores) can't stall the fan-out to zero in-flight
+/// requests. A pin of 0 or a non-number is ignored for the same reason.
+fn concurrency_for(cores: usize, multiplier: usize, pinned: Option<&str>) -> usize {
+    let from_config = cores.max(1) * multiplier.max(1);
+    pinned.and_then(|p| p.parse::<std::num::NonZeroUsize>().ok()).map_or(from_config, |n| n.get())
 }
 
+#[mutants::skip] // (#689) env + config shell; tests pin the OnceLock to 1, so `concurrency_for` carries the tests
 pub fn fetch_concurrency() -> usize {
     *FETCH_CONCURRENCY.get_or_init(|| {
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        concurrency_for(cores, crate::config::load().fetch_concurrency_multiplier)
+        let pinned = std::env::var("FOLIOMAN_FETCH_CONCURRENCY").ok();
+        concurrency_for(cores, crate::config::load().fetch_concurrency_multiplier, pinned.as_deref())
     })
 }
 
