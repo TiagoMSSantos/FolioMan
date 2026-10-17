@@ -1669,6 +1669,15 @@ pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
+    // (#687) The IPO lane reads no quote, so it runs under the universe and quote fetches instead of after
+    // them. It is awaited where it used to run, before the page needs its rows.
+    let ipo = tokio::spawn({
+        let (client, urls) = (client.clone(), settings.urls.clone());
+        async move {
+            let t = std::time::Instant::now();
+            (fetch::fetch_ipo_upcoming(&client, &urls).await, t.elapsed())
+        }
+    });
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it.
     // etf_tickers = Xetra-ETF source set, used below to fix Yahoo mislabeling them as EQUITY.
     let explicit_args = !args.is_empty();
@@ -1916,7 +1925,7 @@ pub async fn run(args: Vec<String>) {
     // `growth_social_boost`
     let social = fetch::fetch_social(&client, &settings.urls, &mut quotes).await;
     // (#515) display only: this month's $1B+ US IPOs not priced yet, under the Young table
-    let upcoming = fetch::fetch_ipo_upcoming(&client, &settings.urls).await;
+    let (upcoming, ipo_took) = ipo.await.expect("the IPO lane panicked");
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
@@ -1953,14 +1962,28 @@ pub async fn run(args: Vec<String>) {
         Default::default()
     };
     filled.extend(mom.iter().cloned());
+    let lanes = std::time::Instant::now();
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &filled).await;
+    let income = lanes.elapsed();
     // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
     fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
+    let profile = lanes.elapsed();
     // (#448) display only: the INS-B/S cell, last so the SEC fundamentals and the 13F lane spend the
     // shared SEC budget first
     fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
+    let insider = lanes.elapsed();
     // (#449) display only: the EARN cell
     fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
+    // (#687) These lanes print nothing on a good run, so the publish log showed their time as one silent
+    // stretch (198s on run 39049240255). One line splits it.
+    eprintln!(
+        "screen: lanes income {:.0}s | profile {:.0}s | insider {:.0}s | earnings {:.0}s | IPO {:.0}s, under the quotes",
+        income.as_secs_f64(),
+        (profile - income).as_secs_f64(),
+        (insider - profile).as_secs_f64(),
+        (lanes.elapsed() - insider).as_secs_f64(),
+        ipo_took.as_secs_f64()
+    );
     eprintln!("{}", crate::picks::young_line(&quotes, 5)); // (#500) the page's Young table in one line
     // (#461) display only: the US line of every printed or shadow-table stock the pool holds on a European
     // line, so `stamp_us_twin` can fill the cells that line leaves n/a (often its 10Y/20Y legs)
