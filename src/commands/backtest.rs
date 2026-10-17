@@ -2427,15 +2427,15 @@ async fn report_pac(client: &reqwest::Client, urls: &config::Urls, samples: &[Sa
     print_cohorts(&pac_cohorts(&passed, &pac));
 }
 
+/// (#424) tickers whose SEC rows `restate_for_splits` moved this run. Per process, like `sec_stats`: one
+/// walk per `backtest` invocation, each ticker counted once, so the fixture golden pins an exact number.
+static SPLIT_RESTATED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// (G) Probe each as-of fundamental factor STANDALONE against the same peer-relative forward return:
 /// rho (selection), top/bottom-half edge (profit spread), and the early-vs-late OOS split. No ablation
 /// — each factor IS its own column, so there's nothing to switch off. This is the validation gate: a
 /// factor earns a place in `growth_score` only if it shows real edge with both-positive OOS, the same
 /// bar the price knobs cleared. `samples` is date-ordered (the OOS split is early-vs-late in time).
-/// (#424) tickers whose SEC rows `restate_for_splits` moved this run. Per process, like `sec_stats`: one
-/// walk per `backtest` invocation, each ticker counted once, so the fixture golden pins an exact number.
-static SPLIT_RESTATED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 fn report_fund_lane(samples: &[Sample], purge_months: i64) {
     let factors: &[(&str, fn(&core::FundFactors) -> Option<f64>)] = &[
         ("revenue_cagr", |f| f.rev_cagr),
@@ -2616,19 +2616,15 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
         .map(|(name, ..)| *name)
 }
 
-/// (G) Auto-select `growth_fund_factor`: for each candidate as-of factor, re-derive every sample's
-/// fund_factor IN MEMORY (no refetch — Sample.fund is already cached), search growth_fund_weight on the
-/// EARLY train half, and report the factor's edge on the LATE test half it never saw + its two OOS sub-
-/// halves. This judges each factor THROUGH the growth lane (report_fund_lane only probes them standalone),
-/// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
-/// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
 /// (Item 10) The best-of-N haircut's two tail percentiles: a 90% band tightened to 5/N a side, so a
 /// winner picked as the MAX of `n` tried factors is charged for having been selected.
 ///
 /// Extracted from the call site because the call site is inside `sweep_fund_factor`, a `-> ()` printer
-/// the mutation gate cannot run at all — the fund lane needs a live `FMP_API_KEY` and every golden runs
-/// offline (tests/backtest_fixture.rs:134). Inline, the six operator mutants on this arithmetic were
-/// unkillable by construction; as a pure fn they are just tested.
+/// the mutation gate cannot run at all — only the fund goldens run the fund lane (frozen SEC rows since
+/// (#364)) and the gate skips them ((#590), ci.yml's `--skip backtest_fund_report --skip
+/// backtest_8y_fund_samples`; (#675) this used to say the lane needs a live `FMP_API_KEY` and every
+/// golden runs offline). Inline, the six operator mutants on this arithmetic were unkillable by
+/// construction; as a pure fn they are just tested.
 fn sidak_tail(n: usize) -> (f64, f64) {
     let side = 5.0 / n.max(1) as f64;
     (side, 100.0 - side)
@@ -2679,6 +2675,13 @@ const FUND_FACTORS: [&str; 53] = [
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
+/// (G) Auto-select `growth_fund_factor`: for each candidate as-of factor, re-derive every sample's
+/// fund_factor IN MEMORY (no refetch — Sample.fund is already cached), search growth_fund_weight on the
+/// EARLY train half, and report the factor's edge on the LATE test half it never saw + its two OOS sub-
+/// halves. This judges each factor THROUGH the growth lane (report_fund_lane only probes them standalone),
+/// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
+/// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
+///
 /// (#119) UNGRADEABLE BY THE MUTATION GATE — only the fund goldens run the fund lane (frozen SEC rows
 /// since (#364)), and the gate skips them ((#590), ci.yml's `--skip backtest_fund_report --skip
 /// backtest_8y_fund_samples`; (#672) this used to say the lane needs a live key), so no test the gate
