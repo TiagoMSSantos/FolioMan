@@ -492,7 +492,8 @@ fn short_8y_mark(quote: &Quote) -> &'static str {
     }
 }
 
-/// The `≈` stand-in for a rung the record ALMOST reaches, or `None` for "leave the cell `n/a`".
+/// The `≈` stand-in for a rung the record ALMOST reaches, or `None` for "leave the cell blank" (#639: `—` or
+/// `n/a`, [`short_or_na`] picks which).
 ///
 /// `YRS` rounds to nearest while a leg needs its full span minus 31d of slack, so every rung has a
 /// ~5-month band where the age column claims the years and the leg is blank: 8Y needs 7.91y but
@@ -516,6 +517,13 @@ fn perf_fill(quote: &Quote, label: &str, tuning: &BuyHeuristic) -> Option<f64> {
     let days = HORIZONS.iter().find(|(l, _)| *l == label)?.1 as f64;
     let cov = quote.age_years? * 365.25 / days;
     (cov >= tuning.perf_fill_coverage_pct / 100.0 && cov < 1.0).then_some(quote.life_return_pct)?
+}
+
+/// (#639) What a span cell with no figure prints: "—" when the record is shorter than `years`, so the
+/// figure cannot exist yet (the `cov < 1.0` side of [`perf_fill`]); "n/a" when the record spans it and
+/// the figure is missing anyway (the H-cov refusal above), or the record's length is unknown.
+fn short_or_na(quote: &Quote, years: f64) -> String {
+    (if quote.age_years.is_some_and(|a| a < years) { "—" } else { "n/a" }).to_string()
 }
 
 /// How intact the long-term trend is, 0..1 — used to scale the on-sale discount so a decaying name's
@@ -3949,8 +3957,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: standard deviation of daily returns over the last 252 sessions (a daily figure, not annualized)" },
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart" },
     // (#447) the footer's hold-pain stats on the page. None = under 5 years of closes, never a fake 100%
-    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of all rolling 5-year windows that ended above where they started; n/a = under 5 years of record" },
-    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years; n/a = under 5 years of record" },
+    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of all rolling 5-year windows that ended above where they started; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
+    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
     ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in" },
@@ -3995,7 +4003,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's legal home, from its ISIN: IE loses 15% of US dividends to tax by treaty, LU 30% (≈ +0.2%/yr to IE on a US or world fund)" },
     ColSpec { key: "top10", hdr: "TOP10%", width: 7, right: true, help: "Funds: share of the fund in its 10 biggest holdings; high = a few companies drive the result, whatever the fund's name says; n/a = neither Yahoo nor justETF lists its holdings" },
     ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out; n/a = trackingdifferences.com doesn't cover this fund" },
-    ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; n/a under 3 years of record, or trackingdifferences.com doesn't cover this fund" },
+    ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; — = under 3 full years of record; n/a = trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before. ‡ = no annual report yet, so year to date vs the same months a year earlier" },
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years (display only, never scored); n/a = under 2 years filed" },
     ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years; burn = free cash flow at or below 0 now; n/a = under 2 years filed, or a burn at the old end" },
@@ -4212,7 +4220,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
                 Some(p) => pct1(Some(p)),
                 // `≈` PREFIX, not suffix: it qualifies the number before it is read. Still fits the
                 // 8-wide column at the worst case (`≈+26522%`) because pct1 drops the decimal ≥1000%.
-                None => perf_fill(quote, &label, tuning).map_or("n/a".to_string(), |p| format!("≈{}", pct1(Some(p)))),
+                None => perf_fill(quote, &label, tuning).map_or_else(
+                    || short_or_na(quote, HORIZONS.iter().find(|(l, _)| *l == label).map_or(0.0, |h| h.1 as f64 / 365.25)),
+                    |p| format!("≈{}", pct1(Some(p))),
+                ),
             }
         }
         "vol" => quote.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
@@ -4224,8 +4235,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             }
         }
         "r2" => format!("{:.2}", quote.trend_r2),
-        "win5y" => quote.roll5y_pos_pct.map_or("n/a".to_string(), |v| format!("{v:.0}%")),
-        "worst5y" => quote.worst_5y_pct.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        "win5y" => quote.roll5y_pos_pct.map_or_else(|| short_or_na(quote, 5.0), |v| format!("{v:.0}%")),
+        "worst5y" => quote.worst_5y_pct.map_or_else(|| short_or_na(quote, 5.0), |v| format!("{v:+.0}%")),
         "uw" => quote.underwater_yrs.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // Signed, because `above_ma_pct` alone cannot say which of three states a row is in: it clamps at
         // zero (`core::above_long_ma_pct`), so "40% below its own 200wk trend" and "no 200wk history yet"
@@ -5326,9 +5337,9 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         .iter()
         .map(|c| {
             let text = match c.key {
-                "1d" | "1w" | "1m" => format!("Nominal — {}", c.help),
+                "1d" | "1w" | "1m" => format!("Nominal — {}; a dash = listed for less than that", c.help),
                 "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => format!(
-                    "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return; n/a = the record is too short (a .DE twin of a US stock counts only its Xetra years)",
+                    "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return; a dash = the record is shorter than the span; n/a = the record spans it but has no usable price at its start",
                     c.help
                 ),
                 "rank" => format!(
@@ -5363,7 +5374,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
                 "REGION" => "Whose consumer prices: USA, the EU (HICP, what a Real column is deflated by) or Portugal".to_string(),
                 "LATEST" => "Newest yearly inflation rate; for a year still running, the latest month's rate vs a year earlier".to_string(),
                 "AS OF" => "Year of that newest rate; ⚠ marks a stale or missing feed".to_string(),
-                span => format!("Total price rise over the last {} yearly rates, compounded; n/a = the series is shorter (EU HICP starts in 1996)", span.trim_end_matches('Y')),
+                span => format!("Total price rise over the last {} yearly rates, compounded; — = the series is shorter (EU HICP starts in 1996); n/a = no data", span.trim_end_matches('Y')),
             };
             (h.clone(), text)
         })
@@ -5420,13 +5431,13 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     // (#515) (#524) (#527) `fetch::ipo_web_rows`; ` r` = a press figure from `tests/ipo-watch.csv`
     let upcoming = fixed(&[
         num,
-        ("STATUS", "upcoming = Nasdaq has a price range and a day; filed = a public S-1/F-1 is on EDGAR, no pricing day set yet; confidential = a watched company that only filed in private (no S-1 yet)"),
+        ("STATUS", "upcoming = Nasdaq has a price range and a day; filed = a public S-1/F-1 is on EDGAR, no pricing day set yet; confidential = a watched company that only filed in private (no S-1 yet, so its S-1 columns read —)"),
         ("TICKER", "The symbol the company asked for; it may list under another; — = none asked for yet"),
         ("NAME", "The company's name, as filed; click to open its website, or for a watched company the article its figures come from"),
-        ("EXPECTED", "The day Nasdaq expects the shares to be priced (the date often slips); r = the month the press reports, not confirmed"),
+        ("EXPECTED", "The day Nasdaq expects the shares to be priced (the date often slips); r = the month the press reports, not confirmed; — = no pricing day set yet"),
         ("INDUSTRY", "SEC's industry code (SIC) description for the filer, as EDGAR lists it"),
-        ("RAISE", "Dollars the offer raises at the top of the range; r = the amount the press reports, not confirmed; n/a on a filed deal kept for its banks, whose S-1 cover still shows a placeholder amount"),
-        ("RANGE", "The price range per share the company filed, $"),
+        ("RAISE", "Dollars the offer raises at the top of the range; r = the amount the press reports, not confirmed; — on a filed deal kept for its banks, whose S-1 cover shows a placeholder amount until its price range is filed; n/a = a range but no amount read"),
+        ("RANGE", "The price range per share the company filed, $; — = none filed yet, and then RAISE, MCAP@MID, P/S@MID, P/E@MID and SHARES read — too, as no terms exist yet"),
         ("MCAP@MID", "Market value at the middle of the range: mid price × the shares outstanding after the offer; r = the valuation the press reports, not confirmed"),
         ("P/S@MID", "Price to sales: MCAP@MID ÷ trailing-twelve-month revenue (the last fiscal year rolled forward by the newest interim period when the S-1 has one)"),
         ("P/E@MID", "Price to earnings: MCAP@MID ÷ trailing-twelve-month net income; loss = no profit to divide by"),
@@ -5437,8 +5448,8 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("LEADS", "Lead underwriters, as Nasdaq lists them; two of Goldman Sachs, Morgan Stanley, J.P. Morgan, BofA and Citigroup keep a deal of any filed size in this table"),
         ("AUDITOR", "The firm auditing the financial statements in the S-1"),
         ("FILING", "The newest public S-1/F-1 (or amendment) and its date; click to open it on sec.gov"),
-        ("FY", "Latest full fiscal year in the S-1's summary financial table; REV to EQUITY are read from it (n/a = the table could not be read)"),
-        ("INTERIM", "The newest interim period in that table (9M 2026 = nine months to a date in 2026); the ratios add it and drop the same period a year before, to read the trailing twelve months. n/a = fiscal year only"),
+        ("FY", "Latest full fiscal year in the S-1's summary financial table; REV to EQUITY are read from it (— = no public S-1 yet; n/a = the table could not be read)"),
+        ("INTERIM", "The newest interim period in that table (9M 2026 = nine months to a date in 2026); the ratios add it and drop the same period a year before, to read the trailing twelve months. — = fiscal year only, or no public S-1 yet; n/a = the table could not be read"),
         ("REV", "Revenue in that fiscal year"),
         ("REV-YoY", "Revenue growth: the interim period vs the same period a year before, or the fiscal year vs the one before when there is no interim"),
         ("NET", "Net income (negative = loss) in that fiscal year"),
@@ -5467,7 +5478,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("AS OF", "Month of that newest yield; ⚠ marks a series more than 6 months old or missing"),
     ]);
     bonds.extend(crate::core::BOND_YEARS.iter().map(|y| {
-        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} years, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; n/a = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993)"))
+        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} years, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
     }));
     BTreeMap::from([
         ("lanes", lanes),
@@ -6015,6 +6026,10 @@ pub fn young_line(quotes: &[Quote], n: usize) -> String {
 /// read n/a on nearly every shadow row.
 const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "misses", "score8y", "ins", "earn"];
 
+/// (#639) ...and the Young table these too: every row there is listed under [`YOUNG_YEARS`], so its
+/// 8Y/10Y/20Y legs and 5-year window stats cannot exist yet and would read — on every row.
+const HIDE_YOUNG: &[&str] = &["8y", "10y", "20y", "win5y", "worst5y"];
+
 /// (#458) The stocks table's columns appended to each shadow table (Attention, Berkshire, Social), after
 /// the table's own cells, through the same [`col_cell`] the lanes print with, and each header's lane help
 /// copied into that table's glossary. A row finds its quote by ticker, else by the US symbol a Xetra twin
@@ -6041,6 +6056,7 @@ pub fn stamp_shadow_cols(
     for table in ["attention", "berkshire", "social", "young", "braked", "reits"] {
         // (#538) the Social table reads `social_heuristic` over `buy_heuristic`; every other table the original
         let (tuning, soc_on) = if table == "social" { (&soc.buy, soc.on()) } else { (tuning, false) };
+        let cols: Vec<&ColSpec> = cols.iter().copied().filter(|c| table != "young" || !HIDE_YOUNG.contains(&c.key)).collect();
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         let mut keyed: Vec<(RankKey, f64, (String, Option<f64>), serde_json::Value)> = Vec::new();
         for mut row in std::mem::take(rows) {
@@ -6103,8 +6119,8 @@ pub fn stamp_shadow_cols(
 /// column from the same company's US line (`twins`, keyed by the European ticker), marked with a trailing
 /// `$`: the European line is often too young for the 10Y/20Y legs the US one carries. A shadow-table row
 /// names the US ticker itself, so it finds the twin by that too. Runs over the stock lane and the shadow
-/// tables; only n/a cells move, and only to a value, never to "—". Display only, stamped by both
-/// builders, so the twins ride in universe.json.
+/// tables; only n/a cells move, and (#639) — cells (the European line's too-short legs), and only to a
+/// value, never to "—". Display only, stamped by both builders, so the twins ride in universe.json.
 pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Quote>, w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
     let cols = lane_columns(w, HIDE_STOCK);
     for table in ["stocks", "attention", "berkshire", "social", "young", "braked", "reits"] {
@@ -6112,7 +6128,7 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default().to_string();
             let Some(twin) = twins.get(&t).or_else(|| twins.values().find(|q| q.ticker == t)) else { continue };
-            for cell in cells.iter_mut().filter(|c| c[1] == "n/a") {
+            for cell in cells.iter_mut().filter(|c| c[1] == "n/a" || c[1] == "—") {
                 let Some(c) = cols.iter().find(|c| cell[0] == c.hdr) else { continue };
                 let v = col_cell(c.key, twin, 0.0, None, "", tuning, fund_pe);
                 if v != "n/a" && v != "—" {
@@ -6665,14 +6681,19 @@ pub(crate) const HOLD_CORE_COLS: [&str; 14] =
     ["", "NAME", "TICKER", "MARKET", "TR-CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM", "TOP10%", "TD-1Y", "TD-5Y"];
 
 /// (#465) TOP10% / TD-1Y / TD-5Y, one spelling for the lane tables and CORE. TD-5Y averages the
-/// newest 5 full years and reads n/a under 3, so one odd launch year never prints as a record.
+/// newest 5 full years and reads — under 3 (n/a with none: no source), so one odd launch year never
+/// prints as a record.
 fn fund_cell(key: &str, q: &Quote) -> String {
     match key {
         "top10" => q.top10.map_or("n/a".to_string(), |v| format!("{v:.0}%")),
         "td1y" => q.td_years.last().map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         _ => {
             let t = &q.td_years[q.td_years.len().saturating_sub(5)..];
-            if t.len() < 3 { "n/a".to_string() } else { format!("{:+.2}%", t.iter().sum::<f64>() / t.len() as f64) }
+            match t.len() {
+                0 => "n/a".to_string(),
+                1 | 2 => "—".to_string(),
+                n => format!("{:+.2}%", t.iter().sum::<f64>() / n as f64),
+            }
         }
     }
 }
@@ -8578,7 +8599,12 @@ mod tests {
         assert_eq!(cc("rev-yoy", &eq, 0.0, None, ""), "—"); // ETF
         assert_eq!(cc("net", &cq, 0.0, None, ""), "—"); // crypto
         // (#447) hold pain on every class; balance sheet + SECTOR stocks only, n/a until filled
-        assert_eq!(cc("win5y", &st, 0.0, None, ""), "n/a", "under 5 years of closes makes no claim");
+        assert_eq!(cc("win5y", &st, 0.0, None, ""), "n/a", "no record length, so no claim it is short");
+        st.age_years = Some(4.9);
+        assert_eq!(cc("win5y", &st, 0.0, None, ""), "—", "(#639) under 5 years of record has no 5-year window");
+        assert_eq!(cc("worst5y", &st, 0.0, None, ""), "—");
+        st.age_years = Some(5.0);
+        assert_eq!(cc("win5y", &st, 0.0, None, ""), "n/a", "5 years of record and no window is a gap");
         st.roll5y_pos_pct = Some(87.4);
         st.worst_5y_pct = Some(-23.6);
         st.underwater_yrs = Some(2.24);
@@ -8645,7 +8671,11 @@ mod tests {
         eq.td_years = vec![0.1, -0.2, -0.5];
         assert_eq!(cc("td5y", &eq, 0.0, None, ""), "-0.20%", "3 years are enough");
         eq.td_years.remove(0);
-        assert_eq!(cc("td5y", &eq, 0.0, None, ""), "n/a", "2 years are not");
+        assert_eq!(cc("td5y", &eq, 0.0, None, ""), "—", "(#639) 2 years are not, and cannot be yet");
+        eq.td_years.remove(0);
+        assert_eq!(cc("td5y", &eq, 0.0, None, ""), "—", "1 year neither");
+        eq.td_years.clear();
+        assert_eq!(cc("td5y", &eq, 0.0, None, ""), "n/a", "no series = no source");
         let mut sq = Quote::stub("S", "€1", "", "Co");
         sq.instrument_type = "EQUITY".into();
         for k in ["top10", "td1y", "td5y"] {
@@ -12326,6 +12356,33 @@ mod tests {
         assert_eq!(p["etfs"][0], row("APC.DE", "n/a"), "the fund lane is not a stock lane");
     }
 
+    /// (#639) A — leg on a European line is its short record, so the US line's leg fills it as it fills
+    /// an n/a; a US line as short leaves the dash.
+    #[test]
+    fn stamp_us_twin_fills_a_short_record_dash() {
+        let aapl = Quote { perf: legs(&[("5Y", 120.0)]), age_years: Some(6.0), ..Quote::stub("AAPL", "$1", "", "Apple") };
+        let twins = HashMap::from([("APC.DE".to_string(), aapl)]);
+        let w = Widths { columns: vec!["5y".into(), "20y".into()], ..Widths::default() };
+        let mut p = serde_json::json!({"stocks": [[["TICKER", "APC.DE"], ["5Y", "—"], ["20Y", "—"]]]});
+        stamp_us_twin(&mut p, &twins, &w, &BuyHeuristic::default(), &FundPeMap::new());
+        assert_eq!(p["stocks"][0], serde_json::json!([["TICKER", "APC.DE"], ["5Y", "+120.0%$"], ["20Y", "—"]]));
+    }
+
+    /// (#639) Every Young row is under 5 years old, so that table drops the legs and 5-year window
+    /// stats it could only print as — (cells and glossary); the other shadow tables keep them.
+    #[test]
+    fn young_table_drops_the_columns_its_rows_cannot_reach() {
+        let quotes = [Quote::stub("NEW", "€1", "", "New")];
+        let w = Widths { columns: ["5y", "8y", "10y", "20y", "win5y", "worst5y"].map(String::from).to_vec(), ..Widths::default() };
+        let mut p = serde_json::json!({"young": [[["TICKER", "NEW"]]], "attention": [[["TICKER", "NEW"]]], "help": {"lanes": {}}});
+        let off = social::resolve(&BuyHeuristic::default(), &serde_yaml::Value::Null).unwrap();
+        stamp_shadow_cols(&mut p, &quotes, &quotes, &w, &BuyHeuristic::default(), &off, &FundPeMap::new(), &|t: &str| t.to_string());
+        let heads = |t: &str| p[t][0].as_array().unwrap().iter().map(|c| c[0].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(heads("young"), ["TICKER", "5Y", "SCORE", "MISSES"]);
+        assert_eq!(heads("attention"), ["TICKER", "5Y", "8Y", "10Y", "20Y", "5Y-WIN%", "WORST-5Y", "SCORE", "MISSES"]);
+        assert!(p["help"]["young"].get("8Y").is_none() && p["help"]["attention"].get("8Y").is_some());
+    }
+
     #[test]
     fn stamp_index_counts_same_benchmark_etf_rows() {
         let q = |t: &str, b: Option<&str>| Quote { benchmark: b.map(str::to_string), ..Quote::stub(t, "€1", "", t) };
@@ -13025,12 +13082,13 @@ mod tests {
         wtai.life_return_pct = Some(282.0);
         // DEFAULT is off, and off BY CONSTRUCTION — `cov >= 1.0 && cov < 1.0` is unsatisfiable, so no
         // age and no life return can fill anything. `cc` uses BuyHeuristic::default().
-        assert_eq!(cc("8y", &wtai, 0.0, None, ""), "n/a", "100.0 = off: no blank cell is ever filled");
+        assert_eq!(cc("8y", &wtai, 0.0, None, ""), "—", "100.0 = off: no blank cell is ever filled; (#639) 7.7y < 8 reads —");
+        assert_eq!(cc("2y", &wtai, 0.0, None, ""), "n/a", "(#639) 7.7y spans the 2Y rung, so its missing leg is a gap, not a dash");
         let on = BuyHeuristic { perf_fill_coverage_pct: 90.0, ..BuyHeuristic::default() };
         // 7.7y is 96% of the 8Y rung (2920d) -> fills, marked. It is 39% of the 20Y rung -> stays blank:
         // the bar is what separates "almost measured it" from "made it up".
         assert_eq!(col_cell("8y", &wtai, 0.0, None, "", &on, &HashMap::new()), "≈+282.0%");
-        assert_eq!(col_cell("20y", &wtai, 0.0, None, "", &on, &HashMap::new()), "n/a");
+        assert_eq!(col_cell("20y", &wtai, 0.0, None, "", &on, &HashMap::new()), "—");
         // THE property the whole design rests on: the fill is display-only because it never entered
         // `perf`, so `perf_pct` — and therefore every gate, `long_leg`, `spy_premium`, `twin_groups` —
         // still reads the 8Y leg as absent. If this ever passes, a fabricated leg is being scored.

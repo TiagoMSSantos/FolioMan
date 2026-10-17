@@ -3456,7 +3456,8 @@ pub fn bond_month_return(c: f64, y: f64) -> f64 {
 
 /// (#486) The yields chained into a wealth index, 1.0 at the first month. A missing month ENDS the
 /// chain: only the run of consecutive months up to the newest one is kept, so a horizon reaching
-/// back past a gap reads n/a instead of splicing two unrelated stretches together.
+/// back past a gap reads — (#639), as past a record's start, instead of splicing two unrelated
+/// stretches together.
 pub fn bond_index(yields: &BTreeMap<i32, f64>) -> BTreeMap<i32, f64> {
     let mut out = BTreeMap::new();
     let mut prev: Option<(i32, f64, f64)> = None; // (month, yield, level)

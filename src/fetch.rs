@@ -7858,8 +7858,8 @@ fn ipo_deal(r: &Value, offer: f64) -> IpoDeal {
 
 /// (#524) Nasdaq's deal overview (`data.poOverview.<Key>.value`, a string or a number) into the deal:
 /// SEC CIK, home page (its `<a href>`, upgraded to https), shares outstanding after the offer,
-/// lock-up days and staff, and the price range a `filed` calendar row lacks. A `--` or a missing key
-/// leaves the cell n/a.
+/// lock-up days and staff, and the price range (#641: and the exchange) a `filed` calendar row lacks.
+/// A `--` or a missing key leaves the cell n/a.
 fn ipo_overview(v: &Value, d: &mut IpoDeal) {
     let f = |k: &str| match v.pointer(&format!("/data/poOverview/{k}/value")) {
         Some(Value::String(s)) => s.trim().to_string(),
@@ -7873,6 +7873,9 @@ fn ipo_overview(v: &Value, d: &mut IpoDeal) {
     d.employees = digits(f("NumberOfEmployees").split(" (").next().unwrap_or("").replace(',', "")).unwrap_or_default();
     if d.range.is_empty() {
         d.range = Some(f("ProposedSharePrice").replace('$', "")).filter(|r| r.starts_with(|c: char| c.is_ascii_digit())).unwrap_or_default();
+    }
+    if d.exchange.is_empty() {
+        d.exchange = Some(f("Exchange")).filter(|e| e != "--").unwrap_or_default();
     }
     let site = f("CompanyWebsite");
     let href = regex::Regex::new(r#"href=['"]([^'"]+)['"]"#).expect("literal regex").captures(&site).map(|c| c[1].to_string());
@@ -8150,9 +8153,10 @@ fn usd_cell(x: f64) -> String {
 /// (#524) The page's Upcoming table. (#539) Ritter-style: rows with a ttm revenue rank first, profitable
 /// before loss-making, then the larger revenue; the rest keep the calendar order (upcoming soonest first,
 /// then filed by filing day, then confidential by the reported month). A real figure wins; a press figure fills a missing one, marked
-/// ` r`; anything else reads n/a. (#527) Ratios read the trailing twelve months (`ttm`) and value the
-/// company at the middle of its range; REV-YoY compares the latest interim with the year before when
-/// the S-1 has one.
+/// ` r`; (#641) a cell that cannot exist yet reads — (no public S-1 on a confidential row; no terms on a
+/// deal without a range, bar an `upcoming` one, which has one by definition), anything else n/a. (#527)
+/// Ratios read the trailing twelve months (`ttm`) and value the company at the middle of its range;
+/// REV-YoY compares the latest interim with the year before when the S-1 has one.
 fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
     let rank = |d: &IpoDeal| ["upcoming", "filed", "confidential"].iter().position(|s| *s == d.status).unwrap_or(3);
     let key = |d: &IpoDeal| (rank(d), if d.status == "confidential" { d.rep_expected.clone() } else { d.day.clone() }, d.name.clone());
@@ -8165,63 +8169,66 @@ fn ipo_web_rows(mut deals: Vec<IpoDeal>) -> Value {
         (fa, fb) => fb.is_some().cmp(&fa.is_some()),
     });
     let na = || "n/a".to_string();
-    let or_na = |s: &str| if s.is_empty() { na() } else { s.to_string() };
+    let gap = |unset: bool| if unset { "—".to_string() } else { na() };
+    let or_gap = |s: &str, unset: bool| if s.is_empty() { gap(unset) } else { s.to_string() };
     let pct = |x: f64| format!("{:.1}%", x * 100.0);
     let mid = |range: &str| {
         let ends: Vec<f64> = range.split('-').filter_map(|p| p.trim().parse().ok()).collect();
         (!ends.is_empty()).then(|| ends.iter().sum::<f64>() / ends.len() as f64)
     };
-    let real_or_r = |real: Option<f64>, rep: Option<f64>| real.map(usd_cell).or(rep.map(|x| usd_cell(x) + " r")).unwrap_or_else(na);
+    let real_or_r = |real: Option<f64>, rep: Option<f64>, unset: bool| real.map(usd_cell).or(rep.map(|x| usd_cell(x) + " r")).unwrap_or_else(|| gap(unset));
     deals
         .iter()
         .enumerate()
         .map(|(i, d)| {
             let link = [&d.site, &d.source].into_iter().find(|u| u.starts_with("https://")).cloned().unwrap_or_default();
+            let (unfiled, no_terms) = (d.status == "confidential", d.range.is_empty() && d.status != "upcoming");
             let expected = match (d.status, d.rep_expected.is_empty()) {
                 ("upcoming", _) => d.day.clone(),
                 (_, false) => format!("{} r", d.rep_expected),
-                _ => na(),
+                _ => "—".to_string(), // no pricing day set yet
             };
             let filing = match (&d.filing, d.status) {
                 (Some((form, day, url)), _) => serde_json::json!(["FILING", format!("{form} {day}"), url]),
                 (None, "filed") => serde_json::json!(["FILING", format!("filed {}", d.day)]),
-                _ => serde_json::json!(["FILING", na()]),
+                _ => serde_json::json!(["FILING", gap(unfiled)]),
             };
             let g = &d.figs;
-            let money = |x: Option<f64>| x.map_or_else(na, usd_cell);
+            let money = |x: Option<f64>| x.map_or_else(|| gap(unfiled), usd_cell);
             let mcap = mid(&d.range).zip(d.shares).map(|(m, s)| m * s);
             let rev = ttm(g.rev, g.i_rev).filter(|r| *r > 0.0);
-            let margin = |x: Option<f64>| x.zip(rev).map_or_else(na, |(x, r)| pct(x / r));
+            let margin = |x: Option<f64>| x.zip(rev).map_or_else(|| gap(unfiled), |(x, r)| pct(x / r));
             let net = ttm(g.net, g.i_net);
             let yoy = g.i_rev.map(|[c, p]| (c, p)).or(g.rev.zip(g.rev_prior)).filter(|(_, p)| *p > 0.0);
             let pe = match (mcap, net) {
                 (Some(m), Some(n)) if n > 0.0 => format!("{:.1}", m / n),
                 (Some(_), Some(_)) => "loss".to_string(),
-                _ => na(),
+                _ => gap(no_terms),
             };
             serde_json::json!([
                 ["RANK", (i + 1).to_string()],
                 ["STATUS", d.status],
                 ["TICKER", if d.sym.is_empty() { "—" } else { &d.sym }],
                 ["NAME", d.name, link],
-                ["INDUSTRY", or_na(&d.industry)],
+                ["INDUSTRY", or_gap(&d.industry, unfiled)],
                 ["EXPECTED", expected],
-                ["RAISE", real_or_r(d.raise, d.rep_raise)],
-                ["RANGE", if d.range.is_empty() { na() } else { format!("${}", d.range) }],
-                ["MCAP@MID", real_or_r(mcap, d.rep_value)],
-                ["P/S@MID", mcap.zip(rev).map_or_else(na, |(m, r)| format!("{:.1}x", m / r))],
+                ["RAISE", real_or_r(d.raise, d.rep_raise, no_terms)],
+                ["RANGE", if d.range.is_empty() { gap(no_terms) } else { format!("${}", d.range) }],
+                ["MCAP@MID", real_or_r(mcap, d.rep_value, no_terms)],
+                ["P/S@MID", mcap.zip(rev).map_or_else(|| gap(no_terms), |(m, r)| format!("{:.1}x", m / r))],
                 ["P/E@MID", pe],
-                ["SHARES", d.shares.map_or_else(na, |s| format!("{:.1}M", s / 1e6))],
-                ["LOCKUP", or_na(&d.lockup)],
-                ["EMPLOYEES", or_na(&d.employees)],
-                ["EXCHANGE", or_na(&d.exchange)],
-                ["LEADS", or_na(&d.leads.join(", "))],
-                ["AUDITOR", or_na(&d.auditor)],
+                ["SHARES", d.shares.map_or_else(|| gap(no_terms), |s| format!("{:.1}M", s / 1e6))],
+                ["LOCKUP", or_gap(&d.lockup, unfiled)],
+                ["EMPLOYEES", or_gap(&d.employees, unfiled)],
+                ["EXCHANGE", or_gap(&d.exchange, unfiled)],
+                ["LEADS", or_gap(&d.leads.join(", "), unfiled)],
+                ["AUDITOR", or_gap(&d.auditor, unfiled)],
                 filing,
-                ["FY", g.fy.map_or_else(na, |y| y.to_string())],
-                ["INTERIM", g.interim.clone().unwrap_or_else(na)],
+                ["FY", g.fy.map_or_else(|| gap(unfiled), |y| y.to_string())],
+                // a read table with no interim column is fiscal year only
+                ["INTERIM", g.interim.clone().unwrap_or_else(|| gap(unfiled || g.fy.is_some()))],
                 ["REV", money(g.rev)],
-                ["REV-YoY", yoy.map_or_else(na, |(r, p)| pct(r / p - 1.0))],
+                ["REV-YoY", yoy.map_or_else(|| gap(unfiled), |(r, p)| pct(r / p - 1.0))],
                 ["NET", money(g.net)],
                 ["NET%", margin(net)],
                 ["GROSS%", margin(ttm(g.gross, g.i_gross))],
@@ -15803,6 +15810,7 @@ pub(crate) mod tests {
     }
 
     /// (#524) The overview's values are strings or numbers; the site is the href, upgraded to https.
+    /// (#641) Its exchange fills a `filed` row's, as its range does; the calendar's wins.
     #[test]
     fn ipo_overview_reads_cik_site_shares_lockup_staff() {
         let v = serde_json::json!({"data": {"poOverview": {
@@ -15813,6 +15821,7 @@ pub(crate) mod tests {
             "NumberOfEmployees": {"value": "1,060 (as of 08/31/2026)"},
             "CompanyWebsite": {"value": "<a href='http://www.trex.bio' target='_blank'>www.trex.bio</a>"},
             "ProposedSharePrice": {"value": "$40.00-44.00"},
+            "Exchange": {"value": "NYSE"},
         }}});
         let mut d = IpoDeal::default();
         ipo_overview(&v, &mut d);
@@ -15820,11 +15829,12 @@ pub(crate) mod tests {
             (d.cik.as_str(), d.shares, d.lockup.as_str(), d.employees.as_str(), d.site.as_str(), d.range.as_str()),
             ("0002139097", Some(27_445_682.0), "180d", "1060", "https://www.trex.bio", "40.00-44.00")
         );
-        let mut d = IpoDeal { range: "30.00-34.00".into(), ..IpoDeal::default() };
+        assert_eq!(d.exchange, "NYSE");
+        let mut d = IpoDeal { range: "30.00-34.00".into(), exchange: "NASDAQ Global Select".into(), ..IpoDeal::default() };
         ipo_overview(&v, &mut d);
-        assert_eq!(d.range, "30.00-34.00", "the calendar's range wins");
+        assert_eq!((d.range.as_str(), d.exchange.as_str()), ("30.00-34.00", "NASDAQ Global Select"), "the calendar's range and exchange win");
         let mut d = IpoDeal::default();
-        ipo_overview(&serde_json::json!({"data": {"poOverview": {"LockupPeriodNumberofDays": {"value": "--"}, "NumberOfEmployees": {"value": "--"}}}}), &mut d);
+        ipo_overview(&serde_json::json!({"data": {"poOverview": {"LockupPeriodNumberofDays": {"value": "--"}, "NumberOfEmployees": {"value": "--"}, "Exchange": {"value": "--"}}}}), &mut d);
         assert_eq!(d, IpoDeal::default(), "`--` and missing keys leave every cell n/a");
     }
 
@@ -15858,7 +15868,8 @@ pub(crate) mod tests {
     }
 
     /// (#524) Watch rows join their Nasdaq deal or stand alone as confidential; with one row of figures the
-    /// rest order by status then day, real figures beat press ones (` r`), a missing one reads n/a.
+    /// rest order by status then day, real figures beat press ones (` r`), a missing one reads n/a and
+    /// (#641) one that cannot exist yet —.
     #[test]
     fn ipo_web_rows_merge_watch_rows_and_mark_press_figures() {
         let csv = "name,expected,reported_valuation_usd,reported_raise_usd,source\n\
@@ -15898,17 +15909,35 @@ pub(crate) mod tests {
         assert_eq!(rows[0][3][2], "https://soon.example");
         let filing = rows[0].as_array().unwrap().iter().find(|c| c[0] == "FILING").unwrap();
         assert_eq!(filing[2], "https://www.sec.gov/x.htm");
-        assert_eq!(["STATUS", "TICKER", "EXPECTED", "RAISE", "MCAP@MID", "FILING", "FY"].map(|h| cell(1, h)), ["filed", "—", "n/a", "$1.2B", "n/a", "filed 2026-08-04", "n/a"]);
+        assert_eq!(["STATUS", "TICKER", "EXPECTED", "RAISE", "MCAP@MID", "FILING", "FY"].map(|h| cell(1, h)), ["filed", "—", "—", "$1.2B", "—", "filed 2026-08-04", "n/a"]);
         assert_eq!(
             ["STATUS", "TICKER", "EXPECTED", "RAISE", "RANGE", "MCAP@MID", "LOCKUP", "FILING", "REV"].map(|h| cell(2, h)),
-            ["confidential", "—", "2026-11 r", "$100.0B r", "n/a", "$2000.0B r", "n/a", "n/a", "n/a"]
+            ["confidential", "—", "2026-11 r", "$100.0B r", "—", "$2000.0B r", "—", "—", "—"]
         );
         assert_eq!(rows[2][3][2], "https://example.com/a", "a watch row's NAME links its source");
         assert_eq!(cell(0, "RANK"), "1");
         assert_eq!(usd_cell(-0.5e6), "-$500K");
         assert_eq!(usd_cell(12e3), "$12K");
         assert_eq!(usd_cell(1e6), "$1.0M");
-        assert_eq!(["P/S@MID", "P/E@MID", "INTERIM", "GROSS%", "LEADS", "INDUSTRY"].map(|h| cell(0, h)), ["97.0x", "loss", "n/a", "n/a", "n/a", "n/a"]);
+        assert_eq!(["P/S@MID", "P/E@MID", "INTERIM", "GROSS%", "LEADS", "INDUSTRY"].map(|h| cell(0, h)), ["97.0x", "loss", "—", "n/a", "n/a", "n/a"]);
+    }
+
+    /// (#641) — = cannot exist yet, n/a = missing. A filed deal with its range in has terms, so an absent
+    /// figure there is n/a, as on an `upcoming` row, which has a range by definition; a read table with no
+    /// interim column is fiscal year only; a confidential row has no public S-1, so every cell is —.
+    #[test]
+    fn ipo_web_rows_dash_what_cannot_exist_yet() {
+        let deal = |status, name: &str, range: &str| IpoDeal { status, name: name.into(), range: range.into(), ..IpoDeal::default() };
+        let mut termed = deal("filed", "Termed", "10.00-12.00");
+        (termed.day, termed.figs.fy) = ("2026-09-01".into(), Some(2025));
+        let rows = ipo_web_rows(vec![termed, deal("confidential", "Quiet", ""), deal("upcoming", "Rangeless", "")]);
+        let row = |r: usize| rows[r].as_array().unwrap().iter().map(|c| (c[0].as_str().unwrap().to_string(), c[1].as_str().unwrap().to_string())).collect::<BTreeMap<_, _>>();
+        let hs = ["EXPECTED", "RAISE", "RANGE", "MCAP@MID", "P/E@MID", "SHARES", "EXCHANGE", "FILING", "FY", "INTERIM", "REV"];
+        let (rangeless, termed, quiet) = (row(0), row(1), row(2));
+        assert_eq!(hs.map(|h| rangeless[h].as_str()), ["", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"]);
+        assert_eq!(hs.map(|h| termed[h].as_str()), ["—", "n/a", "$10.00-12.00", "n/a", "n/a", "n/a", "n/a", "filed 2026-09-01", "2025", "—", "n/a"]);
+        let blank: Vec<&str> = quiet.iter().filter(|(h, v)| !matches!(h.as_str(), "RANK" | "STATUS" | "NAME") && *v != "—").map(|(h, _)| h.as_str()).collect();
+        assert!(blank.is_empty(), "a confidential row reads — throughout: {blank:?}");
     }
 
     /// (#539) Rows with a ttm revenue rank first: profitable (ttm net > 0, so break-even is not) before
@@ -15933,6 +15962,7 @@ pub(crate) mod tests {
         let col = |h: &str| rows.as_array().unwrap().iter().map(|r| r.as_array().unwrap().iter().find(|c| c[0] == h).unwrap()[1].as_str().unwrap().to_string()).collect::<Vec<_>>();
         assert_eq!(col("NAME"), ["Small profit", "Turn", "Big loss", "Even", "Small loss", "Bare", "Zero rev", "Later bare"]);
         assert_eq!(col("RANK"), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+        assert_eq!(col("NET%")[6], "n/a", "zero revenue has no margin to read");
     }
 
     /// (#527) Oura's S-1/A (2026-09-21), trimmed: fiscal year to September, nine-month interim first.

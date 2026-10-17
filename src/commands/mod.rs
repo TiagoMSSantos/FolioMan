@@ -58,8 +58,8 @@ mod tests {
     /// nothing — it prints these cells verbatim — so a shifted horizon, a renamed header or a
     /// swapped region lands straight in the published table with no other check between here and
     /// the site. (#366) The horizons are [`INFL_YEARS`] (plus the EU's span, #367), the region set
-    /// is all three, and a series too short for a horizon prints n/a there rather than a shorter
-    /// span passed off as the full one.
+    /// is all three, and a series too short for a horizon prints — there (#639) rather than a shorter
+    /// span passed off as the full one; n/a is a dead feed's.
     #[test]
     fn inflation_web_rows_publish_all_three_regions_out_to_40y() {
         use std::collections::BTreeMap;
@@ -83,8 +83,8 @@ mod tests {
         );
         assert_eq!(
             rows[1].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
-            ["EU", "3.0%", "6.1%", "15.9%", "34.4%", "80.6%", "115.7%", "n/a", "n/a", "2025 ⚠ STALE"],
-            "a frozen feed still prints its numbers and says where they stop; 26 years is n/a at 30Y/40Y"
+            ["EU", "3.0%", "6.1%", "15.9%", "34.4%", "80.6%", "115.7%", "—", "—", "2025 ⚠ STALE"],
+            "a frozen feed still prints its numbers and says where they stop; 26 years is — at 30Y/40Y"
         );
         assert_eq!(
             rows[2].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
@@ -108,7 +108,8 @@ mod tests {
     /// (#486) The Bonds rows as EXACT STRINGS, for the same reason as the inflation ones: the page
     /// prints them verbatim. A flat 6% yield earns +6.2% a year, 41 years of it fills every column,
     /// USA in EUR lands right after USA with the dollar's 10% fall off the euro taken out, and short,
-    /// stale and dead series say so rather than printing a shorter span as the full one.
+    /// stale and dead series say so rather than printing a shorter span as the full one: (#639) a
+    /// short one prints — past its start, a dead one n/a everywhere.
     #[test]
     fn bond_web_rows_publish_usa_twice_and_say_where_a_series_stops() {
         use std::collections::BTreeMap;
@@ -130,10 +131,10 @@ mod tests {
         assert_eq!(cells(&rows[0]), ["USA", "6.00%", "+6.2%", "+12.7%", "+34.9%", "+81.9%", "+231.0%", "+403.3%", "+502.3%", "+995.7%", "2026-09"]);
         assert_eq!(
             cells(&rows[1]),
-            ["USA in EUR", "6.00%", "-3.5%", "+2.5%", "+22.6%", "+65.4%", "+200.9%", "+357.5%", "n/a", "n/a", "2026-09"],
+            ["USA in EUR", "6.00%", "-3.5%", "+2.5%", "+22.6%", "+65.4%", "+200.9%", "+357.5%", "—", "—", "2026-09"],
             "the 1.1 a euro now costs divides every span that starts before it; EXUSEU's 27 years cap the row"
         );
-        assert_eq!(cells(&rows[2])[9], "n/a", "Italy's 35 years stop short of 40Y");
+        assert_eq!(cells(&rows[2])[9], "—", "Italy's 35 years stop short of 40Y");
         assert_eq!(cells(&rows[2])[8], "+502.3%");
         assert_eq!(cells(&rows[3])[10], "2026-02 ⚠ STALE", "8 months behind October");
         assert_eq!(
@@ -238,8 +239,8 @@ mod tests {
 
 /// (#366) The inflation table's cumulative horizons, shared by the footer and the page so the two
 /// cannot drift. 2Y/5Y/20Y line up with the ranked tables' growth columns; 10Y/30Y/40Y are the long
-/// view a 20+ year hold is judged against. A region too short for a horizon prints n/a there (EU HICP
-/// starts in 2000, so its 30Y/40Y are n/a by design — no older basket is spliced under it).
+/// view a 20+ year hold is judged against. A region too short for a horizon prints — there (#639; EU
+/// HICP starts in 2000, so its 30Y/40Y are — by design: no older basket is spliced under it).
 /// (#367) At run time [`eu_span`] joins these through [`infl_years`], so every region is also read
 /// over EU27's whole history — the longest span the EU row can be compared on.
 const INFL_YEARS: [usize; 6] = [2, 5, 10, 20, 30, 40];
@@ -293,7 +294,11 @@ pub(crate) fn inflation_web_rows(
         .filter_map(|want| inflations.iter().find(|(label, _)| label == want))
         .map(|(label, series)| {
             let (year, latest, _, _) = crate::core::inflation_summary(series);
-            let cum = |years| pct(crate::core::inflation_compounded(series, years));
+            // (#639) a series too short for the span is —; n/a = a dead feed, every cell
+            let cum = |years| match crate::core::inflation_compounded(series, years) {
+                None if !series.is_empty() => "—".to_string(),
+                v => pct(v),
+            };
             // An empty series has no latest year AND is never "stale" (`infl_series_stale` returns
             // None on empty, which is why the dead-feed arm reads off `year` rather than re-testing
             // `is_empty()` — one source for "is there anything here at all").
@@ -339,8 +344,10 @@ pub(crate) fn bond_web_rows(
             ("MARKET".to_string(), label.to_string()),
             ("YIELD".to_string(), yld.values().next_back().map_or("n/a".to_string(), |y| format!("{y:.2}%"))),
         ];
+        // (#639) a span reaching past the start of the unbroken record is —; n/a = no series at all
+        let blank = || (if index.is_empty() { "n/a" } else { "—" }).to_string();
         cells.extend(crate::core::BOND_YEARS.iter().map(|&y| {
-            (format!("{y}Y"), crate::core::bond_cum(&index, y).map_or("n/a".to_string(), signed_pct))
+            (format!("{y}Y"), crate::core::bond_cum(&index, y).map_or_else(blank, signed_pct))
         }));
         cells.push(("AS OF".to_string(), as_of));
         cells

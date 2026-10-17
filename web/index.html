@@ -197,7 +197,8 @@
     watched company with no public S-1 reads <code>confidential</code>; its date and amounts are the press's,
     marked <code>r</code>, and give way to the real ones once filed. The figures from FY to EQUITY are read
     from the S-1's summary financial table, the last full fiscal year and the newest balance sheet; n/a
-    where the table could not be read. Rows rank by the S-1: profitable ones first, then by trailing
+    where the table could not be read, — where there is no public S-1 yet (and, before a price range, in
+    the columns priced off it). Rows rank by the S-1: profitable ones first, then by trailing
     revenue; rows with no figures follow in calendar order. The ratios (P/S, P/E and the margins) read the trailing twelve months
     when the table has an interim period, and value the company at the middle of its range. Underwriters
     and auditor come from Nasdaq, the industry from EDGAR. There is no share price yet, so nothing here is scored or journalled;
@@ -234,7 +235,7 @@
     a span starting before that is still under water. Real bond funds lost the same. It is rebuilt from FRED's monthly
     average yields, so it is a model with no fees, not a fund you can buy. Each row is in its own
     currency; <em>USA in EUR</em> is the same Treasury for a euro holder, the dollar's swing included.
-    n/a = the series is shorter (euro FX starts in 1999, Italy in 1991, Portugal in 1993).
+    — = the series is shorter (euro FX starts in 1999, Italy in 1991, Portugal in 1993); n/a = no data.
     Compare a cell with the Inflation table above to see the real return.
   </details>
 
@@ -277,7 +278,7 @@
        as each header's hover title), and listing only the headers these tables show. -->
   <details class="note" id="glossary" hidden>
     <summary>What the columns mean</summary>
-    <p>In any column, n/a = no data for this row and — = does not apply to this kind of row. A trailing $ = the European line had no data there, so the cell reads the same company's US line (its returns are in dollars).</p>
+    <p>In any column, n/a = no data for this row and — = does not apply to this kind of row, or cannot exist yet (a record shorter than the column's span, an IPO's figures before its S-1 or price range). A trailing $ = the European line had no data there, so the cell reads the same company's US line (its returns are in dollars).</p>
     <dl></dl>
   </details>
 </main>
