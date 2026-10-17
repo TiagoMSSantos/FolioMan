@@ -2989,7 +2989,8 @@ fn parse_edinet_doc(zip: &[u8]) -> Option<(String, String, String, u64, f64, f64
     let mut raw = Vec::new();
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).ok()?;
-        if f.name().ends_with(".csv") {
+        // (#638) zip 9 decodes the name fallibly; an undecodable one is no CSV
+        if f.name().is_ok_and(|n| n.ends_with(".csv")) {
             std::io::Read::read_to_end(&mut f, &mut raw).ok()?;
             break;
         }
