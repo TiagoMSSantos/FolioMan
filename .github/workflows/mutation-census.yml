@@ -99,6 +99,11 @@ jobs:
     # 350 of GitHub's 360; the step's own 330m SIGINT fires first, so a shard that overruns still
     # writes what it graded.
     timeout-minutes: 350
+    # (#635) ci.yml sets this at job level on folioman-test's four jobs, and rust-cache hashes it into
+    # the key like the two above, so without it every shard misses again. No build here reads it:
+    # `[profile.mutants]` pins debug = false.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
       fail-fast: false
       # 16 of the 20 concurrent runners a free account gets: the other 4 keep the 5-minute Pages cron

@@ -51,6 +51,24 @@ permissions:
 # time against run 36228243075: build 32.8s -> 15.2s, unit-tests 33.6 -> 20.2, unit-tests-configless
 # 47.2 -> 23.5, integration-tests 35.2 -> 22.4. CI's wall clock does not move, because the gate is
 # the tail; runner minutes do.
+# (#635) CARGO_PROFILE_DEV_DEBUG=line-tables-only is set at JOB level on exactly the four jobs that
+# share folioman-test: build, unit-tests, unit-tests-configless, integration-tests. Panics keep their
+# file:line (compiled in, not read from debuginfo) and line tables keep any backtrace symbolized;
+# only variable and type info goes, and nothing here reads it. It must be JOB level: no package
+# override pins debuginfo, so it reaches every dependency's rustc flags, and rust-cache hashes
+# job-level CARGO* env into its key. A step-level value leaves the key alone, so the restored
+# full-debuginfo dependencies would be rebuilt on every run and never saved. The four must carry the
+# SAME value too, or the odd one out looks up another key and compiles cold. Two readers outside
+# this file restore folioman-test and carry it as well: mutation-census.yml at job level (its
+# `[profile.mutants]` pins debug = false, so only the key moves there) and probe.yml's bless, on its
+# restore step and its goldens build. Change all of them or none.
+# Coverage, lint, wasm, the gate and mutants have keys of their own and are unchanged. The landing
+# push re-keys folioman-test once, with no restore fallback across an env change, so its four jobs
+# compile dependencies cold and integration-tests saves the new key. Read the SECOND push. The
+# build job's rustc lines must say `-C debuginfo=line-tables-only` (a9d2bab says `=2`), and
+# rust-cache's "Cache Size" must fall below the ~400 MB it restores there (419620083 B). The
+# `Finished` times swing more between runs than this saves (build 41.15s on run 38933540600,
+# 18.40s on a9d2bab; integration-tests 1m 52s and 1m 17s), so one pair of them proves nothing.
 # (#354) Third-party actions are pinned to a commit SHA, the tag it was cut from in the trailing
 # comment, and .github/dependabot.yml bumps them in one grouped PR a month. A moving tag runs
 # whatever its owner pushes next, and pages.yml runs rust-cache beside `pages: write` and
@@ -120,6 +138,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -197,6 +217,8 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -224,6 +246,8 @@ jobs:
   unit-tests-configless:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -352,6 +376,8 @@ jobs:
     # (#566) 25 -> 45: the debug fund-lane goldens went from ~3 to ~19 min once the soft gates (#564)
     # scored every failer (34bfee8 cancelled twice at 25, every finished test green).
     timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -369,11 +395,14 @@ jobs:
           # (#591) folioman's own code at opt-level 2, as its dependencies already are (Cargo.toml's
           # dev package."*" override). The fund-lane goldens are CPU-bound in that code: on 0c5394f
           # backtest_fixture took 404s of this job's 441s at 0, seven fund runs packed on 4 vCPUs.
-          # Debug assertions, overflow checks and debuginfo stay on. The goldens are their own check:
-          # Rust never contracts or reorders float math, so a byte an opt-level moved would red them;
-          # they were blessed at 0, and `cargo t` (profile mutants) runs them at 2. STEP level on
-          # purpose: rust-cache hashes job-level CARGO_* env into its key, this job is folioman-test's
-          # only writer, and the dependency artifacts it saves do not change.
+          # Debug assertions and overflow checks stay on (debuginfo is line tables only, from the
+          # job-level env above). The goldens are their own check: Rust never contracts or reorders
+          # float math, so a byte an opt-level moved would red them; they were blessed at 0, and
+          # `cargo t` (profile mutants) runs them at 2. STEP level on purpose: rust-cache hashes
+          # job-level CARGO_* env into its key, this job is folioman-test's only writer, and the
+          # dependency artifacts it saves do not change. (#635) That holds for opt-level only
+          # because Cargo.toml pins the dependencies at 2 whatever this says; nothing pins their
+          # debuginfo, which is why that one is job level.
           CARGO_PROFILE_DEV_OPT_LEVEL: "2"
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test '*' -- --nocapture
 
@@ -738,11 +767,27 @@ jobs:
           # outlived the 17m wrapper. Figures above that price the full fixture predate this. If a push
           # reds here with a MISSED, re-grade that one mutant on mutation-census.yml, whose `tests`
           # default has no skip. If only a fund golden kills it, the fix is a lib test, not a revert.
+          #
+          # (#635) --lib and the fixture go in as --cargo-arg, so they reach the Build phase too.
+          # Arguments after the first `--` reach the Test phase only, so Build used to run an
+          # unfiltered `cargo test --no-run` and compile the bin test harness and the cli and network
+          # test crates, which nothing here runs, for the baseline and again for every mutant. The
+          # libtest flags now follow a second `--`, so they still reach only the test binaries. Keep
+          # --lib out of the trailing arguments: the Test phase appends both lists, so it would reach
+          # cargo twice. `cargo mutants --list` names the same mutants under both argument lists
+          # (33967 on the whole tree when checked, byte-identical) and the Test phase runs the same
+          # command as before. The saving is EXPECTED, not yet measured. On the first code push after
+          # this lands, the mutants-out artifact's log/baseline.log must show a Build line ending
+          # `--lib --test=backtest_fixture`, no rustc line for tests/cli.rs or tests/network.rs, and
+          # src/main.rs once, not twice (a9d2bab compiled seven targets there, now four). Then read
+          # "Unmutated baseline in Xs build" against 48s on a9d2bab (32s in the note above) and each
+          # mutant's Build in outcomes.json against its 6.6-11.6s. A push with no Rust change runs
+          # no mutants and is unchanged.
           rc=0
           timeout --signal=INT --kill-after=60s 17m \
             cargo mutants "${SHARD[@]}" --in-diff push.diff -j 1 --copy-target=false \
-              --profile mutants -- --lib --test backtest_fixture \
-              -- --skip backtest_fund_report --skip backtest_8y_fund_samples || rc=$?
+              --profile mutants --cargo-arg=--lib --cargo-arg=--test=backtest_fixture \
+              -- -- --skip backtest_fund_report --skip backtest_8y_fund_samples || rc=$?
           # THE FILES ARE THE VERDICT, not the exit code: under `timeout` the code conflates
           # "mutants survived" (2), "interrupted" (124) and any internal error, so it is reported
           # for diagnosis and nothing is decided from it.
