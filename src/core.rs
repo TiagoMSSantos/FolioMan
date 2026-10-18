@@ -401,6 +401,7 @@ pub struct Quote {
     pub top_holdings: Vec<String>, // (#510) the fund's Yahoo top-10 holding symbols, same rows as top10. SCORED only through `growth_etf_one_per_overlap`'s trim
     pub look_fair: Option<f64>, // (#521) an ETF's FAIR ÷ price, its top-10 holdings' own stock FAIR weight-averaged (`picks::look_through_fair`). DISPLAY-ONLY: `fetch::enrich_etf_cells` fills the same rows as top10
     pub ep_fair: Option<(f64, String)>, // (#519) a non-US stock's FAIR ÷ price + span marker from Eulerpool's annual FCF (`picks::ep_fair_ratio`), where SEC filed no FCF. DISPLAY-ONLY: never `fund`, which is scored; `fetch::enrich_eulerpool_fcf` fills pooled stock rows
+    pub ep_fund: Option<FundFactors>, // (#707) `fund_factors` over Eulerpool's annual statements, for a stock with no SEC fiscal-year row (non-US, or US before its first 10-K). DISPLAY-ONLY: the cells read it before `fund`, which stays the scored one; `fetch::enrich_eulerpool_fcf` fills pooled stock rows
     pub next_earnings: Option<NaiveDate>, // (#449) next scheduled earnings report, from Nasdaq's earnings calendar since (#450). DISPLAY-ONLY: `fetch::enrich_earnings` fills the printed stock rows only
     #[serde(default)]
     pub profile: Profile, // (#469) DISPLAY-ONLY: the NAME link + SHORT%/TARGET% facts, printed and shadow-table rows only
@@ -510,6 +511,7 @@ impl Quote {
             top_holdings: Vec::new(),
             look_fair: None,
             ep_fair: None,
+            ep_fund: None,
             splits: Vec::new(),
         }
     }
@@ -3861,7 +3863,8 @@ pub(crate) fn ranks(v: &[f64]) -> Vec<f64> {
 /// backtest read a quarter before it was reported (look-ahead bias). Every ratio is Option: a factor
 /// the free tier can't source (roic/debt = premium-gated) stays None and scores NEUTRAL, never zero.
 /// revenue/margins/eps come from the free `stable/income-statement`; the rest await a paid tier.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)] // (#707) the Eulerpool rows cache as FundRows
 pub struct FundRow {
     pub filed: NaiveDate,
     pub financial: bool,               // (#478) a bank or insurer line filed within 2y of this period: EBIT-type ratios mean nothing here

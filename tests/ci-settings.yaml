@@ -22807,7 +22807,9 @@ urls:
   # which file no SEC cash flow, so FAIR/MOS% read on pooled ones and on ETF top-10 look-throughs.
   # Display only: lands on `Quote.ep_fair`, never the scored `fund`. Needs EULERPOOL_API_KEY (Bearer
   # header). Cash flow cached 30 days, market cap 1 day, in `.eulerpool_fcf.json`; ~5k calls a month
-  # on a 100k quota. Asked 2026-10-07 for more sources. REVERT: delete this line.
+  # on a 100k quota. Asked 2026-10-07 for more sources. (#707) A stock with no SEC fiscal-year row (non-US,
+  # or US before its first 10-K) also reads the annual statements into `Quote.ep_fund`, display only, monthly,
+  # in `.eulerpool_fund.json`. REVERT: delete this line.
   eulerpool_api: "https://api.eulerpool.com/api/1/equity/"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"

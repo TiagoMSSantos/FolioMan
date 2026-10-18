@@ -2082,6 +2082,8 @@ pub async fn run(args: Vec<String>) {
     fetch::enrich_fund_factor(&client, &settings.urls, &mut shadow_extra, &settings.buy_heuristic).await;
     fetch::enrich_income_stmt(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
     fetch::enrich_profile(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
+    // (#707) a side-fetched stock with no SEC row (Social, Berkshire tables) reads Eulerpool's statements too
+    fetch::enrich_eulerpool_fcf(&client, &settings.urls, &mut shadow_extra, &Default::default(), &settings.buy_heuristic).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
@@ -2248,7 +2250,7 @@ pub async fn run(args: Vec<String>) {
     let mut cells = holdings.clone();
     cells.extend(fetch::yahoo_top_holdings(&client, &extra).await.0);
     let funds: Vec<String> = bench.iter().chain(&extra).cloned().collect();
-    fetch::enrich_etf_cells(&client, &settings.urls, &mut quotes, &funds, &cells).await;
+    fetch::enrich_etf_cells(&client, &settings.urls, &mut quotes, &funds, &cells, &settings.buy_heuristic).await;
     let mut fund_pe: picks::FundPeMap = mix
         .iter()
         .filter_map(|(t, (_, _, pe, as_of))| {

@@ -986,6 +986,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         top_holdings: Vec::new(),
         look_fair: None,
         ep_fair: None,
+        ep_fund: None,
         annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
@@ -2317,6 +2318,53 @@ fn td_years(html: &str) -> Vec<f64> {
 type EpEntry = (String, Vec<(String, f64)>, String, Option<f64>);
 const EULERPOOL_CACHE_PATH: &str = ".eulerpool_fcf.json";
 const EP_CASHFLOW_DAYS: i64 = 30;
+/// (#707) Per ticker: (fetch day, [`ep_fund_rows`]), refetched every 30 days like the cash flow.
+const EULERPOOL_FUND_PATH: &str = ".eulerpool_fund.json";
+
+/// (#707) Eulerpool's three annual statements as FundRows, one per dated income row with a revenue, newest 7
+/// ("…e" estimate periods fail the date parse). Millions -> raw units; "filed" = period end. Equity and assets
+/// stay None: they missed ASML's own filing, so ROE/A, ROIC and the asset ratios read n/a, not a wrong figure.
+/// `financial` (Eulerpool's profile sector) marks a bank or insurer, whose EBIT Eulerpool files as 0.
+fn ep_fund_rows(income: &Value, balance: &Value, cash: &Value, financial: bool) -> Vec<core::FundRow> {
+    let by = |v: &Value| -> HashMap<String, Value> {
+        v.as_array().into_iter().flatten().filter_map(|r| Some((r["period"].as_str()?.to_string(), r.clone()))).collect()
+    };
+    let (bs, cf) = (by(balance), by(cash));
+    let mut rows: Vec<core::FundRow> = income
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let p = r["period"].as_str()?;
+            let end = NaiveDate::parse_from_str(p, "%Y-%m-%d").ok()?;
+            let rev = r["revenue"].as_f64()?;
+            let f = |v: Option<&Value>, k: &str| v.and_then(|v| v[k].as_f64());
+            let (b, c, m) = (bs.get(p), cf.get(p), 1e6);
+            let pct = |x: Option<f64>| x.filter(|_| rev > 0.0).map(|x| x / rev * 100.0);
+            let debt = ["shortTermDebt", "longTermDebt"].into_iter().filter_map(|k| f(b, k)).reduce(|a, x| a + x);
+            Some(core::FundRow {
+                filed: end,
+                financial,
+                period_end: end,
+                revenue: Some(rev * m),
+                op_margin: pct(f(Some(r), "ebit")),
+                net_margin: pct(f(Some(r), "netIncome")),
+                eps: f(Some(r), "diluted_eps"),
+                shares: f(Some(r), "shares").map(|s| s * m),
+                fcf_margin: pct(f(c, "fcf")),
+                ebitda: f(Some(r), "ebit").zip(f(c, "amortization")).map(|(e, d)| (e + d) * m),
+                debt: debt.map(|d| d * m),
+                net_debt: f(b, "cashShortTermInvestments").map(|x| (debt.unwrap_or(0.0) - x) * m),
+                cash_ttm: f(c, "netOperatingCashFlow")
+                    .zip(f(c, "capex"))
+                    .map(|(o, k)| core::CashTtm { end, filed: end, ocf: o * m, capex: -k * m, q_ocf: None, q_capex: None }),
+                ..Default::default()
+            })
+        })
+        .collect();
+    rows.sort_by_key(|r| r.period_end);
+    rows.split_off(rows.len().saturating_sub(7))
+}
 
 /// (#519) One Eulerpool GET: Ok(Some) on 200, Ok(None) on 404 (no such security), Err(status) on anything
 /// else, 0 = no answer. Bearer header: the key never rides the URL.
@@ -2334,12 +2382,16 @@ async fn ep_get(client: &Client, url: &str, hdr: &[(&str, &str)]) -> Result<Opti
 /// holding of `holdings`, which the ETF look-through averages. Cash flow refetched every 30 days, the
 /// market cap daily, ~5k calls a month on a 100k quota. No `EULERPOOL_API_KEY` = lane off, one log line.
 /// Any answer but 200/404 (quota, key) stops the fetches for the run; the cached rows still serve.
-#[mutants::skip] // (#519) network + cache shell; the math is `picks::ep_fair_ratio`
-async fn enrich_eulerpool_fcf(
+/// (#707) A stock with no SEC fiscal-year row (foreign, or US before its first 10-K) also takes the three
+/// annual statements + profile monthly, read into `ep_fund` (display only), priced off Eulerpool's own market
+/// cap so EPS and price share the reporting currency.
+#[mutants::skip] // (#519) network + cache shell; the math is `picks::ep_fair_ratio`, (#707) `ep_fund_rows`
+pub async fn enrich_eulerpool_fcf(
     client: &Client,
     urls: &Urls,
     quotes: &mut [core::Quote],
     holdings: &HashMap<String, Vec<(String, f64)>>,
+    tuning: &crate::config::BuyHeuristic,
 ) -> HashMap<String, f64> {
     if urls.eulerpool_api.is_empty() {
         return HashMap::new();
@@ -2352,7 +2404,12 @@ async fn enrich_eulerpool_fcf(
     let hdr = [("Authorization", auth.as_str())];
     // a venue suffix and no US twin behind it: SEC files nothing for these
     let foreign = |t: &str| t.contains('.') && us_symbol(t) == t;
-    let pooled = |q: &core::Quote| crate::picks::asset_class(q) == 2 && foreign(&q.ticker) && q.fund.as_ref().and_then(|f| f.fcf_ttm).is_none();
+    // (#707) no SEC fiscal-year row: SEC wins once the first 10-K lands
+    let no_row = |q: &core::Quote| q.fund.as_ref().map_or(true, |f| f.revenue_ttm.is_none());
+    let pooled = |q: &core::Quote| {
+        crate::picks::asset_class(q) == 2 && q.fund.as_ref().and_then(|f| f.fcf_ttm).is_none() && (foreign(&q.ticker) || no_row(q))
+    };
+    let funded: HashSet<String> = quotes.iter().filter(|q| pooled(q) && no_row(q)).map(|q| q.ticker.clone()).collect();
     let targets: std::collections::BTreeSet<String> = quotes
         .iter()
         .filter(|q| pooled(q))
@@ -2362,6 +2419,9 @@ async fn enrich_eulerpool_fcf(
     let path = crate::config::data_path(EULERPOOL_CACHE_PATH);
     let mut cache: HashMap<String, EpEntry> =
         std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let fund_path = crate::config::data_path(EULERPOOL_FUND_PATH);
+    let mut fund_cache: HashMap<String, (String, Vec<core::FundRow>)> =
+        std::fs::read_to_string(&fund_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let today = chrono::Local::now().date_naive();
     let fresh = |d: &str, days: i64| cache_age_days(d, today).is_some_and(|a| a < days);
     let mut calls = 0;
@@ -2389,16 +2449,53 @@ async fn enrich_eulerpool_fcf(
                 (e.2, e.3) = (today.to_string(), v.and_then(|v| v["mcap"].as_f64()));
             }
         }
+        // (#707) a cash flow row means Eulerpool knows the name; a 404 never pays the four calls below
+        if e.1.is_empty() || !funded.contains(t) || fund_cache.get(t).is_some_and(|(d, _)| fresh(d, EP_CASHFLOW_DAYS)) {
+            continue;
+        }
+        // shortcut: re-reads the cash flow and profile the FAIR fetch above may have just read, two calls a month a name
+        let mut got = Vec::new();
+        for url in ["incomestatement", "balancesheet", "cashflowstatement", "profile"] {
+            calls += 1;
+            match ep_get(client, &format!("{}{url}/{t}", urls.eulerpool_api), &hdr).await {
+                Ok(v) => got.push(v.unwrap_or(Value::Null)),
+                Err(s) => {
+                    eprintln!("fetch: Eulerpool answered {s} on {t}: no more fetches this run");
+                    break 'run;
+                }
+            }
+        }
+        let fin = got[3]["sector"].as_str() == Some("Financials");
+        fund_cache.insert(t.clone(), (today.to_string(), ep_fund_rows(&got[0], &got[1], &got[2], fin)));
     }
     let ratios: HashMap<String, (f64, String)> = targets
         .iter()
         .filter_map(|t| cache.get(t).and_then(|e| crate::picks::ep_fair_ratio(&e.1, e.3?)).map(|r| (t.clone(), r)))
         .collect();
+    let mut fund_n = 0;
     for q in quotes.iter_mut().filter(|q| pooled(q)) {
         q.ep_fair = ratios.get(&q.ticker).cloned();
+        if !no_row(q) {
+            continue;
+        }
+        let Some((_, rows)) = fund_cache.get(&q.ticker).filter(|(_, r)| !r.is_empty()) else { continue };
+        // (#707) the price fields `enrich_fund_factor` stamps, off Eulerpool's cap ÷ shares
+        let mut ff = core::fund_factors(rows, today, 5);
+        let cap = cache.get(&q.ticker).and_then(|e| e.3).map(|m| m * 1e6);
+        let price = cap.zip(ff.shares_ttm).filter(|(_, n)| *n > 0.0).map(|(c, n)| c / n);
+        ff.earnings_yield = price.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
+        ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, crate::picks::peg_cagr_pct(q, tuning), p));
+        ff.cap_fund = cap;
+        q.ep_fund = Some(ff);
+        fund_n += 1;
     }
-    eprintln!("fetch: Eulerpool: {calls} calls, FAIR on {} of {} non-US names", ratios.len(), targets.len());
+    eprintln!(
+        "fetch: Eulerpool: {calls} calls, FAIR on {} of {} names, fundamentals on {fund_n}",
+        ratios.len(),
+        targets.len()
+    );
     cache_write(&path, serde_json::to_string(&cache).unwrap_or_default());
+    cache_write(&fund_path, serde_json::to_string(&fund_cache).unwrap_or_default());
     ratios.into_iter().map(|(t, (r, _))| (t, r)).collect()
 }
 
@@ -2430,6 +2527,7 @@ pub async fn enrich_etf_cells(
     quotes: &mut [core::Quote],
     syms: &[String],
     holdings: &HashMap<String, Vec<(String, f64)>>,
+    tuning: &crate::config::BuyHeuristic,
 ) {
     let read = |p: &str| std::fs::read_to_string(crate::config::data_path(p)).ok();
     let isins: HashMap<String, String> = read(ISIN_CACHE_PATH)
@@ -2454,7 +2552,7 @@ pub async fn enrich_etf_cells(
     // (#521) the stock FAIR ratios the look-through averages; `enrich_fund_factor` filled `fund` earlier. Keyed
     // on the US symbol: holdings name AAPL while the pond holds its Xetra twin APC.DE
     // (#519) plus the non-US holdings Eulerpool values, which no pooled row carries
-    let ep = enrich_eulerpool_fcf(client, urls, quotes, holdings).await;
+    let ep = enrich_eulerpool_fcf(client, urls, quotes, holdings, tuning).await;
     let mut ratios: HashMap<String, f64> =
         quotes.iter().filter_map(|q| crate::picks::stock_fair_ratio(q).map(|(r, _)| (us_symbol(&q.ticker), r))).collect();
     for (t, r) in ep {
@@ -12176,6 +12274,45 @@ pub(crate) mod tests {
         assert!(td_years("<html>home page</html>").is_empty());
     }
 
+    /// (#707) Eulerpool's statements -> FundRows: millions scaled up, margins over revenue, capex sign flipped,
+    /// debt the sum of what was filed. Newest 7 dated rows with a revenue, sorted; an estimate period, a row with
+    /// no revenue and a missing balance or cash flow row each drop only what they lack.
+    #[test]
+    fn ep_fund_rows_maps_the_annual_statements() {
+        let mut income: Vec<Value> = (2016..=2024)
+            .map(|y| serde_json::json!({"period": format!("{y}-12-31"), "revenue": 100, "ebit": 10, "netIncome": 5, "diluted_eps": 1.0, "shares": 5}))
+            .collect();
+        income[4] = serde_json::json!({"period": "2020-12-31", "ebit": 10}); // no revenue: skipped
+        income[5]["revenue"] = 0.into(); // 2021: no margin over a zero revenue
+        income[8] = serde_json::json!({"period": "2024-12-31", "revenue": 200, "ebit": 50, "netIncome": 30, "diluted_eps": 2.5, "shares": 12});
+        income.push(serde_json::json!({"period": "2025-12-31e", "revenue": 999}));
+        income.reverse(); // newest first: the sort, not the feed, orders the rows
+        let balance = serde_json::json!([
+            {"period": "2024-12-31", "cashShortTermInvestments": 40, "shortTermDebt": 10, "longTermDebt": 20},
+            {"period": "2023-12-31", "longTermDebt": 5},
+            {"period": "2021-12-31", "cashShortTermInvestments": 8},
+        ]);
+        let cash = serde_json::json!([{"period": "2024-12-31", "fcf": 25, "amortization": 6, "netOperatingCashFlow": 34, "capex": -10}]);
+        let rows = ep_fund_rows(&Value::Array(income), &balance, &cash, true);
+        let d = |y: i32| NaiveDate::from_ymd_opt(y, 12, 31).unwrap();
+        assert_eq!(rows.iter().map(|r| r.period_end).collect::<Vec<_>>(), [2017, 2018, 2019, 2021, 2022, 2023, 2024].map(d));
+        let r = &rows[6];
+        assert_eq!((r.filed, r.financial, r.revenue, r.eps, r.shares), (d(2024), true, Some(2e8), Some(2.5), Some(1.2e7)));
+        assert_eq!((r.op_margin, r.net_margin, r.fcf_margin), (Some(25.0), Some(15.0), Some(12.5)));
+        assert_eq!((r.ebitda, r.debt, r.net_debt), (Some(5.6e7), Some(3e7), Some(-1e7)));
+        let c = r.cash_ttm.as_ref().unwrap();
+        assert_eq!((c.end, c.filed, c.ocf, c.capex, c.q_ocf), (d(2024), d(2024), 3.4e7, 1e7, None));
+        // 2023: debt but no cash; no cash flow row
+        assert_eq!((rows[5].debt, rows[5].net_debt, rows[5].fcf_margin, rows[5].ebitda), (Some(5e6), None, None, None));
+        assert!(rows[5].cash_ttm.is_none() && rows[5].op_margin == Some(10.0));
+        // 2022: no balance row at all
+        assert_eq!((rows[4].debt, rows[4].net_debt), (None, None));
+        // 2021: cash and no debt filed; zero revenue
+        assert_eq!((rows[3].debt, rows[3].net_debt, rows[3].revenue), (None, Some(-8e6), Some(0.0)));
+        assert_eq!((rows[3].op_margin, rows[3].net_margin), (None, None));
+        assert!(ep_fund_rows(&Value::Null, &balance, &cash, false).is_empty());
+    }
+
     /// (#479) justETF's wording -> BF's tokens: the method span decides a physical fund, a wording
     /// nobody mapped reads None, and a page without the rows reads nothing at all.
     #[test]
@@ -12264,7 +12401,7 @@ pub(crate) mod tests {
             ("ZZTDE".to_string(), vec![("X".to_string(), 0.5)]),
             ("ZZTDI".to_string(), vec![("X".to_string(), 0.5)]),
         ]);
-        enrich_etf_cells(&client, &urls, &mut quotes, &syms, &holdings).await;
+        enrich_etf_cells(&client, &urls, &mut quotes, &syms, &holdings, &crate::config::BuyHeuristic::default()).await;
         assert!(quotes[0].top10.is_some_and(|t| (t - 40.0).abs() < 1e-9), "{:?}", quotes[0].top10);
         assert_eq!(quotes[0].td_years, vec![0.3, -0.2]);
         assert_eq!(quotes[1].td_years, vec![0.1], "a fresh cache row is served, not refetched");

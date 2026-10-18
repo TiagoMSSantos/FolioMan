@@ -93,6 +93,8 @@ config/settings.yaml
 .edinet_brk.json
 # (#519) Eulerpool annual FCF (30 days) + market cap (1 day) per non-US stock; its own cache step in pages.yml
 .eulerpool_fcf.json
+# (#707) Eulerpool annual statements (30 days) per stock with no SEC row; its own cache step in pages.yml
+.eulerpool_fund.json
 .justetf_cells_cache.json
 # (#469) the NAME link + SHORT%/TARGET% facts (Nasdaq + FINRA); refetched every 7 days
 .profile_cache.json

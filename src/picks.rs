@@ -3992,7 +3992,7 @@ const COLUMNS: &[ColSpec] = &[
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
     // (#540) display only: the link is stamped by `stamp_site`, off `profile.cik`
-    ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report). Hover (desktop) for the company's description and its last annual report's revenue, net income, free cash flow and net debt" },
+    ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report). Hover (desktop) for the company's description and its last annual report's revenue, net income, free cash flow and net debt; ᵉ = fundamentals from Eulerpool's annual statements, not a filing this page read" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
     ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price; — = under a year listed" },
@@ -4178,6 +4178,13 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
     // Unknown class ("" instrument_type) falls through to the value so a real name is never wrongly blanked.
     let is_crypto = is_currency_quoted(&quote.ticker) || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
     let is_etf = quote.instrument_type.eq_ignore_ascii_case("ETF");
+    // (#707) a stock with no SEC fiscal-year row reads Eulerpool's annual statements (`ep_fund`) in every
+    // fundamental cell; the score and gates still read `fund` alone
+    let ep = quote.ep_fund.as_ref();
+    let fund = ep.or(fund);
+    // shortcut: a home-market listing (a dot suffix) prices ordinary shares; a US ticker with no SEC row may
+    // be an ADR whose ratio Eulerpool does not give, so its MCAP stays n/a until a filing lands
+    let shares = quote.shares_out.or_else(|| ep.filter(|_| quote.ticker.contains('.')).and_then(|f| f.shares_ttm));
     let is_equity = quote.instrument_type.eq_ignore_ascii_case("EQUITY");
     let stock_only_na = is_etf || is_crypto; // P/E, ROE don't apply here (PEG now splits equity/fund — see below)
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
@@ -4254,7 +4261,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         },
         "pe" if stock_only_na => "—".to_string(),
         // (#506) a loss-maker has no P/E, and "n/a" read as missing data: "loss" says the filing was read
-        "pe" => match (quote.pe_ratio, quote.fund.as_ref().and_then(|f| f.eps_ttm)) {
+        "pe" => match (quote.pe_ratio.or_else(|| ep.and_then(|f| f.earnings_yield).filter(|y| *y > 0.0).map(|y| 100.0 / y)), fund.and_then(|f| f.eps_ttm)) {
             (Some(v), _) => format!("{v:.1}"),
             (None, Some(e)) if e <= 0.0 => "loss".to_string(),
             _ => "n/a".to_string(),
@@ -4300,19 +4307,15 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             format!("{:.2}{}{}", 100.0 / p, if borrowed { "~" } else { "" }, if cached { "°" } else { "" })
         }),
         // (#624) a loss-maker has no PEG for the reason it has no P/E: "loss" says the filing was read, as the P/E cell does (#506)
-        "peg" if quote.fund.as_ref().is_some_and(|f| f.peg_yield.is_none() && f.eps_ttm.is_some_and(|e| e <= 0.0)) => "loss".to_string(),
+        "peg" if fund.is_some_and(|f| f.peg_yield.is_none() && f.eps_ttm.is_some_and(|e| e <= 0.0)) => "loss".to_string(),
         // (#702) earnings but no growth to divide by: the price leg fell, or the record is shorter than the
         // leg PEG reads (`peg_cagr_pct`, `growth_min_leg_years` back), so the ratio cannot exist: "—"
-        "peg" if quote.fund.as_ref().is_some_and(|f| f.peg_yield.is_none() && f.eps_ttm.is_some()) => match peg_cagr_pct(quote, tuning) {
+        "peg" if fund.is_some_and(|f| f.peg_yield.is_none() && f.eps_ttm.is_some()) => match peg_cagr_pct(quote, tuning) {
             Some(g) if g <= 0.0 => "—".to_string(),
             Some(_) => "n/a".to_string(),
             None => short_or_na(quote, tuning.growth_min_leg_years),
         },
-        "peg" => quote
-            .fund
-            .as_ref()
-            .and_then(|f| f.peg_yield)
-            .map_or("n/a".to_string(), |p| format!("{:.2}", 100.0 / p)),
+        "peg" => fund.and_then(|f| f.peg_yield).map_or("n/a".to_string(), |p| format!("{:.2}", 100.0 / p)),
         // (#45) MVRV — market cap / realized cap, the coin's price against what its holders actually
         // paid. This is what `crypto_max_mvrv` cuts on, printed verbatim. It is NOT a PEG and must not
         // be folded into that column: there is no earnings term, so it reads as a P/B, not a P/E ÷ g.
@@ -4336,33 +4339,29 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#522) ...and its free cash flow is deposit and loan flow, so the whole FCF family goes with it
         // (#540) ...except FAIR, MOS% and FAIR-CAP, which read a book-value FAIR off P/E and ROE
         "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcfy" | "fcf5y" | "fair_oe" | "mos_oe" | "impl_g" | "capex"
-            if quote.fund.as_ref().is_some_and(|f| f.financial) =>
+            if fund.is_some_and(|f| f.financial) =>
         {
             "—".to_string()
         }
         // (#462) a cap needs a positive level under it; FCF keeps its sign, a burn is worth seeing
-        "fcfy" => quote.fund.as_ref().and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
-        "ps" => quote.fund.as_ref().and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
+        "fcfy" => fund.and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
+        "ps" => fund.and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
         "evebitda" | "nde" if ebitda_loss(quote) => "loss".to_string(),
-        "evebitda" => quote
-            .fund
-            .as_ref()
+        "evebitda" => fund
             .and_then(|f| f.cap_fund.map(|m| m + f.net_debt.unwrap_or(0.0)).zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
             .map_or("n/a".to_string(), |(ev, e)| format!("{:.1}x", ev / e)),
         "earn" => quote.next_earnings.map_or("n/a".to_string(), |d| d.format("%m-%d").to_string()),
         "ins" => quote.insider_90d.map_or("n/a".to_string(), |(b, s)| format!("{b}/{s}")),
-        "roic" => quote.fund.as_ref().and_then(|f| f.roic).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
-        "fcf" => quote.fund.as_ref().and_then(|f| f.fcf_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
-        "capex" => quote.fund.as_ref().and_then(|f| f.cash_ttm.as_ref()).map(core::capex_ocf).map_or("n/a".to_string(), |r| {
+        "roic" => fund.and_then(|f| f.roic).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "fcf" => fund.and_then(|f| f.fcf_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "capex" => fund.and_then(|f| f.cash_ttm.as_ref()).map(core::capex_ocf).map_or("n/a".to_string(), |r| {
             if r.is_finite() { format!("{r:.0}%") } else { "burn".to_string() }
         }),
-        "nde" => quote
-            .fund
-            .as_ref()
+        "nde" => fund
             .and_then(|f| f.net_debt.zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
             .map_or("n/a".to_string(), |(d, e)| format!("{:.1}x", d / e)),
         // (#702) no interest line and a filed zero (or absent) debt figure: nothing to cover, not a gap
-        "icov" => match quote.fund.as_ref() {
+        "icov" => match fund {
             Some(f) if f.interest_cover.is_none() && f.debt == Some(0.0) => "no debt".to_string(),
             f => f.and_then(|f| f.interest_cover).map_or("n/a".to_string(), |v| format!("{v:.0}x")),
         },
@@ -4393,7 +4392,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#622) a fund has no market value: the mixed REIT table prints funds beside stocks and has no AUM
         // column, so MCAP reads the fund size there, as the column's help says (the ETF lane hides MCAP)
         "mcap" if is_etf => turnover_cell(quote.aum_shown().or(quote.profile.aum)),
-        "mcap" => turnover_cell(quote.shares_out.zip(quote.price_eur).map(|(n, p)| n * p)),
+        "mcap" => turnover_cell(shares.zip(quote.price_eur).map(|(n, p)| n * p)),
         // ETF share class + replication tokens (BF keyData). Display-only — the price-only CAGR already
         // prices the Dist payout drag, so these inform the BUY (which listing), never the ranking.
         "use" if etf_only_na => "—".to_string(),
@@ -4408,11 +4407,11 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // newest complete-FY income-statement snapshot (report pipeline; enriched only for displayed
         // stock rows). "—" for ETF/crypto (no income statement); "n/a" = not enriched / no data.
         "rev-yoy" if stock_only_na => "—".to_string(),
-        "rev-yoy" => quote.rev_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%{}", if quote.rev_ytd { "‡" } else { "" })),
+        "rev-yoy" => quote.rev_yoy.or_else(|| ep.and_then(|f| f.rev_yoy)).map_or("n/a".to_string(), |v| format!("{v:+.1}%{}", if quote.rev_ytd { "‡" } else { "" })),
         "eps-yoy" if stock_only_na => "—".to_string(),
-        "eps-yoy" => quote.eps_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "eps-yoy" => quote.eps_yoy.or_else(|| ep.and_then(|f| f.eps_yoy)).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "net" if stock_only_na => "—".to_string(),
-        "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        "net" => quote.net_margin_fy.or_else(|| ep.and_then(|f| f.net_margin)).map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // (#463) the 5y fund_factors levels the live enrich already fills
         "rev5y" | "opm" | "mtrend" | "fcf5y" if stock_only_na => "—".to_string(),
         // (#622) company cash-flow cells: a fund has none, so the dash replaces an n/a that means "exists but
@@ -4423,10 +4422,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#522) each cell against its own base: FCF-5Y this year's FCF, the FAIR family the 3-year median
         "fcf5y" | "fair" | "mos" | "fair_oe" | "mos_oe" | "fair_cap" | "impl_g"
             if !stock_only_na
-                && !quote.fund.as_ref().is_some_and(|f| f.financial)
-                && quote
-                    .fund
-                    .as_ref()
+                && !fund.is_some_and(|f| f.financial)
+                && fund
                     .and_then(|f| match key {
                         "fcf5y" => f.fcf_ttm,
                         "fair_oe" | "mos_oe" => f.oe_base,
@@ -4437,7 +4434,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             "burn".to_string()
         }
         // (#702) no rate can exist (`fcf_dash`: under 2 years filed, or a burn at the old end): "—"
-        "fcf5y" => quote.fund.as_ref().map_or("n/a".to_string(), |f| {
+        "fcf5y" => fund.map_or("n/a".to_string(), |f| {
             span_or_short(f.fcf_cagr, f.fcf_cagr_short).map_or_else(|| (if f.fcf_dash { "—" } else { "n/a" }).to_string(), |(v, m)| format!("{v:+.1}%{m}"))
         }),
         // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio. (#521) An ETF reads its
@@ -4455,34 +4452,32 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         }
         .and_then(|(x, m)| match key {
             "mos" | "mos_oe" => Some(format!("{:+.0}%{m}", (x - 1.0) * 100.0)),
-            "fair_cap" => quote.shares_out.zip(quote.price_eur).map(|(n, p)| format!("{}{m}", turnover_cell(Some(n * p * x)))),
+            "fair_cap" => shares.zip(quote.price_eur).map(|(n, p)| format!("{}{m}", turnover_cell(Some(n * p * x)))),
             _ => quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)),
         })
         // (#702) a stock whose FCF-5Y cannot exist has no rate to grow FAIR by either
-        .unwrap_or_else(|| (if !stock_only_na && quote.fund.as_ref().is_some_and(|f| !f.financial && f.fcf_dash) { "—" } else { "n/a" }).to_string()),
-        "impl_g" => quote
-            .fund
-            .as_ref()
+        .unwrap_or_else(|| (if !stock_only_na && fund.is_some_and(|f| !f.financial && f.fcf_dash) { "—" } else { "n/a" }).to_string()),
+        "impl_g" => fund
             .and_then(|f| Some(f.fcf_base? / f.cap_fund?))
             .and_then(implied_growth)
             .map_or("n/a".to_string(), |g| format!("{g:+.1}%")),
-        "rev5y" => quote.fund.as_ref().map_or("n/a".to_string(), |f| {
+        "rev5y" => fund.map_or("n/a".to_string(), |f| {
             span_or_short(f.rev_cagr, f.rev_cagr_short).map_or_else(|| (if f.rev_dash { "—" } else { "n/a" }).to_string(), |(v, m)| format!("{v:+.1}%{m}"))
         }),
-        "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
-        "mtrend" => quote.fund.as_ref().and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
+        "opm" => fund.and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "mtrend" => fund.and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
         // (#464) the (#412) red flags, un-negated back to their published sign
         "mscore" | "sbc" if stock_only_na => "—".to_string(),
-        "mscore" => quote.fund.as_ref().and_then(|f| f.mscore).map_or("n/a".to_string(), |v| format!("{:.2}", -v)),
-        "sbc" => quote.fund.as_ref().and_then(|f| f.sbc).map_or("n/a".to_string(), |v| format!("{:.1}%", -v)),
-        "reports" => if quote.profile.cik.is_some() { "SEC" } else { "search" }.to_string(), // (#540)
+        "mscore" => fund.and_then(|f| f.mscore).map_or("n/a".to_string(), |v| format!("{:.2}", -v)),
+        "sbc" => fund.and_then(|f| f.sbc).map_or("n/a".to_string(), |v| format!("{:.1}%", -v)),
+        "reports" => reports_link(Some(quote), "").0.to_string(), // (#540)
         "misses" => lane_misses(quote, tuning),
         "buyback" | "target" | "short" if stock_only_na => "—".to_string(),
         // (#489) fewer than 3 analysts is one bank's opinion, not a consensus
         "target" => quote.profile.target_pct.filter(|_| quote.profile.analysts.is_some_and(|n| n >= 3)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // the MCAP cell's share count, so an ADR's ratio (#425) cancels the same way it does there
-        "short" => quote.profile.short_shares.zip(quote.shares_out.filter(|n| *n > 0.0)).map_or("n/a".to_string(), |(s, n)| format!("{:.1}%", s / n * 100.0)),
-        "buyback" => quote.buyback_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "short" => quote.profile.short_shares.zip(shares.filter(|n| *n > 0.0)).map_or("n/a".to_string(), |(s, n)| format!("{:.1}%", s / n * 100.0)),
+        "buyback" => quote.buyback_yoy.or_else(|| ep.and_then(|f| f.buyback_yield)).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
@@ -4717,6 +4712,10 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         if !seen.contains('°') && earns_cache_mark(quote, &cols, tuning, fund_pe) {
             seen.push('°');
         }
+        // (#707) `ᵉ` rides the REPORTS cell
+        if !seen.contains('ᵉ') && quote.ep_fund.is_some() && cols.iter().any(|c| c.key == "reports") {
+            seen.push('ᵉ');
+        }
         row(&m, quote, *score);
     }
     // Legend: explain only the flags THIS table used, so clean tables stay clean.
@@ -4732,6 +4731,9 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
             "° = look-through P/E served from cache, not fetched this run (Yahoo unreachable) — the fund P/E line dates each one; anything older than 3 days is dropped rather than shown"
                 .into(),
         );
+    }
+    if seen.contains('ᵉ') {
+        legend.push("ᵉ = fundamentals from Eulerpool's annual statements, not a filing this page read".into());
     }
     if seen.contains('≈') {
         legend.push(format!(
@@ -4897,7 +4899,7 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 
 /// (#506) EBITDA filed at or below 0: EV/EBITDA and ND/EBITDA print "loss", not "n/a"
 fn ebitda_loss(quote: &Quote) -> bool {
-    quote.fund.as_ref().and_then(|f| f.ebitda_ttm).is_some_and(|e| e <= 0.0)
+    quote.ep_fund.as_ref().or(quote.fund.as_ref()).and_then(|f| f.ebitda_ttm).is_some_and(|e| e <= 0.0)
 }
 
 /// (#505) The 5y rate unmarked, else the short-span fallback marked with its years, rounded, in superscript
@@ -6200,14 +6202,16 @@ pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn
 /// and a Google search on the name (the quote's, or the row's NAME text when unpriced: its cell read n/a)
 /// for its investor-relations reports, a fund's for its factsheet, KID and annual report.
 fn reports_link(q: Option<&Quote>, named: &str) -> (&'static str, String) {
+    // (#707) ᵉ: the fundamental cells read Eulerpool's annual statements, not a filing this page read
+    let ep = q.is_some_and(|q| q.ep_fund.is_some());
     if let Some(cik) = q.and_then(|q| q.profile.cik.as_deref()) {
-        return ("SEC", format!("https://www.sec.gov/edgar/browse/?CIK={cik}"));
+        return (if ep { "SECᵉ" } else { "SEC" }, format!("https://www.sec.gov/edgar/browse/?CIK={cik}"));
     }
     let what = if q.is_some_and(|q| q.instrument_type.eq_ignore_ascii_case("ETF")) { "factsheet KID annual report" } else { "investor relations annual report" };
     let query = format!("\"{}\" {what}", q.map_or(named, |q| q.name.as_str()));
     // RFC 3986 unreserved bytes pass, every other byte is %XX: the wasm build carries no url crate
     let enc: String = query.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
-    ("search", format!("https://www.google.com/search?q={enc}"))
+    (if ep { "searchᵉ" } else { "search" }, format!("https://www.google.com/search?q={enc}"))
 }
 
 /// (#545) The CAPEX/OCF hover: the TTM operating cash flow and capex in the filer's currency, then the
@@ -9045,6 +9049,7 @@ mod tests {
             top_holdings: Vec::new(),
             look_fair: None,
             ep_fair: None,
+            ep_fund: None,
             annual_brief: None,
         }
     };
@@ -11478,6 +11483,8 @@ mod tests {
         let full_year = Quote { rev_ytd: false, ..ytd.clone() };
         let mut filer = stock.clone();
         filer.profile.cik = Some("0000320193".into());
+        let ep = |q: &Quote| Quote { ep_fund: Some(core::FundFactors::default()), ..q.clone() };
+        let (ep_filer, ep_stock) = (ep(&filer), ep(&stock));
         for (key, quote, pe, want) in [
             ("peg", &fund, &fresh, "2.50"),
             ("peg", &fund, &borrowed, "2.50~"),
@@ -11487,6 +11494,8 @@ mod tests {
             ("rev-yoy", &full_year, &no_pe, "+65.5%"),
             ("reports", &filer, &no_pe, "SEC"),
             ("reports", &stock, &no_pe, "search"),
+            ("reports", &ep_filer, &no_pe, "SECᵉ"),
+            ("reports", &ep_stock, &no_pe, "searchᵉ"),
         ] {
             assert_eq!(col_cell(key, quote, 0.0, None, "", &t, pe), want, "{key} {want}");
         }
@@ -11497,6 +11506,48 @@ mod tests {
             let q = Quote::stub(ticker, "€1", "", "Coin");
             assert_eq!(rank_mark(0, &q, &none, &owned, &t), want, "{ticker}");
         }
+    }
+
+    /// (#707) A stock with no SEC fiscal-year row prints Eulerpool's statements (`ep_fund`) in its fundamental
+    /// cells, and they win over an SEC row, which only exists without revenue when `ep_fund` is stamped. P/E
+    /// comes off the stamped yield, the quote-level YoY cells fall back to the same row, and MCAP takes
+    /// Eulerpool's share count only on a home-market listing (a bare US ticker may be an ADR).
+    #[test]
+    fn ep_fund_fills_the_fundamental_cells() {
+        let t = BuyHeuristic::default();
+        let no_pe: FundPeMap = HashMap::new();
+        let ff = core::FundFactors {
+            eps_ttm: Some(2.0),
+            earnings_yield: Some(5.0),
+            cap_fund: Some(1e9),
+            revenue_ttm: Some(5e8),
+            rev_yoy: Some(12.0),
+            eps_yoy: Some(-3.0),
+            net_margin: Some(15.0),
+            buyback_yield: Some(1.5),
+            shares_ttm: Some(1e7),
+            roic: Some(9.0),
+            ..Default::default()
+        };
+        let home = Quote { price_eur: Some(10.0), ep_fund: Some(ff.clone()), ..Quote::stub("ABC.DE", "€10.00", "", "Abc AG") };
+        let us = Quote { ticker: "ABC".into(), ..home.clone() };
+        for (key, want) in [("pe", "20.0"), ("ps", "2.0x"), ("rev-yoy", "+12.0%"), ("eps-yoy", "-3.0%"), ("net", "15.0"), ("buyback", "+1.5%"), ("roic", "9.0%"), ("mcap", "€100M")] {
+            assert_eq!(col_cell(key, &home, 0.0, None, "", &t, &no_pe), want, "{key}");
+        }
+        assert_eq!(col_cell("mcap", &us, 0.0, None, "", &t, &no_pe), "n/a", "a bare US ticker keeps its own share count");
+        // the quote's own figures still win, and a loss reads off the Eulerpool EPS (a zero yield prices no P/E)
+        let filed = Quote { pe_ratio: Some(30.0), rev_yoy: Some(4.0), ..home.clone() };
+        assert_eq!(col_cell("pe", &filed, 0.0, None, "", &t, &no_pe), "30.0");
+        assert_eq!(col_cell("rev-yoy", &filed, 0.0, None, "", &t, &no_pe), "+4.0%");
+        let loss = Quote { ep_fund: Some(core::FundFactors { eps_ttm: Some(-1.0), earnings_yield: Some(0.0), ..ff.clone() }), ..home.clone() };
+        assert_eq!(col_cell("pe", &loss, 0.0, None, "", &t, &no_pe), "loss");
+        // a bank on Eulerpool's sector dashes its EBIT cells over an SEC row that filed no revenue
+        let bank = Quote {
+            fund: Some(core::FundFactors { roic: Some(7.0), ..Default::default() }),
+            ep_fund: Some(core::FundFactors { financial: true, ..ff }),
+            ..home
+        };
+        assert_eq!(col_cell("roic", &bank, 0.0, None, "", &t, &no_pe), "—");
     }
 
     /// (#79) The S-8Y tuning makes exactly three changes and inherits everything else. Asserted on

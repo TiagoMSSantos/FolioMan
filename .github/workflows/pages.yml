@@ -196,6 +196,14 @@ jobs:
           key: folioman-eulerpool-${{ github.run_id }}
           restore-keys: folioman-eulerpool-
 
+      # (#707) Eulerpool's annual statements behind `ep_fund` (30 days), four calls a month per name with no SEC row.
+      - name: Restore Eulerpool fundamentals cache
+        uses: actions/cache@v6
+        with:
+          path: .eulerpool_fund.json
+          key: folioman-epfund-${{ github.run_id }}
+          restore-keys: folioman-epfund-
+
       # (#366) The three PERMANENT BLS decades behind the USA 20Y/30Y/40Y inflation cells. `.fmp_cache`
       # is otherwise cold on every run, so each run would re-ask BLS for all three plus the fresh
       # window: 4 keyless calls per run against a 25/day per-IP cap. With this it is 1. Its own step,
