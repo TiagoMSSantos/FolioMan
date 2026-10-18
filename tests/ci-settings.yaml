@@ -1723,6 +1723,8 @@ sizing:
   #  (37 vs 36, 45 vs 44), so part of those two cells is composition. The 20y cells have equal n and still gain.
   #  OPEN: two designs (momentum, 1Y off) now beat the book and stall on the same 21-program pit DCA median.
   #  Whether that median tie stays a veto has to be decided BEFORE the next test, never after one.
+  #  (#724) 1Y+ off re-asked on the (j) bar after the drop-only veto (60a2607): REFUSED 0/6, the floor binds
+  #  no walk window alone. Receipt at growth_min_1y_pct.
   #  cagr (4/6 in the screen) is the other stage-2 candidate and is not run yet.
   #  RULE PRE-REGISTERED 2026-10-12, before any further test: from now on the 20y DCA VETOES only when a
   #  lane's `never-sell vs index DCA` mean OR median FALLS by >= 0.2 pts/yr against the same-batch control.
@@ -2778,6 +2780,30 @@ buy_heuristic:
                                  #   are secular decliners over 20y, the round-5 −108-pts cohort seen at lane level. The top-10 BOOK
                                  #   actually ticks up (+6.4/+6.1 vs +6.1/+5.8), so the wound is below the buy line — but the 20y+ hold
                                  #   goal keeps the floor. VERDICT: 0.0 stays; an overlay running -1e6 should return to 0.0.
+                                 #   (#724) REFUSED 0/6 (probe on b526c5b, universe fund pit/stress rivals winners, 8/12/20y;
+                                 #   control/arm runs 39127609341/39127611068 pit, 39127612962/39127614595 stress). Arm = this floor
+                                 #   off (-1000000000): a negative-1Y stock stops taking the (#566) x0.8 dock. Why tried: the owner
+                                 #   asked to RAISE the rank of a name that is down over 1M and 1Y. Every looser or inverted grid
+                                 #   above graded worse, so the one open door was (#561) 1Y+ off, which beat the old top-10 row 6/6
+                                 #   and stalled only on a 20y DCA median tie that the drop-only veto (60a2607) no longer counts.
+                                 #   USER DECISION 2026-10-18: 1M is not tested this round (mom121 (#47) stands), and a failed
+                                 #   undock closes a negative-1Y bonus too. Bar as (#587)/(#609), pre-registered: rival (j) arm -
+                                 #   control mean AND median >= +0.2 in >= 5/6 cells; 20y DCA S+inter not down > 0.2 (mean or
+                                 #   median) in either lane; WINNERS HELD not under control by >= 2.0 in any cell.
+                                 #   (j) mean/median, control -> arm:
+                                 #     pit     8y +5.0/+4.4 -> +5.1/+4.5   12y +4.1/+3.9 -> +4.2/+4.0   20y +5.7/+4.6 -> same
+                                 #     stress  8y +6.3/+6.5 -> +6.2/+6.7   12y +5.7/+6.3 -> +5.6/+6.2   20y +5.6/+5.5 -> +5.6/+5.3
+                                 #   cells 0/6. 20y DCA S+inter unmoved (pit +5.2/+4.4, stress +7.0/+7.8). WINNERS HELD within 0.5
+                                 #   in every cell. Windows identical (6163/2779/1119 and 9015/5078/2541). Passer edge and passer
+                                 #   lift identical to the decimal in all 6 cells. The plain `top-10 ` excess moves +0.4/+0.2/0.0
+                                 #   (pit 8/12/20y) and +0.1/+0.2/0.0 (stress), while the pit Série E share falls 80 -> 78% at 8y
+                                 #   and 82 -> 79% at 12y.
+                                 #   WHY NOTHING MOVES: every control prints `growth_min_1y_pct -10 admits 0 new names (gate not
+                                 #   binding on this sample)`. No walk window fails this floor ALONE, so lifting it adds no passer;
+                                 #   it only shrinks one x0.8 dock on names that fail another gate too. Likely why (#561)'s 6/6 is
+                                 #   gone: it was graded under hard gates, where a waived name took an empty slot of a saturated
+                                 #   book; since (#566) docked failers fill those slots already. The undock's slope is flat, so a
+                                 #   dip bonus has nothing to extend. -0.3 stays.
   min_1y_pct_crypto: -50.0       # LIVE (crypto/FX -EUR/-USD): 1Y floor for the crypto growth lane — coins swing far harder than
                                  #   stocks, but a coin down worse than -50% on the year is a crash, not a swing (BTC's own bad
                                  #   year is -33.5%, comfortably inside; GT -62 / BGB -60 out). Was -75, which let deep crashers rank
