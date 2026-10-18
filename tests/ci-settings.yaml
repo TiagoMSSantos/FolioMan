@@ -20629,7 +20629,7 @@ buy_heuristic:
   #  re-run of this grid.
   growth_red_flag_dock: 1.0     # (#730) < 1.0 = a name's score x this^(its (#729) red-flag count, L 2 B I R D, as-of in the
   #  backtest). No SEC read, no current filing (over 550 days) or no flag = x1.0. 1.0 = off, the shipped lane bit for bit.
-  #── (#730) PRE-REGISTERED 2026-10-18, before any run — DOCK A NAME PER RED FLAG ──
+  #── (#730) REFUSED 2026-10-18 (pre-registered before any run) — DOCK A NAME PER RED FLAG ──
   #  WHY: the owner asks to punish assets that carry red flags. This RE-OPENS on purpose what the (#729) receipt closed
   #  ("never a gate, tilt or score term"); the owner chose to grade a soft dock rather than ship one blind.
   #  Against it, stated before the run: (#576) refused a hard loss rule 5/5 (stress 1y/2y vetoed, inert elsewhere);
@@ -20651,6 +20651,22 @@ buy_heuristic:
   #  only forward read.
   #  CAVEATS: survivorship (today's pond); a flag is a filing fact, not a verdict ((#728): ~7% of the pond reads 2+ flags
   #  any month and most survive); the walk carries flags only on `fund` runs, so a non-SEC name is never docked.
+  #  VERDICT 2026-10-18: REFUSED IN ALL THREE ARMS, bar 1 fails. The knob stays 1.0. Probe runs at 9b979d5: pit
+  #  39146403821 (ctl) / 39146406217 (0.8) / 39146408456 (0.6) / 39146410911 (0.4); stress 39146413285 / 39146415744 /
+  #  39146418430 / 39146421664. Knob echo matches every arm. `windows scored` matches ctl (pit 6163/2779/1119, stress
+  #  9015/5078/2541) except stress 0.6 at 8y (8965, the Wikidata blip): that cell is ungraded, and its re-dispatch
+  #  39146826236 cannot flip the verdict, because 0.6 already fails at pit 12y.
+  #    rival (j), mean (paired median), ctl -> every arm (the three arms print the same line in every graded cell):
+  #          pit 8y +5.0 (+4.4) -> +4.9 (+4.4); 12y +4.1 (+3.9) -> +4.1 (+3.7) VETO; 20y +5.7 (+4.6) unmoved;
+  #          stress 8y +6.3 (+6.5) -> +6.2 (+6.0) VETO; 12y +5.7 (+6.3) -> +5.7 (+6.2); 20y +5.6 (+5.5) unmoved.
+  #    bar 2 passes: 20y DCA S+inter unmoved in every arm (pit +5.2 (+4.4), stress +7.0 (+7.8)).
+  #    bar 3 passes: every WINNERS HELD line is unmoved (pit 8y 9.1% of 460, 20y 7.7% of 220; stress 12y 12.5% of 606).
+  #  READING: f = 0.8 already drops the flagged names below the cut, so 0.6 and 0.4 evict the same names: the dock acts
+  #  as a binary drop, not a tilt. The drop costs the (j) median at stress 8y (-0.5) and pit 12y (-0.2), and the growth
+  #  lane's top-half edge falls at stress 8y (+11.9 -> +6.6 pts) and pit 8y (+25.7 -> +24.4/+24.5). The plain top-10
+  #  book barely moves (stress 8y +4.6 (+4.3) -> +4.5 (+4.5)): the cost lands in the blend's score half. The survivors
+  #  the dock evicts paid more than it saved, and dead names cannot show the other side (the CAVEAT). A re-open needs
+  #  the forward `redf` track row (12 lines + 12 links), not a re-run of this grid; do not re-ask a red-flag score term.
   growth_overext_backed_floor: 0.0 # (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock
   #  (`picks::earnings_backed`: 5y chained EPS CAGR, as-of in the backtest, at least the 5y price CAGR, so the P/E did
   #  not expand over the run), in place of growth_overext_floor 0.05. Either number missing = the normal brake (funds,
