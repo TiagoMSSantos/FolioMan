@@ -7752,8 +7752,8 @@ pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
 /// row survives per issuer, and what is left is weighted by score / volatility inside a class budget
 /// and then capped. Journalling that needs ONE spelling of it (non-negotiable #4), not a copy in
 /// `screen` drifting against the original here. `screen` reaches it through [`buy_book`], which (#584)
-/// splices the momentum order in after it. `size --picks` calls it alone, on fresh quotes of
-/// `.screen_state.json`'s ranked list, so the two books part wherever a momentum slot places a name (#668).
+/// splices the momentum order in after it. (#679) `size --picks` prints the rows `buy_book` returned,
+/// read back from `.screen_state.json`, and calls this alone only for typed names or an old state file.
 ///
 /// `nupl` comes IN and `cfactor`/`btc_1y` are derived HERE, rather than each caller deriving them:
 /// two callers re-deriving a scoring input is exactly how the `cagr` column drifted off the score it

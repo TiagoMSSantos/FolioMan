@@ -132,9 +132,8 @@ pub(crate) fn spill_split(rest: f64, tiers: &[Option<u8>]) -> Vec<f64> {
 /// (#295) THE BUY LIST `screen` prints: the growth picks at the weights `picks::buy_book` gave them, then
 /// the CORE trackers at their `spill_split` share of what the picks left. Until this round a `screen` run
 /// ended on ranked tables and the book itself, ~40% of it trackers, printed only under `size --picks`.
-/// (#668) `size --picks` is not this book: it re-sizes `.screen_state.json`'s ranked list through
-/// `sized_book` on fresh quotes, without `buy_book`'s (#584) momentum splice or the (#608) US-series
-/// scoring. Pure; `screen::run` only prints it. `None` = nothing to buy, so a run with no book stays silent.
+/// (#679) `size --picks` prints these picks at these weights, read back from `.screen_state.json`.
+/// Pure; `screen::run` only prints it. `None` = nothing to buy, so a run with no book stays silent.
 pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Option<String> {
     if sized.is_empty() && core.is_empty() {
         return None;
@@ -209,6 +208,27 @@ pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Opt
 // and its issuer dedup followed, so the page prints the same BUY % this module sizes.
 pub(crate) use crate::picks::{equal_weights, sized_book, HEAD};
 
+/// (#679) The rows `run` prints: `(quote, SCORE, SIZE%, CAP)`. With `buy` (the BUY NOW book the last
+/// `screen` printed) the names and weights are that run's, in its order, and this run's `fresh` book
+/// supplies only SCORE, `None` for a name it did not size (a momentum slot that fails the growth
+/// gate). CAP stays blank there, because the cap reason belongs to a weight this run did not compute.
+/// A name with no quote this run is dropped, and TOTAL then says so. Without `buy` the rows are `fresh`.
+pub(crate) fn book_rows<'a>(
+    buy: Option<&[(String, f64)]>,
+    quotes: &'a [crate::core::Quote],
+    fresh: Vec<(&'a crate::core::Quote, f64, f64, Option<&'static str>)>,
+) -> Vec<(&'a crate::core::Quote, Option<f64>, f64, Option<&'static str>)> {
+    let Some(buy) = buy else {
+        return fresh.into_iter().map(|(q, s, w, cap)| (q, Some(s), w, cap)).collect();
+    };
+    buy.iter()
+        .filter_map(|(t, w)| {
+            let q = quotes.iter().find(|q| &q.ticker == t)?;
+            Some((q, fresh.iter().find(|r| r.0.ticker == *t).map(|r| r.1), *w, None))
+        })
+        .collect()
+}
+
 /// (#293) Yahoo's fund sector names (`fetch::pretty_sector`) against the GICS spelling the constituents
 /// CSV gives a stock, so a fund and a stock in the same sector meet under one cap.
 pub(crate) const YAHOO_GICS: [(&str, &str); 11] = [
@@ -264,15 +284,28 @@ pub async fn run(args: Vec<String>) {
     let picks = args.iter().any(|a| a == "--picks");
     let watchlist = args.iter().any(|a| a == "--watchlist");
     let named: Vec<String> = args.into_iter().filter(|a| a != "--picks" && a != "--watchlist").collect();
-    let ranked = crate::commands::screen::last_ranked(
-        std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
-    );
+    let raw = std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok();
+    // (#679) the ranked list as-is means the book `screen` printed, so its rows are read back. Typed
+    // names or `--watchlist` size a list `screen` never sized, and those keep `sized_book` below.
+    let buy = if watchlist || !named.is_empty() { None } else { crate::commands::screen::last_buy(raw.clone()) };
+    let ranked = match &buy {
+        Some((date, rows)) => Some((date.clone(), rows.iter().map(|(t, _)| t.clone()).collect())),
+        None => crate::commands::screen::last_ranked(raw),
+    };
     let Some((tickers, note)) = size_source(picks, watchlist, named, ranked, &settings.tickers) else {
         println!("No ranked picks on file — run `screen` first, then `size --picks`.");
         return;
     };
-    if let Some(note) = note {
-        println!("{note}");
+    match &buy {
+        Some((date, rows)) => println!(
+            "Printing the BUY NOW book of the {date} screen run: {} pick(s) at that run's weights. SCORE and VOL are this run's quotes.",
+            rows.len()
+        ),
+        None => {
+            if let Some(note) = note {
+                println!("{note}");
+            }
+        }
     }
 
     let eu_infl = if settings.inflation_adjust.enabled {
@@ -317,7 +350,8 @@ pub async fn run(args: Vec<String>) {
         quotes.iter().filter(|q| crate::picks::asset_class(q) == 1).map(|q| q.ticker.clone()).collect();
     let (_, mix) = fetch::yahoo_top_holdings(&client, &fund_tickers).await;
     let sz = &settings.sizing;
-    let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl, &fund_sectors(&mix));
+    let fresh = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl, &fund_sectors(&mix));
+    let book = book_rows(buy.as_ref().map(|(_, rows)| rows.as_slice()), &quotes, fresh);
 
     if book.is_empty() {
         println!("No names pass the growth gate — nothing to size. (try `screen` for candidates)");
@@ -341,9 +375,9 @@ pub async fn run(args: Vec<String>) {
     println!("  {:<10} {:>7} {:>7} {:>7}  CAP", "TICKER", "SCORE", "VOL", "SIZE%");
     for &(q, s, w, cap) in &book {
         println!(
-            "  {:<10} {:>7.1} {:>7} {:>6.1}%  {}",
+            "  {:<10} {:>7} {:>7} {:>6.1}%  {}",
             q.ticker,
-            s,
+            s.map_or("—".to_string(), |s| format!("{s:.1}")),
             q.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
             w,
             cap.map_or(String::new(), |c| format!("cap: {c}")),
@@ -615,6 +649,26 @@ pub(crate) mod tests {
         // This is the arm `run`'s early return and `screen`'s journal both depend on.
         let none = [crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp")];
         assert!(sized_book(&none.iter().collect::<Vec<_>>(), &tuning, &sz, None, &Default::default()).is_empty());
+    }
+
+    /// (#679) With the journalled BUY NOW book, `run` prints that book's names, order and weights, and
+    /// this run's sizing supplies only SCORE. A name it did not size scores None, a name with no quote
+    /// drops, and CAP is blank. Without the book the fresh rows print unchanged.
+    #[test]
+    fn book_rows_print_the_journalled_buy_now_book() {
+        let quotes = [
+            scoring_quote("AAA.DE", "Alpha Corp", 900.0, 2.0),
+            scoring_quote("BBB.DE", "Beta Corp", 500.0, 4.0),
+        ];
+        let fresh = || vec![(&quotes[0], 7.5, 60.0, Some("issuer")), (&quotes[1], 3.0, 40.0, None)];
+        let buy = [("BBB.DE".to_string(), 30.0), ("GONE.DE".to_string(), 5.0), ("AAA.DE".to_string(), 20.0)];
+        let got: Vec<_> = book_rows(Some(&buy[..]), &quotes, fresh()).into_iter().map(|(q, s, w, cap)| (q.ticker.as_str(), s, w, cap)).collect();
+        assert_eq!(got, vec![("BBB.DE", Some(3.0), 30.0, None), ("AAA.DE", Some(7.5), 20.0, None)]);
+        let not_sized = [("BBB.DE".to_string(), 30.0)];
+        let got = book_rows(Some(&not_sized[..]), &quotes, vec![(&quotes[0], 7.5, 60.0, None)]);
+        assert_eq!(got[0].1, None, "a name this run did not size has no SCORE");
+        let got: Vec<_> = book_rows(None, &quotes, fresh()).into_iter().map(|(q, s, w, cap)| (q.ticker.as_str(), s, w, cap)).collect();
+        assert_eq!(got, vec![("AAA.DE", Some(7.5), 60.0, Some("issuer")), ("BBB.DE", Some(3.0), 40.0, None)]);
     }
 
     /// (#293) A fund's top look-through sector, GICS-spelled, with its share; nothing for a fund whose

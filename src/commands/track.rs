@@ -43,7 +43,7 @@ pub struct Snapshot {
     /// equal-weight, which is not the book anyone is told to buy: on the 2026-09-12 run the ranked
     /// 12 size to weights from 8.0% down to 1.8%, and two of them fall outside the graded ten
     /// entirely. `screen::run` fills this from `picks::buy_book`: `sized_book`, the one spelling of
-    /// that pipeline, plus the (#584) momentum splice, which `size --picks` does not run (#668).
+    /// that pipeline, plus the (#584) momentum splice. (#679) `size --picks` prints these same rows.
     ///
     /// NO PRICE HERE, and that is not an omission. Every sized ticker is already in `rows` with that
     /// day's close; a second copy of the same price is the drift non-negotiable #4 exists to stop,

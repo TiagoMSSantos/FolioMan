@@ -61,6 +61,12 @@ struct ScreenState {
     // its own record. `core_tier` covers this list, so it is keyed by ticker for both.
     #[serde(default)]
     core_all: Vec<String>,
+    // (#679) the BUY NOW rows this run printed, `(ticker, % of gross)` off `picks::buy_book`, so
+    // `size --picks` prints the same book instead of re-sizing `ranked` without the (#584) momentum
+    // splice or the (#608) US-series scores. Empty in a state file written before this field, and
+    // `size` then sizes `ranked` as before.
+    #[serde(default)]
+    buy_now: Vec<(String, f64)>,
 }
 
 /// (round 68) One-line membership diff, "+JOINED -DROPPED" (order-insensitive — market drift
@@ -318,6 +324,14 @@ pub(crate) fn last_core(
 pub(crate) fn last_ranked(raw: Option<String>) -> Option<(String, Vec<String>)> {
     let state = parse_state(raw).0?;
     (!state.ranked.is_empty()).then_some((state.date, state.ranked))
+}
+
+/// (#679) The BUY NOW book the last `screen` run printed, plus that run's date. `None` on every path
+/// [`last_ranked`] answers `None` for, and for a state file written before the `buy_now` field, where
+/// `size` falls back to sizing the ranked list itself.
+pub(crate) fn last_buy(raw: Option<String>) -> Option<(String, Vec<(String, f64)>)> {
+    let state = parse_state(raw).0?;
+    (!state.buy_now.is_empty()).then_some((state.date, state.buy_now))
 }
 
 use crate::picks::{holdings_scannable, overlap_groups, HOLDINGS_OVERLAP_MIN};
@@ -2413,8 +2427,7 @@ pub async fn run(args: Vec<String>) {
         // pipeline (non-negotiable #4) and it is pure — no fetch, no price, no state read — so this
         // costs a scoring pass over a dozen quotes and writes one field. `nupl` is the same value
         // `render` was handed above, so the crypto rows adjust exactly as the printed table does.
-        // (#668) `size --picks` funds another book: `sized_book` alone, on fresh quotes of
-        // `.screen_state.json`'s ranked list, without the (#584) momentum slots spliced in here.
+        // (#679) `.screen_state.json` keeps these rows too, and `size --picks` prints them.
         //
         // Weights only; the price is already in `rows` for every one of these tickers (`journal_rows`
         // carries the momentum names), and `track::sized_rows` does the join.
@@ -2860,6 +2873,7 @@ pub async fn run(args: Vec<String>) {
         // make it unfundable entirely. Both built together far above, at the one place the list exists.
         core_tier,
         core_all,
+        buy_now: sized_now.clone(),
     };
     // (round 69) persistence failure must not be silent: a stuck baseline means every drift alert
     // above re-fires (or a pending one never fires) on the next run with no hint why. Serialize
@@ -2874,8 +2888,8 @@ pub async fn run(args: Vec<String>) {
         journal(&run_date, &[warn]);
     }
 
-    // (#295) THE BUY LIST: `buy_book` off this run (#668: not `size --picks`, which skips the momentum
-    // splice), picks plus the CORE trackers that take the remainder. Read off the state just built, not
+    // (#295) THE BUY LIST: `buy_book` off this run (#679: the rows `size --picks` reads back), picks
+    // plus the CORE trackers that take the remainder. Read off the state just built, not
     // the file, so a failed write above cannot print yesterday's CORE.
     let sized_tickers: Vec<String> = sized_now.iter().map(|(t, _)| t.clone()).collect();
     let buy_core = last_core(serde_json::to_string(&state).ok(), &sized_tickers, settings.sizing.spill_cut(), settings.sizing.spill_per_tier)
@@ -5705,6 +5719,7 @@ mod tests {
             ranked: Vec::new(),
             core_tier: HashMap::new(),
             core_all: Vec::new(),
+            buy_now: Vec::new(),
         })
         .unwrap();
         let (st, corrupt) = parse_state(Some(valid));
@@ -5776,6 +5791,7 @@ mod tests {
                 // (#288) empty: these fixtures ARE the pre-(#288) state files, so every arm below
                 // also pins that `last_core` still reads `core` when no wide list was journalled.
                 core_all: Vec::new(),
+                buy_now: Vec::new(),
             })
             .unwrap()
         };
@@ -5947,6 +5963,7 @@ mod tests {
             ranked: Vec::new(),
             core_tier: [("EIMI.L".to_string(), em)].into_iter().collect(),
             core_all: Vec::new(),
+            buy_now: Vec::new(),
         })
         .unwrap();
         let rest = last_core(Some(with_tier), &[], 4, false).unwrap().2;
@@ -6004,6 +6021,7 @@ mod tests {
                 ranked: Vec::new(),
                 core_tier,
                 core_all,
+                buy_now: Vec::new(),
             })
             .unwrap()
         };
@@ -6072,6 +6090,7 @@ mod tests {
             ranked: Vec::new(),
             core_tier: full,
             core_all: wide.clone(),
+            buy_now: Vec::new(),
         })
         .unwrap();
         assert_eq!(names(both, 9, false), wide, "the wide list wins when the run journalled one");
@@ -6091,6 +6110,7 @@ mod tests {
                 core_tier: HashMap::new(),
                 core: Vec::new(),
                 core_all: Vec::new(),
+                buy_now: Vec::new(),
                 ranked,
             })
             .unwrap()
@@ -6104,6 +6124,31 @@ mod tests {
         assert!(last_ranked(None).is_none()); // no state file yet
         assert!(last_ranked(Some("{ truncated".into())).is_none()); // corrupt
         assert!(last_ranked(Some(state(Vec::new()))).is_none()); // ranked nothing / pre-round-68
+    }
+
+    /// (#679) `size --picks` reads back the rows BUY NOW printed, weights included; a state file
+    /// written before the field carries no `buy_now` key and answers None, so `size` sizes `ranked`.
+    #[test]
+    fn last_buy_hands_size_the_printed_book() {
+        let book = vec![("NVDA".to_string(), 12.5), ("SNDK".to_string(), 6.25)];
+        let state = |buy_now: Vec<(String, f64)>| {
+            serde_json::to_string(&ScreenState {
+                date: "2026-10-18".into(),
+                passing: Vec::new(),
+                facts: HashMap::new(),
+                fund_meta: HashMap::new(),
+                core_tier: HashMap::new(),
+                core: Vec::new(),
+                core_all: Vec::new(),
+                ranked: vec!["NVDA".into()],
+                buy_now,
+            })
+            .unwrap()
+        };
+        assert_eq!(last_buy(Some(state(book.clone()))), Some(("2026-10-18".to_string(), book)));
+        assert!(last_buy(Some(state(Vec::new()))).is_none());
+        assert!(last_buy(Some(r#"{"date":"2026-09-05","passing":[],"ranked":["NVDA"]}"#.into())).is_none());
+        assert!(last_buy(None).is_none());
     }
 
     /// (round 68) membership diff: no baseline (empty prev — first run or a state file predating
