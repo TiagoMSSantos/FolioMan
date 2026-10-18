@@ -2312,14 +2312,23 @@ fn td_years(html: &str) -> Vec<f64> {
         .unwrap_or_default()
 }
 
-/// (#519) Eulerpool per ticker: (cash flow day, annual `(period, fcf)`), (profile day, market cap), all in
-/// millions of the reporting currency. A 404 is a dated empty row, so a name Eulerpool lacks is asked once
-/// a month, never daily.
-type EpEntry = (String, Vec<(String, f64)>, String, Option<f64>);
+/// (#519) Eulerpool per ticker: (cash flow day, annual `(period, fcf)`), (profile day, market cap, (#709) its
+/// share count), all in millions, the cap in the reporting currency. A 404 is a dated empty row, so a name
+/// Eulerpool lacks is asked once a month, never daily. (#709) A cache from before the share count fails to
+/// parse and is refetched whole once, about two calls a name.
+type EpEntry = (String, Vec<(String, f64)>, String, Option<f64>, Option<f64>);
 const EULERPOOL_CACHE_PATH: &str = ".eulerpool_fcf.json";
 const EP_CASHFLOW_DAYS: i64 = 30;
 /// (#707) Per ticker: (fetch day, [`ep_fund_rows`]), refetched every 30 days like the cash flow.
 const EULERPOOL_FUND_PATH: &str = ".eulerpool_fund.json";
+
+/// (#709) Eulerpool's cap (millions) re-based on the newest annual share count (millions). The profile's
+/// own count can lag a split: 8053.T's read 1,213M against 4,761M restated, so its cap read a quarter of the
+/// real one, its P/E 3.5 and its MOS% +876%. Cap ÷ that count is still today's price, and the price times
+/// the restated count is the cap the MCAP cell prints. Either count missing: the profile's cap as given.
+fn ep_cap(mcap: f64, profile_shares: Option<f64>, annual_shares: Option<f64>) -> f64 {
+    profile_shares.zip(annual_shares).filter(|(n, _)| *n > 0.0).map_or(mcap, |(n, s)| mcap / n * s)
+}
 
 /// (#707) Eulerpool's three annual statements as FundRows, one per dated income row with a revenue, newest 7
 /// ("…e" estimate periods fail the date parse). Millions -> raw units; "filed" = period end. Equity and assets
@@ -2446,7 +2455,7 @@ pub async fn enrich_eulerpool_fcf(
                     .collect();
                 e.0 = today.to_string();
             } else {
-                (e.2, e.3) = (today.to_string(), v.and_then(|v| v["mcap"].as_f64()));
+                (e.2, e.3, e.4) = (today.to_string(), v.as_ref().and_then(|v| v["mcap"].as_f64()), v.and_then(|v| v["shares"].as_f64()));
             }
         }
         // (#707) a cash flow row means Eulerpool knows the name; a 404 never pays the four calls below
@@ -2468,9 +2477,14 @@ pub async fn enrich_eulerpool_fcf(
         let fin = got[3]["sector"].as_str() == Some("Financials");
         fund_cache.insert(t.clone(), (today.to_string(), ep_fund_rows(&got[0], &got[1], &got[2], fin)));
     }
+    let cap_m = |t: &str| {
+        let e = cache.get(t)?;
+        let annual = fund_cache.get(t).and_then(|(_, r)| r.last()?.shares).map(|s| s / 1e6);
+        Some(ep_cap(e.3?, e.4, annual))
+    };
     let ratios: HashMap<String, (f64, String)> = targets
         .iter()
-        .filter_map(|t| cache.get(t).and_then(|e| crate::picks::ep_fair_ratio(&e.1, e.3?)).map(|r| (t.clone(), r)))
+        .filter_map(|t| cache.get(t).and_then(|e| crate::picks::ep_fair_ratio(&e.1, cap_m(t)?)).map(|r| (t.clone(), r)))
         .collect();
     let mut fund_n = 0;
     for q in quotes.iter_mut().filter(|q| pooled(q)) {
@@ -2481,7 +2495,7 @@ pub async fn enrich_eulerpool_fcf(
         let Some((_, rows)) = fund_cache.get(&q.ticker).filter(|(_, r)| !r.is_empty()) else { continue };
         // (#707) the price fields `enrich_fund_factor` stamps, off Eulerpool's cap ÷ shares
         let mut ff = core::fund_factors(rows, today, 5);
-        let cap = cache.get(&q.ticker).and_then(|e| e.3).map(|m| m * 1e6);
+        let cap = cap_m(&q.ticker).map(|m| m * 1e6);
         let price = cap.zip(ff.shares_ttm).filter(|(_, n)| *n > 0.0).map(|(c, n)| c / n);
         ff.earnings_yield = price.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
         ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, crate::picks::peg_cagr_pct(q, tuning), p));
@@ -12272,6 +12286,16 @@ pub(crate) mod tests {
         let page = "x=1;data:[9];tdChart=Highcharts.chart('c',{xAxis:{categories:['2024','2025',]},series:[{type:'column',name:'TD (%)',data:[-0.1,0.25,]},{name:'TER',data:[0.07,0.07,]}]});";
         assert_eq!(td_years(page), vec![-0.1, 0.25]);
         assert!(td_years("<html>home page</html>").is_empty());
+    }
+
+    /// (#709) A profile count a quarter of the restated one (8053.T's lagged split) quadruples the cap; either
+    /// count missing, or a zero profile count, keeps the profile's cap.
+    #[test]
+    fn ep_cap_rebases_a_stale_profile_count() {
+        assert_eq!(ep_cap(100.0, Some(10.0), Some(40.0)), 400.0);
+        assert_eq!(ep_cap(100.0, None, Some(40.0)), 100.0);
+        assert_eq!(ep_cap(100.0, Some(10.0), None), 100.0);
+        assert_eq!(ep_cap(100.0, Some(0.0), Some(40.0)), 100.0);
     }
 
     /// (#707) Eulerpool's statements -> FundRows: millions scaled up, margins over revenue, capex sign flipped,
