@@ -4173,6 +4173,14 @@ pub struct FundFactors {
     // owner earnings, fcf − stock-based comp (a missing SBC line reads 0).
     pub fcf_base: Option<f64>,
     pub oe_base: Option<f64>,
+    // (#715) DISPLAY ONLY, FAIR's base on another line where FCF is the year's build-out, not what the owner
+    // keeps (ARE, CEG read burn): a REIT's FFO (`FundRow::ffo_margin`) and a utility's net income.
+    // `picks::fair_leg` picks one by sector; the (#523) shadow yields stay on FCF.
+    #[serde(default)]
+    pub ffo: FairLeg,
+    #[serde(default)]
+    pub ni: FairLeg,
+    pub sti: Option<f64>, // (#717) the as-of row's short-term investments: the burn runway's cash adds them. Display only
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -4189,6 +4197,15 @@ pub struct FundFactors {
     // (#545) the as-of row's TTM cash lines, kept only when their 10-Q was filed by the cutoff: they ride
     // the NEWEST row alone, so a backtest window never reads them. Display and the capex penalty only
     pub cash_ttm: Option<CashTtm>,
+}
+
+/// (#715) One FAIR leg: the 3-year median margin × today's revenue, as `fcf_base`, and that line's own `yrs`
+/// rate or its (#505) short span, as `fcf_cagr` / `fcf_cagr_short`.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct FairLeg {
+    pub base: Option<f64>,
+    pub cagr: Option<f64>,
+    pub short: Option<(f64, f64)>,
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -4487,6 +4504,15 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     });
     let rev_cagr_short = first_2y.and_then(|(r, span)| grow(now.and_then(|n| n.revenue), r.revenue).map(|c| (cagr(c, span), span)));
     let fcf_cagr_short = first_2y.and_then(|(r, span)| grow(fcf(now), fcf(Some(r))).map(|c| (cagr(c, span), span)));
+    // (#715) the same base and rates on another margin line. No (#498) stand-in: that bridges a capex tag gap.
+    let leg = |m: fn(&FundRow) -> Option<f64>| {
+        let level = |r: Option<&FundRow>| r.and_then(|r| Some(m(r)? * r.revenue?)).filter(|v| *v > 0.0);
+        FairLeg {
+            base: margin_base(m),
+            cagr: grow(level(now), level(long_ago)).map(|c| cagr(c, yrs as f64)),
+            short: first_2y.and_then(|(r, span)| grow(level(now), level(Some(r))).map(|c| (cagr(c, span), span))),
+        }
+    };
     // (#702) the rows those rates divide by: the `yrs`-back row (FCF's own stand-in), else the oldest 2+ years back.
     // No row filed by `cutoff` at all is a gap, not "—": every factor is None and the flags stay false with them.
     let base = long_ago.or(first_2y.map(|(r, _)| r));
@@ -4747,6 +4773,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         cap_fund: None,
         fcf_base: margin_base(|r| r.fcf_margin),
         oe_base: margin_base(|r| Some(r.fcf_margin? - r.sbc_margin.unwrap_or(0.0))),
+        ffo: leg(|r| r.ffo_margin),
+        ni: leg(|r| r.net_margin),
+        sti: now.and_then(|r| r.sti),
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -6435,6 +6464,9 @@ mod tests {
             cap_fund: None,
             fcf_base: None,
             oe_base: None,
+            ffo: FairLeg::default(),
+            ni: FairLeg::default(),
+            sti: None,
             eps_never_reported: false,
             filed: None,
             period_end: None,
@@ -7463,6 +7495,20 @@ mod tests {
         let f = fund_factors(&rows, cutoff, 5);
         assert_eq!((f.fcf_ttm, f.fcf_base, f.oe_base), (Some(0.2), Some(14.0), Some(10.0)), "7% and 5% of 200");
         assert_eq!(fund_factors(&rows[2..], cutoff, 5).fcf_base, Some(0.2), "one year filed is its own base");
+        // (#715) a leg reads its own line: FFO 10% of 100 five years back, 20% of 200 now = ×4 over 5 years
+        let ffo = |yr: i32, m: f64, rev: f64| FundRow { ffo_margin: Some(m), net_margin: Some(m / 2.0), revenue: Some(rev), ..y(yr, 1.0, None) };
+        let leg = |rows: &[FundRow]| {
+            let f = fund_factors(rows, cutoff, 5);
+            let r = |x: Option<f64>| x.map(|v| (v * 100.0).round() / 100.0);
+            (f.ffo.base, r(f.ffo.cagr), f.ffo.short.map(|(g, s)| (r(Some(g)), r(Some(s)))), f.ni.base, f.sti)
+        };
+        let reit = [ffo(2019, 10.0, 100.0), ffo(2022, 30.0, 150.0), ffo(2023, 40.0, 150.0), ffo(2024, 20.0, 200.0)];
+        assert_eq!(leg(&reit), (Some(60.0), Some(31.95), None, Some(30.0), None), "median 30% of 200; NI half of it");
+        let burn = [ffo(2019, 10.0, 100.0), ffo(2024, 0.0, 200.0)];
+        assert_eq!(leg(&burn).1, None, "zero FFO now is no rate");
+        assert_eq!(leg(&reit[1..]).2, Some((Some(-5.72), Some(2.0))), "no row 5y back: 45 -> 40 over 2 years");
+        let sti = FundRow { sti: Some(7.0), ..ffo(2024, 20.0, 200.0) };
+        assert_eq!(leg(&[sti]).4, Some(7.0));
         assert_eq!(median(vec![1.0, 3.0]), Some(2.0));
         assert_eq!(median(vec![]), None);
     }

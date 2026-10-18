@@ -4426,11 +4426,15 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
                     .and_then(|f| match key {
                         "fcf5y" => f.fcf_ttm,
                         "fair_oe" | "mos_oe" => f.oe_base,
-                        _ => f.fcf_base,
+                        _ => fair_leg(quote, f).0.base,
                     })
                     .is_some_and(|c| c <= 0.0) =>
         {
-            "burn".to_string()
+            // (#717) FAIR's own cell names the runway: years of cash at this burn
+            match fund.filter(|_| key == "fair").and_then(|f| burn_cash(f, fair_leg(quote, f).0.base?)) {
+                Some((cash, burn)) => format!("burn {:.1}y", cash / burn),
+                None => "burn".to_string(),
+            }
         }
         // (#702) no rate can exist (`fcf_dash`: under 2 years filed, or a burn at the old end): "—"
         "fcf5y" => fund.map_or("n/a".to_string(), |f| {
@@ -4457,7 +4461,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#702) a stock whose FCF-5Y cannot exist has no rate to grow FAIR by either
         .unwrap_or_else(|| (if !stock_only_na && !bank(quote, fund) && fund.is_some_and(|f| f.fcf_dash) { "—" } else { "n/a" }).to_string()),
         "impl_g" => fund
-            .and_then(|f| Some(f.fcf_base? / f.cap_fund?))
+            .and_then(|f| Some(fair_leg(quote, f).0.base? / f.cap_fund?))
             .and_then(implied_growth)
             .map_or("n/a".to_string(), |g| format!("{g:+.1}%")),
         "rev5y" => fund.map_or("n/a".to_string(), |f| {
@@ -4911,13 +4915,31 @@ fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, S
 
 /// (#484) FAIR ÷ price for a stock: base ÷ cap × [`dcf_multiple`] at FCF-5Y, with the short-span marker.
 /// (#522) The base is `fcf_base`, the 3-year median margin; a bank or insurer (#478) has no usable FCF
-/// (deposit and loan flow: COF read +607%), so (#540) it reads [`bank_fair_ratio`] instead. None on a
-/// burn, no cap, or no rate.
+/// (deposit and loan flow: COF read +607%), so (#540) it reads [`bank_fair_ratio`] instead. (#715) A REIT
+/// or a utility reads its [`fair_leg`]. None on a burn or no cap.
 pub fn stock_fair_ratio(q: &Quote) -> Option<(f64, String)> {
     if bank(q, q.fund.as_ref()) {
         return bank_fair_ratio(q);
     }
-    fair_on(q, |f| f.fcf_base).or_else(|| q.ep_fair.clone())
+    fair_on(q, |f| fair_leg(q, f)).or_else(|| q.ep_fair.clone())
+}
+
+/// (#715) FAIR's base and rates by sector: a REIT's FFO, marked ᶠ (its FCF is the year's build-out: ARE read
+/// burn), a utility's net income, marked ⁿ (CEG, CNP), else FCF unmarked. A leg with no base falls back to
+/// FCF. shortcut: an Eulerpool row (no FFO line, FAIR off `ep_fair`) stays on FCF.
+fn fair_leg(q: &Quote, f: &crate::core::FundFactors) -> (crate::core::FairLeg, &'static str) {
+    let s = if q.ep_fund.is_some() { "" } else { q.sector.as_deref().or(q.profile.sector.as_deref()).unwrap_or("") };
+    [(&f.ffo, "Real Estate", "ᶠ"), (&f.ni, "Utilit", "ⁿ")]
+        .into_iter()
+        .find(|(l, k, _)| s.contains(k) && l.base.is_some())
+        .map_or((crate::core::FairLeg { base: f.fcf_base, cagr: f.fcf_cagr, short: f.fcf_cagr_short }, ""), |(l, _, m)| (l.clone(), m))
+}
+
+/// (#717) A burner's cash and yearly burn, for FAIR's `burn Ny`: cash (debt − net debt) plus short-term
+/// investments, against a negative FAIR base. None at a zero base or no cash.
+fn burn_cash(f: &crate::core::FundFactors, base: f64) -> Option<(f64, f64)> {
+    let cash = f.debt.unwrap_or(0.0) - f.net_debt? + f.sti.unwrap_or(0.0);
+    (base < 0.0 && cash > 0.0).then_some((cash, -base))
 }
 
 /// (#710) The (#478, #540) bank reading for a `financial` filer, unless its sector says it is not one: a
@@ -4943,13 +4965,16 @@ pub fn bank_fair_ratio(q: &Quote) -> Option<(f64, String)> {
 /// (#522) FAIR-OE ÷ price: [`stock_fair_ratio`] on owner earnings (FCF − stock-based comp). SEC filers only:
 /// Eulerpool carries no SBC line, so a non-US stock reads None rather than a copy of FAIR.
 pub fn stock_oe_ratio(q: &Quote) -> Option<(f64, String)> {
-    fair_on(q, |f| f.oe_base)
+    fair_on(q, |f| (crate::core::FairLeg { base: f.oe_base, cagr: f.fcf_cagr, short: f.fcf_cagr_short }, ""))
 }
 
-fn fair_on(q: &Quote, base: fn(&crate::core::FundFactors) -> Option<f64>) -> Option<(f64, String)> {
+fn fair_on(q: &Quote, leg: impl Fn(&crate::core::FundFactors) -> (crate::core::FairLeg, &'static str)) -> Option<(f64, String)> {
     q.fund.as_ref().filter(|_| !bank(q, q.fund.as_ref())).and_then(|f| {
-        let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
-        Some((base(f).filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
+        let (l, mark) = leg(f);
+        let base = l.base.filter(|c| *c > 0.0)?;
+        // (#716) a positive base with no rate (a burn at the old end, under 2 years filed): 0% growth, marked ⁰
+        let (g, m) = span_or_short(l.cagr, l.short).unwrap_or_else(|| (0.0, "⁰".to_string()));
+        Some((base / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), format!("{mark}{m}")))
     })
 }
 
@@ -4957,6 +4982,7 @@ fn fair_on(q: &Quote, base: fn(&crate::core::FundFactors) -> Option<f64>) -> Opt
 /// price (MOS% + 1), the same on owner earnings, and the 3y-median FCF over the cap (IMPL-G is monotone in
 /// it). One fn for both stamp sites, backtest.rs as-of and fetch.rs live, so the shadow journals the graded
 /// number. Same base, rate and multiple as the cells; a financial, a burn or no rate is None, like FCF/EV.
+/// (#715, #716) The cells' REIT/utility legs and their 0%-growth ⁰ stay out: the shadow keeps the FCF definition.
 /// shortcut: the cap is shares × `p`, the filer-currency close both sites hand `ev_ebitda_yield`, not
 /// `cap_fund`; the two agree wherever the listing trades in the filing currency.
 pub fn stamp_fair_yields(f: &mut crate::core::FundFactors, p: f64) {
@@ -8791,19 +8817,30 @@ mod tests {
             }
             assert_eq!(stock_fair_ratio(&st), None, "(#521) a burn feeds no look-through either");
         }
+        // (#717) FAIR's own burn cell names its runway: cash (debt 5 − net debt −25) + short-term investments 6
         let f = st.fund.as_mut().unwrap();
-        (f.fcf_ttm, f.fcf_base, f.cap_fund) = (Some(20.0), Some(20.0), Some(0.0));
+        (f.fcf_base, f.net_debt, f.sti) = (Some(-10.0), Some(-25.0), Some(6.0));
+        assert_eq!([cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")], ["burn 3.6y", "burn"], "36 of cash at 10 a year");
+        st.fund.as_mut().unwrap().net_debt = Some(11.0);
+        assert_eq!(cc("fair", &st, 0.0, None, ""), "burn", "no cash left, no runway");
+        let f = st.fund.as_mut().unwrap();
+        (f.fcf_base, f.net_debt) = (Some(0.0), Some(-25.0));
+        assert_eq!(cc("fair", &st, 0.0, None, ""), "burn", "a zero base burns nothing, so no runway either");
+        let f = st.fund.as_mut().unwrap();
+        (f.fcf_ttm, f.fcf_base, f.cap_fund, f.net_debt, f.sti) = (Some(20.0), Some(20.0), Some(0.0), None, None);
         assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "no cap, no yield");
         let f = st.fund.as_mut().unwrap();
         (f.cap_fund, f.fcf_cagr) = (Some(400.0), None);
-        assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "no 5y FCF rate");
-        // (#702) ...and "—" when no rate CAN exist: FCF-5Y and the FAIR family together, a bank excepted
+        assert_eq!(cc("mos", &st, 0.0, None, ""), "-35%⁰", "(#716) no 5y FCF rate: a 5% yield at the 0% multiple, 13.08");
+        // (#702) ...and "—" when no rate CAN exist: FCF-5Y always, the FAIR family once it has no base either, a bank excepted
         st.fund.as_mut().unwrap().fcf_dash = true;
-        assert_eq!([cc("fcf5y", &st, 0.0, None, ""), cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")], ["—"; 3]);
+        assert_eq!([cc("fcf5y", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")], ["—", "-35%⁰"]);
+        st.fund.as_mut().unwrap().fcf_base = None;
+        assert_eq!([cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")], ["—"; 2]);
         st.fund.as_mut().unwrap().financial = true;
         assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "a bank's FAIR reads its book, not the FCF rate");
         let f = st.fund.as_mut().unwrap();
-        (f.fcf_dash, f.financial) = (false, false);
+        (f.fcf_dash, f.financial, f.fcf_base) = (false, false, Some(20.0));
         st.fund.as_mut().unwrap().fcf_cagr = Some(4.04);
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "no euro price");
         st.price_eur = Some(50.0);
@@ -8840,6 +8877,16 @@ mod tests {
         assert_eq!(stock_fair_ratio(&st), bank_fair_ratio(&st));
         st.sector = Some("Real Estate".into());
         assert_eq!((cc("fair", &st, 0.0, None, ""), stock_fair_ratio(&st)), ("burn".to_string(), None), "(#710) a REIT's FAIR reads its own cash flow, not its book");
+        // (#715) ...its FFO once filed, marked ᶠ, IMPL-G on the same base; a utility its net income, marked ⁿ
+        let f = st.fund.as_mut().unwrap();
+        (f.ffo, f.ni) = (core::FairLeg { base: Some(20.0), cagr: Some(4.04), short: None }, core::FairLeg { base: Some(10.0), cagr: None, short: None });
+        assert_eq!([cc("fair", &st, 0.0, None, ""), cc("impl_g", &st, 0.0, None, "")], ["€44.27ᶠ", "+5.7%"]);
+        (st.sector, st.fund.as_mut().unwrap().financial) = (Some("Utilities".into()), false);
+        assert_eq!(cc("mos", &st, 0.0, None, ""), "-67%ⁿ⁰", "a 2.5% yield at the 0% multiple");
+        st.ep_fund = Some(core::FundFactors::default());
+        assert_eq!(stock_fair_ratio(&st), None, "an Eulerpool row stays on FCF, a burn here");
+        let f = st.fund.as_mut().unwrap();
+        (st.ep_fund, f.ffo, f.ni, f.financial) = (None, core::FairLeg::default(), core::FairLeg::default(), true);
         st.sector = Some("Financials".into());
         st.roe = Some(2.5);
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "ROE at g earns nothing over book");
