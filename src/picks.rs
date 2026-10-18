@@ -3978,7 +3978,7 @@ const COLUMNS: &[ColSpec] = &[
     // (#545) the trailing twelve months from the 10-Qs, not the annual report: AI build-outs move capex inside a year
     ColSpec { key: "capex", hdr: "CAPEX/OCF", width: 9, right: true, help: "Stocks: capital expenditure ÷ operating cash flow over the trailing twelve months (the last annual report plus the 10-Q quarters since); above 100% the business spends more than it brings in. Above growth_capex_ocf_max the score is multiplied by growth_capex_ocf_penalty; hover for the TTM and the latest quarter alone; burn = operating cash flow at or below 0; n/a = no SEC 10-Q cash lines (most non-US companies); — = a bank or insurer" },
     ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; — = a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; no debt = no debt filed and no interest line; — = a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow (last annual report) ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
@@ -4361,7 +4361,11 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             .as_ref()
             .and_then(|f| f.net_debt.zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
             .map_or("n/a".to_string(), |(d, e)| format!("{:.1}x", d / e)),
-        "icov" => quote.fund.as_ref().and_then(|f| f.interest_cover).map_or("n/a".to_string(), |v| format!("{v:.0}x")),
+        // (#702) no interest line and a filed zero (or absent) debt figure: nothing to cover, not a gap
+        "icov" => match quote.fund.as_ref() {
+            Some(f) if f.interest_cover.is_none() && f.debt == Some(0.0) => "no debt".to_string(),
+            f => f.and_then(|f| f.interest_cover).map_or("n/a".to_string(), |v| format!("{v:.0}x")),
+        },
         "sector" => quote.sector.clone().or_else(|| quote.profile.sector.clone()).unwrap_or_else(|| "n/a".to_string()),
         // Read the Option `dividend_yields` already carries rather than `dividend_yield_1y`, whose
         // `unwrap_or(0.0)` collapses two different facts into one: Some(0.0) = pays NOTHING (MNST, and
@@ -8655,6 +8659,13 @@ mod tests {
         assert_eq!(cc("roic", &st, 0.0, None, ""), "31.2%");
         assert_eq!(cc("fcf", &st, 0.0, None, ""), "-4.0%");
         assert_eq!(cc("icov", &st, 0.0, None, ""), "12x");
+        st.fund.as_mut().unwrap().interest_cover = None;
+        assert_eq!(cc("icov", &st, 0.0, None, ""), "n/a", "no interest and no debt figure is a gap");
+        st.fund.as_mut().unwrap().debt = Some(0.0);
+        assert_eq!(cc("icov", &st, 0.0, None, ""), "no debt", "(#702) nothing borrowed, nothing to cover");
+        st.fund.as_mut().unwrap().debt = Some(5.0);
+        assert_eq!(cc("icov", &st, 0.0, None, ""), "n/a", "debt with no interest line is a gap");
+        st.fund.as_mut().unwrap().interest_cover = Some(12.4);
         assert_eq!(cc("nde", &st, 0.0, None, ""), "-1.5x", "net cash reads below zero");
         st.fund.as_mut().unwrap().ebitda_ttm = Some(0.0);
         assert_eq!(cc("nde", &st, 0.0, None, ""), "loss", "(#506) no positive EBITDA, no ratio");
