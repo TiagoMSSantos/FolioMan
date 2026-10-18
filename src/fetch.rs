@@ -4767,6 +4767,8 @@ struct FactTags {
     // (#703) profit and its income tax, the EBIT fallback's base for filers that tag no pretax line either
     pl: &'static [&'static str],
     tax: &'static [&'static str],
+    // (#708) a lessor's ASC 842 lease income, which its ASC 606 contract revenue leaves out
+    lease: &'static [&'static str],
 }
 
 // ExcludingAssessedTax listed before Including: when a filer reports both for a period (values differ by
@@ -4891,6 +4893,7 @@ const US_GAAP_TAGS: FactTags = FactTags {
     // BXP's EBIT keeps its partners' share like pretax income does.
     pl: &["ProfitLoss", "NetIncomeLoss"],
     tax: &["IncomeTaxExpenseBenefit"],
+    lease: &["OperatingLeaseLeaseIncome"],
 };
 
 // IFRS. `ProfitLoss`/`Equity`/`CashFlowsFromUsedInOperatingActivities`/`CashAndCashEquivalents` were
@@ -4937,6 +4940,7 @@ const IFRS_TAGS: FactTags = FactTags {
     amort: &[],
     pl: &[],
     tax: &[],
+    lease: &[],
 };
 
 /// (FX) The currency the filer REPORTS in, read off the XBRL unit key instead of assumed. A 20-F filer
@@ -5162,7 +5166,15 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // Concept names come from the taxonomy table; the unit is the filer's OWN reporting currency, not a
     // hard-coded "USD" (that matched nothing for a EUR filer like ASML). `shares` is a unitless count and
     // stays literal — it is the one line that never carries a currency.
-    let rev = collect(tags.rev, &money);
+    let mut rev = collect(tags.rev, &money);
+    // (#708) CPT tags no `Revenues`: its $13M of contract revenue read as the year beside $1574M of lease
+    // income, and OP% printed 4142%. A revenue below its own lease income cannot be the total, so it gets
+    // the sum; one at or above it may already hold the lease income and keeps its read.
+    for (end, (_, lease, _)) in collect(tags.lease, &money) {
+        if let Some((_, r, _)) = rev.get_mut(&end).filter(|(_, r, _)| *r < lease) {
+            *r += lease;
+        }
+    }
     let gp = collect(tags.gp, &money);
     // (EV/EBITDA probe) D&A from the cash-flow statement — the add-back that turns operating income into
     // EBITDA. Duration concept. Missing -> EBITDA None-outs (a partial EBITDA is garbage).
@@ -11368,6 +11380,11 @@ pub(crate) mod tests {
         let op = ("OperatingIncomeLoss", 20.0);
         assert_eq!(us(&[op, ("InterestCostsIncurred", 5.0)]).interest_cover, Some(4.0), "DHI's interest incurred");
         assert_eq!(us(&[op, ("InterestExpenseOperating", 5.0)]).interest_cover, Some(4.0), "JKHY's operating line");
+        // (#708) CPT: contract revenue 10 beside lease income 90 is a 100 total; a revenue at its lease income stays
+        let lessor = |rev: (&str, f64)| row("us-gaap", &[rev, ("OperatingLeaseLeaseIncome", 90.0), op]);
+        let cpt = lessor(("RevenueFromContractWithCustomerExcludingAssessedTax", 10.0));
+        assert_eq!((cpt.revenue, cpt.op_margin), (Some(100.0), Some(20.0)), "CPT's lease income joins its revenue");
+        assert_eq!(lessor(("Revenues", 90.0)).revenue, Some(90.0), "a total at its lease income keeps its read");
         let apic = "AdjustmentsToAdditionalPaidInCapitalSharebasedCompensationRequisiteServicePeriodRecognitionValue";
         assert_eq!(us(&[op, (apic, 3.0)]).sbc_margin, Some(3.0), "RSG's equity-statement credit");
         let eqx = row("ifrs-full", &[("Revenue", 100.0), ("ProfitLossFromOperatingActivities", 20.0), ("FinanceCosts", 5.0),
