@@ -123,3 +123,5 @@ config/settings.yaml
 # `backtest … pit` has no offline pin at all, and the one mode nothing can reach is the one that rots.
 !tests/fixture/.sp500_history.json
 .screen_alerts.log
+# Python bytecode from running tools/*.py. No leading slash, so it matches at any depth.
+__pycache__/
