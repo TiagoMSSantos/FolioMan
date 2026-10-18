@@ -4,6 +4,19 @@
 // headers in the same order, which is why the head is read off row 0.
 const LANES = ["stocks", "etfs", "crypto"];
 const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
+// (#718) An n/a, — or burn cell hovers its column's own "mark = why" clause from the help text, else
+// the mark's plain meaning. The clause ends at "; " or ". "; a bracket or a dot inside a number stays.
+const WHY = {
+  "n/a": ["n/a", "no source this page reads carries this figure for this row"],
+  "—": ["—|dash", "does not apply to this row, or cannot exist yet"],
+  burn: ["burn", "the cash flow is at or below 0"],
+};
+function why(text, cell) {
+  const mark = Object.keys(WHY).find((m) => cell.startsWith(m));
+  const [alt, plain] = WHY[mark];
+  const hit = (text || "").match(new RegExp("(?:^|[;.,(] |a )(?:" + alt + ") = ((?:[^;.()]|\\([^)]*\\)|\\.(?! ))+)"));
+  return mark + " = " + (hit ? hit[1].trim() : plain);
+}
 
 function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set(), flags = {}) {
   if (!rows || rows.length === 0) {
@@ -39,6 +52,7 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
     for (const [h, cell, url, tip] of row) {
       const td = tr.insertCell();
       if (tip) td.title = tip; // (#542) a REPORTS cell's hover: the description and last annual report; (#543) a MISSES cell's: each missed gate's value vs its bar. Text only
+      else if (/^(n\/a|—|burn)/.test(cell)) td.title = why(help[h], cell); // (#718)
       // (#474) a RANK cell's hover reads its position, then what each of its flags means
       if (h === "RANK" && cell) {
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);
