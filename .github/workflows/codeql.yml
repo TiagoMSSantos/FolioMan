@@ -65,7 +65,31 @@ jobs:
         language: [actions, python, rust]
     steps:
       - uses: actions/checkout@v7
+      # (#725) A MAIN PUSH THAT CHANGES NO RUST SKIPS THE RUST SCAN. That leg takes ~7 min (extract
+      # 2m27s, queries 3m19s), and on the ~1 in 3 pushes that touch no Rust it alone held the
+      # all-green time (ci.yml ~3 min, pages.yml ~4 min). The base is the commit of main's newest
+      # uploaded rust analysis, NOT github.event.before: the concurrency block above cancels an
+      # in-flight scan, so a Rust push cancelled by a non-Rust one would otherwise never be scanned.
+      # Every error (API, fetch, a first push, a force-pushed-away base) falls through to a scan. A
+      # PR, the cron and a dispatch never run this step, so they always scan, and automerge.yml's
+      # `Analyze (rust)` need on bot PRs is always a real scan. A skipped leg still ends success.
+      # shortcut: a non-Rust file pulled in by include_str! (the src/fetch.rs JSON, src/web.rs's
+      # ci-settings.yaml) changes no scan; it is string data, and the weekly cron rescans it.
+      - name: Rust changed since main's last rust scan?
+        id: scan
+        if: matrix.language == 'rust' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last=$(gh api "repos/$GITHUB_REPOSITORY/code-scanning/analyses?ref=refs/heads/main&tool_name=CodeQL&per_page=100" \
+            --jq '[.[] | select(.category == "/language:rust")][0].commit_sha' 2>/dev/null) || true
+          if [ -n "$last" ] && git fetch -q --depth=1 origin "$last" 2>/dev/null &&
+             git diff --quiet "$last" HEAD -- '*.rs' '*Cargo.toml' '*Cargo.lock' .cargo/config.toml .github/workflows/codeql.yml; then
+            echo "Rust unchanged since $last, the last rust scan: skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: github/codeql-action/init@v4
+        if: steps.scan.outputs.skip != 'true'
         with:
           languages: ${{ matrix.language }}
           # All three are buildless here, which is what default setup already used, so this stays a
@@ -79,8 +103,12 @@ jobs:
           # `cargo clippy -D warnings` on the Rust legs; that duplication was weighed and accepted.
           queries: security-and-quality
       - uses: github/codeql-action/analyze@v4
+        if: steps.scan.outputs.skip != 'true'
         with:
           category: "/language:${{ matrix.language }}"
+          # (#725) The database only feeds variant analysis and the query model editor, neither used
+          # here; bundling and uploading it cost 16s of every main scan.
+          upload-database: false
 
   # Actions housekeeping, MIRRORING ci.yml's cleanup-runs job (and, since (#399), pages.yml's, which
   # used to keep its red runs): each scan supersedes the history, so sweep everything finished.
