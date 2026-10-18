@@ -3935,6 +3935,8 @@ pub struct FundRow {
     // currency — a EUR EPS over a USD ADR close is the Item 16 trap, off by the whole FX rate.
     pub currency: Option<String>,
     pub cash_ttm: Option<CashTtm>, // (#545) the newest row only: see `CashTtm`
+    pub ffo_margin: Option<f64>, // (#714) FFO ÷ revenue, %: net income + D&A + impairments - gains on sale
+    pub sti: Option<f64>,        // (#714) short-term investments, as of period_end, reporting currency
 }
 
 /// (#545) Operating cash flow and capex over the trailing twelve months, built from the newest 10-Q
@@ -10691,6 +10693,8 @@ mod tests {
             dep_rate: Some(5.0 + k / 10.0),
             lev: Some(2.0 + k / 10.0),
             currency: Some("USD".into()),
+            ffo_margin: Some(14.0 + k),
+            sti: Some(50.0 * k),
         };
         let mut rows: Vec<FundRow> = (2010..=2021).map(|y| row(y, ymd(y + 1, 2, 15), 1.0 + 0.1 * (y - 2010) as f64)).collect();
         rows.push(row(2014, ymd(2019, 8, 1), 50.0));
