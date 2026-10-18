@@ -5524,7 +5524,7 @@ fn book_sides(
     funds: &HashMap<String, (&'static str, f64)>,
 ) -> Vec<(String, f64, bool)> {
     let rows: Vec<&Quote> = ranked.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect();
-    let book: Vec<(&Quote, f64)> = sized_book(&rows, tuning, sz, nupl, funds).into_iter().map(|r| (r.0, r.2)).collect();
+    let book: Vec<(&Quote, f64)> = sized_book(&rows, tuning, sz, nupl, btc_1y(quotes), funds).into_iter().map(|r| (r.0, r.2)).collect();
     if tuning.growth_momentum_interleave && sz.equal_weight_book {
         return sized_splice_sides(&book, &momentum_order(quotes, tuning), false, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w, m)| (t.to_string(), w, m)).collect();
     }
@@ -6245,6 +6245,12 @@ fn btc_relative(coin_1y: Option<f64>, btc_1y: Option<f64>, score: f64, w: f64) -
         (Some(c), Some(b)) if w > 0.0 => score * (1.0 + w * (c - b) / 100.0).clamp(0.5, 2.0),
         _ => score,
     }
+}
+
+/// (#680) Bitcoin's 1Y leg, the base [`crypto_adjust`] tilts every coin against. Read off the WHOLE
+/// pool by `render` and [`buy_book`] alike, so a book whose ranked rows hold no BTC still tilts its coins.
+pub(crate) fn btc_1y<'a>(quotes: impl IntoIterator<Item = &'a Quote>) -> Option<f64> {
+    quotes.into_iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"))
 }
 
 /// (Item 17) The crypto-only score adjustments `screen`/`check` apply at render time: scale by the
@@ -7127,7 +7133,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     let cfactor = nupl_factor(ctx.nupl, tuning);
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
     // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
-    let btc_1y = quotes.iter().find(|quote| quote.ticker.starts_with("BTC-")).and_then(|quote| perf_pct(quote, "1Y"));
+    let btc_1y = btc_1y(quotes);
     let crypto_adj = |quote: &Quote, s: f64| crypto_adjust(quote, s, tuning, cfactor, btc_1y); // (Item 17) shared with `size`
     // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
     // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
@@ -7755,9 +7761,11 @@ pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
 /// splices the momentum order in after it. (#679) `size --picks` prints the rows `buy_book` returned,
 /// read back from `.screen_state.json`, and calls this alone only for typed names or an old state file.
 ///
-/// `nupl` comes IN and `cfactor`/`btc_1y` are derived HERE, rather than each caller deriving them:
-/// two callers re-deriving a scoring input is exactly how the `cagr` column drifted off the score it
-/// was printing (see `long_leg_fixed`'s doc for that case, which cost a round to find).
+/// `nupl` comes IN and `cfactor` is derived HERE, rather than each caller deriving it: two callers
+/// re-deriving a scoring input is exactly how the `cagr` column drifted off the score it was printing
+/// (see `long_leg_fixed`'s doc for that case, which cost a round to find). (#680) `btc_1y` comes IN too,
+/// as [`btc_1y`] over the pool the caller ranked from: derived from `quotes` here, it read None whenever
+/// BTC itself was not a sized row, so the book dropped the BTC tilt `render` gave its coins.
 ///
 /// Returns `(quote, score, weight %, cap reason)` in sized order — best score first, one row per
 /// issuer. EMPTY means nothing passed the growth gate; the caller says so in its own words, because
@@ -7767,13 +7775,13 @@ pub(crate) fn sized_book<'a>(
     tuning: &BuyHeuristic,
     sz: &crate::config::Sizing,
     nupl: Option<f64>,
+    btc_1y: Option<f64>,
     funds: &std::collections::HashMap<String, (&'static str, f64)>,
 ) -> Vec<(&'a crate::core::Quote, f64, f64, Option<&'static str>)> {
     // (Item 17) the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` apply at render
     // time, so crypto sizes rank the way the picks tables showed them, not on the raw price-only
     // score. Equities pass through `crypto_adjust` unchanged.
     let cfactor = nupl_factor(nupl, tuning);
-    let btc_1y = quotes.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
     // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
     let mut scored: Vec<_> = quotes
         .iter()
@@ -13473,6 +13481,29 @@ mod tests {
         let capped = BuyHeuristic { growth_momentum_miss_cap: waived(ccc, &on, false).unwrap().1.len(), ..on.clone() };
         assert_eq!(names(buy_book(&ranked, &quotes, &capped, &ew, None, &HashMap::new())), ["AAA", "BBB"]);
         assert_eq!(shipped_book(&ranked, &quotes, &capped, &ew, None, &HashMap::new()), ["AAA"]);
+    }
+    /// (#680) BTC in the pool but not among the ranked rows still tilts the book's coins: `buy_book` reads
+    /// [`btc_1y`] off the whole pool, as `render` does, so ETH (above BTC's year) gains on SOL (below it).
+    #[test]
+    fn buy_book_tilts_coins_by_an_unranked_btc() {
+        use crate::commands::size::tests::scoring_quote;
+        let t = BuyHeuristic::default();
+        let sz = crate::config::Sizing { max_name_pct: 0.0, max_sector_pct: 0.0, ..Default::default() };
+        let pool = [
+            scoring_quote("ETH-EUR", "Ethereum", 900.0, 2.0),
+            scoring_quote("SOL-EUR", "Solana", 100.0, 2.0),
+            scoring_quote("BTC-EUR", "Bitcoin", 400.0, 2.0),
+        ];
+        let btc = perf_pct(&pool[2], "1Y").expect("the fixture carries a 1Y leg");
+        assert_eq!(btc_1y(&pool), Some(btc));
+        assert_eq!(btc_1y(&pool[..2]), None, "no BTC- ticker, no base");
+        let ranked = ["ETH-EUR".to_string(), "SOL-EUR".to_string()];
+        let ratio = |q: &[Quote]| {
+            let book = buy_book(&ranked, q, &t, &sz, None, &HashMap::new());
+            let w = |tk: &str| book.iter().find(|r| r.0 == tk).map(|r| r.1).expect("both coins are funded");
+            w("ETH-EUR") / w("SOL-EUR")
+        };
+        assert!(ratio(&pool) > ratio(&pool[..2]) + 1e-6, "{} vs {}", ratio(&pool), ratio(&pool[..2]));
     }
 
     /// (#584) A momentum-only name gets a Stocks row flagged `m` after the shown sized name before it, and the later

@@ -350,7 +350,7 @@ pub async fn run(args: Vec<String>) {
         quotes.iter().filter(|q| crate::picks::asset_class(q) == 1).map(|q| q.ticker.clone()).collect();
     let (_, mix) = fetch::yahoo_top_holdings(&client, &fund_tickers).await;
     let sz = &settings.sizing;
-    let fresh = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl, &fund_sectors(&mix));
+    let fresh = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl, crate::picks::btc_1y(&quotes), &fund_sectors(&mix));
     let book = book_rows(buy.as_ref().map(|(_, rows)| rows.as_slice()), &quotes, fresh);
 
     if book.is_empty() {
@@ -636,7 +636,7 @@ pub(crate) mod tests {
             scoring_quote("BBB.DE", "Beta Corp", 500.0, 4.0),
             crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp"), // no history, no turnover
         ];
-        let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None, &Default::default());
+        let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None, None, &Default::default());
 
         let tickers: Vec<&str> = book.iter().map(|(q, ..)| q.ticker.as_str()).collect();
         assert_eq!(tickers, vec!["AAA.DE", "BBB.DE"], "gate refusals and the issuer dedup both bite: {tickers:?}");
@@ -648,7 +648,7 @@ pub(crate) mod tests {
         // EMPTY is a real answer, not a bug: nothing cleared the gate, so there is nothing to fund.
         // This is the arm `run`'s early return and `screen`'s journal both depend on.
         let none = [crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp")];
-        assert!(sized_book(&none.iter().collect::<Vec<_>>(), &tuning, &sz, None, &Default::default()).is_empty());
+        assert!(sized_book(&none.iter().collect::<Vec<_>>(), &tuning, &sz, None, None, &Default::default()).is_empty());
     }
 
     /// (#679) With the journalled BUY NOW book, `run` prints that book's names, order and weights, and
@@ -705,7 +705,7 @@ pub(crate) mod tests {
         }
         quotes[2].instrument_type = "ETF".into();
         let caps = |funds: &std::collections::HashMap<String, (&'static str, f64)>| -> Vec<(String, Option<&'static str>)> {
-            let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None, funds);
+            let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None, None, funds);
             book.iter().map(|(q, _, _, cap)| (q.ticker.clone(), *cap)).collect()
         };
         let tag = |v: &[(String, Option<&'static str>)], t: &str| v.iter().find(|r| r.0 == t).and_then(|r| r.1);
@@ -728,7 +728,7 @@ pub(crate) mod tests {
         quotes.push(scoring_quote("BTC-EUR", "Bitcoin", 900.0, 2.0));
         let refs: Vec<&crate::core::Quote> = quotes.iter().collect();
         let book = |sz: &config::Sizing, q: &[&crate::core::Quote]| -> Vec<(String, f64, Option<&'static str>)> {
-            sized_book(q, &tuning, sz, None, &Default::default()).iter().map(|(q, _, w, cap)| (q.ticker.clone(), *w, *cap)).collect()
+            sized_book(q, &tuning, sz, None, crate::picks::btc_1y(q.iter().copied()), &Default::default()).iter().map(|(q, _, w, cap)| (q.ticker.clone(), *w, *cap)).collect()
         };
         let on = config::Sizing { equal_weight_book: true, ..config::Sizing::default() };
         let coin_of = |b: &[(String, f64, Option<&'static str>)]| b.iter().find(|r| r.0 == "BTC-EUR").map(|r| r.1);
@@ -816,12 +816,12 @@ pub(crate) mod tests {
         quotes[1].sector = Some("Energy".into());
         let refs: Vec<&crate::core::Quote> = quotes.iter().collect();
         let on = config::Sizing { equal_weight_book: true, head_weight: 2.0, head_skip_commodity: true, ..config::Sizing::default() };
-        let got: Vec<(String, f64)> = sized_book(&refs, &tuning, &on, None, &Default::default()).iter().map(|(q, _, w, _)| (q.ticker.clone(), *w)).collect();
+        let got: Vec<(String, f64)> = sized_book(&refs, &tuning, &on, None, None, &Default::default()).iter().map(|(q, _, w, _)| (q.ticker.clone(), *w)).collect();
         let order: Vec<&str> = got.iter().map(|r| r.0.as_str()).collect();
         assert_eq!(order, ["S0.DE", "S2.DE", "S3.DE", "S4.DE", "S5.DE", "S1.DE", "S6.DE"]);
         assert!((got[5].1 - 100.0 / 12.0).abs() < 1e-9 && (got[0].1 - 200.0 / 12.0).abs() < 1e-9, "{got:?}");
         let off = config::Sizing { head_skip_commodity: false, ..on };
-        assert_eq!(sized_book(&refs, &tuning, &off, None, &Default::default())[1].0.ticker, "S1.DE", "off: score order");
+        assert_eq!(sized_book(&refs, &tuning, &off, None, None, &Default::default())[1].0.ticker, "S1.DE", "off: score order");
         assert!(!crate::commands::backtest::tuning_fingerprint(&off).contains("head_skip_commodity"));
     }
 

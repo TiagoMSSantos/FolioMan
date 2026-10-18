@@ -4875,7 +4875,7 @@ fn sized_buckets(
             rows.truncate(top);
             let quotes: Vec<&Quote> = rows.iter().map(|r| &*r.1.quote).collect();
             // (weight fraction, name multiple, bench multiple, remainder multiple) per funded row, joined back by identity.
-            let legs: Vec<(f64, f64, f64, f64)> = crate::commands::size::sized_book(&quotes, tuning, sz, None, &Default::default())
+            let legs: Vec<(f64, f64, f64, f64)> = crate::commands::size::sized_book(&quotes, tuning, sz, None, picks::btc_1y(quotes.iter().copied()), &Default::default())
                 .iter()
                 .filter_map(|(q, _, w, _)| rows.iter().find(|r| std::ptr::eq(*q, &*r.1.quote)).map(|r| {
                     let bench = 1.0 + r.2 / 100.0;
@@ -5109,7 +5109,7 @@ fn report_roll(
     let top10 = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(capped(d, end, VERDICT_TOP)?.into_iter(), VERDICT_TOP)) };
     let sized = |d, end| -> Option<Vec<(&str, f64)>> {
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
-        Some(crate::commands::size::sized_book(&q, tuning, sz, None, &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), w / 100.0)).collect())
+        Some(crate::commands::size::sized_book(&q, tuning, sz, None, picks::btc_1y(q.iter().copied()), &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), w / 100.0)).collect())
     };
     let mom = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP)) };
     let blend = |d, end| -> Option<Vec<(&str, f64)>> {
@@ -5118,7 +5118,7 @@ fn report_roll(
     // (#584) the SIZED book with momentum names spliced in, `after` its head or interleaved
     let sized_blend = |d: chrono::NaiveDate, end: chrono::NaiveDate, after: bool| -> Option<Vec<(&str, f64)>> {
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
-        let book: Vec<(&Quote, f64)> = crate::commands::size::sized_book(&q, tuning, sz, None, &Default::default()).into_iter().map(|r| (r.0, r.2)).collect();
+        let book: Vec<(&Quote, f64)> = crate::commands::size::sized_book(&q, tuning, sz, None, picks::btc_1y(q.iter().copied()), &Default::default()).into_iter().map(|r| (r.0, r.2)).collect();
         let mom: Vec<&Quote> = ranked.get(&d)?.2.iter().filter(|s| alive(s, d, end)).map(|s| s.quote.as_ref()).collect();
         Some(picks::sized_splice(&book, &mom, after, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w)| (t, w / 100.0)).collect())
     };
