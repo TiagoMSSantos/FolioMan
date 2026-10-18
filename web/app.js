@@ -142,7 +142,7 @@ const VIEW = {
   CAGR: "returns", YRS: "returns", "1D": "returns", "1W": "returns", "1M": "returns", "2Y": "returns",
   "5Y": "returns", "8Y": "returns", "20Y": "returns", "S-8Y": "returns",
   VOL: "risk", MAXDD: "risk", R2: "risk", "ABV-MA": "risk", "OFF-HI": "risk", TURNOVER: "risk",
-  "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk cash", "INT-COV": "risk cash", "SHORT%": "risk",
+  "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk cash", "INT-COV": "risk cash", "SHORT%": "risk", "RED-FLAGS": "risk",
   MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "FCF-5Y": "value cash", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",
   MVRV: "value", ROIC: "value", "FCF%": "value cash", "CAPEX/OCF": "value cash", FAIR: "value", "MOS%": "value", "FAIR-OE": "value", "MOS-OE%": "value", "FAIR-CAP": "value", "IMPL-G": "value", "TARGET%": "value", REPORTS: "overview value", "INS-B/S": "value",

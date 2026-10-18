@@ -2463,8 +2463,6 @@ fn parse_failures(csv: &str) -> Vec<Failure> {
 const FAIL_HORIZONS: [i64; 4] = [1, 2, 3, 5];
 /// (#728) Row labels, in [`fail_groups`]' order.
 const FAIL_GROUPS: [&str; 5] = ["all", "bankrupt", "bankrupt $1B+", "wipeout", "$1B+ or wipe"];
-/// (#728) Flag letters, in [`red_flags`]' order.
-const FAIL_FLAGS: [char; 6] = ['L', '2', 'B', 'I', 'R', 'D'];
 /// (#728) Failure instances a cell needs before its AUC counts toward the verdict.
 const FAIL_MIN_N: usize = 30;
 
@@ -2475,27 +2473,10 @@ fn fail_groups(f: &Failure) -> [bool; 5] {
     [true, f.bankrupt, big, !f.bankrupt, big || !f.bankrupt]
 }
 
-/// (#728) The six red flags, fixed before the census ran: a loss, a second loss year running, an
-/// operating cash burn, interest cover under 1.5x, revenue down over 10% on the year, and a share count
-/// up over 10%. `prev` is the fiscal year before `now`.
-fn red_flags(now: &core::FundRow, prev: Option<&core::FundRow>, ff: &core::FundFactors) -> [bool; 6] {
-    let loss = |r: &core::FundRow| r.net_margin.is_some_and(|m| m < 0.0);
-    [
-        loss(now),
-        loss(now) && prev.is_some_and(loss),
-        now.ocf_margin.is_some_and(|m| m < 0.0),
-        now.interest_cover.is_some_and(|c| c < 1.5),
-        ff.rev_yoy.is_some_and(|g| g < -10.0),
-        ff.buyback_yield.is_some_and(|b| b < -10.0),
-    ]
-}
-
-/// (#728) [`red_flags`] on the newest row filed by `cutoff`. None when that row was filed more than 550
-/// days before it: a filer that stopped filing has nothing current to read.
+/// (#728) `FundFactors::red_flags` at `cutoff`: None when the newest row filed by it is over 550 days
+/// old, since a filer that stopped filing has nothing current to read.
 fn fail_flags(rows: &[core::FundRow], cutoff: chrono::NaiveDate) -> Option<[bool; 6]> {
-    let now = core::fund_as_of(rows, cutoff).filter(|r| (cutoff - r.filed).num_days() <= 550)?;
-    let prev = rows.iter().filter(|r| r.filed <= cutoff && r.period_end < now.period_end).max_by_key(|r| (r.period_end, r.filed));
-    Some(red_flags(now, prev, &core::fund_factors(rows, cutoff, FUND_LOOKBACK_YRS)))
+    core::fund_factors(rows, cutoff, FUND_LOOKBACK_YRS).red_flags
 }
 
 /// (#728) The controls' flags at one cutoff: `hist[k]` names reading k flags, `flag[i]` reading flag i.
@@ -2620,7 +2601,7 @@ fn failure_census_lines(fails: &[(Failure, Vec<core::FundRow>)], ctrls: &[(Strin
         for (g, name) in FAIL_GROUPS.iter().enumerate() {
             let [old, new, all] = &t[g][h];
             let flags: Vec<String> =
-                FAIL_FLAGS.iter().enumerate().map(|(i, l)| format!("{l} {}/{}", pct(all.fail_flag[i] as f64, all.n), pct(all.ctrl_flag[i], all.n))).collect();
+                core::FAIL_FLAGS.iter().enumerate().map(|(i, l)| format!("{l} {}/{}", pct(all.fail_flag[i] as f64, all.n), pct(all.ctrl_flag[i], all.n))).collect();
             out.push(format!("  T-{yrs}y {name:<15}{:>5}{:>7}{:>7}{:>7}   {}", all.n, auc(all), auc(old), auc(new), flags.join("  ")));
         }
     }
@@ -2652,7 +2633,7 @@ fn failure_census_lines(fails: &[(Failure, Vec<core::FundRow>)], ctrls: &[(Strin
         .filter_map(|(tk, rows)| {
             let f = fail_flags(rows, at)?;
             let n = f.iter().filter(|b| **b).count();
-            (n >= k).then(|| (n, tk.as_str(), FAIL_FLAGS.iter().zip(f).filter(|(_, on)| *on).map(|(l, _)| *l).collect()))
+            (n >= k).then(|| (n, tk.as_str(), core::FAIL_FLAGS.iter().zip(f).filter(|(_, on)| *on).map(|(l, _)| *l).collect()))
         })
         .collect();
     look.sort_by_key(|(n, tk, _)| (std::cmp::Reverse(*n), *tk));
@@ -9098,18 +9079,6 @@ mod tests {
         assert!(!pac_pass(&side(30, 1.0, 50.0), &rest), "hit tie");
         assert!(!pac_pass(&side(30, 0.0, 55.0), &rest), "median tie");
         assert!(!pac_pass(&side(30, -1.0, 99.0), &rest), "hit up, median down");
-    }
-
-    /// (#728) Every flag needs its bound strictly crossed, and a missing field reads clean.
-    #[test]
-    fn red_flags_bite_strictly_past_each_bound() {
-        let r = |nm, ocf, ic| core::FundRow { net_margin: Some(nm), ocf_margin: Some(ocf), interest_cover: Some(ic), ..Default::default() };
-        let ff = |g, b| core::FundFactors { rev_yoy: Some(g), buyback_yield: Some(b), ..Default::default() };
-        assert_eq!(red_flags(&r(0.0, 0.0, 1.5), Some(&r(-1.0, 0.0, 9.0)), &ff(-10.0, -10.0)), [false; 6], "each bound itself reads clean");
-        assert_eq!(red_flags(&r(-0.1, -0.1, 1.4), Some(&r(-0.1, 0.0, 9.0)), &ff(-10.1, -10.1)), [true; 6]);
-        assert_eq!(red_flags(&r(-0.1, 0.0, 9.0), Some(&r(0.0, 0.0, 9.0)), &ff(0.0, 0.0)), [true, false, false, false, false, false], "a first loss");
-        assert!(!red_flags(&r(-0.1, 0.0, 9.0), None, &ff(0.0, 0.0))[1], "no prior year");
-        assert_eq!(red_flags(&core::FundRow::default(), None, &core::FundFactors::default()), [false; 6]);
     }
 
     /// (#728) The newest row filed by the cutoff, at most 550 days old, and the fiscal year before it,

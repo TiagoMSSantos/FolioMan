@@ -4012,6 +4012,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps; n/a = no operating profit line filed (some REITs file none, VICI among them); — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Stocks: OP% now minus OP% a year earlier, in percentage points; positive = margins widening; n/a = OP% missing now or a year earlier; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "mscore", hdr: "M-SCORE", width: 8, right: true, help: "Stocks: Beneish M-score, an accounting red-flag test on the newest two filed years; above -1.78 = the books look like those of known earnings manipulators, read the filings before buying. A missing input counts as no change; n/a = the newest two filed years lack revenue, margins or assets (every REPORTS ᵉ row: Eulerpool's balance sheets do not add up, so they are not read); — = a fund or coin, which files no company accounts" },
+    // (#729) display only: the (#728) census's flags, never scored
+    ColSpec { key: "redf", hdr: "RED-FLAGS", width: 9, right: false, help: "Stocks: how many of six warning signs the newest filing shows, and which: L a loss, 2 a second loss year running, B operating cash burn, I interest cover under 1.5x, R revenue down over 10% on the year, D share count up over 10%. 2 or more is what 78% of US filers that later went bankrupt or lost 80%+ showed a year before, and what 7% of survivors show in any month: a reason to read the filings, never a sell signal, and never scored. n/a = no filing in the last 550 days; — = a fund or coin, which files no company accounts" },
     ColSpec { key: "sbc", hdr: "SBC%", width: 6, right: true, help: "Stocks: stock-based pay as % of revenue, a real cost that reported earnings leave out and that dilutes owners every year; n/a = no stock-pay line filed (every REPORTS ᵉ row, and filers that tag none); — = a fund or coin, which files no company accounts" },
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares; n/a = no share count for both newest years, or a jump over 40% with no restated comparative (a merger or a split); — = a fund or coin, which files no company accounts" },
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
@@ -4470,9 +4472,14 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "opm" => fund.and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "mtrend" => fund.and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
         // (#464) the (#412) red flags, un-negated back to their published sign
-        "mscore" | "sbc" if stock_only_na => "—".to_string(),
+        "mscore" | "sbc" | "redf" if stock_only_na => "—".to_string(),
         "mscore" => fund.and_then(|f| f.mscore).map_or("n/a".to_string(), |v| format!("{:.2}", -v)),
         "sbc" => fund.and_then(|f| f.sbc).map_or("n/a".to_string(), |v| format!("{:.1}%", -v)),
+        // (#729) MISSES' shape: the count, then the letters
+        "redf" => fund.and_then(|f| f.red_flags).map_or("n/a".to_string(), |f| {
+            let on: String = core::FAIL_FLAGS.iter().zip(f).filter(|(_, b)| *b).map(|(l, _)| *l).collect();
+            if on.is_empty() { "0".to_string() } else { format!("{}: {on}", on.len()) }
+        }),
         "reports" => reports_link(Some(quote), "").0.to_string(), // (#540)
         "misses" => lane_misses(quote, tuning),
         "buyback" | "target" | "short" if stock_only_na => "—".to_string(),
@@ -5066,11 +5073,11 @@ const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10
 // (#576) `misses` in both: ETFs and coins score hard at any growth_gate_soft, so a ranked row always reads 0
 const HIDE_ETF: &[&str] =
     &["misses", "pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "capex", "nde", "icov", "sector", "ins",
-    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "fcf5y", "target", "short",
+    "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "redf", "sbc", "fcf5y", "target", "short",
     "fair_oe", "mos_oe", "fair_cap", "impl_g"];
 const HIDE_CRYPTO: &[&str] = &[
     "misses", "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "capex", "nde",
-    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "top10", "td1y", "td5y",
+    "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "redf", "sbc", "top10", "td1y", "td5y",
     "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g", "reports",
 ];
 
@@ -8798,6 +8805,12 @@ mod tests {
         f.sbc = Some(-3.46);
         assert_eq!(cc("mscore", &st, 0.0, None, ""), "-1.23");
         assert_eq!(cc("sbc", &st, 0.0, None, ""), "3.5%");
+        // (#729) the count, then the letters in census order; no current filing reads n/a
+        assert_eq!(cc("redf", &st, 0.0, None, ""), "n/a");
+        st.fund.as_mut().unwrap().red_flags = Some([false; 6]);
+        assert_eq!(cc("redf", &st, 0.0, None, ""), "0");
+        st.fund.as_mut().unwrap().red_flags = Some([true, false, true, false, false, true]);
+        assert_eq!(cc("redf", &st, 0.0, None, ""), "3: LBD");
         assert_eq!(cc("ins", &st, 0.0, None, ""), "n/a", "(#448) no SEC coverage");
         st.insider_90d = Some((2, 7));
         assert_eq!(cc("ins", &st, 0.0, None, ""), "2/7");
@@ -8938,7 +8951,7 @@ mod tests {
             assert!(near(implied_growth(1.0 / dcf_raw(g)), g), "{g}");
         }
         assert_eq!([implied_growth(0.0), implied_growth(-0.05), implied_growth(5.0), implied_growth(1e-9)], [None; 4]);
-        for k in ["roic", "fcf", "capex", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "sbc", "sector", "ins", "earn", "fcf5y", "target", "short"] {
+        for k in ["roic", "fcf", "capex", "nde", "icov", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "redf", "sbc", "sector", "ins", "earn", "fcf5y", "target", "short"] {
             assert_eq!(cc(k, &eq, 0.0, None, ""), "—", "{k} on an ETF");
             assert_eq!(cc(k, &cq, 0.0, None, ""), "—", "{k} on a coin");
         }

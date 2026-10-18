@@ -1146,6 +1146,7 @@ widths:
     - nde         # (#447) net debt ÷ EBITDA (stocks only); <0 = net cash, >3 = stretched
     - icov        # (#447) operating profit ÷ interest expense (stocks only); <2 = distress risk
     - mscore      # (#464) Beneish M-score (stocks only) — above -1.78 = accounting red flag
+    - redf        # (#729) the (#728) census's six failure flags, count + letters (stocks only; display only, never scored)
     - sbc         # (#464) stock-based pay % of revenue (stocks only) — dilution GAAP leaves out
     - buyback     # newest complete-FY share-count change, sign-flipped: + = buying back, − = diluting (stocks only)
     - short       # (#489) FINRA short shares ÷ shares outstanding (stocks only; display only)
@@ -1910,6 +1911,22 @@ sizing:
   #  NEXT: stage 2 (a display-only flag column plus a track journal tag) is asked of the owner once.
   #  REVERT RULE: drop the `failures` keyword and its report, tests/failures.csv and the builder. No knob,
   #  score or golden reads them.
+  #── (#729) 2026-10-18: THE RED FLAGS GO ON THE PAGE AS A WARNING, AND INTO THE TRACK SHADOW ──
+  #  WHY: (#728) passed, and the owner chose stage 2: a display-only flag column plus a track journal tag.
+  #  BUILT: `FundFactors::red_flags` reads the six flags inside core::fund_factors, so the live enrich, the
+  #  page's universe.json and the backtest share one read; the census now calls it too. A RED-FLAGS column
+  #  (risk view, stocks only) prints the count, then the letters ("2: LI"); "0" when clean, n/a when the
+  #  newest row was filed over 550 days ago. track journals `redf` (the count) on every cohort name at 2+
+  #  flags, and its "redf flagged minus peg cheap" row holds that set against peg's cheap half.
+  #  A (#707) stock with no SEC row reads the flags off Eulerpool's annual rows, as every fundamental cell
+  #  does. The census graded US filers only, so those cells are ungraded, and the tag journals SEC rows only.
+  #  DISPLAY ONLY: no gate, tilt or score term reads the flags, and no golden moves (none serializes
+  #  FundFactors, and the column is not in a golden's list). Old caches load: the field defaults to None.
+  #  PRE-REGISTERED before the first line: the warning reads informative when the redf row's 12+ monthly
+  #  lines AND 12+ chained links each read mean AND median BELOW 0. Otherwise it stays display-only. Either
+  #  way it never re-opens as a gate, tilt or score term: dead names still have no bars ((#728) caveat 4).
+  #  REVERT RULE: drop the column, the `red_flags` field and the `redf` tag. Journalled lines keep the tag,
+  #  and track reads it only through the redf row, so it goes unread.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.

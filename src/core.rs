@@ -4198,6 +4198,9 @@ pub struct FundFactors {
     // (#545) the as-of row's TTM cash lines, kept only when their 10-Q was filed by the cutoff: they ride
     // the NEWEST row alone, so a backtest window never reads them. Display and the capex penalty only
     pub cash_ttm: Option<CashTtm>,
+    // (#729) DISPLAY + track only, never scored: the census's six red flags in [`FAIL_FLAGS`] order, off
+    // the newest row. None when nothing is filed, or the newest row was filed over 550 days before the cutoff
+    pub red_flags: Option<[bool; 6]>,
 }
 
 /// (#715) One FAIR leg: the 3-year median margin × today's revenue, as `fcf_base`, and that line's own `yrs`
@@ -4452,6 +4455,24 @@ pub fn capital_stock(rows: &[FundRow], cutoff: NaiveDate, delta: f64, flow: impl
     }
     let (&oldest, newer) = run.split_last()?;
     Some(newer.iter().rev().fold(oldest / (0.1 + delta), |k, f| (1.0 - delta) * k + f))
+}
+
+/// (#728) Flag letters, in [`red_flags`]' order.
+pub const FAIL_FLAGS: [char; 6] = ['L', '2', 'B', 'I', 'R', 'D'];
+
+/// (#728) The six red flags, fixed before the census ran: a loss, a second loss year running, an
+/// operating cash burn, interest cover under 1.5x, revenue down over 10% on the year, and a share count
+/// up over 10%. `prev` is the fiscal year before `now`.
+fn red_flags(now: &FundRow, prev: Option<&FundRow>, rev_yoy: Option<f64>, buyback_yield: Option<f64>) -> [bool; 6] {
+    let loss = |r: &FundRow| r.net_margin.is_some_and(|m| m < 0.0);
+    [
+        loss(now),
+        loss(now) && prev.is_some_and(loss),
+        now.ocf_margin.is_some_and(|m| m < 0.0),
+        now.interest_cover.is_some_and(|c| c < 1.5),
+        rev_yoy.is_some_and(|g| g < -10.0),
+        buyback_yield.is_some_and(|b| b < -10.0),
+    ]
 }
 
 /// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. The
@@ -4790,6 +4811,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         period_end: now.map(|r| r.period_end),
         currency: now.and_then(|r| r.currency.clone()),
         cash_ttm: now.and_then(|r| r.cash_ttm.clone()).filter(|c| c.filed <= cutoff),
+        // (#728) `prev` is the latest fiscal year before `now`, not `yr_ago`: the census graded this read
+        red_flags: now.filter(|n| (cutoff - n.filed).num_days() <= 550).map(|n| {
+            let prev = rows.iter().filter(|r| r.filed <= cutoff && r.period_end < n.period_end).max_by_key(|r| (r.period_end, r.filed));
+            red_flags(n, prev, rev_1y, buyback_yield)
+        }),
     }
 }
 
@@ -6391,6 +6417,17 @@ mod tests {
         assert_eq!(fund_factors(&[r(2024, 0.0, 300.0, Some(20.0))], cutoff, 5).op_rd, None);
     }
 
+    /// (#728) Every flag needs its bound strictly crossed, and a missing field reads clean.
+    #[test]
+    fn red_flags_bite_strictly_past_each_bound() {
+        let r = |nm, ocf, ic| FundRow { net_margin: Some(nm), ocf_margin: Some(ocf), interest_cover: Some(ic), ..Default::default() };
+        assert_eq!(red_flags(&r(0.0, 0.0, 1.5), Some(&r(-1.0, 0.0, 9.0)), Some(-10.0), Some(-10.0)), [false; 6], "each bound itself reads clean");
+        assert_eq!(red_flags(&r(-0.1, -0.1, 1.4), Some(&r(-0.1, 0.0, 9.0)), Some(-10.1), Some(-10.1)), [true; 6]);
+        assert_eq!(red_flags(&r(-0.1, 0.0, 9.0), Some(&r(0.0, 0.0, 9.0)), Some(0.0), Some(0.0)), [true, false, false, false, false, false], "a first loss");
+        assert!(!red_flags(&r(-0.1, 0.0, 9.0), None, Some(0.0), Some(0.0))[1], "no prior year");
+        assert_eq!(red_flags(&FundRow::default(), None, None, None), [false; 6]);
+    }
+
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None
     /// (neutral) so a typo'd config can never panic the score. Pure, no network.
     #[test]
@@ -6415,6 +6452,7 @@ mod tests {
             roic: Some(22.0),
             financial: false,
             cash_ttm: None,
+            red_flags: None,
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             core_factor: None,

@@ -851,7 +851,8 @@ pub(crate) const FACTORS: [(&str, &str); 11] = [
 /// dropped here, not written: JSON has no NaN, and one would poison the line it sits on.
 /// (#436) A cohort name Berkshire's 13F bought also writes `(t, "brk", 1.0)`, fundamentals or not.
 /// (#442) One its newest 13F holds writes `(t, "brkh", 1.0)` the same way. (#444) So does `soc`:
-/// the Social Arbitrage trading table names it.
+/// the Social Arbitrage trading table names it. (#729) `redf` holds a name reading 2+ of the (#728)
+/// census's six red flags, valued at its count: the warning the RED-FLAGS column shows, never scored.
 pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quote]) -> Vec<(String, String, f64)> {
     let mut out = Vec::new();
     for (t, ..) in peg {
@@ -866,6 +867,10 @@ pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quo
             out.push((t.clone(), "soc".to_string(), 1.0));
         }
         let Some(f) = q.fund.as_ref() else { continue };
+        let flags = f.red_flags.map_or(0, |r| r.iter().filter(|b| **b).count());
+        if flags >= 2 {
+            out.push((t.clone(), "redf".to_string(), flags as f64));
+        }
         for (k, _) in FACTORS {
             if let Some(v) = crate::core::select_fund_factor(f, k).filter(|v| v.is_finite()) {
                 out.push((t.clone(), k.to_string(), v));
@@ -930,6 +935,7 @@ fn fac_section(
             pairs.push(("brk bought minus peg cheap", peg_rows(s, false, true), brk_rows(s, "brk")));
             pairs.push(("brkh held minus peg cheap", peg_rows(s, false, true), brk_rows(s, "brkh")));
             pairs.push(("soc social minus peg cheap", peg_rows(s, false, true), brk_rows(s, "soc")));
+            pairs.push(("redf flagged minus peg cheap", peg_rows(s, false, true), brk_rows(s, "redf")));
             pairs
         },
         30,
@@ -942,7 +948,7 @@ fn fac_section(
             .collect::<std::collections::HashSet<&str>>()
             .len()
     };
-    let (brk_n, brkh_n, soc_n) = (names("brk"), names("brkh"), names("soc"));
+    let (brk_n, brkh_n, soc_n, redf_n) = (names("brk"), names("brkh"), names("soc"), names("redf"));
     if verdict.is_empty() {
         return format!(
             "\n  Factor shadow: nothing gradeable yet. A month's first line needs a day of age and a priced name\n  \
@@ -957,7 +963,8 @@ fn fac_section(
          top half held against peg_yield's cheap half on the SAME names. (#436) `brk` holds EVERY cohort name\n  \
          Berkshire Hathaway's 13F bought (the `w` flag), (#442) `brkh` every one its newest 13F holds (the `W` flag),\n  \
          each against that same cheap half. (#444) `soc` holds every one the Social Arbitrage trading table\n  \
-         names (the `s` flag). EUR seat, price-only. NOT advice.\n  \
+         names (the `s` flag). (#729) `redf` holds every one reading 2+ of the (#728) census's six red flags\n  \
+         (the RED-FLAGS column). EUR seat, price-only. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
@@ -968,7 +975,10 @@ fn fac_section(
          a direct ship, only when its row clears that same bar AND {BRK_MIN_NAMES}+ distinct brk names have been\n  \
          journalled ({brk_n} so far) AND the spread survives a rank-slice read. Any miss records a refusal.\n  \
          (#442) `brkh` is pre-registered on the same three bars ({brkh_n} distinct brkh names so far).\n  \
-         (#444) `soc` is too ({soc_n} distinct soc names so far)."
+         (#444) `soc` is too ({soc_n} distinct soc names so far).\n\n  \
+         Pre-registered by (#729) before its first line: `redf` never re-opens as a gate, tilt or score term.\n  \
+         The warning reads informative when {REOPEN_LINES}+ monthly lines AND {REOPEN_LINES}+ chained links each read\n  \
+         mean AND median BELOW 0 ({redf_n} distinct redf names so far); otherwise it stays display-only."
     )
 }
 
@@ -2198,6 +2208,7 @@ mod tests {
     /// per factor, in [`FACTORS`] order. (#436) A cohort name Berkshire bought writes `brk` even with no
     /// fundamentals; one outside the cohort writes nothing. (#442) `brkh` likewise, after `brk` and before the factors.
     /// (#444) `soc` after `brkh`. (#727) The stability rows come last, so a mistyped key journals nothing.
+    /// (#729) `redf` after `soc`, at 2+ flags only.
     #[test]
     fn fac_journal_writes_present_finite_cohort_values_only() {
         let with = |t: &str, f: Option<crate::core::FundFactors>| {
@@ -2217,6 +2228,7 @@ mod tests {
             rnd_growth: Some(6.0),    // (#532)
             margin_stability: Some(7.0), // (#727)
             rev_stability: Some(8.0),    // (#727)
+            red_flags: Some([true, false, true, false, false, false]), // (#729)
             ..Default::default()
         };
         let quotes = [
@@ -2230,6 +2242,7 @@ mod tests {
             vec![
                 ("A".to_string(), "brkh".to_string(), 1.0),
                 ("A".to_string(), "soc".to_string(), 1.0),
+                ("A".to_string(), "redf".to_string(), 2.0),
                 ("A".to_string(), "rnd_yield".to_string(), 1.0),
                 ("A".to_string(), "mscore".to_string(), -2.0),
                 ("A".to_string(), "sgr_yield".to_string(), 3.0),
@@ -2276,7 +2289,7 @@ mod tests {
         let px = |t: &str| Some(if t == "D" { 200.0 } else { 100.0 });
         let rows: Vec<(&str, Option<f64>)> = ["A", "B", "C", "D"].map(|t| (t, Some(100.0))).to_vec();
         let peg = [("A", 90.0, 0.0), ("B", 70.0, 0.0), ("C", 30.0, 0.0), ("D", 10.0, 0.0)];
-        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &[("C", "brk", 1.0), ("D", "brk", 1.0), ("D", "brkh", 1.0), ("D", "soc", 1.0)]);
+        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &[("C", "brk", 1.0), ("D", "brk", 1.0), ("D", "brkh", 1.0), ("D", "soc", 1.0), ("D", "redf", 2.0)]);
         let again = with_fac(snap("2026-01-02", Some(100.0), &rows), &[("D", "brk", 1.0)]);
         let out = fac_section(&[s, again], today, &px, Some(100.0));
         let row = out.lines().find(|l| l.trim_start().starts_with("brk bought minus peg cheap")).unwrap_or_default();
@@ -2292,6 +2305,10 @@ mod tests {
         let social = out.lines().find(|l| l.trim_start().starts_with("soc social minus peg cheap")).unwrap_or_default();
         assert!(social.contains(" 1 line(s)") && social.matches("+100.0pp").count() == 2, "{social}");
         assert!(out.contains("(1 distinct soc names so far)"), "{out}");
+        // (#729) redf holds D only (+100%)
+        let flagged = out.lines().find(|l| l.trim_start().starts_with("redf flagged minus peg cheap")).unwrap_or_default();
+        assert!(flagged.contains(" 1 line(s)") && flagged.matches("+100.0pp").count() == 2, "{flagged}");
+        assert!(out.contains("(1 distinct redf names so far)"), "{out}");
     }
 
     /// (#500) The `yng` row holds every young name equal-weight against the line's book, and the reopen
