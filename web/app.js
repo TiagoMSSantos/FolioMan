@@ -11,12 +11,52 @@ const WHY = {
   "—": ["—|dash", "does not apply to this row, or cannot exist yet"],
   burn: ["burn", "the cash flow is at or below 0"],
 };
+const clause = (text, alt) => (text || "").match(new RegExp("(?:^|[;.,(] |a )(?:" + alt + ") = ((?:[^;.()]|\\([^)]*\\)|\\.(?! ))+)"))?.[1].trim();
 function why(text, cell) {
   const mark = Object.keys(WHY).find((m) => cell.startsWith(m));
   const [alt, plain] = WHY[mark];
-  const hit = (text || "").match(new RegExp("(?:^|[;.,(] |a )(?:" + alt + ") = ((?:[^;.()]|\\([^)]*\\)|\\.(?! ))+)"));
-  return mark + " = " + (hit ? hit[1].trim() : plain);
+  return mark + " = " + (clause(text, alt) ?? plain);
 }
+// (#732) Any other value cell hovers what each of its marks means, a line per mark: a word cell (IE,
+// Swap, held) is its own mark, a RED-FLAGS cell's letters are marks, else its superscripts and signs
+// (ᶠ³ reads as ᶠ, then ³ off "³ etc. ="), and a trailing " r". A mark its own column leaves undefined
+// is read off a column its help names (MOS%'s "ᵇ … as FAIR"), so a free-text title's ~ borrows
+// nothing. No mark read: the column's first clause.
+// shortcut: the first named column defining a borrowed mark wins, so a mark must mean one thing per table.
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function hover(help, h, cell) {
+  const own = help[h];
+  if (!own || !cell) return "";
+  const word = !/\d/.test(cell) && clause(own, esc(cell));
+  if (word) return cell + " = " + word;
+  const texts = [own, ...Object.entries(help).filter(([k]) => k && k !== h && own.includes(k)).map(([, t]) => t)];
+  const look = (alt) => texts.reduce((c, t) => c || clause(t, alt), undefined);
+  const s = cell.match(/^\d+: ([A-Z0-9]+)$/)?.[1] ?? (cell.match(/[ʰ-˿ᴬ-ᶿ⁰-₟¹²³‡†~°≈]/g) ?? []).join("") + (/ r$/.test(cell) ? "r" : "");
+  const lines = [];
+  for (let i = 0; i < s.length; ) {
+    let j = s.length;
+    let c;
+    while (j > i && !(c = look(esc(s.slice(i, j))))) j--;
+    const run = j > i ? s.slice(i, j) : s.slice(i).match(/^[⁰¹²³⁴-⁹]+/)?.[0];
+    if (j === i && run) c = look("[⁰¹²³⁴-⁹]+ etc\\.");
+    if (c) lines.push(run + " = " + c);
+    i += run?.length || 1;
+  }
+  return lines.join("\n") || own.match(/^(?:[^;.()]|\([^)]*\)|\.(?! ))+/)?.[0].trim() || "";
+}
+console.assert(
+  ((help) =>
+    hover(help, "R", "2: LI") === "L = a loss\nI = interest cover under 1.5x" && hover(help, "F", "€1.2ᶠ³") === "ᶠ = a REIT\n³ = over that many years" &&
+    hover(help, "M", "+5%ᵇ") === "ᵇ = a bank (on book value)" && hover(help, "S", "0.4ʷⁱ") === "ʷⁱ = under a year" &&
+    hover(help, "U", "Swap") === "Swap = a counterparty pays" && hover(help, "F", "23.1") === "Fair price" && hover(help, "U", "Opt") === "Tracks")({
+    R: "Flags, and which; L = a loss; I = interest cover under 1.5x. 2 or more",
+    F: "Fair price. A check; ³ etc. = over that many years; ᶠ = a REIT. ᵇ = a bank (on book value)",
+    M: "Margin; ᵇ, ᶠ as F",
+    S: "Score; ʷ = gates off; ʷⁱ = under a year",
+    U: "Tracks; Full = holds every name; Swap = a counterparty pays",
+  }),
+  "a value cell's hover misreads its marks",
+);
 
 // (#731) A NAME also links its TradingView chart, an icon after the name. A Yahoo suffix maps to the
 // TradingView exchange; a bare US symbol needs none, a class share's dash is a dot there (BRK.B) and a
@@ -70,6 +110,7 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
       const td = tr.insertCell();
       if (tip) td.title = tip; // (#542) a REPORTS cell's hover: the description and last annual report; (#543) a MISSES cell's: each missed gate's value vs its bar. Text only
       else if (/^(n\/a|—|burn)/.test(cell)) td.title = why(help[h], cell); // (#718)
+      else if (h !== "NAME" && h !== "TICKER") td.title = hover(help, h, String(cell)); // (#732) NAME and TICKER link; their link is the hover
       // (#474) a RANK cell's hover reads its position, then what each of its flags means
       if (h === "RANK" && cell) {
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);
