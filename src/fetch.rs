@@ -2322,12 +2322,19 @@ const EP_CASHFLOW_DAYS: i64 = 30;
 /// (#707) Per ticker: (fetch day, [`ep_fund_rows`]), refetched every 30 days like the cash flow.
 const EULERPOOL_FUND_PATH: &str = ".eulerpool_fund.json";
 
-/// (#709) Eulerpool's cap (millions) re-based on the newest annual share count (millions). The profile's
-/// own count can lag a split: 8053.T's read 1,213M against 4,761M restated, so its cap read a quarter of the
-/// real one, its P/E 3.5 and its MOS% +876%. Cap ÷ that count is still today's price, and the price times
-/// the restated count is the cap the MCAP cell prints. Either count missing: the profile's cap as given.
-fn ep_cap(mcap: f64, profile_shares: Option<f64>, annual_shares: Option<f64>) -> f64 {
-    profile_shares.zip(annual_shares).filter(|(n, _)| *n > 0.0).map_or(mcap, |(n, s)| mcap / n * s)
+/// (#709) Eulerpool's cap (millions) re-based on the newest annual share count (millions) when the two differ
+/// by a split. The profile's own count can lag one: 8053.T's read 1,213M against 4,761M restated, so its cap
+/// read a quarter of the real one, its P/E 3.5 and its MOS% +876%. Cap ÷ the profile count is still today's
+/// price, and the price times the restated count is the cap the MCAP cell prints. The profile's cap stands on a
+/// gap under 1.5x (IVG.MI's 2025 row reads 340M against 264M), on a US ticker (the same ADR doubt as MCAP;
+/// an IPO's statements carry pre-IPO counts: XE's read 20M against 287M listed), or with either count missing.
+// shortcut: 1.5x stands in for a split record; a home-market IPO whose newest annual row is pre-IPO would still
+// rebase on it, so gate on the profile's `ipo` date if one shows
+fn ep_cap(ticker: &str, mcap: f64, profile_shares: Option<f64>, annual_shares: Option<f64>) -> f64 {
+    profile_shares
+        .zip(annual_shares)
+        .filter(|&(n, s)| ticker.contains('.') && n > 0.0 && s > 0.0 && (s / n).max(n / s) >= 1.5)
+        .map_or(mcap, |(n, s)| mcap / n * s)
 }
 
 /// (#707) Eulerpool's three annual statements as FundRows, one per dated income row with a revenue, newest 7
@@ -2480,7 +2487,7 @@ pub async fn enrich_eulerpool_fcf(
     let cap_m = |t: &str| {
         let e = cache.get(t)?;
         let annual = fund_cache.get(t).and_then(|(_, r)| r.last()?.shares).map(|s| s / 1e6);
-        Some(ep_cap(e.3?, e.4, annual))
+        Some(ep_cap(t, e.3?, e.4, annual))
     };
     let ratios: HashMap<String, (f64, String)> = targets
         .iter()
@@ -12288,14 +12295,20 @@ pub(crate) mod tests {
         assert!(td_years("<html>home page</html>").is_empty());
     }
 
-    /// (#709) A profile count a quarter of the restated one (8053.T's lagged split) quadruples the cap; either
-    /// count missing, or a zero profile count, keeps the profile's cap.
+    /// (#709) A profile count a quarter of the restated one (8053.T's lagged split) quadruples the cap, a reverse
+    /// split quarters it, 1.5x rebases. A gap under 1.5x (IVG.MI), a US ticker (XE's pre-IPO count), either
+    /// count missing or zero: the profile's cap stands.
     #[test]
-    fn ep_cap_rebases_a_stale_profile_count() {
-        assert_eq!(ep_cap(100.0, Some(10.0), Some(40.0)), 400.0);
-        assert_eq!(ep_cap(100.0, None, Some(40.0)), 100.0);
-        assert_eq!(ep_cap(100.0, Some(10.0), None), 100.0);
-        assert_eq!(ep_cap(100.0, Some(0.0), Some(40.0)), 100.0);
+    fn ep_cap_rebases_a_split_profile_count() {
+        assert_eq!(ep_cap("8053.T", 100.0, Some(10.0), Some(40.0)), 400.0);
+        assert_eq!(ep_cap("8053.T", 100.0, Some(40.0), Some(10.0)), 25.0);
+        assert_eq!(ep_cap("8053.T", 100.0, Some(10.0), Some(15.0)), 150.0);
+        assert_eq!(ep_cap("IVG.MI", 100.0, Some(264.0), Some(340.0)), 100.0);
+        assert_eq!(ep_cap("XE", 100.0, Some(10.0), Some(40.0)), 100.0);
+        assert_eq!(ep_cap("8053.T", 100.0, None, Some(40.0)), 100.0);
+        assert_eq!(ep_cap("8053.T", 100.0, Some(10.0), None), 100.0);
+        assert_eq!(ep_cap("8053.T", 100.0, Some(0.0), Some(40.0)), 100.0);
+        assert_eq!(ep_cap("8053.T", 100.0, Some(10.0), Some(0.0)), 100.0);
     }
 
     /// (#707) Eulerpool's statements -> FundRows: millions scaled up, margins over revenue, capex sign flipped,
