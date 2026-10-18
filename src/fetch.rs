@@ -11634,7 +11634,7 @@ pub(crate) mod tests {
         assert_eq!(us(&[ocf, ("PaymentsForProceedsFromProductiveAssets", line(10.0))]).fcf_margin, Some(20.0), "(#719) TPG's net line");
         let (eps, out) = (("EarningsPerShareDiluted", dur("USD/shares", 2.0)), ("CommonStockSharesOutstanding", inst("shares", 50.0)));
         assert_eq!(us(&[eps.clone(), out.clone()]).shares, Some(50.0), "(#721) REG: the outstanding count behind an EPS");
-        assert_eq!(us(&[out.clone()]).shares, None, "no EPS: ARES's Class C stays out");
+        assert_eq!(us(std::slice::from_ref(&out)).shares, None, "no EPS: ARES's Class C stays out");
         let weighted = ("WeightedAverageNumberOfDilutedSharesOutstanding", dur("shares", 40.0));
         assert_eq!(us(&[eps, out, weighted]).shares, Some(40.0), "a weighted count wins");
         let lp = ("WeightedAverageLimitedPartnershipUnitsOutstandingDiluted", dur("shares", 80.0));
