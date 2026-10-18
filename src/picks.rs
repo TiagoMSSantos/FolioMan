@@ -3953,7 +3953,7 @@ const COLUMNS: &[ColSpec] = &[
     // display only; ranking uses the fixed-horizon ladder — see `leg`
     ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); n/a = no usable price history" },
     ColSpec { key: "leg", hdr: "LEG", width: 8, right: true, help: "The long-run %/yr the growth rank actually scores: the 20Y window, else 8Y, else 5Y, whichever the record allows, after the score's cap" },
-    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "Average yearly price growth since listing with the dividends paid added back: a lower bound on total return. Equals the price CAGR for accumulating funds and non-payers. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); n/a = no usable price history" },
+    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "Average yearly price growth since listing with the dividends paid added back: a lower bound on total return. Equals the price CAGR for accumulating funds and non-payers. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); ʸ = under 3 years listed: a short run compounded into a yearly rate, so one burst reads like a lasting pace; n/a = no usable price history" },
     ColSpec { key: "1h", hdr: "1H", width: 7, right: true, help: "Price change over the last hourly bar" },
     ColSpec { key: "6h", hdr: "6H", width: 7, right: true, help: "Price change over the last 6 hourly bars" },
     ColSpec { key: "12h", hdr: "12H", width: 7, right: true, help: "Price change over the last 12 hourly bars" },
@@ -5606,7 +5606,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     // (#735) "1 year", not "1 years"; the hover clause names what the cell's own title shows
     bonds.extend(crate::core::BOND_YEARS.iter().map(|y| {
         let span = if *y == 1 { "year" } else { "years" };
-        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield; — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
+        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield, then that yearly rate after inflation (US CPI for USA, Portugal's HICP for Portugal, EU HICP for the rest and for USA in EUR); — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
     }));
     BTreeMap::from([
         ("lanes", lanes),
@@ -6877,8 +6877,11 @@ fn cagr_cell(q: &Quote) -> String {
 
 /// (#530) The TR-CAGR cell: the dividend-added CAGR, else under 6 months (no whole-life CAGR) the CAGR
 /// cell's ⁱ change since listing, since a payout that young adds nothing yet; else n/a. Display only.
+/// (#736) Under 3 years listed the rate is marked ʸ: SNDK's 1.7 years read +756% a year, a burst
+/// compounded into a pace.
 fn trcagr_cell(q: &Quote) -> String {
     match (q.tr_cagr, q.life_cagr) {
+        (Some(v), _) if q.age_years.is_some_and(|a| a < 3.0) => format!("{v:+.0}%ʸ"),
         (Some(v), _) => format!("{v:+.0}%"),
         (None, None) => cagr_cell(q),
         _ => "n/a".to_string(),
@@ -13450,6 +13453,11 @@ mod tests {
         assert_eq!(cc("trcagr", &q, 0.0, None, ""), "n/a", "a whole-life CAGR with no TR figure is not passed off as one");
         q.tr_cagr = Some(21.4);
         assert_eq!(cc("trcagr", &q, 0.0, None, ""), "+21%");
+        q.age_years = Some(2.9);
+        assert_eq!(cc("trcagr", &q, 0.0, None, ""), "+21%ʸ", "(#736) under 3 years listed: a short run's rate");
+        q.age_years = Some(3.0);
+        assert_eq!(cc("trcagr", &q, 0.0, None, ""), "+21%", "3 years is enough");
+        q.age_years = age;
         q.tr_cagr = None;
         (q.life_cagr, q.young_ret_pct) = (None, None);
         q.age_years = Some(11.0);

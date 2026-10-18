@@ -111,6 +111,8 @@ mod tests {
     /// stale and dead series say so rather than printing a shorter span as the full one: (#639) a
     /// short one prints — past its start, a dead one n/a everywhere. (#735) A span with a reading
     /// hovers its yearly rate and the yields it was bought at and ends at; a — or n/a cell hovers none.
+    /// (#736) Then that rate after its region's inflation: USA's own, EU's for USA in EUR and Italy,
+    /// at rates that differ so a swapped region shows, and none past the deflator's reach.
     #[test]
     fn bond_web_rows_publish_usa_twice_and_say_where_a_series_stops() {
         use std::collections::BTreeMap;
@@ -119,9 +121,12 @@ mod tests {
         let flat = |from: i32, to: i32| -> BTreeMap<i32, f64> { (from..=to).map(|m| (m, 6.0)).collect() };
         // USD per EUR: 1.0 until a year ago, then 1.1 (a euro buys more dollars, so dollars lost value)
         let fx: BTreeMap<i32, f64> = (end - 27 * 12..=end).map(|m| (m, if m > end - 12 { 1.1 } else { 1.0 })).collect();
+        let yearly = |from: i32, rate: f64| -> BTreeMap<i32, f64> { (from..=2026).map(|y| (y, rate)).collect() };
+        let inflations = [("USA", yearly(1986, 2.0)), ("EU", yearly(2000, 3.0))];
         let rows = bond_web_rows(
             &[("USA", flat(end - 41 * 12, end)), ("Italy", flat(end - 35 * 12, end)), ("Spain", flat(end - 41 * 12, end - 7)), ("Portugal", BTreeMap::new())],
             &fx,
+            &inflations,
             today,
         );
         let cells = |r: &Vec<serde_json::Value>| r.iter().map(|c| c[1].as_str().expect("a text cell").to_string()).collect::<Vec<_>>();
@@ -143,15 +148,30 @@ mod tests {
             ["Portugal", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "⚠ no data"]
         );
         assert_eq!(rows.len(), 5);
-        assert_eq!(bond_web_rows(&[("Germany", flat(end - 5, end - 5))], &fx, today)[0][10][1], "2026-04", "6 months behind is not yet stale");
+        assert_eq!(bond_web_rows(&[("Germany", flat(end - 5, end - 5))], &fx, &[], today)[0][10][1], "2026-04", "6 months behind is not yet stale");
         // (#735) the hover rides after a null link, as REPORTS' does
-        assert_eq!(rows[0][3], serde_json::json!(["2Y", "+12.7%", null, "+6.2%/yr; started at 6.00% yield (2024-09), now 6.00%"]));
-        assert_eq!(rows[1][2][3], "-3.5%/yr; started at 6.00% yield (2025-09), now 6.00%", "in EUR, the dollar yields it holds");
+        assert_eq!(
+            rows[0][3],
+            serde_json::json!(["2Y", "+12.7%", null, "+6.2%/yr; started at 6.00% yield (2024-09), now 6.00%; after inflation +4.1%/yr"])
+        );
+        assert_eq!(
+            rows[1][2][3],
+            "-3.5%/yr; started at 6.00% yield (2025-09), now 6.00%; after inflation -6.3%/yr",
+            "in EUR, the dollar yields it holds, less euro inflation"
+        );
+        assert_eq!(rows[2][7][3], "+6.2%/yr; started at 6.00% yield (1999-09), now 6.00%; after inflation +3.1%/yr", "Italy, EU's 27 years");
+        assert_eq!(rows[2][8][3], "+6.2%/yr; started at 6.00% yield (1996-09), now 6.00%", "27 years of EU rates can't deflate 30");
         assert_eq!(rows[1][8].as_array().map(Vec::len), Some(2), "a — span hovers nothing");
         assert_eq!(rows[4][2].as_array().map(Vec::len), Some(2), "nor does an n/a one");
         // bought at 0.5% and sold at 3%: the price fall outruns a year of coupons
         let rise: BTreeMap<i32, f64> = (end - 12..=end).map(|m| (m, if m == end - 12 { 0.5 } else { 3.0 })).collect();
-        assert_eq!(bond_web_rows(&[("Germany", rise)], &fx, today)[0][2], serde_json::json!(["1Y", "-18.9%", null, "-18.9%/yr; started at 0.50% yield (2025-09), now 3.00%"]));
+        assert_eq!(bond_web_rows(&[("Germany", rise.clone())], &fx, &[], today)[0][2], serde_json::json!(["1Y", "-18.9%", null, "-18.9%/yr; started at 0.50% yield (2025-09), now 3.00%"]));
+        let own = [("Portugal", yearly(2000, 1.0)), ("EU", yearly(2000, 3.0))];
+        assert_eq!(
+            bond_web_rows(&[("Portugal", rise)], &fx, &own, today)[0][2][3],
+            "-18.9%/yr; started at 0.50% yield (2025-09), now 3.00%; after inflation -19.7%/yr",
+            "Portugal's own 1%, not EU's 3% (-21.3%)"
+        );
     }
 
     /// (#488) A cell that rounds to zero carries no sign either way; one that rounds to 0.1 keeps it.
@@ -336,16 +356,25 @@ fn signed_pct(v: f64) -> String {
     if &s[1..] == "0.0%" { s[1..].to_string() } else { s }
 }
 
+/// (#736) `inflations` is [`inflation_web_rows`]' input. A span's hover adds its yearly rate after the
+/// inflation of the currency's region: US CPI for USA, Portugal's for Portugal, EU HICP for the euro
+/// markets and for USA in EUR, whose euros a euro holder spends.
 pub(crate) fn bond_web_rows(
     yields: &[(&str, std::collections::BTreeMap<i32, f64>)],
     usd_per_eur: &std::collections::BTreeMap<i32, f64>,
+    inflations: &[(&'static str, std::collections::BTreeMap<i32, f64>)],
     today: chrono::NaiveDate,
 ) -> Vec<Vec<serde_json::Value>> {
     use chrono::Datelike;
     use serde_json::json;
     let now = today.year() * 12 + today.month0() as i32;
     let ym = |m: i32| format!("{}-{:02}", m.div_euclid(12), m.rem_euclid(12) + 1);
+    let deflator = |region: &str| inflations.iter().find(|(label, _)| *label == region).map(|(_, s)| s);
     let row = |label: &str, yld: &std::collections::BTreeMap<i32, f64>, index: std::collections::BTreeMap<i32, f64>| {
+        let infl = deflator(match label {
+            "USA" | "Portugal" => label,
+            _ => "EU",
+        });
         let last = index.keys().next_back().copied();
         let as_of = match last {
             None => "⚠ no data".to_string(),
@@ -363,8 +392,14 @@ pub(crate) fn bond_web_rows(
             let start = last.map(|m| m - 12 * y);
             match start.and_then(|m0| Some((m0, yld.get(&m0)?, yld.get(&last?)?))) {
                 Some((m0, y0, y1)) => {
-                    let rate = signed_pct(((1.0 + cum / 100.0).powf(1.0 / f64::from(y)) - 1.0) * 100.0);
-                    json!([format!("{y}Y"), signed_pct(cum), null, format!("{rate}/yr; started at {y0:.2}% yield ({}), now {y1:.2}%", ym(m0))])
+                    let per_year = |growth: f64| signed_pct((growth.powf(1.0 / f64::from(y)) - 1.0) * 100.0);
+                    // shortcut: the deflator is the last `y` YEARLY rates, the Inflation table's own
+                    // number for the span (one year of slack included), not the span's months; monthly CPI
+                    // would align the ends
+                    let real = infl.and_then(|s| crate::core::inflation_compounded(s, y as usize));
+                    let real = real.map_or(String::new(), |i| format!("; after inflation {}/yr", per_year((1.0 + cum / 100.0) / (1.0 + i / 100.0))));
+                    let rate = per_year(1.0 + cum / 100.0);
+                    json!([format!("{y}Y"), signed_pct(cum), null, format!("{rate}/yr; started at {y0:.2}% yield ({}), now {y1:.2}%{real}", ym(m0))])
                 }
                 None => json!([format!("{y}Y"), signed_pct(cum)]),
             }

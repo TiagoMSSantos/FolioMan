@@ -1779,7 +1779,7 @@ pub async fn run(args: Vec<String>) {
         bond_yields.push((label, fetch::fetch_fred(&client, &settings.urls.fred, &settings.urls.sec_user_agent, id).await));
     }
     let usd_per_eur = fetch::fetch_fred(&client, &settings.urls.fred, &settings.urls.sec_user_agent, "EXUSEU").await;
-    let bonds = crate::commands::bond_web_rows(&bond_yields, &usd_per_eur, chrono::Local::now().date_naive());
+    let bonds = crate::commands::bond_web_rows(&bond_yields, &usd_per_eur, &inflations, chrono::Local::now().date_naive());
     // intraday ONLY when the table actually prints 1h/6h/12h — it was hardcoded on, and it costs one
     // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display
     // cells nothing scores on. news off (screen never prints headlines).

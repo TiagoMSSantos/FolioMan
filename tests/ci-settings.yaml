@@ -1974,6 +1974,19 @@ sizing:
   #  cell, and no golden carries these cells.
   #  REVERT RULE: drop the bond tip, the `shown_sector` calls (back to `q.sector`), the `conc` banner and the
   #  `lossᵒ` arm; each stands alone.
+  #── (#736) 2026-10-18: TR-CAGR MARKS A SHORT HISTORY, BOND SPANS HOVER THEIR RATE AFTER INFLATION ──
+  #  WHY: the owner asked what the page still lacks. TR-CAGR prints SNDK's 1.7 listed years as +756% a year,
+  #  a burst compounded into a pace that reads like a lasting rate. The Bonds hover prints a nominal rate,
+  #  and the reader had to divide by the Inflation table's number to see what a span kept.
+  #  BUILT: `picks::trcagr_cell` appends `ʸ` when a name is under 3 years listed (lane tables and the CORE
+  #  row), and the TR-CAGR help defines it; the page sort key reads the number past it. Each Bonds span with
+  #  a reading hovers "; after inflation X/yr": US CPI for USA, Portugal's for Portugal, EU HICP for the euro
+  #  markets and for USA in EUR, whose euros a euro holder spends. The deflator is
+  #  `core::inflation_compounded` over the span's years, the Inflation table's own number; a span past its
+  #  reach hovers no clause.
+  #  DISPLAY ONLY: no gate, tilt or score term reads either cell; the backtest's `age_years` is None, so no
+  #  golden moves.
+  #  REVERT RULE: drop the `ʸ` arm and the `inflations` argument of `bond_web_rows`; each stands alone.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.
