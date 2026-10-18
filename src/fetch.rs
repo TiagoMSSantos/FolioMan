@@ -2340,6 +2340,7 @@ fn ep_cap(ticker: &str, mcap: f64, profile_shares: Option<f64>, annual_shares: O
 /// (#707) Eulerpool's three annual statements as FundRows, one per dated income row with a revenue, newest 7
 /// ("…e" estimate periods fail the date parse). Millions -> raw units; "filed" = period end. Equity and assets
 /// stay None: they missed ASML's own filing, so ROE/A, ROIC and the asset ratios read n/a, not a wrong figure.
+/// (#711) Still None: on 26 of 27 live names the newest `allAssets` misses liabilities + equity by 6-490%.
 /// `financial` (Eulerpool's profile sector) marks a bank or insurer, whose EBIT Eulerpool files as 0.
 fn ep_fund_rows(income: &Value, balance: &Value, cash: &Value, financial: bool) -> Vec<core::FundRow> {
     let by = |v: &Value| -> HashMap<String, Value> {
@@ -2369,6 +2370,9 @@ fn ep_fund_rows(income: &Value, balance: &Value, cash: &Value, financial: bool) 
                 shares: f(Some(r), "shares").map(|s| s * m),
                 fcf_margin: pct(f(c, "fcf")),
                 ebitda: f(Some(r), "ebit").zip(f(c, "amortization")).map(|(e, d)| (e + d) * m),
+                // (#711) over the cash flow's interest paid, Eulerpool's only gross interest line; none paid reads
+                // None, as on SEC
+                interest_cover: f(Some(r), "ebit").zip(f(c, "cashInterestPaid").filter(|i| *i > 0.0)).map(|(e, i)| e / i),
                 debt: debt.map(|d| d * m),
                 net_debt: f(b, "cashShortTermInvestments").map(|x| (debt.unwrap_or(0.0) - x) * m),
                 cash_ttm: f(c, "netOperatingCashFlow")
@@ -2380,6 +2384,26 @@ fn ep_fund_rows(income: &Value, balance: &Value, cash: &Value, financial: bool) 
         .collect();
     rows.sort_by_key(|r| r.period_end);
     rows.split_off(rows.len().saturating_sub(7))
+}
+
+/// (#713) [`core::fund_factors`] on Eulerpool's rows, with the cash cells read off the newest year that has a
+/// cash flow: the trading houses (8058.T) carry FY2026's income statement and balance sheet a year before its
+/// cash flow, which left FCF%, FCF-YLD, CAPEX/OCF, EV/EBITDA, ND/EBITDA, INT-COV and FCF-5Y n/a.
+fn ep_fund_factors(rows: &[core::FundRow], today: NaiveDate) -> core::FundFactors {
+    let ff = core::fund_factors(rows, today, 5);
+    let Some(k) = rows.iter().rposition(|r| r.fcf_margin.is_some()) else { return ff };
+    let c = core::fund_factors(&rows[..=k], today, 5);
+    core::FundFactors {
+        fcf_margin: c.fcf_margin,
+        fcf_ttm: c.fcf_ttm,
+        cash_ttm: c.cash_ttm,
+        ebitda_ttm: c.ebitda_ttm,
+        interest_cover: c.interest_cover,
+        fcf_cagr: c.fcf_cagr,
+        fcf_cagr_short: c.fcf_cagr_short,
+        fcf_dash: c.fcf_dash,
+        ..ff
+    }
 }
 
 /// (#519) One Eulerpool GET: Ok(Some) on 200, Ok(None) on 404 (no such security), Err(status) on anything
@@ -2436,7 +2460,8 @@ pub async fn enrich_eulerpool_fcf(
     let mut cache: HashMap<String, EpEntry> =
         std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let fund_path = crate::config::data_path(EULERPOOL_FUND_PATH);
-    let mut fund_cache: HashMap<String, (String, Vec<core::FundRow>)> =
+    // (#711) + the profile's sector: a cache from before it fails to parse and is refetched once
+    let mut fund_cache: HashMap<String, (String, Vec<core::FundRow>, Option<String>)> =
         std::fs::read_to_string(&fund_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let today = chrono::Local::now().date_naive();
     let fresh = |d: &str, days: i64| cache_age_days(d, today).is_some_and(|a| a < days);
@@ -2465,8 +2490,7 @@ pub async fn enrich_eulerpool_fcf(
                 (e.2, e.3, e.4) = (today.to_string(), v.as_ref().and_then(|v| v["mcap"].as_f64()), v.and_then(|v| v["shares"].as_f64()));
             }
         }
-        // (#707) a cash flow row means Eulerpool knows the name; a 404 never pays the four calls below
-        if e.1.is_empty() || !funded.contains(t) || fund_cache.get(t).is_some_and(|(d, _)| fresh(d, EP_CASHFLOW_DAYS)) {
+        if !funded.contains(t) || fund_cache.get(t).is_some_and(|(d, _, _)| fresh(d, EP_CASHFLOW_DAYS)) {
             continue;
         }
         // shortcut: re-reads the cash flow and profile the FAIR fetch above may have just read, two calls a month a name
@@ -2474,6 +2498,9 @@ pub async fn enrich_eulerpool_fcf(
         for url in ["incomestatement", "balancesheet", "cashflowstatement", "profile"] {
             calls += 1;
             match ep_get(client, &format!("{}{url}/{t}", urls.eulerpool_api), &hdr).await {
+                // (#712) a 404 on the income statement: Eulerpool doesn't know the name, so the other three are
+                // not paid. Gated here, not on the cash flow: SKHY and JMKE file an empty one
+                Ok(None) if got.is_empty() => break,
                 Ok(v) => got.push(v.unwrap_or(Value::Null)),
                 Err(s) => {
                     eprintln!("fetch: Eulerpool answered {s} on {t}: no more fetches this run");
@@ -2481,12 +2508,14 @@ pub async fn enrich_eulerpool_fcf(
                 }
             }
         }
-        let fin = got[3]["sector"].as_str() == Some("Financials");
-        fund_cache.insert(t.clone(), (today.to_string(), ep_fund_rows(&got[0], &got[1], &got[2], fin)));
+        got.resize(4, Value::Null);
+        let sector = got[3]["sector"].as_str().map(str::to_string);
+        let fin = sector.as_deref() == Some("Financials");
+        fund_cache.insert(t.clone(), (today.to_string(), ep_fund_rows(&got[0], &got[1], &got[2], fin), sector));
     }
     let cap_m = |t: &str| {
         let e = cache.get(t)?;
-        let annual = fund_cache.get(t).and_then(|(_, r)| r.last()?.shares).map(|s| s / 1e6);
+        let annual = fund_cache.get(t).and_then(|(_, r, _)| r.last()?.shares).map(|s| s / 1e6);
         Some(ep_cap(t, e.3?, e.4, annual))
     };
     let ratios: HashMap<String, (f64, String)> = targets
@@ -2499,9 +2528,13 @@ pub async fn enrich_eulerpool_fcf(
         if !no_row(q) {
             continue;
         }
-        let Some((_, rows)) = fund_cache.get(&q.ticker).filter(|(_, r)| !r.is_empty()) else { continue };
+        let Some((_, rows, sector)) = fund_cache.get(&q.ticker).filter(|(_, r, _)| !r.is_empty()) else { continue };
+        // (#711) the SECTOR cell's, display only: `q.sector` feeds the score
+        if q.profile.sector.is_none() {
+            q.profile.sector = sector.clone();
+        }
         // (#707) the price fields `enrich_fund_factor` stamps, off Eulerpool's cap ÷ shares
-        let mut ff = core::fund_factors(rows, today, 5);
+        let mut ff = ep_fund_factors(rows, today);
         let cap = cap_m(&q.ticker).map(|m| m * 1e6);
         let price = cap.zip(ff.shares_ttm).filter(|(_, n)| *n > 0.0).map(|(c, n)| c / n);
         ff.earnings_yield = price.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
@@ -12329,14 +12362,19 @@ pub(crate) mod tests {
             {"period": "2023-12-31", "longTermDebt": 5},
             {"period": "2021-12-31", "cashShortTermInvestments": 8},
         ]);
-        let cash = serde_json::json!([{"period": "2024-12-31", "fcf": 25, "amortization": 6, "netOperatingCashFlow": 34, "capex": -10}]);
+        let cash = serde_json::json!([
+            {"period": "2024-12-31", "fcf": 25, "amortization": 6, "netOperatingCashFlow": 34, "capex": -10, "cashInterestPaid": 5},
+            {"period": "2022-12-31", "cashInterestPaid": 0},
+        ]);
         let rows = ep_fund_rows(&Value::Array(income), &balance, &cash, true);
         let d = |y: i32| NaiveDate::from_ymd_opt(y, 12, 31).unwrap();
         assert_eq!(rows.iter().map(|r| r.period_end).collect::<Vec<_>>(), [2017, 2018, 2019, 2021, 2022, 2023, 2024].map(d));
         let r = &rows[6];
         assert_eq!((r.filed, r.financial, r.revenue, r.eps, r.shares), (d(2024), true, Some(2e8), Some(2.5), Some(1.2e7)));
         assert_eq!((r.op_margin, r.net_margin, r.fcf_margin), (Some(25.0), Some(15.0), Some(12.5)));
-        assert_eq!((r.ebitda, r.debt, r.net_debt), (Some(5.6e7), Some(3e7), Some(-1e7)));
+        assert_eq!((r.ebitda, r.debt, r.net_debt, r.interest_cover), (Some(5.6e7), Some(3e7), Some(-1e7), Some(10.0)));
+        // (#711) no interest paid (2022) and no cash flow row (2023) both read None, never inf
+        assert_eq!((rows[4].interest_cover, rows[5].interest_cover), (None, None));
         let c = r.cash_ttm.as_ref().unwrap();
         assert_eq!((c.end, c.filed, c.ocf, c.capex, c.q_ocf), (d(2024), d(2024), 3.4e7, 1e7, None));
         // 2023: debt but no cash; no cash flow row
@@ -12348,6 +12386,45 @@ pub(crate) mod tests {
         assert_eq!((rows[3].debt, rows[3].net_debt, rows[3].revenue), (None, Some(-8e6), Some(0.0)));
         assert_eq!((rows[3].op_margin, rows[3].net_margin), (None, None));
         assert!(ep_fund_rows(&Value::Null, &balance, &cash, false).is_empty());
+    }
+
+    /// (#713) a newest year with no cash flow (8058.T's FY2026) reads its cash cells off the year before, and every
+    /// other cell off the newest year; a series whose newest year has a cash flow, or that has none, reads plain
+    /// `fund_factors`.
+    #[test]
+    fn ep_cash_lag_reads_the_last_cash_year() {
+        let d = |y: i32| NaiveDate::from_ymd_opt(y, 3, 31).unwrap();
+        let row = |y: i32, fcf: Option<f64>| core::FundRow {
+            filed: d(y),
+            period_end: d(y),
+            revenue: Some(f64::from(100 * (y - 2018))),
+            net_margin: Some(f64::from(y - 2000)),
+            fcf_margin: fcf,
+            ebitda: fcf.map(|_| f64::from(y)),
+            interest_cover: fcf.map(|_| 4.0),
+            cash_ttm: fcf.map(|_| core::CashTtm { end: d(y), filed: d(y), ocf: 9.0, capex: 1.0, q_ocf: None, q_capex: None }),
+            ..Default::default()
+        };
+        let today = NaiveDate::from_ymd_opt(2026, 10, 18).unwrap();
+        let plain = |rows: &[core::FundRow]| format!("{:?}", core::fund_factors(rows, today, 5));
+        // 2020-2025 filed a cash flow, 2021's a burn; 2026 filed none
+        let mut rows: Vec<core::FundRow> = (2020..=2025).map(|y| row(y, Some(if y == 2021 { -5.0 } else { 10.0 }))).collect();
+        rows.push(row(2026, None));
+        let f = ep_fund_factors(&rows, today);
+        assert_eq!((f.fcf_margin, f.fcf_ttm, f.ebitda_ttm, f.interest_cover), (Some(10.0), Some(70.0), Some(2025.0), Some(4.0)));
+        assert_eq!(f.cash_ttm.map(|c| c.end), Some(d(2025)));
+        // over 2020-2025, not 2021's burn: the newest year's own read is no rate and a dash
+        assert!(f.fcf_cagr.is_some() && !f.fcf_dash);
+        assert_eq!(format!("{:?}", f.fcf_cagr), format!("{:?}", core::fund_factors(&rows[..6], today, 5).fcf_cagr));
+        assert_eq!((f.revenue_ttm, f.net_margin, f.period_end), (Some(800.0), Some(26.0), Some(d(2026))));
+        // a 3-year record: the short rate, off the cash years too
+        let short = &rows[3..];
+        let s = ep_fund_factors(short, today);
+        assert!(s.fcf_cagr_short.is_some());
+        assert_eq!(format!("{:?}", s.fcf_cagr_short), format!("{:?}", core::fund_factors(&short[..3], today, 5).fcf_cagr_short));
+        assert_eq!(format!("{:?}", ep_fund_factors(&rows[..6], today)), plain(&rows[..6]));
+        let none: Vec<core::FundRow> = (2020..=2026).map(|y| row(y, None)).collect();
+        assert_eq!(format!("{:?}", ep_fund_factors(&none, today)), plain(&none));
     }
 
     /// (#479) justETF's wording -> BF's tokens: the method span decides a physical fund, a wording
