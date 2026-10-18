@@ -1690,6 +1690,11 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
             q.rev_yoy = fetch_sec_ytd_rev_yoy(client, urls, &q.ticker).await;
             q.rev_ytd = q.rev_yoy.is_some();
         }
+        if q.shares_out.is_none() {
+            // (#704) a stub-year or 10-Q-only filer: the newest count any filing states, split since it filed
+            let got = sec_cached_read(client, urls, &q.ticker, "shares1", sec_newest_shares).await;
+            q.shares_out = got.map(|(filed, n)| n * core::split_factor_since(&q.splits, filed));
+        }
     }
 }
 
@@ -1700,18 +1705,31 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
 /// miss or a refused GET writes nothing, so the next run asks again.
 #[mutants::skip] // (#504) async network shell; `sec_ytd_rev_yoy` carries the tests
 async fn fetch_sec_ytd_rev_yoy(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
-    let cache = sec_cache_path(&format!("{ticker}_ytdrev1"));
+    sec_cached_read(client, urls, ticker, "ytdrev1", sec_ytd_rev_yoy).await
+}
+
+/// (#700) One companyfacts read through `parse`, cached under `{ticker}_{key}` for `sec_cache_ttl`,
+/// misses included. (#704) shares it with the MCAP count fallback.
+#[mutants::skip] // (#704) async network shell; each `parse` carries its own tests
+async fn sec_cached_read<T: serde::Serialize + serde::de::DeserializeOwned>(
+    client: &Client,
+    urls: &Urls,
+    ticker: &str,
+    key: &str,
+    parse: fn(&Value) -> Option<T>,
+) -> Option<T> {
+    let cache = sec_cache_path(&format!("{ticker}_{key}"));
     evict_if_stale(&cache, sec_cache_ttl(ticker));
-    if let Some(yoy) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Option<f64>>(&s).ok()) {
-        return yoy;
+    if let Some(got) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Option<T>>(&s).ok()) {
+        return got;
     }
     let cik = sec_cik(client, urls, ticker).await?;
     if SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= SEC_FETCH_BUDGET {
         return None;
     }
-    let yoy = sec_ytd_rev_yoy(&sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent).await?);
-    let _ = std::fs::write(&cache, serde_json::to_string(&yoy).unwrap_or_default());
-    yoy
+    let got = parse(&sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent).await?);
+    let _ = std::fs::write(&cache, serde_json::to_string(&got).unwrap_or_default());
+    got
 }
 
 // ── (Item 4) SEC EDGAR insider (Form 4) lane ───────────────────────────────────────────────────────
@@ -4969,6 +4987,27 @@ fn sec_ytd_rev_yoy(j: &Value) -> Option<f64> {
         f.0 == cur.0 && f.1 == filed && f.4 > 0.0 && (350..=380).contains(&(cur.3 - f.3).num_days()) && ((f.3 - f.2).num_days() - span).abs() <= 10
     })?;
     Some((cur.4 / prior.4 - 1.0) * 100.0)
+}
+
+/// (#704) MCAP's share count for a filer whose newest FY row has none. FPS's first 10-K covers a
+/// 4.8-month stub (243.8M diluted to 2026-06-30), and LLYVA/LLYVK file 10-Qs only (92.6M to
+/// 2026-06-30). The FY row's own tags, any form and span: the newest end, then the newest filing, then
+/// the latest start (the quarter over its year-to-date slice), then the first tag. Returns the filing
+/// date with the count, for the split restatement. shortcut: dei's cover count is not read. Companyfacts
+/// drops the class axis, so a two-class cover reads one class, and LLYVA's reads 0.
+fn sec_newest_shares(j: &Value) -> Option<(NaiveDate, f64)> {
+    let g = j.pointer("/facts/us-gaap")?;
+    let day = |x: &Value, k: &str| NaiveDate::parse_from_str(x.get(k)?.as_str()?, "%Y-%m-%d").ok();
+    US_GAAP_TAGS
+        .shares
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| Some((i, g.get(t)?.get("units")?.get("shares")?.as_array()?)))
+        .flat_map(|(i, arr)| arr.iter().map(move |x| (i, x)))
+        .filter_map(|(i, x)| Some((day(x, "end")?, day(x, "filed")?, day(x, "start"), std::cmp::Reverse(i), x.get("val")?.as_f64()?)))
+        .filter(|f| f.4 > 0.0)
+        .max_by_key(|f| (f.0, f.1, f.2, f.3))
+        .map(|f| (f.1, f.4))
 }
 
 /// Newest `end` on any annual-form fact in a taxonomy block.
@@ -12418,6 +12457,62 @@ pub(crate) mod tests {
             .expect("backdate mtime");
         assert_eq!(fetch_sec_ytd_rev_yoy(&client, &urls, "ZZYTD").await, None, "stale, and ZZYTD has no CIK");
         assert!(!hit.exists(), "evicted");
+    }
+
+    /// (#704) MCAP's fallback count, on the live shapes of 2026-10-18. LLYVA files 10-Qs only: its Q2
+    /// quarter (92.604M) over the half-year beside it and Q1. FPS's first 10-K is a stub year, filed after
+    /// its S-1 restated Q1. A newer period wins over the first tag, the first tag wins one period, and a
+    /// zero count is no count.
+    #[test]
+    fn sec_newest_shares_reads_the_newest_count_any_filing_states() {
+        use serde_json::json;
+        let (dil, basic) = ("WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic");
+        let f = |start: &str, end: &str, filed: &str, val: f64| json!({"start": start, "end": end, "filed": filed, "val": val, "form": "10-Q"});
+        let doc = |d: Vec<Value>, b: Vec<Value>| json!({"facts": {"us-gaap": {dil: {"units": {"shares": d}}, basic: {"units": {"shares": b}}}}});
+        let day = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let llyva = doc(
+            vec![
+                f("2026-01-01", "2026-03-31", "2026-05-07", 92_495_000.0),
+                f("2026-01-01", "2026-06-30", "2026-08-06", 92_550_000.0),
+                f("2026-04-01", "2026-06-30", "2026-08-06", 92_604_000.0),
+            ],
+            vec![f("2026-04-01", "2026-06-30", "2026-08-06", 92_005_000.0)],
+        );
+        assert_eq!(sec_newest_shares(&llyva), Some((day("2026-08-06"), 92_604_000.0)));
+        let fps = doc(
+            vec![
+                f("2026-02-07", "2026-03-31", "2026-05-14", 233_902_000.0),
+                f("2026-02-06", "2026-06-30", "2026-09-15", 243_802_000.0),
+                f("2026-02-06", "2026-03-31", "2026-06-29", 233_000_000.0),
+            ],
+            vec![],
+        );
+        assert_eq!(sec_newest_shares(&fps), Some((day("2026-09-15"), 243_802_000.0)));
+        let older = vec![f("2025-01-01", "2025-12-31", "2026-02-01", 10.0)];
+        assert_eq!(sec_newest_shares(&doc(older.clone(), vec![f("2026-01-01", "2026-03-31", "2026-05-01", 9.0)])), Some((day("2026-05-01"), 9.0)));
+        assert_eq!(sec_newest_shares(&doc(older.clone(), vec![f("2025-01-01", "2025-12-31", "2026-02-01", 8.0)])), Some((day("2026-02-01"), 10.0)));
+        assert_eq!(sec_newest_shares(&doc(older, vec![f("2026-01-01", "2026-03-31", "2026-05-01", 0.0)])), Some((day("2026-02-01"), 10.0)), "a zero is skipped");
+        assert_eq!(sec_newest_shares(&json!({"facts": {}})), None, "no us-gaap block");
+    }
+
+    /// (#704) A displayed stock with no FY count reads the cached fallback, restated by the split after it
+    /// filed (2:1 on 2026-09-01) and not the one before (3:1 on 2026-08-01). ZZSHR has no CIK and no fund
+    /// cache, so only the seeded `_shares1` answers.
+    #[tokio::test]
+    async fn enrich_income_stmt_falls_back_to_the_newest_filed_share_count() {
+        pin_throttle();
+        seed_cik_map();
+        let cache = sec_cache_path("ZZSHR_shares1");
+        std::fs::write(&cache, r#"["2026-08-06", 92604000.0]"#).expect("seed a cached count");
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let mut q = core::Quote::stub("ZZSHR", "1.00", "", "ZZSHR");
+        let day = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        q.splits = vec![(day("2026-08-01"), 3.0), (day("2026-09-01"), 2.0)];
+        let mut quotes = [q];
+        enrich_income_stmt(&client, &urls, &mut quotes, &HashSet::from(["ZZSHR".to_string()])).await;
+        let _ = std::fs::remove_file(&cache);
+        assert_eq!(quotes[0].shares_out, Some(185_208_000.0));
     }
 
     /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost
