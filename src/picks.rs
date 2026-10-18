@@ -3975,7 +3975,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in; — = under 200 trading days listed" },
-    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback; loss = earnings at or below 0; n/a = no source this page reads (SEC, FMP, Eulerpool) gives the earnings; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback; loss = earnings at or below 0; lossᵒ = operating profit covers interest 2x or more (or there is no debt) and free cash flow is positive, so the loss sits below the operating line: usually a one-off charge, write-down or tax; n/a = no source this page reads (SEC, FMP, Eulerpool) gives the earnings; — = a fund or coin, which files no company accounts" },
     // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
     // exactly equal the TTM-based P/E cell ÷ CAGR. (#426) Nor its EPS: the PEG's is core, gains stripped
     ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap; loss = earnings at or below 0; — = no growth to divide by (the long-run price trend fell, or under 5 years of record), or a coin; n/a = no annual core earnings on file to price (most non-US companies), or a fund whose holdings' P/E is unknown. Funds look through to their holdings; ~ = borrowed from a twin fund; ° = served from cache" },
@@ -4191,6 +4191,30 @@ pub(crate) fn short_pct(quote: &Quote) -> Option<f64> {
     quote.profile.short_shares.zip(share_count(quote).filter(|n| *n > 0.0)).map(|(s, n)| s / n * 100.0)
 }
 
+/// (#499) Nasdaq's sector words -> the GICS names the constituent ponds carry, so `c` and the sector
+/// mix read one vocabulary. Unknown words pass through; a missing sector reads "other", like a
+/// sector-less CSV row. (#735) Here, not in `fetch`, so the page engine's [`shown_sector`] has it.
+pub fn gics_of_nasdaq(sector: Option<&str>) -> String {
+    match sector.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("Technology") => "Information Technology",
+        Some("Finance") => "Financials",
+        Some("Basic Materials") => "Materials",
+        Some("Telecommunications") => "Communication Services",
+        Some(s) => s,
+        None => "other",
+    }
+    .to_string()
+}
+
+/// (#735) The SECTOR cell's and the exposure mix's sector: the pond's, else the (#481) profile's in
+/// GICS words. A pond row with no sector reads "other" (`core::sector_symbol`), which had hidden
+/// ASML's and Arm's Technology and filed 25% of the book under "other". Display only: `q.sector`
+/// alone feeds the sector cap and sizing.
+pub fn shown_sector(q: &Quote) -> Option<String> {
+    let pond = q.sector.as_deref().filter(|s| !s.trim().is_empty() && *s != "other");
+    pond.map(str::to_string).or_else(|| q.profile.sector.as_deref().map(|p| gics_of_nasdaq(Some(p)))).or_else(|| q.sector.clone())
+}
+
 /// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags), `alt` the
 /// 8Y-pinned score for the `score8y` column (`None` = gated/unscoreable). All values come from
 /// already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
@@ -4286,10 +4310,16 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             _ => quote.ma200d_pct.map_or_else(|| short_or_na(quote, 200.0 / 252.0), |v| format!("{v:+.0}%ᵈ")),
         },
         "pe" if stock_only_na => "—".to_string(),
-        // (#506) a loss-maker has no P/E, and "n/a" read as missing data: "loss" says the filing was read
+        // (#506) a loss-maker has no P/E, and "n/a" read as missing data: "loss" says the filing was read.
+        // (#735) `lossᵒ` = the loss sits below a healthy operating line (OP and FCF above 0, interest
+        // covered 2x or no debt), as LU2.DE: usually a one-off charge, write-down or tax
         "pe" => match (quote.pe_ratio.or_else(|| ep.and_then(|f| f.earnings_yield).filter(|y| *y > 0.0).map(|y| 100.0 / y)), fund.and_then(|f| f.eps_ttm)) {
             (Some(v), _) => format!("{v:.1}"),
-            (None, Some(e)) if e <= 0.0 => "loss".to_string(),
+            (None, Some(e)) if e <= 0.0 => match fund {
+                Some(f) if f.op_margin.is_some_and(|m| m > 0.0) && f.fcf_margin.is_some_and(|m| m > 0.0)
+                    && (f.interest_cover.is_some_and(|c| c >= 2.0) || (f.interest_cover.is_none() && f.debt == Some(0.0))) => "lossᵒ".to_string(),
+                _ => "loss".to_string(),
+            },
             _ => "n/a".to_string(),
         },
         // (#37) THE one PEG: the number `growth_max_peg` cuts on and `growth_fund_factor: peg_yield`
@@ -4390,7 +4420,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             Some(f) if f.interest_cover.is_none() && f.debt == Some(0.0) => "no debt".to_string(),
             f => f.and_then(|f| f.interest_cover).map_or("n/a".to_string(), |v| format!("{v:.0}x")),
         },
-        "sector" => quote.sector.clone().or_else(|| quote.profile.sector.clone()).unwrap_or_else(|| "n/a".to_string()),
+        "sector" => shown_sector(quote).unwrap_or_else(|| "n/a".to_string()),
         // Read the Option `dividend_yields` already carries rather than `dividend_yield_1y`, whose
         // `unwrap_or(0.0)` collapses two different facts into one: Some(0.0) = pays NOTHING (MNST, and
         // it's a real, knowable 0.00%), None = no price or too little history to say. Printing both as
@@ -5573,8 +5603,10 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("YIELD", "Newest monthly average 10-year yield, % a year"),
         ("AS OF", "Month of that newest yield; ⚠ marks a series more than 6 months old or missing"),
     ]);
+    // (#735) "1 year", not "1 years"; the hover clause names what the cell's own title shows
     bonds.extend(crate::core::BOND_YEARS.iter().map(|y| {
-        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} years, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
+        let span = if *y == 1 { "year" } else { "years" };
+        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield; — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
     }));
     BTreeMap::from([
         ("lanes", lanes),
@@ -8753,6 +8785,17 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(cc("sector", &st, 0.0, None, ""), "Health Care");
+        st.sector = Some("other".into()); // (#735) the pond's placeholder gives way to the profile, in GICS words
+        st.profile.sector = Some("Technology".into());
+        assert_eq!(cc("sector", &st, 0.0, None, ""), "Information Technology");
+        st.sector = Some(" ".into());
+        assert_eq!(cc("sector", &st, 0.0, None, ""), "Information Technology", "a blank pond sector too");
+        st.profile.sector = None;
+        assert_eq!(cc("sector", &st, 0.0, None, ""), " ", "no profile: the pond's cell stays");
+        st.sector = Some("other".into());
+        assert_eq!(cc("sector", &st, 0.0, None, ""), "other");
+        st.sector = Some("Health Care".into());
+        st.profile.sector = Some("Health Care Equipment".into());
         assert_eq!(cc("roic", &st, 0.0, None, ""), "31.2%");
         assert_eq!(cc("fcf", &st, 0.0, None, ""), "-4.0%");
         assert_eq!(cc("icov", &st, 0.0, None, ""), "12x");
@@ -11457,6 +11500,20 @@ mod tests {
         assert_eq!(cc("pe", &eq, 0.0, None, ""), "n/a", "no EPS filed");
         eq.fund = Some(crate::core::FundFactors { eps_ttm: Some(0.0), ..Default::default() });
         assert_eq!(cc("pe", &eq, 0.0, None, ""), "loss", "(#506) earnings at or below 0");
+        // (#735) a loss below a healthy operating line reads lossᵒ (LU2.DE: OP 17.4%, FCF 10.0%, 24x)
+        let ok = crate::core::FundFactors { eps_ttm: Some(-0.5), op_margin: Some(17.4), fcf_margin: Some(10.0), interest_cover: Some(24.0), ..Default::default() };
+        for (f, want, why) in [
+            (ok.clone(), "lossᵒ", "all three hold"),
+            (crate::core::FundFactors { interest_cover: Some(2.0), ..ok.clone() }, "lossᵒ", "interest covered exactly 2x"),
+            (crate::core::FundFactors { interest_cover: None, debt: Some(0.0), ..ok.clone() }, "lossᵒ", "no debt, so no interest to cover"),
+            (crate::core::FundFactors { op_margin: Some(0.0), ..ok.clone() }, "loss", "no operating profit"),
+            (crate::core::FundFactors { fcf_margin: Some(0.0), ..ok.clone() }, "loss", "no free cash flow"),
+            (crate::core::FundFactors { interest_cover: Some(1.9), ..ok.clone() }, "loss", "interest covered under 2x"),
+            (crate::core::FundFactors { interest_cover: None, debt: Some(5.0), ..ok.clone() }, "loss", "debt with no cover on file"),
+        ] {
+            eq.fund = Some(f);
+            assert_eq!(cc("pe", &eq, 0.0, None, ""), want, "{why}");
+        }
         eq.fund = Some(crate::core::FundFactors { eps_ttm: Some(0.1), ..Default::default() });
         assert_eq!(cc("pe", &eq, 0.0, None, ""), "n/a", "a profit with no P/E is missing data");
 
@@ -12737,7 +12794,9 @@ mod tests {
         // (#486) every Bonds header has its line, each horizon naming its own span
         assert_eq!(nominal["bonds"].len(), 3 + crate::core::BOND_YEARS.len());
         for y in crate::core::BOND_YEARS {
-            assert!(nominal["bonds"][&format!("{y}Y")].contains(&format!(" last {y} years")), "{y}");
+            let span = if y == 1 { "year" } else { "years" };
+            assert!(nominal["bonds"][&format!("{y}Y")].contains(&format!(" last {y} {span},")), "{y}");
+            assert!(nominal["bonds"][&format!("{y}Y")].contains("; hover = that return as % a year, the yield the bond was bought at"), "(#735) {y}");
         }
         // (#474) every flag ships for the cell hovers and the RANK header names each one, `b` included.
         assert_eq!(nominal["flags"].len(), RANK_FLAGS.len());

@@ -109,7 +109,8 @@ mod tests {
     /// prints them verbatim. A flat 6% yield earns +6.2% a year, 41 years of it fills every column,
     /// USA in EUR lands right after USA with the dollar's 10% fall off the euro taken out, and short,
     /// stale and dead series say so rather than printing a shorter span as the full one: (#639) a
-    /// short one prints — past its start, a dead one n/a everywhere.
+    /// short one prints — past its start, a dead one n/a everywhere. (#735) A span with a reading
+    /// hovers its yearly rate and the yields it was bought at and ends at; a — or n/a cell hovers none.
     #[test]
     fn bond_web_rows_publish_usa_twice_and_say_where_a_series_stops() {
         use std::collections::BTreeMap;
@@ -123,9 +124,9 @@ mod tests {
             &fx,
             today,
         );
-        let cells = |r: &Vec<(String, String)>| r.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>();
+        let cells = |r: &Vec<serde_json::Value>| r.iter().map(|c| c[1].as_str().expect("a text cell").to_string()).collect::<Vec<_>>();
         assert_eq!(
-            rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(),
+            rows[0].iter().map(|c| c[0].as_str().expect("a header")).collect::<Vec<_>>(),
             ["MARKET", "YIELD", "1Y", "2Y", "5Y", "10Y", "20Y", "27Y", "30Y", "40Y", "AS OF"]
         );
         assert_eq!(cells(&rows[0]), ["USA", "6.00%", "+6.2%", "+12.7%", "+34.9%", "+81.9%", "+231.0%", "+403.3%", "+502.3%", "+995.7%", "2026-09"]);
@@ -142,7 +143,15 @@ mod tests {
             ["Portugal", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "⚠ no data"]
         );
         assert_eq!(rows.len(), 5);
-        assert_eq!(bond_web_rows(&[("Germany", flat(end - 5, end - 5))], &fx, today)[0][10].1, "2026-04", "6 months behind is not yet stale");
+        assert_eq!(bond_web_rows(&[("Germany", flat(end - 5, end - 5))], &fx, today)[0][10][1], "2026-04", "6 months behind is not yet stale");
+        // (#735) the hover rides after a null link, as REPORTS' does
+        assert_eq!(rows[0][3], serde_json::json!(["2Y", "+12.7%", null, "+6.2%/yr; started at 6.00% yield (2024-09), now 6.00%"]));
+        assert_eq!(rows[1][2][3], "-3.5%/yr; started at 6.00% yield (2025-09), now 6.00%", "in EUR, the dollar yields it holds");
+        assert_eq!(rows[1][8].as_array().map(Vec::len), Some(2), "a — span hovers nothing");
+        assert_eq!(rows[4][2].as_array().map(Vec::len), Some(2), "nor does an n/a one");
+        // bought at 0.5% and sold at 3%: the price fall outruns a year of coupons
+        let rise: BTreeMap<i32, f64> = (end - 12..=end).map(|m| (m, if m == end - 12 { 0.5 } else { 3.0 })).collect();
+        assert_eq!(bond_web_rows(&[("Germany", rise)], &fx, today)[0][2], serde_json::json!(["1Y", "-18.9%", null, "-18.9%/yr; started at 0.50% yield (2025-09), now 3.00%"]));
     }
 
     /// (#488) A cell that rounds to zero carries no sign either way; one that rounds to 0.1 keeps it.
@@ -331,25 +340,36 @@ pub(crate) fn bond_web_rows(
     yields: &[(&str, std::collections::BTreeMap<i32, f64>)],
     usd_per_eur: &std::collections::BTreeMap<i32, f64>,
     today: chrono::NaiveDate,
-) -> Vec<Vec<(String, String)>> {
+) -> Vec<Vec<serde_json::Value>> {
     use chrono::Datelike;
+    use serde_json::json;
     let now = today.year() * 12 + today.month0() as i32;
+    let ym = |m: i32| format!("{}-{:02}", m.div_euclid(12), m.rem_euclid(12) + 1);
     let row = |label: &str, yld: &std::collections::BTreeMap<i32, f64>, index: std::collections::BTreeMap<i32, f64>| {
-        let as_of = match index.keys().next_back() {
+        let last = index.keys().next_back().copied();
+        let as_of = match last {
             None => "⚠ no data".to_string(),
-            Some(&m) if now - m > 6 => format!("{}-{:02} ⚠ STALE", m.div_euclid(12), m.rem_euclid(12) + 1),
-            Some(&m) => format!("{}-{:02}", m.div_euclid(12), m.rem_euclid(12) + 1),
+            Some(m) if now - m > 6 => format!("{} ⚠ STALE", ym(m)),
+            Some(m) => ym(m),
         };
-        let mut cells = vec![
-            ("MARKET".to_string(), label.to_string()),
-            ("YIELD".to_string(), yld.values().next_back().map_or("n/a".to_string(), |y| format!("{y:.2}%"))),
-        ];
+        let mut cells = vec![json!(["MARKET", label]), json!(["YIELD", yld.values().next_back().map_or("n/a".to_string(), |y| format!("{y:.2}%"))])];
         // (#639) a span reaching past the start of the unbroken record is —; n/a = no series at all
-        let blank = || (if index.is_empty() { "n/a" } else { "—" }).to_string();
+        let blank = if index.is_empty() { "n/a" } else { "—" };
         cells.extend(crate::core::BOND_YEARS.iter().map(|&y| {
-            (format!("{y}Y"), crate::core::bond_cum(&index, y).map_or_else(blank, signed_pct))
+            let Some(cum) = crate::core::bond_cum(&index, y) else { return json!([format!("{y}Y"), blank]) };
+            // (#735) the hover: the span's yearly rate and the yield its par bond was bought at (the
+            // index's first month is the purchase), so a span bought near 0% before 2022's rise reads
+            // why it lost, and one bought at a 6% coupon why it gained
+            let start = last.map(|m| m - 12 * y);
+            match start.and_then(|m0| Some((m0, yld.get(&m0)?, yld.get(&last?)?))) {
+                Some((m0, y0, y1)) => {
+                    let rate = signed_pct(((1.0 + cum / 100.0).powf(1.0 / f64::from(y)) - 1.0) * 100.0);
+                    json!([format!("{y}Y"), signed_pct(cum), null, format!("{rate}/yr; started at {y0:.2}% yield ({}), now {y1:.2}%", ym(m0))])
+                }
+                None => json!([format!("{y}Y"), signed_pct(cum)]),
+            }
         }));
-        cells.push(("AS OF".to_string(), as_of));
+        cells.push(json!(["AS OF", as_of]));
         cells
     };
     yields

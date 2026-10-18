@@ -56,6 +56,7 @@
   <pre class="why" id="why-out" role="status" hidden></pre>
 
   <h2 title="Single stocks ranked for a 20-year hold: strong proven long-run growth, near their own highs, braked when far above trend. BUY% is the share of new money the book puts in each. NOT advice" id="h-stocks">Stocks</h2>
+  <p class="stale" id="conc" role="note" hidden></p>
   <div id="stocks"></div>
   <h2 title="Funds ranked on the same 20-year growth rules as the stocks; mostly sector and theme bets, not the one-fund-forever pick (that is CORE). NOT advice" id="h-etfs">ETFs</h2>
   <div id="etfs"></div>
@@ -232,7 +233,9 @@
     yield, sold a month later at the next, coupons reinvested. A negative cell is a real loss, not a
     bug: when yields rise, a bond you already hold falls in price, about 8% per point for a 10-year.
     They rose fast in 2021-23 (Germany's from about -0.5% to 3%) after years of near-zero coupons, so
-    a span starting before that is still under water. Real bond funds lost the same. It is rebuilt from FRED's monthly
+    a span starting before that is still under water. Real bond funds lost the same. A span that starts
+    at a low yield and then sees yields rise loses; one that starts high is carried by its coupons. Hover
+    a cell for its % a year and the yield it was bought at. It is rebuilt from FRED's monthly
     average yields, so it is a model with no fees, not a fund you can buy. Each row is in its own
     currency; <em>USA in EUR</em> is the same Treasury for a euro holder, the dollar's swing included.
     — = the series is shorter (euro FX starts in 1999, Italy in 1991, Portugal in 1993); n/a = no data.

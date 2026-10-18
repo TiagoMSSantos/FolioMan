@@ -595,8 +595,8 @@ fn exposure_rows(
         }
         if !picks::quote_is_etf(q) {
             let us = home(t);
-            match &q.sector {
-                Some(s) => add(&mut sector, s, *w),
+            match picks::shown_sector(q) {
+                Some(s) => add(&mut sector, &s, *w), // (#735) past the pond's "other", as the SECTOR cell
                 None => {
                     add(&mut sector, "?", *w);
                     no_sector.push(t.as_str());
@@ -4503,6 +4503,10 @@ mod tests {
         let one = exposure_rows(&book[1..2], &quotes, &holdings, &mix, &home, &d);
         assert_eq!(one[one.as_array().expect("rows").len() - 1][6][1], "via 1 fund");
         assert_eq!(exposure_rows(&[], &quotes, &holdings, &mix, &home, &d), serde_json::json!([]));
+        // (#735) a pond row's "other" gives way to the profile's sector, as in the SECTOR cell
+        let mut arm = stock("ARM", Some("other"));
+        arm.profile.sector = Some("Technology".into());
+        assert_eq!(exposure_rows(&[("ARM".into(), 1.0)], &[arm], &holdings, &mix, &home, &d)[0][2][1], "Information Technology");
     }
 
     /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the

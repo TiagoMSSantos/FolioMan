@@ -1957,6 +1957,23 @@ sizing:
   #  page's word hover reads. The page sorts `past burn`, and the runway cells, with the missing cells.
   #  DISPLAY ONLY: no gate, tilt or score term reads a cell, and no golden carries these columns.
   #  REVERT RULE: drop the `past burn` branch and its six help clauses; the arm prints burn again.
+  #── (#735) 2026-10-18: PAGE REVIEW: BOND HOVERS, SECTOR PAST `other`, A TILT BANNER, `lossᵒ` ──
+  #  WHY: the owner reviewed the page and asked why the Bonds table mixes positive and negative cells. The
+  #  model checks out against FRED (GS10 4.99, DE 3.47). Spans that start at the near-zero yields of 2016-21
+  #  and then take the 2022-23 rise lose; 20Y+ spans start at 4-7% coupons and gain. The review also found
+  #  ASML and Arm reading SECTOR `other` (the pond's placeholder blocked the profile), so Exposure split IT
+  #  59.1% from `other` 24.9%. About 84% of BUY% sits in IT and 93% in USD, and the page said nothing. And
+  #  a GAAP `loss` hid a healthy business: LU2.DE reads OP 17.4%, FCF 10.0% and INT-COV 24x.
+  #  BUILT: each Bonds span cell hovers its % a year, the yield its bond was bought at and the newest one;
+  #  the help reads "1 year", and the note says why spans differ. `picks::shown_sector` reads the profile
+  #  sector past a blank or `other` pond sector, for the SECTOR cell and the Exposure rows (`gics_of_nasdaq`
+  #  moved to picks, which the page engine builds). A banner over Stocks prints when one sector carries 50%+
+  #  of BUY% or one currency 80%+. P/E prints `lossᵒ` when OP and FCF are above 0 and interest is covered 2x
+  #  or there is no debt; the page sorts it with the missing cells.
+  #  DISPLAY ONLY: `q.sector` still drives the sector cap and sizing; no gate, tilt or score term reads a
+  #  cell, and no golden carries these cells.
+  #  REVERT RULE: drop the bond tip, the `shown_sector` calls (back to `q.sector`), the `conc` banner and the
+  #  `lossᵒ` arm; each stands alone.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.

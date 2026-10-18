@@ -8780,21 +8780,6 @@ pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
     ipo_web_rows(kept)
 }
 
-/// (#499) Nasdaq's sector words -> the GICS names the constituent ponds carry, so `c` and the sector
-/// mix read one vocabulary. Unknown words pass through; a missing sector reads "other", like a
-/// sector-less CSV row.
-fn gics_of_nasdaq(sector: Option<&str>) -> String {
-    match sector.map(str::trim).filter(|s| !s.is_empty()) {
-        Some("Technology") => "Information Technology",
-        Some("Finance") => "Financials",
-        Some("Basic Materials") => "Materials",
-        Some("Telecommunications") => "Communication Services",
-        Some(s) => s,
-        None => "other",
-    }
-    .to_string()
-}
-
 /// (#499) Every $1B+ US IPO of the last 5 years, as a pond: (Yahoo symbol, GICS sector). Sector is
 /// one Nasdaq profile read per kept name, paid once per month thanks to the cache. A refused month is
 /// not cached, so it is retried next run; only the months on disk feed the pond meanwhile.
@@ -8821,7 +8806,7 @@ async fn ipo_pond(client: &Client, urls: &Urls) -> Vec<(String, String)> {
         for sym in ipo_rows(&v) {
             let profile = get_json(client, &urls.nasdaq_profile.replace("{sym}", &sym)).await;
             let sector = profile.as_ref().and_then(|p| p.pointer("/data/Sector/value")).and_then(Value::as_str);
-            rows.push((sym.replace('.', "-"), gics_of_nasdaq(sector)));
+            rows.push((sym.replace('.', "-"), crate::picks::gics_of_nasdaq(sector)));
         }
         cache.insert(ym.clone(), rows);
     }
@@ -16602,9 +16587,9 @@ pub(crate) mod tests {
         ]}}});
         assert_eq!(ipo_rows(&v), vec!["ARM", "CRWV", "EXACT", "TENX", "SOLU", "SPCX"], "(#528) Space is no SPAC");
         assert_eq!(ipo_rows(&serde_json::json!({"data": null})), Vec::<String>::new());
-        assert_eq!(gics_of_nasdaq(Some("Technology")), "Information Technology");
-        assert_eq!(gics_of_nasdaq(Some("Energy")), "Energy");
-        assert_eq!(gics_of_nasdaq(None), "other");
+        assert_eq!(crate::picks::gics_of_nasdaq(Some("Technology")), "Information Technology");
+        assert_eq!(crate::picks::gics_of_nasdaq(Some("Energy")), "Energy");
+        assert_eq!(crate::picks::gics_of_nasdaq(None), "other");
     }
 
     /// (#517) Exchange QID -> Yahoo suffix, one row per company (newest listing first), spaces and dots to
