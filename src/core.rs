@@ -4176,9 +4176,10 @@ pub struct FundFactors {
     // (#715) DISPLAY ONLY, FAIR's base on another line where FCF is the year's build-out, not what the owner
     // keeps (ARE, CEG read burn): a REIT's FFO (`FundRow::ffo_margin`) and a utility's net income.
     // `picks::fair_leg` picks one by sector; the (#523) shadow yields stay on FCF.
-    #[serde(default)]
+    // an empty leg is left out, so a FundFactors with no data still reads all-null (the fixture's FERG leak check)
+    #[serde(default, skip_serializing_if = "FairLeg::is_empty")]
     pub ffo: FairLeg,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "FairLeg::is_empty")]
     pub ni: FairLeg,
     pub sti: Option<f64>, // (#717) the as-of row's short-term investments: the burn runway's cash adds them. Display only
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
@@ -4201,11 +4202,17 @@ pub struct FundFactors {
 
 /// (#715) One FAIR leg: the 3-year median margin × today's revenue, as `fcf_base`, and that line's own `yrs`
 /// rate or its (#505) short span, as `fcf_cagr` / `fcf_cagr_short`.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FairLeg {
     pub base: Option<f64>,
     pub cagr: Option<f64>,
     pub short: Option<(f64, f64)>,
+}
+
+impl FairLeg {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -7509,6 +7516,8 @@ mod tests {
         assert_eq!(leg(&reit[1..]).2, Some((Some(-5.72), Some(2.0))), "no row 5y back: 45 -> 40 over 2 years");
         let sti = FundRow { sti: Some(7.0), ..ffo(2024, 20.0, 200.0) };
         assert_eq!(leg(&[sti]).4, Some(7.0));
+        let keys = |f: &FundFactors| serde_json::to_string(f).unwrap().contains("\"ffo\"");
+        assert!(keys(&fund_factors(&reit, cutoff, 5)) && !keys(&FundFactors::default()), "an empty leg is not serialized");
         assert_eq!(median(vec![1.0, 3.0]), Some(2.0));
         assert_eq!(median(vec![]), None);
     }
