@@ -3905,6 +3905,9 @@ pub struct FundRow {
     // exactly like earnings_yield — so no live currency skew).
     pub ebitda: Option<f64>,
     pub net_debt: Option<f64>,
+    // (#703) net_debt's total debt leg alone. Some(0.0) = a filed 0, or no debt tag and no interest line;
+    // None = unknown, the FMP and pre-facts23 rows included. INT-COV labels the first "no debt".
+    pub debt: Option<f64>,
     // (#410) R&D and NET PAYOUT as % of revenue, like `fcf_margin`. SEC-computed, None on FMP. Payout is
     // dividends + buybacks − share issuance, so NEGATIVE = a net issuer, and that sign is kept.
     pub rnd_margin: Option<f64>,
@@ -4036,6 +4039,7 @@ pub struct FundFactors {
     pub ebitda_ttm: Option<f64>,     // (EV/EBITDA) as-of EBITDA level = operating income + D&A
     pub shares_ttm: Option<f64>,     // (EV/EBITDA) as-of diluted share count — the market-cap leg of EV
     pub net_debt: Option<f64>,       // (EV/EBITDA) as-of net debt (total debt − cash) — the leverage leg of EV
+    pub debt: Option<f64>,           // (#703) as-of total debt, net_debt's own leg: Some(0.0) = debt-free
     pub ebitda_yield: Option<f64>,   // (EV/EBITDA) EBITDA ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew, same as earnings_yield)
     pub peg_yield: Option<f64>,      // (PEG) 1/PEG = earnings_yield · as-of CAGR (high = cheap-for-its-growth). THE LIVE RANKING TILT since 2026-07-25 (`growth_fund_factor`); filled from the NATIVE close in both the backtest loop and the live enrich, so train and serve share one definition
     pub buyback_yield: Option<f64>, // as-of net share-count change over the last year, sign-flipped (+ = shrinking share count = buying back). Fully as-of from the FundRows (no price needed), unlike earnings_yield — so it populates in both the backtest AND the live enrich
@@ -4651,6 +4655,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         ebitda_ttm: now.and_then(|r| r.ebitda),
         shares_ttm: now.and_then(|r| r.shares),
         net_debt: now.and_then(|r| r.net_debt),
+        debt: now.and_then(|r| r.debt),
         ebitda_yield: None,
         // (PEG) needs the as-of price AND CAGR, which this fn has no access to -> filled by the CALLER.
         // THREE call sites must each remember, and a miss is SILENT (select_fund_factor just reads None
@@ -6376,6 +6381,7 @@ mod tests {
             ebitda_ttm: Some(50.0),
             shares_ttm: Some(2.0),
             net_debt: Some(-10.0),
+            debt: Some(0.0),
             ebitda_yield: Some(16.0),
             peg_yield: Some(17.0),
             buyback_yield: Some(10.0),
@@ -10670,6 +10676,7 @@ mod tests {
             net_cash_rev: Some(k - 10.0),
             ebitda: Some(300.0 * k),
             net_debt: Some(200.0 * k),
+            debt: Some(250.0 * k),
             rnd_margin: Some(5.0 + k),
             payout_margin: Some(4.0 + k),
             rec_margin: Some(10.0 + k),
@@ -10785,8 +10792,9 @@ mod tests {
     fn fund_factors_hides_a_cash_ttm_filed_after_the_cutoff() {
         let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
         let cash = CashTtm { end: ymd(2026, 6, 30), filed: ymd(2026, 7, 23), ocf: 185.67, capex: 132.41, q_ocf: None, q_capex: None };
-        let rows = [FundRow { filed: ymd(2026, 2, 4), period_end: ymd(2025, 12, 31), revenue: Some(400.0), cash_ttm: Some(cash.clone()), ..Default::default() }];
+        let rows = [FundRow { filed: ymd(2026, 2, 4), period_end: ymd(2025, 12, 31), revenue: Some(400.0), cash_ttm: Some(cash.clone()), debt: Some(0.0), ..Default::default() }];
         assert_eq!(fund_factors(&rows, ymd(2026, 7, 22), 5).cash_ttm, None);
+        assert_eq!(fund_factors(&rows, ymd(2026, 7, 23), 5).debt, Some(0.0), "(#703) a debt-free filer, not an unknown");
         assert_eq!(fund_factors(&rows, ymd(2026, 7, 23), 5).cash_ttm, Some(cash.clone()));
         assert_eq!(capex_ocf(&cash).round(), 71.0);
         assert_eq!(capex_ocf(&CashTtm { ocf: 0.0, ..cash }), f64::INFINITY, "no cash in: an infinite share");
