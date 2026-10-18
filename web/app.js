@@ -18,6 +18,23 @@ function why(text, cell) {
   return mark + " = " + (hit ? hit[1].trim() : plain);
 }
 
+// (#731) A NAME also links its TradingView chart, an icon after the name. A Yahoo suffix maps to the
+// TradingView exchange; a bare US symbol needs none, a class share's dash is a dot there (BRK.B) and a
+// coin pair drops its dash (BTCEUR). No symbol, or an unmapped suffix, gets no icon.
+// shortcut: a few ETF codes differ between the two sites, so that icon 404s; the NAME and TICKER links still work.
+const TV = { DE: "XETR", L: "LSE", PA: "EURONEXT", AS: "EURONEXT", LS: "EURONEXT", SW: "SIX", T: "TSE", MI: "MIL", OL: "OSL", ST: "OMXSTO", F: "FWB" };
+function tradingview(t) {
+  const [, s, x] = String(t).match(/^([A-Z0-9][A-Z0-9-]*)(?:\.([A-Z]+))?$/) ?? [];
+  if (!s || (x && !TV[x])) return null;
+  return "https://www.tradingview.com/symbols/" + (x ? TV[x] + "-" : "") + s.replace(/-([A-Z])$/, ".$1").replace(/-(EUR|USD)$/, "$1") + "/";
+}
+console.assert(
+  tradingview("APC.DE") === "https://www.tradingview.com/symbols/XETR-APC/" && tradingview("BRK-B")?.endsWith("/symbols/BRK.B/") &&
+    tradingview("8001.T")?.endsWith("/TSE-8001/") && tradingview("BTC-EUR")?.endsWith("/BTCEUR/") && tradingview("SMCI")?.endsWith("/symbols/SMCI/") &&
+    tradingview("0700.HK") === null && tradingview("—") === null && tradingview(null) === null,
+  "a TradingView link misreads its symbol",
+);
+
 function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set(), flags = {}) {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
@@ -63,7 +80,8 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
       // (#482) A NAME with no page of its own links the row's Yahoo quote, and so does an Exposure
       // `name` row, whose NAME is the symbol.
       const yahoo = (t) => "https://finance.yahoo.com/quote/" + encodeURIComponent(t);
-      const sym = h === "NAME" && !url?.startsWith("https://") && (row.find(([k]) => k === "TICKER")?.[1] ?? (row.some(([k, c]) => k === "KIND" && c === "name") ? cell : null));
+      const own = h === "NAME" && (row.find(([k]) => k === "TICKER")?.[1] ?? (row.some(([k, c]) => k === "KIND" && c === "name") ? cell : null));
+      const sym = !url?.startsWith("https://") && own;
       // (#524) an IPO row's TICKER reads — before a symbol is asked for: no quote to link
       const href = h === "TICKER" ? (cell === "—" ? null : yahoo(cell)) : sym && sym !== "—" ? yahoo(sym) : url;
       if (!href?.startsWith("https://")) {
@@ -71,6 +89,10 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
         continue;
       }
       td.append(Object.assign(document.createElement("a"), { href, target: "_blank", rel: "noopener", textContent: cell }));
+      // (#731) a plain NAME has no symbol, so the icon only follows a link. It is CSS `::before`, so the
+      // cell's textContent (the sort key and the search) stays the name.
+      const tv = own && tradingview(own);
+      if (tv) td.append(Object.assign(document.createElement("a"), { href: tv, className: "tv", target: "_blank", rel: "noopener", title: "TradingView chart", ariaLabel: "TradingView chart" }));
       if (h === "TICKER" && fresh.has(cell)) td.className = "new";
     }
   });
