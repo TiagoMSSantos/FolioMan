@@ -830,7 +830,9 @@ const PEG_HEADER: &str =
 /// day one rather than after a backtest verdict, so the forward clock runs alongside it. (#532) added
 /// `rnd_growth`, the one row whose backtest CANDIDATE read the LOW end winning: its top half is the
 /// RA hypothesis (R&D growers win), so its row tests that claim forward against the backtest.
-pub(crate) const FACTORS: [(&str, &str); 9] = [
+/// (#727) added the two business-stability rows, `margin_stability` and `rev_stability`. Each is a
+/// negated std, so high is the good end: the steadiest margins and the steadiest revenue growth.
+pub(crate) const FACTORS: [(&str, &str); 11] = [
     ("rnd_yield", "rnd_yield top minus peg cheap"),
     ("int_yield", "int_yield top minus peg cheap"),
     ("mscore", "mscore top minus peg cheap"),
@@ -840,6 +842,8 @@ pub(crate) const FACTORS: [(&str, &str); 9] = [
     ("oe_fair_yield", "oe_fair_yield top minus peg cheap"),
     ("fcf_cap_yield", "fcf_cap_yield top minus peg cheap"),
     ("rnd_growth", "rnd_growth top minus peg cheap"),
+    ("margin_stability", "margin_stability top minus peg cheap"),
+    ("rev_stability", "rev_stability top minus peg cheap"),
 ];
 
 /// (#415) The `fac` journal for one run: every [`FACTORS`] value the (#332) cohort's names carry, read
@@ -2193,7 +2197,7 @@ mod tests {
     /// no fundamentals, a missing value and a NaN all write nothing, and the rest write one tagged row
     /// per factor, in [`FACTORS`] order. (#436) A cohort name Berkshire bought writes `brk` even with no
     /// fundamentals; one outside the cohort writes nothing. (#442) `brkh` likewise, after `brk` and before the factors.
-    /// (#444) `soc` after `brkh`.
+    /// (#444) `soc` after `brkh`. (#727) The stability rows come last, so a mistyped key journals nothing.
     #[test]
     fn fac_journal_writes_present_finite_cohort_values_only() {
         let with = |t: &str, f: Option<crate::core::FundFactors>| {
@@ -2211,6 +2215,8 @@ mod tests {
             sgr_yield: Some(3.0), // (#416)
             fcf_cap_yield: Some(5.0), // (#523)
             rnd_growth: Some(6.0),    // (#532)
+            margin_stability: Some(7.0), // (#727)
+            rev_stability: Some(8.0),    // (#727)
             ..Default::default()
         };
         let quotes = [
@@ -2229,6 +2235,8 @@ mod tests {
                 ("A".to_string(), "sgr_yield".to_string(), 3.0),
                 ("A".to_string(), "fcf_cap_yield".to_string(), 5.0),
                 ("A".to_string(), "rnd_growth".to_string(), 6.0),
+                ("A".to_string(), "margin_stability".to_string(), 7.0),
+                ("A".to_string(), "rev_stability".to_string(), 8.0),
                 ("B".to_string(), "brk".to_string(), 1.0),
                 ("B".to_string(), "brkh".to_string(), 1.0),
             ]

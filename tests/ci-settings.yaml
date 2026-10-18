@@ -1831,6 +1831,43 @@ sizing:
   #  (#407) forbids a re-ask on this horizon pair. low_turnover moved 0.49/0.59 -> 0.78/0.65 on the same
   #  rows (10-35 losers), so these AUCs move with the book.
   #  Comments only: no knob, score or golden moves.
+  #── (#727) 2026-10-18: DURABLE-BUSINESS SIGNALS FOR A 20Y HOLD, AND TWO STABILITY ROWS JOIN THE SHADOW ──
+  #  WHY: the owner asks whether the buy heuristic can pick businesses whose model lasts 20+ years.
+  #  LITERATURE, three lanes, ~70 ideas, 0 new and buildable on the as-of rows:
+  #    durability  firm age is DEAD (#534), and Daepp et al. 2015 find firm mortality flat with age.
+  #                Technological obsolescence (Ma 2021) needs a patent-to-ticker crosswalk, and moat lists,
+  #                Hoberg-Phillips product similarity and dual-class flags need data the rows lack.
+  #    death       a distress evict cannot be graded: 141 of 737 pond exits are scorable, and only 5
+  #                bankruptcies sit in the stress lane. Hou-Xue-Zhang find distress insignificant.
+  #    compounders all mapped earlier. Keloharju-Linnainmaa-Nyberg 2021 find no lasting return gap
+  #                between firms once the factors are out.
+  #  SOURCE, no new run: the (#724) controls on b526c5b, as (#726). AUC 8y/12y, n winners/losers:
+  #                       pit                          stress
+  #    margin_stability   0.65 (140/35) 0.70 (79/15)   0.65 (150/21) 0.73 (85/6)   (#165) read 0.47/0.46
+  #    rev_stability      0.77 (124/31) 0.71 (64/10)   0.67 (133/18) 0.56 (70/2)   (#407) read 0.75/0.58
+  #  THE TILT IS INERT: in the FUND FACTOR SWEEP both factors read the price-only baseline's held-out TEST
+  #  edge exactly, every horizon and lane: pit +65.7/-170.8/-92.1, stress +67.3/+62.2/-13.6 (8/12/20y).
+  #  Weighted into growth_score they change no pick. No fundamental moves a 20y cell either: XBRL starts
+  #  ~2009, so a 20y window has no as-of row.
+  #  HELD BOOK, top by factor, excess / win / OOS halves, 8y | 12y:
+  #    pit     margin_stability  -1.0 39% -0.2/-1.9 | +0.5 70% +2.4/-1.4
+  #            rev_stability     -0.0 50% +2.7/-2.7 | +1.1 62% +2.5/-0.3
+  #    stress  margin_stability  +3.2 89% +3.1/+3.3 | +2.2 80% +3.8/+0.7
+  #            rev_stability     +1.5 81% +3.4/-0.3 | +1.7 100% +2.3/+1.2
+  #  RESCUE LANE, margin_stability over gate-rejected stocks at reject 0/10/25%: pit excess +3.4..+3.9 at 8y,
+  #  +3.2..+3.4 at 12y, both OOS halves +2.9 or more; stress +4.7..+4.8 and +4.5..+4.6, OOS +1.2/+8.2 and
+  #  +0.5/+8.6 at reject 0%. Growth admission stays closed, so this is recorded and not asked.
+  #  VERDICT: no ship. The stability factors separate winners from losers on today's book, and they buy no
+  #  edge as a tilt.
+  #  SHADOW: both join track's FACTORS (9 -> 11) under the (#415) bar, unchanged. margin_stability clears
+  #  (#165) at 8y and 12y on both lanes today. rev_stability rides (#407)'s own reopen route, a longer
+  #  forward record; this is not a re-ask on the 12y/8y pair. Eleven rows now read at once, so the (#415)
+  #  chance-clear caveat widens again. Both are row-only, so the live `fund_factors` already stamps them and
+  #  no fetch changes; live coverage is read off the first journalled line. Earliest verdict ~2027-11.
+  #  20Y DATA, deferred: the one free pre-XBRL source is SEC EX-27 (1997-2001 filings). Reopen it only if a
+  #  stability row passes forward.
+  #  REVERT RULE: drop the two rows from track's FACTORS. Lines already journalled keep the tags, and track
+  #  reads only the FACTORS rows, so the tags go unread.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.
