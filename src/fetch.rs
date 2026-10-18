@@ -6150,6 +6150,29 @@ pub async fn fetch_fundamentals_ranked(client: &Client, urls: &Urls, ticker: &st
     }
 }
 
+/// (#728) A failed filer's SEC rows by CIK, for `backtest … failures`: a dead name has no ticker in
+/// `company_tickers.json`, so `fetch_fundamentals_sec` cannot reach it. Cached in `.fail_cache` with no
+/// TTL, since a dead filer files nothing new; the `_facts24` suffix follows `fetch_sec_facts_fresh`'s,
+/// so a parse bump there must bump it here too. A refused GET or a spent [`HOLDER_FETCH_BUDGET`]
+/// writes nothing and returns no rows, so the next run asks again.
+#[mutants::skip] // (#728) async network shell; `parse_sec_facts` carries the tests
+pub async fn sec_facts_by_cik(client: &Client, urls: &Urls, cik: &str) -> Vec<core::FundRow> {
+    let cache = crate::config::data_path(".fail_cache").join(format!("CIK{cik}_facts24.json"));
+    if let Some(rows) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+        return rows;
+    }
+    if SEC_FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= HOLDER_FETCH_BUDGET {
+        return Vec::new();
+    }
+    let Some(v) = sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", cik), &urls.sec_user_agent).await else {
+        return Vec::new();
+    };
+    let rows = parse_sec_facts(&v);
+    let _ = std::fs::create_dir_all(cache.parent().unwrap_or(&cache));
+    let _ = std::fs::write(&cache, serde_json::to_string(&rows).unwrap_or_default());
+    rows
+}
+
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
 pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
     get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()

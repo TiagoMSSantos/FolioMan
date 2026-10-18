@@ -35,6 +35,8 @@ config/settings.yaml
 !tests/fixture/.sec_cache
 # (#559) FEC bulk breadth per cycle + SEC former names; only probe.yml's `pac` arm restores it
 .fec_cache/
+# (#728) the failure library's SEC facts by CIK; only probe.yml's `failures` arm restores it
+.fail_cache/
 
 # screen run-to-run gate state (EXIT-review footer)
 .screen_state.json

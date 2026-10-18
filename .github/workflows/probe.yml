@@ -7,8 +7,9 @@ name: Probe
 # Read it with `gh run view <id> --log`, and check `windows scored` on every horizon before grading.
 # Read it within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes.
 #
-# MANUAL ONLY, and it never writes a cache Pages or the gate read. The one cache it saves is (#559)'s
-# `folioman-fec-`, which only a `pac` probe fills and nothing else restores.
+# MANUAL ONLY, and it never writes a cache Pages or the gate read. The caches it saves are (#559)'s
+# `folioman-fec-` and (#728)'s `folioman-fail-`, which only a `pac` / `failures` probe fills and nothing
+# else restores.
 on:
   workflow_dispatch:
     inputs:
@@ -94,6 +95,15 @@ jobs:
           path: .fec_cache
           key: folioman-fec-${{ github.run_id }}
           restore-keys: folioman-fec-
+      # (#728) the failure library's SEC facts by CIK, for `backtest … failures` only. A dead filer files
+      # nothing new, so the rows are kept forever and each run only fetches the CIKs it has not seen.
+      - name: Restore the failure cache
+        if: ${{ contains(inputs.args, 'failures') }}
+        uses: actions/cache/restore@v6
+        with:
+          path: .fail_cache
+          key: folioman-fail-${{ github.run_id }}
+          restore-keys: folioman-fail-
       - name: backtest
         if: ${{ !inputs.bless }}
         env:
@@ -128,6 +138,12 @@ jobs:
         with:
           path: .fec_cache
           key: folioman-fec-${{ github.run_id }}
+      - name: Save the failure cache
+        if: ${{ !cancelled() && contains(inputs.args, 'failures') }}
+        uses: actions/cache/save@v6
+        with:
+          path: .fail_cache
+          key: folioman-fail-${{ github.run_id }}
       # (#554) A knob ship moves a frozen-data golden, and the CI log prints only its FIRST changed line.
       # This writes every `*report_is_pinned` golden at the dispatched commit, in the debug profile
       # integration-tests checks them in, and uploads them: download, review the diff, commit. Each

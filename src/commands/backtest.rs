@@ -718,6 +718,7 @@ struct Args {
     insider: bool,
     holders: bool,
     pac: bool,
+    failures: bool,
     rivals: bool,
     winners: bool,
     halflife: bool,
@@ -741,6 +742,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) also pull SEC Form-4 net buys
             _ if a.eq_ignore_ascii_case("holders") => a_.holders = true, // (#518) grade the 13F-holder boosts
             _ if a.eq_ignore_ascii_case("pac") => a_.pac = true, // (#559) grade FEC corporate-PAC breadth
+            _ if a.eq_ignore_ascii_case("failures") => a_.failures = true, // (#728) failed filers vs survivors
             _ if a.eq_ignore_ascii_case("rivals") => a_.rivals = true, // (#560) rival books on the same pond
             _ if a.eq_ignore_ascii_case("winners") => a_.winners = true, // (#583) where the top-10 book loses each window's winners
             _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
@@ -1079,7 +1081,8 @@ pub async fn run(args: Vec<String>) {
     let anchor_windows =
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
-    let Args { years, wide, long, fund, tune, insider, holders, pac, rivals, winners, halflife, stress, pit, mut tickers } = parse_args(&args);
+    let Args { years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, mut tickers } =
+        parse_args(&args);
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
     // mutate the process environment.
     if fmp_key_missing(fund, &crate::config::fund_source(), std::env::var("FMP_API_KEY").ok()) {
@@ -1895,6 +1898,9 @@ pub async fn run(args: Vec<String>) {
     if pac {
         report_pac(&client, &settings.urls, &samples, years, tuning).await;
     }
+    if failures {
+        report_failures(&client, &settings.urls, &samples).await;
+    }
     report_risk_lane(&samples, tuning.split_purge_months); // closes-derived risk stats, standalone — no fundamentals needed
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
     // (survivorship-clean), matched to the sample cadence. realized is untouched by de-mean.
@@ -2425,6 +2431,264 @@ async fn report_pac(client: &reqwest::Client, urls: &config::Urls, samples: &[Sa
     let passed: Vec<Sample> = samples.iter().filter(|s| growth_score(&s.quote, tuning).is_some()).cloned().collect();
     println!("  among stocks the buy gates pass (info, no verdict):");
     print_cohorts(&pac_cohorts(&passed, &pac));
+}
+
+/// (#728) One row of `tests/failures.csv`, which `tools/failures_from_sec.py` writes.
+#[derive(Clone, Debug, PartialEq)]
+struct Failure {
+    cik: String,
+    ticker: String,
+    event: chrono::NaiveDate,
+    bankrupt: bool, // an 8-K Item 1.03; else a price wipeout
+    assets_musd: Option<f64>,
+}
+
+/// (#728) The CSV's rows; the header and any malformed line drop out.
+fn parse_failures(csv: &str) -> Vec<Failure> {
+    csv.lines()
+        .filter_map(|l| {
+            let [cik, ticker, _, event, kind, assets] = l.split(',').collect::<Vec<_>>()[..] else { return None };
+            Some(Failure {
+                cik: cik.into(),
+                ticker: ticker.into(),
+                event: chrono::NaiveDate::parse_from_str(event, "%Y-%m-%d").ok()?,
+                bankrupt: kind == "bankrupt",
+                assets_musd: assets.parse().ok(),
+            })
+        })
+        .collect()
+}
+
+/// (#728) Census horizons, in years before the event.
+const FAIL_HORIZONS: [i64; 4] = [1, 2, 3, 5];
+/// (#728) Row labels, in [`fail_groups`]' order.
+const FAIL_GROUPS: [&str; 5] = ["all", "bankrupt", "bankrupt $1B+", "wipeout", "$1B+ or wipe"];
+/// (#728) Flag letters, in [`red_flags`]' order.
+const FAIL_FLAGS: [char; 6] = ['L', '2', 'B', 'I', 'R', 'D'];
+/// (#728) Failure instances a cell needs before its AUC counts toward the verdict.
+const FAIL_MIN_N: usize = 30;
+
+/// (#728) Which census rows a failure lands in: all, bankrupt, bankrupt with $1B+ of assets, wipeout,
+/// and bar (b)'s size guard, bankrupt $1B+ or wipeout.
+fn fail_groups(f: &Failure) -> [bool; 5] {
+    let big = f.bankrupt && f.assets_musd.is_some_and(|a| a >= 1000.0);
+    [true, f.bankrupt, big, !f.bankrupt, big || !f.bankrupt]
+}
+
+/// (#728) The six red flags, fixed before the census ran: a loss, a second loss year running, an
+/// operating cash burn, interest cover under 1.5x, revenue down over 10% on the year, and a share count
+/// up over 10%. `prev` is the fiscal year before `now`.
+fn red_flags(now: &core::FundRow, prev: Option<&core::FundRow>, ff: &core::FundFactors) -> [bool; 6] {
+    let loss = |r: &core::FundRow| r.net_margin.is_some_and(|m| m < 0.0);
+    [
+        loss(now),
+        loss(now) && prev.is_some_and(loss),
+        now.ocf_margin.is_some_and(|m| m < 0.0),
+        now.interest_cover.is_some_and(|c| c < 1.5),
+        ff.rev_yoy.is_some_and(|g| g < -10.0),
+        ff.buyback_yield.is_some_and(|b| b < -10.0),
+    ]
+}
+
+/// (#728) [`red_flags`] on the newest row filed by `cutoff`. None when that row was filed more than 550
+/// days before it: a filer that stopped filing has nothing current to read.
+fn fail_flags(rows: &[core::FundRow], cutoff: chrono::NaiveDate) -> Option<[bool; 6]> {
+    let now = core::fund_as_of(rows, cutoff).filter(|r| (cutoff - r.filed).num_days() <= 550)?;
+    let prev = rows.iter().filter(|r| r.filed <= cutoff && r.period_end < now.period_end).max_by_key(|r| (r.period_end, r.filed));
+    Some(red_flags(now, prev, &core::fund_factors(rows, cutoff, FUND_LOOKBACK_YRS)))
+}
+
+/// (#728) The controls' flags at one cutoff: `hist[k]` names reading k flags, `flag[i]` reading flag i.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct MonthHist {
+    hist: [usize; 7],
+    flag: [usize; 6],
+}
+
+fn month_hist(ctrls: &[(String, Vec<core::FundRow>)], cutoff: chrono::NaiveDate) -> MonthHist {
+    let mut m = MonthHist::default();
+    for f in ctrls.iter().filter_map(|(_, rows)| fail_flags(rows, cutoff)) {
+        m.hist[f.iter().filter(|b| **b).count()] += 1;
+        for (n, on) in m.flag.iter_mut().zip(f) {
+            *n += usize::from(on);
+        }
+    }
+    m
+}
+
+/// (#728) One census cell, summed over its failure instances. Each instance is graded against the
+/// controls of its own cutoff month: `auc` adds P(the failure reads more flags than a control) + half
+/// the ties, `ctrl_ge[k]` the share of controls reading k+ flags, `ctrl_flag[i]` the share with flag i.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct FailTally {
+    n: usize,
+    auc: f64,
+    fail_ge: [usize; 7],
+    ctrl_ge: [f64; 7],
+    fail_flag: [usize; 6],
+    ctrl_flag: [f64; 6],
+}
+
+impl FailTally {
+    /// A month with no control is skipped: there is nothing to rank the failure against.
+    fn add(&mut self, f: [bool; 6], m: &MonthHist) {
+        let n: usize = m.hist.iter().sum();
+        if n == 0 {
+            return;
+        }
+        let n = n as f64;
+        let c = f.iter().filter(|b| **b).count();
+        self.n += 1;
+        self.auc += (m.hist[..c].iter().sum::<usize>() as f64 + 0.5 * m.hist[c] as f64) / n;
+        for (k, (fail, ctrl)) in self.fail_ge.iter_mut().zip(&mut self.ctrl_ge).enumerate() {
+            *fail += usize::from(c >= k);
+            *ctrl += m.hist[k..].iter().sum::<usize>() as f64 / n;
+        }
+        for (i, (fail, ctrl)) in self.fail_flag.iter_mut().zip(&mut self.ctrl_flag).enumerate() {
+            *fail += usize::from(f[i]);
+            *ctrl += m.flag[i] as f64 / n;
+        }
+    }
+
+    /// n >= [`FAIL_MIN_N`] and a mean AUC of at least `bar`.
+    fn auc_at_least(&self, bar: f64) -> bool {
+        self.n >= FAIL_MIN_N && self.auc >= bar * self.n as f64
+    }
+}
+
+/// (#728) The pre-registered bar, fixed before the census ran. `t[group][horizon][era]`: groups as in
+/// [`fail_groups`], horizons as in [`FAIL_HORIZONS`], era 0 = events through 2017, 1 = from 2018,
+/// 2 = pooled. PASS needs all of:
+///   (a) all failures, each era: AUC >= 0.75 at T-1y and >= 0.65 at T-3y, n >= [`FAIL_MIN_N`] a cell;
+///   (b) bankrupt $1B+ or wipeout, pooled: AUC >= 0.70 at T-1y, the same n floor;
+///   (c) k = the smallest flag count that at most 10% of controls reach at T-1y, era 0;
+///   (d) at that k, at least 40% of era-1 failures reach it at T-1y.
+/// Returns the verdict and (c)'s k.
+fn fail_verdict(t: &[[[FailTally; 3]; 4]; 5]) -> (bool, Option<usize>) {
+    let a = (0..2).all(|e| t[0][0][e].auc_at_least(0.75) && t[0][2][e].auc_at_least(0.65));
+    let b = t[4][0][2].auc_at_least(0.70);
+    let (old, new) = (&t[0][0][0], &t[0][0][1]);
+    let k = (1..7).find(|&k| old.ctrl_ge[k] <= 0.10 * old.n as f64);
+    let d = k.is_some_and(|k| new.fail_ge[k] as f64 >= 0.40 * new.n as f64);
+    (a && b && d, k)
+}
+
+/// (#728) The `failures` census as printed lines. `fails` pairs each library row with its SEC rows,
+/// `ctrls` each control's ticker with its rows; `today` dates the lookalike list.
+#[mutants::skip] // printing; `fail_flags`, `month_hist`, `FailTally::add` and `fail_verdict` carry the tests
+fn failure_census_lines(fails: &[(Failure, Vec<core::FundRow>)], ctrls: &[(String, Vec<core::FundRow>)], today: chrono::NaiveDate) -> Vec<String> {
+    let mut t = [[[FailTally::default(); 3]; 4]; 5];
+    let mut months = HashMap::new();
+    let mut missing = [0usize; 4];
+    let mut quiet = Vec::new();
+    for (f, rows) in fails {
+        let era = usize::from(f.event.year() >= 2018);
+        for (h, yrs) in FAIL_HORIZONS.iter().enumerate() {
+            let at = f.event - chrono::Duration::days(365 * yrs);
+            let cutoff = at.with_day(1).unwrap_or(at);
+            let Some(flags) = fail_flags(rows, cutoff) else {
+                missing[h] += 1;
+                continue;
+            };
+            if h == 0 && !flags.contains(&true) {
+                quiet.push(f.ticker.as_str());
+            }
+            let m = *months.entry(cutoff).or_insert_with(|| month_hist(ctrls, cutoff));
+            for (g, _) in fail_groups(f).iter().enumerate().filter(|(_, on)| **on) {
+                t[g][h][era].add(flags, &m);
+                t[g][h][2].add(flags, &m);
+            }
+        }
+    }
+    let pct = |x: f64, n: usize| if n == 0 { "—".to_string() } else { format!("{:.0}", 100.0 * x / n as f64) };
+    let auc = |c: &FailTally| if c.n == 0 { "—".to_string() } else { format!("{:.2}", c.auc / c.n as f64) };
+    let bk = fails.iter().filter(|(f, _)| f.bankrupt).count();
+    let mut out = vec![
+        "\n── (#728) FAILURES: did filers that went bankrupt or were wiped out read more red flags than survivors that month? ──".to_string(),
+        format!(
+            "  library: {} rows of tests/failures.csv, {bk} bankrupt (8-K Item 1.03, assets $100M+), {} wipeout (-80%, no recovery); SEC rows for {}",
+            fails.len(),
+            fails.len() - bk,
+            fails.iter().filter(|(_, r)| !r.is_empty()).count()
+        ),
+        format!("  controls: {} pond stocks with SEC rows, library CIKs removed. They survived to today, which flatters every AUC.", ctrls.len()),
+        "  flags: L loss, 2 a second loss year, B operating cash burn, I interest cover < 1.5x, R revenue -10%, D shares +10%".to_string(),
+        "  AUC = P(a failure reads more flags than a control the same month) + half the ties; 0.5 = no signal".to_string(),
+        format!("  {:<21}{:>5}{:>7}{:>7}{:>7}   fail% / ctrl% per flag, pooled", "", "n", "AUC", "<=2017", ">=2018"),
+    ];
+    for (h, yrs) in FAIL_HORIZONS.iter().enumerate() {
+        for (g, name) in FAIL_GROUPS.iter().enumerate() {
+            let [old, new, all] = &t[g][h];
+            let flags: Vec<String> =
+                FAIL_FLAGS.iter().enumerate().map(|(i, l)| format!("{l} {}/{}", pct(all.fail_flag[i] as f64, all.n), pct(all.ctrl_flag[i], all.n))).collect();
+            out.push(format!("  T-{yrs}y {name:<15}{:>5}{:>7}{:>7}{:>7}   {}", all.n, auc(all), auc(old), auc(new), flags.join("  ")));
+        }
+    }
+    let (pass, k) = fail_verdict(&t);
+    let [old, new, _] = &t[0][0];
+    if let Some(k) = k {
+        out.push(format!(
+            "  (c) k = {k}: {}% of controls read {k}+ flags at T-1y (<=2017); (d) {}% of >=2018 failures do, {}% of their controls",
+            pct(old.ctrl_ge[k], old.n),
+            pct(new.fail_ge[k] as f64, new.n),
+            pct(new.ctrl_ge[k], new.n)
+        ));
+    }
+    let gaps: Vec<String> = FAIL_HORIZONS.iter().zip(missing).map(|(y, n)| format!("T-{y}y {n}")).collect();
+    out.push(format!("  no row filed in the 550 days to the cutoff (no XBRL yet, or a refused GET): {}", gaps.join(", ")));
+    out.push(format!(
+        "  0 flags at T-1y: {} failures (a sudden death, a fraud or a mislabel), first 40: {}",
+        quiet.len(),
+        quiet.iter().take(40).copied().collect::<Vec<_>>().join(" ")
+    ));
+    out.push(format!(
+        "  VERDICT: {} (bar: (a) all, each era, n >= {FAIL_MIN_N}: AUC >= 0.75 at T-1y and >= 0.65 at T-3y; (b) $1B+ or wipe, pooled: AUC >= 0.70 at T-1y; (d) >= 40% of >=2018 failures at k)",
+        if pass { "PASS" } else { "FAIL" }
+    ));
+    let k = k.unwrap_or(6);
+    let at = today.with_day(1).unwrap_or(today);
+    let mut look: Vec<(usize, &str, String)> = ctrls
+        .iter()
+        .filter_map(|(tk, rows)| {
+            let f = fail_flags(rows, at)?;
+            let n = f.iter().filter(|b| **b).count();
+            (n >= k).then(|| (n, tk.as_str(), FAIL_FLAGS.iter().zip(f).filter(|(_, on)| *on).map(|(l, _)| *l).collect()))
+        })
+        .collect();
+    look.sort_by_key(|(n, tk, _)| (std::cmp::Reverse(*n), *tk));
+    let names: Vec<String> = look.iter().map(|(_, tk, l)| format!("{tk}({l})")).collect();
+    out.push(format!("  TODAY ({at}): {} pond stocks read {k}+ flags: {}", look.len(), names.join(" ")));
+    out
+}
+
+/// (#728) The `failures` report: the library's SEC rows by CIK, the pond's stocks as controls, then
+/// [`failure_census_lines`]. Report only, no knob reads it.
+#[mutants::skip] // network + printing; `failure_census_lines` carries the tests
+async fn report_failures(client: &reqwest::Client, urls: &config::Urls, samples: &[Sample]) {
+    let lib = parse_failures(include_str!("../../tests/failures.csv"));
+    let ciks: HashSet<&str> = lib.iter().map(|f| f.cik.as_str()).collect();
+    let stocks: std::collections::BTreeSet<&str> =
+        samples.iter().filter(|s| picks::asset_class(&s.quote) == 2).map(|s| s.quote.ticker.as_str()).collect();
+    let mut ctrls = Vec::new();
+    for tk in stocks {
+        let Some(rows) = fetch::fetch_fundamentals_ranked(client, urls, tk).await else { continue };
+        if !fetch::cached_cik(tk).is_some_and(|c| ciks.contains(c.as_str())) {
+            ctrls.push((tk.to_string(), rows));
+        }
+    }
+    let fails: Vec<(Failure, Vec<core::FundRow>)> = stream::iter(lib.iter().cloned())
+        .map(|f| async move {
+            let rows = fetch::sec_facts_by_cik(client, urls, &f.cik).await;
+            (f, rows)
+        })
+        .buffered(8)
+        .collect()
+        .await;
+    for line in failure_census_lines(&fails, &ctrls, chrono::Local::now().date_naive()) {
+        println!("{line}");
+    }
+    let (sent, refused) = fetch::sec_stats();
+    println!("  SEC requests this run: {sent} sent, {refused} refused");
 }
 
 /// (#424) tickers whose SEC rows `restate_for_splits` moved this run. Per process, like `sec_stats`: one
@@ -8347,6 +8611,7 @@ mod tests {
         assert!(p("insider").insider);
         assert!(p("holders").holders);
         assert!(p("pac").pac);
+        assert!(p("failures").failures);
         assert!(p("rivals").rivals);
         assert!(p("winners").winners);
         assert!(p("halflife").halflife);
@@ -8832,6 +9097,132 @@ mod tests {
         assert!(!pac_pass(&side(30, 1.0, 50.0), &rest), "hit tie");
         assert!(!pac_pass(&side(30, 0.0, 55.0), &rest), "median tie");
         assert!(!pac_pass(&side(30, -1.0, 99.0), &rest), "hit up, median down");
+    }
+
+    /// (#728) Every flag needs its bound strictly crossed, and a missing field reads clean.
+    #[test]
+    fn red_flags_bite_strictly_past_each_bound() {
+        let r = |nm, ocf, ic| core::FundRow { net_margin: Some(nm), ocf_margin: Some(ocf), interest_cover: Some(ic), ..Default::default() };
+        let ff = |g, b| core::FundFactors { rev_yoy: Some(g), buyback_yield: Some(b), ..Default::default() };
+        assert_eq!(red_flags(&r(0.0, 0.0, 1.5), Some(&r(-1.0, 0.0, 9.0)), &ff(-10.0, -10.0)), [false; 6], "each bound itself reads clean");
+        assert_eq!(red_flags(&r(-0.1, -0.1, 1.4), Some(&r(-0.1, 0.0, 9.0)), &ff(-10.1, -10.1)), [true; 6]);
+        assert_eq!(red_flags(&r(-0.1, 0.0, 9.0), Some(&r(0.0, 0.0, 9.0)), &ff(0.0, 0.0)), [true, false, false, false, false, false], "a first loss");
+        assert!(!red_flags(&r(-0.1, 0.0, 9.0), None, &ff(0.0, 0.0))[1], "no prior year");
+        assert_eq!(red_flags(&core::FundRow::default(), None, &core::FundFactors::default()), [false; 6]);
+    }
+
+    /// (#728) The newest row filed by the cutoff, at most 550 days old, and the fiscal year before it,
+    /// even when a first XBRL 10-K files both years the same day.
+    #[test]
+    fn fail_flags_read_a_row_at_most_550_days_old() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let row = |filed, pe, nm| core::FundRow { filed: d(filed), period_end: d(pe), net_margin: Some(nm), ..Default::default() };
+        let rows = [row("2019-03-01", "2018-12-31", -1.0), row("2020-03-01", "2019-12-31", -2.0)];
+        let two = |f: Option<[bool; 6]>| f.map(|f| (f[0], f[1]));
+        assert_eq!(two(fail_flags(&rows, d("2020-03-01") + chrono::Duration::days(550))), Some((true, true)));
+        assert_eq!(fail_flags(&rows, d("2020-03-01") + chrono::Duration::days(551)), None, "stopped filing");
+        assert_eq!(two(fail_flags(&rows, d("2019-03-01"))), Some((true, false)), "no year before the first");
+        assert_eq!(fail_flags(&rows, d("2019-02-28")), None, "nothing filed yet");
+        let first = [row("2020-03-01", "2018-12-31", -1.0), row("2020-03-01", "2019-12-31", -2.0)];
+        assert_eq!(two(fail_flags(&first, d("2020-03-01"))), Some((true, true)));
+    }
+
+    /// (#728) Controls bin by flag count; a stale control is left out.
+    #[test]
+    fn month_hist_bins_fresh_controls() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let row = |filed, nm| core::FundRow { filed: d(filed), period_end: d(filed) - chrono::Duration::days(60), net_margin: Some(nm), ..Default::default() };
+        let ctrls = [("LOSS", "2020-03-01", -1.0), ("OK", "2020-03-01", 5.0), ("STALE", "2017-03-01", -1.0)]
+            .map(|(t, filed, nm)| (t.to_string(), vec![row(filed, nm)]));
+        assert_eq!(month_hist(&ctrls, d("2020-06-01")), MonthHist { hist: [1, 1, 0, 0, 0, 0, 0], flag: [1, 0, 0, 0, 0, 0] });
+    }
+
+    /// (#728) One failure reading 1 flag against 5 controls (2 read 0, 2 read 1, 1 reads 2): it beats
+    /// 2, ties 2, so AUC 0.6. A month with no control adds nothing.
+    #[test]
+    fn fail_tally_ranks_each_failure_against_its_month() {
+        let m = MonthHist { hist: [2, 2, 1, 0, 0, 0, 0], flag: [3, 0, 2, 0, 0, 1] };
+        let f = [true, false, false, false, false, false];
+        let mut t = FailTally::default();
+        t.add(f, &MonthHist::default());
+        assert_eq!(t, FailTally::default());
+        t.add(f, &m);
+        let one = FailTally {
+            n: 1,
+            auc: 0.6,
+            fail_ge: [1, 1, 0, 0, 0, 0, 0],
+            ctrl_ge: [1.0, 0.6, 0.2, 0.0, 0.0, 0.0, 0.0],
+            fail_flag: [1, 0, 0, 0, 0, 0],
+            ctrl_flag: [0.6, 0.0, 0.4, 0.0, 0.0, 0.2],
+        };
+        assert_eq!(t, one);
+        t.add(f, &m);
+        assert_eq!((t.n, t.auc, t.fail_ge[1], t.ctrl_ge[1], t.fail_flag[0], t.ctrl_flag[5]), (2, 1.2, 2, 1.2, 2, 0.4));
+    }
+
+    /// (#728) Size splits on $1B of last-10-K assets; a wipeout joins the size-guard row unsized.
+    #[test]
+    fn fail_groups_split_on_kind_and_a_billion() {
+        let f = |bankrupt, assets_musd| Failure { cik: "1".into(), ticker: "X".into(), event: chrono::NaiveDate::MIN, bankrupt, assets_musd };
+        assert_eq!(fail_groups(&f(true, Some(1000.0))), [true, true, true, false, true]);
+        assert_eq!(fail_groups(&f(true, Some(999.9))), [true, true, false, false, false]);
+        assert_eq!(fail_groups(&f(true, None)), [true, true, false, false, false]);
+        assert_eq!(fail_groups(&f(false, Some(5000.0))), [true, false, false, true, true]);
+    }
+
+    /// (#728) Six fields and a date, else the line drops; every shipped row parses.
+    #[test]
+    fn parse_failures_keeps_whole_rows() {
+        let csv = "cik,ticker,name,event_date,kind,assets_musd\n0000000001,AAA,Alpha,2020-05-01,bankrupt,1234.5\n\
+                   0000000002,BBB,Beta,2019-01-02,wipeout,\n0000000003,CCC,Gamma,2019-01-02,wipeout\n0000000004,DDD,Delta,2019-13-02,wipeout,\n";
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        assert_eq!(
+            parse_failures(csv),
+            [
+                Failure { cik: "0000000001".into(), ticker: "AAA".into(), event: d("2020-05-01"), bankrupt: true, assets_musd: Some(1234.5) },
+                Failure { cik: "0000000002".into(), ticker: "BBB".into(), event: d("2019-01-02"), bankrupt: false, assets_musd: None },
+            ]
+        );
+        let shipped = include_str!("../../tests/failures.csv");
+        assert_eq!(parse_failures(shipped).len(), shipped.lines().count() - 1);
+    }
+
+    /// (#728) The bar at each of its edges: every cell at n 30 sits exactly on its AUC bound, and k is
+    /// the first count at most 10% of the old era's controls reach.
+    #[test]
+    fn fail_verdict_holds_every_bar_at_its_edge() {
+        let cell = FailTally { n: 30, auc: 22.5, fail_ge: [30, 25, 20, 12, 5, 1, 0], ctrl_ge: [30.0, 20.0, 9.0, 3.0, 1.0, 0.0, 0.0], ..Default::default() };
+        let mut pass = [[[cell; 3]; 4]; 5];
+        (pass[0][2][0].auc, pass[0][2][1].auc, pass[4][0][2].auc) = (19.5, 19.5, 21.0);
+        assert_eq!(fail_verdict(&pass), (true, Some(3)));
+        let fails = |edit: &dyn Fn(&mut [[[FailTally; 3]; 4]; 5])| {
+            let mut t = pass;
+            edit(&mut t);
+            fail_verdict(&t)
+        };
+        assert_eq!(fails(&|t| t[0][0][0].auc = 22.4), (false, Some(3)), "(a) T-1y, old era");
+        assert_eq!(fails(&|t| t[0][0][1].auc = 22.4), (false, Some(3)), "(a) T-1y, new era");
+        assert_eq!(fails(&|t| t[0][2][0].auc = 19.4), (false, Some(3)), "(a) T-3y");
+        assert_eq!(fails(&|t| (t[0][0][1].n, t[0][0][1].auc) = (29, 29.0)), (false, Some(3)), "(a) n under 30");
+        assert_eq!(fails(&|t| t[4][0][2].auc = 20.9), (false, Some(3)), "(b)");
+        assert_eq!(fails(&|t| t[0][0][1].fail_ge[3] = 11), (false, Some(3)), "(d)");
+        assert_eq!(fails(&|t| t[0][0][0].ctrl_ge[3] = 3.1), (false, Some(4)), "(c) moves k");
+    }
+
+    /// (#728) The printout end to end on a toy library: one bankrupt reading a loss against a sick and a
+    /// healthy control, one wipeout with no control that month.
+    #[test]
+    fn failure_census_prints_the_verdict_and_todays_lookalikes() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let row = |filed, nm| core::FundRow { filed: d(filed), period_end: d(filed) - chrono::Duration::days(60), net_margin: Some(nm), ..Default::default() };
+        let fail = |ticker: &str, event, bankrupt| Failure { cik: ticker.into(), ticker: ticker.into(), event: d(event), bankrupt, assets_musd: Some(2000.0) };
+        let fails = [(fail("BUST", "2021-06-15", true), vec![row("2020-03-01", -5.0)]), (fail("WIPE", "2016-06-15", false), vec![row("2015-03-01", 5.0)])];
+        let ctrls = [("SICK", -1.0), ("OK", 5.0)].map(|(t, nm)| (t.to_string(), vec![row("2020-03-01", nm)]));
+        let out = failure_census_lines(&fails, &ctrls, d("2020-07-10"));
+        assert!(out.iter().any(|l| l.starts_with("  T-1y all ") && l.contains("0.75")), "{out:#?}");
+        assert!(out.iter().any(|l| l.starts_with("  0 flags at T-1y: 1 failures") && l.ends_with("WIPE")), "{out:#?}");
+        assert!(out.iter().any(|l| l.starts_with("  VERDICT: FAIL")), "{out:#?}");
+        assert!(out.contains(&"  TODAY (2020-07-01): 1 pond stocks read 1+ flags: SICK(L)".to_string()), "{out:#?}");
     }
 
     /// The verdict journal's OTHER half — the merge and the horizon pick, which had no test caller
