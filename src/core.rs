@@ -4478,10 +4478,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     });
     let rev_cagr_short = first_2y.and_then(|(r, span)| grow(now.and_then(|n| n.revenue), r.revenue).map(|c| (cagr(c, span), span)));
     let fcf_cagr_short = first_2y.and_then(|(r, span)| grow(fcf(now), fcf(Some(r))).map(|c| (cagr(c, span), span)));
-    // (#702) the rows those rates divide by: the `yrs`-back row (FCF's own stand-in), else the oldest 2+ years back
+    // (#702) the rows those rates divide by: the `yrs`-back row (FCF's own stand-in), else the oldest 2+ years back.
+    // No row filed by `cutoff` at all is a gap, not "—": every factor is None and the flags stay false with them.
     let base = long_ago.or(first_2y.map(|(r, _)| r));
-    let rev_dash = base.is_none_or(|r| r.revenue.is_some_and(|v| v <= 0.0));
-    let fcf_dash = fcf_from.or(first_2y).map_or(base.is_none(), |(r, _)| r.fcf_margin.zip(r.revenue).is_some_and(|(m, v)| m * v <= 0.0));
+    let rev_dash = now.is_some() && base.is_none_or(|r| r.revenue.is_some_and(|v| v <= 0.0));
+    let fcf_dash = now.is_some() && fcf_from.or(first_2y).map_or(base.is_none(), |(r, _)| r.fcf_margin.zip(r.revenue).is_some_and(|(m, v)| m * v <= 0.0));
     // (P3) same two endpoints, same `grow` positivity guard and the same `cagr` annualiser as rev_cagr
     // above — one definition of a growth rate, per the house rule — then NEGATED so a slow-growing
     // asset base ranks high alongside the other safety factors.
@@ -7513,7 +7514,9 @@ mod tests {
             let f = fund_factors(rows, cutoff, 5);
             (f.rev_dash, f.fcf_dash)
         };
-        assert_eq!(dash(&[now.clone()]), (true, true), "under 2 years filed");
+        assert_eq!(dash(std::slice::from_ref(&now)), (true, true), "under 2 years filed");
+        assert_eq!(dash(&[]), (false, false), "nothing filed yet is a gap");
+        assert_eq!(dash(&[FundRow { filed: NaiveDate::from_ymd_opt(2030, 1, 1).unwrap(), ..now.clone() }]), (false, false), "filed after the cutoff");
         assert_eq!(dash(&[at(2023, Some(10.0)), now.clone()]), (true, true), "1 year is too short");
         assert_eq!(dash(&[at(2021, Some(10.0)), now.clone()]), (false, false), "a short rate exists");
         assert_eq!(dash(&[at(2021, Some(-1.0)), now.clone()]), (false, true), "a burn at the old end");
