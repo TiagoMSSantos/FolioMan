@@ -1800,6 +1800,37 @@ sizing:
   #  NEXT: the blind half needs a different ranking signal, not a looser gate. The only signal that beat the
   #  book on this pond is (#560) momentum 12-1 (5/6, failed on the DCA tie), so it is tested as a blend with
   #  the shipped book next, under its own pre-registered bar.
+  #── (#726) RE-READ 2026-10-18: THE ≥10× MISSES ON TODAY'S RULER ──
+  #  WHY: the owner asks whether the buy heuristic can find more stock baggers. (#124)/(#127) last read the
+  #  misses in 2026-08, before the soft gates (#564)/(#566) and the momentum blend (#584)/(#587)/(#607).
+  #  SOURCE, no new run: the (#724) controls on b526c5b, shipped settings, `universe fund pit|stress rivals
+  #  winners`, 8/12/20y: pit 39127609341, stress 39127612962. GROWTH windows scored pit 7412/5302/2239,
+  #  stress 12459/9599/4881.
+  #  ≥10× WINNERS, growth held book, recall/capture %, 8y | 12y | 20y:
+  #    pit     n 90/247/316      7/5 | 11/7 | 12/12    ((#124) read 5/6 | 4/5 | 14/21)
+  #    stress  n 402/991/1478    6/6 |  7/6 | 10/7
+  #  MISSED WEALTH by first failing gate, %, pit 8/12/20 | stress 8/12/20:
+  #    range        31.6/65.3/47.0 | 37.5/49.8/45.8   sole blocker at most 4.0 | 1.1
+  #    cagr         28.3/24.3/37.3 | 21.2/20.8/19.9   sole blocker at most 1.5 | 1.4
+  #    history      23.5/ 4.0/ 9.0 | 19.3/14.4/18.1   the sole blocker every time
+  #    out-ranked    0.6/ 1.2/ 1.2 |  1.2/ 1.2/ 3.1
+  #    one-gate ceiling 32.9/8.7/17.7 | 24.3/18.0/24.4
+  #  WINNERS (#583): score blind 42/44/42 | 52/58/54 % of winners; that whole kind beats the book
+  #  31/28/31 | 30/26/25 %. WINNERS HELD (#606), score half vs momentum half: pit 12 vs 30, 14 vs 24,
+  #  5 vs 12; stress 29 vs 54, 29 vs 47, 21 vs 41.
+  #  READING, unchanged from (#127)/(#583): (1) Selection is still dead: a ≥10× winner admitted but ranked
+  #  out of the book holds 0.6-3.1% of the missed wealth. (2) range and cagr fail together: range is the
+  #  first failure for 32-65% of the missed wealth but the sole blocker for at most 4%. (3) history is the
+  #  largest sole blocker; those are young names, and the `yng` track grades them. (4) Half the winners look
+  #  like losers at the cutoff, and releasing that kind buys mostly losers. (5) The momentum half already
+  #  holds 1.6-2.5x the score half's winners. (6) At 20y the held-book factor table reads "no factor fills
+  #  both sides": no as-of fundamentals exist, so no company-data bagger signal can be graded on a 20y hold.
+  #  VERDICT: no buy-heuristic lever. The open doors already ride forward shadows: young names (`yng`), the
+  #  near-miss notch (`track`), the 9 shadow factors (earliest ~2027-10).
+  #  ALSO READ, NOT RE-ASKED: held-book rev_stability AUC 12y/8y 0.71/0.77 against (#407)'s 0.58/0.75.
+  #  (#407) forbids a re-ask on this horizon pair. low_turnover moved 0.49/0.59 -> 0.78/0.65 on the same
+  #  rows (10-35 losers), so these AUCs move with the book.
+  #  Comments only: no knob, score or golden moves.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.
