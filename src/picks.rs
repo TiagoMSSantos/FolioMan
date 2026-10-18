@@ -4338,11 +4338,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#478) a bank's interest is its cost of goods: no operating profit, EBITDA or invested capital
         // (#522) ...and its free cash flow is deposit and loan flow, so the whole FCF family goes with it
         // (#540) ...except FAIR, MOS% and FAIR-CAP, which read a book-value FAIR off P/E and ROE
-        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcfy" | "fcf5y" | "fair_oe" | "mos_oe" | "impl_g" | "capex"
-            if fund.is_some_and(|f| f.financial) =>
-        {
-            "—".to_string()
-        }
+        // (#710) ...unless its sector is a REIT's or a health insurer's (VICI, UNH): see [`bank`]
+        "roic" | "nde" | "icov" | "evebitda" | "opm" | "mtrend" | "fcf" | "fcfy" | "fcf5y" | "fair_oe" | "mos_oe" | "impl_g" if bank(quote, fund) => "—".to_string(),
+        // (#545) every financial filer's TTM capex is skipped at the fetch, so this one reads the raw flag
+        "capex" if fund.is_some_and(|f| f.financial) => "—".to_string(),
         // (#462) a cap needs a positive level under it; FCF keeps its sign, a burn is worth seeing
         "fcfy" => fund.and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
         "ps" => fund.and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
@@ -4422,7 +4421,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#522) each cell against its own base: FCF-5Y this year's FCF, the FAIR family the 3-year median
         "fcf5y" | "fair" | "mos" | "fair_oe" | "mos_oe" | "fair_cap" | "impl_g"
             if !stock_only_na
-                && !fund.is_some_and(|f| f.financial)
+                && !bank(quote, fund)
                 && fund
                     .and_then(|f| match key {
                         "fcf5y" => f.fcf_ttm,
@@ -4456,7 +4455,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             _ => quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)),
         })
         // (#702) a stock whose FCF-5Y cannot exist has no rate to grow FAIR by either
-        .unwrap_or_else(|| (if !stock_only_na && fund.is_some_and(|f| !f.financial && f.fcf_dash) { "—" } else { "n/a" }).to_string()),
+        .unwrap_or_else(|| (if !stock_only_na && !bank(quote, fund) && fund.is_some_and(|f| f.fcf_dash) { "—" } else { "n/a" }).to_string()),
         "impl_g" => fund
             .and_then(|f| Some(f.fcf_base? / f.cap_fund?))
             .and_then(implied_growth)
@@ -4915,10 +4914,19 @@ fn span_or_short(full: Option<f64>, short: Option<(f64, f64)>) -> Option<(f64, S
 /// (deposit and loan flow: COF read +607%), so (#540) it reads [`bank_fair_ratio`] instead. None on a
 /// burn, no cap, or no rate.
 pub fn stock_fair_ratio(q: &Quote) -> Option<(f64, String)> {
-    if q.fund.as_ref().is_some_and(|f| f.financial) {
+    if bank(q, q.fund.as_ref()) {
         return bank_fair_ratio(q);
     }
     fair_on(q, |f| f.fcf_base).or_else(|| q.ep_fair.clone())
+}
+
+/// (#710) The (#478, #540) bank reading for a `financial` filer, unless its sector says it is not one: a
+/// REIT (VICI) or a health insurer (UNH) files operating profit and free cash flow like any company.
+/// Display only: the score's `financial` reads (`low_dro`, `capex_light`, TTM capex) and the (#523) shadow
+/// yields keep the raw flag.
+fn bank(q: &Quote, f: Option<&crate::core::FundFactors>) -> bool {
+    f.is_some_and(|f| f.financial)
+        && !q.sector.as_deref().or(q.profile.sector.as_deref()).is_some_and(|s| s.contains("Real Estate") || s.contains("Health"))
 }
 
 /// (#540) A bank's or insurer's FAIR ÷ price, the justified price-to-book: book × (ROE − g) ÷ (r − g) at
@@ -4939,7 +4947,7 @@ pub fn stock_oe_ratio(q: &Quote) -> Option<(f64, String)> {
 }
 
 fn fair_on(q: &Quote, base: fn(&crate::core::FundFactors) -> Option<f64>) -> Option<(f64, String)> {
-    q.fund.as_ref().filter(|f| !f.financial).and_then(|f| {
+    q.fund.as_ref().filter(|_| !bank(q, q.fund.as_ref())).and_then(|f| {
         let (g, m) = span_or_short(f.fcf_cagr, f.fcf_cagr_short)?;
         Some((base(f).filter(|c| *c > 0.0)? / f.cap_fund.filter(|m| *m > 0.0)? * dcf_multiple(g), m))
     })
@@ -8710,12 +8718,18 @@ mod tests {
         f.ebitda_ttm = Some(0.0);
         assert_eq!(cc("ps", &st, 0.0, None, ""), "n/a", "no revenue, no ratio");
         assert_eq!(cc("evebitda", &st, 0.0, None, ""), "loss", "(#506) no positive EBITDA, no ratio");
-        // (#478) a bank's EBIT-type cells are not missing, they do not apply; its FCF% still prints
+        // (#478) a bank's EBIT-type cells are not missing, they do not apply; (#710) nor, as its help says, is its FCF%
         st.fund.as_mut().unwrap().financial = true;
-        for k in ["roic", "nde", "icov", "evebitda", "opm", "mtrend"] {
+        st.sector = Some("Financials".into());
+        for k in ["roic", "nde", "icov", "evebitda", "opm", "mtrend", "fcf", "capex"] {
             assert_eq!(cc(k, &st, 0.0, None, ""), "—", "{k} on a bank");
         }
-        assert_eq!(cc("fcf", &st, 0.0, None, ""), "-4.0%");
+        // (#710) a REIT or a health insurer flagged financial reads like any company, bar its unfetched TTM capex
+        for s in ["Real Estate", "Health Care"] {
+            st.sector = Some(s.into());
+            assert_eq!([cc("fcf", &st, 0.0, None, ""), cc("capex", &st, 0.0, None, "")], ["-4.0%", "—"], "{s}");
+        }
+        st.sector = Some("Financials".into());
         st.fund.as_mut().unwrap().financial = false;
         // (#465) fund-only cells: concentration and the realized-cost series
         assert_eq!(cc("top10", &eq, 0.0, None, ""), "n/a");
@@ -8824,6 +8838,9 @@ mod tests {
         let fair = (cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, ""), cc("fair_cap", &st, 0.0, None, ""));
         assert_eq!(fair, ("€64.10ᵇ".to_string(), "+28%ᵇ".to_string(), "€51.3Bᵇ".to_string()), "0.1 × (1 − 2.5/15) ÷ 6.5% = 1.282 × €50");
         assert_eq!(stock_fair_ratio(&st), bank_fair_ratio(&st));
+        st.sector = Some("Real Estate".into());
+        assert_eq!((cc("fair", &st, 0.0, None, ""), stock_fair_ratio(&st)), ("burn".to_string(), None), "(#710) a REIT's FAIR reads its own cash flow, not its book");
+        st.sector = Some("Financials".into());
         st.roe = Some(2.5);
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "ROE at g earns nothing over book");
         (st.pe_ratio, st.roe) = (Some(-5.0), Some(15.0));
