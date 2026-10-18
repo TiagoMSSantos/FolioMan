@@ -4178,6 +4178,19 @@ pub fn clean_name(quote: &Quote) -> String {
     }
 }
 
+/// The MCAP cell's share count: SEC's, else (#707) Eulerpool's for a home-market listing.
+pub(crate) fn share_count(quote: &Quote) -> Option<f64> {
+    // shortcut: a home-market listing (a dot suffix) prices ordinary shares; a US ticker with no SEC row may
+    // be an ADR whose ratio Eulerpool does not give, so its MCAP stays n/a until a filing lands
+    quote.shares_out.or_else(|| quote.ep_fund.as_ref().filter(|_| quote.ticker.contains('.')).and_then(|f| f.shares_ttm))
+}
+
+/// SHORT%: FINRA's short position over [`share_count`], so an ADR's ratio (#425) cancels the way it does in
+/// MCAP. None with no position or no positive count. (#733) The cell and `track`'s `short` tag read this one number.
+pub(crate) fn short_pct(quote: &Quote) -> Option<f64> {
+    quote.profile.short_shares.zip(share_count(quote).filter(|n| *n > 0.0)).map(|(s, n)| s / n * 100.0)
+}
+
 /// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags), `alt` the
 /// 8Y-pinned score for the `score8y` column (`None` = gated/unscoreable). All values come from
 /// already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
@@ -4197,9 +4210,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
     // fundamental cell; the score and gates still read `fund` alone
     let ep = quote.ep_fund.as_ref();
     let fund = ep.or(quote.fund.as_ref());
-    // shortcut: a home-market listing (a dot suffix) prices ordinary shares; a US ticker with no SEC row may
-    // be an ADR whose ratio Eulerpool does not give, so its MCAP stays n/a until a filing lands
-    let shares = quote.shares_out.or_else(|| ep.filter(|_| quote.ticker.contains('.')).and_then(|f| f.shares_ttm));
+    let shares = share_count(quote);
     let is_equity = quote.instrument_type.eq_ignore_ascii_case("EQUITY");
     let stock_only_na = is_etf || is_crypto; // P/E, ROE don't apply here (PEG now splits equity/fund — see below)
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
@@ -4498,8 +4509,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "buyback" | "target" | "short" if stock_only_na => "—".to_string(),
         // (#489) fewer than 3 analysts is one bank's opinion, not a consensus
         "target" => quote.profile.target_pct.filter(|_| quote.profile.analysts.is_some_and(|n| n >= 3)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
-        // the MCAP cell's share count, so an ADR's ratio (#425) cancels the same way it does there
-        "short" => quote.profile.short_shares.zip(shares.filter(|n| *n > 0.0)).map_or("n/a".to_string(), |(s, n)| format!("{:.1}%", s / n * 100.0)),
+        "short" => short_pct(quote).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "buyback" => quote.buyback_yoy.or_else(|| ep.and_then(|f| f.buyback_yield)).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),

@@ -853,6 +853,7 @@ pub(crate) const FACTORS: [(&str, &str); 11] = [
 /// (#442) One its newest 13F holds writes `(t, "brkh", 1.0)` the same way. (#444) So does `soc`:
 /// the Social Arbitrage trading table names it. (#729) `redf` holds a name reading 2+ of the (#728)
 /// census's six red flags, valued at its count: the warning the RED-FLAGS column shows, never scored.
+/// (#733) `short` holds every one with a SHORT% reading, valued at it, fundamentals or not.
 pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quote]) -> Vec<(String, String, f64)> {
     let mut out = Vec::new();
     for (t, ..) in peg {
@@ -865,6 +866,9 @@ pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quo
         }
         if q.social {
             out.push((t.clone(), "soc".to_string(), 1.0));
+        }
+        if let Some(v) = crate::picks::short_pct(q) {
+            out.push((t.clone(), "short".to_string(), v));
         }
         let Some(f) = q.fund.as_ref() else { continue };
         let flags = f.red_flags.map_or(0, |r| r.iter().filter(|b| **b).count());
@@ -936,6 +940,7 @@ fn fac_section(
             pairs.push(("brkh held minus peg cheap", peg_rows(s, false, true), brk_rows(s, "brkh")));
             pairs.push(("soc social minus peg cheap", peg_rows(s, false, true), brk_rows(s, "soc")));
             pairs.push(("redf flagged minus peg cheap", peg_rows(s, false, true), brk_rows(s, "redf")));
+            pairs.push(("short top minus peg cheap", fac_rows(s, "short", false), fac_rows(s, "short", true)));
             pairs
         },
         30,
@@ -964,7 +969,9 @@ fn fac_section(
          Berkshire Hathaway's 13F bought (the `w` flag), (#442) `brkh` every one its newest 13F holds (the `W` flag),\n  \
          each against that same cheap half. (#444) `soc` holds every one the Social Arbitrage trading table\n  \
          names (the `s` flag). (#729) `redf` holds every one reading 2+ of the (#728) census's six red flags\n  \
-         (the RED-FLAGS column). EUR seat, price-only. NOT advice.\n  \
+         (the RED-FLAGS column). (#733) `short` ranks the names with a SHORT% reading (FINRA short interest\n  \
+         over shares outstanding): its most-shorted half against peg's cheap half on those names. EUR seat,\n  \
+         price-only. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
@@ -978,7 +985,11 @@ fn fac_section(
          (#444) `soc` is too ({soc_n} distinct soc names so far).\n\n  \
          Pre-registered by (#729) before its first line: `redf` never re-opens as a gate, tilt or score term.\n  \
          The warning reads informative when {REOPEN_LINES}+ monthly lines AND {REOPEN_LINES}+ chained links each read\n  \
-         mean AND median BELOW 0 ({redf_n} distinct redf names so far); otherwise it stays display-only."
+         mean AND median BELOW 0 ({redf_n} distinct redf names so far); otherwise it stays display-only.\n\n  \
+         Pre-registered by (#733) before its first line: SHORT% re-opens as ONE owner ask for a score dock, shipped\n  \
+         off and graded forward the same way (the backtest cannot see FINRA history), only when {REOPEN_LINES}+ monthly\n  \
+         lines AND {REOPEN_LINES}+ chained links each read mean AND median BELOW 0. Any other read records a refusal,\n  \
+         never re-asked."
     )
 }
 
@@ -2208,7 +2219,7 @@ mod tests {
     /// per factor, in [`FACTORS`] order. (#436) A cohort name Berkshire bought writes `brk` even with no
     /// fundamentals; one outside the cohort writes nothing. (#442) `brkh` likewise, after `brk` and before the factors.
     /// (#444) `soc` after `brkh`. (#727) The stability rows come last, so a mistyped key journals nothing.
-    /// (#729) `redf` after `soc`, at 2+ flags only.
+    /// (#729) `redf` after `soc`, at 2+ flags only. (#733) `short` after `soc`, fundamentals or not.
     #[test]
     fn fac_journal_writes_present_finite_cohort_values_only() {
         let with = |t: &str, f: Option<crate::core::FundFactors>| {
@@ -2231,10 +2242,13 @@ mod tests {
             red_flags: Some([true, false, true, false, false, false]), // (#729)
             ..Default::default()
         };
+        let mut short = with("B", None);
+        short.shares_out = Some(4.0e6);
+        short.profile.short_shares = Some(1.0e6);
         let quotes = [
             with("C", Some(crate::core::FundFactors { rnd_yield: Some(7.0), ..Default::default() })),
             with("A", Some(full)),
-            with("B", None),
+            short,
         ];
         let peg: Vec<(String, f64, f64)> = ["A", "B", "Z"].map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
         assert_eq!(
@@ -2252,6 +2266,7 @@ mod tests {
                 ("A".to_string(), "rev_stability".to_string(), 8.0),
                 ("B".to_string(), "brk".to_string(), 1.0),
                 ("B".to_string(), "brkh".to_string(), 1.0),
+                ("B".to_string(), "short".to_string(), 25.0),
             ]
         );
     }
@@ -2270,7 +2285,8 @@ mod tests {
         let rows: Vec<(&str, Option<f64>)> = ["A", "B", "C", "D"].map(|t| (t, Some(100.0))).to_vec();
         let peg = [("A", 90.0, 0.0), ("B", 70.0, 0.0), ("C", 30.0, 0.0), ("D", 10.0, 0.0)];
         let fac = [("A", "rnd_yield", 1.0), ("B", "rnd_yield", 2.0), ("C", "rnd_yield", 3.0), ("D", "rnd_yield", 4.0)];
-        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &fac);
+        let short = [("A", "short", 1.0), ("B", "short", 2.0), ("C", "short", 3.0), ("D", "short", 4.0)];
+        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &[fac, short].concat());
         let out = fac_section(std::slice::from_ref(&s), today, &px, Some(100.0));
         let row = out.lines().find(|l| l.trim_start().starts_with("rnd_yield top minus peg cheap")).unwrap_or_default();
         // rnd_yield holds D, C (+50%); peg holds A, B (0%)
@@ -2278,6 +2294,10 @@ mod tests {
         assert!(row.contains("needs 12 lines"), "{row}");
         assert!(!out.contains("int_yield top minus") && !out.contains("mscore top minus"), "{out}");
         assert!(out.contains("Journalled on 1 of 1 run(s)") && out.contains("never a direct ship"), "{out}");
+        // (#733) short holds D, C (+50%) against peg's A, B on the same names
+        let shorted = out.lines().find(|l| l.trim_start().starts_with("short top minus peg cheap")).unwrap_or_default();
+        assert!(shorted.contains(" 1 line(s)") && shorted.matches("+50.0pp").count() == 2, "{shorted}");
+        assert!(out.contains("Pre-registered by (#733)"), "{out}");
     }
 
     /// (#436) The `brk` row holds EVERY cohort name journalled `brk` (no top-half cut) against peg's

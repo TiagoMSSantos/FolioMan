@@ -1927,6 +1927,24 @@ sizing:
   #  way it never re-opens as a gate, tilt or score term: dead names still have no bars ((#728) caveat 4).
   #  REVERT RULE: drop the column, the `red_flags` field and the `redf` tag. Journalled lines keep the tag,
   #  and track reads it only through the redf row, so it goes unread.
+  #── (#733) 2026-10-18: SHORT% JOINS THE TRACK SHADOW, THE ONE BAD-VALUE COLUMN NEVER GRADED ──
+  #  WHY: the owner asked to rank names lower when they show bad values. Every such penalty was already
+  #  graded and refused: the red-flag dock (#730), the hard loss gate (#576), the net-margin floor (#38), the
+  #  interest-cover, FCF-margin and net-cash floors (P1b-d) and the miss-count cap (#582). SHORT% is the one
+  #  never graded. FINRA keeps no history, so the backtest cannot see it, and a forward journal is the only
+  #  evidence that can exist. The owner chose a track row first, ranked like the FACTORS rows.
+  #  BUILT: picks::short_pct is the SHORT% cell's one number (short position over the MCAP share count).
+  #  track journals `short` (that percent) on every cohort name with a reading, fundamentals or not, and its
+  #  "short top minus peg cheap" row holds the most-shorted half against peg's cheap half on the SAME names.
+  #  Profiles are fetched for shown rows only, so the ranked part of the cohort carries it; a notch name reads
+  #  None and journals nothing. Live 2026-10-18: all 39 Stocks rows read SHORT%, 7 at 5%+, 3 at 10%+.
+  #  DISPLAY ONLY: no gate, tilt or score term reads it, and no golden moves (none reads the journal or the
+  #  SHORT% cell).
+  #  PRE-REGISTERED before the first line: SHORT% re-opens as ONE owner ask for a score dock, shipped off and
+  #  graded forward the same way, only when the short row's 12+ monthly lines AND 12+ chained links each read
+  #  mean AND median BELOW 0. Any other read records a refusal, never re-asked. Earliest read ~2027-10.
+  #  REVERT RULE: drop the `short` tag and its row. Journalled lines keep the tag, and track reads it only
+  #  through the short row, so it goes unread.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.
