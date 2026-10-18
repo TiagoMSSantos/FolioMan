@@ -2006,7 +2006,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
         1.0
     };
     let (brk_boost, super_boost, social_boost, capex_damp, peg_taper) = holder_boosts(quote, tuning);
-    let holder_boost = brk_boost * super_boost * social_boost * capex_damp * peg_taper;
+    let holder_boost = brk_boost * super_boost * social_boost * capex_damp * peg_taper * red_flag_dock(quote, tuning);
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
     // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
@@ -2123,6 +2123,14 @@ fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64, f64, f
         1.0
     };
     (brk, sup, soc, capex, peg_taper)
+}
+
+/// (#730) `growth_red_flag_dock`^(the (#729) red-flag count). Its own fn, not a 6th `holder_boosts`
+/// slot, so that tuple stays narrow. No SEC read or no flag is powi(0), an exact 1.0, and so is the knob
+/// off: appended last in `holder_boost`, off keeps every bit. Graded: red_flags is as-of on `fund` runs.
+fn red_flag_dock(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    let n = quote.fund.as_ref().and_then(|f| f.red_flags).map_or(0, |r| r.iter().filter(|b| **b).count());
+    tuning.growth_red_flag_dock.powi(n as i32)
 }
 
 /// (#550) true = `growth_max_peg` is a hard wall (the default); false = a taper starts there. One reader
@@ -3666,7 +3674,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     // (#472) and the 13F nudge, (#473) with the social one, printed only on a flagged name with a knob set;
     // (#477) one plain line per source that bites
     let holder_frag = if p.holder_boost != 1.0 {
-        s.push_str(&format!("  bonuses      = Berkshire × superinvestors × social × capex × PEG taper = {:.3}\n", p.holder_boost));
+        s.push_str(&format!("  bonuses      = Berkshire × superinvestors × social × capex × PEG taper × red flags = {:.3}\n", p.holder_boost));
         let (brk, sup, soc, capex, peg_taper) = holder_boosts(quote, tuning);
         if brk != 1.0 {
             say(&mut s, &format!("Berkshire Hathaway holds it (its newest 13F filing): ×{brk:.2}."));
@@ -3685,6 +3693,11 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         }
         if peg_taper != 1.0 {
             say(&mut s, &format!("PEG above the {:.2} ceiling: ×{peg_taper:.2} ((ceiling ÷ PEG)^{}).", tuning.growth_max_peg, tuning.growth_peg_taper_k));
+        }
+        let red = red_flag_dock(quote, tuning);
+        if red != 1.0 {
+            let on = quote.fund.as_ref().and_then(|f| f.red_flags).map(|f| core::FAIL_FLAGS.iter().zip(f).filter(|(_, b)| *b).map(|(l, _)| *l).collect::<String>()).unwrap_or_default();
+            say(&mut s, &format!("{} red flags ({on}): ×{:.2} each = ×{red:.3}.", on.len(), tuning.growth_red_flag_dock));
         }
         format!(" × {:.3}", p.holder_boost)
     } else {
@@ -3764,7 +3777,7 @@ fn in_short(p: &ScoreParts, tuning: &BuyHeuristic) -> String {
         }
     }
     if p.holder_boost != 1.0 {
-        s.push_str(&format!("    · Bonuses, the capex penalty and the PEG taper multiply it by ×{:.3}.\n", p.holder_boost));
+        s.push_str(&format!("    · Bonuses, the capex penalty, the PEG taper and red flags multiply it by ×{:.3}.\n", p.holder_boost));
     }
     s
 }
@@ -11318,10 +11331,10 @@ mod tests {
         assert!(b.contains("Berkshire Hathaway holds it (its newest 13F filing): ×1.20."), "{b}");
         assert!(b.contains("6 superinvestors bought it last quarter: ×1.10 per 3 buyers = ×1.210."), "{b}");
         assert!(b.contains("Social tip: the Social table names it"), "{b}");
-        assert!(b.contains("Bonuses, the capex penalty and the PEG taper multiply it by ×1.525."), "{b}");
+        assert!(b.contains("Bonuses, the capex penalty, the PEG taper and red flags multiply it by ×1.525."), "{b}");
         let only = ex(&Quote { social_tip: true, ..q.clone() }, &all);
         assert!(!only.contains("Berkshire Hathaway holds") && !only.contains("superinvestors bought"), "×1.00 parts are not printed");
-        assert!(!s.contains("Bonuses, the capex penalty and the PEG taper multiply"), "{s}");
+        assert!(!s.contains("Bonuses, the capex penalty, the PEG taper and red flags multiply"), "{s}");
     }
 
     #[test]
@@ -14475,6 +14488,33 @@ mod tests {
         stamp_site(&mut p, std::slice::from_ref(&q), &|t: &str| t.to_string());
         assert_eq!(p["stocks"][0][1][3], capex_tip(&q).unwrap().as_str(), "the tip rides as the 4th element");
         assert!(explain_growth_score(&q, &t, 0.0).expect("the fixture clears the gates").contains("Capex is 71% of operating cash flow (TTM, above 70%): ×0.80."));
+    }
+
+    /// (#730) the red-flag dock: f^(flag count) rides in the holder multiplier and prints its line. No
+    /// flag, no current filing, no SEC read and the knob off all stay an exact x1.0.
+    #[test]
+    fn red_flag_dock_docks_per_flag_and_prints() {
+        let with = |red_flags: Option<[bool; 6]>| {
+            let mut q = gate_fixture();
+            q.fund = Some(core::FundFactors { red_flags, ..q.fund.clone().unwrap_or_default() });
+            q
+        };
+        let t = BuyHeuristic { growth_red_flag_dock: 0.8, ..BuyHeuristic::default() };
+        let three = with(Some([true, false, true, false, false, true]));
+        assert_eq!(red_flag_dock(&with(Some([true, false, false, false, false, false])), &t), 0.8);
+        assert!((red_flag_dock(&three, &t) - 0.512).abs() < 1e-12, "0.8^3");
+        assert_eq!(red_flag_dock(&with(Some([false; 6])), &t), 1.0);
+        assert_eq!(red_flag_dock(&with(None), &t), 1.0, "no current filing");
+        let mut bare = gate_fixture();
+        bare.fund = None;
+        assert_eq!(red_flag_dock(&bare, &t), 1.0, "no SEC read");
+        assert_eq!(red_flag_dock(&three, &BuyHeuristic::default()), 1.0, "the code default is off");
+        let one = with(Some([false, false, false, true, false, false]));
+        let hit = score_parts(&one, &t).expect("the fixture clears the gates");
+        assert_eq!(hit.holder_boost, 0.8, "the dock rides in the holder multiplier");
+        assert!(hit.score < score_parts(&one, &BuyHeuristic::default()).expect("the fixture clears the gates").score, "and lowers the score");
+        assert!(explain_growth_score(&three, &t, 0.0).expect("the fixture clears the gates").contains("3 red flags (LBD): ×0.80 each = ×0.512."));
+        assert!(!explain_growth_score(&three, &BuyHeuristic::default(), 0.0).expect("the fixture clears the gates").contains("red flags ("), "off prints nothing");
     }
 
     /// (#550) the soft PEG ceiling: with a taper, a name over `growth_max_peg` scores at (ceiling ÷ PEG)^k

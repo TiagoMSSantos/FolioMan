@@ -20627,6 +20627,30 @@ buy_heuristic:
   #  are 3 -> 2 (pit 8y, 12y under cap 3), 0 -> 1 (stress 1y, 2y) and unchanged elsewhere. The brake keeps NVDA out,
   #  not a weak rival. Cap 3 is the near miss (bar 3 only); a re-open needs the forward `track` (~2027-09), not a
   #  re-run of this grid.
+  growth_red_flag_dock: 1.0     # (#730) < 1.0 = a name's score x this^(its (#729) red-flag count, L 2 B I R D, as-of in the
+  #  backtest). No SEC read, no current filing (over 550 days) or no flag = x1.0. 1.0 = off, the shipped lane bit for bit.
+  #── (#730) PRE-REGISTERED 2026-10-18, before any run — DOCK A NAME PER RED FLAG ──
+  #  WHY: the owner asks to punish assets that carry red flags. This RE-OPENS on purpose what the (#729) receipt closed
+  #  ("never a gate, tilt or score term"); the owner chose to grade a soft dock rather than ship one blind.
+  #  Against it, stated before the run: (#576) refused a hard loss rule 5/5 (stress 1y/2y vetoed, inert elsewhere);
+  #  the pool has read profitability backwards in earlier sweeps; dead names have no bars, so the replay sees only the
+  #  dock's COST on survivors, never the failures it would have avoided ((#728) graded detection, not a book effect).
+  #  Live page (data.json 2026-10-18), 39 Stocks rows: 34 read 0 flags. The 5 flagged are COHR (1: D), LU2.DE Lumentum
+  #  (1: L), 1ZB.DE Bloom (2: L2), SMCI (2: BD) and INL.DE Intel (3: L2I); most are momentum (`m`) admits.
+  #  SHAPE (owner): score x f^n from the first flag. Folded into holder_boost last, so x1.0 keeps every bit.
+  #  ARMS: growth_red_flag_dock = 0.8, 0.6, 0.4 against ctl (1.0). Runs per arm: `universe fund pit rivals winners` and
+  #  `universe fund stress rivals winners`, years 8 12 20 (4 arms x 2 = 8 runs).
+  #  BAR, NOT-WORSE (owner), as (#576) on the (#587)/(#609)/(#724) ruler; an arm passes only if all four hold:
+  #    1. rival (j), arm - ctl: neither mean nor median drops 0.2 or more in any of the 6 cells (pit|stress x 8/12/20y);
+  #    2. 20y DCA S+inter does not drop 0.2 or more (mean or median) in either lane;
+  #    3. WINNERS HELD is never under ctl by 2.0 or more in any cell;
+  #    4. `windows scored` matches ctl; a run that differs is re-dispatched, not graded.
+  #  TIE-BREAK: several arms pass -> the harshest f ships (0.4 before 0.6 before 0.8), in a follow-up commit with the
+  #  goldens re-blessed, after one owner question that also settles the Eulerpool-only names (their flags are ungraded:
+  #  the census was US filers only). No arm passes -> 1.0 stays and this lane closes; the `redf` track row stays the
+  #  only forward read.
+  #  CAVEATS: survivorship (today's pond); a flag is a filing fact, not a verdict ((#728): ~7% of the pond reads 2+ flags
+  #  any month and most survive); the walk carries flags only on `fund` runs, so a non-SEC name is never docked.
   growth_overext_backed_floor: 0.0 # (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock
   #  (`picks::earnings_backed`: 5y chained EPS CAGR, as-of in the backtest, at least the 5y price CAGR, so the P/E did
   #  not expand over the run), in place of growth_overext_floor 0.05. Either number missing = the normal brake (funds,
