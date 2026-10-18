@@ -1868,6 +1868,48 @@ sizing:
   #  stability row passes forward.
   #  REVERT RULE: drop the two rows from track's FACTORS. Lines already journalled keep the tags, and track
   #  reads only the FACTORS rows, so the tags go unread.
+  #── (#728) 2026-10-18: A FAILED-COMPANY LIBRARY, AND WHETHER RED FLAGS WARNED OF IT ──
+  #  WHY: the owner asks to keep a record of failed companies, so names held today can be checked for a
+  #  similar position before they close. Dead names have no price bars, so a survival gate's BOOK effect
+  #  stays ungradable ((#727) death lane). This grades DETECTION only: did failed filers' as-of rows read
+  #  more red flags than survivors' rows on the same dates?
+  #  OWNER DECISIONS: a failure is an 8-K Item 1.03 bankruptcy with $100M+ of assets on the last 10-K, or a
+  #  price wipeout: a close 80% below its running peak, with the last bar still under 25% of it. US SEC
+  #  filers only. The signal is six red flags fixed before the run: L loss, 2 a second loss year, B operating
+  #  cash burn, I interest cover < 1.5x, R revenue -10% on the year, D shares +10%. A pass means a warning
+  #  plus a track journal line at most, never a gate or a tilt. The library is refreshed by rerunning
+  #  tools/failures_from_sec.py by hand.
+  #  LIBRARY: tests/failures.csv, 504 rows: 455 bankrupt (EFTS full-text search from 2009, sized by
+  #  companyconcept Assets), 49 wipeout (.long_history_cache.json). SVB, BBBY, WeWork, Rite Aid and Yellow are
+  #  in it. The builder's floor is 400 bankrupt rows: most 2009-2011 filers have no XBRL Assets to size by.
+  #  SOURCE: probe 39140897596 on 515a4b1, `backtest 8 universe fund failures`, shipped settings. SEC rows
+  #  for 474 of 504; 482 pond stocks as controls, library CIKs removed. 561 SEC GETs, 0 refused.
+  #  AUC (vs the same month's controls) pooled / <=2017 / >=2018, n pooled:
+  #                      T-1y               T-2y               T-3y               T-5y
+  #    all              0.89/0.87/0.90 368  0.87/0.87/0.87 314  0.82/0.81/0.83 279  0.76/0.78/0.76 210
+  #    bankrupt         0.92/0.89/0.93 333  0.89/0.88/0.90 282  0.85/0.83/0.86 249  0.79/0.80/0.79 185
+  #    bankrupt $1B+    0.88/0.86/0.89 138  0.87/0.84/0.88 118  0.85/0.81/0.86 116  0.77/0.83/0.75  87
+  #    wipeout          0.63/0.56/0.64  35  0.63/0.66/0.63  32  0.58/0.64/0.57  30  0.57/0.41/0.57  25
+  #    $1B+ or wipe     0.83/0.83/0.83 173  0.82/0.82/0.82 150  0.79/0.79/0.80 146  0.72/0.80/0.71 112
+  #  FLAGS at T-1y, all, fail% / ctrl%: L 73/7, 2 59/3, B 41/3, I 73/7, R 18/6, D 26/4.
+  #  (c) k = 2: 7% of the old era's controls read 2+ flags at T-1y. (d) 78% of >=2018 failures do, against
+  #  7% of their controls.
+  #  No row filed in the 550 days to the cutoff: T-1y 136, T-2y 190, T-3y 225, T-5y 294 (no XBRL yet, or the
+  #  filer stopped filing). 54 failures read 0 flags at T-1y, among them CLF, MOS, PCG, NCLH, CHK, SIVBQ and
+  #  PYPL. They are likely sudden deaths, subsidiary or bank cases, or wipeouts that are living drawdowns;
+  #  not each one was checked.
+  #  VERDICT: PASS, all four bars. (a) holds in both eras at T-1y and T-3y, and (b) reads 0.83.
+  #  CAVEATS: (1) the controls survived to today, which flatters every AUC. (2) The signal is the bankrupt
+  #  rows; wipeouts read 0.57-0.64, near noise, and most are size-free micro caps or living drawdowns.
+  #  (3) A lookalike is not a prediction: 7% of the pond reads 2+ flags in any month, and most survive.
+  #  (4) No book effect is gradable, so this cannot become a gate or a tilt. (5) Failure rows skip the split
+  #  restatement and the (#613) predecessor merge.
+  #  TODAY (2026-10-01), 23 pond stocks at 2+ flags: INSM(L2BID) MSTR(L2BID) ALB(L2I) BAX(L2I) INTC(L2I)
+  #  IP(LID) LYB(LIR) TTWO(L2I) VTRS(L2I) APD(LI) ARE(LI) CNC(LI) CRL(LI) DD(LR) F(LI) HAS(LI) IFF(LI) IVZ(LI)
+  #  KHC(LI) ON(IR) SJM(L2) SMCI(BD) VTR(ID).
+  #  NEXT: stage 2 (a display-only flag column plus a track journal tag) is asked of the owner once.
+  #  REVERT RULE: drop the `failures` keyword and its report, tests/failures.csv and the builder. No knob,
+  #  score or golden reads them.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.
