@@ -1961,17 +1961,26 @@ pub async fn run(args: Vec<String>) {
         }
         order
     };
-    let targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
+    let mut targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
+    // (#705) plus the page's Stocks rows, the ones `render` publishes below: the lane trims reorder the raw
+    // score top above, so GL and NVD.DE printed while ranking under it and read n/a in every lane's cells
+    let lane_rows = crate::picks::shown_stocks(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, &settings.tickers);
+    targets.extend(shadow_pool(&[&lane_rows], &quotes, &fetch::us_symbol));
     // (#467) after the three shadow tables, so their pool names get the same MCAP/REV-YoY/EPS-YoY/NET%/BUYBK
     // cells the printed rows do: display only, and the 3-day SEC cache serves the repeats
     let mut filled = targets.clone();
     filled.extend(shadow_pool(&[&attention, &berkshire, &social], &quotes, &fetch::us_symbol));
+    // (#705) and the Braked table's (read off the same rows, as below) and the REITs table's stocks: ANET
+    // and 18 US REITs printed every SEC cell n/a
+    let braked_pre = crate::picks::braked_rows(&lane_rows, &quotes, &settings.tickers, &settings.buy_heuristic);
+    filled.extend(shadow_pool(&[&braked_pre], &quotes, &fetch::us_symbol));
+    filled.extend(quotes.iter().filter(|q| crate::picks::reit_kind(q) == Some("stock")).map(|q| q.ticker.clone()));
     // (#500) and the Young table's, which sorts on the REV-YoY this fills
     filled.extend(crate::picks::young(&quotes).into_iter().map(|q| q.ticker.clone()));
     // (#603) and the blended book's momentum half, which `stamp_momentum` gives page rows: the score top above
     // misses most of it, so FLEX, VRT, TER, GLW.DE and AMC.DE printed MCAP, NET%, REV-YoY, EPS-YoY, BUYBK,
-    // SHORT% and TARGET% n/a, and AMC.DE its 8Y/20Y (the US-twin fill below). INS-B/S and EARN stay
-    // `targets`-only, as for the shadow tables.
+    // SHORT% and TARGET% n/a, and AMC.DE its 8Y/20Y (the US-twin fill below). (#705) INS-B/S and EARN read
+    // it too (`booked`); the shadow tables still go without both.
     // shortcut: the order's first `book_cut` names hold every name a momentum slot can reach unless an issuer
     // twin is skipped ahead of one; widen if an `m` row reads n/a again
     let mom: std::collections::HashSet<String> = if settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book {
@@ -1981,6 +1990,7 @@ pub async fn run(args: Vec<String>) {
         Default::default()
     };
     filled.extend(mom.iter().cloned());
+    let booked: std::collections::HashSet<String> = targets.union(&mom).cloned().collect();
     // (#461) display only: the US line of every printed or shadow-table stock the pool holds on a European
     // line, so `stamp_us_twin` can fill the cells that line leaves n/a (often its 10Y/20Y legs)
     let shown: std::collections::HashSet<String> = [&attention, &berkshire, &social]
@@ -2028,13 +2038,13 @@ pub async fn run(args: Vec<String>) {
             let income = lanes.elapsed();
             // (#448) display only: the INS-B/S cell, last so the SEC fundamentals and the 13F lane spend the
             // shared SEC budget first. (#693) The profile and earnings lanes spend none of it.
-            fetch::enrich_insider(&client, &settings.urls, &mut quotes, &targets).await;
+            fetch::enrich_insider(&client, &settings.urls, &mut quotes, &booked).await;
             let insider = lanes.elapsed();
             // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
             fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
             let profile = lanes.elapsed();
             // (#449) display only: the EARN cell
-            fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &targets).await;
+            fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &booked).await;
             (income, insider, profile, lanes.elapsed())
         },
         fetch::quotes(

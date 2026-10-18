@@ -7142,17 +7142,15 @@ fn turnover_cache(n_quotes: usize) -> &'static str {
     if n_quotes > 200 { ".folioman_turnover_screen.txt" } else { ".folioman_turnover_watch.txt" }
 }
 
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
-    // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
-    // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
-    let pinned_set: HashSet<&str> = ctx.pinned.iter().map(String::as_str).collect();
+/// The book [`render`] ranks and every table, BUY% and the journal read. (#705) Out of `render` so
+/// [`shown_stocks`] reads the same rows ahead of `screen`'s display lanes.
+fn book_picks<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic, nupl: Option<f64>, pinned_set: &HashSet<&str>) -> Vec<(&'a Quote, f64)> {
     // (4) market-sentiment factor, applied to crypto rows only (it's a whole-crypto-market gauge):
     // <1 in euphoria, >1 in capitulation, 1.0 in the neutral band / unknown.
-    let cfactor = nupl_factor(ctx.nupl, tuning);
+    let cfactor = nupl_factor(nupl, tuning);
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
     // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
     let btc_1y = btc_1y(quotes);
-    let crypto_adj = |quote: &Quote, s: f64| crypto_adjust(quote, s, tuning, cfactor, btc_1y); // (Item 17) shared with `size`
     // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
     // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
     // err/no-data quotes (a bad symbol like a suffix-less ETF) — nothing to compare, don't show a blank row.
@@ -7162,12 +7160,34 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     let growth_scorer = |quote: &Quote, tuning: &BuyHeuristic| {
         // map first, `growth_score` second: coins and gated names are absent from the map by design,
         // and the fallback is what keeps "gated" answering None exactly as it does today.
-        norm.get(quote.ticker.as_str()).copied().or_else(|| growth_score(quote, tuning)).map(|s| crypto_adj(quote, s)).or_else(|| {
+        norm.get(quote.ticker.as_str()).copied().or_else(|| growth_score(quote, tuning)).map(|s| crypto_adjust(quote, s, tuning, cfactor, btc_1y)).or_else(|| {
             let usable = quote.price != "err" && quote.price != "no data";
             (usable && pinned_set.contains(quote.ticker.as_str())).then_some(f64::MIN_POSITIVE)
         })
     };
+    // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
+    // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
+    let picks = ranked(quotes, tuning, growth_scorer, 0.0, pinned_set);
+    // (#557) the sector cap trims the BOOK here, ahead of every reader: the tables, BUY% and the journal.
+    cap_book(picks, tuning.growth_sector_cap, pinned_set)
+}
 
+/// (#705) The page's Stocks rows (`web_top`'s lane rows, pins and `b` rows) before `render` runs, so
+/// `screen`'s display lanes fill every printed row, not a raw score top that the lane trims reorder.
+/// The Stocks lane reads no sectors, `fund_pe`, holdings or NUPL (which tilts coins only), so the
+/// empty ones here print the same names.
+pub fn shown_stocks(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, pinned: &[String]) -> serde_json::Value {
+    let set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
+    let picks = book_picks(quotes, tuning, None, &set);
+    serde_json::json!(web_top(picks, n, w, &[], tuning, &set, &Owned::default(), &HashMap::new(), &[], &[]).stocks)
+}
+
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
+    // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
+    // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
+    let pinned_set: HashSet<&str> = ctx.pinned.iter().map(String::as_str).collect();
+    let (cfactor, btc_1y) = (nupl_factor(ctx.nupl, tuning), btc_1y(quotes)); // `book_picks`' own, for `what_if` below
+    let crypto_adj = |quote: &Quote, s: f64| crypto_adjust(quote, s, tuning, cfactor, btc_1y); // (Item 17) shared with `size`
     let growth = "20yr+ growth ranking: at/near its own ~10y high (OFF-HI ≈ 0) with a strong proven \
                   long-term CAGR and an accelerating recent year, braked by how far it's run above its \
                   200wk trend — quality pricey *because* it keeps winning. Crypto ranked vs Bitcoin (the \
@@ -7175,11 +7195,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
                   index core (the `H`-marked hold-suitable names) — these ranked tilts are higher-variance, \
                   regime-dependent sector/thematic bets whose recent leadership won't necessarily repeat. \
                   NOT advice.";
-    // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
-    // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
-    let picks = ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set);
-    // (#557) the sector cap trims the BOOK here, ahead of every reader: the tables, BUY% and the journal.
-    let picks = cap_book(picks, tuning.growth_sector_cap, &pinned_set);
+    let picks = book_picks(quotes, tuning, ctx.nupl, &pinned_set);
     // (Item 8) churn warning: compare this run's top-N against the last. Separate cache for the wide
     // `screen` universe vs the small `check`/watch set (keyed by size) so their overlaps don't mix.
     let cache = crate::config::data_path(turnover_cache(quotes.len()));
@@ -11845,17 +11861,27 @@ mod tests {
         coin.avg_turnover_eur = Some(1e9);
         coin.range_pct = 70.0;
         let quotes = vec![stock("STRONG", 400.0), stock("WEAK", 250.0), coin];
+        let page = std::cell::RefCell::new(String::new());
+        let sink = |json: String| *page.borrow_mut() = json;
+        let names = |rows: &serde_json::Value| -> Vec<String> {
+            let row = |r: &serde_json::Value| r.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str().map(String::from);
+            rows.as_array().expect("a table").iter().filter_map(row).collect()
+        };
         let cut = |n: usize| {
             let (_, mut t) = render(&quotes, n, &tuning, &w, RenderCtx {
-                nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
+                nupl: Some(0.9), sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
                 owned: &owned, explain: None, show_hold_core: false, fund_pe: &HashMap::new(),
-                web_out: None, web_inflation: &[], web_degraded: &[],
+                web_out: Some(&sink), web_inflation: &[], web_degraded: &[],
             });
+            // (#705) the rows `screen` fills ahead of `render` are the Stocks rows the page prints
+            let printed: serde_json::Value = serde_json::from_str(&page.borrow()).expect("the payload");
+            assert_eq!(names(&shown_stocks(&quotes, n, &tuning, &w, &pinned)), names(&printed["stocks"]), "n {n}");
             t.sort();
             t
         };
         assert_eq!(cut(1), ["BTC-EUR", "STRONG"], "one stock slot, and the coin does not take it");
         assert_eq!(cut(2), ["BTC-EUR", "STRONG", "WEAK"]);
+        assert_eq!(names(&shown_stocks(&quotes, 1, &tuning, &w, &["WEAK".to_string()])), ["STRONG", "WEAK"], "a pin below the cut");
 
         let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt"));
     }
