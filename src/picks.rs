@@ -3961,11 +3961,11 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
     ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
-    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in" },
+    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in; — = under 200 trading days listed" },
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback; loss = earnings at or below 0" },
     // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
     // exactly equal the TTM-based P/E cell ÷ CAGR. (#426) Nor its EPS: the PEG's is core, gains stripped
-    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap; loss = earnings at or below 0. Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
+    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap; loss = earnings at or below 0; — = no growth to divide by (the long-run price trend fell, or under 5 years of record). Funds look through to their holdings; ~ = borrowed from a twin fund, ° = served from cache" },
     // (#45) CRYPTO's valuation cell, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that
     // column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is
     // a P/B analogue
@@ -3982,12 +3982,12 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow (last annual report) ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = no SEC filing carries the lines (most non-US companies)" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; n/a = no FCF-5Y rate to grow it by (under 2 years of FCF filed, or a burn at the old end of the span). Banks and insurers (ᵇ), whose cash flow is deposits and loans: book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE; n/a at ROE ≤ 2.5% or a loss. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
-    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn, n/a and ᵇ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; burn = that free cash flow at or below 0; — = no FCF-5Y rate can exist to grow it by (under 2 years filed, or a burn at the old end of the span); n/a = the filings lack a line it needs. Banks and insurers (ᵇ), whose cash flow is deposits and loans: book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE; n/a at ROE ≤ 2.5% or a loss. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM; a burn reads n/a). ETFs: the top-10 holdings' own FAIR, weight-averaged; n/a under half the top-10 weight covered (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
+    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn, —, n/a and ᵇ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#522) the FAIR pair on owner earnings, the whole-company value, and the reverse DCF. Display only
-    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; n/a for non-US stocks (no stock-pay line); burn and n/a as FAIR; — = a bank or insurer" },
+    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; n/a for non-US stocks (no stock-pay line); burn, — and n/a as FAIR; — also = a bank or insurer" },
     ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Stocks: margin of safety on FAIR-OE, FAIR-OE ÷ price − 1; burn, n/a and — as FAIR-OE" },
-    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn, n/a and ᵇ as FAIR" },
+    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn, —, n/a and ᵇ as FAIR" },
     ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Stocks: the growth the price already assumes, a reverse DCF: how fast free cash flow (FAIR's base) must grow each year for 10 years, then 2.5% forever at 9%, for the price to be fair. Set it beside FCF-5Y: below = the price asks less than the record; burn and n/a as FAIR; — = a bank or insurer" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage" },
@@ -3995,7 +3995,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report). Hover (desktop) for the company's description and its last annual report's revenue, net income, free cash flow and net debt" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = no SEC filing carries the lines" },
     ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price" },
+    ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price; — = under a year listed" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it" },
     ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class: Acc reinvests income (tax deferred), Dist pays it out (taxed yearly); n/a = neither Börse Frankfurt nor justETF lists this fund" },
@@ -4005,8 +4005,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out; n/a = trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; — = under 3 full years of record; n/a = trackingdifferences.com doesn't cover this fund" },
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before. ‡ = no annual report yet, so year to date vs the same months a year earlier" },
-    ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years (display only, never scored); n/a = under 2 years filed" },
-    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years; burn = free cash flow at or below 0 now; n/a = under 2 years filed, or a burn at the old end" },
+    ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years (display only, never scored); — = no rate can exist: under 2 years filed, or no revenue at the old end; n/a = a filing without the revenue line" },
+    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years; burn = free cash flow at or below 0 now; — = no rate can exist: under 2 years filed, or a burn at the old end; n/a = a filing without the FCF lines" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before" },
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue" },
     ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps; — = a bank or insurer, where interest is the cost of doing business" },
@@ -4249,7 +4249,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             (a, _) if a > 0.0 => format!("+{a:.0}%"),
             (_, b) if b > 0.0 => format!("-{b:.0}%"),
             // (#505) under ~4 years listed: the 200-day average stands in, marked ᵈ
-            _ => quote.ma200d_pct.map_or("n/a".to_string(), |v| format!("{v:+.0}%ᵈ")),
+            // (#702) under 200 sessions listed even that average cannot exist yet: "—"
+            _ => quote.ma200d_pct.map_or_else(|| short_or_na(quote, 200.0 / 252.0), |v| format!("{v:+.0}%ᵈ")),
         },
         "pe" if stock_only_na => "—".to_string(),
         // (#506) a loss-maker has no P/E, and "n/a" read as missing data: "loss" says the filing was read
@@ -4300,6 +4301,13 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         }),
         // (#624) a loss-maker has no PEG for the reason it has no P/E: "loss" says the filing was read, as the P/E cell does (#506)
         "peg" if quote.fund.as_ref().is_some_and(|f| f.peg_yield.is_none() && f.eps_ttm.is_some_and(|e| e <= 0.0)) => "loss".to_string(),
+        // (#702) earnings but no growth to divide by: the price leg fell, or the record is shorter than the
+        // leg PEG reads (`peg_cagr_pct`, `growth_min_leg_years` back), so the ratio cannot exist: "—"
+        "peg" if quote.fund.as_ref().is_some_and(|f| f.peg_yield.is_none() && f.eps_ttm.is_some()) => match peg_cagr_pct(quote, tuning) {
+            Some(g) if g <= 0.0 => "—".to_string(),
+            Some(_) => "n/a".to_string(),
+            None => short_or_na(quote, tuning.growth_min_leg_years),
+        },
         "peg" => quote
             .fund
             .as_ref()
@@ -4368,7 +4376,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             // an FX-scaled sum and can land a hair below zero, which formats as "-0.00%" — every one of
             // the 24 non-payers on the table printed that. Clamp the DISPLAY, not the number: the score
             // reads `dividend_yield_1y` on its own path and is untouched.
-            .map_or("n/a".to_string(), |d| format!("{:.2}%", if d.abs() < 0.005 { 0.0 } else { d })),
+            .map_or_else(|| short_or_na(quote, 1.0), |d| format!("{:.2}%", if d.abs() < 0.005 { 0.0 } else { d })), // (#702) under a year listed: "—"
         // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
         // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
         "ter" if etf_only_na => "—".to_string(),
@@ -4424,7 +4432,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         {
             "burn".to_string()
         }
-        "fcf5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.fcf_cagr, f.fcf_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
+        // (#702) no rate can exist (`fcf_dash`: under 2 years filed, or a burn at the old end): "—"
+        "fcf5y" => quote.fund.as_ref().map_or("n/a".to_string(), |f| {
+            span_or_short(f.fcf_cagr, f.fcf_cagr_short).map_or_else(|| (if f.fcf_dash { "—" } else { "n/a" }).to_string(), |(v, m)| format!("{v:+.1}%{m}"))
+        }),
         // (#484) FAIR ÷ price = FCF-YLD × the multiple, so both cells share one ratio. (#521) An ETF reads its
         // top-10 look-through, a coin its realized price (price ÷ MVRV: what holders paid, not a cash-flow value).
         // (#522) FAIR-CAP = the same ratio × MCAP, the whole company's equity value (SEC FCF is after
@@ -4443,14 +4454,17 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             "fair_cap" => quote.shares_out.zip(quote.price_eur).map(|(n, p)| format!("{}{m}", turnover_cell(Some(n * p * x)))),
             _ => quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)),
         })
-        .unwrap_or_else(|| "n/a".to_string()),
+        // (#702) a stock whose FCF-5Y cannot exist has no rate to grow FAIR by either
+        .unwrap_or_else(|| (if !stock_only_na && quote.fund.as_ref().is_some_and(|f| !f.financial && f.fcf_dash) { "—" } else { "n/a" }).to_string()),
         "impl_g" => quote
             .fund
             .as_ref()
             .and_then(|f| Some(f.fcf_base? / f.cap_fund?))
             .and_then(implied_growth)
             .map_or("n/a".to_string(), |g| format!("{g:+.1}%")),
-        "rev5y" => quote.fund.as_ref().and_then(|f| span_or_short(f.rev_cagr, f.rev_cagr_short)).map_or("n/a".to_string(), |(v, m)| format!("{v:+.1}%{m}")),
+        "rev5y" => quote.fund.as_ref().map_or("n/a".to_string(), |f| {
+            span_or_short(f.rev_cagr, f.rev_cagr_short).map_or_else(|| (if f.rev_dash { "—" } else { "n/a" }).to_string(), |(v, m)| format!("{v:+.1}%{m}"))
+        }),
         "opm" => quote.fund.as_ref().and_then(|f| f.op_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "mtrend" => quote.fund.as_ref().and_then(|f| f.margin_trend).map_or("n/a".to_string(), |v| format!("{v:+.1}pp")),
         // (#464) the (#412) red flags, un-negated back to their published sign
@@ -8436,6 +8450,10 @@ mod tests {
         // div distinguishes "pays nothing" from "don't know" — the whole point of reading the Option
         // instead of `dividend_yield_1y`'s unwrap_or(0.0). No price -> genuinely unknown -> n/a.
         assert_eq!(cc("div", &q, 0.0, None, ""), "n/a");
+        // (#702) ...but under a year listed no trailing year of dividends can exist yet: "—"
+        let mut young = q.clone();
+        young.age_years = Some(0.5);
+        assert_eq!(cc("div", &young, 0.0, None, ""), "—");
         let mut payer = Quote::stub("P", "€1", "", "Payer");
         payer.price_eur = Some(100.0);
         payer.div_eur = vec![Some(2.0)]; // 2.00 EUR/share on a 100 EUR price = 2.00%
@@ -8692,6 +8710,8 @@ mod tests {
         }
         // (#463) the 5y income-statement levels
         assert_eq!(cc("rev5y", &st, 0.0, None, ""), "n/a", "under 5 years filed");
+        st.fund.as_mut().unwrap().rev_dash = true;
+        assert_eq!(cc("rev5y", &st, 0.0, None, ""), "—", "(#702) no rate can exist; a rate below still wins");
         let f = st.fund.as_mut().unwrap();
         f.rev_cagr = Some(12.34);
         f.op_margin = Some(28.06);
@@ -8732,6 +8752,13 @@ mod tests {
         let f = st.fund.as_mut().unwrap();
         (f.cap_fund, f.fcf_cagr) = (Some(400.0), None);
         assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "no 5y FCF rate");
+        // (#702) ...and "—" when no rate CAN exist: FCF-5Y and the FAIR family together, a bank excepted
+        st.fund.as_mut().unwrap().fcf_dash = true;
+        assert_eq!([cc("fcf5y", &st, 0.0, None, ""), cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, "")], ["—"; 3]);
+        st.fund.as_mut().unwrap().financial = true;
+        assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "a bank's FAIR reads its book, not the FCF rate");
+        let f = st.fund.as_mut().unwrap();
+        (f.fcf_dash, f.financial) = (false, false);
         st.fund.as_mut().unwrap().fcf_cagr = Some(4.04);
         assert_eq!(cc("fair", &st, 0.0, None, ""), "n/a", "no euro price");
         st.price_eur = Some(50.0);
@@ -12619,6 +12646,21 @@ mod tests {
         assert_eq!(peg(None, Some(0.1)), "n/a", "a profit with no growth to divide by");
         assert_eq!(peg(None, None), "n/a", "no EPS filed");
         assert_eq!(peg(Some(40.0), Some(-1.0)), "2.50", "a priced PEG still prints");
+        // (#702) a profit the gate declined to price: "—" when no growth CAN exist to divide by (the price leg
+        // fell, or the record is shorter than the leg PEG reads), n/a when it can and the gate still declined
+        let t = BuyHeuristic { growth_min_leg_years: 5.0, ..BuyHeuristic::default() };
+        let cell = |q: &Quote| col_cell("peg", q, 0.0, None, "", &t, &HashMap::new());
+        q.fund = Some(core::FundFactors { eps_ttm: Some(0.1), ..Default::default() });
+        q.age_years = Some(3.0);
+        assert_eq!(cell(&q), "—", "3 years listed, no 5y leg");
+        q.age_years = Some(10.0);
+        assert_eq!(cell(&q), "n/a", "a long record with no leg is a gap");
+        q.perf = legs(&[("5Y", -30.0)]);
+        assert_eq!(cell(&q), "—", "the price leg fell");
+        q.perf = legs(&[("5Y", 0.0)]);
+        assert_eq!(cell(&q), "—", "a flat leg is no growth either");
+        q.perf = legs(&[("5Y", 400.0)]);
+        assert_eq!(cell(&q), "n/a", "growth exists, the gate still declined");
     }
 
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + the per-tier cap, and the
@@ -13092,6 +13134,13 @@ mod tests {
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "-40%", "below the 200wk trend reads signed, not 0%");
         q.below_ma_pct = 0.0;
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "n/a", "both clamps at zero = no 200wk history");
+        // (#702) under 200 sessions listed even the 200-day average cannot exist yet: "—"
+        let age = q.age_years;
+        q.age_years = Some(0.5);
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "—");
+        q.age_years = Some(0.8);
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "n/a", "200 sessions listed: a gap");
+        q.age_years = age;
         q.ma200d_pct = Some(-12.4);
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "-12%ᵈ", "(#505) a young name reads its 200-day average");
         assert_eq!(cc("cagr", &q, 0.0, None, ""), "n/a");

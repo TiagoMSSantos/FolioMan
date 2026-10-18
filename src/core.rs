@@ -3992,6 +3992,14 @@ pub struct FundFactors {
     // fcf_cagr off its oldest row 2+ years back instead, over that span. The scored rev_cagr stays None.
     pub rev_cagr_short: Option<(f64, f64)>,
     pub fcf_cagr_short: Option<(f64, f64)>,
+    // (#702) DISPLAY ONLY: no rate CAN exist, so REV-5Y, FCF-5Y and the FAIR family print "—", not n/a. True
+    // when no row sits 2+ years back (under 2 years filed), or the base row the rate divides by filed a
+    // figure at or below 0 (RIVN's zero-revenue start, COHR's old-end burn). A base row with NO figure is
+    // a tag gap and stays false.
+    #[serde(default)]
+    pub rev_dash: bool,
+    #[serde(default)]
+    pub fcf_dash: bool,
     pub gross_margin: Option<f64>, // current gross margin level (pricing power / moat)
     pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
@@ -4470,6 +4478,10 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     });
     let rev_cagr_short = first_2y.and_then(|(r, span)| grow(now.and_then(|n| n.revenue), r.revenue).map(|c| (cagr(c, span), span)));
     let fcf_cagr_short = first_2y.and_then(|(r, span)| grow(fcf(now), fcf(Some(r))).map(|c| (cagr(c, span), span)));
+    // (#702) the rows those rates divide by: the `yrs`-back row (FCF's own stand-in), else the oldest 2+ years back
+    let base = long_ago.or(first_2y.map(|(r, _)| r));
+    let rev_dash = base.is_none_or(|r| r.revenue.is_some_and(|v| v <= 0.0));
+    let fcf_dash = fcf_from.or(first_2y).map_or(base.is_none(), |(r, _)| r.fcf_margin.zip(r.revenue).is_some_and(|(m, v)| m * v <= 0.0));
     // (P3) same two endpoints, same `grow` positivity guard and the same `cagr` annualiser as rev_cagr
     // above — one definition of a growth rate, per the house rule — then NEGATED so a slow-growing
     // asset base ranks high alongside the other safety factors.
@@ -4598,6 +4610,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         fcf_cagr,
         rev_cagr_short,
         fcf_cagr_short,
+        rev_dash,
+        fcf_dash,
         gross_margin: now.and_then(|r| r.gross_margin),
         op_margin: now.and_then(|r| r.op_margin),
         margin_trend,
@@ -6340,6 +6354,8 @@ mod tests {
             fcf_cagr: None, // (#484) display only, no factor name selects it
             rev_cagr_short: None,
             fcf_cagr_short: None,
+            rev_dash: false,
+            fcf_dash: false,
             gross_margin: Some(3.0),
             op_margin: Some(4.0),
             margin_trend: Some(5.0),
@@ -7491,6 +7507,21 @@ mod tests {
         assert_eq!(short(&[at(2023, Some(10.0)), now.clone()]).3, None, "1 year is too short");
         assert_eq!(short(&[at(2021, Some(-1.0)), now.clone()]).3, None, "a burn at the old end");
         assert_eq!(short(&nvda).2, None, "a row 5y back exists: the full rate's job, never the short one");
+        // (#702) no rate CAN exist (the cells print "—"): under 2 years filed, or a base row at or below 0.
+        // A base row with no figure is a tag gap and stays false (n/a).
+        let dash = |rows: &[FundRow]| {
+            let f = fund_factors(rows, cutoff, 5);
+            (f.rev_dash, f.fcf_dash)
+        };
+        assert_eq!(dash(&[now.clone()]), (true, true), "under 2 years filed");
+        assert_eq!(dash(&[at(2023, Some(10.0)), now.clone()]), (true, true), "1 year is too short");
+        assert_eq!(dash(&[at(2021, Some(10.0)), now.clone()]), (false, false), "a short rate exists");
+        assert_eq!(dash(&[at(2021, Some(-1.0)), now.clone()]), (false, true), "a burn at the old end");
+        assert_eq!(dash(&[FundRow { revenue: Some(0.0), ..at(2021, Some(10.0)) }, now.clone()]), (true, true), "a zero-revenue start");
+        assert_eq!(dash(&[FundRow { revenue: None, ..at(2021, Some(10.0)) }, now.clone()]), (false, false), "no revenue line is a gap");
+        assert_eq!(dash(&[old(-10.0), r(Some(10.0), Some(200.0))]), (false, true), "the 5y-back row burned");
+        assert_eq!(dash(&[at(2019, None), now.clone()]), (false, false), "no FCF figure and no stand-in: a gap");
+        assert_eq!(dash(&[at(2019, Some(1.0)), at(2021, Some(-1.0)), now.clone()]), (false, false), "the 5y row, not the oldest 2y, is the base");
         // FCF 20 over EV 2·40 + 20 = 100 -> 20%; a negative FCF drops out, never ranks last
         assert_eq!(ev_ebitda_yield(f.fcf_ttm, Some(2.0), Some(20.0), 40.0), Some(20.0));
         assert_eq!(ev_ebitda_yield(Some(-20.0), Some(2.0), Some(20.0), 40.0), None);
