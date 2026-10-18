@@ -2813,9 +2813,13 @@ fn brk_window(list: Vec<(String, String, String)>) -> Vec<(String, String, Strin
 /// count, never `PRN` (a bond's principal), and never a row with `<putCall>` (an option, not a holding).
 /// A CUSIP listed once per managing subsidiary sums. Namespace prefixes go first: Berkshire's filing
 /// agents write bare tags today, other agents write `ns1:infoTable`. An unreadable value reads 0: the
-/// shares still count, the row only loses its weight.
+/// shares still count, the row only loses its weight. (#737) A filing with no XML table is text, read
+/// by [`parse_13f_text`].
 fn parse_13f(txt: &str) -> (String, HashMap<String, (u64, u64)>) {
     let txt = regex::Regex::new(r"(</?)[\w-]+:").expect("literal regex").replace_all(txt, "$1");
+    if !txt.contains("<infoTable") && !txt.contains("<informationTable") {
+        return parse_13f_text(&txt);
+    }
     let amend = if between(&txt, "<isAmendment>", "</isAmendment>").is_some_and(|s| s.trim() == "true") {
         between(&txt, "<amendmentType>", "</amendmentType>").unwrap_or("").trim().to_uppercase()
     } else {
@@ -2834,6 +2838,113 @@ fn parse_13f(txt: &str) -> (String, HashMap<String, (u64, u64)>) {
         }
     }
     (amend, held)
+}
+
+/// (#737) A 13F filed before XML (report dates before [`XML_13F_SINCE`]) -> what [`parse_13f`] reads,
+/// from its fixed-width text table. A row is a line holding a [`text_cusip`]; its first two numbers
+/// after the CUSIP are value and shares (`$`, a decimal tail and a glued `SH` allowed: Fairholme writes
+/// `5489500.0000SH`). A line with no CUSIP under a row adds to that row's CUSIP when its first two numbers
+/// end in the row's columns, or `SH` follows them: Berkshire splits a holding across its subsidiaries
+/// that way. A line saying "total" is skipped. A row with `PRN`, `PUT` or `CALL` within 20 characters
+/// after its shares counts toward the value sum, never the holding. The read is kept only when the value
+/// sum lies within 1% of the cover's "Value Total" at scale 1, 1000 or 1/1000 (filers print thousands or
+/// dollars), or, with no total printed, when no unread line with two numbers looks like a row. Else it
+/// returns no holding, which [`read_13f`] never caches and [`fetch_holder_history`] folds into the next
+/// quarter: a misread drops a quarter, never fakes a sell-off. The amendment type is the cover's ticked
+/// box. shortcut: with no total printed, a table listing shares before value reads them swapped; check
+/// the column order when the census shows a no-total manager's moves look off.
+fn parse_13f_text(txt: &str) -> (String, HashMap<String, (u64, u64)>) {
+    let re = |p: &str| regex::Regex::new(p).expect("literal regex");
+    let amend = if re(r"(?i)\[x\]\s*is a restatement").is_match(txt) {
+        "RESTATEMENT"
+    } else if re(r"(?i)\[x\]\s*adds new holdings").is_match(txt) {
+        "NEW HOLDINGS"
+    } else {
+        ""
+    };
+    let (token, number) = (re(r"\S+"), re(r"^((\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?i:SHR?|PRN)?$"));
+    // Each number token as (start, end of its digits, whole part).
+    let numbers = |line: &str| -> Vec<(usize, usize, u64)> {
+        token
+            .find_iter(line)
+            .filter_map(|m| {
+                let t = m.as_str().trim_start_matches('$');
+                let k = number.captures(t)?;
+                let start = m.end() - t.len();
+                Some((start, start + k[1].len(), k[2].replace(',', "").parse().ok()?))
+            })
+            .collect()
+    };
+    let (option, sh) = (re(r"(?i)\b(PRN|PUT|CALL)\b"), re(r"(?i)^\s*SHR?\b"));
+    let rowish = re(r"(?i)\d[\d,.]*\s+(SHR?|PRN)\b|\bSOLE\b|\bDEFINED\b");
+    let (mut held, mut sum, mut orphans): (HashMap<String, (u64, u64)>, u64, usize) = Default::default();
+    let mut anchor: Option<(String, usize, usize)> = None;
+    for line in txt.lines() {
+        let ns = numbers(line);
+        let row = if let Some((cusip, end)) = text_cusip(line) {
+            let mut after = ns.iter().filter(|n| n.1 > end);
+            let pair = after.next().zip(after.next());
+            anchor = pair.map(|(v, s)| (cusip.clone(), v.1, s.1));
+            pair.map(|(v, s)| (cusip, *v, *s))
+        } else if line.to_ascii_lowercase().contains("total") {
+            continue;
+        } else {
+            match (&anchor, ns.as_slice()) {
+                (Some((cusip, v_end, s_end)), [v, s, ..])
+                    if (v.1.abs_diff(*v_end) <= 2 && s.1.abs_diff(*s_end) <= 1) || sh.is_match(&line[s.1..]) =>
+                {
+                    Some((cusip.clone(), *v, *s))
+                }
+                _ => None,
+            }
+        };
+        if let Some((cusip, v, s)) = row {
+            sum = sum.saturating_add(v.2);
+            let tail = &line[s.1..];
+            if !option.is_match(tail.char_indices().nth(20).map_or(tail, |(i, _)| &tail[..i])) {
+                let e = held.entry(cusip).or_default();
+                *e = (e.0.saturating_add(s.2), e.1.saturating_add(v.2));
+            }
+        } else if rowish.is_match(line) && ns.len() >= 2 {
+            orphans += 1;
+        }
+    }
+    let total = re(r"(?i)value total[\s:.]*(?:\(thousands\))?[\s:.]*\$?\s*([\d,]+)")
+        .captures(txt)
+        .and_then(|c| c[1].replace(',', "").parse::<u64>().ok());
+    let kept = match total {
+        Some(t) => [sum.saturating_mul(1000), sum, sum / 1000].iter().any(|v| v.abs_diff(t).saturating_mul(100) <= t),
+        None => orphans == 0,
+    };
+    (amend.to_string(), if kept { held } else { HashMap::new() })
+}
+
+/// (#737) A text line's first CUSIP, upper-cased, and the byte after it: nine letters or digits alone in
+/// their run, a space allowed after the 6th and the 8th (Berkshire writes `037833 10 0`), the 9th the
+/// mod-10 check digit of the first eight (a letter counts 10 for A on, every second one doubled).
+fn text_cusip(line: &str) -> Option<(String, usize)> {
+    let b = line.as_bytes();
+    let an = |i: usize| b.get(i).is_some_and(u8::is_ascii_alphanumeric);
+    (0..b.len()).filter(|&i| an(i) && (i == 0 || !an(i - 1))).find_map(|i| {
+        let (mut c, mut j) = (String::new(), i);
+        for part in [6, 2, 1] {
+            if b.get(j) == Some(&b' ') {
+                j += 1;
+            }
+            if !(j..j + part).all(an) {
+                return None;
+            }
+            c.push_str(&line[j..j + part].to_ascii_uppercase());
+            j += part;
+        }
+        let sum: u32 = c.bytes().take(8).enumerate().map(|(k, ch)| {
+            let v = u32::from(if ch.is_ascii_digit() { ch - b'0' } else { ch - b'A' + 10 });
+            let v = if k % 2 == 1 { v * 2 } else { v };
+            v / 10 + v % 10
+        }).sum();
+        let check = c.as_bytes()[8];
+        (!an(j) && u32::from(check - b'0') == (10 - sum % 10) % 10).then_some((c, j))
+    })
 }
 
 /// (#436) More than [`BRK_BUY_PCT`]% of the prior quarter's shares, a new position reading prior 0.
@@ -3608,16 +3719,19 @@ async fn fetch_sec_superinvestors(client: &Client, urls: &Urls) -> (String, Vec<
 }
 
 // ── (#518) The holders backtest's 13F history ───────────────────────────────────────────────────────
-// Every move Berkshire and the [`SOC_SEC_MANAGERS`] made since 13F XML began, dated by its SEC filing, so
-// `backtest … holders` can grade the `W`/superinvestor boosts that every backtest quote is blind to.
+// Every move Berkshire and the [`SOC_SEC_MANAGERS`] made since (#737) EDGAR's 13Fs began, dated by its
+// SEC filing, so `backtest … holders` can grade the `W`/superinvestor boosts every backtest quote is
+// blind to.
 
-/// (#518) The oldest 13F report the holders backtest reads: SEC's XML information table starts with it,
-/// and an older text filing parses empty (and is never cached).
-const HOLDER_SINCE: &str = "2013-06-30";
-/// (#518) SEC calls a `backtest … holders` run may spend: the cold history is ~4,400 filings (84
-/// managers' 13Fs since [`HOLDER_SINCE`], Berkshire's Form 4s, their filing lists), on top of the fund
-/// lane's [`SEC_FETCH_BUDGET`]. ~10 minutes cold at the 8 req/s pacer; a warm cache spends nothing.
-pub const HOLDER_FETCH_BUDGET: usize = 6000;
+/// (#518) The oldest 13F report the holders backtest reads. (#737) EDGAR's 13Fs start in 1999: text
+/// tables before [`XML_13F_SINCE`] ([`parse_13f_text`]), XML from it on.
+const HOLDER_SINCE: &str = "1999-01-01";
+/// (#737) The first quarter SEC's 13F carries an XML information table; an older report is text.
+const XML_13F_SINCE: &str = "2013-06-30";
+/// (#518) SEC calls a `backtest … holders` run may spend: the cold history is (#737) ~7,400 filings
+/// (84 managers' 13Fs since [`HOLDER_SINCE`], Berkshire's Form 4s, their filing lists), on top of the
+/// fund lane's [`SEC_FETCH_BUDGET`]. ~16 minutes cold at the 8 req/s pacer; a warm cache spends nothing.
+pub const HOLDER_FETCH_BUDGET: usize = 12000;
 
 /// (#518) A `submissions` JSON -> the names of its older `filings.files` pages that reach back to
 /// [`HOLDER_SINCE`]. Berkshire's 1000 `recent` rows (Form 4s included) start in 2022.
@@ -3733,10 +3847,10 @@ pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<Strin
     let ua = &urls.sec_user_agent;
     let mut by_cusip: HashMap<String, Vec<core::HolderTx>> = HashMap::new();
     let mut by_ticker: HashMap<String, Vec<core::HolderTx>> = HashMap::new();
-    let (mut read, mut f4_moves) = (0, 0);
+    let (mut read, mut f4_moves, mut old, mut old_dead, mut dropped) = (0, 0, 0, 0, 0);
     for (m, cik) in ciks.iter().enumerate() {
         let brk = m == core::HOLDER_BRK as usize;
-        let path = sec_cache_path(&format!("_holders_{cik}"));
+        let path = sec_cache_path(&format!("_holders2_{cik}")); // (#737) 2 = pages back to 1999
         if !fresh_on_disk(&path, BRK_LIST_TTL) && ask() {
             if let Some(v) = sec_get_json(client, &urls.sec_submissions.replace("{cik}", cik), ua).await {
                 let f4 = |v: &Value| if brk { brk_form4_list(v, HOLDER_SINCE) } else { Vec::new() };
@@ -3772,6 +3886,9 @@ pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<Strin
         }
         filings.retain(|f| !dead.contains(&f.0));
         read += usize::from(!filings.is_empty());
+        old += seen.iter().filter(|r| r.as_str() < XML_13F_SINCE).count();
+        old_dead += dead.iter().filter(|r| r.as_str() < XML_13F_SINCE).count();
+        dropped += dead.len();
         let held = if brk { holder_held(filings.clone()) } else { Vec::new() };
         let rows = holder_moves(filings).into_iter().map(|r| (m as u32, r)).chain(held.into_iter().map(|r| (core::HOLDER_BRK_HELD, r)));
         for (manager, (c, filed, add)) in rows {
@@ -3801,11 +3918,12 @@ pub async fn fetch_holder_history(client: &Client, urls: &Urls) -> HashMap<Strin
         txs.sort_by_key(|t| (t.filed, !t.add));
     }
     eprintln!(
-        "fetch: holders: {read} of {} managers read since {HOLDER_SINCE}, {moves} 13F moves + {held} Berkshire holdings + {f4_moves} Berkshire Form 4s; {} CUSIPs asked, {} named -> {} tickers",
+        "fetch: holders: {read} of {} managers read since {HOLDER_SINCE}, {moves} 13F moves + {held} Berkshire holdings + {f4_moves} Berkshire Form 4s; {} CUSIPs asked, {} named -> {} tickers; {} of {old} quarters before {XML_13F_SINCE} read from text, {dropped} quarters dropped in all",
         ciks.len(),
         cusips.len(),
         cusips.iter().filter(|c| ticker_of.contains_key(*c)).count(),
-        by_ticker.len()
+        by_ticker.len(),
+        old - old_dead
     );
     by_ticker
 }
@@ -13006,13 +13124,13 @@ pub(crate) mod tests {
     /// (#518) A `filings.files` page: the same columns at the root, read the same way; its URL sits beside
     /// the submissions JSON, and only pages reaching [`HOLDER_SINCE`] are asked for.
     #[test]
-    fn holder_pages_reach_back_to_13f_xml() {
+    fn holder_pages_reach_back_to_1999() {
         let page = serde_json::json!({"form": ["13F-HR", "4"], "accessionNumber": ["p1", "p2"],
             "reportDate": ["2014-03-31", ""], "filingDate": ["2014-05-15", "2014-05-16"]});
         assert_eq!(brk_13f_list(&page), vec![("p1".to_string(), "2014-03-31".to_string(), "2014-05-15".to_string())]);
         let v = serde_json::json!({"filings": {"files": [
-            {"name": "CIK1-submissions-001.json", "filingTo": "2013-06-30"},
-            {"name": "CIK1-submissions-002.json", "filingTo": "2013-06-29"},
+            {"name": "CIK1-submissions-001.json", "filingTo": "1999-01-01"},
+            {"name": "CIK1-submissions-002.json", "filingTo": "1998-12-31"},
             {"name": "CIK1-submissions-003.json"},
         ]}});
         assert_eq!(holder_pages(&v), ["CIK1-submissions-001.json"]);
@@ -13191,9 +13309,102 @@ pub(crate) mod tests {
         };
         let (amend, held) = parse_13f(&format!("{}<ns1:informationTable>{table}</ns1:informationTable>", cover("true", "new holdings")));
         assert_eq!(amend, "NEW HOLDINGS");
-        assert_eq!(held, HashMap::from([("037833100".to_string(), (120, 1050)), ("02005N100".to_string(), (7, 0))]));
-        assert_eq!(parse_13f(&format!("{}{table}", cover("false", "RESTATEMENT"))).0, "", "an original carries no type");
+        let want = HashMap::from([("037833100".to_string(), (120, 1050)), ("02005N100".to_string(), (7, 0))]);
+        assert_eq!(held, want);
+        assert_eq!(
+            parse_13f(&format!("{}{table}", cover("false", "RESTATEMENT"))),
+            (String::new(), want),
+            "an original carries no type; (#737) bare infoTable rows are still XML, never text"
+        );
         assert_eq!(parse_13f("<x/>"), (String::new(), HashMap::new()));
+    }
+
+    /// (#737) A text 13F as Berkshire's agents filed them before XML: a spaced CUSIP, a holding split
+    /// over lines under it (aligned, or marked `SH` off the columns), a wrapped manager list and a
+    /// subtotal read as no row, a lower-case CUSIP, a glued `4000.0000SH`, PRN and PUT rows summed but
+    /// never held, a bad check digit and a CUSIP inside a longer run ignored. The sum 2,475 reads with a
+    /// total 1% off (2,500) or printed in dollars (2,475,000), never 2% off; the ticked box types it.
+    #[test]
+    fn parse_13f_text_reads_rows_and_gates_on_the_value_total() {
+        let row = |name: &str, class: &str, cusip: &str, v: &str, s: &str, rest: &str| format!("{name:<24}{class:<6}{cusip:<13}{v:>8}{s:>11} {rest}");
+        let filing = |restated: &str, adds: &str, total: &str| {
+            [
+                "                    FORM 13F COVER PAGE".to_string(),
+                "Check here if Amendment [X]; Amendment Number: 1".to_string(),
+                format!("This Amendment (Check only one.): [{restated}] is a restatement."),
+                format!("                                  [{adds}] adds new holdings entries."),
+                "Form 13F Information Table Entry Total: 10".to_string(),
+                format!("Form 13F Information Table Value Total: {total} (thousands)"),
+                "NAME OF ISSUER          CLASS CUSIP           VALUE     SHARES SH  DISCRETION  MANAGERS  SOLE".to_string(),
+                row("AMERICAN EXPRESS CO", "COM", "025816 10 9", "1,000", "50,000", "SH  SHARED-DEFINED 4, 5"),
+                format!("{:<43}{:>8}{:>11} SH  SHARED-DEFINED 4, 2, 5", "", "300", "15,000"),
+                format!("{:<70}16, 17, 18", ""),
+                format!("{:<36}{:>8}  {:>8} SH  DEFINED 7", "", "200", "10,000"),
+                format!("{:>43}{:>8}{:>11}", "Subtotal", "1,500", "75,000"),
+                row("APPLE INC", "COM", "037833100", "100", "2,000", "SH  SOLE"),
+                format!("{:<24}{:<6}X037833100   10   100   Sole", "APPLE INC", "COM"),
+                row("3M CO", "COM", "88579y101", "50", "1,000", "SH  SOLE"),
+                format!("{:<24}{:<6}191216100   295 4000.0000SH  SOLE", "COCA COLA CO", "COM"),
+                row("WELLS FARGO NOTE", "NOTE", "949746101", "500", "500,000", "PRN SOLE"),
+                row("PROCTER & GAMBLE CO", "COM", "742718109", "30", "1,000", "SH  PUT  SOLE"),
+                format!("{:<24}{:<6}{:<13}{:>5}{:>6}   Sole", "APPLE INC", "COM", "037833109", "70", "700"),
+                format!("{:<43}{:>8}", "GRAND TOTAL", "2,475"),
+            ]
+            .join("\n")
+        };
+        let held = HashMap::from([
+            ("025816109".to_string(), (75_000, 1_500)),
+            ("037833100".to_string(), (2_000, 100)),
+            ("88579Y101".to_string(), (1_000, 50)),
+            ("191216100".to_string(), (4_000, 295)),
+        ]);
+        assert_eq!(parse_13f(&filing(" ", " ", "2,500")), (String::new(), held.clone()), "1% off the total still reads");
+        assert_eq!(parse_13f(&filing("X", " ", "2,475,000")), ("RESTATEMENT".to_string(), held), "a total printed in dollars");
+        assert_eq!(parse_13f(&filing(" ", "x", "2,526")), ("NEW HOLDINGS".to_string(), HashMap::new()), "2% off reads no holding");
+    }
+
+    /// (#737) A text 13F with no value total and values in dollars (Torray's shape): a line under a row
+    /// adds to it with no `SH` when it ends in the row's columns, up to 2 off on value and 1 on shares; a
+    /// line further off on either reads as no row. With no total, one unread line shaped like a row (two
+    /// numbers and `SOLE`) drops the read and a header saying `SOLE` does not; a "(thousands)" total a
+    /// thousandth of the dollar sum keeps it.
+    #[test]
+    fn parse_13f_text_without_a_total_reads_only_with_no_stray_row() {
+        let row = |name: &str, cusip: &str, v: &str, s: &str| format!("{name:<24}{:<6}{cusip:<13}{v:>12}{s:>10}   X       1", "COM");
+        let filing = |extra: &[&str]| {
+            let lines = [
+                "FORM 13F".to_string(),
+                "Report for the Calendar Quarter Ended: March 31, 1999".to_string(),
+                "NAME OF ISSUER          CLASS CUSIP               VALUE    SHARES   DISC  MGRS  VOTING SOLE".to_string(),
+                row("AT&T CORP", "001957109", "12,345,000", "250,000"),
+                ".".repeat(70),
+                format!("{:<43}{:>12}{:>10}   X       2", "", "1,000,000", "20,000"),
+                row("ABBOTT LABS", "002824100", "5,000,000", "100,000"),
+                format!("{:<45}{:>12}{:>9}   X", "", "500,000", "10,000"),
+                format!("{:<43}{:>12}{:>13}   X", "", "7,000", "70"),
+            ];
+            lines.iter().map(String::as_str).chain(extra.iter().copied()).collect::<Vec<_>>().join("\n")
+        };
+        let held = HashMap::from([("001957109".to_string(), (270_000, 13_345_000)), ("002824100".to_string(), (110_000, 5_500_000))]);
+        assert_eq!(parse_13f(&filing(&[])), (String::new(), held.clone()));
+        let stray = "ACME CORP COM 12 345 SOLE";
+        assert_eq!(parse_13f(&filing(&[stray])).1, HashMap::new(), "a stray row-shaped line drops the read");
+        assert_eq!(parse_13f(&filing(&[stray, "Form 13F Information Table Value Total: 18,845 (thousands)"])).1, held);
+    }
+
+    /// (#737) A CUSIP in text: at the line's start, spaced, lower-case, or with a letter; never with a bad
+    /// check digit or inside a longer run.
+    #[test]
+    fn text_cusip_checks_the_digit_and_the_run() {
+        assert_eq!(text_cusip("037833100 x"), Some(("037833100".to_string(), 9)));
+        assert_eq!(text_cusip("025816 10 9  1"), Some(("025816109".to_string(), 11)));
+        assert_eq!(text_cusip("  88579y101"), Some(("88579Y101".to_string(), 11)));
+        for c in ["191216100", "949746101", "742718109", "001957109", "002824100", "02005N100"] {
+            assert_eq!(text_cusip(c), Some((c.to_string(), 9)), "{c}");
+        }
+        for t in ["037833109 ", "0378331000", "X037833100", "AMERICAN EXPRESS"] {
+            assert_eq!(text_cusip(t), None, "{t}");
+        }
     }
 
     /// (#436) More than +5% or new, and never an exact whole multiple (a forward split).

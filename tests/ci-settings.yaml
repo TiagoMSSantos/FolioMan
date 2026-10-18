@@ -1987,6 +1987,29 @@ sizing:
   #  DISPLAY ONLY: no gate, tilt or score term reads either cell; the backtest's `age_years` is None, so no
   #  golden moves.
   #  REVERT RULE: drop the `ʸ` arm and the `inflations` argument of `bond_web_rows`; each stands alone.
+  #── (#737) 2026-10-18: 13F BEFORE 2013-Q2 READ FROM ITS TEXT TABLE, THE HOLDERS BACKTEST REACHES 1999 ──
+  #  PRE-REGISTERED 2026-10-18, before any reading.
+  #  WHY: EDGAR's 13F XML starts 2013-Q2, so the (#518) holders backtest graded `growth_brk_held_boost`
+  #  and `growth_superinvestor_boost` at 8y only: the 12y leg saw little and the 20y leg nothing. (#614)
+  #  found the W row failing at 8y and `8+ added` passing; one horizon could not settle either boost.
+  #  BUILT: `fetch::parse_13f` hands a filing with no XML table to `parse_13f_text`. A row is a line with
+  #  a CUSIP that passes its check digit (spaced `037833 10 0` read too); its first two numbers after it
+  #  are value and shares. Lines under it with no CUSIP add to it when they end in its columns or carry
+  #  `SH` (one holding split over Berkshire's subsidiaries). PRN, PUT and CALL rows count toward the value
+  #  sum only. The read is kept when that sum lies within 1% of the cover's value total at scale 1, 1000
+  #  or 1/1000, or, with no total printed, when no row-shaped line is left unread. Else the filing reads
+  #  no holding, is never cached, and its quarter folds into the next: a misread drops a quarter, never
+  #  fakes a sell-off. HOLDER_SINCE moves to 1999-01-01, the list cache key to `_holders2_`, the fetch
+  #  budget to 12000 GETs (~7,400 cold); the census line prints how many pre-2013 quarters read from text.
+  #  On 15 sampled filings (Berkshire, Torray, Fairholme, Akre, Hillman; 1999-2013) all 15 read.
+  #  BACKTEST ONLY: only `backtest ... holders` calls `fetch_holder_history`; no screen, gate, golden or CI
+  #  test reads it.
+  #  DECISION RULE: probe `universe fund pit holders` at 20, 12 and 8 years; read the (#544) scored-set
+  #  rows. A horizon grades a row when its n >= 30. W (`Berkshire holds`) passes a graded horizon when it
+  #  beats the rest on mean AND median; any graded fail proposes `growth_brk_held_boost` 1.0, all passing
+  #  keeps 1.20, none graded keeps it (thin). `8+ added` reads the same bar for `growth_superinvestor_boost`
+  #  (1.0 vs 1.10). A proposal only: a knob ship needs the owner's yes and a bless=true probe.
+  #  REVERT RULE: drop the dispatch line in `parse_13f` and set HOLDER_SINCE back to 2013-06-30.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.
