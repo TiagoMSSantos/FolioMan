@@ -1945,6 +1945,18 @@ sizing:
   #  mean AND median BELOW 0. Any other read records a refusal, never re-asked. Earliest read ~2027-10.
   #  REVERT RULE: drop the `short` tag and its row. Journalled lines keep the tag, and track reads it only
   #  through the short row, so it goes unread.
+  #── (#734) 2026-10-18: A BURN THE NEWEST YEAR IS PAST READS `past burn`, NO RUNWAY ──
+  #  WHY: the owner asked what SNDK's FAIR "burn 14.4y" means beside its FCF% 56.8%. FAIR's base is the
+  #  median FCF margin of the last 3 filed years, which is at or below 0, so the (#506) arm printed burn and
+  #  (#717) divided cash by a burn the company no longer has. LU2.DE, F3A.DE, EQX, SAIL and SDZ.SW read the
+  #  same. The owner kept the median and chose a mark.
+  #  BUILT: col_cell's burn arm prints `past burn` on FAIR, MOS%, FAIR-CAP and IMPL-G when the leg is FCF and
+  #  the newest FCF margin (the FCF% cell) is above 0, and on FAIR-OE and MOS-OE% when that margin less
+  #  stock pay is. FCF-5Y's base is the newest year itself; a REIT's FFO and a utility's net income keep no
+  #  newest figure, so those still read burn. Each of the six help texts defines `past burn`, which the
+  #  page's word hover reads. The page sorts `past burn`, and the runway cells, with the missing cells.
+  #  DISPLAY ONLY: no gate, tilt or score term reads a cell, and no golden carries these columns.
+  #  REVERT RULE: drop the `past burn` branch and its six help clauses; the arm prints burn again.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.

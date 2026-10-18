@@ -3995,13 +3995,13 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow (last annual report) ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; ⁰ = no growth rate on record yet, so valued at 0% growth; ᶠ = a REIT, valued on FFO (net income + depreciation − gains on property sales, at FFO's own growth), as its free cash flow is the year's build-out; ⁿ = a utility, valued on net income at its own growth, as its capex swamps free cash flow; burn = the base (free cash flow, FFO or net income) at or below 0, and burn 3.6y the years cash plus short-term investments last at that yearly burn (plain burn = no cash figure filed); — = under 2 years filed, so there is no base to value yet; n/a = a line it needs is not filed, a bank or insurer at ROE ≤ 2.5% or a loss, or a fund whose top-10 holdings carry under half their weight in FAIR. ᵇ = a bank or insurer, whose cash flow is deposits and loans: valued on book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM). ETFs: the top-10 holdings' own FAIR, weight-averaged (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
-    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn = FAIR's base at or below 0; — = under 2 years filed, so there is no base to value yet; n/a = FAIR is n/a (a line it needs is not filed, a bank or insurer at ROE ≤ 2.5% or a loss, or a fund whose top-10 holdings carry under half their weight in FAIR); ᵇ, ᶠ, ⁿ and ⁰ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; ⁰ = no growth rate on record yet, so valued at 0% growth; ᶠ = a REIT, valued on FFO (net income + depreciation − gains on property sales, at FFO's own growth), as its free cash flow is the year's build-out; ⁿ = a utility, valued on net income at its own growth, as its capex swamps free cash flow; burn = the base (free cash flow, FFO or net income) at or below 0, and burn 3.6y the years cash plus short-term investments last at that yearly burn (plain burn = no cash figure filed); past burn = the median of the last 3 filed years is at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = a line it needs is not filed, a bank or insurer at ROE ≤ 2.5% or a loss, or a fund whose top-10 holdings carry under half their weight in FAIR. ᵇ = a bank or insurer, whose cash flow is deposits and loans: valued on book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM). ETFs: the top-10 holdings' own FAIR, weight-averaged (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
+    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = FAIR is n/a (a line it needs is not filed, a bank or insurer at ROE ≤ 2.5% or a loss, or a fund whose top-10 holdings carry under half their weight in FAIR); ᵇ, ᶠ, ⁿ and ⁰ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#522) the FAIR pair on owner earnings, the whole-company value, and the reverse DCF. Display only
-    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; burn = owner earnings at or below 0; — = a fund or coin, a bank or insurer (whose cash flow is deposits and loans), or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row: Eulerpool has none) or a line FAIR needs is missing" },
-    ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Stocks: margin of safety on FAIR-OE, FAIR-OE ÷ price − 1; burn = owner earnings at or below 0; — = a fund or coin, a bank or insurer (whose cash flow is deposits and loans), or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row: Eulerpool has none) or a line FAIR needs is missing" },
-    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn = FAIR's base at or below 0; — = a fund (its holdings, not the fund, are the companies), or under 2 years filed; n/a = FAIR or MCAP's share count is n/a; ᵇ, ᶠ, ⁿ and ⁰ as FAIR" },
-    ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Stocks: the growth the price already assumes, a reverse DCF: how fast FAIR's base (free cash flow, FFO for a REIT, net income for a utility) must grow each year for 10 years, then 2.5% forever at 9%, for the price to be fair. Set it beside FCF-5Y: below = the price asks less than the record; burn = that base at or below 0; n/a = no base or market value filed, or the answer falls outside −50% to +100% a year; — = a fund or coin, or a bank or insurer" },
+    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer (whose cash flow is deposits and loans), or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row: Eulerpool has none) or a line FAIR needs is missing" },
+    ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Stocks: margin of safety on FAIR-OE, FAIR-OE ÷ price − 1; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer (whose cash flow is deposits and loans), or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row: Eulerpool has none) or a line FAIR needs is missing" },
+    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = a fund (its holdings, not the fund, are the companies), or under 2 years filed; n/a = FAIR or MCAP's share count is n/a; ᵇ, ᶠ, ⁿ and ⁰ as FAIR" },
+    ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Stocks: the growth the price already assumes, a reverse DCF: how fast FAIR's base (free cash flow, FFO for a REIT, net income for a utility) must grow each year for 10 years, then 2.5% forever at 9%, for the price to be fair. Set it beside FCF-5Y: below = the price asks less than the record; burn = that base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; n/a = no base or market value filed, or the answer falls outside −50% to +100% a year; — = a fund or coin, or a bank or insurer" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
     ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage; — = a fund or coin" },
     // (#540) display only: the link is stamped by `stamp_site`, off `profile.cik`
@@ -4456,10 +4456,22 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
                     })
                     .is_some_and(|c| c <= 0.0) =>
         {
-            // (#717) FAIR's own cell names the runway: years of cash at this burn
-            match fund.filter(|_| key == "fair").and_then(|f| burn_cash(f, fair_leg(quote, f).0.base?)) {
-                Some((cash, burn)) => format!("burn {:.1}y", cash / burn),
-                None => "burn".to_string(),
+            // (#734) a 3-year median at or below 0 under a cash-positive newest year (SNDK: FCF% 56.8%) is a burn
+            // behind it: no runway. Owner earnings read the newest FCF less stock pay. FCF-5Y's base IS the newest
+            // year, and a REIT's FFO or a utility's net income keeps no newest figure, so those stay burn.
+            let oe = key.ends_with("_oe");
+            if fund.is_some_and(|f| {
+                key != "fcf5y"
+                    && (oe || fair_leg(quote, f).1.is_empty())
+                    && f.fcf_margin.is_some_and(|m| m + f.sbc.filter(|_| oe).unwrap_or(0.0) > 0.0)
+            }) {
+                "past burn".to_string()
+            } else {
+                // (#717) FAIR's own cell names the runway: years of cash at this burn
+                match fund.filter(|_| key == "fair").and_then(|f| burn_cash(f, fair_leg(quote, f).0.base?)) {
+                    Some((cash, burn)) => format!("burn {:.1}y", cash / burn),
+                    None => "burn".to_string(),
+                }
             }
         }
         // (#702) no rate can exist (`fcf_dash`: under 2 years filed, or a burn at the old end): "—"
@@ -8863,6 +8875,20 @@ mod tests {
         let f = st.fund.as_mut().unwrap();
         (f.fcf_base, f.net_debt) = (Some(0.0), Some(-25.0));
         assert_eq!(cc("fair", &st, 0.0, None, ""), "burn", "a zero base burns nothing, so no runway either");
+        // (#734) a cash-positive newest year under that median reads past burn, no runway; owner earnings judge
+        // the newest FCF less stock pay, and FCF-5Y's base is that newest year itself
+        let f = st.fund.as_mut().unwrap();
+        (f.fcf_base, f.oe_base, f.fcf_ttm, f.fcf_margin, f.sbc) = (Some(-10.0), Some(-1.0), Some(-10.0), Some(5.0), Some(-10.0));
+        for k in ["fair", "mos", "fair_cap", "impl_g"] {
+            assert_eq!(cc(k, &st, 0.0, None, ""), "past burn", "{k}: FCF% 5 on a 3-year median of -10");
+        }
+        for k in ["fair_oe", "mos_oe", "fcf5y"] {
+            assert_eq!(cc(k, &st, 0.0, None, ""), "burn", "{k}: 5% FCF less 10% stock pay, or FCF-5Y's own newest year");
+        }
+        st.fund.as_mut().unwrap().fcf_margin = Some(0.0);
+        assert_eq!(cc("fair", &st, 0.0, None, ""), "burn 3.6y", "a zero newest year is no cash yet");
+        let f = st.fund.as_mut().unwrap();
+        (f.fcf_margin, f.sbc, f.oe_base) = (Some(-4.0), Some(-3.46), None);
         let f = st.fund.as_mut().unwrap();
         (f.fcf_ttm, f.fcf_base, f.cap_fund, f.net_debt, f.sti) = (Some(20.0), Some(20.0), Some(0.0), None, None);
         assert_eq!(cc("mos", &st, 0.0, None, ""), "n/a", "no cap, no yield");
@@ -12739,6 +12765,10 @@ mod tests {
             for m in marks.split(' ') {
                 assert!(nominal[table][hdr].contains(&format!("; {m} = ")), "{table} {hdr} {m}");
             }
+        }
+        // (#734) every cell that can read past burn defines it, for the page's word hover (web/app.js `hover`)
+        for h in ["FAIR", "MOS%", "FAIR-CAP", "IMPL-G", "FAIR-OE", "MOS-OE%"] {
+            assert!(nominal["lanes"][h].contains("; past burn = "), "{h}");
         }
     }
 
