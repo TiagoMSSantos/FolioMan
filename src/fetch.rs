@@ -2405,7 +2405,7 @@ pub async fn enrich_eulerpool_fcf(
     // a venue suffix and no US twin behind it: SEC files nothing for these
     let foreign = |t: &str| t.contains('.') && us_symbol(t) == t;
     // (#707) no SEC fiscal-year row: SEC wins once the first 10-K lands
-    let no_row = |q: &core::Quote| q.fund.as_ref().map_or(true, |f| f.revenue_ttm.is_none());
+    let no_row = |q: &core::Quote| q.fund.as_ref().is_none_or(|f| f.revenue_ttm.is_none());
     let pooled = |q: &core::Quote| {
         crate::picks::asset_class(q) == 2 && q.fund.as_ref().and_then(|f| f.fcf_ttm).is_none() && (foreign(&q.ticker) || no_row(q))
     };

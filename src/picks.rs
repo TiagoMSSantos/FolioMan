@@ -4181,7 +4181,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
     // (#707) a stock with no SEC fiscal-year row reads Eulerpool's annual statements (`ep_fund`) in every
     // fundamental cell; the score and gates still read `fund` alone
     let ep = quote.ep_fund.as_ref();
-    let fund = ep.or(fund);
+    let fund = ep.or(quote.fund.as_ref());
     // shortcut: a home-market listing (a dot suffix) prices ordinary shares; a US ticker with no SEC row may
     // be an ADR whose ratio Eulerpool does not give, so its MCAP stays n/a until a filing lands
     let shares = quote.shares_out.or_else(|| ep.filter(|_| quote.ticker.contains('.')).and_then(|f| f.shares_ttm));
