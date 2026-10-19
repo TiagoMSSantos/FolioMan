@@ -1056,9 +1056,12 @@ fn dead_member_charts(csv: &str, spans: &core::MemberSpans) -> (HashMap<String, 
 
 /// (#751) Does this pool member walk on its dead-members series? Only when Yahoo's own bars give it no
 /// point-in-time cutoff at all (none past the warm-up falls inside a membership span). Yahoo stays the
-/// primary source; the archive only adds the names it cannot score.
-fn wants_dead_fill(yahoo: Option<&[chrono::NaiveDate]>, min_history: usize, spans: &[(chrono::NaiveDate, Option<chrono::NaiveDate>)]) -> bool {
-    !yahoo.is_some_and(|d| d.iter().skip(min_history).any(|x| core::sp500_member_at(spans, *x)))
+/// primary source; the archive only adds the names it cannot score. (#755) Or when the archive's series is
+/// DEAD (`died`, its last bar) and Yahoo's runs on more than a quarter past it: those bars are the ticker's
+/// next holder (Yahoo's CPWR is Ocean Thermal; Compuware's series ends in 2014), so the archive's is the member.
+fn wants_dead_fill(yahoo: Option<&[chrono::NaiveDate]>, min_history: usize, spans: &[(chrono::NaiveDate, Option<chrono::NaiveDate>)], died: Option<chrono::NaiveDate>) -> bool {
+    let reused = |d: &[chrono::NaiveDate]| died.zip(d.last()).is_some_and(|(e, l)| *l > e + chrono::Duration::days(92));
+    !yahoo.is_some_and(|d| !reused(d) && d.iter().skip(min_history).any(|x| core::sp500_member_at(spans, *x)))
 }
 
 /// (#751) The forward return from cutoff `i`, and whether it is TERMINAL. A full `years` window is the
@@ -1397,7 +1400,7 @@ pub async fn run(args: Vec<String>) {
             let (Some((chart, is_dead)), Some(spans)) = (charts.get(tk), pit_spans.get(tk)) else { continue };
             let slot = fetched.iter().position(|f| f.as_ref().is_some_and(|x| x.0 == tk));
             let yahoo = slot.and_then(|k| fetched[k].as_ref()?.1.parse(tk));
-            if !wants_dead_fill(yahoo.as_ref().map(|c| c.dates.as_slice()), min_history, spans) {
+            if !wants_dead_fill(yahoo.as_ref().map(|c| c.dates.as_slice()), min_history, spans, chart.dates.last().copied().filter(|_| *is_dead)) {
                 continue;
             }
             let entry = Some((tk, Hist::Parsed(chart.clone()), None, None, None));
@@ -10822,15 +10825,18 @@ mod tests {
     }
 
     /// (#751) Yahoo stays primary: the archive fills a member only when no Yahoo bar past the warm-up is
-    /// a point-in-time cutoff.
+    /// a point-in-time cutoff, or (#755) when Yahoo's series outlives the archive's dead one by over 92 days.
     #[test]
     fn wants_dead_fill_only_where_yahoo_has_no_member_cutoff() {
         let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
         let spans = [(d("2000-01-01"), Some(d("2005-01-01")))];
         let bars = [d("1999-01-01"), d("2001-01-01"), d("2006-01-01")];
-        assert!(wants_dead_fill(None, 1, &spans), "Yahoo served no bars");
-        assert!(!wants_dead_fill(Some(&bars[..]), 1, &spans), "2001 is a member cutoff past the warm-up");
-        assert!(wants_dead_fill(Some(&bars[..]), 2, &spans), "inside the warm-up it is not");
+        assert!(wants_dead_fill(None, 1, &spans, None), "Yahoo served no bars");
+        assert!(!wants_dead_fill(Some(&bars[..]), 1, &spans, None), "2001 is a member cutoff past the warm-up");
+        assert!(wants_dead_fill(Some(&bars[..]), 2, &spans, None), "inside the warm-up it is not");
+        // a reused ticker: Yahoo's last bar (2006-01-01) is the next holder's once the archive's series died
+        assert!(wants_dead_fill(Some(&bars[..]), 1, &spans, Some(d("2005-06-01"))), "214 days past the death");
+        assert!(!wants_dead_fill(Some(&bars[..]), 1, &spans, Some(d("2005-10-01"))), "92 days: still the member");
     }
 
     /// (#751) A full window is the walk's old arithmetic, terminal or not; without one, only a dead series
