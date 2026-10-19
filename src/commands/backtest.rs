@@ -725,6 +725,7 @@ struct Args {
     stress: bool,
     pit: bool,
     dead: bool,
+    dead_flat: bool,
     tickers: Vec<String>,
 }
 
@@ -750,6 +751,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
             _ if a.eq_ignore_ascii_case("pit") => a_.pit = true, // (PIT) score each cutoff against the index AS IT WAS
             _ if a.eq_ignore_ascii_case("dead") => a_.dead = true, // (#751) walk dead members on tests/dead-members.csv
+            _ if a.eq_ignore_ascii_case("deadflat") => (a_.dead, a_.dead_flat) = (true, true), // (#752) ... with no crash cut
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -1002,6 +1004,10 @@ const DEAD_MEMBERS_CSV: &str = "tests/dead-members.csv";
 /// reason (takeover vs failure) nor a delisting return. A sourced reason per name would replace both.
 const DEAD_CRASH_RATIO: f64 = 0.5;
 const DEAD_PENALTY: f64 = 0.7;
+/// (#752) Tiingo's monthly bars for exited members, same rows as [`DEAD_MEMBERS_CSV`], written by
+/// `tools/dead_members_from_tiingo.py` into a probe-only cache. Never committed: the data is licensed
+/// for personal use. Missing (every run but a filled probe) = WIKI alone.
+const TIINGO_DEAD_CSV: &str = ".tiingo_dead_members.csv";
 
 /// (#751) The dead members' series from [`DEAD_MEMBERS_CSV`]: `ticker,month,close,div` rows, month as
 /// `YYYY-MM`, split-adjusted like Yahoo's price-only close, each bar dated at its month's first day as
@@ -1058,7 +1064,8 @@ fn wants_dead_fill(yahoo: Option<&[chrono::NaiveDate]>, min_history: usize, span
 /// (#751) The forward return from cutoff `i`, and whether it is TERMINAL. A full `years` window is the
 /// walk's old arithmetic, untouched, so every golden stays byte-identical. Without one, a dead series
 /// (`dead_bench` = the S&P level) still pays out: its last close, rolled into the index from its last bar
-/// to the window's end (a takeover's cash, reinvested), cut by [`DEAD_PENALTY`] when it crashed first.
+/// to the window's end (a takeover's cash, reinvested), cut by the bench's penalty ([`DEAD_PENALTY`], or
+/// (#752) 1.0 under `deadflat`) when it crashed first.
 /// None = no window and no terminal, and the walk stops there as before: a live or censored series, or
 /// an index that does not reach the window's end yet.
 fn forward_return(
@@ -1066,18 +1073,18 @@ fn forward_return(
     closes: &[f64],
     i: usize,
     years: i64,
-    dead_bench: Option<(&[chrono::NaiveDate], &[f64])>,
+    dead_bench: Option<(&[chrono::NaiveDate], &[f64], f64)>,
 ) -> Option<(f64, bool)> {
     let target = dates[i] + chrono::Duration::days(years * 365);
     if let Some(off) = dates[i..].iter().position(|d| *d >= target) {
         return Some(((closes[i + off] / closes[i] - 1.0) * 100.0, false));
     }
-    let (bench_dates, bench_closes) = dead_bench?;
+    let (bench_dates, bench_closes, crash_penalty) = dead_bench?;
     let at = |d: chrono::NaiveDate| bench_dates.iter().position(|x| *x >= d).map(|k| bench_closes[k]);
     let last = dates.len() - 1;
     let roll = at(target)? / at(dates[last])?;
     let year_ago = dates.iter().rposition(|d| *d <= dates[last] - chrono::Duration::days(365)).unwrap_or(0);
-    let penalty = if closes[last] / closes[year_ago] < DEAD_CRASH_RATIO { DEAD_PENALTY } else { 1.0 };
+    let penalty = if closes[last] / closes[year_ago] < DEAD_CRASH_RATIO { crash_penalty } else { 1.0 };
     Some(((closes[last] / closes[i] * penalty * roll - 1.0) * 100.0, true))
 }
 
@@ -1171,7 +1178,7 @@ pub async fn run(args: Vec<String>) {
     let anchor_windows =
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
-    let Args { years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, mut tickers } =
+    let Args { years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, mut tickers } =
         parse_args(&args);
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
     // mutate the process environment.
@@ -1370,9 +1377,21 @@ pub async fn run(args: Vec<String>) {
     // (#751) the `dead` arm: a pool member Yahoo gives no point-in-time cutoff walks on its archive series
     // instead, and only a DEAD one (not censored at the archive's end) pays a terminal return in the walk.
     // Off, this is an empty set and nothing below reads the archive.
+    let dead_penalty = if dead_flat { 1.0 } else { DEAD_PENALTY }; // (#752) `deadflat`: no crash cut
     let dead_end: HashSet<&str> = if dead {
         let csv = std::fs::read_to_string(DEAD_MEMBERS_CSV).unwrap_or_default();
-        let (charts, refused) = dead_member_charts(&csv, &pit_spans);
+        let (mut charts, mut refused) = dead_member_charts(&csv, &pit_spans);
+        // (#752) Tiingo's series, graded on THEIR file's end (the fetch month, not the archive's 2018-03),
+        // so neither file calls the other's censored names dead. Tiingo wins per ticker: one source per
+        // name, no seam. The tool only fetches names the archive lacks or censors.
+        let tiingo =
+            std::fs::read_to_string(crate::config::data_path(TIINGO_DEAD_CSV)).unwrap_or_default();
+        let (t_charts, t_refused) = dead_member_charts(&tiingo, &pit_spans);
+        let t_dead = t_charts.values().filter(|c| c.1).count();
+        let t_over = t_charts.keys().filter(|k| charts.contains_key(*k)).count();
+        let t_n = t_charts.len();
+        refused += t_refused;
+        charts.extend(t_charts);
         let (mut filled, mut ends) = (0, HashSet::new());
         for tk in &tickers {
             let (Some((chart, is_dead)), Some(spans)) = (charts.get(tk), pit_spans.get(tk)) else { continue };
@@ -1394,10 +1413,10 @@ pub async fn run(args: Vec<String>) {
         fetched.sort_by_key(|f| f.as_ref().map(|x| x.0)); // (#342)'s A-Z order, with the fills in it
         let censored = charts.values().filter(|c| !c.1).count();
         eprintln!(
-            "backtest: DEAD (#751) — {DEAD_MEMBERS_CSV}: {} series ({censored} censored at the file's end), {refused} refused (last bar >30d before the S&P exit); {filled} pool member(s) Yahoo could not score walk on it, {} of them dead{}",
+            "backtest: DEAD (#751) — {DEAD_MEMBERS_CSV} + (#752) {TIINGO_DEAD_CSV} ({t_n} series, {t_dead} dead, {t_over} replacing the archive's): {} series ({censored} censored at their file's end), {refused} refused (last bar >30d before the S&P exit); {filled} pool member(s) Yahoo could not score walk on them, {} of them dead, crash cut x{dead_penalty}{}",
             charts.len(),
             ends.len(),
-            if csv.is_empty() { " — FILE MISSING OR EMPTY, so this arm is the control" } else { "" }
+            if charts.is_empty() { " — FILES MISSING OR EMPTY, so this arm is the control" } else { "" }
         );
         ends
     } else {
@@ -1512,7 +1531,7 @@ pub async fn run(args: Vec<String>) {
             // an S&P 500 member — and is never filtered: PIT is a claim about the index pond alone.
             let member_spans = pit_spans.get(tk.as_str()).map(Vec::as_slice);
             // (#751) only a dead archive series may pay a terminal return; None keeps the old walk exactly
-            let dead_bench = dead_end.contains(tk.as_str()).then_some((bench.0.as_slice(), bench.1.as_slice()));
+            let dead_bench = dead_end.contains(tk.as_str()).then_some((bench.0.as_slice(), bench.1.as_slice(), dead_penalty));
             let mut out = Vec::new();
             // (#117) per-SERIES walk parameters. Off by default, in which case this is exactly the
             // run-wide triple that arrived. See `walk_params`.
@@ -2185,7 +2204,7 @@ pub async fn run(args: Vec<String>) {
         if dead {
             let n = dead_terminals.load(std::sync::atomic::Ordering::Relaxed);
             println!("    DEAD (#751): {n} of {} cutoffs paid a TERMINAL return, the one the line above asks for: a dead", samples.len());
-            println!("    member's last close rolled into the S&P to the window's end, x{DEAD_PENALTY} if it lost over half its");
+            println!("    member's last close rolled into the S&P to the window's end, x{dead_penalty} if it lost over half its");
             println!("    price in its last year (one constant: the archive records no delist reason). Archive names carry no");
             println!("    fund rows (no SEC CIK map), so their growth fund term reads neutral; ^GSPC bars are quarterly.");
         }
@@ -8763,6 +8782,10 @@ mod tests {
         assert!(p("stress").stress);
         assert!(p("pit").pit, "`pit` must set pit — lose it and the point-in-time run is a plain one that says it isn't");
         assert!(p("dead").dead && !p("dead").pit && !p("pit").dead);
+        assert!(
+            p("deadflat").dead && p("deadflat").dead_flat && !p("dead").dead_flat,
+            "(#752) deadflat is the dead arm, uncut"
+        );
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
         // and each keyword sets ONLY its own flag: `pit` and `stress` are opposite treatments of the
@@ -8794,7 +8817,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead failures");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures");
         assert_eq!(
             all,
             Args {
@@ -8812,6 +8835,7 @@ mod tests {
                 stress: true,
                 pit: true,
                 dead: true,
+                dead_flat: true,
                 failures: true,
                 tickers: vec![]
             }
@@ -10812,7 +10836,7 @@ mod tests {
         let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
         let dates = [d("2000-01-01"), d("2001-01-01"), d("2002-01-01"), d("2003-01-01")];
         let bench = ([d("2002-01-01"), d("2003-01-01"), d("2006-01-01")], [100.0, 110.0, 132.0]);
-        let dead = Some((&bench.0[..], &bench.1[..]));
+        let dead = Some((&bench.0[..], &bench.1[..], DEAD_PENALTY));
         let flat = [10.0, 20.0, 18.0, 9.0]; // last close is exactly half the year-ago one: no cut
         assert_eq!(forward_return(&dates, &flat, 0, 1, dead), Some(((20.0f64 / 10.0 - 1.0) * 100.0, false)));
         assert_eq!(forward_return(&dates, &flat, 1, 1, None), Some(((18.0f64 / 20.0 - 1.0) * 100.0, false)));
@@ -10821,7 +10845,10 @@ mod tests {
         let crashed = [10.0, 20.0, 30.0, 9.0];
         let cut = (9.0f64 / 20.0 * DEAD_PENALTY * (132.0 / 110.0) - 1.0) * 100.0;
         assert_eq!(forward_return(&dates, &crashed, 1, 5, dead), Some((cut, true)));
-        let short = Some((&bench.0[..2], &bench.1[..2]));
+        let uncut = Some((&bench.0[..], &bench.1[..], 1.0)); // (#752) `deadflat`
+        let whole = (9.0f64 / 20.0 * (132.0 / 110.0) - 1.0) * 100.0;
+        assert_eq!(forward_return(&dates, &crashed, 1, 5, uncut), Some((whole, true)));
+        let short = Some((&bench.0[..2], &bench.1[..2], DEAD_PENALTY));
         assert_eq!(forward_return(&dates, &crashed, 1, 5, short), None, "the index has not reached the window's end");
     }
 

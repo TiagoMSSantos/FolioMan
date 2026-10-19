@@ -8,8 +8,8 @@ name: Probe
 # Read it within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes.
 #
 # MANUAL ONLY, and it never writes a cache Pages or the gate read. The caches it saves are (#559)'s
-# `folioman-fec-` and (#728)'s `folioman-fail-`, which only a `pac` / `failures` probe fills and nothing
-# else restores.
+# `folioman-fec-`, (#728)'s `folioman-fail-` and (#752)'s `folioman-tiingo-`, which only a `pac` /
+# `failures` / `dead` probe fills and nothing else restores.
 on:
   workflow_dispatch:
     inputs:
@@ -31,6 +31,7 @@ on:
         default: false
 
 # No concurrency group (#550): a probe saves no shared cache (each FEC save is keyed on its own run id), so arms dispatched together run in parallel.
+# (#752) Tiingo fills are the exception: dispatch them one at a time, an hour apart (see the fill step).
 # A shared group kept one run going and one pending, and a third dispatch silently cancelled the pending one.
 permissions:
   contents: read
@@ -113,6 +114,25 @@ jobs:
           path: .fail_cache
           key: folioman-fail-${{ github.run_id }}
           restore-keys: folioman-fail-
+      # (#752) Tiingo's bars of exited S&P members, for `backtest … pit dead` only. Licensed for personal
+      # use and the repo is public, so the cache holds them encrypted with the key: a fork's pull_request
+      # run can restore this repo's caches but gets no secret. A wrong or rotated key drops the file, and
+      # the fills start over.
+      - name: Restore the Tiingo cache
+        if: ${{ contains(inputs.args, 'dead') }}
+        uses: actions/cache/restore@v6
+        with:
+          path: .tiingo_dead_members.csv.enc
+          key: folioman-tiingo-${{ github.run_id }}
+          restore-keys: folioman-tiingo-
+      - name: Decrypt the Tiingo cache
+        if: ${{ contains(inputs.args, 'dead') }}
+        env:
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
+        run: |
+          [[ -f .tiingo_dead_members.csv.enc && -n $TIINGO_API_KEY ]] || exit 0
+          openssl enc -d -aes-256-cbc -pbkdf2 -pass env:TIINGO_API_KEY -in .tiingo_dead_members.csv.enc -out .tiingo_dead_members.csv \
+            || { rm -f .tiingo_dead_members.csv; echo "::warning::the Tiingo cache did not decrypt, so this run reads the archive alone"; }
       - name: backtest
         if: ${{ !inputs.bless }}
         env:
@@ -155,6 +175,29 @@ jobs:
             ./target/release/folioman backtest "$y" "${args[@]}"
             echo "::endgroup::"
           done
+      # (#752) After the backtests, because the `pit` run writes the membership spans it reads. It fetches
+      # up to 45 names a run (a free key allows 50 requests an hour), so dispatch fills one at a time, an
+      # hour apart: `years=8 args="universe pit dead"`. Once every candidate is answered, a run asks
+      # nothing. Progress is encrypted even when the tool stops on an error.
+      - name: Fill the Tiingo cache
+        if: ${{ !cancelled() && !inputs.bless && contains(inputs.args, 'dead') }}
+        env:
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
+        run: |
+          [[ -n $TIINGO_API_KEY ]] || { echo "::notice::no TIINGO_API_KEY secret, so nothing to fill"; exit 0; }
+          [[ -f .sp500_history.json ]] || { echo "::warning::no membership spans, so nothing to fill: run with pit"; exit 0; }
+          rc=0
+          python3 -I tools/dead_members_from_tiingo.py || rc=$?
+          if [[ -f .tiingo_dead_members.csv ]]; then
+            openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:TIINGO_API_KEY -in .tiingo_dead_members.csv -out .tiingo_dead_members.csv.enc
+          fi
+          exit $rc
+      - name: Save the Tiingo cache
+        if: ${{ !cancelled() && contains(inputs.args, 'dead') && hashFiles('.tiingo_dead_members.csv.enc') != '' }}
+        uses: actions/cache/save@v6
+        with:
+          path: .tiingo_dead_members.csv.enc
+          key: folioman-tiingo-${{ github.run_id }}
       - name: Save the FEC cache
         if: ${{ !cancelled() && contains(inputs.args, 'pac') }}
         uses: actions/cache/save@v6

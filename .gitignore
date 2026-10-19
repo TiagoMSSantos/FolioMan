@@ -122,6 +122,9 @@ config/settings.yaml
 # ...except the fixture copy, for the same reason the frozen history cache above is kept: without it
 # `backtest … pit` has no offline pin at all, and the one mode nothing can reach is the one that rots.
 !tests/fixture/.sp500_history.json
+# (#752) Tiingo's bars of exited S&P members, licensed for personal use: probe.yml keeps them in an
+# encrypted cache, and neither the file nor its encrypted copy may ever be committed.
+.tiingo_dead_members.csv*
 .screen_alerts.log
 # Python bytecode from running tools/*.py. No leading slash, so it matches at any depth.
 __pycache__/
