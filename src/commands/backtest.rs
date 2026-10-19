@@ -9188,6 +9188,10 @@ mod tests {
         // (#744) Y is B's twin, but the cut places only A from the score side, so Y keeps its slot
         let y = Quote::stub("Y", "1", "", "Beta");
         assert_eq!(picks::sized_splice(&[(&a, 50.0), (&b, 50.0)], &[&y, &x], false, 5, &sz), vec![("A", 50.0), ("Y", 50.0)]);
+        // (#753) book row X is booked from the momentum side, and it still blocks its twin X2: one Xco, not both
+        let (xo, x2, m) = (Quote::stub("X", "1", "", "Xco"), Quote::stub("X2", "1", "", "Xco"), Quote::stub("M", "1", "", "Mco"));
+        let got = picks::sized_splice(&[(&a, 50.0), (&xo, 50.0)], &[&x2, &xo, &m], false, 5, &config::Sizing { book_names: 3, ..sz.clone() });
+        assert_eq!(got.iter().map(|r| r.0).collect::<Vec<_>>(), ["A", "X", "M"]);
         let sz = config::Sizing { book_names: 6, ..sz };
         let six: Vec<Quote> = ["P", "Q", "R", "S", "T", "U"].iter().map(|t| Quote::stub(t, "1", "", t)).collect();
         let book: Vec<(&Quote, f64)> = six[..5].iter().map(|q| (q, 0.0)).collect();

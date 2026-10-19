@@ -7844,7 +7844,7 @@ pub(crate) fn splice_sides<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: b
 /// (#584) The blended book's weights, the (#313) equal-weight book. `book` is [`sized_book`]'s rows `(quote,
 /// weight %)`, one per issuer, `mom` the momentum order, its coins dropped (the crypto budget is `sized_book`'s).
 /// Only non-coin rows are spliced, since the head counts only them; coins go first and keep their weight. A
-/// momentum twin of a score row the splice places ([`first_per_issuer`]'s key) is dropped before
+/// momentum twin of a book row the splice places, on either side ([`first_per_issuer`]'s key), is dropped before
 /// [`splice_order`], so its slot goes to the next momentum name; (#744) a twin of a row past the cut (the blend
 /// places about half of `book_names` from the score side) keeps its slot. Then a commodity leaves the head as `sized_book` parks it, and
 /// [`equal_weights`] re-splits the non-coin rows with the head share. Weights in %.
@@ -7860,13 +7860,14 @@ fn sized_splice_sides<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: b
         let mut seen = HashSet::new();
         mom.iter().copied().filter(|q| !coin(q)).filter(|q| q.name.is_empty() || (held.get(&q.name.to_lowercase()).is_none_or(|t| *t == q.ticker) && seen.insert(q.name.to_lowercase()))).collect()
     };
-    // (#744) a twin only blocks a score row the splice places: a first pass against every row finds them.
+    // (#744) a twin only blocks a book row the splice places: a first pass against every row finds them. (#753)
+    // on EITHER side: a book row momentum reaches first is booked too, so its twin must still drop.
     // shortcut: a momentum side that runs dry before the cut moves the score side deeper in the second pass, so
     // a row past `placed` could join beside its kept twin; the live pond is hundreds of names, never dry.
     let all: HashMap<String, &str> = book.iter().map(|r| (r.0.name.to_lowercase(), r.0.ticker.as_str())).collect();
     let s: Vec<&str> = book.iter().map(|r| r.0.ticker.as_str()).collect();
     let m: Vec<&str> = pick(&all).into_iter().map(|q| q.ticker.as_str()).collect();
-    let placed: HashSet<&str> = splice_sides(&s, &m, after, slots, sz.book_cut()).into_iter().filter(|r| !r.1).map(|r| r.0).collect();
+    let placed: HashSet<&str> = splice_sides(&s, &m, after, slots, sz.book_cut()).into_iter().map(|r| r.0).collect();
     let mom = pick(&all.into_iter().filter(|r| placed.contains(r.1)).collect());
     let rows: HashMap<&str, (&Quote, f64)> = mom.iter().map(|q| (*q, 0.0)).chain(book.iter().copied()).map(|r| (r.0.ticker.as_str(), r)).collect();
     let m: Vec<&str> = mom.iter().map(|q| q.ticker.as_str()).collect();
