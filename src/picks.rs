@@ -5555,7 +5555,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
         ("NO-BRAKE", "The buy score with the ran-too-far brake switched off (growth_overext_cap 0), every other rule unchanged. It is at or above TABLE-CUT, so the brake alone keeps the stock out of the Stocks table"),
         ("TABLE-CUT", "The lowest SCORE in the Stocks table, pinned rows aside: what a stock needs to be listed there"),
-        ("BRAKE", "The ran-too-far brake's multiplier, and how far the price sits above its own 200-WEEK average (the ABV-MA column is the 200-day one). The multiplier falls from ×1 at the average to ×growth_overext_floor at growth_overext_cap above it, and enters the score through a geometric mean with the trust factor, so the score drops by less than the multiplier"),
+        ("BRAKE", "The ran-too-far brake's multiplier, and how far the price sits above its own 200-WEEK average, the same figure as the ABV-MA column (ᵈ there = a listing under ~4 years, read off its 200-day average). The multiplier falls from ×1 at the average to ×growth_overext_floor at growth_overext_cap above it, and enters the score through a geometric mean with the trust factor, so the score drops by less than the multiplier"),
     ]);
     // (#525) the REITs table: `reit_rows`, then the stock columns like Young
     let reits = fixed(&[
@@ -5685,7 +5685,7 @@ pub(crate) fn shipped_book(
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
 /// the column is there.
-const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list across stocks and ETFs by score, its first five names weighted `sizing.head_weight` (8 on CI) against 1 for each later one (a `c` commodity-price name never takes one of the five when `sizing.head_skip_commodity` is on, as on CI), coins at their crypto budget. Blank = the book does not fund this row. NOT advice";
+const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list of `sizing.book_names` names (25 on CI) across stocks and ETFs. `growth_momentum_slots` of every 10 slots (5 on CI: score, momentum, score, …) go to the best stocks by 12-7 momentum (`m` rows), skipping a name the score side already holds or its twin; the rest go to the score order. The first five names are weighted `sizing.head_weight` (8 on CI) against 1 for each later one (a `c` commodity-price name never takes one of the five when `sizing.head_skip_commodity` is on, as on CI); coins come first at their crypto budget. Blank = the book does not fund this row. NOT advice";
 
 /// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
