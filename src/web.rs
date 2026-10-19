@@ -105,6 +105,10 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     });
     let mut top: serde_json::Value =
         out.into_inner().and_then(|j| serde_json::from_str(&j).ok()).ok_or("render built no payload")?;
+    let soc = s.social().map_err(|e| format!("settings.yaml: {e}"))?;
+    // (#746) the upload's own Braked table, off the shipped rows before (#584) momentum rows join them, as
+    // `screen` builds it: without it the page kept CI's
+    top["braked"] = picks::braked_rows(&top["stocks"], &u.quotes, &pins, bh);
     // (#403) The equal-weight book never reads the fund look-through, so an empty map replays `screen`'s
     // BUY NOW exactly. The vol-target book caps fund sectors by holdings the page does not carry, so an
     // upload that turns it on gets no BUY% column rather than a wrong one.
@@ -115,6 +119,7 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
         picks::stamp_buy(&mut top, &book);
     }
     picks::stamp_index(&mut top, &u.quotes); // (#446) after BUY%, which it sits beside
+    picks::stamp_shadow_cols(&mut top, &u.quotes, &u.quotes, &s.widths, bh, &soc, &u.fund_pe, &|t: &str| t.to_string()); // (#746) Braked's
     picks::stamp_us_twin(&mut top, &u.twins, &s.widths, bh, &u.fund_pe);
     // (#469) every re-ranked row's quote carries its own site, so the exact ticker finds it
     picks::stamp_site(&mut top, &u.quotes, &|t: &str| t.to_string());
@@ -123,7 +128,7 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     top["cagr_floor"] = serde_json::json!(bh.growth_min_cagr);
     top["reit_cagr_floor"] = serde_json::json!(s.reit_min_cagr);
     top["page_min_cagr"] = serde_json::json!(s.page_min_cagr);
-    top["social_cagr_floor"] = serde_json::json!(s.social().map_err(|e| format!("settings.yaml: {e}"))?.buy.growth_min_cagr); // (#538)
+    top["social_cagr_floor"] = serde_json::json!(soc.buy.growth_min_cagr); // (#538)
     // only when there is something to say, so a pool that holds every pin stays byte-equal to `screen`
     if !(twins.is_empty() && missing.is_empty()) {
         top["pins"] = serde_json::json!({ "twins": twins, "missing": missing });
@@ -299,18 +304,21 @@ mod tests {
             web_degraded: &["MVRV feed down".to_string()],
         });
         let mut v: serde_json::Value = serde_json::from_str(&out.into_inner()).expect("render built the payload");
+        v["braked"] = picks::braked_rows(&v["stocks"], quotes, pinned, &s.buy_heuristic); // (#746)
         // (#403) the BUY% `screen` stamps from its own sized book, with its real look-through map
         let book = picks::buy_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new());
         let shipped = picks::shipped_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new());
         picks::stamp_momentum(&mut v, &book, &shipped, quotes, &s.widths, &s.buy_heuristic, &FundPeMap::new()); // (#584)
         picks::stamp_buy(&mut v, &book);
         picks::stamp_index(&mut v, quotes);
+        let soc = s.social().unwrap();
+        picks::stamp_shadow_cols(&mut v, quotes, quotes, &s.widths, &s.buy_heuristic, &soc, &FundPeMap::new(), &|t: &str| t.to_string());
         picks::stamp_site(&mut v, quotes, &|t: &str| t.to_string()); // (#540) the REPORTS links, as `screen` stamps them
         v["generated"] = serde_json::Value::Null;
         v["cagr_floor"] = serde_json::json!(s.buy_heuristic.growth_min_cagr);
         v["reit_cagr_floor"] = serde_json::json!(s.reit_min_cagr);
         v["page_min_cagr"] = serde_json::json!(s.page_min_cagr);
-        v["social_cagr_floor"] = serde_json::json!(s.social().unwrap().buy.growth_min_cagr);
+        v["social_cagr_floor"] = serde_json::json!(soc.buy.growth_min_cagr);
         v
     }
 
