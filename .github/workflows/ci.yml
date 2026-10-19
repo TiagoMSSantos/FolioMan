@@ -501,6 +501,14 @@ jobs:
           path: .ipo_cache.json
           key: folioman-ipo2-${{ github.run_id }}
           restore-keys: folioman-ipo2-
+      # (#749) Pages' Wikidata young listings, READ-ONLY: a refused live answer had dropped ~43 young EU
+      # tickers from the walk, which read like a knob moving windows.
+      - name: Restore Pages' Wikidata listings
+        uses: actions/cache/restore@v6
+        with:
+          path: .wikidata_listings.json
+          key: folioman-wikidata-${{ github.run_id }}
+          restore-keys: folioman-wikidata-
       # (#352) The monthly history, cached HERE and written by this job only. Live, it was ~90s of the
       # 20y horizon's 143s: ~4700 series at the 60 rps pacer (local: 94s cold vs 5.6s warm). A cache
       # hit is the raw Yahoo payload taking the same parse as a fetch, under the tool's own 7-day

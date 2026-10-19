@@ -8985,12 +8985,14 @@ fn wikidata_pond(v: &Value) -> Vec<(String, String)> {
 
 /// (#517) One SPARQL GET a day, sent with the repo's contact User-Agent as Wikidata's policy asks. A
 /// refused or empty answer is not cached, so the next run retries.
+/// (#749) Meanwhile the last good pond answers, as `cached_feed` does for the macro feeds: a refused GET
+/// had cost the live Young table 14 of 64 rows and a probe ~43 young EU tickers.
 #[mutants::skip] // one GET around the tested `wikidata_query` / `wikidata_pond`
 async fn wikidata_young_pond(client: &Client, urls: &Urls) -> Vec<(String, String)> {
     let path = crate::config::data_path(WIKIDATA_POND_PATH);
-    evict_if_stale(&path, StdDuration::from_secs(24 * 3600));
-    if let Some(pond) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
-        return pond;
+    let banked: Option<Vec<(String, String)>> = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+    if let Some(pond) = banked.as_ref().filter(|_| fresh_on_disk(&path, StdDuration::from_secs(24 * 3600))) {
+        return pond.clone();
     }
     if offline() {
         return Vec::new();
@@ -9000,12 +9002,13 @@ async fn wikidata_young_pond(client: &Client, urls: &Urls) -> Vec<(String, Strin
     let query = wikidata_query(since);
     let req = client.get(&urls.wikidata_sparql).query(&[("format", "json"), ("query", query.as_str())]);
     let Some(v) = req.header(reqwest::header::USER_AGENT, &urls.sec_user_agent).send().await.ok().and_then(|r| r.error_for_status().ok()) else {
-        return Vec::new();
+        return banked.unwrap_or_default();
     };
     let pond = v.json::<Value>().await.map(|v| wikidata_pond(&v)).unwrap_or_default();
-    if !pond.is_empty() {
-        let _ = std::fs::write(&path, serde_json::to_string(&pond).unwrap_or_default());
+    if pond.is_empty() {
+        return banked.unwrap_or_default();
     }
+    let _ = std::fs::write(&path, serde_json::to_string(&pond).unwrap_or_default());
     pond
 }
 

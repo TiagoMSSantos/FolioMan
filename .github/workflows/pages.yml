@@ -160,6 +160,16 @@ jobs:
           key: folioman-ipo2-${{ github.run_id }}
           restore-keys: folioman-ipo2-
 
+      # (#749) The Wikidata EU young listings: every runner started cold and asked live, and a refused
+      # answer cost the Young table 14 of 64 rows (2026-10-17, 2026-10-19). A copy under a day old answers
+      # without a request (tar keeps the mtime); an older one answers when the live GET is refused.
+      - name: Restore the Wikidata listings
+        uses: actions/cache@v6
+        with:
+          path: .wikidata_listings.json
+          key: folioman-wikidata-${{ github.run_id }}
+          restore-keys: folioman-wikidata-
+
       # (#516) The App Store chart's daily ranks: a climb is graded against the week before, so the
       # file must survive between runs or every run is day one.
       - name: Restore App Store ranks cache

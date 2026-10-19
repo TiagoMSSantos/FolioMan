@@ -84,6 +84,12 @@ jobs:
           path: .ipo_cache.json
           key: folioman-ipo2-${{ github.run_id }}
           restore-keys: folioman-ipo2-
+      - name: Restore Pages' Wikidata listings
+        uses: actions/cache/restore@v6
+        with:
+          path: .wikidata_listings.json
+          key: folioman-wikidata-${{ github.run_id }}
+          restore-keys: folioman-wikidata-
       - name: Restore the gate's history cache
         uses: actions/cache/restore@v6
         with:
