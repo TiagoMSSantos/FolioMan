@@ -17,7 +17,7 @@ Not wired into the binary: download the Kaggle mirror (marketneutral/quandl-wiki
 hand, run this on the zip from the repo root, commit the CSV it writes. The zip is read in place; nothing
 in it is extracted.
 """
-import argparse, csv, hashlib, io, json, re, sys, zipfile
+import argparse, csv, hashlib, io, json, math, re, sys, zipfile
 
 NEED = ("ticker", "date", "close", "ex-dividend", "split_ratio")
 
@@ -27,7 +27,7 @@ def num(s):
         x = float(s)
     except ValueError:
         return None
-    return x if x == x else None  # NaN reads as missing
+    return None if math.isnan(x) else x  # NaN reads as missing
 
 
 def monthly(days, divs, splits):
