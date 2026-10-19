@@ -548,44 +548,45 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 
 ── held-book by FACTOR (rank FUND-COVERED gated picks by each FREE factor, top-10 held 12y, vs growth_score) ──
   growth_score   book +13.1%/yr  excess +4.8  win 85%  worst -10.8  OOS +5.0/+4.7   [baseline, n=972]
-  gross_margin   book +14.7%/yr  excess +3.1  win 89%  worst -1.4  OOS +2.5/+3.6   (n=93)
-  op_margin      book +11.4%/yr  excess -0.2  win 44%  worst -3.5  OOS +1.5/-1.5   (n=179)
-  margin_trend   book +14.4%/yr  excess +2.9  win 100%  worst +0.5  OOS +1.9/+3.6   (n=177)
-  rev_cagr       book +13.1%/yr  excess +1.2  win 67%  worst -2.3  OOS -2.3/+3.0   (n=45)
-  rev_accel      book +12.4%/yr  excess +0.6  win 33%  worst -2.3  OOS -2.3/+2.0   (n=45)
-  eps_growth     book +12.9%/yr  excess +1.0  win 67%  worst -1.6  OOS -1.6/+2.3   (n=37)
-  earnings_yield book +11.9%/yr  excess +0.3  win 33%  worst -1.0  OOS -0.1/+0.6   (n=197)
-  ebitda_yield   book +10.8%/yr  excess -0.7  win 67%  worst -4.5  OOS -3.0/+1.0   (n=127)
-  peg_yield      book +13.4%/yr  excess +1.8  win 89%  worst -0.3  OOS +1.4/+2.1   (n=163)
-  buyback_yield  book +11.4%/yr  excess -0.3  win 56%  worst -5.9  OOS +0.5/-0.9   (n=204)
-  quality(roe/roa) book +13.4%/yr  excess +1.8  win 89%  worst -4.9  OOS +2.4/+1.3   (n=215)
-  roic           book +12.5%/yr  excess +0.9  win 56%  worst -1.9  OOS +1.5/+0.4   (n=179)
-  roe_raw        book +12.5%/yr  excess +0.9  win 78%  worst -4.9  OOS +1.5/+0.5   (n=215)
-  fcf_margin     book +11.6%/yr  excess -0.0  win 56%  worst -3.1  OOS +1.2/-1.0   (n=194)
-  interest_cover book +15.7%/yr  excess +4.1  win 100%  worst +0.0  OOS +4.4/+3.8   (n=141)
-  net_cash_rev   book +14.3%/yr  excess +2.6  win 100%  worst +0.4  OOS +1.7/+3.4   (n=205)
-  margin_stability book +13.3%/yr  excess +1.7  win 78%  worst -1.0  OOS +1.6/+1.8   (n=213)
-  accrual_gap    book +10.2%/yr  excess -1.4  win 33%  worst -4.0  OOS -1.4/-1.5   (n=184)
-  asset_growth   book +13.2%/yr  excess +1.4  win 100%  worst +1.4  OOS -0.0/+1.4   (n=7)
-  gp_assets      book +13.8%/yr  excess +2.2  win 78%  worst -1.4  OOS +0.8/+3.3   (n=91)
-  cf_assets      book +10.9%/yr  excess -0.7  win 44%  worst -3.9  OOS -0.1/-1.1   (n=192)
-  rev_stability  book +9.6%/yr  excess -2.2  win 14%  worst -5.0  OOS -1.1/-3.0   (n=146)
-  fcf_ev_yield   book +10.8%/yr  excess -0.8  win 44%  worst -2.5  OOS -1.0/-0.6   (n=166)
-  sales_ev_yield book +12.6%/yr  excess +1.0  win 56%  worst -1.0  OOS +0.5/+1.4   (n=200)
-  value_composite book +11.7%/yr  excess +0.1  win 44%  worst -2.0  OOS -0.9/+0.9   (n=196)
-  book_yield     book +12.8%/yr  excess +1.2  win 89%  worst -0.3  OOS +0.5/+1.7   (n=195)
-  small_pct      book +15.6%/yr  excess +3.9  win 100%  worst +1.2  OOS +3.0/+4.7   (n=207)
-  noa            book +11.7%/yr  excess +0.1  win 56%  worst -0.9  OOS -0.0/+0.2   (n=203)
-  op_leverage    book +15.7%/yr  excess +4.1  win 100%  worst +0.5  OOS +2.3/+5.6   (n=177)
-  lynch_yield    book +12.3%/yr  excess +0.4  win 67%  worst -2.6  OOS -2.6/+1.9   (n=25)
-  exp_neg        book +13.9%/yr  excess +2.1  win 67%  worst -1.6  OOS -1.6/+3.9   (n=37)
-  discipline     book +10.0%/yr  excess -1.6  win 33%  worst -4.6  OOS -1.7/-1.5   (n=132)
-  fair_yield     book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=135)
-  oe_fair_yield  book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=135)
-  fcf_cap_yield  book +11.1%/yr  excess -0.5  win 44%  worst -2.6  OOS -0.7/-0.5   (n=177)
-  low_turnover   book +12.7%/yr  excess +1.1  win 67%  worst -4.2  OOS +2.0/+0.3   (n=209)
+  gross_margin   book +14.7%/yr  excess +3.1  win 89%  worst -1.4  OOS +2.5/+3.6   (n=93)  same-set score excess +3.2 OOS +3.1/+3.2, 10 rows/window
+  op_margin      book +11.4%/yr  excess -0.2  win 44%  worst -3.5  OOS +1.5/-1.5   (n=179)  same-set score excess +1.5 OOS +1.2/+1.7, 20 rows/window
+  margin_trend   book +14.4%/yr  excess +2.9  win 100%  worst +0.5  OOS +1.9/+3.6   (n=177)  same-set score excess +0.9 OOS -0.0/+1.7, 20 rows/window
+  rev_cagr       book +13.1%/yr  excess +1.2  win 67%  worst -2.3  OOS -2.3/+3.0   (n=45)  same-set score excess +0.4 OOS -2.3/+1.8, 15 rows/window
+  rev_accel      book +12.4%/yr  excess +0.6  win 33%  worst -2.3  OOS -2.3/+2.0   (n=45)  same-set score excess +0.4 OOS -2.3/+1.8, 15 rows/window
+  eps_growth     book +12.9%/yr  excess +1.0  win 67%  worst -1.6  OOS -1.6/+2.3   (n=37)  same-set score excess +1.8 OOS -1.6/+3.5, 12 rows/window
+  earnings_yield book +11.9%/yr  excess +0.3  win 33%  worst -1.0  OOS -0.1/+0.6   (n=197)  same-set score excess +0.2 OOS -0.3/+0.6, 22 rows/window
+  ebitda_yield   book +10.8%/yr  excess -0.7  win 67%  worst -4.5  OOS -3.0/+1.0   (n=127)  same-set score excess -0.8 OOS -1.9/+0.2, 14 rows/window
+  peg_yield      book +13.4%/yr  excess +1.8  win 89%  worst -0.3  OOS +1.4/+2.1   (n=163)  same-set score excess +0.3 OOS -0.2/+0.7, 18 rows/window
+  buyback_yield  book +11.4%/yr  excess -0.3  win 56%  worst -5.9  OOS +0.5/-0.9   (n=204)  same-set score excess +1.5 OOS +0.9/+1.9, 23 rows/window
+  quality(roe/roa) book +13.4%/yr  excess +1.8  win 89%  worst -4.9  OOS +2.4/+1.3   (n=215)  same-set score excess +1.9 OOS +1.9/+1.9, 24 rows/window
+  roic           book +12.5%/yr  excess +0.9  win 56%  worst -1.9  OOS +1.5/+0.4   (n=179)  same-set score excess +1.5 OOS +1.2/+1.7, 20 rows/window
+  roe_raw        book +12.5%/yr  excess +0.9  win 78%  worst -4.9  OOS +1.5/+0.5   (n=215)  same-set score excess +1.9 OOS +1.9/+1.9, 24 rows/window
+  fcf_margin     book +11.6%/yr  excess -0.0  win 56%  worst -3.1  OOS +1.2/-1.0   (n=194)  same-set score excess +2.0 OOS +2.1/+1.9, 22 rows/window
+  interest_cover book +15.7%/yr  excess +4.1  win 100%  worst +0.0  OOS +4.4/+3.8   (n=141)  same-set score excess +3.2 OOS +3.5/+2.9, 16 rows/window
+  net_cash_rev   book +14.3%/yr  excess +2.6  win 100%  worst +0.4  OOS +1.7/+3.4   (n=205)  same-set score excess +1.9 OOS +1.9/+2.0, 23 rows/window
+  margin_stability book +13.3%/yr  excess +1.7  win 78%  worst -1.0  OOS +1.6/+1.8   (n=213)  same-set score excess +1.4 OOS +0.7/+1.9, 24 rows/window
+  accrual_gap    book +10.2%/yr  excess -1.4  win 33%  worst -4.0  OOS -1.4/-1.5   (n=184)  same-set score excess +2.0 OOS +2.1/+1.9, 20 rows/window
+  asset_growth   book +13.2%/yr  excess +1.4  win 100%  worst +1.4  OOS -0.0/+1.4   (n=7)  same-set score excess +1.4 OOS -0.0/+1.4, 7 rows/window
+  gp_assets      book +13.8%/yr  excess +2.2  win 78%  worst -1.4  OOS +0.8/+3.3   (n=91)  same-set score excess +2.4 OOS +1.4/+3.2, 10 rows/window
+  cf_assets      book +10.9%/yr  excess -0.7  win 44%  worst -3.9  OOS -0.1/-1.1   (n=192)  same-set score excess +1.4 OOS +0.9/+1.9, 21 rows/window
+  rev_stability  book +9.6%/yr  excess -2.2  win 14%  worst -5.0  OOS -1.1/-3.0   (n=146)  same-set score excess +1.5 OOS +1.6/+1.4, 21 rows/window
+  fcf_ev_yield   book +10.8%/yr  excess -0.8  win 44%  worst -2.5  OOS -1.0/-0.6   (n=166)  same-set score excess -0.4 OOS -0.1/-0.6, 18 rows/window
+  sales_ev_yield book +12.6%/yr  excess +1.0  win 56%  worst -1.0  OOS +0.5/+1.4   (n=200)  same-set score excess +0.2 OOS -0.3/+0.6, 22 rows/window
+  value_composite book +11.7%/yr  excess +0.1  win 44%  worst -2.0  OOS -0.9/+0.9   (n=196)  same-set score excess +0.1 OOS -0.5/+0.6, 22 rows/window
+  book_yield     book +12.8%/yr  excess +1.2  win 89%  worst -0.3  OOS +0.5/+1.7   (n=195)  same-set score excess +0.5 OOS -0.1/+0.9, 22 rows/window
+  small_pct      book +15.6%/yr  excess +3.9  win 100%  worst +1.2  OOS +3.0/+4.7   (n=207)  same-set score excess +1.8 OOS +1.8/+1.9, 23 rows/window
+  noa            book +11.7%/yr  excess +0.1  win 56%  worst -0.9  OOS -0.0/+0.2   (n=203)  same-set score excess +1.4 OOS +0.7/+2.0, 23 rows/window
+  op_leverage    book +15.7%/yr  excess +4.1  win 100%  worst +0.5  OOS +2.3/+5.6   (n=177)  same-set score excess +0.9 OOS -0.0/+1.7, 20 rows/window
+  lynch_yield    book +12.3%/yr  excess +0.4  win 67%  worst -2.6  OOS -2.6/+1.9   (n=25)  same-set score excess +0.4 OOS -2.6/+1.9, 8 rows/window
+  exp_neg        book +13.9%/yr  excess +2.1  win 67%  worst -1.6  OOS -1.6/+3.9   (n=37)  same-set score excess +1.8 OOS -1.6/+3.5, 12 rows/window
+  discipline     book +10.0%/yr  excess -1.6  win 33%  worst -4.6  OOS -1.7/-1.5   (n=132)  same-set score excess +0.3 OOS -1.7/+1.8, 15 rows/window
+  fair_yield     book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=135)  same-set score excess +0.3 OOS +0.4/+0.1, 15 rows/window
+  oe_fair_yield  book +11.7%/yr  excess +0.1  win 56%  worst -2.4  OOS +0.8/-0.5   (n=135)  same-set score excess +0.3 OOS +0.4/+0.1, 15 rows/window
+  fcf_cap_yield  book +11.1%/yr  excess -0.5  win 44%  worst -2.6  OOS -0.7/-0.5   (n=177)  same-set score excess +0.3 OOS -0.1/+0.6, 20 rows/window
+  low_turnover   book +12.7%/yr  excess +1.1  win 67%  worst -4.2  OOS +2.0/+0.3   (n=209)  same-set score excess +1.9 OOS +1.9/+1.9, 23 rows/window
   no book: insider_net_buys_90d n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0, op_rd n=0, rnd_growth n=0, low_dro n=0, capex_light n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
-  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.
+  (a factor beating its OWN row's same-set score excess, OOS both halves above, ranks better than growth_score;
+   beating only the baseline row is the factor's subset talking, not its ranking (#741).
    every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,
    which is DERIVED (EBIT ÷ equity+net debt), not the premium `FundRow::roic` that never populates.)
 
