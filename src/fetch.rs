@@ -15134,6 +15134,14 @@ pub(crate) mod tests {
         serde_yaml::from_str(&yaml).expect("stub urls")
     }
 
+    /// (#750) The trap above, enforced: an unlisted `Urls` field keeps its serde default, so any host but
+    /// the stub's in the debug print is a unit test that can reach the live internet.
+    #[test]
+    fn stub_urls_name_no_real_host() {
+        let rest = format!("{:?}", stub_urls("http://stub/")).replace("http://stub/", "");
+        assert!(!rest.contains("http"), "{rest}");
+    }
+
     /// The scratch-root seam itself, asserted directly. Every other test here depends on it silently:
     /// delete `config::test_root_override` and they all still pass, having written their caches into
     /// the working tree — which surfaces as a dirty `git status` on someone else's branch, days later.
@@ -16833,6 +16841,32 @@ pub(crate) mod tests {
         let q = wikidata_query(NaiveDate::from_ymd_opt(2021, 10, 7).unwrap());
         assert!(q.contains("wd:Q151139 wd:Q171240") && q.contains("wd:Q1019983 }"), "{q}");
         assert!(q.contains("FILTER(?start >= \"2021-10-07T00:00:00Z\"^^xsd:dateTime)"), "{q}");
+    }
+
+    /// (#750) #749's fallback, branch by branch: a refused or empty answer serves the last good pond, a
+    /// good one replaces it on disk, and a copy under a day old answers without a request. No other lib
+    /// test touches this file (`stub_urls` leaves `wikidata_sparql` empty, the caller's off switch).
+    #[tokio::test]
+    async fn wikidata_young_pond_serves_the_last_good_copy() {
+        const LIVE: &str = r#"{"results":{"bindings":[{"c":{"value":"http://www.wikidata.org/entity/Q1"},"ex":{"value":"http://www.wikidata.org/entity/Q151139"},"tick":{"value":"P911"}}]}}"#;
+        let path = crate::config::data_path(WIKIDATA_POND_PATH);
+        let old = vec![("OLD.DE".to_string(), "other".to_string())];
+        std::fs::write(&path, serde_json::to_string(&old).expect("pond json")).expect("bank the pond");
+        let two_days = SystemTime::now() - StdDuration::from_secs(48 * 3600);
+        std::fs::OpenOptions::new().write(true).open(&path).expect("reopen").set_modified(two_days).expect("backdate mtime");
+        let pond = |routes: Vec<(&'static str, &'static str)>| async move {
+            let (url, client, requests) = routed_stub(routes);
+            let mut urls = stub_urls(&url);
+            urls.wikidata_sparql = url;
+            (wikidata_young_pond(&client, &urls).await, requests)
+        };
+        assert_eq!(pond(vec![]).await.0, old, "a refused GET serves the banked pond");
+        assert_eq!(pond(vec![("", r#"{"results":{"bindings":[]}}"#)]).await.0, old, "an empty answer too");
+        let live = vec![("P911.DE".to_string(), "other".to_string())];
+        assert_eq!(pond(vec![("", LIVE)]).await.0, live, "a good answer replaces it");
+        let (fresh, requests) = pond(vec![]).await;
+        assert_eq!(fresh, live, "the written copy is fresh");
+        assert!(requests.try_recv().is_err(), "a fresh copy asks nothing");
     }
 
     /// (#524) Nasdaq's sections into deals: upcoming only from this month and the next, filed from all
