@@ -5549,19 +5549,25 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();
     for (name, get) in factors {
+        // (#741) `paired` ranks the factor's OWN rows by growth_score. The baseline row ranks every
+        // fund-covered pick, so a factor beating it may only have picked a better subset to rank.
         let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+        let mut paired: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
         for s in samples {
-            if picks::asset_class(&s.quote) == 0 || growth_score(&s.quote, tuning).is_none() {
+            if picks::asset_class(&s.quote) == 0 {
                 continue;
             }
+            let Some(score) = growth_score(&s.quote, tuning) else { continue };
             let Some(fv) = s.fund.as_ref().and_then(get) else { continue };
             let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
             by.entry(bucket(s.date)).or_default().push((fv, s.realized, br));
+            paired.entry(bucket(s.date)).or_default().push((score, s.realized, br));
         }
         let rows: usize = by.values().map(|v| v.len()).sum();
-        if let Some((b, _, e, w, wo, el, la)) = book_stats(&by, n, years) {
+        if let (Some((b, _, e, w, wo, el, la)), Some((_, _, pe, _, _, pel, pla))) = (book_stats(&by, n, years), book_stats(&paired, n, years)) {
             any = true;
-            println!("  {name:<14} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (n={rows})");
+            let per = rows as f64 / by.len() as f64;
+            println!("  {name:<14} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (n={rows})  same-set score excess {pe:+.1} OOS {pel:+.1}/{pla:+.1}, {per:.0} rows/window");
         } else {
             // (N) SAY SO when a listed factor builds no book. This loop used to print only on Some, so a
             // factor with zero as-of coverage was indistinguishable from one nobody configured — and
@@ -5579,7 +5585,8 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         // coverage at all the line above already says so, and 18 identical "n=0" rows say nothing.
         println!("  no book: {} — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)", skipped.join(", "));
     }
-    println!("  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.");
+    println!("  (a factor beating its OWN row's same-set score excess, OOS both halves above, ranks better than growth_score;");
+    println!("   beating only the baseline row is the factor's subset talking, not its ranking (#741).");
     println!("   every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,");
     println!("   which is DERIVED (EBIT ÷ equity+net debt), not the premium `FundRow::roic` that never populates.)");
     // (#291) RESCUE LANE. Every admission knob that ADDS names is refused, the last one on the sized book

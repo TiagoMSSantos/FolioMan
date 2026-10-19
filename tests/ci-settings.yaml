@@ -6687,7 +6687,27 @@ buy_heuristic:
                                  #  VERDICT: the momentum half's losers are names this pool holds no as-of fundamentals for, so no fundamental dock can
                                  #  reach them; nothing to ask. REOPEN only when as-of fundamentals cover them (losers n >= 10 in all 4 cells); the re-run
                                  #  is `universe fund pit winners` and `universe fund stress winners`, years 12 8.
-  journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
+                                 #── (#741) PRE-REGISTERED 2026-10-19, before any run — DOES A FREE FACTOR RANK BETTER THAN growth_score ON ITS OWN SET? ──
+                                 #  WHY: the owner asks to spot good assets better and rank them higher. In the `held-book by FACTOR` table of the
+                                 #  (#740) runs, seven rows beat the growth_score baseline's excess in all 4 cells (pit/stress x 12y/8y): roic
+                                 #  (+4.9/+4.9/+6.9/+7.9), interest_cover, net_cash_rev, rnd_yield, op_rd, discipline and rnd_growth. The comparison is
+                                 #  confounded. The baseline ranks every fund-covered gated pick; a factor ranks only the rows where it is not None
+                                 #  (discipline needs EBITDA > 0, the rnd rows an R&D filer). So a row can win by its subset, not by its ranking.
+                                 #  BUILT, report only: each factor row also prints `same-set score excess`, growth_score ranking that factor's own
+                                 #  rows in the same buckets through the same `book_stats`, plus rows/window. No knob; the fund golden is re-blessed.
+                                 #  BAR (owner): a factor is a LEAD only if, in ALL 4 cells, its excess is >= the same-set score excess + 0.5 pts/yr,
+                                 #  both OOS halves beat the same-set halves, and it holds >= 20 rows per window (the (#136) mirage guard). Anything
+                                 #  else is DEAD.
+                                 #  A LEAD SHIPS NOTHING: an open lead earns one owner ask for a `growth_fund_extra` probe, which needs its own new
+                                 #  bar because 20y reads no fundamental. A closed family is recorded, never asked: profitability (gross/op/net
+                                 #  margin, roe, quality, roic, fcf_margin, gp_assets, cf_assets, op_rd (#417)), the P1 floors (interest_cover,
+                                 #  net_cash_rev), peg_yield (#550), and the eleven journalled shadow factors (rnd_yield int_yield mscore
+                                 #  lynch_yield sgr_yield fair_yield oe_fair_yield fcf_cap_yield rnd_growth margin_stability rev_stability). Of the
+                                 #  seven rows only discipline is open.
+                                 #  RUNS: probe.yml, `universe fund pit` and `universe fund stress`, years 12 8.
+                                 #  PREDICTED: no open lead; (#726) found selection dead, and (#417) found discipline dead at n=115.
+                                 #  REVERT: drop `paired` and the appended columns in `report_book_by_factor`, and re-bless.
+  journal_core_list: true       # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
                                  # there never will be: it does not change a number, it starts a record.
