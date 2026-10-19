@@ -6737,6 +6737,32 @@ buy_heuristic:
                                  #  Near misses, not leads: margin_trend and mscore pass 3 cells and fail pit 8y.
                                  #  PREDICTION MISSED: one open lead. NOTHING SHIPS; per the bar, rev_cagr earns one owner ask for a `growth_fund_extra`
                                  #  probe with its own bar, since 20y fills no fundamental.
+                                 #── (#742) PRE-REGISTERED 2026-10-19, before any run — rev_cagr AS A growth_fund_extra TERM ──
+                                 #  WHY: rev_cagr is (#741)'s one open lead. The owner chose to probe it on this bar (2026-10-19), before any run.
+                                 #  BUILT: probe.yml takes `extra` = factor:weight:cap:neutral and appends that term to `growth_fund_extra` for the
+                                 #  run only. No scoring code changes: the term adds weight x clamp(rev_cagr, else neutral, 0, cap) beside roic's.
+                                 #  NEUTRAL 9.1 = the median REV-5Y of the 211 SEC-reported tickers on the live page (data.json 2026-10-18), the
+                                 #  covered-peer median the owner asked for. growth_fund_scope_by_class is false, so every ETF and every stock
+                                 #  without 5 filed years takes weight x 9.1 (0.91 / 1.82 / 3.64 points). A constant inside `base` ranks by the
+                                 #  multiplier stack ((#150)), so 20y, where nothing is filed, can still move.
+                                 #  ARMS: rev_cagr weight 0.1 / 0.2 / 0.4, cap 30.0, neutral 9.1, against a same-batch ctl with no extra term.
+                                 #  Runs per arm: `universe fund pit rivals winners` and `universe fund stress rivals winners`, years 20 12 8
+                                 #  (4 arms x 2 = 8 runs, one SHA).
+                                 #  BAR (owner): an arm passes only if all of these hold:
+                                 #    1. the plain `top-10 book` excess, mean AND median, is >= ctl + 0.2 pts/yr in ALL 4 fund cells
+                                 #       (pit|stress x 12y/8y);
+                                 #    2. VETO: the 20y DCA `S+inter never-sell vs index DCA` mean or median falls by >= 0.2 in either lane;
+                                 #    3. VETO: WINNERS HELD is under ctl by 2.0 or more in any of the 6 cells ((#606));
+                                 #    4. VETO, added here because the published basket is the blend: rival (j) mean or median falls by >= 0.2
+                                 #       in any of the 6 cells (the (#730) not-worse bar);
+                                 #    5. `windows scored` and the term echo match ctl; a run that differs is re-dispatched, not graded.
+                                 #  TIE-BREAK: several arms pass -> the smallest weight that passes. A pass ships nothing by itself: it earns a
+                                 #  second owner ask to ship the term and re-bless the goldens. No arm passes -> `growth_fund_extra` stays roic
+                                 #  alone and this lane closes.
+                                 #  PREDICTED: no arm passes. The (#741) gap is thin at pit 8y (+1.0), 12y fills only 4 of its windows, (#165)
+                                 #  read the held losers as fast revenue growers, and the recent score tilts ((#570), (#599), (#730)) were all
+                                 #  refused.
+                                 #  REVERT: drop the `extra` input from probe.yml; nothing in the score changes unless a second ask ships it.
   journal_core_list: true       # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

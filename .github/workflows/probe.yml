@@ -22,6 +22,9 @@ on:
       knobs:
         description: "(#550) ci-settings overrides for this run only, space-separated key=value (numbers only)"
         default: ""
+      extra:
+        description: "(#742) growth_fund_extra terms added for this run only, space-separated factor:weight:cap:neutral"
+        default: ""
       bless:
         description: "(#554) re-bless tests/fixture/*.golden instead of a backtest; uploads them as an artifact"
         type: boolean
@@ -111,11 +114,13 @@ jobs:
           YEARS: ${{ inputs.years }}
           ARGS: ${{ inputs.args }}
           KNOBS: ${{ inputs.knobs }}
+          EXTRA: ${{ inputs.extra }}
         # Inputs reach the shell only through env and `read -ra`, never as interpolated script text.
         run: |
           read -ra years <<< "$YEARS"
           read -ra args <<< "$ARGS"
           read -ra knobs <<< "$KNOBS"
+          read -ra extra <<< "$EXTRA"
           # (#550) an arm edits the checked-out yaml in place: each key must already sit on exactly one
           # `  key:` line and the value must be a plain number, so a typo fails the run instead of grading
           # the control under an arm's name. (#570) `true`/`false` too, for the bool knobs.
@@ -125,6 +130,18 @@ jobs:
             [[ $(grep -c "^  $k: " tests/ci-settings.yaml) == 1 ]] || { echo "::error::'$k' is not one ci-settings line"; exit 1; }
             sed -i -E "s/^(  $k: )[^ ]+/\1$v/" tests/ci-settings.yaml
             grep "^  $k: " tests/ci-settings.yaml | cut -c1-80
+          done
+          # (#742) a knob cannot add an item to a list, so a term arm appends to `growth_fund_extra`. The
+          # factor must be a name `select_fund_factor` routes: an unknown one reads None and grades the
+          # neutral fill as a constant under the factor's name.
+          for t in "${extra[@]}"; do
+            IFS=: read -r f w c n <<< "$t"
+            num='^-?[0-9]+(\.[0-9]+)?$'
+            [[ $f =~ ^[a-z0-9_]+$ && $w =~ $num && $c =~ $num && $n =~ $num && $t == "$f:$w:$c:$n" ]] || { echo "::error::bad extra '$t'"; exit 1; }
+            grep -q "^        \"$f\" =>" src/core.rs || { echo "::error::'$f' is not a fund factor"; exit 1; }
+            [[ $(grep -c '^  growth_fund_extra:$' tests/ci-settings.yaml) == 1 ]] || { echo "::error::no growth_fund_extra list"; exit 1; }
+            sed -i -E "s/^(  growth_fund_extra:)$/\1\n    - {factor: $f, weight: $w, cap: $c, neutral: $n}/" tests/ci-settings.yaml
+            grep -A1 '^  growth_fund_extra:$' tests/ci-settings.yaml
           done
           cargo build --locked --release
           for y in "${years[@]}"; do
