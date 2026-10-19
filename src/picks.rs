@@ -5392,7 +5392,8 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
     // rank like a pin; one a display trim dropped from its lane (#473) takes its place by score, so a
     // boosted name the value brake cut climbs the printed rows too. Both are flagged `b`: the page's copy
     // of the terminal's (#284) "those N in full" tables. Who shows is decided on the lane alone, so a
-    // `b` row never pushes a lane row out; the RANK cell counts the merged order.
+    // `b` row never pushes a lane row out; the RANK cell counts the merged order. (#745) This book is score
+    // only: [`stamp_buy`] drops a `b` row the blended book does not fund.
     let keep = equal_weights(&picks.iter().map(|(q, _)| (asset_class(q) == 0, 0.0)).collect::<Vec<_>>(), n, 1.0);
     let book: Vec<(&Quote, f64)> = picks.iter().zip(keep).filter_map(|(p, k)| k.map(|_| *p)).collect();
     let bought = |q: &Quote| book.iter().any(|(b, _)| b.ticker == q.ticker);
@@ -5689,15 +5690,25 @@ const BUY_HELP: &str = "Share of new money the 20-year book puts here, the termi
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
 /// wrote it, by both of its builders (`screen`, `web::screen`), because the book is sized off the slice
 /// `render` returns. CORE is untouched: the equal-weight book funds no tracker. A lane the payload lacks
-/// stays absent.
+/// stays absent. (#745) A `b` row the book leaves unfunded is dropped and every later RANK moves up: `web_top`
+/// flags `b` off the score-only book, and the (#584) blend funds only about half of it from the score side.
 pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
     for lane in ["stocks", "etfs", "crypto"] {
-        for row in payload.get_mut(lane).and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
-            let Some(cells) = row.as_array_mut() else { continue };
-            let Some(at) = cells.iter().position(|c| c[0] == "TICKER") else { continue };
+        let Some(rows) = payload.get_mut(lane).and_then(serde_json::Value::as_array_mut) else { continue };
+        let mut cut: isize = 0;
+        rows.retain_mut(|row| {
+            let Some(cells) = row.as_array_mut() else { return true };
+            let Some(at) = cells.iter().position(|c| c[0] == "TICKER") else { return true };
             let w = sized.iter().find(|(t, _)| cells[at][1] == t.as_str()).map(|(_, w)| format!("{w:.1}%")).unwrap_or_default();
+            let flags = |c: &serde_json::Value| c[1].as_str().unwrap_or_default().trim_start_matches(|d: char| d.is_ascii_digit()).contains('b');
+            if w.is_empty() && cells.iter().any(|c| c[0] == "RANK" && flags(c)) {
+                cut += 1;
+                return false;
+            }
             cells.insert(at + 1, serde_json::json!(["BUY%", w]));
-        }
+            shift_rank(row, -cut);
+            true
+        });
     }
     payload["help"]["lanes"]["BUY%"] = BUY_HELP.into();
 }
@@ -12234,6 +12245,17 @@ mod tests {
         assert!(p.get("etfs").is_none(), "an absent lane stays absent");
         assert_eq!(p["help"]["lanes"]["BUY%"], BUY_HELP);
         assert_eq!(p["help"]["lanes"]["SCORE"], "x", "the other entries stay");
+    }
+
+    /// (#745) A `b` row the book does not fund is dropped and later ranks move up; a funded `b` row and an
+    /// unfunded plain row stay.
+    #[test]
+    fn stamp_buy_drops_a_b_row_the_book_does_not_fund() {
+        let row = |r: &str, t: &str| serde_json::json!([["RANK", r], ["TICKER", t]]);
+        let mut p = serde_json::json!({"stocks": [row("1", "A"), row("2#b", "B"), row("3b", "C"), row("4", "D")]});
+        stamp_buy(&mut p, &[("A".to_string(), 50.0), ("C".to_string(), 50.0)]);
+        let got: Vec<(&str, &str)> = p["stocks"].as_array().unwrap().iter().map(|r| (r[0][1].as_str().unwrap(), r[2][1].as_str().unwrap())).collect();
+        assert_eq!(got, [("1", "50.0%"), ("2b", "50.0%"), ("3", "")]);
     }
 
     /// (#446) INDEX lands after BUY% (after TICKER when BUY% is absent) on ETF rows only: a shared
