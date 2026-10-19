@@ -21662,7 +21662,19 @@ buy_heuristic:
                                  #   listing rule) passes at 8y, n 55: +88.06 / +45.57 vs +0.57 / -45.61; 12y n 14, thin.
                                  #   CONSEQUENCE: propose 1.0. A live-page change that reverses the 2026-10-05 USER DECISION,
                                  #   so the OWNER decides; the value stays 1.20 until then.
-  growth_superinvestor_boost: 1.10  # (#472) see growth_brk_held_boost directly above. (#473) USER DECISION 2026-10-05:
+                                 #   (#737) RE-GRADED 2026-10-19 with 13F read back to 1999, same (#544) bar, rule set
+                                 #   before the run: W PASSES both graded horizons, scored set. 12y: n 167, +22.68 / -66.39
+                                 #   vs +1.81 / -109.00; 8y: n 310, +17.84 / -23.92 vs +0.49 / -45.62. 20y thin (n 27).
+                                 #   KEEP 1.20; the (#614) proposal is withdrawn (its 8y fail read 2013-Q2 onward only).
+  growth_superinvestor_boost: 1.0  # (#739) SHIPPED 1.0 = OFF 2026-10-19, was 1.10. Its listing rule `8+ added` FAILS the
+                                 #   (#737) bar at 12y, scored set: n 44, -9.60 / -140.08 vs +2.57 / -106.88 (8y passes, n 85,
+                                 #   +68.81 / +16.51 vs +0.43 / -45.63; 20y thin, n 4). (#738) OWNER RULE 2026-10-19, set
+                                 #   before the names were seen: keep 1.10 only if dropping any ONE name's samples makes the
+                                 #   12y row pass. 0 of 20 drops pass (best: drop QCOM, mean +10.22 but median -123.73).
+                                 #   The fail is the 2013-14 cutoffs (n 17, -164.26 / -178.60: QCOM, IBM, CSCO, ORCL, EBAY,
+                                 #   WMT); the pre-2013 ones beat the rest (n 27, +87.77 / -54.54). The `s` flag and the
+                                 #   Social table still list the buyers; only the score multiplier is off.
+                                 #   (#472) see growth_brk_held_boost directly above. (#473) USER DECISION 2026-10-05:
                                  #   x1.10 once per growth_superinvestor_step buyers, rounded down, counted from zero,
                                  #   no cap. Dataroma lists 8+ buyers, so the smallest boost is x1.21; live counts on
                                  #   2026-10-05 ran 8-18: 8 -> x1.21, 11 -> x1.33, 14 -> x1.46, 18 (MSF.DE) -> x1.77.
