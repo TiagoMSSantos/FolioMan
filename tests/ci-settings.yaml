@@ -6707,6 +6707,36 @@ buy_heuristic:
                                  #  RUNS: probe.yml, `universe fund pit` and `universe fund stress`, years 12 8.
                                  #  PREDICTED: no open lead; (#726) found selection dead, and (#417) found discipline dead at n=115.
                                  #  REVERT: drop `paired` and the appended columns in `report_book_by_factor`, and re-bless.
+                                 #  RESULT 2026-10-19, probe runs 39226244123 (pit) and 39226247670 (stress) on e811653, bless 39226241049 -> a8c3aa5.
+                                 #  Windows scored pit 2779/6163, stress 5078/9015 (= control). Every row's unpaired columns equal the (#740) runs on
+                                 #  all 48 rows x 4 cells. Sanity: on small_pct, which covers nearly every pick, the same-set column reads
+                                 #  +2.8/+3.0/+5.8/+5.2 against the baseline's +3.3/+3.8/+4.6/+4.8.
+                                 #  gap = factor excess minus same-set score excess, pts/yr; `x` = an OOS half at or below the same-set half:
+                                 #                      pit 12y   pit 8y   stress 12y   stress 8y   verdict
+                                 #    roic               +2.0      +1.8      +0.4 x       +1.9      DEAD (stress 12y)            closed
+                                 #    interest_cover     +7.8 x    +1.9      +2.2 x       -0.1 x    DEAD                         closed
+                                 #    net_cash_rev       +0.0 x    +0.5 x    +2.7         +4.3      DEAD (pit)                   closed
+                                 #    rnd_yield         +15.0      +8.4     +12.9         +9.2      PASSES, recorded only        closed (shadow)
+                                 #    op_rd              +9.5 x    +6.1      +0.6 x       +3.1 x    DEAD                         closed
+                                 #    discipline         +5.8      +1.4 x    +5.4         +2.3      DEAD (pit 8y early +5.4 vs +6.4)
+                                 #    rnd_growth         +6.0      +5.7      +3.3 x       +6.6      DEAD (stress 12y early)      closed
+                                 #    rev_cagr           +4.5      +1.0      +2.4         +5.7      LEAD, the one open row
+                                 #  Most of the seven rows' lift over the baseline was their subset: growth_score ranking roic's own rows already
+                                 #  earns +2.9..+6.5, leaving roic +0.4..+2.0, and interest_cover's stress 8y lift of +1.9 is -0.1 on the same set.
+                                 #  The only open row of the seven, discipline, fails one OOS half. rev_cagr was not among the seven: it misses the
+                                 #  baseline at pit 8y (+3.1 vs +3.8) because its subset is hard; growth_score earns +1.8..+3.9 there, below the
+                                 #  baseline in every cell.
+                                 #  rev_cagr excess +6.3/+3.1/+5.8/+9.6 vs same-set +1.8/+2.1/+3.4/+3.9; OOS +8.2/+4.4 vs +5.8/-2.2, +5.3/+1.0 vs +4.3/-0.1,
+                                 #  +8.6/+2.9 vs +6.3/+0.6, +9.6/+9.6 vs +5.6/+2.1; rows/window 104/176/110/208.
+                                 #  CAVEATS, read before any re-grade:
+                                 #    (1) at 12y rev_cagr fills only 4 windows (pit n 416, stress n 441), because 5 filed years must precede the cutoff;
+                                 #        8y fills 12.
+                                 #    (2) the pit 8y gap +1.0 is the thinnest cell.
+                                 #    (3) (#165) read rev_cagr AUC 0.21 at 8y on pre-(#676) data (n 41/10): the held book's LOSERS were the fast revenue
+                                 #        growers. That asks which held names lost, not how to order a subset, but a probe must explain it.
+                                 #  Near misses, not leads: margin_trend and mscore pass 3 cells and fail pit 8y.
+                                 #  PREDICTION MISSED: one open lead. NOTHING SHIPS; per the bar, rev_cagr earns one owner ask for a `growth_fund_extra`
+                                 #  probe with its own bar, since 20y fills no fundamental.
   journal_core_list: true       # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
