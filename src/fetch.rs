@@ -8995,7 +8995,7 @@ async fn wikidata_young_pond(client: &Client, urls: &Urls) -> Vec<(String, Strin
         return pond.clone();
     }
     if offline() {
-        return Vec::new();
+        return banked.unwrap_or_default(); // (#754) a stale pond, as `cached_feed` serves offline
     }
     throttle().await;
     let since = chrono::Local::now().date_naive() - chrono::Duration::days((crate::picks::YOUNG_YEARS * 365.25) as i64);
