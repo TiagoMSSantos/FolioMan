@@ -4212,7 +4212,8 @@ fn winner_bar(mut fwd: Vec<f64>, top_pct: f64) -> Option<f64> {
 /// of every 10 places the momentum half's, where it was the top `VERDICT_TOP - growth_momentum_slots` score names
 /// then momentum's. Winners are the top `top_pct`% stocks by realized %, as in [`winner_leaks`]. Returns the
 /// filled book slots, and per held winner its [score half, momentum half] slot counts, a slot counting for the
-/// side that placed it. A config that loses winners from either half reads here.
+/// side that placed it, and (#740) the momentum half's slots, one per slot. A config that loses winners from either
+/// half reads here.
 // shortcut: skips the sector and corr caps the DCA lane runs; both are the identity at their shipped 0.
 fn blend_winners<'a>(
     groups: &BTreeMap<i32, Vec<&'a Sample>>,
@@ -4220,8 +4221,8 @@ fn blend_winners<'a>(
     scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>,
     tuning: &BuyHeuristic,
     open: &BuyHeuristic,
-) -> (usize, BTreeMap<&'a str, [usize; 2]>) {
-    let (mut slots, mut held) = (0, BTreeMap::<&'a str, [usize; 2]>::new());
+) -> (usize, BTreeMap<&'a str, [usize; 2]>, Vec<&'a Sample>) {
+    let (mut slots, mut held, mut mom) = (0, BTreeMap::<&'a str, [usize; 2]>::new(), Vec::new());
     for group in groups.values() {
         let by_tk: BTreeMap<&'a str, &'a Sample> = group.iter().map(|&s| (s.quote.ticker.as_str(), s)).collect();
         let pool: Vec<&'a Sample> = by_tk.values().copied().collect();
@@ -4236,12 +4237,15 @@ fn blend_winners<'a>(
         slots += book.len();
         for (t, by_m) in book {
             let s = by_tk[t];
+            if by_m {
+                mom.push(s);
+            }
             if picks::asset_class(&s.quote) == 2 && s.realized >= bar {
                 held.entry(t).or_default()[usize::from(by_m)] += 1;
             }
         }
     }
-    (slots, held)
+    (slots, held, mom)
 }
 
 /// (#583) The `winners` report: where each window's top-5% stocks went, on the shipped book's pond (the
@@ -4278,7 +4282,7 @@ fn report_winners(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)
             tags.join(", ")
         );
     }
-    let (slots, held) = blend_winners(&pools, WINNER_TOP_PCT, picks::growth_scores_ranked, tuning, &picks::gates_off(tuning));
+    let (slots, held, mom) = blend_winners(&pools, WINNER_TOP_PCT, picks::growth_scores_ranked, tuning, &picks::gates_off(tuning));
     let [sh, mh] = held.values().fold([0, 0], |a, h| [a[0] + h[0], a[1] + h[1]]);
     let mut names: Vec<(&str, usize)> = held.iter().map(|(t, h)| (*t, h[0] + h[1])).collect();
     names.sort_by_key(|a| std::cmp::Reverse(a.1)); // stable: ticker order on ties
@@ -4289,6 +4293,14 @@ fn report_winners(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)
         (sh + mh) as f64 / slots.max(1) as f64 * 100.0,
         names.join(", ")
     );
+    // (#740) the momentum half's held book split by factor, as (#159) splits the score lane's: what that half
+    // BOUGHT AND LOST. Every slot is held, so the score is a dummy and n is unbounded.
+    let mom: Vec<(&Sample, f64)> = mom.into_iter().map(|s| (s, 0.0)).collect();
+    let lost = mom.iter().filter(|(s, _)| s.realized < 0.0).count();
+    println!("  (#740) momentum half's held LOSERS by factor: {} slots, {lost} lost money", mom.len());
+    for HeldLoserRow { factor, n_win, n_lose, med_win, med_lose, auc } in held_loser_factors(&mom, usize::MAX, &FUND_FACTORS) {
+        println!("    {factor:<21} winners n={n_win:<4} med {med_win:>9.2}   losers n={n_lose:<4} med {med_lose:>9.2}   AUC {auc:>5.2}");
+    }
 }
 
 /// (#106) The per-bucket terminal multiples of an equal-weight top-`n` book and of the same bucket's
@@ -8788,9 +8800,15 @@ mod tests {
         let shipped = BuyHeuristic { quality_weight: 0.0, growth_momentum_slots: 8, ..BuyHeuristic::default() };
         let open = BuyHeuristic { quality_weight: 1.0, ..shipped.clone() };
         // bucket 1: 6 stocks, top 50% down to M1's 90; the book is S1 S2 | M1 M2 S3. Bucket 3: bar T1's 30, book T1 T2
-        let (slots, held) = blend_winners(&groups, 50.0, swap_scorer, &shipped, &open);
+        let (slots, held, mom) = blend_winners(&groups, 50.0, swap_scorer, &shipped, &open);
         assert_eq!(slots, 7);
         assert_eq!(held, BTreeMap::from([("M1", [0, 1]), ("S1", [1, 0]), ("T1", [0, 1])]));
+        let tickers = |v: Vec<&Sample>| {
+            let mut t: Vec<String> = v.iter().map(|s| s.quote.ticker.clone()).collect();
+            t.sort();
+            t
+        };
+        assert_eq!(tickers(mom), ["M1", "M2", "S3", "T1", "T2"], "(#740) the momentum half's slots");
         // (#630) 12 stocks, bar S4's 800 (a tie at the bar holds): the book is S1 M1 S2 S4 S3 M3 S5 M4 S6 M5, M6 (900) out
         let d = ymd(2013, 1, 8);
         let b4 = [
@@ -8809,9 +8827,10 @@ mod tests {
         ];
         let five = BuyHeuristic { growth_momentum_slots: 5, ..shipped };
         let open = BuyHeuristic { quality_weight: 1.0, ..five.clone() };
-        let (slots, held) = blend_winners(&BTreeMap::from([(bucket(d), b4.iter().collect::<Vec<_>>())]), 25.0, swap_scorer, &five, &open);
+        let (slots, held, mom) = blend_winners(&BTreeMap::from([(bucket(d), b4.iter().collect::<Vec<_>>())]), 25.0, swap_scorer, &five, &open);
         assert_eq!(slots, 10);
         assert_eq!(held, BTreeMap::from([("S4", [0, 1]), ("S6", [1, 0])]));
+        assert_eq!(tickers(mom), ["M1", "M3", "M4", "M5", "S4"]);
     }
 
     /// (#560) The rival books' arithmetic: the tie band, the 12-1 formula, rank ties, the book's dedupe and

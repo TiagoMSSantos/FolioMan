@@ -6657,6 +6657,26 @@ buy_heuristic:
                                  #  MEASURED, backtest-gate control (HEAD) vs arm, same session: 20/12/8y price legs byte-identical (+5.4/+5.9/+6.5 top-10).
                                  #  8y fund: top-10 excess +5.2 both, lane edge +21.4 -> +20.7, as-of fundamentals 51.0% -> 51.5%, peg_yield n 3301 -> 3293.
                                  #  REVERT RULE: none, all three are parse errors. A new debt tag is a census line here.
+                                 #── (#740) PRE-REGISTERED 2026-10-19, before any run — THE MOMENTUM HALF'S HELD LOSERS BY FACTOR ──
+                                 #  WHY: the owner asks to spot bad assets and rank them lower. Every penalty is graded and refused: the red-flag dock
+                                 #  (#730), the loss and life floors (#576), the margin, cover, FCF and net-cash floors (#38, P1b-d, #169), the miss caps
+                                 #  (#582 score half, #585 momentum half), momentum re-sorted by score (#600 n), the PEG taper (#550). The live page's
+                                 #  weakest rows are momentum (`m`) picks (INL.DE, 1ZB.DE, CIE1.DE), and that half holds 1.6-2.5x the score half's
+                                 #  winners (#606). This table (#159/#165) reads the score lane's top 10 only; nothing has asked which as-of data
+                                 #  separates the momentum half's losers from its winners.
+                                 #  BUILT, report only: `blend_winners` also returns the momentum half's book slots, and the `winners` report runs
+                                 #  `held_loser_factors` on them over FUND_FACTORS (loser = realized < 0, as (#159)). No knob; no golden reads it.
+                                 #  BAR (owner): a factor is a LEAD only if it reads the same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10, in pit
+                                 #  AND stress, with losers n >= 10 in each of the 4 cells. Anything else is DEAD. 20y is not run: no as-of
+                                 #  fundamentals there ((#583) note 6).
+                                 #  A LEAD SHIPS NOTHING: it earns one owner ask to pre-register a momentum-half dock under (#730)'s four bars. A lead in
+                                 #  a closed family is recorded, never asked: profitability (gross/op/net margin, roe, quality, roic, fcf_margin,
+                                 #  gp_assets, cf_assets), the P1 floors (interest_cover, net_cash_rev), peg_yield (#550), and the eleven journalled
+                                 #  shadow factors (track FACTORS: rnd_yield int_yield mscore lynch_yield sgr_yield fair_yield oe_fair_yield
+                                 #  fcf_cap_yield rnd_growth margin_stability rev_stability), which wait for their forward rows.
+                                 #  RUNS: probe.yml, `universe fund pit winners` and `universe fund stress winners`, years 12 8.
+                                 #  PREDICTED: no lead, as (#583) and (#726) found no lever; outright losers are few at 12y.
+                                 #  REVERT: drop `blend_winners`' third element and the loop in `report_winners`.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
