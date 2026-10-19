@@ -4239,7 +4239,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
     let stock_only_na = is_etf || is_crypto; // P/E, ROE don't apply here (PEG now splits equity/fund — see below)
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
     let crypto_only_na = is_equity || is_etf; // MVRV doesn't apply here — realized cap is an on-chain quantity
-    match key {
+    unsign_zero(match key {
         "rank" => mark.to_string(),
         "name" => clean_name(quote),
         "ticker" => quote.ticker.clone(),
@@ -4430,11 +4430,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "div" => core::dividend_yields(&quote.div_eur, quote.price_eur)
             .first()
             .and_then(|o| *o)
-            // A yield that ROUNDS to zero is a non-payer and must print as one. The raw value comes off
-            // an FX-scaled sum and can land a hair below zero, which formats as "-0.00%" — every one of
-            // the 24 non-payers on the table printed that. Clamp the DISPLAY, not the number: the score
-            // reads `dividend_yield_1y` on its own path and is untouched.
-            .map_or_else(|| short_or_na(quote, 1.0), |d| format!("{:.2}%", if d.abs() < 0.005 { 0.0 } else { d })), // (#702) under a year listed: "—"
+            // An FX-scaled sum can land a hair below zero ("-0.00%" on every non-payer); [`unsign_zero`] drops that sign.
+            .map_or_else(|| short_or_na(quote, 1.0), |d| format!("{d:.2}%")), // (#702) under a year listed: "—"
         // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
         // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
         "ter" if etf_only_na => "—".to_string(),
@@ -4564,7 +4561,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // this is the full-history score wearing an 8Y label. Same test the fallback itself uses.
         "score8y" => alt.map_or("n/a".to_string(), |v| format!("{v:.1}{}", short_8y_mark(quote))),
         _ => "?".to_string(),
-    }
+    })
 }
 
 /// (round 110) Ticker-base normalizers for the owned-position overlay. Trading212 encodes a listing
@@ -4672,6 +4669,17 @@ fn rank_mark(idx: usize, quote: &Quote, pinned: &HashSet<&str>, owned: &Owned, t
     // stakes, ARK buys, insider cluster buys, a recent video, the hand list). Display-only, like `w`/`W`.
     let social = if quote.social { "s" } else { "" };
     format!("{}{star}{enriched}{braked}{commodity}{exchange}{fx_listed}{bridged}{holdable}{held}{brk}{brk_held}{social}", idx + 1)
+}
+
+/// (#743) A cell whose number rounds to zero drops its minus: a hair-below-zero value printed `-0.0%`,
+/// `-0x` or `-0%ⁱ` in 57 cells over 8 tables, which reads as a bug. (#488) fixed the Bonds cells alone; every
+/// table cell producer ([`col_cell`], [`hold_core_cells`], the side tables' SCORE) now ends here. Only the
+/// minus: `+0.0%` is not wrong.
+pub(crate) fn unsign_zero(s: String) -> String {
+    match s.strip_prefix('-') {
+        Some(r) if r.starts_with('0') && r.chars().take_while(|c| c.is_ascii_digit() || *c == '.').all(|c| c == '0' || c == '.') => r.to_string(),
+        _ => s,
+    }
 }
 
 /// (#79) One printed row as `(header, cell)` pairs — the same pairing [`print_picks`] pads into
@@ -6204,7 +6212,7 @@ pub fn stamp_shadow_cols(
             let at = cells.iter().position(|c| c[0] == "NAME").map_or(cells.len(), |i| i + 1);
             // (#543) the hover rides as the 4th element, after a null link, as REPORTS' does (#542)
             let misses = if hover.is_empty() { serde_json::json!(["MISSES", misses]) } else { serde_json::json!(["MISSES", misses, null, hover]) };
-            cells.splice(at..at, [serde_json::json!(["SCORE", score]), misses]);
+            cells.splice(at..at, [serde_json::json!(["SCORE", unsign_zero(score)]), misses]);
             if let Some(v) = soc_score {
                 cells.insert(at, serde_json::json!(["SOC", format!("{v:.2}")]));
             }
@@ -6862,7 +6870,7 @@ pub(crate) fn hold_core_cells(q: &Quote, owned: &Owned) -> Vec<String> {
         fund_cell("top10", q),
         fund_cell("td1y", q),
         fund_cell("td5y", q),
-    ]
+    ].into_iter().map(unsign_zero).collect()
 }
 
 /// (#507) The CAGR cell, lanes and CORE alike: whole-life CAGR, else under 6 months the plain change
@@ -13402,6 +13410,12 @@ mod tests {
 
     /// (QA) `col_cell` VALUE arms the `screen_columns_config` test leaves at n/a (it uses a bare stub):
     /// the number-formatting columns + the ≥1000% no-decimal path + the unknown-key fallback.
+    #[test]
+    fn unsign_zero_drops_the_minus_only_off_a_zero() {
+        let got = ["-0.0%", "-0x", "-0%ⁱ", "-0.00%", "-0.0ˢ", "-0.05%", "-10%", "+0.0%", "n/a", "-"].map(|c| unsign_zero(c.to_string()));
+        assert_eq!(got, ["0.0%", "0x", "0%ⁱ", "0.00%", "0.0ˢ", "-0.05%", "-10%", "+0.0%", "n/a", "-"]);
+    }
+
     #[test]
     fn col_cell_value_arms() {
         let mut q = Quote::stub("AAA", "€12.34", "", "Alpha");
