@@ -436,9 +436,9 @@ fn screen_ranks_and_journals_offline() {
         assert!(payload.get(k).is_some(), "payload lacks `{k}`");
         assert!(reads_data_key(&app, k), "web/app.js never reads data.{k}: the page drops what screen writes");
     }
-    // (#530) the keys both stamp are the CAGR floors the page greys or hides rows under
+    // (#530) the keys both stamp are the CAGR floors the page greys or hides rows under; (#746) and the Braked table
     for k in stamped.intersection(&engine) {
-        assert!(payload[k].is_number(), "`{k}` must be a number: {}", payload[k]);
+        assert!(payload[k].is_number() || k == "braked", "`{k}` must be a number: {}", payload[k]);
     }
     let smoke = repo_file("web/engine/smoke.mjs");
     let line = smoke.lines().find(|l| l.trim_start().starts_with("const ci = [")).expect("smoke.mjs lists its CI-only keys");
