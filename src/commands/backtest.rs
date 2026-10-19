@@ -9023,6 +9023,9 @@ mod tests {
         let z = Quote::stub("Z", "1", "", "Acme");
         let sz = config::Sizing { book_names: 2, head_weight: 3.0, ..Default::default() };
         assert_eq!(picks::sized_splice(&[(&a, 50.0), (&b, 50.0)], &[&z, &x], false, 5, &sz), vec![("A", 50.0), ("X", 50.0)]);
+        // (#744) Y is B's twin, but the cut places only A from the score side, so Y keeps its slot
+        let y = Quote::stub("Y", "1", "", "Beta");
+        assert_eq!(picks::sized_splice(&[(&a, 50.0), (&b, 50.0)], &[&y, &x], false, 5, &sz), vec![("A", 50.0), ("Y", 50.0)]);
         let sz = config::Sizing { book_names: 6, ..sz };
         let six: Vec<Quote> = ["P", "Q", "R", "S", "T", "U"].iter().map(|t| Quote::stub(t, "1", "", t)).collect();
         let book: Vec<(&Quote, f64)> = six[..5].iter().map(|q| (q, 0.0)).collect();
