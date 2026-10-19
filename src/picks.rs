@@ -2059,7 +2059,8 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
 
 /// (#563) [`score_parts_hard`], with `growth_gate_soft` armed: a name the knob gates refuse is scored
 /// with exactly the gates it fails waived ([`waived`], the same what-if the MISSES column shows) and
-/// docked f^n, n = gates waived. At the shipped 0.0 nothing reaches `waived`, so the lane is bit for bit.
+/// docked f^n, n = gates waived. At 0.0 nothing reaches `waived`, so the lane is bit for bit the hard one;
+/// CI ships 0.8 (#566).
 /// What `waived` cannot lift (a structural refusal, no turnover, the repriced-bar artifact) stays `None`.
 fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let hard = score_parts_hard(quote, tuning);
@@ -3880,8 +3881,8 @@ fn ranked<'a>(
     // (B) collapse dual-class share twins (GOOG/GOOGL, BRK.A/BRK.B): same company = identical Yahoo
     // name; after the best-first sort, keep the first (higher-scoring/more-liquid) leg, drop the rest.
     // A pinned ticker is NEVER deduped away — else a pinned ETF (VUAA.DE) vanishes behind a same-named
-    // higher-scored twin (VUAA.L) in the full universe. (insert() still runs so a non-pinned twin is
-    // dropped whether the pinned leg came before or after it.)
+    // higher-scored twin (VUAA.L) in the full universe. (insert() still runs for the pinned leg, so a
+    // non-pinned twin sorted after it is dropped; one sorted before it was kept first and stays.)
     let mut seen: HashSet<&str> = HashSet::new();
     picks.retain(|(quote, _)| {
         let fresh = seen.insert(quote.name.as_str());
@@ -6687,13 +6688,6 @@ fn hold_core_cmp(a: &Quote, ta: u8, b: &Quote, tb: u8, swap_credit: f64, dom_pen
         .then(a.ticker.cmp(&b.ticker))
 }
 
-/// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
-/// overext brake floors a broad index fund that has simply run for years). Built straight from the full
-/// universe, bypassing `growth_score` entirely: keep every `hold_suitable` fund (broad + cheap +
-/// physical + accumulating + large + UCITS), collapse currency/listing twins by name, and rank by what
-/// a decades hold actually cares about — broadest diversification first (one fund = the whole world),
-/// then cheapest TER, then largest AUM (least closure risk). Pure display; touches no score, no gate,
-/// no backtest. Scoped to the wide `screen` universe (empty on the small `check` watchlist anyway).
 /// (#269) The `(tier, index family)` pair that answers "does this sleeve already show that index".
 ///
 /// ONE spelling, shared by [`retain_new_family_only`] and by the `keys` [`hold_core_list`] hands to
@@ -6749,10 +6743,17 @@ fn retain_new_family_only(cores: &mut Vec<&Quote>, strict: f64, relaxed: f64, by
     cores.retain(|q| clears_strict(q) || !seated.contains(&family_key(q, by_bench)));
 }
 
+/// Buy-and-hold CORE shortlist — the one-fund-forever holds the growth score buries (the overext brake
+/// floors a broad index fund that has simply run for years). Built straight from the full universe,
+/// bypassing `growth_score` entirely: keep every `hold_suitable` fund (broad + cheap + physical +
+/// accumulating + large + UCITS) and collapse currency/listing twins by name. Pure display; touches no
+/// score, no gate, no backtest. Scoped to the wide `screen` universe (empty on the small `check`
+/// watchlist anyway).
+///
 /// (round 55) The CORE shortlist selection, shared by the printed block and the screen-state
 /// membership diff: EU-buyable hold-suitable funds, one row per fund name (best venue kept),
 /// breadth-major sort (all-world -> World -> S&P 500; IE domicile, cheapest TER, largest AUM
-/// within a tier), capped at 3 per tier so no index family crowds out the others.
+/// within a tier), capped at `hold_per_tier` per tier so no index family crowds out the others.
 pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     let mut cores: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)).collect();
     // (#233) the swap TER credit, read ONCE here and passed into the comparator — the sort must not

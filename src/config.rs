@@ -663,7 +663,7 @@ impl Default for BuyHeuristic {
             growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
             growth_accel_beta: 1.0,        // (#98) 1.0 = subtract the whole long CAGR, the shipped expression, byte-identical. Any other value is an UNSWEPT scoring change; see the receipt in ci-settings before moving it
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
-            growth_min_score_etf: 5.0,     // code default = growth_min_score (no behavior change out-of-box); ci-settings.yaml ships the lower ETF-calibrated floor
+            growth_min_score_etf: 5.0,     // code default = growth_min_score (no behavior change out-of-box); ci-settings.yaml ships -100 for both floors (no row hidden)
             growth_allow_negative_scores: false, // (#86) OFF = the shipped lane, byte-identical: the floor stays clamped at 0 and a negative base keeps taking the damp. Turning it on changes both halves at once and is edge-affecting on the live tables (the backtest pool has no negative-base rows to reorder, so no golden covers it) — measure before shipping it, and never turn on one half alone
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
             growth_max_above_ma: 0.0,      // code default off; ci-settings.yaml ships the validated 150
@@ -673,7 +673,7 @@ impl Default for BuyHeuristic {
             growth_max_vol_crypto: 0.0,    // (#36) off by default; ci-settings ships 3.0 (just above BTC's ~2.4%/day)
             growth_min_age_years: 0.0,     // (#33) off by default; ci-settings ships 0.0 TOO — deliberately, to keep early winners visible and let trust_factor dock them instead (backtest-blind either way, so no grid can settle it)
             growth_min_aum_etf: 0.0,       // (AUM) off by default; ci-settings ships 100M (backtest-blind ETF closure-risk gate)
-            growth_max_peg: 0.0,           // (#37) off by default. MEASURABLE (peg_yield is filled in the backtest) -> validate on `backtest universe fund pit` before shipping a value. (#266) ci-settings ships 1.6 and the 2.0 this line used to suggest is MEASURED WORSE: the {1.75, 2.0, 2.5} ladder fails PRIMARY monotonically at 12y and 8y. Read that receipt before proposing a value here
+            growth_max_peg: 0.0,           // (#37) off by default. MEASURABLE (peg_yield is filled in the backtest) -> validate on `backtest universe fund pit` before shipping a value. (#266) the {1.75, 2.0, 2.5} ladder failed PRIMARY at 12y and 8y and 1.6 shipped; (#552) re-graded on the split-restated pool, ci-settings ships 2.0. Read both receipts before proposing a value here
             growth_peg_taper_k: 0.0,       // (#550) 0 = OFF: growth_max_peg stays a hard wall. k = 1/2/4 REFUSED 2026-10-11 on one 8y median tick; read the receipt before re-arming
             growth_max_peg_etf: 0.0,       // (#37 funds) off by default. ci-settings ships 2.0 — the value that keeps the concentrated growth funds and cuts the broad expensive ones; see the knob doc for why it is not the equity 1.6
             growth_require_peg: false,     // (V) off by default. Only meaningful alongside growth_max_peg — it closes the hole where a filer with NO per-share data walks past that ceiling untested
@@ -740,7 +740,7 @@ impl Default for BuyHeuristic {
             growth_er_cap: 20.0, // (#105) unfitted judgement value; inert while the weight is 0.
             growth_record_weight: 0.0, // (#133) 0 = the term contributes exactly 0.0 — the lane every golden holds.
             growth_record_full_years: 20.0, // (#133) unfitted judgement value; inert while the weight is 0.
-            growth_gate_soft: 0.0, // (#563) OFF: every gate hard, the shipped lane bit for bit.
+            growth_gate_soft: 0.0, // (#563) OFF: every gate hard, the pre-(#563) lane bit for bit. (#566) ci-settings ships 0.8, stocks only.
             growth_leg_dock: 0.0, // (#566) OFF: trust_factor and the f^n count stand as before.
             growth_soft_life_hard: 0.0, // (#568) OFF: cagr-life is waivable like every other knob gate.
             growth_hard_life_floor: 0.0, // (#576) OFF: any life CAGR can be docked in.

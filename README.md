@@ -138,20 +138,30 @@ a corrupt or unwritable state file is detected and warned about, never silently 
 (function names so you can jump into the source):
 
 ```
-fetch::fetch_universe   live universe: top-N crypto (CoinGecko) + S&P 500 + Euronext Lisbon + Xetra UCITS ETFs  (screen only)
+fetch::fetch_universe   live universe: top-N crypto (CoinGecko) + S&P 500 + Euronext Lisbon + Xetra UCITS ETFs
+                        + $1B+ US IPOs of the last 5 years  (screen only)
         ↓
 fetch::quotes           one Quote per ticker (price, per-horizon %, volatility, SMA dist, P/E, ROE…)
         ↓
 picks::eu_buyable       drop what EU retail can't buy (US-domiciled ETFs, Asia-only listings)
         ↓
-picks::growth_score     GATE then SCORE each Quote (src/picks.rs) — the heuristic
+picks::growth_score     GATE then SCORE each Quote (src/picks.rs) — the heuristic. A stock that fails
+                        knob gates is scored with them waived and docked 0.8 per failed gate
+                        (`growth_gate_soft`); the overextension brake damps names far above their 200wk SMA
         ↓
-picks::ranked           dedup currency twins + dual-class shares, sort best-first, trim padding
+picks::ranked           dedup currency twins + dual-class shares, one fund per benchmark index, sort best-first
         ↓
 picks::print_lane       split per class (stocks / ETFs / crypto), print Top-N each
         ↓
+picks::buy_book         BUY NOW: a 25-name equal-weight book, the first five at 8 shares each
+                        (`head_weight`), score names and 12-7 momentum names interleaved S M S M …
+        ↓
 NUPL + macro footer     Bitcoin sentiment + Euribor / Certificados de Aforro / inflation baselines
 ```
+
+The page shows that book as the BUY% column: `b` marks a score row the book funds, `m` a momentum
+row, and the Braked table lists the stocks the overextension brake alone keeps out. Uploading a
+settings file re-ranks every table in the browser (`src/web.rs`, compiled to wasm).
 
 There is a SECOND lane, `picks::buy_score` ("on-sale", buy-the-dip). **It is a backtest foil only —
 neither `check` nor `screen` prints it.** It exists so `backtest` can show that dip-buying has
@@ -159,13 +169,16 @@ neither `check` nor `screen` prints it.** It exists so `backtest` can show that 
 
 ## Tuning the buy heuristic
 
-Goal: change what the `screen` growth ranking surfaces. Edit `buy_heuristic:` in
-`config/settings.yaml`, then **validate with `cargo run -- backtest`** (watch rho = rank
-correlation, the top-vs-bottom-half edge in points, and that both out-of-sample halves stay
-positive). Two rules:
+Goal: change what the `screen` growth ranking surfaces. The shipped knobs live in
+`tests/ci-settings.yaml`, which CI and the page read. A local `config/settings.yaml` (or the file
+`FOLIOMAN_CONFIG` names) is merged over it, so it only needs the knobs you change. Edit
+`buy_heuristic:` there, then **validate with `cargo run -- backtest`** or a `probe.yml` dispatch
+with `knobs=` (watch rho = rank correlation, the top-vs-bottom-half edge in points, and that both
+out-of-sample halves stay positive). Two rules:
 
 - **Only knobs NOT tagged `[FOIL]` affect `screen`.** The `[FOIL]` knobs (`discount_*`,
-  `momentum_*`, `min_score`, `cheap_*`, `sustained_*`, `min_1y_pct`, `min_long_pct*`, …) feed the
+  `momentum_*` but not `growth_momentum_*`, `min_score`, `cheap_*`, `sustained_*`, `min_1y_pct`,
+  `min_long_pct*`, …) feed the
   backtest-only on-sale lane. Tuning them changes nothing you see.
 - **Gates move the signal; weights barely do.** A gate reshapes the scored pool; additive/multiplier
   weights only re-rank what's already in it. Tune gates first.
@@ -190,38 +203,34 @@ with no `FMP_API_KEY` coverage) are detected and skipped so the search doesn't w
 | Damp crypto when the market is euphoric | `nupl_euphoria` / `nupl_damp_floor` | lower the floor |
 | Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
 | Tilt toward cheap-on-earnings (needs `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
-| Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | shipped 1.0 (`earnings_yield`); 0 = off |
+| Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | shipped 0.07 (`peg_yield`); 0 = off |
+| Admit fewer near-miss stocks | `growth_gate_soft` | lower (0 = every gate a hard wall) |
+| Give the momentum side more or fewer of every 10 book slots | `growth_momentum_slots` | shipped 5 |
 
-### Current status (2026-07): the defaults are a measured optimum
+### Current status (2026-10): the defaults are a measured optimum
 
-The shipped defaults were validated by the 12y walk-forward: growth edge ~+170 pts with both
-out-of-sample halves positive; a held top-10 book compounds ~+15.0%/yr vs the S&P's ~8.0. The
-ship rule for ANY knob change is the same bar: the edge must hold with BOTH out-of-sample
-halves positive, or the change reverts.
+Every shipped knob was graded by CI's backtest gate (12y and 8y walk-forward, point-in-time and
+stress pools), and each knob's receipt sits beside it in `tests/ci-settings.yaml`. The ship rule
+for ANY knob change is the same bar: the edge must hold with BOTH out-of-sample halves positive,
+or the change reverts.
 
 Measured dead — don't re-run these:
 
 - **Range gate below 80** — lost the same-batch triple three separate times.
 - **R² steadiness floor or damp** — low-R² boom-bust names near their high BEAT the field at
   12y (the accel term is deliberately buying cyclical upswings).
-- **Removing the 1Y>0 floor** — the names it would admit average −108 pts forward; it is one
-  of the lane's most protective gates.
+- **Loosening the 1Y floor** — the names a 10-point looser floor admits average −108 pts
+  forward. It ships at −0.3% (`growth_min_1y_pct`): a hard wall for ETFs, and one of the gates
+  the 0.8 soft dock covers for stocks. Coins have their own floor (`min_1y_pct_crypto`).
 - **Shorter horizons** — the edge is a LONG-horizon signal: negative under 3y, rising through
   10y. Selling early converts a validated signal into noise.
-- **Every fundamentals factor through the fund lane except `earnings_yield`** — margins, rev/eps
-  growth, buyback yield, SEC-computed ROE, and Form-4 insider net-buys all fail out-of-sample
-  against the price-only baseline on the full S&P pool.
+- **Every fundamentals factor through the fund lane except `peg_yield`** — margins, profitability,
+  rev/eps growth, buyback yield, SEC-computed ROE, and Form-4 insider net-buys all fail
+  out-of-sample against the price-only baseline. `peg_yield` (1/PEG) at weight 0.07 is the only
+  live fund tilt; it replaced the earlier `earnings_yield` tilt at 1.0.
 
 The `[FOIL]` on-sale lane stays deliberately unimproved: its job is to keep proving that
 dip-buying loses to the growth lane over a multi-decade hold.
-
-One exception shipped 2026-07-12: the `earnings_yield` fund tilt (`growth_fund_weight: 1.0`,
-SEC-sourced) is ON. It beat the price-only baseline with both out-of-sample halves positive in
-three independent-pool wide runs, and the on-vs-off ship test on the serving universe improved
-the growth edge (+170.3 vs +156.9, OOS +0.14|+0.20) and the held top-10 book (+15.0 vs
-+14.7%/yr) with the worst 12y hold unchanged. Revert rule: a future wide run losing an
-out-of-sample half sets the weight back to 0. The one earlier contradicting run (2026-07-02)
-traced to baseline variance — the factor's own lane edge held +137..+157 in all four runs.
 
 ## Glossary
 
