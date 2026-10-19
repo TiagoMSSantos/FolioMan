@@ -2010,6 +2010,20 @@ sizing:
   #  keeps 1.20, none graded keeps it (thin). `8+ added` reads the same bar for `growth_superinvestor_boost`
   #  (1.0 vs 1.10). A proposal only: a knob ship needs the owner's yes and a bless=true probe.
   #  REVERT RULE: drop the dispatch line in `parse_13f` and set HOLDER_SINCE back to 2013-06-30.
+  #── (#738) 2026-10-19: THE `8+ added` SAMPLES PRINT BY NAME, A LEAVE-ONE-NAME-OUT READS THE 12y FAIL ──
+  #  PRE-REGISTERED 2026-10-19, before the names were seen.
+  #  WHY: the (#737) probe on f731ce3 failed `8+ added` at 12y on both bars, scored set: n 44, mean -9.60,
+  #  median -140.08, hit 36.4 vs rest n 5258, +2.57, -106.88, 31.1. The report printed no names, so a fail
+  #  carried by one or two names repeated over quarters read the same as a broad one.
+  #  BUILT: `report_holder_cohorts` prints each scored-set `8+ added` sample: ticker, cutoff, excess, and
+  #  whether it also clears every gate. The line count equals the table row's n.
+  #  BACKTEST ONLY: report output; no CI test or golden runs `holders`.
+  #  DECISION RULE: probe `universe fund pit holders` at 12 and 8 years. On the 12y scored set, drop each
+  #  ticker's samples in turn (rest unchanged). If dropping ANY one name makes `8+ added` beat the rest on
+  #  mean AND median, the fail is that name: keep `growth_superinvestor_boost` 1.10. Else ship 1.0. If the
+  #  12y row moved from n 44 (pond drift), grade the new run's row. Info only: the hard column, and the 8y
+  #  samples split at cutoff 2013-06-30.
+  #  REVERT RULE: drop the (#738) loop.
   #── (#606) HELD WINNERS: A GATE ON THE NAMES, NOT ONLY ON THE AVERAGES ──
   #  PRE-REGISTERED 2026-10-16, before any reading.
   #  WHY: the owner asked for tests that stop a new buy-heuristic config from quietly losing good assets.

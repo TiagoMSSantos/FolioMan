@@ -2328,6 +2328,14 @@ fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::Hol
     println!("  (#544) among the stocks that score, soft admits too (rest = the other scored): what each boost multiplies.");
     print_cohorts(&holder_cohorts(&passed, txs));
     let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
+    // (#738) the samples behind the shipped listing rule's row, scored set, one line each: which names and
+    // cutoffs its verdict rests on. `hard` = it also clears every gate.
+    println!("  (#738) `8+ added` samples, scored set: ticker, cutoff, excess, hard");
+    for s in passed.iter().filter(|s| picks::asset_class(&s.quote) == 2) {
+        if txs.get(&s.quote.ticker).is_some_and(|t| core::holder_flags(t, s.date).adders >= 8) {
+            println!("    {:<10} {} {:>+9.2} {}", s.quote.ticker, s.date, s.relative, growth_score(&s.quote, &hard).is_some());
+        }
+    }
     let passed: Vec<Sample> = samples.iter().filter(|s| growth_score(&s.quote, &hard).is_some()).cloned().collect();
     println!("  (#614) among the stocks that clear every gate (rest = the other hard passers):");
     print_cohorts(&holder_cohorts(&passed, txs));
