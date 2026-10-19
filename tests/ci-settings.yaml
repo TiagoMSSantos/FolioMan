@@ -6677,6 +6677,16 @@ buy_heuristic:
                                  #  RUNS: probe.yml, `universe fund pit winners` and `universe fund stress winners`, years 12 8.
                                  #  PREDICTED: no lead, as (#583) and (#726) found no lever; outright losers are few at 12y.
                                  #  REVERT: drop `blend_winners`' third element and the loop in `report_winners`.
+                                 #  RESULT 2026-10-19, probe runs 39219323518 (pit) and 39219332967 (stress) on 468ddc3: NO LEAD, 0 of 53 factors. Guards
+                                 #  held: windows scored pit 2779/6163, stress 5078/9015; WINNERS HELD equal to the (#730) control in all 4 cells.
+                                 #  The bar fails on coverage before AUC. The momentum half's held book lost money in 56 of 190 slots (pit 12y), 60 of 230
+                                 #  (pit 8y), 27 of 296 (stress 12y) and 52 of 336 (stress 8y), yet at most 1, 11, 1 and 3 of those losers carry as-of
+                                 #  fundamentals, against 12-54 winners per factor. Only pit 8y reaches losers n >= 10 (29 factors, 14 of them at
+                                 #  |AUC-0.5| >= 0.10, best noa 0.65, accrual_gap 0.66, op_leverage 0.64, small_pct 0.33); no other cell has a factor
+                                 #  with more than 3 losers, and 27 of the 52 printed factors drop out of at least one cell with an empty loser side.
+                                 #  VERDICT: the momentum half's losers are names this pool holds no as-of fundamentals for, so no fundamental dock can
+                                 #  reach them; nothing to ask. REOPEN only when as-of fundamentals cover them (losers n >= 10 in all 4 cells); the re-run
+                                 #  is `universe fund pit winners` and `universe fund stress winners`, years 12 8.
   journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
