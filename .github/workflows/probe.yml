@@ -9,7 +9,7 @@ name: Probe
 #
 # MANUAL ONLY, and it never writes a cache Pages or the gate read. The caches it saves are (#559)'s
 # `folioman-fec-`, (#728)'s `folioman-fail-` and (#752)'s `folioman-tiingo-`, which only a `pac` /
-# `failures` / `dead` probe fills and nothing else restores.
+# `failures` / (#756) `dead` + `fill` probe fills and nothing else restores.
 on:
   workflow_dispatch:
     inputs:
@@ -27,6 +27,10 @@ on:
         default: ""
       bless:
         description: "(#554) re-bless tests/fixture/*.golden instead of a backtest; uploads them as an artifact"
+        type: boolean
+        default: false
+      fill:
+        description: "(#756) a `dead` probe also fetches the next Tiingo names and saves the cache; one fill run at a time, never an A/B arm"
         type: boolean
         default: false
 
@@ -177,10 +181,12 @@ jobs:
           done
       # (#752) After the backtests, because the `pit` run writes the membership spans it reads. It fetches
       # up to 45 names a run (a free key allows 50 requests an hour), so dispatch fills one at a time, an
-      # hour apart: `years=8 args="universe pit dead"`. Once every candidate is answered, a run asks
-      # nothing. Progress is encrypted even when the tool stops on an error.
+      # hour apart: `years=8 args="universe pit dead" fill=true`. Once every candidate is answered, a run
+      # asks nothing. Progress is encrypted even when the tool stops on an error. (#756) Only a `fill` run
+      # fills and saves: an A/B's `dead` arms run in parallel, so each spent the key and saved its own
+      # copy, the newest save won the next restore, and a new month's first arm saved a restarted file.
       - name: Fill the Tiingo cache
-        if: ${{ !cancelled() && !inputs.bless && contains(inputs.args, 'dead') }}
+        if: ${{ !cancelled() && !inputs.bless && inputs.fill && contains(inputs.args, 'dead') }}
         env:
           TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
         run: |
@@ -193,7 +199,7 @@ jobs:
           fi
           exit $rc
       - name: Save the Tiingo cache
-        if: ${{ !cancelled() && contains(inputs.args, 'dead') && hashFiles('.tiingo_dead_members.csv.enc') != '' }}
+        if: ${{ !cancelled() && inputs.fill && contains(inputs.args, 'dead') && hashFiles('.tiingo_dead_members.csv.enc') != '' }}
         uses: actions/cache/save@v6
         with:
           path: .tiingo_dead_members.csv.enc

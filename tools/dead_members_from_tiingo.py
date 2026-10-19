@@ -11,11 +11,14 @@ Rows are the WIKI tool's: `ticker,month,close,div`, split-adjusted from Tiingo's
 splitFactor. A candidate is an exited member (every S&P span closed) the WIKI file does not show dead,
 listed by Tiingo as a USD stock that started before its last exit and traded to within 30 days of it.
 A refused or missing series writes `# miss TK why` so no later run asks again: a hole (a reused ticker
-resumes after a gap as another company) or a first bar after the exit (the ticker's new holder). A rate
-limit or any other error stops the run and writes nothing for that name.
+resumes after a gap as another company), a first bar after the exit (the ticker's new holder), or (#756) a
+body that is not a price CSV. A second such body in a row stops the run unwritten, since two bad series in a
+row read more like a refusal. A rate limit or any other error stops the run and writes nothing for that name.
 
-A new calendar month restarts the file. A series still trading ends on its fetch month, and the backtest
-calls every series that ends before its file's newest month dead.
+A new calendar month restarts the file, and so does a file with another tag. (#756) The fetch month's bar is
+partial and is skipped, so a series still trading ends on the month before it, whatever day the fill ran;
+the backtest calls every series that ends before its file's newest month dead. A (#752) file kept that bar,
+so it restarts rather than mix the two shapes.
 
 Prints counts only, never the key or a price.
 """
@@ -27,7 +30,7 @@ from dead_members_from_wiki import holed, monthly, num  # noqa: E402
 TICKERS = "https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip"
 PRICES = "https://api.tiingo.com/tiingo/daily/{}/prices?startDate=1970-01-01&format=csv"
 NEED = ("date", "close", "divCash", "splitFactor")
-HEAD = "# (#752) Tiingo monthly bars of exited S&P 500 members, fetched in {}. Personal-use licence: never commit.\n"
+HEAD = "# (#756) Tiingo monthly bars of exited S&P 500 members, fetched in {}. Personal-use licence: never commit.\n"
 
 
 def day(s):
@@ -54,15 +57,16 @@ def candidates(spans, wiki, listing, done):
     return out
 
 
-def series(text, exit_):
-    """Tiingo's daily CSV -> ([(month, close, div)], None), or (None, why) for a refused series. A body
-    that is not a price CSV raises: that is an error, not a miss."""
+def series(text, exit_, month):
+    """Tiingo's daily CSV -> ([(month, close, div)], None), or (None, why) for a refused series. Rows of
+    the fetch `month` and later are skipped. A body that is not a price CSV raises, and `main` decides
+    whether it is a miss."""
     rows = csv.DictReader(io.StringIO(text))
     if not rows.fieldnames or any(c not in rows.fieldnames for c in NEED):
         raise ValueError("not a price CSV")
     days, divs, splits, first = {}, [], [], None
     for r in rows:
-        if any(r[c] is None for c in NEED):
+        if any(r[c] is None for c in NEED) or r["date"][:7] >= month:
             continue
         d, c = r["date"][:10], num(r["close"])
         if c is not None and c > 0 and (first is None or d < first):
@@ -86,7 +90,7 @@ def series(text, exit_):
 def kept(text, month):
     """The out file's text and the tickers it answers (rows or miss lines), or nothing when it was
     fetched in another month."""
-    m = re.match(r"# \(#752\) .*fetched in (\d{4}-\d\d)", text)
+    m = re.match(r"# \(#756\) .*fetched in (\d{4}-\d\d)", text)
     if not m or m.group(1) != month:
         return "", set()
     done = set()
@@ -112,17 +116,20 @@ def check():
     # the WIKI tool's 2:1 split mid-June, as daily rows: May's close and both dividends halve
     csv_ = ("date,close,high,divCash,splitFactor\n2010-05-10,41,0,1.0,1.0\n2010-05-28,40,0,0,1.0\n"
             "2010-06-10,43,0,0.5,1.0\n2010-06-15,21,0,0,2.0\n2010-06-30,22,0,0,1.0\n")
-    assert series(csv_, datetime.date(2010, 7, 1)) == ([("2010-05", 20.0, 0.5), ("2010-06", 22.0, 0.25)], None)
-    assert series(csv_, datetime.date(2010, 5, 1)) == (None, "starts after its exit")
-    assert series("date,close,divCash,splitFactor\n2010-05-28,1,0,1\n2010-07-30,1,0,1\n", datetime.date(2011, 1, 1)) == (None, "hole")
-    assert series("date,close,divCash,splitFactor\n", datetime.date(2011, 1, 1)) == (None, "empty")
+    assert series(csv_, datetime.date(2010, 7, 1), "2026-10") == ([("2010-05", 20.0, 0.5), ("2010-06", 22.0, 0.25)], None)
+    # (#756) fetched in June: June's partial rows go, its split with them, so May stays as it closed
+    assert series(csv_, datetime.date(2010, 7, 1), "2010-06") == ([("2010-05", 40.0, 1.0)], None)
+    assert series(csv_, datetime.date(2010, 5, 1), "2026-10") == (None, "starts after its exit")
+    assert series("date,close,divCash,splitFactor\n2010-05-28,1,0,1\n2010-07-30,1,0,1\n", datetime.date(2011, 1, 1), "2026-10") == (None, "hole")
+    assert series("date,close,divCash,splitFactor\n", datetime.date(2011, 1, 1), "2026-10") == (None, "empty")
     try:
-        series('{"detail":"Not found."}', datetime.date(2011, 1, 1))
+        series('{"detail":"Not found."}', datetime.date(2011, 1, 1), "2026-10")
         raise AssertionError("a JSON answer must raise")
     except ValueError:
         pass
     f = HEAD.format("2026-10") + "ticker,month,close,div\nA,2010-05,20,0\n# miss B hole\n"
     assert kept(f, "2026-10") == (f, {"A", "B"}) and kept(f, "2026-11") == ("", set())
+    assert kept(f.replace("(#756)", "(#752)"), "2026-10") == ("", set())  # a (#752) file kept the partial bar
 
 
 def get(url, key=None):
@@ -163,22 +170,28 @@ def main():
             if len(r) >= len(h):
                 listing.setdefault(r[ti].upper(), []).append((r[ai], r[ci], r[si], r[ei]))
     todo = candidates(spans, wiki, listing, done)
-    got, missed, stop = 0, 0, None
+    got, missed, stop, unread = 0, 0, None, False
     with open(a.out, "w" if not text else "a", encoding="utf-8", newline="\n") as f:
         if not text:
             f.write(HEAD.format(month) + "ticker,month,close,div\n")
         for tk in todo[:a.max]:
             exit_ = max(day(e) for _, e in spans[tk])
             try:
-                bars, why = series(get(PRICES.format(urllib.parse.quote(tk.lower(), safe="")), key).decode("utf-8", "replace"), exit_)
+                bars, why = series(get(PRICES.format(urllib.parse.quote(tk.lower(), safe="")), key).decode("utf-8", "replace"), exit_, month)
             except urllib.error.HTTPError as e:
                 if e.code != 404:
                     stop = f"HTTP {e.code}"
                     break
                 bars, why = None, "not served"
-            except (urllib.error.URLError, OSError, ValueError) as e:
+            except ValueError:
+                bars, why = None, "not a price CSV"
+            except (urllib.error.URLError, OSError) as e:
                 stop = type(e).__name__
                 break
+            if unread and why == "not a price CSV":
+                stop = "two bodies in a row that are not a price CSV"
+                break
+            unread = why == "not a price CSV"
             if bars is None:
                 f.write(f"# miss {tk} {why}\n")
                 missed += 1
