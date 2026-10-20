@@ -2506,7 +2506,9 @@ fn report_holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::Hol
     println!("  CAVEATS: (#737) 13F before 2013-Q2 is read from its text table, kept only when its rows add up to");
     println!("  the cover's value total (none printed: no row-shaped line left unread), else the quarter folds into");
     println!("  the next; the 83 managers were picked in 2026, so survivor bias flatters their rows; cutoffs overlap,");
-    println!("  so n counts samples, not independent bets. Read mean AND hit: a hit rate up with the mean down dilutes.");
+    println!("  so n counts samples, not independent bets. (#794) CUSIPs are named by today's OpenFIGI map, and one");
+    println!("  it cannot name (mostly a dead issuer) is dropped, so its moves flag no stock: the `fetch: holders:`");
+    println!("  line prints asked against named. Read mean AND hit: a hit rate up with the mean down dilutes.");
     print_cohorts(&holder_cohorts(samples, txs));
     // (#544) The boosts only multiply names the gates already pass, so the row that grades a boost is
     // flagged passers against the OTHER passers, not against every stock. (#614) Since `growth_gate_soft`
