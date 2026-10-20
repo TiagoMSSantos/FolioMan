@@ -164,8 +164,10 @@ row, and the Braked table lists the stocks the overextension brake alone keeps o
 settings file re-ranks every table in the browser (`src/web.rs`, compiled to wasm).
 
 There is a SECOND lane, `picks::buy_score` ("on-sale", buy-the-dip). **It is a backtest foil only —
-neither `check` nor `screen` prints it.** It exists so `backtest` can show that dip-buying has
-*negative* edge over a multi-decade hold. See the `[FOIL]` tags in `settings.yaml` / `src/config.rs`.
+neither `check` nor `screen` prints it.** It is the dip-buying control the growth lane is graded
+against. Its held top-10 book beats the S&P 500 but trails the growth book at 12 and 8 years; it
+leads at 20 years, on only 22 windows (receipt (#798)). See the `[FOIL]` tags in `settings.yaml` /
+`src/config.rs`.
 
 ## Tuning the buy heuristic
 
@@ -229,8 +231,8 @@ Measured dead — don't re-run these:
   out-of-sample against the price-only baseline. `peg_yield` (1/PEG) at weight 0.07 is the only
   live fund tilt; it replaced the earlier `earnings_yield` tilt at 1.0.
 
-The `[FOIL]` on-sale lane stays deliberately unimproved: its job is to keep proving that
-dip-buying loses to the growth lane over a multi-decade hold.
+The `[FOIL]` on-sale lane stays deliberately unimproved: it is the dip-buying control the growth
+lane has to beat over a multi-decade hold (#798).
 
 ## Glossary
 

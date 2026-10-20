@@ -2940,8 +2940,9 @@ sizing:
 #         score = base · proximity · value(P/E tilt) · geomean(trust, overext_brake) + liquidity
 #       (CAGR = Compound Annual Growth Rate; accel = how much the last 1Y outpaced that CAGR.)
 #
-#   • ON-SALE lane (`buy_score`)    --> BACKTEST FOIL ONLY. `screen` does NOT print this. It exists so
-#       `cargo run -- backtest` can demonstrate that dip-buying has NEGATIVE edge over a 20yr+ hold.
+#   • ON-SALE lane (`buy_score`)    --> BACKTEST FOIL ONLY. `screen` does NOT print this. It is the
+#       dip-buying control `cargo run -- backtest` grades the growth lane against; (#798) its held book
+#       beats the S&P 500 but trails growth at 12y/8y on the pit runs.
 #       Every knob tagged "[FOIL]" feeds ONLY this lane: changing it does NOT change `screen` output.
 #
 # So to tune what `screen` shows, touch ONLY the knobs NOT tagged "[FOIL]". GATES drop a candidate
@@ -2951,6 +2952,13 @@ sizing:
 buy_heuristic:
   # --- GATES (fail any one -> excluded before scoring) ---
   min_1y_pct: -25.0              # [FOIL] on-sale only: reject if 1Y % <= this (the growth lane reads growth_min_1y_pct below, not this)
+                                 # (#800) 2026-10-20, record only: 0.0 (on-sale names must be up this year) graded on the ON-SALE top-10
+                                 #   book (#796). Probe on aaa6596, `universe fund pit`, control 39479922307, arm 39479962778. The gate
+                                 #   cuts ON-SALE windows 2708/5150/9176 -> 1994/3928/7143 (-22 to -26%). Book excess mean|median,
+                                 #   control -> arm: 20y +4.6|+3.2 -> +3.3|+2.6, 12y +1.9|+1.3 -> +1.7|+1.6, 8y +1.5|+1.0 -> +1.9|+1.9.
+                                 #   Only 8y clears +0.2 on both stats, and its late OOS half stays negative (-0.4), so the bar (2 of
+                                 #   3 horizons, both OOS halves > 0) FAILS. The 12y worst bucket improves (-6.1 -> -4.2), but the 20y
+                                 #   book gives up 1.3 pts/yr. GROWTH rows byte-identical. -25.0 stays.
   growth_min_1y_pct: -0.3        # (#457) 2026-10-04: lowest floor whose live AND fixture books are IDENTICAL to 0.0. Live = `backtest 20 universe fund pit`,
                                  #   one session, one pond (4754/4732 cache), dotfiles restored before every run, 0.0 control run three times:
                                  #     floor      0.0  -0.1..-0.6  -0.7..-0.9  -1.0  -1.5  -2.0  -2.5  -5.0  -7.5
@@ -16708,7 +16716,34 @@ buy_heuristic:
   #   S&P 500, excess mean and median, win rate, worst bucket, OOS halves), scored by `buy_score` over the
   #   non-crypto pool. It is a print only: no knob moved, no assert reads it, and rule #6 still stands, so
   #   a result on it is recorded and then put to the owner, never shipped. The knob split comes next.
-  quality_cap: 40.0             # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
+  #   (#798) THE MEASURE-FIRST READ, 2026-10-20, record only. Three controls on aaa6596, no knob moved:
+  #   `universe fund pit` 39479922307, `universe fund stress` 39481116039, `universe fund pit dead`
+  #   39481138847. ON-SALE book excess mean|median against the same run's GROWTH `top-10 book` row:
+  #                20y                      12y                      8y
+  #     pit      +4.6|+3.2 vs +3.4|+1.8   +1.9|+1.3 vs +3.4|+3.2   +1.5|+1.0 vs +3.1|+2.9
+  #     stress   +5.0|+4.6 vs +3.6|+4.3   +3.7|+3.2 vs +2.7|+3.6   +3.5|+2.7 vs +3.2|+3.6
+  #     dead     +3.8|+2.7 vs +2.9|+1.7   +1.2|+0.1 vs +2.2|+2.3   +1.1|-0.1 vs +2.2|+1.7
+  #   ON-SALE windows: pit 2708/5150/9176, stress 5181/8701/13397, dead 3250/6380/10774.
+  #   "Dip-buying has negative edge" does NOT hold on the book: its mean excess over the S&P 500 is
+  #   positive at every horizon in all three runs. The weaker claim does hold: GROWTH wins at 12y and
+  #   8y on pit and dead, and stress splits them (ON-SALE leads the mean, GROWTH the median). The exited
+  #   members cost the dip book most at the median (12y +1.3 -> +0.1, 8y +1.0 -> -0.1, win 61% -> 50%),
+  #   so survivorship flatters it there, and its late OOS half is negative at 12y and 8y on pit (-0.1,
+  #   -1.9). At 20y ON-SALE leads GROWTH on both stats in all three runs, but on 22 windows (65 under
+  #   stress). The owner question (ON-SALE ahead on both stats at 2 of 3 horizons) is met in no run, so
+  #   rule #6 stands. The prose that called the lane a proven loser (src/config.rs, src/picks.rs,
+  #   README, the header of this file) now states this result.
+  #   (#799) THE SPLIT ARM, READ ON THAT BOOK, FAILS, so the split is not worth its code. 2026-10-20,
+  #   record only. No code was needed to grade it: the ON-SALE book depends on `buy_score` alone, so
+  #   `quality_weight=0` reads exactly what `onsale_quality_weight: 0.0` would. Probe on aaa6596,
+  #   `universe fund pit`, control 39479922307, arm 39479942304, ON-SALE windows identical
+  #   (2708/5150/9176). Book excess mean|median, control -> arm: 20y +4.6|+3.2 -> +4.6|+3.2 (inert, no
+  #   as-of fundamentals that far back), 12y +1.9|+1.3 -> +1.8|+1.7, 8y +1.5|+1.0 -> +1.1|+1.4. The mean
+  #   falls at both horizons where the term reaches, the worst bucket deepens (12y -6.1 -> -9.9, 8y
+  #   -7.7 -> -11.7) and the 8y late OOS half sinks -1.9 -> -2.7. The pre-registered bar (mean AND
+  #   median >= +0.2 at 2 of 3 horizons, both OOS halves > 0) fails at every horizon. (#72)'s +45.0 lane
+  #   edge does not reach the book. The arm's GROWTH rows moved too (the knob is shared); not graded here.
+  quality_cap: 40.0            # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
   # (#42) "why does Apple print n/m as ROE" — asked 2026-07-27. The answer was a display rule reading the
   #   WRONG AXIS, and chasing it found the score doing the same thing. Two thresholds existed for one
   #   claim: the cell called ROE meaningless above 100, the score stopped believing it above quality_cap

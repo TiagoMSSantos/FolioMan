@@ -259,8 +259,9 @@ impl Default for Widths {
 ///   `base = growth_trend_weight·CAGR + growth_accel_weight·accel + risk + quality + dividend`,
 ///   `score = base · proximity · value(P/E) · geomean(trust, overext) + liquidity`.
 ///   (CAGR = Compound Annual Growth Rate.)
-/// - **ON-SALE lane** (`buy_score`) — a BACKTEST FOIL ONLY (not printed by `screen`); kept so
-///   `backtest` can show dip-buying has NEGATIVE multi-decade edge. Fields marked `[FOIL]` below feed
+/// - **ON-SALE lane** (`buy_score`) — a BACKTEST FOIL ONLY (not printed by `screen`); kept as the
+///   dip-buying control `backtest` grades the growth lane against. (#798) Its held book beats the
+///   S&P 500 but trails growth at 12y/8y on the pit runs. Fields marked `[FOIL]` below feed
 ///   ONLY this lane — changing them does nothing to `screen` output.
 /// Its score: `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
 /// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.

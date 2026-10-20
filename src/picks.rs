@@ -1,8 +1,9 @@
 //! Buy-candidate algorithm + table printer (the whole heuristic in one place). TWO lanes:
 //! - `growth_score` — proven compounders near their high, still climbing. THIS is what `check` and
 //!   `screen` print (via `render`); the only lane with a validated forward edge.
-//! - `buy_score` — "on-sale"/buy-the-dip. A BACKTEST FOIL ONLY (used by `backtest` to show dip-buying
-//!   loses over a multi-decade hold); never printed. Knobs feeding it are tagged `[FOIL]` in config.
+//! - `buy_score` — "on-sale"/buy-the-dip. A BACKTEST FOIL ONLY (the dip-buying control `backtest`
+//!   grades the growth lane against; (#798) it trails growth at 12y/8y); never printed. Knobs feeding
+//!   it are tagged `[FOIL]` in config.
 //! Acronyms (CAGR, ROE, P/E, NUPL, SMA, Sharpe, Calmar, …): see the Glossary in README.md.
 //! **NOT advice** — a transparent ranking of the table, never an auto-buy.
 
