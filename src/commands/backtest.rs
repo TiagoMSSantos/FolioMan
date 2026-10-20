@@ -5415,7 +5415,7 @@ fn book_multiple(
         Some(l) if *l < to && dead.0.contains(t) => dead_multiple(&s.0, &s.1, px_at(s, from)?, to, (bench.0.as_slice(), bench.1.as_slice(), dead.1)),
         _ => grow(s),
     };
-    let names = book.iter().map(|(t, w)| Some(w * held(*t, series.get(t)?)?)).sum::<Option<f64>>()?;
+    let names = book.iter().map(|(t, w)| Some(w * held(t, series.get(t)?)?)).sum::<Option<f64>>()?;
     let rest = legs.iter().map(|(w, s)| Some(w * grow(if s.0.first().is_some_and(|f| *f <= from) { s } else { bench })?)).sum::<Option<f64>>()?;
     Some(names + (1.0 - book.iter().map(|(_, w)| w).sum::<f64>()) * rest)
 }
