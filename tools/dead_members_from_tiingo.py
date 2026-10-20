@@ -22,7 +22,7 @@ so it restarts rather than mix the two shapes.
 
 Prints counts only, never the key or a price.
 """
-import argparse, csv, datetime, io, os, json, re, sys, urllib.error, urllib.parse, urllib.request, zipfile
+import argparse, csv, datetime, io, os, json, pathlib, re, sys, urllib.error, urllib.parse, urllib.request, zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dead_members_from_wiki import holed, monthly, num  # noqa: E402
@@ -160,7 +160,7 @@ def main():
         spans = json.load(f)
     with open(a.wiki, encoding="utf-8") as f:
         wiki = f.read()
-    raw = get(a.tickers) if a.tickers.startswith("https://") else open(a.tickers, "rb").read()
+    raw = get(a.tickers) if a.tickers.startswith("https://") else pathlib.Path(a.tickers).read_bytes()
     listing = {}
     with zipfile.ZipFile(io.BytesIO(raw)) as z:
         rows = csv.reader(io.TextIOWrapper(z.open(z.namelist()[0]), encoding="utf-8", newline=""))
