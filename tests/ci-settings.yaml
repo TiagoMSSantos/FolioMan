@@ -16703,7 +16703,12 @@ buy_heuristic:
   #   wants 0.15 but on-sale wants 0"), THEN grade the split arm on the new book. Splitting first would
   #   ship a knob on the one metric this file keeps catching out.
   #   (#599) 0.30 REFUSED on rival (j): 0/6 cells, harmed 2/6. Receipt: the (#599) block.
-  quality_cap: 40.0              # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
+  #   (#796) THE FIRST STEP OF THAT ORDER IS DONE: every ON-SALE block now prints an `ON-SALE top-10 book`
+  #   line under its passer line, the same held equal-weight book the GROWTH lane is graded on (book,
+  #   S&P 500, excess mean and median, win rate, worst bucket, OOS halves), scored by `buy_score` over the
+  #   non-crypto pool. It is a print only: no knob moved, no assert reads it, and rule #6 still stands, so
+  #   a result on it is recorded and then put to the owner, never shipped. The knob split comes next.
+  quality_cap: 40.0             # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
   # (#42) "why does Apple print n/m as ROE" — asked 2026-07-27. The answer was a display rule reading the
   #   WRONG AXIS, and chasing it found the score doing the same thing. Two thresholds existed for one
   #   claim: the cell called ROE meaningless above 100, the score stopped believing it above quality_cap

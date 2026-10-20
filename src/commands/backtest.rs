@@ -1951,6 +1951,7 @@ pub async fn run(args: Vec<String>) {
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
     let gate_loosen: Vec<Knob> = picks::gate_notches().into_iter().map(|(_, label, f)| knob(label, f)).collect();
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs, years);
+    report_onsale_book(&samples, &bench, years, tuning);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs, years);
     // (#3g) the two levers that decide how hard a HIGH-CAGR name is rewarded: the slope and the ceiling.
     // Swept as curves because the ablation only prices removal and `tune` only reports a confounded
@@ -4572,6 +4573,37 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
     let worst = excess.iter().cloned().fold(f64::INFINITY, f64::min);
     let cut = m / 2;
     Some((mean(&book), mean(&spy), mean(&excess), win, worst, mean(&excess[..cut]), mean(&excess[cut..])))
+}
+
+/// (#796) The ON-SALE lane read on the GROWTH lane's ruler: [`book_stats`]'s top-`n` equal-weight held book plus
+/// the median excess, in `report_vs_benchmark`'s pts/yr, so the foil's "negative edge" can be checked against the
+/// book GROWTH ships on. The row never starts with `top-10 `, since [`markers::VERDICT_ROW`] reads the first one.
+fn onsale_book_row(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>, n: usize, years: i64) -> Option<String> {
+    let (book, spy, excess, win, worst, early, late) = book_stats(by_bucket, n, years)?;
+    let pairs = book_multiples(by_bucket, n);
+    let med = median(pairs.iter().map(|(b, s)| ann((b - 1.0) * 100.0, years) - ann((s - 1.0) * 100.0, years)).collect());
+    Some(format!(
+        "  ON-SALE top-{n:<2} book {book:+.1}%/yr  vs S&P500 {spy:+.1}%/yr  ->  excess {excess:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}",
+        pairs.len()
+    ))
+}
+
+/// (#796) Prints [`onsale_book_row`] for `buy_score` over `report_book_by_factor`'s pool (non-crypto, with a
+/// benchmark window), under the ON-SALE lane block. A print only: no gate reads it, and the lane stays a foil.
+fn report_onsale_book(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 {
+            continue;
+        }
+        let Some(score) = buy_score(&s.quote, tuning) else { continue };
+        let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        by.entry(bucket(s.date)).or_default().push((score, s.realized, br));
+    }
+    if let Some(row) = onsale_book_row(&by, VERDICT_TOP, years) {
+        println!("{row}");
+    }
 }
 
 /// (#324) Each `picks::gate_notches` row applied to `tuning`: (tag, loosened tuning), in list order.
@@ -10310,6 +10342,21 @@ mod tests {
         tie.insert(0, vec![(1.0, 20.0, 20.0)]);
         let (.., win, _, _, _) = book_stats(&tie, 1, 1).unwrap();
         assert!(win.abs() < 1e-9, "an exact tie must not count as a win: win {win}");
+    }
+
+    #[test]
+    fn onsale_book_row_prints_the_held_book_and_its_median() {
+        // (#796) book_stats_topn_held_book's two buckets plus a third (real +20, bench +10), held 1y, top-1:
+        // excesses +100/-50/+10, so the mean (+20) and the median (+10) differ; OOS splits 1 | 2.
+        let mut m: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+        m.insert(0, vec![(5.0, 100.0, 0.0), (1.0, -50.0, 0.0)]);
+        m.insert(1, vec![(3.0, 0.0, 50.0)]);
+        m.insert(2, vec![(1.0, 20.0, 10.0)]);
+        assert_eq!(
+            onsale_book_row(&m, 1, 1).unwrap(),
+            "  ON-SALE top-1  book +40.0%/yr  vs S&P500 +20.0%/yr  ->  excess +20.0 (med +10.0) pts/yr   win 67% of 3   worst -50.0   OOS +100.0/-20.0"
+        );
+        assert!(onsale_book_row(&Default::default(), 1, 1).is_none());
     }
 
     /// (#67) The two BOOK PROBES that no test has ever touched: `drop_bottom_book` (the fund-factor
