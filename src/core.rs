@@ -4230,8 +4230,10 @@ impl FairLeg {
     }
 }
 
-/// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
-/// look-ahead guard) and its direction. Only `P` (purchase) and `S` (sale) are kept — option grants,
+/// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date and its
+/// direction. (#789) The date is the TRADE date, not the filing date, so a trade made before a cutoff
+/// counts even when its Form 4 was filed after it. The leak is the filing lag: 2 business days when
+/// filed on time, longer for a late filer. Only `P` (purchase) and `S` (sale) are kept — option grants,
 /// gifts, tax-withholding (codes A/G/F/M…) are noise for a "conviction buying" signal.
 #[derive(Clone, Copy, Debug)]
 pub struct InsiderTx {
@@ -4240,8 +4242,9 @@ pub struct InsiderTx {
 }
 
 /// (Item 4) Net open-market insider conviction in the `window_days` BEFORE `cutoff`: (#buys − #sales),
-/// counting each `InsiderTx` ±1. The transaction date is the look-ahead guard — a filing dated on/after
-/// the cutoff can't leak in. None when no transaction falls in the window (no coverage -> the factor stays
+/// counting each `InsiderTx` ±1. The window is keyed on the trade date, so a Form 4 filed on or after
+/// the cutoff for a trade before it does leak in, by the filing lag (#789, see [`InsiderTx`]). Shadow
+/// only: no shipped factor reads it. None when no transaction falls in the window (no coverage -> the factor stays
 /// neutral, never a fabricated 0). Pure -> unit-tested without touching SEC.
 pub fn insider_net_buys(txns: &[InsiderTx], cutoff: NaiveDate, window_days: i64) -> Option<f64> {
     let start = cutoff - Duration::days(window_days);
@@ -4296,8 +4299,8 @@ pub struct HolderFlags {
 }
 
 /// (#518) Each manager's NEWEST change filed in [cutoff - [`HOLDER_WINDOW_DAYS`], cutoff), counted. The
-/// filing date is the look-ahead guard, as in [`insider_net_buys`]: a 13F's report date is 45 days older
-/// than anyone could read it. On a same-day tie the first change listed stands. A [`HOLDER_BRK_HELD`]
+/// filing date is the look-ahead guard (unlike [`insider_net_buys`], which keys on the trade date): a
+/// 13F's report date is 45 days older than anyone could read it. On a same-day tie the first change listed stands. A [`HOLDER_BRK_HELD`]
 /// record sets `brk_held` and is never an adder.
 pub fn holder_flags(txs: &[HolderTx], cutoff: NaiveDate) -> HolderFlags {
     let start = cutoff - Duration::days(HOLDER_WINDOW_DAYS);
@@ -11001,7 +11004,8 @@ mod tests {
     }
 
     /// (#529) The two one-line as-of reads the walk also joins: insider trades and the FX rate. Each must
-    /// read the same with everything after the cutoff deleted.
+    /// read the same with everything after the cutoff deleted. (#789) The insider half deletes by TRADE
+    /// date, so it cannot see the filing lag that [`InsiderTx`] documents.
     #[test]
     fn look_ahead_insider_and_fx_ignore_the_future() {
         let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();

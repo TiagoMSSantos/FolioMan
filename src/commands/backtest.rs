@@ -27,7 +27,10 @@
 //!   cutoff slice — so there is no look-ahead to guard against by hand. If you are about to write
 //!   "the backtest cannot see X", check whether X is already in the payload first.
 //! - **(#5) survivorship**: the universe is names that SURVIVED to today, so realized returns are
-//!   biased UP. Flagged in the footer — treat the edge as optimistic, never a forecast.
+//!   biased UP. Flagged in the footer — treat the edge as optimistic, never a forecast. (#789) It is
+//!   also SELECTED by today's size: the pool is today's ranked lists (CoinGecko top market cap,
+//!   Frankfurt top turnover, the Lisbon, Euronext and SIX lists), so a name that is big or busy NOW
+//!   is in it at every past cutoff. `pit` swaps only the S&P list; every other list stays today's.
 //! - **(PIT) point-in-time universe**: `pit` scores every cutoff against the S&P 500 AS IT STOOD THAT
 //!   DAY — the direct cure for the line above, not the `stress` proxy. With `universe` it also swaps
 //!   the pool: today's ~503 survivors out, all 1206 names ever in the index since 1996 in, dead ones
@@ -572,6 +575,8 @@ fn stamp_asset_class(
     quote.name = name.to_string();
     quote.instrument_type =
         if etf_set.contains(&quote.ticker) { "ETF".to_string() } else { instrument_type.to_string() };
+    // (#789) name, type and the ETF set are TODAY's too, like the sector below: a fund renamed or
+    // re-tagged since is classed at every past cutoff by what it is called now.
     // (#569) last writer of name and type, so stamp here; cleared first so the derive reads them live
     quote.name_class = None;
     quote.name_class = Some(picks::name_class(quote));
@@ -689,7 +694,10 @@ const ROUND_TRIP_BPS: f64 = 20.0;
 /// the edge is graded against a sample that includes the losers, not just the survivors. Mixed on purpose:
 /// crashed-and-alive mega/large-caps with deep Yahoo history (score at many cutoffs, then bleed forward)
 /// plus a few bankrupt/failed tickers whose truncated series ends near ZERO (the strongest correction —
-/// each is a cutoff with a ~−100% forward window). Any that Yahoo no longer serves return None and are
+/// each is a cutoff with a ~−100% forward window). (#789) Only a few cutoffs, though: these come from
+/// Yahoo, and the walk pays a terminal return only to names on the `dead` archive, so a STRESS name
+/// scores a cutoff only when its full `years` window ends by its last bar. The crash shows up only in
+/// the windows that end after the collapse. Any that Yahoo no longer serves return None and are
 /// harmlessly skipped, so the list can over-include. shortcut: a hand-picked loser set, NOT point-in-time
 /// index reconstruction (a data-vendor problem) — enough to tell "edge is real" from "edge is survivorship".
 const STRESS_TICKERS: &[&str] = &[

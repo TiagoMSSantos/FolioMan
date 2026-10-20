@@ -215,8 +215,13 @@
 # any horizon and better on rank at 8y, 12y and 20y. 0.1 reads the same as 0.2 (a plateau), so the
 # milder end of it ships. Top-1/3/10 book rows do not move at any arm: the damp sorts the tail of the
 # admitted set, it does not swap the head.
-# CAVEAT: the walk stamps TODAY's GICS sector (#95), a look-ahead. It is the same look-ahead in every
-# arm, so it cancels in the arm-vs-arm diff, but it does not cancel in the level.
+# CAVEAT: the walk stamps TODAY's GICS sector (#95), a look-ahead, and it does NOT cancel in the
+# arm-vs-arm diff (corrected in (#789)). Under `pit`, 703 of 1206 member spans carry no sector at all
+# (census in (#190)): they are the delisted names. So the damp only ever reached SURVIVING Energy and
+# Materials stocks, and the dead ones escaped it in every arm. The 20y read above comes from the
+# survivor pond. The stock half of 0.2 was therefore graded on survivors only. No as-of GICS feed
+# exists, so it cannot be re-graded honestly. The fund-name token leg (`picks::is_commodity`) reads
+# no sector and is unaffected.
 #
 # GATES THAT WERE DEAD AND ARE NOW LIVE in the backtest (they read name/instrument_type/sector):
 #   is_commodity_etf (physical-gold/ETC), is_commodity (fund name tokens), sharpe_cap_etf.
