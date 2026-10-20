@@ -6889,6 +6889,18 @@ buy_heuristic:
                                  #  SHIP RULE (pre-registered by the owner): ship `sec_line_filed_gate: true`, with re-blessed goldens in the
                                  #  same push, if every backtest_edge_holds assert stays green with it on, whatever the edge delta. If any
                                  #  assert goes red, nothing ships and a lane opens on the gate floors, which were tuned on the leaky rows.
+                                 #── (#784) A/B 2026-10-20 — SHIPPED ON ──
+                                 #  Run on 7df1573, on the (#790) grid, once Pages had warmed `_facts26` (448 SEC GETs, under the 600 budget).
+                                 #  Probes 39457495099 (off) and 39457506108 (on), years 20 12 8 on `universe fund pit winners`. Both arms walk
+                                 #  6286 tickers and score the same windows on every leg (20y 2708/5075, 12y 5150/10437, 8y 9176/13654). The on
+                                 #  arm's 20y leg logged a Nasdaq-100 CSV blip; the equal ticker counts show it moved no name. GROWTH, off -> on:
+                                 #    20y  identical, but for the SIZED DCA late OOS, +4.3 -> +4.4.
+                                 #    12y  edge +20.1 -> +20.7, null lift +8.9 -> +8.7, passer lift +127.9 -> +127.0, winners held 12.4% -> 12.6%.
+                                 #    8y   edge +24.7 both, null lift +17.7 -> +16.7, passer edge +80.8 -> +85.6, passer lift +73.8 -> +77.7,
+                                 #         OOS late +0.18 -> +0.17, winners held 10.4% -> 10.7%.
+                                 #  Top-1, top-10 and RANKED top-10 excess and Série E are unchanged on every leg. The strict twins move
+                                 #  fund-covered ranks only, and by little. Per the rule the knob ships on; the backtest-gate legs on the ship
+                                 #  push grade the asserts, and the goldens are reblessed from a bless probe on the ship SHA.
                                  #── (#790) LANDED 2026-10-20 — EVERY WALK CUTS ON THE HALF-YEAR CALENDAR GRID ──
                                  #  Both walks started each series at its own bar `min_history` and stepped 6 bars. So cutoff dates followed the
                                  #  listing month, and the step weighted the sample by granularity: 6 bars is six months on a monthly series, 18 on
@@ -19113,8 +19125,8 @@ buy_heuristic:
                              #   NO LONGER US-only as of 2026-07-25 (#3c): 20-F/40-F forms, the ifrs-full
                              #   taxonomy and non-USD reporting currencies all parse now. Non-covered names
                              #   still get fund_factor None -> tilt neutral, price terms decide.
-  sec_line_filed_gate: false # (#784) OFF, the code default, so nothing moves. The line is listed only so a probe
-                             #   arm can set it; the A/B and its pre-registered ship rule are in the (#784) receipt.
+  sec_line_filed_gate: true  # (#784) ON since its A/B: a SEC row is served as its strict twin until `full_from`.
+                             #   The code default stays off. The A/B and the ship rule are in the (#784) receipt.
   # (#3) GROWTH-AT-PRICE — earnings_yield SUPERSEDED by peg_yield 2026-07-25. peg_yield = 1/PEG =
   #   earnings_yield · as-of CAGR (100 <=> PEG 1; >100 <=> PEG < 1 = cheap for its growth). The axis sat
   #   wired-but-unmeasured for rounds, annotated "expected dead — redundant with earnings_yield x CAGR
