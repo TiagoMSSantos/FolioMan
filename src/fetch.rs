@@ -8912,7 +8912,10 @@ pub async fn fetch_ipo_upcoming(client: &Client, urls: &Urls) -> Value {
 
 /// (#499) Every $1B+ US IPO of the last 5 years, as a pond: (Yahoo symbol, GICS sector). Sector is
 /// one Nasdaq profile read per kept name, paid once per month thanks to the cache. A refused month is
-/// not cached, so it is retried next run; only the months on disk feed the pond meanwhile.
+/// not cached, so it is retried next run; only the months on disk feed the pond meanwhile. (#779) A
+/// profile that does not answer is asked once more: its sector banks as `other` for good, since a past
+/// month is never asked again, and `other` escapes `max_sector_pct`. The month still caches, so a name
+/// whose profile never answers costs one retry, not one per run.
 async fn ipo_pond(client: &Client, urls: &Urls) -> Vec<(String, String)> {
     use chrono::Datelike;
     let mut cache: BTreeMap<String, Vec<(String, String)>> =
@@ -8934,7 +8937,11 @@ async fn ipo_pond(client: &Client, urls: &Urls) -> Vec<(String, String)> {
         }
         let mut rows = Vec::new();
         for sym in ipo_rows(&v) {
-            let profile = get_json(client, &urls.nasdaq_profile.replace("{sym}", &sym)).await;
+            let url = urls.nasdaq_profile.replace("{sym}", &sym);
+            let profile = match get_json(client, &url).await {
+                Some(p) => Some(p),
+                None => get_json(client, &url).await,
+            };
             let sector = profile.as_ref().and_then(|p| p.pointer("/data/Sector/value")).and_then(Value::as_str);
             rows.push((sym.replace('.', "-"), crate::picks::gics_of_nasdaq(sector)));
         }
@@ -17386,7 +17393,8 @@ pub(crate) mod tests {
     }
 
     /// (#499) The ONE owner of `.ipo_cache.json`. Cold: all 60 months asked, each cached under its
-    /// YYYY-MM, one row per name. Warm: only the current month is asked again. A refused month
+    /// YYYY-MM, one row per name, and (#779) a profile that does not answer asked twice. Warm: only the
+    /// current month is asked again. A refused month
     /// (no `data`) is not cached. `constituent_ponds` appends the pond only when the URL is set.
     #[tokio::test]
     async fn ipo_pond_caches_past_months_and_refetches_this_one() {
@@ -17396,7 +17404,7 @@ pub(crate) mod tests {
         let cal = r#"{"data": {"priced": {"rows": [
             {"proposedTickerSymbol": "ARM", "companyName": "Arm", "proposedSharePrice": "51.00", "dollarValueOfSharesOffered": "$4,870,000,000"},
             {"proposedTickerSymbol": "ZZ.B", "companyName": "Zz", "proposedSharePrice": "20.00", "dollarValueOfSharesOffered": "$2,000,000,000"}]}}}"#;
-        let (base, client, _) = routed_stub(vec![
+        let (base, client, asked0) = routed_stub(vec![
             ("/ARM/profile", r#"{"data": {"Sector": {"value": "Technology"}}}"#),
             ("calendar", cal),
         ]);
@@ -17406,6 +17414,10 @@ pub(crate) mod tests {
         let arm = ("ARM".to_string(), "Information Technology".to_string());
         let zz = ("ZZ-B".to_string(), "other".to_string());
         assert_eq!(ipo_pond(&client, &urls).await, vec![arm.clone(), zz.clone()], "60 months, one row per name");
+        // (#779) the unrouted ZZ profile answers 404 with no body, so it is asked twice per month before it banks `other`
+        let profiles: Vec<String> = asked0.try_iter().filter(|r| r.contains("/profile ")).collect();
+        let count = |sym: &str| profiles.iter().filter(|r| r.starts_with(&format!("GET /{sym}/profile "))).count();
+        assert_eq!((count("ARM"), count("ZZ.B")), (60, 120), "one retry for a profile that did not answer");
         let cache: BTreeMap<String, Vec<(String, String)>> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let today = chrono::Local::now().date_naive();
         let ym = |d: NaiveDate| format!("{}-{:02}", d.year(), d.month());
