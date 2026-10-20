@@ -30,6 +30,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
     calmar_weight        rho -0.10 Δ+0.00   edge -454.6 Δ+0.0
     quality_weight       rho -0.10 Δ+0.00   edge -454.6 Δ+0.0
     tax_split ->off      rho -0.10 Δ+0.00   edge -454.6 Δ+0.0
+  ON-SALE top-10 book +8.3%/yr  vs S&P500 +7.5%/yr  ->  excess +0.8 (med +0.6) pts/yr   win 57% of 54   worst -4.4   OOS +0.4/+1.3
 
 ── GROWTH (growth_score) ──
   windows scored: 807
