@@ -4,9 +4,20 @@ use super::env_var;
 use reqwest::Client;
 use serde_json::{json, Value};
 
+/// The live API host. Only the env-reading wrappers pass it; tests hand the `_at` halves a loopback stub.
+const LIVE: &str = "https://live.trading212.com";
+
+/// UNGRADEABLE, hence the skip: the live host in front of [`get_at`], which carries the call and is
+/// pinned below against a loopback stub. Every caller reads the key from the env first.
+#[mutants::skip]
 async fn get(client: &Client, key: &str, path: &str) -> Result<Value, String> {
+    get_at(client, LIVE, key, path).await
+}
+
+/// (#781) `get` against `host`, so a test drives the status check and the parse without a key.
+async fn get_at(client: &Client, host: &str, key: &str, path: &str) -> Result<Value, String> {
     let resp = client
-        .get(format!("https://live.trading212.com/api/v0/{path}"))
+        .get(format!("{host}/api/v0/{path}"))
         .header("Authorization", key)
         .send()
         .await
@@ -43,8 +54,7 @@ pub async fn owned_positions(client: &Client) -> Result<Vec<(String, f64, Option
 }
 
 /// Trading212 encodes order direction by the SIGN of the quantity: buy = +qty, sell = -qty. Split
-/// out of `order` so the branch is testable — the transport around it posts to a hardcoded
-/// production URL and cannot be exercised without pointing a real-money client somewhere else.
+/// out of `order` so the branch is testable on its own; the transport around it is [`order_at`].
 fn signed_qty(side: &str, qty: f64) -> f64 {
     if side == "sell" {
         -qty
@@ -112,6 +122,11 @@ fn extract_instruments(v: &Value) -> Result<Vec<Instrument>, String> {
 /// empty vec: the glue degrades to `<T212_SYMBOL>` placeholders exactly like the owned overlay,
 /// never fails the screen.
 pub async fn instruments_cached(client: &Client) -> Vec<Instrument> {
+    instruments_cached_at(client, LIVE, env_var("TRADING212_API_KEY").ok()).await
+}
+
+/// (#781) `instruments_cached` against `host` with the key passed in (`None` = no key configured).
+async fn instruments_cached_at(client: &Client, host: &str, key: Option<String>) -> Vec<Instrument> {
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Cache {
         date: String,
@@ -124,10 +139,10 @@ pub async fn instruments_cached(client: &Client) -> Vec<Instrument> {
             return c.rows;
         }
     }
-    let Ok(key) = env_var("TRADING212_API_KEY") else {
+    let Some(key) = key else {
         return Vec::new(); // no key configured = broker off, silent like the owned overlay
     };
-    let rows = match get(client, &key, "equity/metadata/instruments").await.and_then(|v| extract_instruments(&v)) {
+    let rows = match get_at(client, host, &key, "equity/metadata/instruments").await.and_then(|v| extract_instruments(&v)) {
         Ok(rows) => rows,
         Err(e) => {
             eprintln!("screen: trading212 instruments fetch failed ({e}) — order symbols degrade to placeholders");
@@ -197,19 +212,83 @@ mod tests {
     }
 
     /// (#359) A cache inside its 7 days is served as-is: no key read, no request. `screen` calls this
-    /// on every run and the endpoint allows ~1 request per 50s. Only the fresh side is pinned; the
-    /// other side of the boundary is the live fetch.
+    /// on every run and the endpoint allows ~1 request per 50s.
+    ///
+    /// (#781) The stale side runs too, in this one test because every step reads or writes the same
+    /// cache file. A cache 7 days old is stale. Stale with no key is empty, and so is a refused fetch,
+    /// which leaves the file alone. A good fetch returns the rows, and the file it writes is then
+    /// served as fresh with the host dead.
     #[tokio::test]
     async fn instruments_cached_serves_a_fresh_cache() {
+        let path = crate::config::data_path(".t212_instruments.json");
         let today = chrono::Utc::now().date_naive();
-        let cache = json!({ "date": today.to_string(), "rows": [
-            { "ticker": "AAPL_US_EQ", "isin": "US0378331005", "currency": "USD" }
-        ] });
-        std::fs::write(crate::config::data_path(".t212_instruments.json"), cache.to_string()).expect("seed cache");
+        let seed = |date: chrono::NaiveDate| {
+            let cache = json!({ "date": date.to_string(), "rows": [
+                { "ticker": "AAPL_US_EQ", "isin": "US0378331005", "currency": "USD" }
+            ] });
+            std::fs::write(&path, cache.to_string()).expect("seed cache");
+        };
+        let tickers = |rows: Vec<Instrument>| rows.into_iter().map(|i| i.ticker).collect::<Vec<_>>();
+        seed(today);
         let client = Client::builder().no_proxy().build().expect("test client");
         let rows = instruments_cached(&client).await;
         assert_eq!(rows.len(), 1);
         assert_eq!((rows[0].ticker.as_str(), rows[0].isin.as_str()), ("AAPL_US_EQ", "US0378331005"));
+
+        seed(today - chrono::Duration::days(7));
+        assert!(instruments_cached_at(&client, DEAD, None).await.is_empty(), "stale with no key");
+        let (url, client, _reqs) = crate::fetch::tests::routed_stub(vec![("/instruments", "HTTP/1.1 429 Too Many Requests\r\n\r\n{}")]);
+        assert!(instruments_cached_at(&client, url.trim_end_matches('/'), Some("k".into())).await.is_empty());
+        let row = r#"[{"ticker":"MSFT_US_EQ","isin":"US5949181045","currencyCode":"USD"}]"#;
+        let (url, client, reqs) = crate::fetch::tests::routed_stub(vec![("/instruments", row)]);
+        let fetched = instruments_cached_at(&client, url.trim_end_matches('/'), Some("k".into())).await;
+        assert_eq!(tickers(fetched), ["MSFT_US_EQ"], "a stale cache refetches");
+        assert!(reqs.recv().expect("one request").starts_with("GET /api/v0/equity/metadata/instruments "));
+        assert_eq!(tickers(instruments_cached_at(&client, DEAD, Some("k".into())).await), ["MSFT_US_EQ"], "the fetch was cached");
+    }
+
+    /// A port nothing listens on: a request to it fails at connect.
+    const DEAD: &str = "http://127.0.0.1:1";
+
+    /// (#781) The read call against a loopback stub: the key goes in the Authorization header, a 2xx
+    /// parses, and a refusal or a body that is not JSON is an error.
+    #[tokio::test]
+    async fn get_at_reads_the_answer() {
+        let (url, client, reqs) = crate::fetch::tests::routed_stub(vec![("/cash", r#"{"free":1.5}"#)]);
+        assert_eq!(get_at(&client, url.trim_end_matches('/'), "k", "equity/account/cash").await, Ok(json!({ "free": 1.5 })));
+        let req = reqs.recv().expect("one request");
+        assert!(req.starts_with("GET /api/v0/equity/account/cash "), "{req}");
+        assert!(req.to_ascii_lowercase().contains("\r\nauthorization: k\r\n"), "{req}");
+        let (url, client, _reqs) = crate::fetch::tests::routed_stub(vec![("/cash", "HTTP/1.1 401 Unauthorized\r\n\r\n{}")]);
+        assert_eq!(get_at(&client, url.trim_end_matches('/'), "k", "equity/account/cash").await, Err("trading212 401 Unauthorized: {}".to_string()));
+        let (url, client, _reqs) = crate::fetch::tests::routed_stub(vec![("/cash", "<html>")]);
+        assert!(get_at(&client, url.trim_end_matches('/'), "k", "equity/account/cash").await.is_err());
+    }
+
+    /// (#781) Every answer the order path can get, against a loopback stub. A 2xx is accepted. A 4xx
+    /// refusal and a refused connection are plain errors; a 5xx says the order MAY be live. The POST
+    /// carries the key and the signed quantity: a sell goes out negative.
+    #[tokio::test]
+    async fn order_at_reads_each_answer() {
+        let (url, client, reqs) = crate::fetch::tests::routed_stub(vec![("/orders/market", r#"{"id":7}"#)]);
+        let placed = order_at(&client, url.trim_end_matches('/'), "k", "sell", "AAPL_US_EQ", 2.5).await;
+        assert_eq!(placed, Ok(r#"trading212 accepted: {"id":7}"#.to_string()));
+        let req = reqs.recv().expect("one request");
+        assert!(req.starts_with("POST /api/v0/equity/orders/market "), "{req}");
+        assert!(req.to_ascii_lowercase().contains("\r\nauthorization: k\r\n"), "{req}");
+        let sent: Value = serde_json::from_str(req.split_once("\r\n\r\n").map_or("", |(_, b)| b)).expect("a JSON body");
+        assert_eq!(sent, json!({ "quantity": -2.5, "ticker": "AAPL_US_EQ" }));
+        let answer = |body: &'static str| async move {
+            let (url, client, _reqs) = crate::fetch::tests::routed_stub(vec![("/orders/market", body)]);
+            order_at(&client, url.trim_end_matches('/'), "k", "buy", "AAPL_US_EQ", 1.0).await
+        };
+        let refused = answer("HTTP/1.1 400 Bad Request\r\n\r\n{}").await.unwrap_err();
+        assert_eq!(refused, "trading212 400 Bad Request: {}");
+        let unknown = answer("HTTP/1.1 503 Service Unavailable\r\n\r\n{}").await.unwrap_err();
+        assert!(unknown.starts_with("trading212 503 Service Unavailable: {}") && unknown.contains("MAY be live"), "{unknown}");
+        assert!(unknown.contains("Trading212 app"), "{unknown}");
+        let dead = order_at(&client, DEAD, "k", "buy", "AAPL_US_EQ", 1.0).await.unwrap_err();
+        assert!(!dead.is_empty() && !dead.contains("MAY"), "a refused connect placed nothing: {dead}");
     }
 
     #[test]
@@ -303,18 +382,23 @@ mod tests {
 /// by sign). Key is the raw `Authorization` header value.
 ///
 /// UNGRADEABLE, hence the skip, and here the reason is sharper than for a read endpoint: killing
-/// `-> Ok(String::new())` means proving this function POSTS. Against a hardcoded
-/// `live.trading212.com` that is a real market order, and the obvious alternative — asserting it
-/// errors with no credential — holds only while `TRADING212_API_KEY` is unset, so the same test
-/// that passes in CI would place an order on a machine that has the key. There is no offline test
-/// of this function that is safe to write. `signed_qty` carries the one branch that can be pinned,
-/// and is.
+/// `-> Ok(String::new())` means proving this function POSTS. Against the live host that is a real
+/// market order, and the obvious alternative — asserting it errors with no credential — holds only
+/// while `TRADING212_API_KEY` is unset, so the same test that passes in CI would place an order on a
+/// machine that has the key. What is left here is that key read; everything past it is
+/// [`order_at`], pinned against a loopback stub, and the sign of the quantity is `signed_qty`.
 #[mutants::skip]
 pub async fn order(client: &Client, side: &str, ticker: &str, qty: f64) -> Result<String, String> {
     let key = env_var("TRADING212_API_KEY")?;
+    order_at(client, LIVE, &key, side, ticker, qty).await
+}
+
+/// (#781) `order` against `host` with the key passed in. A test can now prove what the order path
+/// says on each answer without a key, so no test can reach `live.trading212.com`.
+async fn order_at(client: &Client, host: &str, key: &str, side: &str, ticker: &str, qty: f64) -> Result<String, String> {
     let signed = signed_qty(side, qty);
     let resp = client
-        .post("https://live.trading212.com/api/v0/equity/orders/market")
+        .post(format!("{host}/api/v0/equity/orders/market"))
         .header("Authorization", key)
         .json(&json!({ "quantity": signed, "ticker": ticker }))
         .send()
