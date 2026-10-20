@@ -3,7 +3,9 @@
 // reformatted here. (#143) A lane was a single row until then; every row of a lane carries the same
 // headers in the same order, which is why the head is read off row 0.
 const LANES = ["stocks", "etfs", "crypto"];
-const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
+// (#767) 36 until here, which hid a dozen refused deploys. 30 days to 2026-10-20: 611 deploys, gaps p99 6.0h,
+// longest 7.3h. So 12h never fires on a healthy cron, and does after a few refused runs in a row.
+const STALE_HOURS = 12;
 // (#718) An n/a, — or burn cell hovers its column's own "mark = why" clause from the help text, else
 // the mark's plain meaning. The clause ends at "; " or ". "; a bracket or a dot inside a number stays.
 const WHY = {
