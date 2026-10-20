@@ -1531,6 +1531,7 @@ pub async fn run(args: Vec<String>) {
             // standing in 1999 and buying a fund that listed in 2019.
             let own_first = dates.first().copied();
             let (dates, closes, history_proxied) = apply_proxy(tk, dates, closes, proxy_map, donors);
+            let own_first = proxy_entry(own_first, history_proxied); // (#787) and the verify window after it
             let (cls_name, cls_type) = (chart.name, chart.instrument_type);
             // (#122) the ticker no longer resolves to the company it names — its bars past the remap are
             // a different instrument's. Drop the whole series rather than its tail: the remap date is not
@@ -1572,7 +1573,7 @@ pub async fn run(args: Vec<String>) {
                 // ticker was listed, and `core::backtest_quote` slices `[splice..=as_of]` without asking whether
                 // the as-of day was one anybody could have bought on. Without this line a 2019 fund becomes
                 // buyable in 1999 and the borrowed years get scored as its own forward returns. Borrowed bars
-                // are history, never an entry.
+                // are history, never an entry. (#787) Nor is the verify window: see `proxy_entry`.
                 if own_first.is_some_and(|f| dates[i] < f) {
                     i += step;
                     continue;
@@ -4951,8 +4952,16 @@ fn report_sector_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
 /// (#327) How much of a young listing's life the pair is judged on. ~26 months, so `PROXY_MIN_MONTHS` (24) of
 /// month-end returns fit inside it with a bar to spare. Deliberately a FIXED window at the listing's start and
 /// not "however much it takes to pass": a verdict allowed to grow its own evidence window until it agrees is
-/// not a test, and the window has to be knowable on the day the pair would first have been used.
+/// not a test. (#787) It is knowable only once the window has closed, so a spliced series has no entry
+/// before then (`proxy_entry`): the verdict is built from the returns of those first ~26 months.
 const PROXY_VERIFY_DAYS: i64 = 800;
+
+/// (#787) The first bar the walk may stand on: the listing's own first, and on a spliced series the day its
+/// verify window closes. The walk used to enter a spliced series at its own first bar, so a cutoff in the
+/// first ~26 months scored a splice that `apply_proxy` approved on the returns that came after it.
+fn proxy_entry(own_first: Option<chrono::NaiveDate>, proxied: bool) -> Option<chrono::NaiveDate> {
+    own_first.map(|f| if proxied { f + chrono::Duration::days(PROXY_VERIFY_DAYS) } else { f })
+}
 
 /// (#327) A ticker's month-end returns with the month each one ENDS in, as `year*12 + month`. The key
 /// is what lets two series of different ages be compared over the same calendar window by index
@@ -11922,6 +11931,10 @@ mod tests {
         // 2019 fund, and the goldens are its proof (the walk lives inside a `#[mutants::skip]` `run`).
         assert!(d[0] < yd[0]);
         assert_eq!(d[168..], yd[..], "the listing's own bars must survive the splice verbatim");
+        // (#787) and no entry until the verify window that approved the splice has closed
+        assert_eq!(proxy_entry(Some(yd[0]), on), Some(ymd(2021, 3, 11)));
+        assert_eq!(proxy_entry(Some(yd[0]), false), Some(yd[0]));
+        assert_eq!(proxy_entry(None, on), None);
 
         // a 2x tracker of the SAME index: correlates ~1.00, compounds elsewhere -> refused, series intact
         let (td, tc) = proxy_series(2005, 1, 0, 228, |k| pat(k) * 2.0);
