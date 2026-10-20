@@ -6901,6 +6901,11 @@ buy_heuristic:
                                  #  Top-1, top-10 and RANKED top-10 excess and Série E are unchanged on every leg. The strict twins move
                                  #  fund-covered ranks only, and by little. Per the rule the knob ships on; the backtest-gate legs on the ship
                                  #  push grade the asserts, and the goldens are reblessed from a bless probe on the ship SHA.
+                                 #  SHIP 8fbc362: CI 39459670909 green on all 12 jobs. Every backtest_edge_holds assert is green. Gate, old CI
+                                 #  39457406032 (7df1573) -> new: the 20y, 12y and 8y legs read no SEC row and are identical. 8y fund: edge
+                                 #  +45.2 -> +42.6, null lift +34.9 -> +31.9, winners held 12.7% -> 12.8%; top-10 +3.3, Série E 91% and OOS
+                                 #  +0.26/+0.15 unchanged. Bless probe 39459670412 wrote all 13 goldens byte-identical: no fixture series has
+                                 #  a line filed after revenue, so no rebless was needed. The live page is unchanged (1191 rows, every table).
                                  #── (#790) LANDED 2026-10-20 — EVERY WALK CUTS ON THE HALF-YEAR CALENDAR GRID ──
                                  #  Both walks started each series at its own bar `min_history` and stepped 6 bars. So cutoff dates followed the
                                  #  listing month, and the step weighted the sample by granularity: 6 bars is six months on a monthly series, 18 on
