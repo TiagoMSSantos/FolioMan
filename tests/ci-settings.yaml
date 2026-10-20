@@ -6884,7 +6884,7 @@ buy_heuristic:
                                  #  revenue's date, the `financial` mark included. With the knob on, fund_factors serves the twin at any
                                  #  cutoff before `full_from`. The twin runs the same EPS, share-scale, ADS and core-earnings steps as its row.
                                  #  The cache key went to `_facts25` (the bridge serves facts24 first); a bridged row has no twin, so the knob
-                                 #  is partly a no-op until the refetch lands. The knob is absent from this file, so it is off and nothing moves.
+                                 #  is partly a no-op until the refetch lands. The knob is listed off in this file, so nothing moves.
                                  #  NEXT: an A/B, off vs on, years 20 12 8 on `universe fund pit winners`, once Pages has warmed `_facts25`.
                                  #  SHIP RULE (pre-registered by the owner): ship `sec_line_filed_gate: true`, with re-blessed goldens in the
                                  #  same push, if every backtest_edge_holds assert stays green with it on, whatever the edge delta. If any
@@ -19113,6 +19113,8 @@ buy_heuristic:
                              #   NO LONGER US-only as of 2026-07-25 (#3c): 20-F/40-F forms, the ifrs-full
                              #   taxonomy and non-USD reporting currencies all parse now. Non-covered names
                              #   still get fund_factor None -> tilt neutral, price terms decide.
+  sec_line_filed_gate: false # (#784) OFF, the code default, so nothing moves. The line is listed only so a probe
+                             #   arm can set it; the A/B and its pre-registered ship rule are in the (#784) receipt.
   # (#3) GROWTH-AT-PRICE — earnings_yield SUPERSEDED by peg_yield 2026-07-25. peg_yield = 1/PEG =
   #   earnings_yield · as-of CAGR (100 <=> PEG 1; >100 <=> PEG < 1 = cheap for its growth). The axis sat
   #   wired-but-unmeasured for rounds, annotated "expected dead — redundant with earnings_yield x CAGR
