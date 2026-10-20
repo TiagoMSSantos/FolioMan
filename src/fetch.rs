@@ -18398,8 +18398,9 @@ pub(crate) mod tests {
         let got = fetch_ratios_sec(&client, &urls, &fx_cache(), "ZZSECNOCCY", 100.0, "USD", &[]).await;
         let _ = std::fs::remove_file(seeded);
         assert_eq!(none, (None, None));
-        // (#491) the same core-earnings quality the sibling test reads off this row: 15
-        assert_eq!(got, (Some(100.0 / 3.0), Some(15.0)));
+        // (#426) the annual fallback is the stripped row's EPS (EBIT 15 of pretax 20 docks 3.0 to 2.25); only the TTM
+        // roll is GAAP. (#491) the same core-earnings quality the sibling test reads off this row: 15
+        assert_eq!(got, (Some(100.0 / 2.25), Some(15.0)));
     }
 
     /// The three conditional branches of the per-quote fund lane, each behind its own factor name: the insider count read
