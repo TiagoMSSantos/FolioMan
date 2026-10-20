@@ -510,8 +510,8 @@ fn fx_scale(cur: &str) -> f64 {
 }
 
 /// EUR per 1 unit of `cur`. 1.0 for EUR; None if Yahoo has no FX pair, and None for an UNKNOWN
-/// currency. Cached — the cache holds the plain pound rate under "GBP"; the pence scale is applied
-/// on read, never stored.
+/// currency. Only a hit is cached — the cache holds the plain pound rate under "GBP"; the pence
+/// scale is applied on read, never stored. A miss is asked again by the next caller.
 pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) -> Option<f64> {
     // (#81) An empty `cur` used to be read as EUR, which returned a rate of 1.0 — an assumption
     // wearing the costume of a fact. It is the same silent mislabel as assuming USD, one direction
@@ -535,7 +535,13 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
             break;
         }
     }
-    cache.lock().await.insert(cur, rate); // cache misses too
+    // (#761) A miss used to be banked too, and `quotes` warms "USD" once up front: one FX blip there
+    // (both pairs, both tries) left every USD row unpriced for the whole run, with no warning, and the
+    // page still deployed. A miss is now asked again; a currency with no pair at all costs its two
+    // pair lookups per quote, and `quote_one` only asks after its own chart answered.
+    if let Some(r) = rate {
+        cache.lock().await.insert(cur, Some(r));
+    }
     rate.map(|r| r * scale)
 }
 
@@ -16435,6 +16441,24 @@ pub(crate) mod tests {
         assert!(close(got, 0.0125), "1 / 0.8 = 1.25 EUR/GBP, 0.0125 EUR/GBp: {got:?}");
         let banked = cold.lock().await.get("GBP").copied().flatten();
         assert!(close(banked, 1.25), "the POUND rate is banked, unscaled: {banked:?}");
+    }
+
+    /// (#761) A miss is never banked. The first ask meets a stub that 404s every pair, so it is None and
+    /// leaves no key; the second ask on the SAME cache meets a stub that answers, and reads its rate.
+    /// When the miss was banked, the second ask read the cached None and never fetched.
+    #[tokio::test]
+    async fn eur_rate_never_banks_a_miss() {
+        let d = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let fx = fx_cache();
+        let (down, client, _) = routed_stub(vec![]);
+        let mut urls = stub_urls(&down);
+        urls.yahoo_chart = format!("{down}{{ticker}}/{{range}}");
+        assert_eq!(eur_rate(&client, &urls, "USD", &fx).await, None, "no pair answered");
+        assert!(!fx.lock().await.contains_key("USD"), "the miss is not banked");
+
+        let (up, client, _) = routed_stub(vec![("USDEUR", chart_body(&[(d, 0.9)], &[], "USD"))]);
+        urls.yahoo_chart = format!("{up}{{ticker}}/{{range}}");
+        assert_eq!(eur_rate(&client, &urls, "USD", &fx).await, Some(0.9), "asked again, and answered");
     }
 
     /// (#358) `eur_rate_series`' two short answers. EUR is the identity and asks for nothing, even with
