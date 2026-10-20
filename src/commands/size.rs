@@ -355,7 +355,7 @@ pub async fn run(args: Vec<String>) {
     }
     let fund_tickers: Vec<String> =
         quotes.iter().filter(|q| crate::picks::asset_class(q) == 1).map(|q| q.ticker.clone()).collect();
-    let (_, mix) = fetch::yahoo_top_holdings(&client, &fund_tickers).await;
+    let (_, mix) = fetch::yahoo_top_holdings(&client, &settings.urls, &fund_tickers).await;
     let sz = &settings.sizing;
     let fresh = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl, crate::picks::btc_1y(&quotes), &fund_sectors(&mix));
     let book = book_rows(buy.as_ref().map(|(_, rows)| rows.as_slice()), &quotes, fresh);

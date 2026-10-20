@@ -84,9 +84,9 @@ pub async fn run(args: Vec<String>) {
                 // seams (TER/AUM/category + holdings + sector weights + equity/bond split) before
                 // giving up; a crumb/transport failure is environmental and leaves the no-data line.
                 let (ter, aum, category) =
-                    fetch::fund_facts_ext_live(&client, ticker).await.unwrap_or((None, None, None));
+                    fetch::fund_facts_ext_live(&client, &settings.urls, ticker).await.unwrap_or((None, None, None));
                 let (holdings, sectors, stock_bond, _fund_pe) =
-                    fetch::fund_composition_live(&client, ticker).await.unwrap_or_default();
+                    fetch::fund_composition_live(&client, &settings.urls, ticker).await.unwrap_or_default();
                 if ter.is_some() || aum.is_some() || !holdings.is_empty() || !sectors.is_empty() {
                     print!(
                         "{}",

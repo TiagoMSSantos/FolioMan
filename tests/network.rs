@@ -190,7 +190,7 @@ async fn yahoo_top_holdings_parses() {
     stamp_run();
     // a symbol the screen actually prints (sector-tech table) — the exact payload class the footers eat
     const SYM: &str = "IITU.L";
-    match fetch::top_holdings_live(&fetch::client(), SYM).await {
+    match fetch::top_holdings_live(&fetch::client(), &config::load().urls, SYM).await {
         Err(why) => eprintln!("network smoke [topHoldings {SYM}] SKIPPED — {why}"),
         Ok(holdings) => {
             assert!(
@@ -358,7 +358,7 @@ async fn sec_core_factor_strips_googl_gains() {
 #[tokio::test]
 async fn yahoo_fund_facts_parse() {
     stamp_run();
-    match fetch::fund_facts_live(&fetch::client(), "IITU.L").await {
+    match fetch::fund_facts_live(&fetch::client(), &config::load().urls, "IITU.L").await {
         Err(why) => eprintln!("network smoke [fund facts IITU.L] SKIPPED — {why}"),
         Ok((ter, aum)) => {
             let t = ter.expect(

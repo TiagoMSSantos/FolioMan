@@ -105,7 +105,7 @@ pub async fn run(args: Vec<String>) {
     let etfs: Vec<String> =
         quotes.iter().filter(|q| picks::quote_is_etf(q)).map(|q| q.ticker.clone()).collect();
     if !etfs.is_empty() {
-        let (holdings, _mix) = fetch::yahoo_top_holdings(&client, &etfs).await;
+        let (holdings, _mix) = fetch::yahoo_top_holdings(&client, &settings.urls, &etfs).await;
         let lines = holdings_lines(&holdings, &etfs);
         if !lines.is_empty() {
             println!("\nTop-10 holdings — what's inside the wrapper:");

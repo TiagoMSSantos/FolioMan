@@ -1087,6 +1087,7 @@ fn fill_venue_listings(fund_pe: &mut picks::FundPeMap, quotes: &[core::Quote]) {
 /// Sources must be MEASURED (`from: None`), so a borrowed value can never itself be borrowed from.
 async fn borrow_index_twins(
     client: &reqwest::Client,
+    urls: &config::Urls,
     bench: &[String],
     fund_pe: &picks::FundPeMap,
     quotes: &[core::Quote],
@@ -1120,7 +1121,7 @@ async fn borrow_index_twins(
     let extra = if todo.is_empty() {
         std::collections::HashMap::new()
     } else {
-        fetch::yahoo_top_holdings(client, &todo).await.1
+        fetch::yahoo_top_holdings(client, urls, &todo).await.1
     };
     // (fund staleness) the source's age travels with its P/E: a value borrowed from a twin whose own
     // ratio came off disk is no fresher than that twin, and it acts just as hard.
@@ -2242,7 +2243,7 @@ pub async fn run(args: Vec<String>) {
             .collect();
         syms.sort();
         syms.dedup();
-        let (holdings, mix) = fetch::yahoo_top_holdings(&client, &syms).await;
+        let (holdings, mix) = fetch::yahoo_top_holdings(&client, &settings.urls, &syms).await;
         (holdings, mix, syms)
     };
     // (#465) TOP10% + TD-1Y/TD-5Y, display only, on Quote so universe.json carries them to the engine.
@@ -2251,7 +2252,7 @@ pub async fn run(args: Vec<String>) {
     // read `bench`'s `holdings`/`mix` only, and no gate moves.
     let extra: Vec<String> = core_all.iter().filter(|t| !bench.contains(t)).cloned().collect();
     let mut cells = holdings.clone();
-    cells.extend(fetch::yahoo_top_holdings(&client, &extra).await.0);
+    cells.extend(fetch::yahoo_top_holdings(&client, &settings.urls, &extra).await.0);
     let funds: Vec<String> = bench.iter().chain(&extra).cloned().collect();
     fetch::enrich_etf_cells(&client, &settings.urls, &mut quotes, &funds, &cells, &settings.buy_heuristic).await;
     let mut fund_pe: picks::FundPeMap = mix
@@ -2270,7 +2271,7 @@ pub async fn run(args: Vec<String>) {
     // ceiling's free pass forever. Borrows a physical index twin's P/E; costs a second topHoldings pass
     // only when something is actually missing. Re-run the venue fill afterwards so a borrowed value
     // reaches the fund's other listings too — same hole, same fix, one level down.
-    let borrowed = borrow_index_twins(&client, &bench, &fund_pe, &quotes).await;
+    let borrowed = borrow_index_twins(&client, &settings.urls, &bench, &fund_pe, &quotes).await;
     fund_pe.extend(borrowed);
     fill_venue_listings(&mut fund_pe, &quotes);
     // optional feeds fail SILENTLY into a weaker run (NUPL None = crypto euphoria damping off;
@@ -5732,7 +5733,8 @@ mod tests {
         let bench: Vec<String> = ["SPY5.MI", "XNAS.DE"].iter().map(|s| (*s).to_string()).collect();
         let client = reqwest::Client::builder().no_proxy().build().expect("test client");
 
-        let got = borrow_index_twins(&client, &bench, &fund_pe, &quotes).await;
+        let urls = crate::fetch::tests::stub_urls("http://127.0.0.1:1/");
+        let got = borrow_index_twins(&client, &urls, &bench, &fund_pe, &quotes).await;
         assert_eq!(
             got,
             vec![(

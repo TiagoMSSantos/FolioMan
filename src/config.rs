@@ -830,6 +830,11 @@ pub struct Urls {
     pub yahoo_intraday: String, // {ticker} — hourly bars (~2d) for the screen 1h/6h/12h columns
     pub yahoo_search: String,  // {ticker}
     pub yahoo_quote: String,   // {ticker} (human quote page, for `perf`)
+    // (#782) Yahoo's quoteSummary host: the cookie+crumb handshake and every fund-facts and topHoldings
+    // read ride it. A field so a test can serve it from a loopback stub; defaulted, so no settings file
+    // has to name it.
+    #[serde(default = "default_yahoo_query2")]
+    pub yahoo_query2: String,
     // (EU listing) OpenFIGI mapping endpoint — POST, keyless, 10 jobs per request (20 returns HTTP
     // 413). Read ONLY by `prefer_eu_listing`; untouched when that knob is off. Defaulted so an older
     // settings.yaml still loads. Yahoo's own search cannot do this job: `?q=GOOGL` returns a 2x ETF
@@ -1341,6 +1346,10 @@ fn default_hn_stories_url() -> String {
 
 /// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
 /// probed that answers "which European line is this US ticker" correctly and consistently.
+fn default_yahoo_query2() -> String {
+    "https://query2.finance.yahoo.com".to_string()
+}
+
 fn default_openfigi_mapping() -> String {
     "https://api.openfigi.com/v3/mapping".to_string()
 }
@@ -3041,6 +3050,7 @@ mod tests {
             (default_fund_expense_url(), "https://financialmodelingprep.com/", &["{ticker}", "{key}"][..]),
             (default_bf_etf_search_url(), "https://api.boerse-frankfurt.de/", &[][..]),
             (default_fec_bulk_url(), "https://www.fec.gov/", &["{year}", "{file}"][..]),
+            (default_yahoo_query2(), "https://query2.finance.yahoo.com", &[][..]),
         ] {
             assert!(url.starts_with(host), "{url}");
             for t in tokens {

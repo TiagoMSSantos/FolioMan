@@ -5887,8 +5887,8 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 /// year's row stayed EPS-less for good. One refetch per new 10-K, since the rewrite moves the mtime past it.
 ///
 /// The instance read is the EXTRACTED one beside the inline-XBRL 10-K: same folder, primary document
-/// name with ".htm" swapped for "_htm.xml". That URL is hardcoded like the `yahoo_crumb` endpoints —
-/// lift it into `Urls` only if a test needs to stub it. `#[mutants::skip]`: network-bound, and no offline
+/// name with ".htm" swapped for "_htm.xml". That URL is hardcoded — lift it into `Urls` (as #782 did for
+/// the Yahoo host) only if a test needs to stub it. `#[mutants::skip]`: network-bound, and no offline
 /// test reaches it; its parser, `parse_sec_instance`, is the tested half.
 #[mutants::skip]
 async fn fetch_sec_instance_eps(
@@ -6487,7 +6487,7 @@ fn borse_frankfurt_sign(url: &str, salt: &str) -> [(&'static str, String); 3] {
 /// degrades to empty — never a crash; the rest of the universe still builds).
 ///
 /// UNGRADEABLE, hence the skip: a signed POST against a live endpoint, with the same `offline()`
-/// pinning problem as `yahoo_crumb`.
+/// pinning problem as the guard in `yahoo_crumb`.
 #[mutants::skip]
 async fn borse_frankfurt_post(client: &Client, url: &str, salt: &str, body: &Value) -> Option<Value> {
     // second of the three seams that bypassed `get_json`/`get_text` — this one because it signs its
@@ -6724,9 +6724,9 @@ fn isin_domicile(isin: &str) -> Option<String> {
 }
 
 /// Yahoo cookie+crumb pair for the query2 quoteSummary API (required since 2023). Fetched once per
-/// process, best-effort: a race just repeats the two-request handshake, first `set` wins.
-/// shortcut: endpoints hardcoded — lift into `Urls` only if a test ever needs to stub them.
-static YQ_AUTH: std::sync::OnceLock<Option<(String, String)>> = std::sync::OnceLock::new();
+/// process per host (`Urls.yahoo_query2`), best-effort: a race just repeats the two-request handshake,
+/// first insert wins. Keyed by host so each loopback stub test (own port) gets its own handshake.
+static YQ_AUTH: std::sync::Mutex<BTreeMap<String, Option<(String, String)>>> = std::sync::Mutex::new(BTreeMap::new());
 
 /// A full browser UA, for Yahoo only. The bare `"Mozilla/5.0"` the rest of this file sends is now
 /// enough on its own to get the crumb handshake refused, so the string's realism IS the feature —
@@ -6739,13 +6739,10 @@ const YAHOO_UA: &str =
 /// request carrying an HTML `Accept`; with this omitted the same URL returns `dflow` alone and the
 /// crumb call 401s. Sent on every Yahoo request so all three stay indistinguishable from each other.
 const YAHOO_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-/// UNGRADEABLE, hence the skip: two live GETs against hardcoded Yahoo hosts. The one branch a test
-/// could pin is the `offline()` guard, and pinning it needs `FOLIOMAN_OFFLINE` set for the whole
-/// process — which a `--lib` test cannot do without `std::env::set_var`, and one of those invalidates
-/// every env-based CI repro in this binary. `tests/cli.rs` pins it from a child process, which is
-/// outside the mutation gate's killing suite.
-#[mutants::skip]
-async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
+/// (#782) Two GETs against `Urls.yahoo_query2`, so the handshake is pinned against a loopback stub.
+/// The `offline()` guard is the one branch a `--lib` test still cannot reach (it needs
+/// `FOLIOMAN_OFFLINE` set for the whole process); `tests/cli.rs` pins it from a child process.
+async fn yahoo_crumb(client: &reqwest::Client, urls: &Urls) -> Option<(String, String)> {
     // Restated here because the quoteSummary pair (this handshake + `quote_summary_json`) is the one
     // outbound path in this file that does NOT ride `get_json`/`get_text` — so the guard those two
     // carry never applied to it. Checked before the `YQ_AUTH` read so an offline run never caches a
@@ -6757,7 +6754,8 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
     if offline() {
         return None;
     }
-    if let Some(v) = YQ_AUTH.get() {
+    let host = urls.yahoo_query2.trim_end_matches('/');
+    if let Some(v) = YQ_AUTH.lock().unwrap().get(host) {
         return v.clone();
     }
     let v: Option<(String, String)> = async {
@@ -6778,7 +6776,7 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
         //
         // Keep the name=value pairs, drop the attributes (Path/Expires/HttpOnly/SameSite).
         let resp = client
-            .get("https://query2.finance.yahoo.com")
+            .get(host)
             .header("User-Agent", YAHOO_UA)
             .header("Accept", YAHOO_ACCEPT)
             .send()
@@ -6795,7 +6793,7 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
             return None;
         }
         let resp = client
-            .get("https://query2.finance.yahoo.com/v1/test/getcrumb")
+            .get(format!("{host}/v1/test/getcrumb"))
             .header("Cookie", &cookie)
             .header("User-Agent", YAHOO_UA)
             .header("Accept", YAHOO_ACCEPT)
@@ -6810,8 +6808,7 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
         is_crumb(&crumb).then_some((cookie, crumb))
     }
     .await;
-    let _ = YQ_AUTH.set(v.clone());
-    v
+    YQ_AUTH.lock().unwrap().entry(host.to_string()).or_insert(v).clone()
 }
 
 /// Does this response body look like a Yahoo crumb rather than an error?
@@ -6822,8 +6819,7 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
 /// process and appended to every quoteSummary URL, so ONE 429 turned into a run's worth of requests
 /// that could only ever earn `401 Invalid Crumb`. Measured against the live endpoint while probing.
 ///
-/// Split out of [`yahoo_crumb`] because that fn is `#[mutants::skip]`-ed live-only code; the rule that
-/// actually decides is pure, so it can be graded and tested.
+/// Split out of [`yahoo_crumb`] so the rule that actually decides is pure, graded and tested on its own.
 fn is_crumb(token: &str) -> bool {
     let t = token.trim();
     !t.is_empty() && !t.contains('{') && !t.chars().any(char::is_whitespace)
@@ -6935,8 +6931,7 @@ async fn yahoo_fund_facts_fill(
         // the firewall: the per-field `miss_ter`/`miss_aum` guards below already refuse to overwrite a
         // BF answer, so deleting this branch changes no returned value — only the number of symbols
         // that reach the fetch list. Killing it means observing that a fully-answered fund is never
-        // fetched, and `yahoo_crumb` hardcodes `https://query2.finance.yahoo.com` (no `Urls`, so `stub_urls`
-        // cannot redirect it), which leaves no way to count requests without a live socket.
+        // fetched, i.e. counting quoteSummary requests on a stub; no test does, by choice.
         if !miss_ter && !miss_aum {
             continue; // BF already answered — Yahoo is only consulted for the holes
         }
@@ -6967,12 +6962,12 @@ async fn yahoo_fund_facts_fill(
     }
     // one handshake up front so a dead crumb skips the whole batch instead of 400 doomed calls;
     // the per-symbol seam below reuses it via the in-process YQ_AUTH cache.
-    let crumb_alive = yahoo_crumb(client).await.is_some();
+    let crumb_alive = yahoo_crumb(client, urls).await.is_some();
     let queried = todo.clone(); // the justETF pass at the bottom needs this list after the stream eats it
     let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = if crumb_alive {
         stream::iter(todo)
             .map(|sym| async move {
-                let (ter, aum) = fund_facts_live(client, &sym).await.ok()?;
+                let (ter, aum) = fund_facts_live(client, urls, &sym).await.ok()?;
                 Some((sym, ter, aum))
             })
             .buffer_unordered(fetch_concurrency())
@@ -6982,12 +6977,9 @@ async fn yahoo_fund_facts_fill(
         Vec::new() // nothing to ask Yahoo with; the justETF pass below carries the whole batch
     };
     // DELIBERATELY UNPINNED (mutation audit, round 5), all three mutants on the two lines below: the
-    // `||`, and both replacements for the `+=`. `got` is read by one `eprintln!` and nothing else, and
-    // this whole block is unreachable without a LIVE Yahoo handshake — the `yahoo_crumb` call above
-    // hardcodes `https://query2.finance.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it and a
-    // unit test can only make it fail closed (`YQ_AUTH.set(None)`), which returns before here.
-    // Killing them needs a real socket, which no test in this binary may open. The cache-served path
-    // above it — the half that decides actual returned values — is pinned.
+    // `||`, and both replacements for the `+=`. `got` is read by one `eprintln!` and nothing else, so
+    // no returned value can tell them apart. The values this block DOES return are pinned on a
+    // loopback stub (`yahoo_fund_facts_fill_asks_the_stub_for_the_holes`).
     let mut got = 0usize;
     for (sym, ter, aum) in fetched.into_iter().flatten() {
         if ter.is_some() || aum.is_some() {
@@ -7243,11 +7235,10 @@ fn cache_use(age: Option<i64>) -> (bool, bool) {
 /// report-only `_ext`/composition cousins) differ ONLY in the `modules=` list, so the crumb
 /// handshake + throttle guard live here once. `Err` = environmental (skip/retry); `Ok(Value)` =
 /// an HTTP-200 body that parsed as JSON (may still be an empty result for an unknown symbol).
-async fn quote_summary_json(client: &Client, sym: &str, modules: &str) -> Result<Value, String> {
-    let (cookie, crumb) = yahoo_crumb(client).await.ok_or("Yahoo crumb handshake failed")?;
-    let url = format!(
-        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={modules}&crumb={crumb}"
-    );
+async fn quote_summary_json(client: &Client, urls: &Urls, sym: &str, modules: &str) -> Result<Value, String> {
+    let (cookie, crumb) = yahoo_crumb(client, urls).await.ok_or("Yahoo crumb handshake failed")?;
+    let host = urls.yahoo_query2.trim_end_matches('/');
+    let url = format!("{host}/v10/finance/quoteSummary/{sym}?modules={modules}&crumb={crumb}");
     // the one outbound call in this file that never went through the pacer. Every quoteSummary read
     // (fund facts, topHoldings, composition) rides this fn, and the screen's fund pass fires it once
     // per fund — an unpaced burst against the endpoint that already answers 429 the most readily.
@@ -7275,8 +7266,8 @@ async fn quote_summary_json(client: &Client, sym: &str, modules: &str) -> Result
 /// public so the network smoke test can probe the payload without touching the weekly cache.
 /// `Err` = environmental (transport/handshake/throttle — skip, retry later); `Ok(empty)` = HTTP 200
 /// whose body yielded no holdings, which for a major equity ETF means the payload shape drifted.
-pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String, f64)>, String> {
-    Ok(parse_top_holdings(&quote_summary_json(client, sym, "topHoldings").await?))
+pub async fn top_holdings_live(client: &Client, urls: &Urls, sym: &str) -> Result<Vec<(String, f64)>, String> {
+    Ok(parse_top_holdings(&quote_summary_json(client, urls, sym, "topHoldings").await?))
 }
 
 /// (report round 7) Report-only cousin of `top_holdings_live`: one topHoldings fetch, but also
@@ -7286,9 +7277,10 @@ pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String
 /// (holdings, sectors desc, `Option<(stock, bond)>`, `Option<P/E>`).
 pub(crate) async fn fund_composition_live(
     client: &Client,
+    urls: &Urls,
     sym: &str,
 ) -> Result<(Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>), String> {
-    let v = quote_summary_json(client, sym, "topHoldings").await?;
+    let v = quote_summary_json(client, urls, sym, "topHoldings").await?;
     Ok((parse_top_holdings(&v), parse_fund_sectors(&v), parse_fund_stock_bond(&v), parse_fund_pe(&v)))
 }
 
@@ -7297,9 +7289,12 @@ pub(crate) async fn fund_composition_live(
 /// fundProfile/summaryDetail payload without touching the weekly cache. Err = environmental
 /// (crumb/transport/throttle — skip, retry later); Ok((None, None)) = HTTP 200 whose body yielded
 /// neither TER nor AUM, which for a major equity ETF means the payload shape drifted.
-pub async fn fund_facts_live(client: &Client, sym: &str) -> Result<(Option<f64>, Option<f64>), String> {
-    let v =
-        quote_summary_json(client, sym, "fundProfile%2CsummaryDetail%2CdefaultKeyStatistics").await?;
+pub async fn fund_facts_live(
+    client: &Client,
+    urls: &Urls,
+    sym: &str,
+) -> Result<(Option<f64>, Option<f64>), String> {
+    let v = quote_summary_json(client, urls, sym, "fundProfile%2CsummaryDetail%2CdefaultKeyStatistics").await?;
     Ok(parse_yahoo_fund_facts(&v))
 }
 
@@ -7308,10 +7303,10 @@ pub async fn fund_facts_live(client: &Client, sym: &str) -> Result<(Option<f64>,
 /// category (it ranks, doesn't describe); the report drill-in does. Returns (ter, aum, category).
 pub(crate) async fn fund_facts_ext_live(
     client: &Client,
+    urls: &Urls,
     sym: &str,
 ) -> Result<(Option<f64>, Option<f64>, Option<String>), String> {
-    let v =
-        quote_summary_json(client, sym, "fundProfile%2CsummaryDetail%2CdefaultKeyStatistics").await?;
+    let v = quote_summary_json(client, urls, sym, "fundProfile%2CsummaryDetail%2CdefaultKeyStatistics").await?;
     let (ter, aum) = parse_yahoo_fund_facts(&v);
     Ok((ter, aum, parse_fund_category(&v)))
 }
@@ -7350,6 +7345,7 @@ pub type FundMix = (Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>, Option<
 /// symbols), so no request budget needed.
 pub async fn yahoo_top_holdings(
     client: &Client,
+    urls: &Urls,
     syms: &[String],
 ) -> (HashMap<String, Vec<(String, f64)>>, HashMap<String, FundMix>) {
     // (fetched date, [(holding symbol/name, weight fraction)], [(sector, weight)], stock/bond, fund P/E)
@@ -7384,8 +7380,8 @@ pub async fn yahoo_top_holdings(
     }
     if !todo.is_empty() {
         // handshake once up front for the explicit skip message; fund_composition_live's own crumb
-        // call is then a free OnceLock read per symbol.
-        if yahoo_crumb(client).await.is_none() {
+        // call is then a free `YQ_AUTH` read per symbol.
+        if yahoo_crumb(client, urls).await.is_none() {
             eprintln!("fetch: Yahoo crumb handshake failed — holdings-overlap footer skipped this run");
             return (out, mix);
         }
@@ -7393,7 +7389,7 @@ pub async fn yahoo_top_holdings(
             stream::iter(todo)
                 .map(|sym| async move {
                     // Err (transport/throttle) -> None: symbol stays uncached, retried next run
-                    let (holdings, sectors, stock_bond, pe) = fund_composition_live(client, &sym).await.ok()?;
+                    let (holdings, sectors, stock_bond, pe) = fund_composition_live(client, urls, &sym).await.ok()?;
                     Some((sym, holdings, sectors, stock_bond, pe))
                 })
                 .buffer_unordered(fetch_concurrency())
@@ -8157,7 +8153,7 @@ async fn euronext_track_page(client: &Client, urls: &Urls, start: usize, len: us
 /// mislabeled). One plain unsigned GET, whole list in one page. Degrades to empty + a diagnostic.
 ///
 /// UNGRADEABLE, hence the skip: one live GET plus a `core::six_fund_isins` call that is pinned where
-/// it lives. Same `offline()` pinning problem as `yahoo_crumb`.
+/// it lives. Same `offline()` pinning problem as the guard in `yahoo_crumb`.
 #[mutants::skip]
 pub async fn fetch_six_etf_isins(client: &Client, urls: &Urls) -> Vec<String> {
     // third seam that bypassed `get_json`/`get_text` — this one because it needs a 60s per-request
@@ -10085,18 +10081,98 @@ pub(crate) mod tests {
     /// would then look like a universe with no fund facts in it, which is exactly the shape of the bug
     /// that took those four columns out.
     ///
-    /// Hermetic without stubbing anything: `yahoo_crumb` hardcodes `https://query2.finance.yahoo.com`
-    /// and takes no `Urls`, so a seeded `None` in `YQ_AUTH` — read before any request — is the only way
-    /// to drive it from a unit test, and it is also the only way to guarantee no socket is opened.
-    /// Every test in this binary that touches `YQ_AUTH` seeds the same `None`, so the `set` race is not
-    /// one: whoever gets there first stores the value the others wanted.
+    /// (#782) `stub_urls` points `yahoo_query2` at a dead loopback port, so the handshake's first GET is
+    /// refused and no socket leaves the box.
     #[tokio::test]
     async fn quote_summary_json_fails_closed_when_the_handshake_does() {
         pin_throttle();
-        let _ = YQ_AUTH.set(None);
         let client = Client::builder().no_proxy().build().expect("test client");
-        let got = quote_summary_json(&client, "VUAA.DE", "fundProfile").await;
+        let got = quote_summary_json(&client, &stub_urls("http://127.0.0.1:1/"), "VUAA.DE", "fundProfile").await;
         assert_eq!(got, Err("Yahoo crumb handshake failed".to_string()), "an Err, never an empty Ok");
+    }
+
+    /// (#782) The session GET as query2 answers it to a browser: two cookies, one with attributes.
+    const YAHOO_SESSION: &str = "HTTP/1.1 200 OK\r\nSet-Cookie: A1=x; Path=/; HttpOnly\r\nSet-Cookie: A3=y\r\n\r\n";
+
+    /// (#782) One fund's quoteSummary, every module the four seams read. The two holdings, the two
+    /// sector shapes (bare and `raw`) and the inverted P/E each take a different parser branch.
+    const FUND_SUMMARY: &str = r#"{"quoteSummary":{"result":[{"fundProfile":{"categoryName":"Technology","feesExpensesInvestment":{"annualReportExpenseRatio":{"raw":0.0012}}},"summaryDetail":{"totalAssets":{"raw":5000000000.0}},"topHoldings":{"holdings":[{"symbol":"NVDA","holdingPercent":{"raw":0.25}},{"holdingName":"Apple Inc","holdingPercent":{"raw":0.125}}],"sectorWeightings":[{"technology":0.75},{"financial_services":{"raw":0.25}}],"stockPosition":0.99,"bondPosition":0.01,"equityHoldings":{"priceToEarnings":{"raw":0.03125}}}}]}}"#;
+
+    /// (#782) The crumb handshake against a loopback host. A session cookie and a 2xx crumb are both
+    /// required. Each refusal gets its own stub, because `YQ_AUTH` caches the first answer per host.
+    #[tokio::test]
+    async fn yahoo_crumb_needs_the_session_cookie_and_a_2xx_crumb() {
+        let (base, client, rx) = routed_stub(vec![("getcrumb", "stubcrumb"), ("GET / ", YAHOO_SESSION)]);
+        let urls = stub_urls(&base);
+        let want = Some(("A1=x; A3=y".to_string(), "stubcrumb".to_string()));
+        assert_eq!(yahoo_crumb(&client, &urls).await, want, "cookie pairs kept, their attributes dropped");
+        assert_eq!(yahoo_crumb(&client, &urls).await, want, "the second call is served from YQ_AUTH");
+        let reqs: Vec<String> = rx.try_iter().collect();
+        assert_eq!(reqs.len(), 2, "one handshake per host: {reqs:?}");
+        assert!(reqs[0].starts_with("GET / "), "the session comes from the host root: {}", reqs[0]);
+        assert!(reqs[1].starts_with("GET /v1/test/getcrumb "), "{}", reqs[1]);
+        assert!(reqs[1].contains("\r\ncookie: A1=x; A3=y\r\n"), "the crumb GET carries the session: {}", reqs[1]);
+
+        let (base, client, rx) = routed_stub(vec![("", "")]);
+        assert_eq!(yahoo_crumb(&client, &stub_urls(&base)).await, None, "no Set-Cookie, no crumb");
+        assert_eq!(rx.try_iter().count(), 1, "and the crumb GET is never sent");
+
+        // `Unauthorized` is crumb-shaped (see `is_crumb`), so only the status check refuses it
+        let (base, client, _rx) =
+            routed_stub(vec![("getcrumb", "HTTP/1.1 401 Unauthorized\r\n\r\nUnauthorized"), ("GET / ", YAHOO_SESSION)]);
+        assert_eq!(yahoo_crumb(&client, &stub_urls(&base)).await, None, "a 401 body is not a crumb");
+
+        let (base, client, _rx) = routed_stub(vec![("getcrumb", "Too Many Requests"), ("GET / ", YAHOO_SESSION)]);
+        assert_eq!(yahoo_crumb(&client, &stub_urls(&base)).await, None, "a 2xx prose body is not a crumb");
+    }
+
+    /// (#782) `quote_summary_json` and the four seams on it, on one stub. A 200 JSON body is `Ok`;
+    /// 429, 5xx, 401 and 403 are each a refusal (`Err`, retried next run), and so is a 200 HTML page.
+    /// The 429, 503 and 401 rows are what tell each `||` of the status guard from an `&&`.
+    #[tokio::test]
+    async fn quote_summary_seams_read_a_live_answer_and_refuse_the_rest() {
+        let (base, client, rx) = routed_stub(vec![
+            ("getcrumb", "stubcrumb"),
+            ("GET / ", YAHOO_SESSION),
+            ("quoteSummary/FUND.DE?", FUND_SUMMARY),
+            ("quoteSummary/LIMIT.DE?", "HTTP/1.1 429 Too Many Requests\r\n\r\n{}"),
+            ("quoteSummary/DOWN.DE?", "HTTP/1.1 503 Service Unavailable\r\n\r\n{}"),
+            ("quoteSummary/AUTH.DE?", "HTTP/1.1 401 Unauthorized\r\n\r\n{}"),
+            ("quoteSummary/DENY.DE?", "HTTP/1.1 403 Forbidden\r\n\r\n{}"),
+            ("quoteSummary/PAGE.DE?", "<html>consent</html>"),
+        ]);
+        let urls = stub_urls(&base);
+        let fixture: Value = serde_json::from_str(FUND_SUMMARY).expect("fixture json");
+        assert_eq!(quote_summary_json(&client, &urls, "FUND.DE", "fundProfile").await, Ok(fixture));
+        let reqs: Vec<String> = rx.try_iter().collect();
+        let ask = reqs.last().expect("the quoteSummary GET");
+        assert!(ask.starts_with("GET /v10/finance/quoteSummary/FUND.DE?modules=fundProfile&crumb=stubcrumb "), "{ask}");
+        assert!(ask.contains("\r\ncookie: A1=x; A3=y\r\n"), "the session rides the data GET too: {ask}");
+        for (sym, status) in [
+            ("LIMIT.DE", "429 Too Many Requests"),
+            ("DOWN.DE", "503 Service Unavailable"),
+            ("AUTH.DE", "401 Unauthorized"),
+            ("DENY.DE", "403 Forbidden"),
+        ] {
+            let got = quote_summary_json(&client, &urls, sym, "fundProfile").await;
+            assert_eq!(got, Err(format!("throttled/unavailable: HTTP {status}")), "{sym}");
+        }
+        let got = quote_summary_json(&client, &urls, "PAGE.DE", "fundProfile").await;
+        assert_eq!(got, Err("200 but body wasn't JSON (likely a throttle/HTML page)".to_string()));
+
+        let holdings = vec![("NVDA".to_string(), 0.25), ("APPLE INC".to_string(), 0.125)];
+        let sectors = vec![("Technology".to_string(), 0.75), ("Financial Services".to_string(), 0.25)];
+        assert_eq!(top_holdings_live(&client, &urls, "FUND.DE").await, Ok(holdings.clone()));
+        assert_eq!(
+            fund_composition_live(&client, &urls, "FUND.DE").await,
+            Ok((holdings, sectors, Some((0.99, 0.01)), Some(32.0)))
+        );
+        assert_eq!(fund_facts_live(&client, &urls, "FUND.DE").await, Ok((Some(0.12), Some(5.0e9))));
+        assert_eq!(
+            fund_facts_ext_live(&client, &urls, "FUND.DE").await,
+            Ok((Some(0.12), Some(5.0e9), Some("Technology".to_string())))
+        );
+        assert!(top_holdings_live(&client, &urls, "LIMIT.DE").await.is_err(), "a refusal stays an Err through the seam");
     }
 
     /// The EU->US alias `sec_cik` looks a swapped ticker up through. Three properties, and the run's
@@ -15220,9 +15296,9 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 55] = [
+        const FIELDS: [&str; 56] = [
             "openfigi_mapping", "fred",
-            "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
+            "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "yahoo_query2", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals_quality",
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
@@ -15632,8 +15708,7 @@ pub(crate) mod tests {
     async fn fresh_resolutions_are_cached_and_definitive_misses_are_remembered() {
         pin_throttle();
         pin_fetch_concurrency(); // this call fans out — see the helper for why it is not optional
-        let _ = YQ_AUTH.set(None); // yahoo_fund_facts_fill runs at the end; keep its crumb off the wire
-        let pos = crate::config::data_path(ISIN_CACHE_PATH);
+        let pos =crate::config::data_path(ISIN_CACHE_PATH);
         let neg = crate::config::data_path(ISIN_NEG_CACHE_PATH);
         let stub_at = |body: &'static str| {
             let (base, client) = stub_server(body);
@@ -15673,18 +15748,14 @@ pub(crate) mod tests {
         assert!(!pos.exists(), "and must not be cached as the fund's symbol");
     }
 
-    /// Seeding `YQ_AUTH` is a HERMETICITY guard, not a shortcut. `yahoo_crumb` hardcodes
-    /// `https://query2.finance.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it, and `offline()`
-    /// is false in this binary — any symbol reaching the fetch list would open a REAL connection to
-    /// Yahoo from a unit test. `YQ_AUTH` is read before that request, so a seeded `None` makes the
-    /// handshake fail closed and the function returns whatever the cache already gave it. No other
-    /// test here touches `YQ_AUTH`, and holding it makes the rest of this binary safer, not riskier.
+    /// The handshake fails closed here: `yahoo_query2` is the justETF stub, whose root answers 200 with
+    /// no `Set-Cookie`. So the function returns whatever the cache and justETF gave it.
     ///
     /// Owns `.fund_facts_cache.json` in the shared scratch root, hence one test rather than four.
+    /// `yahoo_fund_facts_fill_asks_the_stub_for_the_holes` is a second phase at the end, for the same reason.
     #[tokio::test]
     async fn yahoo_fund_facts_fill_serves_the_cache_for_bf_holes_only() {
         pin_throttle();
-        let _ = YQ_AUTH.set(None); // fail the crumb handshake without a socket — see above
         let path = crate::config::data_path(FUND_FACTS_CACHE_PATH);
         let today = chrono::Utc::now().date_naive();
         let stale = today - chrono::Duration::days(30);
@@ -15848,6 +15919,17 @@ pub(crate) mod tests {
         // cache keeping yesterday's row rather than justETF's restamped one.
         let yday = (today - chrono::Duration::days(1)).to_string();
         assert_eq!(banked.get("YDAY.DE"), Some(&(yday, Some(0.31), Some(3.1e8))), "no hole -> never asked");
+
+        // (#782) yahoo_fund_facts_fill_asks_the_stub_for_the_holes: a live handshake this time. LIVE.DE
+        // is a BF hole with no cache row, filled from Yahoo's answer. GONE.DE's quoteSummary 404s, so it
+        // stays out of both maps (no ISIN, so justETF skips it too).
+        let (base, client, _rx) =
+            routed_stub(vec![("getcrumb", "stubcrumb"), ("GET / ", YAHOO_SESSION), ("quoteSummary/LIVE.DE?", FUND_SUMMARY)]);
+        let syms: Vec<String> = ["LIVE.DE", "GONE.DE"].iter().map(|s| s.to_string()).collect();
+        let none = HashMap::new();
+        let (ter, aum) = yahoo_fund_facts_fill(&client, &stub_urls(&base), &syms, &none, &none, &HashMap::new()).await;
+        assert_eq!(ter, HashMap::from([("LIVE.DE".to_string(), 0.12)]), "Yahoo's answer fills the hole");
+        assert_eq!(aum, HashMap::from([("LIVE.DE".to_string(), 5.0e9)]), "and a failed quoteSummary is no answer");
     }
 
     /// (TER/AUM) `justetf_fund_facts_fill` on its own, for the two things its caller structurally
@@ -15905,8 +15987,8 @@ pub(crate) mod tests {
         assert!(!cache.contains_key("NOISIN.DE"), "no ISIN, no request, no cache row");
     }
 
-    /// (fund staleness) `yahoo_top_holdings`' CACHE HALF — the only half reachable without a socket, and
-    /// the half that decides what the fund table prints on a day Yahoo will not shake hands.
+    /// (fund staleness) `yahoo_top_holdings`' CACHE HALF — the half that decides what the fund table
+    /// prints on a day Yahoo will not shake hands. (#782) The live half follows on a loopback stub.
     ///
     /// Three ages, one per outcome of `cache_use`, because the two flags it returns are INDEPENDENT and
     /// the `°` date hangs off exactly the window where they disagree:
@@ -15917,14 +15999,13 @@ pub(crate) mod tests {
     /// | today-2 | yes   | yes     | served and DATED `today - 2` — the stale-but-usable window |
     /// | today-9 | no    | yes     | withheld — past the cap, the column goes `n/a` rather than lying |
     ///
-    /// A seeded `YQ_AUTH` of `None` fails the crumb handshake without a request, so the refetch leg
+    /// `yahoo_query2` is a dead loopback port, so the handshake fails closed and the refetch leg
     /// returns early — ahead of the cache write — and the seeded rows are what comes back verbatim.
     /// `MISSING.DE` has no row at all: absent must read the same as far-too-old, never as fresh.
     ///
     /// Owns `.holdings_cache.json` in the shared scratch root; nothing else in this binary touches it.
     #[tokio::test]
     async fn yahoo_top_holdings_serves_its_cache_and_dates_only_the_stale_rows() {
-        let _ = YQ_AUTH.set(None); // every test here seeds None, so the racing `set` is benign
         let today = chrono::Utc::now().date_naive();
         type Row = (String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>);
         let row = |age: i64, holder: &str, weight: f64, pe: f64| -> Row {
@@ -15950,7 +16031,7 @@ pub(crate) mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
         let syms: Vec<String> =
             ["FRESH.DE", "STALE2.DE", "ANCIENT.DE", "MISSING.DE"].iter().map(|s| s.to_string()).collect();
-        let (out, mix) = yahoo_top_holdings(&client, &syms).await;
+        let (out, mix) = yahoo_top_holdings(&client, &stub_urls("http://127.0.0.1:1/"), &syms).await;
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(out.get("FRESH.DE"), Some(&vec![("Apple Inc".to_string(), 7.5)]), "today's row, weights intact");
@@ -15972,6 +16053,21 @@ pub(crate) mod tests {
             "served AND due a refetch — dated backwards to when it was actually fetched"
         );
         assert_eq!(mix.len(), 2, "same two rows, same reason");
+
+        // (#782) the live half: NEW.DE has no row, so it is fetched, served UNDATED and banked today.
+        // GONE.DE's quoteSummary 404s: no row out, none banked, retried next run.
+        let (base, client, _rx) =
+            routed_stub(vec![("getcrumb", "stubcrumb"), ("GET / ", YAHOO_SESSION), ("quoteSummary/NEW.DE?", FUND_SUMMARY)]);
+        let syms: Vec<String> = ["NEW.DE", "GONE.DE"].iter().map(|s| s.to_string()).collect();
+        let (out, mix) = yahoo_top_holdings(&client, &stub_urls(&base), &syms).await;
+        let holdings = vec![("NVDA".to_string(), 0.25), ("APPLE INC".to_string(), 0.125)];
+        let sectors = vec![("Technology".to_string(), 0.75), ("Financial Services".to_string(), 0.25)];
+        assert_eq!(out, HashMap::from([("NEW.DE".to_string(), holdings.clone())]));
+        assert_eq!(mix, HashMap::from([("NEW.DE".to_string(), (sectors.clone(), Some((0.99, 0.01)), Some(32.0), None))]));
+        let banked: HashMap<String, Row> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written back")).expect("json");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(banked, HashMap::from([("NEW.DE".to_string(), (today.to_string(), holdings, sectors, Some((0.99, 0.01)), Some(32.0)))]));
     }
 
     /// `enrich_fund_factor`'s per-quote lane, opening NO socket. `fetch_fundamentals_history` treats a
