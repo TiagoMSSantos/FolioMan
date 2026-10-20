@@ -399,4 +399,4 @@ backtest: universe read from FOLIOMAN_UNIVERSE_SNAPSHOT (200 names), not fetched
 backtest: PIT — the index pond is now 1206 names that were EVER in the S&P 500, not the ~503 that survived to today
 backtest: 1360 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
 backtest: verdict NOT journaled — a POINT-IN-TIME run measures a different pool than the screen ranks, so its number must not overwrite the footer's; re-run without `pit` to journal
-backtest: 12y point-in-time record (SIZED row included) journaled to .backtest_sized.json (1 horizons on file) — the BUY NOW record line cites every horizon
+backtest: SIZED record NOT journaled — a `pit` run without `dead` scores survivors only; add `dead` to journal it
