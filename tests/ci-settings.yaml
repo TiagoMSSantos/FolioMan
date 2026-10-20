@@ -15679,9 +15679,10 @@ buy_heuristic:
                                  #   TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB. Make the anchor half RESPECT BAR CADENCE:
                                  #   widen (or skip) a short-horizon window where the local bar spacing is monthly, so
                                  #   `asof_avg` is never silently reduced to `asof` and 1D/1W/1M cannot collapse onto one bar.
-                                 #   That is a change at core.rs:1655-1658, and it would also make the LIVE path honest on any
-                                 #   name whose early record is monthly — so it is worth doing on its own merits, before any
-                                 #   train-serve reconciliation is measured again. DO NOT reopen this by re-fitting
+                                 #   That is a change at the one `asof_avg` call in core.rs, the one that falls back to `asof`,
+                                 #   and it would also make the LIVE path honest on any name whose early record is monthly — so
+                                 #   it is worth doing on its own merits, before any train-serve reconciliation is measured
+                                 #   again. DO NOT reopen this by re-fitting
                                  #   `anchor_windows` until the backtest survives: that fits the ruler to the sample, which is
                                  #   (#120)'s argmax wearing a third hat.
                                  #   ON THE PRE-REGISTERED AMBIGUITY: this round fixed in advance that a REFUSAL on a train-serve
