@@ -135,6 +135,21 @@ fn order_query(symbol: &str, side: &str, amount: f64, eur: bool, ts: u128) -> St
     format!("symbol={symbol}&side={}&type=MARKET&{field}={amount}&recvWindow=5000&timestamp={ts}", side.to_uppercase())
 }
 
+/// (#762) What a 2xx order answer with an `orderId` says. A MARKET order Binance cannot fully fill
+/// (a thin book, or self-trade prevention) still answers 2xx, with `status` EXPIRED or
+/// EXPIRED_IN_MATCH and a partial or zero `executedQty`. It used to print "filled" all the same, so
+/// only FILLED says filled now. A body with no readable status keeps the old text.
+fn fill_label(body: &str) -> String {
+    let v: Value = serde_json::from_str(body).unwrap_or_default();
+    match v.get("status").and_then(Value::as_str) {
+        Some("FILLED") | None => format!("binance filled: {body}"),
+        Some(status) => {
+            let qty = v.get("executedQty").and_then(Value::as_str).unwrap_or("?");
+            format!("binance order {status}, executedQty {qty} — NOT fully filled, check the Binance app: {body}")
+        }
+    }
+}
+
 /// Binance spot MARKET order via the live API. `symbol` = pair, e.g. `BTCEUR`. `qty` = base
 /// asset amount, or euros to spend when `eur` ([`order_query`]). HMAC-signed query, key in the
 /// `X-MBX-APIKEY` header.
@@ -170,7 +185,7 @@ pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64, eur: boo
         // 2xx without an orderId in the body = accepted transport-wise but the fill is
         // unconfirmed; the caller printed real money, make the doubt explicit.
         if body.contains("orderId") {
-            Ok(format!("binance filled: {body}"))
+            Ok(fill_label(&body))
         } else {
             Ok(format!("binance answered {status} but no orderId in the response — VERIFY the order in the app: {body}"))
         }
@@ -208,6 +223,22 @@ mod tests {
             order_query("BTCEUR", "sell", 0.001, false, 1),
             "symbol=BTCEUR&side=SELL&type=MARKET&quantity=0.001&recvWindow=5000&timestamp=1"
         );
+    }
+
+    /// (#762) Only FILLED reads as filled. EXPIRED with a partial fill and EXPIRED_IN_MATCH with none
+    /// say how much went through; a body that is not JSON keeps the old text.
+    #[test]
+    fn fill_label_says_filled_only_for_filled() {
+        let filled = r#"{"orderId":1,"status":"FILLED","executedQty":"0.001"}"#;
+        assert_eq!(fill_label(filled), format!("binance filled: {filled}"));
+        let partial = r#"{"orderId":2,"status":"EXPIRED","executedQty":"0.0004"}"#;
+        assert_eq!(
+            fill_label(partial),
+            format!("binance order EXPIRED, executedQty 0.0004 — NOT fully filled, check the Binance app: {partial}")
+        );
+        let stp = r#"{"orderId":3,"status":"EXPIRED_IN_MATCH","executedQty":"0.00000000"}"#;
+        assert!(fill_label(stp).starts_with("binance order EXPIRED_IN_MATCH, executedQty 0.00000000 — NOT fully filled"));
+        assert_eq!(fill_label("orderId garbled"), "binance filled: orderId garbled");
     }
 
     /// Rendering: stable/fiat lands under `cash` and everything else under `holdings`, dust and
