@@ -13,7 +13,16 @@ use std::env;
 
 /// Read a required broker credential from the environment (never config).
 pub(crate) fn env_var(k: &str) -> Result<String, String> {
-    env::var(k).map_err(|_| format!("missing env var {k} (broker credential)"))
+    env::var(k).map_err(|_| format!("{MISSING} {k} (broker credential)"))
+}
+
+const MISSING: &str = "missing env var";
+
+/// (#769, #772) A broker call that failed only because its key is not set: the broker is off here,
+/// which callers skip quietly. Any other `Err` failed with the key set (a 401, a throttle, API drift),
+/// and a caller that skips that one too reports half a portfolio as the whole of it.
+pub(crate) fn is_keyless(err: &str) -> bool {
+    err.starts_with(MISSING)
 }
 
 /// (#667) An order error the broker may not have refused. `trade` prints every `Err` as ORDER FAILED
@@ -43,6 +52,9 @@ mod tests {
         assert!(err.contains("FOLIOMAN_NO_SUCH_BROKER_CREDENTIAL"), "must name the variable: {err}");
         // PATH is set in every environment this can run in, so the success arm is real too.
         assert!(env_var("PATH").is_ok());
+        // (#769) the error it returns is the one callers read as "broker off"; a failed call is not
+        assert!(is_keyless(&err), "{err}");
+        assert!(!is_keyless("trading212 401 Unauthorized: {}"));
     }
 
     /// (#667) a definite refusal passes through unchanged; anything else keeps the broker's words and
