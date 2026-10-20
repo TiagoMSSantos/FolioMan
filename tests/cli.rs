@@ -449,10 +449,12 @@ fn screen_ranks_and_journals_offline() {
 
 /// A run that priced nothing must record nothing. The dip journal is a dedup ledger: an entry written
 /// for a name that was never actually seen dipping would suppress the real alert when it later does.
+/// (#770) Asked for a name, so the run really priced nothing (the default list is empty), and it says so.
 #[test]
 fn alert_without_prices_records_no_dips() {
-    let (code, _, _) = run_isolated("alert-offline", "{}\n", &[], &["alert"]);
+    let (code, _, stderr) = run_isolated("alert-offline", "{}\n", &[], &["alert", "AAA"]);
     assert_eq!(code, 0);
+    assert!(stderr.contains("WARNING: none of 1 tickers priced"), "{stderr}");
     assert!(
         !isolated_root("alert-offline").join(".alert_dips").exists(),
         "no priced name dipped, so no dedup entry may be written"

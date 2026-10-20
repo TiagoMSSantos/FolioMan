@@ -68,10 +68,12 @@ pub async fn run(args: Vec<String>) {
         .map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
         .unwrap_or_default();
     let before = alerted.clone();
+    let mut priced = 0;
     for quote in fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, None, settings.inflation_adjust.score_on_nominal).await { // news on: alert body shows headlines; keys on price drop, not returns
         if quote.price == "err" || quote.price == "no data" {
             continue; // a stub quote reads drop_pct 0.0 — treating that as a recovery would fake-clear the dedup
         }
+        priced += 1;
         let in_dip = quote.drop_pct >= settings.drop_pct;
         let mut delivered = false;
         if dip_ping_due(alerted.contains(&quote.ticker), in_dip) {
@@ -93,6 +95,10 @@ pub async fn run(args: Vec<String>) {
             }
         }
         apply_dip_state(&mut alerted, &quote.ticker, in_dip, delivered);
+    }
+    // (#770) every quote a stub reads exactly like a quiet market, and a cron reads only stderr
+    if priced == 0 && !tickers.is_empty() {
+        eprintln!("WARNING: none of {} tickers priced, so no dip was read this run", tickers.len());
     }
     if alerted != before {
         let text = alerted.iter().map(|t| format!("{t}\n")).collect::<String>();
