@@ -20954,6 +20954,16 @@ buy_heuristic:
   #  READING: past 0.8 the 8-20y books barely move (stress paired medians 0.00, pit within +-0.25). Only 1y gains,
   #  and pit 8y and both 2y cells lose. 0.8 is now an interior peak of 0.3 / 0.45 / 0.6 / 0.8 / 0.9 / 1.0.
   #  RE-OPEN: none on f. A stock re-ask needs a different mechanism (e.g. per-gate f), pre-registered first.
+  #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
+  #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
+  #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
+  #  RUNS at aaa6596, `backtest 20 12 8 universe fund pit rivals winners`, one batch: ctl 39481164331 (no knobs),
+  #  arm 39481186804. Cutoffs 5110/13390/22777 and tickers 6286 are identical in both runs. GROWTH stock windows at
+  #  20y fall from 5075 to 188 under hard gates, by design.
+  #  RULER: the (#566) paired stock BOOK, arm minus ctl per common bucket (22/37/45).
+  #  RESULT, d mean|median: 20y -2.52|-1.95, 12y -1.42|-0.80, 8y -0.84|-1.20. Hard gates lose all three cells.
+  #  Top-10 book 20y +0.8 (med +1.0) vs ctl +3.4 (med +1.8). Winners held 20y 7.3% vs 9.1%.
+  #  VERDICT: (#566) HOLDS on the half-year grid, 0.8 stays. Per-gate hard bits: (#802)-(#803) at growth_soft_hard_gates.
   growth_leg_dock: 0.0          # (#566) REFUSED (receipt above): only 0.85 passed stocks, below the plain 0.8 rung. p > 0 docks a score x p^k, k = how many of the 1Y/2Y/5Y/8Y/10Y/20Y
   #  legs lie past the name's longest one, and REPLACES both record-length charges: trust_factor reads 1.0 and a waived
   #  history/young gate leaves growth_gate_soft's n. Graded per class on the `BOOK stock|etf|crypto b<bucket>` lines.
@@ -21073,7 +21083,31 @@ buy_heuristic:
   #  other gates stay soft. The (#561) waive-one cells (range 0/6, 5Y+ 0/6, stretch 1/6) graded the opposite move, a gate
   #  switched off. A census of the knob lanes found no unmeasured price-only GROWTH knob left, and the 20y winners table
   #  of probe 39468555080 (3a178fe) shows the gate dock alone catching 21% of winners. Graded next, pre-registered
-  #  before any run, with a growth_gate_soft=0 re-grade of (#566) on the (#790) half-year grid.
+  #  before any run, with a growth_gate_soft=0 re-grade of (#566) on the (#790) half-year grid ((#801), receipt above).
+  #── (#802) REFUSED 2026-10-20 (pre-registered before any run) — RANGE KEPT HARD, growth_soft_hard_gates=1 ──
+  #  RUNS at aaa6596, `backtest 20 12 8 universe fund pit rivals winners`, one batch: ctl 39481164331 (no knobs),
+  #  arm 39481210650. Cutoffs 5110/13390/22777 and tickers 6286 are identical in both runs.
+  #  BAR: the (#566) paired stock BOOK, arm minus ctl per common bucket (22/38/46). WIN = mean AND median >= +0.2 in
+  #  2 of 3 cells (20/12/8y), and no cell with either stat <= -0.2. Guards: rank-1, zeros, the 20y DCA S+inter veto,
+  #  and the (#606) winners-held veto. A pass would then need stress.
+  #  RESULT, d mean|median: 20y -0.83|+0.00 VETO, 12y -0.18|+0.00, 8y -0.21|+0.00 VETO. 0 wins.
+  #  Top-10 book 20y +2.5 (med +1.6) vs ctl +3.4 (med +1.8). Winners held 20y 8.6% vs 9.1%.
+  #  VERDICT: REFUSED, 0 stays.
+  #── (#803) REFUSED 2026-10-20 (pre-registered before any run) — 5Y+ KEPT HARD, growth_soft_hard_gates=2 ──
+  #  RUNS: the (#802) batch, arm 39481230589. Same bar and guards.
+  #  RESULT, d mean|median: 20y -0.77|-0.25 VETO, 12y -0.27|-0.15 VETO, 8y -0.08|+0.00. 0 wins.
+  #  The zeros guard fails too: the top-10 rode 9 zeros of 220 holds at 20y (ctl 7) and 17 of 380 at 12y (ctl 16).
+  #  Top-10 book 20y +2.6 (med +1.7). Winners held 20y 10.0% vs 9.1%, the only stat that rose.
+  #  VERDICT: REFUSED, 0 stays.
+  #  READING (#802)-(#803): a hard bit drops every stock that misses that gate (GROWTH stock windows at 20y fall from
+  #  5075 to 3744 for range and 1963 for 5Y+), and the book refills with weaker names. The x f dock already ranks those
+  #  misses below the clean passers, so keeping one gate hard only shrinks the pool. The 20y SIZED never-sell vs
+  #  index DCA line falls in both arms (ctl +3.6, range +2.8, 5Y+ +3.2); S+inter holds (+5.1 / +5.1 / +5.3).
+  #  The pre-registered parity rule (void a run whose windows scored fall over 5%) did not fit a hard knob, which
+  #  cuts windows by design. Read on cutoffs, tickers and the offline signature instead, it voids no run, and no
+  #  arm wins on either reading.
+  #  UNGRADED: bit 4 (stretch). The x0.05 brake floor already keeps a stretched name out of the top 10, and (#574)
+  #  found the stretch arms inert. A re-ask runs it alone, pre-registered first.
   growth_red_flag_dock: 1.0     # (#730) < 1.0 = a name's score x this^(its (#729) red-flag count, L 2 B I R D, as-of in the
   #  backtest). No SEC read, no current filing (over 550 days) or no flag = x1.0. 1.0 = off, the shipped lane bit for bit.
   #── (#730) REFUSED 2026-10-18 (pre-registered before any run) — DOCK A NAME PER RED FLAG ──
