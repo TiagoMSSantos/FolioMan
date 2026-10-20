@@ -25,6 +25,19 @@ pub(crate) fn is_keyless(err: &str) -> bool {
     err.starts_with(MISSING)
 }
 
+/// (#769, #775) One broker's holdings for a caller that reads them: a keyless broker holds nothing, and
+/// `None` is a broker that failed with its key set, which warns naming what the caller drops (`skipped`).
+pub(crate) fn held<T>(broker: &str, skipped: &str, res: Result<Vec<T>, String>) -> Option<Vec<T>> {
+    match res {
+        Ok(v) => Some(v),
+        Err(e) if is_keyless(&e) => Some(Vec::new()),
+        Err(e) => {
+            eprintln!("WARNING: {broker} holdings unreadable, {skipped}: {e}");
+            None
+        }
+    }
+}
+
 /// (#667) An order error the broker may not have refused. `trade` prints every `Err` as ORDER FAILED
 /// and exits 1, which reads as "nothing happened, retry". That holds only when `definite`: the
 /// connection never opened, or the broker answered a 4xx refusal. A request that died after it was
@@ -55,6 +68,16 @@ mod tests {
         // (#769) the error it returns is the one callers read as "broker off"; a failed call is not
         assert!(is_keyless(&err), "{err}");
         assert!(!is_keyless("trading212 401 Unauthorized: {}"));
+    }
+
+    /// (#769) a keyless broker holds nothing and keeps the caller's table; a broker that failed with its
+    /// key set is None, which drops it.
+    #[test]
+    fn held_drops_the_table_only_for_a_failed_call() {
+        assert_eq!(held("T", "gap skipped", Ok(vec![1.5])), Some(vec![1.5]));
+        let keyless = env_var("FOLIOMAN_NO_SUCH_BROKER_CREDENTIAL").map(|_| Vec::<f64>::new());
+        assert_eq!(held("T", "gap skipped", keyless), Some(Vec::new()));
+        assert_eq!(held::<f64>("T", "gap skipped", Err("trading212 401 Unauthorized: {}".into())), None);
     }
 
     /// (#667) a definite refusal passes through unchanged; anything else keeps the broker's words and

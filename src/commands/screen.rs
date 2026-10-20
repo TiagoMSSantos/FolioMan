@@ -2134,25 +2134,28 @@ pub async fn run(args: Vec<String>) {
 
     // (round 110/111) owned-position overlay: what you already hold at the brokers, so the tables
     // can mark covered rows with `o`. Stocks/ETFs from Trading212, crypto from Binance; each broker
-    // absent (no env key) or erroring is independently and silently off — a broker key is optional
-    // config, not a degradation. Display-only.
+    // absent (no env key) is independently and silently off — a broker key is optional config, not a
+    // degradation. (#775) One that failed with its key set is off too, but warns: its `o` marks, the
+    // owned venue and the (#388) switches would otherwise vanish as if nothing were held. Display-only.
     // t212_raw keeps the broker's exact ticker forms (`AAPL_US_EQ`) — the order-glue footer needs
     // them verbatim, while the overlay below collapses them to comparable bases.
     let mut t212_raw: Vec<String> = Vec::new();
     let mut t212_held: Vec<(String, f64, Option<f64>)> = Vec::new(); // (#388) + qty and P/L, for the switches
     let owned = {
         let mut o = crate::picks::Owned::default();
-        if let Ok(v) = crate::broker::trading212::owned_positions(&client).await {
+        let off = "owned marks and switches off this run";
+        if let Some(v) = crate::broker::held("Trading212", off, crate::broker::trading212::owned_positions(&client).await) {
             t212_raw = v.iter().map(|(t, ..)| t.clone()).collect();
             o.stocks = t212_raw.iter().map(|t| crate::picks::t212_base(t)).collect();
             t212_held = v;
         }
-        if let Ok(v) = crate::broker::binance::owned_assets(&client).await {
+        if let Some(v) = crate::broker::held("Binance", off, crate::broker::binance::owned_assets(&client).await) {
             o.crypto = v.iter().map(|a| a.to_lowercase()).collect();
         }
         o
     };
-    // (round 118) live free cash, same key + degrade-to-silence stance as the holdings overlay above.
+    // (round 118) live free cash, same key + degrade-to-silence stance as the holdings overlay above; a
+    // failed key already warned there, on the same API.
     let t212_cash = crate::broker::trading212::cash_free(&client).await.ok();
 
     // (round 112) entry-state fetch, hoisted ABOVE the tables: S&P 500 % off its high decides how fast

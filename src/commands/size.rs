@@ -516,8 +516,9 @@ pub async fn run(args: Vec<String>) {
     // broker key at all the section is absent. (#769) A broker that failed with its key set drops the
     // whole table: its holdings missing would read every other weight as overweight. Class-prefixed
     // keys so a SOL coin never matches a SOL-lettered stock (round 111 rule). Display-only, NOT advice.
-    let t212 = broker_held("Trading212", crate::broker::trading212::owned_positions(&client).await);
-    let bnc = broker_held("Binance", crate::broker::binance::owned_amounts(&client).await);
+    let gap = "allocation gap skipped";
+    let t212 = crate::broker::held("Trading212", gap, crate::broker::trading212::owned_positions(&client).await);
+    let bnc = crate::broker::held("Binance", gap, crate::broker::binance::owned_amounts(&client).await);
     let mut held: Vec<(String, String, f64)> = Vec::new();
     for (t, q, _) in t212.iter().flatten() {
         held.push((format!("s:{}", crate::picks::t212_base(t)), t.clone(), *q));
@@ -540,19 +541,6 @@ pub async fn run(args: Vec<String>) {
         println!("\nAllocation gap — actual broker weights vs the SIZE% split rescaled to 100% of the sized names (matched names only; NOT advice):");
         for line in allocation_gap_lines(&sized, &held) {
             println!("{line}");
-        }
-    }
-}
-
-/// (#769) One broker's holdings for the gap table: a keyless broker holds nothing here, and `None` is a
-/// broker that failed with its key set, which says so and drops the table.
-fn broker_held<T>(broker: &str, res: Result<Vec<T>, String>) -> Option<Vec<T>> {
-    match res {
-        Ok(v) => Some(v),
-        Err(e) if crate::broker::is_keyless(&e) => Some(Vec::new()),
-        Err(e) => {
-            eprintln!("WARNING: {broker} holdings unreadable, allocation gap skipped: {e}");
-            None
         }
     }
 }
@@ -1095,16 +1083,6 @@ pub(crate) mod tests {
         assert_eq!(first_per_issuer(&["", "", "A", ""]), vec![0, 1, 2, 3]);
 
         assert!(first_per_issuer(&[]).is_empty(), "empty in -> empty out");
-    }
-
-    /// (#769) a keyless broker holds nothing and keeps the table; a broker that failed with its key
-    /// set is None, which drops it.
-    #[test]
-    fn broker_held_drops_the_table_only_for_a_failed_call() {
-        assert_eq!(broker_held("T", Ok(vec![1.5])), Some(vec![1.5]));
-        let keyless = crate::broker::env_var("FOLIOMAN_NO_SUCH_BROKER_CREDENTIAL").map(|_| Vec::<f64>::new());
-        assert_eq!(broker_held("T", keyless), Some(Vec::new()));
-        assert_eq!(broker_held::<f64>("T", Err("trading212 401 Unauthorized: {}".into())), None);
     }
 
     /// (round 114) Gap-table semantics: matched holdings split ACTUAL% over their EUR total, an
