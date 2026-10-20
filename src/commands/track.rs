@@ -1684,6 +1684,9 @@ pub async fn run(args: Vec<String>) {
     .await;
     let px_now = |t: &str| quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0);
     let spx_now = px_now("^GSPC");
+    if spx_now.is_none() {
+        eprintln!("WARNING: ^GSPC unpriced today, so no window can be graded against the index");
+    }
     // (#82) BEFORE anything grades: journaled prices are quoted-on-the-day, `px_now` is retro-adjusted,
     // and a split between them books a fake collapse. Restating here means every reader below — the
     // table, the fold, the push ping — sees one consistent share definition.
@@ -1716,8 +1719,11 @@ pub async fn run(args: Vec<String>) {
     // (#146) the win rate and the caveat that says what it is worth travel together, here and in the
     // screen's trust line. The `--push` ping interpolates `summary` too, so the phone — the most
     // decontextualised surface there is — carries it for free.
-    let summary =
-        format!("{}{}", summary_line(wins, graded_n, excess_sum), trials_note(&snaps, today, &px_now, spx_now));
+    // (#771) unpriced, every window reads ungraded, and the age reason summary_line gives would be wrong
+    let summary = match spx_now {
+        None => "benchmark ^GSPC unpriced today, nothing graded; rerun when it prices.".to_string(),
+        Some(_) => format!("{}{}", summary_line(wins, graded_n, excess_sum), trials_note(&snaps, today, &px_now, spx_now)),
+    };
     println!("\n  summary: {summary}");
     // (#285) and the CORE list. Printed LAST, below the summary, because that summary is the bought
     // book's verdict and belongs next to the bought book's table — a second table wedged between

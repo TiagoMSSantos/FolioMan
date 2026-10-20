@@ -334,7 +334,7 @@ fn sim_with_unparseable_settings_exits_1_naming_the_file() {
 /// contract under test is that it says so instead of printing an empty table as if it were a result.
 #[test]
 fn track_grades_the_journal_offline() {
-    let (code, stdout, _) = run_isolated(
+    let (code, stdout, stderr) = run_isolated(
         "track-journal",
         "{}\n",
         &[(".screen_snapshots.jsonl", JOURNAL)],
@@ -342,7 +342,9 @@ fn track_grades_the_journal_offline() {
     );
     assert_eq!(code, 0);
     assert!(stdout.contains("Track record"), "header missing: {stdout}");
-    assert!(stdout.contains("nothing gradeable yet"), "ungradeable summary missing: {stdout}");
+    // (#771) offline the benchmark is unpriced, and that is the reason the summary must give
+    assert!(stdout.contains("summary: benchmark ^GSPC unpriced today"), "ungradeable summary missing: {stdout}");
+    assert!(stderr.contains("WARNING: ^GSPC unpriced"), "{stderr}");
 }
 
 #[test]
