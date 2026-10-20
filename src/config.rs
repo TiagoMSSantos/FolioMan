@@ -1486,26 +1486,30 @@ pub(crate) fn merge_yaml(base: &mut serde_yaml::Value, over: serde_yaml::Value) 
 
 /// The canonical base mapping to overlay onto. Empty when the overlay IS the fixture (CI sets
 /// `FOLIOMAN_CONFIG=tests/ci-settings.yaml` -> pure fixture, no self-merge) or when no base file exists.
-fn ci_base_yaml(overlay: &Path) -> serde_yaml::Value {
-    let empty = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+/// `None` when the base exists but does not parse; see [`base_from`].
+fn ci_base_yaml(overlay: &Path) -> Option<serde_yaml::Value> {
     if overlay.ends_with("ci-settings.yaml") {
-        return empty;
+        return Some(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
     }
-    let base = ci_settings_path();
+    base_from(&ci_settings_path())
+}
+
+/// (#773) The base at `base`: an empty mapping when there is none (empty path), `None` when the file is
+/// there but unreadable or not YAML. That used to merge as empty too, so a conflict marker or a half-saved
+/// edit in `tests/ci-settings.yaml` let a partial overlay `buy_heuristic` pass `gates_configured` and rank
+/// off ~200 code defaults with no warning. `None` makes `load` refuse instead.
+fn base_from(base: &Path) -> Option<serde_yaml::Value> {
     if base.as_os_str().is_empty() {
-        return empty;
+        return Some(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
     }
-    std::fs::read_to_string(&base)
-        .ok()
-        .and_then(|t| serde_yaml::from_str(&t).ok())
-        .unwrap_or(empty)
+    serde_yaml::from_str(&std::fs::read_to_string(base).ok()?).ok()
 }
 
 /// Overlay the discovered config file ON TOP of the committed canonical base (`tests/ci-settings.yaml`),
 /// overlay winning field-by-field. So `config/settings.yaml` only needs to carry what it CHANGES —
 /// secrets (`ntfy_topic`), the watchlist, CI-specific values it must override (`universe_size`), and any
-/// knob under test — instead of duplicating the whole `buy_heuristic`. `None` if the overlay is
-/// absent/invalid (soft callers fall back to defaults; `load` turns `None` into a panic).
+/// knob under test — instead of duplicating the whole `buy_heuristic`. `None` if the overlay or its base is
+/// absent/invalid (soft callers fall back to defaults; `load` exits on `None`).
 pub(crate) fn merged_config() -> Option<serde_yaml::Value> {
     #[cfg(target_family = "wasm")]
     if let Some(v) = INSTALLED.get() {
@@ -1514,7 +1518,7 @@ pub(crate) fn merged_config() -> Option<serde_yaml::Value> {
     let overlay_path = settings_path();
     let text = std::fs::read_to_string(&overlay_path).ok()?;
     let overlay: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
-    let mut merged = ci_base_yaml(&overlay_path);
+    let mut merged = ci_base_yaml(&overlay_path)?;
     merge_yaml(&mut merged, overlay);
     Some(merged)
 }
@@ -1559,7 +1563,7 @@ fn config_fatal(path: &Path, detail: &str) -> ! {
 pub fn load() -> Settings {
     let path = settings_path();
     let Some(merged) = merged_config() else {
-        config_fatal(&path, "unreadable, or not valid YAML");
+        config_fatal(&path, "unreadable, or not valid YAML (this file or its base tests/ci-settings.yaml)");
     };
     if !gates_configured(&merged) {
         config_fatal(
@@ -1611,7 +1615,7 @@ fn heuristic_drift_at(path: &Path) -> Option<String> {
     let serde_yaml::Value::Mapping(mut base) = serde_yaml::to_value(BuyHeuristic::default()).ok()? else {
         return None;
     };
-    if let Some(serde_yaml::Value::Mapping(cb)) = ci_base_yaml(path).get("buy_heuristic").cloned() {
+    if let Some(serde_yaml::Value::Mapping(cb)) = ci_base_yaml(path)?.get("buy_heuristic").cloned() {
         for (k, v) in cb {
             base.insert(k, v);
         }
@@ -2892,7 +2896,30 @@ mod tests {
         assert!(w.contains("growth_min_range_pct 80"), "{w}");
         assert_eq!(heuristic_drift_at(&quiet), None);
         assert_eq!(heuristic_drift_at(&fixture), None);
+        // (#773) a knob at its tests/ci-settings.yaml value is the baseline even where the code default differs
+        let tuned = ci_base_yaml(&over).expect("the repo base parses")["buy_heuristic"]["growth_min_cagr"].as_f64();
+        let tuned = tuned.expect("the base tunes growth_min_cagr");
+        assert_ne!(tuned, BuyHeuristic::default().growth_min_cagr);
+        let at_base = dir.join("at_base.yaml");
+        std::fs::write(&at_base, format!("buy_heuristic:\n  growth_min_cagr: {tuned}\n")).unwrap();
+        assert_eq!(heuristic_drift_at(&at_base), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// (#773) A base that is there but does not parse refuses (`None`, so `load` exits) instead of
+    /// merging as an empty mapping under the overlay. A missing base (empty path) is still empty.
+    #[test]
+    fn a_broken_base_refuses_instead_of_merging_empty() {
+        let dir = test_data_root().join("broken_base_773");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (broken, good) = (dir.join("broken.yaml"), dir.join("good.yaml"));
+        std::fs::write(&broken, "buy_heuristic:\n<<<<<<< HEAD\n  growth_min_cagr: [19\n").unwrap();
+        std::fs::write(&good, "buy_heuristic:\n  growth_min_cagr: 19.0\n").unwrap();
+        assert_eq!(base_from(&broken), None);
+        assert_eq!(base_from(&dir.join("absent.yaml")), None);
+        let ok = base_from(&good).expect("a valid base parses");
+        assert_eq!(ok["buy_heuristic"]["growth_min_cagr"].as_f64(), Some(19.0));
+        assert_eq!(base_from(Path::new("")), Some(serde_yaml::Value::Mapping(serde_yaml::Mapping::new())));
     }
 
     /// The overlay wins field-by-field over the base, mappings merge DEEP (a partial `buy_heuristic:` only
