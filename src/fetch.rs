@@ -16850,6 +16850,8 @@ pub(crate) mod tests {
         urls.ntfy = format!("{base}{{topic}}");
         assert!(push(&client, &urls, "up", "Dip", "VWCE -5%").await);
         assert!(!push(&client, &urls, "down", "Dip", "VWCE -5%").await);
+        // (#760) track's title: the summary plus the trials note on its own indented line
+        assert!(push(&client, &urls, "up", "Track record: 2/2 windows.\n  ~1.0 effective trials — nested", "body").await);
     }
 
     /// (#358) The `history_proxy` splice, census config only: `VUAA.DE -> SXR8.DE` lives in
@@ -18948,10 +18950,12 @@ pub async fn inflation_all(client: &Client, urls: &Urls) -> Vec<(&'static str, B
 /// accepted it (POST sent AND 2xx) — a dropped push is the one thing `alert` exists to deliver,
 /// so the caller must get the chance to say so. No retry: alert runs from an hourly cron, the
 /// next run re-fires anything still dipping.
+/// (#760) The title is folded onto one line: a header value cannot hold a newline, and `track`'s title carries the
+/// (#146) trials note, which starts with one, so every graded `track --push` failed in the builder before it was sent.
 pub async fn push(client: &Client, urls: &Urls, topic: &str, title: &str, msg: &str) -> bool {
     client
         .post(urls.ntfy.replace("{topic}", topic))
-        .header("Title", title)
+        .header("Title", title.split_whitespace().collect::<Vec<_>>().join(" "))
         .header("Tags", "chart_with_downwards_trend")
         .body(msg.to_string())
         .send()
