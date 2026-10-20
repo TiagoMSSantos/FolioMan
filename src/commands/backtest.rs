@@ -7,6 +7,7 @@
 //! - **(#3) walk-forward**: score the name at MANY cutoffs (~every 6 months back through its history),
 //!   each measured against the realized return over the SAME `YEARS`-long forward window. Pools ~10×
 //!   the samples a single as-of date gives, killing lucky-single-date bias — from the very same fetch.
+//!   (#790) The cutoffs sit on a calendar grid: one per ~6-month bucket, at the name's first bar in it.
 //! - **(#1) peer-relative**: each cutoff's realized return is de-meaned within its ~6-month bucket, so the
 //!   correlation measures SELECTION (did the name beat its same-period peers?), not the bull/bear regime
 //!   every pooled cutoff would otherwise share. Without it the score races calendar luck, not skill.
@@ -441,6 +442,20 @@ fn bucket(d: chrono::NaiveDate) -> i32 {
     d.year() * 2 + d.month0() as i32 / 6
 }
 
+/// (#790) The walk's cutoffs: every bar from `from` on that opens its ~6-month [`bucket`]. Both walks
+/// iterate this, so every name's cutoff in a bucket sits on its first bar there, and no step count can
+/// stall or skip a bucket.
+///
+/// Before this the walk stepped a fixed bar count from each name's own first bar, which made the
+/// cutoff dates follow the listing month: a name listed in March was scored in March and September,
+/// then ranked by `demean` against peers scored in January and July of the same buckets, with months
+/// of extra or missing price path between them. The bar count also weighted the sample by granularity
+/// (6 bars is six months monthly, six weeks weekly, six sessions daily), which (#117) could only fix
+/// by rescaling a knob that ships off. A calendar grid fixes both at once.
+fn cutoffs(dates: &[chrono::NaiveDate], from: usize) -> impl Iterator<Item = usize> + '_ {
+    (from..dates.len()).filter(move |&i| i == 0 || bucket(dates[i - 1]) != bucket(dates[i]))
+}
+
 /// (#91) How many INDEPENDENT trials a printed window count is actually worth.
 ///
 /// A "window" here is a ~6-month entry bucket and the hold is `years`, so two consecutive windows share
@@ -679,9 +694,6 @@ fn demean_with(samples: &mut [Sample], by_market: bool) {
 /// over 4 names is still mostly one name.
 const MIN_PEER_GROUP: usize = 8;
 
-/// ~6 months between walk-forward cutoffs (trading sessions, ~252/yr). Overlapping forward windows —
-/// fine for a rank correlation, not an independent-sample t-test (flagged in the footer).
-const STEP_SESSIONS: usize = 126;
 /// Need ~3y of history BEFORE a cutoff to form/score the long trend fairly.
 const MIN_HISTORY: usize = 750;
 /// (Item 9) Conservative round-trip trading cost (bps) charged against the gross edge per unit of
@@ -865,9 +877,9 @@ fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &cor
     out
 }
 
-/// (#117) The walk's three bar-counted parameters, resolved PER SERIES rather than once per run.
+/// (#117) The walk's two bar-counted parameters, resolved PER SERIES rather than once per run.
 ///
-/// `cadence`, `min_history` and `step` are counts of BARS, and `run` fixes them at 12/36/6 for the
+/// `cadence` and `min_history` are counts of BARS, and `run` fixes them at 12/36 for the
 /// whole monthly path on the assumption that a bar is a month. That assumption is false for most of
 /// the universe: `fetch::chart_json_long` asks Yahoo for `interval=1mo` and Yahoo serves a thin line
 /// at whatever granularity it pleases, while nothing anywhere reads `meta.dataGranularity`. A census
@@ -875,11 +887,11 @@ fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &cor
 /// 172 `1y` — 31% monthly. The fixture carries the same mix (58 of 200), which is why no golden has
 /// ever noticed.
 ///
-/// `step` is where it bites hardest: 6 bars is 6 SESSIONS on a daily series, so that name emits a
-/// cutoff every week and a half and enters the sample with roughly 40x the weight of a monthly one —
-/// sample weighting decided by which granularity a feed happened to return. `cadence` is the other
-/// end, annualising `volatility_pct` (which the LIVE `sharpe_cap` and `sharpe_cap_etf` read) and
-/// sizing `long_ma`.
+/// A third count, `step`, was where it bit hardest: 6 bars is 6 SESSIONS on a daily series, so that
+/// name emitted a cutoff every week and a half and entered the sample with roughly 40x the weight of a
+/// monthly one. (#790) `step` is gone: `cutoffs` puts every series on the same half-year grid,
+/// whatever its granularity, with this knob on or off. `cadence` annualises `volatility_pct` (which
+/// the LIVE `sharpe_cap` and `sharpe_cap_etf` read) and sizes `long_ma`.
 ///
 /// BARS/YEAR IS MEASURED AS span/count, NOT as the median gap between bars, and the difference is the
 /// whole correctness of the daily arm: consecutive daily bars are one day apart, so a median-gap
@@ -889,8 +901,8 @@ fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &cor
 /// `calendar == false` returns `fallback` untouched — that is what keeps every golden byte-identical
 /// while the knob ships off. It is also NEAR-INERT on real data when on, which is the property worth
 /// checking rather than trusting: a genuine monthly record measures 12.00 bars/yr and resolves to
-/// exactly today's 12/36/6, and a genuine daily one measures 252.0 and resolves to 252/756/126
-/// against today's 252/750/126.
+/// exactly today's 12/36, and a genuine daily one measures 252.0 and resolves to 252/756 against
+/// today's 252/750.
 ///
 /// Pure, and deliberately so: `run` is a 900-line `-> ()` under `#[mutants::skip]` (#119; this said
 /// otherwise until (#672)), so logic left inline there is graded by no mutant, only through a golden
@@ -898,8 +910,8 @@ fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &cor
 fn walk_params(
     dates: &[chrono::NaiveDate],
     calendar: bool,
-    fallback: (usize, usize, usize),
-) -> (usize, usize, usize) {
+    fallback: (usize, usize),
+) -> (usize, usize) {
     if !calendar || dates.len() < 2 {
         return fallback;
     }
@@ -909,7 +921,7 @@ fn walk_params(
     }
     let per_year = (dates.len() - 1) as f64 * 365.25 / span_days as f64;
     let bars = |years: f64| ((per_year * years).round() as usize).max(1);
-    (bars(1.0), bars(3.0), bars(0.5))
+    (bars(1.0), bars(3.0))
 }
 
 /// (PIT) Does this run swap its pool? Two refusals, and they refuse different disasters, which is why
@@ -949,7 +961,7 @@ fn pit_unserved(pool: &[String], spans: &core::MemberSpans, served: &HashSet<&st
 /// `MOLX` 49. Those post-exit bars are not the company's prices, because the company was gone. A hold
 /// opened before the exit and closed `years` later therefore reads its ENTRY from the real company and
 /// its EXIT from whatever now owns the ticker, and reports the ratio as a return. Replaying the walk's
-/// 36-bar warmup and 6-bar step over the cached series — an APPROXIMATION of the walk, not the walk
+/// 36-bar warmup and (before #790) 6-bar step over the cached series — an APPROXIMATION of the walk, not the walk
 /// itself — 15-24% of PIT-eligible cutoffs have a forward window landing past the name's index exit
 /// (20y 522/2196, 12y 956/5055, 8y 1039/7023). Most of those are healthy names that merely LEFT the
 /// index and kept trading, which is fine; the dead ones are in there too and are NOT separable from
@@ -1227,7 +1239,6 @@ pub async fn run(args: Vec<String>) {
     // monthly bars as it does on the live daily closes (train == serve).
     core::set_measure_cadence(cadence);
     let min_history = if monthly { 36 } else { MIN_HISTORY }; // ~3y of bars before a cutoff to form the long trend
-    let step = if monthly { 6 } else { STEP_SESSIONS }; // ~6 months between cutoffs
     // (#46) the universe's own ETF ticker set and ticker->GICS sector map. Both were fetched and thrown
     // away (`.0`) — they are the belt to the chart-meta braces below: a venue whose meta omits
     // `instrumentType` must not silently drop a fund back into the stock class, and `is_commodity`
@@ -1327,7 +1338,7 @@ pub async fn run(args: Vec<String>) {
     // (Item 11) hold-period / signal half-life sweep: which forward window gives the best NET edge?
     // Self-contained (own price-only fetch, cached -> cheap) so the validated dispatch below is untouched.
     if halflife {
-        hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, step, tuning, &etf_set, &sector_of, &anchor_windows)
+        hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, tuning, &etf_set, &sector_of, &anchor_windows)
             .await;
         fetch::long_cache_save(); // this path fetches too — flush before the early return
         return;
@@ -1568,21 +1579,16 @@ pub async fn run(args: Vec<String>) {
             let dead_bench = dead_end.contains(tk.as_str()).then_some((bench.0.as_slice(), bench.1.as_slice(), dead_penalty));
             let mut out = Vec::new();
             // (#117) per-SERIES walk parameters. Off by default, in which case this is exactly the
-            // run-wide triple that arrived. See `walk_params`.
-            let (cadence, min_history, step) =
-                walk_params(&dates, tuning.backtest_calendar_cadence, (cadence, min_history, step));
-            let mut i = min_history;
-            // DELIBERATELY UNPINNED (mutation audit, round 4): `<`->`<=` survives here, and killing
-            // it needs a fixture whose walk lands exactly on `dates.len()` — a golden-data change,
-            // not a test. The mutant is also self-limiting: `dates[i]` on the next line panics
-            // immediately rather than returning a wrong number.
-            while i < dates.len() {
+            // run-wide pair that arrived. See `walk_params`. (#790) The cutoffs then sit on the
+            // half-year grid: see `cutoffs`.
+            let (cadence, min_history) =
+                walk_params(&dates, tuning.backtest_calendar_cadence, (cadence, min_history));
+            for i in cutoffs(&dates, min_history) {
                 // (PIT) was this name IN the index on the day we are pretending to stand? If not, the
                 // cutoff never existed for a real screener and contributes no sample — that is the whole
                 // point-in-time correction, and it cuts BOTH ways: a future member is not scored early,
                 // and a departed one stops being scored at its exit rather than at its delisting.
                 if member_spans.is_some_and(|sp| !core::sp500_member_at(sp, dates[i])) {
-                    i += step;
                     continue;
                 }
                 // (#327) THE PROXY'S POINT-IN-TIME GUARD. A spliced series carries bars from years before this
@@ -1591,7 +1597,6 @@ pub async fn run(args: Vec<String>) {
                 // buyable in 1999 and the borrowed years get scored as its own forward returns. Borrowed bars
                 // are history, never an entry. (#787) Nor is the verify window: see `proxy_entry`.
                 if own_first.is_some_and(|f| dates[i] < f) {
-                    i += step;
                     continue;
                 }
                 // forward return: first session at least `years` past the as-of date, or (#751) a dead
@@ -1601,13 +1606,6 @@ pub async fn run(args: Vec<String>) {
                     Some((realized, terminal)) => {
                         if !realized.is_finite() {
                             // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff.
-                            // DELIBERATELY UNPINNED: both mutants of this `+=` survive, because every
-                            // fixture close is finite and positive (`trailing_returns` documents the
-                            // same property) so this branch is never taken offline. Reaching it means
-                            // seeding a zero close into a committed golden, which would move six
-                            // reports to grade one increment. The identical `+=` on the main path
-                            // below IS caught.
-                            i += step;
                             continue;
                         }
                         dead_terminals.fetch_add(usize::from(terminal), std::sync::atomic::Ordering::Relaxed);
@@ -1714,7 +1712,6 @@ pub async fn run(args: Vec<String>) {
                     }
                     None => break, // no full forward window left -> stop walking this ticker
                 }
-                i += step;
             }
             out
         })
@@ -2284,17 +2281,17 @@ fn sweep_cutoffs(
     instrument_type: &str,
     holds: &[i64],
     min_history: usize,
-    step: usize,
     cadence: usize,
-    calendar: bool, // (#117) resolve the three above per SERIES; false = use them as handed in
+    calendar: bool, // (#117) resolve the two above per SERIES; false = use them as handed in
     etf_set: &HashSet<String>,
     sector_of: &HashMap<String, String>,
     windows: &BTreeMap<String, i64>, // (#88) the live anchor map, or empty for the old default-only behaviour
 ) -> Vec<(i64, Sample)> {
     // (#117) same resolution as the validated walk, off the same helper — the sweep answers "which
     // hold length pays best", and it could not answer it honestly while a daily-granularity name
-    // contributed ~40x the cutoffs of a monthly one. Off by default, and then this is a no-op.
-    let (cadence, min_history, step) = walk_params(dates, calendar, (cadence, min_history, step));
+    // contributed ~40x the cutoffs of a monthly one. Off by default, and then this is a no-op. (#790)
+    // That cutoff count is now the calendar grid's in both walks, whatever this resolves.
+    let (cadence, min_history) = walk_params(dates, calendar, (cadence, min_history));
     let mut out = Vec::new();
     // The cutoff's Quote does not depend on the hold window — only `realized` does — yet this used to
     // rebuild it from the raw series once per window, so every cutoff paid `backtest_quote` six times
@@ -2305,8 +2302,7 @@ fn sweep_cutoffs(
     // stable `sort_by_key(date)` and `demean` downstream inherit.
     let mut quotes: Vec<Option<Arc<Quote>>> = vec![None; dates.len()];
     for &h in holds {
-        let mut i = min_history;
-        while i < dates.len() {
+        for i in cutoffs(dates, min_history) {
             let target = dates[i] + chrono::Duration::days(h * 365);
             match dates[i..].iter().position(|d| *d >= target) {
                 Some(off) => {
@@ -2326,7 +2322,6 @@ fn sweep_cutoffs(
                 }
                 None => break,
             }
-            i += step;
         }
     }
     out
@@ -2347,7 +2342,6 @@ async fn hold_period_sweep(
     monthly: bool,
     cadence: usize,
     min_history: usize,
-    step: usize,
     tuning: &BuyHeuristic,
     etf_set: &HashSet<String>,
     sector_of: &HashMap<String, String>,
@@ -2386,7 +2380,7 @@ async fn hold_period_sweep(
             };
             sweep_cutoffs(
                 tk, &chart.dates, &chart.closes, &chart.divs, &chart.name, &chart.instrument_type, &HOLDS,
-                min_history, step, cadence, tuning.backtest_calendar_cadence, etf_set, sector_of, windows,
+                min_history, cadence, tuning.backtest_calendar_cadence, etf_set, sector_of, windows,
             )
         })
         .collect();
@@ -3519,8 +3513,8 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     let mut rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> = Vec::new();
     // (#140) trailing returns for the graded `growth_corr_cap` skip, keyed by (bucket, ticker) because
     // a trail is per-SAMPLE, not per-ticker — the same name at two cutoffs carries two histories.
-    // A ticker appearing twice inside one ~6mo bucket keeps the later trail; both describe the same
-    // window to within the step, and a near-duplicate trail cannot change a correlation verdict.
+    // (#790) The walk cuts each series once per bucket, so a (bucket, ticker) pair repeats only when
+    // two series share a ticker, and then the later trail wins.
     //
     // Built UNCONDITIONALLY, and that is deliberate. An `if cap > 0.0` guard here saves a borrowed
     // slice per sample on the shipped lane and costs a mutant nobody can kill: at `cap: 0.0` the map
@@ -5413,12 +5407,13 @@ fn priced_at_both(s: &(Vec<chrono::NaiveDate>, Vec<f64>), d: chrono::NaiveDate, 
 }
 
 /// (#311) The names a DCA buy on `d` picks from: each ticker's LATEST point-in-time cutoff in the six months up
-/// to `d`, coins out. Nothing dated after `d` enters, so there is no look-ahead, and a step-6 monthly walk leaves
-/// exactly one cutoff per name in any six months, so every month sees the whole pond. Ticker-ordered, so a tie
-/// ranks the same way every run. `books` is date-sorted.
+/// to `d`, coins out. Nothing dated after `d` enters, so there is no look-ahead. (#790) The walk cuts each name
+/// once per half-year bucket, on its first bar there, so the window is closed at BOTH ends: a daily name cut on
+/// 1 July is still the latest cutoff for the 1 January buy, and every month sees the whole pond. Ticker-ordered,
+/// so a tie ranks the same way every run. `books` is date-sorted.
 fn month_pool(books: &[Sample], d: chrono::NaiveDate) -> Vec<&Sample> {
     let from = d - chrono::Months::new(6);
-    let window = &books[books.partition_point(|s| s.date <= from)..books.partition_point(|s| s.date <= d)];
+    let window = &books[books.partition_point(|s| s.date < from)..books.partition_point(|s| s.date <= d)];
     let mut latest: BTreeMap<&str, &Sample> = BTreeMap::new();
     for s in window.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
         latest.insert(s.quote.ticker.as_str(), s);
@@ -7764,6 +7759,10 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
+    /// The pre-(#790) daily stride, ~6 months of sessions. Only the replicas below still walk it: their
+    /// pinned numbers were measured on that walk.
+    const STEP_SESSIONS: usize = 126;
+
     /// (#558) rank r of k weighs (k+1-r)/(k(k+1)/2): of two names the first counts twice the second, a
     /// reorder moves the multiple, and a full ten weighs 10..1 over 55 (sum of i*(11-i) is 220).
     #[test]
@@ -7798,22 +7797,22 @@ mod tests {
 
     /// (#117) `walk_params`, OFF — the arm that ships, and the only thing keeping every golden still.
     /// The fallback must come back untouched no matter what the dates say, so this hands it a daily
-    /// record and the monthly triple: if the guard were dropped the result would be 252/756/126 and
-    /// every fixture would move.
+    /// record and the monthly pair: if the guard were dropped the result would be 252/756 and every
+    /// fixture would move.
     #[test]
-    fn walk_params_off_is_the_run_wide_triple_verbatim() {
+    fn walk_params_off_is_the_run_wide_pair_verbatim() {
         let daily = trading_days(ymd(2016, 1, 4), 2518);
-        assert_eq!(walk_params(&daily, false, (12, 36, 6)), (12, 36, 6));
-        assert_eq!(walk_params(&daily, false, (252, 750, 126)), (252, 750, 126));
+        assert_eq!(walk_params(&daily, false, (12, 36)), (12, 36));
+        assert_eq!(walk_params(&daily, false, (252, 750)), (252, 750));
         // and with the knob ON, the same input must NOT be the fallback — otherwise the assertions
         // above would pass on a function that ignores its flag entirely.
-        assert_ne!(walk_params(&daily, true, (12, 36, 6)), (12, 36, 6));
+        assert_ne!(walk_params(&daily, true, (12, 36)), (12, 36));
     }
 
     /// (#117) ON, against the two cadences the tool actually runs. This is the "near-inert where the
     /// data was already right" claim, checked rather than asserted in prose: a genuine monthly record
-    /// resolves to EXACTLY the 12/36/6 `run` hardcodes, and a genuine daily one lands on 252/756/126
-    /// against its 252/750/126 — so turning the knob on cannot move a name whose feed was honest, and
+    /// resolves to EXACTLY the 12/36 `run` hardcodes, and a genuine daily one lands on 252/756 against
+    /// its 252/750 — so turning the knob on cannot move a name whose feed was honest, and
     /// every difference it does make is a series that was never monthly to begin with.
     ///
     /// The daily case is also why bars/year is span/count and not the median gap between bars.
@@ -7822,58 +7821,79 @@ mod tests {
     #[test]
     fn walk_params_on_reproduces_the_constants_on_honest_data() {
         let monthly = month_ends(2009, 9, 205); // AVGO's real shape: 205 bars, 2009-09 -> 2026-08
-        assert_eq!(walk_params(&monthly, true, (999, 999, 999)), (12, 36, 6));
+        assert_eq!(walk_params(&monthly, true, (999, 999)), (12, 36));
 
         let daily = trading_days(ymd(2016, 1, 4), 2518); // ~10y of sessions, `fetch_history`'s range
-        assert_eq!(walk_params(&daily, true, (999, 999, 999)), (252, 756, 126));
+        assert_eq!(walk_params(&daily, true, (999, 999)), (252, 756));
     }
 
     /// (#117) ON, against the granularities Yahoo actually returns for a thin line while answering an
     /// `interval=1mo` request. These are the 4011 non-monthly series of the 5829 in the live long
-    /// cache, and each one of them was being walked at 12/36/6.
+    /// cache, and each one of them was being walked at 12/36.
     ///
-    /// The weekly row is the one that ruins a sample quietly: at 12/36/6 such a name needs only 36
-    /// WEEKS (8 months) of history before its first cutoff and then emits one every 6 weeks, so it
-    /// contributes ~8.7x the cutoffs a monthly name does. Daily is ~40x. Neither is a modelling
+    /// The weekly row is the one that ruins a sample quietly: at 12/36 such a name needs only 36
+    /// WEEKS (8 months) of history before its first cutoff. Before (#790) it then emitted a cutoff
+    /// every 6 weeks, ~8.7x the cutoffs of a monthly name, and daily was ~40x. Neither is a modelling
     /// choice — it is whichever granularity the feed happened to serve.
     #[test]
     fn walk_params_on_reads_the_granularity_yahoo_actually_served() {
         let weekly = every_n_days(ymd(2010, 1, 4), 7, 800);
-        assert_eq!(walk_params(&weekly, true, (12, 36, 6)), (52, 157, 26));
+        assert_eq!(walk_params(&weekly, true, (12, 36)), (52, 157));
 
         let quarterly = month_ends(2000, 3, 100).into_iter().step_by(3).collect::<Vec<_>>();
-        assert_eq!(walk_params(&quarterly, true, (12, 36, 6)), (4, 12, 2));
+        assert_eq!(walk_params(&quarterly, true, (12, 36)), (4, 12));
 
         // hourly, which is what `WIC.DE` and `34U.DE` really carry: ~450 bars over two months. No 8y
         // forward window exists in a record that short, so these contribute nothing either way — but
         // they must not be walked as if 36 bars were three years.
         let hourly = every_n_days(ymd(2026, 6, 5), 1, 70);
-        let (cadence, min_history, step) = walk_params(&hourly, true, (12, 36, 6));
+        let (cadence, min_history) = walk_params(&hourly, true, (12, 36));
         assert!(cadence > 300, "a sub-daily record cannot measure 12 bars a year; got {cadence}");
-        assert!(min_history > 36 && step > 6, "got {min_history}/{step}");
+        assert!(min_history > 36, "got {min_history}");
     }
 
     /// (#117) The three degenerate records, each of which would otherwise divide by zero or floor a
-    /// parameter at 0 — and a `step` of 0 is an INFINITE LOOP in both walks, not a wrong number.
+    /// parameter at 0.
     #[test]
     fn walk_params_refuses_to_measure_a_record_that_says_nothing() {
-        let fb = (12, 36, 6);
+        let fb = (12, 36);
         assert_eq!(walk_params(&[], true, fb), fb, "no dates at all");
         assert_eq!(walk_params(&[ymd(2020, 1, 1)], true, fb), fb, "one bar spans nothing");
         assert_eq!(walk_params(&[ymd(2020, 1, 1); 4], true, fb), fb, "four bars, zero span");
 
-        // Sparser than one bar every two years: `step` would round to 0 and hang the walk. The floor
-        // is what makes it 1, and every parameter must clear it.
+        // Sparser than one bar every two years: `cadence` would round to 0. The floor is what makes
+        // it 1, and every parameter must clear it.
         let sparse = every_n_days(ymd(1990, 1, 1), 365 * 3, 12);
-        let (cadence, min_history, step) = walk_params(&sparse, true, fb);
-        assert!(cadence >= 1 && min_history >= 1 && step >= 1, "got {cadence}/{min_history}/{step}");
+        let (cadence, min_history) = walk_params(&sparse, true, fb);
+        assert!(cadence >= 1 && min_history >= 1, "got {cadence}/{min_history}");
+    }
+
+    /// (#790) Each cutoff lands on the first bar of its half-year bucket. The monthly record runs
+    /// 2000-03 to 2002-02, so bar 0 opens the first bucket and bars 4 (2000-07), 10 (2001-01), 16 and
+    /// 22 open the rest. A start inside a bucket waits for the next opening, and a start in the last
+    /// bucket or past the end yields nothing. A daily record opens a bucket on its first session of
+    /// January, and a bucket with no bars at all is skipped.
+    #[test]
+    fn cutoffs_land_on_the_first_bar_of_each_half_year() {
+        fn at(d: &[NaiveDate], from: usize) -> Vec<usize> {
+            cutoffs(d, from).collect()
+        }
+        let monthly = month_ends(2000, 3, 24);
+        assert_eq!(at(&monthly, 0), [0, 4, 10, 16, 22]);
+        assert_eq!(at(&monthly, 4), [4, 10, 16, 22]);
+        assert_eq!(at(&monthly, 5), [10, 16, 22]);
+        assert!(at(&monthly, 23).is_empty() && at(&monthly, 99).is_empty() && at(&[], 3).is_empty());
+        let daily = [ymd(2003, 12, 30), ymd(2003, 12, 31), ymd(2004, 1, 2), ymd(2004, 1, 5)];
+        assert_eq!(at(&daily, 1), [2]);
+        let gap = [ymd(2005, 3, 1), ymd(2005, 5, 1), ymd(2006, 2, 1), ymd(2006, 3, 1)];
+        assert_eq!(at(&gap, 1), [2]);
     }
 
     /// Consecutive trading sessions from `start`. Weekends dropped, and every 29th surviving weekday
     /// dropped as a holiday — because weekdays ALONE are 261 a year and a real exchange closes about
     /// nine more, which is the difference between 261 and the ~252 the daily constants were sized on.
     /// Modelling it matters here: the whole point of the daily assertion is that the estimator lands
-    /// on the number the shipped `STEP_SESSIONS`/`MIN_HISTORY` already assume.
+    /// on the number the shipped `MIN_HISTORY` already assumes.
     fn trading_days(start: NaiveDate, n: usize) -> Vec<NaiveDate> {
         let mut out = Vec::with_capacity(n);
         let (mut d, mut weekdays) = (start, 0usize);
@@ -8251,13 +8271,13 @@ mod tests {
     }
 
     /// (#340) Two dates a year apart are enough to measure a bar rate, and the rate counts GAPS
-    /// (`len - 1`), not dates: one gap in one year is ~1 bar/yr -> (1, 3, 1).
+    /// (`len - 1`), not dates: one gap in one year is ~1 bar/yr -> (1, 3).
     #[test]
     fn walk_params_counts_gaps_between_two_dates() {
         let two = [ymd(2021, 1, 1), ymd(2022, 1, 1)];
-        assert_eq!(walk_params(&two, true, (9, 9, 9)), (1, 3, 1));
-        assert_eq!(walk_params(&two, false, (9, 9, 9)), (9, 9, 9), "calendar off keeps the run's constants");
-        assert_eq!(walk_params(&two[..1], true, (9, 9, 9)), (9, 9, 9), "one date measures nothing");
+        assert_eq!(walk_params(&two, true, (9, 9)), (1, 3));
+        assert_eq!(walk_params(&two, false, (9, 9)), (9, 9), "calendar off keeps the run's constants");
+        assert_eq!(walk_params(&two[..1], true, (9, 9)), (9, 9), "one date measures nothing");
     }
 
     /// (#89) The block length is real, and 0 is exactly the one-bucket resample every band in this repo
@@ -9539,15 +9559,16 @@ mod tests {
         assert!(!priced_at_both(&s, ymd(2000, 4), ymd(2000, 5), true), "nothing buys a dead series after its last bar");
     }
 
-    /// (#311) A buy on `d` sees each name's LATEST cutoff in (d − 6 months, d]: a cutoff exactly six months back
-    /// is out, one ON `d` is in, one after `d` is look-ahead and out, and a coin never enters.
+    /// (#311) A buy on `d` sees each name's LATEST cutoff in [d − 6 months, d]: (#790) a cutoff exactly six months
+    /// back is in, an older one is out, one ON `d` is in, one after `d` is look-ahead and out, and a coin never
+    /// enters.
     #[test]
     fn month_pool_takes_each_names_latest_cutoff_in_the_six_months_to_the_buy() {
         let ymd = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
         let at = |tk: &str, date| Sample { date, realized: 0.0, relative: 0.0, quote: Arc::new(Quote::stub(tk, "1", "", tk)), fund: None, trail: Vec::new() };
-        let books = [at("OLD", ymd(2000, 1)), at("AAA", ymd(2000, 2)), at("BTC-USD", ymd(2000, 3)), at("AAA", ymd(2000, 5)), at("BBB", ymd(2000, 7)), at("LATE", ymd(2000, 8))];
+        let books = [at("GONE", ymd(1999, 12)), at("OLD", ymd(2000, 1)), at("AAA", ymd(2000, 2)), at("BTC-USD", ymd(2000, 3)), at("AAA", ymd(2000, 5)), at("BBB", ymd(2000, 7)), at("LATE", ymd(2000, 8))];
         let got: Vec<(&str, NaiveDate)> = month_pool(&books, ymd(2000, 7)).iter().map(|s| (s.quote.ticker.as_str(), s.date)).collect();
-        assert_eq!(got, [("AAA", ymd(2000, 5)), ("BBB", ymd(2000, 7))]);
+        assert_eq!(got, [("AAA", ymd(2000, 5)), ("BBB", ymd(2000, 7)), ("OLD", ymd(2000, 1))]);
     }
 
     /// (#311) Hand arithmetic: A ×3 at 30%, B ×2 at 20%, and the 50% remainder on two legs. L starts ON the buy
@@ -11207,9 +11228,9 @@ mod tests {
             ("WOB1", series(0.13, 0.20, 0.5)),
             ("WOB2", series(0.04, 0.25, 1.5)),
         ];
-        // run()'s exact cutoff walk: MIN_HISTORY warmup, STEP_SESSIONS stride, 5y forward window,
-        // stop when no full window remains. (Kept in sync by the pin itself: a drift in these
-        // constants changes the sample set and the pinned numbers move.)
+        // run()'s cutoff walk before (#790): MIN_HISTORY warmup, STEP_SESSIONS stride, 5y forward
+        // window, stop when no full window remains. The pinned numbers were measured on that walk,
+        // so the replica keeps it; the pin grades the scorer, not the cutoff grid.
         let years = 5;
         let mut samples: Vec<Sample> = Vec::new();
         for (tk, closes) in &universe {
@@ -11585,7 +11606,7 @@ mod tests {
             ("ETH-EUR", "ETH-EUR", "CRYPTOCURRENCY", 0.35, 0.35, 4.0),
             ("LTC-EUR", "LTC-EUR", "CRYPTOCURRENCY", -0.05, 0.25, 2.5),
         ];
-        // run()'s exact cutoff walk, twice: once with the class fields stamped on, once without —
+        // run()'s pre-(#790) cutoff walk, twice: once with the class fields stamped on, once without —
         // the second is precisely the pre-fix behaviour, where every fund and coin is a "stock".
         let years = 5i64;
         let build = |stamp: bool| -> Vec<Sample> {
@@ -11729,9 +11750,19 @@ mod tests {
         let sector_of = HashMap::new();
         let holds = [1i64, 2, 5];
         let walk = |c: &[f64]| {
-            sweep_cutoffs("VWRA.L", &dates, c, &[], "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, false, &etf_set, &sector_of, &BTreeMap::new())
+            sweep_cutoffs("VWRA.L", &dates, c, &[], "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, 252, false, &etf_set, &sector_of, &BTreeMap::new())
         };
         let got = walk(&closes);
+
+        // (#790) each hold cuts once per half-year bucket, in consecutive buckets, on the bucket's first bar.
+        for &h in &holds {
+            let cut: Vec<NaiveDate> = got.iter().filter(|(w, _)| *w == h).map(|(_, s)| s.date).collect();
+            assert!(cut.windows(2).all(|p| bucket(p[1]) == bucket(p[0]) + 1), "{h}y hold skipped or repeated a bucket");
+            for d in &cut {
+                let k = dates.binary_search(d).unwrap();
+                assert_ne!(bucket(dates[k - 1]), bucket(*d), "{h}y cutoff {d} is not its bucket's first bar");
+            }
+        }
 
         // every hold produces cutoffs, and a longer hold can only yield FEWER (it needs more forward
         // history) — the shape that makes the per-hold edge rows comparable at all.
@@ -11745,8 +11776,9 @@ mod tests {
 
         // a zero close poisons `realized` to ±inf, and one such row drags a whole de-meaned bucket to
         // -inf. Short holds reach early data the 12y path never walks, which is where this bites.
+        // (#790) The first cutoff is the first bucket opening at or after MIN_HISTORY, not bar 750.
         let mut poisoned = closes.clone();
-        poisoned[MIN_HISTORY] = 0.0;
+        poisoned[cutoffs(&dates, MIN_HISTORY).next().unwrap()] = 0.0;
         let after = walk(&poisoned);
         assert!(after.iter().all(|(_, s)| s.realized.is_finite()), "non-finite realized must be dropped");
         assert!(after.len() < got.len(), "the poisoned cutoffs must actually have been dropped");
@@ -11848,8 +11880,10 @@ mod tests {
         let mut samples: Vec<Sample> = names
             .iter()
             .flat_map(|(tk, closes)| {
-                // holds=[12] / min_history 36 / step 6 / cadence 12 — `run`'s monthly branch verbatim
-                sweep_cutoffs(tk, &dates, closes, &[], tk, "", &[12], 36, 6, 12, false, &etf_set, &sector_of, &BTreeMap::new())
+                // holds=[12] / min_history 36 / cadence 12 — `run`'s monthly branch verbatim. Bar 36 is
+                // 1988-01, a bucket opening, so the (#790) grid cuts the same Jan/Jul dates the old
+                // 6-bar stride did.
+                sweep_cutoffs(tk, &dates, closes, &[], tk, "", &[12], 36, 12, false, &etf_set, &sector_of, &BTreeMap::new())
                     .into_iter()
                     .map(|(_, s)| s)
             })
