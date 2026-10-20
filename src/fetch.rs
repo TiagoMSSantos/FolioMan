@@ -8073,8 +8073,10 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
 /// (measured 2026-07-05: 2580 unique ISINs, 659 not in BF's 3468). Same DataTables POST as
 /// `fetch_euronext_lisbon`, but paged: the server answers with the right row COUNT and EMPTY
 /// `aaData` above ~1000 rows per request, so ask 1000 at a time until a short page. Per-page
-/// retry mirrors Lisbon's 2-attempt shape (a transient blip emptied that leg once). Degrades to
-/// whatever pages arrived (or empty, with a diagnostic) — the BF leg still builds the universe.
+/// retry mirrors Lisbon's 2-attempt shape (a transient blip emptied that leg once). A failed page
+/// degrades to empty, with a diagnostic — the caller then serves the last-good copy, and the BF leg
+/// still builds the universe. (#778) That holds on every page, not only page 0: a later page that
+/// failed used to read as the end of the list, and the partial list overwrote the last-good one.
 /// Hard stop at 10 pages (~10k rows): the list is ~3.3k, so a runaway server cannot loop us.
 /// `#[mutants::skip]`: network-bound, and no offline test reaches it.
 ///
@@ -8091,10 +8093,12 @@ pub async fn fetch_euronext_etf_isins(client: &Client, urls: &Urls) -> Vec<Strin
     'pages: for first in (0..10).step_by(BATCH) {
         let batch = (first..(first + BATCH).min(10)).map(|page| euronext_track_page(client, urls, page * PAGE, PAGE));
         for (page, (rows, last_status)) in (first..).zip(futures::future::join_all(batch).await) {
-            // both attempts empty: on page 0 the leg failed; on a later page it's just the end of the list
+            // both attempts empty: past page 0, a 200 with no rows is the end of the list; on page 0, or
+            // with any other status, the leg failed
             let Some(v) = rows else {
-                if page == 0 {
-                    eprintln!("fetch: Euronext ETF list failed after 2 attempts (last status: {last_status}) — Euronext-only ETFs absent from the screen");
+                if page == 0 || !last_status.starts_with("200") {
+                    eprintln!("fetch: Euronext ETF list failed on page {page} after 2 attempts (last status: {last_status}) — no partial list is kept");
+                    return Vec::new();
                 }
                 break 'pages;
             };
@@ -14615,7 +14619,8 @@ pub(crate) mod tests {
     }
 
     /// (#358) The same server, answering by what was asked: the first route whose needle is in the
-    /// request LINE wins, and no match is a 404. For the calls that make two requests needing two
+    /// request LINE wins, then (#778) the first whose needle is in the BODY (a POST that pages in its
+    /// body), and no match is a 404. For the calls that make two requests needing two
     /// answers (`quote_one`'s 10y daily and max monthly legs, `eur_rate`'s two FX pairs). Their URLs
     /// only differ once `yahoo_chart` carries `{ticker}` and `{range}`, which `stub_urls` drops.
     pub(crate) fn routed_stub(
@@ -14674,7 +14679,9 @@ pub(crate) mod tests {
                 }
                 let req = String::from_utf8_lossy(&req).into_owned();
                 let line = req.lines().next().unwrap_or("");
-                let resp = match routes.iter().find(|(needle, _)| line.contains(needle)) {
+                let body = req.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+                let route = routes.iter().find(|(needle, _)| line.contains(needle));
+                let resp = match route.or_else(|| routes.iter().find(|(needle, _)| body.contains(needle))) {
                     Some((_, body)) => {
                         let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                         [head.as_bytes(), *body].concat()
@@ -18302,6 +18309,14 @@ pub(crate) mod tests {
         assert_eq!(requests.try_iter().count(), 10, "a full page every time is cut at ten pages");
 
         assert!(fetch_euronext_etf_isins(&client, &stub_urls("http://127.0.0.1:1/")).await.is_empty(), "no answer on page 0 is an empty list");
+
+        // (#778) past page 0, a 200 with no rows ends the list, and any other answer fails the whole leg
+        let (base, client, _) = routed_stub(vec![("start=0&", full), ("start=1000&", r#"{"aaData": []}"#)]);
+        urls.euronext_track = format!("{base}track");
+        assert_eq!(fetch_euronext_etf_isins(&client, &urls).await.len(), 1000, "an empty 200 on page 1 is the end");
+        let (base, client, _) = routed_stub(vec![("start=0&", full)]);
+        urls.euronext_track = format!("{base}track");
+        assert!(fetch_euronext_etf_isins(&client, &urls).await.is_empty(), "a 404 on page 1 keeps no partial list");
     }
 
     // ── coverage push: the instance-EPS fallback ──
