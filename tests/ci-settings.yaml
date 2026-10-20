@@ -6861,8 +6861,8 @@ buy_heuristic:
                                  #  under 0.5% of rows flip `financial` when later-filed fin facts are dropped. Over either bar: a knob lane, which
                                  #  waits on the owner's go.
                                  #  CENSUS: 100 current S&P members (every 5th, sorted), raw companyfacts, the parser's per-line winners mirrored;
-                                 #  1683 rows. Every late value is over 90 days late (the >0d and >90d counts are equal on every line), so a late
-                                 #  value is always the next annual filing's. Share of values filed over 90 days after revenue's, %:
+                                 #  1683 rows. No late value is under 256 days late: of 561, 383 came 301-400 days on (the next 10-K's comparative)
+                                 #  and 177 over 400 (mostly two 10-Ks on). Share of values filed over 90 days after revenue's, %:
                                  #    iss 7.61   rnd 4.50   rep 4.32   shares 4.25   debt_cur 2.95   div 2.68   pretax 2.65   dna 2.24   op 1.88
                                  #    intexp 1.85   sga 1.75   sbc 1.74   cash 1.62   gw 1.61   eps 1.21   gp 1.12   debt_nc 1.01   (under 1%:)
                                  #    eq 0.96   capex 0.26   ni 0.06   assets 0.06   ocf 0.00
