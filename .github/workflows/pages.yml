@@ -72,6 +72,8 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url || steps.deploy-retry.outputs.page_url }}
+    outputs:
+      clean: ${{ steps.validate.outputs.clean }}
     steps:
       - uses: actions/checkout@v7
 
@@ -354,8 +356,10 @@ jobs:
         # holds most of that wall clock, so a slower run reads as network or as code from the log alone.
         run: time ./target/release/folioman screen
 
+      # (#766) Not on a cancelled run: one cut mid-write saves a torn cache file, its reader takes it as
+      # empty, and the next run starts cold.
       - name: Save fetch caches
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/cache/save@v6
         with:
           path: |
@@ -373,6 +377,7 @@ jobs:
       # own staleness banner then labels — instead of publishing three empty tables. That is the
       # whole fallback: no last-good store to maintain, because not deploying IS the fallback.
       - name: Validate the payload
+        id: validate
         run: |
           test -f .screen_web.json || { echo "screen wrote no payload"; exit 1; }
           jq -e '(.stocks | length) + (.etfs | length) + (.crypto | length) > 0' .screen_web.json \
@@ -384,6 +389,8 @@ jobs:
           jq -e -f web/universe-contracts.jq .screen_universe.json > /dev/null \
             || { echo "fund coverage under a web/universe-contracts.jq floor — not deploying over a good page"; exit 1; }
           jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) rows"' .screen_web.json
+          # (#765) read by `record`: a degraded run deploys, but its journal line waits for a clean run
+          echo "clean=$(jq '(.degraded // []) | length == 0' .screen_web.json)" >> "$GITHUB_OUTPUT"
 
       - name: Assemble the site
         run: |
@@ -404,12 +411,15 @@ jobs:
           # and every later deploy that day carries the live prev.json forward. The query string sidesteps
           # the Pages CDN's 10-minute cache, which could hand back the prev.json from BEFORE the day's
           # roll and carry that forward all day. Best effort: no prev.json = no marks, never a red run.
+          # (#768) A same-day deploy that cannot read the live prev.json ships none. It used to ship the
+          # live data.json in its place, so "new since yesterday" meant new since this morning's deploy.
           site="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
-          get() { curl -sfL --max-time 30 "$site/$1?run=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" -o "$2" && jq -e .generated "$2" >/dev/null 2>&1; }
+          get() { curl -sfL --retry 3 --retry-all-errors --max-time 30 "$site/$1?run=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" -o "$2" && jq -e .generated "$2" >/dev/null 2>&1; }
           if get data.json live.json; then
-            if [ "$(jq -r '.generated[:10]' live.json)" != "$(jq -r '.generated[:10]' _site/data.json)" ] \
-               || ! get prev.json _site/prev.json; then
+            if [ "$(jq -r '.generated[:10]' live.json)" != "$(jq -r '.generated[:10]' _site/data.json)" ]; then
               mv live.json _site/prev.json
+            else
+              get prev.json _site/prev.json || rm -f _site/prev.json
             fi
           fi
           rm -f live.json
@@ -516,7 +526,14 @@ jobs:
           name: screen-journal
           path: run-journal
       - name: Commit today's line
+        env:
+          CLEAN: ${{ needs.publish.outputs.clean }}
         run: |
+          # (#765) A degraded run's line used to be the day's line for good when it came first, though a
+          # clean run could follow. It waits now, unless main has no line for yesterday either: a feed can
+          # stay degraded for weeks, and the forward record still needs a line a month.
+          [ "$CLEAN" = true ] || [[ "$(tail -n 1 .screen_snapshots.jsonl | jq -r .date)" < "$(date -u -d yesterday +%F)" ]] \
+            || { echo "degraded run: its line waits for a clean run"; exit 0; }
           # (#605) Append the run's LAST line, never copy its file, and only when it is dated after
           # main's last one: a queued or re-run job checks out an older SHA than main. (#637) That
           # test is .github/scripts/journal-newer-line.sh, which the actionlint job runs on five
