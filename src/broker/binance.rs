@@ -7,12 +7,26 @@ use serde_json::Value;
 /// Quote/stable assets treated as "cash available to invest".
 const CASH_ASSETS: &[&str] = &["EUR", "USD", "USDT", "USDC", "BUSD", "FDUSD"];
 
+/// (#776) Both credentials, or why not. Only a pair missing BOTH is keyless (the broker is off). A key
+/// without its secret, or the reverse, used to read as keyless too, so `size` and `accounts` skipped
+/// Binance in silence; prefixed, it is a failed call they report.
+fn creds(key: Result<String, String>, secret: Result<String, String>) -> Result<(String, String), String> {
+    match (key, secret) {
+        (Ok(k), Ok(s)) => Ok((k, s)),
+        (Err(e), Err(_)) => Err(e),
+        (Err(e), Ok(_)) | (Ok(_), Err(e)) => Err(format!("half-configured: {e}")),
+    }
+}
+
 /// Signed `/api/v3/account` call → the raw balances array. Shared by `summary` (rendering) and
 /// `owned_assets` (round 111 screen overlay). A missing balances array is API drift, not an empty
 /// account — say so instead of rendering "(none)".
+///
+/// UNGRADEABLE, hence the skip, for `summary`'s reason: env credentials and a signed GET to a hardcoded
+/// `api.binance.com`. The credential pairing is [`creds`], pinned below.
+#[mutants::skip]
 async fn account_balances(client: &Client) -> Result<Vec<Value>, String> {
-    let key = env_var("BINANCE_API_KEY")?;
-    let secret = env_var("BINANCE_API_SECRET")?;
+    let (key, secret) = creds(env_var("BINANCE_API_KEY"), env_var("BINANCE_API_SECRET"))?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -158,8 +172,7 @@ fn fill_label(body: &str) -> String {
 /// hardcoded `api.binance.com`. The branch that picks the amount field is [`order_query`], pinned below.
 #[mutants::skip]
 pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64, eur: bool) -> Result<String, String> {
-    let key = env_var("BINANCE_API_KEY")?;
-    let secret = env_var("BINANCE_API_SECRET")?;
+    let (key, secret) = creds(env_var("BINANCE_API_KEY"), env_var("BINANCE_API_SECRET"))?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -198,6 +211,22 @@ pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64, eur: boo
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// (#776) a pair is keyless only when both halves are missing; one half alone names the missing
+    /// variable and is not keyless, so callers report it instead of skipping the broker.
+    #[test]
+    fn creds_names_a_half_configured_pair() {
+        let set = |v: &str| Ok::<String, String>(v.to_string());
+        let unset = || env_var("FOLIOMAN_NO_SUCH_BINANCE_SECRET");
+        assert_eq!(creds(set("k"), set("s")), Ok(("k".to_string(), "s".to_string())));
+        let off = creds(env_var("FOLIOMAN_NO_SUCH_BINANCE_KEY"), unset()).unwrap_err();
+        assert!(crate::broker::is_keyless(&off) && off.contains("FOLIOMAN_NO_SUCH_BINANCE_KEY"), "{off}");
+        for half in [creds(set("k"), unset()), creds(unset(), set("s"))] {
+            let e = half.unwrap_err();
+            assert!(e.starts_with("half-configured: ") && e.contains("FOLIOMAN_NO_SUCH_BINANCE_SECRET"), "{e}");
+            assert!(!crate::broker::is_keyless(&e), "{e}");
+        }
+    }
 
     /// (round 111/114) owned-amounts extraction: cash/stable and zero rows drop, unparsable rows
     /// skip, and the held amount = free + locked.
