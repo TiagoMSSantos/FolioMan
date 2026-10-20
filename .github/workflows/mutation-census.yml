@@ -206,9 +206,17 @@ jobs:
             ind=(--in-diff "${RUNNER_TEMP}/since.diff")
           fi
           listed=$(cargo mutants --list "${files[@]}" -F "${RE}" "${ex[@]}" "${ind[@]}" | wc -l)
+          # (#792) a mistyped `files` path lists 0 mutants and cargo-mutants still exits 0, so every shard
+          # graded nothing and uploaded nothing; say why and go red instead of dying on the empty glob below
+          if [ "${listed}" -eq 0 ]; then
+            echo "listed 0: files, regex and since match nothing; check the path" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           mkdir -p out
           for k in caught missed timeout unviable; do
-            cat census/*/"$k".txt 2>/dev/null | sort > "out/$k.txt"
+            # (#792) no shard file for a kind = an empty list: under pipefail a bare `cat` on the unmatched
+            # glob exited 1 and the step died before writing its summary
+            { cat census/*/"$k".txt 2>/dev/null || true; } | sort > "out/$k.txt"
           done
           graded=$(cat out/*.txt | wc -l)
           {
