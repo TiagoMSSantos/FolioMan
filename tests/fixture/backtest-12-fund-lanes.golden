@@ -364,7 +364,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   CAVEATS: (#737) 13F before 2013-Q2 is read from its text table, kept only when its rows add up to
   the cover's value total (none printed: no row-shaped line left unread), else the quarter folds into
   the next; the 83 managers were picked in 2026, so survivor bias flatters their rows; cutoffs overlap,
-  so n counts samples, not independent bets. Read mean AND hit: a hit rate up with the mean down dilutes.
+  so n counts samples, not independent bets. (#794) CUSIPs are named by today's OpenFIGI map, and one
+  it cannot name (mostly a dead issuer) is dropped, so its moves flag no stock: the `fetch: holders:`
+  line prints asked against named. Read mean AND hit: a hit rate up with the mean down dilutes.
   cohort                                    n     mean   median   hit% | rest n     mean   median   hit%
   Berkshire added (13F or Form 4)           0      NaN      NaN    NaN |   1572    +0.00  -144.15   28.0
   3+ superinvestors added                   0      NaN      NaN    NaN |   1572    +0.00  -144.15   28.0
