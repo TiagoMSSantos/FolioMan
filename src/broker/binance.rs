@@ -22,18 +22,27 @@ fn creds(key: Result<String, String>, secret: Result<String, String>) -> Result<
 /// `owned_assets` (round 111 screen overlay). A missing balances array is API drift, not an empty
 /// account — say so instead of rendering "(none)".
 ///
-/// UNGRADEABLE, hence the skip, for `summary`'s reason: env credentials and a signed GET to a hardcoded
-/// `api.binance.com`. The credential pairing is [`creds`], pinned below.
+/// UNGRADEABLE, hence the skip: the env credential read in front of [`account_balances_at`], which
+/// carries the call and is pinned below against a loopback stub. The credential pairing is [`creds`].
 #[mutants::skip]
 async fn account_balances(client: &Client) -> Result<Vec<Value>, String> {
     let (key, secret) = creds(env_var("BINANCE_API_KEY"), env_var("BINANCE_API_SECRET"))?;
+    account_balances_at(client, LIVE, &key, &secret).await
+}
+
+/// The live API host. Only the env-reading wrappers pass it; tests hand the `_at` halves a loopback stub.
+const LIVE: &str = "https://api.binance.com";
+
+/// (#780) `account_balances` against `host`, with the credentials passed in rather than read, so a test
+/// drives the signed GET, the status check and the drift error without a key or a real account.
+async fn account_balances_at(client: &Client, host: &str, key: &str, secret: &str) -> Result<Vec<Value>, String> {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis();
     let query = format!("recvWindow=5000&timestamp={ts}");
-    let sig = sign(&secret, &query);
-    let url = format!("https://api.binance.com/api/v3/account?{query}&signature={sig}");
+    let sig = sign(secret, &query);
+    let url = format!("{host}/api/v3/account?{query}&signature={sig}");
     let resp = client
         .get(&url)
         .header("X-MBX-APIKEY", key)
@@ -80,21 +89,19 @@ fn extract_amounts(balances: &[Value]) -> Vec<(String, f64)> {
 
 /// Free + invested balances (read-only). Splits stable/fiat (cash) from the rest (holdings).
 ///
-/// UNGRADEABLE, hence the skip: what is left here after `render_balances` was split out is a
-/// credential read and a signed GET against a hardcoded `api.binance.com`. Killing
-/// `-> Ok(String::new())` needs either a live socket, or a test that asserts this errors — which
-/// only holds while `BINANCE_API_KEY` is unset, so it would pass in CI and fetch for real on a
-/// machine that has keys. Neither belongs in the offline suite. The half that carries the logic is
-/// pinned below.
+/// UNGRADEABLE, hence the skip: what is left here after `render_balances` was split out is the
+/// env credential read in `account_balances`, against the live host. Killing `-> Ok(String::new())`
+/// needs either a live socket, or a test that asserts this errors — which only holds while
+/// `BINANCE_API_KEY` is unset, so it would pass in CI and fetch for real on a machine that has keys.
+/// Neither belongs in the offline suite. The signed GET is [`account_balances_at`] and the text is
+/// `render_balances`, both pinned below.
 #[mutants::skip]
 pub async fn summary(client: &Client) -> Result<String, String> {
     Ok(render_balances(&account_balances(client).await?))
 }
 
 /// Pure balances→text rendering, split from the fetch so the dust/drift handling is testable offline
-/// (like `extract_amounts`). The URL is hardcoded to `api.binance.com`, so the fetch half cannot be
-/// reached by a test without pointing a real-money client somewhere else — this is the half worth
-/// pinning anyway.
+/// (like `extract_amounts`). The fetch half is [`account_balances_at`], pinned against a stub.
 fn render_balances(balances: &[Value]) -> String {
     let mut cash = Vec::new();
     let mut holdings = Vec::new();
@@ -168,18 +175,26 @@ fn fill_label(body: &str) -> String {
 /// asset amount, or euros to spend when `eur` ([`order_query`]). HMAC-signed query, key in the
 /// `X-MBX-APIKEY` header.
 ///
-/// UNGRADEABLE, hence the skip, for `summary`'s reason: env credentials and a signed POST to a
-/// hardcoded `api.binance.com`. The branch that picks the amount field is [`order_query`], pinned below.
+/// UNGRADEABLE, hence the skip, for `summary`'s reason: env credentials and the live host. Everything
+/// past the credential read is [`order_at`], pinned below against a loopback stub; the branch that picks
+/// the amount field is [`order_query`].
 #[mutants::skip]
 pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64, eur: bool) -> Result<String, String> {
     let (key, secret) = creds(env_var("BINANCE_API_KEY"), env_var("BINANCE_API_SECRET"))?;
+    order_at(client, LIVE, &key, &secret, side, symbol, qty, eur).await
+}
+
+/// (#780) `order` against `host` with the credentials passed in. A test can now prove what the order
+/// path says on each answer (filled, no orderId, a 4xx refusal, a 5xx that MAY be live, a refused
+/// connection) without a key, so no test can reach `api.binance.com`.
+async fn order_at(client: &Client, host: &str, key: &str, secret: &str, side: &str, symbol: &str, qty: f64, eur: bool) -> Result<String, String> {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis();
     let query = order_query(symbol, side, qty, eur, ts);
-    let sig = sign(&secret, &query);
-    let url = format!("https://api.binance.com/api/v3/order?{query}&signature={sig}");
+    let sig = sign(secret, &query);
+    let url = format!("{host}/api/v3/order?{query}&signature={sig}");
     let resp = client
         .post(&url)
         .header("X-MBX-APIKEY", key)
@@ -310,5 +325,64 @@ mod tests {
             sign("key", "The quick brown fox jumps over the lazy dog"),
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
         );
+    }
+
+    /// The query a stubbed request signed and the signature it sent, both read off its request line.
+    fn signed(req: &str) -> (&str, &str) {
+        let path = req.split(' ').nth(1).unwrap_or("");
+        path.split_once('?').and_then(|(_, q)| q.rsplit_once("&signature=")).expect("a signed query")
+    }
+
+    /// (#780) The signed account GET against a loopback stub. The rows come back, and the request
+    /// carries the key header and a signature over its own query. A refusal, or a 200 without a
+    /// balances array, is an error and never an empty account.
+    #[tokio::test]
+    async fn account_balances_at_signs_and_reads_the_rows() {
+        let (url, client, reqs) =
+            crate::fetch::tests::routed_stub(vec![("/api/v3/account", r#"{"balances":[{"asset":"BTC","free":"0.5","locked":"0"}]}"#)]);
+        let rows = account_balances_at(&client, url.trim_end_matches('/'), "k", "s").await;
+        assert_eq!(rows, Ok(vec![json!({ "asset": "BTC", "free": "0.5", "locked": "0" })]));
+        let req = reqs.recv().expect("one request");
+        assert!(req.starts_with("GET /api/v3/account?recvWindow=5000&timestamp="), "{req}");
+        let (query, sig) = signed(&req);
+        assert_eq!(sig, sign("s", query));
+        assert!(req.to_ascii_lowercase().contains("\r\nx-mbx-apikey: k\r\n"), "{req}");
+        for (answer, want) in [
+            ("HTTP/1.1 401 Unauthorized\r\n\r\n{\"code\":-2015}", "binance 401 Unauthorized: {\"code\":-2015}"),
+            ("{\"accountType\":\"SPOT\"}", "binance: no balances array"),
+        ] {
+            let (url, client, _reqs) = crate::fetch::tests::routed_stub(vec![("/api/v3/account", answer)]);
+            let err = account_balances_at(&client, url.trim_end_matches('/'), "k", "s").await.unwrap_err();
+            assert!(err.starts_with(want), "{err}");
+        }
+    }
+
+    /// (#780) Every answer the order path can get, against a loopback stub. FILLED prints the fill, and
+    /// a 2xx without an orderId says VERIFY. A 4xx refusal and a refused connection are plain errors;
+    /// a 5xx says the order MAY be live. The POST carries `order_query`'s fields, signed, with the key.
+    #[tokio::test]
+    async fn order_at_reads_each_answer() {
+        let filled = r#"{"orderId":1,"status":"FILLED","executedQty":"0.001"}"#;
+        let (url, client, reqs) = crate::fetch::tests::routed_stub(vec![("/api/v3/order", filled)]);
+        let placed = order_at(&client, url.trim_end_matches('/'), "k", "s", "buy", "BTCEUR", 23.63, true).await;
+        assert_eq!(placed, Ok(fill_label(filled)));
+        let req = reqs.recv().expect("one request");
+        let want = "POST /api/v3/order?symbol=BTCEUR&side=BUY&type=MARKET&quoteOrderQty=23.63&recvWindow=5000&timestamp=";
+        assert!(req.starts_with(want), "{req}");
+        let (query, sig) = signed(&req);
+        assert_eq!(sig, sign("s", query));
+        assert!(req.to_ascii_lowercase().contains("\r\nx-mbx-apikey: k\r\n"), "{req}");
+        let answer = |body: &'static str| async move {
+            let (url, client, _reqs) = crate::fetch::tests::routed_stub(vec![("/api/v3/order", body)]);
+            order_at(&client, url.trim_end_matches('/'), "k", "s", "sell", "BTCEUR", 0.001, false).await
+        };
+        let unconfirmed = answer("{\"code\":0}").await.expect("a 2xx is Ok");
+        assert!(unconfirmed.contains("VERIFY"), "{unconfirmed}");
+        let refused = answer("HTTP/1.1 400 Bad Request\r\n\r\n{\"code\":-1013}").await.unwrap_err();
+        assert!(refused.starts_with("binance 400 Bad Request: ") && !refused.contains("MAY"), "{refused}");
+        let unknown = answer("HTTP/1.1 503 Service Unavailable\r\n\r\n{}").await.unwrap_err();
+        assert!(unknown.starts_with("binance 503 Service Unavailable: ") && unknown.contains("MAY be live"), "{unknown}");
+        let dead = order_at(&client, "http://127.0.0.1:1", "k", "s", "buy", "BTCEUR", 1.0, true).await.unwrap_err();
+        assert!(!dead.is_empty() && !dead.contains("MAY"), "a refused connect placed nothing: {dead}");
     }
 }

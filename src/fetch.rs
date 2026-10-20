@@ -14689,9 +14689,17 @@ pub(crate) mod tests {
                 let body = req.split_once("\r\n\r\n").map_or("", |(_, b)| b);
                 let route = routes.iter().find(|(needle, _)| line.contains(needle));
                 let resp = match route.or_else(|| routes.iter().find(|(needle, _)| body.contains(needle))) {
-                    Some((_, body)) => {
-                        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-                        [head.as_bytes(), *body].concat()
+                    Some(&(_, body)) => {
+                        // (#780) a route that opens with its own status line and headers, ended by a blank
+                        // line (`HTTP/1.1 503 ...\r\nSet-Cookie: A1=x\r\n\r\n{body}`), is served with them;
+                        // any other route is a 200. A broker's 5xx and Yahoo's session cookie need both.
+                        let split = body.windows(4).position(|w| w == b"\r\n\r\n").filter(|_| body.starts_with(b"HTTP/"));
+                        let (status, body) = match split {
+                            Some(i) => (String::from_utf8_lossy(&body[..i]).into_owned(), &body[i + 4..]),
+                            None => ("HTTP/1.1 200 OK".to_string(), body),
+                        };
+                        let head = format!("{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                        [head.as_bytes(), body].concat()
                     }
                     None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
                 };
