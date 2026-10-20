@@ -122,16 +122,19 @@
 //! `cargo mutants --in-diff` on every push, so new code must be killed by tests that land with it.
 //!
 //! KNOWN GAPS, stated rather than implied:
-//! - the run takes the NARROW path (an explicit `tickers:` list), which leaves `etf_set`/`sector_of`
-//!   empty (backtest.rs, `(#46)`). The chart-meta class stamping is covered; the index-membership
-//!   braces over it are not. Closing it needs the WIDE path, which needs a live index-member fetch.
-//! - the DAILY-cadence path (`backtest 5` — `years < 8 && !long`) has no end-to-end coverage and
-//!   deliberately gets none here. `fetch_history` goes through `chart_json` (fetch.rs), which has NO
-//!   disk cache — only `chart_json_long` does — so every pin above is monthly by construction.
+//! - the pinned runs take the NARROW path (an explicit `tickers:` list), which leaves `etf_set`/`sector_of`
+//!   empty (backtest.rs, `(#46)`). The chart-meta class stamping is covered. The WIDE path is reached
+//!   through `FOLIOMAN_UNIVERSE_SNAPSHOT` (`backtest_universe_report_is_pinned`), but its pool is the
+//!   fixture's own names plus filler, never a real index list, so the index-membership braces see no real ETFs.
+//! - the DAILY-cadence path (`backtest 5` — `years < 8 && !long`) has no end-to-end REPORT coverage and
+//!   deliberately gets none here; `backtest_daily_cadence_stops_when_nothing_resolves` only reaches its
+//!   label, its fetch dispatch and the too-few-cutoffs exit. `fetch_history` goes through `chart_json`
+//!   (fetch.rs), which has NO disk cache — only `chart_json_long` does — so every pin above is monthly by construction.
 //!   Fixturing the daily path means adding a cache to the fetch layer for tests alone, which is a
 //!   worse trade than the gap. `backtest 8` sits ON the boundary and pins the `MAX monthly` label, so
 //!   a change to the `years >= 8` threshold still reds.
-//! - `insider` needs live APIs and `universe` a live index fetch, so neither is pinned. (#672) `fund`
+//! - `insider` is checked structurally on seeded Form 4 rows, and `universe` runs from a snapshot file, never
+//!   a live index fetch. (#672) `fund`
 //!   is, on frozen SEC rows ((#364), `backtest_fund_report_is_pinned` and its invariants below), but
 //!   the mutants gate skips those goldens ((#590), ci.yml's `--skip backtest_fund_report --skip
 //!   backtest_8y_fund_samples`), so code only the fund lane runs is ungraded there.
@@ -251,6 +254,12 @@ fn pin(args: &[&str], golden_name: &str) {
 /// `compute_threads: 0`, so `RAYON_NUM_THREADS` is what sizes it. (#342) `cfg` picks the config, and
 /// with it the data root; the golden is always read from `fixture_dir()`.
 fn pin_at(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>) {
+    pin_at_env(cfg, args, golden_name, threads, &[]);
+}
+
+/// `pin_at` with extra environment for the child, for the one input a run reads from its process
+/// environment rather than its config (`FOLIOMAN_UNIVERSE_SNAPSHOT`).
+fn pin_at_env(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>, envs: &[(&str, &Path)]) {
     let cache = fixture_dir().join(".long_history_cache.json");
     assert!(
         cache.is_file(),
@@ -259,7 +268,7 @@ fn pin_at(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>) {
         cache.display()
     );
 
-    let got = report_at(cfg, args, threads);
+    let got = report_at_env(cfg, args, threads, envs);
 
     let golden_path = fixture_dir().join(golden_name);
     if std::env::var("FOLIOMAN_BLESS").is_ok_and(|v| !v.is_empty()) {
@@ -295,12 +304,18 @@ fn first_difference(got: &str, want: &str) -> String {
 
 /// The real binary over `cfg`'s data root, offline, stdout+stderr normalized: what `pin_at` diffs.
 fn report_at(cfg: &Path, args: &[&str], threads: Option<&str>) -> String {
+    report_at_env(cfg, args, threads, &[])
+}
+
+/// `report_at` with extra environment variables for the child process.
+fn report_at_env(cfg: &Path, args: &[&str], threads: Option<&str>, envs: &[(&str, &Path)]) -> String {
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"));
     cmd.arg("backtest")
         .args(args)
         .env("FOLIOMAN_CONFIG", cfg)
         .env("FOLIOMAN_OFFLINE", "1") // no socket may be opened; a fixture miss must not become a live fetch
         .env_remove("FMP_API_KEY"); // (#364) CI has none, so a developer's key must not reach the golden either
+    cmd.envs(envs.iter().copied());
     if let Some(n) = threads {
         cmd.env("RAYON_NUM_THREADS", n);
     }
@@ -861,6 +876,156 @@ fn first_verdict_row_is_the_book_row() {
             assert!(l.contains(EXCESS), "{}: the gate parses `{l}`, which has no `{EXCESS}`", p.display());
         }
     }
+}
+
+/// A copy of the fixture whose config carries `extra_yaml` after the ticker list: more top-level keys, or
+/// a `buy_heuristic:` block that `config::load` deep-merges over the CI settings.
+fn fixture_copy_with(name: &str, extra_yaml: &str) -> PathBuf {
+    let cfg = fixture_copy(name, false);
+    let mut raw = std::fs::read_to_string(&cfg).expect("read copied settings");
+    raw.push_str(extra_yaml);
+    std::fs::write(&cfg, raw).expect("write settings");
+    cfg
+}
+
+/// A `FOLIOMAN_UNIVERSE_SNAPSHOT` file next to `cfg`: the fixture's own 200 names, `filler` names no cache
+/// holds (offline they resolve to nothing, which only lifts the pool past the 500-name journal floor), an
+/// empty ETF set and the given ticker -> sector map. A non-empty map is what `pit_swaps_pool` keys on.
+fn universe_snapshot(cfg: &Path, filler: usize, sectors: &[(&str, &str)]) -> PathBuf {
+    let mut names = fixture_tickers();
+    names.extend((0..filler).map(|i| format!("ZZFILL{i:03}")));
+    let sectors: std::collections::BTreeMap<&str, &str> = sectors.iter().copied().collect();
+    let path = cfg.with_file_name("universe-snapshot.json");
+    let json = serde_json::to_string(&(names, Vec::<String>::new(), sectors)).expect("snapshot json");
+    std::fs::write(&path, json).expect("write snapshot");
+    path
+}
+
+/// Frozen Form 4 rows for `names`: `.sec_cache/{ticker}.json`, which `fetch_insider_history` serves before it
+/// opens a socket. One filing a month from 2004 to 2013, two buys then a sale per quarter, so the 90-day
+/// window behind every cutoff of a 12y run holds filings.
+fn seed_insider_rows(cfg: &Path, names: &[&str]) {
+    let rows: Vec<(String, bool)> = (2004..=2013).flat_map(|y| (1..=12).map(move |m| (format!("{y}-{m:02}-15"), m % 3 != 0))).collect();
+    let dir = cfg.parent().and_then(Path::parent).expect("the data root").join(".sec_cache");
+    for tk in names {
+        std::fs::write(dir.join(format!("{tk}.json")), serde_json::to_string(&rows).expect("insider json")).expect("write insider rows");
+    }
+}
+
+/// The four report-only lanes together: `holders` (13F cohorts), `pac` (FEC breadth), `rivals` and `winners`.
+/// Offline the holder and PAC fetches come back empty, so their tables print with zero-row cohorts; the
+/// rivals and winners tables, and the DCA roll's rival lanes, run on the frozen prices.
+#[test]
+fn backtest_lanes_report_is_pinned() {
+    pin(&["12", "holders", "pac", "rivals", "winners"], "backtest-12-lanes.golden");
+}
+
+/// The same four lanes with the fundamental lane on, which is what the fund-only branches of the winners,
+/// rivals, factor-book and two-style-book reports read.
+#[test]
+fn backtest_fund_report_is_pinned_with_every_lane() {
+    pin(&["12", "fund", "holders", "pac", "rivals", "winners"], "backtest-12-fund-lanes.golden");
+}
+
+/// (#751) The `dead` arm over the archive of dead S&P members. The five extra names are in
+/// `.sp500_history.json` and in `tests/dead-members.csv` but not in the frozen Yahoo cache, so each is
+/// filled from the archive: ARG, TE and SWY end dead, BEAM and MIL are the crash and reused-ticker cases.
+#[test]
+fn backtest_dead_report_is_pinned() {
+    let mut args: Vec<String> = ["12", "pit", "dead"].map(String::from).to_vec();
+    args.extend(fixture_tickers());
+    args.extend(["ARG", "BEAM", "MIL", "TE", "SWY"].map(String::from));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    pin(&args, "backtest-12-dead.golden");
+}
+
+/// The wide path on a snapshot: `universe` reads the pool from `FOLIOMAN_UNIVERSE_SNAPSHOT` instead of the
+/// live index fetch. 520 names clear the 500-name floor, so the method verdict is journaled (into the
+/// scratch data root, not the repo) and the journal line is part of the golden.
+#[test]
+fn backtest_universe_report_is_pinned() {
+    let cfg = fixture_copy("backtest-12-universe.golden", false);
+    let snap = universe_snapshot(&cfg, 320, &[]);
+    pin_at_env(&cfg, &["12", "universe"], "backtest-12-universe.golden", None, &[("FOLIOMAN_UNIVERSE_SNAPSHOT", snap.as_path())]);
+}
+
+/// The wide PIT path: a non-empty sector map makes `pit_swaps_pool` swap the pool for every name ever in
+/// the index (~1200, nearly all unserved offline), the run declines the method journal and writes the
+/// point-in-time record to its own file instead.
+#[test]
+fn backtest_universe_pit_report_is_pinned() {
+    let cfg = fixture_copy("backtest-12-universe-pit.golden", false);
+    let snap = universe_snapshot(&cfg, 0, &[("AIG", "Financials"), ("BA", "Industrials"), ("GE", "Industrials"), ("INTC", "Information Technology")]);
+    pin_at_env(&cfg, &["12", "universe", "pit"], "backtest-12-universe-pit.golden", None, &[("FOLIOMAN_UNIVERSE_SNAPSHOT", snap.as_path())]);
+}
+
+/// A configured `compute_threads` builds the global rayon pool inside `run`; the report must still be the
+/// same bytes as the default-pool golden, which is the thread-count invariant (#341) again.
+#[test]
+fn backtest_report_is_bit_identical_on_a_configured_thread_count() {
+    let cfg = fixture_copy_with("configured-threads-12", "compute_threads: 2\n");
+    pin_at(&cfg, &["12"], "backtest-12.golden", None);
+}
+
+/// `history_proxy_auto` discovers point-in-time twins from the graded pool itself, and
+/// `backtest_drop_lookahead_sector` stops stamping today's sector label on a cutoff, and
+/// `splice_trim_point_in_time` trims a redenomination joint per cutoff instead of at parse time. None is a
+/// shipped setting, so the run is not pinned; it must complete, say how many twins it found, and still
+/// print the walk-forward report.
+#[test]
+fn backtest_proxy_discovery_and_sector_drop_complete() {
+    let cfg = fixture_copy_with("proxy-discovery-12", "history_proxy_auto: true\nbuy_heuristic:\n  backtest_drop_lookahead_sector: true\n  splice_trim_point_in_time: true\n");
+    let out = report_at(&cfg, &["12"], None);
+    assert!(out.contains("backtest: history_proxy discovered"), "the discovery line is missing:\n{out}");
+    assert!(out.contains("Backtest — WALK-FORWARD score vs"), "the run did not reach the walk-forward report");
+}
+
+/// `print_book_deciles` prints the terminal-multiple distribution beside the ladder, and a non-empty
+/// `cgt_hold_schedule` makes the after-tax footer name the rates the never-sell and rotation arms pay. Both
+/// ship off, so the default golden never shows them; the run is checked structurally.
+#[test]
+fn backtest_report_prints_book_deciles_and_the_taxed_hold() {
+    let extra = "buy_heuristic:\n  print_book_deciles: true\n  cgt_hold_schedule:\n  - min_years: 5\n    excluded_pct: 50\n";
+    let cfg = fixture_copy_with("deciles-and-cgt-12", extra);
+    let out = report_at(&cfg, &["12"], None);
+    assert!(out.contains("terminal-multiple distribution across windows"), "the decile block is missing:\n{out}");
+    assert!(out.contains("P(book < 1.0×)"), "the decile rows are missing");
+    assert!(out.contains("[held 12y taxed at"), "the after-tax footer does not name the schedule's rates:\n{out}");
+}
+
+/// `insider` standalone: seeded Form 4 rows reach the samples, so the factor sweep measures
+/// `insider_net90d` instead of printing the empty-cohort line the `fund` golden carries. Named like the fund
+/// arms because it runs the same fundamental sweeps, which the mutants job skips.
+#[test]
+fn backtest_fund_report_insider_lane_reads_form4_rows() {
+    let cfg = fixture_copy("insider-12", false);
+    seed_insider_rows(&cfg, &["AIG", "BA", "C", "GE", "INTC", "F", "ACGL", "AEE", "AVGO", "BIIB", "CCL", "COF", "DGX"]);
+    let out = report_at(&cfg, &["12", "insider"], None);
+    assert!(out.contains("insider_net90d"), "the insider factor row is missing:\n{out}");
+    assert!(
+        !out.contains("insider_net90d n/a (only 0 cutoffs carry this factor)"),
+        "seeded Form 4 rows did not reach a single sample"
+    );
+}
+
+/// (#728) The `failures` report: the library of failed filers, the pond's stocks as controls, and the SEC
+/// request count. The census prints today's date, so the run is checked structurally, not pinned.
+#[test]
+fn backtest_failures_report_prints_the_census() {
+    let out = report_at(&fixture_copy("failures-12", false), &["12", "failures"], None);
+    for needle in ["FAILURES:", "library: ", "controls: ", "SEC requests this run:"] {
+        assert!(out.contains(needle), "`{needle}` is missing from the failures report:\n{out}");
+    }
+}
+
+/// The DAILY cadence (`years < 8`): every fetch goes through `chart_json`, which has no disk cache, so
+/// offline it resolves nothing and the run stops at the too-few-cutoffs line. That is the daily arm's
+/// whole offline reach: the label, the fetch dispatch and the early exit. Two names keep the retry pause short.
+#[test]
+fn backtest_daily_cadence_stops_when_nothing_resolves() {
+    let out = report_at(&fixture_copy("daily-5", false), &["5", "AAPL", "MSFT"], None);
+    assert!(out.contains("10y daily"), "the daily label is missing:\n{out}");
+    assert!(out.contains("too few to correlate"), "the run should stop with nothing to correlate:\n{out}");
 }
 
 /// Rebuild `tests/fixture/.long_history_cache.json` from a warm real one. `#[ignore]`d: it needs the

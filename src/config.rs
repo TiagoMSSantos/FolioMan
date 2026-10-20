@@ -3041,4 +3041,28 @@ mod tests {
         assert!(auto_proxy_load().is_empty(), "a garbled file splices nothing");
         let _ = std::fs::remove_file(&path);
     }
+
+    /// The process-wide accessors (`stock_turnover_floor`, `hold_issuer_share_class_codes`, `history_proxy`)
+    /// cache one read of the ambient merged config. No test can choose that config, but each answer must
+    /// equal the same read done by hand under either regime (settings file present or absent).
+    #[test]
+    fn process_wide_accessors_agree_with_a_direct_read_of_the_merged_config() {
+        let settings = merged_config().and_then(|v| serde_yaml::from_value::<Settings>(v).ok());
+        let want_floor = settings.as_ref().map_or(0.0, |s| match s.buy_heuristic.min_avg_turnover_eur_stock {
+            f if f > 0.0 => f,
+            _ => s.buy_heuristic.min_avg_turnover_eur,
+        });
+        assert_eq!(stock_turnover_floor(), want_floor);
+        assert_eq!(
+            hold_issuer_share_class_codes(),
+            settings.as_ref().is_some_and(|s| s.buy_heuristic.hold_issuer_share_class_codes)
+        );
+        let curated = settings.map(|s| s.history_proxy).unwrap_or_default();
+        let got = history_proxy();
+        if history_proxy_auto() {
+            assert!(curated.iter().all(|(k, v)| got.get(k) == Some(v)), "a curated twin always wins");
+        } else {
+            assert_eq!(got, &curated);
+        }
+    }
 }

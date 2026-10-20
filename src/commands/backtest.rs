@@ -12389,4 +12389,156 @@ mod tests {
         tighter.growth_maxdd_cap = 10.0;
         assert!(sole(&tighter).contains(&"maxdd"), "tightening growth_maxdd_cap to 10% did not make it sole-block anyone: the pin is inert");
     }
+
+    /// The index the synthetic world is graded against: 8%/yr on the universe's own month calendar.
+    fn synthetic_bench() -> (Vec<NaiveDate>, Vec<f64>) {
+        let (dates, _) = synthetic_universe();
+        let closes: Vec<f64> = (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect();
+        (dates, closes)
+    }
+
+    /// The journal shell merges a second horizon into the first (so a short run never replaces a long one) and
+    /// a path whose directory does not exist is reported, not created. Own file name: no other test touches it.
+    #[test]
+    fn write_verdict_merges_horizons_and_survives_an_unwritable_path() {
+        let file = "write_verdict_test_journal.json";
+        let path = config::data_path(file);
+        let _ = std::fs::remove_file(&path);
+        write_verdict(file, stub_verdict(8, VERDICT_TOP));
+        write_verdict(file, stub_verdict(12, VERDICT_TOP));
+        let raw = std::fs::read_to_string(&path).expect("write_verdict created the journal");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(parse_journal(&raw).keys().copied().collect::<Vec<i64>>(), [8, 12], "both horizons stay on file");
+
+        let missing = "write_verdict_no_such_dir/journal.json";
+        write_verdict(missing, stub_verdict(8, VERDICT_TOP));
+        assert!(!config::data_path(missing).exists(), "a write into a missing directory leaves no file behind");
+    }
+
+    /// A month is ended by its LAST bar: the second February bar overwrites the first, so the February return
+    /// is 120 over January's 105, not 110 over 100.
+    #[test]
+    fn month_series_ends_a_month_on_its_last_bar() {
+        let d = [ymd(2020, 1, 15), ymd(2020, 1, 31), ymd(2020, 2, 10), ymd(2020, 2, 20), ymd(2020, 3, 5)];
+        let (keys, rets) = month_series(&d, &[100.0, 105.0, 110.0, 120.0, 126.0]);
+        assert_eq!(keys, vec![2020 * 12 + 2, 2020 * 12 + 3]);
+        assert!((rets[0] - (120.0 / 105.0 - 1.0) * 100.0).abs() < 1e-9 && (rets[1] - 5.0).abs() < 1e-9, "{rets:?}");
+    }
+
+    #[test]
+    fn bar_column_is_blank_on_the_base_row_and_names_a_missing_bar() {
+        assert_eq!(bar_column(true, Some(1.0)), "");
+        assert_eq!(bar_column(true, None), "");
+        assert_eq!(bar_column(false, Some(2.34)), "  bar +2.3");
+        assert_eq!(bar_column(false, None), "  bar n/a");
+    }
+
+    /// An empty bucket, or a book of zero names, yields no pair instead of a 0/0 multiple.
+    #[test]
+    fn book_multiples_skips_buckets_that_yield_no_pick() {
+        let m: BTreeMap<i32, Vec<(f64, f64, f64)>> = BTreeMap::from([(0, Vec::new()), (1, vec![(2.0, 10.0, 0.0), (1.0, -10.0, 5.0)])]);
+        let one = book_multiples(&m, 1);
+        assert_eq!(one.len(), 1, "the empty bucket contributes no pair");
+        assert!((one[0].0 - 1.1).abs() < 1e-9 && (one[0].1 - 1.0).abs() < 1e-9, "top-1 is the best-ranked row: {one:?}");
+        assert!(book_multiples(&m, 0).is_empty(), "a zero-name book has no pair either");
+    }
+
+    /// The report fns that return or print only past a guard: no benchmark, no scorable pool, no trail. Each
+    /// must decline quietly rather than index into an empty series or fabricate a row.
+    #[test]
+    fn report_helpers_decline_without_a_benchmark_or_a_scorable_pool() {
+        let (samples, tuning, bench) = (synthetic_samples(), shipped_hard(), synthetic_bench());
+        let none: (Vec<NaiveDate>, Vec<f64>) = (Vec::new(), Vec::new());
+        assert!(report_entry_state(&samples, &none, 12, &tuning).is_none(), "no benchmark, no entry-state rows");
+        assert!(report_entry_state(&[], &bench, 12, &tuning).is_none(), "no scorable sample, nothing to class");
+        assert!(report_sized_book(&[], &bench, 12, &tuning, &config::Sizing::default(), 10, &[]).is_none(), "no bucket, no sized verdict");
+
+        report_rivals(&samples, &none, 12, &tuning);
+        report_winners(&samples, &none, 12, &tuning);
+        report_two_style_book(&samples, &none, 12, &tuning);
+        report_vs_benchmark(&samples, &none, 12, &tuning);
+        // with a benchmark but no fund coverage the two-style book has no earnings yield to combine
+        report_two_style_book(&samples, &bench, 12, &tuning);
+        // and with a benchmark but no gated picks the absolute table says "too few" instead of grading nothing
+        report_vs_benchmark(&[], &bench, 12, &tuning);
+
+        // CORR-CAP: no sample carries a trail -> no rows; a trail but nothing that scores -> header and footer only
+        report_corr_cap(&[sample(ymd(2000, 1, 3), 0.0)], &bench, 12, &tuning);
+        report_corr_cap(&[Sample { trail: vec![0.5; 12], ..sample(ymd(2000, 1, 3), 0.0) }], &bench, 12, &tuning);
+    }
+
+    /// (#738) A name carrying 8 adders is flagged at its cutoff and the report lists it. Eight managers add
+    /// every synthetic name 10 days before each cutoff, so the `8+ added` listing has rows to print; the empty
+    /// inputs print empty tables instead of dividing by zero.
+    #[test]
+    fn report_holder_cohorts_lists_the_scored_names_eight_managers_added() {
+        let (samples, tuning) = (synthetic_samples(), shipped_hard());
+        let mut txs: HashMap<String, Vec<core::HolderTx>> = HashMap::new();
+        for s in &samples {
+            let filed = s.date - chrono::Duration::days(10);
+            txs.entry(s.quote.ticker.clone()).or_default().extend((1..=8).map(|m| core::HolderTx { filed, manager: m, add: true }));
+        }
+        let listed = samples
+            .iter()
+            .filter(|s| picks::asset_class(&s.quote) == 2 && growth_score(&s.quote, &tuning).is_some())
+            .filter(|s| core::holder_flags(&txs[&s.quote.ticker], s.date).adders >= 8)
+            .count();
+        assert!(listed > 0, "the synthetic world scores stocks, and every one of them is flagged");
+        assert!(holder_cohorts(&samples, &txs).iter().any(|r| r.1.n > 0), "some cohort holds a flagged stock");
+        report_holder_cohorts(&samples, &txs, 12, &tuning);
+        report_holder_cohorts(&[], &HashMap::new(), 12, &tuning);
+    }
+
+    /// (#325) Under HARD gates the replay has refused names to file. Each notch's line count is the number of
+    /// buckets holding a name only that notch admits AND a cleared name, recounted here without `notch_tail`'s
+    /// zip. The sibling pin runs at the soft shipped tuning, where nothing is refused and this arm never runs.
+    #[test]
+    fn notch_tail_under_hard_gates_files_each_refused_name_under_the_notch_that_admits_it() {
+        let (samples, tuning) = (synthetic_samples(), shipped_hard());
+        let since = samples.iter().map(|s| s.date).min().unwrap().pred_opt().unwrap();
+        let rows = notch_tail(&samples, since, &tuning);
+        assert!(!rows.is_empty(), "the hard world refuses names that a notch then admits next to cleared ones");
+        let after: Vec<&Sample> = samples.iter().filter(|s| s.date > since && picks::asset_class(&s.quote) != 0).collect();
+        let cleared: std::collections::BTreeSet<i32> = after.iter().filter(|s| growth_score(&s.quote, &tuning).is_some()).map(|s| bucket(s.date)).collect();
+        for (tag, n, _, _) in &rows {
+            let (_, loosened) = notch_tunings(&tuning).into_iter().find(|(g, _)| g == tag).expect("every row names a notch");
+            let cohort: std::collections::BTreeSet<i32> = after
+                .iter()
+                .filter(|s| growth_score(&s.quote, &tuning).is_none() && growth_score(&s.quote, &loosened).is_some())
+                .map(|s| bucket(s.date))
+                .collect();
+            assert_eq!(*n, cohort.intersection(&cleared).count(), "{tag}");
+        }
+    }
+
+    /// (#328) The sector door adds a row only when a stamped sector floor admits a name the shipped floor
+    /// refused. Unstamped, the world is the cleared book alone; stamp a floor of 0 on every name and the CAGR
+    /// bar opens for the slow compounders, so a `sector-door` row appears carrying the admitted samples.
+    #[test]
+    fn sector_books_adds_a_door_row_only_when_a_sector_floor_admits_a_refused_name() {
+        let (mut samples, tuning, bench) = (synthetic_samples(), shipped_hard(), synthetic_bench());
+        let rows = sector_books(&samples, &bench, 12, &tuning);
+        assert_eq!(rows.iter().map(|r| (r.0.as_str(), r.1)).collect::<Vec<_>>(), [("cleared", 158)], "no floor stamped, no door row");
+
+        for s in &mut samples {
+            Arc::make_mut(&mut s.quote).growth_sector_floor = Some(0.0);
+        }
+        let rows = sector_books(&samples, &bench, 12, &tuning);
+        assert_eq!(rows.len(), 2, "{:?}", rows.iter().map(|r| (r.0.as_str(), r.1)).collect::<Vec<_>>());
+        assert_eq!((rows[0].0.as_str(), rows[0].1), ("cleared", 158), "the door can only ADD: the cleared book is untouched");
+        assert!(rows[1].0 == "sector-door" && rows[1].1 > 0, "{:?}", (rows[1].0.as_str(), rows[1].1));
+    }
+
+    /// The sweep printers on inputs too thin to grade: a curve with fewer than 8 scored windows says so, a
+    /// split with fewer than 8 cutoffs a side says so, and the gate sweep prints a row per gate with or
+    /// without the accepted-cohort median. None of them may panic.
+    #[test]
+    fn sweep_printers_handle_thin_and_degenerate_samples() {
+        let (samples, tuning) = (synthetic_samples(), shipped_hard());
+        weight_curve("test_knob", &[], &tuning, |t, v| t.growth_trend_weight = v, tuning.growth_trend_weight, &[0.0, 1.0], "note");
+        tune_growth(&samples[..5], &tuning);
+        let gates: Vec<Knob> = picks::gate_notches().into_iter().map(|(_, label, f)| knob(label, f)).collect();
+        gate_sweep(&samples, &tuning, &gates, None);
+        gate_sweep(&samples, &tuning, &gates, Some(0.0));
+    }
 }

@@ -10916,6 +10916,105 @@ mod tests {
             assert_eq!(rate_as_of(&fx, c), rate_as_of(&fx_seen, c), "{c}");
         }
     }
+
+    /// A zero close is skipped as a splice endpoint: it neither reads as a joint itself (0/x, x/0) nor hides
+    /// a real joint that follows it.
+    #[test]
+    fn splice_trim_start_skips_a_zero_close_without_losing_a_later_joint() {
+        let wk: Vec<NaiveDate> = (0..4).map(|i| NaiveDate::from_ymd_opt(2024, 6, 3).unwrap() + Duration::days(7 * i)).collect();
+        assert_eq!(splice_trim_start(&wk, &[10.0, 0.0, 10.0, 11.0], 2.0), 0, "a zero bar is not a joint");
+        assert_eq!(splice_trim_start(&wk, &[10.0, 0.0, 10.0, 100.0], 2.0), 3, "the joint after the zero bar still trims");
+    }
+
+    /// An average at or below zero reads 0 from both stretch gauges instead of a ratio over it; the two
+    /// controls pin the arithmetic (average 8, last 6 or 10 -> 25%).
+    #[test]
+    fn long_ma_gauges_read_zero_when_the_average_is_not_positive() {
+        assert_eq!(below_long_ma_pct(&[0.0, 0.0], 2), 0.0);
+        assert_eq!(above_long_ma_pct(&[0.0, 0.0], 2), 0.0);
+        assert_eq!(below_long_ma_pct(&[-2.0, -1.0], 2), 0.0, "an average of -1.5 would otherwise read +33%");
+        assert_eq!(above_long_ma_pct(&[-1.0, -2.0], 2), 0.0, "an average of -1.5 would otherwise read +33%");
+        assert!((below_long_ma_pct(&[10.0, 6.0], 2) - 25.0).abs() < 1e-9);
+        assert!((above_long_ma_pct(&[6.0, 10.0], 2) - 25.0).abs() < 1e-9);
+    }
+
+    /// (#372) `pond_rows` sends a Wikipedia URL to the table parser and any other URL to the CSV one, so a
+    /// page read under the wrong host yields nothing rather than garbage rows.
+    #[test]
+    fn pond_rows_picks_its_parser_from_the_url_host() {
+        let wiki = "<table id=\"constituents\"><tr><th>Symbol</th><th>Security</th><th>GICS Sector</th></tr>\n\
+                    <tr><td><a>BRK.B</a></td><td><a>Berkshire</a></td><td>Financials</td></tr></table>";
+        let csv = "Symbol,Security,GICS Sector\nBRK.B,Berkshire,Financials\nMMM,3M,Industrials";
+        let page = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies";
+        assert_eq!(pond_rows(page, wiki, &[]), vec![("BRK-B".to_string(), "Financials".to_string())]);
+        assert!(pond_rows(page, csv, &[]).is_empty(), "a CSV body has no constituents table");
+        assert_eq!(
+            pond_rows("https://example.com/sp.csv", csv, &[]),
+            vec![("BRK-B".to_string(), "Financials".to_string()), ("MMM".to_string(), "Industrials".to_string())]
+        );
+        assert!(pond_rows("https://example.com/sp.csv", wiki, &[]).is_empty(), "a table body has no CSV rows");
+    }
+
+    /// A factor-tilt fund that also carries another narrow token (an ESG overlay) is not claimed by the
+    /// factor sleeve; the same fund without the overlay is, and only while the sleeve is on.
+    #[test]
+    fn factor_sleeve_tier_refuses_a_factor_fund_that_carries_another_narrow_token() {
+        assert_eq!(factor_sleeve_tier("xtrackers msci world quality ucits etf 1c", "quality", true), Some(FACTOR_TIER));
+        assert_eq!(factor_sleeve_tier("xtrackers msci world quality esg ucits etf 1c", "quality", true), None);
+        assert_eq!(factor_sleeve_tier("xtrackers msci world quality ucits etf 1c", "quality", false), None);
+    }
+
+    /// Years that print no EPS at all (and no comparatives) leave the brief at the revenue chain.
+    #[test]
+    fn annual_brief_stops_at_the_revenue_chain_when_no_year_reports_eps() {
+        let y = |year: i32, revenue: f64| AnnualReport {
+            year, revenue, gross_margin: None, op_margin: None, net_margin: None, eps: None, shares: Some(10.0),
+            prior_eps: None, prior_shares: None, quarters: 1,
+        };
+        assert_eq!(annual_brief(&[y(2023, 600.0), y(2022, 500.0)]).as_deref(), Some("rev 2y 500\u{2192}600 (+20%/yr)"));
+    }
+
+    /// A span of zero or less reads `0s` (no unit fits), while the smallest unit still prints.
+    #[test]
+    fn fmt_duration_reads_a_zero_or_negative_span_as_zero_seconds() {
+        assert_eq!(fmt_duration(Duration::seconds(0)), "0s");
+        assert_eq!(fmt_duration(Duration::seconds(-90)), "0s");
+        assert_eq!(fmt_duration(Duration::seconds(59)), "59s");
+    }
+
+    /// An hourly series answers None when it is too short for the lookback or when the base bar is 0.
+    #[test]
+    fn intraday_pct_declines_a_zero_base_and_a_short_series() {
+        assert_eq!(intraday_pct(&[0.0, 5.0], 1), None);
+        assert_eq!(intraday_pct(&[5.0], 1), None);
+        assert_eq!(intraday_pct(&[4.0, 5.0], 1), Some(25.0));
+    }
+
+    /// A BPstat date shorter than a year is skipped, not sliced: only the full date lands in the map.
+    #[test]
+    fn parse_pt_series_skips_a_date_too_short_to_carry_a_year() {
+        let pt = serde_json::json!({
+            "dimension": {"reference_date": {"category": {"index": ["202", "2024-12-31"]}}},
+            "value": [9.9, 2.4]
+        });
+        assert_eq!(parse_pt_series(&pt), BTreeMap::from([(2024, 2.4)]));
+    }
+
+    /// (#559) A committee whose name reduces to nothing (here the bare word PAC, no connected org) is never
+    /// listed, so its gifts have no firm to count for; a named sibling still counts.
+    #[test]
+    fn pac_cycle_breadth_skips_a_committee_whose_name_reduces_to_nothing() {
+        let cm_row = |id: &str, name: &str, org: &str| format!("{id}|{name}|||||||||||C|{org}|");
+        let cm = [cm_row("C1", "PAC", ""), cm_row("C2", "ACME PAC", "ACME CORP")].join("\n");
+        let mut f = [""; 22];
+        (f[0], f[5], f[14], f[16]) = ("C1", "24K", "100", "H1");
+        let nameless_gift = f.join("|");
+        f[0] = "C2";
+        let acme_gift = f.join("|");
+        let b = pac_cycle_breadth(&cm, &format!("{nameless_gift}\n{acme_gift}"));
+        assert_eq!(b.len(), 1, "{b:?}");
+        assert_eq!(b.get("ACME"), Some(&("ACME CORP".to_string(), 1)));
+    }
 }
 
 #[test]

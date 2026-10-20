@@ -17588,4 +17588,249 @@ mod tests {
         carry_proxies(&mut repaired, &pool, &prior);
         assert_eq!(repaired["RESCUED"], "BETTER");
     }
+
+    /// A spliced ticker the journal never paired (a hand-curated `history_proxy` pair, say) has no donor to carry.
+    #[test]
+    fn carry_proxies_ignores_a_proxied_ticker_the_journal_never_paired() {
+        let mut orphan = Quote::stub("ORPHAN", "€100.00", "", "Some Index UCITS ETF Acc");
+        orphan.history_proxied = true;
+        let prior: std::collections::BTreeMap<String, String> = [("OTHER".to_string(), "D1".to_string())].into();
+        let mut found: std::collections::BTreeMap<String, String> = [("NEW".to_string(), "D3".to_string())].into();
+        carry_proxies(&mut found, &[orphan], &prior);
+        assert_eq!(found.into_iter().collect::<Vec<_>>(), [("NEW".to_string(), "D3".to_string())], "no journalled donor, nothing to add");
+    }
+
+    /// The normaliser rewrites a term through its setter, so a getter and setter that disagree on the field would
+    /// move another term's level. Each setter must change exactly the dimension its getter reads.
+    #[test]
+    fn term_dims_getter_and_setter_address_the_same_field() {
+        let fresh = || score_parts(&gate_fixture(), &BuyHeuristic::default()).expect("the fixture clears the gates");
+        let reference = fresh();
+        for (i, (name, _, set)) in TERM_DIMS.iter().enumerate() {
+            let mut p = fresh();
+            let marker = 1000.0 + i as f64;
+            set(&mut p, marker);
+            for (j, (other, get, _)) in TERM_DIMS.iter().enumerate() {
+                let want = if i == j { marker } else { get(&reference) };
+                assert_eq!(get(&p), want, "setting {name} must move {other} only when they are the same dimension");
+            }
+        }
+    }
+
+    /// `artifact` and `exchange` are held by UNWAIVABLE and an unknown tag has no knob: none of them may touch the
+    /// tuning, while a tag that does have a knob switches it off.
+    #[test]
+    fn waive_gate_leaves_the_tuning_alone_for_a_tag_with_no_knob() {
+        let d = BuyHeuristic::default();
+        for tag in ["artifact", "exchange", "no-such-gate", ""] {
+            let mut t = d.clone();
+            waive_gate(&mut t, tag);
+            assert_eq!(format!("{t:?}"), format!("{d:?}"), "`{tag}` has no waiver, so it must change nothing");
+        }
+        let mut t = d.clone();
+        waive_gate(&mut t, "range");
+        assert_eq!(t.growth_min_range_pct, f64::NEG_INFINITY, "a tag WITH a knob does switch it off");
+    }
+
+    /// (#20) Unknown turnover is excluded from the growth lane whatever the floor is.
+    #[test]
+    fn score_parts_hard_refuses_a_name_whose_turnover_is_unknown() {
+        let d = BuyHeuristic::default();
+        let mut q = gate_fixture();
+        assert!(score_parts_hard(&q, &d).is_some(), "with a known turnover the fixture scores");
+        q.avg_turnover_eur = None;
+        assert!(score_parts_hard(&q, &d).is_none(), "an unknown turnover cannot be assessed as a deep-liquid compounder");
+    }
+
+    /// With the geomean fold and the leg dock both armed the walkthrough quotes the folded formula, the short-record
+    /// dock and the fold-aware "In short" cut list instead of the product formula.
+    #[test]
+    fn explain_walkthrough_names_the_folded_formula_and_the_short_record_dock() {
+        let t = BuyHeuristic { growth_geomean_fold: true, growth_leg_dock: 0.5, ..BuyHeuristic::default() };
+        let q = gate_fixture();
+        assert!(missing_legs(&q) > 0, "the fixture has legs past its longest one, so the dock bites");
+        let s = growth_score(&q, &t).expect("the fixture still clears the gates with the fold and the dock on");
+        let text = explain_growth_score(&q, &t, s).expect("a scoring row explains");
+        assert!(text.contains("(#8 fold ON)"), "the formula line names the fold:\n{text}");
+        assert!(text.contains("Short record: ×0.50 for each"), "the dock line quotes the knob:\n{text}");
+        assert!(text.contains(" × geomean(trust"), "the SCORE line folds the brakes:\n{text}");
+        assert!(text.contains("In short:"), "{text}");
+        assert!(!text.contains("growth_score = base × proximity × value"), "the product formula is the fold-off line:\n{text}");
+    }
+
+    /// The legal-suffix guard: a stem under four characters is not a name worth showing alone, so the suffix stays.
+    #[test]
+    fn display_name_keeps_a_name_whose_stem_would_be_too_short() {
+        assert_eq!(display_name("ABC Inc"), "ABC Inc", "a 3-char stem fails the guard");
+        assert_eq!(display_name("ABCD Inc"), "ABCD", "a 4-char stem clears it");
+    }
+
+    /// `print_picks` keeps a legend line only for a flag a printed row carried. This table prints all three marks that
+    /// ride a cell rather than the rank: `≈` (a blank 8Y rung filled from the whole life), `°` (a look-through P/E off
+    /// disk) and `ᵉ` (reports read from Eulerpool). The preconditions pin that each row really earns its mark.
+    #[test]
+    fn print_picks_prints_the_legend_for_a_filled_rung_a_cached_pe_and_an_eulerpool_row() {
+        let mut fund = Quote::stub("CACHED.L", "€100.00", "", "CACHED.L UCITS ETF");
+        fund.instrument_type = "ETF".into();
+        fund.perf = vec![None; core::HORIZONS.len()];
+        fund.perf[core::HORIZONS.iter().position(|(l, _)| *l == "5Y").unwrap()] = Some((String::new(), 61.051));
+        fund.age_years = Some(7.0); // 7y of a 8y rung: 87.6% covered, not all of it
+        fund.life_return_pct = Some(120.0);
+        let mut stock = gate_fixture();
+        stock.ep_fund = Some(core::FundFactors::default());
+        let t = BuyHeuristic { perf_fill_coverage_pct: 50.0, ..BuyHeuristic::default() };
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 8, 13).expect("a real date");
+        let pe: FundPeMap = [("CACHED.L".to_string(), FundPe { pe: 25.0, from: None, as_of: Some(day) })].into_iter().collect();
+        let w = Widths { columns: ["rank", "ticker", "peg", "8y", "reports", "score"].iter().map(|s| s.to_string()).collect(), ..Widths::default() };
+        let cols = active_columns(&w.columns);
+        assert_eq!(cols.len(), 6, "every column key resolves");
+        assert!(perf_fill(&fund, "8Y", &t).is_some(), "the fund's blank 8Y cell is filled and marked");
+        assert!(earns_cache_mark(&fund, &cols, &t, &pe), "its P/E came off disk and the PEG prints");
+        assert!(stock.ep_fund.is_some() && cols.iter().any(|c| c.key == "reports"), "the stock rides the REPORTS cell");
+        let picks = [(&fund, 5.0), (&stock, 4.0)];
+        print_picks("every mark:", &picks, 5, &w, &HashSet::new(), &Owned::default(), &[], &t, &pe);
+    }
+
+    /// The CORE block tallies the BF benchmark names, prices the NARROW refusals and lists the GEO blind spots. NOWH.DE
+    /// carries no token of any list, so it is a blind spot whichever sleeves the config opens.
+    #[test]
+    fn print_hold_core_prints_the_benchmark_narrow_and_blind_spot_lines() {
+        let cap = crate::config::hold_max_ter();
+        let mut world = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        world.benchmark = Some("ftse all-world".to_string());
+        let quotes = vec![
+            world,
+            core_etf("EGSU.DE", "UBS MSCI World ESG UCITS ETF", 5e9, 0.20), // geo-broad, refused on the "esg" token
+            core_etf("NOWH.DE", "Amundi Nowhere Index UCITS ETF", 4e9, cap), // no geography at all, every other leg clear
+        ];
+        assert_eq!(narrow_census(&quotes), vec![("esg", 1)], "the NARROW cost line has a row to print");
+        let (swap, unknown, country, developed) = (
+            crate::config::hold_allow_swap(),
+            crate::config::hold_allow_unknown_ter(),
+            crate::config::hold_per_tier_country(),
+            crate::config::hold_per_tier_developed(),
+        );
+        let blind: Vec<&str> = geo_miss_census(&quotes, swap, unknown, country, developed).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(blind, ["NOWH.DE"], "the GEO blind-spot block has a row to print");
+        assert!(core::hold_suitable(&quotes[0]), "the benchmark-carrying fund is counted in its sleeve");
+        print_hold_core(&quotes, &hold_core_list(&quotes), &HashSet::new(), &Owned::default());
+    }
+
+    /// A pinned fund refused at the breadth leg with NO narrow token has only the leg message to give.
+    #[test]
+    fn near_miss_reason_falls_back_to_the_leg_message_when_no_narrow_token_fired() {
+        let q = core_etf("NOWH.DE", "Amundi Nowhere Index UCITS ETF", 4e9, 0.20);
+        assert_eq!(core::hold_miss_leg_with(&q, false, false, 0.0, false, false, 0, 0, 0).map(|(leg, _)| leg), Some(0), "refused at leg 0");
+        assert_eq!(core::narrow_hit(&q.name.to_lowercase()), None, "no tilt word to name");
+        assert_eq!(
+            near_miss_reason_with(&q, false, false, 0.0, false, false, 0, 0, 0).as_deref(),
+            Some("not a broad-index name (sector/thematic/factor tilt)")
+        );
+    }
+
+    /// `render`'s bridge footers print and return nothing about themselves, so each arm is first proven through
+    /// [`bridge_hint_lines`] (a moved gate or token reds the premise) and then driven through `render`: the pinned
+    /// lane's hint with a sector mix, the discovery lane's measured-nothing line, and its list of bridges.
+    #[test]
+    fn render_runs_the_pinned_hint_and_both_discovery_footers() {
+        let (w, tuning) = (Widths::default(), BuyHeuristic::default());
+        let admit_t = BuyHeuristic { growth_min_cagr: 19.0, ..BuyHeuristic::default() };
+        let etf = |t: &str, bench: &str, age: f64, c10: f64| {
+            let mut q = Quote::stub(t, "€5.00", "", t);
+            q.instrument_type = "ETF".into();
+            q.benchmark = Some(bench.into());
+            (q.age_years, q.range_pct, q.drop_pct, q.drawdown_pct, q.avg_turnover_eur) = (Some(age), 95.0, 5.0, 5.0, Some(1e9));
+            q.perf = legs(&[("1Y", 10.0), ("5Y", 40.0), ("8Y", ((1.0 + c10 / 100.0).powf(0.8) - 1.0) * 100.0), ("10Y", c10)]);
+            q
+        };
+        let young = |t: &str, bench: &str| {
+            let mut q = etf(t, bench, 2.0, 0.0);
+            q.perf = legs(&[("1Y", 10.0)]);
+            q
+        };
+        let (yng, old) = (young("YNG.DE", "x index"), etf("OLD.DE", "x index", 15.0, 200.0));
+        let (yng2, strong) = (young("YNG2.DE", "z index"), etf("STRONG.DE", "z index", 12.0, 600.0));
+        let mut apple = gate_fixture();
+        (apple.ticker, apple.name) = ("AAPL".into(), "Apple Inc".into());
+        let (owned, fund_pe, no_sectors) = (Owned::default(), FundPeMap::new(), Vec::<String>::new());
+        let run = |quotes: &[Quote], t: &BuyHeuristic, pinned: &[String], sector_of: &HashMap<String, String>| {
+            let ctx = RenderCtx {
+                nupl: None, sectors: &no_sectors, sector_of, pinned,
+                owned: &owned, explain: None, show_hold_core: true, fund_pe: &fund_pe,
+                web_out: None, web_inflation: &[], web_degraded: &[],
+            };
+            render(quotes, 5, t, &w, ctx).1
+        };
+
+        // pinned: the young fund earns its hint from the older fund on its index, whatever the twin's CAGR
+        let quotes = [apple, yng.clone(), old.clone()];
+        let (hint, _) = bridge_hint_lines(&[&quotes[1]], &quotes, &tuning, false);
+        assert!(hint.len() == 1 && hint[0].contains("YNG.DE tracks the same index as OLD.DE"), "{hint:?}");
+        let pinned = ["AAPL".to_string(), "YNG.DE".to_string()];
+        let sector_of = HashMap::from([("AAPL".to_string(), "Technology".to_string())]);
+        let tickers = run(&quotes, &tuning, &pinned, &sector_of);
+        assert!(tickers.iter().any(|t| t == "AAPL") && tickers.iter().any(|t| t == "YNG.DE"), "both pins are ranked: {tickers:?}");
+
+        // discovery with a bridge whose twin compounds under the floor: counted, none listed
+        let pair = [yng, old];
+        let subjects: Vec<&Quote> = pair.iter().collect();
+        let (found, considered) = bridge_hint_lines(&subjects, &pair, &admit_t, true);
+        assert_eq!((found.len(), considered), (0, 1), "one same-index bridge, culled by the CAGR floor: {found:?}");
+        assert!(!run(&pair, &admit_t, &[], &HashMap::new()).iter().any(|t| t == "YNG.DE"), "an unpinned fund with no record is not ranked");
+
+        // discovery with a bridge whose twin clears the floor: listed
+        let pair = [yng2, strong];
+        let subjects: Vec<&Quote> = pair.iter().collect();
+        let (found, considered) = bridge_hint_lines(&subjects, &pair, &admit_t, true);
+        assert_eq!((found.len(), considered), (1, 1), "{found:?}");
+        assert!(found[0].contains("YNG2.DE tracks the same index as STRONG.DE"), "{found:?}");
+        let tickers = run(&pair, &admit_t, &[], &HashMap::new());
+        assert!(!tickers.iter().any(|t| t == "YNG2.DE"), "an unpinned fund with no record is not ranked: {tickers:?}");
+        let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt")); // gitignored cache render wrote
+    }
+
+    /// The twin a young fund would borrow from can itself be refused (hedged): its class is above 1, so the borrow
+    /// is declined and the fund is scored on its own change since listing, exactly as if no twin existed.
+    #[test]
+    fn rank_key_declines_a_refused_twin_and_scores_the_young_fund_on_its_own_change() {
+        let d = BuyHeuristic::default();
+        let etf = |t: &str, name: &str| {
+            let mut q = Quote::stub(t, "€100.00", "", name);
+            q.instrument_type = "ETF".into();
+            (q.range_pct, q.avg_turnover_eur, q.benchmark) = (95.0, Some(3.0e9), Some("msci world".into()));
+            q
+        };
+        let mut kid = etf("KID", "KID");
+        (kid.age_years, kid.young_ret_pct) = (Some(0.5), Some(5.0));
+        let mut twin = etf("HDGOLD", "World UCITS ETF EUR Hedged");
+        (twin.age_years, twin.perf) = (Some(15.0), legs(&[("1Y", 12.0), ("5Y", 70.0), ("8Y", 130.0)]));
+        let pool = [twin, kid.clone()];
+        assert_eq!(index_twin(&kid, &pool, &d).map(|t| t.ticker.as_str()), Some("HDGOLD"), "the hedged fund is the oldest on the index");
+        assert_eq!(rank_key(Some(&pool[0]), &d, &pool).2, "refused: hedged", "and it is refused, so class 3");
+        let alone = rank_key(Some(&kid), &d, &[]);
+        assert!(alone.1.ends_with('ⁱ') && !alone.2.contains('~'), "own since-listing change, no borrow: {alone:?}");
+        assert_eq!(rank_key(Some(&kid), &d, &pool), alone, "the refused twin changes nothing");
+    }
+
+    /// A weeks-old stock whose page carries a real-terms leg list has both lists filled with the change since
+    /// listing, so the ⁱ score is the same whichever list `perf_pct` reads.
+    #[test]
+    fn rank_key_fills_the_nominal_one_year_leg_of_a_weeks_old_stock() {
+        let d = BuyHeuristic::default();
+        let stock = |nominal: bool| {
+            let mut q = Quote::stub("NEW", "€100.00", "", "NEW");
+            q.instrument_type = "EQUITY".into();
+            (q.range_pct, q.avg_turnover_eur, q.age_years, q.young_ret_pct) = (95.0, Some(3.0e9), Some(0.3), Some(30.0));
+            if nominal {
+                (q.perf, q.perf_nominal) = (legs(&[]), legs(&[]));
+            }
+            q
+        };
+        let mut hand = stock(false);
+        hand.perf = legs(&[("1Y", 30.0)]);
+        assert!(perf_pct(&stock(true), "1Y").is_none(), "the premise: the quote carries no 1Y leg of its own");
+        let ((class, ..), cell, _) = rank_key(Some(&stock(true)), &d, &[]);
+        let (_, want, _) = rank_key(Some(&hand), &d, &[]);
+        assert_eq!((class, cell), (1, format!("{want}ⁱ")));
+    }
 }
