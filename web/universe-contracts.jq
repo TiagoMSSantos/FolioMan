@@ -17,10 +17,21 @@
 # (#426) plus the core-earnings strip: the PEG prices EPS with non-operating gains taken off (GOOGL 0.81), off
 # the pretax line facts18 carries. A factor above 1 means the strip ADDED earnings, which it never may; under
 # 10% of equities stamped means the pretax tag went dark and every mark prices as earnings again.
+# (#763) plus the FX leg: a quote with a native close and no EUR price drops out of every ranked table. One
+# missed USD rate did that to all 1850 USD quotes (22 of 39 Stocks rows) and every check here still passed.
+# 2026-10-20: 0 of 5397 quotes with a close lack price_eur; at most 1% may.
+# (#764) plus a floor per instrument type, where only EQUITY had one (100): a partial Yahoo throttle left a
+# page ranked from a fraction of the pool. 2026-10-20 reading: EQUITY 625, ETF 4704, CRYPTOCURRENCY 69.
+# Floors 500 / 4000 / 60: 64 of the 625 equities are under 5 years old, and 2026-09-30 read 547, so a floor
+# near 0.9x would refuse a page that lost one feed's names.
 [.quotes[] | select(.instrument_type == "EQUITY")] as $eq
 | [$eq[] | .fund // {}] as $f
 | ($f | length) as $n
-| $n >= 100
+| [.quotes[] | select(.close_native != null)] as $priced
+| $n >= 500
+  and ([.quotes[] | select(.instrument_type == "ETF")] | length) >= 4000
+  and ([.quotes[] | select(.instrument_type == "CRYPTOCURRENCY")] | length) >= 60
+  and ([$priced[] | select(.price_eur == null)] | length) * 100 <= ($priced | length)
   and ({eps_ttm: 83, net_debt: 80, peg_yield: 65, roic: 62}
        | all(to_entries[]; .key as $k | .value * $n <= ([$f[] | select(.[$k] != null)] | length) * 100))
   and 10 * $n <= ([$eq[] | select((.splits // []) | length > 0)] | length) * 100
