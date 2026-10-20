@@ -1129,7 +1129,8 @@ async fn fetch_ratios_sec(
 /// (#425) `sec_ttm_eps_filed` on the LISTED share: the roll is per ordinary share as filed, and one PDD
 /// ADS is four of them (`core::ads_ratio`). The cached float stays per ordinary share, so no eviction.
 async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str, splits: &[(NaiveDate, f64)]) -> Option<f64> {
-    Some(sec_ttm_eps_filed(client, urls, ticker, splits).await? * core::ads_ratio(&us_symbol(ticker)))
+    let today = chrono::Utc::now().date_naive(); // (#786) the roll is on today's basis, so today's ratio
+    Some(sec_ttm_eps_filed(client, urls, ticker, splits).await? * core::ads_ratio(&us_symbol(ticker), today))
 }
 
 /// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
@@ -6025,9 +6026,9 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
     // not in the parse, so cached rows get it too and no cache-key bump is needed. Split restatement
     // runs downstream; all three multiply, so the order doesn't matter.
     core::repair_share_scale(&mut rows);
-    core::restate_for_ads(&mut rows, core::ads_ratio(&us_symbol(ticker))); // (#460) TSFA.F is TSM's ADS
+    core::restate_for_ads(&mut rows, &us_symbol(ticker)); // (#460) TSFA.F is TSM's ADS
     core::repair_share_scale(&mut strict);
-    core::restate_for_ads(&mut strict, core::ads_ratio(&us_symbol(ticker)));
+    core::restate_for_ads(&mut strict, &us_symbol(ticker));
     // (#426) then EPS onto core earnings, once, on the same seam: every path that prices EPS (the peg
     // tilt and gate, report, the backtest join) reads what's left after the marks and tax releases.
     if core::strip_noncore(&mut rows) > 0 {

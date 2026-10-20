@@ -307,7 +307,7 @@ async fn ads_ratio_matches_the_20f_cover() {
         text.contains("representing four"),
         "PDD 20-F {acc}: the cover no longer says one ADS represents FOUR ordinary shares — read it and fix `core::ads_ratio`"
     );
-    assert_eq!(core::ads_ratio("PDD"), 4.0, "the hand table disagrees with PDD's cover");
+    assert_eq!(core::ads_ratio("PDD", chrono::Utc::now().date_naive()), 4.0, "the hand table disagrees with PDD's cover");
     eprintln!("network smoke [ads PDD] 20-F {acc}: one ADS = four ordinary shares");
 }
 

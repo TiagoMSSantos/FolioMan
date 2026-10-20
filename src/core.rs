@@ -4920,12 +4920,22 @@ pub fn restate_for_splits(rows: &mut [FundRow], splits: &[(NaiveDate, f64)]) -> 
 /// row here; the PDD network net reds when its 20-F cover moves.
 ///
 /// (#459) The `tests/adr-pond.csv` rows, each matched on 2026-10-04 by ADR close ÷ (home close × FX)
-/// to the 20-F ratio. TSM reads 6.0 on price for a 20-F ratio of 5: the ADR trades at a premium. AZN
-/// is 1:1 since its ordinary shares listed on NYSE directly.
-pub fn ads_ratio(ticker: &str) -> f64 {
+/// to the 20-F ratio. TSM reads 6.0 on price for a 20-F ratio of 5: the ADR trades at a premium.
+///
+/// (#786) The ratio in force on `filed`, the day the line was reported: a filing states its per-share
+/// lines per ordinary share as they stood then, and a fixed ratio put every older filing on today's.
+/// BABA was one share per ADS until its 1:8 subdivision on 2019-07-30, and TM two until its 5:1 split
+/// on 2021-10-01. The ADS price didn't move at either, so Yahoo books no split and these dated arms
+/// carry the whole step: ×8 and ×10 had read their earlier EPS 8x and 5x too rich. AZN's ADS was half a
+/// share from 2015-07-27 until its ordinary shares listed on NYSE directly on 2026-02-02, and Yahoo books
+/// both changes as splits (2:1, then 1:2): the 0.5 arm and `restate_for_splits` net to one share there.
+pub fn ads_ratio(ticker: &str, filed: NaiveDate) -> f64 {
+    let since = |y, m, d| filed >= NaiveDate::from_ymd_opt(y, m, d).unwrap();
     match ticker {
-        "TM" => 10.0,
-        "BABA" => 8.0,
+        "TM" if since(2021, 10, 1) => 10.0,
+        "TM" => 2.0,
+        "BABA" if since(2019, 7, 30) => 8.0,
+        "AZN" if since(2015, 7, 27) && !since(2026, 2, 2) => 0.5,
         "BP" => 6.0,
         "TSM" | "HSBC" => 5.0,
         "PDD" | "DEO" => 4.0,
@@ -4936,15 +4946,18 @@ pub fn ads_ratio(ticker: &str) -> f64 {
     }
 }
 
-/// (#425) Put SEC rows' per-share figures on the LISTED share: per-share lines ×`ratio`, counts ÷`ratio`.
+/// (#425) Put SEC rows' per-share figures on the LISTED share: per-share lines ×ratio, counts ÷ratio.
 /// A byte-exact no-op at 1.0. Same-filing pairs move together, so growth and buyback reads stay put.
-pub fn restate_for_ads(rows: &mut [FundRow], ratio: f64) {
+/// (#786) Each side at the ratio of its own filing (`eps_filed`, `shares_filed`), as the split restate.
+pub fn restate_for_ads(rows: &mut [FundRow], ticker: &str) {
     for r in rows.iter_mut() {
-        r.eps = r.eps.map(|v| v * ratio);
-        r.prior_eps = r.prior_eps.map(|v| v * ratio);
-        r.fcf_ps = r.fcf_ps.map(|v| v * ratio);
-        r.shares = r.shares.map(|v| v / ratio);
-        r.prior_shares = r.prior_shares.map(|v| v / ratio);
+        let re = ads_ratio(ticker, r.eps_filed.unwrap_or(r.filed));
+        let rs = ads_ratio(ticker, r.shares_filed.unwrap_or(r.filed));
+        r.eps = r.eps.map(|v| v * re);
+        r.prior_eps = r.prior_eps.map(|v| v * re);
+        r.fcf_ps = r.fcf_ps.map(|v| v * re);
+        r.shares = r.shares.map(|v| v / rs);
+        r.prior_shares = r.prior_shares.map(|v| v / rs);
     }
 }
 
@@ -6799,11 +6812,26 @@ mod tests {
     }
 
     /// (#425) The ADS restate: per-share lines up by the ratio, counts down, and 1:1 is exact.
+    /// (#786) The ratio is the one in force on the line's own filed date.
     #[test]
     fn restate_for_ads_moves_per_share_lines_onto_the_listing() {
-        assert_eq!((ads_ratio("PDD"), ads_ratio("AAPL")), (4.0, 1.0));
-        let adr = ["TM", "BABA", "BP", "TSM", "HSBC", "DEO", "HDB", "SHEL", "BHP", "GSK", "SNY"].map(ads_ratio);
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let now = ymd(2026, 10, 1);
+        assert_eq!((ads_ratio("PDD", now), ads_ratio("AAPL", now)), (4.0, 1.0));
+        let adr = ["TM", "BABA", "BP", "TSM", "HSBC", "DEO", "HDB", "SHEL", "BHP", "GSK", "SNY"].map(|t| ads_ratio(t, now));
         assert_eq!(adr, [10.0, 8.0, 6.0, 5.0, 5.0, 4.0, 3.0, 2.0, 2.0, 2.0, 0.5], "(#459) 20-F cover ratios");
+        // (#786) the 20-Fs either side of each change: BABA FY2018/FY2020, TM FY2021/FY2022, AZN's half share
+        let dated = [
+            ("BABA", ymd(2018, 7, 27)),
+            ("BABA", ymd(2020, 7, 9)),
+            ("TM", ymd(2021, 6, 24)),
+            ("TM", ymd(2022, 6, 23)),
+            ("AZN", ymd(2014, 3, 6)),
+            ("AZN", ymd(2020, 2, 11)),
+            ("AZN", ymd(2026, 3, 3)),
+        ]
+        .map(|(t, d)| ads_ratio(t, d));
+        assert_eq!(dated, [1.0, 8.0, 2.0, 10.0, 1.0, 0.5, 1.0]);
         let row = FundRow {
             eps: Some(2.36),
             prior_eps: Some(2.6),
@@ -6811,15 +6839,22 @@ mod tests {
             shares: Some(5.9e9),
             prior_shares: Some(5.8e9),
             currency: Some("CNY".into()),
+            filed: now,
             ..Default::default()
         };
         let got = |r: &FundRow| (r.eps, r.prior_eps, r.fcf_ps, r.shares, r.prior_shares);
         let mut rows = vec![row.clone()];
-        restate_for_ads(&mut rows, 4.0);
+        restate_for_ads(&mut rows, "PDD");
         assert_eq!(got(&rows[0]), (Some(9.44), Some(10.4), Some(12.0), Some(1.475e9), Some(1.45e9)));
         let mut same = vec![row.clone()];
-        restate_for_ads(&mut same, 1.0);
+        restate_for_ads(&mut same, "AAPL");
         assert_eq!(got(&same[0]), got(&row));
+        // a TM row filed before the split whose EPS line came after it: EPS x10, counts /2
+        let late = FundRow { filed: ymd(2021, 6, 24), eps_filed: Some(ymd(2022, 6, 23)), ..row.clone() };
+        let mut tm = vec![late.clone(), FundRow { eps_filed: None, shares_filed: late.eps_filed, ..late }];
+        restate_for_ads(&mut tm, "TM");
+        assert_eq!(got(&tm[0]), (Some(2.36 * 10.0), Some(26.0), Some(30.0), Some(2.95e9), Some(2.9e9)));
+        assert_eq!(got(&tm[1]), (Some(4.72), Some(5.2), Some(6.0), Some(5.9e8), Some(5.8e8)));
     }
 
     /// (#491) quality on core earnings: Alphabet's marks come off ROE, a filer with no factor scores as
