@@ -6570,6 +6570,8 @@ fn long_skip_fresh(recorded: Option<&NaiveDate>, today: NaiveDate) -> bool {
 
 /// Persist the skip list: still-fresh old entries keep their ORIGINAL date (so the TTL actually
 /// expires), this run's new zero-contribution tickers stamp today. Stale entries drop out.
+/// (#777) Reads `LONG_SKIP_NEW` without draining it: `screen` calls `quotes` four times and each one
+/// saves, so a drain let the later saves rewrite the file without the universe call's skips.
 fn long_skip_save() {
     let today = chrono::Local::now().date_naive();
     let mut m: HashMap<String, String> = long_skip_load()
@@ -6577,8 +6579,8 @@ fn long_skip_save() {
         .filter(|(_, d)| long_skip_fresh(Some(d), today))
         .map(|(t, d)| (t.clone(), d.to_string()))
         .collect();
-    for t in LONG_SKIP_NEW.lock().unwrap().drain(..) {
-        m.entry(t).or_insert_with(|| today.to_string());
+    for t in LONG_SKIP_NEW.lock().unwrap().iter() {
+        m.entry(t.clone()).or_insert_with(|| today.to_string());
     }
     let _ = std::fs::write(crate::config::data_path(LONG_SKIP_FILE), serde_json::to_string(&m).unwrap_or_default());
 }
@@ -16698,9 +16700,10 @@ pub(crate) mod tests {
     /// (#358) `quote_one`'s merge arithmetic, one scenario per ticker off a single routed stub, plus the
     /// dead-list pass in `quotes`. Tickers carry the pid because `.long_history_skip.json` outlives the
     /// binary in the scratch root: a young ticker an earlier run recorded there would skip the very
-    /// monthly fetch asserted on here. `quotes` goes FIRST, since its `long_skip_save` drains
-    /// `LONG_SKIP_NEW`, the static the young scenario reads. The seam scenario is census config only:
-    /// the bare config's splice trim is off, so there the ×100 monthly head is simply kept.
+    /// monthly fetch asserted on here. `quotes` goes FIRST, so its `long_skip_save` runs before the
+    /// young scenario fills `LONG_SKIP_NEW`; (#777) a second save must still keep that skip. The seam
+    /// scenario is census config only: the bare config's splice trim is off, so there the ×100 monthly
+    /// head is simply kept.
     #[tokio::test]
     async fn quote_one_merges_the_monthly_head_and_measures_the_daily_tail() {
         pin_fetch_concurrency();
@@ -16824,6 +16827,8 @@ pub(crate) mod tests {
         long_skip_save();
         let saved = read_skips();
         assert!(saved.contains_key(&tk("YOUNG")), "the young ticker's skip is written");
+        long_skip_save(); // (#777) the next `quotes` call in the same run saves again
+        assert!(read_skips().contains_key(&tk("YOUNG")), "a later save keeps this run's skips");
         let today = chrono::Local::now().date_naive();
         for (t, d) in loaded.iter().filter(|(_, d)| long_skip_fresh(d.parse().ok().as_ref(), today)) {
             assert_eq!(saved.get(t), Some(d), "a fresh skip survives the rewrite: {t}");
