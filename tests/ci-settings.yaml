@@ -6889,6 +6889,24 @@ buy_heuristic:
                                  #  SHIP RULE (pre-registered by the owner): ship `sec_line_filed_gate: true`, with re-blessed goldens in the
                                  #  same push, if every backtest_edge_holds assert stays green with it on, whatever the edge delta. If any
                                  #  assert goes red, nothing ships and a lane opens on the gate floors, which were tuned on the leaky rows.
+                                 #── (#790) LANDED 2026-10-20 — EVERY WALK CUTS ON THE HALF-YEAR CALENDAR GRID ──
+                                 #  Both walks started each series at its own bar `min_history` and stepped 6 bars. So cutoff dates followed the
+                                 #  listing month, and the step weighted the sample by granularity: 6 bars is six months on a monthly series, 18 on
+                                 #  a quarterly one and six sessions on a daily one. `cutoffs` now yields every bar that opens its half-year bucket,
+                                 #  so each series is cut once per bucket, on its first bar there. No knob: this is a ruler change, and the goldens
+                                 #  were reblessed from bless probe 39453318690 on 7a357e6. The fixture's 12 quarterly series (AIG, GE, INTC and
+                                 #  others) were cut every 18 months and are now cut every 6: backtest-12 reads 1271 -> 1657 cutoffs with a forward
+                                 #  window and 526 -> 728 windows scored.
+                                 #  GATE, old CI 39450477713 (52871da) -> new CI 39453254691 (7a357e6). Every backtest_edge_holds assert is green:
+                                 #    leg       GROWTH edge        null-model lift    top-10 excess/yr   Série E %    winners held %   OOS early / late
+                                 #    20y       +705.3 -> +426.7   +614.9 -> +378.7   +4.5 -> +3.6       100 -> 100   13.9 -> 13.2     +0.27/+0.20 -> -0.03/+0.32
+                                 #    12y       +211.9 -> +156.9   +213.0 -> +109.5   +4.5 -> +2.8        95 -> 93    11.6 -> 12.5     +0.19/+0.19 -> +0.18/+0.23
+                                 #    8y         +66.1 -> +54.0     +77.5 -> +25.3    +5.2 -> +3.4        94 -> 91    12.5 -> 13.1     +0.25/+0.16 -> +0.25/+0.18
+                                 #    8y fund    +52.7 -> +45.2     +70.6 -> +34.9    +4.6 -> +3.3        94 -> 91    12.1 -> 12.7     +0.25/+0.11 -> +0.26/+0.15
+                                 #  20y SIZED DCA +5.5 -> +4.8 pts/yr (floor +4.4). Fund leg as-of fundamentals 51.6% -> 66.3%, peg_yield n 3343 -> 5503.
+                                 #  Every edge, lift and top-10 excess fell, and no floor moved. The tightest margins are 20y SIZED DCA (0.4 over its
+                                 #  floor) and 12y Série E (3 points). The 20y early OOS half is now negative; the assert reds only when both are.
+                                 #  Every ship or refuse verdict before this line was graded on the staggered walk, and its numbers do not carry over.
   journal_core_list: true       # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
