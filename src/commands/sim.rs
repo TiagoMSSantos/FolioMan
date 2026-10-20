@@ -661,6 +661,15 @@ mod tests {
         s.core[0].1 = Some(0.0);
         let e = buy_event(&s, 900.0, 1.0, true, &sz, &tier_of, &no_fee).unwrap();
         assert_eq!(lots(e), [("A".to_string(), 600.0), ("B".to_string(), 100.0), ("US".to_string(), 200.0)]);
+
+        // (#297) a tracker whose tier cannot be read is still funded, by the walk-down, at an even share
+        // of what the pick left: the same book whether the tier lookup knows no tier or just not this one
+        let mut u = snap("2026-09-14", None, None, &[("A", Some(10.0))]);
+        u.sized = vec![("A".into(), 50.0)];
+        u.core = vec![("XX".into(), Some(100.0))];
+        let even = [("A".to_string(), 50.0), ("XX".to_string(), 50.0)];
+        assert_eq!(lots(buy_event(&u, 100.0, 1.0, true, &sz, &tier_of, &no_fee).expect("the book buys")), even);
+        assert_eq!(lots(buy_event(&u, 100.0, 1.0, true, &sz, &no_tier, &no_fee).expect("the book buys")), even);
     }
 
     /// ledger(): a month with a snapshot deploys base × the SAME deploy_scaled_eur composition the
@@ -836,6 +845,12 @@ mod tests {
         // (#340) a zero index close today is no index price: no twin, rather than a €0 one
         let (_, _, _, bench, _, _) =
             digest(&snaps, 300.0, (2026, 6), &px, Some(0.0), &config::Sizing::default(), &no_tier, &no_fee).unwrap();
+        assert!(bench.is_none());
+        // a held name the price source has never heard of (C) is a hole too: A alone is priced, the twin drops
+        let with_c = [snap("2026-06-03", Some(110.0), None, &[("A", Some(12.0)), ("C", Some(5.0))])];
+        let (_, _, _, bench, priced, held) =
+            digest(&with_c, 300.0, (2026, 6), &px, Some(120.0), &config::Sizing::default(), &no_tier, &no_fee).expect("A priced");
+        assert_eq!((priced, held), (1, 2));
         assert!(bench.is_none());
 
         // empty journal / nothing priced today → None (screen stays silent)

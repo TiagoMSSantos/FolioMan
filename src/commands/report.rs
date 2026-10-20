@@ -514,6 +514,34 @@ mod tests {
         assert!(!out.contains("incomplete fiscal year"), "two full years owe no footnote: {out}");
     }
 
+    /// A filing's own prior-year EPS (the comparative restated onto today's share basis) beats the
+    /// previous row's EPS: 1.50 over its own 1.25 comparative is +20.0%, not the +50.0% the 1.00 of the
+    /// older filing would give.
+    #[test]
+    fn eps_yoy_reads_the_filings_own_comparative_before_the_older_row() {
+        let rows = [
+            quarter(2024, 6, Some(100.0), Some(1.0)),
+            core::FundRow { prior_eps: Some(1.25), ..quarter(2025, 6, Some(100.0), Some(1.5)) },
+        ];
+        let (out, has_table) = render("ACME", "SEC EDGAR", &rows);
+        assert!(has_table);
+        let line = out.lines().find(|l| l.trim_start().starts_with("2025")).unwrap_or_else(|| panic!("no 2025 row: {out}"));
+        assert!(line.contains("1.50") && line.contains("+20.0%"), "comparative EPS growth missing: {line}");
+        assert!(!line.contains("+50.0%"), "must not fall back to the older row's EPS: {line}");
+    }
+
+    /// A buyback-shrunk filer (ROE 406.8 on ROA 10.9, 37x leverage) scores on ROA, so the grower
+    /// profile prints the note that explains why quality and ROE differ.
+    #[test]
+    fn grower_profile_explains_a_quality_that_differs_from_roe() {
+        let lev = core::FundRow { roe: Some(406.8), roa: Some(10.9), net_margin: Some(12.0), ..quarter(2024, 6, Some(100.0), Some(2.0)) };
+        let (out, _) = render("LEV", "SEC EDGAR", &[lev]);
+        assert!(out.contains("(quality != roe: equity is negative or bought down past 1/20th of assets"), "{out}");
+        let plain = core::FundRow { roe: Some(30.0), roa: Some(15.0), net_margin: Some(12.0), ..quarter(2024, 6, Some(100.0), Some(2.0)) };
+        let (out, _) = render("OK", "SEC EDGAR", &[plain]);
+        assert!(!out.contains("quality != roe"), "a credible ROE needs no note: {out}");
+    }
+
     /// (round 69 guard) a zero-revenue older year must render REV-YoY as "-", never "+inf%".
     /// Pinned to the rendered "inf%" cell, not bare "inf" — prose like "info" must not trip it.
     #[test]
@@ -651,6 +679,18 @@ mod tests {
         let ranked = verdict_line(&scoring(), &t);
         assert!(ranked.contains("IITU.L — verdict: growth_score "), "{ranked}");
         assert!(!ranked.contains("not ranked") && !ranked.contains("late-cycle"), "{ranked}");
+        assert!(!ranked.contains("hold-suitable"), "a bare-named stub is no core fund: {ranked}");
+
+        // a ranked fund that clears every hold-core leg (broad + cheap + physical + Acc + large) gets the H tail
+        let mut core_fund = scoring();
+        core_fund.name = "Vanguard S&P 500 UCITS ETF USD Acc".to_string();
+        core_fund.replication = Some("Full");
+        core_fund.use_of_profits = Some("Acc");
+        core_fund.expense_ratio = Some(0.07);
+        core_fund.aum_eur = Some(28.8e9);
+        let held = verdict_line(&core_fund, &t);
+        assert!(held.contains("growth_score ") && !held.contains("not ranked"), "{held}");
+        assert!(held.ends_with(" — hold-suitable 20yr core (broad + cheap + physical + Acc + large)"), "{held}");
 
         // late-cycle: price past the overextension cap -> the floored-brake tail (still ranked)
         let mut late = scoring();

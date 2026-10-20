@@ -4186,6 +4186,15 @@ mod tests {
         ), "{out}");
         assert_eq!(out.matches(" -> ").count(), 2, "{out}");
         assert!(switch_lines(&rows[1..3], &quotes, &sym, 28.0).is_none());
+        // a holding with no benchmark, and one whose index has no suitable twin, are both skipped
+        let mut nobench = held.clone();
+        nobench.benchmark = None;
+        let mut lonely = vusa.clone();
+        lonely.use_of_profits = Some("Dist");
+        lonely.benchmark = Some("lonely index".to_string());
+        assert!(!core::hold_suitable(&lonely));
+        let skipped = [("NOBa_EQ", 1.0, 0.0, &nobench), ("LONEa_EQ", 1.0, 0.0, &lonely)];
+        assert!(switch_lines(&skipped, &quotes, &sym, 28.0).is_none());
     }
 
     #[test]
@@ -4255,6 +4264,10 @@ mod tests {
         assert_eq!(resolve_t212("AAPL", &owned, &instruments, &isin_of), Some(("AAPL_US_EQ".to_string(), "base")));
         assert_eq!(resolve_t212("DUAL", &owned, &instruments, &isin_of), None);
         assert_eq!(resolve_t212("UNKNOWN", &owned, &[], &isin_of), None);
+        // a known ISIN that no instrument carries falls through to the unique base match
+        let orphan = vec![inst("ORPH_US_EQ", "US0000000001", "USD")];
+        let orphan_isin: HashMap<String, String> = [("ORPH.L".to_string(), "IE0000000000".to_string())].into();
+        assert_eq!(resolve_t212("ORPH.L", &[], &orphan, &orphan_isin), Some(("ORPH_US_EQ".to_string(), "base")));
     }
 
     /// (tests round 5) The banner € and the order-glue € ride ONE composition fn — pin its
@@ -4300,6 +4313,11 @@ mod tests {
         let got = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(got, "2026-09-25 ALERT A\n2026-09-25 ALERT B\n2026-09-26 ALERT C\n");
+        // an unwritable journal (a directory squats on the path) warns and writes nothing; it never panics
+        std::fs::create_dir_all(&path).unwrap();
+        journal("2026-09-27", &["ALERT D".to_string()]);
+        assert!(path.is_dir(), "the squatting directory is left alone");
+        std::fs::remove_dir(&path).unwrap();
     }
 
     /// (#343) A fetched P/E reaches every listing of the SAME fund (exact name, any case), provenance
@@ -5181,6 +5199,10 @@ mod tests {
         assert_eq!(book_stability(&capped), Some(1.0));
         // < 2 screens → no pair to compare → None
         assert_eq!(book_stability(&[snap("d1", &["A"])]), None);
+        // an empty book has nothing to retain: its pair is skipped, the next pair still counts
+        assert_eq!(book_stability(&[snap("d1", &[]), snap("d2", &["A"]), snap("d3", &["A"])]), Some(1.0));
+        // every pair skipped → no pair compared at all → None
+        assert_eq!(book_stability(&[snap("d1", &[]), snap("d2", &["A"])]), None);
     }
 
     /// (round 31) mean book rank: a name's average top-BOOK position across the journal, best-seated
