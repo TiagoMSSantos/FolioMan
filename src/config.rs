@@ -510,6 +510,7 @@ pub struct BuyHeuristic {
     pub growth_soft_life_hard: f64, // (#568) > 0 keeps a STOCK under the whole-life CAGR floor (`cagr-life`) hard while `growth_gate_soft` softens its other gates. A separate guard, not an `UNWAIVABLE` tag: the `cagr` waiver turns the shared `growth_min_cagr` floor off for the life leg too. 0.0 = off, the shipped lane bit for bit, and the DEFAULT
     pub growth_hard_life_floor: f64, // (#576) > 0 = a STOCK whose whole-life price CAGR (`picks::life_leg_cagr`, the number the `cagr-life` gate reads) is under this many %/yr cannot be docked in by `growth_gate_soft`; it stays out as under hard gates. Unlike (#568)'s `growth_soft_life_hard`, the floor sits BELOW `growth_min_cagr`, so only the weakest compounders lose the soft path. Missing data passes. 0.0 = off, the shipped lane bit for bit, and the DEFAULT
     pub growth_soft_drop_misses: u32, // (#582) k > 0 = a STOCK that misses k or more knob gates (`picks::score_parts`' n, the same count `growth_gate_soft`'s f^n docks; `cagr` and `cagr-life` count 2) is not docked in: it gets no score and leaves the table. 0 = off, the shipped lane bit for bit, and the DEFAULT
+    pub growth_soft_hard_gates: u32, // (#797) bit mask over `picks::SOFT_HARD_GATES` (1 = `range`, 2 = `5Y+`, 4 = `stretch`): a STOCK that misses a gate whose bit is set cannot be docked in by `growth_gate_soft`; it stays out as under hard gates, while a miss on an unset gate still docks x f. Per gate, where (#568)/(#576) keep one floor hard and (#582) caps the miss count. 0 = off, the shipped lane bit for bit, and the DEFAULT
     pub growth_hard_loss: bool, // (#576) true = a STOCK with trailing EPS <= 0 (`eps_ttm`, as-of in the backtest) cannot be docked in by `growth_gate_soft`. No EPS figure passes. false = off, the shipped lane bit for bit, and the DEFAULT
     pub growth_red_flag_dock: f64, // (#730) < 1.0 = a name's score x this^(its (#729) red-flag count, `FundFactors::red_flags`, as-of in the backtest). No SEC read or no flag = x1.0. 1.0 = off, the shipped lane bit for bit, and the DEFAULT
     pub growth_overext_backed_floor: f64, // (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock (`picks::earnings_backed`: 5-year chained EPS CAGR at least the 5-year price CAGR, so the P/E did not expand), in place of `growth_overext_floor`. Either number missing = the normal brake. 0.0 = off, the shipped lane bit for bit, and the DEFAULT
@@ -748,6 +749,7 @@ impl Default for BuyHeuristic {
             growth_hard_life_floor: 0.0, // (#576) OFF: any life CAGR can be docked in.
             growth_hard_loss: false, // (#576) OFF: a loss-maker can be docked in.
             growth_soft_drop_misses: 0, // (#582) OFF: any number of misses can be docked in.
+            growth_soft_hard_gates: 0, // (#797) OFF: a miss on any knob gate can be docked in.
             growth_red_flag_dock: 1.0, // (#730) OFF: a red flag does not dock the score.
             growth_overext_backed_floor: 0.0, // (#577) OFF: every stock brakes to growth_overext_floor.
             growth_overext_trend_adjust: false, // (#579) OFF: every stock brakes on its raw stretch.

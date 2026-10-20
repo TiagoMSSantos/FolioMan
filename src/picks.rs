@@ -2084,6 +2084,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // shortcut: clones the tuning and re-runs the gates (tags only) per FAILING quote while the knob is armed;
     // precompute per pool if a probe arm slows. (#576) the walkthrough prints the f^n as its soft dock line.
     let (open, tags, _) = waived(quote, tuning, false)?;
+    // (#797) armed, a stock missing a gate whose bit is set stays hard
+    if tags.iter().any(|g| SOFT_HARD_GATES.iter().any(|&(t, b)| t == g.0 && tuning.growth_soft_hard_gates & b != 0)) {
+        return None;
+    }
     let mut p = score_parts_hard(quote, &open)?;
     // (#566) with the leg dock on, a short record pays p^k instead, so its record gates leave the n
     let n = tags.iter().filter(|g| !(tuning.growth_leg_dock > 0.0 && matches!(g.0, "history" | "young"))).count();
@@ -3156,6 +3160,9 @@ pub(crate) fn misses_ok(q: &Quote, tuning: &BuyHeuristic) -> bool {
 /// (#566) Tags no waiver lifts. `exchange` has a knob, but growth_gate_soft 0.6 waived it and seven
 /// exchange tokens (BNB, GT, LEO, BGB, OKB, KCS, WBT) ranked: the (#511) refusal is the user's call, not a gate.
 const UNWAIVABLE: [&str; 2] = ["artifact", "exchange"];
+
+/// (#797) The gates `growth_soft_hard_gates` can keep hard, each with its bit.
+const SOFT_HARD_GATES: [(&str, u32); 3] = [("range", 1), ("5Y+", 2), ("stretch", 4)];
 
 /// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 1Y rung
 /// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
@@ -14094,6 +14101,26 @@ mod tests {
         assert_eq!(growth_score(&q, &drop(3)), docked, "at 3, two misses dock in as before");
         let pass = gate_fixture();
         assert_eq!(growth_score(&pass, &drop(1)), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
+    }
+
+    /// (#797) `growth_soft_hard_gates`: a stock missing a gate whose bit is set stays out at any f; a miss on an
+    /// unset bit docks in as before, and off (0) every miss docks in.
+    #[test]
+    fn soft_hard_gates_keep_a_masked_miss_out() {
+        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..BuyHeuristic::default() };
+        let hard = |m: u32| BuyHeuristic { growth_soft_hard_gates: m, ..soft.clone() };
+        let mut range = gate_fixture();
+        range.range_pct = 20.0; // under the range floor: a `range` miss
+        let mut five = gate_fixture();
+        five.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", -10.0)]); // a `5Y+` miss
+        let docked = growth_score(&range, &soft);
+        assert!(docked.is_some(), "off, a range failer docks in");
+        assert_eq!(growth_score(&range, &hard(1)), None, "bit 1 keeps a range miss out");
+        assert_eq!(growth_score(&range, &hard(2)), docked, "bit 2 leaves a range miss docked");
+        assert!(growth_score(&five, &soft).is_some(), "off, a 5Y+ failer docks in");
+        assert_eq!(growth_score(&five, &hard(2)), None, "bit 2 keeps a 5Y+ miss out");
+        let pass = gate_fixture();
+        assert_eq!(growth_score(&pass, &hard(7)), growth_score(&pass, &BuyHeuristic::default()), "a passer never moves");
     }
 
     /// (#577) `growth_overext_backed_floor`: armed, a stock whose 5y EPS CAGR is at least its 5y price

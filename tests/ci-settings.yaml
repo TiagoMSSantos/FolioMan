@@ -21029,6 +21029,16 @@ buy_heuristic:
   #  are 3 -> 2 (pit 8y, 12y under cap 3), 0 -> 1 (stress 1y, 2y) and unchanged elsewhere. The brake keeps NVDA out,
   #  not a weak rival. Cap 3 is the near miss (bar 3 only); a re-open needs the forward `track` (~2027-09), not a
   #  re-run of this grid.
+  growth_soft_hard_gates: 0     # (#797) bit mask, 1 = range, 2 = 5Y+, 4 = stretch: a STOCK that misses a gate whose bit
+  #  is set gets no soft dock and stays out, as under hard gates; its misses on unset gates still dock x f. 0 = off, the
+  #  shipped lane bit for bit.
+  #── (#797) ADDED 2026-10-20, OFF — KEEP ONE GATE HARD UNDER THE SOFT DOCK ──
+  #  WHY: (#567) closed the dock's size and said a stock re-ask needs a per-gate mechanism. (#568) and (#576) kept one
+  #  floor hard (life CAGR, loss) and (#582) capped the miss count; no arm has kept range, 5Y+ or stretch hard while the
+  #  other gates stay soft. The (#561) waive-one cells (range 0/6, 5Y+ 0/6, stretch 1/6) graded the opposite move, a gate
+  #  switched off. A census of the knob lanes found no unmeasured price-only GROWTH knob left, and the 20y winners table
+  #  of probe 39468555080 (3a178fe) shows the gate dock alone catching 21% of winners. Graded next, pre-registered
+  #  before any run, with a growth_gate_soft=0 re-grade of (#566) on the (#790) half-year grid.
   growth_red_flag_dock: 1.0     # (#730) < 1.0 = a name's score x this^(its (#729) red-flag count, L 2 B I R D, as-of in the
   #  backtest). No SEC read, no current filing (over 550 days) or no flag = x1.0. 1.0 = off, the shipped lane bit for bit.
   #── (#730) REFUSED 2026-10-18 (pre-registered before any run) — DOCK A NAME PER RED FLAG ──
