@@ -6816,6 +6816,63 @@ buy_heuristic:
                                  #  drop between the 63 deaths and the 164 censored names, and 0.7 / 0.5 are unfitted shortcut constants.
                                  #  RE-GRADE LANES OPEN: 12y and 8y. First question for each: does the red survive DEAD_PENALTY 1.0 (index roll only)
                                  #  and a dead-only fill (censored names left out)? Only then is it the names, not the shortcut.
+                                 #── (#752) PRE-REGISTERED 2026-10-19 — DOES (#751)'S RED SURVIVE DEAD MEMBERS PAST THE ARCHIVE'S 2018 CUT? ──
+                                 #  WHY: the WIKI archive stops on 2018-03-27, so a member alive then walks censored and every later death is absent.
+                                 #  tools/dead_members_from_tiingo.py fills exited members from Tiingo's free API into a probe-only encrypted cache
+                                 #  (personal-use licence, never committed). A series ranks Yahoo > Tiingo > WIKI, whole series, never spliced.
+                                 #  ARMS: `universe fund pit winners` (ctl), `+ dead`, `+ dead deadflat` (crash cut x1), years 20 12 8, one SHA.
+                                 #  BAR (owner): receipt only, both ways. Green (every horizon clears what ctl clears) means (#751)'s red came
+                                 #  from the 2018 cut. Red records a survivorship discount. Gate, settings and goldens stay unchanged either way;
+                                 #  a retune is a new ask.
+                                 #  FILL: 7 paced runs 2026-10-19/20 wrote 246 series and missed 26; 0 of 272 candidates left. A fill run in a new
+                                 #  month restarts the file, so `dead` probes read a thin cache (~45 names) until a 6-7 run chain refills it.
+                                 #  RESULT 2026-10-20, probe runs at b88c2e7 (after (#755) and (#757)): ctl 39378506012, dead 39378526493, deadflat
+                                 #  39378547347. ctl ON-SALE windows 1119/2779/6162 ((#751): 6163 at 8y, pond drift). DEAD line: 246 Tiingo series,
+                                 #  111 dead, 177 replacing the archive's; 392 series in all (217 censored at their file's end), 0 refused; 264
+                                 #  unscored members walk on them, 173 dead. ctl / dead (deadflat is within 0.3 of dead on every graded cell):
+                                 #                     20y              12y              8y
+                                 #    GROWTH scored    2239 / 3496      5302 / 8309      7412 / 11158
+                                 #    passer edge      -8.4 / +53.2    +116.9 / +65.6    +67.7 / +42.7
+                                 #    passer lift     -16.0 / +36.7    +136.7 / +92.2    +78.0 / +66.7
+                                 #    top-10 excess    +2.9 / +1.7       +3.1 / +1.3      +3.3 / +1.8
+                                 #    Série E share     100 / 91           82 / 63          80 / 67      (floors 90 / 90 / 80)
+                                 #    winners held      7.7 / 8.2        10.0 / 8.4        9.1 / 8.0     (floors 11 / 9 / 10)
+                                 #    OOS early/late  -.17,-.04 / -.11,+.06   +.16,-.02 / +.02,-.02   +.20,+.09 / +.01,+.19
+                                 #    fund covered %     93 / 60            57 / 42          39 / 32
+                                 #  VERDICT: RED AT 12y AND 8y; A SURVIVORSHIP DISCOUNT, NOT THE 2018 CUT. 12y: winners held 10.0 -> 8.4, under its 9
+                                 #  floor ((#751) broke on the OOS halves; with Tiingo the early half is +.02). 8y: Série E 80 -> 67, under its 80
+                                 #  floor, as in (#751). 20y breaks nothing ctl clears. Tiingo stays probe-only; no golden moves.
+                                 #  DEADFLAT answers (#751)'s first open question: at x1 no verdict moves, so the red is the names, not the 0.7
+                                 #  shortcut. The dead-only fill (censored names left out) is still unrun.
+                                 #  READING: the top-10 excess falls 58% at 12y and 45% at 8y. Most dead names carry no as-of fundamentals (fund
+                                 #  covered falls 7-33 points), so the fund leg grades them on price alone. The census `refused` count can count a
+                                 #  WIKI-refused name that Tiingo fills; it reads 0 here.
+                                 #  (#757) 20y DCA, a name that dies inside a program now held to the walk's terminal: SIZED never-sell vs index DCA
+                                 #  ctl +3.7 (med +3.3), dead +2.1 (med +1.9); top-10 +3.5 / +2.5; Série E DCA 100 / 100 of 22 programs. BAR
+                                 #  (pre-registered: dead mean AND median > 0, Série E DCA >= 90): PASS. (#751)'s dead cell (+3.5) had dropped every
+                                 #  name that died inside a program, so it was a survivor number. The crash cut moves no DCA cell: no lot held a name
+                                 #  that halved in its last year. The +4.4 SIZED floor fails in both arms, as in (#751).
+                                 #── (#758) MEASURED 2026-10-20 — DOES A SEC ROW SERVE A LINE VALUE FILED AFTER ITS REVENUE? ──
+                                 #  WHY: parse_sec_facts keys every line on its period end and reads it with `at = |m| m.get(&end)`, which drops the
+                                 #  line's own filed date. The row carries revenue's filed date, and fund_as_of gates on that. So a value first filed
+                                 #  later (a comparative in the next 10-K, or a tag the first filing did not use) is served at revenue's earlier date.
+                                 #  The `financial` mark reads fin facts of any filed date.
+                                 #  BAR (pre-registered): close it if every line has under 1% of its values filed over 90 days after revenue's, and
+                                 #  under 0.5% of rows flip `financial` when later-filed fin facts are dropped. Over either bar: a knob lane, which
+                                 #  waits on the owner's go.
+                                 #  CENSUS: 100 current S&P members (every 5th, sorted), raw companyfacts, the parser's per-line winners mirrored;
+                                 #  1683 rows. Every late value is over 90 days late (the >0d and >90d counts are equal on every line), so a late
+                                 #  value is always the next annual filing's. Share of values filed over 90 days after revenue's, %:
+                                 #    iss 7.61   rnd 4.50   rep 4.32   shares 4.25   debt_cur 2.95   div 2.68   pretax 2.65   dna 2.24   op 1.88
+                                 #    intexp 1.85   sga 1.75   sbc 1.74   cash 1.62   gw 1.61   eps 1.21   gp 1.12   debt_nc 1.01   (under 1%:)
+                                 #    eq 0.96   capex 0.26   ni 0.06   assets 0.06   ocf 0.00
+                                 #  `financial`: 190 marked rows; 9 flip (0.53% of rows) with fin facts filed after the row's date dropped, 6 (0.36%)
+                                 #  with those filed after the next row's. Hand-checked against the raw facts: Honeywell FY2009 shares, Warner Bros.
+                                 #  Discovery FY2020 EPS, Ross Stores FY2016 debt_cur.
+                                 #  VERDICT: OVER THE BAR ON 17 OF 22 LINES AND ON `financial`. Nothing ships. The lane is a `sec_line_filed_gate`
+                                 #  knob (each line keeps only values filed on or before the row's date), A/B years 20 12 8 on `universe fund pit
+                                 #  winners`. It prices a look-ahead fix's cost and does not decide it. A ship moves the goldens. The census script
+                                 #  was a one-off and is not in the repo.
   journal_core_list: true       # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
