@@ -3943,6 +3943,12 @@ pub struct FundRow {
     pub strict: Option<Box<FundRow>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_from: Option<NaiveDate>,
+    // (#785) the EPS line's and the share count's own filed dates, when later than `filed`: a late line
+    // states the split and ADS basis of ITS day. None = filed with revenue. See `restate_for_splits`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eps_filed: Option<NaiveDate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shares_filed: Option<NaiveDate>,
 }
 
 /// (#545) Operating cash flow and capex over the trailing twelve months, built from the newest 10-Q
@@ -4880,22 +4886,25 @@ pub fn split_factor_since(splits: &[(NaiveDate, f64)], since: NaiveDate) -> f64 
 /// AFTER a cutoff multiplies both sides of every ratio and cancels. Same-filing pairs (eps/prior_eps,
 /// shares/prior_shares) move together, so every growth read stays put.
 ///
+/// (#785) Each side divides from its own line's filed date, `eps_filed`/`shares_filed`, falling back to
+/// `filed`. A line first filed after a split already states the new basis, so dating it by revenue's
+/// filing divided it twice. Dividing by a factor of 1.0 is exact, so an on-time row reads as before.
+///
 /// shortcut: SEC rows only, told apart by `currency` exactly as the FX arms do. FMP rows carry none, and
 /// FMP's history basis is unverified, so they keep the legacy read. Check it before `fund_source: fmp` ships.
 pub fn restate_for_splits(rows: &mut [FundRow], splits: &[(NaiveDate, f64)]) -> bool {
     let mut moved = false;
     for r in rows.iter_mut().filter(|r| r.currency.is_some()) {
-        let f = split_factor_since(splits, r.filed);
-        if f != 1.0 {
-            moved = true;
-            r.eps = r.eps.map(|v| v / f);
-            r.prior_eps = r.prior_eps.map(|v| v / f);
-            r.fcf_ps = r.fcf_ps.map(|v| v / f);
-            r.shares = r.shares.map(|v| v * f);
-            r.prior_shares = r.prior_shares.map(|v| v * f);
-            if let Some(s) = r.strict.as_deref_mut() {
-                restate_for_splits(std::slice::from_mut(s), splits); // (#784) the twin shares `filed`, so the same factor
-            }
+        let fe = split_factor_since(splits, r.eps_filed.unwrap_or(r.filed));
+        let fs = split_factor_since(splits, r.shares_filed.unwrap_or(r.filed));
+        moved |= fe != 1.0 || fs != 1.0;
+        r.eps = r.eps.map(|v| v / fe);
+        r.prior_eps = r.prior_eps.map(|v| v / fe);
+        r.fcf_ps = r.fcf_ps.map(|v| v / fe);
+        r.shares = r.shares.map(|v| v * fs);
+        r.prior_shares = r.prior_shares.map(|v| v * fs);
+        if let Some(s) = r.strict.as_deref_mut() {
+            restate_for_splits(std::slice::from_mut(s), splits); // (#784) the twin dates its own lines
         }
     }
     moved
@@ -6726,6 +6735,15 @@ mod tests {
         let mut twin = [FundRow { strict: Some(Box::new(row(d(2022, 2), Some("USD")))), ..row(d(2022, 2), Some("USD")) }];
         assert!(restate_for_splits(&mut twin, &splits));
         assert_eq!(got(twin[0].strict.as_deref().unwrap()), got(&rows[0]));
+        // (#785) a line first filed after both splits already states them: only the other side moves
+        let mut own = [
+            FundRow { eps_filed: Some(d(2025, 1)), ..row(d(2022, 2), Some("USD")) },
+            FundRow { shares_filed: Some(d(2025, 1)), ..row(d(2022, 2), Some("USD")) },
+        ];
+        assert!(restate_for_splits(&mut own[..1], &splits));
+        restate_for_splits(&mut own[1..], &splits);
+        assert_eq!(got(&own[0]), (Some(8.0), Some(4.0), Some(2.0), Some(500.0), Some(450.0)));
+        assert_eq!(got(&own[1]), (Some(1.6), Some(0.8), Some(0.4), Some(100.0), Some(90.0)));
         // the point of it: a pre-split EPS over the ADJUSTED close equals the raw as-of ratio. Raw close
         // 200 on 2022-03 is 40 on today's chart (÷4 ÷1.25), raw EPS 8 -> earnings yield 4% both ways.
         assert_eq!(earnings_yield(rows[0].eps, 200.0 / 5.0), earnings_yield(Some(8.0), 200.0));
@@ -10817,6 +10835,8 @@ mod tests {
             sti: Some(50.0 * k),
             strict: None,
             full_from: None,
+            eps_filed: None,
+            shares_filed: None,
         };
         let mut rows: Vec<FundRow> = (2010..=2021).map(|y| row(y, ymd(y + 1, 2, 15), 1.0 + 0.1 * (y - 2010) as f64)).collect();
         rows.push(row(2014, ymd(2019, 8, 1), 50.0));
