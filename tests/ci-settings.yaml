@@ -6873,6 +6873,17 @@ buy_heuristic:
                                  #  knob (each line keeps only values filed on or before the row's date), A/B years 20 12 8 on `universe fund pit
                                  #  winners`. It prices a look-ahead fix's cost and does not decide it. A ship moves the goldens. The census script
                                  #  was a one-off and is not in the repo.
+                                 #── (#784) LANDED 2026-10-20 — THE `sec_line_filed_gate` KNOB, OFF ──
+                                 #  The owner gave the go. parse_sec_facts now builds each period twice. The full row keeps its late lines and
+                                 #  carries `full_from`, the latest late line's filed date. Its strict twin drops every line filed after
+                                 #  revenue's date, the `financial` mark included. With the knob on, fund_factors serves the twin at any
+                                 #  cutoff before `full_from`. The twin runs the same EPS, share-scale, ADS and core-earnings steps as its row.
+                                 #  The cache key went to `_facts25` (the bridge serves facts24 first); a bridged row has no twin, so the knob
+                                 #  is partly a no-op until the refetch lands. The knob is absent from this file, so it is off and nothing moves.
+                                 #  NEXT: an A/B, off vs on, years 20 12 8 on `universe fund pit winners`, once Pages has warmed `_facts25`.
+                                 #  SHIP RULE (pre-registered by the owner): ship `sec_line_filed_gate: true`, with re-blessed goldens in the
+                                 #  same push, if every backtest_edge_holds assert stays green with it on, whatever the edge delta. If any
+                                 #  assert goes red, nothing ships and a lane opens on the gate floors, which were tuned on the leaky rows.
   journal_core_list: true       # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -22223,7 +22234,7 @@ fetch_requests_per_second: 60.0
 # facts cache (backtest-gate's fund leg: ~517 companyfacts GETs) went over, and each refused filer fell
 # back to older cached rows or to none. 8 leaves headroom under the cap; 0 disables it (don't).
 sec_requests_per_second: 8.0
-# (#547) USER DECISION 2026-10-11: the SEC pair (`_facts24`, `_ttmeps4`) refreshes DAILY, 24-47 hours
+# (#547) USER DECISION 2026-10-11: the SEC pair (`_facts25`, `_ttmeps4`) refreshes DAILY, 24-47 hours
 # staggered per ticker, down from (#84)'s 30-43 days — a 10-Q used to reach P/E, PEG, FCF and CAPEX/OCF
 # up to 43 days late, now within two. Cost: ~960 SEC names x 2 files = ~1,300 GETs/day, ~22 a run at the
 # throttled */5 Pages cron, against SEC_FETCH_BUDGET's 600 per run; SEC has no daily cap, only the pacer

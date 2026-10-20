@@ -3937,6 +3937,12 @@ pub struct FundRow {
     pub cash_ttm: Option<CashTtm>, // (#545) the newest row only: see `CashTtm`
     pub ffo_margin: Option<f64>, // (#714) FFO ÷ revenue, %: net income + D&A + impairments - gains on sale
     pub sti: Option<f64>,        // (#714) short-term investments, as of period_end, reporting currency
+    // (#784) this row with every line filed after `filed` dropped, kept only when one was. `full_from` is
+    // the latest such line's filed date: from then on the full row was knowable. See `rows_at`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<Box<FundRow>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_from: Option<NaiveDate>,
 }
 
 /// (#545) Operating cash flow and capex over the trailing twelve months, built from the newest 10-Q
@@ -4480,7 +4486,21 @@ fn red_flags(now: &FundRow, prev: Option<&FundRow>, rev_yoy: Option<f64>, buybac
 /// only when filed by `cutoff`, so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
 /// growth needs a positive base to be meaningful, so a non-positive denominator -> None, never a
 /// garbage ratio. note: EPS CAGR only when both endpoints are positive (a sign flip isn't a CAGR).
+/// (#784) The rows as they could be read at `cutoff` under `sec_line_filed_gate`: a row with a line filed
+/// after the cutoff is served as its strict twin. shortcut: clones every row per call; borrow the untouched
+/// ones if the knob ships and the walk slows.
+fn rows_at(rows: &[FundRow], cutoff: NaiveDate) -> Vec<FundRow> {
+    rows.iter().map(|r| r.strict.as_deref().filter(|_| r.full_from > Some(cutoff)).unwrap_or(r).clone()).collect()
+}
+
 pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactors {
+    let held;
+    let rows = if crate::config::sec_line_filed_gate() {
+        held = rows_at(rows, cutoff);
+        &held[..]
+    } else {
+        rows
+    };
     let now = fund_as_of(rows, cutoff);
     // (#676) `back(k)`: the statement k fiscal years before `now`, found by PERIOD END. Stepping back by FILING
     // date (`fund_as_of(cutoff - k*365)`) lands a year off whenever filing dates drift: a late 10-K made `yr_ago`
@@ -4873,6 +4893,9 @@ pub fn restate_for_splits(rows: &mut [FundRow], splits: &[(NaiveDate, f64)]) -> 
             r.fcf_ps = r.fcf_ps.map(|v| v / f);
             r.shares = r.shares.map(|v| v * f);
             r.prior_shares = r.prior_shares.map(|v| v * f);
+            if let Some(s) = r.strict.as_deref_mut() {
+                restate_for_splits(std::slice::from_mut(s), splits); // (#784) the twin shares `filed`, so the same factor
+            }
         }
     }
     moved
@@ -6699,6 +6722,10 @@ mod tests {
         let mut late = vec![row(d(2025, 1), Some("USD"))];
         assert!(!restate_for_splits(&mut late, &splits));
         assert_eq!(late[0].eps, Some(8.0));
+        // (#784) a strict twin shares its row's filing date, so it moves by the same factor
+        let mut twin = [FundRow { strict: Some(Box::new(row(d(2022, 2), Some("USD")))), ..row(d(2022, 2), Some("USD")) }];
+        assert!(restate_for_splits(&mut twin, &splits));
+        assert_eq!(got(twin[0].strict.as_deref().unwrap()), got(&rows[0]));
         // the point of it: a pre-split EPS over the ADJUSTED close equals the raw as-of ratio. Raw close
         // 200 on 2022-03 is 40 on today's chart (÷4 ÷1.25), raw EPS 8 -> earnings yield 4% both ways.
         assert_eq!(earnings_yield(rows[0].eps, 200.0 / 5.0), earnings_yield(Some(8.0), 200.0));
@@ -10788,6 +10815,8 @@ mod tests {
             currency: Some("USD".into()),
             ffo_margin: Some(14.0 + k),
             sti: Some(50.0 * k),
+            strict: None,
+            full_from: None,
         };
         let mut rows: Vec<FundRow> = (2010..=2021).map(|y| row(y, ymd(y + 1, 2, 15), 1.0 + 0.1 * (y - 2010) as f64)).collect();
         rows.push(row(2014, ymd(2019, 8, 1), 50.0));
@@ -10898,6 +10927,22 @@ mod tests {
         assert_eq!(fund_factors(&rows, ymd(2026, 7, 23), 5).cash_ttm, Some(cash.clone()));
         assert_eq!(capex_ocf(&cash).round(), 71.0);
         assert_eq!(capex_ocf(&CashTtm { ocf: 0.0, ..cash }), f64::INFINITY, "no cash in: an infinite share");
+    }
+
+    /// (#784) `rows_at` serves a row's strict twin while its late line is unfiled at the cutoff, and the
+    /// full row from that line's filing date on. A row with no late line reads as it is.
+    #[test]
+    fn rows_at_serves_the_twin_until_the_late_line_is_filed() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let twin = FundRow { filed: ymd(2025, 2, 1), period_end: ymd(2024, 12, 31), revenue: Some(100.0), ..Default::default() };
+        let full = FundRow { rnd_margin: Some(9.0), full_from: Some(ymd(2026, 2, 1)), ..twin.clone() };
+        let full = FundRow { strict: Some(Box::new(twin)), ..full };
+        let plain = FundRow { filed: ymd(2024, 2, 1), period_end: ymd(2023, 12, 31), rnd_margin: Some(7.0), ..Default::default() };
+        let rows = [full, plain];
+        let rnd = |cutoff| rows_at(&rows, cutoff).iter().map(|r| r.rnd_margin).collect::<Vec<_>>();
+        assert_eq!(rnd(ymd(2026, 1, 31)), [None, Some(7.0)], "the day before: the twin");
+        assert_eq!(rnd(ymd(2026, 2, 1)), [Some(9.0), Some(7.0)], "filed that day: the full row");
+        assert_eq!(rnd(ymd(2027, 1, 1)), [Some(9.0), Some(7.0)]);
     }
 
     /// (#529) The two one-line as-of reads the walk also joins: insider trades and the FX rate. Each must

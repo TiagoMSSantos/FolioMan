@@ -915,12 +915,12 @@ fn a_configured_worker_thread_cap_leaves_the_command_working() {
     assert!(stdout.contains("AAA [AAA]"), "{stdout}");
 }
 
-/// Seeds one ticker's parsed SEC rows (`<ticker>_facts24.json`) under `.sec_cache` in a case's data root, AFTER
+/// Seeds one ticker's parsed SEC rows (`<ticker>_facts25.json`) under `.sec_cache` in a case's data root, AFTER
 /// `isolated_cmd` has wiped it. `report` reads a cached file before it asks for a CIK, so the statements need no socket.
 fn seed_sec_cache(name: &str, ticker: &str, body: &str) {
     let dir = isolated_root(name).join(".sec_cache");
     std::fs::create_dir_all(&dir).expect("mkdir sec cache");
-    std::fs::write(dir.join(format!("{ticker}_facts24.json")), body).expect("seed sec cache");
+    std::fs::write(dir.join(format!("{ticker}_facts25.json")), body).expect("seed sec cache");
 }
 
 /// Three annual filings in USD for a made-up filer: EPS 2.50, 2.75 and 3.00, no share counts, no pretax line.
