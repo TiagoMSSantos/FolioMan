@@ -18,7 +18,7 @@ use futures::stream::StreamExt;
 /// exit probe measures (newly-failing names lag kept-passing names by ~14 pts forward). Lives in
 /// `.screen_state.json` in the working dir (same local-file pattern as `.fmp_cache`), gitignored.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct ScreenState {
+pub(crate) struct ScreenState {
     date: String,         // YYYY-MM-DD of the run that wrote it
     passing: Vec<String>, // watchlist tickers that cleared every growth gate on that run
     // (round 50) ticker -> (TER %, AUM €) AS SHOWN last run (ter_shown/aum_shown, i.e. incl. the
