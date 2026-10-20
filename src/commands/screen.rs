@@ -120,8 +120,8 @@ fn journal(date: &str, lines: &[String]) {
 /// hand edit, a schema change serde can't bridge) was previously swallowed by `.ok()` into the
 /// same None, silently resetting every alert baseline (exit review, TER/AUM drift, USE/REPL
 /// flips, CORE diff) — a pending alert vanished without a word. The `true` flag lets the caller
-/// say so; it never changes what loads.
-fn parse_state(raw: Option<String>) -> (Option<ScreenState>, bool) {
+/// say so; it never changes what loads. (#774) `size` reads the same file and warns on the same flag.
+pub(crate) fn parse_state(raw: Option<String>) -> (Option<ScreenState>, bool) {
     match raw {
         None => (None, false),
         Some(s) => match serde_json::from_str(&s) {
@@ -161,7 +161,7 @@ fn spill_repl_note(repl: Option<&str>) -> Option<&'static str> {
 /// stock-class budget with no eligible single names). `size` does the file read itself — its `run`
 /// is `#[mutants::skip]`, so the I/O costs nothing to grade — and hands the bytes here, which keeps
 /// this half pure and its test free of a scratch-dir write. `None` on every not-known path: no
-/// state file yet, a corrupt one ([`parse_state`] already forks that and warns), a state predating
+/// state file yet, a corrupt one (`size` and `screen` warn on it from [`parse_state`]), a state predating
 /// the round-55 `core` field, or a run that printed no CORE table. Display only: it moves no weight
 /// and reads no price.
 ///
@@ -319,7 +319,7 @@ pub(crate) fn last_core(
 ///
 /// Pure for [`last_core`]'s reason verbatim: `size::run` is `#[mutants::skip]`, so it does the file read
 /// and hands the bytes here, where the gate can actually grade the logic. `None` on every not-known
-/// path — no state file, a corrupt one ([`parse_state`] already forks that and warns), a state predating
+/// path — no state file, a corrupt one (`size` and `screen` warn on it from [`parse_state`]), a state predating
 /// the round-68 `ranked` field, or a run that ranked nothing. Reads no price and moves no weight.
 pub(crate) fn last_ranked(raw: Option<String>) -> Option<(String, Vec<String>)> {
     let state = parse_state(raw).0?;

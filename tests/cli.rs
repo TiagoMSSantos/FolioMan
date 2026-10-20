@@ -781,6 +781,16 @@ fn size_picks_without_a_screen_run_on_file_says_to_run_screen_first() {
     assert!(!stdout.contains("Suggested sizes"), "{stdout}");
 }
 
+/// (#774) A state file that does not parse is named on stderr, not read in silence as "no screen run".
+#[test]
+fn size_warns_when_the_screen_state_file_is_corrupt() {
+    let (code, stdout, stderr) =
+        run_isolated("size-corrupt-state", "{}\n", &[(".screen_state.json", "{ truncated")], &["size", "--picks"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.contains("WARNING: .screen_state.json exists but is unreadable — sized as if no screen run is on file"), "{stderr}");
+    assert!(stdout.contains("No ranked picks on file — run `screen` first, then `size --picks`."), "{stdout}");
+}
+
 /// A state with a ranked list but no journalled BUY NOW book re-sizes the ranked names and says which run
 /// they came from; here no name has a price, so nothing passes the growth gate.
 #[test]

@@ -285,6 +285,13 @@ pub async fn run(args: Vec<String>) {
     let watchlist = args.iter().any(|a| a == "--watchlist");
     let named: Vec<String> = args.into_iter().filter(|a| a != "--picks" && a != "--watchlist").collect();
     let raw = std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok();
+    // (#774) a corrupt file reads below exactly like no screen run, so the list sized is the wrong one
+    if crate::commands::screen::parse_state(raw.clone()).1 {
+        eprintln!(
+            "WARNING: {} exists but is unreadable — sized as if no screen run is on file; run `screen` to rewrite it",
+            crate::commands::screen::SCREEN_STATE_FILE
+        );
+    }
     // (#679) the ranked list as-is means the book `screen` printed, so its rows are read back. Typed
     // names or `--watchlist` size a list `screen` never sized, and those keep `sized_book` below.
     let buy = if watchlist || !named.is_empty() { None } else { crate::commands::screen::last_buy(raw.clone()) };
