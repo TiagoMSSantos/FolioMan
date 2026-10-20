@@ -1082,13 +1082,27 @@ fn forward_return(
     if let Some(off) = dates[i..].iter().position(|d| *d >= target) {
         return Some(((closes[i + off] / closes[i] - 1.0) * 100.0, false));
     }
-    let (bench_dates, bench_closes, crash_penalty) = dead_bench?;
+    Some(((dead_multiple(dates, closes, closes[i], target, dead_bench?)? - 1.0) * 100.0, true))
+}
+
+/// (#751) What a dead series bought at `entry` is worth on `to`, past its last bar: its last close, rolled into
+/// the index (`dead`'s dates and closes) from that bar to `to`, times the penalty when that close is under
+/// [`DEAD_CRASH_RATIO`] of the one a year earlier. (#757) One helper for [`forward_return`]'s walk and
+/// [`book_multiple`]'s DCA ruler, so the two price a death the same way. None when the index does not reach `to`.
+fn dead_multiple(
+    dates: &[chrono::NaiveDate],
+    closes: &[f64],
+    entry: f64,
+    to: chrono::NaiveDate,
+    dead: (&[chrono::NaiveDate], &[f64], f64),
+) -> Option<f64> {
+    let (bench_dates, bench_closes, crash_penalty) = dead;
     let at = |d: chrono::NaiveDate| bench_dates.iter().position(|x| *x >= d).map(|k| bench_closes[k]);
     let last = dates.len() - 1;
-    let roll = at(target)? / at(dates[last])?;
+    let roll = at(to)? / at(dates[last])?;
     let year_ago = dates.iter().rposition(|d| *d <= dates[last] - chrono::Duration::days(365)).unwrap_or(0);
     let penalty = if closes[last] / closes[year_ago] < DEAD_CRASH_RATIO { crash_penalty } else { 1.0 };
-    Some(((closes[last] / closes[i] * penalty * roll - 1.0) * 100.0, true))
+    Some(closes[last] / entry * penalty * roll)
 }
 
 /// (PIT) `pit` is the third refusal, and it is not about sample size. A point-in-time run answers a
@@ -2103,7 +2117,7 @@ pub async fn run(args: Vec<String>) {
         let legs: Vec<String> = tiers.iter().zip(&spill).map(|(t, (w, _))| format!("{} {:.0}%", name(*t), w * 100.0)).collect();
         println!("  {:<28} (#308) the remainder above earns the spill's index legs, price-only: {}", "", legs.join(" · "));
     }
-    let roll = report_roll(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill, rivals);
+    let roll = report_roll(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill, rivals, (dead_end, dead_penalty));
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -5362,9 +5376,11 @@ fn px_at(s: &(Vec<chrono::NaiveDate>, Vec<f64>), d: chrono::NaiveDate) -> Option
 }
 
 /// (#340) Priced on BOTH ends of a roll window, the liveness rule `report_roll`'s book is built on. A helper
-/// so the `&&` is graded by a unit test; inline, it was reachable only through the sized journal.
-fn priced_at_both(s: &(Vec<chrono::NaiveDate>, Vec<f64>), d: chrono::NaiveDate, end: chrono::NaiveDate) -> bool {
-    px_at(s, d).is_some() && px_at(s, end).is_some()
+/// so the `&&` is graded by a unit test; inline, it was reachable only through the sized journal. (#757) A `dead`
+/// series needs only its entry price: [`book_multiple`] pays its terminal past its last bar, so a name that dies
+/// inside the program stays in the book instead of handing its slot to a survivor.
+fn priced_at_both(s: &(Vec<chrono::NaiveDate>, Vec<f64>), d: chrono::NaiveDate, end: chrono::NaiveDate, dead: bool) -> bool {
+    px_at(s, d).is_some() && (dead || px_at(s, end).is_some())
 }
 
 /// (#311) The names a DCA buy on `d` picks from: each ticker's LATEST point-in-time cutoff in the six months up
@@ -5383,7 +5399,8 @@ fn month_pool(books: &[Sample], d: chrono::NaiveDate) -> Vec<&Sample> {
 
 /// (#311) What €1 put into `book` (ticker, weight fraction) on `from` is worth on `to`. The unfunded remainder
 /// earns `legs` as [`sized_buckets`] prices it: a leg that does not reach back to `from` borrows the benchmark.
-/// None when any leg is unpriced.
+/// None when any leg is unpriced. (#757) A name in `dead`'s set whose series ends before `to` pays the walk's
+/// terminal ([`dead_multiple`], `dead`'s crash penalty); any other name that ends early prices nothing.
 fn book_multiple(
     book: &[(&str, f64)],
     from: chrono::NaiveDate,
@@ -5391,9 +5408,14 @@ fn book_multiple(
     series: &HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)>,
     bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
     legs: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
+    dead: (&HashSet<&str>, f64),
 ) -> Option<f64> {
     let grow = |s: &(Vec<chrono::NaiveDate>, Vec<f64>)| Some(px_at(s, to)? / px_at(s, from)?);
-    let names = book.iter().map(|(t, w)| Some(w * grow(series.get(t)?)?)).sum::<Option<f64>>()?;
+    let held = |t: &str, s: &(Vec<chrono::NaiveDate>, Vec<f64>)| match s.0.last() {
+        Some(l) if *l < to && dead.0.contains(t) => dead_multiple(&s.0, &s.1, px_at(s, from)?, to, (bench.0.as_slice(), bench.1.as_slice(), dead.1)),
+        _ => grow(s),
+    };
+    let names = book.iter().map(|(t, w)| Some(w * held(*t, series.get(t)?)?)).sum::<Option<f64>>()?;
     let rest = legs.iter().map(|(w, s)| Some(w * grow(if s.0.first().is_some_and(|f| *f <= from) { s } else { bench })?)).sum::<Option<f64>>()?;
     Some(names + (1.0 - book.iter().map(|(_, w)| w).sum::<f64>()) * rest)
 }
@@ -5464,9 +5486,11 @@ fn dca_program<B>(
 /// [`DCA_MONTHS`] equal monthly buys into that month's screen, all sold at `years`, against selling each lot at
 /// [`ROLL_YEARS`] and re-buying that month's screen. Both are after tax, as money-weighted %/yr, one program per
 /// half-year start ([`dca_program`]). Each month is ranked once over [`month_pool`]; a program's book is the
-/// ranked names still priced at its end, the same filter in both arms. A month with no such name puts the
-/// whole € on the legs, as BUY NOW does: its picks and trackers always sum to gross. Top-10 is a reading. SIZED is the
-/// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
+/// ranked names still priced at its end, the same filter in both arms. (#757) Under `dead` a name that dies inside
+/// the program stays, on the walk's terminal ([`book_multiple`]), so the ruler is no longer survivors only. A month
+/// with no such name puts the whole € on the legs, as BUY NOW does: its picks and trackers always sum to gross.
+/// Top-10 is a reading. SIZED is the pre-registered bar, and its Δ is returned for the journal. Empty `books` (any
+/// other horizon) prints nothing.
 /// (#560) `rivals` adds the momentum rival's lane on the same months (`mom12-1`, named for its (#560) key; since
 /// (#587) it follows `growth_momentum_key`): the DCA re-grade a rival that beats
 /// the top-10 ruler owes before anything ships. (#584) and the blend's: the top-10 lane's order spliced with
@@ -5485,6 +5509,7 @@ fn report_roll(
     top: usize,
     spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
     rivals: bool,
+    dead: (&HashSet<&str>, f64),
 ) -> Option<f64> {
     if books.is_empty() {
         return None;
@@ -5523,7 +5548,10 @@ fn report_roll(
             (d, (kept.iter().map(|x| by_tk[x.3.as_str()]).collect(), sized.into_iter().map(|x| x.1).collect(), mom))
         })
         .collect();
-    let alive = |s: &Sample, d, end| series.get(s.quote.ticker.as_str()).is_some_and(|x| priced_at_both(x, d, end));
+    let alive = |s: &Sample, d, end| {
+        let tk = s.quote.ticker.as_str();
+        series.get(tk).is_some_and(|x| priced_at_both(x, d, end, dead.0.contains(tk)))
+    };
     let capped = |d: chrono::NaiveDate, end: chrono::NaiveDate, n: usize| -> Option<Vec<&Sample>> {
         let v: Vec<&Sample> = ranked.get(&d)?.0.iter().copied().filter(|s| alive(s, d, end)).collect();
         let v = picks::sector_cap(v, tuning.growth_sector_cap, |s| picks::stock_sector(&s.quote)); // (#557)
@@ -5546,7 +5574,7 @@ fn report_roll(
         let mom: Vec<&Quote> = ranked.get(&d)?.2.iter().filter(|s| alive(s, d, end)).map(|s| s.quote.as_ref()).collect();
         Some(picks::sized_splice(&book, &mom, after, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w)| (t, w / 100.0)).collect())
     };
-    let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs);
+    let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs, dead);
     let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);
     let top_programs: BTreeMap<i32, Dca> =
         starts.par_iter().filter_map(|s| Some((bucket(*s), dca_program(*s, top10, value, index, base, &tuning.cgt_hold_schedule)?))).collect();
@@ -9469,9 +9497,12 @@ mod tests {
         assert_eq!(px_at(&s, ymd(2000, 2)), None, "a zero close prices nothing");
         assert_eq!(px_at(&s, ymd(2000, 4)), None, "the series ended");
         // (#340) a roll window needs a price at BOTH ends
-        assert!(priced_at_both(&s, ymd(2000, 1), ymd(2000, 3)));
-        assert!(!priced_at_both(&s, ymd(2000, 1), ymd(2000, 4)), "priced at entry, but the series ended");
-        assert!(!priced_at_both(&s, ymd(2000, 2), ymd(2000, 3)), "a zero close at entry");
+        assert!(priced_at_both(&s, ymd(2000, 1), ymd(2000, 3), false));
+        assert!(!priced_at_both(&s, ymd(2000, 1), ymd(2000, 4), false), "priced at entry, but the series ended");
+        assert!(!priced_at_both(&s, ymd(2000, 2), ymd(2000, 3), false), "a zero close at entry");
+        // (#757) a dead series needs only its entry: the DCA ruler pays its terminal
+        assert!(priced_at_both(&s, ymd(2000, 1), ymd(2000, 4), true), "a dead series ended inside the window");
+        assert!(!priced_at_both(&s, ymd(2000, 4), ymd(2000, 5), true), "nothing buys a dead series after its last bar");
     }
 
     /// (#311) A buy on `d` sees each name's LATEST cutoff in (d − 6 months, d]: a cutoff exactly six months back
@@ -9496,9 +9527,28 @@ mod tests {
         let bench = (vec![ymd(1999), ymd(2000), ymd(2010)], vec![50.0, 100.0, 150.0]);
         let (l, m) = (two(20.0, 60.0), (vec![ymd(2005), ymd(2010)], vec![1.0, 9.0]));
         let legs = [(0.5, &l), (0.5, &m)];
-        let got = book_multiple(&[("A", 0.3), ("B", 0.2)], ymd(2000), ymd(2010), &series, &bench, &legs).unwrap();
+        let none = HashSet::new();
+        let got = book_multiple(&[("A", 0.3), ("B", 0.2)], ymd(2000), ymd(2010), &series, &bench, &legs, (&none, DEAD_PENALTY)).unwrap();
         assert!((got - 2.425).abs() < 1e-12, "{got}");
-        assert_eq!(book_multiple(&[("ZZZ", 0.5)], ymd(2000), ymd(2010), &series, &bench, &legs), None);
+        assert_eq!(book_multiple(&[("ZZZ", 0.5)], ymd(2000), ymd(2010), &series, &bench, &legs, (&none, DEAD_PENALTY)), None);
+    }
+
+    /// (#757) X dies in 2005 at 12, under half its year-ago 30: the walk's terminal rolls 12 into the index (120 to
+    /// 150) and cuts it, 12/10 × 0.7 × 1.25 = 1.05. Y has the same bars but is not dead, so it prices nothing. W is
+    /// dead and crashed too, but its last bar is ON `to`, so it is a price: 9/10, no cut.
+    #[test]
+    fn book_multiple_pays_a_name_that_dies_mid_hold_the_walks_terminal() {
+        let ymd = |y| NaiveDate::from_ymd_opt(y, 1, 1).unwrap();
+        let died = (vec![ymd(2000), ymd(2004), ymd(2005)], vec![10.0, 30.0, 12.0]);
+        let series = HashMap::from([("X", died.clone()), ("Y", died), ("W", (vec![ymd(2000), ymd(2009), ymd(2010)], vec![10.0, 30.0, 9.0]))]);
+        let bench = (vec![ymd(2000), ymd(2005), ymd(2010)], vec![100.0, 120.0, 150.0]);
+        let legs = [(1.0, &bench)];
+        let dead = HashSet::from(["X", "W"]);
+        let got = |tk| book_multiple(&[(tk, 1.0)], ymd(2000), ymd(2010), &series, &bench, &legs, (&dead, DEAD_PENALTY));
+        let x = got("X").unwrap();
+        assert!((x - 1.05).abs() < 1e-12, "{x}");
+        assert_eq!(got("Y"), None, "a live or censored name that ends early prices nothing");
+        assert_eq!(got("W"), Some(0.9));
     }
 
     /// (#311) Every lot compounding at 10%/yr reads 10.0. A program ending with exactly what it put in reads at or
