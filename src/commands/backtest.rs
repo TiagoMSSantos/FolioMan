@@ -2059,6 +2059,7 @@ pub async fn run(args: Vec<String>) {
     gate_sweep(&samples, tuning, &gate_loosen, accepted_med); // (#10) which specific gate is too tight?
     weight_sweep(&samples, tuning); // (#334) which shipped ranking weight is mis-set?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
+    entry_probe(&samples, growth_score, tuning); // (#820) does a fresh pass lag a confirmed one?
     if fund_lane_on(fund, insider) {
         report_fund_lane(&samples, tuning.split_purge_months);
         sweep_fund_factor(&samples, tuning, years); // (G) which factor pays THROUGH the growth lane, held-out
@@ -7820,6 +7821,59 @@ fn exit_probe(
     Some((gap, gap_med))
 }
 
+/// (#820) The entry-side mirror of `exit_cohorts`: consecutive-cutoff pairs where the EARLIER cutoff
+/// FAILED the lane's gates and the later one passes. Returns the forward peer-relative returns taken at
+/// the later cutoff, the moment the name first shows as a buy. The pass->pass half is `exit_cohorts`'s
+/// `kept`, so it is not built twice.
+fn fresh_entries(samples: &[Sample], scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>, tuning: &BuyHeuristic) -> Vec<f64> {
+    // BTreeMap for the same reason as `exit_cohorts`: the output order follows the map's.
+    let mut by_ticker: BTreeMap<&str, Vec<&Sample>> = BTreeMap::new();
+    for s in samples {
+        by_ticker.entry(s.quote.ticker.as_str()).or_default().push(s);
+    }
+    let mut fresh = Vec::new();
+    for series in by_ticker.values_mut() {
+        series.sort_by_key(|s| s.date);
+        for w in series.windows(2) {
+            if scorer(&w[0].quote, tuning).is_none() && scorer(&w[1].quote, tuning).is_some() {
+                fresh.push(w[1].relative);
+            }
+        }
+    }
+    fresh
+}
+
+/// (#820) Sweep 40's falsifier: should a buy wait for a second passing cutoff? Compares the forward
+/// peer-relative return of names that pass NOW after failing ~6mo ago (newly passing) against names
+/// that passed both times (confirmed). A negative gap on both stats = fresh passers lag, so an
+/// entry-confirmation rule earns a graded knob; otherwise buy on the first pass. Report only, no knob.
+/// Returns `(mean gap, median gap)`, fresh minus confirmed, for the test.
+fn entry_probe(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    tuning: &BuyHeuristic,
+) -> Option<(f64, f64)> {
+    let (confirmed, _) = exit_cohorts(samples, scorer, tuning);
+    let fresh = fresh_entries(samples, scorer, tuning);
+    println!("\n── ENTRY PROBE (growth lane: passes now -> did it pass ~6mo ago too?) ──");
+    if confirmed.len() < 4 || fresh.len() < 4 {
+        println!("  too few entries to read (confirmed {} / newly-passing {}).", confirmed.len(), fresh.len());
+        return None;
+    }
+    let ((mc, medc), (mf, medf)) = (cohort_stats(&confirmed), cohort_stats(&fresh));
+    let (gap, gap_med) = (mf - mc, medf - medc);
+    println!("  confirmed      n={:<6} fwd peer-relative  mean {mc:+.1} | med {medc:+.1} pts", confirmed.len());
+    println!("  newly PASSING  n={:<6} fwd peer-relative  mean {mf:+.1} | med {medf:+.1} pts", fresh.len());
+    let verdict = gap_verdict(
+        gap,
+        gap_med,
+        "entry confirmation would NOT pay — fresh passers did as well or better; buy on the first pass",
+        "fresh passers LAG the confirmed ones — an entry-confirmation rule is worth a graded knob",
+    );
+    println!("  gap  mean {gap:+.1} | med {gap_med:+.1} pts  ->  {verdict}");
+    Some((gap, gap_med))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10547,6 +10601,66 @@ mod tests {
         assert!(exit_probe(&build([-1.0; 4])[..6], scorer, &BuyHeuristic::default()).is_none());
         // (#340) BOTH sides need four: four kept against three newly-failed is still no claim.
         assert!(exit_probe(&build([-1.0; 4])[..14], scorer, &BuyHeuristic::default()).is_none());
+    }
+
+    /// (#820) `fresh_entries` keeps only fail->pass pairs: pass->pass is `exit_cohorts`'s kept,
+    /// pass->fail its failed, and fail->fail never shows as a buy.
+    #[test]
+    fn fresh_entries_keep_only_fail_then_pass() {
+        let scorer: fn(&Quote, &BuyHeuristic) -> Option<f64> =
+            |q, _| if q.drop_pct < 50.0 { Some(1.0) } else { None };
+        let mk = |tk: &str, m: u32, drop: f64, rel: f64| {
+            let mut s = sample(ymd(2020, m, 1), 0.0);
+            let mut q = Quote::stub(tk, "1", "", tk);
+            q.drop_pct = drop;
+            s.quote = Arc::new(q);
+            s.relative = rel;
+            s
+        };
+        let samples = vec![
+            mk("A", 12, 0.0, 3.0), // pass -> pass: not fresh (out of date order on purpose)
+            mk("A", 1, 99.0, 1.0), // fails
+            mk("A", 7, 0.0, 2.0),  // fail -> PASS: fresh (rel 2.0)
+            mk("B", 1, 99.0, 4.0), // fail -> fail: never a buy
+            mk("B", 7, 99.0, 5.0),
+            mk("C", 1, 0.0, 6.0), // pass -> fail: an exit, not an entry
+            mk("C", 7, 99.0, 7.0),
+        ];
+        assert_eq!(fresh_entries(&samples, scorer, &BuyHeuristic::default()), vec![2.0]);
+    }
+
+    /// (#820) `entry_probe` reads fresh minus confirmed on both stats, and calls a verdict only when
+    /// they agree. Confirmed names sit at +2.0 so a flipped subtraction cannot pass.
+    #[test]
+    fn entry_probe_gap_is_fresh_minus_confirmed() {
+        let scorer: fn(&Quote, &BuyHeuristic) -> Option<f64> =
+            |q, _| if q.drop_pct < 50.0 { Some(1.0) } else { None };
+        // Each ticker gets two cutoffs: the second always passes; the first passed (confirmed) or failed (fresh).
+        let pair = |tk: &str, fresh: bool, rel: f64| {
+            let mut a = sample(ymd(2020, 1, 1), 0.0);
+            let mut aq = Quote::stub(tk, "1", "", tk);
+            aq.drop_pct = if fresh { 99.0 } else { 0.0 };
+            a.quote = Arc::new(aq);
+            let mut b = sample(ymd(2020, 7, 1), 0.0);
+            b.quote = Arc::new(Quote::stub(tk, "1", "", tk));
+            b.relative = rel;
+            vec![a, b]
+        };
+        let build = |fresh_rels: [f64; 4]| -> Vec<Sample> {
+            let confirmed = ["K1", "K2", "K3", "K4"].iter().flat_map(|t| pair(t, false, 2.0));
+            let fresh = ["F1", "F2", "F3", "F4"].iter().zip(fresh_rels).flat_map(|(t, r)| pair(t, true, r));
+            confirmed.chain(fresh).collect()
+        };
+        // fresh mean -13, median -13; confirmed +2 on both
+        let got = entry_probe(&build([-10.0, -12.0, -14.0, -16.0]), scorer, &BuyHeuristic::default());
+        assert_eq!(got, Some((-15.0, -15.0)));
+        // one collapse drags the mean negative; the typical fresh passer beat the confirmed ones
+        let (gap, gap_med) = entry_probe(&build([5.0, 6.0, 7.0, -900.0]), scorer, &BuyHeuristic::default()).unwrap();
+        assert!(gap < 0.0 && gap_med > 0.0);
+        assert!(gap_verdict(gap, gap_med, "buy", "wait").starts_with("SPLIT"));
+        // both sides need four: 4 confirmed + 3 fresh, then 3 confirmed + 4 fresh
+        assert!(entry_probe(&build([-1.0; 4])[..14], scorer, &BuyHeuristic::default()).is_none());
+        assert!(entry_probe(&build([-1.0; 4])[2..], scorer, &BuyHeuristic::default()).is_none());
     }
 
     /// Peer-bucket key + the de-meaning that turns realized returns into the SELECTION signal rho
