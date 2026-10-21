@@ -1661,7 +1661,8 @@ fn meta_alerts(
 /// completed before `today`, as page rows plus the `(market, ticker)` pairs the journal keeps. Same ponds,
 /// floor and USD rate as the (#809) ruler, on 3mo of bars. A name in neither EUR nor USD is skipped.
 /// (#822) Each name the book holds is then fetched again on 10y of bars, `track`'s fetch, and its
-/// journalled sessions tallied for the RIGHT/FAIL column.
+/// journalled sessions tallied for the RIGHT/FAIL column. (#823) Today's session counts once the
+/// exchange closes, read off the UTC clock.
 #[mutants::skip] // network shell; `rank`, `web_rows`, `tally` and their tests live in heuristics::intraday
 async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>) {
     use crate::heuristics::intraday;
@@ -1689,8 +1690,9 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             })
             .collect();
         let book = intraday::rank(k, &pond, today);
+        let closed = intraday::closed(market, chrono::Utc::now().time());
         let hits: Vec<Option<(usize, usize)>> = futures::stream::iter(&book)
-            .map(|(tk, ..)| async move { Some(intraday::tally(market, tk, journal, fetch::fetch_history(client, &settings.urls, tk).await?, today)) })
+            .map(|(tk, ..)| async move { Some(intraday::tally(market, tk, journal, fetch::fetch_history(client, &settings.urls, tk).await?, today, closed)) })
             .buffered(fetch::fetch_concurrency())
             .collect()
             .await;

@@ -17,7 +17,7 @@
 
 use crate::core;
 use crate::fetch::Chart;
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveTime, Timelike};
 use std::collections::{BTreeMap, HashMap};
 
 /// How many names each market's book holds.
@@ -233,16 +233,29 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], hits: &[Optio
         .collect()
 }
 
+/// (#823) Whether `market`'s session dated today is over at `now`, UTC: from 17:00 for EU (17:30
+/// Frankfurt is 15:30 UTC in summer time, 16:30 in winter) and 21:30 for US (16:00 New York is 20:00 or
+/// 21:00), past the closing auction and a delayed chart either way.
+/// shortcut: fixed UTC hours, so in summer time a closed session waits an hour longer than it must;
+/// each exchange's time-zone rules would cut that hour.
+pub fn closed(market: &str, now: NaiveTime) -> bool {
+    (now.hour(), now.minute()) >= if market == "US" { (21, 30) } else { (17, 0) }
+}
+
 /// (#822) How `tk`'s journalled sessions in `market` went, `(right, fail)`: right = the session closed
 /// above its open, before costs, fail = at or below it. Each session a journalled book held it counts
-/// once, graded as [`graded`] grades a book, so a bar dated `today` waits until tomorrow.
-pub fn tally(market: &str, tk: &str, journal: &[(NaiveDate, Vec<(String, String)>)], c: Chart, today: NaiveDate) -> (usize, usize) {
+/// once, graded as [`graded`] grades a book, so a bar dated `today` waits until tomorrow. (#823) Unless
+/// the session is `closed`; and today's table holds `tk`, so its session counts as a line dated `today`
+/// would. A session no journal line holds drops out when the date turns.
+pub fn tally(market: &str, tk: &str, journal: &[(NaiveDate, Vec<(String, String)>)], c: Chart, today: NaiveDate, closed: bool) -> (usize, usize) {
     let lines: Vec<(NaiveDate, Vec<&str>)> = journal
         .iter()
         .filter(|(_, book)| book.iter().any(|(m, t)| m == market && t == tk))
         .map(|(d, _)| (*d, vec![tk]))
+        .chain([(today, vec![tk])])
         .collect();
-    let days = graded(&lines, &HashMap::from([(tk.to_string(), c)]), today);
+    let until = if closed { today.succ_opt().unwrap_or(today) } else { today };
+    let days = graded(&lines, &HashMap::from([(tk.to_string(), c)]), until);
     let right = days.iter().filter(|d| d.1 > 0.0).count();
     (right, days.len() - right)
 }
@@ -550,7 +563,8 @@ mod tests {
     }
 
     /// (#822) Sessions d3 up, d4 flat, d5 up, d6 flat, d7 down. The d1 and d2 lines reach d3 once; the
-    /// d5 line holds A in the other market and B here, so d5 never counts; a flat day is a fail.
+    /// d5 line holds A in the other market and B here, so d5 never counts; a flat day is a fail. (#823)
+    /// Today's table holds the name too, so a closed session today counts with or without a line.
     #[test]
     fn tally_counts_each_journalled_session_once() {
         let mut a = chart(&[100.0; 6], &[100.0, 101.0, 100.0, 102.0, 100.0, 99.0], 1.0);
@@ -564,9 +578,19 @@ mod tests {
             line(6, &[("US", "A")]),
             line(7, &[("US", "A")]),
         ];
-        assert_eq!(tally("US", "A", &journal, a.clone(), d(8)), (1, 3));
-        assert_eq!(tally("US", "A", &journal, a.clone(), d(7)), (1, 2), "a bar dated today may still be trading");
-        assert_eq!(tally("US", "A", &[], a, d(8)), (0, 0));
+        assert_eq!(tally("US", "A", &journal, a.clone(), d(8), false), (1, 3));
+        assert_eq!(tally("US", "A", &journal, a.clone(), d(7), false), (1, 2), "a bar dated today may still be trading");
+        assert_eq!(tally("US", "A", &journal, a.clone(), d(7), true), (1, 3), "once the session closes, its bar counts");
+        assert_eq!(tally("US", "A", &[], a.clone(), d(5), true), (1, 0), "today's table is a line dated today");
+        assert_eq!(tally("EU", "A", &journal, a.clone(), d(5), true), (1, 0), "the d5 line and today's table are one session");
+        assert_eq!(tally("US", "A", &[], a, d(8), false), (0, 0));
+    }
+
+    #[test]
+    fn a_session_is_closed_from_a_fixed_utc_hour() {
+        let at = |h, m| NaiveTime::from_hms_opt(h, m, 0).unwrap();
+        assert!(!closed("EU", at(16, 59)) && closed("EU", at(17, 0)));
+        assert!(!closed("US", at(17, 0)) && !closed("US", at(21, 29)) && closed("US", at(21, 30)));
     }
 
     #[test]
