@@ -732,9 +732,8 @@ fn samples_at(cfg: &Path) -> std::collections::BTreeMap<(String, String), String
 /// after the cutoff gets an all-null `FundFactors` where the cut world has `None`. Every field agrees;
 /// the presence does not, and `s.fund.is_none()` is what the fund-covered cohorts skip on
 /// (`report_book_by_factor`'s baseline, the `growth_fund_weight` sweep, the EY table, the "cutoffs with
-/// as-of fundamentals" count), and what `expected_return_pct` turns into income + rerating instead of
-/// None. So those probes admit names for becoming SEC filers LATER. The shipped score is untouched
-/// (`growth_er_weight` 0, every other read goes through a field). On this fixture it is FERG alone
+/// as-of fundamentals" count). So those probes admit names for becoming SEC filers LATER. The shipped
+/// score is untouched (every read goes through a field). On this fixture it is FERG alone
 /// (first 10-K filed 2024-09-25), six samples. The set is asserted EXACTLY: a new leaker reds, and so
 /// does the fix, which should then delete this paragraph and the `fund_without_rows` arm.
 ///

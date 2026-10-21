@@ -3563,8 +3563,8 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // This one loop feeds `by_bucket` and therefore EVERY number the ship rule reads: the TOP_LADDER
     // books, `rank_slice_stats` (rank-1, the h2h GUARD, the disjoint slices) and `book_deciles`.
     //
-    // BYTE-IDENTICAL ON THE SHIPPED LANE, and by two separate properties rather than one. At
-    // `growth_rank_normalise: 0.0` `growth_scores_ranked` returns `growth_score`'s values verbatim.
+    // BYTE-IDENTICAL ON THE SHIPPED LANE, and by two separate properties rather than one.
+    // `growth_scores_ranked` is `growth_score` per name.
     // And the ROW ORDER cannot move either: each bucket's Vec is filled in `samples` order exactly as
     // before, so `value_floor_trim`'s per-bucket Vec is element-for-element what it was — which
     // matters because the rank sort below is STABLE and a reordered tie would silently rebuild a book.
