@@ -344,7 +344,7 @@ pub struct Quote {
     pub capped_cagr: Option<f64>,      // (#3l/#73) endpoint CAGR over the last min(age, life_cagr_max_years) years, via `core::capped_life_cagr`. ONE reader: `picks::life_leg_cagr`, i.e. `growth_min_cagr`'s whole-life reject bar — (#73) repointed this field from the RANK (where (#3l) measured it at -66 edge and shipped it off) to that bar. Filled at the same two sites as `life_cagr` (fetch + backtest_quote), same knob read via the free accessor -> train==serve. None = knob off / <5y of history, and the bar then falls back to the uncapped `life_cagr` it always used -> the pool is unchanged at 0 and young names never move
     pub life_return_pct: Option<f64>,  // whole-life CUMULATIVE real return (%) over that same full history, via `core::life_return`. DISPLAY-ONLY, and deliberately NOT an entry in `perf`: `picks::perf_fill` prints it (marked `≈`) in a long rung the record ALMOST reaches, and putting it in `perf` would hand it to `perf_pct` and therefore to every gate. None = <6mo history / non-positive first close / stub / BACKTEST (never rendered there)
     pub trail_monthly: Vec<f64>,       // (#41) up to 36 trailing MONTH-over-MONTH returns (%), newest last, via `core::monthly_returns_tail`. Sole input to the growth_corr_cap redundancy skip. Built from the DAILY chart live and from the monthly slice in the backtest — the same fn, so a pair's correlation means the same thing in train and serve. Empty = no history / stub -> unjudgeable, and an unjudgeable pair never blocks
-    pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). ≈ life_cagr for Acc funds/non-payers. (#99) NO LONGER DISPLAY-ONLY: with `growth_gate_on_tr_cagr` on, `picks::life_leg_cagr` adds `tr_cagr − life_cagr` to the whole-life reject bar. Filled at BOTH sites since (#99) — fetch and `backtest_quote`, the same `core::tr_life_cagr` over the same `[..=as_of]` slice and the same as-of dividends `div_eur` reads -> train==serve, and the knob is measurable. Knob off = read by the `trcagr` column only, exactly as before. (#572) also scored by the `tr_life` term in `base` when `growth_tr_life_weight`/`growth_tr_life_penalty` are armed (both 0 by default)
+    pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). ≈ life_cagr for Acc funds/non-payers. (#99) its gate uplift was retired (#817); read by the `trcagr` column. Filled at BOTH sites since (#99) — fetch and `backtest_quote`, the same `core::tr_life_cagr` over the same `[..=as_of]` slice and the same as-of dividends `div_eur` reads -> train==serve. (#572) also scored by the `tr_life` term in `base` when `growth_tr_life_weight`/`growth_tr_life_penalty` are armed (both 0 by default)
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
     pub stats_8y: Option<Stats8>,      // (S-8Y) the >8y price stats re-measured on the last 8 years, for the 8Y-pinned diagnostic column ONLY — never read by the live score. None = no history older than 8y (its whole record IS the window, so the full-window stats already are the 8y ones) / stub / backtest
     // (#326) THE MARKET'S OWN STATE at this quote's as-of date — the only two fields on `Quote` that
@@ -2587,34 +2587,6 @@ pub const COUNTRY_TIER: u8 = NASDAQ_TIER - 1;
 /// 0.30%-0.33% (CSNDX.SW, EQAC.SW, PUST.PA, EXXT.DE) STAY OUT, which is the trade ci-settings:4629
 /// already refused once for a sleeve whose funds sat five basis points over.
 pub const NASDAQ_TIER: u8 = HOLD_TIERS as u8 - 1;
-
-/// (#235) The sleeves whose index EXCLUDES US equities BY ITS OWN NAME. Emerging markets, World
-/// ex-USA, Developed Europe, Japan, Pacific ex-Japan and every single-market fund the lane spells —
-/// none holds a US share, so none of them can pay US dividend withholding, so the Irish treaty rate
-/// buys their holders nothing at all.
-///
-/// THIS IS DEFINITIONAL, NOT FITTED, and the distinction is the whole licence for the constant. Each
-/// entry is a property the index asserts in its own title; not one of them was chosen by measuring
-/// which set moved a row. That is what separates it from the per-tier US-WEIGHT table `net_ter`'s doc
-/// refuses to invent — asking "does this index hold ANY US stock" has a published answer, while
-/// asking "what fraction" does not, and `Quote` carries no region weights to answer it with.
-///
-/// THE THREE ABSENTEES ARE DELIBERATE. Tiers 0 (all-world), 1 (developed) and 3 (US) are US-heavy and
-/// obviously keep the charge. `FACTOR_TIER` and `SECTOR_TIER` keep it too — the lane's factor sleeve
-/// is MSCI WORLD quality/value/momentum/equal-weight and its sector sleeve is S&P 500 sectors, both
-/// US-heavy by construction. `SIZE_TIER` is the one GENUINELY MIXED rung (Russell 2000 and MSCI World
-/// Small Cap are US-heavy; MSCI Europe Small Cap holds no US stock at all) and it keeps the charge,
-/// which is the CONSERVATIVE choice because keeping it is today's behaviour. Splitting that sleeve
-/// needs geography this tier does not carry — its family is a SIZE token — and re-deriving it from
-/// the name at a read site is the re-derivation non-negotiable #4 forbids. LEFT OPEN, not guessed.
-const NO_US_TIERS: [u8; 6] = [2, 4, 5, 6, 7, COUNTRY_TIER];
-
-/// (#235) Does a fund in this sleeve hold US shares, and therefore pay US dividend withholding at a
-/// rate its domicile decides? The single reader of [`NO_US_TIERS`], so the set has ONE spelling and
-/// `picks::dom_cost` never re-derives geography at a read site (non-negotiable #4).
-pub fn tier_holds_us_equity(tier: u8) -> bool {
-    !NO_US_TIERS.contains(&tier)
-}
 
 /// (#227) STRUCTURALLY THE INVERSE of the other three optional sleeves, and that is the whole trick.
 /// [`size_sleeve_tier`], [`factor_sleeve_tier`] and [`sector_sleeve_tier`] all fire from INSIDE
@@ -5771,9 +5743,9 @@ pub fn backtest_quote(
     // contributed 0 to every name: a shipped, live-firing score term that was inert everywhere the
     // repo measures. `(#3k)` proved that empirically (zeroing the weight reproduced the 20y-stress
     // grid metric-for-metric) and could only record it. The divisor is now the run's own cadence, so
-    // the stat is a calendar duration on either bar size; the knob gates whether the monthly path
-    // FILLS it, and ships OFF so the seven goldens stay byte-identical (non-negotiable #1).
-    if cadence == 252 || crate::config::underwater_monthly() {
+    // the stat is a calendar duration on either bar size; the monthly path leaves it None so the seven
+    // goldens stay byte-identical (non-negotiable #1); the (#223) knob that could fill it was retired (#817).
+    if cadence == 252 {
         quote.underwater_yrs = longest_underwater_yrs(c, cadence);
     }
     // (#20) the LIVE growth lane excludes a name whose turnover is UNKNOWN (an untradeable/dead listing
@@ -6197,9 +6169,7 @@ mod tests {
 
     /// (#99) tr_life_cagr: life_cagr's total-return twin. Same endpoints, dividends added to the ending
     /// price, so the two are None in exactly the same cases and their DIFFERENCE is the dividend
-    /// contribution in CAGR points — which is the quantity `picks::life_leg_cagr` adds when
-    /// `growth_gate_on_tr_cagr` is on. Zero dividends must reproduce `life_cagr` exactly, or the knob's
-    /// off-arm and its on-arm would differ for non-payers.
+    /// contribution in CAGR points. Zero dividends must reproduce `life_cagr` exactly.
     #[test]
     fn tr_life_cagr_adds_the_payouts_the_price_series_dropped() {
         let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
@@ -9686,41 +9656,7 @@ mod tests {
     assert_eq!(geo_tier_at("vanguard esg global all cap ucits etf (usd) accumulating", 0.0, false, false, 0, 0, 0), None,
         "a tilt word still refuses the fund before any GEO token is consulted");
 
-    // (#235) the withholding gate's tier set, pinned against the SLEEVE each tier actually holds
-    // rather than against the literals — a renumbering that moved a sleeve without moving the set
-    // would otherwise pass silently. Every entry is a claim the index makes in its own name.
-    for (fund, holds_us, why) in [
-        ("ishares core msci world ucits etf usd acc", true, "developed is ~72% US"),
-        ("vanguard s&p 500 ucits etf acc", true, "the US sleeve is 100% US"),
-        ("ishares core msci em imi ucits etf usd acc", false, "emerging holds no US share"),
-        ("xtrackers msci world ex usa ucits etf 1c usd", false, "ex-USA says so in the name"),
-        ("vanguard ftse developed europe ucits etf eur acc", false, "Europe holds no US share"),
-        ("vanguard ftse japan ucits etf usd acc", false, "Japan holds no US share"),
-        ("ishares core msci pacific ex japan ucits etf", false, "Pacific ex-Japan holds no US share"),
-    ] {
-        let tier = geo_tier_at(fund, 0.0, false, false, 0, 0, 0).unwrap_or_else(|| panic!("{fund}: no tier"));
-        assert_eq!(tier_holds_us_equity(tier), holds_us, "{fund}: {why}");
-    }
-    // …the single-country sleeve too, which needs its knob open to place the fund at all.
-    let dax = geo_tier_at("xtrackers dax ucits etf 1c", 0.0, false, false, 9, 0, 0).expect("dax tiers");
-    assert_eq!(dax, COUNTRY_TIER);
-    assert!(!tier_holds_us_equity(dax), "a single-market fund holds no US share — no US token exists");
-    // …and the three rungs that KEEP the charge, tier 8 among them BY DECISION and not by measurement:
-    // its family is a SIZE token carrying no geography, so the sleeve cannot be split without
-    // re-deriving one at a read site. Left charged, which is what shipped.
-    // (#239) …and the Nasdaq-100 sleeve joins them, by MEASUREMENT rather than by decision: the
-    // index is 100% US equity, so leaving it out of the charge would price an Irish-domiciled
-    // tracker as if it held none. `NO_US_TIERS` is deliberately NOT extended — that is this pin.
-    for tier in [SIZE_TIER, FACTOR_TIER, SECTOR_TIER, NASDAQ_TIER] {
-        assert!(tier_holds_us_equity(tier),
-            "tier {tier}: world small-cap, MSCI World factors, S&P 500 sectors and the Nasdaq-100 are all US-heavy");
-    }
-    assert_eq!(
-        (0..HOLD_TIERS as u8).filter(|t| !tier_holds_us_equity(*t)).count(),
-        NO_US_TIERS.len(),
-        "the predicate and the set must not drift apart — one is the only reader of the other",
-    );
-    // …and what it must still REFUSE. The first is the reason `core::COUNTRY` may never hold a bare
+    // What it must still REFUSE. The first is the reason `core::COUNTRY` may never hold a bare
     // `uk` token: 11 funds in the live pond carry an ex-UK spelling, and the token would drag every
     // one of them out of the Europe sleeve. The rest are the populations the sleeve must not reach.
     for (no, why) in [
@@ -10289,13 +10225,9 @@ mod tests {
     let mq = backtest_quote("X", &mdates, &mcloses, &[], mdates.len() - 1, 12, &BTreeMap::new());
     assert!(mq.volatility_pct.is_some());
     assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
-    // (#223) …and `underwater_yrs` stays None on a MONTHLY run while `underwater_monthly` is off,
-    // which is the default and what every golden holds. A monotone riser would fill Some(0.0) the
-    // instant the guard were dropped, so this kills the guard-removal mutant outright. The ON branch
-    // is not reachable from `--lib`: the flag is a process-wide OnceLock read from the ambient
-    // config, the same limitation `vol_daily_equivalent` carries — the goldens and the graded
-    // arm-vs-control run are what cover it.
-    assert_eq!(mq.underwater_yrs, None, "monthly fill is OFF by default (non-negotiable #1)");
+    // (#223) …and `underwater_yrs` stays None on a MONTHLY run (non-negotiable #1). A monotone riser
+    // would fill Some(0.0) the instant the guard were dropped, so this kills the guard-removal mutant outright.
+    assert_eq!(mq.underwater_yrs, None, "a monthly run leaves it unfilled (non-negotiable #1)");
     // (#3j) whole-life CAGR over the SAME `[..=as_of]` slice. THE anti-inert assert: while this stayed
     // None, `use_life_cagr` fell back to the leg in every backtest and any measurement of it would have
     // reported "no change" — a broken knob that looks like a safe flip. 1%/bar over 59 30-day bars
@@ -10334,8 +10266,8 @@ mod tests {
     let dq = backtest_quote("X", &ddates, &dcloses, &[], ddates.len() - 1, 252, &BTreeMap::new());
     let worst = dq.max_daily_1m.expect("a daily backtest_quote must fill max_daily_1m");
     assert!((worst - 20.0).abs() < 1e-6, "the window is the LAST 21 sessions, not one and not all: {worst}");
-    // (#223) the OTHER half of the cadence guard: a DAILY run fills `underwater_yrs` whatever
-    // `underwater_monthly` says, because `cadence == 252` alone admits it. Both live `fetch.rs` call
+    // (#223) the OTHER half of the cadence guard: a DAILY run fills `underwater_yrs` because
+    // `cadence == 252` admits it. Both live `fetch.rs` call
     // sites depend on exactly this, and `growth_underwater_weight` docks the live screen off it.
     // `dcloses` only ever steps UP, so a filled stat is Some(0.0) and an unfilled one is None —
     // which is what makes this a kill rather than a tautology.

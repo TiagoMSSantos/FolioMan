@@ -12011,7 +12011,7 @@ buy_heuristic:
                                  #   a SINGLE-COUNTRY or ESG-crossed fund in this sleeve — that would mean `SECTOR_GEO` or
                                  #   the no-other-NARROW-token conjunct has been widened, and neither should be. Or revert
                                  #   on (#210)'s principle alone, which this entry deliberately leaves standing.
-  hold_domicile_penalty: 0.0     # (#235) BUILT, MEASURED, AND REFUSED ON ITS OWN PRE-REGISTERED STOP
+  # (#817) retired: hold_domicile_penalty: 0.0     # (#235) BUILT, MEASURED, AND REFUSED ON ITS OWN PRE-REGISTERED STOP
                                  # RULE. SHIPS OFF (0.0) = today's comparator, byte-identical. The
                                  # measurement is the deliverable; the code lands so the next round
                                  # re-runs it with one config line instead of rebuilding the probe.
@@ -14340,7 +14340,7 @@ buy_heuristic:
                                  #   grades `mblend` (blend top vs shipped-only top) forward, pre-registered
                                  #   to print REVERT SIGNAL at 12+ lines and 12+ links, mean AND median < 0.
                                  #   false reverts to the shipped-only book.
-  growth_momentum_miss_cap: 0    # (#585) REFUSED 3/3 (probe on 178c06d, universe fund pit/stress
+  # (#817) retired: growth_momentum_miss_cap: 0    # (#585) REFUSED 3/3 (probe on 178c06d, universe fund pit/stress
                                  #   rivals, 8/12/20y): a momentum-half candidate that misses this many
                                  #   buy gates or more is skipped, its slot to the next momentum name.
                                  #   Bar: rival (j) mean AND median >= +0.2 in >= 5/6 cells, and 20y DCA
@@ -14351,7 +14351,7 @@ buy_heuristic:
                                  #   Windows identical to control (pit 6163/2779/1119, stress
                                  #   9015/5078/2541). The many-miss momentum names are part of what the
                                  #   half earns: skipping them lowers the stress book. 0 = off, kept.
-  growth_momentum_keep_age: 0    # (#586) REFUSED 2/2 (probe on 4656393, universe fund pit/stress
+  # (#817) retired: growth_momentum_keep_age: 0    # (#586) REFUSED 2/2 (probe on 4656393, universe fund pit/stress
                                  #   rivals, 8/12/20y): the momentum half keeps age gates the gates-off
                                  #   pond waives; a candidate that misses one is skipped.
                                  #   1 = history (no 5y+ leg; `young` is dead at growth_min_age_years
@@ -14528,7 +14528,7 @@ buy_heuristic:
                                  #   20y mean, by a tenth of a point. k3 is the profit-best qualifier (median >= control in all 6
                                  #   cells, +1.4 on pit 20y), but the bar ranks qualifiers by risk, and no cap bought any risk. KEPT 0 (USER
                                  #   DECISION). `track` decides on scap5; scap1..4 inform.
-  growth_gate_on_tr_cagr: false  # (#99) MEASURED 2026-09-13 AND REFUSED, (#303) at the end of this block. Held OFF,
+  # (#817) retired: growth_gate_on_tr_cagr: false  # (#99) MEASURED 2026-09-13 AND REFUSED, (#303) at the end of this block. Held OFF,
                                  # the price-only bar every golden and every gate receipt in this file
                                  # was measured under. Read with `growth_min_cagr` and `use_adjusted_close`.
                                  #
@@ -14637,7 +14637,7 @@ buy_heuristic:
                                  #   CAT/TXN/VRTX on 7 of 13 buckets. The flag stays false. Do not re-ask it under soft
                                  #   gates. The price-only lean (edge a) is at most the payers' yield, ~3-6/yr for these
                                  #   three. It cannot close the ~12-14/yr gap between the names swapped.
-  backtest_calendar_cadence: false # (#117) MEASURED 2026-08-22 AND REFUSED. Held at false, which is
+  # (#817) retired: backtest_calendar_cadence: false # (#117) MEASURED 2026-08-22 AND REFUSED. Held at false, which is
                                  #   the fixed 12/36/6 bar-count triple (and the daily path's
                                  #   252/750/126) that every golden in tests/fixture and every fitted
                                  #   receipt in this file was measured under. The defect below is REAL
@@ -18383,7 +18383,7 @@ buy_heuristic:
                                  #   n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +. Candidate lane run at 0.3 same-batch:
                                  #   edge +25.5->+27.5, winsorized +15.7->+17.7, rho intact +0.12, OOS -0.03|+0.26 -> -0.02|+0.27,
                                  #   worst era -11.7->-4.8 (nothing degraded). 0 = off.
-  underwater_monthly: false      # (#223) MEASURED 2026-09-03 and REFUSED. Gates whether `backtest_quote`
+  # (#817) retired: underwater_monthly: false      # (#223) MEASURED 2026-09-03 and REFUSED. Gates whether `backtest_quote`
                                  #   fills `underwater_yrs` on a MONTHLY-cadence run. OFF = the daily-only
                                  #   blank (#3k) described, which is what every golden and every shipped
                                  #   verdict holds; the seven fixtures are byte-identical at this default,
@@ -21036,7 +21036,7 @@ buy_heuristic:
   growth_leg_dock: 0.0          # (#566) REFUSED (receipt above): only 0.85 passed stocks, below the plain 0.8 rung. p > 0 docks a score x p^k, k = how many of the 1Y/2Y/5Y/8Y/10Y/20Y
   #  legs lie past the name's longest one, and REPLACES both record-length charges: trust_factor reads 1.0 and a waived
   #  history/young gate leaves growth_gate_soft's n. Graded per class on the `BOOK stock|etf|crypto b<bucket>` lines.
-  growth_soft_life_hard: 0.0    # (#568) REFUSED 2026-10-13. 1 = a stock under the whole-life CAGR floor (`cagr-life`)
+  # (#817) retired: growth_soft_life_hard: 0.0    # (#568) REFUSED 2026-10-13. 1 = a stock under the whole-life CAGR floor (`cagr-life`)
   #  stays hard while growth_gate_soft softens its other gates. 0 = cagr-life is waivable like every other knob gate.
   #  PRE-REGISTERED 2026-10-13, before any run: arms base (growth_gate_soft 0), ctl (shipped), life (this knob 1), one batch at
   #  one commit; pit 1 2 5 8 12 20 + stress `1 2 5` | `8 12 20`, `universe fund`. Stock BOOK cells on the (#566) paired ruler.
@@ -21049,9 +21049,9 @@ buy_heuristic:
   #  8/12/20y books run empty in 15 of 59-83 buckets (44/59, 60/75, 68/83 vs 59/75/83), so the paired median reads 0.
   #  So a hard life floor loses the 1-2y books and empties stress buckets. The knob stays 0. Do not re-ask
   #  without a mechanism that keeps the stress books full.
-  growth_hard_life_floor: 0.0   # (#576) > 0 = a STOCK whose whole-life CAGR (`picks::life_leg_cagr`) is under this many %/yr
+  # (#817) retired: growth_hard_life_floor: 0.0   # (#576) > 0 = a STOCK whose whole-life CAGR (`picks::life_leg_cagr`) is under this many %/yr
   #  stays hard while growth_gate_soft softens its other gates. Missing data passes. 0 = off, the shipped lane bit for bit.
-  growth_hard_loss: false       # (#576) true = a STOCK with trailing EPS <= 0 (`eps_ttm`, as-of in the backtest) stays hard
+  # (#817) retired: growth_hard_loss: false       # (#576) true = a STOCK with trailing EPS <= 0 (`eps_ttm`, as-of in the backtest) stays hard
   #  under growth_gate_soft. No EPS figure passes. false = off, the shipped lane bit for bit.
   #── (#576) PRE-REGISTERED 2026-10-14, before any run — A HARD FLOOR FOR THE WEAKEST SOFT ADMITS ──
   #  WHY: on the live page (data.json 2026-10-14 09:22Z) 22 of the 26 Stocks rows fail at least one gate and rank only
@@ -21099,7 +21099,7 @@ buy_heuristic:
   #  admits on today's page are not what drags the replay; the f^n dock is already charging them. Do not re-ask a
   #  hard life floor or a hard loss rule without a mechanism that keeps the #1 slot; the forward `track` grades the
   #  live soft admits from ~2027-09.
-  growth_soft_drop_misses: 0    # (#582) k > 0 = a STOCK that misses k or more knob gates (the n growth_gate_soft's f^n
+  # (#817) retired: growth_soft_drop_misses: 0    # (#582) k > 0 = a STOCK that misses k or more knob gates (the n growth_gate_soft's f^n
   #  docks; `cagr` and `cagr-life` count 2) gets no score and leaves the table. 0 = off, the shipped lane bit for bit.
   #── (#582) REFUSED 2026-10-14 (pre-registered before any run) — DROP A STOCK THAT MISSES TOO MANY GATES ──
   #  WHY: the owner asks again why NVDA (0 misses) is out while J.B. Hunt (4 misses), Delta (3) and Visa (3) rank. Each
@@ -21143,7 +21143,7 @@ buy_heuristic:
   #  are 3 -> 2 (pit 8y, 12y under cap 3), 0 -> 1 (stress 1y, 2y) and unchanged elsewhere. The brake keeps NVDA out,
   #  not a weak rival. Cap 3 is the near miss (bar 3 only); a re-open needs the forward `track` (~2027-09), not a
   #  re-run of this grid.
-  growth_soft_hard_gates: 0     # (#797) bit mask, 1 = range, 2 = 5Y+, 4 = stretch: a STOCK that misses a gate whose bit
+  # (#817) retired: growth_soft_hard_gates: 0     # (#797) bit mask, 1 = range, 2 = 5Y+, 4 = stretch: a STOCK that misses a gate whose bit
   #  is set gets no soft dock and stays out, as under hard gates; its misses on unset gates still dock x f. 0 = off, the
   #  shipped lane bit for bit.
   #── (#797) ADDED 2026-10-20, OFF — KEEP ONE GATE HARD UNDER THE SOFT DOCK ──
@@ -21177,7 +21177,7 @@ buy_heuristic:
   #  arm wins on either reading.
   #  UNGRADED: bit 4 (stretch). The x0.05 brake floor already keeps a stretched name out of the top 10, and (#574)
   #  found the stretch arms inert. A re-ask runs it alone, pre-registered first.
-  growth_red_flag_dock: 1.0     # (#730) < 1.0 = a name's score x this^(its (#729) red-flag count, L 2 B I R D, as-of in the
+  # (#817) retired: growth_red_flag_dock: 1.0     # (#730) < 1.0 = a name's score x this^(its (#729) red-flag count, L 2 B I R D, as-of in the
   #  backtest). No SEC read, no current filing (over 550 days) or no flag = x1.0. 1.0 = off, the shipped lane bit for bit.
   #── (#730) REFUSED 2026-10-18 (pre-registered before any run) — DOCK A NAME PER RED FLAG ──
   #  WHY: the owner asks to punish assets that carry red flags. This RE-OPENS on purpose what the (#729) receipt closed
@@ -21217,7 +21217,7 @@ buy_heuristic:
   #  book barely moves (stress 8y +4.6 (+4.3) -> +4.5 (+4.5)): the cost lands in the blend's score half. The survivors
   #  the dock evicts paid more than it saved, and dead names cannot show the other side (the CAVEAT). A re-open needs
   #  the forward `redf` track row (12 lines + 12 links), not a re-run of this grid; do not re-ask a red-flag score term.
-  growth_overext_backed_floor: 0.0 # (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock
+  # (#817) retired: growth_overext_backed_floor: 0.0 # (#577) > 0 = the overextension brake's floor for an EARNINGS-BACKED stock
   #  (`picks::earnings_backed`: 5y chained EPS CAGR, as-of in the backtest, at least the 5y price CAGR, so the P/E did
   #  not expand over the run), in place of growth_overext_floor 0.05. Either number missing = the normal brake (funds,
   #  coins, a loss year in the EPS chain, no 5Y leg). 0.0 = off, the shipped lane bit for bit.
@@ -21271,7 +21271,7 @@ buy_heuristic:
   #  It lifts stretched names whose earnings merely kept up, and those crowd out the strongest names.
   #  Do not re-ask a brake waiver keyed on EPS-vs-price growth. A re-open needs a mechanism that reaches NVDA's
   #  windows (its EPS chain lags price at the start of each run), or the forward `track` from ~2027-09.
-  growth_overext_trend_adjust: false # (#579) true = a STOCK's overextension brake reads only the stretch ABOVE what
+  # (#817) retired: growth_overext_trend_adjust: false # (#579) true = a STOCK's overextension brake reads only the stretch ABOVE what
   #  its own 8Y price CAGR explains: excess = max(0, above_MA - picks::steady_above_ma_pct(8Y CAGR)), where a steady
   #  compounder at g %/yr sits rT/(1-e^-rT) - 1 above its 200-week mean (r = ln(1+g), T = 1000/252 years): 6%/yr +12%,
   #  20%/yr +41%, 50%/yr +101%. The cap 100 and floor 0.05 then apply to the excess. No 8Y leg, funds and coins = the
@@ -21318,7 +21318,7 @@ buy_heuristic:
   #  (#574)/(#575) did. Short horizons gain because a 1-2y window still rides the run.
   #  Do not re-ask "subtract the name's own pace from the brake". A re-open needs the forward `track` (~2027-09), or a
   #  mechanism that tells a blow-off from a compounder by something other than its past price pace.
-  growth_overext_peg_waive: 0.0 # (#581) > 0 = a STOCK priced at or under this PEG (fund.peg_yield >= 100/ceiling, as-of
+  # (#817) retired: growth_overext_peg_waive: 0.0 # (#581) > 0 = a STOCK priced at or under this PEG (fund.peg_yield >= 100/ceiling, as-of
   #  in the backtest) skips both the overextension brake and the growth_max_above_ma +150% stretch gate
   #  (`picks::peg_waived`). No PEG (loss-maker, no filings, every fund and coin) = braked and gated as before. 0.0 = off,
   #  the shipped lane bit for bit.
@@ -21362,7 +21362,7 @@ buy_heuristic:
   #  the ctl book (KLAC, AMD, LRCX, NVDA +292%) books +35.1 pts/yr; the arm swaps in VST, JBL, PHM, DECK, BX, APO, PGR
   #  and books +4.7. Floor (#574), cap (#575), EPS-backed waiver (#577), own-pace (#579) and PEG-keyed waiver (#581) are
   #  all graded now. Do not re-ask a valuation-keyed brake waiver; a re-open needs the forward `track` (~2027-09).
-  growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
+  # (#817) retired: growth_peg_taper_k: 0.0       # (#550) SOFT PEG CEILING: 0 = growth_max_peg stays the hard wall above. k > 0 keeps a name priced
   #  over the ceiling and multiplies its score by (growth_max_peg / PEG)^k: near 1.6 a name loses about k% of score per 1% of PEG
   #  over it. PEG 1.67 (AAPL, MSFT) keeps x0.96 / x0.92 / x0.84 at k = 1 / 2 / 4, PEG 3.0 (AMZN) x0.53 / x0.28 / x0.08.
   #── (#550) REFUSED 2026-10-11 — TAPER INSTEAD OF WALL ABOVE growth_max_peg ──
@@ -21555,12 +21555,12 @@ buy_heuristic:
                                  #   and cross-checks against the tool's own NUPL footer. The GRADING did not, and
                                  #   cannot: the backtest still scores zero crypto rows. So `crypto_max_mvrv` ships on
                                  #   judgement, and the sentence above still stands for anything built on fee revenue.
-  growth_min_net_margin: 0.0     # (#38) net-margin floor on `fund.net_margin`. MEASURED AND REJECTED, kept at 0 with the
+  # (#817) retired: growth_min_net_margin: 0.0     # (#38) net-margin floor on `fund.net_margin`. MEASURED AND REJECTED, kept at 0 with the
                                  #   receipt so it is not re-proposed: 5/10/15 all cost edge or era-stability, and combined
                                  #   with growth_max_peg it cancels that gate entirely and turns the newest era negative.
                                  #   Single-digit net margin is an INDUSTRY fact (retail, distribution, industrials), not a
                                  #   quality signal. Raising this cuts sectors, not bad companies. 0 = off.
-  growth_max_margin_swing: 0.0   # (#39) MEASURED, EDGE-POSITIVE, AND DELIBERATELY NOT SHIPPED — kept at 0 with the receipt
+  # (#817) retired: growth_max_margin_swing: 0.0   # (#39) MEASURED, EDGE-POSITIVE, AND DELIBERATELY NOT SHIPPED — kept at 0 with the receipt
                                  #   so the good numbers don't get it re-proposed. Rejects on net-margin std, which has no
                                  #   direction, so it cuts NVDA (36%->56%) and ANET (29%->39%) while CF and MPC survive: it
                                  #   punishes margin EXPANSION as readily as cyclicality. Needs downside-only dispersion, or
@@ -21668,25 +21668,25 @@ buy_heuristic:
   # is graded-inert, every arm sat inside it, and the ladder above is a like-for-like comparison.
   # This CONFIRMS the determinism claim this file already makes; run-order drift was the first thing
   # suspected when the ladder came out monotone, and it is not the explanation.
-  growth_max_dilution_pct: 0.0   # (P1a) reject a filer whose as-of 1y share count grew more than this %.
+  # (#817) retired: growth_max_dilution_pct: 0.0   # (P1a) reject a filer whose as-of 1y share count grew more than this %.
                                  #   Reads `-fund.buyback_yield` (that field is sign-flipped, + = shrinking),
                                  #   so a 3% share raise reads +3.0 here. Serial issuance is how a compounder's
                                  #   per-share result is taken from the holder, and no margin or growth term in
                                  #   the lane can see it. SWEPT AND REFUSED at every rung — see (#156)
                                  #   directly above. Do not re-run this ladder without a new reason.
                                  #   The ladder it ran was off / 10 / 5 / 2 / 0. 0 = off.
-  growth_min_interest_cover: 0.0 # (P1b) reject a filer whose as-of operating income ÷ interest expense is
+  # (#817) retired: growth_min_interest_cover: 0.0 # (P1b) reject a filer whose as-of operating income ÷ interest expense is
                                  #   under this ×. `fund.interest_cover` is None when NO interest expense was
                                  #   filed, so a debt-free balance sheet reads NEUTRAL and passes — deliberate:
                                  #   scoring "carries no debt" as "cannot service its debt" inverts the gate.
                                  #   UNFITTED. Suggested ladder: off / 2 / 3 / 5 / 8. 0 = off.
-  growth_min_fcf_margin: -1e9    # (P1c) reject a filer whose as-of (op cash flow − capex) ÷ revenue is under
+  # (#817) retired: growth_min_fcf_margin: -1e9    # (P1c) reject a filer whose as-of (op cash flow − capex) ÷ revenue is under
                                  #   this %. NOTE THE OFF SENTINEL: it is -1e9, NOT the house 0, because a bar
                                  #   of exactly 0 ("reject anyone burning cash") is the single most interesting
                                  #   setting this knob has — a knob whose off-state collides with its best
                                  #   candidate value cannot be swept at all.
                                  #   UNFITTED. Suggested ladder: off / -10 / 0 / 5 / 10. -1e9 = off.
-  growth_min_net_cash_rev: -1e9  # (P1d) reject a filer whose as-of (cash − debt) ÷ revenue is under this %.
+  # (#817) retired: growth_min_net_cash_rev: -1e9  # (P1d) reject a filer whose as-of (cash − debt) ÷ revenue is under this %.
                                  #   Same -1e9 off sentinel and the same reason as P1c: negative values are
                                  #   meaningful here (a levered balance sheet), so 0 is a legitimate bar.
                                  #   Revenue-scaled rather than EBITDA-scaled so loss-makers stay defined

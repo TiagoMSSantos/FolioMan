@@ -9325,7 +9325,7 @@ fn eu_chart_ok(raw: &RawValue, max_weekly_rate: f64, max_flat_years: f64) -> boo
     let start = core::splice_trim_start(&dates, &closes, max_weekly_rate)
         .max(core::flat_trim_start(&dates, &closes, max_flat_years));
     let kept = &bars[start..];
-    // seconds, so 365.25 days — the same year `commands::backtest::walk_params` counts in
+    // seconds, so 365.25 days — a Julian year
     let span_years = match (kept.first(), kept.last()) {
         (Some(a), Some(b)) => (b.0 - a.0) as f64 / 31_557_600.0,
         _ => 0.0,
