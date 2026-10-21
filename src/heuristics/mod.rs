@@ -6,5 +6,7 @@
 //! defaults to off, and its own page table. It reads quotes or charts and never writes a score the
 //! lanes read, so the 20y goldens stay byte-identical.
 
+// reads `fetch::Chart`, which the wasm page engine does not build
+#[cfg(not(target_family = "wasm"))]
 pub mod intraday;
 pub mod social;
