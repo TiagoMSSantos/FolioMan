@@ -22464,6 +22464,19 @@ social_heuristic:
 # The page table ranks each market on the key with the best net t, K1 in both (US -19.54 against K3's
 # -19.56; EU -8.03), and its header says shadow, NOT a buy signal, with these numbers. `track` grades the
 # journalled top 10s forward; a re-ask needs a new key with a gross t >= 3 here first, not a cost cut.
+#
+# (#811) SHIPPED 2026-10-21 as a shadow table, per the (#809) decision. `screen` ranks each market's top
+# 10 on key `intraday_key` for the session dated by its journal line (bars completed before that date,
+# fetched on a 3-month range), publishes it as the page's last table, Intraday (shadow, NOT a buy signal),
+# and journals the two books as `intra` (market, ticker) pairs on the day's first line. `track` grades each
+# book on the open-to-close bar of the session it ranked for, net of the same 50/20 bp round trip, one
+# row per market. 0 = off, the code default: screen fetches nothing for it and the table stays empty.
+# Further caveats of the live table: the session may already be open or over when the page is read; the
+# SESSION column shows each exchange's local hours, not the time the page was built; a halted name ranks
+# on its last bars; a name with no bar for the graded session drops out of that day's track grade; the
+# US list is today's S&P 500, read from the cached membership history. Nothing here reaches BUY NOW,
+# `size`, `trade` or a broker.
+intraday_key: 1
 
 # --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
 # How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources

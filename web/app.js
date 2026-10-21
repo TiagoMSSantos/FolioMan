@@ -179,7 +179,7 @@ function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
   const all = document.getElementById("allrows").checked;
   for (const t of document.querySelectorAll(".scroll table")) {
-    if (t.closest("#inflation, #bonds")) continue;
+    if (t.closest("#inflation, #bonds, #intraday")) continue; // (#811) every intraday row shows, unfiltered
     const id = t.closest("div[id]").id;
     const cap = id === "exposure" ? Infinity : n;
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
@@ -472,6 +472,10 @@ function render(data, prev) {
   if (data.upcoming) {
     document.getElementById("upcoming").replaceChildren(table(data.upcoming, "(no $1B+ US IPO filed, expected or watched)", help.upcoming));
   }
+  // (#811) CI's Yahoo daily bars, so an upload keeps CI's table like the shadow tables above
+  if (data.intraday) {
+    document.getElementById("intraday").replaceChildren(table(data.intraday, "(off, or no name ranked)", help.intraday));
+  }
   // (#456) Only CI's payload carries it, and unlike the shadow tables it describes the BUY% book, which
   // an upload changes: the page has no fund holdings to look a new book through, so it says so.
   document
@@ -498,7 +502,7 @@ function render(data, prev) {
   chooser(Math.max(1, ...sizes), secondShortest(sizes));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, help);
@@ -532,6 +536,7 @@ function glossary(data, help) {
     ["Braked", "braked", [data.braked]],
     ["REITs and SIGIs", "reits", [data.reits]],
     ["Upcoming IPOs", "upcoming", [data.upcoming]],
+    ["Intraday", "intraday", [data.intraday]],
   ]) {
     const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];
     const known = heads.filter((h) => help[part]?.[h]);

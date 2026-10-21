@@ -159,6 +159,11 @@ pub struct Snapshot {
     /// Empty with the blend off. Same serde contract as `sized`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shipped: Vec<(String, Option<f64>)>,
+    /// (#811) `(market, ticker)` for the page's Intraday table: each market's top `heuristics::intraday::BOOK`
+    /// for the session on this line's date. No prices: [`intra_section`] grades each book on that session's
+    /// open-to-close bar. Empty with `intraday_key` 0. Same serde contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intra: Vec<(String, String)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -1368,6 +1373,28 @@ fn mblend_top(rows: &[(String, Option<f64>)]) -> Rows<'_> {
     equal(rows).into_iter().filter(|(t, ..)| !crate::picks::is_currency_quoted(t)).take(BOOK).collect()
 }
 
+/// (#811) THE INTRADAY SHADOW: each market's journalled Intraday book graded on the open-to-close session
+/// it ranked for, net of the (#809) round trip. `charts` holds the daily bars of every journalled name.
+fn intra_section(snaps: &[Snapshot], charts: &std::collections::HashMap<String, fetch::Chart>, today: chrono::NaiveDate) -> String {
+    use crate::heuristics::intraday;
+    let mut out = String::from(
+        "\n  (#811) INTRADAY shadow: the page's Intraday book bought at the open, sold at the close, equal weight.\n  \
+         NOT a buy signal: every key lost net of cost on the (#810) ruler.",
+    );
+    for (market, cost) in [("US", intraday::COST_BPS_US), ("EU", intraday::COST_BPS_EU)] {
+        let lines: Vec<(chrono::NaiveDate, Vec<&str>)> = snaps
+            .iter()
+            .filter_map(|s| {
+                let book = s.intra.iter().filter(|(m, _)| m == market).map(|(_, t)| t.as_str()).collect();
+                Some((chrono::NaiveDate::parse_from_str(&s.date, "%Y-%m-%d").ok()?, book))
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&intraday::track_line(market, &intraday::graded(&lines, charts, today), cost));
+    }
+    out
+}
+
 /// (#584) THE BLEND SHADOW: each line's blended book against the shipped-only book of the same line, the
 /// first [`BOOK`] non-coin names of `rows` and of `shipped`, equal-weight. The backtest graded the blend
 /// in-sample (see ci-settings `growth_momentum_interleave`); this grades it on prices that did not exist
@@ -1750,6 +1777,19 @@ pub async fn run(args: Vec<String>) {
     println!("{}", soc_section(&snaps, today, &px_now, spx_now)); // (#538)
     println!("{}", scap_section(&snaps, today, &px_now, spx_now)); // (#557)
     println!("{}", mblend_section(&snaps, today, &px_now, spx_now)); // (#584)
+    // (#811) the Intraday books, on the daily bars of every name a line journalled
+    let intra: std::collections::BTreeSet<&str> = snaps.iter().flat_map(|s| s.intra.iter().map(|(_, t)| t.as_str())).collect();
+    if !intra.is_empty() {
+        use futures::stream::StreamExt;
+        let (client, urls) = (&client, &settings.urls);
+        let charts: std::collections::HashMap<String, fetch::Chart> = futures::stream::iter(intra)
+            .map(|t| async move { Some((t.to_string(), fetch::fetch_history(client, urls, t).await?)) })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        println!("{}", intra_section(&snaps, &charts, today));
+    }
     println!("{}", chain_section(&snaps)); // (#336)
     if push {
         let delivered = fetch::push(
@@ -1779,7 +1819,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(),
         }
     }
 
@@ -2396,6 +2436,36 @@ mod tests {
         assert!(row.contains(" 1 line(s)") && row.contains("-125.0pp"), "{row}");
         assert!(!out.contains("REOPEN"), "{out}");
         assert!(out.contains("1 of 1 run(s)"), "{out}");
+    }
+
+    /// (#811) each market grades only its own journalled names, on the session the line ranked for, net of
+    /// that market's cost; an old line parses and grades nothing.
+    #[test]
+    fn intra_section_grades_each_market_on_its_session() {
+        let d = |i: u32| chrono::NaiveDate::from_ymd_opt(2026, 1, i).unwrap();
+        let bars = |o: &[f64], c: &[f64]| fetch::Chart {
+            dates: vec![d(1), d(2)],
+            closes: c.to_vec(),
+            volumes: vec![1.0; 2],
+            opens: o.to_vec(),
+            highs: c.to_vec(),
+            lows: o.to_vec(),
+            currency: "EUR".into(),
+            name: String::new(),
+            instrument_type: String::new(),
+            divs: vec![],
+            splits: vec![],
+        };
+        let charts = std::collections::HashMap::from([("A".to_string(), bars(&[100.0; 2], &[102.0, 101.0])), ("B".to_string(), bars(&[100.0; 2], &[103.0; 2]))]);
+        let bare = snap("2026-01-01", None, &[]);
+        assert_eq!(serde_json::from_str::<Snapshot>(&serde_json::to_string(&bare).unwrap()).unwrap().intra, Vec::new(), "an old line parses");
+        let a = Snapshot { intra: vec![("US".into(), "A".into()), ("EU".into(), "B".into())], ..bare.clone() };
+        let b = Snapshot { intra: vec![("US".into(), "A".into())], ..snap("2026-01-02", None, &[]) };
+        let out = intra_section(&[a, b], &charts, d(3));
+        // US: A's +2% and +1% sessions, 50 bp round trip; EU: B's one session, so no t yet
+        assert!(out.contains("US: 2 sessions 2026-01-01..2026-01-02  book net +100.0 bp/day (gross +150.0)  t +2.00"), "{out}");
+        assert!(out.contains("EU: 1 session(s) graded"), "{out}");
+        assert!(intra_section(&[bare], &charts, d(3)).contains("US: 0 session(s) graded"));
     }
 
     /// (#557) Each `scapK` row rebuilds the top-[`BOOK`] under sector cap K off the line's own tags: at

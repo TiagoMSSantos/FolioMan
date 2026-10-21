@@ -12,12 +12,13 @@
 //! `MIN_TURNOVER_EUR`: the US side is the S&P 500 as it stood each day, the EU side the static
 //! `EU_POND`. The book is the top `BOOK` by key, equal weight, net of a round-trip cost per market.
 //! `backtest N intraday` grades every key on 10y of daily bars; nothing here reaches a lane, BUY NOW or
-//! the 20y backtest.
+//! the 20y backtest. (#811) With `intraday_key` set, `screen` prints today's top `BOOK` per market as the
+//! page's Intraday table, a shadow, and journals it; `track` grades each journalled book on its session.
 
 use crate::core;
 use crate::fetch::Chart;
 use chrono::NaiveDate;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// How many names each market's book holds.
 pub const BOOK: usize = 10;
@@ -188,6 +189,81 @@ pub fn report(market: &str, k: u8, days: &[Day], cost_bps: f64) -> String {
         s.h2 * 1e4,
         all * 1e4,
         if passes(&s, all) { "PASS" } else { "FAIL" }
+    )
+}
+
+/// (#811) Today's book on key `k`: the members in the index today that clear the floor, ranked on the
+/// sessions completed before `today`, top `BOOK` (fewer when fewer rank), each with its key.
+/// shortcut: a halted name ranks on its last bars; the page's DATA TO cell prints how old they are.
+pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f64, &'a Chart)> {
+    let mut v: Vec<(&str, f64, &Chart)> = pond
+        .iter()
+        .filter(|(_, c, fx, spans)| spans.is_none_or(|s| core::sp500_member_at(s, today)) && liquid(c, completed(c, today), *fx))
+        .filter_map(|&(tk, c, _, _)| Some((tk, key(k, c, completed(c, today))?, c)))
+        .collect();
+    by_key(&mut v);
+    v.truncate(BOOK);
+    v
+}
+
+/// (#811) The page rows for one market's [`rank`] book: position, market, ticker, name, key, the
+/// session's hours on the exchanges' own clock, and the last completed bar the key read.
+pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
+    use serde_json::json;
+    let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
+    book.iter()
+        .enumerate()
+        .map(|(n, (tk, x, c))| {
+            vec![
+                json!(["RANK", (n + 1).to_string()]),
+                json!(["MARKET", market]),
+                json!(["TICKER", tk]),
+                json!(["NAME", c.name]),
+                json!(["KEY", format!("{:+.2}%", x * 100.0), null, KEYS[usize::from(k) - 1]]),
+                json!(["SESSION", hours]),
+                json!(["DATA TO", c.dates[completed(c, today) - 1].to_string()]),
+            ]
+        })
+        .collect()
+}
+
+/// (#811) Each journalled book graded on the session it ranked for. For a line dated `D`, each name's
+/// first bar dated on or after `D` and before `today` (a bar dated today may still be trading); the
+/// book's mean open-to-close return, dated by the earliest of those bars. Two lines that reach the same
+/// session (a weekend's) grade it once, from the first. A name with no such bar drops out.
+pub fn graded(lines: &[(NaiveDate, Vec<&str>)], charts: &HashMap<String, Chart>, today: NaiveDate) -> Vec<(NaiveDate, f64)> {
+    let mut by = BTreeMap::new();
+    for (day, book) in lines {
+        let rs: Vec<(NaiveDate, f64)> = book
+            .iter()
+            .filter_map(|t| {
+                let c = charts.get(*t)?;
+                let i = completed(c, *day);
+                let date = *c.dates.get(i).filter(|d| **d < today)?;
+                Some((date, session_return(c, i)?))
+            })
+            .collect();
+        if let Some(date) = rs.iter().map(|r| r.0).min() {
+            by.entry(date).or_insert_with(|| mean(&rs.iter().map(|r| r.1).collect::<Vec<_>>()));
+        }
+    }
+    by.into_iter().collect()
+}
+
+/// (#811) One `track` line per market: the graded sessions net of the round trip, in basis points.
+pub fn track_line(market: &str, days: &[(NaiveDate, f64)], cost_bps: f64) -> String {
+    let net: Vec<f64> = days.iter().map(|d| d.1 - cost_bps / 1e4).collect();
+    let Some(s) = stats(&net) else {
+        return format!("  {market}: {} session(s) graded; the t needs 2", days.len());
+    };
+    format!(
+        "  {market}: {} sessions {}..{}  book net {:+.1} bp/day (gross {:+.1})  t {:+.2}",
+        s.n,
+        days[0].0,
+        days[days.len() - 1].0,
+        s.mean * 1e4,
+        s.mean * 1e4 + cost_bps,
+        s.t
     )
 }
 
@@ -379,5 +455,87 @@ mod tests {
         assert!(line.contains("t +12.25") && line.contains("all-names gross +0.0") && line.ends_with("-> PASS"), "{line}");
         assert!(report("EU", 3, &days, 70.0).ends_with("-> FAIL"));
         assert_eq!(report("EU", 2, &days[..1], 20.0), "  EU K2 calm range   no session with 10+ ranked names");
+    }
+
+    /// The walk's twelve names ranked live: K3 reads the bars before today, members today only.
+    #[test]
+    fn the_live_book_is_the_top_ten_members_today() {
+        let names: Vec<String> = (0..12).map(|n| format!("N{n:02}")).collect();
+        let charts: Vec<Chart> = (0..12)
+            .map(|n| {
+                let mut c = [100.0 * (1.0 + n as f64 / 1000.0); 31];
+                c[30] = 100.0 * (1.0 + n as f64 / 100.0);
+                chart(&[100.0; 31], &c, 1e5)
+            })
+            .collect();
+        let (out, open, thin) = ([(d(0), Some(d(31)))], [(d(31), None)], chart(&[100.0; 31], &[100.0; 31], 1.0));
+        let mut pond: Vec<Member> = names.iter().zip(&charts).map(|(t, c)| (t.as_str(), c, 1.0, None)).collect();
+        let book = rank(3, &pond, d(31));
+        let tickers = |b: &[(&str, f64, &Chart)]| b.iter().map(|x| x.0).collect::<Vec<_>>().join(" ");
+        assert_eq!(tickers(&book), "N11 N10 N09 N08 N07 N06 N05 N04 N03 N02");
+        assert!((book[0].1 - key(3, &charts[11], 31).unwrap()).abs() < 1e-15);
+        assert_eq!(rank(3, &pond, d(30))[0].0, "N11", "bar 30 dated today is not read, and 30 bars still rank");
+        assert!(rank(3, &pond, d(29)).is_empty(), "29 bars is short of the floor's window");
+        // out of the index today, under the floor, or no key: dropped, and fewer than ten still rank
+        pond[11].3 = Some(&out);
+        pond[10].1 = &thin;
+        assert_eq!(tickers(&rank(3, &pond, d(31))), "N09 N08 N07 N06 N05 N04 N03 N02 N01 N00");
+        pond[11].3 = Some(&open);
+        assert_eq!(rank(3, &pond, d(31))[0].0, "N11");
+        assert_eq!(rank(1, &pond[..3], d(31)).len(), 3, "K1 reads 22 bars, so all three rank");
+        assert!(rank(4, &pond, d(31)).is_empty());
+    }
+
+    #[test]
+    fn a_page_row_carries_the_key_session_and_last_bar() {
+        let mut c = wavy(31);
+        c.name = "Acme".into();
+        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], d(31));
+        assert_eq!(
+            serde_json::json!(rows),
+            serde_json::json!([
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"]],
+            ])
+        );
+        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], d(20));
+        assert_eq!((eu[0][1][1].as_str(), eu[0][4][3].as_str()), (Some("EU"), Some("K1 tug of war")));
+        assert_eq!((eu[0][5][1].as_str(), eu[0][6][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-20")));
+        // (#452) the page's hover text keys on exactly these headers
+        let heads: std::collections::BTreeSet<&str> = rows[0].iter().map(|c| c[0].as_str().unwrap()).collect();
+        assert_eq!(crate::picks::web_help(false, &[])["intraday"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads);
+    }
+
+    /// A weekend line and the Monday line after it reach one session; the first one grades it.
+    #[test]
+    fn a_journalled_book_grades_on_the_session_it_ranked_for() {
+        let mut a = chart(&[100.0; 4], &[101.0, 102.0, 103.0, 104.0], 1.0);
+        a.dates = vec![d(0), d(3), d(4), d(5)];
+        let mut b = chart(&[100.0; 2], &[150.0, 200.0], 1.0);
+        b.dates = vec![d(3), d(4)];
+        let mut c = chart(&[100.0], &[110.0], 1.0);
+        c.dates = vec![d(5)];
+        let charts: HashMap<String, Chart> = [("A", a), ("B", b), ("C", c)].map(|(t, c)| (t.to_string(), c)).into();
+        let lines = [(d(1), vec!["A", "Z"]), (d(2), vec!["B"]), (d(4), vec!["B", "C"]), (d(5), vec!["A"]), (d(9), vec!["A"])];
+        let near = |got: Vec<(NaiveDate, f64)>, want: &[(NaiveDate, f64)]| {
+            assert_eq!(got.len(), want.len(), "{got:?}");
+            for (g, w) in got.iter().zip(want) {
+                assert!(g.0 == w.0 && (g.1 - w.1).abs() < 1e-12, "{got:?}");
+            }
+        };
+        near(graded(&lines, &charts, d(6)), &[(d(3), 0.02), (d(4), 0.55), (d(5), 0.04)]);
+        // a bar dated today may still be trading: C's drops out, and A's d(5) session waits
+        near(graded(&lines, &charts, d(5)), &[(d(3), 0.02), (d(4), 1.0)]);
+        assert!(graded(&[], &charts, d(6)).is_empty());
+    }
+
+    #[test]
+    fn the_track_line_is_net_of_cost_in_bp() {
+        let days = [(d(0), 0.0060), (d(1), 0.0062), (d(2), 0.0058), (d(3), 0.0060)];
+        assert_eq!(
+            track_line("US", &days, 50.0),
+            "  US: 4 sessions 2026-01-01..2026-01-04  book net +10.0 bp/day (gross +60.0)  t +12.25"
+        );
+        assert_eq!(track_line("EU", &days[..1], 20.0), "  EU: 1 session(s) graded; the t needs 2");
     }
 }

@@ -19,7 +19,7 @@
   <nav class="sub" aria-label="sections">
     <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
-    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Braked</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a>
+    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Braked</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-intraday">Intraday</a>
   </nav>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
@@ -241,6 +241,27 @@
     — = the series is shorter (euro FX starts in 1999, Italy in 1991, Portugal in 1993); n/a = no data.
     Compare a cell with the Inflation table above to see the real return.
   </details>
+
+  <!-- (#811) The second buy heuristic's table, `heuristics::intraday`, ranked by screen alone from Yahoo's
+       daily bars, so an upload keeps CI's rows. Shadow only: it never feeds BUY%, `size` or `trade`. -->
+  <h2 title="Each market's top 10 by an intraday key, to buy at the open and sell before the close. A shadow table, graded by track, NOT a buy signal" id="h-intraday">Intraday (shadow, NOT a buy signal)</h2>
+  <details class="note">
+    <summary>about this table</summary>
+    The names an intraday key ranks highest for one session: buy at the open, sell before the close, the
+    ten names of a market equal weight. US names are today's S&amp;P 500 members, EU names a fixed list of
+    DAX, CAC 40 and Euro Stoxx 50 members; a name must have traded at least €5 million a day on average
+    over the last 30 sessions. KEY is the score the table ranks by (hover it for which key), read only from the
+    sessions completed before the one ranked. DATA TO is the last of those sessions. The session it ranks
+    for may already be open, or over, when you read this. <strong>No key has made money after costs.</strong>
+    The 10-year backtest (receipt #810) lost on every key and market once a round trip is paid: about
+    −49 to −52 basis points a day in the US at 50 bp of cost, −16 to −20 in the EU at 20 bp. The best
+    of them, K1 on the EU list, earned +4.3 bp a day before costs, which a round trip of more than
+    4.3 bp wipes out. The backtest also leans optimistic: today's members only on the EU side, Yahoo's
+    first print as the open, and one exchange rate for every day. The table is here so <code>track</code>
+    can grade it on sessions that had not happened when it ranked; it is not advice and nothing here
+    places an order.
+  </details>
+  <div id="intraday"></div>
 
   <details class="note">
     <summary>about the rankings</summary>

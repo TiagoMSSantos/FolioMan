@@ -27,7 +27,8 @@ try {
   // (#530) The three CAGR floors are graded: the engine echoes the upload's, as screen writes CI's.
   // (#538) `social_cagr_floor` too: the Social table's, off `social_heuristic` over `buy_heuristic`.
   // (#746) `braked` is graded, glossary included: the engine builds it off its own Stocks rows, as screen does.
-  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits"];
+  // (#811) `intraday`, from Yahoo's daily bars, ranked by screen alone.
+  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits", "intraday"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);
   const drift = Object.keys(want).filter((k) => !["generated", ...ci].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));

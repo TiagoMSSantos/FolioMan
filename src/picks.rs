@@ -5615,6 +5615,16 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("BUY%", "Share of the BUY% book. A name's share is a lower bound: a fund counts only its top-10 holdings"),
         ("DETAIL", "For a name: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
     ]);
+    // (#811) `heuristics::intraday::web_rows`
+    let intraday = fixed(&[
+        num,
+        ("MARKET", "US = an S&P 500 member today; EU = a DAX 40, CAC 40 or Euro Stoxx 50 member; each market ranks its own top 10"),
+        ("TICKER", ticker),
+        ("NAME", "The company's name, as Yahoo lists it"),
+        ("KEY", "The intraday key the run ranks on, higher first; hover a cell for its name. K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions"),
+        ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock"),
+        ("DATA TO", "The last completed session the key read; the row is for the session after it"),
+    ]);
     // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
     let mut bonds: BTreeMap<String, String> = fixed(&[
         ("MARKET", "Whose 10-year government bond: the US Treasury, the same bond for a euro holder (USA in EUR), or a euro-area government"),
@@ -5640,6 +5650,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("reits", reits),
         ("upcoming", upcoming),
         ("exposure", exposure),
+        ("intraday", intraday),
     ])
 }
 
