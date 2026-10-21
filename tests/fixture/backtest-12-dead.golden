@@ -217,6 +217,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──
   too few flips to read (kept 1040 / newly-failed 2).
 
+── ENTRY PROBE (growth lane: passes now -> did it pass ~6mo ago too?) ──
+  too few entries to read (confirmed 1040 / newly-passing 0).
+
 ── PRICE-RISK (closes-derived, standalone probes) ──
   consistency_5y n=1017  rho -0.07  edge -77.8  OOS -0.13 | -0.13
   consistency_10y n=525   rho -0.17  edge -84.6  OOS -0.22 | -0.16

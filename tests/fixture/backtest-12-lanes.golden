@@ -223,6 +223,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──
   too few flips to read (kept 1490 / newly-failed 2).
 
+── ENTRY PROBE (growth lane: passes now -> did it pass ~6mo ago too?) ──
+  too few entries to read (confirmed 1490 / newly-passing 0).
+
 ── (#518) HOLDERS: do Berkshire's and the superinvestors' adds pick winners? (12y forward, stocks) ──
   excess = forward return minus the same-cutoff stock peer mean; hit = excess > 0. Each cohort is
   read against the stock samples outside it. A sample is flagged by the moves FILED in the 135 days
