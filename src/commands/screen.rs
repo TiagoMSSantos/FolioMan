@@ -808,7 +808,7 @@ fn near_miss_tail<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::B
     };
     near.sort_by(|a, b| {
         a.1.cmp(b.1)
-            .then_with(|| cagr_val(b.1, &b.2).partial_cmp(&cagr_val(a.1, &a.2)).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| cagr_val(b.1, &b.2).total_cmp(&cagr_val(a.1, &a.2)))
             .then_with(|| a.0.ticker.cmp(&b.0.ticker))
     });
     let mut seen_names = std::collections::HashSet::new();

@@ -3090,7 +3090,7 @@ fn emit_probe(name: &str, pairs: &[(&Sample, f64)], purge_months: i64) {
     let rels: Vec<f64> = pairs.iter().map(|(s, _)| s.relative).collect();
     let rho = core::spearman(&sc, &rels).map_or("n/a".to_string(), |v| format!("{v:+.2}"));
     let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    v.sort_by(|a, b| b.1.total_cmp(&a.1));
     let half = v.len() / 2;
     let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
     let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
@@ -3143,7 +3143,7 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
     results
         .iter()
         .filter(|(_, edge, a, b)| *edge > baseline && a.is_some_and(|v| v > 0.0) && b.is_some_and(|v| v > 0.0))
-        .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+        .max_by(|x, y| x.1.total_cmp(&y.1))
         .map(|(name, ..)| *name)
 }
 
@@ -3385,7 +3385,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
         // shows the cliff exists but not where it starts, which is the number that decides safety.
         let mut ladder =
             vec![0.0, 0.005, shipped, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.25, 0.5];
-        ladder.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ladder.sort_by(|a, b| a.total_cmp(b));
         ladder.dedup();
         println!(
             "\n── growth_fund_weight CURVE for `{configured}` (held-out TEST, growth_fund_cap {:.0}) ──",
@@ -3433,7 +3433,7 @@ fn class_book_lines(
             if p.is_empty() {
                 return None;
             }
-            p.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); // score desc, like the main book
+            p.sort_by(|x, y| y.0.total_cmp(&x.0)); // score desc, like the main book
             p.truncate(n);
             let cum = |f: fn(&(f64, f64, f64, String)) -> f64| p.iter().map(|&x| 1.0 + f(x) / 100.0).sum::<f64>() / p.len() as f64;
             let excess = ann((cum(|x| x.1) - 1.0) * 100.0, years) - ann((cum(|x| x.2) - 1.0) * 100.0, years);
@@ -3696,7 +3696,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         let mut ranked: Vec<f64> = Vec::new(); // (#558) per bucket: rank-weighted book minus bench, pts/yr
         for (b, v) in &by_bucket {
             let mut vv = v.clone();
-            vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
+            vv.sort_by(|a, b| b.0.total_cmp(&a.0)); // score desc
             let sample = |t: &str| sample_of.get(b).and_then(|m| m.get(t)).copied();
             // (#557) the graded twin of the live `picks::cap_book`, through the same `sector_cap`, so a
             // capped name refills from below. Identity at the shipped 0. Like the corr skip below, it
@@ -4002,7 +4002,7 @@ fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f
     let (mut mid, mut low) = (H2h::default(), H2h::default());
     for v in by_bucket.values() {
         let mut vv = v.clone();
-        vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc — the screen's own order
+        vv.sort_by(|a, b| b.0.total_cmp(&a.0)); // score desc — the screen's own order
         for ((lo, hi, _), (_, series)) in SLICES.iter().zip(out.iter_mut()) {
             if vv.len() <= *lo {
                 continue; // slice starts past this window's pool — no fake short book
@@ -4027,8 +4027,10 @@ fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f
 }
 
 /// Median of an owned sample. Callers skip empty slices, so the 0-length arm never reaches a print.
+/// (#815) Every backtest sort keys on `total_cmp`, as the live screen does: `partial_cmp().unwrap()`
+/// panicked the whole run on one NaN score (`discount_cap: 0` makes `discount / 0`).
 fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(|a, b| a.total_cmp(b));
     let k = v.len();
     if k == 0 {
         return f64::NAN;
@@ -4426,7 +4428,7 @@ fn winner_leaks(groups: &BTreeMap<i32, Vec<(&Quote, f64, Option<f64>)>>, years: 
             group.iter().zip(&sh).filter_map(|(g, s)| Some((*b, (*s)?, g.1, 0.0, g.0.ticker.clone(), g.2))).collect();
         let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(b).unwrap_or_default();
         let survived: HashSet<String> = kept.iter().map(|r| r.3.clone()).collect();
-        kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); // score desc, stable like the shipped book
+        kept.sort_by(|x, y| y.0.total_cmp(&x.0)); // score desc, stable like the shipped book
         kept.truncate(VERDICT_TOP);
         if kept.is_empty() {
             continue;
@@ -4508,7 +4510,7 @@ fn blend_winners<'a>(
         let rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> =
             pool.iter().zip(scorer(&quotes, tuning)).filter_map(|(s, sc)| Some((0, sc?, 0.0, 0.0, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)))).collect();
         let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(&0).unwrap_or_default();
-        kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); // score desc, stable like the shipped book
+        kept.sort_by(|x, y| y.0.total_cmp(&x.0)); // score desc, stable like the shipped book
         let shipped: Vec<&'a Sample> = kept.iter().map(|r| by_tk[r.3.as_str()]).collect();
         let book = blend_sides(&shipped, momentum_ranked(&pool, &scorer(&quotes, open), tuning).into_iter(), tuning.growth_momentum_slots, VERDICT_TOP);
         slots += book.len();
@@ -4589,7 +4591,7 @@ fn book_multiples(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64
     let mut out = Vec::new();
     for v in by_bucket.values() {
         let mut vv = v.clone();
-        vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // rank_key desc
+        vv.sort_by(|a, b| b.0.total_cmp(&a.0)); // rank_key desc
         let take = n.min(vv.len());
         if take == 0 {
             continue;
@@ -5686,7 +5688,7 @@ fn report_roll(
                 .collect();
             let by_tk: HashMap<&str, &Sample> = pool.iter().map(|s| (s.quote.ticker.as_str(), *s)).collect();
             let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(&0).unwrap_or_default();
-            kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
+            kept.sort_by(|x, y| y.0.total_cmp(&x.0));
             let mut sized: Vec<(f64, &Sample)> = pool.iter().filter_map(|s| Some((growth_score(&s.quote, tuning)?, *s))).collect();
             sized.sort_by(|a, b| b.0.total_cmp(&a.0));
             let mom = if rivals { momentum_ranked(&pool, &picks::growth_scores_ranked(&quotes, &open), tuning) } else { Vec::new() };
@@ -6125,7 +6127,7 @@ fn drop_bottom_book(
             if vals.is_empty() {
                 None
             } else {
-                vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                vals.sort_by(|a, b| a.total_cmp(b));
                 Some(vals[(((p / 100.0) * vals.len() as f64) as usize).min(vals.len() - 1)]) // P-th percentile floor
             }
         } else {
@@ -6174,7 +6176,7 @@ fn corr_cap_book(
     }
     let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
     for (bk, ranked) in &mut buckets {
-        ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
         for (score, s) in greedy_decorrelate(ranked, n, cap) {
             let br = benchmark_fwd(bd, bc, s.date, years).unwrap();
             by.entry(*bk).or_default().push((score, s.realized, br));
@@ -6225,10 +6227,10 @@ fn report_corr_cap(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>
 /// (mean pick terminal multiple, mean bench terminal multiple, book size, overlap count).
 fn union_book(rows: &[(String, f64, Option<f64>, f64, f64)], g: usize, v: usize) -> Option<(f64, f64, usize, usize)> {
     let mut by_score: Vec<&(String, f64, Option<f64>, f64, f64)> = rows.iter().collect();
-    by_score.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    by_score.sort_by(|a, b| b.1.total_cmp(&a.1));
     let mut picked: Vec<&(String, f64, Option<f64>, f64, f64)> = by_score.into_iter().take(g).collect();
     let mut by_ey: Vec<&(String, f64, Option<f64>, f64, f64)> = rows.iter().filter(|r| r.2.is_some()).collect();
-    by_ey.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+    by_ey.sort_by(|a, b| b.2.unwrap().total_cmp(&a.2.unwrap()));
     let mut overlap = 0;
     for r in by_ey.into_iter().take(v) {
         if picked.iter().any(|p| p.0 == r.0) {
@@ -6350,7 +6352,7 @@ fn report_two_style_book(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
 /// `report_lane`, the ablation, and `tune`.
 fn edge_halves(pairs: &[(&Sample, f64)]) -> (f64, f64) {
     let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    v.sort_by(|a, b| b.1.total_cmp(&a.1));
     let half = v.len() / 2;
     let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
     (mean(&v[..half]), mean(&v[v.len() - half..]))
@@ -6365,11 +6367,11 @@ fn winsor_edge(pairs: &[(&Sample, f64)]) -> f64 {
         return f64::NAN;
     }
     let mut rels: Vec<f64> = pairs.iter().map(|x| x.0.relative).collect();
-    rels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    rels.sort_by(|a, b| a.total_cmp(b));
     let (lo, hi) = (percentile(&rels, 1.0), percentile(&rels, 99.0));
     // (score, clamped-relative), sorted by score desc -> same half split as edge_halves.
     let mut v: Vec<(f64, f64)> = pairs.iter().map(|x| (x.1, x.0.relative.clamp(lo, hi))).collect();
-    v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    v.sort_by(|a, b| b.0.total_cmp(&a.0));
     let half = v.len() / 2;
     let mean = |s: &[(f64, f64)]| s.iter().map(|x| x.1).sum::<f64>() / s.len().max(1) as f64;
     mean(&v[..half]) - mean(&v[v.len() - half..])
@@ -6382,7 +6384,7 @@ fn winsor_edge(pairs: &[(&Sample, f64)]) -> f64 {
 /// small for 10 stable buckets. <3 rows -> all-NaN (no spread to read).
 fn edge_terciles(pairs: &[(&Sample, f64)]) -> (f64, f64, f64) {
     let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    v.sort_by(|a, b| b.1.total_cmp(&a.1));
     let n = v.len();
     if n < 3 {
         return (f64::NAN, f64::NAN, f64::NAN);
@@ -6768,7 +6770,7 @@ fn bootstrap_edge_ci(
     if edges.len() < iters / 2 {
         return None; // too many draws gated out to too few rows -> no trustworthy band
     }
-    edges.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    edges.sort_by(|a, b| a.total_cmp(b));
     Some((percentile(&edges, lo_p), percentile(&edges, hi_p)))
 }
 
@@ -6785,7 +6787,7 @@ fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
     let tops: Vec<HashSet<&str>> = by_bucket
         .into_values()
         .map(|mut rows| {
-            rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            rows.sort_by(|a, b| b.1.total_cmp(&a.1));
             rows[..rows.len() / 2].iter().map(|(t, _)| *t).collect::<HashSet<&str>>()
         })
         .filter(|s| !s.is_empty())
@@ -8705,6 +8707,8 @@ mod tests {
         // median: odd + even sample sizes, and the top-N table's clone-then-sort usage pattern
         assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
         assert_eq!(median(vec![4.0, 1.0, 2.0, 3.0]), 2.5);
+        // (#815) a NaN sorts last under total_cmp instead of panicking the sort
+        assert_eq!(median(vec![3.0, f64::NAN, 1.0]), 3.0);
     }
 
     /// (#40) benchmark math: `ann` inverts a 12y cumulative back to CAGR (and floors a wipeout at

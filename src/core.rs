@@ -3839,9 +3839,12 @@ pub fn spearman(xs: &[f64], ys: &[f64]) -> Option<f64> {
 /// Tie-averaging is the half that matters there: a term where half the pool shares one value (every
 /// `growth_fund_extra` fill, every zeroed weight) must map that whole group to ONE position, not
 /// spread it across the range in input order.
+///
+/// (#815) `total_cmp`, not `partial_cmp` mapped to Equal: a NaN that compares Equal to everything is not
+/// a total order, and the std sort may panic on one. Non-NaN ranks are unchanged, since ties still merge on `==`.
 pub(crate) fn ranks(v: &[f64]) -> Vec<f64> {
     let mut idx: Vec<usize> = (0..v.len()).collect();
-    idx.sort_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap_or(std::cmp::Ordering::Equal));
+    idx.sort_by(|&a, &b| v[a].total_cmp(&v[b]));
     let mut r = vec![0.0; v.len()];
     let mut i = 0;
     while i < idx.len() {
