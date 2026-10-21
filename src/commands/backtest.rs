@@ -418,6 +418,8 @@ struct Sample {
 /// `Raw` payload has not been parsed yet, so its `parse` lands in the walk and spreads over the cores.
 /// `Parsed` is the cases that cannot defer — the daily arm (network-bound, no disk cache, nothing to
 /// gain) and a `fund` run (the FX branch needs the currency before the walk starts).
+// One Hist per ticker, ~5k at most; boxing `Parsed` saves ~1 MB and costs an allocation per fetch.
+#[allow(clippy::large_enum_variant)]
 enum Hist {
     Raw(Cow<'static, RawValue>),
     Parsed(fetch::Chart),
