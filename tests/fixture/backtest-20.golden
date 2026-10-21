@@ -225,6 +225,11 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
 ── ENTRY PROBE (growth lane: passes now -> did it pass ~6mo ago too?) ──
   too few entries to read (confirmed 764 / newly-passing 0).
 
+── BOOK ENTRY PROBE (#821) (blend book: held now -> was it in the book ~6mo ago too?) ──
+  held both times  n=221    fwd peer-relative  mean -230.4 | med -315.1 pts
+  new to the book  n=134    fwd peer-relative  mean -89.7 | med -588.7 pts
+  gap  mean +140.7 | med -273.6 pts  ->  SPLIT — mean (+140.7) and median (-273.6) disagree: the gap is driven by the tail, not the typical name. Read the median.
+
 ── PRICE-RISK (closes-derived, standalone probes) ──
   consistency_5y n=551   rho -0.38  edge -1133.1  OOS -0.22 | -0.48
   consistency_10y n=149   rho -0.43  edge -1958.9  OOS -0.39 | -0.46

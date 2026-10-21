@@ -226,6 +226,11 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── ENTRY PROBE (growth lane: passes now -> did it pass ~6mo ago too?) ──
   too few entries to read (confirmed 1490 / newly-passing 0).
 
+── BOOK ENTRY PROBE (#821) (blend book: held now -> was it in the book ~6mo ago too?) ──
+  held both times  n=269    fwd peer-relative  mean -6.5 | med -78.6 pts
+  new to the book  n=246    fwd peer-relative  mean +24.5 | med -133.3 pts
+  gap  mean +31.0 | med -54.7 pts  ->  SPLIT — mean (+31.0) and median (-54.7) disagree: the gap is driven by the tail, not the typical name. Read the median.
+
 ── (#518) HOLDERS: do Berkshire's and the superinvestors' adds pick winners? (12y forward, stocks) ──
   excess = forward return minus the same-cutoff stock peer mean; hit = excess > 0. Each cohort is
   read against the stock samples outside it. A sample is flagged by the moves FILED in the 135 days

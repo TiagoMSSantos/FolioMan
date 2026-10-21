@@ -265,6 +265,11 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── ENTRY PROBE (growth lane: passes now -> did it pass ~6mo ago too?) ──
   too few entries to read (confirmed 1490 / newly-passing 0).
 
+── BOOK ENTRY PROBE (#821) (blend book: held now -> was it in the book ~6mo ago too?) ──
+  held both times  n=274    fwd peer-relative  mean +10.1 | med -72.5 pts
+  new to the book  n=241    fwd peer-relative  mean -16.7 | med -143.2 pts
+  gap  mean -26.8 | med -70.8 pts  ->  new entrants LAG the names held twice — a wait-one-cutoff rule is worth a graded knob
+
 ── FUNDAMENTAL (as-of, standalone factor probes) ──
   cutoffs with as-of fundamentals: 1344 / 1657
   SEC requests this run: 0 sent, 0 refused (403/429/5xx/transport)
