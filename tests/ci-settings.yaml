@@ -15729,6 +15729,25 @@ buy_heuristic:
                                  #   edge; it loses the sample, and the cause is identified in code rather than inferred from a
                                  #   number. That is why this closes as NOT GRADEABLE with a named remedy instead of as a null.
                                  #   REVERT RULE: it is at the revert value and stays there.
+  backtest_tr_ruler: false       # (#804) PRE-REGISTERED 2026-10-21, before any data. The RULER half of `use_adjusted_close`
+                                 #   alone: forward returns compound the payouts inside their window and the book is graded
+                                 #   against ^SP500TR, while selection stays price-only. Cutoffs before ^SP500TR's 1988 start
+                                 #   drop from every arm alike. WHY: every receipt in this file was graded on a price-only
+                                 #   ruler, which (#304) found flatters the shipped book by 0.2-1.6 pts/yr, and every TR arm
+                                 #   ((#303), (#304), (#305)) predates the half-year grid (#790).
+                                 #   ARMS, each on pit AND stress with `universe fund pit winners rivals`, this knob true:
+                                 #   control (j) (rivals (k)/(l)/(m)/(d) print free beside it); `growth_gate_on_tr_cagr`
+                                 #   true; `growth_min_cagr` 18; `growth_min_cagr` 17. `use_adjusted_close` is NOT armed:
+                                 #   adjclose is back-adjusted by payouts after the cutoff, and the P/E, PEG and MCAP joins
+                                 #   divide by it (dividend look-ahead (#424) never restated).
+                                 #   BAR, one for the incumbent and every challenger: the pooled lift over (j) across the 6
+                                 #   cells (pit+stress x 20/12/8y) >= +0.3 pts/yr on BOTH the excess mean and the median, no
+                                 #   cell below -1.0, and the standing vetoes (worst window, WINNERS HELD -2.0, 20y DCA drop
+                                 #   >= 0.2, Serie E 90/90/80). The cagr ladder passes only if 18 AND 17 pass and 17 >= 18.
+                                 #   CONFIRM: each passer and one control re-run on `dead`; pooled 3-cell lift >= 0 on both
+                                 #   stats, no cell below -1.0. ON A PASS: the best knob arm by pooled mean ships with a
+                                 #   golden rebless; a red CI gate reverts it. A passing rival is a question, not a ship.
+                                 #   false = the price-only ruler, byte-identical, and the DEFAULT.
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.

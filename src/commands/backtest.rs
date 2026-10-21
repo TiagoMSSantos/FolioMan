@@ -1106,6 +1106,22 @@ fn forward_return(
     Some(((dead_multiple(dates, closes, closes[i], target, dead_bench?)? - 1.0) * 100.0, true))
 }
 
+/// (#804) The payouts a holder banked from cutoff `i` to `to`, as a multiple: every dividend with an ex-date
+/// in `(dates[i], to]`, reinvested at the last close before that ex-date. 1.0 with none. Yahoo's dividend
+/// amounts sit on the same split basis as its closes, so the ratio needs no restating.
+fn payout_multiple(
+    dates: &[chrono::NaiveDate],
+    closes: &[f64],
+    divs: &[(chrono::NaiveDate, f64)],
+    i: usize,
+    to: chrono::NaiveDate,
+) -> f64 {
+    divs.iter()
+        .filter(|(d, _)| *d > dates[i] && *d <= to)
+        .map(|(d, amount)| 1.0 + amount / closes[dates.partition_point(|x| x < d) - 1])
+        .product()
+}
+
 /// (#751) What a dead series bought at `entry` is worth on `to`, past its last bar: its last close, rolled into
 /// the index (`dead`'s dates and closes) from that bar to `to`, times the penalty when that close is under
 /// [`DEAD_CRASH_RATIO`] of the one a year earlier. (#757) One helper for [`forward_return`]'s walk and
@@ -1512,7 +1528,8 @@ pub async fn run(args: Vec<String>) {
     let pit_spans = &pit_spans;
     let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
     // (#751) fetched before the walk, which rolls a dead series' last close into it
-    let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR" } else { "^GSPC" };
+    // (#804) `backtest_tr_ruler` grades on the total-return index too, with price-only selection
+    let bench_sym = if crate::config::use_adjusted_close() || tuning.backtest_tr_ruler { "^SP500TR" } else { "^GSPC" };
     let bench = if monthly {
         fetch::fetch_history_long(&client, &settings.urls, bench_sym).await
     } else {
@@ -1604,6 +1621,19 @@ pub async fn run(args: Vec<String>) {
                 // peer-mean spans the whole period universe; each lane filters by its own gates.
                 match forward_return(&dates, &closes, i, years, dead_bench) {
                     Some((realized, terminal)) => {
+                        // (#804) the total-return ruler: the window's payouts compound into the forward
+                        // return, and a cutoff ^SP500TR does not reach (pre-1988) has no fair benchmark, so
+                        // it is dropped. shortcut: payouts are counted to the target date, not to the bar
+                        // that closes the window, so up to one bar's payout is missed on every arm alike.
+                        let realized = if tuning.backtest_tr_ruler {
+                            if bench.0.first().is_none_or(|f| *f > dates[i] + chrono::Duration::days(31)) {
+                                continue;
+                            }
+                            let to = dates[i] + chrono::Duration::days(years * 365);
+                            ((1.0 + realized / 100.0) * payout_multiple(&dates, &closes, &divs, i, to) - 1.0) * 100.0
+                        } else {
+                            realized
+                        };
                         if !realized.is_finite() {
                             // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff.
                             continue;
@@ -8633,6 +8663,25 @@ mod tests {
         let r = benchmark_fwd(&dates, &closes, ymd(2000, 1, 1), 12).unwrap();
         assert!((ann(r, 12) - 8.0).abs() < 0.1); // 12y forward from 2000 -> ~+8%/yr
         assert!(benchmark_fwd(&dates, &closes, ymd(2010, 1, 1), 12).is_none()); // no 12y window left
+    }
+
+    /// (#804) `payout_multiple` counts a payout strictly after the cutoff and up to `to` inclusive, each at
+    /// the close of the last bar BEFORE its ex-date, so an ex-date that falls on a bar reinvests at the
+    /// prior close.
+    #[test]
+    fn payout_multiple_reinvests_each_window_payout_at_the_prior_close() {
+        let dates: Vec<NaiveDate> = (0..4).map(|k| ymd(2000 + k, 1, 3)).collect();
+        let closes = [100.0, 110.0, 120.0, 130.0];
+        let divs = [
+            (ymd(2000, 1, 3), 50.0),  // ON the cutoff: banked before it, not counted
+            (ymd(2000, 6, 1), 5.0),   // at 100
+            (ymd(2001, 1, 3), 11.0),  // on a bar: at the PRIOR close, 100, not 110
+            (ymd(2002, 6, 1), 12.0),  // on `to`: counted, at 120
+            (ymd(2002, 6, 2), 99.0),  // after `to`: not counted
+        ];
+        let m = payout_multiple(&dates, &closes, &divs, 0, ymd(2002, 6, 1));
+        assert!((m - 1.05 * 1.11 * 1.1).abs() < 1e-12, "{m}");
+        assert_eq!(payout_multiple(&dates, &closes, &divs, 3, ymd(2010, 1, 1)), 1.0, "no payout after the last cutoff");
     }
 
     /// (r40) `bench_trailing` is the BACKWARD mirror of `benchmark_fwd`: the return over the N years
