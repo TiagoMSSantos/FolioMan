@@ -22445,6 +22445,25 @@ social_heuristic:
 # the first print, not necessarily the opening auction price a market order gets; one USD->EUR rate
 # (today's) converts ten years of US turnover. Whatever the verdict, the page table is a shadow and
 # never a buy signal unless a key passes; nothing here reaches a lane, BUY NOW, `trade` or a broker.
+#
+# (#810) VERDICT 2026-10-21: FAIL, all six cells. Probe run 39561215181 on 305ca28, `backtest 1 intraday`.
+# US pond 605 of 721 names fetched, median 452 ranked a session, 2482 sessions 2016-12-05..2026-10-20.
+# EU pond 105 of 105, median 99 ranked, 2528 sessions 2016-12-02..2026-10-19. Per key, bp/day:
+#   market key  book net  gross  t(net)  halves net   all-names gross
+#   US     K1    -49.2    +0.8   -19.54  -53.2|-45.2   +0.8
+#   US     K2    -49.9    +0.1   -35.15  -49.2|-50.7   +0.8
+#   US     K3    -52.2    -2.2   -19.56  -56.9|-47.6   +0.8
+#   EU     K1    -15.7    +4.3    -8.03  -15.5|-16.0   +0.7
+#   EU     K2    -17.5    +2.5   -13.96  -16.7|-18.2   +0.7
+#   EU     K3    -19.7    +0.3    -9.76  -18.5|-20.9   +0.7
+# Reading: the cost decides it. Even gross, no US key beats the pond (K1 ties it at +0.8, gross t ~0.3,
+# derived as gross x t / net). EU K1 is the only key with a gross edge, +3.6 bp/day over the pond at a
+# gross t of ~2.2: it would break even at a 4.3 bp round trip, a fifth of the 20 bp assumed. Clause (1)
+# fails in every cell, so the bar is not close anywhere. The caveats above all flatter the keys, so none
+# of them can turn this into a pass.
+# The page table ranks each market on the key with the best net t, K1 in both (US -19.54 against K3's
+# -19.56; EU -8.03), and its header says shadow, NOT a buy signal, with these numbers. `track` grades the
+# journalled top 10s forward; a re-ask needs a new key with a gross t >= 3 here first, not a cost cut.
 
 # --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
 # How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources
