@@ -22490,6 +22490,25 @@ social_heuristic:
 # `size`, `trade` or a broker.
 intraday_key: 1
 
+# (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
+# for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
+# return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
+# passing) against names that passed both (confirmed, the exit probe's kept). Pre-registered: mean AND
+# median gap >= 0 at every horizon = refuse, buy on the first pass; both < 0 at every horizon = a
+# candidate knob, the owner's call; anything else = no lever.
+# Probe run 39613111442 on f7bc78c, `universe fund pit`, GROWTH windows 5075/10437/13654:
+#   horizon  confirmed n  newly passing n  gap mean | median
+#   20y      4768         0                too few to read
+#   12y      10020        0                too few to read
+#   8y       13156        5                +120.6 | +92.8 (fresh passers ahead)
+# Reading: NO LEVER. Two of three horizons cannot be read, and the one that can points the other way
+# (fresh passers did better, on five names). The cause is structural: under growth_gate_soft 0.8 a stock
+# that misses a gate is docked, not refused, so growth_score almost never flips from None to a score
+# between cutoffs. The exit probe's newly-failed side in the same run is 4/8/16 for the same reason. A
+# rule that waits for a second gate pass would bind on 0/0/5 entries, so it is inert by construction.
+# What this does not measure is entry into the held top-N book (a rank crossing, not a gate flip).
+# The fixture goldens print `too few entries to read` for the same reason.
+
 # --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
 # How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources
 # (coingecko_markets + sp500_csv URLs below). Bigger = more to scan = slower (one history
