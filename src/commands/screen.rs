@@ -1892,26 +1892,25 @@ pub async fn run(args: Vec<String>) {
     if let Some(report) = fetch::bf_meta_miss_report(&quotes) {
         eprintln!("{report}");
     }
-    // (G) route the validated as-of fundamental onto the live quotes so the growth ranking weighs it —
-    // only when the tilt is on (weight 0 default = no fetch, no change). Across the ~750-name universe the
-    // FMP daily budget caps cold fetches; the rest serve from the disk cache, warming over runs.
-    let mut fund_tilt_uncovered = false; // set below; joins the DEGRADED line at the end of the run
-    if settings.buy_heuristic.growth_fund_weight > 0.0 {
-        let sec0 = fetch::sec_stats().0; // (#699)
-        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
-        // the tilt fails SILENT (fetch errors -> factor None -> neutral): with the feed down every
-        // stock quietly reverts to price-only ranks. Say what the tilt actually covered so a
-        // degraded run is distinguishable from a normal one. Display-only.
-        let stocks = quotes.iter().filter(|q| q.instrument_type == "EQUITY").count();
-        let covered =
-            quotes.iter().filter(|q| q.instrument_type == "EQUITY" && q.fund_factor.is_some()).count();
-        eprintln!(
-            "screen: fund tilt ({}): {covered} of {stocks} stocks carry the factor (SEC = US filers; uncovered names rank price-only); {} SEC GETs",
-            settings.buy_heuristic.growth_fund_factor,
-            fetch::sec_stats().0 - sec0
-        );
-        fund_tilt_uncovered = covered == 0 && stocks > 0;
-    }
+    // (G) route the validated as-of fundamental onto the live quotes so the growth ranking weighs it.
+    // (#816) ALWAYS, whatever the tilt weight: the backtest's fund leg fills `quote.fund` at any weight,
+    // and the PEG ceiling, hard loss, red flags, value brake and `growth_fund_extra` terms read `fund`, so
+    // a weight-0 run used to drop those gates live only. Across the ~750-name universe the FMP daily
+    // budget caps cold fetches; the rest serve from the disk cache, warming over runs.
+    let sec0 = fetch::sec_stats().0; // (#699)
+    fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
+    // the tilt fails SILENT (fetch errors -> factor None -> neutral): with the feed down every
+    // stock quietly reverts to price-only ranks. Say what the tilt actually covered so a
+    // degraded run is distinguishable from a normal one. Display-only.
+    let stocks = quotes.iter().filter(|q| q.instrument_type == "EQUITY").count();
+    let covered =
+        quotes.iter().filter(|q| q.instrument_type == "EQUITY" && q.fund_factor.is_some()).count();
+    eprintln!(
+        "screen: fund tilt ({}): {covered} of {stocks} stocks carry the factor (SEC = US filers; uncovered names rank price-only); {} SEC GETs",
+        settings.buy_heuristic.growth_fund_factor,
+        fetch::sec_stats().0 - sec0
+    );
+    let fund_tilt_uncovered = covered == 0 && stocks > 0; // joins the DEGRADED line at the end of the run
     // keep only what an EU-retail investor can actually buy (drops any non-European-listed ETF,
     // Asian-only stock listings) so the growth ranking below is actionable.
     let before = quotes.len();

@@ -4903,27 +4903,11 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     // bypass BOTH the score trim and the sector filter (`|| pinned`) — they're always shown.
     let keep = |quote: &Quote, s: f64, floor: f64, sector_ok: bool| (s > floor && sector_ok) || pinned.contains(quote.ticker.as_str());
     let stock: Vec<_> = stock.into_iter().filter(|(quote, s)| keep(quote, *s, min_score, true)).collect();
-    // (#41) REDUNDANCY skip, stocks only — the ETF lane is diversified by construction and crypto is one
-    // bet already. Runs HERE, after the score/sector trim and before the table is cut to `n`, so the rows
-    // it drops are replaced from below instead of leaving a short table. Every row here passed every gate;
-    // what this removes is the SECOND COPY of a bet, which is why it is not a gate and not a score term.
-    // Pinned tickers bypass it, exactly as they bypass the score trim — a pin means "always show me this".
-    let stock: Vec<_> = if tuning.growth_corr_cap > 0.0 {
-        let trails: Vec<&[f64]> = stock.iter().map(|(q, _)| q.trail_monthly.as_slice()).collect();
-        let kept = core::decorrelate_keep(&trails, n, tuning.growth_corr_cap);
-        stock
-            .iter()
-            .enumerate()
-            .filter(|(i, (q, _))| kept.contains(i) || pinned.contains(q.ticker.as_str()))
-            .map(|(_, row)| *row)
-            .collect()
-    } else {
-        stock
-    };
-    // (#75) VALUE BRAKE, stocks only, and deliberately the NEXT thing after the redundancy skip: both are
-    // cohort-aware post-rank trims, both sit after the score/sector cut and before the table is cut to
-    // `n` so what they drop refills from below. Cut the dearest-for-their-growth `growth_value_floor_pct`%
-    // by `fund.peg_yield` — a CROSS-SECTIONAL floor over this table's own rows, not an absolute PEG,
+    // (#75) VALUE BRAKE, stocks only, and (#816) deliberately BEFORE the redundancy skip, the order the
+    // graded twin runs (`value_floor_trim` on the cohort, then `corr_cap_rung`): the skip stops at `n`, so
+    // running it first left the brake nothing to refill from. Both are cohort-aware post-rank trims, both
+    // sit after the score/sector cut and before the table is cut to `n`. Cut the dearest-for-their-growth
+    // `growth_value_floor_pct`% by `fund.peg_yield` — a CROSS-SECTIONAL floor over this table's own rows, not an absolute PEG,
     // because `growth_max_peg` already owns the absolute ceiling and the question here is "dearest OF THE
     // SURVIVORS". Names with no peg_yield are KEPT: unjudgeable is not a verdict, the same house rule the
     // gate above follows, and what makes this equity-only for free. Pinned tickers bypass it like every
@@ -4945,6 +4929,24 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
             })
             .collect(),
         None => stock, // knob off, or nobody in this table carries a PEG -> nothing to rank against
+    };
+    // (#41) REDUNDANCY skip, stocks only — the ETF lane is diversified by construction and crypto is one
+    // bet already. Runs HERE, after the score/sector trim and the value brake and before the table is cut
+    // to `n`, so the rows it drops are replaced from below instead of leaving a short table. Every row here
+    // passed every gate; what this removes is the SECOND COPY of a bet, which is why it is not a gate and
+    // not a score term. Pinned tickers bypass it, exactly as they bypass the score trim — a pin means
+    // "always show me this".
+    let stock: Vec<_> = if tuning.growth_corr_cap > 0.0 {
+        let trails: Vec<&[f64]> = stock.iter().map(|(q, _)| q.trail_monthly.as_slice()).collect();
+        let kept = core::decorrelate_keep(&trails, n, tuning.growth_corr_cap);
+        stock
+            .iter()
+            .enumerate()
+            .filter(|(i, (q, _))| kept.contains(i) || pinned.contains(q.ticker.as_str()))
+            .map(|(_, row)| *row)
+            .collect()
+    } else {
+        stock
     };
     // (#101) the sector cap used to trim HERE, display only, so BUY% still bought what it hid. (#557)
     // moved it to `cap_book`, ahead of every reader.
@@ -17291,6 +17293,17 @@ mod tests {
         // where an absent cohort means "everything is below the floor" and the table empties itself.
         let (v4, _, _) = lane_split(vec![(&unpriced, 8.0)], 10, &all_sectors, &brake50, &none, &no_pe);
         assert_eq!(names(&v4), ["NOPEG"], "no PEG anywhere in the cohort -> no verdict, no cut");
+        // (#816) ORDER: the brake runs before the redundancy skip, as the graded twin does. The floor is
+        // index 1 of [40,90,100] -> 90, so PRICEY goes and REFILL takes its slot; HEDGE is ANTI-shaped,
+        // so the skip keeps both. Skip-first stopped at n=2 on PRICEY+HEDGE, then the brake (floor 100
+        // over [40,100]) cut PRICEY and nothing was left to refill: a one-row table.
+        let (pricey, mut hedge, refill) =
+            (priced("PRICEY", Some(40.0)), priced("HEDGE", Some(100.0)), priced("REFILL", Some(90.0)));
+        hedge.trail_monthly = down;
+        let both = BuyHeuristic { growth_corr_cap: 0.9, growth_value_floor_pct: 50.0, ..d.clone() };
+        let (o1, _, _) =
+            lane_split(vec![(&pricey, 12.0), (&hedge, 11.0), (&refill, 10.0)], 2, &all_sectors, &both, &none, &no_pe);
+        assert_eq!(names(&o1), ["HEDGE", "REFILL"], "(#816) the brake's casualty refills before the skip cuts to n");
 
         // (#265) …and whatever a trim dropped is now NAMED, because the journal keeps it and
         // `size --picks`/`trade` act on it. Reuses the brake cohort above: same rows, same floors.

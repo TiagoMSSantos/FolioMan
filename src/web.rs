@@ -196,15 +196,11 @@ fn load(overlay: &str, universe: &str) -> Result<(Settings, Universe), String> {
     #[cfg(target_family = "wasm")]
     config::install(merged)?;
     let bh = &s.buy_heuristic;
-    // Replayed in `screen`'s order. 1: the fund tilt, which `screen` fetches only when its weight is on.
+    // Replayed in `screen`'s order. 1: the fund tilt, which (#816) `screen` fetches at any weight, so a
+    // weight-0 upload keeps `fund` for the gates and extras that read it.
     for q in &mut u.quotes {
-        if bh.growth_fund_weight > 0.0 {
-            if let Some(f) = &q.fund {
-                q.fund_factor = core::select_fund_factor(f, &bh.growth_fund_factor);
-            }
-        } else {
-            q.fund = None;
-            q.fund_factor = None;
+        if let Some(f) = &q.fund {
+            q.fund_factor = core::select_fund_factor(f, &bh.growth_fund_factor);
         }
     }
     // 2: the (#328) sector door, floored at the index's CAGR under THESE knobs.
@@ -392,9 +388,9 @@ mod tests {
         assert!(engine("tickers: [AAPL]\n", &q).get("pins").is_none(), "a pool holding every pin stays byte-equal to `screen`");
     }
 
-    /// The fund tilt follows the UPLOAD's weight: re-selected from `fund` while it is on, and `fund`
-    /// dropped when it is 0, which is what `screen` does by never fetching it. CI's `roic` extra reads
-    /// `fund` straight, so a kept one would still move the score at weight 0.
+    /// The fund tilt follows the UPLOAD's weight: the factor is re-selected from `fund` at any weight,
+    /// and (#816) `fund` is KEPT at 0, as `screen` now fetches it at any weight. CI's `roic` extra reads
+    /// `fund` straight, so the kept one still moves the score at weight 0.
     #[test]
     fn the_fund_tilt_follows_the_uploaded_weight() {
         let mut q = pool();
@@ -409,7 +405,7 @@ mod tests {
         assert_eq!(engine("tickers: [AAPL]\n", &q), want, "weight on: the factor is re-selected from `fund`");
         let off = "tickers: [AAPL]\nbuy_heuristic:\n  growth_fund_weight: 0\n";
         assert_ne!(engine(off, &picked), engine("tickers: [AAPL]\n", &picked), "not vacuous: 0 moves the row");
-        assert_eq!(engine(off, &q), engine(off, &bare), "weight off: `fund` is dropped with its factor");
+        assert_ne!(engine(off, &q), engine(off, &bare), "(#816) weight off: `fund` is kept, so the roic extra still reads it");
     }
 
     /// One row's cell by header, "" when the row or the column is absent.

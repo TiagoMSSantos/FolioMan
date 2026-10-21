@@ -1577,8 +1577,11 @@ fn evict_stale_sec_caches(ticker: &str, splits: &[(NaiveDate, f64)]) {
 /// validated fundamental tilt re-ranks `screen`/`check` — not just the backtest. Reuses the disk-cached
 /// `fetch_fundamentals_ranked` (Item 22: same `fund_source` the backtest uses — FMP or SEC) and the SAME
 /// `fund_factors`/`select_fund_factor` path the backtest validates, so the live and tested signal can't drift. A '-' ticker (crypto/FX) or a
-/// name with no statements stays neutral (None). Caller gates on growth_fund_weight > 0, so the default
-/// config never pays the fetch. note: ~5y lookback to match the backtest's default forward `years`.
+/// name with no statements stays neutral (None). (#816) Callers run it at ANY `growth_fund_weight`, as
+/// the backtest's fund leg fills `quote.fund` at any weight: the PEG ceiling, hard loss, red flags, the
+/// value brake and the `growth_fund_extra` terms all read `fund`, not the tilt. The in-body "caller
+/// gates on growth_fund_weight > 0" notes predate that. note: ~5y lookback to match the backtest's
+/// default forward `years`.
 ///
 /// (Item 13) When the selected factor IS the insider lane (`insider_net_buys_90d`), ALSO pull the shipped
 /// Form-4 data and merge `insider_net_buys` onto the as-of factors before selecting — without this the live

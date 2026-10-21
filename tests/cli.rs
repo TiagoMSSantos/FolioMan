@@ -756,12 +756,12 @@ fn size_prints_the_journalled_book_and_spills_the_rest_over_the_core_markets() {
 }
 
 /// The vol-target book (equal weight off) prints its class budgets, and with no CORE shortlist on file the
-/// unallocated part has no home. Inflation adjustment off skips the HICP fetch, a zero fund-tilt weight
-/// skips the fundamentals enrichment, and a set deploy base prints the deploy line, whose entry state
-/// stays unknown offline.
+/// unallocated part has no home. Inflation adjustment off skips the HICP fetch, and a set deploy base
+/// prints the deploy line, whose entry state stays unknown offline. (#816) The fundamentals enrichment
+/// runs at any fund-tilt weight, so the overlay no longer zeroes it.
 #[test]
 fn size_vol_target_book_reports_unallocated_budget_and_the_deploy_line() {
-    let overlay = "sizing:\n  equal_weight_book: false\nmonthly_deploy_eur: 1000\ninflation_adjust:\n  enabled: false\nbuy_heuristic:\n  growth_fund_weight: 0\n";
+    let overlay = "sizing:\n  equal_weight_book: false\nmonthly_deploy_eur: 1000\ninflation_adjust:\n  enabled: false\n";
     let state = r#"{"date":"2026-10-19","passing":[],"buy_now":[["AAA",30.0],["BBB",20.0]]}"#;
     let (code, stdout, stderr) = run_isolated("size-vol-target", overlay, &[(".screen_state.json", state)], &["size"]);
     assert_eq!(code, 0, "{stderr}");
@@ -822,11 +822,12 @@ const EU_HICP_CURRENT: &str = r#"{"dimension":{"time":{"category":{"index":{"209
 /// The Portuguese CPI feed frozen at 2019: stale from March of any later year.
 const PT_CPI_FROZEN: &str = r#"{"dimension":{"reference_date":{"category":{"index":["2018-12","2019-12"]}}},"value":[1.0,2.0]}"#;
 
-/// An empty watchlist with the HICP fetch and the fund-factor enrichment both configured off: the table
-/// header still prints, nothing is flagged for review, and the run ends cleanly on the macro footer.
+/// An empty watchlist with the HICP fetch configured off: the table header still prints, nothing is
+/// flagged for review, and the run ends cleanly on the macro footer. (#816) The fund-factor enrichment
+/// runs at any weight, over no quotes here.
 #[test]
 fn check_with_an_empty_watchlist_flags_nothing_and_skips_the_optional_fetches() {
-    let overlay = "inflation_adjust:\n  enabled: false\nbuy_heuristic:\n  growth_fund_weight: 0\n";
+    let overlay = "inflation_adjust:\n  enabled: false\n";
     let (code, stdout, stderr) = run_isolated("check-empty-watchlist", overlay, &[], &["check"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("PRICE(EUR)"), "table header missing: {stdout}");
@@ -850,7 +851,7 @@ fn check_explain_fetches_a_ticker_that_is_not_on_the_watchlist() {
 fn check_prints_the_top_holdings_of_a_checked_etf_from_the_day_cache() {
     let cache = r#"{"ZZETF":["2999-01-01",[["HOLDA",0.1],["HOLDB",0.05]],[],null,null]}"#;
     let files = [(".holdings_cache.json", cache)];
-    let extra = "buy_heuristic:\n  growth_fund_weight: 0\ninflation_adjust:\n  enabled: false\n"; // no fundamentals or HICP fetch to wait on
+    let extra = "inflation_adjust:\n  enabled: false\n"; // no HICP fetch to wait on
     let (code, stdout, stderr) = run_routed("check-etf-holdings", vec![("", 200, ETF_CHART)], extra, &files, &[], &["check", "ZZETF"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("Top-10 holdings — what's inside the wrapper:"), "{stdout}");
@@ -1065,7 +1066,8 @@ fn screen_marks_a_frozen_eu_hicp_feed_stale_in_the_degraded_line() {
 }
 
 /// The optional stages announce themselves only while their knob is on: the same run with the US-series
-/// scoring, the stale-listing drop, the fund tilt and the CORE journal switched off prints neither line.
+/// scoring, the stale-listing drop and the CORE journal switched off skips the (#608) line. (#816) The
+/// fund tilt line prints at weight 0 too: the fundamentals it reports feed the gates, not just the tilt.
 #[test]
 fn screen_with_its_optional_stages_switched_off_skips_their_lines() {
     let (code, _, stderr) = run_isolated("screen-switches-on", "{}\n", &[], &["screen", "AAA"]);
@@ -1078,7 +1080,7 @@ fn screen_with_its_optional_stages_switched_off_skips_their_lines() {
     let (code, _, stderr) = run_isolated("screen-switches-off", off, &[], &["screen", "AAA"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(!stderr.contains("screen: (#608)"), "{stderr}");
-    assert!(!stderr.contains("screen: fund tilt ("), "{stderr}");
+    assert!(stderr.contains("screen: fund tilt ("), "(#816) weight 0 still fetches the fundamentals the gates read: {stderr}");
     assert!(isolated_root("screen-switches-off").join(".screen_snapshots.jsonl").is_file(), "the ranking is journalled either way");
 }
 

@@ -73,11 +73,9 @@ pub async fn run(args: Vec<String>) {
         None
     };
     let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal).await; // news on: check prints headlines
-    // (G) route the validated as-of fundamental onto the live quotes so the buy ranking weighs it — only
-    // when the tilt is on (weight 0 default = no fetch, no change). `check` scale keeps the FMP budget easy.
-    if settings.buy_heuristic.growth_fund_weight > 0.0 {
-        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
-    }
+    // (G) route the validated as-of fundamental onto the live quotes so the buy ranking weighs it. (#816)
+    // at any tilt weight, as `screen`: the gates read `fund` too. `check` scale keeps the FMP budget easy.
+    fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
     fetch::stamp_13f(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await; // (#472) the 13F boost, as `screen`
     for quote in &quotes {
         let cells = HORIZONS
