@@ -1660,12 +1660,15 @@ fn meta_alerts(
 /// (#811) The Intraday shadow table: each market's top `intraday::BOOK` on key `k`, ranked on the bars
 /// completed before `today`, as page rows plus the `(market, ticker)` pairs the journal keeps. Same ponds,
 /// floor and USD rate as the (#809) ruler, on 3mo of bars. A name in neither EUR nor USD is skipped.
-#[mutants::skip] // network shell; `rank`, `web_rows` and their tests live in heuristics::intraday
+/// (#822) Each name the book holds is then fetched again on 10y of bars, `track`'s fetch, and its
+/// journalled sessions tallied for the RIGHT/FAIL column.
+#[mutants::skip] // network shell; `rank`, `web_rows`, `tally` and their tests live in heuristics::intraday
 async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>) {
     use crate::heuristics::intraday;
     let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
     let usd = fetch::eur_rate(client, &settings.urls, "USD", &fetch::fx_cache()).await;
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
+    let journal = &crate::commands::track::journal_intra();
     let (mut rows, mut pairs) = (Vec::new(), Vec::new());
     for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)
@@ -1686,7 +1689,12 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             })
             .collect();
         let book = intraday::rank(k, &pond, today);
-        rows.extend(intraday::web_rows(market, k, &book, today));
+        let hits: Vec<Option<(usize, usize)>> = futures::stream::iter(&book)
+            .map(|(tk, ..)| async move { Some(intraday::tally(market, tk, journal, fetch::fetch_history(client, &settings.urls, tk).await?, today)) })
+            .buffered(fetch::fetch_concurrency())
+            .collect()
+            .await;
+        rows.extend(intraday::web_rows(market, k, &book, &hits, today));
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
     }
     (rows, pairs)
@@ -5371,6 +5379,9 @@ mod tests {
     /// (#335) `track::journal_prior` is a second read on `run`'s path, by design: it runs BEFORE the
     /// append, and only its TICKERS are used — `exits` and (#337) `carry` price each from today's
     /// quotes, so no journaled price leaves it to restate.
+    ///
+    /// (#822) `track::journal_intra` is a third, by the same design: the Intraday table is built before
+    /// the append too, and only each line's date and Intraday tickers leave it, graded on fresh bars.
     #[test]
     fn the_journal_is_read_once_and_restated_once() {
         let src = include_str!("screen.rs");

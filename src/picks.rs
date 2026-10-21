@@ -5032,6 +5032,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("KEY", "The intraday key the run ranks on, higher first; hover a cell for its name. K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions"),
         ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock"),
         ("DATA TO", "The last completed session the key read; the row is for the session after it"),
+        ("RIGHT/FAIL", "How this name's past sessions in this table went, open to close before costs, right/fail; right = it closed above its open; fail = it closed at or below its open; the two add up to every session measured since the journal's first Intraday line, 2026-10-22, and today's session counts once it closes; n/a = its 10-year chart did not load"),
     ]);
     // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
     let mut bonds: BTreeMap<String, String> = fixed(&[

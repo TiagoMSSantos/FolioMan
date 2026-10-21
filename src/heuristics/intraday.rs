@@ -207,13 +207,15 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 }
 
 /// (#811) The page rows for one market's [`rank`] book: position, market, ticker, name, key, the
-/// session's hours on the exchanges' own clock, and the last completed bar the key read.
-pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
+/// session's hours on the exchanges' own clock, and the last completed bar the key read. (#822) Then
+/// each name's [`tally`], `hits[n]` for `book[n]`; `None` = its chart did not load.
+pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], hits: &[Option<(usize, usize)>], today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
     use serde_json::json;
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
     book.iter()
+        .zip(hits)
         .enumerate()
-        .map(|(n, (tk, x, c))| {
+        .map(|(n, ((tk, x, c), hit))| {
             vec![
                 json!(["RANK", (n + 1).to_string()]),
                 json!(["MARKET", market]),
@@ -222,9 +224,27 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], today: NaiveD
                 json!(["KEY", format!("{:+.2}%", x * 100.0), null, KEYS[usize::from(k) - 1]]),
                 json!(["SESSION", hours]),
                 json!(["DATA TO", c.dates[completed(c, today) - 1].to_string()]),
+                match hit {
+                    Some((r, f)) => json!(["RIGHT/FAIL", format!("{r}/{f}"), null, format!("{r} right, {f} failed, {} sessions measured", r + f)]),
+                    None => json!(["RIGHT/FAIL", "n/a"]),
+                },
             ]
         })
         .collect()
+}
+
+/// (#822) How `tk`'s journalled sessions in `market` went, `(right, fail)`: right = the session closed
+/// above its open, before costs, fail = at or below it. Each session a journalled book held it counts
+/// once, graded as [`graded`] grades a book, so a bar dated `today` waits until tomorrow.
+pub fn tally(market: &str, tk: &str, journal: &[(NaiveDate, Vec<(String, String)>)], c: Chart, today: NaiveDate) -> (usize, usize) {
+    let lines: Vec<(NaiveDate, Vec<&str>)> = journal
+        .iter()
+        .filter(|(_, book)| book.iter().any(|(m, t)| m == market && t == tk))
+        .map(|(d, _)| (*d, vec![tk]))
+        .collect();
+    let days = graded(&lines, &HashMap::from([(tk.to_string(), c)]), today);
+    let right = days.iter().filter(|d| d.1 > 0.0).count();
+    (right, days.len() - right)
 }
 
 /// (#811) Each journalled book graded on the session it ranked for. For a line dated `D`, each name's
@@ -490,17 +510,17 @@ mod tests {
     fn a_page_row_carries_the_key_session_and_last_bar() {
         let mut c = wavy(31);
         c.name = "Acme".into();
-        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], d(31));
+        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], &[Some((7, 3)), None], d(31));
         assert_eq!(
             serde_json::json!(rows),
             serde_json::json!([
-                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"]],
-                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"]],
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "7/3", null, "7 right, 3 failed, 10 sessions measured"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "n/a"]],
             ])
         );
-        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], d(20));
+        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], &[Some((0, 0))], d(20));
         assert_eq!((eu[0][1][1].as_str(), eu[0][4][3].as_str()), (Some("EU"), Some("K1 tug of war")));
-        assert_eq!((eu[0][5][1].as_str(), eu[0][6][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-20")));
+        assert_eq!((eu[0][5][1].as_str(), eu[0][6][1].as_str(), eu[0][7][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-20"), Some("0/0")));
         // (#452) the page's hover text keys on exactly these headers
         let heads: std::collections::BTreeSet<&str> = rows[0].iter().map(|c| c[0].as_str().unwrap()).collect();
         assert_eq!(crate::picks::web_help(false, &[])["intraday"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads);
@@ -527,6 +547,26 @@ mod tests {
         // a bar dated today may still be trading: C's drops out, and A's d(5) session waits
         near(graded(&lines, &charts, d(5)), &[(d(3), 0.02), (d(4), 1.0)]);
         assert!(graded(&[], &charts, d(6)).is_empty());
+    }
+
+    /// (#822) Sessions d3 up, d4 flat, d5 up, d6 flat, d7 down. The d1 and d2 lines reach d3 once; the
+    /// d5 line holds A in the other market and B here, so d5 never counts; a flat day is a fail.
+    #[test]
+    fn tally_counts_each_journalled_session_once() {
+        let mut a = chart(&[100.0; 6], &[100.0, 101.0, 100.0, 102.0, 100.0, 99.0], 1.0);
+        a.dates = vec![d(0), d(3), d(4), d(5), d(6), d(7)];
+        let line = |i: usize, b: &[(&str, &str)]| (d(i), b.iter().map(|(m, t)| (m.to_string(), t.to_string())).collect::<Vec<_>>());
+        let journal = [
+            line(1, &[("US", "A")]),
+            line(2, &[("EU", "X"), ("US", "A")]),
+            line(4, &[("US", "A")]),
+            line(5, &[("EU", "A"), ("US", "B")]),
+            line(6, &[("US", "A")]),
+            line(7, &[("US", "A")]),
+        ];
+        assert_eq!(tally("US", "A", &journal, a.clone(), d(8)), (1, 3));
+        assert_eq!(tally("US", "A", &journal, a.clone(), d(7)), (1, 2), "a bar dated today may still be trading");
+        assert_eq!(tally("US", "A", &[], a, d(8)), (0, 0));
     }
 
     #[test]
