@@ -747,6 +747,7 @@ struct Args {
     pit: bool,
     dead: bool,
     dead_flat: bool,
+    intraday: bool,
     tickers: Vec<String>,
 }
 
@@ -773,6 +774,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("pit") => a_.pit = true, // (PIT) score each cutoff against the index AS IT WAS
             _ if a.eq_ignore_ascii_case("dead") => a_.dead = true, // (#751) walk dead members on tests/dead-members.csv
             _ if a.eq_ignore_ascii_case("deadflat") => (a_.dead, a_.dead_flat) = (true, true), // (#752) ... with no crash cut
+            _ if a.eq_ignore_ascii_case("intraday") => a_.intraday = true, // (#809) open-to-close keys on 10y daily bars
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -1064,6 +1066,9 @@ fn dead_member_charts(csv: &str, spans: &core::MemberSpans) -> (HashMap<String, 
             dates: bars.iter().map(|b| b.0).collect(),
             closes: bars.iter().map(|b| b.1).collect(),
             volumes: Vec::new(),
+            opens: Vec::new(),
+            highs: Vec::new(),
+            lows: Vec::new(),
             currency: "USD".to_string(),
             name: tk.to_string(),
             instrument_type: "EQUITY".to_string(),
@@ -1239,8 +1244,13 @@ pub async fn run(args: Vec<String>) {
     let anchor_windows =
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
-    let Args { years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, mut tickers } =
-        parse_args(&args);
+    let Args {
+        years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, mut tickers,
+    } = parse_args(&args);
+    if intraday {
+        intraday_ruler(&client, &settings).await;
+        return;
+    }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
     // mutate the process environment.
     if fmp_key_missing(fund, &crate::config::fund_source(), std::env::var("FMP_API_KEY").ok()) {
@@ -2525,6 +2535,51 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
             (*name, cohort_side(a.iter().map(|x| x.1).collect()), cohort_side(b.iter().map(|x| x.1).collect()))
         })
         .collect()
+}
+
+/// (#809) `backtest N intraday`: every intraday key graded on 10y of daily bars, per market, against the
+/// bar pre-registered in tests/ci-settings.yaml. The US pond is every S&P 500 member since the start,
+/// ranked only on its member days; the EU pond is the static `EU_POND`. A name in neither EUR nor USD is
+/// skipped, and one USD rate (today's) converts every US session's turnover.
+#[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::intraday
+async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
+    use crate::heuristics::intraday;
+    let today = chrono::Utc::now().date_naive();
+    let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
+    let us = intraday::us_pond(&spans, today - chrono::Duration::days(3653));
+    let Some(usd) = fetch::eur_rate(client, &settings.urls, "USD", &fetch::fx_cache()).await else {
+        eprintln!("backtest intraday: no USD->EUR rate, nothing graded");
+        return;
+    };
+    let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
+    println!(
+        "\n── (#809) INTRADAY: buy at the open, sell at the close, top {} equal weight, net of cost ──",
+        intraday::BOOK
+    );
+    // the walk sorts each session by key then ticker, so fetch completion order cannot move a number
+    for (market, names, cost) in [("US", &us, intraday::COST_BPS_US), ("EU", &eu, intraday::COST_BPS_EU)] {
+        let charts: Vec<(&str, fetch::Chart)> = stream::iter(names)
+            .map(|tk| async move { Some((tk.as_str(), fetch::fetch_history(client, &settings.urls, tk).await?)) })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        let pond: Vec<intraday::Member> = charts
+            .iter()
+            .filter_map(|(tk, c)| {
+                let fx = match c.currency.as_str() {
+                    "EUR" => 1.0,
+                    "USD" => usd,
+                    _ => return None,
+                };
+                Some((*tk, c, fx, (market == "US").then(|| spans[*tk].as_slice())))
+            })
+            .collect();
+        println!("  {market} pond: {} of {} names fetched in EUR or USD; cost {cost} bp round trip", pond.len(), names.len());
+        for k in 1..=intraday::KEYS.len() as u8 {
+            println!("{}", intraday::report(market, k, &intraday::walk(k, &pond, today), cost));
+        }
+    }
 }
 
 /// (#518) The `holders` report: [`holder_cohorts`] printed with its caveats. Report only, no knob reads it.
@@ -8954,6 +9009,7 @@ mod tests {
             p("deadflat").dead && p("deadflat").dead_flat && !p("dead").dead_flat,
             "(#752) deadflat is the dead arm, uncut"
         );
+        assert!(p("intraday").intraday && !p("intraday").wide && !p("12").intraday);
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
         // and each keyword sets ONLY its own flag: `pit` and `stress` are opposite treatments of the
@@ -8985,7 +9041,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday");
         assert_eq!(
             all,
             Args {
@@ -9005,6 +9061,7 @@ mod tests {
                 dead: true,
                 dead_flat: true,
                 failures: true,
+                intraday: true,
                 tickers: vec![]
             }
         );

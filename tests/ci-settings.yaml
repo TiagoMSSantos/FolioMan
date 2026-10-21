@@ -22423,6 +22423,29 @@ social_heuristic:
   runup_cap_pct: 50
   loud_penalty: 0.5
 
+# (#809) USER DECISION 2026-10-21: a third buy heuristic, INTRADAY, ranks which stocks will gain the most
+# in % from today's open to today's close: buy at the open, sell before the close, hold nothing overnight.
+# Code in src/heuristics/intraday.rs; `backtest 1 intraday` grades it. Three keys, each read only from
+# sessions completed before the one it ranks (a bar dated today, UTC, is never read):
+#   K1 tug of war: 21-day sum of ln(close/open) minus 21-day sum of ln(open/previous close)
+#     (Lou, Polk & Skouras 2019: names whose returns come in the day session keep earning there).
+#   K2 calm range: minus the 20-day mean of ln(high/low).
+#   K3 5d intraday: the 5-day mean of ln(close/open).
+# Pond: stocks with a 30-session average turnover (close x volume) of at least 5M EUR. US = the S&P 500
+# as it stood each day (members Yahoo no longer serves drop out, so the US side leans to survivors); EU =
+# a static list of today's DAX 40, CAC 40 and Euro Stoxx 50 members (survivor-biased by construction).
+# Ruler: 10y of daily bars; each session the top 10 by key, equal weight, bought at the open and sold at
+# the close; ties by key then ticker; a session with fewer than 10 ranked names is skipped. Round-trip
+# cost 50 bp US, 20 bp EU (spread plus fees).
+# PRE-REGISTERED BAR, written before any data, per market and per key, all four clauses:
+#   (1) net mean > 0 bp/day; (2) t = mean / standard error >= 3; (3) both halves (by session count)
+#   net > 0; (4) net book mean > the gross mean of every ranked name that day.
+# Caveats the verdict must carry: the research prior that any daily key clears a 20-50 bp round trip is
+# small (a few %); the 5M EUR floor keeps only liquid names and may flatter the cost; Yahoo's open is
+# the first print, not necessarily the opening auction price a market order gets; one USD->EUR rate
+# (today's) converts ten years of US turnover. Whatever the verdict, the page table is a shadow and
+# never a buy signal unless a key passes; nothing here reaches a lane, BUY NOW, `trade` or a broker.
+
 # --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
 # How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources
 # (coingecko_markets + sp500_csv URLs below). Bigger = more to scan = slower (one history

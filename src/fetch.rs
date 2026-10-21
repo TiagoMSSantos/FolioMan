@@ -217,6 +217,12 @@ pub struct Chart {
     pub dates: Vec<NaiveDate>,
     pub closes: Vec<f64>,
     pub volumes: Vec<f64>, // parallel to closes (0.0 where no volume reported); liquidity proxy
+    /// (#809) the session's open, high and low, parallel to `closes` and NaN where Yahoo printed none.
+    /// Raw prints even when `use_adjusted_close` swaps the closes, so only the intraday heuristic reads
+    /// them, and it runs on the raw closes (the shipped default).
+    pub opens: Vec<f64>,
+    pub highs: Vec<f64>,
+    pub lows: Vec<f64>,
     pub currency: String,
     pub name: String,
     pub instrument_type: String, // Yahoo meta.instrumentType ("ETF"/"EQUITY"/...); "" if absent
@@ -362,6 +368,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         raw_closes
     };
     let vols_arr = quote0.get("volume").and_then(|v| v.as_array());
+    let leg = |k: &str, i: usize| quote0.get(k).and_then(|a| a.get(i)).and_then(Value::as_f64).unwrap_or(f64::NAN);
     let meta = result.get("meta").cloned().unwrap_or(Value::Null);
     // (#685) every stamp below, bars and events alike, is dated on the exchange's calendar
     let off = meta.get("gmtoffset").and_then(Value::as_i64).unwrap_or(0);
@@ -369,6 +376,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     let mut dates = Vec::new();
     let mut closes = Vec::new();
     let mut volumes = Vec::new();
+    let (mut opens, mut highs, mut lows) = (Vec::new(), Vec::new(), Vec::new());
     for (i, (t, c)) in ts.iter().zip(closes_arr).enumerate() {
         if let (Some(secs), Some(close)) = (t.as_i64(), c.as_f64()) {
             if let Some(date) = bar_date(secs, off) {
@@ -376,6 +384,9 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
                 closes.push(close);
                 // volume parallel to closes; missing/null -> 0.0 (avg_turnover skips those days)
                 volumes.push(vols_arr.and_then(|a| a.get(i)).and_then(|v| v.as_f64()).unwrap_or(0.0));
+                opens.push(leg("open", i));
+                highs.push(leg("high", i));
+                lows.push(leg("low", i));
             }
         }
     }
@@ -449,6 +460,9 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
             dates.drain(..start);
             closes.drain(..start);
             volumes.drain(..start);
+            opens.drain(..start);
+            highs.drain(..start);
+            lows.drain(..start);
             divs.retain(|(d, _)| *d >= cut);
             splits.retain(|(d, _)| *d >= cut); // same reason: they describe bars that are no longer here
         }
@@ -458,6 +472,9 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         dates,
         closes,
         volumes,
+        opens,
+        highs,
+        lows,
         currency,
         name: name_of(&meta, ticker),
         // Yahoo's own asset-class tag — reliable where the name string isn't (ETF shortNames like
@@ -14667,6 +14684,19 @@ pub(crate) mod tests {
             (NaiveDate::from_ymd_opt(2020, 4, 1).unwrap(), 0.5),
             (NaiveDate::from_ymd_opt(2020, 7, 1).unwrap(), 3.0),
         ]);
+        // (#809) open/high/low ride the same bar index as the close, so a null-close bar takes its open
+        // with it, and a missing or null leg reads NaN, never a 0.0 that would fake a -100% session.
+        let ohlc = parse_chart(&json!({"chart": {"result": [{
+            "timestamp": [1577836800, 1577923200, 1578009600],
+            "indicators": {"quote": [{"close": [10.0, null, 12.0], "open": [9.0, 1.0, 11.0],
+                                      "high": [10.5, 1.0, null], "low": [8.5]}]}
+        }]}}), "X").unwrap();
+        assert_eq!(ohlc.opens, vec![9.0, 11.0]);
+        assert_eq!(ohlc.highs[0], 10.5);
+        assert!(ohlc.highs[1].is_nan());
+        assert_eq!(ohlc.lows[0], 8.5);
+        assert!(ohlc.lows[1].is_nan());
+        assert!(c.opens.iter().all(|o| o.is_nan()) && c.opens.len() == 2, "no open array -> NaN per kept bar");
         // no events object at all -> empty, never a phantom split (this is the overwhelming case)
         assert!(parse_chart(&json!({"chart": {"result": [{
             "timestamp": [1577836800], "indicators": {"quote": [{"close": [10.0]}]}
