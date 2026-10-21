@@ -2060,6 +2060,7 @@ pub async fn run(args: Vec<String>) {
     weight_sweep(&samples, tuning); // (#334) which shipped ranking weight is mis-set?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     entry_probe(&samples, growth_score, tuning); // (#820) does a fresh pass lag a confirmed one?
+    book_entry_probe(&samples, picks::growth_scores_ranked, tuning, &picks::gates_off(tuning)); // (#821) does a name new to the book lag one it already held?
     if fund_lane_on(fund, insider) {
         report_fund_lane(&samples, tuning.split_purge_months);
         sweep_fund_factor(&samples, tuning, years); // (G) which factor pays THROUGH the growth lane, held-out
@@ -4450,13 +4451,7 @@ fn blend_winners<'a>(
         let by_tk: BTreeMap<&'a str, &'a Sample> = group.iter().map(|&s| (s.quote.ticker.as_str(), s)).collect();
         let pool: Vec<&'a Sample> = by_tk.values().copied().collect();
         let Some(bar) = winner_bar(pool.iter().filter(|s| picks::asset_class(&s.quote) == 2).map(|s| s.realized).collect(), top_pct) else { continue };
-        let quotes: Vec<&Quote> = pool.iter().map(|s| s.quote.as_ref()).collect();
-        let rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> =
-            pool.iter().zip(scorer(&quotes, tuning)).filter_map(|(s, sc)| Some((0, sc?, 0.0, 0.0, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)))).collect();
-        let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(&0).unwrap_or_default();
-        kept.sort_by(|x, y| y.0.total_cmp(&x.0)); // score desc, stable like the shipped book
-        let shipped: Vec<&'a Sample> = kept.iter().map(|r| by_tk[r.3.as_str()]).collect();
-        let book = blend_sides(&shipped, momentum_ranked(&pool, &scorer(&quotes, open), tuning).into_iter(), tuning.growth_momentum_slots, VERDICT_TOP);
+        let book = blend_book(&by_tk, scorer, tuning, open);
         slots += book.len();
         for (t, by_m) in book {
             let s = by_tk[t];
@@ -4469,6 +4464,26 @@ fn blend_winners<'a>(
         }
     }
     (slots, held, mom)
+}
+
+/// (#821) One bucket's published blend book, as [`blend_winners`] reads it. `by_tk` holds each ticker's latest
+/// sample. The score half is the score order after the (#75) value trim; the momentum half fills from
+/// [`momentum_ranked`] over the `open` pond; [`blend_sides`] splices them, true = momentum's.
+// shortcut: skips the sector and corr caps the DCA lane runs; both are the identity at their shipped 0.
+fn blend_book<'a>(
+    by_tk: &BTreeMap<&'a str, &'a Sample>,
+    scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>,
+    tuning: &BuyHeuristic,
+    open: &BuyHeuristic,
+) -> Vec<(&'a str, bool)> {
+    let pool: Vec<&'a Sample> = by_tk.values().copied().collect();
+    let quotes: Vec<&Quote> = pool.iter().map(|s| s.quote.as_ref()).collect();
+    let rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> =
+        pool.iter().zip(scorer(&quotes, tuning)).filter_map(|(s, sc)| Some((0, sc?, 0.0, 0.0, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)))).collect();
+    let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(&0).unwrap_or_default();
+    kept.sort_by(|x, y| y.0.total_cmp(&x.0)); // score desc, stable like the shipped book
+    let shipped: Vec<&'a Sample> = kept.iter().map(|r| by_tk[r.3.as_str()]).collect();
+    blend_sides(&shipped, momentum_ranked(&pool, &scorer(&quotes, open), tuning).into_iter(), tuning.growth_momentum_slots, VERDICT_TOP)
 }
 
 /// (#583) The `winners` report: where each window's top-5% stocks went, on the shipped book's pond (the
@@ -7874,6 +7889,65 @@ fn entry_probe(
     Some((gap, gap_med))
 }
 
+/// (#821) The rank form of (#820)'s split. Per bucket, [`blend_book`] over the non-crypto samples, each ticker's
+/// latest; each held name is filed by whether the previous bucket's book held it too (confirmed) or not (new to
+/// the book). Returns the two sides' forward peer-relative returns, taken at the later cutoff. A bucket with no
+/// previous bucket in the walk is skipped: there was no earlier book to wait for.
+fn book_entries(
+    samples: &[Sample],
+    scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>,
+    tuning: &BuyHeuristic,
+    open: &BuyHeuristic,
+) -> (Vec<f64>, Vec<f64>) {
+    let mut groups: BTreeMap<i32, BTreeMap<&str, &Sample>> = BTreeMap::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        groups.entry(bucket(s.date)).or_default().insert(s.quote.ticker.as_str(), s);
+    }
+    let (mut confirmed, mut fresh, mut held) = (Vec::new(), Vec::new(), BTreeMap::<i32, HashSet<&str>>::new());
+    for (&b, by_tk) in &groups {
+        let book = blend_book(by_tk, scorer, tuning, open);
+        if let Some(before) = held.get(&(b - 1)) {
+            for (t, _) in &book {
+                let side = if before.contains(t) { &mut confirmed } else { &mut fresh };
+                side.push(by_tk[t].relative);
+            }
+        }
+        held.insert(b, book.into_iter().map(|x| x.0).collect());
+    }
+    (confirmed, fresh)
+}
+
+/// (#821) Sweep 40's idea as it was phrased: should a buy wait until the book held the name at the previous
+/// cutoff too? Compares the forward peer-relative return of names new to the published blend book against
+/// names it held both times ([`book_entries`]). A negative gap on both stats = new entrants lag, so a
+/// wait-one-cutoff rule earns a graded knob; otherwise buy on entry. Report only, no knob. Returns
+/// `(mean gap, median gap)`, new minus held, for the test.
+fn book_entry_probe(
+    samples: &[Sample],
+    scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>,
+    tuning: &BuyHeuristic,
+    open: &BuyHeuristic,
+) -> Option<(f64, f64)> {
+    let (confirmed, fresh) = book_entries(samples, scorer, tuning, open);
+    println!("\n── BOOK ENTRY PROBE (#821) (blend book: held now -> was it in the book ~6mo ago too?) ──");
+    if confirmed.len() < 4 || fresh.len() < 4 {
+        println!("  too few entries to read (held both times {} / new to the book {}).", confirmed.len(), fresh.len());
+        return None;
+    }
+    let ((mc, medc), (mf, medf)) = (cohort_stats(&confirmed), cohort_stats(&fresh));
+    let (gap, gap_med) = (mf - mc, medf - medc);
+    println!("  held both times  n={:<6} fwd peer-relative  mean {mc:+.1} | med {medc:+.1} pts", confirmed.len());
+    println!("  new to the book  n={:<6} fwd peer-relative  mean {mf:+.1} | med {medf:+.1} pts", fresh.len());
+    let verdict = gap_verdict(
+        gap,
+        gap_med,
+        "waiting a cutoff would NOT pay — new entrants did as well or better; buy on entry",
+        "new entrants LAG the names held twice — a wait-one-cutoff rule is worth a graded knob",
+    );
+    println!("  gap  mean {gap:+.1} | med {gap_med:+.1} pts  ->  {verdict}");
+    Some((gap, gap_med))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10661,6 +10735,62 @@ mod tests {
         // both sides need four: 4 confirmed + 3 fresh, then 3 confirmed + 4 fresh
         assert!(entry_probe(&build([-1.0; 4])[..14], scorer, &BuyHeuristic::default()).is_none());
         assert!(entry_probe(&build([-1.0; 4])[2..], scorer, &BuyHeuristic::default()).is_none());
+    }
+
+    /// (#821) `book_entries` files each book name by the PREVIOUS bucket's book: a name it held is
+    /// confirmed, one it did not is new. A ticker's last sample in a bucket wins, an unscored name never
+    /// joins the book, a coin never counts, and a bucket whose previous bucket is missing is skipped.
+    #[test]
+    fn book_entries_split_on_the_previous_book() {
+        let rel = |mut s: Sample, r: f64| {
+            s.relative = r;
+            s
+        };
+        let (a, b, c) = (ymd(2010, 1, 5), ymd(2010, 7, 5), ymd(2012, 1, 5));
+        let samples = vec![
+            swap_sample(a, "P1", 3.0, 0.0, 0.0),
+            swap_sample(a, "P2", 2.0, 0.0, 0.0),
+            swap_sample(a, "P3", 1.0, 0.0, 0.0),
+            rel(swap_sample(b, "P1", 3.0, 0.0, 0.0), 99.0), // stale: the later P1 row replaces it
+            rel(swap_sample(ymd(2010, 8, 5), "P1", 3.0, 0.0, 0.0), 1.0),
+            rel(swap_sample(b, "P2", 2.0, 0.0, 0.0), 2.0),
+            rel(swap_sample(b, "N1", 5.0, 0.0, 0.0), 7.0),
+            rel(swap_sample(b, "P3", -1.0, 0.0, 0.0), 3.0), // unscored now: out of the book
+            rel(swap_sample(b, "BTC-EUR", 100.0, 0.0, 0.0), 500.0), // a coin: never counts
+            rel(swap_sample(c, "Q1", 1.0, 0.0, 0.0), 50.0), // no 2011 H2 bucket: nothing to compare
+        ];
+        let t = BuyHeuristic::default();
+        assert_eq!(book_entries(&samples, swap_scorer, &t, &t), (vec![1.0, 2.0], vec![7.0]));
+    }
+
+    /// (#821) `book_entry_probe` reads new minus held on both stats. Held names sit at +2.0 so a flipped
+    /// subtraction cannot pass.
+    #[test]
+    fn book_entry_probe_gap_is_new_minus_held() {
+        // `held` of K1..K4 sit in the first book; all four K and every F sit in the second.
+        let build = |held: usize, fresh_rels: &[f64]| -> Vec<Sample> {
+            let mut v: Vec<Sample> = ["K1", "K2", "K3", "K4"][..held].iter().map(|t| swap_sample(ymd(2020, 1, 1), t, 1.0, 0.0, 0.0)).collect();
+            for t in ["K1", "K2", "K3", "K4"] {
+                let mut s = swap_sample(ymd(2020, 7, 1), t, 1.0, 0.0, 0.0);
+                s.relative = 2.0;
+                v.push(s);
+            }
+            for (t, r) in ["F1", "F2", "F3", "F4"].iter().zip(fresh_rels) {
+                let mut s = swap_sample(ymd(2020, 7, 1), t, 1.0, 0.0, 0.0);
+                s.relative = *r;
+                v.push(s);
+            }
+            v
+        };
+        let t = BuyHeuristic::default();
+        // new mean -13, median -13; held +2 on both
+        assert_eq!(book_entry_probe(&build(4, &[-10.0, -12.0, -14.0, -16.0]), swap_scorer, &t, &t), Some((-15.0, -15.0)));
+        // one collapse drags the mean negative; the typical new entrant beat the held names
+        let (gap, gap_med) = book_entry_probe(&build(4, &[5.0, 6.0, 7.0, -900.0]), swap_scorer, &t, &t).unwrap();
+        assert!(gap < 0.0 && gap_med > 0.0);
+        // both sides need four: 3 held + 4 new (K4 joins late), then 4 held + 3 new
+        assert!(book_entry_probe(&build(3, &[-1.0; 3]), swap_scorer, &t, &t).is_none());
+        assert!(book_entry_probe(&build(4, &[-1.0; 3]), swap_scorer, &t, &t).is_none());
     }
 
     /// Peer-bucket key + the de-meaning that turns realized returns into the SELECTION signal rho
