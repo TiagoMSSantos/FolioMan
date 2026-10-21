@@ -15748,6 +15748,44 @@ buy_heuristic:
                                  #   stats, no cell below -1.0. ON A PASS: the best knob arm by pooled mean ships with a
                                  #   golden rebless; a red CI gate reverts it. A passing rival is a question, not a ship.
                                  #   false = the price-only ruler, byte-identical, and the DEFAULT.
+                                 # (#805) MEASURED 2026-10-21 on 3e3cdcc, the TR ruler on the shipped book. 8 probe runs, all
+                                 #   with this knob true and `universe fund pit winners rivals`: pit ctl 39552706226, stress
+                                 #   ctl 39552757599. No offline hit; cutoffs and tickers match inside each mode (pit 6287,
+                                 #   stress 6296 tickers; GROWTH windows 5075/10437/13654 on the pit ctl). Rival (j), excess
+                                 #   mean|median pts/yr, price ruler (39481164331, aaa6596) -> TR pit ctl: 20y +5.0|+4.4 ->
+                                 #   +4.2|+3.6 (worst -1.4); 12y +4.3|+4.8 -> +3.2|+2.8 (worst -4.7); 8y +4.7|+4.5 -> +3.8|+3.1
+                                 #   (worst -4.5). The top-10 book row: 20y +3.4|+1.8 -> +2.8|+1.6; 12y +3.4|+3.2 -> +2.6|+2.1;
+                                 #   8y +3.1|+2.9 -> +2.3|+2.2. At 20y the S&P line moves 6.5 -> 8.6 %/yr and the book 9.9 ->
+                                 #   11.4. READING: the price ruler flatters the book by ~0.6-2.0 pts/yr, past the (#304) range,
+                                 #   but the book still beats ^SP500TR at every horizon on both stats. TR ctl guards: WINNERS
+                                 #   HELD 8.2/10.5/10.0, Serie E 100/84/91 (price ruler 95/74/85), 20y DCA S+inter +3.5|+3.1.
+                                 #   CAVEATS: the price-ruler numbers come from an earlier run, so pond drift is mixed in; the
+                                 #   lift verdicts below compare same-batch runs only. `report_vs_benchmark` still labels the
+                                 #   line S&P500/^GSPC when only this knob is on; the numbers are ^SP500TR. With `pit` on,
+                                 #   `stress` adds only 9 names (STRESS_TICKERS mostly sit in the PIT pond), so the stress
+                                 #   cells read ~ the pit cells. A real stress confirm needs `universe fund stress` without pit.
+                                 #   No verdict below depends on a stress cell: every arm is vetoed by a pit cell alone.
+                                 # (#806) growth_gate_on_tr_cagr=true on the TR ruler: FAIL. pit 39552718714, stress
+                                 #   39552772066. Pooled lift over the ctl (j) +0.02|+0.00 (inert: every cell 0.0 but s8 +0.1
+                                 #   mean). Serie E 12y drops 84 -> 79 (pit) and 84 -> 82 (stress), below the 90 floor and
+                                 #   below the ctl: veto. Fourth refusal, after (#99), (#303) and (#570), and the first on a TR
+                                 #   ruler: grading the book on total return does not reward a total-return gate.
+                                 # (#807) growth_min_cagr ladder 18 and 17 on the TR ruler: FAIL. c18 pit 39552730602, stress
+                                 #   39552787139; c17 pit 39552741859, stress 39552801908. c18 pooled -0.05|+0.10, c17
+                                 #   -0.12|-0.00, both under +0.3. Both deepen the 12y worst window -4.7 -> -8.1 in both modes
+                                 #   (veto). c17 also drops Serie E 12y to 79/82 and the 8y median by 0.3. The ladder needs both
+                                 #   rungs to pass; neither does. The floor stays at its shipped value.
+                                 # (#808) rivals on the TR ruler, row minus (j) inside each ctl run: all FAIL.
+                                 #   (k) 5 TR life + 5 momentum: pooled +0.53|+0.32, the only row over +0.3 on both stats.
+                                 #   Cells p20 -0.9|-0.8, p12 +0.7|+0.3, p8 +2.0|+1.8, s20 -1.0|-1.3, s12 +0.4|+0.2, s8
+                                 #   +2.0|+1.7. It fails on s20 median -1.3 and on the worst window in 5 of 6 cells (pit 20y
+                                 #   -3.6 vs -1.4, pit 8y -7.4 vs -4.5). It buys 8y return with 20y return and deeper holes.
+                                 #   (m) pooled +0.45|+0.22: median under the bar, and the 12y worst -6.4 vs -4.7 (veto).
+                                 #   (l) pooled -0.33|-0.50, 8y cells -1.1. (d) pooled -1.02|-0.82, 4 cells under -1.0.
+                                 #   VERDICT (#804)-(#808): no passer, so no dead confirm and no ship. On a total-return ruler
+                                 #   the shipped book keeps a +3-4 pts/yr edge over (j)'s benchmark and no tested knob or rival
+                                 #   beats it. The worst-window veto (row worst >= ctl worst - 1.0) and the Serie E reading
+                                 #   (below its floor AND below the same-mode ctl) were fixed in writing before any run ended.
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.
