@@ -388,11 +388,12 @@ mod tests {
         assert!(engine("tickers: [AAPL]\n", &q).get("pins").is_none(), "a pool holding every pin stays byte-equal to `screen`");
     }
 
-    /// The fund tilt follows the UPLOAD's weight: the factor is re-selected from `fund` at any weight,
-    /// and (#816) `fund` is KEPT at 0, as `screen` now fetches it at any weight. CI's `roic` extra reads
-    /// `fund` straight, so the kept one still moves the score at weight 0.
+    /// The fund factor is re-selected from `fund` at any uploaded weight, and (#816) `fund` is KEPT at 0,
+    /// as `screen` now fetches it at any weight. CI's `roic` extra reads `fund` straight, so the kept one
+    /// still moves the payload at weight 0. The tilt term itself (weight x factor) is graded in `picks`;
+    /// this pool's pinned row does not show it, so the old "0 moves the row" read the dropped `fund`.
     #[test]
-    fn the_fund_tilt_follows_the_uploaded_weight() {
+    fn the_fund_factor_is_reselected_and_fund_kept_at_any_weight() {
         let mut q = pool();
         q[0].fund = Some(core::FundFactors { peg_yield: Some(50.0), roic: Some(40.0), ..Default::default() });
         let mut picked = q.clone();
@@ -401,10 +402,9 @@ mod tests {
         bare[0].fund = None;
         let aapl = ["AAPL".to_string()];
         let want = direct(&picked, &aapl, 25);
-        assert_ne!(want, direct(&bare, &aapl, 25), "not vacuous: the tilt moves the pinned row");
+        assert_ne!(want, direct(&bare, &aapl, 25), "not vacuous: `fund` moves the pinned row");
         assert_eq!(engine("tickers: [AAPL]\n", &q), want, "weight on: the factor is re-selected from `fund`");
         let off = "tickers: [AAPL]\nbuy_heuristic:\n  growth_fund_weight: 0\n";
-        assert_ne!(engine(off, &picked), engine("tickers: [AAPL]\n", &picked), "not vacuous: 0 moves the row");
         assert_ne!(engine(off, &q), engine(off, &bare), "(#816) weight off: `fund` is kept, so the roic extra still reads it");
     }
 
