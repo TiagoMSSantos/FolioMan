@@ -1662,15 +1662,16 @@ fn meta_alerts(
 /// floor and USD rate as the (#809) ruler, on 3mo of bars. A name in neither EUR nor USD is skipped.
 /// (#822) Each name the book holds is then fetched again on 10y of bars, `track`'s fetch, and its
 /// journalled sessions tallied for the RIGHT/FAIL column. (#823) Today's session counts once the
-/// exchange closes, read off the UTC clock.
+/// exchange closes, read off the UTC clock. (#824) Each book name as a bare quote, its profile looked up
+/// as the pool's are, for the NAME link; a market's prices convert at its one currency's rate.
 #[mutants::skip] // network shell; `rank`, `web_rows`, `tally` and their tests live in heuristics::intraday
-async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>) {
+async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>, Vec<Quote>) {
     use crate::heuristics::intraday;
     let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
     let usd = fetch::eur_rate(client, &settings.urls, "USD", &fetch::fx_cache()).await;
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
     let journal = &crate::commands::track::journal_intra();
-    let (mut rows, mut pairs) = (Vec::new(), Vec::new());
+    let (mut rows, mut pairs, mut stubs) = (Vec::new(), Vec::new(), Vec::new());
     for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)
             .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk).await?)) })
@@ -1696,10 +1697,14 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             .buffered(fetch::fetch_concurrency())
             .collect()
             .await;
-        rows.extend(intraday::web_rows(market, k, &book, &hits, today));
+        let fx = if market == "US" { usd.unwrap_or(f64::NAN) } else { 1.0 };
+        rows.extend(intraday::web_rows(market, k, &book, &hits, fx, today));
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
+        stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
     }
-    (rows, pairs)
+    let targets = stubs.iter().map(|q| q.ticker.clone()).collect();
+    fetch::enrich_profile(client, &settings.urls, &mut stubs, &targets).await;
+    (rows, pairs, stubs)
 }
 
 /// (#68) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
@@ -2405,7 +2410,7 @@ pub async fn run(args: Vec<String>) {
     let mut soc_book = crate::heuristics::social::SocBook::default();
     // (#811) the Intraday shadow table, ranked for the session dated `run_date` (the journal's date, so
     // `track` grades the session it ranked for); key 0 (the default) fetches nothing
-    let (intra_rows, intra_pairs) = match settings.intraday_key {
+    let (intra_rows, intra_pairs, intra_quotes) = match settings.intraday_key {
         0 => Default::default(),
         k => intraday_book(&client, &settings, k, chrono::Local::now().date_naive()).await,
     };
@@ -2431,7 +2436,11 @@ pub async fn run(args: Vec<String>) {
         top["page_min_cagr"] = serde_json::json!(settings.page_min_cagr); // (#526) the page hides rows under it
         top["social_cagr_floor"] = serde_json::json!(soc.buy.growth_min_cagr); // (#538) the Social table greys under its own
         top["bonds"] = serde_json::json!(bonds);
-        top["intraday"] = serde_json::json!(intra_rows); // (#811)
+        // (#811) (#824) its own NAME links first, on a payload of its own: a bare quote stamped on the
+        // other tables would relink their REPORTS cells
+        let mut intra = serde_json::json!({ "intraday": intra_rows });
+        crate::picks::stamp_site(&mut intra, &intra_quotes, &fetch::us_symbol);
+        top["intraday"] = intra["intraday"].take();
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["braked"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();

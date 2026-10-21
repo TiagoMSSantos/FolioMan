@@ -77,6 +77,28 @@ console.assert(
   "a TradingView link misreads its symbol",
 );
 
+// (#824) An Intraday SESSION cell, `09:30-16:00 New York`, on the browser's own clock. `wall` is the
+// instant of today's h:m in `zone`: the zone's offset is its wall clock now, read as UTC, less now.
+// shortcut: the offset is now's, so on a clock-change day the hover can read an hour off until the change.
+const ZONES = { "New York": "America/New_York", Frankfurt: "Europe/Berlin" };
+function wall(h, m, zone, now = new Date()) {
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" });
+  const p = Object.fromEntries(fmt.formatToParts(now).map((x) => [x.type, +x.value]));
+  return Date.UTC(p.year, p.month - 1, p.day, h, m) - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(now / 6e4) * 6e4);
+}
+function local(cell) {
+  const [, a, b, c, d, city] = String(cell).match(/^(\d\d):(\d\d)-(\d\d):(\d\d) (.+)$/) ?? [];
+  if (!ZONES[city]) return "";
+  const at = (h, m) => new Date(wall(+h, +m, ZONES[city])).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return cell + " = " + at(a, b) + "-" + at(c, d) + " your time (" + Intl.DateTimeFormat().resolvedOptions().timeZone + ")";
+}
+console.assert(
+  wall(9, 30, "America/New_York", new Date(Date.UTC(2026, 0, 15, 12))) === Date.UTC(2026, 0, 15, 14, 30) &&
+    wall(17, 30, "Europe/Berlin", new Date(Date.UTC(2026, 6, 15, 12))) === Date.UTC(2026, 6, 15, 15, 30) &&
+    local("09:30-16:00 New York").startsWith("09:30-16:00 New York = ") && local("09:00-17:30 Tokyo") === "",
+  "a SESSION hover misreads its exchange's clock",
+);
+
 function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set(), flags = {}) {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
@@ -118,6 +140,7 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);
         td.title = ["rank " + n + " in this table", ...[...marks].filter((f) => flags[f]).map((f) => f + " " + flags[f])].join("\n");
       }
+      if (h === "SESSION") td.title = local(cell) || td.title; // (#824) the Intraday hours on the reader's own clock
       // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo. (#455) A shadow
       // table's cell may carry its source page as a third element; only https ever becomes a link.
       // (#482) A NAME with no page of its own links the row's Yahoo quote, and so does an Exposure

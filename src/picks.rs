@@ -5028,9 +5028,10 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("MARKET", "US = an S&P 500 member today; EU = a DAX 40, CAC 40 or Euro Stoxx 50 member; each market ranks its own top 10"),
         ("TICKER", ticker),
-        ("NAME", "The company's name, as Yahoo lists it"),
-        ("KEY", "The intraday key the run ranks on, higher first; hover a cell for its name. K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions"),
-        ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock"),
+        ("NAME", "The company's name, as Yahoo lists it; click to open the company's own website (or its Wikipedia article) when one is found, else its Yahoo quote"),
+        ("PRICE(EUR)", "Last close, converted to euros; while the session trades, Yahoo's latest price"),
+        ("KEY", "The intraday key the run ranks on, higher first; hover a cell for how its number was worked out (K2 and K3 show their name). K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions"),
+        ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock; hover a cell for the hours on your own clock"),
         ("DATA TO", "The last completed session the key read; the row is for the session after it"),
         ("RIGHT/FAIL", "How this name's past sessions in this table went, open to close before costs, right/fail; right = it closed above its open; fail = it closed at or below its open; the two add up to every session measured since the journal's first Intraday line, 2026-10-22, plus today's once its exchange has closed (from 17:00 UTC for EU, 21:30 UTC for US); a session no journal line holds, like 2026-10-21's, counts until midnight UTC only; n/a = its 10-year chart did not load"),
     ]);
@@ -5723,7 +5724,7 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
 pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn(&str) -> String) {
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q)));
-    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young", "braked", "reits"] {
+    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young", "braked", "reits", "intraday"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default();
@@ -11540,8 +11541,9 @@ mod tests {
         let quotes = [q("APC.DE", Some("https://www.apple.com")), q("VWCE.DE", Some("https://jetf/IE00")), q("BAD", Some("http://x")), q("NONE", None), q("BTC-EUR", Some("https://cg/bitcoin"))];
         let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
         let row = |t: &str| serde_json::json!([["TICKER", t], ["NAME", "n", "https://old"]]);
-        let mut p = serde_json::json!({"stocks": [row("APC.DE"), row("BAD"), row("NONE")], "core": [row("VWCE.DE")], "berkshire": [row("AAPL"), row("SIRI")], "crypto": [row("BTC-EUR")]});
+        let mut p = serde_json::json!({"stocks": [row("APC.DE"), row("BAD"), row("NONE")], "core": [row("VWCE.DE")], "berkshire": [row("AAPL"), row("SIRI")], "crypto": [row("BTC-EUR")], "intraday": [row("AAPL")]});
         stamp_site(&mut p, &quotes, &us);
+        assert_eq!(p["intraday"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "(#824) the Intraday table links too");
         assert_eq!(p["stocks"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "a stale third element is replaced");
         assert_eq!(p["core"][0][1], serde_json::json!(["NAME", "n", "https://jetf/IE00"]));
         assert_eq!(p["berkshire"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "a US filing finds its Xetra twin");

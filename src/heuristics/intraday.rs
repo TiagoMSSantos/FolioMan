@@ -84,6 +84,14 @@ pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
     }
 }
 
+/// (#824) K1's two sums for the session at bar `i`, the page's KEY hover: the last 21 sessions'
+/// open-to-close log moves and their overnight ones (each close to the next open). K1 = day − night;
+/// [`key`] keeps its own sum, so the ranking stays bit-identical.
+fn tug(c: &Chart, i: usize) -> Option<(f64, f64)> {
+    (i >= 22).then_some(())?;
+    (i - 21..i).try_fold((0.0, 0.0), |(day, night), j| Some((day + ln(c.closes[j], c.opens[j])?, night + ln(c.opens[j], c.closes[j - 1])?)))
+}
+
 /// The realized open-to-close return of the session at bar `i`.
 pub fn session_return(c: &Chart, i: usize) -> Option<f64> {
     Some(pos(c.closes[i])? / pos(c.opens[i])? - 1.0)
@@ -208,20 +216,30 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 
 /// (#811) The page rows for one market's [`rank`] book: position, market, ticker, name, key, the
 /// session's hours on the exchanges' own clock, and the last completed bar the key read. (#822) Then
-/// each name's [`tally`], `hits[n]` for `book[n]`; `None` = its chart did not load.
-pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], hits: &[Option<(usize, usize)>], today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
+/// each name's [`tally`], `hits[n]` for `book[n]`; `None` = its chart did not load. (#824) Each row's
+/// latest price in euros at `fx`, the market's euro rate (one currency per market), and K1's [`tug`]
+/// sums as the KEY hover.
+pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], hits: &[Option<(usize, usize)>], fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
     use serde_json::json;
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
     book.iter()
         .zip(hits)
         .enumerate()
         .map(|(n, ((tk, x, c), hit))| {
+            let tip = match tug(c, completed(c, today)).map(|(d, n)| (d * 100.0, n * 100.0)) {
+                Some((d, n)) if k == 1 => format!(
+                    "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: {d:+.2}%\nnight moves (close to next open) added up: {n:+.2}%\nkey = day - night = {d:+.2} - ({n:+.2}) = {:+.2}%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)",
+                    x * 100.0
+                ),
+                _ => KEYS[usize::from(k) - 1].to_string(),
+            };
             vec![
                 json!(["RANK", (n + 1).to_string()]),
                 json!(["MARKET", market]),
                 json!(["TICKER", tk]),
                 json!(["NAME", c.name]),
-                json!(["KEY", format!("{:+.2}%", x * 100.0), null, KEYS[usize::from(k) - 1]]),
+                json!(["PRICE(EUR)", format!("€{}", core::fmt_money2(c.closes[c.closes.len() - 1] * fx))]),
+                json!(["KEY", format!("{:+.2}%", x * 100.0), null, tip]),
                 json!(["SESSION", hours]),
                 json!(["DATA TO", c.dates[completed(c, today) - 1].to_string()]),
                 match hit {
@@ -370,6 +388,18 @@ mod tests {
         gap.highs[25] = f64::NAN;
         assert!(key(1, &gap, 30).is_none() && key(2, &gap, 30).is_none() && key(3, &gap, 30).is_none());
         assert!(key(1, &gap, 25).is_some() && key(3, &gap, 25).is_some());
+    }
+
+    /// (#824) The day sum is the window's open-to-close moves, and day less night is K1 itself.
+    #[test]
+    fn tug_splits_k1_into_its_day_and_night_sums() {
+        let c = wavy(40);
+        for i in [22, 30, 39] {
+            let (day, night) = tug(&c, i).unwrap();
+            let want: f64 = (i - 21..i).map(|j| (c.closes[j] / c.opens[j]).ln()).sum();
+            assert!((day - want).abs() < 1e-12 && (day - night - key(1, &c, i).unwrap()).abs() < 1e-12, "at {i}");
+        }
+        assert_eq!(tug(&c, 21), None);
     }
 
     #[test]
@@ -523,17 +553,22 @@ mod tests {
     fn a_page_row_carries_the_key_session_and_last_bar() {
         let mut c = wavy(31);
         c.name = "Acme".into();
-        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], &[Some((7, 3)), None], d(31));
+        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], &[Some((7, 3)), None], 2.0, d(31));
         assert_eq!(
             serde_json::json!(rows),
             serde_json::json!([
-                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "7/3", null, "7 right, 3 failed, 10 sessions measured"]],
-                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "n/a"]],
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "7/3", null, "7 right, 3 failed, 10 sessions measured"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "n/a"]],
             ])
         );
-        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], &[Some((0, 0))], d(20));
-        assert_eq!((eu[0][1][1].as_str(), eu[0][4][3].as_str()), (Some("EU"), Some("K1 tug of war")));
-        assert_eq!((eu[0][5][1].as_str(), eu[0][6][1].as_str(), eu[0][7][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-20"), Some("0/0")));
+        // too few sessions for K1's hover sums: it names the key
+        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], &[Some((0, 0))], 1.0, d(20));
+        assert_eq!((eu[0][1][1].as_str(), eu[0][5][3].as_str()), (Some("EU"), Some("K1 tug of war")));
+        assert_eq!((eu[0][6][1].as_str(), eu[0][7][1].as_str(), eu[0][8][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-20"), Some("0/0")));
+        // (#824) 21 sessions behind it: the hover works the number out
+        let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], &[None], 1.0, d(31));
+        assert_eq!(k1[0][4][1], "€103.00");
+        assert_eq!(k1[0][5][3], "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: +80.00%\nnight moves (close to next open) added up: -82.87%\nkey = day - night = +80.00 - (-82.87) = +162.87%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)");
         // (#452) the page's hover text keys on exactly these headers
         let heads: std::collections::BTreeSet<&str> = rows[0].iter().map(|c| c[0].as_str().unwrap()).collect();
         assert_eq!(crate::picks::web_help(false, &[])["intraday"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads);
