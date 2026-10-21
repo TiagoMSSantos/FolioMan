@@ -379,7 +379,7 @@ pub struct BuyHeuristic {
     pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
     pub quality_weight: f64,         // (F) reward per % of trailing return-on-capital — the profitability/QUALITY factor (Novy-Marx: high-ROE firms out-compound). ROE, or ROA where equity is negative or collapsed below 1/20th of assets (`core::quality_return`). Applied to BOTH lanes. 0 = off. Was BACKTEST-BLIND until the backtest loop started filling `Quote.roe` — every number measured for it before then was taken with the term at a constant 0 (see #F)
     pub quality_cap: f64,            // (F) cap the % fed into the quality reward (one 200%-ROE outlier can't dominate). NOTE it binds on ROE (30-50% typical) far more often than on ROA (5-15%), so a negative-equity filer can never reach the ceiling
-    pub quality_neutral: f64,        // (#87) what an ABSENT ROE is worth, in ROE points, before weight and cap — the same field `growth_fund_extra[].neutral` already carries, for the term that predates it. `quality_reward` reads `roe.unwrap_or(0.0)` and its own doc calls that "0 = neutral", which the (N) note beside growth_fund_extra refutes in as many words: in a RANKING absent is not neutral, it is a demotion of up to weight x cap. `quote.roe` needs a CIK or an FMP key, so every non-US filer, every name past the 600-call SEC budget and every ETF and coin takes the full 0.15 x 40 = -6.0 against US peers in the same table. 0.0 = today's behaviour and the DEFAULT; the covered-peer median is the value that makes the term mean what its doc says
+    pub quality_neutral: f64,        // (#87) what an ABSENT ROE is worth, in ROE points, before weight and cap — the same field `growth_fund_extra[].neutral` already carries, for the term that predates it. `quality_reward` reads `roe.unwrap_or(0.0)` and its own doc calls that "0 = neutral", which the (N) note beside growth_fund_extra refutes in as many words: in a RANKING absent is not neutral, it is a demotion of up to weight x cap. `quote.roe` needs a CIK ((#814) the FMP fallback no longer fills it), so every non-US filer, every name past the 600-call SEC budget and every ETF and coin takes the full 0.15 x 40 = -6.0 against US peers in the same table. 0.0 = today's behaviour and the DEFAULT; the covered-peer median is the value that makes the term mean what its doc says
 
     // --- GROWTH LANE: a SECOND ranking (the mirror of the on-sale lane) for quality names AT/NEAR
     //     their high that are still climbing — proven compounders the on-sale score fades to ~0.
@@ -697,7 +697,7 @@ impl Default for BuyHeuristic {
             growth_commodity_damp: 1.0,    // (#44) 1.0 = OFF (this knob is a MULTIPLIER, so neutral is 1.0, not the house 0 — same inversion as tax_keep_eu); ci-settings ships 0.2, swept (#508)
             growth_fx_damp: 1.0,           // (#45) 1.0 = OFF (multiplier, same inversion as #44); ci-settings ships 0.98 (non-EUR-listed ETF FX/venue tie-break)
             growth_brk_held_boost: 1.0, // (#472) 1.0 = OFF; ci-settings ships 1.20
-            growth_superinvestor_boost: 1.0, // (#472) 1.0 = OFF; ci-settings ships 1.10
+            growth_superinvestor_boost: 1.0, // (#472) 1.0 = OFF; ci-settings shipped 1.10, 1.0 since (#739)
             growth_superinvestor_step: 3,     // (#473)
             growth_social_boost: 1.0,         // (#473) 1.0 = OFF; ci-settings ships 1.05
             growth_capex_ocf_max: 100.0,      // (#545)
@@ -1260,7 +1260,7 @@ fn default_coinmetrics_mvrv_url() -> String {
     "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets={assets}&metrics=CapMVRVCur&frequency=1d&limit_per_asset=1&page_size=1000".to_string()
 }
 
-/// Default (F) quality endpoint: FMP's `stable/ratios-ttm` (carries `returnOnEquityTTM`). v3 legacy
+/// Default (E) P/E fallback endpoint: FMP's `stable/ratios-ttm`. (#814) Its `returnOnEquityTTM` is ignored. v3 legacy
 /// `/api/v3/ratios-ttm/` died 2025-08-31 for new keys; `stable` replaces it.
 fn default_fundamentals_quality_url() -> String {
     "https://financialmodelingprep.com/stable/ratios-ttm?symbol={ticker}&apikey={key}".to_string()

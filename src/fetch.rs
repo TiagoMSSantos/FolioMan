@@ -1081,10 +1081,14 @@ async fn cached_fund_json(client: &Client, url_tmpl: &str, ticker: &str, tag: &s
     real.then_some(v)
 }
 
-/// (E/F) Trailing P/E + ROE for an EQUITY from FMP `stable/ratios-ttm` — ONE cached call serves both.
+/// (E) Trailing P/E for an EQUITY from FMP `stable/ratios-ttm`, the fallback when SEC has neither number.
 /// P/E = `priceToEarningsRatioTTM`: the old `stable/quote` source did NOT carry a `pe` field (P/E was
-/// always n/a because of it); ratios-ttm does. ROE = `returnOnEquityTTM`, a FRACTION (0.42 -> 42%), ×100.
-/// Both None unless FMP_API_KEY is set AND the free-tier endpoint returns them.
+/// always n/a because of it); ratios-ttm does. None unless FMP_API_KEY is set AND the free-tier endpoint
+/// returns it. The ROE half is always None.
+/// (#814) The payload's `returnOnEquityTTM` is NOT read. The backtest fills `quote.roe` from SEC alone, and
+/// this raw ratio skipped `core::core_quality` (the negative-equity guard and the core-earnings strip), so a
+/// non-SEC name earned up to `quality_weight` x `quality_cap` points the ruler never graded. The P/E stays
+/// and still drifts: it feeds the on-sale `value_factor` live, while the backtest has no P/E for these names.
 /// note: UNVERIFIED field name `priceToEarningsRatioTTM` — confirm once the daily FMP budget resets.
 async fn fetch_ratios(client: &Client, urls: &Urls, ticker: &str) -> (Option<f64>, Option<f64>) {
     let Some(v) = cached_fund_json(client, &urls.fundamentals_quality, ticker, "ratios").await else {
@@ -1092,8 +1096,7 @@ async fn fetch_ratios(client: &Client, urls: &Urls, ticker: &str) -> (Option<f64
     };
     let o = v.get(0).unwrap_or(&v);
     let pe = o.get("priceToEarningsRatioTTM").and_then(|x| x.as_f64()).filter(|p| p.is_finite() && *p > 0.0);
-    let roe = o.get("returnOnEquityTTM").and_then(|x| x.as_f64()).filter(|r| r.is_finite()).map(|r| r * 100.0);
-    (pe, roe)
+    (pe, None)
 }
 
 /// (E/F) Trailing P/E + ROE for an EQUITY from SEC EDGAR — free, no key, no daily cap (unlike FMP).
@@ -12452,8 +12455,9 @@ pub(crate) mod tests {
         assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(), &[]), Some(4.0));
     }
 
-    /// (#358) `fetch_ratios` off a seeded `ratios` cache: P/E as served, ROE a fraction x100. A P/E of
-    /// 0 is not a valuation, so the `> 0.0` half of the guard keeps it out of the column.
+    /// (#358) `fetch_ratios` off a seeded `ratios` cache: P/E as served. (#814) The seeded ROE is ignored,
+    /// because SEC is the only ROE source. A P/E of 0 is not a valuation, so the `> 0.0` half of the guard
+    /// keeps it out of the column.
     #[tokio::test]
     async fn fetch_ratios_reads_the_cached_ratios_payload() {
         pin_throttle();
@@ -12477,7 +12481,7 @@ pub(crate) mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
         let got = (fetch_ratios(&client, &urls, "ZZRATIOS").await, fetch_ratios(&client, &urls, "ZZRATIOS0").await);
         let _ = (std::fs::remove_file(good), std::fs::remove_file(zero));
-        assert_eq!(got, ((Some(12.5), Some(50.0)), (None, None)));
+        assert_eq!(got, ((Some(12.5), None), (None, None)));
     }
 
     /// (#358) `fetch_ratios_sec` off seeded SEC caches: the P/E divides the close by the TTM roll (4.0,
