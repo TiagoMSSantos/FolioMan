@@ -3703,7 +3703,7 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
                                  #   (#599) 2.0 REFUSED on rival (j): 0/6 cells, harmed 4/6. Receipt: the (#599) block.
-  growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  # (#819) retired: growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
   print_acquisition_hazard: false # (#112 / round 3 §9) UNMEASURED, and unmeasurABLE from this data —
                                  # which is the point. Ships OFF, which is the caveat block every
                                  # golden holds. Prose only; no gate, no score term, no journal field.
@@ -19055,7 +19055,7 @@ buy_heuristic:
   #   so the knob's real authority is the FOURTH ROOT of its advertised swing — 1.32x total spread at
   #   w = 1.0 rather than 3x — under a three-row table of folded ranges sized on that.
   #   THAT IS THE WRONG ARM OF `compose_score`. It has three, and the 4-slot `combine_damps` is the
-  #   `growth_geomean_fold` arm, which (#8) reverted on 2026-07-02 and which ships FALSE (line 1172).
+  #   `growth_geomean_fold` arm, which (#8) reverted on 2026-07-02 and which was retired (#819).
   #   The SHIPPED arm is the one line 754 has carried all along:
   #     score = base · proximity · value · geomean(trust, overext_brake) · ter · commodity · fx · acc
   #             + liq_bonus

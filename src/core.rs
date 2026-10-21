@@ -1413,6 +1413,7 @@ pub const NON_EU: [&str; 17] = [
 /// "S&P 500 Information Technology" (has "s&p 500" but also "information"/"technolog") is correctly
 /// NOT a core, while "Vanguard S&P 500 UCITS ETF" is. Name-token heuristic — lowercased, substring
 /// match, same style as the venue-list funnels above. See `GEO` for the rule and what it replaced.
+#[cfg(test)]
 pub fn is_broad_index_name(name: &str) -> bool {
     geo_tier(&name.to_lowercase()).is_some()
 }

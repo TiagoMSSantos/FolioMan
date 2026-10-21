@@ -1292,7 +1292,7 @@ struct ScoreParts {
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
     holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one × (#545) growth_capex_ocf_penalty above growth_capex_ocf_max; 1.0 otherwise / knobs off / every backtest quote
     gate_soft: f64,    // (#563) f^n, n = knob gates waived to score this name ([`waived`]); 1.0 = it cleared every gate, or `growth_gate_soft` is 0 and it never got here
-    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
+    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus. (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
 /// (#98) The acceleration leg, and the ONE definition of it — `score_parts` computes it, nothing else
@@ -1625,8 +1625,8 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // (#48) distance from the name's own 10y high, blended toward neutral by its authority knob:
     // w=1 is the raw `range_pct/100` multiply (0.8..1.0 inside the shipped gate — closer to the high
     // = stronger confirmation), w=0 turns the term off, w<0 inverts it so the name furthest below its
-    // high scores highest. Clamped at 0 because `combine_damps` fractional-exponents its inputs and a
-    // negative factor there is NaN — unreachable at the shipped gate, guarded at the boundary anyway.
+    // high scores highest. Clamped at 0 so a negative factor cannot invert the name (on the fold arm
+    // (#819) retired it was NaN) — unreachable at the shipped gate, guarded at the boundary anyway.
     let proximity =
         (1.0 + tuning.growth_proximity_weight * (quote.range_pct / 100.0 - 1.0)).max(0.0);
     let risk_reward = risk_bonus(quote, long_cagr, tuning.sharpe_weight, tuning.calmar_weight, tuning); // (B/C) growth lane's Sharpe weight
@@ -1710,10 +1710,10 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // (it cannot reach the argmax) rather than because the walk-forward could not see it.
     // (#147) CLAMPED AT 0, for the same reason `proximity` is and on the same evidence. (#148)
     // CORRECTS THE ARM THIS NAMED: on the SHIPPED arm of `compose_score`, `value` multiplies RAW, and
-    // a negative there would merely invert the name rather than poison it. The NaN lives on the
-    // `growth_geomean_fold` arm, where `value` enters `combine_damps` and gets fractional-exponented
-    // — that arm ships FALSE but is config-reachable, which is exactly why the guard stays at the
-    // boundary. Any weight above 2.0 drives a name at VALUE_TILT_MIN negative: 1 + 3x(0.5 - 1) = -0.5.
+    // a negative there would merely invert the name rather than poison it. The NaN lived on the
+    // `growth_geomean_fold` arm, where `value` entered `combine_damps`. (#819) retired that arm; the
+    // guard stays at the boundary so a config weight cannot invert the name.
+    // Any weight above 2.0 drives a name at VALUE_TILT_MIN negative: 1 + 3x(0.5 - 1) = -0.5.
     // This was UNREACHABLE in the backtest until (#147) filled `quote.pe_ratio`: `value_raw` was 1.0
     // on every walk-forward row, so every weight yielded exactly 1.0 and the boundary could not be
     // touched. Filling the P/E made it reachable, and the knob is config input, so the guard sits at
@@ -1752,11 +1752,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     //  & rho +0.18->+0.20; removing mom-confirm lifted edge +5.9. R² docks exactly the parabolic
     //  compounders this lane exists to surface, and accel already encodes momentum -> dropped both.)
     let damp = combine_damps(&[trust, overext_damp]);
-    // (#8) PROBE: fold proximity + value INTO the geomean so three soft multipliers can't compound to
-    // ~0 (a name at prox 0.7 × value 0.8 × damp 0.85 keeps only 0.48 of base). The geomean bounds the
-    // stack by the SOFTEST term instead of the raw product. Edge-affecting — it also changes the geomean
-    // SLOT COUNT (trust/overext exponent ½ -> ¼), which alone can move the edge (a past constant-1.0 slot
-    // deletion shifted it +98->+109) -> knob-gated, default off = the raw-multiply formula, edge intact.
+    // (#8) folding proximity + value into this geomean cost edge +103.2->+79.2; (#819) retired that knob.
     // (T) TER cost drag — ETF-only, BACKTEST-BLIND. The expense ratio is the ONE cost certain to
     // compound against a decades hold, so dock the score by the actual 20-year wealth multiple it eats:
     // (1 − TER)^20 (20 = the lane's stated hold horizon). Tiebreaks near-identical index ETFs (two
@@ -1892,14 +1888,12 @@ fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64, f64) {
 /// (#144) `base` and the multiplier stack -> the ranked score: the ONE definition of that
 /// composition, which `score_parts` builds (non-negotiable #4).
 ///
-/// The three expressions are the pre-(#144) ones untouched, which is load-bearing and not tidiness:
+/// The two expressions are the pre-(#144) ones untouched, which is load-bearing and not tidiness:
 /// float multiplication does not re-associate, and a golden is a bit-comparison. Reordering a single
 /// factor here would move the shipped lane.
 fn compose_score(p: &ScoreParts, tuning: &BuyHeuristic) -> f64 {
     let s = if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
         p.base + p.liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
-    } else if tuning.growth_geomean_fold {
-        p.base * combine_damps(&[p.trust, p.overext_damp, p.proximity, p.value]) * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost + p.liq_bonus
     } else {
         p.base * p.proximity * p.value * p.damp * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost + p.liq_bonus
     };
@@ -2964,11 +2958,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         "\n─── how the SCORE was computed — {name} ({}), score {displayed:.2}. Verify it yourself ───\n",
         quote.ticker
     ));
-    if tuning.growth_geomean_fold {
-        s.push_str("  growth_score = base × geomean(trust, overext_damp, proximity, value) + liq_bonus   (#8 fold ON)\n\n");
-    } else {
-        s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
-    }
+    s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
     s.push_str("  base = trend + accel + risk + quality + dividend + fund + mom121 + smooth\n");
     // The formula string tracks the cap knob: printing `min(CAGR, cap)` while `long_trend_cap` is 0
     // (off, shipped) would advertise a clamp that is not running — the same class of lie the `cagr`
@@ -3154,13 +3144,8 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         ("", String::new())
     };
-    if tuning.growth_geomean_fold {
-        s.push_str(&format!("\n  SCORE = {open}{:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2}{dock_frag} = {:.2}\n",
-            p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
-    } else {
-        s.push_str(&format!("\n  SCORE = {open}{:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2}{dock_frag} = {:.2}\n",
-            p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
-    }
+    s.push_str(&format!("\n  SCORE = {open}{:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2}{dock_frag} = {:.2}\n",
+        p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     if (displayed - p.score).abs() > 1e-6 {
         s.push_str(&format!("  crypto NUPL + BTC-relative adjustment: {:.2} → {displayed:.2} (the table value)\n", p.score));
         say(&mut s, "Coins only: scaled by Bitcoin market mood (NUPL) and by strength against Bitcoin.");
@@ -3194,11 +3179,7 @@ fn in_short(p: &ScoreParts, tuning: &BuyHeuristic) -> String {
     if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
         s.push_str("    · Base is below 0, so no multiplier applies.\n");
     } else {
-        let mut cuts = if tuning.growth_geomean_fold {
-            vec![("the blended brakes", combine_damps(&[p.trust, p.overext_damp, p.proximity, p.value]))]
-        } else {
-            vec![("price position", p.proximity), ("cheapness", p.value), ("trust and ran-too-far brakes", p.damp)]
-        };
+        let mut cuts = vec![("price position", p.proximity), ("cheapness", p.value), ("trust and ran-too-far brakes", p.damp)];
         cuts.extend([("fund fee", p.ter_damp), ("raw-material price", p.commodity_damp), ("currency", p.fx_damp), ("dividend tax", p.acc_damp)]);
         let (n, f) = cuts.into_iter().min_by(|a, b| a.1.total_cmp(&b.1)).expect("the dock list is never empty");
         if f >= 1.0 {
@@ -9463,12 +9444,6 @@ mod tests {
     assert!((sp.smooth - 4.5).abs() < 1e-9, "smooth part must carry the E term");
     let recomposed = parts.base * parts.proximity * parts.value * parts.damp + parts.liq_bonus;
     assert!((recomposed - parts.score).abs() < 1e-9, "formula must reproduce score");
-    // (#8) fold path: score must equal base × geomean(trust, overext, proximity, value) + liq_bonus.
-    let mut folded = tuning.clone();
-    folded.growth_geomean_fold = true;
-    let fp = score_parts(&rocket, &folded).unwrap();
-    let expect = fp.base * combine_damps(&[fp.trust, fp.overext_damp, fp.proximity, fp.value]) + fp.liq_bonus;
-    assert!((fp.score - expect).abs() < 1e-9, "#8 fold formula must reproduce score");
     assert_eq!(parts.score, growth_score(&rocket, &tuning).unwrap(), "ScoreParts.score == growth_score");
     assert!(explain_growth_score(&rocket, &tuning, parts.score).is_some());
     // ...and ranked picks it up where the on-sale lane (min_score) would have trimmed an at-high name
@@ -9765,19 +9740,15 @@ mod tests {
     for w in [-1.0, 0.0, 0.5, 3.0] {
         assert_eq!(growth_score(&at_high, &prox(w)), base_hi, "w={w} moved a name at its own high");
     }
-    // the NaN guard. `combine_damps` is product().powf(1/n), so a negative factor there yields NaN and
-    // silently poisons the whole score. Unreachable at the shipped gate, so it is forced here: a name
-    // at 50% of range under w=3 would compute 1 + 3×(−0.5) = −0.5 without the clamp.
+    // the clamp. A negative factor would invert the name (on the fold arm (#819) retired, it was NaN).
+    // Unreachable at the shipped gate, so it is forced here: a name at 50% of range under w=3 would
+    // compute 1 + 3×(−0.5) = −0.5 without the clamp.
     let bled = quote(50.0, &[("1Y", 30.0), ("5Y", 200.0), ("10Y", 600.0)]); // range_pct 50
     let open_gate = BuyHeuristic { growth_min_range_pct: 0.0, growth_proximity_weight: 3.0, ..BuyHeuristic::default() };
     let clamped = growth_score(&bled, &open_gate).expect("gate opened, so it scores");
     assert!(clamped.is_finite(), "proximity clamp let a NaN through: {clamped}");
     let neutral = growth_score(&bled, &BuyHeuristic { growth_proximity_weight: 0.0, ..open_gate.clone() }).unwrap();
     assert!(clamped < neutral, "a clamped proximity must still be the harshest rung, not a free pass");
-    // same fixture through the geomean-fold branch, which is where the NaN would actually be born:
-    // combine_damps is product().powf(1/n), and (−0.5)^(1/4) is NaN, not a small number.
-    let folded = BuyHeuristic { growth_geomean_fold: true, ..open_gate.clone() };
-    assert!(growth_score(&bled, &folded).expect("scores").is_finite(), "geomean fold ate a negative proximity");
 
     // (S-8Y) the pin re-runs the CAGR floor on the 8-year window, so a name whose full record clears
     // the floor but whose 8Y window doesn't gets NO pinned score — that was the bare "n/a" in the
@@ -13464,7 +13435,7 @@ mod tests {
     /// at 1.0 and `liq_bonus` at 0.0 — at those values `*` and `/` compute the same number and so do
     /// `+` and `-`, so the composition was structurally untestable through a `Quote`. Building the
     /// `ScoreParts` directly with eight DISTINCT non-1.0 damps and a non-zero bonus is what makes each
-    /// factor observable. The `growth_geomean_fold` branch has no other test at all.
+    /// factor observable.
     ///
     /// The expected values are written in the SAME association order as the code on purpose: float
     /// multiplication does not re-associate, so a reordered expectation would be a different number
@@ -13486,14 +13457,9 @@ mod tests {
         p.liq_bonus = 2.0;
 
         let plain = BuyHeuristic::default();
-        assert!(!plain.growth_geomean_fold && !plain.growth_allow_negative_scores, "the shipped lane is the else branch");
+        assert!(!plain.growth_allow_negative_scores, "the shipped lane is the else branch");
         let want = 8.0 * 0.9 * 0.8 * 0.7 * 0.6 * 0.5 * 0.4 * 0.3 * 1.2 + 2.0;
         assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all eight damps and the boost, and ADDS the bonus");
-
-        let fold = BuyHeuristic { growth_geomean_fold: true, ..BuyHeuristic::default() };
-        let want = 8.0 * combine_damps(&[0.95, 0.85, 0.9, 0.8]) * 0.6 * 0.5 * 0.4 * 0.3 * 1.2 + 2.0;
-        assert_eq!(compose_score(&p, &fold), want, "(#8) the fold takes trust/overext/prox/value geometrically, the rest as-is");
-        assert_ne!(compose_score(&p, &fold), compose_score(&p, &plain), "the two branches must not coincide on this fixture");
 
         // (#86) a negative base takes NO damp — and with a non-zero bonus the sign of the `+` shows.
         let neg = BuyHeuristic { growth_allow_negative_scores: true, ..BuyHeuristic::default() };
@@ -15431,11 +15397,11 @@ mod tests {
         rich.pe_ratio = Some(40.0); // 2× ref_pe -> the damp end of value_factor
         let vw = |w: f64| s(&rich, &BuyHeuristic { growth_value_weight: w, ..d.clone() });
         assert!(vw(0.0) > vw(0.5) && vw(0.5) > vw(1.0), "less P/E authority = less damp on a rich name");
-        // (#147) THE NaN GUARD, the exact twin of the proximity one. On the `growth_geomean_fold` arm
-        // `value` enters `combine_damps` (product().powf(1/n)), so a NEGATIVE factor there is NaN — it
-        // poisons the whole score rather than sinking the name. (#148): that arm ships FALSE and the
-        // shipped arm multiplies `value` raw, but the knob is config input and the arm is config-
-        // reachable, so the guard stays. `rich` sits AT VALUE_TILT_MIN (ref_pe/40 clamps to 0.5), so
+        // (#147) THE CLAMP, the exact twin of the proximity one. On the `growth_geomean_fold` arm
+        // `value` entered `combine_damps` (product().powf(1/n)), where a NEGATIVE factor was NaN.
+        // (#819) retired that arm. The shipped arm multiplies `value` raw, where a negative would
+        // invert the name, and the knob is config input, so the guard stays. `rich` sits AT
+        // VALUE_TILT_MIN (ref_pe/40 clamps to 0.5), so
         // w=3 computes 1 + 3x(0.5 - 1) = -0.5 without the clamp. This was UNREACHABLE in the backtest
         // until (#147) filled `quote.pe_ratio` — `value_raw` was 1.0 on every row, so no weight could
         // reach the boundary. Forced here because a config knob has no gate in front of it.
@@ -16064,20 +16030,6 @@ mod tests {
         assert!(score_parts_hard(&q, &d).is_some(), "with a known turnover the fixture scores");
         q.avg_turnover_eur = None;
         assert!(score_parts_hard(&q, &d).is_none(), "an unknown turnover cannot be assessed as a deep-liquid compounder");
-    }
-
-    /// With the geomean fold armed the walkthrough quotes the folded formula and the fold-aware "In short"
-    /// cut list instead of the product formula.
-    #[test]
-    fn explain_walkthrough_names_the_folded_formula() {
-        let t = BuyHeuristic { growth_geomean_fold: true, ..BuyHeuristic::default() };
-        let q = gate_fixture();
-        let s = growth_score(&q, &t).expect("the fixture still clears the gates with the fold on");
-        let text = explain_growth_score(&q, &t, s).expect("a scoring row explains");
-        assert!(text.contains("(#8 fold ON)"), "the formula line names the fold:\n{text}");
-        assert!(text.contains(" × geomean(trust"), "the SCORE line folds the brakes:\n{text}");
-        assert!(text.contains("In short:"), "{text}");
-        assert!(!text.contains("growth_score = base × proximity × value"), "the product formula is the fold-off line:\n{text}");
     }
 
     /// The legal-suffix guard: a stem under four characters is not a name worth showing alone, so the suffix stays.
