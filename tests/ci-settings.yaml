@@ -22509,6 +22509,25 @@ intraday_key: 1
 # What this does not measure is entry into the held top-N book (a rank crossing, not a gate flip).
 # The fixture goldens print `too few entries to read` for the same reason.
 
+# (#821) BOOK ENTRY PROBE, 2026-10-21, record only, no knob. The rank form (#820) left open, as sweep 40
+# phrased the idea: should a buy wait until the published book held the name at the previous cutoff
+# too? Every backtest now prints, after the ENTRY PROBE, the forward peer-relative return of the names in
+# each bucket's blend top-10 (`blend_book`: the score half after the value trim, the momentum half over
+# the gates-off pond, spliced as the page does) split by whether the previous bucket's book held them
+# (held both times) or not (new to the book). The sector and corr caps are skipped; both ship 0 here.
+# Same pre-registered bar as (#820): mean AND median gap >= 0 at every horizon = refuse, buy on entry;
+# both < 0 at every horizon = a candidate knob, the owner's call; anything else = no lever.
+# Probe run 39617835282 on c6c81ff, `universe fund pit`, GROWTH windows 5075/10437/13654:
+#   horizon  held both times n, mean | median   new to the book n, mean | median   gap mean | median
+#   20y      35, -6.5 | -325.7                   175, +991.3 | -247.7               +997.8 | +77.9
+#   12y      59, +49.5 | -114.2                  311, +137.9 | -73.5                +88.4 | +40.7
+#   8y       85, +50.7 | -19.0                   365, +75.3 | -15.3                 +24.5 | +3.7
+# Reading: REFUSED. Names new to the book did as well or better than the names it held twice, on both
+# stats at every horizon, so waiting one cutoff before buying would not pay. Caveats: the book turns
+# over fast, so the held side is small (17/16/19% of book slots); the 8y median gap (+3.7) is thin;
+# the momentum and score halves are pooled, not split. The fixture goldens read SPLIT or the other way
+# (the fund fixture shows new entrants behind), which is the frozen fixture's small pool, not the ruler.
+
 # --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
 # How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources
 # (coingecko_markets + sp500_csv URLs below). Bigger = more to scan = slower (one history
