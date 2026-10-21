@@ -3481,6 +3481,13 @@ buy_heuristic:
                                  #   negative on 53 names, ~0 on the 354-name wide sample), so 0.35 shifts weight to the
                                  #   CAGR/sharpe terms WITHOUT gutting on-sale scores (0.15 dropped normal names below
                                  #   min_score for only a noise-level rho gain). 1.0 = old behaviour, 0 = drop it entirely.
+                                 # (#812) 2026-10-21, record only: 0.0 (drop the explicit dip reward; long_reward still scales by the discount
+                                 #   fraction, so this is a partial ablation) graded on the ON-SALE top-10 book (#796). Probe on e2ca207, `universe
+                                 #   fund pit`, control 39570715211, arm 39570732728. Windows unchanged 2708/5150/9176. Book excess mean|median,
+                                 #   control -> arm: 20y +4.6|+3.2 -> +4.3|+2.8, 12y +1.8|+1.3 -> +1.9|+1.2, 8y +1.5|+1.0 -> +2.2|+2.3. Only 8y clears
+                                 #   +0.2 on both stats (OOS +4.3/+0.2), so the bar (2 of 3 horizons) FAILS. The goal horizon loses: 20y gives up 0.3
+                                 #   pts/yr and its worst bucket falls -1.3 -> -4.0. ON-SALE beats GROWTH's top-10 at 20y only, in control and arm, so
+                                 #   rule #6 stands. GROWTH rows byte-identical. No stress run (no pit pass). 0.35 stays.
   # Goal = multi-decade buy-and-hold, so momentum is NEUTRAL (1.0/1.0): a green/red WEEK is noise
   # over a 10-50y hold and must not reorder the ranking. Want a short-term timing view (e.g. for
   # `check`)? Set bounce ~1.3 / knife ~0.6 to reward a confirmed turn and dock a falling knife.
@@ -3489,6 +3496,11 @@ buy_heuristic:
   # (A) Long-trend reward = the proven-compounder signal for a decades hold, now on the long leg's
   # CAGR (Compound Annual Growth Rate, %/yr — annualized so a 10Y and a 20Y leg compare fairly).
   long_trend_weight: 0.5         # [FOIL] on-sale reward per %/yr of long-leg CAGR (×cap below = max bonus, ~15)
+                                 # (#813) 2026-10-21, record only: 1.0 (double the compounder reward on a dip) graded on the ON-SALE top-10 book
+                                 #   (#796). Probe on e2ca207, `universe fund pit`, control 39570715211, arm 39570748865. Windows unchanged
+                                 #   2708/5150/9176. Book excess mean|median, control -> arm: 20y +4.6|+3.2 -> +4.4|+3.1, 12y +1.8|+1.3 -> +1.8|+1.3,
+                                 #   8y +1.5|+1.0 -> +1.4|+0.9. No horizon clears +0.2, so the bar FAILS at 0 of 3; 20y win 86% -> 82%. ON-SALE beats
+                                 #   GROWTH's top-10 at 20y only, so rule #6 stands. GROWTH rows byte-identical. No stress run (no pit pass). 0.5 stays.
   long_trend_cap: 30.0           # LIVE+FOIL (SHARED). (#3k) 2026-07-29 RESTORED at 30 on the first-ever
                                  #   20y-STRESS ladder (the goal horizon, corpses injected), trend weight at
                                  #   its new 0.15: 15 +559.3 | 20 +579.7 | 25 +593.0 | 30 +623.5 (peak) |
