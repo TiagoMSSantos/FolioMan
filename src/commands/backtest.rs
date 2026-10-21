@@ -7882,26 +7882,6 @@ mod tests {
         assert_eq!(at(&gap, 1), [2]);
     }
 
-    /// Consecutive trading sessions from `start`. Weekends dropped, and every 29th surviving weekday
-    /// dropped as a holiday — because weekdays ALONE are 261 a year and a real exchange closes about
-    /// nine more, which is the difference between 261 and the ~252 the daily constants were sized on.
-    /// Modelling it matters here: the whole point of the daily assertion is that the estimator lands
-    /// on the number the shipped `MIN_HISTORY` already assumes.
-    fn trading_days(start: NaiveDate, n: usize) -> Vec<NaiveDate> {
-        let mut out = Vec::with_capacity(n);
-        let (mut d, mut weekdays) = (start, 0usize);
-        while out.len() < n {
-            if !matches!(d.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun) {
-                weekdays += 1;
-                if weekdays % 29 != 0 {
-                    out.push(d);
-                }
-            }
-            d += chrono::Duration::days(1);
-        }
-        out
-    }
-
     /// `n` bars, one per month, on the 1st — the shape a real `interval=1mo` payload carries.
     fn month_ends(year: i32, month: u32, n: usize) -> Vec<NaiveDate> {
         (0..n)
@@ -7910,11 +7890,6 @@ mod tests {
                 ymd(year + (m / 12) as i32, (m % 12) as u32 + 1, 1)
             })
             .collect()
-    }
-
-    /// `n` bars spaced exactly `gap` days apart.
-    fn every_n_days(start: NaiveDate, gap: i64, n: usize) -> Vec<NaiveDate> {
-        (0..n).map(|k| start + chrono::Duration::days(gap * k as i64)).collect()
     }
 
     /// (#116) STRUCTURAL PIN, and the regression it exists for was a RED CI GATE, not a hypothetical.
