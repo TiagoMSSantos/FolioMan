@@ -2488,6 +2488,11 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
 /// bar pre-registered in tests/ci-settings.yaml. The US pond is every S&P 500 member since the start,
 /// ranked only on its member days; the EU pond is the static `EU_POND`. A name in neither EUR nor USD is
 /// skipped, and one USD rate (today's) converts every US session's turnover.
+///
+/// (#830) A third market, `US*`, re-grades the same US charts with only today's members, each ranked
+/// as a member every day: the way `EU_POND` is built. A key's US* minus US hit diff is what a static
+/// pond adds. Pre-registered: an EU hit pass stands only if its diff, less that key's addition, still
+/// clears t 3 at the EU line's own noise (diff x 3 / t).
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::intraday
 async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     use crate::heuristics::intraday;
@@ -2525,6 +2530,17 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         println!("  {market} pond: {} of {} names fetched in EUR or USD; cost {cost} bp round trip", pond.len(), names.len());
         for k in 1..=intraday::KEYS.len() as u8 {
             println!("{}", intraday::report(market, k, &intraday::walk(k, &pond, today), cost));
+        }
+        if market == "US" {
+            let now: Vec<intraday::Member> = pond
+                .iter()
+                .filter(|m| m.3.is_some_and(|s| core::sp500_member_at(s, today)))
+                .map(|&(tk, c, fx, _)| (tk, c, fx, None))
+                .collect();
+            println!("  US* pond: {} of today's members, each ranked every day (survivor-biased, as EU)", now.len());
+            for k in 1..=intraday::KEYS.len() as u8 {
+                println!("{}", intraday::report("US*", k, &intraday::walk(k, &now, today), cost));
+            }
         }
     }
 }
