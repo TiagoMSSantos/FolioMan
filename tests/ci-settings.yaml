@@ -22158,6 +22158,13 @@ buy_heuristic:
                                  #   BACKTEST-BLIND: the TTM is never replayed point-in-time, so no sweep can grade it.
                                  #   The annual cousin growth_min_fcf_margin reads AUC 0.53 at 8y (near coin-flip).
                                  #   Return growth_capex_ocf_penalty to 1.0 if the forward record reads it negative.
+                                 #   (#834) 2026-10-22: that forward record did not exist; nothing journalled the docked
+                                 #   names. Each screen line now writes `capx` for every PEG-cohort name above this max,
+                                 #   valued at its share (a cash burn writes 1000), and `track` grades a `capx penalised
+                                 #   minus peg cheap` row, held against peg's cheap half like `redf`. Pre-registered: the
+                                 #   penalty returns to 1.0 when 12+ monthly lines AND 12+ chained links each read mean
+                                 #   AND median ABOVE 0 (the docked names beat the cheap half). Any other read keeps it.
+                                 #   Live 2026-10-22: 3 of 36 numeric stock CAPEX/OCF cells sit above 70%.
   growth_capex_ocf_penalty: 0.80 # (#545) the multiplier above growth_capex_ocf_max. A bank, an insurer, a non-SEC name
                                  #   and a name with no 10-Q cash lines carry no TTM and stay x1.0.
                                  #   n/a CENSUS 2026-10-11 (live data.json, 8e784fc): 330 names, 127 n/a. 23 have no SEC

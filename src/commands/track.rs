@@ -863,7 +863,9 @@ pub(crate) const FACTORS: [(&str, &str); 11] = [
 /// the Social Arbitrage trading table names it. (#729) `redf` holds a name reading 2+ of the (#728)
 /// census's six red flags, valued at its count: the warning the RED-FLAGS column shows, never scored.
 /// (#733) `short` holds every one with a SHORT% reading, valued at it, fundamentals or not.
-pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quote]) -> Vec<(String, String, f64)> {
+/// (#834) `capx` holds every one whose TTM capex tops `capex_max`% of operating cash flow, the names
+/// the (#545) penalty docks, valued at that share (a cash burn, +inf, writes 1000).
+pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quote], capex_max: f64) -> Vec<(String, String, f64)> {
     let mut out = Vec::new();
     for (t, ..) in peg {
         let Some(q) = quotes.iter().find(|q| &q.ticker == t) else { continue };
@@ -883,6 +885,9 @@ pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quo
         let flags = f.red_flags.map_or(0, |r| r.iter().filter(|b| **b).count());
         if flags >= 2 {
             out.push((t.clone(), "redf".to_string(), flags as f64));
+        }
+        if let Some(r) = f.cash_ttm.as_ref().map(crate::core::capex_ocf).filter(|r| *r > capex_max) {
+            out.push((t.clone(), "capx".to_string(), r.min(1000.0)));
         }
         for (k, _) in FACTORS {
             if let Some(v) = crate::core::select_fund_factor(f, k).filter(|v| v.is_finite()) {
@@ -950,6 +955,7 @@ fn fac_section(
             pairs.push(("soc social minus peg cheap", peg_rows(s, false, true), brk_rows(s, "soc")));
             pairs.push(("redf flagged minus peg cheap", peg_rows(s, false, true), brk_rows(s, "redf")));
             pairs.push(("short top minus peg cheap", fac_rows(s, "short", false), fac_rows(s, "short", true)));
+            pairs.push(("capx penalised minus peg cheap", peg_rows(s, false, true), brk_rows(s, "capx")));
             pairs
         },
         30,
@@ -962,7 +968,7 @@ fn fac_section(
             .collect::<std::collections::HashSet<&str>>()
             .len()
     };
-    let (brk_n, brkh_n, soc_n, redf_n) = (names("brk"), names("brkh"), names("soc"), names("redf"));
+    let (brk_n, brkh_n, soc_n, redf_n, capx_n) = (names("brk"), names("brkh"), names("soc"), names("redf"), names("capx"));
     if verdict.is_empty() {
         return format!(
             "\n  Factor shadow: nothing gradeable yet. A month's first line needs a day of age and a priced name\n  \
@@ -979,8 +985,9 @@ fn fac_section(
          each against that same cheap half. (#444) `soc` holds every one the Social Arbitrage trading table\n  \
          names (the `s` flag). (#729) `redf` holds every one reading 2+ of the (#728) census's six red flags\n  \
          (the RED-FLAGS column). (#733) `short` ranks the names with a SHORT% reading (FINRA short interest\n  \
-         over shares outstanding): its most-shorted half against peg's cheap half on those names. EUR seat,\n  \
-         price-only. NOT advice.\n  \
+         over shares outstanding): its most-shorted half against peg's cheap half on those names. (#834) `capx`\n  \
+         holds every one whose TTM capex tops growth_capex_ocf_max% of operating cash flow (the names the (#545)\n  \
+         penalty docks). EUR seat, price-only. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
@@ -998,7 +1005,10 @@ fn fac_section(
          Pre-registered by (#733) before its first line: SHORT% re-opens as ONE owner ask for a score dock, shipped\n  \
          off and graded forward the same way (the backtest cannot see FINRA history), only when {REOPEN_LINES}+ monthly\n  \
          lines AND {REOPEN_LINES}+ chained links each read mean AND median BELOW 0. Any other read records a refusal,\n  \
-         never re-asked."
+         never re-asked.\n\n  \
+         Pre-registered by (#834) before its first line: the (#545) capex penalty returns to 1.0 (off) when\n  \
+         {REOPEN_LINES}+ monthly lines AND {REOPEN_LINES}+ chained links each read mean AND median ABOVE 0 ({capx_n}\n  \
+         distinct capx names so far): the docked names beat peg's cheap half. Any other read keeps it."
     )
 }
 
@@ -2307,7 +2317,7 @@ mod tests {
         ];
         let peg: Vec<(String, f64, f64)> = ["A", "B", "Z"].map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
         assert_eq!(
-            fac_journal(&peg, &quotes),
+            fac_journal(&peg, &quotes, 70.0),
             vec![
                 ("A".to_string(), "brkh".to_string(), 1.0),
                 ("A".to_string(), "soc".to_string(), 1.0),
@@ -2323,6 +2333,24 @@ mod tests {
                 ("B".to_string(), "brkh".to_string(), 1.0),
                 ("B".to_string(), "short".to_string(), 25.0),
             ]
+        );
+    }
+
+    /// (#834) `capx` journals a cohort name only past the max, at its share; a cash burn writes 1000.
+    #[test]
+    fn fac_journal_writes_capx_above_the_max_only() {
+        let with = |t: &str, ocf: f64, capex: f64| {
+            let mut q = crate::core::Quote::stub(t, "€1.00", "", t);
+            let d = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+            let cash_ttm = Some(crate::core::CashTtm { end: d, filed: d, ocf, capex, q_ocf: None, q_capex: None });
+            q.fund = Some(crate::core::FundFactors { cash_ttm, ..Default::default() });
+            q
+        };
+        let quotes = [with("A", 4.0, 3.0), with("B", 2.0, 1.0), with("C", 0.0, 1.0)];
+        let peg: Vec<(String, f64, f64)> = ["A", "B", "C"].map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
+        assert_eq!(
+            fac_journal(&peg, &quotes, 50.0),
+            vec![("A".to_string(), "capx".to_string(), 75.0), ("C".to_string(), "capx".to_string(), 1000.0)]
         );
     }
 

@@ -2575,7 +2575,7 @@ pub async fn run(args: Vec<String>) {
     };
     // (#337) and today's close for every name last month's line grades that this line does not price,
     // so each cohort can be graded month to month the way (#336) chains the book
-    line.fac = crate::commands::track::fac_journal(&line.peg, &quotes); // (#415)
+    line.fac = crate::commands::track::fac_journal(&line.peg, &quotes, settings.buy_heuristic.growth_capex_ocf_max); // (#415) (#834)
     // (#538) a SOC book name may be one only the side fetch priced, (#663) a dropped one only its own list
     line.carry = crate::commands::track::carry(prior.as_ref(), &line, &close);
     crate::commands::track::append_snapshot(&line);
