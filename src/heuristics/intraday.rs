@@ -9,6 +9,7 @@
 //! - K3 5d intraday: the 5-day mean of ln(C/O). Short-run intraday momentum.
 //! - K4 hit share: (#825) the share of the last 63 sessions that closed above their open.
 //! - K5-K8 long memory: (#828) K1 and K4 over 252 and 504 sessions.
+//! - K9 day Sharpe: (#829) mean over sd of the last 63 open-to-close moves.
 //!
 //! The pond is stocks with a 30-session average turnover (close × volume, in EUR) of at least
 //! `MIN_TURNOVER_EUR`: the US side is the S&P 500 as it stood each day, the EU side the static
@@ -35,8 +36,9 @@ pub const MIN_TURNOVER_EUR: f64 = 5e6;
 /// waits for its own history.
 const WARMUP: usize = 30;
 /// Key names, `KEYS[k - 1]` for key `k`.
-pub const KEYS: [&str; 8] =
-    ["K1 tug of war", "K2 calm range", "K3 5d intraday", "K4 hit share", "K5 tug 1y", "K6 tug 2y", "K7 hit 1y", "K8 hit 2y"];
+pub const KEYS: [&str; 9] = [
+    "K1 tug of war", "K2 calm range", "K3 5d intraday", "K4 hit share", "K5 tug 1y", "K6 tug 2y", "K7 hit 1y", "K8 hit 2y", "K9 day Sharpe",
+];
 /// (#825) The one-line file holding the date the RIGHT/FAIL column counts from, `YYYY-MM-DD`.
 pub const SINCE_FILE: &str = ".intraday_since";
 
@@ -61,13 +63,15 @@ pub const EU_POND: &[&str] = &[
 /// a member every day).
 pub type Member<'a> = (&'a str, &'a Chart, f64, Option<&'a [(NaiveDate, Option<NaiveDate>)]>);
 
-/// One graded session: how many names ranked, and the gross mean open-to-close return of the book and
-/// of every ranked name.
+/// One graded session: how many names ranked, the gross mean open-to-close return of the book and of
+/// every ranked name, and (#829) the share of each that closed above its open.
 pub struct Day {
     pub date: NaiveDate,
     pub n: usize,
     pub book: f64,
     pub all: f64,
+    pub hit: f64,
+    pub all_hit: f64,
 }
 
 /// A price the arithmetic can use: finite and above zero.
@@ -82,7 +86,7 @@ fn ln(a: f64, b: f64) -> Option<f64> {
 
 /// Key `k` for the session at bar `i`, from bars before `i` only. None for an unknown key, too little
 /// history, or a missing print in the window. (#828) K5-K8 are K1's tug and K4's hit share over 252 and
-/// 504 sessions.
+/// 504 sessions. (#829) K9 is None on a window with no spread, so a NaN never ranks first.
 /// shortcut: each key re-sums its whole window, so a 2y key costs 504 steps a bar in the walk; a running
 /// sum would remove that.
 pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
@@ -106,6 +110,7 @@ pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
         6 => tug(504),
         7 => hit(252),
         8 => hit(504),
+        9 if i >= 63 => stats(&(i - 63..i).map(co).collect::<Option<Vec<f64>>>()?).map(|s| s.t / 63f64.sqrt()).filter(|x| x.is_finite()),
         _ => None,
     }
 }
@@ -170,7 +175,8 @@ pub fn walk(k: u8, pond: &[Member], today: NaiveDate) -> Vec<Day> {
         .filter(|(_, v)| v.len() >= BOOK)
         .map(|(date, v)| {
             let rs: Vec<f64> = v.iter().map(|x| x.2).collect();
-            Day { date, n: v.len(), book: mean(&rs[..BOOK]), all: mean(&rs) }
+            let up = |xs: &[f64]| xs.iter().filter(|&&r| r > 0.0).count() as f64 / xs.len() as f64;
+            Day { date, n: v.len(), book: mean(&rs[..BOOK]), all: mean(&rs), hit: up(&rs[..BOOK]), all_hit: up(&rs) }
         })
         .collect()
 }
@@ -209,18 +215,21 @@ pub fn passes(net: &Stats, all: f64) -> bool {
     net.mean > 0.0 && net.t >= 3.0 && net.h1 > 0.0 && net.h2 > 0.0 && net.mean > all
 }
 
-/// One graded line per market and key, in basis points per session.
+/// Two graded lines per market and key: the book net of cost in basis points per session, then (#829)
+/// its hit share, the share of the book that closed above its open minus the pond's share that session.
+/// The hit bar: that difference is above zero at t ≥ 3, in both halves.
 pub fn report(market: &str, k: u8, days: &[Day], cost_bps: f64) -> String {
     let name = KEYS[usize::from(k) - 1];
     let net: Vec<f64> = days.iter().map(|d| d.book - cost_bps / 1e4).collect();
-    let Some(s) = stats(&net) else {
+    let edge: Vec<f64> = days.iter().map(|d| d.hit - d.all_hit).collect();
+    let (Some(s), Some(h)) = (stats(&net), stats(&edge)) else {
         return format!("  {market} {name:<15} no session with {BOOK}+ ranked names");
     };
     let all = mean(&days.iter().map(|d| d.all).collect::<Vec<_>>());
     let mut ns: Vec<usize> = days.iter().map(|d| d.n).collect();
     ns.sort_unstable();
     format!(
-        "  {market} {name:<15} {} sessions {}..{} median {} names  book net {:+.1} bp/day (gross {:+.1})  t {:+.2}  halves {:+.1}|{:+.1}  all-names gross {:+.1}  -> {}",
+        "  {market} {name:<15} {} sessions {}..{} median {} names  book net {:+.1} bp/day (gross {:+.1})  t {:+.2}  halves {:+.1}|{:+.1}  all-names gross {:+.1}  -> {}\n  {market} {name:<15} hit share book {:.1}% pond {:.1}%  diff {:+.2} pp  t {:+.2}  halves {:+.2}|{:+.2}  -> {}",
         s.n,
         days[0].date,
         days[days.len() - 1].date,
@@ -231,7 +240,14 @@ pub fn report(market: &str, k: u8, days: &[Day], cost_bps: f64) -> String {
         s.h1 * 1e4,
         s.h2 * 1e4,
         all * 1e4,
-        if passes(&s, all) { "PASS" } else { "FAIL" }
+        if passes(&s, all) { "PASS" } else { "FAIL" },
+        mean(&days.iter().map(|d| d.hit).collect::<Vec<_>>()) * 100.0,
+        mean(&days.iter().map(|d| d.all_hit).collect::<Vec<_>>()) * 100.0,
+        h.mean * 100.0,
+        h.t,
+        h.h1 * 100.0,
+        h.h2 * 100.0,
+        if passes(&h, 0.0) { "PASS" } else { "FAIL" }
     )
 }
 
@@ -418,7 +434,7 @@ mod tests {
         // the first bar each key can read, and one before it
         assert!(key(1, &c, 21).is_none() && key(2, &c, 19).is_none() && key(3, &c, 4).is_none());
         assert!(key(1, &c, 22).is_some() && key(2, &c, 20).is_some() && key(3, &c, 5).is_some());
-        assert!(key(0, &c, 30).is_none() && key(9, &c, 30).is_none());
+        assert!(key(0, &c, 30).is_none() && key(10, &c, 30).is_none());
         // (#825) K4 against a plain count; bar 22 is flat (open = close = 101), so it counts as a miss
         let c = wavy(70);
         assert_eq!((c.opens[22], c.closes[22]), (101.0, 101.0));
@@ -427,6 +443,15 @@ mod tests {
             assert_eq!(key(4, &c, i), Some(up as f64 / 63.0), "K4 at {i}");
         }
         assert!(key(4, &c, 62).is_none() && key(4, &c, 63).is_some());
+        // (#829) K9 against a plain mean over sd; a window with no spread has no key
+        for i in [63, 69] {
+            let xs: Vec<f64> = (i - 63..i).map(|j| (c.closes[j] / c.opens[j]).ln()).collect();
+            let m = xs.iter().sum::<f64>() / 63.0;
+            let sd = (xs.iter().map(|x| (x - m).powi(2)).sum::<f64>() / 62.0).sqrt();
+            assert!((key(9, &c, i).unwrap() - m / sd).abs() < 1e-12, "K9 at {i}");
+        }
+        assert!(key(9, &c, 62).is_none() && key(9, &c, 63).is_some());
+        assert!(key(9, &chart(&[100.0; 70], &[100.0; 70], 1e5), 69).is_none());
         // (#828) K5-K8: K1's tug and K4's count over a year and two, from their first bar on
         let c = wavy(510);
         let co = |j: usize| (c.closes[j] / c.opens[j]).ln();
@@ -515,6 +540,8 @@ mod tests {
         assert_eq!((day.date, day.n), (d(30), 12));
         assert!((day.book - (2..12).sum::<usize>() as f64 / 1000.0).abs() < 1e-12, "N02..N11");
         assert!((day.all - (0..12).sum::<usize>() as f64 / 1200.0).abs() < 1e-12);
+        // (#829) N00 closes flat at its open, a miss
+        assert_eq!((day.hit, day.all_hit), (1.0, 11.0 / 12.0));
         assert!(walk(3, &all_in, d(30)).is_empty(), "bar 30 dated today is not completed");
 
         // a name out of the index that day, and a name under the floor, both drop out
@@ -527,6 +554,7 @@ mod tests {
         let day = &walk(3, &pond, d(31))[0];
         assert_eq!(day.n, 10);
         assert!((day.book - (0..10).sum::<usize>() as f64 / 1000.0).abs() < 1e-12, "N00..N09");
+        assert_eq!((day.hit, day.all_hit), (0.9, 0.9));
         // a member that day stays in
         pond[11].3 = Some(&open);
         assert_eq!(walk(3, &pond, d(31))[0].n, 11);
@@ -570,13 +598,19 @@ mod tests {
 
     #[test]
     fn the_report_is_net_of_cost_in_bp() {
-        let day = |i: usize, book: f64, n: usize| Day { date: d(i), n, book, all: 0.0 };
-        let days = [day(0, 0.0060, 30), day(1, 0.0062, 10), day(2, 0.0058, 20), day(3, 0.0060, 40)];
-        let line = report("US", 1, &days, 50.0);
+        let day = |i: usize, book: f64, n: usize, hit: f64| Day { date: d(i), n, book, all: 0.0, hit, all_hit: 0.5 };
+        let days = [day(0, 0.0060, 30, 0.7), day(1, 0.0062, 10, 0.6), day(2, 0.0058, 20, 0.8), day(3, 0.0060, 40, 0.7)];
+        let out = report("US", 1, &days, 50.0);
+        let (line, hit) = out.split_once('\n').unwrap();
         assert!(line.starts_with("  US K1 tug of war   4 sessions 2026-01-01..2026-01-04 median 30 names"), "{line}");
         assert!(line.contains("book net +10.0 bp/day (gross +60.0)") && line.contains("halves +11.0|+9.0"), "{line}");
         assert!(line.contains("t +12.25") && line.contains("all-names gross +0.0") && line.ends_with("-> PASS"), "{line}");
-        assert!(report("EU", 3, &days, 70.0).ends_with("-> FAIL"));
+        // (#829) the hit line: book minus pond share each session, in percentage points
+        assert_eq!(hit, "  US K1 tug of war   hit share book 70.0% pond 50.0%  diff +20.00 pp  t +4.90  halves +15.00|+25.00  -> PASS");
+        assert!(report("EU", 3, &days, 70.0).contains("-> FAIL\n"));
+        let tied = [day(0, 0.0060, 30, 0.5), day(1, 0.0062, 10, 0.5), day(2, 0.0058, 20, 0.8), day(3, 0.0060, 40, 0.7)];
+        let out = report("US", 1, &tied, 50.0);
+        assert!(out.contains("-> PASS\n") && out.ends_with("-> FAIL"), "a half that only ties the pond fails: {out}");
         assert_eq!(report("EU", 2, &days[..1], 20.0), "  EU K2 calm range   no session with 10+ ranked names");
     }
 
