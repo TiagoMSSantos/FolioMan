@@ -22575,6 +22575,31 @@ social_heuristic:
 # sessions in 200, and every key still loses net of cost. The table keeps K1 until the owner decides. An
 # up-day key would also lift the page's RIGHT/FAIL in-sample, because the key and the column read
 # overlapping sessions.
+#
+# (#830) USER DECISION 2026-10-22: run the survivor-bias check on the (#829) EU passes. The ruler adds a
+# US* arm: today's S&P members, each ranked every day, built the way the EU pond is. US* diff minus US
+# diff is what a static list of survivors adds to a key's hit diff. Pre-registered: an EU pass stands
+# only if its diff, less that key's addition, still clears t 3 at the EU line's own noise (diff x 3 / t).
+# VERDICT 2026-10-22: 6 of the 7 EU passes stand; EU K1 does not. Probe run 39781923633 on be32341,
+# `backtest 1 intraday`. Ponds: US 605 of 721 fetched, US* 503 of today's members, EU 105 of 105.
+#   key               US diff  US* diff  adds   US* t  verdict   EU diff  EU t   less adds  needs  stands
+#   K1 tug of war      -1.13    -0.79   +0.34  -2.17  FAIL      +1.09   +3.31    +0.75    0.99   no
+#   K2 calm range      +0.55    +0.33   -0.22  +0.77  FAIL      +1.28   +3.62    +1.50    1.06   yes
+#   K3 5d intraday     -1.00    -0.60   +0.40  -1.54  FAIL      -0.31   -0.88      -        -     -
+#   K4 hit share       +1.07    +1.24   +0.17  +3.29  PASS      +1.25   +3.75    +1.08    1.00   yes
+#   K5 tug 1y          +0.30    +0.33   +0.03  +0.91  FAIL      +1.20   +3.60    +1.17    1.00   yes
+#   K6 tug 2y          +0.55    +0.28   -0.27  +0.73  FAIL      +1.19   +3.36    +1.46    1.06   yes
+#   K7 hit 1y          +1.19    +1.30   +0.11  +3.28  PASS      +1.68   +4.67    +1.57    1.08   yes
+#   K8 hit 2y          +1.34    +1.35   +0.01  +3.38  PASS      +1.13   +2.88      -        -     -
+#   K9 day Sharpe      +1.04    +1.18   +0.14  +2.97  FAIL      +1.76   +4.97    +1.62    1.06   yes
+# US* net (bp/day, gross in brackets), all FAIL: K1 -45.2 (+4.8), K2 -49.8 (+0.2), K3 -48.1 (+1.9),
+# K4 -46.7 (+3.3), K5 -43.5 (+6.5), K6 -43.5 (+6.5), K7 -47.1 (+2.9), K8 -47.0 (+3.0), K9 -46.6 (+3.4);
+# median 482-488 names. The US and EU lines re-read the (#829) table unchanged.
+# Reading: a static pond adds at most +0.34 pp to a hit diff (K1), +0.01 to +0.17 for the up-day keys
+# and less than nothing for K2 and K6, so survivor bias explains little of the EU edge. With the negative
+# additions floored at zero, K2 and K6 still stand. The check assumes the US addition carries over to
+# the EU list. The edge stays small (+1.1 to +1.8 pp, about 2 to 3.5 more up sessions in 200), and every
+# key still loses net of cost. No live change: the table keeps K1 until the owner decides.
 intraday_key: 1
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
