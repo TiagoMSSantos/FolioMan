@@ -235,8 +235,10 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 /// session's hours on the exchanges' own clock, and the last completed bar the key read. (#824) Each
 /// row's latest price in euros at `fx`, the market's euro rate (one currency per market), and K1's
 /// [`tug`] sums as the KEY hover. (#825) Each name's [`record`] since `since`, a name it lacks at 0/0;
-/// the rows in order of hit share, (right + 1) / (right + fail + 2), ties in key order.
-pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], rec: &HashMap<&str, (usize, usize)>, since: NaiveDate, fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
+/// the rows in order of hit share, (right + 1) / (right + fail + 2), ties in key order. (#826) That
+/// share as the SCORE cell, and DATA TO as the window the record counts, `since` to the last bar before
+/// `until`.
+pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], rec: &HashMap<&str, (usize, usize)>, since: NaiveDate, until: NaiveDate, fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
     use serde_json::json;
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
     let share = |(r, f): (usize, usize)| (r + 1) as f64 / (r + f + 2) as f64;
@@ -260,8 +262,9 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], rec: &HashMap
                 json!(["PRICE(EUR)", format!("€{}", core::fmt_money2(c.closes[c.closes.len() - 1] * fx))]),
                 json!(["KEY", format!("{:+.2}%", x * 100.0), null, tip]),
                 json!(["SESSION", hours]),
-                json!(["DATA TO", c.dates[completed(c, today) - 1].to_string()]),
+                json!(["DATA TO", format!("{since} – {}", c.dates[completed(c, until) - 1])]),
                 json!(["RIGHT/FAIL", format!("{r}/{f}"), null, format!("{r} right, {f} failed since {since}: the {} sessions it made this table's top 10", r + f)]),
+                json!(["SCORE", format!("{:.0}%", share((r, f)) * 100.0)]),
             ]
         })
         .collect()
@@ -592,28 +595,29 @@ mod tests {
         c.name = "Acme".into();
         // (#825) B's 9 in 10 outranks ACME's 7 in 10, though ACME's key is higher
         let rec = HashMap::from([("ACME", (7, 3)), ("B", (9, 1))]);
-        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], &rec, d(1), 2.0, d(31));
+        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], &rec, d(1), d(31), 2.0, d(31));
         assert_eq!(
             serde_json::json!(rows),
             serde_json::json!([
-                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "9/1", null, "9 right, 1 failed since 2026-01-02: the 10 sessions it made this table's top 10"]],
-                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "7/3", null, "7 right, 3 failed since 2026-01-02: the 10 sessions it made this table's top 10"]],
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "9/1", null, "9 right, 1 failed since 2026-01-02: the 10 sessions it made this table's top 10"], ["SCORE", "83%"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "7/3", null, "7 right, 3 failed since 2026-01-02: the 10 sessions it made this table's top 10"], ["SCORE", "67%"]],
             ])
         );
         // equal hit shares keep key order: 4 in 6 and 2 in 3, then 0 in 0 (a name `rec` lacks) and 1 in 2
         let order = |book: &[&'static str], rec: &[(&'static str, (usize, usize))]| {
             let book: Vec<(&str, f64, &Chart)> = book.iter().map(|t| (*t, 0.0, &c)).collect();
-            web_rows("EU", 3, &book, &rec.iter().copied().collect(), d(1), 1.0, d(31)).iter().map(|r| r[2][1].as_str().unwrap().to_string()).collect::<Vec<_>>().join(" ")
+            web_rows("EU", 3, &book, &rec.iter().copied().collect(), d(1), d(31), 1.0, d(31)).iter().map(|r| r[2][1].as_str().unwrap().to_string()).collect::<Vec<_>>().join(" ")
         };
         assert_eq!(order(&["Y", "X"], &[("Y", (3, 1)), ("X", (1, 0))]), "Y X");
         assert_eq!(order(&["P", "Q"], &[("Q", (1, 1))]), "P Q");
-        // too few sessions for K1's hover sums: it names the key
-        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], &HashMap::new(), d(1), 1.0, d(20));
+        // too few sessions for K1's hover sums: it names the key; (#826) the session dated today closed, so
+        // the window ends on it, one bar past the key's last
+        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], &HashMap::new(), d(1), d(21), 1.0, d(20));
         assert_eq!((eu[0][1][1].as_str(), eu[0][5][3].as_str()), (Some("EU"), Some("K1 tug of war")));
-        assert_eq!((eu[0][6][1].as_str(), eu[0][7][1].as_str(), eu[0][8][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-20"), Some("0/0")));
+        assert_eq!((eu[0][6][1].as_str(), eu[0][7][1].as_str(), eu[0][8][1].as_str(), eu[0][9][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-02 – 2026-01-21"), Some("0/0"), Some("50%")));
         assert_eq!(eu[0][8][3], "0 right, 0 failed since 2026-01-02: the 0 sessions it made this table's top 10");
         // (#824) 21 sessions behind it: the hover works the number out
-        let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], &HashMap::new(), d(1), 1.0, d(31));
+        let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], &HashMap::new(), d(1), d(31), 1.0, d(31));
         assert_eq!(k1[0][4][1], "€103.00");
         assert_eq!(k1[0][5][3], "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: +80.00%\nnight moves (close to next open) added up: -82.87%\nkey = day - night = +80.00 - (-82.87) = +162.87%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)");
         // (#452) the page's hover text keys on exactly these headers

@@ -345,6 +345,27 @@ fn bar_date(secs: i64, gmtoffset: i64) -> Option<NaiveDate> {
     Some(DateTime::from_timestamp(local, 0)?.date_naive())
 }
 
+/// (#826) Yahoo serves a European session's last daily bar with a null close (and adjclose) from the
+/// close to the next open, while `meta.regularMarketPrice` already holds that close: fill the bar from
+/// it when `meta.regularMarketTime` falls on the bar's own exchange date. Only `fetch_recent` calls it.
+fn fill_last_close(j: &mut Value) -> Option<()> {
+    let r = j.pointer_mut("/chart/result/0")?;
+    let off = r.pointer("/meta/gmtoffset").and_then(Value::as_i64).unwrap_or(0);
+    let ts = r.get("timestamp")?.as_array()?;
+    let last = bar_date(ts.last()?.as_i64()?, off)?; // an empty array returns here, before len() - 1
+    let n = ts.len() - 1;
+    let price = r.pointer("/meta/regularMarketPrice")?.as_f64()?;
+    if bar_date(r.pointer("/meta/regularMarketTime")?.as_i64()?, off)? != last {
+        return None;
+    }
+    for p in ["/indicators/quote/0/close", "/indicators/adjclose/0/adjclose"] {
+        if let Some(c) = r.pointer_mut(&format!("{p}/{n}")).filter(|c| c.is_null()) {
+            *c = price.into();
+        }
+    }
+    Some(())
+}
+
 /// Parse a Yahoo chart payload into aligned dates+closes (null closes dropped) + meta.
 ///
 /// `pub` for the network drift net, which health-probes the chart endpoint and then has to assert the
@@ -16931,6 +16952,33 @@ pub(crate) mod tests {
         assert_eq!(c.splits, [(day(5), 2.0)], "and a 2:0 split, which would divide by nothing, is gone");
     }
 
+    /// (#826) Yahoo's overnight EU bar: a null close the quote's price fills, on the bar's own day only.
+    #[test]
+    fn fill_last_close_takes_the_meta_price_for_a_null_last_close() {
+        // 07:00 UTC on 2026-10-20 and 10-21, Xetra's open; the quote stamped 15:35 UTC on the 21st
+        let (mon, tue, quote) = (1_792_479_600_i64, 1_792_566_000_i64, 1_792_596_900_i64);
+        let body = |at: i64, close: Value| {
+            serde_json::json!({"chart": {"result": [{
+                "timestamp": [mon, tue],
+                "indicators": {"quote": [{"open": [1.0, 2.0], "close": [1.5, close]}], "adjclose": [{"adjclose": [1.5, close]}]},
+                "meta": {"gmtoffset": 7200, "regularMarketPrice": 2.5, "regularMarketTime": at}
+            }]}})
+        };
+        let filled = |mut j: Value| {
+            fill_last_close(&mut j);
+            (j.pointer("/chart/result/0/indicators/adjclose/0/adjclose/1").cloned(), parse_chart(&j, "ZZTZ.DE").map(|c| c.closes))
+        };
+        assert_eq!(filled(body(quote, Value::Null)), (Some(serde_json::json!(2.5)), Some(vec![1.5, 2.5])), "close and adjclose both");
+        assert_eq!(filled(body(quote + 86_400, Value::Null)), (Some(Value::Null), Some(vec![1.5])), "a quote from the next day is not that bar's close");
+        assert_eq!(filled(body(quote, serde_json::json!(2.0))), (Some(serde_json::json!(2.0)), Some(vec![1.5, 2.0])), "a printed close stays");
+        let mut bare = body(quote, Value::Null);
+        bare["chart"]["result"][0]["meta"].as_object_mut().unwrap().remove("regularMarketPrice");
+        assert_eq!(filled(bare), (Some(Value::Null), Some(vec![1.5])), "no price, nothing to fill");
+        let mut empty = body(quote, Value::Null);
+        empty["chart"]["result"][0]["timestamp"] = serde_json::json!([]);
+        assert_eq!(fill_last_close(&mut empty), None, "no bars, no panic");
+    }
+
     /// (#81) The whole live quote assembly, which had no test at all, pinned at the one seam this
     /// change moves: every EUR-denominated field on a `Quote` is the native number times ONE rate, and
     /// a row whose rate is unknown must carry no EUR number rather than a native one wearing a € sign.
@@ -18998,10 +19046,13 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
 
 /// (#811) `fetch_history` on a shorter range: the last daily bars the intraday table ranks on, without
 /// the 10y download per name. (#825) `range` is a Yahoo chart range, `intraday::chart_range`'s pick.
+/// (#826) The last bar's null close is filled from the quote first ([`fill_last_close`]).
 /// None on fetch/parse fail or empty history.
 #[mutants::skip] // network shell, fetch_history's body on a shorter range
 pub async fn fetch_recent(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Chart> {
-    parse_chart(&chart_json(client, urls, ticker, range).await?, ticker).filter(|c| !c.closes.is_empty())
+    let mut j = chart_json(client, urls, ticker, range).await?;
+    fill_last_close(&mut j);
+    parse_chart(&j, ticker).filter(|c| !c.closes.is_empty())
 }
 
 /// The parsed `Chart` from the MAX monthly history — the long-horizon `backtest` path. Decades of

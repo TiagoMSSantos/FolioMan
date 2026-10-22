@@ -5032,8 +5032,9 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("PRICE(EUR)", "Last close, converted to euros; while the session trades, Yahoo's latest price"),
         ("KEY", "The intraday key the run ranks on, higher first; hover a cell for how its number was worked out (K2 and K3 show their name). K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions; K4 hit share = the share of the last 63 sessions that closed above their open (graded, not used until it passes)"),
         ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock; hover a cell for the hours on your own clock"),
-        ("DATA TO", "The last completed session the key read; the row is for the session after it"),
+        ("DATA TO", "The window RIGHT/FAIL counts, on this name's own bars: from the start date to the last session counted; before the exchange closes that is the last completed session the key read, after it the session this row is for"),
         ("RIGHT/FAIL", "How this name's sessions in this table went since the start date, open to close before costs, right/fail; every session from the start date on whose top 10, ranked as today's is, held this name, replayed on today's charts; right = it closed above its open; fail = it closed at or below its open; today's session counts once its exchange has closed (from 17:00 UTC for EU, 21:30 UTC for US); the start date is the Pages workflow's since input"),
+        ("SCORE", "The hit share the rows sort by, (right+1)/(right+fail+2) as a percent: every name starts at 50% and nears its plain right share as its sessions add up; 9/1 = 83%; 1/0 = 67%; 0/0 = 50%"),
     ]);
     // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
     let mut bonds: BTreeMap<String, String> = fixed(&[
