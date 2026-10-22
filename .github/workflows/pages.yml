@@ -33,6 +33,11 @@ name: Pages
 on:
   schedule:
     - cron: "*/5 * * * *" # every 5 min
+    # (#831) One tick just after each Intraday cutoff (EU 17:00, US 21:30 UTC), so today's session
+    # reaches the table without waiting on a `*/5` tick: on 2026-10-22 none fired from 14:40 to 17:35.
+    # Still best-effort; off-the-hour minutes are only less likely to be dropped.
+    - cron: "7 17 * * 1-5"
+    - cron: "37 21 * * 1-5"
   # Republish whenever main moves, so a heuristic change is visible on the page immediately instead of
   # at the next cron tick: GitHub throttles `*/5` to ~2-4 runs an hour (36 deploys on 2026-09-26). NO `paths` filter, deliberately: the rows are a live universe fetch, so
   # what the page shows depends on the market as much as on the diff, and a docs-only push simply
