@@ -22600,7 +22600,18 @@ social_heuristic:
 # additions floored at zero, K2 and K6 still stand. The check assumes the US addition carries over to
 # the EU list. The edge stays small (+1.1 to +1.8 pp, about 2 to 3.5 more up sessions in 200), and every
 # key still loses net of cost. No live change: the table keeps K1 until the owner decides.
-intraday_key: 1
+#
+# (#832) USER DECISION 2026-10-22: rank the page's Intraday table on K7 hit 1y, the share of the last 252
+# sessions that closed above their open, in place of K1. The goal stays more RIGHT days (#829). On that
+# ruler K7 passes the hit bar in the EU (+1.68 pp, t 4.67; +1.57 once the (#830) survivor addition is
+# taken off) and on the US* arm of today's S&P members (+1.30 pp, t 3.28), and misses it by a hair on the
+# point-in-time US pond (+1.19 pp, t 2.97). K1, the key it replaces, picks US names that close up less
+# often than the pond (-1.13 pp, t -3.13). Net of cost K7 still loses like every key (US* -47.1 bp/day,
+# gross +2.9), so the table stays a shadow. Journal lines now carry `intra_key`, and `track` grades each
+# key on its own row; the one unlabelled line with a book, 2026-10-22, is K1's. KEY and SCORE both count
+# up sessions, so a name K7 puts on the table starts with a high SCORE in-sample; only the sessions after
+# a line's date test the key. The KEY hover counts K7's up sessions out of 252.
+intraday_key: 7
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

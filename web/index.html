@@ -258,8 +258,12 @@
     21:30 UTC for US. Yahoo leaves an EU session's last close empty until the next open, so the table takes
     it from the quote's latest price. DATA TO is the window RIGHT/FAIL counts, from the start date to the
     last session counted. The rows are ordered by SCORE, that record's (right+1)/(right+fail+2) as a
-    percent, highest first, ties by KEY. K4, the share of the last 63 sessions that closed
-    above their open, is graded but not used until it passes. <strong>No key has made money after costs.</strong>
+    percent, highest first, ties by KEY. The table ranks on K7 (receipt #832), the share of the last 252
+    sessions that closed above their open: on the 10-year backtest its ten names closed up about 1.7
+    percentage points more often than the EU list as a whole, and 1.2 more than the S&amp;P 500 as a whole,
+    just short of the backtest's bar in the US.
+    KEY and SCORE both count up sessions, so a name that makes the table starts with a high SCORE by
+    construction; only the sessions after it ranks test the key. <strong>No key has made money after costs.</strong>
     The 10-year backtest (receipt #810) lost on every key and market once a round trip is paid: about
     −49 to −52 basis points a day in the US at 50 bp of cost, −16 to −20 in the EU at 20 bp. The best
     of them, K1 on the EU list, earned +4.3 bp a day before costs, which a round trip of more than
