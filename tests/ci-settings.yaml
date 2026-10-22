@@ -22504,6 +22504,15 @@ social_heuristic:
 # US 2449 sessions 2017-01-25..2026-10-21, median 453 ranked; EU 2496 sessions 2017-01-19..2026-10-20,
 # median 99. K1-K3 re-read within 0.2 bp of the (#810) table. No key reaches a gross t of 3, so K4 stays
 # in the ruler only and the table keeps K1.
+#
+# (#827) USER DECISION 2026-10-22: RIGHT/FAIL counts every session since the start date on each of
+# today's 10 names' own bars, whether or not the name made that session's top 10. It grades the stock,
+# not the pick. The replayed record held a name only on the sessions it made the top 10, 1 to ~70 of
+# them, and the (right+1)/(right+fail+2) order lifted thin luck to the top: on 2026-10-22, NKE ranked #1
+# US on 3/1 (67%; a coin gives 3 of 4 right 31% of the time), but read 89/113 over all its sessions since
+# 2026-01-02. Ordering by a name's own hit share is the K4 idea the ruler refused above, so the table
+# stays a shadow, and the 10 names are still the top 10 by key. The US pond fetched for the table is
+# today's members only, since nothing replays past members any more.
 intraday_key: 1
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait

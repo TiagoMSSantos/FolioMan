@@ -252,9 +252,9 @@
     DAX, CAC 40 and Euro Stoxx 50 members; a name must have traded at least €5 million a day on average
     over the last 30 sessions. KEY is the score that picks the ten (hover it for which key), read only from the
     sessions completed before the one ranked. The session it ranks for may already be open, or over, when
-    you read this. RIGHT/FAIL replays every session since the start date (hover the column for it) and
-    counts those whose top 10 held the name: right when it closed above its open, fail when it closed at or
-    below it, before costs. Today's session counts once its exchange has closed: from 17:00 UTC for EU and
+    you read this. RIGHT/FAIL counts every session of the name since the start date (hover the column for
+    it), whether or not it made the table that day: right when it closed above its open, fail when it
+    closed at or below it, before costs. Today's session counts once its exchange has closed: from 17:00 UTC for EU and
     21:30 UTC for US. Yahoo leaves an EU session's last close empty until the next open, so the table takes
     it from the quote's latest price. DATA TO is the window RIGHT/FAIL counts, from the start date to the
     last session counted. The rows are ordered by SCORE, that record's (right+1)/(right+fail+2) as a

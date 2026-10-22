@@ -1662,9 +1662,9 @@ fn meta_alerts(
 /// floor and USD rate as the (#809) ruler. A name in neither EUR nor USD is skipped. (#823) Today's
 /// session counts once the exchange closes, read off the UTC clock. (#824) Each book name as a bare
 /// quote, its profile looked up as the pool's are, for the NAME link; a market's prices convert at its
-/// one currency's rate. (#825) The bars reach far enough back to replay every session from `since` for
-/// the RIGHT/FAIL column, and the US pond holds every member since then.
-#[mutants::skip] // network shell; `rank`, `record`, `web_rows` and their tests live in heuristics::intraday
+/// one currency's rate. (#827) The bars reach back to `since` for the RIGHT/FAIL column, which counts
+/// every session on each book name's own bars, so the US pond is today's members only.
+#[mutants::skip] // network shell; `rank`, `web_rows` and their tests live in heuristics::intraday
 async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate, since: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>, Vec<Quote>) {
     use crate::heuristics::intraday;
     let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
@@ -1672,7 +1672,7 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
     let range = intraday::chart_range(since, today);
     let (mut rows, mut pairs, mut stubs) = (Vec::new(), Vec::new(), Vec::new());
-    for (market, names) in [("US", intraday::us_pond(&spans, since.min(today))), ("EU", eu)] {
+    for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)
             .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk, range).await?)) })
             .buffer_unordered(fetch::fetch_concurrency())
@@ -1692,9 +1692,8 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             .collect();
         let book = intraday::rank(k, &pond, today);
         let until = if intraday::closed(market, chrono::Utc::now().time()) { today.succ_opt().unwrap_or(today) } else { today };
-        let rec = intraday::record(k, &pond, since, until);
         let fx = if market == "US" { usd.unwrap_or(f64::NAN) } else { 1.0 };
-        rows.extend(intraday::web_rows(market, k, &book, &rec, since, until, fx, today));
+        rows.extend(intraday::web_rows(market, k, &book, since, until, fx, today));
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
         stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
     }
