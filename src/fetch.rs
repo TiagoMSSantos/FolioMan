@@ -18996,11 +18996,12 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
     Some(chart)
 }
 
-/// (#811) `fetch_history` on a 3mo range: the last daily bars the intraday table ranks on, without the
-/// 10y download per name. None on fetch/parse fail or empty history.
+/// (#811) `fetch_history` on a shorter range: the last daily bars the intraday table ranks on, without
+/// the 10y download per name. (#825) `range` is a Yahoo chart range, `intraday::chart_range`'s pick.
+/// None on fetch/parse fail or empty history.
 #[mutants::skip] // network shell, fetch_history's body on a shorter range
-pub async fn fetch_recent(client: &Client, urls: &Urls, ticker: &str) -> Option<Chart> {
-    parse_chart(&chart_json(client, urls, ticker, "3mo").await?, ticker).filter(|c| !c.closes.is_empty())
+pub async fn fetch_recent(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Chart> {
+    parse_chart(&chart_json(client, urls, ticker, range).await?, ticker).filter(|c| !c.closes.is_empty())
 }
 
 /// The parsed `Chart` from the MAX monthly history — the long-horizon `backtest` path. Decades of

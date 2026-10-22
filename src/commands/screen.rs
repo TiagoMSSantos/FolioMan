@@ -1659,22 +1659,22 @@ fn meta_alerts(
 
 /// (#811) The Intraday shadow table: each market's top `intraday::BOOK` on key `k`, ranked on the bars
 /// completed before `today`, as page rows plus the `(market, ticker)` pairs the journal keeps. Same ponds,
-/// floor and USD rate as the (#809) ruler, on 3mo of bars. A name in neither EUR nor USD is skipped.
-/// (#822) Each name the book holds is then fetched again on 10y of bars, `track`'s fetch, and its
-/// journalled sessions tallied for the RIGHT/FAIL column. (#823) Today's session counts once the
-/// exchange closes, read off the UTC clock. (#824) Each book name as a bare quote, its profile looked up
-/// as the pool's are, for the NAME link; a market's prices convert at its one currency's rate.
-#[mutants::skip] // network shell; `rank`, `web_rows`, `tally` and their tests live in heuristics::intraday
-async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>, Vec<Quote>) {
+/// floor and USD rate as the (#809) ruler. A name in neither EUR nor USD is skipped. (#823) Today's
+/// session counts once the exchange closes, read off the UTC clock. (#824) Each book name as a bare
+/// quote, its profile looked up as the pool's are, for the NAME link; a market's prices convert at its
+/// one currency's rate. (#825) The bars reach far enough back to replay every session from `since` for
+/// the RIGHT/FAIL column, and the US pond holds every member since then.
+#[mutants::skip] // network shell; `rank`, `record`, `web_rows` and their tests live in heuristics::intraday
+async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate, since: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>, Vec<Quote>) {
     use crate::heuristics::intraday;
     let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
     let usd = fetch::eur_rate(client, &settings.urls, "USD", &fetch::fx_cache()).await;
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
-    let journal = &crate::commands::track::journal_intra();
+    let range = intraday::chart_range(since, today);
     let (mut rows, mut pairs, mut stubs) = (Vec::new(), Vec::new(), Vec::new());
-    for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
+    for (market, names) in [("US", intraday::us_pond(&spans, since.min(today))), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)
-            .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk).await?)) })
+            .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk, range).await?)) })
             .buffer_unordered(fetch::fetch_concurrency())
             .filter_map(std::future::ready)
             .collect()
@@ -1691,14 +1691,10 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             })
             .collect();
         let book = intraday::rank(k, &pond, today);
-        let closed = intraday::closed(market, chrono::Utc::now().time());
-        let hits: Vec<Option<(usize, usize)>> = futures::stream::iter(&book)
-            .map(|(tk, ..)| async move { Some(intraday::tally(market, tk, journal, fetch::fetch_history(client, &settings.urls, tk).await?, today, closed)) })
-            .buffered(fetch::fetch_concurrency())
-            .collect()
-            .await;
+        let until = if intraday::closed(market, chrono::Utc::now().time()) { today.succ_opt().unwrap_or(today) } else { today };
+        let rec = intraday::record(k, &pond, since, until);
         let fx = if market == "US" { usd.unwrap_or(f64::NAN) } else { 1.0 };
-        rows.extend(intraday::web_rows(market, k, &book, &hits, fx, today));
+        rows.extend(intraday::web_rows(market, k, &book, &rec, since, fx, today));
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
         stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
     }
@@ -2410,9 +2406,12 @@ pub async fn run(args: Vec<String>) {
     let mut soc_book = crate::heuristics::social::SocBook::default();
     // (#811) the Intraday shadow table, ranked for the session dated `run_date` (the journal's date, so
     // `track` grades the session it ranked for); key 0 (the default) fetches nothing
+    // (#825) the RIGHT/FAIL column counts from the date the Pages workflow's `since` input left on disk
+    let intra_today = chrono::Local::now().date_naive();
+    let intra_since = crate::heuristics::intraday::since(intra_today);
     let (intra_rows, intra_pairs, intra_quotes) = match settings.intraday_key {
         0 => Default::default(),
-        k => intraday_book(&client, &settings, k, chrono::Local::now().date_naive()).await,
+        k => intraday_book(&client, &settings, k, intra_today, intra_since).await,
     };
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
@@ -2441,6 +2440,10 @@ pub async fn run(args: Vec<String>) {
         let mut intra = serde_json::json!({ "intraday": intra_rows });
         crate::picks::stamp_site(&mut intra, &intra_quotes, &fetch::us_symbol);
         top["intraday"] = intra["intraday"].take();
+        // (#825) the column's header hover names the day it counts from, as each cell's does
+        if let Some(h) = top["help"]["intraday"]["RIGHT/FAIL"].as_str().map(str::to_owned) {
+            top["help"]["intraday"]["RIGHT/FAIL"] = serde_json::json!(format!("Counted since {intra_since}. {h}"));
+        }
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["braked"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
@@ -5390,9 +5393,6 @@ mod tests {
     /// (#335) `track::journal_prior` is a second read on `run`'s path, by design: it runs BEFORE the
     /// append, and only its TICKERS are used — `exits` and (#337) `carry` price each from today's
     /// quotes, so no journaled price leaves it to restate.
-    ///
-    /// (#822) `track::journal_intra` is a third, by the same design: the Intraday table is built before
-    /// the append too, and only each line's date and Intraday tickers leave it, graded on fresh bars.
     #[test]
     fn the_journal_is_read_once_and_restated_once() {
         let src = include_str!("screen.rs");

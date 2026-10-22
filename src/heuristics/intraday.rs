@@ -7,6 +7,7 @@
 //!   the day session rather than overnight (Lou, Polk & Skouras, "A tug of war", JFE 2019).
 //! - K2 calm range: minus the 20-day mean of ln(H/L). Low intraday range names.
 //! - K3 5d intraday: the 5-day mean of ln(C/O). Short-run intraday momentum.
+//! - K4 hit share: (#825) the share of the last 63 sessions that closed above their open.
 //!
 //! The pond is stocks with a 30-session average turnover (close × volume, in EUR) of at least
 //! `MIN_TURNOVER_EUR`: the US side is the S&P 500 as it stood each day, the EU side the static
@@ -14,6 +15,8 @@
 //! `backtest N intraday` grades every key on 10y of daily bars; nothing here reaches a lane, BUY NOW or
 //! the 20y backtest. (#811) With `intraday_key` set, `screen` prints today's top `BOOK` per market as the
 //! page's Intraday table, a shadow, and journals it; `track` grades each journalled book on its session.
+//! (#825) The table's RIGHT/FAIL column replays the key's daily top `BOOK` from the date in
+//! `SINCE_FILE`, which the Pages workflow's `since` input sets.
 
 use crate::core;
 use crate::fetch::Chart;
@@ -30,7 +33,9 @@ pub const MIN_TURNOVER_EUR: f64 = 5e6;
 /// Sessions of history a name needs before it ranks: the turnover window, longer than every key's.
 const WARMUP: usize = 30;
 /// Key names, `KEYS[k - 1]` for key `k`.
-pub const KEYS: [&str; 3] = ["K1 tug of war", "K2 calm range", "K3 5d intraday"];
+pub const KEYS: [&str; 4] = ["K1 tug of war", "K2 calm range", "K3 5d intraday", "K4 hit share"];
+/// (#825) The one-line file holding the date the RIGHT/FAIL column counts from, `YYYY-MM-DD`.
+pub const SINCE_FILE: &str = ".intraday_since";
 
 /// The EU pond: DAX 40, CAC 40 and Euro Stoxx 50 members as of 2026, one listing per company.
 /// shortcut: a static list of today's members, so the walk is survivor-biased on this side. A
@@ -80,6 +85,9 @@ pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
         1 if i >= 22 => (i - 21..i).map(|j| Some(co(j)? - ln(c.opens[j], c.closes[j - 1])?)).sum(),
         2 if i >= 20 => Some(-(i - 20..i).map(|j| ln(c.highs[j], c.lows[j])).sum::<Option<f64>>()? / 20.0),
         3 if i >= 5 => Some((i - 5..i).map(co).sum::<Option<f64>>()? / 5.0),
+        // shortcut: 64 possible values, so ties are common and break on ticker; a second key as the
+        // tie-break would remove that.
+        4 if i >= 63 => Some((i - 63..i).map(|j| Some(f64::from(u8::from(co(j)? > 0.0)))).sum::<Option<f64>>()? / 63.0),
         _ => None,
     }
 }
@@ -117,11 +125,12 @@ fn mean(xs: &[f64]) -> f64 {
     xs.iter().sum::<f64>() / xs.len() as f64
 }
 
-/// Every completed session where at least `BOOK` names rank on key `k`, in date order.
-pub fn walk(k: u8, pond: &[Member], today: NaiveDate) -> Vec<Day> {
+/// Each session dated on or after `since` and before `until`, with every member that ranks on key `k`
+/// that day as (ticker, key, open-to-close return), in rank order.
+fn sessions<'a>(k: u8, pond: &[Member<'a>], since: NaiveDate, until: NaiveDate) -> BTreeMap<NaiveDate, Vec<(&'a str, f64, f64)>> {
     let mut by: BTreeMap<NaiveDate, Vec<(&str, f64, f64)>> = BTreeMap::new();
     for &(tk, c, fx, spans) in pond {
-        for i in 0..completed(c, today) {
+        for i in completed(c, since)..completed(c, until) {
             if spans.is_some_and(|s| !core::sp500_member_at(s, c.dates[i])) || !liquid(c, i, fx) {
                 continue;
             }
@@ -130,10 +139,18 @@ pub fn walk(k: u8, pond: &[Member], today: NaiveDate) -> Vec<Day> {
             }
         }
     }
-    by.into_iter()
+    for v in by.values_mut() {
+        by_key(v);
+    }
+    by
+}
+
+/// Every completed session where at least `BOOK` names rank on key `k`, in date order.
+pub fn walk(k: u8, pond: &[Member], today: NaiveDate) -> Vec<Day> {
+    sessions(k, pond, NaiveDate::MIN, today)
+        .into_iter()
         .filter(|(_, v)| v.len() >= BOOK)
-        .map(|(date, mut v)| {
-            by_key(&mut v);
+        .map(|(date, v)| {
             let rs: Vec<f64> = v.iter().map(|x| x.2).collect();
             Day { date, n: v.len(), book: mean(&rs[..BOOK]), all: mean(&rs) }
         })
@@ -215,17 +232,19 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 }
 
 /// (#811) The page rows for one market's [`rank`] book: position, market, ticker, name, key, the
-/// session's hours on the exchanges' own clock, and the last completed bar the key read. (#822) Then
-/// each name's [`tally`], `hits[n]` for `book[n]`; `None` = its chart did not load. (#824) Each row's
-/// latest price in euros at `fx`, the market's euro rate (one currency per market), and K1's [`tug`]
-/// sums as the KEY hover.
-pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], hits: &[Option<(usize, usize)>], fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
+/// session's hours on the exchanges' own clock, and the last completed bar the key read. (#824) Each
+/// row's latest price in euros at `fx`, the market's euro rate (one currency per market), and K1's
+/// [`tug`] sums as the KEY hover. (#825) Each name's [`record`] since `since`, a name it lacks at 0/0;
+/// the rows in order of hit share, (right + 1) / (right + fail + 2), ties in key order.
+pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], rec: &HashMap<&str, (usize, usize)>, since: NaiveDate, fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
     use serde_json::json;
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
-    book.iter()
-        .zip(hits)
+    let share = |(r, f): (usize, usize)| (r + 1) as f64 / (r + f + 2) as f64;
+    let mut v: Vec<_> = book.iter().map(|b| (b, rec.get(b.0).copied().unwrap_or_default())).collect();
+    v.sort_by(|a, b| share(b.1).total_cmp(&share(a.1)));
+    v.into_iter()
         .enumerate()
-        .map(|(n, ((tk, x, c), hit))| {
+        .map(|(n, ((tk, x, c), (r, f)))| {
             let tip = match tug(c, completed(c, today)).map(|(d, n)| (d * 100.0, n * 100.0)) {
                 Some((d, n)) if k == 1 => format!(
                     "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: {d:+.2}%\nnight moves (close to next open) added up: {n:+.2}%\nkey = day - night = {d:+.2} - ({n:+.2}) = {:+.2}%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)",
@@ -242,10 +261,7 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], hits: &[Optio
                 json!(["KEY", format!("{:+.2}%", x * 100.0), null, tip]),
                 json!(["SESSION", hours]),
                 json!(["DATA TO", c.dates[completed(c, today) - 1].to_string()]),
-                match hit {
-                    Some((r, f)) => json!(["RIGHT/FAIL", format!("{r}/{f}"), null, format!("{r} right, {f} failed, {} sessions measured", r + f)]),
-                    None => json!(["RIGHT/FAIL", "n/a"]),
-                },
+                json!(["RIGHT/FAIL", format!("{r}/{f}"), null, format!("{r} right, {f} failed since {since}: the {} sessions it made this table's top 10", r + f)]),
             ]
         })
         .collect()
@@ -260,22 +276,35 @@ pub fn closed(market: &str, now: NaiveTime) -> bool {
     (now.hour(), now.minute()) >= if market == "US" { (21, 30) } else { (17, 0) }
 }
 
-/// (#822) How `tk`'s journalled sessions in `market` went, `(right, fail)`: right = the session closed
-/// above its open, before costs, fail = at or below it. Each session a journalled book held it counts
-/// once, graded as [`graded`] grades a book, so a bar dated `today` waits until tomorrow. (#823) Unless
-/// the session is `closed`; and today's table holds `tk`, so its session counts as a line dated `today`
-/// would. A session no journal line holds drops out when the date turns.
-pub fn tally(market: &str, tk: &str, journal: &[(NaiveDate, Vec<(String, String)>)], c: Chart, today: NaiveDate, closed: bool) -> (usize, usize) {
-    let lines: Vec<(NaiveDate, Vec<&str>)> = journal
-        .iter()
-        .filter(|(_, book)| book.iter().any(|(m, t)| m == market && t == tk))
-        .map(|(d, _)| (*d, vec![tk]))
-        .chain([(today, vec![tk])])
-        .collect();
-    let until = if closed { today.succ_opt().unwrap_or(today) } else { today };
-    let days = graded(&lines, &HashMap::from([(tk.to_string(), c)]), until);
-    let right = days.iter().filter(|d| d.1 > 0.0).count();
-    (right, days.len() - right)
+/// (#825) The RIGHT/FAIL column: for every session dated on or after `since` and before `until`, the
+/// top `BOOK` on key `k` that day, ranked as [`rank`] ranks today's, each counted `(right, fail)`:
+/// right = the session closed above its open, before costs, fail = at or below it.
+pub fn record<'a>(k: u8, pond: &[Member<'a>], since: NaiveDate, until: NaiveDate) -> HashMap<&'a str, (usize, usize)> {
+    let mut out: HashMap<&str, (usize, usize)> = HashMap::new();
+    for v in sessions(k, pond, since, until).values() {
+        for &(tk, _, r) in v.iter().take(BOOK) {
+            let e = out.entry(tk).or_default();
+            if r > 0.0 {
+                e.0 += 1;
+            } else {
+                e.1 += 1;
+            }
+        }
+    }
+    out
+}
+
+/// (#825) The date in `SINCE_FILE`, or `today` when the file is missing or holds no date.
+pub fn since(today: NaiveDate) -> NaiveDate {
+    std::fs::read_to_string(crate::config::data_path(SINCE_FILE)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(today)
+}
+
+/// (#825) The shortest chart range that reaches 60 days before `since`: the floor's 30 sessions and
+/// K1's 22 before the first session counted. K4's 63 need about 92, so on K4 the first weeks count
+/// fewer names.
+pub fn chart_range(since: NaiveDate, today: NaiveDate) -> &'static str {
+    let need = (today - since).num_days() + 60;
+    [(91, "3mo"), (182, "6mo"), (365, "1y"), (730, "2y"), (1826, "5y")].into_iter().find(|(d, _)| need <= *d).map_or("10y", |(_, r)| r)
 }
 
 /// (#811) Each journalled book graded on the session it ranked for. For a line dated `D`, each name's
@@ -381,7 +410,15 @@ mod tests {
         // the first bar each key can read, and one before it
         assert!(key(1, &c, 21).is_none() && key(2, &c, 19).is_none() && key(3, &c, 4).is_none());
         assert!(key(1, &c, 22).is_some() && key(2, &c, 20).is_some() && key(3, &c, 5).is_some());
-        assert!(key(0, &c, 30).is_none() && key(4, &c, 30).is_none());
+        assert!(key(0, &c, 30).is_none() && key(5, &c, 30).is_none());
+        // (#825) K4 against a plain count; bar 22 is flat (open = close = 101), so it counts as a miss
+        let c = wavy(70);
+        assert_eq!((c.opens[22], c.closes[22]), (101.0, 101.0));
+        for i in [63, 69] {
+            let up = (i - 63..i).filter(|&j| c.closes[j] > c.opens[j]).count();
+            assert_eq!(key(4, &c, i), Some(up as f64 / 63.0), "K4 at {i}");
+        }
+        assert!(key(4, &c, 62).is_none() && key(4, &c, 63).is_some());
         // a missing print inside the window voids the key; one at the session itself does not
         let mut gap = wavy(40);
         gap.opens[25] = f64::NAN;
@@ -546,27 +583,37 @@ mod tests {
         pond[11].3 = Some(&open);
         assert_eq!(rank(3, &pond, d(31))[0].0, "N11");
         assert_eq!(rank(1, &pond[..3], d(31)).len(), 3, "K1 reads 22 bars, so all three rank");
-        assert!(rank(4, &pond, d(31)).is_empty());
+        assert!(rank(5, &pond, d(31)).is_empty());
     }
 
     #[test]
     fn a_page_row_carries_the_key_session_and_last_bar() {
         let mut c = wavy(31);
         c.name = "Acme".into();
-        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], &[Some((7, 3)), None], 2.0, d(31));
+        // (#825) B's 9 in 10 outranks ACME's 7 in 10, though ACME's key is higher
+        let rec = HashMap::from([("ACME", (7, 3)), ("B", (9, 1))]);
+        let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &c)], &rec, d(1), 2.0, d(31));
         assert_eq!(
             serde_json::json!(rows),
             serde_json::json!([
-                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "7/3", null, "7 right, 3 failed, 10 sessions measured"]],
-                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "n/a"]],
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "9/1", null, "9 right, 1 failed since 2026-01-02: the 10 sessions it made this table's top 10"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-31"], ["RIGHT/FAIL", "7/3", null, "7 right, 3 failed since 2026-01-02: the 10 sessions it made this table's top 10"]],
             ])
         );
+        // equal hit shares keep key order: 4 in 6 and 2 in 3, then 0 in 0 (a name `rec` lacks) and 1 in 2
+        let order = |book: &[&'static str], rec: &[(&'static str, (usize, usize))]| {
+            let book: Vec<(&str, f64, &Chart)> = book.iter().map(|t| (*t, 0.0, &c)).collect();
+            web_rows("EU", 3, &book, &rec.iter().copied().collect(), d(1), 1.0, d(31)).iter().map(|r| r[2][1].as_str().unwrap().to_string()).collect::<Vec<_>>().join(" ")
+        };
+        assert_eq!(order(&["Y", "X"], &[("Y", (3, 1)), ("X", (1, 0))]), "Y X");
+        assert_eq!(order(&["P", "Q"], &[("Q", (1, 1))]), "P Q");
         // too few sessions for K1's hover sums: it names the key
-        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], &[Some((0, 0))], 1.0, d(20));
+        let eu = web_rows("EU", 1, &[("X", 0.0, &c)], &HashMap::new(), d(1), 1.0, d(20));
         assert_eq!((eu[0][1][1].as_str(), eu[0][5][3].as_str()), (Some("EU"), Some("K1 tug of war")));
         assert_eq!((eu[0][6][1].as_str(), eu[0][7][1].as_str(), eu[0][8][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-20"), Some("0/0")));
+        assert_eq!(eu[0][8][3], "0 right, 0 failed since 2026-01-02: the 0 sessions it made this table's top 10");
         // (#824) 21 sessions behind it: the hover works the number out
-        let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], &[None], 1.0, d(31));
+        let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], &HashMap::new(), d(1), 1.0, d(31));
         assert_eq!(k1[0][4][1], "€103.00");
         assert_eq!(k1[0][5][3], "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: +80.00%\nnight moves (close to next open) added up: -82.87%\nkey = day - night = +80.00 - (-82.87) = +162.87%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)");
         // (#452) the page's hover text keys on exactly these headers
@@ -597,28 +644,46 @@ mod tests {
         assert!(graded(&[], &charts, d(6)).is_empty());
     }
 
-    /// (#822) Sessions d3 up, d4 flat, d5 up, d6 flat, d7 down. The d1 and d2 lines reach d3 once; the
-    /// d5 line holds A in the other market and B here, so d5 never counts; a flat day is a fail. (#823)
-    /// Today's table holds the name too, so a closed session today counts with or without a line.
+    /// (#825) Eleven names; name `n` gains n/1000 a session to bar 30, so its K3 ranks it `n`th and N00,
+    /// the lowest, is never in the top 10. Then every name's bar 30 is up, bar 31 flat, bar 32 down.
     #[test]
-    fn tally_counts_each_journalled_session_once() {
-        let mut a = chart(&[100.0; 6], &[100.0, 101.0, 100.0, 102.0, 100.0, 99.0], 1.0);
-        a.dates = vec![d(0), d(3), d(4), d(5), d(6), d(7)];
-        let line = |i: usize, b: &[(&str, &str)]| (d(i), b.iter().map(|(m, t)| (m.to_string(), t.to_string())).collect::<Vec<_>>());
-        let journal = [
-            line(1, &[("US", "A")]),
-            line(2, &[("EU", "X"), ("US", "A")]),
-            line(4, &[("US", "A")]),
-            line(5, &[("EU", "A"), ("US", "B")]),
-            line(6, &[("US", "A")]),
-            line(7, &[("US", "A")]),
-        ];
-        assert_eq!(tally("US", "A", &journal, a.clone(), d(8), false), (1, 3));
-        assert_eq!(tally("US", "A", &journal, a.clone(), d(7), false), (1, 2), "a bar dated today may still be trading");
-        assert_eq!(tally("US", "A", &journal, a.clone(), d(7), true), (1, 3), "once the session closes, its bar counts");
-        assert_eq!(tally("US", "A", &[], a.clone(), d(5), true), (1, 0), "today's table is a line dated today");
-        assert_eq!(tally("EU", "A", &journal, a.clone(), d(5), true), (1, 0), "the d5 line and today's table are one session");
-        assert_eq!(tally("US", "A", &[], a, d(8), false), (0, 0));
+    fn record_counts_each_top_ten_session_from_since() {
+        let names: Vec<String> = (0..11).map(|n| format!("N{n:02}")).collect();
+        let charts: Vec<Chart> = (0..11)
+            .map(|n| {
+                let mut c = [100.0 * (1.0 + n as f64 / 1000.0); 33];
+                c[30..].copy_from_slice(&[101.0, 100.0, 99.0]);
+                chart(&[100.0; 33], &c, 1e5)
+            })
+            .collect();
+        let pond: Vec<Member> = names.iter().zip(&charts).map(|(t, c)| (t.as_str(), c, 1.0, None)).collect();
+        let at = |since, until| {
+            let rec = record(3, &pond, d(since), d(until));
+            assert!(!rec.contains_key("N00"), "{since}..{until}");
+            assert_eq!(rec.len(), 10, "{since}..{until}");
+            rec["N05"]
+        };
+        assert_eq!(at(30, 33), (1, 2), "a flat session is a fail");
+        assert_eq!(at(31, 33), (0, 2), "a session before `since` is not counted");
+        assert_eq!(at(30, 32), (1, 1), "nor one dated `until`");
+        assert_eq!(at(0, 31), (1, 0), "bars before 30 are short of the floor's window");
+        assert!(record(3, &pond, d(33), d(40)).is_empty());
+    }
+
+    #[test]
+    fn the_chart_range_reaches_60_days_before_since() {
+        assert_eq!(chart_range(d(0), d(31)), "3mo", "91 days");
+        assert_eq!(chart_range(d(0), d(32)), "6mo");
+        assert_eq!(chart_range(d(1), NaiveDate::from_ymd_opt(2026, 10, 22).unwrap()), "1y", "293 + 60 = 353 days");
+        assert_eq!((chart_range(d(0), d(305)), chart_range(d(0), d(306))), ("1y", "2y"));
+        assert_eq!(chart_range(d(0), d(1766)), "5y");
+        assert_eq!(chart_range(d(0), d(1767)), "10y");
+    }
+
+    /// Under `cargo test --lib` the data dir is a scratch dir that holds no `SINCE_FILE`.
+    #[test]
+    fn a_missing_since_file_means_today() {
+        assert_eq!(since(d(5)), d(5));
     }
 
     #[test]

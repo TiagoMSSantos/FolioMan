@@ -1240,15 +1240,6 @@ pub(crate) fn journal_prior(date: &str) -> Option<Snapshot> {
     prior_month(&snaps, date).cloned()
 }
 
-/// (#822) Each journal line's date and Intraday book, read off disk for the page's RIGHT/FAIL column.
-/// Same reason as [`journal_prior`]: `screen` builds the Intraday table before its one restated read,
-/// and only dates and tickers leave this one, graded on freshly fetched bars. `#[mutants::skip]`: a file
-/// read wired to the tested `heuristics::intraday::tally`, reachable only from `screen::run`.
-#[mutants::skip]
-pub(crate) fn journal_intra() -> Vec<(chrono::NaiveDate, Vec<(String, String)>)> {
-    read_snapshots().0.into_iter().filter_map(|s| Some((s.date.parse().ok()?, s.intra))).collect()
-}
-
 /// (#335) The gap that decides the exit shadow; the other one prints for information.
 const EXIT_DECIDES: &str = "kept minus failed";
 

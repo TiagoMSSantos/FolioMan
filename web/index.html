@@ -250,12 +250,14 @@
     The names an intraday key ranks highest for one session: buy at the open, sell before the close, the
     ten names of a market equal weight. US names are today's S&amp;P 500 members, EU names a fixed list of
     DAX, CAC 40 and Euro Stoxx 50 members; a name must have traded at least €5 million a day on average
-    over the last 30 sessions. KEY is the score the table ranks by (hover it for which key), read only from the
+    over the last 30 sessions. KEY is the score that picks the ten (hover it for which key), read only from the
     sessions completed before the one ranked. DATA TO is the last of those sessions. The session it ranks
-    for may already be open, or over, when you read this. RIGHT/FAIL counts the past sessions this table
-    held the name: right when it closed above its open, fail when it closed at or below it, before costs;
-    the two add up to every session measured. Today's session counts once its exchange has closed:
-    from 17:00 UTC for EU and 21:30 UTC for US. <strong>No key has made money after costs.</strong>
+    for may already be open, or over, when you read this. RIGHT/FAIL replays every session since the start
+    date (hover the column for it) and counts those whose top 10 held the name: right when it closed above
+    its open, fail when it closed at or below it, before costs. Today's session counts once its exchange has
+    closed: from 17:00 UTC for EU and 21:30 UTC for US. The rows are ordered by that record,
+    (right+1)/(right+fail+2) highest first, ties by KEY. K4, the share of the last 63 sessions that closed
+    above their open, is graded but not used until it passes. <strong>No key has made money after costs.</strong>
     The 10-year backtest (receipt #810) lost on every key and market once a round trip is paid: about
     −49 to −52 basis points a day in the US at 50 bp of cost, −16 to −20 in the EU at 20 bp. The best
     of them, K1 on the EU list, earned +4.3 bp a day before costs, which a round trip of more than

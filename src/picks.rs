@@ -5025,15 +5025,15 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     ]);
     // (#811) `heuristics::intraday::web_rows`
     let intraday = fixed(&[
-        num,
+        ("RANK", "Position in its market by RIGHT/FAIL, (right+1)/(right+fail+2) highest first, ties by KEY; the 10 names are the top 10 by KEY"),
         ("MARKET", "US = an S&P 500 member today; EU = a DAX 40, CAC 40 or Euro Stoxx 50 member; each market ranks its own top 10"),
         ("TICKER", ticker),
         ("NAME", "The company's name, as Yahoo lists it; click to open the company's own website (or its Wikipedia article) when one is found, else its Yahoo quote"),
         ("PRICE(EUR)", "Last close, converted to euros; while the session trades, Yahoo's latest price"),
-        ("KEY", "The intraday key the run ranks on, higher first; hover a cell for how its number was worked out (K2 and K3 show their name). K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions"),
+        ("KEY", "The intraday key the run ranks on, higher first; hover a cell for how its number was worked out (K2 and K3 show their name). K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions; K4 hit share = the share of the last 63 sessions that closed above their open (graded, not used until it passes)"),
         ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock; hover a cell for the hours on your own clock"),
         ("DATA TO", "The last completed session the key read; the row is for the session after it"),
-        ("RIGHT/FAIL", "How this name's past sessions in this table went, open to close before costs, right/fail; right = it closed above its open; fail = it closed at or below its open; the two add up to every session measured since the journal's first Intraday line, 2026-10-22, plus today's once its exchange has closed (from 17:00 UTC for EU, 21:30 UTC for US); a session no journal line holds, like 2026-10-21's, counts until midnight UTC only; n/a = its 10-year chart did not load"),
+        ("RIGHT/FAIL", "How this name's sessions in this table went since the start date, open to close before costs, right/fail; every session from the start date on whose top 10, ranked as today's is, held this name, replayed on today's charts; right = it closed above its open; fail = it closed at or below its open; today's session counts once its exchange has closed (from 17:00 UTC for EU, 21:30 UTC for US); the start date is the Pages workflow's since input"),
     ]);
     // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
     let mut bonds: BTreeMap<String, String> = fixed(&[

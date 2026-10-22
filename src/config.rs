@@ -51,7 +51,7 @@ pub struct Settings {
     #[serde(default)]
     pub social_heuristic: serde_yaml::Value, // (#538) the Social table's own heuristic, as written: `half_life_days` (0 = OFF, the DEFAULT), `mcap_pivot_eur`, `runup_cap_pct`, `loud_penalty`, plus any `buy_heuristic` key as an override for the Social table only (an unset one inherits). Read it through `Settings::social`; see `heuristics::social`
     #[serde(default)]
-    pub intraday_key: u8, // (#811) the Intraday shadow table: which `heuristics::intraday` key ranks today's open-to-close book (1 = K1, 2 = K2, 3 = K3). 0 = off (the DEFAULT): screen fetches nothing for it and the page table stays empty. Shadow only, every key lost net of cost on the (#810) ruler
+    pub intraday_key: u8, // (#811) the Intraday shadow table: which `heuristics::intraday` key ranks today's open-to-close book (1 = K1, 2 = K2, 3 = K3, 4 = K4). 0 = off (the DEFAULT): screen fetches nothing for it and the page table stays empty. Shadow only, every key lost net of cost on the (#810) ruler
     #[serde(default)]
     pub anchor_windows: BTreeMap<String, i64>, // per-horizon ±days averaged around the anchor date; missing label = built-in default (see core::default_anchor_half)
     #[serde(default)]
