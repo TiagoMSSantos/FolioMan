@@ -22359,6 +22359,11 @@ buy_heuristic:
   #   TO REOPEN: the next bull, when the ceiling stops being inert. At that point the 1.6-vs-2.0 gap
   #   becomes observable in the funnel for the first time, and the coins landing between them are the
   #   evidence this block has never had. Until then, do not spend runs on it.
+  # (#835) 2026-10-22, BUG FIX, no knob moved. `screen` asked CoinMetrics for the UNIVERSE's tickers, but a
+  # coin Yahoo has no -EUR pair for is refetched as -USD (GT-EUR -> GT-USD), and the MVRV map is keyed per
+  # quote ticker. Such a coin carried no MVRV, and missing data passes, so this ceiling never tested it. The
+  # request now uses the quotes' tickers, as the (#395) supply request beside it already did. Live crypto
+  # rows on 2026-10-22: 1 (BTC-EUR, MVRV present), so the published table does not move today.
 
   # RISK-ADJUSTED-RETURN tilts (B/C) — Sharpe ratio (return ÷ volatility) and Calmar ratio (return ÷
   # worst peak-to-trough drawdown), from the SAME closes already fetched, ZERO extra network cost.
