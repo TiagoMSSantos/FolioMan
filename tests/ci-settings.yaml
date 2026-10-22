@@ -22633,6 +22633,17 @@ social_heuristic:
 # key on its own row; the one unlabelled line with a book, 2026-10-22, is K1's. KEY and SCORE both count
 # up sessions, so a name K7 puts on the table starts with a high SCORE in-sample; only the sessions after
 # a line's date test the key. The KEY hover counts K7's up sessions out of 252.
+#
+# (#836) USER DECISION 2026-10-22: grade two volume keys on the (#829) ruler, record only. K10 low volume
+# shock = minus the last session's volume over the mean of the 20 before it; attention-driven buying
+# lifts the open and reverses in the day (Berkman et al., JFQA 2012, same-day attention; reading it off
+# the session before is our own extrapolation). K11 = the same ratio with the sign flipped, the
+# falsifier. `backtest N intraday` grades both beside K1-K9; nothing here changes the page. Pre-
+# registered: K10 passes a market when the book's hit share minus the pond's is above 0 at t >= 3 with
+# both halves above 0. A switch question goes to the owner only if K10 passes in BOTH markets, beats K7
+# there (US +1.19 pp, EU +1.68 pp) and K11 fails, and only after a K2 overlap check (a mean daily share
+# of K10's book also in K2's of 50% or more means no switch: it would be calm range under a new name).
+# Net of cost is expected to fail like every key, so the table stays a shadow either way.
 intraday_key: 7
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait

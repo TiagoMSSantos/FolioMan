@@ -10,6 +10,9 @@
 //! - K4 hit share: (#825) the share of the last 63 sessions that closed above their open.
 //! - K5-K8 long memory: (#828) K1 and K4 over 252 and 504 sessions.
 //! - K9 day Sharpe: (#829) mean over sd of the last 63 open-to-close moves.
+//! - K10 low volume shock: (#836) minus the last session's volume over the mean of the 20 before it.
+//!   Attention-driven buying lifts the open and reverses in the day (Berkman et al., JFQA 2012), so a
+//!   quiet name ranks first. K11 is the same ratio with the sign flipped, the falsifier.
 //!
 //! The pond is stocks with a 30-session average turnover (close × volume, in EUR) of at least
 //! `MIN_TURNOVER_EUR`: the US side is the S&P 500 as it stood each day, the EU side the static
@@ -36,8 +39,9 @@ pub const MIN_TURNOVER_EUR: f64 = 5e6;
 /// waits for its own history.
 const WARMUP: usize = 30;
 /// Key names, `KEYS[k - 1]` for key `k`.
-pub const KEYS: [&str; 9] = [
+pub const KEYS: [&str; 11] = [
     "K1 tug of war", "K2 calm range", "K3 5d intraday", "K4 hit share", "K5 tug 1y", "K6 tug 2y", "K7 hit 1y", "K8 hit 2y", "K9 day Sharpe",
+    "K10 low volume shock", "K11 high volume shock",
 ];
 /// (#825) The one-line file holding the date the RIGHT/FAIL column counts from, `YYYY-MM-DD`.
 pub const SINCE_FILE: &str = ".intraday_since";
@@ -86,7 +90,8 @@ fn ln(a: f64, b: f64) -> Option<f64> {
 
 /// Key `k` for the session at bar `i`, from bars before `i` only. None for an unknown key, too little
 /// history, or a missing print in the window. (#828) K5-K8 are K1's tug and K4's hit share over 252 and
-/// 504 sessions. (#829) K9 is None on a window with no spread, so a NaN never ranks first.
+/// 504 sessions. (#829) K9 is None on a window with no spread, so a NaN never ranks first. (#836) K10 and
+/// K11 are None when any of their 21 volume prints is missing or zero.
 /// shortcut: each key re-sums its whole window, so a 2y key costs 504 steps a bar in the walk; a running
 /// sum would remove that.
 pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
@@ -111,6 +116,10 @@ pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
         7 => hit(252),
         8 => hit(504),
         9 if i >= 63 => stats(&(i - 63..i).map(co).collect::<Option<Vec<f64>>>()?).map(|s| s.t / 63f64.sqrt()).filter(|x| x.is_finite()),
+        10 | 11 if i >= 21 => {
+            let shock = pos(c.volumes[i - 1])? / ((i - 21..i - 1).map(|j| pos(c.volumes[j])).sum::<Option<f64>>()? / 20.0);
+            Some(if k == 10 { -shock } else { shock })
+        }
         _ => None,
     }
 }
@@ -442,7 +451,7 @@ mod tests {
         // the first bar each key can read, and one before it
         assert!(key(1, &c, 21).is_none() && key(2, &c, 19).is_none() && key(3, &c, 4).is_none());
         assert!(key(1, &c, 22).is_some() && key(2, &c, 20).is_some() && key(3, &c, 5).is_some());
-        assert!(key(0, &c, 30).is_none() && key(10, &c, 30).is_none());
+        assert!(key(0, &c, 30).is_none() && key(12, &c, 30).is_none());
         // (#825) K4 against a plain count; bar 22 is flat (open = close = 101), so it counts as a miss
         let c = wavy(70);
         assert_eq!((c.opens[22], c.closes[22]), (101.0, 101.0));
@@ -709,6 +718,24 @@ mod tests {
         // a bar dated today may still be trading: C's drops out, and A's d(5) session waits
         near(graded(&lines, &charts, d(5)), &[(d(3), 0.02), (d(4), 1.0)]);
         assert!(graded(&[], &charts, d(6)).is_empty());
+    }
+
+    /// (#836) K10/K11 against a plain ratio: the last session's volume over the mean of the 20 before it.
+    #[test]
+    fn volume_keys_read_the_last_session_over_the_20_before() {
+        let mut c = wavy(30);
+        c.volumes = (0..30).map(|j| 1e5 + j as f64).collect();
+        for i in [21, 29] {
+            let want = c.volumes[i - 1] / ((i - 21..i - 1).map(|j| c.volumes[j]).sum::<f64>() / 20.0);
+            assert!((key(11, &c, i).unwrap() - want).abs() < 1e-12, "K11 at {i}");
+            assert_eq!(key(10, &c, i), Some(-key(11, &c, i).unwrap()), "K10 at {i}");
+        }
+        assert!(key(10, &c, 20).is_none() && key(11, &c, 20).is_none());
+        for bad in [0.0, f64::NAN] {
+            c.volumes[25] = bad;
+            assert!(key(10, &c, 25).is_some(), "bar 25 is not in the window yet");
+            assert!(key(10, &c, 26).is_none() && key(11, &c, 29).is_none(), "{bad} as the last print, then in the mean");
+        }
     }
 
     #[test]
