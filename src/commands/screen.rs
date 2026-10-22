@@ -1670,7 +1670,7 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
     let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
     let usd = fetch::eur_rate(client, &settings.urls, "USD", &fetch::fx_cache()).await;
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
-    let range = intraday::chart_range(since, today);
+    let range = intraday::chart_range(since, today, k);
     let (mut rows, mut pairs, mut stubs) = (Vec::new(), Vec::new(), Vec::new());
     for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)

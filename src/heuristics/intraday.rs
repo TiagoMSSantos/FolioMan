@@ -325,10 +325,17 @@ pub fn since(today: NaiveDate) -> NaiveDate {
 }
 
 /// (#825) The shortest chart range that reaches 60 days before `since`: the floor's 30 sessions and
-/// K1's 22 before the first session counted. K4's 63 need about 92, so on K4 the first weeks count
-/// fewer names.
-pub fn chart_range(since: NaiveDate, today: NaiveDate) -> &'static str {
-    let need = (today - since).num_days() + 60;
+/// K1's 22 before the first session counted. (#832) And far enough back for key `k`'s own window before
+/// today, at 3 calendar days per 2 sessions: on a 1y chart a US name has about 250 completed sessions,
+/// short of K7's 252, so every US key was None and the US rows dropped.
+pub fn chart_range(since: NaiveDate, today: NaiveDate, k: u8) -> &'static str {
+    let window: i64 = match k {
+        4 | 9 => 63,
+        5 | 7 => 253,
+        6 | 8 => 505,
+        _ => 22,
+    };
+    let need = ((today - since).num_days() + 60).max(window * 3 / 2);
     [(91, "3mo"), (182, "6mo"), (365, "1y"), (730, "2y"), (1826, "5y")].into_iter().find(|(d, _)| need <= *d).map_or("10y", |(_, r)| r)
 }
 
@@ -706,12 +713,25 @@ mod tests {
 
     #[test]
     fn the_chart_range_reaches_60_days_before_since() {
-        assert_eq!(chart_range(d(0), d(31)), "3mo", "91 days");
-        assert_eq!(chart_range(d(0), d(32)), "6mo");
-        assert_eq!(chart_range(d(1), NaiveDate::from_ymd_opt(2026, 10, 22).unwrap()), "1y", "293 + 60 = 353 days");
-        assert_eq!((chart_range(d(0), d(305)), chart_range(d(0), d(306))), ("1y", "2y"));
-        assert_eq!(chart_range(d(0), d(1766)), "5y");
-        assert_eq!(chart_range(d(0), d(1767)), "10y");
+        assert_eq!(chart_range(d(0), d(31), 1), "3mo", "91 days");
+        assert_eq!(chart_range(d(0), d(32), 1), "6mo");
+        assert_eq!(chart_range(d(1), NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(), 1), "1y", "293 + 60 = 353 days");
+        assert_eq!((chart_range(d(0), d(305), 1), chart_range(d(0), d(306), 1)), ("1y", "2y"));
+        assert_eq!(chart_range(d(0), d(1766), 1), "5y");
+        assert_eq!(chart_range(d(0), d(1767), 1), "10y");
+    }
+
+    #[test]
+    fn the_chart_range_holds_the_keys_own_window() {
+        // (#832) the live case: since 2026-01-02 reads 1y on K1, but K7's 252 sessions need 2y
+        let today = NaiveDate::from_ymd_opt(2026, 10, 22).unwrap();
+        assert_eq!(chart_range(d(1), today, 7), "2y", "253 x 3 / 2 = 379 days");
+        let at = |k| chart_range(today, today, k);
+        assert_eq!([at(1), at(2), at(3)], ["3mo"; 3], "60 days still rule the short keys");
+        assert_eq!([at(4), at(9)], ["6mo"; 2], "63 x 3 / 2 = 94 days");
+        assert_eq!([at(5), at(7)], ["2y"; 2]);
+        assert_eq!([at(6), at(8)], ["5y"; 2], "505 x 3 / 2 = 757 days");
+        assert_eq!(chart_range(d(0), d(1767), 8), "10y", "the longer reach wins");
     }
 
     /// Under `cargo test --lib` the data dir is a scratch dir that holds no `SINCE_FILE`.
