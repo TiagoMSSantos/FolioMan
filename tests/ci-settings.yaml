@@ -22513,6 +22513,31 @@ social_heuristic:
 # 2026-01-02. Ordering by a name's own hit share is the K4 idea the ruler refused above, so the table
 # stays a shadow, and the 10 names are still the top 10 by key. The US pond fetched for the table is
 # today's members only, since nothing replays past members any more.
+#
+# (#828) USER QUESTION 2026-10-22: would an earlier `.intraday_since` (2y, 40y) improve the heuristic?
+# No: the date feeds only the RIGHT/FAIL and SCORE columns (and through SCORE the row order); `rank`
+# reads K1's last 21 sessions and the ruler never reads the file. History moves results only if the key
+# reads it, so K1's tug and K4's hit share went to the (#810) ruler over a year and two years (252 and
+# 504 sessions). More than 10y is out of reach either way: the ruler and `chart_range` fetch at most 10y.
+# VERDICT 2026-10-22: FAIL, all 8 new cells. Probe run 39748863544 on 662fc34, `backtest 1 intraday`.
+#   market key        book net  gross  t(net)  halves net   all-names gross   gross t
+#   US     K5 tug 1y   -46.4    +3.6   -19.45  -48.7|-44.2   +0.7              ~1.5
+#   US     K6 tug 2y   -46.9    +3.1   -19.54  -49.3|-44.5   +1.3              ~1.3
+#   US     K7 hit 1y   -48.3    +1.7   -22.52  -48.5|-48.0   +0.7              ~0.8
+#   US     K8 hit 2y   -47.7    +2.3   -20.64  -48.8|-46.5   +1.2              ~1.0
+#   EU     K5 tug 1y   -15.5    +4.5    -8.82  -17.1|-13.8   +0.3              ~2.6
+#   EU     K6 tug 2y   -14.4    +5.6    -7.64  -17.8|-11.0   +1.2              ~2.97
+#   EU     K7 hit 1y   -15.9    +4.1    -9.07  -17.2|-14.6   +0.3              ~2.3
+#   EU     K8 hit 2y   -15.7    +4.3    -7.64  -17.6|-13.8   +1.2              ~2.1
+# The 1y keys start 2017-10 (US 2259-2260 sessions, EU 2305-2306), the 2y keys 2018-10 (US 2007-2008, EU
+# 2053-2054): their warm-up comes out of the same 10y fetch. K1-K4 re-read within 0.2 bp of the (#810)
+# and (#825) tables (EU K1 -15.8, gross +4.2, against -15.7/+4.3: the 10y window slides with the run date).
+# Reading: a longer memory lifts the tug's gross a little (US +0.8 -> +3.6, EU +4.2 -> +5.6) and the hit
+# share's barely; no cell comes near the 50/20 bp cost. EU K6 sits at the gross t line (2.97; the printed
+# rounding allows 2.93-3.01) but not over it. It is also the best of 16 cells, beats its own window's
+# pond (+1.2) by only +4.4 bp, ranks a static list of today's EU members, and would break even only at a
+# 5.6 bp round trip. The keys stay in the ruler only, the table keeps K1, and `.intraday_since` stays
+# 2026-01-02.
 intraday_key: 1
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
