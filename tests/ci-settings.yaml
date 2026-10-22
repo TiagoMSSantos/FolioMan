@@ -22538,6 +22538,43 @@ social_heuristic:
 # pond (+1.2) by only +4.4 bp, ranks a static list of today's EU members, and would break even only at a
 # 5.6 bp round trip. The keys stay in the ruler only, the table keeps K1, and `.intraday_since` stays
 # 2026-01-02.
+#
+# (#829) USER QUESTION 2026-10-22: can the intraday heuristic pick names that close above their open
+# more often (more RIGHT days on the page)? The ruler now prints a second line per market and key: each
+# session, the share of the 10 book names that closed above the open minus the same share over every
+# ranked pond name (a flat session is a fail, as on the page). Pre-registered bar: the mean difference is
+# above zero at t >= 3, in both halves. New key K9 day Sharpe = mean over sd of the last 63 open-to-close
+# moves. VERDICT 2026-10-22: hit bar PASS in 8 of 18 cells, net FAIL in all 18. Probe run 39756851926 on
+# 471b46f, `backtest 1 intraday`; book and pond are hit shares, diff and halves in percentage points.
+#   market key               book    pond    diff       t  halves       verdict
+#   US     K1 tug of war    49.6%   50.7%   -1.13   -3.13  -1.43|-0.82  FAIL
+#   US     K2 calm range    51.3%   50.7%   +0.55   +1.24  +0.66|+0.45  FAIL
+#   US     K3 5d intraday   49.7%   50.7%   -1.00   -2.56  -1.89|-0.10  FAIL
+#   US     K4 hit share     51.8%   50.7%   +1.07   +2.80  +1.06|+1.08  FAIL
+#   US     K5 tug 1y        50.9%   50.6%   +0.30   +0.81  +0.20|+0.41  FAIL
+#   US     K6 tug 2y        51.3%   50.7%   +0.55   +1.38  +0.31|+0.78  FAIL
+#   US     K7 hit 1y        51.8%   50.6%   +1.19   +2.97  +1.49|+0.88  FAIL
+#   US     K8 hit 2y        52.0%   50.7%   +1.34   +3.18  +1.05|+1.64  PASS
+#   US     K9 day Sharpe    51.7%   50.7%   +1.04   +2.55  +0.46|+1.61  FAIL
+#   EU     K1 tug of war    51.3%   50.2%   +1.09   +3.31  +1.27|+0.91  PASS
+#   EU     K2 calm range    51.5%   50.2%   +1.28   +3.62  +1.68|+0.89  PASS
+#   EU     K3 5d intraday   49.9%   50.2%   -0.31   -0.88  +0.34|-0.95  FAIL
+#   EU     K4 hit share     51.4%   50.1%   +1.25   +3.75  +1.70|+0.79  PASS
+#   EU     K5 tug 1y        51.4%   50.2%   +1.20   +3.60  +1.26|+1.14  PASS
+#   EU     K6 tug 2y        51.8%   50.7%   +1.19   +3.36  +0.84|+1.53  PASS
+#   EU     K7 hit 1y        51.9%   50.2%   +1.68   +4.67  +1.73|+1.62  PASS
+#   EU     K8 hit 2y        51.8%   50.6%   +1.13   +2.88  +1.13|+1.13  FAIL
+#   EU     K9 day Sharpe    51.9%   50.1%   +1.76   +4.97  +1.83|+1.69  PASS
+# K9 net: US -47.7 bp/day (gross +2.3, t -24.04), EU -15.8 (gross +4.2, t -9.46), both FAIL. The K1-K8
+# net lines re-read within 0.1 bp of (#828); the EU window now ends 2026-10-21, one session later.
+# Reading: in the US, whose pond is the point-in-time S&P list, only K8 clears the bar (t 3.18); the other
+# up-day keys K4, K7 and K9 sit at +1.0 to +1.2 pp with t 2.55-2.97. The live key K1 picks US names
+# that close up LESS often than the pond (-1.13 pp, t -3.13). In the EU, 7 of 9 keys pass by +1.1 to
+# +1.8 pp, but that pond is a static list of today's members, so its cells carry a survivor bias the US
+# cells do not; that check is outstanding. The edge is small: +1.76 pp (EU K9) is about 3.5 more up
+# sessions in 200, and every key still loses net of cost. The table keeps K1 until the owner decides. An
+# up-day key would also lift the page's RIGHT/FAIL in-sample, because the key and the column read
+# overlapping sessions.
 intraday_key: 1
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
