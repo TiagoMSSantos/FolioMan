@@ -22488,6 +22488,22 @@ social_heuristic:
 # on its last bars; a name with no bar for the graded session drops out of that day's track grade; the
 # US list is today's S&P 500, read from the cached membership history. Nothing here reaches BUY NOW,
 # `size`, `trade` or a broker.
+#
+# (#825) USER DECISION 2026-10-22: RIGHT/FAIL replays from a start date instead of reading the journal.
+# Every Pages run re-ranks each session from the date in the tracked file `.intraday_since` (seeded
+# 2026-01-02) up to today, on today's charts (fetched on the shortest Yahoo range reaching 60 days before
+# that date), and counts the sessions each of today's 10 names made that session's top 10; rows order by
+# (right+1)/(right+fail+2), ties by key. The date is set by the Pages workflow's `since` dispatch input,
+# which the `record` job commits to `.intraday_since`; every cron run reads it.
+# A fourth key went to the (#810) ruler first:
+#   K4 hit share: the share of the last 63 sessions that closed above their open.
+# VERDICT 2026-10-22: FAIL, both markets. Probe run 39730152890 on c4b5e84, `backtest 1 intraday`.
+#   market key  book net  gross  t(net)  halves net   all-names gross   gross t
+#   US     K4    -48.2    +1.8   -24.59  -48.5|-48.0   +0.8              ~0.9
+#   EU     K4    -16.3    +3.7    -9.98  -17.1|-15.5   +0.4              ~2.3
+# US 2449 sessions 2017-01-25..2026-10-21, median 453 ranked; EU 2496 sessions 2017-01-19..2026-10-20,
+# median 99. K1-K3 re-read within 0.2 bp of the (#810) table. No key reaches a gross t of 3, so K4 stays
+# in the ruler only and the table keeps K1.
 intraday_key: 1
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
