@@ -1116,6 +1116,11 @@ fn span_to_bars(span_days: usize, cadence: usize) -> usize {
     (span_days * cadence / 252).max(1)
 }
 
+/// (#833) The same conversion with no floor: 0 stays 0, so an off knob stays off (`span_to_bars` would read 1).
+fn per_cadence(sessions: usize, cadence: usize) -> usize {
+    sessions * cadence / 252
+}
+
 /// Mean of the last `n` closes (n clamped to [1, len]). Split from `measure_endpoint` so the math is
 /// unit-testable without the process-wide config read.
 fn endpoint_avg(closes: &[f64], n: usize) -> f64 {
@@ -5701,7 +5706,7 @@ pub fn backtest_quote(
     let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;
     quote.below_ma_pct = below_long_ma_pct(c, long_ma);
     // (#833) the young-name floor scales with the cadence exactly as the window does
-    let brake_min = crate::config::growth_brake_min_sessions() * cadence / 252;
+    let brake_min = per_cadence(crate::config::growth_brake_min_sessions(), cadence);
     quote.above_ma_pct = above_long_ma_pct(c, stretch_window(c.len(), long_ma, brake_min));
     quote.trend_r2 = trend_r2(c);
     quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
@@ -10986,6 +10991,14 @@ mod tests {
         assert_eq!(stretch_window(500, 1000, 252), 500);
         assert_eq!(stretch_window(1500, 1000, 252), 1000, "a full history keeps n");
         assert!((above_long_ma_pct(&[5.0, 5.0, 10.0], stretch_window(3, 4, 2)) - 50.0).abs() < 1e-9);
+    }
+
+    /// (#833) A session count converts at the cadence (daily is the identity, 2y is 24 monthly bars) and 0 stays 0.
+    #[test]
+    fn per_cadence_scales_without_a_floor() {
+        assert_eq!(per_cadence(504, 252), 504);
+        assert_eq!(per_cadence(504, 12), 24);
+        assert_eq!(per_cadence(0, 12), 0);
     }
 
     /// An average at or below zero reads 0 from both stretch gauges instead of a ratio over it; the two
