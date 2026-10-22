@@ -8,6 +8,7 @@
 //! - K2 calm range: minus the 20-day mean of ln(H/L). Low intraday range names.
 //! - K3 5d intraday: the 5-day mean of ln(C/O). Short-run intraday momentum.
 //! - K4 hit share: (#825) the share of the last 63 sessions that closed above their open.
+//! - K5-K8 long memory: (#828) K1 and K4 over 252 and 504 sessions.
 //!
 //! The pond is stocks with a 30-session average turnover (close × volume, in EUR) of at least
 //! `MIN_TURNOVER_EUR`: the US side is the S&P 500 as it stood each day, the EU side the static
@@ -30,10 +31,12 @@ pub const COST_BPS_US: f64 = 50.0;
 pub const COST_BPS_EU: f64 = 20.0;
 /// The liquidity floor, average daily turnover in EUR over the `WARMUP` sessions before the one ranked.
 pub const MIN_TURNOVER_EUR: f64 = 5e6;
-/// Sessions of history a name needs before it ranks: the turnover window, longer than every key's.
+/// Sessions of history a name needs before it ranks: the turnover window; a key with a longer window
+/// waits for its own history.
 const WARMUP: usize = 30;
 /// Key names, `KEYS[k - 1]` for key `k`.
-pub const KEYS: [&str; 4] = ["K1 tug of war", "K2 calm range", "K3 5d intraday", "K4 hit share"];
+pub const KEYS: [&str; 8] =
+    ["K1 tug of war", "K2 calm range", "K3 5d intraday", "K4 hit share", "K5 tug 1y", "K6 tug 2y", "K7 hit 1y", "K8 hit 2y"];
 /// (#825) The one-line file holding the date the RIGHT/FAIL column counts from, `YYYY-MM-DD`.
 pub const SINCE_FILE: &str = ".intraday_since";
 
@@ -78,16 +81,31 @@ fn ln(a: f64, b: f64) -> Option<f64> {
 }
 
 /// Key `k` for the session at bar `i`, from bars before `i` only. None for an unknown key, too little
-/// history, or a missing print in the window.
+/// history, or a missing print in the window. (#828) K5-K8 are K1's tug and K4's hit share over 252 and
+/// 504 sessions.
+/// shortcut: each key re-sums its whole window, so a 2y key costs 504 steps a bar in the walk; a running
+/// sum would remove that.
 pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
     let co = |j: usize| ln(c.closes[j], c.opens[j]);
+    let tug = |n: usize| -> Option<f64> {
+        (i > n).then_some(())?;
+        (i - n..i).map(|j| Some(co(j)? - ln(c.opens[j], c.closes[j - 1])?)).sum()
+    };
+    let hit = |n: usize| -> Option<f64> {
+        (i >= n).then_some(())?;
+        Some((i - n..i).map(|j| Some(f64::from(u8::from(co(j)? > 0.0)))).sum::<Option<f64>>()? / n as f64)
+    };
     match k {
-        1 if i >= 22 => (i - 21..i).map(|j| Some(co(j)? - ln(c.opens[j], c.closes[j - 1])?)).sum(),
+        1 => tug(21),
         2 if i >= 20 => Some(-(i - 20..i).map(|j| ln(c.highs[j], c.lows[j])).sum::<Option<f64>>()? / 20.0),
         3 if i >= 5 => Some((i - 5..i).map(co).sum::<Option<f64>>()? / 5.0),
         // shortcut: 64 possible values, so ties are common and break on ticker; a second key as the
         // tie-break would remove that.
-        4 if i >= 63 => Some((i - 63..i).map(|j| Some(f64::from(u8::from(co(j)? > 0.0)))).sum::<Option<f64>>()? / 63.0),
+        4 => hit(63),
+        5 => tug(252),
+        6 => tug(504),
+        7 => hit(252),
+        8 => hit(504),
         _ => None,
     }
 }
@@ -400,7 +418,7 @@ mod tests {
         // the first bar each key can read, and one before it
         assert!(key(1, &c, 21).is_none() && key(2, &c, 19).is_none() && key(3, &c, 4).is_none());
         assert!(key(1, &c, 22).is_some() && key(2, &c, 20).is_some() && key(3, &c, 5).is_some());
-        assert!(key(0, &c, 30).is_none() && key(5, &c, 30).is_none());
+        assert!(key(0, &c, 30).is_none() && key(9, &c, 30).is_none());
         // (#825) K4 against a plain count; bar 22 is flat (open = close = 101), so it counts as a miss
         let c = wavy(70);
         assert_eq!((c.opens[22], c.closes[22]), (101.0, 101.0));
@@ -409,6 +427,21 @@ mod tests {
             assert_eq!(key(4, &c, i), Some(up as f64 / 63.0), "K4 at {i}");
         }
         assert!(key(4, &c, 62).is_none() && key(4, &c, 63).is_some());
+        // (#828) K5-K8: K1's tug and K4's count over a year and two, from their first bar on
+        let c = wavy(510);
+        let co = |j: usize| (c.closes[j] / c.opens[j]).ln();
+        for (k, n, sums) in [(5, 252, true), (6, 504, true), (7, 252, false), (8, 504, false)] {
+            let first = if sums { n + 1 } else { n };
+            assert!(key(k, &c, first - 1).is_none(), "K{k} before {first}");
+            for i in [first, 509] {
+                let want = if sums {
+                    (i - n..i).map(|j| co(j) - (c.opens[j] / c.closes[j - 1]).ln()).sum::<f64>()
+                } else {
+                    (i - n..i).filter(|&j| c.closes[j] > c.opens[j]).count() as f64 / n as f64
+                };
+                assert!((key(k, &c, i).unwrap() - want).abs() < 1e-12, "K{k} at {i}");
+            }
+        }
         // a missing print inside the window voids the key; one at the session itself does not
         let mut gap = wavy(40);
         gap.opens[25] = f64::NAN;
