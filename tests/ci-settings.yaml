@@ -20435,6 +20435,16 @@ buy_heuristic:
                                  #   The free gate sweep prints 'admits 0 new names (gate not binding on this sample)' for soft
                                  #   stock gates: under soft 0.8 nothing is ever 'admitted', so that label is not an inertness
                                  #   reading. Grade a soft stock gate with a knobs= probe, as here.
+  # (#833) 2026-10-22, PROBE KNOB, ships off. A stock with fewer than LONG_MA_SESSIONS (1000) closes has no
+  # 200wk average, so `above_ma_pct` reads 0 and the stretch gate above and the overext brake both pass it
+  # unseen. Most live Stocks rows are soft admits and a name under 200 weeks skips the brake. With this knob
+  # > 0, a name holding at least this many closes reads its stretch against the average of ALL its closes
+  # (`core::stretch_window`). The backtest scales the floor by cadence like the window. Display (ABV-MA, the
+  # `!` mark) reads the same field, so it moves with the knob. Pre-registered, arms 252 and 504 against the
+  # control on one SHA, `universe fund pit winners` at 20y/12y/8y: PASS = at every horizon the PAIRED stock
+  # median >= control, passer edge >= control - 0.5, WINNERS HELD >= 11/9/10, the book line vs S&P no worse,
+  # and every `backtest_edge_holds` assert still holds. INERT = the same book names at every cutoff. Else FAIL.
+  growth_brake_min_sessions: 0
   # (#138) 2026-08-25 — THIS GATE NOW SHIPS OFF (0.0). It carried 84.0 from (#26) until then; the
   # receipt for the change is at the END of this block, after (#74). The (#26) head text below is
   # left as originally written and describes the gate as it behaved while it was armed.

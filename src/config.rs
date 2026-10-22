@@ -414,6 +414,7 @@ pub struct BuyHeuristic {
     pub growth_allow_negative_scores: bool, // (#86) ONE knob for two halves of the same defect, deliberately inseparable. HALF ONE: `ranked` trims on `min_score.max(0.0)`, so every negative floor is the same floor — both `growth_min_score` and `growth_min_score_etf` ship at -100.0 in ci-settings.yaml and neither can fire, which is what the ~40-line receipt arguing 4.0 vs 5.0 for the ETF floor is describing. HALF TWO: the score is `base × damps + liq_bonus` with every damp in 0..1, so when `base` is negative a damp RAISES it toward zero — base -2 × damp 0.22 = -0.44, and the most overextended, least-trusted, longest-underwater name ranks HIGHEST among the negatives. `underwater` is the only term that can drive base below zero and it is unbounded below. Half two is currently almost invisible BECAUSE of half one, which is exactly why they cannot be separate knobs: honouring a negative floor without fixing the inversion publishes a table ordered backwards at the bottom. true = the floor is used as written AND a negative base takes no damp; false (default) = today's behaviour, byte-identical
     pub growth_overext_cap: f64,     // (1) % ABOVE the 200wk SMA at which the overextension brake maxes out
     pub growth_max_above_ma: f64,    // hard gate: reject equities more than this % above the 200wk SMA — the extreme blow-off cohort the overext brake can only floor, not remove. VALIDATED at 150 (see ci-settings.yaml); 0 = off. Crypto exempt (rides far above its SMA normally; its brake cap handles it)
+    pub growth_brake_min_sessions: usize, // (#833) a stock with fewer than LONG_MA_SESSIONS closes has no 200wk average, so its stretch reading is 0 and neither the stretch gate above nor the overext brake can see a young blow-off. A name with at least this many closes (and fewer than LONG_MA_SESSIONS) reads its stretch against the average of ALL its closes instead. Scaled by cadence in the backtest like the long MA. 0 = off, the shipped behaviour, byte-identical
     pub growth_require_lifetime_uptrend: bool, // (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — moon-crash-partial-recovery names whose 5Y/10Y legs look great but never reclaimed their long-run trend. false = off (default). Crypto exempt (young coins; the range gate handles bled ones). REACHABLE BUT DOMINATED: its fields (trend_cagr, life_cagr) ARE filled in the backtest, yet `growth_gate_reachability_pin` reads it INERT for every class, because `growth_min_cagr` (8.0) rejects the same names first — a fixture built to trip exactly this gate (crash −95%, recover to just under the start price: life_cagr −0.2%/yr with a +1349% 20Y leg) dies at `cagr-life -0.2%/yr (need ≥8.0%)` and never reaches it. So it is not backtest-blind, it is redundant at any `growth_min_cagr >= 0` — which is every config shipped. Lower that floor below 0 and this knob starts biting
     pub growth_maxdd_cap: f64,       // (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name that ever fell >83% peak-to-trough). 0 = off (default)
     pub growth_maxdd_cap_crypto: f64, // (#26) crypto's OWN maxdd cap. Coins crash >90% every cycle, so the equity cap would gate Bitcoin itself (-83%); set this just ABOVE BTC's mark (84) to mean "reject coins that wiped out worse than Bitcoin". 0 = off (default)
@@ -636,6 +637,7 @@ impl Default for BuyHeuristic {
             growth_allow_negative_scores: false, // (#86) OFF = the shipped lane, byte-identical: the floor stays clamped at 0 and a negative base keeps taking the damp. Turning it on changes both halves at once and is edge-affecting on the live tables (the backtest pool has no negative-base rows to reorder, so no golden covers it) — measure before shipping it, and never turn on one half alone
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
             growth_max_above_ma: 0.0,      // code default off; ci-settings.yaml ships the validated 150
+            growth_brake_min_sessions: 0,  // (#833) off: a name under LONG_MA_SESSIONS closes reads 0 stretch, as before
             growth_require_lifetime_uptrend: false, // (#25) code default off; ci-settings.yaml ships true
             growth_maxdd_cap: 0.0,         // (#26) off until a probe validates a value
             growth_maxdd_cap_crypto: 0.0,  // (#26) off by default; ci-settings ships 84 (just above BTC's -83)
@@ -2150,6 +2152,20 @@ pub fn vol_daily_equivalent() -> bool {
             .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
             .map(|s| s.buy_heuristic.vol_daily_equivalent)
             .unwrap_or(false)
+    })
+}
+
+/// (#833) free accessor twin — the live fetch and `core::backtest_quote` both fill `above_ma_pct` and
+/// neither has a `tuning` handle. The decision is `core::stretch_window`, graded there.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+pub fn growth_brake_min_sessions() -> usize {
+    use std::sync::OnceLock;
+    static MIN: OnceLock<usize> = OnceLock::new();
+    *MIN.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.buy_heuristic.growth_brake_min_sessions)
+            .unwrap_or(0)
     })
 }
 

@@ -990,7 +990,15 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (C) % below the ~200wk SMA — structural "cheap vs long trend" entry signal (FX-agnostic ratio).
         below_ma_pct: core::below_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
         // (1) % ABOVE the ~200wk SMA — overextension brake for the growth lane (far above trend = stretched).
-        above_ma_pct: core::above_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
+        // (#833) a young name may read its stretch against all its closes; off by default
+        above_ma_pct: core::above_long_ma_pct(
+            &chart.closes,
+            core::stretch_window(
+                chart.closes.len(),
+                crate::config::LONG_MA_SESSIONS,
+                crate::config::growth_brake_min_sessions(),
+            ),
+        ),
         ma200d_pct: core::short_ma_pct(&chart.closes),
         // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
         pe_ratio: pe,

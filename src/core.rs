@@ -880,6 +880,17 @@ pub fn above_long_ma_pct(closes: &[f64], n: usize) -> f64 {
     f64::max(0.0, (*closes.last().expect("closes non-empty: closes.len() >= n >= 1 guarded above") - ma) / ma * 100.0)
 }
 
+/// (#833) The window `above_long_ma_pct` averages over. A name with fewer than `n` closes reads 0
+/// stretch, so neither the stretch gate nor the overext brake can see a young blow-off. With `min` > 0, a
+/// name holding at least `min` closes averages over all of them instead. `min` 0 = `n` always, as before.
+pub fn stretch_window(len: usize, n: usize, min: usize) -> usize {
+    if min > 0 && len >= min {
+        len.min(n)
+    } else {
+        n
+    }
+}
+
 /// (#505) A name listed under `LONG_MA_SESSIONS` sessions has no 200-week average, so ABV-MA read n/a for
 /// every young stock. Display only: the signed % vs the 200-session average, the same two helpers.
 pub fn short_ma_pct(closes: &[f64]) -> Option<f64> {
@@ -5689,7 +5700,9 @@ pub fn backtest_quote(
     quote.max_daily_1m = max_daily_pct(c, (cadence / 12).max(1));
     let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;
     quote.below_ma_pct = below_long_ma_pct(c, long_ma);
-    quote.above_ma_pct = above_long_ma_pct(c, long_ma);
+    // (#833) the young-name floor scales with the cadence exactly as the window does
+    let brake_min = crate::config::growth_brake_min_sessions() * cadence / 252;
+    quote.above_ma_pct = above_long_ma_pct(c, stretch_window(c.len(), long_ma, brake_min));
     quote.trend_r2 = trend_r2(c);
     quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
     // (#3j) whole-life endpoint CAGR over the SAME `[..=as_of]` slice, from the SAME `core::life_cagr`
@@ -10961,6 +10974,18 @@ mod tests {
         let wk: Vec<NaiveDate> = (0..4).map(|i| NaiveDate::from_ymd_opt(2024, 6, 3).unwrap() + Duration::days(7 * i)).collect();
         assert_eq!(splice_trim_start(&wk, &[10.0, 0.0, 10.0, 11.0], 2.0), 0, "a zero bar is not a joint");
         assert_eq!(splice_trim_start(&wk, &[10.0, 0.0, 10.0, 100.0], 2.0), 3, "the joint after the zero bar still trims");
+    }
+
+    /// (#833) Off (`min` 0) and under the floor keep the full window; at or past the floor a short history
+    /// averages over all its closes, and a full one still uses `n`.
+    #[test]
+    fn stretch_window_widens_only_past_the_floor() {
+        assert_eq!(stretch_window(500, 1000, 0), 1000, "off");
+        assert_eq!(stretch_window(200, 1000, 252), 1000, "under the floor");
+        assert_eq!(stretch_window(252, 1000, 252), 252, "at the floor");
+        assert_eq!(stretch_window(500, 1000, 252), 500);
+        assert_eq!(stretch_window(1500, 1000, 252), 1000, "a full history keeps n");
+        assert!((above_long_ma_pct(&[5.0, 5.0, 10.0], stretch_window(3, 4, 2)) - 50.0).abs() < 1e-9);
     }
 
     /// An average at or below zero reads 0 from both stretch gauges instead of a ratio over it; the two
