@@ -20444,6 +20444,20 @@ buy_heuristic:
   # control on one SHA, `universe fund pit winners` at 20y/12y/8y: PASS = at every horizon the PAIRED stock
   # median >= control, passer edge >= control - 0.5, WINNERS HELD >= 11/9/10, the book line vs S&P no worse,
   # and every `backtest_edge_holds` assert still holds. INERT = the same book names at every cutoff. Else FAIL.
+  # VERDICT 2026-10-22: FAIL, the knob stays 0. Probe runs on c2dcf28: control 39844332792, arm 252
+  # 39844341325, arm 504 39844350144. The two arms print identical numbers at every horizon. Not inert: the
+  # book differs at 13 of 22 cutoffs at 20y, 15 of 38 at 12y and 15 of 46 at 8y (46, 49, 49 names out).
+  #   hold  passer edge       passer lift       top-10 excess (med)        win     worst        held winners   paired stock
+  #   20y   +115.0 -> -0.7    +163.5 -> +59.9   +3.4 (+1.8) -> +3.7 (+2.2)  91->86  -3.0 -> -2.1  9.1 -> 9.5%    +0.32 / 0.00
+  #   12y   +139.0 -> +136.0  +127.0 -> +123.6  +3.4 (+3.2) -> +3.6 (+3.8)  87->89  -4.0 -> -3.8  12.6 -> 13.7%  +0.22 / 0.00
+  #   8y    +85.6 -> +107.0   +77.7 -> +96.3    +3.1 (+2.9) -> +3.4 (+3.4)  83->85  -6.6 -> -7.5  10.7 -> 11.3%  +0.28 / 0.00
+  # (paired stock = mean / median over buckets of arm minus control on the `BOOK stock` lines.) At 20y the
+  # lane edge falls +27.9 -> +23.7 and passer OOS early +0.06 -> -0.27 (late +0.12 -> +0.09).
+  # Reading: the published book gains 0.2 to 0.3 pts/yr at every hold and holds more winners, but the bar
+  # fails on passer edge at 20y and 12y. At 20y it lands under 0, which trips the gate's passer edge > 0
+  # assert. The 8y worst bucket also gets worse. The 20y held-winners share sits under its 11% floor in the
+  # control too, so that condition grades nothing on this pond. The floor value is not the lever: 252 and
+  # 504 read the same. A re-ask needs a ruler where the book line, not the passer edge, decides.
   growth_brake_min_sessions: 0
   # (#138) 2026-08-25 — THIS GATE NOW SHIPS OFF (0.0). It carried 84.0 from (#26) until then; the
   # receipt for the change is at the END of this block, after (#74). The (#26) head text below is
@@ -22644,6 +22658,16 @@ social_heuristic:
 # there (US +1.19 pp, EU +1.68 pp) and K11 fails, and only after a K2 overlap check (a mean daily share
 # of K10's book also in K2's of 50% or more means no switch: it would be calm range under a new name).
 # Net of cost is expected to fail like every key, so the table stays a shadow either way.
+# VERDICT 2026-10-22: K10 FAILS in every market, so no switch question. Probe run 39844358847 on c2dcf28,
+# `backtest 1 intraday`. Hit share, book minus pond, pp (t; halves):
+#   K10 low volume shock   US +0.01 (+0.04; +0.31|-0.29)  US* +0.11 (+0.35; +0.52|-0.30)  EU -0.37 (-1.27; -0.22|-0.52)
+#   K11 high volume shock  US -1.14 (-3.45; -1.56|-0.72)  US* -1.24 (-3.72; -1.82|-0.66)  EU -0.05 (-0.16; -0.82|+0.73)
+# Net bp/day (gross), all FAIL: K10 US -50.2 (-0.2), US* -47.0 (+3.0), EU -19.3 (+0.7); K11 US -52.7
+# (-2.7), US* -50.4 (-0.4), EU -19.0 (+1.0). The K1-K9 lines re-read the (#830) table unchanged.
+# Reading: on both US ponds K11 is a significant negative with both halves below 0, so a US name after a
+# volume spike closes up less often than the pond. Flipping the sign gains nothing: the low-shock book
+# sits on the pond's own hit share. The effect lives in the high-shock tail, and only in the US. The
+# page keeps K7.
 intraday_key: 7
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
