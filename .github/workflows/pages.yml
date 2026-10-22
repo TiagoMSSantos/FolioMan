@@ -335,8 +335,9 @@ jobs:
         env:
           SINCE: ${{ inputs.since }}
         run: |
-          [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -d "$SINCE" >/dev/null 2>&1 \
-            || { echo "since must be YYYY-MM-DD"; exit 1; }
+          if ! [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || ! date -d "$SINCE" >/dev/null 2>&1; then
+            echo "since must be YYYY-MM-DD"; exit 1
+          fi
           echo "$SINCE" > .intraday_since
 
       # The run itself. FMP_API_KEY reaches it through `env:` and nothing else — never an argument,
