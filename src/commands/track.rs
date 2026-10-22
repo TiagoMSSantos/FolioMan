@@ -164,6 +164,10 @@ pub struct Snapshot {
     /// open-to-close bar. Empty with `intraday_key` 0. Same serde contract as `sized`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intra: Vec<(String, String)>,
+    /// (#832) The `intraday_key` that ranked `intra`, so [`intra_section`] grades each key on its own row.
+    /// None with the key off, and on lines from before (#832), when K1 was the only key the page ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intra_key: Option<u8>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -1375,22 +1379,27 @@ fn mblend_top(rows: &[(String, Option<f64>)]) -> Rows<'_> {
 
 /// (#811) THE INTRADAY SHADOW: each market's journalled Intraday book graded on the open-to-close session
 /// it ranked for, net of the (#809) round trip. `charts` holds the daily bars of every journalled name.
+/// (#832) One row per market and key: a line without a key is K1's.
 fn intra_section(snaps: &[Snapshot], charts: &std::collections::HashMap<String, fetch::Chart>, today: chrono::NaiveDate) -> String {
     use crate::heuristics::intraday;
     let mut out = String::from(
         "\n  (#811) INTRADAY shadow: the page's Intraday book bought at the open, sold at the close, equal weight.\n  \
          NOT a buy signal: every key lost net of cost on the (#810) ruler.",
     );
+    let keys: std::collections::BTreeSet<u8> = snaps.iter().map(|s| s.intra_key.unwrap_or(1)).collect();
     for (market, cost) in [("US", intraday::COST_BPS_US), ("EU", intraday::COST_BPS_EU)] {
-        let lines: Vec<(chrono::NaiveDate, Vec<&str>)> = snaps
-            .iter()
-            .filter_map(|s| {
-                let book = s.intra.iter().filter(|(m, _)| m == market).map(|(_, t)| t.as_str()).collect();
-                Some((chrono::NaiveDate::parse_from_str(&s.date, "%Y-%m-%d").ok()?, book))
-            })
-            .collect();
-        out.push('\n');
-        out.push_str(&intraday::track_line(market, &intraday::graded(&lines, charts, today), cost));
+        for k in &keys {
+            let lines: Vec<(chrono::NaiveDate, Vec<&str>)> = snaps
+                .iter()
+                .filter(|s| s.intra_key.unwrap_or(1) == *k)
+                .filter_map(|s| {
+                    let book = s.intra.iter().filter(|(m, _)| m == market).map(|(_, t)| t.as_str()).collect();
+                    Some((chrono::NaiveDate::parse_from_str(&s.date, "%Y-%m-%d").ok()?, book))
+                })
+                .collect();
+            out.push('\n');
+            out.push_str(&intraday::track_line(&format!("{market} K{k}"), &intraday::graded(&lines, charts, today), cost));
+        }
     }
     out
 }
@@ -1819,7 +1828,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None,
         }
     }
 
@@ -2461,11 +2470,17 @@ mod tests {
         assert_eq!(serde_json::from_str::<Snapshot>(&serde_json::to_string(&bare).unwrap()).unwrap().intra, Vec::new(), "an old line parses");
         let a = Snapshot { intra: vec![("US".into(), "A".into()), ("EU".into(), "B".into())], ..bare.clone() };
         let b = Snapshot { intra: vec![("US".into(), "A".into())], ..snap("2026-01-02", None, &[]) };
-        let out = intra_section(&[a, b], &charts, d(3));
-        // US: A's +2% and +1% sessions, 50 bp round trip; EU: B's one session, so no t yet
-        assert!(out.contains("US: 2 sessions 2026-01-01..2026-01-02  book net +100.0 bp/day (gross +150.0)  t +2.00"), "{out}");
-        assert!(out.contains("EU: 1 session(s) graded"), "{out}");
-        assert!(intra_section(&[bare], &charts, d(3)).contains("US: 0 session(s) graded"));
+        // (#832) a K7 line on the same day grades on its own row; a line without a key is K1's, and writes none
+        let c = Snapshot { intra: vec![("US".into(), "B".into())], intra_key: Some(7), ..snap("2026-01-02", None, &[]) };
+        assert!(!serde_json::to_string(&bare).unwrap().contains("intra_key"));
+        assert_eq!(serde_json::from_str::<Snapshot>(&serde_json::to_string(&c).unwrap()).unwrap().intra_key, Some(7));
+        let out = intra_section(&[a, b, c], &charts, d(3));
+        // US K1: A's +2% and +1% sessions, 50 bp round trip; EU K1: B's one session, so no t yet; US K7: B's one
+        assert!(out.contains("US K1: 2 sessions 2026-01-01..2026-01-02  book net +100.0 bp/day (gross +150.0)  t +2.00"), "{out}");
+        assert!(out.contains("EU K1: 1 session(s) graded"), "{out}");
+        assert!(out.contains("US K7: 1 session(s) graded"), "{out}");
+        assert!(out.contains("EU K7: 0 session(s) graded"), "{out}");
+        assert!(intra_section(&[bare], &charts, d(3)).contains("US K1: 0 session(s) graded"));
     }
 
     /// (#557) Each `scapK` row rebuilds the top-[`BOOK`] under sector cap K off the line's own tags: at

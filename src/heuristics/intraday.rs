@@ -268,7 +268,7 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 /// (#811) The page rows for one market's [`rank`] book: position, market, ticker, name, key, the
 /// session's hours on the exchanges' own clock, and the last completed bar the key read. (#824) Each
 /// row's latest price in euros at `fx`, the market's euro rate (one currency per market), and K1's
-/// [`tug`] sums as the KEY hover. (#825) The rows in order of hit share, (right + 1) / (right + fail + 2),
+/// [`tug`] sums as the KEY hover; (#832) K7's count of up sessions. (#825) The rows in order of hit share, (right + 1) / (right + fail + 2),
 /// ties in key order. (#826) That share as the SCORE cell, and DATA TO as the window the record counts,
 /// `since` to the last bar before `until`. (#827) The record is every session in that window on the
 /// name's own bars: right = it closed above its open, before costs, fail = at or below it.
@@ -291,6 +291,7 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
                     "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: {d:+.2}%\nnight moves (close to next open) added up: {n:+.2}%\nkey = day - night = {d:+.2} - ({n:+.2}) = {:+.2}%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)",
                     x * 100.0
                 ),
+                _ if k == 7 => format!("K7 hit 1y, last 252 sessions:\n{:.0} closed above their open = {:.2}%\n(a session that closed at its open counts as not up)", x * 252.0, x * 100.0),
                 _ => KEYS[usize::from(k) - 1].to_string(),
             };
             vec![
@@ -672,6 +673,9 @@ mod tests {
         let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], d(1), d(31), 1.0, d(31));
         assert_eq!(k1[0][4][1], "€103.00");
         assert_eq!(k1[0][5][3], "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: +80.00%\nnight moves (close to next open) added up: -82.87%\nkey = day - night = +80.00 - (-82.87) = +162.87%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)");
+        // (#832) K7's hover counts the up sessions behind its share
+        let k7 = web_rows("EU", 7, &[("X", 0.5, &c)], d(1), d(31), 1.0, d(31));
+        assert_eq!(k7[0][5][3], "K7 hit 1y, last 252 sessions:\n126 closed above their open = 50.00%\n(a session that closed at its open counts as not up)");
         // (#452) the page's hover text keys on exactly these headers
         let heads: std::collections::BTreeSet<&str> = rows[0].iter().map(|c| c[0].as_str().unwrap()).collect();
         assert_eq!(crate::picks::web_help(false, &[])["intraday"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads);
