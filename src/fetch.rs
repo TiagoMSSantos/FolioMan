@@ -241,6 +241,11 @@ pub struct Chart {
 const RETRY_PAUSE_MS: u64 = if cfg!(test) { 0 } else { 400 };
 
 async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Value> {
+    // (#848) `get_json` already answers None offline; returning here skips the retry's 400 ms, which the
+    // cli tests paid on every FX warm-up because they run the real binary, where `cfg!(test)` is false.
+    if offline() {
+        return None;
+    }
     let url = urls.yahoo_chart.replace("{ticker}", ticker).replace("{range}", range);
     // Fallback retry. The global `throttle()` pacer now spaces launches so the fan-out shouldn't 429 in
     // the first place; this stays as cheap insurance for an isolated timeout / transient rate-limit body
@@ -9506,8 +9511,13 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         .unwrap_or_default();
     // (#460) Once, every cached miss is asked again: it was a miss before the Frankfurt fallback existed.
     let regrade = !cache.contains_key(EU_GF_MARK);
-    let todo: Vec<String> =
+    let mut todo: Vec<String> =
         syms.iter().filter(|s| cache.get(*s).is_none_or(|e| regrade && e.is_empty())).cloned().collect();
+    // (#848) Offline, OpenFIGI never answers, so hop 1 only paced: 2.5 s a chunk for nothing. Known twins
+    // still take the chart check below, which the long-history cache serves offline.
+    if offline() {
+        todo.clear();
+    }
     cache.insert(EU_GF_MARK.into(), String::new());
     // (#404) Every KNOWN twin goes back through the chart check below, not just the new ones. Yahoo
     // restarted some Xetra series in 2026 (1170.DE Arista and 49V.DE Vertiv now start 2026-08-20), and a
