@@ -182,6 +182,18 @@ pub struct InflationAdjust {
     pub score_on_nominal: bool,
 }
 
+/// (#840) A score cap is the top of `clamp(0.0, cap)`, and `f64::clamp` panics on a top below 0 or NaN,
+/// so the parse refuses one there: every reader (the CLI, the page's upload, the engine) gets the error
+/// instead of the first score that clamps on it. 0 stays valid: it zeroes the term.
+fn cap<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    let v = f64::deserialize(d)?;
+    if v >= 0.0 {
+        Ok(v)
+    } else {
+        Err(serde::de::Error::custom(format!("a cap must be 0 or more, got {v}")))
+    }
+}
+
 fn default_top_picks() -> usize {
     5
 }
@@ -283,6 +295,7 @@ impl Default for Widths {
 pub struct FundTerm {
     pub factor: String,
     pub weight: f64,
+    #[serde(deserialize_with = "cap")] // (#840)
     pub cap: f64,
     /// (N) what a MISSING factor scores. In a RANKING an absent datum is not neutral — at 0 it is a
     /// demotion of up to `weight × cap`, which for the shipped roic term (0.25 × 40) is TEN POINTS
@@ -378,6 +391,7 @@ pub struct BuyHeuristic {
     pub tax_keep_other: f64,         // (D/PT) same keep-fraction for EVERY other market AND for funds of any domicile: an OICVM/ETF distribution is not a Parent-Subsidiary-Directive company's *lucro*, so it draws no 50% exclusion however EU-listed the wrapper is. 1.0 = off (DEFAULT)
     pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
     pub quality_weight: f64,         // (F) reward per % of trailing return-on-capital — the profitability/QUALITY factor (Novy-Marx: high-ROE firms out-compound). ROE, or ROA where equity is negative or collapsed below 1/20th of assets (`core::quality_return`). Applied to BOTH lanes. 0 = off. Was BACKTEST-BLIND until the backtest loop started filling `Quote.roe` — every number measured for it before then was taken with the term at a constant 0 (see #F)
+    #[serde(deserialize_with = "cap")] // (#840)
     pub quality_cap: f64,            // (F) cap the % fed into the quality reward (one 200%-ROE outlier can't dominate). NOTE it binds on ROE (30-50% typical) far more often than on ROA (5-15%), so a negative-equity filer can never reach the ceiling
     pub quality_neutral: f64,        // (#87) what an ABSENT ROE is worth, in ROE points, before weight and cap — the same field `growth_fund_extra[].neutral` already carries, for the term that predates it. `quality_reward` reads `roe.unwrap_or(0.0)` and its own doc calls that "0 = neutral", which the (N) note beside growth_fund_extra refutes in as many words: in a RANKING absent is not neutral, it is a demotion of up to weight x cap. `quote.roe` needs a CIK ((#814) the FMP fallback no longer fills it), so every non-US filer, every name past the 600-call SEC budget and every ETF and coin takes the full 0.15 x 40 = -6.0 against US peers in the same table. 0.0 = today's behaviour and the DEFAULT; the covered-peer median is the value that makes the term mean what its doc says
 
@@ -407,6 +421,7 @@ pub struct BuyHeuristic {
     pub growth_sector_leaders: usize, // (#328) growth GATE (stocks only): a SECOND way past `growth_min_cagr`, and the first one that is not a single global number. K > 0 = a stock also clears the CAGR floor when it is among the top K compounders IN ITS OWN GICS SECTOR and its long CAGR still beats the benchmark's over the same leg. WHY: `growth_min_cagr: 19.0` is one absolute bar across every sector, so it admits whichever sector actually compounded at 19%/yr — since ~2016 that is US tech, nearly alone. Measured on the live book 2026-09-19: 21 non-coin names for a 25-wide book, ~15 of them one bet (three Nasdaq-100 wrappers, four S&P-US-Tech wrappers, two semiconductor funds, WTEC/XAID, and 4 of the 5 stocks are semis) — so `max_sector_pct: 25.0` then refuses most of what the screen ranked and the remainder spills to index legs ((#296)/(#308)). Width is NOT the constraint (`top_picks`/`book_names` are 25 against 21 supplied), which is why this round moves the admission bar instead. A SECOND DOOR, OR'd: `growth_min_cagr` is untouched and this can only LOWER a floor, never raise one, so it can only ADD names and never evict a held one — "no worse" is structural and any refusal is attributable to the admits alone. STOCKS ONLY, enforced structurally in `picks::min_cagr_floor`'s equity branch: the door reads `Quote.sector`, which is None for ETFs and crypto by construction, and the backtest census (ETF 0/14 graded samples at 20y against stock 380/4619) means a fund-facing arm could not be graded at all. THE BACKSTOP IS THE BENCHMARK, not a new constant: the ruler is excess vs the index, so a name compounding below the index cannot add excess. Note the direction is OPPOSITE to (#326)'s regime valve, which capped a floor BY the index and was refused for admitting falling knives — here the index is a LOWER bound. Both constants were fixed before any number existed and are not to be tuned afterwards: K = 1 ("one leader per sector", the minimum non-arbitrary choice, ~11 sectors inside a 25-wide book). POINT-IN-TIME: the cohort map (`sector_floor`) is built in the backtest from the PREVIOUS cutoff's samples, never this one's. MEASURED AND REFUSED 2026-09-21 (`backtest {20,12,8} universe fund pit`, SECTOR BOOK row, windows scored 1112/2771/6175): the door holds its pre-registered `guard_holds` bar ONLY at 20y (n=22, excess +0.7 -> +1.0, worst identical at -10.0, both OOS halves up) and fails at 12y (n=33, +3.5 -> +3.2) and 8y (n=33, +4.6 -> +4.2) against a 0.1 tolerance. THE MECHANISM IS THE POINT: the WIN RATE RISES AT EVERY HORIZON (57->62, 75->81, 84->89) while mean excess falls at two — the door buys names that beat the index more OFTEN and by LESS, and in an equal-weight book each admit costs a 1/N slice of the leaders it displaces. Breadth, not return, which is (#317)'s and (#319)'s verdict a third time. So this ships at 0 and what actually ships is the MEASUREMENT: `stamp_sector_cohorts` writes each quote's point-in-time sector floor whether or not the knob is armed, so the SECTOR BOOK row prices this door at EVERY run for free by re-scoring with the knob flipped — the (#324) notch-shadow idea applied to a refusal. Do NOT retune K or the backstop to rescue it: both were fixed before the run, and a different value is a new round with its own pre-registered bar. Most plausible reopen is a ruler that does not pay 1/N ((#313) `equal_weight_book`, or a cap-weighted book), since dilution IS the refusal. 0 = off, byte-identical (proved: re-blessing the seven goldens produced +20 lines and MINUS ZERO) — and the code default, so the config-less CI job keeps its regime ((#171)). Full receipt: the (#328) block in tests/ci-settings.yaml
     pub growth_trend_weight: f64,    // growth SCORE: reward per %/yr of the long-leg CAGR (capped at long_trend_cap when that cap is on; 0 there = uncapped — the shipped lane caps at 30.0, (#270))
     pub growth_accel_weight: f64,    // growth SCORE: reward per pt the recent 1Y return outpaces the long CAGR (momentum building)
+    #[serde(deserialize_with = "cap")] // (#840)
     pub growth_accel_cap: f64,       // growth SCORE: cap on that 1Y-minus-CAGR acceleration term
     pub growth_accel_beta: f64,      // (#98) how much of the long CAGR the acceleration leg subtracts: accel = clamp(1Y - beta*long_cagr, 0, growth_accel_cap). 1.0 = the original 1Y-minus-CAGR expression, bit for bit (x*1.0 is exact), and the DEFAULT. It exists because inside the unclamped band the lane's derivative in the very quantity it hunts is growth_trend_weight - beta*growth_accel_weight = 0.15 - 0.50 = -0.35 per %/yr: a 30%/yr compounder scores BELOW an identical 20%/yr one at the same 1Y return. The (#70) pin records that raising growth_trend_weight to fix it makes the graded book worse; that grid moved the WEIGHT and never the coupling. Slope turns positive below beta = growth_trend_weight/growth_accel_weight = 0.30; beta 0 is plain 1Y momentum. Lowering beta also lifts names off the clamp floor, which is part of the effect
     pub growth_min_score: f64,       // growth SCORE: hide ranked growth rows scoring <= this (padding); 0 = show all
@@ -453,6 +468,7 @@ pub struct BuyHeuristic {
     pub growth_turnover_weight: f64, // (L) liquidity tilt: bonus per ln(turnover/€1B), added OUTSIDE the brake. Rewards deep-liquid mega-caps (easy multi-decade exit, less manipulation) so a proven compounder like NVDA isn't ranked below an illiquid €200M twin on a score tie. RANK-NEUTRAL in backtest: backtest_quote sets a uniform sentinel turnover (#20) so this bonus is a constant offset on every name -> never moves the validated edge; 0 = off
     pub growth_overext_cap_crypto: f64, // (#4) crypto's OWN overextension cap (% above the 200wk SMA at which the brake maxes). Crypto routinely rides far above its long SMA, so a separate looser cap avoids over-braking coins; equities/ETFs keep growth_overext_cap. 0 = crypto brake off
     pub growth_fund_weight: f64,     // (G) reward per pt of the as-of FUNDAMENTAL factor (see growth_score / fund_factor). The fund lane proves WHICH as-of factor predicts forward returns standalone; this folds it INTO growth_score so its through-the-lane edge is ablatable. 0 = off (DEFAULT, no behavior change). Validate via `backtest <set> fund` then set the weight only on +ablation-Δ + both-half-positive OOS
+    #[serde(deserialize_with = "cap")] // (#840)
     pub growth_fund_cap: f64,        // (G) cap (in the factor's own pts) on the fund factor fed into that reward, so one data-artifact (+9000% rev) can't dominate the rank
     pub growth_fund_neutral: f64,    // (#87) what an ABSENT `fund_factor` is worth, in the factor's own pts, before weight and cap. Third of the three fundamental terms to get the field, so all three finally answer "no data" the same way instead of three ways. 0.0 = today's behaviour and the DEFAULT
     pub growth_fund_scope_by_class: bool, // (#87) the OTHER half of one missing-data policy, and the half a neutral fill alone gets backwards. A neutral is a COVERED-PEER MEDIAN, which is a sensible stand-in for a filer whose data we merely failed to fetch and is meaningless for an asset that has no income statement at all. ci-settings ships `growth_fund_extra: roic, weight 0.25, neutral 17.3`, so every ETF, every coin and every non-SEC stock collects 0.25 x 17.3 = 4.325 points for having no fundamentals — against a `trend_term` whose entire discriminating span above the `growth_min_cagr` floor is 1.65 points, and against a MEASURED filer with a real 5% ROIC who scores 1.25. Coverage outranks merit by ~3 points in the term that is supposed to measure merit. true = crypto and ETFs take 0 from all three fundamental terms (they have nothing to be missing), while a stock that could have been covered still takes the neutral; false (default) = today's behaviour, byte-identical
@@ -551,9 +567,11 @@ pub struct BuyHeuristic {
     // --- QUALITY tilts (B/C) — all from already-fetched closes, ZERO extra fetch ---
     pub sharpe_weight: f64,          // (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off
     pub onsale_sharpe_weight: f64,   // (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation shows growth wants 0.15 but on-sale wants 0 (removing it lifts on-sale 12y edge +23.7). 0 = off
+    #[serde(deserialize_with = "cap")] // (#840)
     pub sharpe_cap: f64,             // (B) cap on that CAGR/volatility ratio fed into the reward
     pub sharpe_cap_etf: f64,         // (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily stdev (thin-line prints + FX conversion), so ETF CAGR/vol above ~9 is listing-line noise, not fund risk — uncapped it reorders identical index wrappers against their real TER cost. Backtest pool holds stock constituents only -> edge byte-identical. 0 = off (ETFs use sharpe_cap)
     pub calmar_weight: f64,          // (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off
+    #[serde(deserialize_with = "cap")] // (#840)
     pub calmar_cap: f64,             // (C) cap on that CAGR/max-drawdown ratio fed into the reward
 
     pub prefer_eur: bool,            // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
@@ -2878,6 +2896,15 @@ mod tests {
         std::fs::write(&at_base, format!("buy_heuristic:\n  growth_min_cagr: {tuned}\n")).unwrap();
         assert_eq!(heuristic_drift_at(&at_base), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// (#840) A cap parses at 0 (the term off) and is refused below 0 or as NaN, which `clamp` panics on.
+    #[test]
+    fn a_cap_below_zero_is_refused_at_the_parse() {
+        let parse = |v: &str| serde_yaml::from_str::<BuyHeuristic>(&format!("quality_cap: {v}\n")).map(|b| b.quality_cap);
+        assert_eq!(parse("0").ok(), Some(0.0));
+        assert!(parse("-1").is_err_and(|e| e.to_string().contains("a cap must be 0 or more, got -1")));
+        assert!(parse(".nan").is_err());
     }
 
     /// (#773) A base that is there but does not parse refuses (`None`, so `load` exits) instead of
