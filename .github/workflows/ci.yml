@@ -228,15 +228,21 @@ jobs:
         with:
           shared-key: folioman-wasm   # (#353) its own key and its only writer: wasm artifacts serve no other job
       - run: cargo check --locked --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
-      # (#589) The wasm-bindgen pair's bot PR only (automerge.yml merges it): build the engine and run
-      # the pinned CLI, as pages.yml does after the merge, where every step is continue-on-error and a
-      # crate/CLI mismatch would only hide the page's engine. Renovate's regex moves this pin in the
-      # same PR as pages.yml's and web/engine/Cargo.toml's.
-      - if: github.head_ref == 'renovate/rust-wasm-bindgen-monorepo'
-        run: |
+      # (#589) Build the engine and run the pinned CLI, as pages.yml does after the merge, where every
+      # step is continue-on-error and a crate/CLI mismatch would only hide the page's engine. Renovate's
+      # regex moves this pin in the same PR as pages.yml's and web/engine/Cargo.toml's.
+      # (#841) On every push, not only the bot's PR: smoke.mjs then holds the wasm build to the native
+      # one on the tied test pool, so a wasm-only drift (32-bit usize, float printing, sort order) reds
+      # here before a merge instead of costing the page its upload control after one. The native side
+      # runs pinned to CI's config because the engine installs exactly that.
+      - run: |
           cargo install --locked wasm-bindgen-cli --version 0.2.129
           cargo build --locked --release --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
-          wasm-bindgen --target web --out-dir "${RUNNER_TEMP}/engine" target/wasm32-unknown-unknown/release/folioman_engine.wasm
+          wasm-bindgen --target web --out-dir "${RUNNER_TEMP}/site/engine" target/wasm32-unknown-unknown/release/folioman_engine.wasm
+      - run: |
+          FOLIOMAN_CONFIG=tests/ci-settings.yaml PARITY_SITE="${RUNNER_TEMP}/site" \
+            cargo test --locked --lib web::tests::writes_the_wasm_parity_site -- --ignored --exact
+          node web/engine/smoke.mjs "${RUNNER_TEMP}/site"
 
   # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
   # sit on a dependency with a known CVE. Audits the COMMITTED Cargo.lock — the exact resolution

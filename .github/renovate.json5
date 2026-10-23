@@ -8,8 +8,8 @@
 //   The CLI refuses a module built by any other version, so all of them move in ONE PR, with no rule
 //   here: both crates' source is the wasm-bindgen repo, so config:recommended's monorepo group
 //   already joins them, and the regex below finds the CLI pin in every workflow. (#589) On that PR
-//   ci.yml's wasm job builds the engine and runs the CLI. smoke.mjs needs a live screen, so it runs
-//   only in pages.yml after the merge, where a break costs the upload control, never the deploy.
+//   ci.yml's wasm job builds the engine and runs the CLI. (#841) It does so on every push, and runs
+//   smoke.mjs on a test pool there too, so a pair that ranks differently reds before the merge.
 // - cargo-mutants@X.Y.Z in ci.yml and mutation-census.yml (x2): one depName, so one PR. (#354) Merge
 //   it only after a census dispatch re-proves the gate on the new version.
 //

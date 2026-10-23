@@ -428,6 +428,8 @@ fn screen_ranks_and_journals_offline() {
     // (#627) The page payload: every key screen stamps past the shared builder lands in it and the page reads it.
     // The keys the engine never makes are exactly smoke.mjs's exempt list, which only Pages runs, after the
     // merge: a key missing there reds the publish, and a misspelt one loses its table from the page.
+    // (#841) ci.yml's wasm job runs smoke.mjs too, but on web::screen's own payload, which carries none
+    // of these keys, so the exempt list is still graded by Pages alone.
     let payload: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(isolated_root("screen-offline").join(".screen_web.json")).expect("screen writes the page payload"),
     )

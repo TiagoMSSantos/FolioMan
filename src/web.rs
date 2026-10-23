@@ -566,6 +566,19 @@ mod tests {
         assert!(bad.is_empty(), "{} of {} arms failed: {bad:#?}", bad.len(), labels.len());
     }
 
+    /// (#841) The wasm job's site: `universe.json` for the [`tied`] pool and `data.json` as this native
+    /// build ranks it, for web/engine/smoke.mjs to hold the wasm build to before a merge. Ignored: it
+    /// writes where `PARITY_SITE` points, in that job alone, pinned to CI's config as the engine installs it.
+    #[test]
+    #[ignore]
+    fn writes_the_wasm_parity_site() {
+        let dir = std::path::PathBuf::from(std::env::var("PARITY_SITE").expect("PARITY_SITE names the site"));
+        let u = universe(&tied());
+        std::fs::create_dir_all(&dir).expect("the site dir");
+        std::fs::write(dir.join("universe.json"), &u).expect("universe.json");
+        std::fs::write(dir.join("data.json"), screen("", &u).expect("ranks")).expect("data.json");
+    }
+
     /// (#403) "Why isn't X in?" answers from the ticker, another venue's line, or part of the name, and
     /// says plainly when nothing matches rather than claiming the name was never scanned.
     #[test]
