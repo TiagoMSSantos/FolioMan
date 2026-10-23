@@ -494,57 +494,75 @@ fn backtest_fund_report_ignores_pool_order() {
 /// without it the pre-split 10-Ks over the halved closes read twice as cheap, and this reds. Powers of two
 /// scale exactly, so the claim is byte-identical rather than close. The 12y cutoffs run 2011-02..2014-07,
 /// so the as-of join reads rows from both sides of the split.
+///
+/// (#849) The FY2011 10-K (filed 2012-02-24) carries a late EPS line: `eps_filed` 2012-07-02, after the
+/// split, so its EPS is stated on the post-split basis while its share count keeps the 10-K's date. Each
+/// side must divide from its own line's date (#785); dividing the EPS from the 10-K's date halves it a
+/// second time. The unstamped twin is that bug's world and must move the report, or the pin is vacuous.
 #[test]
 fn backtest_fund_report_is_split_invariant() {
     use serde_json::Value;
-    let cfg = fixture_copy("split-12-fund", false);
-    let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
-    let (tk, split_day, split_ts) = ("MAA", "2012-06-15", 1_339_767_000_i64);
+    let (tk, split_day, split_ts, late_10k) = ("MAA", "2012-06-15", 1_339_767_000_i64, "2012-02-24");
     let scale = |v: &mut Value, k: f64| {
         if let Some(x) = v.as_f64() {
             *v = serde_json::json!(x * k);
         }
     };
+    let world = |name: &str, stamp: bool| -> PathBuf {
+        let cfg = fixture_copy(name, false);
+        let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
 
-    let cache_path = root.join(".long_history_cache.json");
-    let mut cache: Value = serde_json::from_str(&std::fs::read_to_string(&cache_path).expect("read cache")).expect("parse cache");
-    let r = &mut cache[tk][1]["chart"]["result"][0];
-    assert!(r["events"]["splits"].is_null(), "{tk} must be split-free in the fixture, or this doubles a real split");
-    r["events"]["splits"] = serde_json::json!({ split_ts.to_string(): {"date": split_ts, "numerator": 2, "denominator": 1, "splitRatio": "2:1"} });
-    for d in r["events"]["dividends"].as_object_mut().expect("dividends").values_mut() {
-        scale(&mut d["amount"], 0.5);
-    }
-    let bars = r["indicators"]["quote"][0]["close"].as_array().map_or(0, Vec::len);
-    assert!(bars > 100, "{tk}'s monthly bars");
-    for v in r["indicators"]["quote"][0]["close"].as_array_mut().expect("close").iter_mut() {
-        scale(v, 0.5);
-    }
-    for v in r["indicators"]["quote"][0]["volume"].as_array_mut().expect("volume").iter_mut() {
-        scale(v, 2.0);
-    }
-    for v in r["indicators"]["adjclose"][0]["adjclose"].as_array_mut().expect("adjclose").iter_mut() {
-        scale(v, 0.5);
-    }
-    std::fs::write(&cache_path, serde_json::to_string(&cache).expect("ser cache")).expect("write cache");
-
-    let facts_path = root.join(format!(".sec_cache/{tk}_facts26.json"));
-    let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
-    let mut restated = (0, 0);
-    for row in rows.as_array_mut().expect("rows") {
-        if row["filed"].as_str().expect("filed") >= split_day {
-            restated.1 += 1;
-            for k in ["eps", "prior_eps", "fcf_ps"] {
-                scale(&mut row[k], 0.5);
-            }
-            for k in ["shares", "prior_shares"] {
-                scale(&mut row[k], 2.0);
-            }
-        } else {
-            restated.0 += 1;
+        let cache_path = root.join(".long_history_cache.json");
+        let mut cache: Value = serde_json::from_str(&std::fs::read_to_string(&cache_path).expect("read cache")).expect("parse cache");
+        let r = &mut cache[tk][1]["chart"]["result"][0];
+        assert!(r["events"]["splits"].is_null(), "{tk} must be split-free in the fixture, or this doubles a real split");
+        r["events"]["splits"] = serde_json::json!({ split_ts.to_string(): {"date": split_ts, "numerator": 2, "denominator": 1, "splitRatio": "2:1"} });
+        for d in r["events"]["dividends"].as_object_mut().expect("dividends").values_mut() {
+            scale(&mut d["amount"], 0.5);
         }
-    }
-    assert!(restated.0 >= 2 && restated.1 >= 2, "filings on both sides of the split: {restated:?}");
-    std::fs::write(&facts_path, serde_json::to_string(&rows).expect("ser facts")).expect("write facts");
+        let bars = r["indicators"]["quote"][0]["close"].as_array().map_or(0, Vec::len);
+        assert!(bars > 100, "{tk}'s monthly bars");
+        for v in r["indicators"]["quote"][0]["close"].as_array_mut().expect("close").iter_mut() {
+            scale(v, 0.5);
+        }
+        for v in r["indicators"]["quote"][0]["volume"].as_array_mut().expect("volume").iter_mut() {
+            scale(v, 2.0);
+        }
+        for v in r["indicators"]["adjclose"][0]["adjclose"].as_array_mut().expect("adjclose").iter_mut() {
+            scale(v, 0.5);
+        }
+        std::fs::write(&cache_path, serde_json::to_string(&cache).expect("ser cache")).expect("write cache");
+
+        let facts_path = root.join(format!(".sec_cache/{tk}_facts26.json"));
+        let mut rows: Value = serde_json::from_str(&std::fs::read_to_string(&facts_path).expect("read facts")).expect("parse facts");
+        let mut restated = (0, 0, 0);
+        for row in rows.as_array_mut().expect("rows") {
+            if row["filed"].as_str().expect("filed") >= split_day {
+                restated.1 += 1;
+                for k in ["eps", "prior_eps", "fcf_ps"] {
+                    scale(&mut row[k], 0.5);
+                }
+                for k in ["shares", "prior_shares"] {
+                    scale(&mut row[k], 2.0);
+                }
+            } else {
+                restated.0 += 1;
+                if row["filed"] == late_10k {
+                    restated.2 += 1;
+                    for k in ["eps", "prior_eps"] {
+                        scale(&mut row[k], 0.5);
+                    }
+                    if stamp {
+                        row["eps_filed"] = serde_json::json!("2012-07-02");
+                    }
+                }
+            }
+        }
+        assert!(restated.0 >= 2 && restated.1 >= 2, "filings on both sides of the split: {restated:?}");
+        assert_eq!(restated.2, 1, "one {tk} 10-K filed {late_10k} to carry the late EPS line");
+        std::fs::write(&facts_path, serde_json::to_string(&rows).expect("ser facts")).expect("write facts");
+        cfg
+    };
 
     // the one line that may move: the injected ticker is now restated too, so the count is the golden's + 1
     use folioman::commands::backtest::markers::FUND_SPLIT;
@@ -553,8 +571,10 @@ fn backtest_fund_report_is_split_invariant() {
     let n: usize = line.split(FUND_SPLIT).nth(1).and_then(|t| t.split_whitespace().next()).and_then(|t| t.parse().ok()).expect("a count");
     let want = golden.replace(line, &line.replace(&format!("{FUND_SPLIT} {n} "), &format!("{FUND_SPLIT} {} ", n + 1)));
     assert_ne!(want, golden, "the count substitution must land");
-    let got = report_at(&cfg, &["12", "fund"], None);
+    let got = report_at(&world("split-12-fund", true), &["12", "fund"], None);
     assert!(got == want, "a 2:1 split moved the fund report — a unit change priced as value.\n{}", first_difference(&got, &want));
+    let undated = report_at(&world("split-12-fund-undated", false), &["12", "fund"], None);
+    assert!(undated != want, "the {late_10k} 10-K's EPS halved twice moved nothing, so the late-EPS pin above reads no row");
 }
 
 /// (#425) THE SCALE INVARIANT. A filer that tags its share counts in thousands (GRMN did for eight years,
