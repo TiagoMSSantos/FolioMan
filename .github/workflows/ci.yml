@@ -389,14 +389,14 @@ jobs:
           #
           # (#837) The test binaries run as two concurrent collections, then one report. The single
           # `cargo llvm-cov` call ran the lib, cli and fixture binaries one after another. Splitting cli
-          # off overlaps it with the lib + fixture run. `--no-clean` on both is required: each run's
-          # default cleanup would delete the other's profiles. The explicit `clean --workspace` first
-          # does what the one-shot run did implicitly. Their scratch roots are disjoint: the lib uses
+          # off overlaps it with the lib + fixture run. `--no-report` runs skip the cleanup a full run
+          # does, so neither deletes the other's profiles (the tool refuses `--no-clean` beside it).
+          # The explicit `clean --workspace` first does what the one-shot run did implicitly. Their scratch roots are disjoint: the lib uses
           # target/lib-test-data, and cli and fixture cases use distinct names under CARGO_TARGET_TMPDIR.
           # Keep it only if the per-file table matches the one-shot run's exactly.
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report --no-clean --locked --lib --test backtest_fixture & a=$!
-          cargo llvm-cov --no-report --no-clean --locked --test cli & b=$!
+          cargo llvm-cov --no-report --locked --lib --test backtest_fixture & a=$!
+          cargo llvm-cov --no-report --locked --test cli & b=$!
           wait "$a" || gate=$?
           wait "$b" || gate=$?
           cargo llvm-cov report --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
