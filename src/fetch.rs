@@ -5825,6 +5825,59 @@ fn cash_ttm(g: &Value, tags: &FactTags, money: &str, fy_end: NaiveDate) -> Optio
     Some(core::CashTtm { end: span.1, filed, ocf: o, capex: c, q_ocf: quarter.map(|q| q.0), q_capex: quarter.map(|q| q.1) })
 }
 
+/// (#842) An extracted XBRL instance's contexts, as id -> (fiscal year end, its dimension members
+/// joined). Durations only: a balance-sheet context is instant and an interim one fails the 350-380 day
+/// span check, so neither can pollute an annual row. Lifted out of [`parse_sec_instance`] for
+/// [`peo_pay_from_instance`], which reads a proxy's instance the same way.
+fn instance_contexts(xml: &str) -> HashMap<&str, (NaiveDate, String)> {
+    let mut ctx: HashMap<&str, (NaiveDate, String)> = HashMap::new();
+    // `[\w-]+:`, NOT `\w+:` — the two prefixes that matter, `us-gaap:` and `ifrs-full:`, both contain a
+    // HYPHEN, which `\w` does not match. With `\w` this parser silently found zero facts on every real
+    // filing; the unit test below is what caught it.
+    let (Ok(ctx_re), Ok(start_re), Ok(end_re), Ok(mem_re)) = (
+        regex::Regex::new(r#"(?s)<(?:[\w-]+:)?context id="([^"]+)"[^>]*>(.*?)</(?:[\w-]+:)?context>"#),
+        regex::Regex::new(r"<(?:[\w-]+:)?startDate>\s*([0-9-]+)"),
+        regex::Regex::new(r"<(?:[\w-]+:)?endDate>\s*([0-9-]+)"),
+        regex::Regex::new(r"<(?:[\w-]+:)?explicitMember[^>]*>\s*([^<]*?)\s*</"),
+    ) else {
+        return ctx;
+    };
+    for c in ctx_re.captures_iter(xml) {
+        let (id, body) = (c.get(1).map_or("", |m| m.as_str()), c.get(2).map_or("", |m| m.as_str()));
+        let (Some(sd), Some(ed)) = (
+            start_re.captures(body).and_then(|m| NaiveDate::parse_from_str(&m[1], "%Y-%m-%d").ok()),
+            end_re.captures(body).and_then(|m| NaiveDate::parse_from_str(&m[1], "%Y-%m-%d").ok()),
+        ) else {
+            continue;
+        };
+        if !(350..=380).contains(&(ed - sd).num_days()) {
+            continue;
+        }
+        let mut dims: Vec<&str> = mem_re.captures_iter(body).filter_map(|m| m.get(1)).map(|m| m.as_str()).collect();
+        dims.sort_unstable(); // instance order is the filer's; sorted so one class keys identically everywhere
+        ctx.insert(id, (ed, dims.join("|")));
+    }
+    ctx
+}
+
+/// (#842) The CEO's total pay for the newest fiscal year in a DEF 14A's extracted instance: the
+/// `ecd:PeoTotalCompAmt` the pay-versus-performance table tags. Only an UNDIMENSIONED fact counts: a
+/// year with two CEOs tags each on an `IndividualAxis` member, and neither alone is the year's pay. A
+/// non-positive value is no reading. `PeoActuallyPaidCompAmt` is never read: it marks equity to market,
+/// so it moves with the share price it would be graded against.
+fn peo_pay_from_instance(xml: &str) -> Option<f64> {
+    let ctx = instance_contexts(xml);
+    let re = regex::Regex::new(r#"<(?:[\w-]+:)?PeoTotalCompAmt\s[^>]*contextRef="([^"]+)"[^>]*>([^<]*)</"#).ok()?;
+    re.captures_iter(xml)
+        .filter_map(|f| {
+            let (end, dims) = ctx.get(&f[1])?;
+            let val = f[2].trim().parse::<f64>().ok()?;
+            (dims.is_empty() && val > 0.0).then_some((*end, val))
+        })
+        .max_by_key(|(end, _)| *end)
+        .map(|(_, v)| v)
+}
+
 /// EPS + weighted-average shares per fiscal year out of ONE 10-K's RAW XBRL INSTANCE. Pure -> unit-tested.
 ///
 /// WHY THIS EXISTS AT ALL. `companyfacts`/`companyconcept` expose only UNDIMENSIONED facts. A multi-class
@@ -5865,36 +5918,7 @@ fn cash_ttm(g: &Value, tags: &FactTags, money: &str, fy_end: NaiveDate) -> Optio
 /// across lines, hence regex rather than a literal find.
 fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
     use std::collections::BTreeMap;
-    let empty = BTreeMap::new();
-    // `[\w-]+:`, NOT `\w+:` — the two prefixes that matter, `us-gaap:` and `ifrs-full:`, both contain a
-    // HYPHEN, which `\w` does not match. With `\w` this parser silently found zero facts on every real
-    // filing; the unit test below is what caught it.
-    let (Ok(ctx_re), Ok(start_re), Ok(end_re), Ok(mem_re)) = (
-        regex::Regex::new(r#"(?s)<(?:[\w-]+:)?context id="([^"]+)"[^>]*>(.*?)</(?:[\w-]+:)?context>"#),
-        regex::Regex::new(r"<(?:[\w-]+:)?startDate>\s*([0-9-]+)"),
-        regex::Regex::new(r"<(?:[\w-]+:)?endDate>\s*([0-9-]+)"),
-        regex::Regex::new(r"<(?:[\w-]+:)?explicitMember[^>]*>\s*([^<]*?)\s*</"),
-    ) else {
-        return empty;
-    };
-    // context id -> (fiscal year end, its dimension members joined). Durations only: a balance-sheet
-    // context is instant and an interim one fails the span check, so neither can pollute an annual row.
-    let mut ctx: HashMap<&str, (NaiveDate, String)> = HashMap::new();
-    for c in ctx_re.captures_iter(xml) {
-        let (id, body) = (c.get(1).map_or("", |m| m.as_str()), c.get(2).map_or("", |m| m.as_str()));
-        let (Some(sd), Some(ed)) = (
-            start_re.captures(body).and_then(|m| NaiveDate::parse_from_str(&m[1], "%Y-%m-%d").ok()),
-            end_re.captures(body).and_then(|m| NaiveDate::parse_from_str(&m[1], "%Y-%m-%d").ok()),
-        ) else {
-            continue;
-        };
-        if !(350..=380).contains(&(ed - sd).num_days()) {
-            continue;
-        }
-        let mut dims: Vec<&str> = mem_re.captures_iter(body).filter_map(|m| m.get(1)).map(|m| m.as_str()).collect();
-        dims.sort_unstable(); // instance order is the filer's; sorted so one class keys identically everywhere
-        ctx.insert(id, (ed, dims.join("|")));
-    }
+    let ctx = instance_contexts(xml);
     // (fiscal year end, dimension key) -> value, first tag in the list wins (US_GAAP_TAGS order is
     // load-bearing: diluted before basic). `ni` is keyed on the year alone and takes ONLY the
     // undimensioned fact — the consolidated bottom line every class's product is measured against.
@@ -6042,6 +6066,62 @@ async fn fetch_sec_instance_eps(
             let _ = std::fs::create_dir_all(dir);
         }
         let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
+    }
+    found
+}
+
+/// (#842) The CEO's total pay for the newest fiscal year, from the newest DEF 14A's extracted instance,
+/// for the `pay` shadow row (track.rs `fac_journal`). `data.sec.gov` serves no `ecd` taxonomy:
+/// companyconcept `ecd/PeoTotalCompAmt` 404s and companyfacts lists only `dei` and `us-gaap`, so the
+/// proxy's own instance is the free path. Two GETs, each against the run's SEC budget.
+///
+/// DISK-CACHED (`.sec_cache/{ticker}_pay1.json`) for 30 days, `null` included: a proxy is filed once a
+/// year. Only an ANSWER is cached, the pay read or a filer with no DEF 14A on file (a foreign filer files
+/// none). A spent budget or a failed GET writes nothing, so the next run retries (#377). Form "DEF 14A"
+/// exactly: DEFA14A is extra soliciting material and DEFM14A a merger proxy. `#[mutants::skip]`:
+/// network-bound; its parser, `peo_pay_from_instance`, is the tested half.
+#[mutants::skip]
+pub async fn sec_peo_pay(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    use std::sync::atomic::Ordering;
+    let cache = sec_cache_path(&format!("{ticker}_pay1"));
+    evict_if_stale(&cache, StdDuration::from_secs(30 * 24 * 3600));
+    if let Some(c) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Option<f64>>(&s).ok()) {
+        return c; // cache hit (null included) -> no network, no budget spend
+    }
+    let mut found = None;
+    let mut answered = false;
+    if let Some(cik) = sec_cik(client, urls, ticker).await {
+        if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET {
+            if let Some(v) = sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), &urls.sec_user_agent).await {
+                let recent = v.get("filings").and_then(|f| f.get("recent"));
+                let get = |k: &str, i: usize| recent?.get(k)?.as_array()?.get(i)?.as_str().map(str::to_string);
+                let newest = recent
+                    .and_then(|r| r.get("form"))
+                    .and_then(|f| f.as_array())
+                    .and_then(|forms| forms.iter().position(|f| f.as_str() == Some("DEF 14A")));
+                answered = recent.is_some() && newest.is_none(); // no proxy on file -> a real negative
+                if let Some(i) = newest.filter(|_| SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET) {
+                    if let (Some(acc), Some(doc)) = (get("accessionNumber", i), get("primaryDocument", i)) {
+                        let url = format!(
+                            "https://www.sec.gov/Archives/edgar/data/{}/{}/{}_htm.xml",
+                            cik.trim_start_matches('0'),
+                            acc.replace('-', ""),
+                            doc.trim_end_matches(".htm")
+                        );
+                        if let Some(xml) = sec_get_text(client, &url, &urls.sec_user_agent).await {
+                            answered = true;
+                            found = peo_pay_from_instance(&xml);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if answered {
+        if let Some(dir) = cache.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&cache, serde_json::to_string(&found).unwrap_or_default());
     }
     found
 }
@@ -11822,6 +11902,42 @@ pub(crate) mod tests {
 
         assert!(parse_sec_instance("", &US_GAAP_TAGS).is_empty()); // garbage in -> empty, never a panic
         assert!(parse_sec_instance("<html>not xbrl at all</html>", &US_GAAP_TAGS).is_empty());
+    }
+
+    /// (#842) `peo_pay_from_instance` reads a DEF 14A's pay-versus-performance table the way TJX's
+    /// `tjx-20260430_htm.xml` tags it: one undimensioned `ecd:PeoTotalCompAmt` per fiscal year. The
+    /// newest year's wins; a CEO's own `IndividualAxis` row, a zero, a quarter and the
+    /// compensation-actually-paid tag are each no reading.
+    #[test]
+    fn peo_pay_reads_the_newest_undimensioned_total() {
+        let ctx = |id: &str, s: &str, e: &str, member: Option<&str>| {
+            let seg = member.map_or(String::new(), |m| {
+                format!(r#"<xbrli:segment><xbrldi:explicitMember dimension="ecd:IndividualAxis">{m}</xbrldi:explicitMember></xbrli:segment>"#)
+            });
+            format!(
+                "<xbrli:context id=\"{id}\"><xbrli:entity><xbrli:identifier>x</xbrli:identifier>{seg}</xbrli:entity>\
+                 <xbrli:period><xbrli:startDate>{s}</xbrli:startDate><xbrli:endDate>{e}</xbrli:endDate></xbrli:period></xbrli:context>"
+            )
+        };
+        let fact = |tag: &str, cref: &str, val: &str| format!("<ecd:{tag}\n  contextRef=\"{cref}\"\n  unitRef=\"usd\">{val}</ecd:{tag}>");
+        let xml = [
+            ctx("new", "2025-02-02", "2026-01-31", None),
+            ctx("old", "2024-02-04", "2025-02-01", None),
+            ctx("ceo", "2025-02-02", "2026-01-31", Some("tjx:CeoOneMember")),
+            ctx("next", "2026-02-01", "2027-01-30", None),
+            ctx("q", "2025-11-02", "2026-01-31", None),
+            fact("PeoTotalCompAmt", "new", "24000000"),
+            fact("PeoTotalCompAmt", "old", "20000000"), // older and later in the document: the year decides
+            fact("PeoTotalCompAmt", "ceo", "99000000"), // one CEO's row of a two-CEO year
+            fact("PeoTotalCompAmt", "next", "0"),        // newest year, but no reading
+            fact("PeoTotalCompAmt", "q", "77000000"),    // a quarter is no fiscal year
+            fact("PeoActuallyPaidCompAmt", "new", "50000000"),
+        ]
+        .join("\n");
+        assert_eq!(peo_pay_from_instance(&xml), Some(24_000_000.0));
+        let only_dimensioned = [ctx("ceo", "2025-02-02", "2026-01-31", Some("tjx:CeoOneMember")), fact("PeoTotalCompAmt", "ceo", "1")].join("\n");
+        assert_eq!(peo_pay_from_instance(&only_dimensioned), None);
+        assert_eq!(peo_pay_from_instance(""), None);
     }
 
     /// (V) The fallback's TRIGGER is the narrow one: it fires only when the whole companyfacts series has

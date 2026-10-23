@@ -865,7 +865,15 @@ pub(crate) const FACTORS: [(&str, &str); 11] = [
 /// (#733) `short` holds every one with a SHORT% reading, valued at it, fundamentals or not.
 /// (#834) `capx` holds every one whose TTM capex tops `capex_max`% of operating cash flow, the names
 /// the (#545) penalty docks, valued at that share (a cash burn, +inf, writes 1000).
-pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quote], capex_max: f64) -> Vec<(String, String, f64)> {
+/// (#842) `pay` holds EXCESS CEO pay, last: the residual of ln(pay) on ln(market cap) across the cohort
+/// names `pay` prices, so a big company's big pay reads 0. Fewer than five names fit no line and write
+/// nothing. Market cap is EUR, and one FX rate per line moves only the intercept.
+pub(crate) fn fac_journal(
+    peg: &[(String, f64, f64)],
+    quotes: &[crate::core::Quote],
+    capex_max: f64,
+    pay: &std::collections::HashMap<String, f64>,
+) -> Vec<(String, String, f64)> {
     let mut out = Vec::new();
     for (t, ..) in peg {
         let Some(q) = quotes.iter().find(|q| &q.ticker == t) else { continue };
@@ -892,6 +900,26 @@ pub(crate) fn fac_journal(peg: &[(String, f64, f64)], quotes: &[crate::core::Quo
         for (k, _) in FACTORS {
             if let Some(v) = crate::core::select_fund_factor(f, k).filter(|v| v.is_finite()) {
                 out.push((t.clone(), k.to_string(), v));
+            }
+        }
+    }
+    let pts: Vec<(&String, f64, f64)> = peg
+        .iter()
+        .filter_map(|(t, ..)| {
+            let q = quotes.iter().find(|q| &q.ticker == t)?;
+            let (p, cap) = (*pay.get(t)?, crate::picks::share_count(q)? * q.price_eur?);
+            (p > 0.0 && cap > 0.0).then_some((t, p.ln(), cap.ln()))
+        })
+        .collect();
+    if pts.len() >= 5 {
+        let n = pts.len() as f64;
+        let (mx, my) = (pts.iter().map(|p| p.2).sum::<f64>() / n, pts.iter().map(|p| p.1).sum::<f64>() / n);
+        // one cap across the cohort fits no slope: 0/0 reads NaN and every residual is dropped below
+        let b = pts.iter().map(|p| (p.2 - mx) * (p.1 - my)).sum::<f64>() / pts.iter().map(|p| (p.2 - mx).powi(2)).sum::<f64>();
+        for (t, y, x) in pts {
+            let e = y - my - b * (x - mx);
+            if e.is_finite() {
+                out.push((t.clone(), "pay".to_string(), e));
             }
         }
     }
@@ -956,6 +984,7 @@ fn fac_section(
             pairs.push(("redf flagged minus peg cheap", peg_rows(s, false, true), brk_rows(s, "redf")));
             pairs.push(("short top minus peg cheap", fac_rows(s, "short", false), fac_rows(s, "short", true)));
             pairs.push(("capx penalised minus peg cheap", peg_rows(s, false, true), brk_rows(s, "capx")));
+            pairs.push(("pay top minus peg cheap", fac_rows(s, "pay", false), fac_rows(s, "pay", true)));
             pairs
         },
         30,
@@ -968,7 +997,7 @@ fn fac_section(
             .collect::<std::collections::HashSet<&str>>()
             .len()
     };
-    let (brk_n, brkh_n, soc_n, redf_n, capx_n) = (names("brk"), names("brkh"), names("soc"), names("redf"), names("capx"));
+    let (brk_n, brkh_n, soc_n, redf_n, capx_n, pay_n) = (names("brk"), names("brkh"), names("soc"), names("redf"), names("capx"), names("pay"));
     if verdict.is_empty() {
         return format!(
             "\n  Factor shadow: nothing gradeable yet. A month's first line needs a day of age and a priced name\n  \
@@ -987,7 +1016,9 @@ fn fac_section(
          (the RED-FLAGS column). (#733) `short` ranks the names with a SHORT% reading (FINRA short interest\n  \
          over shares outstanding): its most-shorted half against peg's cheap half on those names. (#834) `capx`\n  \
          holds every one whose TTM capex tops growth_capex_ocf_max% of operating cash flow (the names the (#545)\n  \
-         penalty docks). EUR seat, price-only. NOT advice.\n  \
+         penalty docks). (#842) `pay` ranks the names with a DEF 14A CEO total pay by EXCESS pay (the residual\n  \
+         of ln pay on ln market cap across the line): its best-paid half against peg's cheap half on those names.\n  \
+         EUR seat, price-only. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
@@ -1008,7 +1039,11 @@ fn fac_section(
          never re-asked.\n\n  \
          Pre-registered by (#834) before its first line: the (#545) capex penalty returns to 1.0 (off) when\n  \
          {REOPEN_LINES}+ monthly lines AND {REOPEN_LINES}+ chained links each read mean AND median ABOVE 0 ({capx_n}\n  \
-         distinct capx names so far): the docked names beat peg's cheap half. Any other read keeps it."
+         distinct capx names so far): the docked names beat peg's cheap half. Any other read keeps it.\n\n  \
+         Pre-registered by (#842) before its first line: excess CEO pay re-opens as ONE owner ask for a score dock,\n  \
+         shipped off and graded forward the same way (no proxy history is fetched), only when {REOPEN_LINES}+ monthly\n  \
+         lines AND {REOPEN_LINES}+ chained links each read mean AND median BELOW 0 ({pay_n} distinct pay names so far):\n  \
+         the overpaid half trails peg's cheap half. Any other read records a refusal, never re-asked."
     )
 }
 
@@ -2317,7 +2352,7 @@ mod tests {
         ];
         let peg: Vec<(String, f64, f64)> = ["A", "B", "Z"].map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
         assert_eq!(
-            fac_journal(&peg, &quotes, 70.0),
+            fac_journal(&peg, &quotes, 70.0, &std::collections::HashMap::new()),
             vec![
                 ("A".to_string(), "brkh".to_string(), 1.0),
                 ("A".to_string(), "soc".to_string(), 1.0),
@@ -2349,9 +2384,39 @@ mod tests {
         let quotes = [with("A", 4.0, 3.0), with("B", 2.0, 1.0), with("C", 0.0, 1.0)];
         let peg: Vec<(String, f64, f64)> = ["A", "B", "C"].map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
         assert_eq!(
-            fac_journal(&peg, &quotes, 50.0),
+            fac_journal(&peg, &quotes, 50.0, &std::collections::HashMap::new()),
             vec![("A".to_string(), "capx".to_string(), 75.0), ("C".to_string(), "capx".to_string(), 1000.0)]
         );
+    }
+
+    /// (#842) `pay` is the residual of ln(pay) on ln(market cap): pay = e^(2x + r) on caps e^x reads r back
+    /// whatever the share price scales the caps by. A zero pay, an unpriced name, fewer than five names
+    /// and one cap across the cohort (no slope) write nothing.
+    #[test]
+    fn fac_journal_writes_excess_pay_residuals_from_five_names() {
+        let r = [1.0, -1.0, 0.0, 0.0, -1.0, 1.0]; // mean 0, orthogonal to x: the fit's own residuals
+        let with = |t: &str, x: f64, price: Option<f64>| {
+            let mut q = crate::core::Quote::stub(t, "€1.00", "", t);
+            q.shares_out = Some(x.exp());
+            q.price_eur = price;
+            q
+        };
+        let ts = ["A", "B", "C", "D", "E", "F", "G", "H"];
+        let mut quotes: Vec<_> = (0..6).map(|i| with(ts[i], i as f64, Some(0.9))).collect();
+        quotes.push(with("G", 3.0, Some(0.9)));
+        quotes.push(with("H", 3.0, None));
+        let mut pay: std::collections::HashMap<String, f64> = (0..6).map(|i| (ts[i].to_string(), (2.0 * i as f64 + r[i]).exp())).collect();
+        pay.insert("G".to_string(), 0.0);
+        pay.insert("H".to_string(), 1.0);
+        let peg: Vec<(String, f64, f64)> = ts.map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
+        let got = fac_journal(&peg, &quotes, 70.0, &pay);
+        assert_eq!(got.iter().map(|(t, f, _)| (t.as_str(), f.as_str())).collect::<Vec<_>>(), ts[..6].iter().map(|t| (*t, "pay")).collect::<Vec<_>>());
+        for ((_, _, e), want) in got.iter().zip(r) {
+            assert!((e - want).abs() < 1e-9, "{got:?}");
+        }
+        assert!(fac_journal(&peg[..4], &quotes, 70.0, &pay).is_empty(), "four names fit no line");
+        let flat: Vec<_> = ts[..6].iter().map(|t| with(t, 0.0, Some(1.0))).collect(); // ln cap 0 exactly: an exact 0/0
+        assert!(fac_journal(&peg, &flat, 70.0, &pay).is_empty(), "one cap, no slope");
     }
 
     /// (#415) The section grades each factor's top half against peg's on one window, prints only the
@@ -2369,7 +2434,8 @@ mod tests {
         let peg = [("A", 90.0, 0.0), ("B", 70.0, 0.0), ("C", 30.0, 0.0), ("D", 10.0, 0.0)];
         let fac = [("A", "rnd_yield", 1.0), ("B", "rnd_yield", 2.0), ("C", "rnd_yield", 3.0), ("D", "rnd_yield", 4.0)];
         let short = [("A", "short", 1.0), ("B", "short", 2.0), ("C", "short", 3.0), ("D", "short", 4.0)];
-        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &[fac, short].concat());
+        let pay = [("A", "pay", -1.0), ("B", "pay", -0.5), ("C", "pay", 0.5), ("D", "pay", 1.0)];
+        let s = with_fac(with_peg(snap("2026-01-01", Some(100.0), &rows), &peg), &[fac, short, pay].concat());
         let out = fac_section(std::slice::from_ref(&s), today, &px, Some(100.0));
         let row = out.lines().find(|l| l.trim_start().starts_with("rnd_yield top minus peg cheap")).unwrap_or_default();
         // rnd_yield holds D, C (+50%); peg holds A, B (0%)
@@ -2381,6 +2447,10 @@ mod tests {
         let shorted = out.lines().find(|l| l.trim_start().starts_with("short top minus peg cheap")).unwrap_or_default();
         assert!(shorted.contains(" 1 line(s)") && shorted.matches("+50.0pp").count() == 2, "{shorted}");
         assert!(out.contains("Pre-registered by (#733)"), "{out}");
+        // (#842) pay holds D, C (+50%) against peg's A, B on the same names
+        let paid = out.lines().find(|l| l.trim_start().starts_with("pay top minus peg cheap")).unwrap_or_default();
+        assert!(paid.contains(" 1 line(s)") && paid.matches("+50.0pp").count() == 2, "{paid}");
+        assert!(out.contains("Pre-registered by (#842)") && out.contains("(4 distinct pay names so far)"), "{out}");
     }
 
     /// (#436) The `brk` row holds EVERY cohort name journalled `brk` (no top-half cut) against peg's

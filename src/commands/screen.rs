@@ -2576,7 +2576,14 @@ pub async fn run(args: Vec<String>) {
     };
     // (#337) and today's close for every name last month's line grades that this line does not price,
     // so each cohort can be graded month to month the way (#336) chains the book
-    line.fac = crate::commands::track::fac_journal(&line.peg, &quotes, settings.buy_heuristic.growth_capex_ocf_max); // (#415) (#834)
+    // (#842) the peg cohort's CEO pay, one DEF 14A read per name, cached 30 days; journal only
+    let mut pay = std::collections::HashMap::new();
+    for (t, ..) in &line.peg {
+        if let Some(v) = fetch::sec_peo_pay(&client, &settings.urls, t).await {
+            pay.insert(t.clone(), v);
+        }
+    }
+    line.fac = crate::commands::track::fac_journal(&line.peg, &quotes, settings.buy_heuristic.growth_capex_ocf_max, &pay); // (#415) (#834) (#842)
     // (#538) a SOC book name may be one only the side fetch priced, (#663) a dropped one only its own list
     line.carry = crate::commands::track::carry(prior.as_ref(), &line, &close);
     crate::commands::track::append_snapshot(&line);
