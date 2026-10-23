@@ -1379,12 +1379,16 @@ async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -
 ///
 /// Order is load-bearing, and every rung exists because a real listing needed it:
 /// exact symbol -> same-stem venue -> unique fund-name prefix -> name minus Yahoo's umbrella prefix.
-fn bf_ter_cascade(
-    map: Option<&HashMap<String, f64>>,
-    names: &std::sync::OnceLock<Vec<(String, f64)>>,
+///
+/// (#850) Generic over the value, because AUM and the USE/REPL/bench facts ride the same Börse
+/// Frankfurt row and walk the same four rungs: `bf_aum` and `bf_meta` were two hand copies of this
+/// cascade over globals, and their rungs could not be graded at all.
+fn bf_ter_cascade<T: Clone + PartialEq>(
+    map: Option<&HashMap<String, T>>,
+    names: &std::sync::OnceLock<Vec<(String, T)>>,
     ticker: &str,
     name: &str,
-) -> Option<f64> {
+) -> Option<T> {
     bf_ter_exact_in(map, ticker)
         .or_else(|| {
             // A pinned EU listing often sits on a different venue than the map's ISIN-resolved one
@@ -1392,7 +1396,7 @@ fn bf_ter_cascade(
             // a same-stem hit is the same fund's TER. ETF-classified quotes only (the caller gates on
             // `is_etf`) — an equity ticker could stem-collide.
             let stem = ticker.split_once('.')?.0;
-            map?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, t)| *t)
+            map?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, t)| t.clone())
         })
         // Last BF resort: unique fund-name prefix (rescues VVSM.DE, whose venue the symbol map can't
         // reach). Retry without Yahoo's umbrella-company prefix: "Amundi Index Solutions - Amundi S&P
@@ -1441,8 +1445,8 @@ pub fn ter_pct(ratio: f64) -> Option<f64> {
 /// shell, it relocated it into a much bigger one. The rule above is satisfied the way `fetch_expense`
 /// satisfies it: the DECISION lives here in `bf_ter_exact_in`, graded directly by the suite, and what
 /// stays skipped is a `BF_TER.get()` and nothing else.
-fn bf_ter_exact_in(map: Option<&HashMap<String, f64>>, ticker: &str) -> Option<f64> {
-    map.and_then(|m| m.get(ticker)).copied()
+fn bf_ter_exact_in<T: Clone>(map: Option<&HashMap<String, T>>, ticker: &str) -> Option<T> {
+    map.and_then(|m| m.get(ticker)).cloned()
 }
 
 #[mutants::skip] // (#212) reads a process-wide OnceLock no test can set — see `bf_ter_exact_in`.
@@ -6749,11 +6753,13 @@ static YH_AUM: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::
 
 /// Exact-symbol Yahoo-fallback lookups — the fill is keyed by the resolved Yahoo symbol the quote
 /// fetch itself uses, so no stem/name tiers are needed.
+#[mutants::skip] // (#850) reads a process-wide OnceLock no test can set — see `bf_ter_exact_in`.
 fn yh_ter_exact(ticker: &str) -> Option<f64> {
-    YH_TER.get().and_then(|m| m.get(ticker)).copied()
+    bf_ter_exact_in(YH_TER.get(), ticker)
 }
+#[mutants::skip] // (#850) as `yh_ter_exact`.
 fn yh_aum_exact(ticker: &str) -> Option<f64> {
-    YH_AUM.get().and_then(|m| m.get(ticker)).copied()
+    bf_ter_exact_in(YH_AUM.get(), ticker)
 }
 
 /// (round 51) Tickers whose MAX-monthly series contributed ZERO bars beyond the 10y daily window on
@@ -7622,40 +7628,23 @@ pub async fn yahoo_top_holdings(
     (out, mix)
 }
 
-/// (AUM) the same 3-tier BF lookup the TER uses (exact resolved symbol -> same-stem cross-venue ->
-/// unique fund-name prefix, retried without Yahoo's umbrella-company prefix) — both values ride the
-/// same etp_search row. No FMP fallback: its free tier doesn't serve fund size.
+/// (AUM) the TER's cascade over the AUM maps — both values ride the same etp_search row. No FMP
+/// fallback: its free tier doesn't serve fund size.
+#[mutants::skip] // (#850) reads process-wide OnceLocks no test can set — `bf_ter_cascade` is graded.
 fn bf_aum(ticker: &str, name: &str) -> Option<f64> {
-    if let Some(v) = bf_aum_exact(ticker) {
-        return Some(v);
-    }
-    if let Some(v) = ticker.split_once('.').and_then(|(stem, _)| {
-        BF_AUM.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, v)| *v)
-    }) {
-        return Some(v);
-    }
-    bf_by_name(&BF_AUM_NAMES, name)
-        .or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_by_name(&BF_AUM_NAMES, fund)))
+    bf_ter_cascade(BF_AUM.get(), &BF_AUM_NAMES, ticker, name)
 }
 
 /// Exact Börse-Frankfurt AUM map hit — same "presence proves ETP" semantics as `bf_ter_exact_in`.
+#[mutants::skip] // (#850) as `bf_aum`.
 fn bf_aum_exact(ticker: &str) -> Option<f64> {
-    BF_AUM.get().and_then(|m| m.get(ticker)).copied()
+    bf_ter_exact_in(BF_AUM.get(), ticker)
 }
 
-/// (USE/REPL/bench) the same 3-tier BF lookup TER/AUM use — the facts ride the same etp_search row.
+/// (USE/REPL/bench) the TER's cascade over the meta maps — the facts ride the same etp_search row.
+#[mutants::skip] // (#850) as `bf_aum`.
 fn bf_meta(ticker: &str, name: &str) -> BfMeta {
-    if let Some(m) = BF_META.get().and_then(|m| m.get(ticker)).cloned() {
-        return m;
-    }
-    if let Some(m) = ticker.split_once('.').and_then(|(stem, _)| {
-        BF_META.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, m)| m.clone())
-    }) {
-        return m;
-    }
-    bf_by_name(&BF_META_NAMES, name)
-        .or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_by_name(&BF_META_NAMES, fund)))
-        .unwrap_or_default()
+    bf_ter_cascade(BF_META.get(), &BF_META_NAMES, ticker, name).unwrap_or_default()
 }
 
 /// (#45) Why `bf_meta` came back empty for one fund. Four causes print an identical `n/a` today, and
@@ -8849,7 +8838,7 @@ fn s1_figures(html: &str) -> S1Figs {
     let Some(run) = re(r"((?:19|20)\d\d\s+)+(?:19|20)\d\d").find_iter(&sec[..anchor]).last() else { return f };
     let years: Vec<i32> = run.as_str().split_whitespace().filter_map(|y| y.parse().ok()).collect();
     let lead = &sec[..run.start()];
-    let phrase = lead[lead.rfind(". ").map_or(0, |i| i + 2)..].to_lowercase();
+    let phrase = lead.rsplit(". ").next().unwrap_or(lead).to_lowercase();
     let (months, year) = (phrase.find("months ended"), phrase.find("year ended").or(phrase.find("years ended")));
     let interim = if months.is_some() { 2.min(years.len()) } else { 0 };
     let annual: Vec<usize> = if months.is_some_and(|m| year.is_none_or(|y| m < y)) { (interim..years.len()).collect() } else { (0..years.len() - interim).collect() };
@@ -10019,7 +10008,7 @@ pub(crate) mod tests {
         // cover for needs its own call site.
         assert_eq!(bf_ter_exact_in(m, "IUSN.DE"), Some(0.35));
         assert_eq!(bf_ter_exact_in(m, "IUSN"), None, "exact means exact — the stem is rung 2's job");
-        assert_eq!(bf_ter_exact_in(None, "IUSN.DE"), None, "no map loaded, no hit");
+        assert_eq!(bf_ter_exact_in::<f64>(None, "IUSN.DE"), None, "no map loaded, no hit");
         // rung 2: same stem, different venue — pinned .DE, map holds only .L
         assert_eq!(bf_ter_cascade(m, &names, "SPYL.DE", "SPDR S&P 500 UCITS ETF"), Some(0.03));
         // rung 3: no symbol hit at all, unique fund-name prefix

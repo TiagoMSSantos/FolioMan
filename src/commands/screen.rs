@@ -581,8 +581,9 @@ fn exposure_rows(
     use std::collections::HashMap;
     let mut sector: HashMap<String, f64> = HashMap::new();
     let mut ccy: HashMap<String, f64> = HashMap::new();
-    // symbol -> (% bought direct, % inside funds, funds holding it)
-    let mut names: HashMap<String, (f64, f64, usize)> = HashMap::new();
+    // symbol -> (% bought direct, % inside funds, funds holding it). Ordered, so the sort below
+    // starts from the same input on every run and a broken comparator shows up in a test.
+    let mut names: std::collections::BTreeMap<String, (f64, f64, usize)> = Default::default();
     let mut funds: HashMap<String, Vec<(String, f64)>> = HashMap::new();
     let (mut no_sector, mut no_holdings, mut ungrouped) = (Vec::new(), Vec::new(), Vec::new());
     let add = |m: &mut HashMap<String, f64>, k: &str, w: f64| *m.entry(k.to_string()).or_default() += w;
@@ -4603,6 +4604,13 @@ mod tests {
         let mut arm = stock("ARM", Some("other"));
         arm.profile.sector = Some("Technology".into());
         assert_eq!(exposure_rows(&[("ARM".into(), 1.0)], &[arm], &holdings, &mix, &home, &d)[0][2][1], "Information Technology");
+        // eleven names held only through one fund: the ten heaviest are kept, so the lightest, which
+        // sorts first by symbol, is the one that drops out
+        let ten: Vec<(String, f64)> =
+            std::iter::once(("AAA".to_string(), 0.01)).chain((1..=10).map(|i| (format!("N{i:02}"), 0.01 + f64::from(i) / 100.0))).collect();
+        let held = exposure_rows(&[("W.L".into(), 1.0)], &[etf("W.L")], &HashMap::from([("W.L".into(), ten)]), &mix, &home, &d);
+        let shown: Vec<&str> = held.as_array().expect("rows").iter().filter(|r| r[1][1] == "name").map(|r| r[2][1].as_str().expect("a symbol")).collect();
+        assert_eq!((shown.len(), shown.contains(&"AAA"), shown.contains(&"N10")), (10, false, true), "{shown:?}");
     }
 
     /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the

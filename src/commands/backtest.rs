@@ -5681,9 +5681,11 @@ fn report_roll(
         Some(corr_cap_rung(&v, &trails, n, tuning.growth_corr_cap))
     };
     let top10 = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(capped(d, end, VERDICT_TOP)?.into_iter(), VERDICT_TOP)) };
+    // (#850) a sized row's weight is a percent and the ruler reads a fraction: one conversion for both sized books
+    let pct = |w: f64| w / 100.0;
     let sized = |d, end| -> Option<Vec<(&str, f64)>> {
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
-        Some(crate::commands::size::sized_book(&q, tuning, sz, None, picks::btc_1y(q.iter().copied()), &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), w / 100.0)).collect())
+        Some(crate::commands::size::sized_book(&q, tuning, sz, None, picks::btc_1y(q.iter().copied()), &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), pct(w))).collect())
     };
     let mom = |d, end| -> Option<Vec<(&str, f64)>> { Some(equal_top(ranked.get(&d)?.2.iter().copied().filter(|s| alive(s, d, end)), VERDICT_TOP)) };
     let blend = |d, end| -> Option<Vec<(&str, f64)>> {
@@ -5694,7 +5696,7 @@ fn report_roll(
         let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
         let book: Vec<(&Quote, f64)> = crate::commands::size::sized_book(&q, tuning, sz, None, picks::btc_1y(q.iter().copied()), &Default::default()).into_iter().map(|r| (r.0, r.2)).collect();
         let mom: Vec<&Quote> = ranked.get(&d)?.2.iter().filter(|s| alive(s, d, end)).map(|s| s.quote.as_ref()).collect();
-        Some(picks::sized_splice(&book, &mom, after, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w)| (t, w / 100.0)).collect())
+        Some(picks::sized_splice(&book, &mom, after, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w)| (t, pct(w))).collect())
     };
     let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs, dead);
     let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);

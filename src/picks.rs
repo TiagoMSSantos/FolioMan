@@ -3827,7 +3827,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "ps" => fund.and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
         "evebitda" | "nde" if ebitda_loss(quote) => "loss".to_string(),
         "evebitda" => fund
-            .and_then(|f| f.cap_fund.map(|m| m + f.net_debt.unwrap_or(0.0)).zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
+            .and_then(|f| f.cap_fund.map(|m| m + f.net_debt.unwrap_or(0.0)).zip(f.ebitda_ttm))
             .map_or("n/a".to_string(), |(ev, e)| format!("{:.1}x", ev / e)),
         "earn" => quote.next_earnings.map_or("n/a".to_string(), |d| d.format("%m-%d").to_string()),
         "ins" => quote.insider_90d.map_or("n/a".to_string(), |(b, s)| format!("{b}/{s}")),
@@ -3837,7 +3837,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             if r.is_finite() { format!("{r:.0}%") } else { "burn".to_string() }
         }),
         "nde" => fund
-            .and_then(|f| f.net_debt.zip(f.ebitda_ttm.filter(|e| *e > 0.0)))
+            .and_then(|f| f.net_debt.zip(f.ebitda_ttm))
             .map_or("n/a".to_string(), |(d, e)| format!("{:.1}x", d / e)),
         // (#702) no interest line and a filed zero (or absent) debt figure: nothing to cover, not a gap
         "icov" => match fund {
@@ -5312,7 +5312,7 @@ pub(crate) fn overlap_groups(holdings: &HashMap<String, Vec<(String, f64)>>, min
 fn one_per_index(rows: &[&Quote], overlap: usize) -> Vec<bool> {
     let key = |q: &Quote| {
         let named = q.benchmark.as_ref().or(q.profile.index.as_ref()).map(|b| index_key(b));
-        quote_is_etf(q).then(|| named.or_else(|| (overlap > 0).then(|| format!("\0{}", q.ticker)))).flatten()
+        quote_is_etf(q).then(|| named.unwrap_or_else(|| format!("\0{}", q.ticker)))
     };
     let mut keys: Vec<Option<String>> = rows.iter().map(|q| key(q)).collect();
     if overlap > 0 {
