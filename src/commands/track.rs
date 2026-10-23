@@ -915,7 +915,7 @@ pub(crate) fn fac_journal(
         let n = pts.len() as f64;
         let (mx, my) = (pts.iter().map(|p| p.2).sum::<f64>() / n, pts.iter().map(|p| p.1).sum::<f64>() / n);
         // one cap across the cohort fits no slope: 0/0 reads NaN and every residual is dropped below
-        let b = pts.iter().map(|p| (p.2 - mx) * (p.1 - my)).sum::<f64>() / pts.iter().map(|p| (p.2 - mx).powi(2)).sum::<f64>();
+        let b = pts.iter().map(|p| (p.2 - mx) * p.1).sum::<f64>() / pts.iter().map(|p| (p.2 - mx).powi(2)).sum::<f64>();
         for (t, y, x) in pts {
             let e = y - my - b * (x - mx);
             if e.is_finite() {
@@ -2389,9 +2389,9 @@ mod tests {
         );
     }
 
-    /// (#842) `pay` is the residual of ln(pay) on ln(market cap): pay = e^(2x + r) on caps e^x reads r back
-    /// whatever the share price scales the caps by. A zero pay, an unpriced name, fewer than five names
-    /// and one cap across the cohort (no slope) write nothing.
+    /// (#842) `pay` is the residual of ln(pay) on ln(market cap): pay = e^(2x + r) on caps e^x reads r back,
+    /// each cap built as shares times its own price. A zero pay, a zero cap, an unpriced name, fewer than
+    /// five names and one cap across the cohort (no slope) write nothing.
     #[test]
     fn fac_journal_writes_excess_pay_residuals_from_five_names() {
         let r = [1.0, -1.0, 0.0, 0.0, -1.0, 1.0]; // mean 0, orthogonal to x: the fit's own residuals
@@ -2401,13 +2401,16 @@ mod tests {
             q.price_eur = price;
             q
         };
-        let ts = ["A", "B", "C", "D", "E", "F", "G", "H"];
-        let mut quotes: Vec<_> = (0..6).map(|i| with(ts[i], i as f64, Some(0.9))).collect();
+        let ts = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
+        let px = [0.5, 2.0, 0.9, 4.0, 0.25, 1.5]; // shares e^i / price: cap e^i only when shares TIMES price
+        let mut quotes: Vec<_> = (0..6).map(|i| with(ts[i], i as f64 - px[i].ln(), Some(px[i]))).collect();
         quotes.push(with("G", 3.0, Some(0.9)));
         quotes.push(with("H", 3.0, None));
+        quotes.push(with("I", 3.0, Some(0.0))); // ln 0 = -inf would turn every residual NaN
         let mut pay: std::collections::HashMap<String, f64> = (0..6).map(|i| (ts[i].to_string(), (2.0 * i as f64 + r[i]).exp())).collect();
         pay.insert("G".to_string(), 0.0);
         pay.insert("H".to_string(), 1.0);
+        pay.insert("I".to_string(), 1.0);
         let peg: Vec<(String, f64, f64)> = ts.map(|t| (t.to_string(), 1.0, 1.0)).to_vec();
         let got = fac_journal(&peg, &quotes, 70.0, &pay);
         assert_eq!(got.iter().map(|(t, f, _)| (t.as_str(), f.as_str())).collect::<Vec<_>>(), ts[..6].iter().map(|t| (*t, "pay")).collect::<Vec<_>>());
