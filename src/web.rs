@@ -507,6 +507,65 @@ mod tests {
         assert!(bad.is_empty(), "the pool's order reached the payload: {bad:?}");
     }
 
+    /// (#840) The `n`th numeric leaf of `v`, in document order, set to `to`; its dotted path, or None
+    /// past the last leaf.
+    fn set_nth(v: &mut serde_yaml::Value, n: &mut usize, to: i32) -> Option<String> {
+        if v.is_number() {
+            if *n == 0 {
+                *v = if v.is_f64() { f64::from(to).into() } else { to.into() };
+                return Some(String::new());
+            }
+            *n -= 1;
+            return None;
+        }
+        let mut hit = |k: String, x: &mut serde_yaml::Value| set_nth(x, n, to).map(|p| if p.is_empty() { k } else { format!("{k}.{p}") });
+        match v {
+            serde_yaml::Value::Mapping(m) => m.iter_mut().find_map(|(k, x)| hit(k.as_str().unwrap_or("?").to_string(), x)),
+            serde_yaml::Value::Sequence(s) => s.iter_mut().enumerate().find_map(|(i, x)| hit(i.to_string(), x)),
+            _ => None,
+        }
+    }
+
+    /// (#840) An upload can set any knob to anything. Each numeric leaf of CI's config, set to 0 and
+    /// to -1 over the [`tied`] pool, must rank with no `inf`/`NaN` cell or be refused with a message:
+    /// never a panic, never a hang. Each arm runs on its own thread, so a hang is named rather than
+    /// stalling the suite. The knobs read once per process (`config::install`) keep the process's value
+    /// off wasm, so their arms pass here without reaching them.
+    #[test]
+    fn every_numeric_knob_at_zero_and_minus_one_ranks_finite_or_refuses() {
+        let mut root: serde_yaml::Value = serde_yaml::from_str(CI).expect("the CI config parses");
+        root["tickers"] = serde_yaml::from_str::<serde_yaml::Value>(TIED_PINS).expect("pins")["tickers"].clone();
+        let u = std::sync::Arc::new(universe(&tied()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut arms = vec![("baseline".to_string(), root.clone())];
+        for to in [0, -1] {
+            for n in 0.. {
+                let (mut v, mut k) = (root.clone(), n);
+                let Some(knob) = set_nth(&mut v, &mut k, to) else { break };
+                arms.push((format!("{knob}: {to}"), v));
+            }
+        }
+        let labels: Vec<String> = arms.iter().map(|(a, _)| a.clone()).collect();
+        for (arm, v) in arms {
+            let (tx, u, overlay) = (tx.clone(), u.clone(), serde_yaml::to_string(&v).expect("YAML"));
+            std::thread::spawn(move || tx.send((arm, std::panic::catch_unwind(|| screen(&overlay, &u)).ok())));
+        }
+        drop(tx);
+        let (mut bad, mut seen) = (Vec::new(), std::collections::HashSet::new());
+        while let Ok((arm, got)) = rx.recv_timeout(std::time::Duration::from_secs(120)) {
+            match &got {
+                None => bad.push(format!("{arm}: panicked")),
+                Some(Err(e)) if arm == "baseline" => bad.push(format!("{arm}: refused: {e}")),
+                Some(Ok(json)) if json.split(|c: char| !c.is_ascii_alphanumeric()).any(|t| t == "inf" || t == "NaN") => bad.push(format!("{arm}: a non-finite cell")),
+                Some(_) => {}
+            }
+            seen.insert(arm);
+        }
+        bad.extend(labels.iter().filter(|a| !seen.contains(*a)).map(|a| format!("{a}: hung")));
+        assert!(labels.len() > 300, "the sweep walks every numeric knob: {}", labels.len());
+        assert!(bad.is_empty(), "{} of {} arms failed: {bad:#?}", bad.len(), labels.len());
+    }
+
     /// (#403) "Why isn't X in?" answers from the ticker, another venue's line, or part of the name, and
     /// says plainly when nothing matches rather than claiming the name was never scanned.
     #[test]
