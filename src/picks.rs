@@ -16242,7 +16242,8 @@ mod tests {
         // no since-listing change served: the lifetime CAGR compounded over the age stands in
         let life = |q: &mut Quote| (q.young_ret_pct, q.life_cagr, q.age_years) = (None, Some(20.0), Some(0.7));
         let (mut new, mut hand) = (stock(true), stock(false));
-        (life(&mut new), life(&mut hand));
+        life(&mut new);
+        life(&mut hand);
         hand.perf = legs(&[("1Y", ((1.0 + 20.0_f64 / 100.0).powf(0.7) - 1.0) * 100.0)]);
         let (_, cell, _) = rank_key(Some(&new), &d, &[]);
         let (_, want, _) = rank_key(Some(&hand), &d, &[]);
