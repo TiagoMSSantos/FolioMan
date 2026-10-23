@@ -415,11 +415,10 @@ jobs:
           # file. Four regions moved, all on screen.rs's intraday `closed(market, Utc::now())` arm,
           # which reads the run's clock: compare the table on that line knowing it can flip.
           cargo llvm-cov clean --workspace
-          # (#844) Build every binary once before the two collections. They share one target dir, so
-          # on 39943908800 cli compiled for 38s while lib + fixture waited on the build lock, then
-          # compiled for 33s more. A filter that matches no test builds all three and runs none; the
-          # profiles it writes carry zero counts, so the table cannot move.
-          cargo llvm-cov --no-report --locked --lib --test backtest_fixture --test cli -- --exact ci-prebuild-runs-nothing
+          # (#844) No prebuild of the three binaries first. Measured on 07103c4 against f84aedd: this
+          # step went 154s -> 176s while integration-tests, unchanged, went 170s -> 192s, so nothing
+          # past runner noise. The build-lock wait it removes was not idle: cli's tests run while lib +
+          # fixture still compile, and after a prebuild they run beside the fixture (96s -> 124s).
           cargo llvm-cov --no-report --locked --lib --test backtest_fixture & a=$!
           cargo llvm-cov --no-report --locked --test cli & b=$!
           wait "$a" || gate=$?
