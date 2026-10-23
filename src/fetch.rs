@@ -8242,6 +8242,11 @@ pub async fn fetch_xetra_etfs(
 /// note: symbol->`.LS` direct map (no ISIN->Yahoo-search bridge); add the bridge fetch_xetra_etfs
 /// already has only if coverage turns out poor.
 pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> {
+    // (#845) a POST, so `get_json`'s offline guard never saw it: an offline run still asked the live
+    // venue. Returns before the diagnostic, as `fetch_six_etf_isins` does.
+    if offline() {
+        return Vec::new();
+    }
     // the table's columns, in order; index 2 (symbol) is what core::euronext_lisbon_symbols reads.
     // Raw body (not reqwest `.form()`) so the `args[...]` key keeps its literal brackets, matching the
     // request the page's JS sends.
@@ -8293,6 +8298,10 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
 /// run; one batch of 4 took 15.9s. 4 is today's page count; a longer list pays one more batch.
 #[mutants::skip]
 pub async fn fetch_euronext_etf_isins(client: &Client, urls: &Urls) -> Vec<String> {
+    // (#845) the same POST gap as `fetch_euronext_lisbon`, and the slower leg: one batch is ~16s
+    if offline() {
+        return Vec::new();
+    }
     const PAGE: usize = 1000;
     const BATCH: usize = 4;
     let mut isins: Vec<String> = Vec::new();
