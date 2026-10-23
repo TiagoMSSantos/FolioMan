@@ -3,11 +3,12 @@
 // Renovate stays off both, because two bots on one file open the same bump twice. What is left here:
 //
 // - web/engine/Cargo.lock: the page engine's own lock, which never joins folioman's (#392).
-// - the wasm-bindgen PAIR: `wasm-bindgen = "=0.2.129"` in web/engine/Cargo.toml and the CLI pin
-//   `cargo install --locked wasm-bindgen-cli --version 0.2.129` in pages.yml and ci.yml's wasm job.
+// - the wasm-bindgen PAIR: `wasm-bindgen = "=0.2.129"` in web/engine/Cargo.toml and the CLI pins,
+//   `cargo install --locked wasm-bindgen-cli --version 0.2.129` in pages.yml and (#846)
+//   `tool: wasm-bindgen@0.2.129` in ci.yml's wasm job.
 //   The CLI refuses a module built by any other version, so all of them move in ONE PR, with no rule
-//   here: both crates' source is the wasm-bindgen repo, so config:recommended's monorepo group
-//   already joins them, and the regex below finds the CLI pin in every workflow. (#589) On that PR
+//   here: every crate's source is the wasm-bindgen repo, so config:recommended's monorepo group
+//   already joins them, and the regexes below find the CLI pins in every workflow. (#589) On that PR
 //   ci.yml's wasm job builds the engine and runs the CLI. (#841) It does so on every push, and runs
 //   smoke.mjs on a test pool there too, so a pair that ranks differently reds before the merge.
 // - cargo-mutants@X.Y.Z in ci.yml and mutation-census.yml (x2): one depName, so one PR. (#354) Merge
@@ -39,9 +40,10 @@
       matchStrings: [
         "tool: (?<depName>cargo-mutants)@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
         "cargo install --locked (?<depName>wasm-bindgen-cli) --version (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "tool: (?<depName>wasm-bindgen)@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
       ],
       datasourceTemplate: "crate",
-      // Both pins install EXACTLY that version. The crate datasource's own `cargo` versioning reads a
+      // Every pin installs EXACTLY that version. The crate datasource's own `cargo` versioning reads a
       // bare 0.2.125 as the range ^0.2.125, finds 0.2.129 inside it and proposes nothing, ever.
       versioningTemplate: "semver",
     },

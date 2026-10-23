@@ -243,8 +243,13 @@ jobs:
       # one on the tied test pool, so a wasm-only drift (32-bit usize, float printing, sort order) reds
       # here before a merge instead of costing the page its upload control after one. The native side
       # runs pinned to CI's config because the engine installs exactly that.
+      # (#846) The CLI as a prebuilt binary. `cargo install` compiled it on every cold cache, 126s of
+      # (#841)'s first 296s run, which made wasm the slowest job on each Cargo.lock bump, and spent
+      # ~10s confirming it on a warm one.
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: wasm-bindgen@0.2.129   # = web/engine's pin
       - run: |
-          cargo install --locked wasm-bindgen-cli --version 0.2.129
           cargo build --locked --release --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
           wasm-bindgen --target web --out-dir "${RUNNER_TEMP}/site/engine" target/wasm32-unknown-unknown/release/folioman_engine.wasm
       - run: |
