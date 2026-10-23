@@ -1,13 +1,14 @@
 // (#392) The deploy's parity pin: the engine re-ranking universe.json with no upload must print the
 // rows `screen` printed into data.json. Usage: node web/engine/smoke.mjs _site
 // (#421) and it must rank the pool as a set: a second instance on the quotes reversed prints the same.
+// (#839) so do four more on seeded shuffles.
 import fs from "node:fs";
 import path from "node:path";
 
 const site = path.resolve(process.argv[2]);
 // --target web emits an ES module under a .js name; the copy gives node an unambiguous .mjs
-// the engine ranks once per instance, so the order leg gets its own module copy
-const glues = ["smoke-glue.mjs", "smoke-glue-rev.mjs"].map((f) => path.join(site, "engine", f));
+// the engine ranks once per instance, so each order leg gets its own module copy
+const glues = ["", "-rev", "-s1", "-s2", "-s3", "-s4"].map((f) => path.join(site, "engine", `smoke-glue${f}.mjs`));
 glues.forEach((g) => fs.copyFileSync(path.join(site, "engine", "folioman_engine.js"), g));
 try {
   const wasm = fs.readFileSync(path.join(site, "engine", "folioman_engine_bg.wasm"));
@@ -38,23 +39,36 @@ try {
   }
   const n = (k) => (want[k] || []).length;
   console.log(`engine parity in ${Date.now() - t0}ms: stocks ${n("stocks")} etfs ${n("etfs")} crypto ${n("crypto")} core ${n("core")}`);
-  const rev = await import(glues[1]);
-  rev.initSync({ module: wasm });
-  const u = JSON.parse(universe);
-  u.quotes.reverse();
-  const back = rev.screen("", JSON.stringify(u));
-  if (back !== raw) {
+  // (#839) a reversal keeps every adjacent pair adjacent, so seeded shuffles break the ties it cannot
+  let seed = 0x9e3779b9;
+  const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+  const shuffle = (a) => {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+  };
+  const arms = [["reversed", (a) => a.reverse()], ...[1, 2, 3, 4].map((n) => [`shuffle ${n}`, shuffle])];
+  let quotes = 0;
+  for (const [i, [label, order]] of arms.entries()) {
+    const leg = await import(glues[i + 1]);
+    leg.initSync({ module: wasm });
+    const u = JSON.parse(universe);
+    order(u.quotes);
+    quotes = u.quotes.length;
+    const back = leg.screen("", JSON.stringify(u));
+    if (back === raw) continue;
     // (#576) name the keys that moved, as the parity leg does: the bare line left nothing to chase
     const r = JSON.parse(back);
     const moved = Object.keys({ ...got, ...r }).filter((k) => JSON.stringify(got[k]) !== JSON.stringify(r[k]));
-    console.error("the engine's rank depends on pool order, on: " + moved.join(", "));
+    console.error(`the engine's rank depends on pool order (${label}), on: ` + moved.join(", "));
     for (const k of moved.filter((k) => Array.isArray(got[k]))) {
-      const i = got[k].findIndex((row, j) => JSON.stringify(row) !== JSON.stringify(r[k]?.[j]));
-      if (i >= 0) console.error(`  ${k}[${i}]: ${JSON.stringify(got[k][i]).slice(0, 300)}\n  reversed: ${JSON.stringify(r[k]?.[i]).slice(0, 300)}`);
+      const j = got[k].findIndex((row, x) => JSON.stringify(row) !== JSON.stringify(r[k]?.[x]));
+      if (j >= 0) console.error(`  ${k}[${j}]: ${JSON.stringify(got[k][j]).slice(0, 300)}\n  ${label}: ${JSON.stringify(r[k]?.[j]).slice(0, 300)}`);
     }
     process.exit(1);
   }
-  console.log(`order-free over ${u.quotes.length} quotes`);
+  console.log(`order-free over ${quotes} quotes, ${arms.length} orders`);
 } finally {
   glues.forEach((g) => fs.rmSync(g, { force: true }));
 }

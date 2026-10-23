@@ -884,8 +884,16 @@ fn dedup_currency_twins<'a>(
     prefer_eur: bool,
 ) -> Vec<(&'a Quote, f64)> {
     let pref = if prefer_eur { "-EUR" } else { "-USD" };
+    let mut out = Vec::new();
     let mut best: HashMap<&str, (&'a Quote, f64)> = HashMap::new();
     for (quote, s) in picks {
+        // (#839) Only a currency-quoted leg has a twin. A stock whose symbol is a coin's base (`SOL`
+        // against `SOL-USD`) shared the coin's map key, so whichever came first in the pool erased the
+        // other: the payload changed with the pool's order.
+        if !is_currency_quoted(&quote.ticker) {
+            out.push((quote, s));
+            continue;
+        }
         let base = underlying(&quote.ticker);
         let take = match best.get(base) {
             None => true,
@@ -896,7 +904,8 @@ fn dedup_currency_twins<'a>(
             best.insert(base, (quote, s));
         }
     }
-    best.into_values().collect()
+    out.extend(best.into_values());
+    out
 }
 
 /// % change at a given horizon label (e.g. "1Y") from a Quote's perf, by label not index
@@ -9401,6 +9410,16 @@ mod tests {
     let usd = dedup_currency_twins(vec![(&btc_e, 8.0), (&btc_u, 9.0)], false);
     assert_eq!(usd.len(), 1);
     assert_eq!(usd[0].0.ticker, "BTC-USD");
+    // (#839) a stock named like a coin's base is not that coin's twin, in either pool order
+    let mut sol = aapl.clone();
+    sol.ticker = "SOL".into();
+    let mut sol_u = btc_u.clone();
+    sol_u.ticker = "SOL-USD".into();
+    for pool in [vec![(&sol, 3.0), (&sol_u, 9.0)], vec![(&sol_u, 9.0), (&sol, 3.0)]] {
+        let mut kept: Vec<&str> = dedup_currency_twins(pool, true).into_iter().map(|(x, _)| x.ticker.as_str()).collect();
+        kept.sort_unstable();
+        assert_eq!(kept, ["SOL", "SOL-USD"]);
+    }
     // both arms above pass the flag literally; this is the knob `ranked` actually reads (picks.rs `dedup_
     // currency_twins(scored, tuning.prefer_eur)`) — a EUR-domiciled tool defaults to keeping the EUR leg.
     assert!(BuyHeuristic::default().prefer_eur);

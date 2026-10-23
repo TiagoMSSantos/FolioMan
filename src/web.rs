@@ -431,31 +431,80 @@ mod tests {
         assert!(vol["stocks"][0].as_array().is_some_and(|r| r.iter().all(|c| c[0] != "BUY%")), "no column, not a blank one");
     }
 
-    /// (#421) The page ranks the pool as a SET: reversed, or with a row every gate refuses appended, the
-    /// payload is byte-equal. A tie is where order leaks, so the pool carries one: five identical
-    /// winners, which rank by ticker. Before the tie-break they came out in HashMap order, a random
-    /// one of 120 per call.
-    #[test]
-    fn the_payload_is_a_function_of_the_pool_as_a_set() {
+    /// (#839) A pool saturated with ties: five more identical winners (one on bridged history), a
+    /// three-fund family on one index with one TER and the same seven holdings, a stock named like a
+    /// coin's base (`SOL` beside `SOL-USD`), and both legs of one coin.
+    fn tied() -> Vec<Quote> {
         let mut q = pool();
-        for (t, name) in [("NVD5.DE", "Epsilon"), ("NVD3.DE", "Gamma"), ("NVD2.DE", "Beta"), ("NVD4.DE", "Delta")] {
+        for (t, name) in [("NVD5.DE", "Epsilon"), ("NVD3.DE", "Gamma"), ("NVD2.DE", "Beta"), ("NVD6.DE", "Zeta"), ("NVD4.DE", "Delta")] {
             let mut twin = winner();
             (twin.ticker, twin.name) = (t.into(), format!("{name} Corp"));
+            twin.history_proxied = t == "NVD6.DE";
             q.push(twin);
         }
-        let tickers = |v: &serde_json::Value| -> Vec<String> {
-            let rows = v["stocks"].as_array().into_iter().flatten().filter_map(|r| r.as_array());
+        let holdings: Vec<String> = ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AVGO"].into_iter().map(String::from).collect();
+        for (t, name) in [("EQQC.DE", "Gamma"), ("EQQA.DE", "Alpha"), ("EQQB.DE", "Beta")] {
+            let mut fund = winner();
+            (fund.ticker, fund.name) = (t.into(), format!("{name} Nasdaq 100 UCITS ETF"));
+            fund.instrument_type = "ETF".into();
+            fund.benchmark = Some("nasdaq 100 index".into());
+            fund.expense_ratio = Some(0.2);
+            fund.top_holdings = holdings.clone();
+            q.push(fund);
+        }
+        for (t, name, kind) in [("SOL", "Sol Corp", "EQUITY"), ("ZZ-USD", "Zeta", "CRYPTOCURRENCY"), ("SOL-USD", "Solana", "CRYPTOCURRENCY"), ("ZZ-EUR", "Zeta", "CRYPTOCURRENCY")] {
+            let mut x = winner();
+            (x.ticker, x.name, x.instrument_type) = (t.into(), name.into(), kind.into());
+            x.market = core::market_of(t);
+            q.push(x);
+        }
+        q
+    }
+
+    /// The pins that put every tied group on the page whatever its gates say.
+    const TIED_PINS: &str = "tickers: [EQQA.DE, EQQB.DE, EQQC.DE, SOL-USD, ZZ-USD, ZZ-EUR]\n";
+
+    /// (#421) The page ranks the pool as a SET: reversed, shuffled, or with a row every gate refuses
+    /// appended, the payload is byte-equal. A tie is where order leaks, so the pool is [`tied`]. Before
+    /// the (#421) tie-break five tied winners came out in HashMap order, a random one of 120 per call;
+    /// before (#839) `SOL` or `SOL-USD`, whichever the pool listed first, erased the other.
+    #[test]
+    fn the_payload_is_a_function_of_the_pool_as_a_set() {
+        let mut q = tied();
+        let tickers = |v: &serde_json::Value, lane: &str| -> Vec<String> {
+            let rows = v[lane].as_array().into_iter().flatten().filter_map(|r| r.as_array());
             rows.filter_map(|r| r.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).map(String::from)).collect()
         };
-        let want = engine("", &q);
-        assert_eq!(tickers(&want), ["NVD.DE", "NVD2.DE", "NVD3.DE", "NVD4.DE", "NVD5.DE"], "an exact tie ranks by ticker");
-        let mut rev = q.clone();
-        rev.reverse();
-        assert_eq!(engine("", &rev), want, "the pool reversed");
+        let want = engine(TIED_PINS, &q);
+        let nvd: Vec<String> = tickers(&want, "stocks").into_iter().filter(|t| t.starts_with("NVD")).collect();
+        assert_eq!(nvd, ["NVD.DE", "NVD2.DE", "NVD3.DE", "NVD4.DE", "NVD5.DE", "NVD6.DE"], "an exact tie ranks by ticker");
+        // not vacuous: every tied group reached the page
+        assert!(cell(&want, "stocks", "NVD6.DE", "RANK").contains('~'), "the bridged row: {want}");
+        assert!(tickers(&want, "stocks").contains(&"SOL".to_string()), "the stock named like a coin: {want}");
+        assert!(tickers(&want, "crypto").contains(&"SOL-USD".to_string()), "the coin beside it: {want}");
+        let zz: Vec<String> = tickers(&want, "crypto").into_iter().filter(|t| t.starts_with("ZZ")).collect();
+        assert_eq!(zz, ["ZZ-EUR"], "one row per coin, the euro leg");
+        assert!(["EQQA.DE", "EQQB.DE", "EQQC.DE"].iter().all(|t| cell(&want, "etfs", t, "INDEX").contains("×3")), "the fund family: {want}");
+        let differs = |got: &serde_json::Value| -> Vec<String> {
+            let (a, b) = (want.as_object().expect("object"), got.as_object().expect("object"));
+            let keys: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).filter(|k| a.get(*k) != b.get(*k)).collect();
+            keys.into_iter().cloned().collect()
+        };
+        let mut arms = vec![("reversed".to_string(), q.iter().rev().cloned().collect::<Vec<_>>())];
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        for n in 1..=4 {
+            let mut s = q.clone();
+            for i in (1..s.len()).rev() {
+                s.swap(i, (core::next_rand(&mut seed) % (i as u64 + 1)) as usize);
+            }
+            arms.push((format!("shuffle {n}"), s));
+        }
         let mut junk = pool().remove(0);
         (junk.ticker, junk.name) = ("JUNK".into(), "Junk Corp".into());
         q.push(junk);
-        assert_eq!(engine("", &q), want, "an unpinned row every gate refuses");
+        arms.push(("an unpinned row every gate refuses".to_string(), q));
+        let bad: Vec<String> = arms.iter().map(|(arm, p)| (arm, differs(&engine(TIED_PINS, p)))).filter(|(_, k)| !k.is_empty()).map(|(arm, k)| format!("{arm}: {k:?}")).collect();
+        assert!(bad.is_empty(), "the pool's order reached the payload: {bad:?}");
     }
 
     /// (#403) "Why isn't X in?" answers from the ticker, another venue's line, or part of the name, and
