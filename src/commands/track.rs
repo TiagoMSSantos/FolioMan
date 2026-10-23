@@ -2402,7 +2402,7 @@ mod tests {
             q
         };
         let ts = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
-        let px = [0.5, 2.0, 0.9, 4.0, 0.25, 1.5]; // shares e^i / price: cap e^i only when shares TIMES price
+        let px: [f64; 6] = [0.5, 2.0, 0.9, 4.0, 0.25, 1.5]; // shares e^i / price: cap e^i only when shares TIMES price
         let mut quotes: Vec<_> = (0..6).map(|i| with(ts[i], i as f64 - px[i].ln(), Some(px[i]))).collect();
         quotes.push(with("G", 3.0, Some(0.9)));
         quotes.push(with("H", 3.0, None));
