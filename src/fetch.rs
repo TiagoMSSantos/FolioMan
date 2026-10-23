@@ -716,6 +716,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         chart.dates.drain(..head);
         chart.closes.drain(..head);
         chart.volumes.drain(..head);
+        chart.opens.drain(..head);
+        chart.highs.drain(..head);
+        chart.lows.drain(..head);
         chart.divs.retain(|(d, _)| *d >= cut);
         chart.splits.retain(|(d, _)| *d >= cut);
     }
@@ -739,6 +742,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
                     let added = dates.len() - chart.dates.len();
                     let mut volumes = vec![0.0; added]; // proxy liquidity is NOT this listing's
                     volumes.extend_from_slice(&chart.volumes);
+                    // nor are its sessions: NaN, as `parse_chart` writes a session with no print
+                    for leg in [&mut chart.opens, &mut chart.highs, &mut chart.lows] {
+                        leg.splice(..0, vec![f64::NAN; added]);
+                    }
                     (chart.dates, chart.closes, chart.volumes) = (dates, closes, volumes);
                     history_proxied = true;
                     donor_ter = bf_ter_exact(proxy); // map lookup, no request — the donor's own fee
@@ -750,6 +757,13 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             None => eprintln!("fetch: history_proxy {proxy} for {ticker} returned no chart — splice skipped"),
         }
     }
+    // One bar index across every leg; a cut or splice that skips a leg shifts its sessions by a day.
+    debug_assert!(
+        [chart.closes.len(), chart.volumes.len(), chart.opens.len(), chart.highs.len(), chart.lows.len()]
+            .iter()
+            .all(|&n| n == chart.dates.len()),
+        "{ticker}: bar legs out of step"
+    );
 
     // Live fundamentals, gated by ASSET CLASS so a column only fetches where it applies (and we don't
     // waste FMP's 250/day free budget on no-op calls): P/E + ROE for EQUITIES only, expense ratio for
@@ -17074,6 +17088,57 @@ pub(crate) mod tests {
         assert_eq!(c.dates, [day(4), day(5)], "monthly bars open their own month");
         assert_eq!(c.divs, [(day(4), 0.5)]);
         assert_eq!(c.splits, [(day(5), 2.0)], "and a 2:0 split, which would divide by nothing, is gone");
+    }
+
+    /// (#843) ...and so does every payload frozen in the fixture's long-history cache. A month or quarter
+    /// bar opens on the 1st, a year bar on 1 January, a week bar on a Monday, and a day bar on a weekday
+    /// unless the name is a coin. The last bar is exempt, because Yahoo stamps the live bar with the
+    /// quote's own time. On these 200 payloads UTC dating, the pre-(#685) code, misdates 19479 bars, and
+    /// dropping only the summer-time hour misdates 86. The floors keep a fixture swap from passing on
+    /// nothing.
+    #[test]
+    fn fixture_payloads_date_every_bar_on_the_venue_calendar() {
+        use chrono::{Datelike, Weekday};
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture/.long_history_cache.json");
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let cache: BTreeMap<String, (String, Value)> = serde_json::from_str(&raw).unwrap();
+        let (mut checked, mut bad) = (BTreeMap::<String, usize>::new(), Vec::new());
+        for (ticker, (_, j)) in &cache {
+            let Some(c) = parse_chart(j, ticker) else { continue };
+            let meta = |k: &str| j.pointer(&format!("/chart/result/0/meta/{k}")).and_then(Value::as_str).unwrap_or("").to_string();
+            let (g, coin) = (meta("dataGranularity"), meta("instrumentType") == "CRYPTOCURRENCY");
+            let n = c.dates.len();
+            if [c.closes.len(), c.volumes.len(), c.opens.len(), c.highs.len(), c.lows.len()].iter().any(|&l| l != n) {
+                bad.push(format!("{ticker}: bar legs out of step"));
+            }
+            if !c.closes.iter().all(|x| x.is_finite() && *x > 0.0) {
+                bad.push(format!("{ticker}: a close that is not a positive number"));
+            }
+            if c.dates.windows(2).any(|w| w[1] < w[0] || (w[1] == w[0] && g != "1h")) {
+                bad.push(format!("{ticker} {g}: bars out of order"));
+            }
+            if c.divs.windows(2).any(|w| w[1].0 < w[0].0) || c.splits.windows(2).any(|w| w[1].0 < w[0].0) {
+                bad.push(format!("{ticker}: events out of order"));
+            }
+            for d in &c.dates[..n.saturating_sub(1)] {
+                let on_calendar = match g.as_str() {
+                    "1mo" | "3mo" => d.day() == 1,
+                    "1y" => d.ordinal() == 1,
+                    "1wk" => d.weekday() == Weekday::Mon,
+                    "1d" => coin || d.weekday().number_from_monday() <= 5,
+                    _ => true,
+                };
+                if !on_calendar {
+                    bad.push(format!("{ticker} {g}: a bar dated {d}"));
+                }
+            }
+            *checked.entry(g).or_default() += n.saturating_sub(1);
+        }
+        assert!(bad.is_empty(), "{} bad bars, first {:?}", bad.len(), &bad[..bad.len().min(5)]);
+        for (g, floor) in [("1mo", 8000), ("1wk", 14000), ("1d", 6000)] {
+            let got = checked.get(g).copied().unwrap_or(0);
+            assert!(got >= floor, "{g}: {got} bars checked, the floor is {floor}");
+        }
     }
 
     /// (#826) Yahoo's overnight EU bar: a null close the quote's price fills, on the bar's own day only.
