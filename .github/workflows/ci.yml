@@ -64,13 +64,19 @@ permissions:
 # restore step and its goldens build. Change all of them or none.
 # (#838) Coverage carries it too, on folioman-coverage, a key no other job restores, so it moves
 # alone. Source-based coverage reads its own mapping sections, not debuginfo, so the per-file table
-# must not move. Lint, wasm, the gate and mutants have keys of their own and are unchanged. The landing
+# must not move. Lint, the gate and mutants have keys of their own and are unchanged. The landing
 # push re-keys folioman-test once, with no restore fallback across an env change, so its four jobs
 # compile dependencies cold and integration-tests saves the new key. Read the SECOND push. The
 # build job's rustc lines must say `-C debuginfo=line-tables-only` (a9d2bab says `=2`), and
 # rust-cache's "Cache Size" must fall below the ~400 MB it restores there (419620083 B). The
 # `Finished` times swing more between runs than this saves (build 41.15s on run 38933540600,
 # 18.40s on a9d2bab; integration-tests 1m 52s and 1m 17s), so one pair of them proves nothing.
+# (#841) wasm carries it as well, on folioman-wasm. Its parity step builds the native lib tests, and
+# its first run full-matched the key cut before that step existed. rust-cache saves nothing on a full
+# match, so wasm-bindgen-cli (126s) and the native dependencies (152s) compiled cold and would have
+# done so on every push until a Cargo.lock change, making wasm the slowest job at 296s against
+# coverage's 222s. The env re-keys it once, so the next run saves. It leaves the release wasm build
+# alone (dev profile only).
 # (#354) Third-party actions are pinned to a commit SHA, the tag it was cut from in the trailing
 # comment, and .github/dependabot.yml bumps them in one grouped PR a month. A moving tag runs
 # whatever its owner pushes next, and pages.yml runs rust-cache beside `pages: write` and
@@ -221,6 +227,8 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#841) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@v7
       - run: rustup target add wasm32-unknown-unknown
