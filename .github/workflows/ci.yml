@@ -62,7 +62,9 @@ permissions:
 # this file restore folioman-test and carry it as well: mutation-census.yml at job level (its
 # `[profile.mutants]` pins debug = false, so only the key moves there) and probe.yml's bless, on its
 # restore step and its goldens build. Change all of them or none.
-# Coverage, lint, wasm, the gate and mutants have keys of their own and are unchanged. The landing
+# (#838) Coverage carries it too, on folioman-coverage, a key no other job restores, so it moves
+# alone. Source-based coverage reads its own mapping sections, not debuginfo, so the per-file table
+# must not move. Lint, wasm, the gate and mutants have keys of their own and are unchanged. The landing
 # push re-keys folioman-test once, with no restore fallback across an env change, so its four jobs
 # compile dependencies cold and integration-tests saves the new key. Read the SECOND push. The
 # build job's rustc lines must say `-C debuginfo=line-tables-only` (a9d2bab says `=2`), and
@@ -336,6 +338,7 @@ jobs:
       # per-job. Measured cost to THIS number: 0.01pt of line coverage (89.13% config-less -> 89.12%
       # pinned, same tree, local, 2026-08-30). The knobs it makes live barely change which lines run.
       FOLIOMAN_CONFIG: tests/ci-settings.yaml
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#838) job level; see the note above `jobs:`
       COVERAGE_MIN: "97"   # ARMED floor (#783). Measured line coverage 97.62% on 2026-10-20 at 7109cb8, read off CI's own log (run 39427856931, job 118644849900, the "TOTAL" line: regions 97.21, functions 96.25, lines 97.62), not a local run. 97 by the rule below: 97.62 sits 0.62 above the integer, outside the ~0.2 band. PREVIOUS: 96 (#759) on 97.19% at 0b35f64 (run 39402624302) on 2026-10-20; it read 97.22% at 287e515 just before the push, and the 0.40 points between that and this are the (#780)-(#782) host seams: the Binance and Trading212 `_at` twins and `Urls.yahoo_query2`, each tested against a loopback stub. Before that: 94 (#427) on 94.42% at 06d0fa4 (run 37109845594) on 2026-10-03; it read 94.06% at c884334 before the push, and the 3.13 points between that and this are the (#759) coverage push: tests only, no production seam, plus five new fixture goldens. Before that: 93 (#365) on 93.94% at 10b9c49 (run 36254293261) on 2026-09-26; the 0.48 points between them are the tests that landed between those two commits. Before that: 92 (#363) on 92.68% at a870cd3 (run 36250536481) the same day; the 1.26 points between them are the (#364) fund-lane golden, the first test to run `backtest ... fund`. Before that: 91 (#356) on 91.51% at e75ed2b (run 36231193580) the same day; the 1.17 points between them are the (#358)/(#359) census tests, which could have vanished without a red. Before that: 88, set on a LOCAL reading of 89.12% (2026-08-30, 1fdd47a plus (#171)); by 2026-09-26 the real number was 91.51, so 3.5 points of slack had accumulated in four weeks: tests that could vanish without a red. Before that: 87 on 87.15% (2026-08-16, 352f496, run 31934809294). Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line off this job's LOG (the step prints it) or its step summary.
       # The measurement's COMMIT is recorded above because its age is what makes it wrong. The 80 this
       # replaced was set against 83.90% at 5c923ae and read as "3.9 points of slack", but twelve commits
@@ -391,9 +394,12 @@ jobs:
           # `cargo llvm-cov` call ran the lib, cli and fixture binaries one after another. Splitting cli
           # off overlaps it with the lib + fixture run. `--no-report` runs skip the cleanup a full run
           # does, so neither deletes the other's profiles (the tool refuses `--no-clean` beside it).
-          # The explicit `clean --workspace` first does what the one-shot run did implicitly. Their scratch roots are disjoint: the lib uses
-          # target/lib-test-data, and cli and fixture cases use distinct names under CARGO_TARGET_TMPDIR.
-          # Keep it only if the per-file table matches the one-shot run's exactly.
+          # The explicit `clean --workspace` first does what the one-shot run did implicitly. Their scratch
+          # roots are disjoint: the lib uses target/lib-test-data, and cli and fixture cases use distinct
+          # names under CARGO_TARGET_TMPDIR. PROVEN on 7d97dd1 (run 39928990392): step 266s against the
+          # one-shot's 308s, job 292s against 325s (run 39847215103). Lines and functions match in every
+          # file. Four regions moved, all on screen.rs's intraday `closed(market, Utc::now())` arm,
+          # which reads the run's clock: compare the table on that line knowing it can flip.
           cargo llvm-cov clean --workspace
           cargo llvm-cov --no-report --locked --lib --test backtest_fixture & a=$!
           cargo llvm-cov --no-report --locked --test cli & b=$!
