@@ -7673,6 +7673,8 @@ mod tests {
         assert_eq!(g(&nvda), Some(26.0), "2021 -> 2024, exactly 3y (1095 days): x2 over 3y");
         assert_eq!(g(&[at(2019, None), at(2022, Some(10.0)), now.clone()]), None, "2y is too short to stand in");
         assert_eq!(g(&[at(2019, Some(-5.0)), at(2021, Some(10.0)), now.clone()]), None, "a burn is a figure, no stand-in");
+        let first_filing = FundRow { filed: NaiveDate::from_ymd_opt(2019, 1, 15).unwrap(), ..at(2019, Some(1.0)) };
+        assert_eq!(g(&[first_filing, at(2019, None), now.clone()]), None, "the refiled year's own first filing never stands in");
         // (#505) no row 5y back at all: the oldest row 2+ years back, over its span; the scored rates stay None
         let short = |rows: &[FundRow]| {
             let f = fund_factors(rows, cutoff, 5);
@@ -8181,6 +8183,7 @@ mod tests {
         assert_eq!(k("PROCTER & GAMBLE COMPANY, THE"), "PROCTER GAMBLE");
         assert_eq!(k("Procter and Gamble Co"), "PROCTER GAMBLE");
         assert_eq!(k("MCDONALD'S CORPORATION (MCDONALD'S)"), "MCDONALDS");
+        assert_eq!(k("ACME (DE) WIDGETS INC"), "ACME WIDGETS", "a mid-name parenthetical closes");
         assert_eq!(k("AMAZON.COM, INC."), "AMAZONCOM");
         assert_eq!(k("BEAZER HOMES USA INC POLITICAL ACTION COMMITT"), "BEAZER HOMES USA");
         assert_eq!(k("ELI LILLY AND COMPANY EMPLOYEES PAC"), "ELI LILLY");
@@ -10935,7 +10938,8 @@ mod tests {
         assert_eq!(fund_factors(&rows, ymd(2026, 7, 23), 5).debt, Some(0.0), "(#703) a debt-free filer, not an unknown");
         assert_eq!(fund_factors(&rows, ymd(2026, 7, 23), 5).cash_ttm, Some(cash.clone()));
         assert_eq!(capex_ocf(&cash).round(), 71.0);
-        assert_eq!(capex_ocf(&CashTtm { ocf: 0.0, ..cash }), f64::INFINITY, "no cash in: an infinite share");
+        assert_eq!(capex_ocf(&CashTtm { ocf: 0.0, ..cash.clone() }), f64::INFINITY, "no cash in: an infinite share");
+        assert_eq!(capex_ocf(&CashTtm { ocf: 0.0, capex: 0.0, ..cash }), f64::INFINITY, "nothing in or out: still infinite, never 0/0");
     }
 
     /// (#784) `rows_at` serves a row's strict twin while its late line is unfiled at the cutoff, and the

@@ -12064,6 +12064,7 @@ pub(crate) mod tests {
             "PaymentsForCapitalImprovements": line(10.0),
         }}})).remove(0);
         assert_eq!((r.interest_cover, r.sbc_margin, r.fcf_margin), (Some(5.0), Some(2.0), Some(20.0)));
+        assert_eq!(r.cash_ttm.map(|c| (c.ocf, c.capex)), Some((30.0, 10.0)), "(#545) a non-bank row carries its TTM");
     }
 
     /// (#703) A REIT or homebuilder tags neither EBIT line (WELL, NVR): profit plus its income tax plus
@@ -12552,6 +12553,21 @@ pub(crate) mod tests {
             .unwrap()
             .push(fact("2026-01-01", "2026-09-30", "10-Q", "2026-10-28", 130.0));
         assert_eq!(got(&lone), got(&facts(true)));
+        // a span's earliest filing wins, before or after a later comparative in the list
+        let mut restated = facts(true);
+        let o = restated["NetCashProvidedByUsedInOperatingActivities"]["units"]["USD"].as_array_mut().unwrap();
+        o.insert(0, fact("2025-01-01", "2025-12-31", "10-K", "2027-02-03", 170.0));
+        o.push(fact("2025-01-01", "2025-06-30", "10-Q", "2026-07-23", 70.0));
+        assert_eq!(got(&restated), got(&facts(true)), "a later comparative never restates the span");
+        // the year-ago span ends a year before, so Q1 2025 is never it
+        let mut q1 = facts(true);
+        for (tag, v) in [("NetCashProvidedByUsedInOperatingActivities", 30.0), ("PaymentsToAcquirePropertyPlantAndEquipment", 20.0)] {
+            q1[tag]["units"]["USD"].as_array_mut().unwrap().push(fact("2025-01-01", "2025-03-31", "10-Q", "2025-04-24", v));
+        }
+        assert_eq!(got(&q1), got(&facts(true)), "the first span of the year is not the year-ago one");
+        // a 52-week year: the next year-to-date starts up to a week after the day after the fiscal year end
+        let week: Value = serde_json::from_str(&facts(true).to_string().replace("2026-01-01", "2026-01-07")).unwrap();
+        assert_eq!(got(&week), got(&facts(true)), "a YTD starting a week late still counts");
         assert!(cash_ttm(&facts(true), &US_GAAP_TAGS, "USD", day("2024-12-31")).is_none(), "no fiscal year at that end");
     }
 
@@ -12895,6 +12911,11 @@ pub(crate) mod tests {
         assert_eq!(profile_of(&Value::Null, &Value::Null, &Value::Null, None), core::Profile::default());
         let sector = |v: &str| profile_of(&serde_json::json!({"data": {"Sector": {"value": v}}}), &Value::Null, &Value::Null, None).sector;
         assert_eq!((sector("Industrials").as_deref(), sector(" ")), (Some("Industrials"), None), "(#481) blank reads None");
+        let zero = |t: f64, c: &str| {
+            let close = serde_json::json!({"data": {"summaryData": {"PreviousClose": {"value": c}}}});
+            profile_of(&Value::Null, &serde_json::json!({"data": {"consensusOverview": {"priceTarget": t}}}), &close, None).target_pct
+        };
+        assert_eq!((zero(110.0, "$0.00"), zero(0.0, "$100")), (None, None), "a zero close or target is no target");
     }
 
     /// (#542) `trim_about`: a short text whole, a long one at its last sentence end inside 300 chars
@@ -12969,7 +12990,7 @@ pub(crate) mod tests {
         seed_cik_map(); // `us_symbol` reads EU_TO_US, which only the seed may fill
         let (base, client, requests) = routed_stub(vec![
             ("/finra", r#"[{"symbolCode": "ZZPB", "settlementDate": "2026-09-30", "currentShortPositionQuantity": 1234}]"#),
-            ("/ZZP.B/profile", r#"{"data": {"CompanyUrl": {"value": "http://zzp.example"}, "Sector": {"value": "Industrials"}}}"#),
+            ("/ZZP.B/profile", r#"{"data": {"CompanyUrl": {"value": "http://zzp.example"}, "Sector": {"value": "Industrials"}, "CompanyDescription": {"value": "Zz makes parts."}}}"#),
             ("/ZZP.B/target", r#"{"data": {"consensusOverview": {"priceTarget": 110, "buy": 3, "hold": 1, "sell": 0}}}"#),
             ("/ZZP.B/summary", r#"{"data": {"summaryData": {"PreviousClose": {"value": "$100.00"}}}}"#),
             ("/ZZPRC/profile", r#"{"data": {"CompanyUrl": {"value": "https://c.example"}}}"#),
@@ -13002,6 +13023,7 @@ pub(crate) mod tests {
         let p = &quotes[0].profile;
         assert_eq!((p.site.as_deref(), p.short_shares, p.analysts, p.sector.as_deref()), (Some("https://zzp.example"), Some(1234.0), Some(4), Some("Industrials")));
         assert!(p.target_pct.is_some_and(|t| (t - 10.0).abs() < 1e-9), "{:?}", p.target_pct);
+        assert_eq!(p.about.as_deref(), Some("Zz makes parts."), "(#542) the description is carried too");
         assert_eq!(quotes[1].profile, fresh, "a fresh row is served");
         assert_eq!((quotes[2].profile.site.as_deref(), quotes[2].profile.target_pct), (Some("https://c.example"), None));
         assert_eq!((&quotes[3].profile, &quotes[4].profile), (&core::Profile::default(), &core::Profile::default()), "not a target, not a stock");
@@ -13913,6 +13935,9 @@ pub(crate) mod tests {
         got.sort();
         assert_eq!(got, ["A", "E", "G"]);
         assert!(brk_bought_cusips(&brk_fold(vec![f("2025-03-31", "2025-05-15", "", &[("A", 1)])])).is_empty(), "a baseline alone buys nothing");
+        let v = |amend: &str, n: u64, v: u64| -> Brk13f { ("2025-03-31".into(), "2025-05-15".into(), amend.into(), HashMap::from([("A".to_string(), (n, v))])) };
+        assert_eq!(brk_fold(vec![v("NEW HOLDINGS", 10, 300), v("", 50, 900)])["2025-03-31"]["A"], (60, 1200), "an /A adds shares and value");
+        assert_eq!((BRK_LIST_TTL.as_secs(), BRK_FORM4_TTL.as_secs()), (604_800, 86_400), "a week, a day");
     }
 
     /// (#440) A CUSIP bought twice keeps its NEWER buy and that transition's share counts; a new position
@@ -14254,6 +14279,8 @@ pub(crate) mod tests {
         assert!(!attn_broken(&series(&[10.0; 3])), "exactly a tenth is not under it");
         assert!(!attn_broken(&[vec![0.0; 12], vec![50.0; 3]].concat()), "no readers before is no base");
         assert!(attn_broken(&[series(&[1001.0; 3]), vec![1001.0; 3]].concat()), "a break mid-series counts");
+        assert!(attn_broken(&[series(&[2000.0; 4]), vec![100.0; 10]].concat()), "the next six months only, not the whole tail");
+        assert!(attn_broken(&[vec![100.0; 16], vec![30.0; 8], vec![900.0; 6]].concat()), "the twelve months before only");
     }
 
     /// (#438) The signal: the median of the twelve year-on-year ratios, or nothing.
@@ -14667,6 +14694,8 @@ pub(crate) mod tests {
         );
         assert_eq!((got[0].name.as_str(), got[0].day.as_str()), ("Lyft, Inc.", "2026-10-07"));
         assert!(app_climbs(&history, today.succ_opt().unwrap(), &quotes).is_empty(), "no ranks for today");
+        history.remove("2026-09-29");
+        assert_eq!(app_climbs(&history, today, &quotes).len(), 4, "the 7th day back alone warms it");
         history.retain(|d, _| d.as_str() > "2026-09-30");
         assert!(app_climbs(&history, today, &quotes).is_empty(), "warming up");
     }
@@ -14753,6 +14782,9 @@ pub(crate) mod tests {
         assert_eq!(quotes.clone().map(|q| q.super_buyers), [10, 0, 0, 0]);
         assert_eq!(quotes.map(|q| (q.social, q.social_tip)), [(true, false), (true, true), (true, true), (false, false)]);
         assert_eq!(SUP_STAKE_TTL.as_secs(), 86_400);
+        let two = ("2026-Q2".to_string(), [("AAA", 2), ("BBB", 5)].map(|(t, n)| (t.to_string(), t.to_string(), n)).to_vec());
+        let order: Vec<String> = soc_merge(&[], &[], &two, &[], &[], &HashMap::new(), &[]).into_iter().map(|r| r.ticker).collect();
+        assert_eq!(order, ["BBB", "AAA"], "more buyers first, whatever the listing order");
     }
 
     #[test]
@@ -14811,6 +14843,9 @@ pub(crate) mod tests {
         assert_eq!(quotes.clone().map(|q| q.super_buyers), [0, 0, 0, 9, 14, 0]);
         // (#536) Benzinga's buzz alone is a tip
         assert_eq!(quotes.map(|q| q.social_tip), [true, false, false, true, false, true]);
+        let mut hn = [q("HN", "EQUITY", false)];
+        stamp_social(&mut hn, &[SocRow { ticker: "HN".into(), hn: 1, ..Default::default() }]);
+        assert!(hn[0].social_tip, "a Hacker News story alone is a tip");
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
@@ -15854,7 +15889,8 @@ pub(crate) mod tests {
             filed: filed.into(),
             period_end: period_end.into(),
             financial: true,
-            cash_ttm: None,
+            // (#545) its own values, read back below
+            cash_ttm: Some(core::CashTtm { end: NaiveDate::from_ymd_opt(2021, 9, 30).unwrap(), filed: NaiveDate::from_ymd_opt(2021, 11, 1).unwrap(), ocf: 21.0, capex: 7.0, q_ocf: Some(6.0), q_capex: Some(2.0) }),
             revenue: Some(1000.0),
             gross_margin: Some(40.0),
             op_margin: Some(20.0),
@@ -15933,6 +15969,7 @@ pub(crate) mod tests {
         assert_eq!(got[0].net_debt, Some(-100.0), "a NEGATIVE net debt is net cash, not a missing value");
         assert_eq!(got[0].debt, Some(400.0), "(#703) INT-COV's no-debt label reads it");
         assert_eq!((got[0].rnd_margin, got[0].payout_margin), (Some(8.0), Some(-6.0))); // (#410)
+        assert_eq!(got[0].cash_ttm.as_ref().map(|c| (c.ocf, c.capex, c.q_ocf)), Some((21.0, 7.0, Some(6.0))), "(#545) the TTM cash line too");
         let g = &got[0];
         assert_eq!(
             [g.rec_margin, g.sga_margin, g.sbc_margin, g.ocf_margin, g.gw_assets, g.soft_assets, g.dep_rate, g.lev],
@@ -17566,9 +17603,10 @@ pub(crate) mod tests {
             row("Q6", "Q661834", ""),
             row("Q7", "Q2385849", "Ä1"),
             row("Q8", "Q1019983", "NOVO B"),
+            row("Q9", "Q151139", "DB1"),
         ]}});
         let got: Vec<String> = wikidata_pond(&v).into_iter().map(|(s, sector)| format!("{s} {sector}")).collect();
-        assert_eq!(got, ["P911.DE other", "VOLV-B.ST other", "BT-A.L other", "NOVO-B.CO other"]);
+        assert_eq!(got, ["P911.DE other", "VOLV-B.ST other", "BT-A.L other", "NOVO-B.CO other", "DB1.DE other"], "DB1 has letters and a digit but is no ISIN");
         let q = wikidata_query(NaiveDate::from_ymd_opt(2021, 10, 7).unwrap());
         assert!(q.contains("wd:Q151139 wd:Q171240") && q.contains("wd:Q1019983 }"), "{q}");
         assert!(q.contains("FILTER(?start >= \"2021-10-07T00:00:00Z\"^^xsd:dateTime)"), "{q}");
@@ -17732,6 +17770,9 @@ pub(crate) mod tests {
         assert!(s1_priced(&sub(&["424B4", "S-1"], serde_json::json!([]))));
         assert!(s1_priced(&sub(&["S-1"], serde_json::json!(["Nasdaq"]))));
         assert_eq!(s1_doc(&sub(&["DRS", "DRS/A"], serde_json::json!([]))), None, "a confidential draft is no public filing");
+        let mut blank = sub(&["S-1"], serde_json::json!([]));
+        blank["filings"]["recent"]["primaryDocument"][0] = "".into();
+        assert_eq!(s1_doc(&blank), None, "an accession without its document has nothing to read");
     }
 
     /// (#524) EDGAR full-text hits: the first filer whose name starts like the watch row's.
@@ -17795,6 +17836,7 @@ pub(crate) mod tests {
         assert_eq!(usd_cell(-0.5e6), "-$500K");
         assert_eq!(usd_cell(12e3), "$12K");
         assert_eq!(usd_cell(1e6), "$1.0M");
+        assert_eq!(usd_cell(0.0), "$0K", "zero carries no minus");
         assert_eq!(["P/S@MID", "P/E@MID", "INTERIM", "GROSS%", "LEADS", "INDUSTRY"].map(|h| cell(0, h)), ["97.0x", "loss", "—", "n/a", "n/a", "n/a"]);
     }
 
@@ -17825,7 +17867,7 @@ pub(crate) mod tests {
         turn.figs.i_rev = Some([20e6, 10e6]);
         turn.figs.i_net = Some([3e6, -1e6]);
         let deals = vec![
-            deal("upcoming", "Bare", "2026-10-01", None, None),
+            deal("upcoming", "Bare", "2026-10-04", None, None),
             deal("upcoming", "Big loss", "2026-10-02", Some(500e6), Some(-50e6)),
             deal("upcoming", "Zero rev", "2026-10-03", Some(0.0), Some(9e6)),
             deal("filed", "Small loss", "2026-08-01", Some(30e6), Some(-5e6)),
@@ -17836,9 +17878,14 @@ pub(crate) mod tests {
         ];
         let rows = ipo_web_rows(deals);
         let col = |h: &str| rows.as_array().unwrap().iter().map(|r| r.as_array().unwrap().iter().find(|c| c[0] == h).unwrap()[1].as_str().unwrap().to_string()).collect::<Vec<_>>();
-        assert_eq!(col("NAME"), ["Small profit", "Turn", "Big loss", "Even", "Small loss", "Bare", "Zero rev", "Later bare"]);
+        assert_eq!(col("NAME"), ["Small profit", "Turn", "Big loss", "Even", "Small loss", "Zero rev", "Bare", "Later bare"], "calendar order by day, not by name");
         assert_eq!(col("RANK"), ["1", "2", "3", "4", "5", "6", "7", "8"]);
-        assert_eq!(col("NET%")[6], "n/a", "zero revenue has no margin to read");
+        assert_eq!(col("NET%")[5], "n/a", "zero revenue has no margin to read");
+        let mut even = deal("filed", "Even", "2026-08-02", Some(200e6), Some(0.0));
+        (even.range, even.shares, even.figs.rev_prior) = ("10-12".into(), Some(1e6), Some(0.0));
+        let even = ipo_web_rows(vec![even]);
+        let cell = |h: &str| even[0].as_array().unwrap().iter().find(|c| c[0] == h).unwrap()[1].as_str().unwrap().to_string();
+        assert_eq!(["REV-YoY", "P/E@MID"].map(cell), ["n/a", "loss"], "a zero base has no growth, and break-even no P/E");
     }
 
     /// (#527) Oura's S-1/A (2026-09-21), trimmed: fiscal year to September, nine-month interim first.
@@ -17937,6 +17984,10 @@ pub(crate) mod tests {
         assert_eq!(s1_figures(spacex).interim.as_deref(), Some("3M 2026"));
         assert_eq!(r(s1_figures(spacex)), (Some(2025), [Some(18_674e6), Some(14_015e6), Some(-4_937e6), Some(15_852e6), Some(102_094e6), Some(60_512e6), Some(34_533e6)]));
         assert_eq!(s1_figures(&trex.replace("(in thousands)", "")), S1Figs::default(), "no units mark: no scale is guessed");
+        let far = format!("Summary financial data {} {trex}", "x ".repeat(8000));
+        assert_eq!(s1_figures(&far), s1_figures(trex), "a units mark over 8000 characters on belongs to a later mention");
+        let annual = "Summary financial data (in thousands) Year ended December 31, 2025 2024 Product revenue 60 50 Total revenue 100 80 Net loss (5) (4)";
+        assert_eq!(s1_figures(annual).rev, Some(100e3), "annual columns only, and the total revenue row beats a product line");
     }
 
     /// (#524) The three prospectuses the fixtures above were cut from, read whole. Ignored: they are

@@ -810,6 +810,7 @@ pub(crate) mod tests {
         assert_eq!(head_skip(&[n, c, coin, n, n, n, n, n, c]), [0, 2, 3, 4, 5, 6, 1, 7, 8]);
         assert_eq!(head_skip(&[c, c, n, n]), [2, 3, 0, 1]);
         assert_eq!(head_skip(&[n, n, n, n, n, c]), [0, 1, 2, 3, 4, 5]);
+        assert_eq!(head_skip(&[n, n, n, n, n, c, n]), [0, 1, 2, 3, 4, 5, 6], "a full head parks nothing");
     }
 
     /// (#495) `head_skip_commodity` in the funded book: an Energy name scored 2nd is bought at the tail share, rank 6.

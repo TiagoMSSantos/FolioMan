@@ -10673,7 +10673,7 @@ mod tests {
             vec![a, b]
         };
         let build = |failed_rels: [f64; 4]| -> Vec<Sample> {
-            let kept = ["K1", "K2", "K3", "K4"].iter().flat_map(|t| pair(t, false, 0.0));
+            let kept = ["K1", "K2", "K3", "K4"].iter().flat_map(|t| pair(t, false, 2.0));
             let failed = ["F1", "F2", "F3", "F4"]
                 .iter().zip(failed_rels).flat_map(|(t, r)| pair(t, true, r));
             kept.chain(failed).collect()
@@ -10681,6 +10681,8 @@ mod tests {
         // every newly-failed name underperformed the holders -> both stats agree -> real sell signal
         let (gap, gap_med) = exit_probe(&build([-10.0, -12.0, -14.0, -16.0]), scorer, &BuyHeuristic::default()).unwrap();
         assert!(gap < 0.0 && gap_med < 0.0, "unanimous underperformance -> both stats negative");
+        // both gaps are failed minus kept: mean and median -13 against the holders' 2
+        assert_eq!((gap, gap_med), (-15.0, -15.0));
         // THE TRAP: three of the four newly-failed names recovered; one collapsed hard enough to drag
         // the MEAN negative on its own. Mean-only, this prints "SELL". The median says hold.
         let (gap, gap_med) = exit_probe(&build([5.0, 6.0, 7.0, -900.0]), scorer, &BuyHeuristic::default()).unwrap();
@@ -10691,6 +10693,8 @@ mod tests {
         assert!(exit_probe(&build([-1.0; 4])[..6], scorer, &BuyHeuristic::default()).is_none());
         // (#340) BOTH sides need four: four kept against three newly-failed is still no claim.
         assert!(exit_probe(&build([-1.0; 4])[..14], scorer, &BuyHeuristic::default()).is_none());
+        // and three kept against four newly-failed
+        assert!(exit_probe(&build([-1.0; 4])[2..], scorer, &BuyHeuristic::default()).is_none());
     }
 
     /// (#820) `fresh_entries` keeps only fail->pass pairs: pass->pass is `exit_cohorts`'s kept,

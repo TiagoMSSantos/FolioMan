@@ -4563,7 +4563,7 @@ mod tests {
             HashMap::from([("A.L".into(), hold([0.2, 0.1, 0.1, 0.05, 0.05])), ("B.L".into(), hold([0.3, 0.1, 0.1, 0.1, 0.1]))]);
         let sectors = |v: &[(&str, f64)]| -> fetch::FundMix { (v.iter().map(|(s, w)| (s.to_string(), *w)).collect(), None, None, None) };
         let mix: HashMap<String, fetch::FundMix> = HashMap::from([
-            ("A.L".into(), sectors(&[("Technology", 0.6), ("Healthcare", 0.4)])),
+            ("A.L".into(), sectors(&[("Technology", 0.3), ("Healthcare", 0.2)])), // shares of the fund's own total, 0.5
             ("B.L".into(), sectors(&[("Technology", 1.0), ("Utilities", 0.0)])),
         ]);
         let home = |t: &str| t.trim_end_matches(".DE").to_string();

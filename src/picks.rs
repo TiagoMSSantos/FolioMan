@@ -8347,6 +8347,7 @@ mod tests {
         let fair = (cc("fair", &st, 0.0, None, ""), cc("mos", &st, 0.0, None, ""), cc("fair_cap", &st, 0.0, None, ""));
         assert_eq!(fair, ("€64.10ᵇ".to_string(), "+28%ᵇ".to_string(), "€51.3Bᵇ".to_string()), "0.1 × (1 − 2.5/15) ÷ 6.5% = 1.282 × €50");
         assert_eq!(stock_fair_ratio(&st), bank_fair_ratio(&st));
+        assert_eq!(bank_fair_ratio(&Quote { pe_ratio: Some(0.0), ..st.clone() }), None, "a zero P/E is no earnings");
         st.sector = Some("Real Estate".into());
         assert_eq!((cc("fair", &st, 0.0, None, ""), stock_fair_ratio(&st)), ("burn".to_string(), None), "(#710) a REIT's FAIR reads its own cash flow, not its book");
         // (#715) ...its FFO once filed, marked ᶠ, IMPL-G on the same base; a utility its net income, marked ⁿ
@@ -9618,6 +9619,7 @@ mod tests {
     assert_eq!(core::max_drawdown_pct(&[1857.5, 30.7, 2089.5, 2012.0]), (2089.5 - 2012.0) / 2089.5 * 100.0);
     assert_eq!(core::max_drawdown_pct(&[2735.0, 556677.0, 2724.5]), (2735.0 - 2724.5) / 2735.0 * 100.0);
     assert_eq!(core::max_drawdown_pct(&[100.0, 10.0, 100.0]), 90.0);
+    assert_eq!(core::max_drawdown_pct(&[10.0, 1.0, 20.0]), 90.0); // exactly 10x under the LEFT neighbour
     assert_eq!(core::max_drawdown_pct(&[1.0, 10.0, 1.0]), 90.0);
     assert_eq!(core::max_drawdown_pct(&[100.0, 5.0, 5.0, 100.0]), 95.0);
     assert_eq!(core::max_drawdown_pct(&[100.0, 5.0]), 95.0);
@@ -13076,6 +13078,10 @@ mod tests {
         let mut coin = gate_fixture();
         (coin.ticker, coin.perf) = ("ZZZ-USD".into(), legs(&[("1M", 2.0), ("1Y", 900.0), ("5Y", 200.0)]));
         quotes.push(coin);
+        // a stock with no turnover is refused before any gate, so the gates-off score has it too
+        let mut dark = gate_fixture();
+        (dark.ticker, dark.avg_turnover_eur, dark.perf) = ("YYY".into(), None, legs(&[("1M", 2.0), ("1Y", 900.0), ("5Y", 200.0)]));
+        quotes.push(dark);
         let got: Vec<&str> = momentum_order(&quotes, &t).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, ["CCC", "AAA", "BBB"]);
     }
@@ -13521,6 +13527,7 @@ mod tests {
         let cell = |q: &Quote| col_cell("capex", q, 0.0, None, "", &t, &FundPeMap::new());
         assert_eq!(cell(&q), "71%");
         assert_eq!(cell(&with(Some(cash(0.0, 1.0)))), "burn");
+        assert!(capex_tip(&with(Some(cash(0.0, 1.0)))).is_some_and(|t| t.contains("(burn)")), "the hover reads burn too");
         assert_eq!(cell(&with(None)), "n/a");
         let mut bank = q.clone();
         if let Some(f) = bank.fund.as_mut() {
@@ -15989,6 +15996,9 @@ mod tests {
         // a zero 3y median is no base: n/a, as the SEC path (`fair_on` refuses base <= 0)
         let zero = rows(&[("2025-12-31", 8000.0), ("2024-12-31", 0.0), ("2023-12-31", 0.0), ("2020-12-31", 4000.0)]);
         assert_eq!(ep_fair_ratio(&zero, 1e5), None);
+        // a zero FCF at either end is no rate and no base
+        assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", 8000.0), ("2020-12-31", 0.0), ("2024-12-31", 4000.0), ("2023-12-31", 4000.0)]), 1e5), None);
+        assert_eq!(ep_fair_ratio(&rows(&[("2025-12-31", 0.0), ("2024-12-31", 4000.0), ("2023-12-31", 4000.0), ("2020-12-31", 4000.0)]), 1e5), None);
         assert_eq!(ep_fair_ratio(&[], 1e5), None);
     }
 
@@ -16229,5 +16239,13 @@ mod tests {
         let ((class, ..), cell, _) = rank_key(Some(&stock(true)), &d, &[]);
         let (_, want, _) = rank_key(Some(&hand), &d, &[]);
         assert_eq!((class, cell), (1, format!("{want}ⁱ")));
+        // no since-listing change served: the lifetime CAGR compounded over the age stands in
+        let life = |q: &mut Quote| (q.young_ret_pct, q.life_cagr, q.age_years) = (None, Some(20.0), Some(0.7));
+        let (mut new, mut hand) = (stock(true), stock(false));
+        (life(&mut new), life(&mut hand));
+        hand.perf = legs(&[("1Y", ((1.0 + 20.0_f64 / 100.0).powf(0.7) - 1.0) * 100.0)]);
+        let (_, cell, _) = rank_key(Some(&new), &d, &[]);
+        let (_, want, _) = rank_key(Some(&hand), &d, &[]);
+        assert_eq!(cell, format!("{want}ⁱ"));
     }
 }
