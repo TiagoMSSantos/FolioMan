@@ -1,6 +1,6 @@
 //! FROZEN-DATA BACKTEST PIN — the deterministic half of "did this change break the backtest".
 //!
-//! The nightly gate (`tests/network.rs::backtest_edge_holds`) grades REGIME: does the edge still hold
+//! The CI gate (`tests/network.rs::backtest_edge_holds`) grades REGIME: does the edge still hold
 //! on today's market. It cannot grade CODE, because a live run has no way to tell a scoring regression
 //! from a bad quarter — which is why its thresholds are `> 0` and why an edge falling +117 -> +3 passes
 //! it green. This file is the other half: same code, frozen market. Every number the report prints is
@@ -328,7 +328,7 @@ fn report_at_env(cfg: &Path, args: &[&str], threads: Option<&str>, envs: &[(&str
     ))
 }
 
-/// 12 is >= 8, so this takes the MONTHLY path — the same branch the wide nightly gate uses
+/// 12 is >= 8, so this takes the MONTHLY path — the same branch the wide CI gate uses
 /// (`monthly = long || years >= 8`) and the one with decades of bars.
 #[test]
 fn backtest_report_is_pinned_on_frozen_data() {
@@ -850,7 +850,7 @@ fn gate_markers_are_all_in_the_golden() {
     assert!(
         missing.is_empty(),
         "tests/network.rs greps the backtest report for these strings and {missing:?} no longer \
-         appear in {}. The nightly gate's reaction to a missing marker is to SKIP, which is GREEN — \
+         appear in {}. The CI gate's reaction to a missing marker is to SKIP, which is GREEN — \
          so this rename would have disarmed the gate silently. Either restore the report wording, or \
          update backtest::markers AND re-bless the goldens in the same commit.",
         golden_path.display()

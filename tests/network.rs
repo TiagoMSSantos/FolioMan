@@ -18,7 +18,7 @@
 //! holds on today's market. It now runs under the same skip-when-you-can't contract as everything else:
 //! release profile + a warm `.long_history_cache.json` and it runs (~127s, almost no network); debug or
 //! cold and it prints why and skips green. `FOLIOMAN_BACKTEST_GATE=1` FORCES it past both guards — that
-//! is how the nightly job runs it on a runner, which is always debug-cold-cache territory:
+//! is how ci.yml's `backtest-gate` job runs it on every push, and a runner is always debug and cold:
 //!
 //!     FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --nocapture
 //!
@@ -1050,7 +1050,7 @@ fn backtest_edge_holds() {
         // ticker count, no GROWTH section and under 20 scored windows all return false and stay green even forced,
         // so four of them in a row land here and this assert is all that reds them. Printing a note and
         // exiting 0 is the failure this file's own header blames for network-smoke silently rotting
-        // twice: a month of throttling and the nightly gate stops gating with a green check mark.
+        // twice: a month of throttling and the CI gate stops gating with a green check mark.
         assert!(
             !forced,
             "backtest-gate: all 4 legs skipped under FOLIOMAN_BACKTEST_GATE — NOTHING was gated. The \

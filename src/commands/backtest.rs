@@ -730,7 +730,7 @@ const STRESS_TICKERS: &[&str] = &[
 /// repo exercised it. The mutation audit made that concrete — the arms recognising `universe`, `long`,
 /// `fund` and `insider` could each be turned off and every golden stayed green, because the frozen-data
 /// pins only ever pass `12`, `20`, `8`, `tune`, `halflife` and `stress`. Silently losing `universe` is
-/// the expensive one: the nightly gate's whole job is the WIDE run, and `wide` also gates the verdict
+/// the expensive one: the CI gate's whole job is the WIDE run, and `wide` also gates the verdict
 /// journal the screen footer cites.
 #[derive(Debug, Default, PartialEq)]
 struct Args {
@@ -855,7 +855,7 @@ fn too_few_samples(n: usize) -> bool {
 /// Does this run get to overwrite `.backtest_verdict.json`, which the screen's method footer quotes?
 ///
 /// Both halves survived the audit and both are real. `&&`->`||` lets a plain watchlist run
-/// (`backtest 12 AAPL`) publish a verdict over the nightly wide one. `>=`->`<` inverts the floor, so
+/// (`backtest 12 AAPL`) publish a verdict over the gate's wide one. `>=`->`<` inverts the floor, so
 /// the ONLY runs that publish are the thin ones the floor exists to reject — a Yahoo-throttled wide
 /// run resolving a few hundred names instead of ~4900 is indistinguishable from a healthy one in the
 /// file, and the footer goes on citing it for days.
@@ -8948,8 +8948,8 @@ mod tests {
         assert!(!too_few_samples(MIN_SAMPLES), "the floor is inclusive — 4 samples correlate");
         assert!(!too_few_samples(500));
 
-        // the verdict journal: wide AND deep. A watchlist run must never publish over the nightly
-        // one, and a throttled wide run that resolved too few names must not either.
+        // the verdict journal: wide AND deep. A watchlist run must never publish over the gate's
+        // wide one, and a throttled wide run that resolved too few names must not either.
         assert!(may_write_verdict(true, false, MIN_VERDICT_TICKERS));
         assert!(!may_write_verdict(false, false, MIN_VERDICT_TICKERS), "a watchlist run must not publish");
         assert!(!may_write_verdict(true, false, MIN_VERDICT_TICKERS - 1), "a thin wide run is a throttled one");
@@ -9004,7 +9004,7 @@ mod tests {
     /// turning off the arms that recognise `universe`, `long`, `fund` or `insider` left all six
     /// frozen-data goldens green, since those only ever pass `12`/`20`/`8`/`tune`/`halflife`/`stress`.
     ///
-    /// `universe` is the one that matters most. It gates the WIDE run — the nightly gate's entire
+    /// `universe` is the one that matters most. It gates the WIDE run — the CI gate's entire
     /// subject — and it also gates the verdict journal (`wide && tickers.len() >= MIN_VERDICT_TICKERS`)
     /// that the screen footer quotes. Lose that keyword and `backtest 12 universe` quietly becomes a
     /// backtest of one ticker literally named "universe".
@@ -9016,7 +9016,7 @@ mod tests {
         assert_eq!(p(""), Args { years: 5, ..Default::default() });
 
         // each keyword on its own, so one arm going dead cannot hide behind another
-        assert!(p("universe").wide, "`universe` must set wide — the nightly gate IS the wide run");
+        assert!(p("universe").wide, "`universe` must set wide — the CI gate IS the wide run");
         assert!(p("long").long);
         assert!(p("fund").fund);
         assert!(p("tune").tune);
@@ -12683,9 +12683,9 @@ mod tests {
     /// The OFFLINE half of the backtest gate. `backtest_edge_holds` (tests/network.rs) asserts two
     /// different things at once — "a scoring-code change or a default-tuning edit broke the edge" AND
     /// "the edge still holds on today's market" — and prices the first at the second's cost: 3000+ live
-    /// tickers, nightly, so a scoring regression surfaces the next morning. This is the first half,
-    /// deterministic and network-free, so it runs on every `cargo test`. Regime drift stays nightly;
-    /// that is the one question a fixture genuinely cannot answer.
+    /// tickers in a release build, so a scoring regression waits on the slowest CI job. This is the
+    /// first half, deterministic and network-free, so it runs on every `cargo test`. Regime drift stays
+    /// with the live gate; that is the one question a fixture genuinely cannot answer.
     ///
     /// WHY THE EDGE IS PINNED AND NOT ASSERTED POSITIVE. The obvious assert here is `edge > 0`, and it
     /// is not available honestly. This fixture is a PERSISTENCE world: each name's forward 12y return
