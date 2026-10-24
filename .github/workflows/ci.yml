@@ -451,7 +451,10 @@ jobs:
           # step's long pole, and on ccc90d3 it started 69.7s in: its call built the lib test binary
           # too, after waiting out cli's build on the lock. Now its call builds one binary. The lib
           # (~5s) and cli (~9s, since (#856)) runs fit in the fixture's shadow.
-          cargo llvm-cov --no-report --locked --test backtest_fixture & a=$!
+          # (#875) Three fixture tests are skipped HERE only: each re-runs args another test already pins
+          # (`12 fund` / `12 tune`) with the pool reversed or RAYON_NUM_THREADS=1, and no src line branches
+          # on either. integration-tests still runs them (`--test '*'`), so the invariants stay graded.
+          cargo llvm-cov --no-report --locked --test backtest_fixture -- --skip backtest_fund_report_ignores_pool_order --skip backtest_tune_report_is_bit_identical_on_one_thread --skip backtest_tune_report_ignores_pool_order & a=$!
           cargo llvm-cov --no-report --locked --lib --test cli & b=$!
           wait "$a" || gate=$?
           wait "$b" || gate=$?
