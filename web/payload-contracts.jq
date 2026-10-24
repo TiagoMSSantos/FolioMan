@@ -4,9 +4,11 @@
 #   1. the funded BUY% column sums to 100 +/- 2 (rounding), when the book prints one at all;
 #   2. no ticker is printed twice across the stocks/etfs/crypto lanes;
 #   3. no cell anywhere reads NaN or inf (word-bounded, so "Information" / "Infrastructure" pass).
+#      (#888) Every key but the `help` glossary is read: a hand-kept table list lost `.social` when
+#      (#444) renamed it, and a new table would slip out the same way.
 [.stocks[]?, .etfs[]?, .crypto[]?] as $rows
 | [$rows[] | (map(select(.[0] == "BUY%"))[0][1] // "") | select(. != "") | rtrimstr("%") | tonumber] as $w
 | [$rows[] | map(select(.[0] == "TICKER"))[0][1]] as $t
 | (($w | length) == 0 or ((($w | add) - 100) | fabs) <= 2)
   and (($t | length) == ($t | unique | length))
-  and ([.stocks, .etfs, .crypto, .core, .inflation, .bonds, .attention, .berkshire, .young, .braked, .reits, .upcoming, .exposure, .intraday | .. | strings | select(test("(^|[^A-Za-z])(NaN|inf)([^A-Za-z]|$)"))] | length == 0)
+  and ([del(.help) | .. | strings | select(test("(^|[^A-Za-z])(NaN|inf)([^A-Za-z]|$)"))] | length == 0)
