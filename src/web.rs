@@ -190,6 +190,10 @@ pub fn explain(overlay: &str, universe: &str, query: &str) -> Result<String, Str
 /// between its fetch and its render.
 fn load(overlay: &str, universe: &str) -> Result<(Settings, Universe), String> {
     let mut u: Universe = serde_json::from_str(universe).map_err(|e| format!("universe.json: {e}"))?;
+    // (#916) no base, as the snapshot doc promises: else a partial upload ranked off code defaults
+    if u.base.is_empty() {
+        return Err("CI config: the snapshot carries none".to_string());
+    }
     let mut merged: serde_yaml::Value = serde_yaml::from_str(&u.base).map_err(|e| format!("CI config: {e}"))?;
     let over: serde_yaml::Value = serde_yaml::from_str(overlay).map_err(|e| format!("settings.yaml: {e}"))?;
     config::merge_yaml(&mut merged, over);
@@ -635,6 +639,16 @@ mod tests {
         let typed = screen("buy_heuristic:\n  growth_min_cagr: abc\n", &u).expect_err("a string is not a CAGR floor");
         assert!(typed.contains("buy_heuristic.growth_min_cagr: invalid type") && !typed.contains(" at line "), "{typed}");
         assert!(screen("", "{}").is_err_and(|e| e.starts_with("universe.json:")));
+        // (#916) a typo'd Social value is refused like a buy one, and so is a snapshot whose base is not YAML or absent
+        assert!(screen("social_heuristic:\n  loud_penalty: abc\n", &u).is_err_and(|e| e.starts_with("settings.yaml: social_heuristic.loud_penalty")));
+        let rebased = |base: &str| {
+            let mut v: serde_json::Value = serde_json::from_str(&u).expect("the snapshot is JSON");
+            v["base"] = base.into();
+            v.to_string()
+        };
+        assert!(screen("", &rebased("tickers: [")).is_err_and(|e| e.starts_with("CI config:")));
+        let bare = screen("buy_heuristic:\n  growth_min_cagr: 5.0\n", &rebased("")).expect_err("no base: never ranked off code defaults");
+        assert!(bare.starts_with("CI config:"), "{bare}");
     }
 
     /// The two interned `&'static str` fields survive the snapshot (a None here blanks USE/REPL).
