@@ -5285,7 +5285,7 @@ pub(crate) fn overlap_groups(holdings: &HashMap<String, Vec<(String, f64)>>, min
         }
     }
     let mut groups: Vec<Vec<&str>> = groups.into_iter().filter(|g| g.len() >= 2).collect();
-    groups.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a[0].cmp(b[0])));
+    groups.sort_by_key(|g| std::cmp::Reverse(g.len())); // stable: equal sizes stay in ticker order (tickers sorted above)
     groups
         .into_iter()
         .map(|members| {
