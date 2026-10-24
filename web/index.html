@@ -114,7 +114,7 @@
   </details>
   <div id="berkshire"></div>
   <!-- (#444) social arbitrage, shown and never ranked: the `s` flag and the track soc row read it. -->
-  <h2 title="Stocks people say they are buying: superinvestor 13F buys and new 13D/13G stakes, ARK fund buys, insider cluster buys, App Store chart climbs, stock-channel videos and a checked hand list. These rank a little higher: a superinvestor buy or stake by its buyer count (growth_superinvestor_boost per growth_superinvestor_step), an ARK, insider, App Store, video or hand-list row a little less (growth_social_boost)" id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
+  <h2 title="Stocks people say they are buying: superinvestor 13F buys and new 13D/13G stakes, ARK fund buys, insider cluster buys, App Store chart climbs, Reddit, Google Trends, Benzinga buzz and Hacker News mentions, stock-channel videos and a checked hand list. These rank a little higher: an ARK, insider, App Store, Reddit, Google Trends, Benzinga buzz, Hacker News, video or hand-list row (growth_social_boost), and a superinvestor buy or stake by its buyer count (growth_superinvestor_boost per growth_superinvestor_step, shipped off at 1.0)" id="h-social">Social Arbitrage trading — shadow, NOT a buy signal</h2>
   <details class="note" id="social-note">
     <summary>about this table</summary>
     Stocks people say they are buying, one row per stock, from free sources. Superinvestors:
@@ -136,9 +136,9 @@
     checked against a linked source, kept in
     <code>src/buy-heuristics/social-arbitrage-trading.json</code>. SOURCES names each source that lists
     the stock; NEWEST is the latest dated mention, or the 13F quarter; WHY quotes the hand list, else
-    the newest video title, else the newest filing. A NAME of — means the screen does not price it. The
-    rows rank a little higher above (see the heading's hover), and an uploaded settings.yaml does not
-    change this table.
+    the newest video title, else the newest filing. A NAME of — means the screen does not price it. A row
+    ranks a little higher above when a source other than the superinvestors names it (see the heading's
+    hover), and an uploaded settings.yaml does not change this table.
   </details>
   <div id="social"></div>
   <!-- (#500) stocks too young for the 5-year history gate, shown and never ranked: the track yng row reads it. -->
