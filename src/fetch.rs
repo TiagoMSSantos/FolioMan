@@ -16752,6 +16752,9 @@ pub(crate) mod tests {
         urls.coingecko_markets = base;
         let (universe, _, _) = fetch_universe(&client, &urls, 10, true, false, &[]).await;
         assert_eq!(universe, ["BTC-EUR", "ETH-EUR"], "the one answering leg must reach the caller");
+        // (#881) a universe that does not prefer EUR names its coins off the USD pair
+        let (usd, _, _) = fetch_universe(&client, &urls, 10, false, false, &[]).await;
+        assert_eq!(usd, ["BTC-USD", "ETH-USD"], "prefer_eur off -> the USD pair");
 
         // 3. A venue answering with a CHANGED list replaces its own entry, and only its own.
         let (base, client) = stub_server(r#"{"rowData":[["IE00BK5BQT80","Vanguard FTSE All-World UCITS ETF"]]}"#);
