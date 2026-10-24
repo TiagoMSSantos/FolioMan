@@ -8756,7 +8756,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 9d272693f844 (#850), graded 2026-10-24 by runs 40043922663 (src/fetch.rs) and
+  # LAST GRADED SHA: 8f41a6b40279 (#873), graded 2026-10-24 by run 40086362754, same five inputs with
+  # `files` = src/commands/backtest.rs src/core.rs src/fetch.rs src/lib.rs (every src file changed since
+  # 9d27269): 29 in scope = 28 caught + 1 unviable (fetch.rs euronext_lisbon_request -> Default::default(),
+  # RequestBuilder has no Default), 0 missed, 0 timeout. The 20 triaged survivors listed under the
+  # previous SHA sit on lines that range left alone, so they stand.
+  # BEFORE THAT: 9d272693f844 (#850), graded 2026-10-24 by runs 40043922663 (src/fetch.rs) and
   # 40043925387 (the other changed src files), same five inputs, since 5cbb35c: 6466 in scope =
   # 6104 caught + 340 unviable + 20 missed + 2 timeout. The 85 survivors of the (#847) catch-up are
   # down to these 20, every one triaged, so the next catch-up starts here:
