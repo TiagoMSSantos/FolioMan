@@ -1456,10 +1456,6 @@ pub async fn run(args: Vec<String>) {
     };
     let dead_end = &dead_end;
 
-    // (#327) The donor series, parsed ONCE and only for tickers some young listing actually names. The walk
-    // defers chart parsing on purpose (it is most of a wide run's CPU), so an all-pairs scan here would double
-    // the hottest cost to answer a question live `screen` already answers for free off `trail_monthly`. A donor
-    // the pool did not fetch is simply absent and its pairs refuse — the map is a candidate list, never a promise.
     // (#327) The pairs this WALK will use: the configured/journalled map, plus — when the knob is on —
     // the ones discovered point-in-time from the graded pool itself, which are the only ones whose
     // forward windows can close. Curated entries win, exactly as they do live.
@@ -1485,6 +1481,10 @@ pub async fn run(args: Vec<String>) {
         config::history_proxy().clone()
     };
     let proxy_map = &proxy_map;
+    // (#327) The donor series, parsed ONCE and only for tickers some young listing actually names. The walk
+    // defers chart parsing on purpose (it is most of a wide run's CPU), so an all-pairs scan here would double
+    // the hottest cost to answer a question live `screen` already answers for free off `trail_monthly`. A donor
+    // the pool did not fetch is simply absent and its pairs refuse — the map is a candidate list, never a promise.
     let donors: HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)> = {
         let wanted: HashSet<&str> = proxy_map.values().map(|s| s.as_str()).collect();
         fetched
@@ -1525,13 +1525,6 @@ pub async fn run(args: Vec<String>) {
                 Some(c) => c,
                 None => return Vec::new(),
             };
-            // (#46) the ASSET-CLASS fields, carried out of the same response the closes came from (no
-            // extra request). `backtest_quote` builds from `Quote::stub`, which leaves `name` as the
-            // TICKER and `instrument_type` empty — and `quote_is_etf` reads exactly those two, so
-            // before this every fund in the pool classified as a single stock. That silently merged
-            // ~4300 ETFs into the ~500-name stock peer-mean `demean` splits by, and no-op'd every
-            // ETF-scoped gate (the physical-gold/ETC bar among them). Yahoo's own `instrumentType`
-            // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
             // (#424) as-filed EPS and share counts onto the chart's split basis, BEFORE any cutoff divides
             // them by a close. Without it a pre-split filing over an adjusted close read the factor of every
             // later split too cheap (NFLX 70x), and splits follow run-ups, so the bias favoured future winners.
@@ -1548,6 +1541,13 @@ pub async fn run(args: Vec<String>) {
             let own_first = dates.first().copied();
             let (dates, closes, history_proxied) = apply_proxy(tk, dates, closes, proxy_map, donors);
             let own_first = proxy_entry(own_first, history_proxied); // (#787) and the verify window after it
+            // (#46) the ASSET-CLASS fields, carried out of the same response the closes came from (no
+            // extra request). `backtest_quote` builds from `Quote::stub`, which leaves `name` as the
+            // TICKER and `instrument_type` empty — and `quote_is_etf` reads exactly those two, so
+            // before this every fund in the pool classified as a single stock. That silently merged
+            // ~4300 ETFs into the ~500-name stock peer-mean `demean` splits by, and no-op'd every
+            // ETF-scoped gate (the physical-gold/ETC bar among them). Yahoo's own `instrumentType`
+            // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
             let (cls_name, cls_type) = (chart.name, chart.instrument_type);
             // (#122) the ticker no longer resolves to the company it names — its bars past the remap are
             // a different instrument's. Drop the whole series rather than its tail: the remap date is not
@@ -1973,7 +1973,7 @@ pub async fn run(args: Vec<String>) {
         tuning,
         |t, v| t.long_trend_cap = v,
         tuning.long_trend_cap,
-        // 0 first because it is the SHIPPED state (#3h) — uncapped. 50 reproduces the recorded 30->50 pair
+        // 0 first as the OFF (uncapped) control; 30 is the SHIPPED state (#3k). 50 reproduces the recorded 30->50 pair
         // (edge +103.2 -> +87.7) so the old point-test is visible as part of a curve, not an isolated claim.
         &[0.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0],
         "CEILING (%/yr) on that CAGR — the binding constraint on the FASTEST compounders. 0 = OFF (uncapped).\n  \
@@ -5911,7 +5911,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         println!("  no fundamental coverage — needs `fund` + fund_source sec (free EDGAR) or an FMP key.");
     } else if !skipped.is_empty() {
         // only when SOME factor did build a book — that is when a missing row is ambiguous. With no
-        // coverage at all the line above already says so, and 18 identical "n=0" rows say nothing.
+        // coverage at all the line above already says so, and a column of identical "n=0" rows says nothing.
         println!("  no book: {} — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)", skipped.join(", "));
     }
     println!("  (a factor beating its OWN row's same-set score excess, OOS both halves above, ranks better than growth_score;");
@@ -5922,7 +5922,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     // too. This asks what no row above can: among the stocks the growth gates REJECT, does a quality
     // ranking find a held book worth buying? Same pool filter and same `book_stats` as the factor rows,
     // gate test inverted, stocks only (the SEC factors are company-level). Three factors named before the
-    // run, so the verdict is not an argmax over twenty. `names/window` is the (#136) coverage-mirage
+    // run, so the verdict is not an argmax over the factor table. `names/window` is the (#136) coverage-mirage
     // guard: a "top-10" holding two names is not a book.
     if any {
         println!("\n── RESCUE-LANE probe (rank gate-REJECTED fund-covered stocks by a quality factor, top-{n} held {years}y, vs the growth_score baseline above) ──");
@@ -6477,8 +6477,8 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     let dims: &[(&str, Get, Set, f64, f64)] = &[
         ("growth_trend_weight", |t| t.growth_trend_weight, |t, v| t.growth_trend_weight = v, 0.0, 1.0),
         // band starts at 15, NOT 0: on this knob 0 means OFF (uncapped = +inf), so 0 is a discontinuity a
-        // uniform draw would misread — 0.1 crushes every name, 0.0 crushes none. The shipped state IS 0, so
-        // `dim_active` sees hi=60 change nothing when no sample tops 60%/yr and reports the dim inert; a
+        // uniform draw would misread — 0.1 crushes every name, 0.0 crushes none. The shipped state is 30 (#3k),
+        // so `dim_active` sees hi=60 change nothing when no sample tops 30%/yr and reports the dim inert; a
         // search winner that does carry a cap prints under "weights (searched dims only)" and still has to
         // beat TEST. The off-vs-on comparison belongs to `weight_curve`, which ladders 0 explicitly.
         ("long_trend_cap", |t| t.long_trend_cap, |t, v| t.long_trend_cap = v, 15.0, 60.0),
@@ -6919,8 +6919,9 @@ struct MissTable {
     /// `unassessable` is absent by construction because it has no gate list to count. This is the
     /// honesty check on `pairs`: if the wealth sits at 3+, no two-knob arm reaches it and the pair
     /// table is a rounding error. Filtered HERE and not at the print site on purpose — the print site
-    /// sits behind `print_recall_capture`, which ships false, so a predicate left there is unkillable
-    /// by the mutation gate. Same rule as the `rows.is_empty()` guard below.
+    /// sits behind `print_recall_capture`, which defaults false and only ci-settings turns on (#154), so a
+    /// predicate left there is caught by a golden diff at best, never by a unit test. Same rule as the
+    /// `rows.is_empty()` guard below.
     by_count: Vec<(usize, usize, f64)>,
     w_n: usize,
     w_mult: f64,
@@ -7071,8 +7072,9 @@ fn missed_winner_reasons(
     // `rows.is_empty()` is the "every winner was held" case, and it returns None for the same reason
     // the other two do: the caller divides by `w_mult` and by Σ`mult`, so an empty table would print
     // a NaN. Deciding it HERE and not at the print site is deliberate — the print site sits inside
-    // `if tuning.print_recall_capture`, which ships false, so no golden ever executes it and any
-    // branch left there is unkillable by the mutation gate. Guards belong where a test can reach them.
+    // `if tuning.print_recall_capture`, which defaults false and only ci-settings turns on (#154), so a
+    // branch left there is caught by a golden diff at best, never by a unit test. Guards belong where a
+    // test can reach them.
     // `pairs` is allowed to be empty — "nothing failed exactly two gates" is a real and publishable
     // answer, and it refuses the arm rather than voiding the table. Only `rows` gates the None.
     // NO `w_n > 0` TERM: it was here and it is redundant, because every winner contributes a

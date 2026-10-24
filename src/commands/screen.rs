@@ -2015,7 +2015,7 @@ pub async fn run(args: Vec<String>) {
     let lane_rows = crate::picks::shown_stocks(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, &settings.tickers);
     targets.extend(shadow_pool(&[&lane_rows], &quotes, &fetch::us_symbol));
     // (#467) after the three shadow tables, so their pool names get the same MCAP/REV-YoY/EPS-YoY/NET%/BUYBK
-    // cells the printed rows do: display only, and the 3-day SEC cache serves the repeats
+    // cells the printed rows do: display only, and the warm report and profile caches serve the repeats
     let mut filled = targets.clone();
     filled.extend(shadow_pool(&[&attention, &berkshire, &social], &quotes, &fetch::us_symbol));
     // (#705) and the Braked table's (read off the same rows, as below) and the REITs table's stocks: ANET
@@ -2267,7 +2267,8 @@ pub async fn run(args: Vec<String>) {
     // (round 56)/(#37 funds) fund holdings + composition, fetched ONCE here. This used to sit with the
     // overlap footer below, i.e. AFTER the tables printed, because everything it fed was display-only.
     // The look-through P/E it carries is no longer display-only — it drives the ETF PEG trim inside
-    // `lane_split` — so the fetch has to precede `render`. Yahoo topHoldings, weekly-cached.
+    // `lane_split` — so the fetch has to precede `render`. Yahoo topHoldings, refetched daily and never
+    // served past 3 days old.
     let (holdings, mix, bench) = {
         let is_fund = |q: &&Quote| crate::picks::quote_is_etf(q) && !crate::picks::is_currency_quoted(&q.ticker);
         let mut ranked: Vec<(&Quote, f64)> = quotes
@@ -2279,7 +2280,7 @@ pub async fn run(args: Vec<String>) {
         // one venue per fund name (the momentum table dedups the same way), then top rows + pinned + CORE.
         // 2x top_picks, not top_picks: the PEG trim drops rows and the table refills from BELOW the cut,
         // and a refilled row with no P/E fetched would pass the ceiling for free. The bench costs ~24
-        // extra weekly-cached symbols — still nowhere near a universe-wide fund gate.
+        // extra daily-cached symbols — still nowhere near a universe-wide fund gate.
         let mut seen = std::collections::HashSet::new();
         let mut syms: Vec<String> = ranked
             .iter()
