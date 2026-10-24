@@ -8409,17 +8409,17 @@ mod tests {
     /// (#89) The block length is real, and 0 is exactly the one-bucket resample every band in this repo
     /// was read off.
     ///
-    /// 16 half-year buckets, 4 rows each, scores 0..3, with the peer-relative return sitting on the top
+    /// 100 half-year buckets, 4 rows each, scores 0..3, with the peer-relative return sitting on the top
     /// two rows only — so a draw's edge is exactly the MEAN of `e_k` over the buckets it drew, and the
     /// bootstrap reduces to the textbook case (the sampling distribution of a mean). `e_k` is a two-regime
-    /// step (eight flat buckets then eight rich ones) because SERIAL CORRELATION is the entire subject:
+    /// step (fifty flat buckets then fifty rich ones) because SERIAL CORRELATION is the entire subject:
     /// the real data has it (consecutive cutoffs share 95.8% of their forward path at 12y) and a
-    /// one-bucket block cannot see it. Note that `picks * block == keys.len()` at both settings, so both
-    /// bands come from pools of the SAME SIZE — the only difference is how many INDEPENDENT selections
-    /// built them, 16 at block 1 against 2 at block 8. Measured: (46.9, 103.1) at block 1 against
-    /// (28.1, 121.9) at block 8 — both centred on the true 75, width 56.2 -> 93.8, a ratio of 1.67
-    /// against the 1.63 the finite-population arithmetic predicts. The 1.25 bar below is that ratio with
-    /// room, not a tuned number: this is a seeded PRNG on frozen rows, so it does not drift.
+    /// one-bucket block cannot see it. Both bands come from pools of about the same size (100 buckets
+    /// at block 1, 13 × 8 = 104 at block 8) — the real difference is how many INDEPENDENT selections
+    /// built them, 100 at block 1 against 13 at block 8. Measured, and pinned to the bit below:
+    /// (64.5, 88.5) at block 1 against (41.8, 108.2) at block 8, width 24.0 -> 66.3, a ratio of about
+    /// 2.8. The 1.25 bar is far under that ratio, not a tuned number: this is a seeded PRNG on frozen
+    /// rows, so it does not drift.
     #[test]
     fn a_longer_bootstrap_block_widens_the_band() {
         fn score_is_the_price(q: &Quote, _: &BuyHeuristic) -> Option<f64> {
@@ -8620,12 +8620,6 @@ mod tests {
         );
     }
 
-    /// (#45) rank-slice ladder + head-to-head on a synthetic ranking with KNOWN outcomes — the
-    /// assert that fails if slices stop being disjoint, stop following score order, or the
-    /// head-to-head silently changes its comparison sets. Window A: 25 names, score descending,
-    /// realized stepped by rank block (rank1 +100, 2-5 +50, 6-10 +30, 11-20 +10, 21-25 0), bench
-    /// +10 everywhere. Window B: 8 names only — too small for a head-to-head (needs ≥11), and its
-    /// 21-50 slice must NOT exist rather than fake a short book.
     #[test]
     fn h2h_low_line_stays_silent_unless_it_has_something_true_to_say() {
         // (#135) THE PRINT CONDITION IS THE TESTABLE PART. This line exists to be read BESIDE the
@@ -8644,6 +8638,12 @@ mod tests {
         assert!(line.contains("denominator 4 here vs 6"), "both denominators, side by side: {line}");
     }
 
+    /// (#45) rank-slice ladder + head-to-head on a synthetic ranking with KNOWN outcomes — the
+    /// assert that fails if slices stop being disjoint, stop following score order, or the
+    /// head-to-head silently changes its comparison sets. Window A: 25 names, score descending,
+    /// realized stepped by rank block (rank1 +100, 2-5 +50, 6-10 +30, 11-20 +10, 21-25 0), bench
+    /// +10 everywhere. Window B: 8 names only — too small for a head-to-head (needs ≥11), and its
+    /// 21-50 slice must NOT exist rather than fake a short book.
     #[test]
     fn rank_slice_ladder_and_head_to_head() {
         let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>> =
@@ -9786,8 +9786,6 @@ mod tests {
         assert_eq!(got("W"), Some(0.9));
     }
 
-    /// (#311) Every lot compounding at 10%/yr reads 10.0. A program ending with exactly what it put in reads at or
-    /// below zero: the bisection's first midpoint IS 0%, so that tie is what picks the side.
     /// (#316) Strict at the hurdle, and the hurdle is 4.5%/yr on the program's own lots.
     #[test]
     fn dca_beats_serie_e_is_strict_at_the_hurdle() {
@@ -9796,6 +9794,8 @@ mod tests {
         assert!((dca_irr(hurdle) - 4.5).abs() < 1e-9, "{}", dca_irr(hurdle));
     }
 
+    /// (#311) Every lot compounding at 10%/yr reads 10.0. A program ending with exactly what it put in reads at or
+    /// below zero: the bisection's first midpoint IS 0%, so that tie is what picks the side.
     #[test]
     fn dca_irr_recovers_the_rate_every_lot_compounded_at() {
         let wealth = (0..96).map(|m| 1.1_f64.powf(f64::from(240 - m) / 12.0)).sum::<f64>();
@@ -9930,8 +9930,8 @@ mod tests {
         // Annualised the two halves are +12.20%/yr and +3.53%/yr — an +8.68 pt/yr spread, ~92× smaller.
         let tag = annualized_edge_tag(true, 900.0, 100.0, 20);
         assert_eq!(tag, "   [= +8.68 pts/yr over the 20y hold]", "{tag}");
-        // annualising the SPREAD instead would read +11.7 pts/yr — a different, wrong answer.
-        assert!(!tag.contains("+11.7"));
+        // annualising the SPREAD instead would read +11.61 pts/yr — a different, wrong answer.
+        assert!(!tag.contains("+11.61"));
         // at a 1y hold the two units coincide, so the restatement must be the edge itself.
         assert_eq!(annualized_edge_tag(true, 900.0, 100.0, 1), "   [= +800.00 pts/yr over the 1y hold]");
 
@@ -12151,8 +12151,8 @@ mod tests {
         assert_eq!(class_census(&samples[4..], &d)[2].0, 2, "stock lands at index 2");
     }
 
-    /// 40 years of monthly bars, one grid, ten shapes: five compounders that clear the shipped gates in
-    /// a known order, one that earns its CAGR through a −55% pit, and four that should never score.
+    /// 40 years of monthly bars, one grid, ten shapes: four compounders that clear the shipped gates in
+    /// a known order, one that earns its CAGR through a −55% pit, and five that should never score.
     /// Deterministic — closes are `base * rate^(i/12)`, so R² is ~1 everywhere and the score ordering
     /// reduces to the CAGR terms, which is exactly the ordering the forward returns have too.
     fn synthetic_universe() -> (Vec<NaiveDate>, Vec<(&'static str, Vec<f64>)>) {
@@ -12192,7 +12192,7 @@ mod tests {
                 .collect()
         };
         let names = vec![
-            ("CMPA", series(1.30, 0.0, false)), // five compounders, rates apart, cycles out of step
+            ("CMPA", series(1.30, 0.0, false)), // four compounders, rates apart, cycles out of step
             ("CMPB", series(1.26, 13.0, false)),
             ("CMPC", series(1.22, 27.0, false)),
             ("CMPD", series(1.20, 7.0, false)),

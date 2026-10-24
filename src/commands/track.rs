@@ -2805,8 +2805,8 @@ mod tests {
     /// third CORE name is a winner, so grading 3 instead of 2 moves the answer off -10, and a cut
     /// that quietly reverted to [`BOOK`] would take all three.
     ///
-    /// The empty-list arm is the one the shipped journal is in TODAY: 13 of 13 lines carry no CORE
-    /// list at all, and that must answer None — nothing gradeable — rather than a zero return.
+    /// The empty-list arm is the one the journal was in before CORE lists were journalled (every line
+    /// carries one now), and it must answer None — nothing gradeable — rather than a zero return.
     #[test]
     fn grade_reads_the_list_it_is_given() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
@@ -2832,13 +2832,13 @@ mod tests {
 
         // a wider cut than the list holds takes what exists, and the third name pulls the book up
         assert!(grade(&s, &equal(&s.core), 99, today, &px, Some(105.0)).unwrap().priced == 3);
-        // ...and today's journal: no CORE list -> nothing gradeable, never a zero
+        // ...and a line with no CORE list -> nothing gradeable, never a zero
         assert!(grade(&snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[], 3, today, &px, Some(105.0)).is_none());
     }
 
     /// (#285) The CORE block: a sentence while the record is empty, a table once it is not.
     ///
-    /// The empty arm is the shipped state and the one that must not lie — no table, no 0.0%, and it
+    /// The empty arm is the one that must not lie — no table, no 0.0%, and it
     /// says how many lines carry a list so "the knob is off" and "the knob is on and the record is
     /// one day old" stay distinguishable. The populated arm must render through the SAME formatter
     /// as the momentum table: asserting on the header text is what catches a second, drifting copy.

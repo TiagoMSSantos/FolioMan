@@ -16021,7 +16021,7 @@ pub(crate) mod tests {
     }
 
     /// `fetch_sec_facts_rows`' SHELL — the disk cache, the CIK gate and the two `then_some` guards.
-    /// `parse_sec_facts` itself is already pinned by the six tests above; what was never covered is
+    /// `parse_sec_facts` itself is already pinned by the tests above; what was never covered is
     /// the orchestration wrapped around it, and that is where a break is invisible: a ticker whose
     /// fundamentals quietly stop loading still prints a row, it just ranks on nothing.
     ///
@@ -16133,11 +16133,14 @@ pub(crate) mod tests {
         // 2. every cached row unparseable -> None, NOT an empty Vec. `Some(vec![])` reads downstream
         //    as "SEC has no fundamentals for this filer" and pins the gap; None refetches.
         write(&[row("not-a-date", "2022-09-30")]);
-        // (#410) the scratch root outlives the run, and a CACHED file under an older key would answer
-        // through the bridge: remove them so this phase still reads the facts19 file alone.
-        let _ = std::fs::remove_file(sec_cache_path("CACHED_facts17"));
-        let _ = std::fs::remove_file(sec_cache_path("CACHED_facts16"));
-        let _ = std::fs::remove_file(sec_cache_path("CACHED_facts15"));
+        // (#410) the scratch root outlives the run, and a CACHED file under any key the bridge reads
+        // would answer through it: remove them all so this phase still reads the facts26 file alone.
+        for n in 15..=26 {
+            let _ = std::fs::remove_file(sec_cache_path(&format!("CACHED_facts{n}stale")));
+            if n < 26 {
+                let _ = std::fs::remove_file(sec_cache_path(&format!("CACHED_facts{n}")));
+            }
+        }
         assert!(fetch_sec_facts_rows(&client, &urls, "CACHED").await.is_none());
 
         // 3. no cache + a ticker absent from the CIK map -> None before any request. This is the

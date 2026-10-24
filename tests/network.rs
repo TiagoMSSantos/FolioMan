@@ -14,10 +14,11 @@
 //! open an unpaced side channel. Whole run is ~10 Yahoo calls against the 4757 a single `screen` does.
 //!
 //! NOTHING in this file is `#[ignore]`. The last holdout, `backtest_edge_holds`, shells
-//! `backtest 12 universe` over ~4900 live tickers and measures REGIME — whether the shipped edge still
-//! holds on today's market. It now runs under the same skip-when-you-can't contract as everything else:
-//! release profile + a warm `.long_history_cache.json` and it runs (~127s, almost no network); debug or
-//! cold and it prints why and skips green. `FOLIOMAN_BACKTEST_GATE=1` FORCES it past both guards — that
+//! `backtest {20,12,8} universe winners` and an 8y `fund` leg over ~4900 live tickers and measures
+//! REGIME — whether the shipped edge still holds on today's market. It now runs under the same
+//! skip-when-you-can't contract as everything else: release profile + a warm
+//! `.long_history_cache.json` and it runs (almost no network); debug or cold and it prints why and
+//! skips green. `FOLIOMAN_BACKTEST_GATE=1` FORCES it past both guards — that
 //! is how ci.yml's `backtest-gate` job runs it on every push, and a runner is always debug and cold:
 //!
 //!     FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --nocapture
@@ -543,16 +544,19 @@ fn sec_throttled_skips_only_a_partial_refusal() {
     assert!(!sec_throttled(0.0, 0.0), "a warm cache sends nothing: graded");
 }
 
-/// Walk-forward regime gate. Shells `backtest {20,12,8} universe` over the LIVE universe and asserts
-/// the committed default tuning still yields a POSITIVE validated edge AND a positive top-10 held book
-/// at each horizon. Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero
-/// exit / too-few-tickers) SKIPS green, per horizon; only a genuine COLLAPSE (GROWTH edge <= 0, top-10
-/// excess <= 0, or BOTH out-of-sample halves negative) FAILS. It scores with the real tuning mirrored
-/// into ci-settings.yaml's `buy_heuristic`.
+/// Walk-forward regime gate. Shells `backtest {20,12,8} universe winners`, plus an 8y `fund` leg, over
+/// the LIVE universe and asserts the committed default tuning still yields a POSITIVE validated edge
+/// AND a positive top-10 held book on each leg. Same skip-vs-fail contract as the probes above: a
+/// throttle (spawn error / nonzero exit / too-few-tickers) SKIPS green, per leg; a genuine COLLAPSE
+/// (GROWTH edge <= 0, top-10 excess <= 0, or BOTH out-of-sample halves negative) FAILS, and so do a
+/// passer lift <= 0 (#57) and the ratchet floors below: Série E (#315), winners held (#606), the 20y
+/// SIZED DCA rows (#316) and the fund join (#421). It scores with the real tuning mirrored into
+/// ci-settings.yaml's `buy_heuristic`.
 ///
-/// COLLAPSE DETECTOR, NOT A SHIP GATE. Thresholds are `> 0`, never "not worse than last time": market
-/// drift must never redden the build (see the job comment in ci.yml). Deciding whether a knob may move
-/// is SHIP RULE v2's job, and it is graded by a human on a same-day A/B, not here.
+/// COLLAPSE DETECTOR, NOT A SHIP GATE. The collapse checks are `> 0`, never "not worse than last
+/// time": market drift must never redden the build (see the job comment in ci.yml). The ratchet floors
+/// are ship-day readings minus a margin, raised and never lowered. Deciding whether a knob may move is
+/// SHIP RULE v2's job, and it is graded by a human on a same-day A/B, not here.
 ///
 /// REGIME ONLY. The other half of what this used to cover — "did an edit to the scoring code or a knob
 /// change what the shipped tuning does" — is deterministic and runs offline on every `cargo test` as
@@ -942,8 +946,8 @@ fn backtest_edge_holds() {
         }
         // (#421) THE FUND LEG. `fund` joins each cutoff to the SEC rows filed by then and tilts the growth score toward
         // the shipped `peg_yield`; the three legs above run price-only and never read them. A tag drift (#419 debt,
-        // #420 op income) or a parse regression thins that join while every price row stays green, so two ratchets
-        // read the join itself. Floors = the 2026-09-30 local reading (10945 / 21883 cutoffs = 50.0%, peg_yield
+        // #420 op income) or a parse regression thins that join while every price row stays green, so the ratchets
+        // below read the join itself. Floors = the 2026-09-30 local reading (10945 / 21883 cutoffs = 50.0%, peg_yield
         // n=3282) minus 10 pts and x0.7. Raise a floor when a round lifts its reading; never lower one to get green.
         if fund {
             const FUND_COVERED_FLOOR: f64 = 40.0;
@@ -984,7 +988,7 @@ fn backtest_edge_holds() {
                     assert!(
                         core >= FUND_CORE_FLOOR,
                         "{leg}: only {core:.0} tickers had non-operating gains taken off their EPS, under the floor \
-                         {FUND_CORE_FLOOR:.0} — the pretax tag went dark or the facts18 cache never warmed, and the PEG prices \
+                         {FUND_CORE_FLOOR:.0} — the pretax tag went dark or the SEC facts cache never warmed, and the PEG prices \
                          investment gains as value again. Fix it, or measure and justify a new floor in the (#426) receipt"
                     );
                     assert!(

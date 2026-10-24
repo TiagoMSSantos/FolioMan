@@ -868,8 +868,9 @@ fn dca_markers_are_in_the_20y_golden() {
     }
 }
 
-/// (#421) The fund twin: `tests/network.rs` ratchets the fund leg's coverage and peg_yield cohort, and panics
-/// under the gate when either row is missing; this reds offline first on a rename.
+/// (#421) The fund twin: `tests/network.rs` ratchets the fund leg's coverage, peg_yield cohort, split-restated
+/// and core-stripped counts, reads its SEC request line, and panics under the gate when a ratcheted row is
+/// missing; this reds offline first on a rename.
 #[test]
 fn fund_markers_are_in_the_fund_golden() {
     use folioman::commands::backtest::markers::{FUND_CORE, FUND_COVERED, FUND_PEG, FUND_SEC, FUND_SECTION, FUND_SPLIT};
