@@ -10447,6 +10447,25 @@ mod tests {
     assert!(downside_deviation_pct(&dip, 30).unwrap() < volatility_pct(&dip, 30).unwrap());
     assert_eq!(downside_deviation_pct(&[100.0], 30), None); // same too-few guard as its twin
     assert!(downside_deviation_pct(&[100.0, 110.0, 99.0], 30).is_some());
+    // (#860) Known answers, where the bounds above leave the arithmetic free: a sign, the x100 or either
+    // mean's divisor could flip and all of them still held. Returns 2,4,4,4,5,5,7,9 have mean 5 and a
+    // POPULATION stdev of exactly 2 (squared deviations sum to 32, over 8, not 7).
+    let mut steps = vec![100.0_f64];
+    for r in [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0] {
+        let next = steps[steps.len() - 1] * (1.0 + r / 100.0);
+        steps.push(next);
+    }
+    assert!((volatility_pct(&steps, 30).unwrap() - 2.0).abs() < 1e-9);
+    // The window is the last n RETURNS, so a -90% bar in front of the eight sits outside it at n = 8
+    // (one return fewer reads 1.79, one more reads the crash).
+    let mut crash = vec![1000.0];
+    crash.extend_from_slice(&steps);
+    assert!((volatility_pct(&crash, 8).unwrap() - 2.0).abs() < 1e-9);
+    assert_eq!(volatility_pct(&[100.0, 110.0], 30), None, "one return is no stdev");
+    assert_eq!(downside_deviation_pct(&[100.0, 110.0], 30), None);
+    // The twin reads the same window: +10, -10, +10 at n = 3, the crash outside it.
+    let dip_after_crash = [1000.0, 100.0, 110.0, 99.0, 108.9];
+    assert!((downside_deviation_pct(&dip_after_crash, 3).unwrap() - (100.0_f64 / 3.0).sqrt()).abs() < 1e-9);
 
     // (#97) the same asset, measured on monthly bars, prints ~sqrt(21) = 4.6x the daily figure — and
     // every knob reading this field is an ABSOLUTE threshold, so that scale is not a wash.
