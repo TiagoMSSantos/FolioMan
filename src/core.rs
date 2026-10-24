@@ -8616,7 +8616,7 @@ mod tests {
     // Names are pre-lowercased — that is the contract of every fn in this family.
     let world_small = "ishares msci world small cap ucits etf";
     assert_eq!(size_sleeve_tier(world_small, "small", 0.0), None, "0.0 = sleeve off");
-    assert_eq!(size_sleeve_tier(world_small, "small", 0.35), Some(SIZE_TIER), "cap on -> the eighth sleeve");
+    assert_eq!(size_sleeve_tier(world_small, "small", 0.35), Some(SIZE_TIER), "cap on -> the ninth sleeve");
     // a SECOND narrow token still refuses: a small-cap ESG fund is an ESG fund
     assert_eq!(size_sleeve_tier("amundi msci world small cap esg ucits etf", "small", 0.35), None);
     assert_eq!(size_sleeve_tier("spdr msci europe small cap eur hedged ucits etf", "small", 0.35), None);
@@ -9511,7 +9511,7 @@ mod tests {
     // byte-identical. (#217) all FOUR combinations, because the two knobs are independent and the
     // `size off + factor on` cell is the one a `take`-based count got silently wrong: it would have
     // printed the factor sleeve's numbers under the `world small-cap` label.
-    // (#218) …and the bound is now `- 3`, because there are THREE optional sleeves. Spelled off
+    // (#218) …and the bound stops below the optional sleeves (three then, five since (#239)). Spelled off
     // `SIZE_TIER` rather than as more arithmetic on `HOLD_TIERS`: the geographic sleeves are exactly
     // the tiers BELOW the first optional one, which is what this loop means and what a literal 8
     // would stop meaning the next time the ladder grows.
@@ -10081,7 +10081,7 @@ mod tests {
     // deliberate, measured exception to it rather than a loosening of it.
     let world_small_lower = "ishares msci world small cap ucits etf";
     assert_eq!(geo_tier_at(world_small_lower, 0.0, false, false, 0, 0, 0), None, "sleeve off -> a size TILT, still barred");
-    assert_eq!(geo_tier_at(world_small_lower, 0.35, false, false, 0, 0, 0), Some(SIZE_TIER), "sleeve on -> the eighth sleeve");
+    assert_eq!(geo_tier_at(world_small_lower, 0.35, false, false, 0, 0, 0), Some(SIZE_TIER), "sleeve on -> the ninth sleeve");
     assert!(!is_broad_index_name("iShares MSCI World EUR Hedged UCITS ETF"));
     assert!(!is_broad_index_name("iShares MSCI World ESG Screened UCITS ETF"));
     // (#236) config-dependent since min-vol joined FACTOR — `geo_tier` reads the sleeve knobs, and
