@@ -9781,6 +9781,23 @@ mod tests {
         assert!(close(p.hold, 226.375) && close(p.roll, 187.5) && close(p.index, 161.1875), "{} {} {}", p.hold, p.roll, p.index);
     }
 
+    /// (#858) Two identities, so no hand sum has to be right. Untaxed, on one series that compounds at a single
+    /// rate, the roll's sale and re-buy at the same price leave it with never-sell's €, and the index on that series
+    /// reads the same. Every leg halving at a 50% rate pins (#310)'s no-loss-credit rule: each lot keeps 0.5, so
+    /// never-sell and the index read 48 and the roll 24, where a credit would read 72 and 54.
+    #[test]
+    fn dca_program_untaxed_roll_is_hold_and_a_loss_earns_no_credit() {
+        let start = NaiveDate::from_ymd_opt(2000, 7, 1).unwrap();
+        let months = |a: NaiveDate, b: NaiveDate| f64::from((b.year() - a.year()) * 12 + b.month() as i32 - a.month() as i32);
+        let grow = |from, to| Some(2.0_f64.powf(months(from, to) / 120.0));
+        let p = dca_program(start, |d, _| Some(d), |_: &NaiveDate, from, to| grow(from, to), &grow, 0.0, &[]).unwrap();
+        let want = (0..96).map(|m| 2.0_f64.powf(f64::from(240 - m) / 120.0)).sum::<f64>();
+        let close = |got: f64| (got - want).abs() < 1e-9;
+        assert!(close(p.hold) && close(p.roll) && close(p.index), "{want}: {} {} {}", p.hold, p.roll, p.index);
+        let half = dca_program(start, |d, _| Some(d), |_: &NaiveDate, _, _| Some(0.5), |_, _| Some(0.5), 0.5, &[]).unwrap();
+        assert_eq!((half.hold, half.roll, half.index), (48.0, 24.0, 48.0));
+    }
+
     /// (#309) The BUY NOW record line: longest horizon first, rows without a SIZED record skipped, and
     /// drift on EITHER fingerprint warns. The `sizing:` half is the new one: a moved cap changes the
     /// SIZED row with every `buy_heuristic` knob untouched.

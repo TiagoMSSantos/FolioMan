@@ -946,6 +946,30 @@ fn backtest_fund_report_is_pinned_with_every_lane() {
     pin(&["12", "fund", "holders", "pac", "rivals", "winners"], "backtest-12-fund-lanes.golden");
 }
 
+/// (#858) Every `NaN` and `inf` cell the goldens hold, counted per file. A pin passes whatever it was blessed
+/// with, so a rebless that slipped a NaN into a real row would read as one more moved line. Today every one
+/// sits in the two lanes goldens' zero-row cohorts above. A rebless that moves a count updates this map in the
+/// same commit; a golden added later starts at zero.
+#[test]
+fn goldens_hold_only_the_known_nan_and_inf_cells() {
+    let known = [("backtest-12-lanes.golden", (79, 4)), ("backtest-12-fund-lanes.golden", (70, 0))];
+    for (name, _) in known {
+        assert!(fixture_dir().join(name).is_file(), "{name} is gone: move its counts to the golden that replaced it");
+    }
+    for e in std::fs::read_dir(fixture_dir()).expect("read the fixture dir") {
+        let p = e.expect("dir entry").path();
+        if p.extension().is_none_or(|x| x != "golden") {
+            continue;
+        }
+        let name = p.file_name().and_then(|n| n.to_str()).expect("utf-8 golden name");
+        let text = std::fs::read_to_string(&p).expect("read golden");
+        let words: Vec<&str> = text.split(|c: char| !c.is_ascii_alphanumeric()).collect();
+        let cells = |w: &str| words.iter().filter(|x| **x == w).count();
+        let want = known.iter().find(|(n, _)| *n == name).map_or((0, 0), |(_, c)| *c);
+        assert_eq!((cells("NaN"), cells("inf")), want, "{name}: (NaN, inf) cells");
+    }
+}
+
 /// (#751) The `dead` arm over the archive of dead S&P members. The five extra names are in
 /// `.sp500_history.json` and in `tests/dead-members.csv` but not in the frozen Yahoo cache, so each is
 /// filled from the archive: ARG, TE and SWY end dead, BEAM and MIL are the crash and reused-ticker cases.
