@@ -814,7 +814,7 @@ fn trailing_returns(closes: &[f64], i: usize) -> Vec<f64> {
 /// (#529) `FOLIOMAN_BACKTEST_SAMPLES=<path>`: one JSON line per sample, written once every cross-sectional
 /// stamp is on and before any report reads them. The seam of the whole-walk look-ahead test in
 /// `tests/backtest_fixture.rs`: a run that cannot see past a date must write these exact lines for every
-/// cutoff whose forward window closes before it.
+/// cutoff whose forward window closes before it. (#857) The run then stops: no report is printed.
 fn write_samples(samples: &[Sample], path: &std::path::Path) {
     let lines: String = samples
         .iter()
@@ -1731,6 +1731,7 @@ pub async fn run(args: Vec<String>) {
     stamp_sector_cohorts(&mut samples, &bench, tuning);
     if let Some(p) = std::env::var_os("FOLIOMAN_BACKTEST_SAMPLES") {
         write_samples(&samples, p.as_ref()); // (#529) the look-ahead test's seam; unset = no-op
+        return; // (#857) the test reads only the samples file, so the reports below are wasted wall time
     }
 
     // `tune`: honest out-of-sample selection. Search the growth weights on an EARLY train split and
