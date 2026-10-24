@@ -4334,6 +4334,10 @@ buy_heuristic:
                                  #   raises `top_picks` to 10 will silently also change what `track` grades, in
                                  #   the same edit, with no test naming the coupling. Read this before touching
                                  #   either.
+                                 #   (#937) STALE since (#321)/(#322): `top_picks` ships 25, so that cut no longer
+                                 #   binds under BOOK, and `track::book_rows` grades the journalled sized book
+                                 #   uncut. BOOK = 10 now cuts only the momentum rows and the equal-weight slice
+                                 #   of lines journalled before (#286).
   # (#818) retired: growth_er_weight: 0.0          # (#145) MEASURED AND REFUSED 2026-08-26 — stays OFF, where the term
   # (#818) retired: growth_er_cap: 20.0            # contributes exactly 0.0 for every row and the lane is the one every
                                  # golden holds. The cap is inert while the weight is 0. This receipt
