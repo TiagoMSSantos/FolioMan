@@ -255,6 +255,9 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
     for attempt in 0..2 {
         if let Some(v) = get_json(client, &url).await {
             if v.pointer("/chart/result/0/timestamp").is_some() {
+                if range == "10y" {
+                    keep_recent(ticker, &v);
+                }
                 return Some(v);
             }
             // (#895) Yahoo's own "Not Found" is an answer, not a blip (`long_cache_keeps` trusts it for the
@@ -269,6 +272,35 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
         }
     }
     None
+}
+
+/// (#924) The Intraday table's names, each with the 10y daily chart the quote path fetched for it. Every
+/// intraday read is windowed by date and `chart_range` never asks past 10y, so the longer chart only adds
+/// older bars, and `fetch_recent` serves it instead of asking Yahoo again: one request less per name the
+/// screen also quoted. Only names `want_recent` listed are kept, so a run without the table holds nothing.
+static RECENT: std::sync::Mutex<BTreeMap<String, Option<Chart>>> = std::sync::Mutex::new(BTreeMap::new());
+static RECENT_SERVED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// (#924) Keep the 10y chart the quote path fetches for each of `names`, for `fetch_recent`.
+pub fn want_recent(names: impl IntoIterator<Item = String>) {
+    RECENT.lock().unwrap().extend(names.into_iter().map(|t| (t, None)));
+}
+
+/// (#924) How many charts `fetch_recent` took from the quote path so far this run.
+pub fn recent_served() -> usize {
+    RECENT_SERVED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// (#924) `v` parsed as `fetch_recent` parses its own fetch, kept when `ticker` is wanted. The lock is
+/// released over the clone and the parse, which run inside the quote fan-out.
+fn keep_recent(ticker: &str, v: &Value) {
+    if !RECENT.lock().unwrap().contains_key(ticker) {
+        return;
+    }
+    let mut j = v.clone();
+    fill_last_close(&mut j);
+    let chart = parse_chart(&j, ticker);
+    RECENT.lock().unwrap().insert(ticker.to_string(), chart);
 }
 
 /// Full-history chart at MONTHLY resolution. Yahoo coarsens interval=1d to ~monthly bars once the
@@ -363,7 +395,8 @@ fn bar_date(secs: i64, gmtoffset: i64) -> Option<NaiveDate> {
 
 /// (#826) Yahoo serves a European session's last daily bar with a null close (and adjclose) from the
 /// close to the next open, while `meta.regularMarketPrice` already holds that close: fill the bar from
-/// it when `meta.regularMarketTime` falls on the bar's own exchange date. Only `fetch_recent` calls it.
+/// it when `meta.regularMarketTime` falls on the bar's own exchange date. Only `fetch_recent` and (#924)
+/// `keep_recent` call it.
 fn fill_last_close(j: &mut Value) -> Option<()> {
     let r = j.pointer_mut("/chart/result/0")?;
     let off = r.pointer("/meta/gmtoffset").and_then(Value::as_i64).unwrap_or(0);
@@ -15692,6 +15725,32 @@ pub(crate) mod tests {
         assert_eq!((n("/QQNF/"), n("/QQTH/"), n("/QQGB/")), (1, 2, 2), "Not Found asked once, the throttle and the garbled body twice");
     }
 
+    /// (#924) A name `want_recent` listed is served to `fetch_recent` from the 10y chart the quote path
+    /// fetched, without a request. A name it did not list, and a wanted name fetched on a shorter range,
+    /// are not kept, so their `fetch_recent` asks Yahoo.
+    #[tokio::test]
+    async fn fetch_recent_serves_a_wanted_names_10y_chart() {
+        let (d0, d1) = (NaiveDate::from_ymd_opt(2026, 1, 5).expect("date"), NaiveDate::from_ymd_opt(2026, 1, 6).expect("date"));
+        let body = chart_body(&[(d0, 1.0), (d1, 2.0)], &[], "EUR");
+        let (base, client, asked) = routed_stub(vec![("/QQKW/", body), ("/QQKU/", body), ("/QQKS/", body)]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        want_recent(["QQKW", "QQKS"].map(String::from));
+        for t in ["QQKW", "QQKU"] {
+            assert!(chart_json(&client, &urls, t, "10y").await.is_some(), "{t}: bars");
+        }
+        assert!(chart_json(&client, &urls, "QQKS", "1y").await.is_some(), "QQKS: bars");
+        let served = recent_served();
+        for t in ["QQKW", "QQKU", "QQKS"] {
+            let c = fetch_recent(&client, &urls, t, "2y").await.expect("bars");
+            assert_eq!((c.dates.as_slice(), c.closes.as_slice()), ([d0, d1].as_slice(), [1.0, 2.0].as_slice()), "{t}");
+        }
+        assert_eq!(recent_served() - served, 1, "only the wanted name's 10y chart was served");
+        let asked: Vec<String> = asked.try_iter().collect();
+        let n = |t: &str| asked.iter().filter(|r| r.contains(t)).count();
+        assert_eq!((n("/QQKW/"), n("/QQKU/"), n("/QQKS/")), (1, 2, 2), "the wanted name's second ask cost no request");
+    }
+
     /// (#397) The venue table on the shapes OpenFIGI served for the Vanguard and Amundi S&P 500
     /// ISINs: German composite and London lines become `.DE`/`.L`, the currency-suffixed multilateral
     /// rows and venues outside the table are dropped, and a `warning` answer lists nothing.
@@ -19462,9 +19521,15 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
 /// (#811) `fetch_history` on a shorter range: the last daily bars the intraday table ranks on, without
 /// the 10y download per name. (#825) `range` is a Yahoo chart range, `intraday::chart_range`'s pick.
 /// (#826) The last bar's null close is filled from the quote first ([`fill_last_close`]).
+/// (#924) A chart the quote path kept for `ticker` ([`want_recent`]) is served first, once.
 /// None on fetch/parse fail or empty history.
 #[mutants::skip] // network shell, fetch_history's body on a shorter range
 pub async fn fetch_recent(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Chart> {
+    let kept = RECENT.lock().unwrap().get_mut(ticker).and_then(Option::take);
+    if let Some(c) = kept {
+        RECENT_SERVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return Some(c).filter(|c| !c.closes.is_empty());
+    }
     let mut j = chart_json(client, urls, ticker, range).await?;
     fill_last_close(&mut j);
     parse_chart(&j, ticker).filter(|c| !c.closes.is_empty())

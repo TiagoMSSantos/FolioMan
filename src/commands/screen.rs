@@ -1692,7 +1692,7 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
         stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
     }
-    eprintln!("screen: intraday: fetched {got} of {asked} names");
+    eprintln!("screen: intraday: fetched {got} of {asked} names, {} from the quote path's charts", fetch::recent_served());
     let targets = stubs.iter().map(|q| q.ticker.clone()).collect();
     fetch::enrich_profile(client, &settings.urls, &mut stubs, &targets).await;
     (rows, pairs, stubs)
@@ -1826,6 +1826,13 @@ pub async fn run(args: Vec<String>) {
     // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display
     // cells nothing scores on. news off (screen never prints headlines).
     let intraday = picks::wants_intraday(&settings.widths.columns);
+    // (#924) the Intraday table's names keep the 10y chart the quote fetch below downloads anyway, so
+    // `intraday_book` asks Yahoo again only for the names this run never quoted
+    if settings.intraday_key != 0 {
+        let spans = fetch::fetch_sp500_history(&client, &settings.urls).await;
+        let pond = crate::heuristics::intraday::us_pond(&spans, chrono::Local::now().date_naive());
+        fetch::want_recent(pond.into_iter().chain(crate::heuristics::intraday::EU_POND.iter().map(|t| t.to_string())));
+    }
     // (#696) The 13F, Attention and Social Arbitrage sources read no quote, so they ride under the quote
     // fetch. After it they took 19s of run 39063079997's screen. Their stamps stay where they were below.
     let (mut quotes, (brk, brk_held, brk_holdings), attention, social_feeds) = tokio::join!(
