@@ -24,12 +24,11 @@
 pub mod broker;
 #[cfg(not(target_family = "wasm"))]
 pub mod commands;
-// (#390) The wasm build's stand-in for the three `commands` paths `picks` still calls by name. Each helper
+// (#390) The wasm build's stand-in for the two `commands` paths `picks` still calls by name. Each helper
 // now lives in `core`/`picks`; natively `commands` re-exports it from there, so both builds link one
-// definition.
+// definition. (#863) `truncate` left: only the native `check` table calls it.
 #[cfg(target_family = "wasm")]
 pub mod commands {
-    pub use crate::picks::truncate;
     pub mod backtest {
         pub(crate) use crate::core::{next_rand, percentile};
     }
