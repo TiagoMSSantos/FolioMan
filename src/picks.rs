@@ -913,7 +913,7 @@ fn dedup_currency_twins<'a>(
 ///
 /// (#88) THE one read site every gate and score term goes through, which is why the real-vs-nominal
 /// switch lives here and nowhere else. `inflation_adjust` is documented as a DISPLAY toggle — "show
-/// REAL returns on the 1Y/5Y/10Y/20Y % columns" — but `horizon_changes` writes its output into
+/// REAL returns on the 1Y/2Y/5Y/8Y/10Y/20Y % columns" — but `horizon_changes` writes its output into
 /// `quote.perf`, and `quote.perf` is this function's input, so with it on every >=1Y leg reaching the
 /// SCORE is deflated too. Every threshold in the growth lane was fitted by a backtest that passes
 /// `infl: None` and is therefore nominal, so a nominal bar was being applied to real numbers: at the

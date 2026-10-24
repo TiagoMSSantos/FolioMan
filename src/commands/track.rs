@@ -2,11 +2,13 @@
 //!
 //! Every `screen` run appends its ranked top slice (tickers + EUR prices + the S&P 500 close) to
 //! `.screen_snapshots.jsonl` (working dir, tracked since (#333), CI commits one JSON line per day — a
-//! same-day rerun adds nothing). `track` replays the journal against TODAY's prices: the equal-weight
-//! book return of each snapshot's top rows vs the index over the same window. This grades the screen's
-//! own advice on data that did not exist when it ranked — the live counterpart of the backtest's
-//! held-book metric, accruing evidence with every month that passes. Price-only (dividends not
-//! counted), EUR seat, same conventions as the backtest receipts. NOT advice.
+//! same-day rerun adds nothing). `track` replays the journal against TODAY's prices: the return
+//! of each snapshot's BUY NOW book at the weights it was sized at (lines from before (#286) carry
+//! no book and fall back to the top-10, equal-weight) vs the index over the same window. This
+//! grades the screen's own advice on data that did not exist when it ranked — the live
+//! counterpart of the backtest's held-book metric, accruing evidence with every month that
+//! passes. Price-only (dividends not counted), EUR seat, same conventions as the backtest
+//! receipts. NOT advice.
 
 use crate::{config, fetch};
 use serde::{Deserialize, Serialize};

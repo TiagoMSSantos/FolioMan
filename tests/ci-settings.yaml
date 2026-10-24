@@ -1219,7 +1219,7 @@ anchor_windows:
   10Y: 365
   20Y: 365
 
-# Show REAL (inflation-adjusted) returns on the 1Y/5Y/10Y/20Y % columns instead of nominal. A
+# Show REAL (inflation-adjusted) returns on the 1Y/2Y/5Y/8Y/10Y/20Y % columns instead of nominal. A
 # coin/stock up +50% over a span that saw +10% inflation is really only ~+36% in purchasing power.
 # Deflates by the ACTUAL cumulative EU HICP inflation over each horizon, fetched live (same source
 # as the check footer) — no rate to guess. Shorter horizons (1D/1W/1M/6M) are never adjusted.

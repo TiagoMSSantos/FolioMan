@@ -2396,7 +2396,7 @@ pub async fn run(args: Vec<String>) {
     });
 
     // (round 114) live track record: journal today's ranked slice + the S&P close so `track` can
-    // grade every past top-10 on prices that didn't exist when it ranked. One line per day (a
+    // grade every past book on prices that didn't exist when it ranked. One line per day (a
     // same-day rerun adds nothing); a failed append warns inside and never fails the screen.
     // (#295) the executed book is bound here, not built inline below, so the buy list printed after the
     // state write shows the same rows this journals. The field's comment says why it is `buy_book`.

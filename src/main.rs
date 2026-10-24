@@ -1,14 +1,14 @@
 //! folioman — review ETF/stock/crypto holdings. Read-only except `trade` (live orders, typed-`yes` gated).
 //!
-//!   folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
+//!   folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/2Y/5Y/8Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon (1Y+ % real terms when inflation_adjust on; past prices nominal)
 //!   folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko, S&P 500, Euronext Lisbon, Xetra UCITS ETFs, recent US IPOs) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
 //!   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
 //!                                 no TICKERS -> last `screen` run's ranked picks; --watchlist for the typed list; TICKERS + --picks = the ranked picks plus those names, minus duplicates
-//!   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower profile (FMP key; only the valuation tilt is score-weighed)
+//!   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower profile (FMP, else keyless SEC EDGAR for US filers; only the valuation tilt is score-weighed)
 //!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [holders] [tune] [halflife] [stress] [long] [pit] [dead|deadflat] [winners] [rivals] [pac] [failures] [intraday]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = as-of fundamentals (SEC EDGAR or FMP, per fund_source), `insider` = SEC Form-4 net buys, `holders` = Berkshire/superinvestor 13F-add cohorts, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check), `long` = force the max monthly series, `pit` = score each cutoff against the index as it stood, `dead`/`deadflat` = walk delisted members (deadflat: no crash cut), `winners` = where the top-10 book misses each window's winners, `rivals` = rival books on the same pond, `pac` = corporate-PAC breadth, `failures` = failed filers vs survivors, `intraday` = open-to-close keys
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
-//!   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
+//!   folioman track [--push]        grade every past `screen` BUY NOW book (at its sizes; top-10 on lines older than the sized journal) vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
 //!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; type `yes` to send)
@@ -25,19 +25,19 @@ use folioman::{commands, config};
 const USAGE: &str = "\
 folioman — review ETF/stock/crypto holdings. Read-only except `trade` (live orders, typed-`yes` gated).
 
-  folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
+  folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/2Y/5Y/8Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon (1Y+ % real terms when inflation_adjust on; past prices nominal)
   folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko, S&P 500, Euronext Lisbon, Xetra UCITS ETFs, recent US IPOs) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
                                   no TICKERS -> last `screen` run's ranked picks; --watchlist for the typed list; TICKERS + --picks = the ranked picks plus those names, minus duplicates
-  folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower profile (FMP key; only the valuation tilt is score-weighed)
+  folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower profile (FMP, else keyless SEC EDGAR for US filers; only the valuation tilt is score-weighed)
   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [holders] [tune] [halflife] [stress] [long] [pit] [dead|deadflat] [winners] [rivals] [pac] [failures] [intraday]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = as-of fundamentals (SEC EDGAR or FMP, per fund_source), `insider` = SEC Form-4 net buys, `holders` = Berkshire/superinvestor 13F-add cohorts, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check), `long` = force the max monthly series, `pit` = score each cutoff against the index as it stood, `dead`/`deadflat` = walk delisted members (deadflat: no crash cut), `winners` = where the top-10 book misses each window's winners, `rivals` = rival books on the same pond, `pac` = corporate-PAC breadth, `failures` = failed filers vs survivors, `intraday` = open-to-close keys
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
-  folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
+  folioman track [--push]        grade every past `screen` BUY NOW book (at its sizes; top-10 on lines older than the sized journal) vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
   folioman accounts              cash available + holdings per broker (read-only; env creds)
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; brokers:
-                                 trading212 | binance | tr — creds from env; type `yes` to send)
+                                 trading212 | binance | tr (login only, orders not implemented) — creds from env; type `yes` to send)
 
 No TICKERS -> uses config/settings.yaml watchlist.";
 

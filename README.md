@@ -99,8 +99,9 @@ confirm gate when you run it.
 ### `track` — live out-of-sample track record
 
 Every `screen` run journals its ranked top slice (tickers, EUR prices, S&P 500 close) to
-`.screen_snapshots.jsonl` — one line per day. `folioman track` grades every past top-10 at
-today's prices: equal-weight book return vs the index over the same window, plus a win-rate
+`.screen_snapshots.jsonl` — one line per day. `folioman track` grades every past BUY NOW book at
+today's prices: its return at the sizes it was bought at vs the index over the same window (lines
+older than the sized journal fall back to the top-10, equal-weight), plus a win-rate
 summary. This is the screen's own advice graded on data that did not exist when it ranked — the
 live counterpart of the backtest's held-book metric, and the honest answer to "does the ranking
 actually work?" as evidence accrues. Price-only (dividends not counted, like the backtest);

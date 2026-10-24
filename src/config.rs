@@ -164,7 +164,7 @@ impl Sizing {
     }
 }
 
-/// Toggle for showing REAL (inflation-adjusted) returns on the 1Y/5Y/10Y/20Y % columns instead of
+/// Toggle for showing REAL (inflation-adjusted) returns on the 1Y/2Y/5Y/8Y/10Y/20Y % columns instead of
 /// nominal. Off by default. When on, deflates by the ACTUAL cumulative EU HICP inflation over each
 /// horizon (fetched live, same source as the `check` footer) — no rate to guess.
 #[derive(Debug, Deserialize, Clone, Default)]
