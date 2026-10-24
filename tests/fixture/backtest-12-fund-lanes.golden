@@ -348,7 +348,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   low_dro        TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   capex_light    TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   composite      TEST edge +156.0 (w 0.031)  OOS +0.22 | +0.19
-  -> WINNER: op_leverage. Set `growth_fund_factor: op_leverage` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm.
+  -> WINNER: op_leverage. Set `growth_fund_factor: op_leverage` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.
   -> validated growth_fund_weight for op_leverage: 0.071 (at growth_fund_cap 300)
 
 ── growth_fund_weight CURVE for `peg_yield` (held-out TEST, growth_fund_cap 300) ──
