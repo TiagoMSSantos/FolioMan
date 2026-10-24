@@ -62,9 +62,9 @@
   @media (min-width: 700px) {
     :is(#stocks, #etfs, #crypto, #core) :is(th, td):nth-child(-n+3) { position: sticky; z-index: 1; background: var(--bg); }
     :is(#stocks, #etfs, #crypto, #core) th:nth-child(-n+3) { z-index: 3; background: var(--head-bg); }
-    :is(th, td):nth-child(1) { left: var(--left0); }
-    :is(th, td):nth-child(2) { left: var(--left1); }
-    :is(th, td):nth-child(3) { left: var(--left2); }
+    :is(#stocks, #etfs, #crypto, #core) :is(th, td):nth-child(1) { left: var(--left0); }
+    :is(#stocks, #etfs, #crypto, #core) :is(th, td):nth-child(2) { left: var(--left1); }
+    :is(#stocks, #etfs, #crypto, #core) :is(th, td):nth-child(3) { left: var(--left2); }
   }
   /* (#250) …and the CORE table has FOUR leading label columns (RANK, NAME, TICKER, MARKET)
      plus three trailing ones (USE, REPL, DOM), which is how the terminal block aligns them. */
