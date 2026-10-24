@@ -4504,7 +4504,6 @@ fn soc_named(name: &str, words: &[(String, bool)]) -> bool {
 
 /// (#443) Every pooled equity one of whose [`soc_names`] a video's text [`soc_named`]. Each as (quote,
 /// videos naming it, the newest one's day, title and (#455) link).
-#[allow(clippy::type_complexity)]
 fn soc_hits<'a>(
     videos: &[(String, String, String, String)],
     quotes: &'a [Quote],

@@ -2266,7 +2266,6 @@ pub async fn run(args: Vec<String>) {
 ///
 /// Note it de-means through the same `demean` as `run`, so it must class names the same way or the two
 /// disagree on what a peer is: hence the shared `stamp_asset_class` rather than a local copy.
-#[allow(clippy::too_many_arguments)]
 fn sweep_cutoffs(
     tk: &str,
     dates: &[chrono::NaiveDate],
@@ -2323,7 +2322,6 @@ fn sweep_cutoffs(
 /// signal, so there's an optimum. shortcut: duplicates ~20 lines of run's walk-forward on purpose, to keep
 /// this opt-in dev path from touching the validated default dispatch; the fetch is cached so the re-walk is
 /// cheap. Price-only (no fund/insider) — this measures the price signal's decay, not the fund tilt.
-#[allow(clippy::too_many_arguments)]
 async fn hold_period_sweep(
     client: &reqwest::Client,
     urls: &crate::config::Urls,
@@ -5213,7 +5211,6 @@ fn apply_proxy(
 /// against that book plus the names only the borrowed history made assessable. Same pool, same equal-weight-per-bucket
 /// arithmetic and the same `guard_holds` bar as the notch shadow, so the two tables are read identically. Empty
 /// second row = the splice admitted nobody at this horizon, which is a finding, not a failure.
-#[allow(clippy::type_complexity)]
 fn proxy_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
     let mut own: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
     let mut borrowed: Vec<(i32, (f64, f64, f64))> = Vec::new();
@@ -5328,7 +5325,6 @@ fn report_notch_tail(samples: &[Sample], years: i64, tuning: &BuyHeuristic) {
 /// Returns the unconditional "all entries" held-book stats (book, excess, win, worst, oos_early,
 /// oos_late, windows) — the same numbers it prints on the `[unconditional]` row — so run() can
 /// journal them as the method verdict without recomputing. None when the sample can't form a book.
-#[allow(clippy::type_complexity)]
 fn report_entry_state(
     samples: &[Sample],
     bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
@@ -5633,7 +5629,6 @@ fn dca_program<B>(
 /// momentum's as the page does ([`blend_top`]; (#630) it was the lane's first 10 minus `growth_momentum_slots`
 /// names, then momentum's); then the SIZED book with momentum spliced in
 /// ([`picks::sized_splice`]), after its head and interleaved, the two ways a shipped blend could order BUY NOW.
-#[allow(clippy::too_many_arguments)]
 fn report_roll(
     samples: &[Sample],
     books: &[Sample],
@@ -11645,7 +11640,6 @@ mod tests {
     /// absurdly HIGH, caps absurdly LOW (but never to the knob's own "0 = off" sentinel), multipliers to
     /// a value that is neither of their two off-states. Cranking to an impossible value is what makes an
     /// INERT verdict mean "unreachable" rather than "my fixture happened to sit on the safe side".
-    #[allow(clippy::type_complexity)]
     const GATE_PROBES: &[(&str, fn(&mut BuyHeuristic, f64), f64)] = &[
         // equity/shared hard gates
         ("growth_min_cagr", |t, v| t.growth_min_cagr = v, 1e9),
@@ -12030,7 +12024,6 @@ mod tests {
 
         // (crypto setter, equity setter, probe) — floors crank up, caps crank down, both past anything
         // the fixture can reach, so a gate that CAN see this quote must bite.
-        #[allow(clippy::type_complexity)]
         let forks: &[(&str, fn(&mut BuyHeuristic, f64), fn(&mut BuyHeuristic, f64), f64)] = &[
             ("1Y floor", |t, v| t.min_1y_pct_crypto = v, |t, v| t.growth_min_1y_pct = v, 1e9),
             ("1M knife", |t, v| t.max_1m_drop_pct_crypto = v, |t, v| t.max_1m_drop_pct = v, 1e9),

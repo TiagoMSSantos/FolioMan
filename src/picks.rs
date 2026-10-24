@@ -2072,7 +2072,6 @@ pub fn rank_robustness(
 /// `screen` journals what each would newly admit TODAY so `track` can grade it forward. The tag is the gate's
 /// funnel name, the one `gate_failures` prints. A reopen ships exactly one of these rows, so the set the forward
 /// record grades and the set a reopen would buy are one definition.
-#[allow(clippy::type_complexity)]
 pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))> {
     vec![
         ("range", "growth_min_range_pct -10", |t| t.growth_min_range_pct -= 10.0),
@@ -4167,7 +4166,6 @@ fn lane_columns(w: &Widths, hide: &[&str]) -> Vec<&'static ColSpec> {
 /// [`tuning_8y`] and [`lane_columns`] above, where the web payload calls the same four and the gate
 /// can actually grade them. What is left here is padding and `println!`.
 #[mutants::skip]
-#[allow(clippy::too_many_arguments)]
 fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
     println!("\n{title}");
     if picks.is_empty() {
@@ -4659,7 +4657,6 @@ fn unshown_ranked<'a>(ranked: &[(&'a Quote, f64)], printed: &[&str]) -> Vec<(&'a
 /// cannot read this binary's stdout. Its decisions have all moved out to functions the gate CAN
 /// reach: [`lane_split`], [`lane_head`], [`lane_columns`], [`etf_widths`] and the `HIDE_*` consts.
 #[mutants::skip]
-#[allow(clippy::too_many_arguments)]
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) {
     // (#265) the EXACT slice `render` journals (`tickers.take(n)`), captured before `lane_split`
     // consumes `picks` — the reference the disclosure at the end of this function diffs against.
@@ -4810,7 +4807,6 @@ pub struct WebTop {
 ///
 /// Widths are NOT applied: the page lays out its own columns, and padding a cell to a terminal width
 /// would only make the browser re-collapse it.
-#[allow(clippy::too_many_arguments)]
 pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap, inflation: &[Vec<(String, String)>], core: &[Vec<(String, String)>]) -> WebTop {
     // (#403) The book `render` returns (coins ride free of `n`), captured before `lane_split` consumes
     // `picks`, because the page's BUY% funds every name in it. One past its table's cut shows at its real

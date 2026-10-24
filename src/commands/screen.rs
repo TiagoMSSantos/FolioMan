@@ -824,7 +824,6 @@ fn near_miss_tail<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::B
 /// row (`track::Snapshot::near`), so `track` grades each cohort against the book the same run bought.
 /// shortcut: no cap. The history cohort can run to hundreds of rows a line; cap per notch if the journal's size
 /// ever matters.
-#[allow(clippy::type_complexity)]
 fn notch_cohorts<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::BuyHeuristic) -> Vec<(&'static str, &'static str, Vec<&'a Quote>)> {
     let refused: Vec<&Quote> = quotes
         .iter()
@@ -851,7 +850,6 @@ fn notch_cohorts<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::Bu
 /// ticker as the tie-break, one venue per fund the way `notch_cohorts` keeps one. Sides are compared by FUND,
 /// not ticker, so a notch that only flips which venue of one fund scores best is not a swap. A notch that
 /// moves nobody writes no row.
-#[allow(clippy::type_complexity)]
 fn weight_swaps<'a>(
     quotes: &'a [Quote],
     tuning: &config::BuyHeuristic,
@@ -1378,7 +1376,6 @@ fn book_ranks(t: &str, journal: &[crate::commands::track::Snapshot]) -> Vec<usiz
 /// r28 and `track::grade` use). A claim needs `>= min_pts` appearances; earlier-half mean vs
 /// later-half mean decides, with a `band`-rank deadband so a flat drift stays silent. Returns
 /// (climbers, faders), each `(ticker, first_rank, last_rank)` as first→last evidence.
-#[allow(clippy::type_complexity)]
 fn rank_trend(
     today_top: &[String],
     journal: &[crate::commands::track::Snapshot],
