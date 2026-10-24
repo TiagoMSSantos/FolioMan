@@ -1288,13 +1288,18 @@ inflation_adjust:
                       #   at the BOTTOM of the stock table: names should be ADMITTED, never dropped,
                       #   since every perf-fed bar gets easier when the deflation comes off.
 
-# (P5) RISK BUDGET for the `size` table. Every value here is UNMEASURED AND UNMEASURABLE IN THIS REPO,
-# and unlike the unfitted gate values elsewhere in this file that is a permanent fact, not a to-do:
-# `size` is a live read-only command, no backtest path reaches `picks::size_weights`, and no golden
-# covers it. These are POLICY. State them, do not sweep them, and do not let a future receipt claim a
-# horizon for them. Written out rather than left to the code defaults so the shipped policy is legible
-# in the same file as everything else the operator reads.
-# REVERT RULE: delete the block — the code defaults are these exact numbers.
+# (P5) RISK BUDGET for the `size` table. Every value from `budget_stock` down to `spill_per_tier` is
+# UNMEASURED AND UNMEASURABLE IN THIS REPO, and unlike the unfitted gate values elsewhere in this file
+# that is a permanent fact, not a to-do: `size` is a live read-only command, no backtest path reaches
+# `picks::size_weights`, and no golden covers it. These are POLICY. State them, do not sweep them, and
+# do not let a future receipt claim a horizon for them. Written out rather than left to the code
+# defaults so the shipped policy is legible in the same file as everything else the operator reads.
+# (#951) The four book knobs below them, from `equal_weight_book` on, are the exception: three were
+# graded on the backtest's book rows and `head_skip_commodity` is a user decision, so read each one's
+# own receipt before moving it.
+# REVERT RULE: deleting any line from `budget_stock` to `spill_per_tier` changes nothing — the code
+# defaults are these exact numbers. The book knobs' code defaults are the opt-in off-state, so
+# deleting the whole block turns `size` back into the vol-target book.
 sizing:
   budget_stock: 70    # share of gross for single stocks, RENORMALISED over the classes actually present
   budget_etf: 25      # funds: already diversified internally, so they need less name-level spreading

@@ -107,10 +107,12 @@ pub struct Sizing {
     pub head_skip_commodity: bool, // (#495) the equal-weight book never seats a commodity-price name (`picks::is_commodity`, the `c` flag) among its first `size::HEAD` non-coin rows: it moves to just after them, so it is still bought at a tail share and the head's `head_weight` goes to the next name. false = score order, the DEFAULT
 }
 
-/// Defaults are the SHIPPED policy, not a neutral off-state — the one place in this file where a
-/// knob's default deliberately does NOT reproduce the previous behaviour. `size` never runs in the
-/// backtest and no golden covers it, so there is nothing for an off-by-default to protect; leaving
-/// the old equal-class split as the default would just mean the fix ships disabled.
+/// The budget, cap and spill defaults are the SHIPPED policy, not a neutral off-state — the one
+/// place in this file where a knob's default deliberately does NOT reproduce the previous behaviour.
+/// `size` never runs in the backtest and no golden covers it, so there is nothing for an
+/// off-by-default to protect; leaving the old equal-class split as the default would just mean the
+/// fix ships disabled. (#951) The four book knobs from `equal_weight_book` on are NOT: they default
+/// to the previous behaviour, and ci-settings' `sizing:` block turns them on.
 impl Default for Sizing {
     fn default() -> Self {
         Self {
