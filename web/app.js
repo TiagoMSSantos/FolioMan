@@ -629,6 +629,8 @@ function say(text, reset) {
       upload.value = "";
       run++;
       current = "";
+      asked++; // (#898) an answer about the old ranking, shown or still in flight, goes with it
+      whyOut.hidden = true;
       mine.hidden = true;
       load();
     };
@@ -658,6 +660,8 @@ upload.onchange = async () => {
     if (data.err) return say("Could not rank with " + file.name + ": " + data.err, true);
     const out = JSON.parse(data.ok);
     current = overlay;
+    asked++; // (#898) likewise
+    whyOut.hidden = true;
     render(out);
     say(
       "Ranked with your " + file.name + ", in this browser: the file was never uploaded. What " +
