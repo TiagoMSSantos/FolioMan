@@ -232,7 +232,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: folioman-test
           save-if: false   # (#353) integration-tests is the key's only writer
@@ -248,7 +248,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: rustup component add clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: folioman-lint   # (#353) clippy's check output is not a build's; lint's alone
       - run: cargo clippy --locked --all-targets -- -D warnings
@@ -266,7 +266,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: folioman-wasm   # (#353) its own key and its only writer: wasm artifacts serve no other job
       - run: cargo check --locked --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
@@ -280,7 +280,7 @@ jobs:
       # (#846) The CLI as a prebuilt binary. `cargo install` compiled it on every cold cache, 126s of
       # (#841)'s first 296s run, which made wasm the slowest job on each Cargo.lock bump, and spent
       # ~10s confirming it on a warm one.
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: wasm-bindgen@0.2.129   # = web/engine's pin
       - run: |
@@ -303,7 +303,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           # (#354) Unversioned: it follows the action's pin. If an advisory-database format change
           # reds this job before Dependabot's monthly bump, bump the action; never pin the tool back.
@@ -324,7 +324,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: folioman-test
           save-if: false   # (#353) integration-tests is the key's only writer
@@ -353,7 +353,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: folioman-test
           save-if: false   # (#353) integration-tests is the key's only writer
@@ -415,10 +415,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: rustup component add llvm-tools-preview
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-llvm-cov   # (#354) follows the action's pin (0.9.1 at v2.87.20)
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: folioman-coverage   # instrumented build — kept apart from folioman-test
       - name: coverage — lib + integration + binary dispatch (floor-gated)
@@ -511,7 +511,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: folioman-test   # (#353) the ONLY writer: it builds every dependency a test job needs
       - name: integration + live API drift nets (skip-on-throttle, fail-on-drift)
@@ -558,7 +558,7 @@ jobs:
     timeout-minutes: 60   # cold release build + one wide-universe fetch + three walk-forward horizons
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # (#349) its OWN key, not the test jobs'. This is the only job that builds `--release`, and a
           # shared key is written by whichever job finishes FIRST after a Cargo.toml/Cargo.lock change —
@@ -691,7 +691,7 @@ jobs:
       # push that changed nothing it grades. Bump it on purpose, here and in mutation-census.yml
       # together, and re-prove with a census dispatch. PROVEN on 51ce484: census run 36229966422
       # (src/core.rs, convert_price) installed 27.1.0 and graded 18 caught, 0 missed, as before.
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-mutants@27.1.0
       # (#596) Did this push change src/? The cache step's save-if reads the answer, and an action's
@@ -707,7 +707,7 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # (#596) A key of its own, written by this job alone ((#353): one writer per key). The gate
           # builds in the checkout's target/ (CARGO_TARGET_DIR below), so this restores dependencies
