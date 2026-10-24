@@ -928,7 +928,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     };
     let drawdown_pct = if hi_window.is_empty() { 0.0 } else { pct_from_high(&hi_window) };
 
-    let (arrow, dur, _) = trend_streak(&chart.dates, &chart.closes);
+    let (arrow, dur) = trend_streak(&chart.dates, &chart.closes);
     let (at_ath, at_atl) = extreme_flags(&chart.closes, 0.001);
 
     let last_date = chart.dates.last().copied();

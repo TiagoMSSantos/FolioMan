@@ -5942,17 +5942,17 @@ pub fn fmt_duration(td: Duration) -> String {
     "0s".to_string()
 }
 
-/// ('↑'/'↓'/'→', duration_str, days) for the current consecutive price run.
+/// ('↑'/'↓'/'→', duration_str) for the current consecutive price run.
 /// Span = first close of the run to the latest (calendar time).
-pub fn trend_streak(dates: &[NaiveDate], closes: &[f64]) -> (&'static str, String, i64) {
+pub fn trend_streak(dates: &[NaiveDate], closes: &[f64]) -> (&'static str, String) {
     let sign = |a: f64, b: f64| -> i32 { (a > b) as i32 - (a < b) as i32 };
     if closes.len() < 2 {
-        return ("→", "0s".to_string(), 0);
+        return ("→", "0s".to_string());
     }
     let n = closes.len();
     let direction = sign(closes[n - 1], closes[n - 2]);
     if direction == 0 {
-        return ("→", "0s".to_string(), 0);
+        return ("→", "0s".to_string());
     }
     let mut i = n - 1;
     while i >= 1 && sign(closes[i], closes[i - 1]) == direction {
@@ -5960,7 +5960,7 @@ pub fn trend_streak(dates: &[NaiveDate], closes: &[f64]) -> (&'static str, Strin
     }
     let arrow = if direction > 0 { "↑" } else { "↓" };
     let span = *dates.last().expect("dates non-empty: lockstep with closes, len >= 2 guarded above") - dates[i];
-    (arrow, fmt_duration(span), span.num_days())
+    (arrow, fmt_duration(span))
 }
 
 /// (at_all_time_high, at_all_time_low): latest close within tol of the max/min seen.
@@ -10641,14 +10641,14 @@ mod tests {
         NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
         NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
     ];
-    assert_eq!(trend_streak(&dd, &[10.0, 11.0, 12.0]), ("↑", "2d".to_string(), 2));
+    assert_eq!(trend_streak(&dd, &[10.0, 11.0, 12.0]), ("↑", "2d".to_string()));
     assert_eq!(trend_streak(&dd, &[12.0, 11.0, 10.0]).0, "↓");
-    assert_eq!(trend_streak(&dd, &[10.0, 10.0, 10.0]), ("→", "0s".to_string(), 0));
-    assert_eq!(trend_streak(&dd[..1], &[10.0]), ("→", "0s".to_string(), 0));
-    assert_eq!(trend_streak(&dd[..2], &[10.0, 11.0]), ("↑", "1d".to_string(), 1)); // two closes ARE a run
+    assert_eq!(trend_streak(&dd, &[10.0, 10.0, 10.0]), ("→", "0s".to_string()));
+    assert_eq!(trend_streak(&dd[..1], &[10.0]), ("→", "0s".to_string()));
+    assert_eq!(trend_streak(&dd[..2], &[10.0, 11.0]), ("↑", "1d".to_string())); // two closes ARE a run
     // the direction is read off the LAST two closes, whatever sits mid-series
     let d5: Vec<NaiveDate> = (1..=5).map(|d| NaiveDate::from_ymd_opt(2024, 1, d).unwrap()).collect();
-    assert_eq!(trend_streak(&d5, &[1.0, 2.0, 5.0, 3.0, 4.0]), ("↑", "1d".to_string(), 1));
+    assert_eq!(trend_streak(&d5, &[1.0, 2.0, 5.0, 3.0, 4.0]), ("↑", "1d".to_string()));
 
     assert_eq!(extreme_flags(&[1.0, 2.0, 3.0], 0.001), (true, false));
     assert_eq!(extreme_flags(&[3.0, 2.0, 1.0], 0.001), (false, true));
