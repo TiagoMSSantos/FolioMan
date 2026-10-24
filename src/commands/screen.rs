@@ -3427,6 +3427,9 @@ pub async fn run(args: Vec<String>) {
         println!("\n{}", crate::commands::backtest::verdict_line(&v, drift, settings.buy_heuristic.print_n_eff));
     }
 
+    // (#870) today's top-BOOK names, one list for the round 28 / 29 / 31 / 34 footers and the currency mix
+    let today_top: Vec<String> = ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
+
     // (round 28) persistent leaders: which of today's top-10 have DURABLY held a top-10 rank
     // across the journal — the multi-screen frequency the trust line (return) and the membership
     // diff (churn since last screen) don't show. A 20yr holder wants the durable leaders, not a
@@ -3437,8 +3440,6 @@ pub async fn run(args: Vec<String>) {
     {
         let past: Vec<_> = snaps.iter().filter(|s| s.date < run_date).cloned().collect();
         if past.len() >= 2 {
-            let today_top: Vec<String> =
-                ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
             let leaders = persistent_leaders(&today_top, &past, 0.8);
             if !leaders.is_empty() {
                 let k = past.len();
@@ -3459,8 +3460,6 @@ pub async fn run(args: Vec<String>) {
     // flat drift silent; silent when nothing clears the band.
     {
         if snaps.len() >= 3 {
-            let today_top: Vec<String> =
-                ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
             let (up, down) = rank_trend(&today_top, &snaps, 3, 1.0);
             if !up.is_empty() || !down.is_empty() {
                 let k = snaps.len();
@@ -3516,8 +3515,6 @@ pub async fn run(args: Vec<String>) {
     // needs ≥3 screens and ≥3 appearances per name; silent when none qualify.
     {
         if snaps.len() >= 3 {
-            let today_top: Vec<String> =
-                ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
             let depth = mean_ranks(&today_top, &snaps, 3);
             if !depth.is_empty() {
                 let k = snaps.len();
@@ -3597,8 +3594,7 @@ pub async fn run(args: Vec<String>) {
     // concentration should tilt the rank is a measured question, and this is how the data to answer it
     // becomes visible. Silent at false, which is the shipped state.
     if settings.buy_heuristic.print_currency_mix {
-        let book: Vec<String> = ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
-        if let Some(line) = currency_mix_line(&book, &quotes, &holdings) {
+        if let Some(line) = currency_mix_line(&today_top, &quotes, &holdings) {
             println!("\n{line}");
         }
     }
@@ -3610,8 +3606,6 @@ pub async fn run(args: Vec<String>) {
     // only (stocks/crypto carry no AUM). Zero fetch. COARSE by design — BF refreshes AUM ~monthly,
     // so a reading accrues over weeks, not per-day; silent until ≥2 journal points carry AUM+close.
     {
-        let today_top: Vec<String> =
-            ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
         let flows = fund_flow_lines(&today_top, &snaps);
         if !flows.is_empty() {
             let parts = flows
