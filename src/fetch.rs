@@ -13267,6 +13267,9 @@ pub(crate) mod tests {
         assert_eq!(parse_justetf_cells(r#"tl_etf-holdings_top-holdings_weight">0.00%"#).2, None, "0 is justETF's unknown");
     }
 
+    /// (#899) `.isin_cache.json` is ONE shared file in the scratch root: a test that seeds or asserts on it holds this for its whole run.
+    static ISIN_CACHE_LOCK: Mutex<()> = Mutex::const_new(());
+
     /// (#465) `enrich_etf_cells`: ZZTDA is fetched (its ISIN off the inverted ISIN cache) and cached,
     /// ZZTDB is served off a fresh cache row while port 1 refuses its stale twin, ZZTDC has no ISIN,
     /// and ZZTDA2 is not printed but shares ZZTDA's name, so it copies both cells. (#479) justETF:
@@ -13279,6 +13282,7 @@ pub(crate) mod tests {
     /// ZZTDL is no real-estate fund and ZZTDM has a fresh cached row, so none of those reads a page.
     #[tokio::test]
     async fn enrich_etf_cells_stamps_printed_funds_and_their_listings() {
+        let _own = ISIN_CACHE_LOCK.lock().await;
         let page = |d: &'static str| -> &'static str { Box::leak(format!("tdChart=x;name:'TD (%)',data:[{d}]").into_boxed_str()) };
         // B is routed so a wrongful refetch of its fresh row would show; E is not, so it answers 404
         let je_page = |use_: &str, top10: &str| -> &'static str {
@@ -16202,6 +16206,7 @@ pub(crate) mod tests {
     /// second run of the suite would grade files the first run left behind and pass on nothing.
     #[tokio::test]
     async fn fresh_resolutions_are_cached_and_definitive_misses_are_remembered() {
+        let _own = ISIN_CACHE_LOCK.lock().await;
         pin_throttle();
         pin_fetch_concurrency(); // this call fans out — see the helper for why it is not optional
         let pos =crate::config::data_path(ISIN_CACHE_PATH);
