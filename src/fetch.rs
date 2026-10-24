@@ -7,7 +7,7 @@
 
 use crate::config::Urls;
 use crate::core::{
-    self, asof, extreme_flags, headline_titles, horizon_changes, market_of, name_of,
+    self, asof, headline_titles, horizon_changes, market_of, name_of,
     pct_from_high, slice_since, trend_streak, Quote,
 };
 use chrono::{DateTime, NaiveDate};
@@ -929,7 +929,6 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let drawdown_pct = if hi_window.is_empty() { 0.0 } else { pct_from_high(&hi_window) };
 
     let (arrow, dur) = trend_streak(&chart.dates, &chart.closes);
-    let (at_ath, at_atl) = extreme_flags(&chart.closes, 0.001);
 
     let last_date = chart.dates.last().copied();
     let month_ago = last_date.and_then(|ld| asof(&chart.dates, &chart.closes, ld - chrono::Duration::days(30)));
@@ -967,8 +966,6 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         social_tip: false,
         name: chart.name,
         trend: format!("{arrow} {dur}"),
-        at_ath,
-        at_atl,
         mom_pct,
         div_eur: core::dividend_sums(&long_divs, &long_dates, rate),
         price_eur: rate.map(|r| cur_close * r),

@@ -297,8 +297,6 @@ pub struct Quote {
     pub social_tip: bool,
     pub name: String,    // human-readable instrument name (falls back to ticker)
     pub trend: String,   // "↑ 2w" / "↓ 5d": current direction + how long it has held
-    pub at_ath: bool,    // at/near all-time high (within tol of max seen)
-    pub at_atl: bool,    // at/near all-time low (within tol of min seen)
     pub mom_pct: Option<f64>, // % change vs ~1 month ago (None if no data); <0 = falling
     pub div_eur: Vec<Option<f64>>, // total dividends/share (EUR) per DIV_HORIZONS; None = short history
     pub price_eur: Option<f64>, // current close in EUR (None if FX unknown); for dividend yield
@@ -444,8 +442,6 @@ impl Quote {
             social_tip: false,
             name: name.to_string(),
             trend: String::new(),
-            at_ath: false,
-            at_atl: false,
             mom_pct: None,
             div_eur: Vec::new(),
             price_eur: None,
@@ -5959,18 +5955,6 @@ pub fn trend_streak(dates: &[NaiveDate], closes: &[f64]) -> (&'static str, Strin
     (arrow, fmt_duration(span))
 }
 
-/// (at_all_time_high, at_all_time_low): latest close within tol of the max/min seen.
-/// 'All-time' = the fetched history window (Yahoo range=max).
-pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
-    if closes.is_empty() {
-        return (false, false);
-    }
-    let last = *closes.last().expect("closes non-empty: closes.is_empty() guarded above");
-    let hi = closes.iter().cloned().fold(f64::MIN, f64::max);
-    let lo = closes.iter().cloned().fold(f64::MAX, f64::min);
-    (last >= hi * (1.0 - tol), last <= lo * (1.0 + tol))
-}
-
 /// (#329) xorshift64. The repo carries no random-number dependency, and the band has to read the same
 /// at any thread count for the goldens to be stable, so three lines beat pulling in a crate.
 pub(crate) fn next_rand(state: &mut u64) -> u64 {
@@ -10644,11 +10628,6 @@ mod tests {
     // the direction is read off the LAST two closes, whatever sits mid-series
     let d5: Vec<NaiveDate> = (1..=5).map(|d| NaiveDate::from_ymd_opt(2024, 1, d).unwrap()).collect();
     assert_eq!(trend_streak(&d5, &[1.0, 2.0, 5.0, 3.0, 4.0]), ("↑", "1d".to_string()));
-
-    assert_eq!(extreme_flags(&[1.0, 2.0, 3.0], 0.001), (true, false));
-    assert_eq!(extreme_flags(&[3.0, 2.0, 1.0], 0.001), (false, true));
-    assert_eq!(extreme_flags(&[2.0, 1.0, 3.0, 2.0], 0.001), (false, false));
-    assert_eq!(extreme_flags(&[], 0.001), (false, false));
 
     // money formatting (Python {:,.2f})
     assert_eq!(fmt_money2(1234567.5), "1,234,567.50");
