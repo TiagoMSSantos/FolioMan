@@ -1665,6 +1665,7 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
     let range = intraday::chart_range(since, today, k);
     let (mut rows, mut pairs, mut stubs) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut asked, mut got) = (0, 0); // names asked for, names whose bars came back
     for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)
             .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk, range).await?)) })
@@ -1672,6 +1673,8 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             .filter_map(std::future::ready)
             .collect()
             .await;
+        asked += names.len();
+        got += charts.len();
         let pond: Vec<intraday::Member> = charts
             .iter()
             .filter_map(|(tk, c)| {
@@ -1690,6 +1693,7 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
         stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
     }
+    eprintln!("screen: intraday: fetched {got} of {asked} names");
     let targets = stubs.iter().map(|q| q.ticker.clone()).collect();
     fetch::enrich_profile(client, &settings.urls, &mut stubs, &targets).await;
     (rows, pairs, stubs)
