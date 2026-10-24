@@ -18738,6 +18738,24 @@ buy_heuristic:
   #   year before today": there are no truncated series to salvage. The 387 zero-bar names cannot be
   #   SCORED at all (no pre-cutoff history -> no score -> never picked), and the rest run to today as
   #   recycled tickers. A terminal-return stub is dead twice over.
+  # (#852) 2026-10-24 — RE-OPENED ON (#140)'s PREMISE, REFUSED ON THE STRESS LANE. (#140) refused because
+  #   the PIT book held ~6 of 10 names, so a dedupe could only empty it. That premise is gone: the pit
+  #   POOL CENSUS now reads median gated pool 235/255/260 at 20/12/8y with 0 saturated buckets, and the
+  #   CORR-CAP probe at 0.6 met its own bar at all three. Graded at 1455fbb, years 20 12 8, args
+  #   `universe fund pit rivals winners` and `universe fund stress rivals winners`, one same-batch control
+  #   per lane, one field moved. windows scored, POOL CENSUS and WINNERS HELD matched control in every
+  #   arm and the fund lane was byte-identical. Top-10 book minus control, excess mean/median/worst:
+  #                    20y               12y               8y
+  #     pit    0.6   +0.8/+1.7/+1.8    +0.8/+0.7/+2.3    +1.0/+0.6/+4.0
+  #     pit    0.4   +0.1/+1.5/+1.1    +1.1/+1.1/+2.2    +1.0/+1.3/+1.8
+  #     stress 0.6   -0.1/+0.0/+0.2    +0.2/+0.4/-0.5    +0.5/+0.8/-1.0
+  #     stress 0.4   -0.5/-0.1/-3.1    -0.2/+0.6/-1.1    -0.1/+1.1/-1.9
+  #   Pre-registered bar: median >= control -0.1 and worst >= control -0.5 in all six cells. 0.6 fails
+  #   stress 8y worst (-1.0) on a deep pool (median 243), so that miss is not exhaustion. 0.4 fails
+  #   stress 20y worst (-3.1), where the pool is thin (median 25, 22 of 72 buckets saturated). The pit
+  #   lane alone is a lead; the stress lane does not confirm it. The RANKED row and h2h are vacuous for
+  #   this knob ((#140) b). No interior rung: 0.5 or 0.7 would be a ladder fitted after a bar fail. And
+  #   a pass still would not ship alone, because (#41)'s live table stops at n.
   # (#75) VALUE BRAKE — the cross-sectional PEG floor: built, wired, graded and REFUSED 2026-08-12.
   #   Sibling of the (#41) skip above by construction (same site, same shape, same "not a gate, not a
   #   score term" standing) and now its sibling in outcome too: a cohort-aware trim that measures well
