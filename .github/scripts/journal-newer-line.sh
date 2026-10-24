@@ -22,4 +22,11 @@ if [[ ! "$day" > "$last" ]]; then
   echo "journal unchanged: main already ends at $last (this run's last line: $day)"
   exit 0
 fi
+# (#884) A date the run could not have: "null" (no .date) and "9999-12-31" both sort after every real
+# day, so one such line on main would hold back every later day for good. Tomorrow is the ceiling,
+# so a runner clock a day ahead of UTC still passes. An empty or older day already left above.
+if ! [[ $day =~ ^20[0-9]{2}-[01][0-9]-[0-3][0-9]$ && ! $day > $(date -u -d tomorrow +%F) ]]; then
+  echo "journal line has a bad date '$day': refusing to append it"
+  exit 1
+fi
 printf '%s\n' "$line" >> .screen_snapshots.jsonl

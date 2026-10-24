@@ -212,7 +212,16 @@ jobs:
           try older "2026-10-14 2026-10-15 2026-10-16" "2026-10-10 2026-10-15" "2026-10-14 2026-10-15 2026-10-16" "journal unchanged: main already ends at 2026-10-16 (this run's last line: 2026-10-15)"
           try empty "" "2026-10-16" "2026-10-16" "day=2026-10-16"
           try missing - "2026-10-16" "2026-10-16" "day=2026-10-16"
-          echo "journal record: newer, same, older, empty and missing main journals all behave"
+          bad() { # (#884) NAME "run's last line": a date no run could have must fail the step and leave main's journal alone
+            mkdir -p "$t/$1/run-journal"; cd "$t/$1" || exit 1
+            j "2026-10-14" > .screen_snapshots.jsonl
+            printf '%s\n' "$2" > run-journal/.screen_snapshots.jsonl
+            if bash -e -c '. "$0"' "$s" > /dev/null 2>&1; then echo "$1: appended a line with a bad date"; exit 1; fi
+            cmp -s .screen_snapshots.jsonl <(j "2026-10-14") || { echo "$1: main's journal changed:"; cat .screen_snapshots.jsonl; exit 1; }
+          }
+          bad future '{"date":"9999-12-31"}'
+          bad nodate '{"spx":1}'
+          echo "journal record: newer, same, older, empty and missing main journals all behave, a bad date is refused"
 
   build:
     runs-on: ubuntu-24.04
