@@ -12209,6 +12209,27 @@ pub(crate) mod tests {
         assert_eq!(rows[1].prior_eps, Some(2.04));
     }
 
+    /// (#866) The strict twin gets the instance fill too, and the write-back keeps the FILLED twin; a
+    /// row with no twin stays without one.
+    #[tokio::test]
+    async fn instance_eps_fills_the_strict_twin() {
+        seed_cik_map();
+        std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
+        std::fs::write(
+            sec_cache_path("STRICTGAP_facts26"),
+            r#"[{"filed": "2025-02-20", "period_end": "2024-12-31", "eps": 1.06},
+                {"filed": "2026-02-25", "period_end": "2025-12-31", "revenue": 100.0,
+                 "strict": {"filed": "2026-02-25", "period_end": "2025-12-31"}}]"#,
+        )
+        .expect("seed facts");
+        std::fs::write(sec_cache_path("STRICTGAP_inst5"), r#"[["2025-12-31", 2.42, 100.0]]"#).expect("seed inst");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let rows = fetch_fundamentals_sec(&client, &stub_urls("http://127.0.0.1:1/"), "STRICTGAP").await.expect("rows");
+        assert_eq!(rows[1].eps, Some(2.42));
+        assert_eq!(rows[1].strict.as_deref().and_then(|s| s.eps), Some(2.42), "the twin is filled and written back");
+        assert!(rows[0].strict.is_none(), "a row with no twin stays without one");
+    }
+
     /// (#385) An instance written before the newest row's 10-K was filed predates that filing, so it is
     /// not served. The ticker is absent from the CIK map: no socket, nothing written, the row stays None.
     #[tokio::test]
