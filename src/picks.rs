@@ -10943,6 +10943,12 @@ mod tests {
         for (flag, _) in RANK_FLAGS {
             assert!(num.is_match(&format!("12{flag}")), "RANK flag {flag} sorts as text");
         }
+        // (#882) the Upcoming table's dollar cells and the REIT `ᶠ` / utility `ⁿ` FAIR, MOS% and FAIR-CAP marks; an
+        // expected day `2027 r` is text.
+        for cell in ["$2.9B", "-$367.1M", "$100.0B r", "$12K", "+25%ᶠ", "€1096.57ᶠ", "€36.5Bᶠ", "-41%ⁿ⁰", "+45%ⁿ²"] {
+            assert!(num.is_match(cell), "{cell:?} sorts as text");
+        }
+        assert!(!num.is_match("2027 r"), "an expected day is text, not a number");
         let mut co = Quote::stub("CO", "€50", "", "Co");
         co.fund = Some(core::FundFactors { margin_trend: Some(3.84), ..Default::default() });
         let mut bank = Quote::stub("BK", "€50", "", "Bank Co");

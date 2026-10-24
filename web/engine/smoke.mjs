@@ -5,6 +5,20 @@
 import fs from "node:fs";
 import path from "node:path";
 
+// (#882) web/app.js runs in no CI step, so its sort key is pinned here on the cell shapes that once sorted as
+// text: sliced out of the file and called.
+{
+  const src = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
+  const a = src.indexOf("const NUM ="), b = src.indexOf("console.assert", a);
+  const key = new Function(src.slice(a, b) + "; return key;")();
+  const want = { "$2.9B": 2.9e9, "-$367.1M": -367.1e6, "$100.0B r": 100e9, "2027 r": "2027 r", "+25%ᶠ": 25, "-41%ⁿ⁰": -41, "€36.5Bᶠ": 36.5e9, "10: a, b": 10, "9: c": 9, "0": 0 };
+  const bad = Object.entries(want).filter(([c, k]) => key(c) !== k).map(([c]) => c);
+  if (bad.length) {
+    console.error("web/app.js sort key misreads: " + bad.join(" | "));
+    process.exit(1);
+  }
+}
+
 const site = path.resolve(process.argv[2]);
 // --target web emits an ES module under a .js name; the copy gives node an unambiguous .mjs
 // the engine ranks once per instance, so each order leg gets its own module copy
