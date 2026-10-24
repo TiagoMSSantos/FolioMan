@@ -24,12 +24,12 @@ mutants = "0.0.4"   # no-op attribute shim: `#[mutants::skip]` marks the functio
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "cookies"] }
-futures = "0.3"
+futures = { version = "0.3", default-features = false, features = ["std"] }  # (#940) streams and join_all only: no executor, no macros
 hmac = "0.12"        # Binance order signing (HMAC-SHA256)
 sha2 = "0.10"
 md-5 = "0.10"        # Börse Frankfurt API request signing (MD5 trace/security headers)
 hex = "0.4"
-zip = { version = "9", default-features = false, features = ["deflate"] }  # FIRDS FULINS_C weekly zips (ESMA/FCA ETF universe); (#638) 9 for RUSTSEC-2026-0367/0368/0369
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }  # FIRDS FULINS_C weekly zips (ESMA/FCA ETF universe); (#638) 9 for RUSTSEC-2026-0367/0368/0369; (#940) flate2 only, zopfli compresses on write past level 9 and nothing here asks for it
 rayon = "1"          # CPU parallelism for the backtest walk + sweeps; tokio's pool is for I/O and `buffer_unordered` is one task on one thread
 
 # (#390) `Utc::now` reads the JS clock in the browser; without it std's clock panics on wasm32.
