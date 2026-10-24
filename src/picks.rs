@@ -12311,7 +12311,8 @@ mod tests {
             core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), // tier 0
             core_etf("IWDA.DE", "iShares Core MSCI World UCITS ETF", 60e9, 0.20), // tier 1
             core_etf("EIMI.DE", "iShares Core MSCI Emerging Markets IMI UCITS ETF", 20e9, 0.18), // tier 2
-            // tier 3 (S&P 500): four DISTINCT names -> the cheapest three survive the per-tier cap.
+            // tier 3 (S&P 500): ten DISTINCT names -> the cheapest three (config-less) or nine
+            // (ci-settings) survive the per-tier cap.
             core_etf("SPYL.DE", "SPDR S&P 500 UCITS ETF", 8e9, 0.03),
             core_etf("CSPX.DE", "iShares Core S&P 500 UCITS ETF", 70e9, 0.07),
             core_etf("VUAA.DE", "Vanguard S&P 500 UCITS ETF", 10e9, 0.07),
@@ -12329,6 +12330,9 @@ mod tests {
             core_etf("HSPX.DE", "HSBC S&P 500 UCITS ETF", 3e9, 0.13),
             core_etf("BNPP.DE", "BNP Paribas Easy S&P 500 UCITS ETF", 2e9, 0.14),
             core_etf("UBSP.DE", "UBS S&P 500 UCITS ETF", 2e9, 0.16),
+            // (#969) and a TENTH: (#282) raised `hold_per_tier_us` to 9, so nine names fit the
+            // ci-settings cap exactly and the count below passed there without trimming a row.
+            core_etf("LYPS.DE", "Lyxor S&P 500 UCITS ETF", 1e9, 0.16),
             core_etf("VUAA.L", "Vanguard S&P 500 UCITS ETF", 5e9, 0.15),  // dup NAME -> deduped
             core_etf("MEUD.DE", "Xtrackers MSCI Europe UCITS ETF", 6e9, 0.12), // tier 5
             Quote::stub("AAPL", "€1", "", "Apple Inc."),                   // not a fund -> excluded
@@ -12337,14 +12341,14 @@ mod tests {
         let cores = hold_core_list(&quotes);
         assert_eq!(core::hold_breadth_tier(&cores[0].name), 0, "all-world sorts first (broadest)");
         assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 3).count(), us_tier_cap(),
-            "S&P tier capped, and five distinct names are supplied so the cap binds in either regime");
+            "S&P tier capped, and ten distinct names are supplied so the cap binds in either regime");
         // (round 118) EM ranks ABOVE the US sleeve — DM+EM spans the planet, the S&P alone does not.
         let tiers: Vec<u8> = cores.iter().map(|q| core::hold_breadth_tier(&q.name)).collect();
         assert!(tiers.windows(2).all(|w| w[0] <= w[1]), "breadth-major order: {tiers:?}");
         assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 2).count(), 1, "EM sleeve present");
         // (#231) 4 non-US rows (all-world + developed + EM + Europe) plus whatever tier 3 admits —
-        // spelled off the same helper as the filter, because nine S&P names are supplied and the
-        // cap that trims them is 3 config-less and 8 under `tests/ci-settings.yaml` since (#272).
+        // spelled off the same helper as the filter, because ten S&P names are supplied and the
+        // cap that trims them is 3 config-less and 9 under `tests/ci-settings.yaml` since (#282).
         assert_eq!(cores.len(), 4 + us_tier_cap(), "1 all-world + 1 world + 1 EM + 1 Europe + the US sleeve, dup dropped");
         let uniq: HashSet<&str> = cores.iter().map(|q| q.name.as_str()).collect();
         assert_eq!(uniq.len(), cores.len(), "one row per fund name");
