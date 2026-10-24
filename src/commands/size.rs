@@ -1,5 +1,7 @@
-//! `size [TICKERS]` — suggested position sizes for the growth picks: weight ∝ score ÷ volatility
-//! (vol-target) inside a per-class risk budget, then capped per name and per sector (`config::Sizing`).
+//! `size [TICKERS]` — suggested position sizes for the growth picks. (#946) The shipped ci-settings
+//! turn `sizing.equal_weight_book` on, which sizes the equal-weight BUY NOW book with no name or sector
+//! cap; off (the code default), weight ∝ score ÷ volatility (vol-target) inside a per-class risk
+//! budget, then capped per name and per sector (`config::Sizing`).
 //! READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS -> the last
 //! `screen` run's RANKED candidates `(#260)`; `--watchlist` sizes the hand-typed list instead, and
 //! `--picks` still names the default. The two had drifted far enough that the default was the worse
