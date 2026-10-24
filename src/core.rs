@@ -3883,8 +3883,6 @@ pub struct FundRow {
     // artifact is dropped at the source rather than becoming a CAGR denominator.
     pub assets: Option<f64>,
     pub roic: Option<f64>,            // % — PREMIUM
-    pub net_debt_ebitda: Option<f64>, // ratio, lower=safer — PREMIUM
-    pub fcf_ps: Option<f64>,          // free cash flow / share — PREMIUM
     // (round 107) SURVIVAL levels, SEC-computed per 10-K (None on FMP free tier). All oriented
     // high = safer so factor ranks and reject-bottom gates read one direction.
     pub fcf_margin: Option<f64>,     // % = (op cash flow − capex) / revenue; negative = burning cash
@@ -4670,9 +4668,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     // (P2) accrual gap = −(eps − fcf_ps) / max(|eps|, floor). A filer earning 3.00 a share on 3.00 of
     // per-share free cash flow scores 0; one earning 3.00 on 0.50 of cash scores −0.83.
     //
-    // fcf_ps is DERIVED here (fcf_margin · revenue ÷ shares) and is deliberately NOT `FundRow::fcf_ps`
-    // — that field is premium-gated and never populates on either feed we run, so reading it would
-    // leave this None on every name in the universe. Same trap `roic` documents against `FundRow::roic`.
+    // fcf_ps is DERIVED here (fcf_margin · revenue ÷ shares): no feed we run files a per-share FCF line.
+    // (#864) The premium `FundRow::fcf_ps` placeholder that never populated is gone.
     //
     // `shares` is the DILUTED WEIGHTED AVERAGE, not the period-end count, so the fcf_ps in here is not
     // a quotable per-share FCF and should never be printed as one. It is consistent across the series
@@ -4892,7 +4889,6 @@ pub fn restate_for_splits(rows: &mut [FundRow], splits: &[(NaiveDate, f64)]) -> 
         moved |= fe != 1.0 || fs != 1.0;
         r.eps = r.eps.map(|v| v / fe);
         r.prior_eps = r.prior_eps.map(|v| v / fe);
-        r.fcf_ps = r.fcf_ps.map(|v| v / fe);
         r.shares = r.shares.map(|v| v * fs);
         r.prior_shares = r.prior_shares.map(|v| v * fs);
         if let Some(s) = r.strict.as_deref_mut() {
@@ -4947,7 +4943,6 @@ pub fn restate_for_ads(rows: &mut [FundRow], ticker: &str) {
         let rs = ads_ratio(ticker, r.shares_filed.unwrap_or(r.filed));
         r.eps = r.eps.map(|v| v * re);
         r.prior_eps = r.prior_eps.map(|v| v * re);
-        r.fcf_ps = r.fcf_ps.map(|v| v * re);
         r.shares = r.shares.map(|v| v / rs);
         r.prior_shares = r.prior_shares.map(|v| v / rs);
     }
@@ -6710,7 +6705,6 @@ mod tests {
             filed,
             eps: Some(8.0),
             prior_eps: Some(4.0),
-            fcf_ps: Some(2.0),
             shares: Some(100.0),
             prior_shares: Some(90.0),
             currency: ccy.map(String::from),
@@ -6720,15 +6714,15 @@ mod tests {
         let splits = [(d(2022, 6), 4.0), (d(2024, 6), 1.25)];
         let mut rows = vec![row(d(2022, 2), Some("USD")), row(d(2023, 2), Some("USD")), row(d(2024, 6), Some("USD")), row(d(2022, 2), None)];
         assert!(restate_for_splits(&mut rows, &splits));
-        let got = |r: &FundRow| (r.eps, r.prior_eps, r.fcf_ps, r.shares, r.prior_shares);
+        let got = |r: &FundRow| (r.eps, r.prior_eps, r.shares, r.prior_shares);
         // before both: ÷5 per share, ×5 shares
-        assert_eq!(got(&rows[0]), (Some(1.6), Some(0.8), Some(0.4), Some(500.0), Some(450.0)));
+        assert_eq!(got(&rows[0]), (Some(1.6), Some(0.8), Some(500.0), Some(450.0)));
         // between: only the spin-off factor is still ahead of it
-        assert_eq!(got(&rows[1]), (Some(6.4), Some(3.2), Some(1.6), Some(125.0), Some(112.5)));
+        assert_eq!(got(&rows[1]), (Some(6.4), Some(3.2), Some(125.0), Some(112.5)));
         // filed ON the split day: already on the new basis, untouched
-        assert_eq!(got(&rows[2]), (Some(8.0), Some(4.0), Some(2.0), Some(100.0), Some(90.0)));
+        assert_eq!(got(&rows[2]), (Some(8.0), Some(4.0), Some(100.0), Some(90.0)));
         // FMP row (no currency): the legacy read, untouched
-        assert_eq!(got(&rows[3]), (Some(8.0), Some(4.0), Some(2.0), Some(100.0), Some(90.0)));
+        assert_eq!(got(&rows[3]), (Some(8.0), Some(4.0), Some(100.0), Some(90.0)));
         // the same-filing ratios the growth reads divide by never move
         assert_eq!(rows[0].eps.unwrap() / rows[0].prior_eps.unwrap(), 2.0);
         assert_eq!(rows[0].shares.unwrap() / rows[0].prior_shares.unwrap(), 100.0 / 90.0);
@@ -6747,8 +6741,8 @@ mod tests {
         ];
         assert!(restate_for_splits(&mut own[..1], &splits));
         restate_for_splits(&mut own[1..], &splits);
-        assert_eq!(got(&own[0]), (Some(8.0), Some(4.0), Some(2.0), Some(500.0), Some(450.0)));
-        assert_eq!(got(&own[1]), (Some(1.6), Some(0.8), Some(0.4), Some(100.0), Some(90.0)));
+        assert_eq!(got(&own[0]), (Some(8.0), Some(4.0), Some(500.0), Some(450.0)));
+        assert_eq!(got(&own[1]), (Some(1.6), Some(0.8), Some(100.0), Some(90.0)));
         // the point of it: a pre-split EPS over the ADJUSTED close equals the raw as-of ratio. Raw close
         // 200 on 2022-03 is 40 on today's chart (÷4 ÷1.25), raw EPS 8 -> earnings yield 4% both ways.
         assert_eq!(earnings_yield(rows[0].eps, 200.0 / 5.0), earnings_yield(Some(8.0), 200.0));
@@ -6827,17 +6821,16 @@ mod tests {
         let row = FundRow {
             eps: Some(2.36),
             prior_eps: Some(2.6),
-            fcf_ps: Some(3.0),
             shares: Some(5.9e9),
             prior_shares: Some(5.8e9),
             currency: Some("CNY".into()),
             filed: now,
             ..Default::default()
         };
-        let got = |r: &FundRow| (r.eps, r.prior_eps, r.fcf_ps, r.shares, r.prior_shares);
+        let got = |r: &FundRow| (r.eps, r.prior_eps, r.shares, r.prior_shares);
         let mut rows = vec![row.clone()];
         restate_for_ads(&mut rows, "PDD");
-        assert_eq!(got(&rows[0]), (Some(9.44), Some(10.4), Some(12.0), Some(1.475e9), Some(1.45e9)));
+        assert_eq!(got(&rows[0]), (Some(9.44), Some(10.4), Some(1.475e9), Some(1.45e9)));
         let mut same = vec![row.clone()];
         restate_for_ads(&mut same, "AAPL");
         assert_eq!(got(&same[0]), got(&row));
@@ -6845,8 +6838,8 @@ mod tests {
         let late = FundRow { filed: ymd(2021, 6, 24), eps_filed: Some(ymd(2022, 6, 23)), ..row.clone() };
         let mut tm = vec![late.clone(), FundRow { eps_filed: None, shares_filed: late.eps_filed, ..late }];
         restate_for_ads(&mut tm, "TM");
-        assert_eq!(got(&tm[0]), (Some(2.36 * 10.0), Some(26.0), Some(30.0), Some(2.95e9), Some(2.9e9)));
-        assert_eq!(got(&tm[1]), (Some(4.72), Some(5.2), Some(6.0), Some(5.9e8), Some(5.8e8)));
+        assert_eq!(got(&tm[0]), (Some(2.36 * 10.0), Some(26.0), Some(2.95e9), Some(2.9e9)));
+        assert_eq!(got(&tm[1]), (Some(4.72), Some(5.2), Some(5.9e8), Some(5.8e8)));
     }
 
     /// (#491) quality on core earnings: Alphabet's marks come off ROE, a filer with no factor scores as
@@ -10823,8 +10816,6 @@ mod tests {
             roa: Some(8.0 + k),
             assets: Some(5000.0 * k),
             roic: Some(12.0 + k),
-            net_debt_ebitda: Some(1.5),
-            fcf_ps: Some(k),
             fcf_margin: Some(9.0 + k),
             interest_cover: Some(8.0 + k),
             net_cash_rev: Some(k - 10.0),

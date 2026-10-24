@@ -539,7 +539,7 @@ fn backtest_fund_report_is_split_invariant() {
         for row in rows.as_array_mut().expect("rows") {
             if row["filed"].as_str().expect("filed") >= split_day {
                 restated.1 += 1;
-                for k in ["eps", "prior_eps", "fcf_ps"] {
+                for k in ["eps", "prior_eps"] {
                     scale(&mut row[k], 0.5);
                 }
                 for k in ["shares", "prior_shares"] {
