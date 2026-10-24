@@ -2991,7 +2991,7 @@ pub async fn run(args: Vec<String>) {
     if let Some(list) = crate::commands::size::buy_list(&sized_now, &buy_core) {
         println!("\n{list}");
         // (#309) what this book earned on the point-in-time backtest, every journaled horizon. Zero fetch;
-        // silent until a `backtest N universe fund pit` run journals a SIZED row.
+        // silent until a `backtest N universe fund pit dead` run journals a SIZED row.
         let journal = crate::commands::backtest::parse_journal(
             &std::fs::read_to_string(crate::config::data_path(crate::commands::backtest::SIZED_FILE)).unwrap_or_default(),
         );

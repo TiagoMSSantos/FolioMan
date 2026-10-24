@@ -344,10 +344,13 @@ fn write_verdict(file: &str, v: Verdict) {
 /// selection that was not made. The tag stays on the ladder TABLE header, which really is 13 rungs
 /// wide and which a reader really can argmax by eye.
 pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool) -> String {
+    // (#965) the row's own horizon: a bare `backtest universe` is 5y and refreshes only the 5y row,
+    // so a footer citing 20y would keep its warning after the user did exactly what it said
+    let rerun = format!("`folioman backtest {} universe`", v.years);
     let tail = if drift {
-        " — ⚠ settings changed since, rerun `folioman backtest universe`"
+        format!(" — ⚠ settings changed since, rerun {rerun}")
     } else {
-        " (rerun: `folioman backtest universe`)"
+        format!(" (rerun: {rerun})")
     };
     format!(
         "Method backtest (run {}, wide universe, top-{} held {}y, {} windows{}): book {:+.1}%/yr, \
@@ -388,7 +391,7 @@ pub(crate) fn sized_record_line(j: &Journal, tuning_fp: &str, sizing_fp: &str) -
             )
         })
         .collect();
-    let tail = if drift { " — ⚠ settings changed since, rerun `folioman backtest N universe fund pit`" } else { "" };
+    let tail = if drift { " — ⚠ settings changed since, rerun `folioman backtest N universe fund pit dead`" } else { "" };
     Some(format!("  Graded record of this book (point-in-time backtest, past windows, not a forecast): {}{tail}", cells.join(" · ")))
 }
 
@@ -9874,7 +9877,7 @@ mod tests {
                  8y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-12)"
             )
         );
-        let warn = " — ⚠ settings changed since, rerun `folioman backtest N universe fund pit`";
+        let warn = " — ⚠ settings changed since, rerun `folioman backtest N universe fund pit dead`";
         assert!(sized_record_line(&j, "moved", "S").unwrap().ends_with(warn), "a moved buy_heuristic knob must warn");
         assert!(sized_record_line(&j, tf, "moved").unwrap().ends_with(warn), "a moved sizing knob must warn");
         // A stale row WITHOUT a SIZED record is not this line's claim, so it must not warn here.
@@ -10327,9 +10330,9 @@ mod tests {
         let fresh = verdict_line(&v, false, false);
         assert!(fresh.contains("run 2026-07-19, wide universe, top-10 held 12y, 84 windows"), "{fresh}");
         assert!(fresh.contains("book +14.3%/yr, +6.9pp/yr vs index, win 71%, worst -8.2, OOS +5.1/+7.4"));
-        assert!(fresh.contains("(rerun: `folioman backtest universe`)") && !fresh.contains('⚠'));
+        assert!(fresh.contains("(rerun: `folioman backtest 12 universe`)") && !fresh.contains('⚠'));
         let drifted = verdict_line(&v, true, false);
-        assert!(drifted.contains("⚠ settings changed since"));
+        assert!(drifted.ends_with("⚠ settings changed since, rerun `folioman backtest 12 universe`"), "{drifted}");
         assert!(!drifted.contains("(rerun:"));
     }
 
