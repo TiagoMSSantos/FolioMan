@@ -1191,9 +1191,10 @@ top_picks: 25      # how many "buy candidate" rows `check` lists after the table
 # (#525) The page's REITs table greys a row whose CAGR is under this % a year; the row stays, in rank
 # order. Display only: nothing scores, gates or sizes on it. The code default is 5.0; CI asks 10.0, so a
 # REIT shows plainly only when it compounded near broad equity (VNQ 20y 5.1%, SPY 11.1%, 2026-10-08).
-# The other shadow tables grey under `growth_min_cagr`. REVERT: delete this line (back to 5.0).
+# Social greys under its own `social_heuristic` `growth_min_cagr` (#538); the other shadow tables grey under
+# `growth_min_cagr`. REVERT: delete this line (back to 5.0).
 reit_min_cagr: 10.0
-# (#526) The page hides a row of the shadow tables (Attention, Berkshire, Social, Young, REITs) and CORE
+# (#526) The page hides a row of the shadow tables (Attention, Berkshire, Social, Young, Braked, REITs) and CORE
 # whose total-return CAGR (TR-CAGR, which adds back the dividends paid; CAGR when TR-CAGR is n/a) is under
 # this % a year. "show all rows" or a filter query shows it again, greyed. 5.0 sits just above the Série E
 # hurdle (4.5): under it a riskless certificate beat the asset. Live payload 2026-10-08, price + yield
@@ -3299,7 +3300,8 @@ buy_heuristic:
                                  #   PROOF IT CANNOT MOVE A RANK, both ways: the same binary run at 100.0 (off) and at 90.0 produced an
                                  #   IDENTICAL ranking in all three lanes; and statically, `perf_fill` has exactly two callers (the perf cell and
                                  #   the legend collector) while `life_return_pct` has exactly one reader (`perf_fill`) — no path into scoring.
-  min_avg_turnover_eur: 500000   # LIVE: reject names with < this avg daily turnover (EUR) on THIS listing — both lanes.
+  min_avg_turnover_eur: 500000   # LIVE: reject names with < this avg daily turnover (EUR) on THIS listing. (#955) Funds,
+                                 #   coins and the on-sale lane read it; growth-lane STOCKS read min_avg_turnover_eur_stock below.
                                  #   Set 2026-07-02 at 100K after zeroing the turnover SCORE tilt (which never docked
                                  #   junk): a hard gate is the honest tool for untradeable listings. 100K killed the real
                                  #   junk (Expat Romania €11K/day, Expat Greece €0K, GraniteShares FAANG €0K).
