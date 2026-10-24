@@ -17464,10 +17464,11 @@ pub(crate) mod tests {
     }
 
     /// (#358) `quote_one`'s merge arithmetic, one scenario per ticker off a single routed stub, plus the
-    /// dead-list pass in `quotes`. Tickers carry the pid because `.long_history_skip.json` outlives the
-    /// binary in the scratch root: a young ticker an earlier run recorded there would skip the very
-    /// monthly fetch asserted on here. `quotes` goes FIRST, so its `long_skip_save` runs before the
-    /// young scenario fills `LONG_SKIP_NEW`; (#777) a second save must still keep that skip. The seam
+    /// dead-list pass in `quotes`. Tickers carry a nanosecond stamp (a pid comes back inside the 30-day
+    /// skip TTL) because `.long_history_skip.json` outlives the binary in the scratch root: a young
+    /// ticker an earlier run recorded there would skip the very monthly fetch asserted on here. `quotes`
+    /// goes FIRST, so its `long_skip_save` runs before the young scenario fills `LONG_SKIP_NEW`; (#777) a
+    /// second save must still keep that skip. The seam
     /// scenario is census config only: the bare config's splice trim is off, so there the ×100 monthly
     /// head is simply kept.
     #[tokio::test]
@@ -17482,8 +17483,8 @@ pub(crate) mod tests {
         let loaded = read_skips();
         let last = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
         let ago = |n: i64| last - chrono::Duration::days(n);
-        let pid = std::process::id();
-        let tk = |name: &str| format!("ZZ{name}{pid}");
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock").as_nanos();
+        let tk = |name: &str| format!("ZZ{name}{stamp}");
         let route = |name: &str, range: &str| -> &'static str { Box::leak(format!("{}/{range}", tk(name)).into_boxed_str()) };
         // d1 sits exactly 2920 days (8 years) before the last bar; the monthly head ends before d0
         let (d0, d1, d2, d3) = (ago(3000), ago(2920), ago(400), ago(30));
