@@ -351,8 +351,11 @@ pub fn chart_range(since: NaiveDate, today: NaiveDate, k: u8) -> &'static str {
 /// (#811) Each journalled book graded on the session it ranked for. For a line dated `D`, each name's
 /// first bar dated on or after `D` and before `today` (a bar dated today may still be trading); the
 /// book's mean open-to-close return, dated by the earliest of those bars. Two lines that reach the same
-/// session (a weekend's) grade it once, from the first. A name with no such bar drops out.
-pub fn graded(lines: &[(NaiveDate, Vec<&str>)], charts: &HashMap<String, Chart>, today: NaiveDate) -> Vec<(NaiveDate, f64)> {
+/// session (a weekend's) grade it once, from the first. A name with no such bar drops out. (#876) The second
+/// value counts the graded sessions that did not grade the whole journalled book: a name dropped out, or
+/// the names' first bars sit on different dates (a halt), so the mean is over a thinner or mixed book than
+/// the line journalled.
+pub fn graded(lines: &[(NaiveDate, Vec<&str>)], charts: &HashMap<String, Chart>, today: NaiveDate) -> (Vec<(NaiveDate, f64)>, usize) {
     let mut by = BTreeMap::new();
     for (day, book) in lines {
         let rs: Vec<(NaiveDate, f64)> = book
@@ -365,27 +368,35 @@ pub fn graded(lines: &[(NaiveDate, Vec<&str>)], charts: &HashMap<String, Chart>,
             })
             .collect();
         if let Some(date) = rs.iter().map(|r| r.0).min() {
-            by.entry(date).or_insert_with(|| mean(&rs.iter().map(|r| r.1).collect::<Vec<_>>()));
+            let thin = rs.len() < book.len() || rs.iter().any(|r| r.0 != date);
+            by.entry(date).or_insert_with(|| (mean(&rs.iter().map(|r| r.1).collect::<Vec<_>>()), thin));
         }
     }
-    by.into_iter().collect()
+    let thin = by.values().filter(|v| v.1).count();
+    (by.into_iter().map(|(d, v)| (d, v.0)).collect(), thin)
 }
 
 /// (#811) One `track` line per market: the graded sessions net of the round trip, in basis points.
-pub fn track_line(market: &str, days: &[(NaiveDate, f64)], cost_bps: f64) -> String {
+/// (#876) `thin` is [`graded`]'s count of sessions on a thinner or mixed book, said on the line.
+pub fn track_line(market: &str, days: &[(NaiveDate, f64)], thin: usize, cost_bps: f64) -> String {
     let net: Vec<f64> = days.iter().map(|d| d.1 - cost_bps / 1e4).collect();
-    let Some(s) = stats(&net) else {
-        return format!("  {market}: {} session(s) graded; the t needs 2", days.len());
+    let line = match stats(&net) {
+        None => format!("  {market}: {} session(s) graded; the t needs 2", days.len()),
+        Some(s) => format!(
+            "  {market}: {} sessions {}..{}  book net {:+.1} bp/day (gross {:+.1})  t {:+.2}",
+            s.n,
+            days[0].0,
+            days[days.len() - 1].0,
+            s.mean * 1e4,
+            s.mean * 1e4 + cost_bps,
+            s.t
+        ),
     };
-    format!(
-        "  {market}: {} sessions {}..{}  book net {:+.1} bp/day (gross {:+.1})  t {:+.2}",
-        s.n,
-        days[0].0,
-        days[days.len() - 1].0,
-        s.mean * 1e4,
-        s.mean * 1e4 + cost_bps,
-        s.t
-    )
+    if thin > 0 {
+        format!("{line}  ({thin} of {} sessions graded on fewer names than the book held, or on two dates)", days.len())
+    } else {
+        line
+    }
 }
 
 #[cfg(test)]
@@ -714,10 +725,15 @@ mod tests {
                 assert!(g.0 == w.0 && (g.1 - w.1).abs() < 1e-12, "{got:?}");
             }
         };
-        near(graded(&lines, &charts, d(6)), &[(d(3), 0.02), (d(4), 0.55), (d(5), 0.04)]);
+        // (#876) d(3) lost Z, d(4) mixes B's d(4) bar with C's d(5) one; d(5) is A alone, the whole book
+        let (days, thin) = graded(&lines, &charts, d(6));
+        near(days, &[(d(3), 0.02), (d(4), 0.55), (d(5), 0.04)]);
+        assert_eq!(thin, 2);
         // a bar dated today may still be trading: C's drops out, and A's d(5) session waits
-        near(graded(&lines, &charts, d(5)), &[(d(3), 0.02), (d(4), 1.0)]);
-        assert!(graded(&[], &charts, d(6)).is_empty());
+        let (days, thin) = graded(&lines, &charts, d(5));
+        near(days, &[(d(3), 0.02), (d(4), 1.0)]);
+        assert_eq!(thin, 2, "d(4) is B alone now, short of the two journalled");
+        assert_eq!(graded(&[], &charts, d(6)), (vec![], 0));
     }
 
     /// (#836) K10/K11 against a plain ratio: the last session's volume over the mean of the 20 before it.
@@ -778,9 +794,18 @@ mod tests {
     fn the_track_line_is_net_of_cost_in_bp() {
         let days = [(d(0), 0.0060), (d(1), 0.0062), (d(2), 0.0058), (d(3), 0.0060)];
         assert_eq!(
-            track_line("US", &days, 50.0),
+            track_line("US", &days, 0, 50.0),
             "  US: 4 sessions 2026-01-01..2026-01-04  book net +10.0 bp/day (gross +60.0)  t +12.25"
         );
-        assert_eq!(track_line("EU", &days[..1], 20.0), "  EU: 1 session(s) graded; the t needs 2");
+        assert_eq!(track_line("EU", &days[..1], 0, 20.0), "  EU: 1 session(s) graded; the t needs 2");
+        // (#876) a thinned session is said, with its share of the graded ones
+        assert_eq!(
+            track_line("US", &days, 2, 50.0),
+            "  US: 4 sessions 2026-01-01..2026-01-04  book net +10.0 bp/day (gross +60.0)  t +12.25  (2 of 4 sessions graded on fewer names than the book held, or on two dates)"
+        );
+        assert_eq!(
+            track_line("EU", &days[..1], 1, 20.0),
+            "  EU: 1 session(s) graded; the t needs 2  (1 of 1 sessions graded on fewer names than the book held, or on two dates)"
+        );
     }
 }

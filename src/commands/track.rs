@@ -1443,7 +1443,8 @@ fn intra_section(snaps: &[Snapshot], charts: &std::collections::HashMap<String, 
                 })
                 .collect();
             out.push('\n');
-            out.push_str(&intraday::track_line(&format!("{market} K{k}"), &intraday::graded(&lines, charts, today), cost));
+            let (days, thin) = intraday::graded(&lines, charts, today);
+            out.push_str(&intraday::track_line(&format!("{market} K{k}"), &days, thin, cost));
         }
     }
     out
@@ -2569,7 +2570,8 @@ mod tests {
         let charts = std::collections::HashMap::from([("A".to_string(), bars(&[100.0; 2], &[102.0, 101.0])), ("B".to_string(), bars(&[100.0; 2], &[103.0; 2]))]);
         let bare = snap("2026-01-01", None, &[]);
         assert_eq!(serde_json::from_str::<Snapshot>(&serde_json::to_string(&bare).unwrap()).unwrap().intra, Vec::new(), "an old line parses");
-        let a = Snapshot { intra: vec![("US".into(), "A".into()), ("EU".into(), "B".into())], ..bare.clone() };
+        // (#876) Z has no chart: the EU book was graded on B alone and the row says so
+        let a = Snapshot { intra: vec![("US".into(), "A".into()), ("EU".into(), "B".into()), ("EU".into(), "Z".into())], ..bare.clone() };
         let b = Snapshot { intra: vec![("US".into(), "A".into())], ..snap("2026-01-02", None, &[]) };
         // (#832) a K7 line on the same day grades on its own row; a line without a key is K1's, and writes none
         let c = Snapshot { intra: vec![("US".into(), "B".into())], intra_key: Some(7), ..snap("2026-01-02", None, &[]) };
@@ -2578,7 +2580,8 @@ mod tests {
         let out = intra_section(&[a, b, c], &charts, d(3));
         // US K1: A's +2% and +1% sessions, 50 bp round trip; EU K1: B's one session, so no t yet; US K7: B's one
         assert!(out.contains("US K1: 2 sessions 2026-01-01..2026-01-02  book net +100.0 bp/day (gross +150.0)  t +2.00"), "{out}");
-        assert!(out.contains("EU K1: 1 session(s) graded"), "{out}");
+        assert!(out.contains("EU K1: 1 session(s) graded; the t needs 2  (1 of 1 sessions graded on fewer names than the book held, or on two dates)"), "{out}");
+        assert!(out.lines().any(|l| l.contains("US K1:") && l.ends_with("t +2.00")), "a whole book carries no note: {out}");
         assert!(out.contains("US K7: 1 session(s) graded"), "{out}");
         assert!(out.contains("EU K7: 0 session(s) graded"), "{out}");
         assert!(intra_section(&[bare], &charts, d(3)).contains("US K1: 0 session(s) graded"));
