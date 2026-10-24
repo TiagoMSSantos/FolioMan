@@ -90,8 +90,8 @@ permissions:
 # genuine hang trips them, never a slow day.
 jobs:
   # Workflow linter: this file changes often and its bugs surface at RUN time (a bad expression,
-  # a wrong needs:, a misnamed key) — actionlint catches them at PR time in seconds. Installed via
-  # the project's own download script (the documented CI usage): actionlint is a Go tool, so the
+  # a wrong needs:, a misnamed key) — actionlint catches them at PR time in seconds. Installed from
+  # the pinned release tarball, checked by sha256 (#885): actionlint is a Go tool, so the
   # Rust-centric taiki-e/install-action can't serve it (not in its manifest, and the cargo-binstall
   # fallback fails — it's not a crate).
   actionlint:
