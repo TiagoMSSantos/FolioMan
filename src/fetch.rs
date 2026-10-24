@@ -1027,13 +1027,13 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             ),
         ),
         ma200d_pct: core::short_ma_pct(&chart.closes),
-        // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
+        // (E) trailing P/E (SEC EDGAR first, FMP_API_KEY fallback; None -> neutral value tilt).
         pe_ratio: pe,
         // (#45) MVRV is stamped LATER, in the screen enrichment block, not here: it comes from one bulk
         // CoinMetrics request for the whole crypto lane, so fetching it per-quote would be one HTTP
         // call per coin for a number the batch already has. None here = "not filled yet", never "no data".
         mvrv: None,
-        // (F) trailing ROE % (equities w/ FMP_API_KEY only; None -> neutral quality tilt).
+        // (F) trailing ROE % (SEC EDGAR filers only; None -> neutral quality tilt).
         roe,
         // (TER) ETF annual expense ratio % (ETFs w/ FMP_API_KEY only; None -> n/a column).
         expense_ratio: ter,

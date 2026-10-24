@@ -17,11 +17,11 @@ cargo run -- check AAPL BTC-USD VWCE.DE
 cargo run -- check --explain KEYS      # full watchlist view + KEYS's SCORE arithmetic decomposed
 cargo run -- perf NVDA          # past EUR price + % at each horizon, with source URL (1Y+ % real terms when inflation_adjust on)
 cargo run -- screen             # live universe -> GROWTH ranking per class (stocks/ETFs/crypto) + NUPL
-cargo run -- size               # suggested position sizes: score ÷ volatility inside a per-class budget, capped per name and per sector (read-only)
+cargo run -- size               # suggested position sizes: score ÷ volatility inside a per-class budget, capped per name and per sector (read-only; --watchlist sizes the typed list, --picks adds typed names to the ranked book)
 cargo run -- report AAPL        # annual income-statement trajectory + as-of grower profile (only the valuation tilt is score-weighed)
 cargo run -- backtest           # walk-forward validation: rho, top/bottom edge, OOS split, ablation
 cargo run -- backtest 7 universe       # 7y-forward window, over the live screen universe (not the watchlist)
-cargo run -- backtest universe fund    # add the as-of fundamentals lane (needs FMP_API_KEY)
+cargo run -- backtest universe fund    # add the as-of fundamentals lane (needs FMP_API_KEY, or key-free with fund_source: "sec")
 cargo run -- backtest universe tune    # honest train/test weight search (ships nothing unless it beats defaults)
 cargo run -- alert              # ntfy push for dips (cron it)
 cargo run -- accounts           # cash + holdings per broker (read-only)
@@ -40,8 +40,10 @@ Outputs are a transparent ranking of public data — **not investment advice**.
 
 Set `FOLIOMAN_CONFIG=/path/to/settings.yaml` to override where the config is loaded from (CI
 points it at a secret-free `tests/ci-settings.yaml` fixture this way). Fundamentals columns (P/E,
-ROE, and the `fund` backtest lane) need `FMP_API_KEY` in the environment; without it those terms
-stay neutral and everything else still works.
+ROE) come from SEC EDGAR for US filers, key-free; `FMP_API_KEY` in the environment adds a P/E
+fallback for names SEC does not cover. The `fund` backtest lane needs the key unless
+`fund_source: "sec"` is set. Where a number is missing that term stays neutral and everything else
+still works.
 
 ### `trade` — live orders (real money, opt-in)
 
@@ -63,10 +65,10 @@ symbol/qty at the prompt; test with tiny quantities first.
 Pushes to `ntfy.sh/<ntfy_topic>` when a ticker *crosses* ≥ `drop_pct` below its trailing high —
 once per dip, not once per run (`.alert_dips` remembers who was pinged; a recovery clears the
 name so its next dip pings again). Subscribe your phone at `https://ntfy.sh/<topic>`. The ntfy
-topic is a secret (= your watchlist) — use a long random string. Cron hourly (the `cd` is
-load-bearing: dedup state and the track journal are working-dir-relative, and cron's default
-cwd is `$HOME` — without it, cron and manual runs keep separate state, and `track --push`
-finds no journal and silently sends nothing):
+topic is a secret (= your watchlist) — use a long random string. Cron hourly (the `cd` is only
+there because the binary path is relative: dedup state and the track journal live at the repo
+root, the directory holding `config/`, whatever the working directory, so cron and manual runs
+share them):
 
 ```cron
 0 * * * * cd /path/to/folioman && ./target/release/folioman alert >> /tmp/folioman.log 2>&1
@@ -76,7 +78,7 @@ The same run also pushes a **market entry-state flip ping** when the S&P 500 *cr
 near-high (<5% off its high) / pullback (5–15%) / drawdown (≥15%). Every transition pings once —
 worsening says deploy new money faster (drawdown entries beat the index by +9.1 pts/yr vs +5.9
 near the high in the 12y multi-regime backtest), recovery back to near-high says resume the
-normal schedule. Deduped via `.alert_state` (working dir, gitignored), so a months-long drawdown
+normal schedule. Deduped via `.alert_state` (repo root, gitignored), so a months-long drawdown
 pings once per line crossed, not hourly; a failed push keeps the old state and retries next cron.
 The `screen` command shows the same signal live — as a loud banner above the tables when the
 market is ≥5% off its high, as a quiet footer near the high. Set `monthly_deploy_eur` (private
@@ -114,7 +116,7 @@ schedule is the dedup; a failed push just retries next month):
 
 ### Run-to-run alerts (`screen`)
 
-`screen` remembers its previous run in `.screen_state.json` (working dir, gitignored) and prints
+`screen` remembers its previous run in `.screen_state.json` (repo root, gitignored) and prints
 a footer alert when something a long-term holder must react to changed since then — each is
 **review, not auto-sell**:
 
@@ -192,7 +194,7 @@ only**, then reports rho/edge on the held-out **test** split next to the current
 numbers. Overfit shows up as train ≫ test. It **ships nothing** — if no searched config beats the
 default out-of-sample, the defaults already generalize (a clean null is a successful run). Copy a
 genuine winner into `settings.yaml` yourself; `tune` never writes. Inert knobs (e.g. the fund weight
-with no `FMP_API_KEY` coverage) are detected and skipped so the search doesn't waste draws on them.
+with no fundamental coverage) are detected and skipped so the search doesn't waste draws on them.
 
 | Want… | Turn this (LIVE knob) | Direction |
 |-------|-----------------------|-----------|
@@ -204,7 +206,7 @@ with no `FMP_API_KEY` coverage) are detected and skipped so the search doesn't w
 | Favor deep-liquid mega-caps on ties | `growth_turnover_weight` | raise |
 | Damp crypto when the market is euphoric | `nupl_euphoria` / `nupl_damp_floor` | lower the floor |
 | Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
-| Tilt toward cheap-on-earnings (needs `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
+| Tilt toward cheap-on-earnings (SEC P/E for US filers; FMP fallback with `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
 | Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | shipped 0.07 (`peg_yield`); 0 = off |
 | Admit fewer near-miss stocks | `growth_gate_soft` | lower (0 = every gate a hard wall) |
 | Give the momentum side more or fewer of every 10 book slots | `growth_momentum_slots` | shipped 5 |
@@ -240,8 +242,8 @@ lane has to beat over a multi-decade hold (#798).
 |---------|---------|
 | ETF | Exchange-Traded Fund — a pooled basket traded like a stock (vs a single-company share) |
 | CAGR | Compound Annual Growth Rate (%/yr; annualizes a multi-year return so 5Y/10Y/20Y compare) |
-| ROE | Return On Equity — profitability/quality factor (needs `FMP_API_KEY`) |
-| P/E | Price-to-Earnings ratio — valuation tilt `value = ref_pe / P/E` (needs `FMP_API_KEY`) |
+| ROE | Return On Equity — profitability/quality factor (SEC EDGAR filers only) |
+| P/E | Price-to-Earnings ratio — valuation tilt `value = ref_pe / P/E` (SEC EDGAR; FMP fallback with `FMP_API_KEY`) |
 | NUPL | Net Unrealized Profit/Loss — Bitcoin whole-market sentiment gauge (damps the crypto lane) |
 | SMA | Simple Moving Average; "200wk SMA" = the ~1000-session long-term trend line |
 | FX | Foreign exchange (currency-quoted tickers carry a `-EUR`/`-USD` suffix: crypto/FX) |
@@ -254,7 +256,7 @@ lane has to beat over a multi-decade hold (#798).
 | OFF-HI | How far below its high a name trades (the `screen` drawdown column) |
 | rho | Spearman rank correlation — the backtest's selection-skill metric |
 | OOS | Out-Of-Sample — the late-vs-early split that tests whether an edge generalizes |
-| FMP | Financial Modeling Prep — the fundamentals API behind P/E and ROE (`FMP_API_KEY` env) |
+| FMP | Financial Modeling Prep — the fallback P/E source for names SEC EDGAR does not cover (`FMP_API_KEY` env) |
 | HICP | Harmonised Index of Consumer Prices — the EU inflation series for real-return adjustment |
 | CdA | Certificados de Aforro — Portuguese savings certificates (a fixed-income baseline) |
 
