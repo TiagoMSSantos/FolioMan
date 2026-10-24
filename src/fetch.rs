@@ -6719,7 +6719,8 @@ fn mvrv_rows<'a>(body: &'a Value, cutoff: &str) -> HashMap<&'a str, f64> {
         ) else {
             continue;
         };
-        if t.len() < 10 || &t[..10] < cutoff {
+        // (#953) `get`, not `[..10]`: a tenth byte inside a multi-byte char panicked the slice
+        if t.get(..10).is_none_or(|d| d < cutoff) {
             continue;
         }
         // the API serves numbers as STRINGS ("0.96110917"); accept a bare number too, in case that changes
@@ -10528,13 +10529,14 @@ pub(crate) mod tests {
 
     /// (#358) The staleness guard's two edges: a row dated ON the cutoff day is kept (`<`, not `<=`),
     /// and a bare 10-character date is a whole date. A time too short to hold one is skipped before
-    /// it is sliced, never panicked on.
+    /// it is sliced, never panicked on, and (#953) so is one whose tenth byte splits a multi-byte char.
     #[test]
     fn mvrv_rows_keeps_the_cutoff_day_and_skips_a_short_time() {
         let body = serde_json::json!({"data": [
             {"asset": "edge", "time": "2026-07-22T00:00:00.000000000Z", "CapMVRVCur": "1.1"},
             {"asset": "bare", "time": "2026-08-01", "CapMVRVCur": "1.2"},
             {"asset": "short", "time": "2026", "CapMVRVCur": "1.3"},
+            {"asset": "split", "time": "2026-08-0é", "CapMVRVCur": "1.4"},
             {"asset": "words", "time": "2026-08-01", "CapMVRVCur": "n/a"}
         ]});
         let mut kept: Vec<&str> = mvrv_rows(&body, "2026-07-22").into_keys().collect();
