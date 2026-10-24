@@ -171,7 +171,8 @@ pub fn peg_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     long_leg_fixed(quote, window, tuning.growth_min_leg_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
-/// (#192) The CAGR floor `growth_min_cagr` judges THIS quote against — one definition, three readers.
+/// (#192) The CAGR floor `growth_min_cagr` judges THIS quote against — one definition for every reader
+/// (#962: `score_parts_hard`, `proven_but_unranked`, `gate_fails` and `bridge_hint_lines` today).
 ///
 /// The floor used to be spelled out as its own `if crypto {..} else {..}` at each of the three sites
 /// that read it (`score_parts`, `gate_failures`, `long_leg_floors`). That is exactly the shape

@@ -52,7 +52,7 @@ No TICKERS -> uses config/settings.yaml watchlist.";
 /// reqwest resolves DNS (see the exit note below) and where the ~165MB FCA regex scan runs, and
 /// `fetch_concurrency()` puts ~64 requests in flight against it. Capping it to a core count would
 /// serialise name resolution — `compute_threads` sizes compute, `fetch_concurrency_multiplier` sizes
-/// the network, and the two are kept apart deliberately (see `config::BuyHeuristic`).
+/// the network, and the two are kept apart deliberately (#962: see `config::Settings::compute_threads`).
 ///
 /// UNGRADEABLE, hence the skip: every mutant cargo-mutants generates here is `delete match arm`, and
 /// the arms are reachable only by running the binary — the `cli` suite, which `ci.yml`'s gate does not
