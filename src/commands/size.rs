@@ -341,7 +341,7 @@ pub async fn run(args: Vec<String>) {
     // (#293) `fetch::quotes` leaves `sector` None and only `screen` joined it, so the sector cap printed
     // below never bound here. The same CSVs `screen <tickers>` joins; an EU line finds its US row through
     // the resolver's cache (read only, nothing is resolved here). Then each fund's top look-through sector.
-    let sector_of = fetch::sector_map(&client, &settings.urls, &[]).await;
+    let sector_of = fetch::sector_map(&client, &settings.urls).await;
     let us = fetch::invert_eu(
         &std::fs::read_to_string(config::data_path(fetch::EU_LISTING_CACHE_PATH))
             .ok()

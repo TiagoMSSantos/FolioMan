@@ -1738,10 +1738,10 @@ pub async fn run(args: Vec<String>) {
     let (mut universe, etf_tickers, sector_of) = if explicit_args {
         // (#44) this path skips the universe fetch by design, but it still JOINS sectors — 1-3 small CSVs.
         // Without them a commodity name explains undamped here (CF 22.25) while the full screen ranks it
-        // damped (17.84), and `--explain` is exactly where that number has to reconcile. Unfiltered (`&[]`):
+        // damped (17.84), and `--explain` is exactly where that number has to reconcile. Unfiltered (`sector_map` takes no sectors):
         // this is a lookup map, not a universe filter, so a sector-restricted config must not hide the
         // row's own sector.
-        (args, std::collections::HashSet::new(), fetch::sector_map(&client, &settings.urls, &[]).await)
+        (args, std::collections::HashSet::new(), fetch::sector_map(&client, &settings.urls).await)
     } else {
         fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, settings.prefer_eu_listing, &settings.sectors).await
     };

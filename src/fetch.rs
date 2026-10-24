@@ -9256,10 +9256,10 @@ async fn wikidata_young_pond(client: &Client, urls: &Urls) -> Vec<(String, Strin
 }
 
 /// (#44) Ticker -> GICS sector over those ponds, first pond winning (a dual-member keeps its real sector).
-/// The explicit-args entry point; `fetch_universe` builds the same map inline while it walks the ponds.
-pub async fn sector_map(client: &Client, urls: &Urls, sectors: &[String]) -> std::collections::HashMap<String, String> {
+/// The explicit-args entry point, unfiltered by sector: `fetch_universe` builds the same map inline while it walks the ponds.
+pub async fn sector_map(client: &Client, urls: &Urls) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    for pond in constituent_ponds(client, urls, sectors).await {
+    for pond in constituent_ponds(client, urls, &[]).await {
         for (sym, sector) in pond {
             out.entry(sym).or_insert(sector);
         }
@@ -18237,7 +18237,7 @@ pub(crate) mod tests {
         let (base, client) = stub_server("Symbol,Name,Sector\nAAPL,Apple,Technology");
         let mut urls = stub_urls(&base);
         urls.constituents_csv.clear();
-        let map = sector_map(&client, &urls, &["Technology".to_string()]).await;
+        let map = sector_map(&client, &urls).await;
         assert_eq!(map.get("AAPL").map(String::as_str), Some("Technology"));
     }
 
