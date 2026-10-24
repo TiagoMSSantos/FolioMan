@@ -12861,6 +12861,37 @@ pub(crate) mod tests {
         assert!(!sec_cache_path("AAPL").exists(), "the backtest's forever file is untouched");
     }
 
+    /// (#880) `fetch_insider_history` stops at `SEC_FORM4_CAP`. A name with more Form 4s than the cap in its
+    /// window reads exactly the cap's worth: a `fetched` counter that never advanced would never reach the
+    /// cap, and the walk would then pay one GET per filing out of the shared SEC budget. GOOGL, not AAPL:
+    /// the live-walk test above owns `AAPL_f4raw`, and tests run in parallel.
+    #[tokio::test]
+    async fn insider_live_walk_stops_at_the_form4_cap() {
+        seed_cik_map();
+        let live = sec_cache_path("GOOGL_f4raw");
+        let _ = std::fs::remove_file(&live);
+        let n = SEC_FORM4_CAP + 5;
+        let sub = serde_json::json!({"filings": {"recent": {
+            "form": vec!["4"; n],
+            "filingDate": vec!["2026-06-30"; n],
+            "accessionNumber": (0..n).map(|i| format!("0001652044-26-{i:06}")).collect::<Vec<_>>(),
+            "primaryDocument": vec!["x.xml"; n]
+        }}});
+        let sub: &'static str = Box::leak(sub.to_string().into_boxed_str());
+        let (base, client, requests) = routed_stub(vec![
+            ("sub/", sub),
+            ("/1652044/", "<transactionDate><value>2026-06-29</value></transactionDate><transactionCode>P</transactionCode>"),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.sec_submissions = format!("{base}sub/CIK{{cik}}.json");
+        urls.sec_form4 = format!("{base}{{cik}}/{{acc}}/{{doc}}");
+        let read = fetch_insider_history(&client, &urls, "GOOGL", NaiveDate::from_ymd_opt(2026, 6, 1)).await;
+        let _ = std::fs::remove_file(&live);
+        let form4_gets = requests.try_iter().filter(|r| r.starts_with("GET /1652044/")).count();
+        assert_eq!(form4_gets, SEC_FORM4_CAP, "one GET per Form 4, no more than the cap");
+        assert_eq!(read.map(|t| t.len()), Some(SEC_FORM4_CAP));
+    }
+
     /// (#450) The first date still ahead, today included, trailing period or comma stripped; a past
     /// date, a missing block and dateless prose read as no date, never as a wrong one.
     #[test]
