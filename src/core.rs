@@ -3551,10 +3551,10 @@ pub fn parse_pt_series(d: &Value) -> BTreeMap<i32, f64> {
         return out;
     };
     for (date, v) in dates.iter().zip(values) {
-        if date.len() >= 4 {
-            if let (Ok(year), Some(rate)) = (date[..4].parse::<i32>(), v.as_f64()) {
-                out.insert(year, rate); // ascending -> later month of a year wins
-            }
+        // (#943) `get`, not `[..4]`: a fourth byte inside a multi-byte char panicked the slice
+        if let (Some(Ok(year)), Some(rate)) = (date.get(..4).map(|y| y.parse::<i32>()), v.as_f64())
+        {
+            out.insert(year, rate); // ascending -> later month of a year wins
         }
     }
     out
@@ -11067,11 +11067,12 @@ mod tests {
     }
 
     /// A BPstat date shorter than a year is skipped, not sliced: only the full date lands in the map.
+    /// (#943) So is one whose fourth byte falls inside a multi-byte char, which panicked the slice.
     #[test]
     fn parse_pt_series_skips_a_date_too_short_to_carry_a_year() {
         let pt = serde_json::json!({
-            "dimension": {"reference_date": {"category": {"index": ["202", "2024-12-31"]}}},
-            "value": [9.9, 2.4]
+            "dimension": {"reference_date": {"category": {"index": ["202", "201é-01", "2024-12-31"]}}},
+            "value": [9.9, 8.8, 2.4]
         });
         assert_eq!(parse_pt_series(&pt), BTreeMap::from([(2024, 2.4)]));
     }
