@@ -3804,14 +3804,6 @@ fn stamp_regime(quotes: &mut [Quote], spx: Option<&Quote>) {
     }
 }
 
-/// (#327) Discover same-series twins for the funds dying on the history gate, journal them, and say
-/// what happened in ONE line. The pairs found here are applied by the NEXT run, not this one: the
-/// splice lives in the fetch (`fetch.rs`, the `history_proxy` path) and the series it would rewrite
-/// were fetched before this pool was ranked. That lag is deliberate rather than a limitation to work
-/// around — a pair lands in a file a human can read and delete before it ever moves a CAGR.
-/// Discovery itself is free: it reads `trail_monthly`, `age_years` and `quote_currency`, all already
-/// on every quote, and issues no request. With the knob off nothing is written and the line is a
-/// suggestion, which is exactly what `bridge_hint_lines` has always printed.
 /// (#467) The pool tickers a shadow table (Attention, Berkshire, Social) prints: a row names a ticker, and the
 /// pool may hold that company on its own line or on a Xetra twin whose `us` symbol is the row's ticker.
 fn shadow_pool(tables: &[&serde_json::Value], quotes: &[Quote], us: &dyn Fn(&str) -> String) -> std::collections::HashSet<String> {
@@ -3823,6 +3815,14 @@ fn shadow_pool(tables: &[&serde_json::Value], quotes: &[Quote], us: &dyn Fn(&str
     quotes.iter().filter(|q| shown.contains(q.ticker.as_str()) || shown.contains(us(&q.ticker).as_str())).map(|q| q.ticker.clone()).collect()
 }
 
+/// (#327) Discover same-series twins for the funds dying on the history gate, journal them, and say
+/// what happened in ONE line. The pairs found here are applied by the NEXT run, not this one: the
+/// splice lives in the fetch (`fetch.rs`, the `history_proxy` path) and the series it would rewrite
+/// were fetched before this pool was ranked. That lag is deliberate rather than a limitation to work
+/// around — a pair lands in a file a human can read and delete before it ever moves a CAGR.
+/// Discovery itself is free: it reads `trail_monthly`, `age_years` and `quote_currency`, all already
+/// on every quote, and issues no request. With the knob off nothing is written and the line is a
+/// suggestion, which is exactly what `bridge_hint_lines` has always printed.
 fn journal_proxies(quotes: &[Quote], tuning: &crate::config::BuyHeuristic) -> String {
     let mut found = crate::picks::discover_proxies(quotes, tuning);
     let fresh = found.len();

@@ -1324,9 +1324,6 @@ fn default_bf_salt() -> String {
     "af5a8d16eb5dc49f8a72b26fd9185475c7a".to_string()
 }
 
-/// Locate `config/settings.yaml` next to the exe or up the tree, mirroring the old
-/// Python "run from any cwd" behaviour. Falls back to `config/settings.yaml` relative
-/// to the current directory.
 /// Step 0 of `settings_path`, split out so it is testable WITHOUT mutating process-global env. The
 /// test that used to cover this called `std::env::set_var`, which every concurrently-running test
 /// that reaches `load()` races — and once one did, pointing `FOLIOMAN_CONFIG` at a bogus path to
@@ -1337,6 +1334,9 @@ fn override_path(var: Option<&str>) -> Option<PathBuf> {
     var.filter(|p| !p.is_empty()).map(PathBuf::from)
 }
 
+/// Locate `config/settings.yaml` next to the exe or up the tree, mirroring the old
+/// Python "run from any cwd" behaviour. Falls back to `config/settings.yaml` relative
+/// to the current directory.
 fn settings_path() -> PathBuf {
     // 0. explicit override: CI points this at a checked-in fixture (tests/ci-settings.yaml) because the
     //    real config/settings.yaml is gitignored and absent there. Empty = ignore.

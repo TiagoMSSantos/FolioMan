@@ -16,7 +16,7 @@ regex = "1"
 # `serde` is here for ONE cache: `.sp500_history.json` stores NaiveDate spans directly rather than
 # round-tripping them through strings by hand. No new crate — serde is already a dependency.
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
-mutants = "0.0.4"   # no-op attribute shim: `#[mutants::skip]` marks the handful of functions cargo-mutants CANNOT grade (see src/broker/*.rs). Compiles to nothing, pulls in nothing
+mutants = "0.0.4"   # no-op attribute shim: `#[mutants::skip]` marks the functions cargo-mutants CANNOT grade (each says why beside it). Compiles to nothing, pulls in nothing
 
 # (#390) Everything that talks to the network, a broker or the OS thread pool. The page engine
 # (web/engine, wasm32) links only `config`/`core`/`picks`/`web`, which use none of these; lib.rs
