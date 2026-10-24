@@ -8767,7 +8767,13 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: fd1d5dd74345 (#928), graded 2026-10-24 by run 40104030376, same five inputs, since
+  # LAST GRADED SHA: c7446069ff39 (#948), graded 2026-10-24 by run 40121486904, same five inputs, since
+  # fd1d5dd, `files` = src/commands/backtest.rs src/commands/screen.rs src/commands/sim.rs
+  # src/commands/size.rs src/commands/track.rs src/config.rs src/core.rs src/fetch.rs src/main.rs
+  # src/picks.rs: 19 in scope = 17 caught (core.rs `parse_pt_series` 10, backtest.rs `parse_args` 4,
+  # picks.rs `momentum_slot` 2 and `splice_sides` 1) + 2 unviable (picks.rs `splice_sides` -> a one-row
+  # vec of `Default::default()`, which does not build), 0 missed, 0 timeout.
+  # BEFORE THAT: fd1d5dd74345 (#928), graded 2026-10-24 by run 40104030376, same five inputs, since
   # 06992f6, `files` = src/commands/screen.rs src/config.rs src/fetch.rs: 7 in scope = 7 caught (the
   # function-level mutants of `sec_ttm_eps_filed` and `fetch_sec_facts_fresh`, whose comments (#928)
   # touched), 0 unviable, 0 missed, 0 timeout.
