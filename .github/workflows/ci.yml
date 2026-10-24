@@ -99,9 +99,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: |
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
-          # (#354) Pinned twice: the script from the tag, the binary by version (the tag's own script
-          # defaults to 1.7.11). A new check must not red an unrelated push; bump both on purpose.
+          curl -fsSLO https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint_1.7.12_linux_amd64.tar.gz" | sha256sum -c -
+          tar xzf actionlint_1.7.12_linux_amd64.tar.gz actionlint
+          # (#354) Pinned by version, (#885) and by sha256 from the release's own actionlint_1.7.12_checksums.txt.
+          # A new check must not red an unrelated push; bump the version and the digest together on purpose.
           # (#351) 1.7.12 predates the concurrency `queue:` key mutation-census.yml uses (rhysd/actionlint#657,
           # open): ignore that one message, every other check stays on. Drop it once a release knows the key.
           ./actionlint -ignore 'unexpected key "queue" for "concurrency" section'
