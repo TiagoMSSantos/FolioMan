@@ -196,7 +196,7 @@ fn load(overlay: &str, universe: &str) -> Result<(Settings, Universe), String> {
     if !config::gates_configured(&merged) {
         return Err("settings.yaml: no buy_heuristic knobs left after the merge".to_string());
     }
-    let s: Settings = serde_yaml::from_value(merged.clone()).map_err(|e| format!("settings.yaml: {e}"))?;
+    let s: Settings = config::settings_of(&merged).map_err(|e| format!("settings.yaml: {e}"))?;
     #[cfg(target_family = "wasm")]
     config::install(merged)?;
     let bh = &s.buy_heuristic;
@@ -627,6 +627,9 @@ mod tests {
         assert!(screen("tickers: [", &u).is_err_and(|e| e.starts_with("settings.yaml:")));
         assert!(screen("not_a_knob: 1\n", &u).is_err_and(|e| e.contains("not_a_knob")));
         assert!(screen("buy_heuristic: 3\n", &u).is_err_and(|e| e.contains("no buy_heuristic")));
+        // (#909) a wrong-typed knob is named, and the merged config's line number is not printed as the upload's
+        let typed = screen("buy_heuristic:\n  growth_min_cagr: abc\n", &u).expect_err("a string is not a CAGR floor");
+        assert!(typed.contains("buy_heuristic.growth_min_cagr: invalid type") && !typed.contains(" at line "), "{typed}");
         assert!(screen("", "{}").is_err_and(|e| e.starts_with("universe.json:")));
     }
 

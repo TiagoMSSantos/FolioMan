@@ -1575,6 +1575,19 @@ fn config_fatal(path: &Path, detail: &str) -> ! {
     std::process::exit(1);
 }
 
+/// (#909) The merged config as [`Settings`]. serde_yaml names the key a wrong-typed value sits under only
+/// when it reads text (a `Value` keeps no path), so a failure is read again as text for that name; the
+/// line number that adds counts the merged config, not the user's file, so it is cut.
+pub fn settings_of(merged: &serde_yaml::Value) -> Result<Settings, String> {
+    serde_yaml::from_value(merged.clone()).map_err(|e| {
+        let Some(named) = serde_yaml::to_string(merged).ok().and_then(|t| serde_yaml::from_str::<Settings>(&t).err()) else {
+            return e.to_string();
+        };
+        let named = named.to_string();
+        named.split(" at line ").next().unwrap_or(&named).to_string()
+    })
+}
+
 /// Read + parse the settings (base + overlay). Exits 1 with a clear message if missing/invalid —
 /// config errors are a startup problem the user must fix, not something to fail soft on.
 pub fn load() -> Settings {
@@ -1593,7 +1606,7 @@ pub fn load() -> Settings {
              give it a knob.",
         );
     }
-    let s: Settings = match serde_yaml::from_value(merged) {
+    let s: Settings = match settings_of(&merged) {
         Ok(s) => s,
         Err(e) => config_fatal(&path, &format!("invalid over tests/ci-settings.yaml: {e}")),
     };
