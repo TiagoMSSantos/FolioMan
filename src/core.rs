@@ -1435,10 +1435,10 @@ pub fn is_broad_index_name(name: &str) -> bool {
 /// index-out-of-bounds panic rather than a display bug.
 pub const HOLD_TIERS: usize = 13;
 
-/// (round 118) The CORE admission rule, ONE table, read by both `is_broad_index_name` (does it match
-/// at all) and `hold_breadth_tier` (which tier) — they cannot drift apart the way two parallel lists
-/// would. A name qualifies iff it names a GEOGRAPHIC partition of the market and carries no NARROW
-/// token.
+/// (round 118) The CORE admission rule, ONE table, read through `geo_hit` by both the breadth leg of
+/// `hold_miss_leg_with` (does it match at all) and `hold_breadth_tier` (which tier) — they cannot
+/// drift apart the way two parallel lists would. A name qualifies iff it names a GEOGRAPHIC
+/// partition of the market and carries no NARROW token.
 ///
 /// THE RULE IS GEOGRAPHY, NEVER INDUSTRY OR STYLE. A region is a sleeve you can hold for 20 years;
 /// an industry, a factor, a screen or a currency hedge is a bet on being right about something. That
@@ -2965,7 +2965,9 @@ pub fn switch_edge(value: f64, gain: f64, ter_from: f64, ter_to: f64, tax: f64, 
 }
 
 /// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
-/// NARROW token disqualifies it. The single place the two public fns above agree.
+/// NARROW token disqualifies it, read with the shipped sleeve knobs. `hold_breadth_tier` reads it;
+/// `hold_miss_leg_with` calls [`geo_tier_at`] with the knobs passed, so on the shipped knobs the two
+/// agree.
 fn geo_tier(n: &str) -> Option<u8> {
     geo_tier_at(
         n,
@@ -3024,8 +3026,9 @@ fn geo_tier_at(
 
 /// Diversification tier of a broad-index fund, for ordering the buy-and-hold CORE broadest-first.
 /// 0 = all-world (whole planet), 1 = developed, 2 = emerging, 3 = US, 4 = ex-US, 5 = Europe,
-/// 6 = Japan, 7 = Asia-Pacific. Assumes `is_broad_index_name` already held; a name that does not
-/// match lands in the last tier rather than panicking, and the CORE never prints it because the
+/// 6 = Japan, 7 = Asia-Pacific, then the five optional sleeves up to `HOLD_TIERS - 1` (named in
+/// `HOLD_TIER_LABELS`). Assumes the breadth leg of `hold_miss_leg` already held; a name that does
+/// not match lands in `FACTOR_TIER` rather than panicking, and the CORE never prints it because the
 /// filter ran first.
 pub fn hold_breadth_tier(name: &str) -> u8 {
     // (#218) PINNED to `FACTOR_TIER` rather than spelled `HOLD_TIERS - 1`. That expression silently

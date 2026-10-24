@@ -267,27 +267,6 @@ impl Default for Widths {
     }
 }
 
-/// Tunable knobs for the buy-candidate heuristic (`src/picks.rs`). Every field is optional in
-/// YAML — omit the whole `buy_heuristic:` block or any field to use these defaults.
-///
-/// TWO scoring lanes share this struct, and `screen` prints ONLY the GROWTH lane:
-/// - **GROWTH lane** (`growth_score`) — what `screen` prints; the only lane with a validated edge.
-///   `base = growth_trend_weight·CAGR + growth_accel_weight·accel + risk + quality + dividend`,
-///   `score = base · proximity · value(P/E) · geomean(trust, overext) + liquidity`.
-///   (CAGR = Compound Annual Growth Rate.)
-/// - **ON-SALE lane** (`buy_score`) — a BACKTEST FOIL ONLY (not printed by `screen`); kept as the
-///   dip-buying control `backtest` grades the growth lane against. (#798) Its held book beats the
-///   S&P 500 but trails growth at 12y/8y on the pit runs. Fields marked `[FOIL]` below feed
-///   ONLY this lane — changing them does nothing to `screen` output.
-/// Its score: `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
-/// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.
-///
-/// The `dividend` term in BOTH lanes is scored NET of Portuguese tax — see `picks::dividend_reward`
-/// and the `tax_keep_eu` / `tax_keep_other` knobs below. (#61) The two lanes now carry SEPARATE
-/// weights, and ci-settings ships this one at `onsale_dividend_weight: 0.0`, so in practice the tax
-/// model shapes the GROWTH lane alone — which is the lane `screen` ranks on and the lane it was
-/// built for. The mechanism stays wired in both so the split remains a knob, not a deletion.
-/// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
 /// (G+) One additional fundamental tilt term: which `FundFactors` field, how much per point, and the
 /// clamp applied before weighting. What the score adds is `weight × clamp(value, 0, cap)` — the same
 /// arithmetic as the primary `growth_fund_*` term, just repeatable. An unknown `factor` name reads
@@ -344,6 +323,27 @@ pub struct CgtRung {
     pub excluded_pct: f64,
 }
 
+/// Tunable knobs for the buy-candidate heuristic (`src/picks.rs`). Every field is optional in
+/// YAML — omit the whole `buy_heuristic:` block or any field to use these defaults.
+///
+/// TWO scoring lanes share this struct, and `screen` prints ONLY the GROWTH lane:
+/// - **GROWTH lane** (`growth_score`) — what `screen` prints; the only lane with a validated edge.
+///   `base = growth_trend_weight·CAGR + growth_accel_weight·accel + risk + quality + dividend`,
+///   `score = base · proximity · value(P/E) · geomean(trust, overext) + liquidity`.
+///   (CAGR = Compound Annual Growth Rate.)
+/// - **ON-SALE lane** (`buy_score`) — a BACKTEST FOIL ONLY (not printed by `screen`); kept as the
+///   dip-buying control `backtest` grades the growth lane against. (#798) Its held book beats the
+///   S&P 500 but trails growth at 12y/8y on the pit runs. Fields marked `[FOIL]` below feed
+///   ONLY this lane — changing them does nothing to `screen` output.
+/// Its score: `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
+/// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.
+///
+/// The `dividend` term in BOTH lanes is scored NET of Portuguese tax — see `picks::dividend_reward`
+/// and the `tax_keep_eu` / `tax_keep_other` knobs below. (#61) The two lanes now carry SEPARATE
+/// weights, and ci-settings ships this one at `onsale_dividend_weight: 0.0`, so in practice the tax
+/// model shapes the GROWTH lane alone — which is the lane `screen` ranks on and the lane it was
+/// built for. The mechanism stays wired in both so the split remains a knob, not a deletion.
+/// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct BuyHeuristic {
@@ -2203,8 +2203,8 @@ pub fn growth_brake_min_sessions() -> usize {
     })
 }
 
-/// (#95) free accessor twin of `splice_trim_point_in_time` — `stamp_asset_class` has three production
-/// call sites inside the walk and no `tuning` handle at any of them.
+/// (#95) free accessor twin of `splice_trim_point_in_time` — `stamp_asset_class` runs inside the walk
+/// with no `tuning` handle at any of its call sites.
 #[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn backtest_drop_lookahead_sector() -> bool {
     use std::sync::OnceLock;
