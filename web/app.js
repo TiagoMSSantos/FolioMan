@@ -249,7 +249,7 @@ function view(v) {
 function remember(k, v) {
   const u = new URLSearchParams(location.search);
   u.set(k, v);
-  history.replaceState(null, "", "?" + u);
+  history.replaceState(null, "", "?" + u + location.hash);
 }
 
 // (#445) A table as CSV, straight from the payload rows: every row and column, cells verbatim.
@@ -278,7 +278,10 @@ function sheet(id, rows) {
   let a = h.querySelector("a.csv");
   if (!a) {
     a = Object.assign(document.createElement("a"), { className: "csv", textContent: "CSV", download: id + ".csv", href: "#" });
-    a.onclick = () => (a.href = URL.createObjectURL(new Blob([csv(sheets[id])], { type: "text/csv" })));
+    a.onclick = () => {
+      URL.revokeObjectURL(a.href); // the last click's copy; the first href is "#", which revoke ignores
+      a.href = URL.createObjectURL(new Blob(["\uFEFF" + csv(sheets[id])], { type: "text/csv;charset=utf-8" })); // the BOM: Excel reads € — ᵇ as ANSI without it
+    };
     h.append(" ", a);
   }
   a.hidden = !rows?.length;
@@ -614,6 +617,7 @@ load();
 const upload = document.getElementById("upload");
 const mine = document.getElementById("mine");
 let current = ""; // (#403) the overlay the tables show, which the why box asks about
+let run = 0; // (#883) the newest upload's number: an older worker's answer, or one back after "back to CI's ranking", is dropped
 function say(text, reset) {
   mine.textContent = text;
   if (reset) {
@@ -623,6 +627,7 @@ function say(text, reset) {
     a.onclick = (e) => {
       e.preventDefault();
       upload.value = "";
+      run++;
       current = "";
       mine.hidden = true;
       load();
@@ -642,11 +647,14 @@ function pinNote(p) {
 upload.onchange = async () => {
   const file = upload.files[0];
   if (!file) return;
+  upload.value = ""; // (#883) so picking the same path again, after editing it, fires `change` again
+  const me = ++run;
   say("ranking with " + file.name + "…");
   const overlay = await file.text();
   const w = new Worker("engine/worker.js", { type: "module" });
   w.onmessage = ({ data }) => {
     w.terminate();
+    if (me !== run) return;
     if (data.err) return say("Could not rank with " + file.name + ": " + data.err, true);
     const out = JSON.parse(data.ok);
     current = overlay;
@@ -660,25 +668,30 @@ upload.onchange = async () => {
   };
   w.onerror = (e) => {
     w.terminate();
-    say("The engine failed to start (" + e.message + ").", true);
+    if (me !== run) return;
+    say("The engine failed to start (" + (e.message || "see the browser console") + ").", true);
   };
   w.postMessage({ overlay });
 };
 // (#403) "Why isn't X in?". A fresh worker per question, like an upload: the engine reads its config
 // once per instance.
 const whyOut = document.getElementById("why-out");
+let asked = 0; // (#883) likewise for the why box: only the newest question's answer lands
 document.getElementById("why-box").onsubmit = (e) => {
   e.preventDefault();
+  const me = ++asked;
   whyOut.textContent = "…";
   whyOut.hidden = false;
   const w = new Worker("engine/worker.js", { type: "module" });
   w.onmessage = ({ data }) => {
     w.terminate();
+    if (me !== asked) return;
     whyOut.textContent = data.err ? "Could not explain: " + data.err : data.ok;
   };
   w.onerror = (e) => {
     w.terminate();
-    whyOut.textContent = "The engine failed to start (" + e.message + ").";
+    if (me !== asked) return;
+    whyOut.textContent = "The engine failed to start (" + (e.message || "see the browser console") + ").";
   };
   w.postMessage({ overlay: current, why: document.getElementById("why").value });
 };
