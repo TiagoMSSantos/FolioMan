@@ -8758,7 +8758,15 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: e9bb0306567b (#908), graded 2026-10-24 by run 40096889695, same five inputs, since
+  # LAST GRADED SHA: db34620506eb (#918), graded 2026-10-24 by run 40101984635, same five inputs, since
+  # e9bb030 (the full 40-character SHA: a short one fails every shard's fetch, run 40101775140), `files` =
+  # src/commands/backtest.rs src/commands/mod.rs src/commands/screen.rs src/commands/size.rs
+  # src/commands/track.rs src/commands/trade.rs src/config.rs src/core.rs src/fetch.rs src/lib.rs
+  # src/main.rs src/picks.rs src/web.rs: 45 in scope = 40 caught + 5 unviable (config.rs settings_of ->
+  # Ok(Default::default()) and load -> Default::default(), fetch.rs quote_one -> Default::default(),
+  # picks.rs score_parts_hard -> Some(Default::default()), web.rs load -> Ok((Default::default(),
+  # Default::default()))), 0 missed, 0 timeout.
+  # BEFORE THAT: e9bb0306567b (#908), graded 2026-10-24 by run 40096889695, same five inputs, since
   # daac5a6, `files` = src/commands/screen.rs src/fetch.rs src/web.rs: 20 in scope = 20 caught, 0
   # unviable, 0 missed, 0 timeout.
   # BEFORE THAT: daac5a66a962 (#897), graded 2026-10-24 by run 40095429474, same five inputs, since
