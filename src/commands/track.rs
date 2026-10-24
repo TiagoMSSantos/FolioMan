@@ -2688,9 +2688,9 @@ mod tests {
         assert_eq!(snaps[0].spx, Some(5000.0), "an index level is not a share");
         assert_eq!(snaps[1].rows[0].1, Some(12.0), "already after the split -> untouched");
         assert_eq!(snaps[2].rows[0].1, Some(999.0), "an unparseable date is skipped, not guessed at");
-        // and it is idempotent in the only sense that matters: a second pass over the SAME quotes
-        // finds nothing left to do, because the correction is keyed off the snapshot date, not the
-        // price. `track` re-reads the journal from disk every run, so this is the real second pass.
+        // and it is NOT idempotent over the same in-memory snapshots: a second pass restates the row
+        // again, because the correction is keyed off the snapshot date, not the price. It is safe only
+        // because `track` re-reads the raw journal from disk every run, so no run applies it twice.
         assert_eq!(adjust_for_splits(&mut snaps, &factor), 1, "keyed off the date: the same row again");
 
         // (#285) the CORE list is restated by the same pass, for the same reason: it is priced the

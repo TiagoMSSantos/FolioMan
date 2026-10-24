@@ -1,7 +1,7 @@
 //! End-to-end tests of the compiled `folioman` binary, OFFLINE. Driven via `CARGO_BIN_EXE_folioman`
 //! (set by cargo for integration tests) — no `assert_cmd` dependency.
 //!
-//! Two families, and the difference matters when adding a case:
+//! Three runners, and the difference matters when adding a case:
 //!
 //! - **`run`** — paths that validate/abort BEFORE any network or `yes` confirmation. The money path
 //!   (`trade`) is the highest-stakes surface: these pin its arg-validation guards and the fat-finger
@@ -10,7 +10,6 @@
 //!   (`screen`, `check`, `perf`, `size`, `report`) or PERSIST state (`screen`, `alert`). These reach
 //!   real command bodies, under `FOLIOMAN_OFFLINE=1` so no socket is opened, and in a data root of
 //!   their own so nothing they write touches the working tree.
-//!
 //! - **`run_stubbed`** — (#359) `run_isolated` ONLINE against a loopback stub, for the two things
 //!   offline cannot reach: a PRICED quote and a DELIVERED push.
 //!
