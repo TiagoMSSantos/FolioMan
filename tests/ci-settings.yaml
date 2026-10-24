@@ -8756,10 +8756,24 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 5cbb35c08202ef38c310c117a15e50bd51c31c00 (proof run 37109779483, 2026-10-03: 1007 in
+  # LAST GRADED SHA: 9d272693f844 (#850), graded 2026-10-24 by runs 40043922663 (src/fetch.rs) and
+  # 40043925387 (the other changed src files), same five inputs, since 5cbb35c: 6466 in scope =
+  # 6104 caught + 340 unviable + 20 missed + 2 timeout. The 85 survivors of the (#847) catch-up are
+  # down to these 20, every one triaged, so the next catch-up starts here:
+  # - 18 EQUIVALENT: fetch.rs 261 (chart_json) and 8268 (fetch_euronext_lisbon) `attempt == 0` only
+  #   move the retry sleep; 2264 finra_newest; 3025 text_cusip; cash_ttm 5813:73, 5829:74, 5829:94,
+  #   5832:120; yahoo_fund_facts_fill 7206, 7207; 8458 fetch_regulatory_etf_isins; 8844:78 s1_figures;
+  #   fetch_universe 9854, 9899; backtest.rs 4283:52 rival_books `/` -> `%` and `*`; core.rs 650
+  #   young_return; picks.rs 4514 implied_growth.
+  # - 1 SPEC: fetch.rs 8854:113 s1_figures `years[i] > fy` -> `>=` (does a non-annual column dated in
+  #   the fiscal year count as current?). 1 open: fetch.rs 9877:49 `delete !` in fetch_universe's
+  #   speculative-ISIN filter.
+  # - 2 TIMEOUT: picks.rs 2678 `waived` (`&&` -> `||`, `==` -> `!=`), as in (#847).
+  # PREVIOUS: 5cbb35c08202ef38c310c117a15e50bd51c31c00 (proof run 37109779483, 2026-10-03: 1007 in
   # scope = 959 caught + 48 unviable, 0 missed, 0 timeout). 1007 not 998 because Phase 2 below moved
-  # mutable lines. The next catch-up dispatches `since: <that SHA>` with
-  # `files` = `git diff --name-only <that SHA> HEAD -- src`.
+  # mutable lines. The next catch-up dispatches `since: <the LAST GRADED SHA>` with
+  # `files` = `git diff --name-only <that SHA> HEAD -- src`, and passes when its missed list is these
+  # 20 at their moved lines and nothing else.
   # PHASE 2 (5cbb35c): `heuristic_drift` split into a skipped ambient-path wrapper and a graded
   # `heuristic_drift_at(path)` with a three-file test (off-baseline knob warns, quiet and ci-settings do
   # not); edge asserts for `slice_since` empty, `cagr` at 0 years, `parse_pt_series` without `value` and
