@@ -8758,7 +8758,11 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 06992f63093b (#924), graded 2026-10-24 by run 40103309636, same five inputs, since
+  # LAST GRADED SHA: fd1d5dd74345 (#928), graded 2026-10-24 by run 40104030376, same five inputs, since
+  # 06992f6, `files` = src/commands/screen.rs src/config.rs src/fetch.rs: 7 in scope = 7 caught (the
+  # function-level mutants of `sec_ttm_eps_filed` and `fetch_sec_facts_fresh`, whose comments (#928)
+  # touched), 0 unviable, 0 missed, 0 timeout.
+  # BEFORE THAT: 06992f63093b (#924), graded 2026-10-24 by run 40103309636, same five inputs, since
   # db34620, `files` = src/commands/screen.rs src/config.rs src/core.rs src/fetch.rs: 8 in scope = 8
   # caught (the (#924) chart memo: `chart_json`, `want_recent`, `recent_served`, `keep_recent`), 0
   # unviable, 0 missed, 0 timeout.
