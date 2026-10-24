@@ -9432,6 +9432,10 @@ mod tests {
         assert_eq!(picks::splice_order(&s9, &m9, false, 3, 10), ["S1", "S2", "S3", "M1", "S4", "S5", "M2", "S6", "S7", "M3"]);
         assert_eq!(picks::splice_order(&s9, &m9, false, 10, 3), ["M1", "M2", "M3"]);
         assert_eq!(picks::splice_order(&s9, &m9, false, 0, 3), ["S1", "S2", "S3"]);
+        // (#944) a huge `slots` reads as every slot, in both modes, and never overflows
+        assert!(picks::momentum_slot(1, usize::MAX));
+        assert_eq!(picks::splice_order(&s9, &m9, true, usize::MAX, 7), ["S1", "S2", "S3", "S4", "S5", "M1", "M2"]);
+        assert_eq!(picks::splice_order(&s9, &m9, false, usize::MAX, 3), ["M1", "M2", "M3"]);
         assert!((0..1000).all(|i| picks::momentum_slot(i, 5) == (i % 2 == 1)), "5 = the (#584) alternation");
         // the weights: momentum twin Z (A's issuer) drops so X takes its slot, the cut drops B; then the first HEAD
         // rows take the head share

@@ -7115,8 +7115,10 @@ pub(crate) const HEAD: usize = 5;
 
 /// (#597) Whether slot `i` (0-based) of the interleaved book is momentum's: `slots` of every 10, spread evenly
 /// (`growth_momentum_slots`). 5 is the (#584) alternation, shipped first; 7 reads S M M S M M S M M M, and 3
-/// reads S S S M S S M S S M.
+/// reads S S S M S S M S S M. (#944) 10 already marks every slot, so a larger `slots` is clamped to it
+/// rather than overflowing the product.
 pub(crate) fn momentum_slot(i: usize, slots: usize) -> bool {
+    let slots = slots.min(10);
     (i + 1) * slots / 10 > i * slots / 10
 }
 
@@ -7218,7 +7220,7 @@ pub(crate) fn splice_sides<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: b
     let mut out: Vec<(T, bool)> = Vec::new();
     while out.len() < n {
         let i = out.len();
-        let from_m = if after { (HEAD..HEAD + slots).contains(&i) } else { momentum_slot(i, slots) };
+        let from_m = if after { (HEAD..HEAD.saturating_add(slots)).contains(&i) } else { momentum_slot(i, slots) };
         let fresh = |t: &T| !out.iter().any(|o| o.0 == *t);
         let (a, b) = if from_m { (&mut m, &mut s) } else { (&mut s, &mut m) };
         let Some(t) = a.find(fresh).map(|t| (t, from_m)).or_else(|| b.find(fresh).map(|t| (t, !from_m))) else { break };
