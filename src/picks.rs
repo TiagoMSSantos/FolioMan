@@ -937,7 +937,7 @@ pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
 
 /// The growth lane's per-rung CUMULATIVE-return floors: `(perf label, near-miss tag, floor %)`.
 /// ONE definition, read by BOTH `score_parts` and `gate_failures` — those two must agree or a name is
-/// silently dropped from the ranking while the tail claims it passes (see picks.rs:745). Sharing the
+/// silently dropped from the ranking while the tail claims it passes (`gate_failures_agrees_with_the_scorer` pins it). Sharing the
 /// table makes them agree by construction instead of by two copies being kept in sync by hand.
 ///
 /// The 5Y rung takes a CRYPTO TWIN, the same split five sibling gates already carry
@@ -1485,7 +1485,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // A leg the quote lacks (`n/a`) is SKIPPED — missing history is not a weak return, and rejecting
     // on it would cut every ETF and coin, none of which has a 20Y leg at all.
     // Must stay the SAME table as the `gate_failures` copy — `long_leg_floors` IS that table, so the
-    // two cannot drift (picks.rs:745 explains what drift costs).
+    // two cannot drift (the `long_leg_floors` doc explains what drift costs).
     for (label, _, floor) in long_leg_floors(tuning, crypto) {
         if perf_pct(quote, label).is_some_and(|p| p <= floor) {
             return None;
@@ -2480,7 +2480,7 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     }
     // (S-8Y) mirror of the 8y-window range bar. MUST stay the same expression as `score_parts`' copy —
     // the two disagreeing means a name is silently dropped from the ranking while the tail claims it
-    // passes, or vice versa (see picks.rs:745). Same `is_close` convention as the 10y entry above.
+    // passes, or vice versa (see `gate_failures_agrees_with_the_scorer`). Same `is_close` convention as the 10y entry above.
     let min_range_8y = if crypto { tuning.growth_min_range_pct_8y_crypto } else { tuning.growth_min_range_pct_8y };
     if min_range_8y > 0.0 {
         if let Some(s) = quote.stats_8y.as_ref().filter(|s| s.range_pct < min_range_8y) {
@@ -10028,7 +10028,7 @@ mod tests {
     assert!(has("liquidity") && has("stretch") && has("lifetime") && has("maxdd"));
 
     // (5Y/8Y/20Y floors) the per-rung CUMULATIVE-return gate. ONE table (`long_leg_floors`) read by
-    // score_parts AND gate_failures, so the pair below is the lockstep assert picks.rs:745 asks for.
+    // score_parts AND gate_failures, so the pair below is the lockstep assert the `long_leg_floors` doc asks for.
     // Fixture clears every other default gate with room: 20Y +500% = 9.4%/yr vs the 8%/yr CAGR floor.
     let rungs = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 500.0)]);
     assert!(growth_score(&rungs, &tuning).is_some(), "8Y/20Y ship OFF (-1e9) -> they must reject nothing");
@@ -10060,7 +10060,7 @@ mod tests {
     // THE EQUIVALENCE this gate was chosen for: it fires exactly when the S-8Y column blanks, so an
     // armed ranking and the printed diagnostic can never disagree. If a future gate starts reading one
     // of the OTHER stats `as_8y_window` swaps (trend_r2, maxdd, underwater), this assert is what catches
-    // the divergence — `tuning8` is reproduced here from the render site (picks.rs:1927).
+    // the divergence — `tuning8` is reproduced here from the render site (`tuning_8y(tuning)` in `print_picks`).
     let tuning8 = BuyHeuristic { fixed_cagr_years: 8, growth_min_cagr: f64::NEG_INFINITY, growth_min_cagr_crypto: f64::NEG_INFINITY, ..armed.clone() };
     assert!(growth_score(&as_8y_window(&weak8), &tuning8).is_none(), "gate fired -> the S-8Y cell must be the n/a it mirrors");
     // no `stats_8y` = under 8y of record: its whole span IS the window and the live bar already judged

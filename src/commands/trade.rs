@@ -1,6 +1,6 @@
 //! `trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>` — place a single **live MARKET order**.
 //! REAL MONEY, IRREVERSIBLE. Credentials are read from environment variables only (see
-//! `src/broker.rs`); nothing trade-related is ever read from `settings.yaml`.
+//! `src/broker/`); nothing trade-related is ever read from `settings.yaml`.
 //!
 //! Brokers: `trading212` (ticker form `AAPL_US_EQ`, sent EXACTLY as typed — venue letters are
 //! meaningfully lowercase, e.g. `VUAGl_EQ`), `binance` (pair like `BTCEUR`, qty in base asset, or

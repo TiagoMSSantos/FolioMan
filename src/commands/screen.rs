@@ -990,7 +990,7 @@ const FUND_ISSUERS: &[&str] = &[
 /// DELIBERATE widening chosen 2026-08-02 over a conservative list, so `iShares Core S&P 500` pairs with
 /// `Invesco S&P 500` and `Amundi PEA Nasdaq-100` with `Invesco EQQQ Nasdaq-100` — both genuinely the same
 /// index behind different wrappers. Every token added here is a new way to fuse two different books,
-/// which is why `index_keys_are_pe_homogeneous` exists: it re-derives these keys over every fund that
+/// which is why `index_key_never_fuses_two_different_books` exists: it re-derives these keys over every fund that
 /// reports a P/E and fails if any key covers two different ratios.
 ///
 /// `hedged` is deliberately NOT here. Leaving it in keeps `MSCI World EUR Hedged` unpaired with

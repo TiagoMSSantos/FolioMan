@@ -2035,7 +2035,7 @@ pub async fn run(args: Vec<String>) {
     // SOUNDNESS: weight_curve re-scores a FIXED admitted set, which is only valid if the swept knob
     // cannot change WHO is admitted. It cannot — `dividend_reward` is a purely additive term applied
     // after every gate in `score_parts`, and the `min_score`/`growth_min_score` trims live in
-    // `picks::rank_picks`/`growth_picks` (the LIVE screen path), not inside `growth_score`, which is
+    // `picks::ranked` (the LIVE screen path), not inside `growth_score`, which is
     // what the backtest calls.
     // WHAT A FLAT LINE MEANS HERE: that yield carries no SELECTION signal — NOT that the plumbing
     // failed. Check the `growth_dividend*` ablation row first: if that also reads 0.0 the term is still
@@ -11716,7 +11716,7 @@ mod tests {
     /// exact shape, and a false "inert" claim is how the receipts rotted.
     ///
     /// SCOPE: the PRICE-ONLY reconstruction. `backtest ... fund` additionally attaches `quote.fund`
-    /// (backtest.rs:422), so the fundamentals knobs are live on THAT path — `growth_max_peg` reads
+    /// (the `quote.fund = fund.clone()` in the walk), so the fundamentals knobs are live on THAT path — `growth_max_peg` reads
     /// INERT below and config.rs's "MEASURABLE (peg_yield is filled in the backtest)" is still right;
     /// the two statements are about different runs, not in conflict.
     ///
@@ -11886,7 +11886,7 @@ mod tests {
     }
 
     /// The ETF-scoped gates were DEAD CODE in the backtest, not merely mis-grouped: with
-    /// `instrument_type` empty and `name` = the ticker, `is_commodity_etf` (picks.rs:338) could never
+    /// `instrument_type` empty and `name` = the ticker, `is_commodity_etf` could never
     /// fire, so a physical-gold ETC — a metal peg with no earnings — scored as a proven compounder in
     /// every number the backtest ever printed. Same prices, same reconstruction, stamped vs not.
     #[test]

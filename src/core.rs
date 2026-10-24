@@ -3004,7 +3004,7 @@ fn geo_tier_at(
         // sleeve is on. Chained LAST, and the four stay mutually exclusive: `NASDAQ_NARROW` is in
         // none of `SIZE`, `FACTOR` or `SECTOR`, and each arm demands `first` be its OWN token, so no
         // fund any sibling already claims can move to this one. That is the ZERO REMOVALS argument
-        // and `every_sibling_sleeve_keeps_its_funds_with_nasdaq_open` is what holds it true.
+        // and the Nasdaq sleeve asserts in `pure_logic` are what hold it true.
         return size_sleeve_tier(n, first, size_cap)
             .or_else(|| factor_sleeve_tier(n, first, factor_on))
             .or_else(|| sector_sleeve_tier(n, first, sector_on))
@@ -3070,7 +3070,7 @@ pub const HOLD_LEGS: [&str; 6] =
 ///
 /// The five optional sleeves are a DESCENDING chain off `HOLD_TIERS` (`SIZE_TIER = FACTOR_TIER - 1`,
 /// … , `NASDAQ_TIER = HOLD_TIERS - 1`), so their positions here are not independently chosen and
-/// cannot be eyeballed — `hold_tier_labels_sit_where_the_chain_puts_them` asserts each one against
+/// cannot be eyeballed — `pure_logic` asserts each one against
 /// its own constant rather than against a literal index.
 pub const HOLD_TIER_LABELS: [&str; HOLD_TIERS] = [
     "all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pac", // geographic, broadest first
