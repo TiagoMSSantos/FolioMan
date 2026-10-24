@@ -1,4 +1,4 @@
-# (#354) Keeps the SHA-pinned third-party actions (and actions/*'s major tags) current: one grouped
+# (#354) Keeps the SHA-pinned actions ((#886) first-party ones too) current: one grouped
 # PR a month, so a bump is one review instead of one per action. cargo-mutants' explicit version in
 # ci.yml and mutation-census.yml is NOT touched by this; (#402) Renovate proposes it.
 version: 2

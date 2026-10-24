@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # backtest-gate's release deps, or (#554) integration-tests' debug deps for a bless; each keeps its
       # own single writer. (#635) Two steps, because folioman-test's writers set CARGO_PROFILE_DEV_DEBUG
       # at job level and rust-cache hashes it into the key: the bless restore needs it, the gate's must
@@ -71,7 +71,7 @@ jobs:
       # The three restores below MUST stay identical to backtest-gate's in ci.yml (the path list is
       # hashed into the cache version, and any difference silently misses).
       - name: Restore Pages' fetch caches
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             .sec_cache
@@ -84,19 +84,19 @@ jobs:
           key: folioman-fetch-${{ github.run_id }}
           restore-keys: folioman-fetch-
       - name: Restore Pages' IPO cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .ipo_cache.json
           key: folioman-ipo2-${{ github.run_id }}
           restore-keys: folioman-ipo2-
       - name: Restore Pages' Wikidata listings
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .wikidata_listings.json
           key: folioman-wikidata-${{ github.run_id }}
           restore-keys: folioman-wikidata-
       - name: Restore the gate's history cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .long_history_cache.json
           key: folioman-longhist-${{ github.run_id }}
@@ -104,7 +104,7 @@ jobs:
       # (#559) FEC bulk breadth per cycle + SEC former names, for `backtest … pac` only.
       - name: Restore the FEC cache
         if: ${{ contains(inputs.args, 'pac') }}
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .fec_cache
           key: folioman-fec-${{ github.run_id }}
@@ -113,7 +113,7 @@ jobs:
       # nothing new, so the rows are kept forever and each run only fetches the CIKs it has not seen.
       - name: Restore the failure cache
         if: ${{ contains(inputs.args, 'failures') }}
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .fail_cache
           key: folioman-fail-${{ github.run_id }}
@@ -124,7 +124,7 @@ jobs:
       # the fills start over.
       - name: Restore the Tiingo cache
         if: ${{ contains(inputs.args, 'dead') }}
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .tiingo_dead_members.csv.enc
           key: folioman-tiingo-${{ github.run_id }}
@@ -200,19 +200,19 @@ jobs:
           exit $rc
       - name: Save the Tiingo cache
         if: ${{ !cancelled() && inputs.fill && contains(inputs.args, 'dead') && hashFiles('.tiingo_dead_members.csv.enc') != '' }}
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .tiingo_dead_members.csv.enc
           key: folioman-tiingo-${{ github.run_id }}
       - name: Save the FEC cache
         if: ${{ !cancelled() && contains(inputs.args, 'pac') }}
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .fec_cache
           key: folioman-fec-${{ github.run_id }}
       - name: Save the failure cache
         if: ${{ !cancelled() && contains(inputs.args, 'failures') }}
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .fail_cache
           key: folioman-fail-${{ github.run_id }}
@@ -225,7 +225,7 @@ jobs:
         env:
           CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) builds what the folioman-test restore holds
         run: FOLIOMAN_BLESS=1 FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test backtest_fixture -- report_is_pinned --nocapture
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: inputs.bless
         with:
           name: goldens

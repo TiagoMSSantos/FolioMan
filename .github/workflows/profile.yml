@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: install perf
         # The runner kernel's own tools package, else the newest Azure one if the index lacks that kernel.
         run: |
@@ -99,7 +99,7 @@ jobs:
             fi
             perf script -i "$p.data" -F ip,sym --no-inline | python3 -I "$RUNNER_TEMP/fold.py" "$p.folded.gz"
           done
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: profile
           path: "*.folded.gz"

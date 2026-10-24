@@ -64,7 +64,7 @@ jobs:
       matrix:
         language: [actions, python, rust]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # (#725) A MAIN PUSH THAT CHANGES NO RUST SKIPS THE RUST SCAN. That leg takes ~7 min (extract
       # 2m27s, queries 3m19s), and on the ~1 in 3 pushes that touch no Rust it alone held the
       # all-green time (ci.yml ~3 min, pages.yml ~4 min). The base is the commit of main's newest
@@ -88,7 +88,7 @@ jobs:
             echo "Rust unchanged since $last, the last rust scan: skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         if: steps.scan.outputs.skip != 'true'
         with:
           languages: ${{ matrix.language }}
@@ -102,7 +102,7 @@ jobs:
           # time it runs — that is the change working. The quality half overlaps
           # `cargo clippy -D warnings` on the Rust legs; that duplication was weighed and accepted.
           queries: security-and-quality
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         if: steps.scan.outputs.skip != 'true'
         with:
           category: "/language:${{ matrix.language }}"

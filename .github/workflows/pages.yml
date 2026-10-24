@@ -86,7 +86,7 @@ jobs:
     outputs:
       clean: ${{ steps.validate.outputs.clean }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The fetch caches, restored from the previous run. This is not a nicety: `resolve_eu_listings`
       # alone is documented at ~4 minutes cold, and the SEC facts cache is append-only history that
@@ -100,7 +100,7 @@ jobs:
       # (#422). The save below runs after `screen` whatever Validate says. The path list must stay identical
       # in both, and in ci.yml's read-only copy: the cache version hashes it.
       - name: Restore fetch caches
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             .sec_cache
@@ -117,7 +117,7 @@ jobs:
       # entry, not a line in the list above: the cache version hashes that list, so adding to it would
       # cold-start every fetch cache here and in ci.yml's read-only copy of it.
       - name: Restore listing cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .listing_cache.json
           key: folioman-listings-${{ github.run_id }}
@@ -126,7 +126,7 @@ jobs:
       # (#438) The Attention table's Wikimedia pageview series. Its own entry for the same reason; warm, a
       # run refetches only names whose newest complete month is missing (the first runs of a month).
       - name: Restore pageview cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .wiki_pageviews_cache.json
           key: folioman-wikiviews-${{ github.run_id }}
@@ -135,7 +135,7 @@ jobs:
       # (#465) The ETF TD-1Y/TD-5Y cells' yearly tracking-difference series, one trackingdifferences.com page
       # per printed fund. Its own entry so warm runs refetch nothing until the cache is 30 days old.
       - name: Restore TD cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .td_cache.json
           key: folioman-td-${{ github.run_id }}
@@ -144,7 +144,7 @@ jobs:
       # (#479) The USE/REPL/TOP10% cells justETF fills for printed funds Börse Frankfurt and Yahoo left
       # n/a, one profile page per fund with a gap. Its own entry so warm runs refetch nothing for 30 days.
       - name: Restore justETF cells cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .justetf_cells_cache.json
           key: folioman-justetf-cells-${{ github.run_id }}
@@ -157,7 +157,7 @@ jobs:
       # (#482) profile4: a cached site is carried forward, so the Wikipedia articles the title guard now
       # refuses (WHK's "Silver mining in the United States") only leave on a cold start.
       - name: Restore profile cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .profile_cache.json
           key: folioman-profile4-${{ github.run_id }}
@@ -167,7 +167,7 @@ jobs:
       # Past months never change, so a warm run asks only for the current month.
       # (#528) ipo2: the old cache held June 2026 without SpaceX (a substring SPAC test dropped it).
       - name: Restore IPO cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .ipo_cache.json
           key: folioman-ipo2-${{ github.run_id }}
@@ -177,7 +177,7 @@ jobs:
       # answer cost the Young table 14 of 64 rows (2026-10-17, 2026-10-19). A copy under a day old answers
       # without a request (tar keeps the mtime); an older one answers when the live GET is refused.
       - name: Restore the Wikidata listings
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .wikidata_listings.json
           key: folioman-wikidata-${{ github.run_id }}
@@ -186,7 +186,7 @@ jobs:
       # (#516) The App Store chart's daily ranks: a climb is graded against the week before, so the
       # file must survive between runs or every run is day one.
       - name: Restore App Store ranks cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .appstore_ranks.json
           key: folioman-appstore-${{ github.run_id }}
@@ -195,7 +195,7 @@ jobs:
       # (#604) Each YouTube channel's last feed with videos, served for 14 days when the channel's RSS
       # answers 404/500 (most tries on 2026-10-16), so a miss stops dropping its names' `s` boost.
       - name: Restore YouTube feeds cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .youtube_feeds.json
           key: folioman-youtube-${{ github.run_id }}
@@ -204,7 +204,7 @@ jobs:
       # (#520) Berkshire's EDINET reports and the day range already scanned: a past day's list never
       # changes, so without this every run would restart the 2020-08 backfill.
       - name: Restore EDINET cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .edinet_brk.json
           key: folioman-edinet-${{ github.run_id }}
@@ -213,7 +213,7 @@ jobs:
       # (#519) Eulerpool FCF rows (30 days) and market caps (1 day): without it every run re-asks ~176 names
       # twice, and the 100k monthly quota would carry ~10k calls instead of ~5k.
       - name: Restore Eulerpool cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .eulerpool_fcf.json
           key: folioman-eulerpool-${{ github.run_id }}
@@ -221,7 +221,7 @@ jobs:
 
       # (#707) Eulerpool's annual statements behind `ep_fund` (30 days), four calls a month per name with no SEC row.
       - name: Restore Eulerpool fundamentals cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .eulerpool_fund.json
           key: folioman-epfund-${{ github.run_id }}
@@ -239,7 +239,7 @@ jobs:
       # file's mtime, which is what that day is measured from.
       # (#486) And the Bonds table's FRED series, same day cache, same fallback.
       - name: Restore the inflation feeds
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             .fmp_cache/us_cpi*.json
@@ -257,7 +257,7 @@ jobs:
       # the prefix restore takes the newest day. After a week with no push the entries age past the
       # TTL and are refetched, which is where this run started, not worse.
       - name: Restore the monthly history cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .long_history_cache.json
           key: folioman-longhist-
@@ -273,7 +273,7 @@ jobs:
         run: echo "key=folioman-bin-$(rustc -V | cut -d' ' -f2)-${{ hashFiles('src/**', 'Cargo.toml', 'Cargo.lock', '.cargo/config.toml', '.github/workflows/pages.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the binary
         id: bin
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: target/release/folioman
           key: ${{ steps.bin-key.outputs.key }}
@@ -293,7 +293,7 @@ jobs:
         run: cargo build --release --locked --config 'profile.release.package.folioman.opt-level=1'
       - name: Save the binary
         if: steps.bin.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: target/release/folioman
           key: ${{ steps.bin-key.outputs.key }}
@@ -306,7 +306,7 @@ jobs:
       - name: Restore the page engine
         id: engine
         continue-on-error: true
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: engine-dist
           key: folioman-engine-${{ hashFiles('src/**', 'web/engine/**', 'Cargo.toml') }}
@@ -384,7 +384,7 @@ jobs:
       # empty, and the next run starts cold.
       - name: Save fetch caches
         if: ${{ !cancelled() }}
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             .sec_cache
@@ -469,7 +469,7 @@ jobs:
 
       # (#398) Named per ATTEMPT: a re-run keeps the earlier attempt's artifacts, and deploy-pages
       # refuses a run holding two `github-pages` (run 36318617516, attempt 2).
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: _site
           name: github-pages-${{ github.run_attempt }}
@@ -479,14 +479,14 @@ jobs:
       # The first attempt may fail without reddening the run; the second, a minute later, may not.
       - id: deploy
         continue-on-error: true
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
       - if: steps.deploy.outcome == 'failure'
         run: sleep 60
       - id: deploy-retry
         if: steps.deploy.outcome == 'failure'
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 
@@ -503,7 +503,7 @@ jobs:
       # it this step reports "No files were found with the provided path" for a file that is sitting
       # right there in the workspace — which is exactly how that first attempt failed.
       - name: Upload the journal
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: screen-journal
           path: .screen_snapshots.jsonl
@@ -542,10 +542,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: screen-journal
           path: run-journal
