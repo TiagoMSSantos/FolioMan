@@ -3567,7 +3567,7 @@ async fn fetch_edinet_brk(client: &Client, urls: &Urls) -> Vec<BrkRow> {
 // - Hand list: `src/buy-heuristics/social-arbitrage-trading.json`, verified claims with their source.
 // - (#475) New 13D/13G stakes: the same managers' original SCHEDULE 13D/13G filings of the last
 //   [`SOC_STAKE_DAYS`], one more buyer each. ARK's net buys and openinsider's cluster buys of a pooled
-//   stock are tips, like a video. Four more channels' videos pool with Dumb Money Live's.
+//   stock are tips, like a video. Twelve more channels' videos pool with Dumb Money Live's.
 // - (#536) Benzinga's weekly "stocks investors couldn't stop buzzing about" tickers, and ApeWisdom's
 //   loudest names beside its surges.
 

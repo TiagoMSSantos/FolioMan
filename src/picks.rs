@@ -4934,7 +4934,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
                 "REGION" => "Whose consumer prices: USA, the EU (HICP, what a Real column is deflated by) or Portugal".to_string(),
                 "LATEST" => "Newest yearly inflation rate; for a year still running, the latest month's rate vs a year earlier".to_string(),
                 "AS OF" => "Year of that newest rate; ⚠ marks a stale or missing feed".to_string(),
-                span => format!("Total price rise over the last {} yearly rates, compounded; — = the series is shorter (EU HICP starts in 1996); n/a = no data", span.trim_end_matches('Y')),
+                span => format!("Total price rise over the last {} yearly rates, compounded; — = the series is shorter (EU HICP starts in 2000); n/a = no data", span.trim_end_matches('Y')),
             };
             (h.clone(), text)
         })
@@ -4962,7 +4962,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("TICKER", ticker),
         ("NAME", "The company's name; — = the screen does not price it; click to open the company's own website (or its Wikipedia article)"),
-        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), 13D/G N (N of those managers filed a new 13D or 13G stake in the last 90 days), ARK (an ARK fund bought it in the last 30 days and none sold), insiders (2+ insiders bought on the open market in one recent filing), App Store (its app climbed 25+ places on Apple's US top-free chart in a week, or entered it), YouTube ×N (mentions in recent videos of five stock channels), hand list"),
+        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), 13D/G N (N of those managers filed a new 13D or 13G stake in the last 90 days), ARK (an ARK fund bought it in the last 30 days and none sold), insiders (2+ insiders bought on the open market in one recent filing), App Store (its app climbed 25+ places on Apple's US top-free chart in a week, or entered it), YouTube ×N (mentions in recent videos of thirteen stock channels), Reddit (a surge of Reddit and 4chan mentions: 10+ in a day at 3x the day before, or 50+), Google Trends (a US daily trending search that is its ticker or name), Benzinga buzz (named in a Benzinga buzz article of the last 8 days), HN ×N (N Hacker News stories of the last 7 days, over 100 points, that name it), hand list"),
         ("NEWEST", "Date of the latest mention, or the 13F quarter"),
         ("WHY", "The hand list's claim, else the newest video title, else the 13D/G, ARK or insider filing, else the superinvestor count; click to open that source"),
     ]);
@@ -5053,7 +5053,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     // (#735) "1 year", not "1 years"; the hover clause names what the cell's own title shows
     bonds.extend(crate::core::BOND_YEARS.iter().map(|y| {
         let span = if *y == 1 { "year" } else { "years" };
-        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield, then that yearly rate after inflation (US CPI for USA, Portugal's HICP for Portugal, EU HICP for the rest and for USA in EUR); — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
+        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield, then that yearly rate after inflation (US CPI for USA, Portugal's CPI for Portugal, EU HICP for the rest and for USA in EUR); — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
     }));
     BTreeMap::from([
         ("lanes", lanes),
