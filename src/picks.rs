@@ -12538,6 +12538,13 @@ mod tests {
         // ("msci em ", 2) and the eurozone fund gets a tier and vanishes from this list.
         assert_eq!(got, vec!["DBXD.DE", "0DZP.L", "LGGE.DE"],
             "descending by AUM, one row per real blind spot");
+        // (#879) equal AUM: the ticker orders it, not the universe order the quotes arrived in
+        let twins = [
+            core_etf("LGGZ.DE", "L&G Global Equity UCITS ETF", 1.5e9, cap),
+            core_etf("LGGA.DE", "L&G Global Equity UCITS ETF", 1.5e9, cap),
+        ];
+        let tied: Vec<&str> = geo_miss_census(&twins, false, false, 0, 0).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(tied, vec!["LGGA.DE", "LGGZ.DE"], "equal AUM sorts by ticker");
         // (#231) …and with the COUNTRY sleeve OPEN, two of those three are not blind spots at all —
         // they are funds the lane already PRINTS. `dax` and `msci emu` are both `core::COUNTRY`
         // tokens, so (#227) gave each of them a sleeve while `geo_hit` kept answering None, and this

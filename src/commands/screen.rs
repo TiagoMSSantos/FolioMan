@@ -5311,6 +5311,19 @@ mod tests {
         let got = mean_ranks(&today, &journal, 3);
         // A (mean 2.0) before B (mean 5.0); C (< 3), D (absent), E (below book) all excluded
         assert_eq!(got, vec![("A".to_string(), 2.0, 3), ("B".to_string(), 5.0, 3)]);
+
+        // (#879) equal mean 2.0 three ways: C sits in 3 snapshots, A and B in 2. More evidence first (C, though it
+        // is alphabetically last), then name (A, B), whatever order `today` lists them in.
+        let tied = [
+            snap("2026-07-01", &[("A", 1), ("B", 3), ("C", 2)]),
+            snap("2026-07-02", &[("A", 3), ("B", 1), ("C", 2)]),
+            snap("2026-07-03", &[("C", 2)]),
+        ];
+        let today = ["B", "A", "C"].map(String::from);
+        assert_eq!(
+            mean_ranks(&today, &tied, 2),
+            vec![("C".to_string(), 2.0, 3), ("A".to_string(), 2.0, 2), ("B".to_string(), 2.0, 2)]
+        );
     }
 
     /// (round 34) fund flow: net shares created/redeemed with price appreciation divided OUT of AUM
@@ -5590,6 +5603,16 @@ mod tests {
         let off = config::BuyHeuristic::default();
         assert_eq!(fund_pe_line(&m, &[], &off).unwrap(), "SPYL.DE 24 · IITU.L 34");
         assert_eq!(fund_pe_line(&HashMap::new(), &[], &off), None);
+        // (#879) equal P/E: the ticker clause orders it. `fund_pe` is a HashMap, so without that clause the line
+        // is hash order. Six names, so a deleted clause passes by luck once in 720 runs, not once in 6.
+        let mut tied: picks::FundPeMap = HashMap::new();
+        for t in ["FFF.DE", "CCC.DE", "AAA.DE", "EEE.DE", "BBB.DE", "DDD.DE"] {
+            tied.insert(t.into(), 20.0.into());
+        }
+        assert_eq!(
+            fund_pe_line(&tied, &[], &off).unwrap(),
+            "AAA.DE 20 · BBB.DE 20 · CCC.DE 20 · DDD.DE 20 · EEE.DE 20 · FFF.DE 20"
+        );
 
         // 5Y cumulative +61.051% is exactly 10.0 %/yr, so the PEGs below are exact:
         // P/E 25 -> peg_yield (100/25)*10 = 40 -> PEG 2.50, under the 50 bar (PEG 2.0) -> cut.
