@@ -854,9 +854,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // and `life_cagr`, `chart.*` feeds range/SMA/R²/trail_monthly. Its own bars (>= own_first) are
     // untouched in both, so the daily tail the long series copied above is charged exactly once.
     if history_proxied {
-        if let (Some(first), Some(own), Some(donor)) = (own_first, ter, donor_ter) {
-            core::charge_ter_gap(&long_dates, &mut long_closes, first, own - donor);
-            core::charge_ter_gap(&chart.dates, &mut chart.closes, first, own - donor);
+        if let (Some(first), Some(gap)) = (own_first, core::ter_gap(ter, donor_ter)) {
+            core::charge_ter_gap(&long_dates, &mut long_closes, first, gap);
+            core::charge_ter_gap(&chart.dates, &mut chart.closes, first, gap);
         }
     }
 

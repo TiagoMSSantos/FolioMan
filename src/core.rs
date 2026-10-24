@@ -3669,6 +3669,13 @@ pub fn charge_ter_gap(dates: &[NaiveDate], closes: &mut [f64], own_first: NaiveD
     }
 }
 
+/// (#889) The signed fee gap a borrowed year is charged: this listing's TER minus the donor's. Either fee
+/// unknown -> None, so nothing is charged rather than a guess. Lifted out of `quote_one` because the donor
+/// fee comes from the process-wide BF_TER cell no test can set, so the subtraction there was never graded.
+pub fn ter_gap(own: Option<f64>, donor: Option<f64>) -> Option<f64> {
+    Some(own? - donor?)
+}
+
 /// Extend a young listing's series with a configured older twin's history (`history_proxy`):
 /// rebase the proxy so its close as-of the listing's first bar equals the listing's first close,
 /// prepend only proxy bars strictly BEFORE that first bar, then the listing's own series
@@ -10768,6 +10775,18 @@ mod tests {
         let mut flat = vec![100.0; 4];
         charge_ter_gap(&dates, &mut flat, own_first, 0.0);
         assert_eq!(flat, vec![100.0; 4]);
+    }
+
+    /// (#889) The gap is OWN minus DONOR, and either fee missing means no charge at all. Quarter and half
+    /// are exact in f64, so the differences compare with assert_eq.
+    #[test]
+    fn ter_gap_is_own_minus_donor_and_needs_both_fees() {
+        assert_eq!(ter_gap(Some(0.5), Some(0.25)), Some(0.25), "dearer listing -> positive gap");
+        assert_eq!(ter_gap(Some(0.25), Some(0.5)), Some(-0.25), "cheaper listing -> negative gap, signed on purpose");
+        assert_eq!(ter_gap(Some(0.5), Some(0.5)), Some(0.0));
+        assert_eq!(ter_gap(None, Some(0.25)), None, "own fee unknown");
+        assert_eq!(ter_gap(Some(0.5), None), None, "donor fee unknown");
+        assert_eq!(ter_gap(None, None), None);
     }
 
     /// (#529) THE LOOK-AHEAD INVARIANT, every field at once. `census_344_..` proves one field (`tr_cagr`)
