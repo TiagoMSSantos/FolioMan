@@ -3411,6 +3411,27 @@ fn class_book_lines(
     out
 }
 
+/// (#874) The coin cohort the main book never ranks, scored on its own samples and benchmarked by `bench`,
+/// joins `all` so `class_book_lines` can rank it as its own class. Returns the coin tickers, which the
+/// caller's class closure needs: `value_floor_trim`'s rows carry no asset class.
+fn merge_coin_cohort<'a>(
+    all: &mut BTreeMap<i32, Vec<(f64, f64, f64, String)>>,
+    coins: &BTreeMap<i32, Vec<&'a Sample>>,
+    bench: impl Fn(chrono::NaiveDate) -> Option<f64>,
+    tuning: &BuyHeuristic,
+) -> HashSet<&'a str> {
+    let mut names = HashSet::new();
+    for (b, group) in coins {
+        let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
+        for (s, scored) in group.iter().copied().zip(picks::growth_scores_ranked(&quotes, tuning)) {
+            let (Some(score), Some(bench_r)) = (scored, bench(s.date)) else { continue };
+            all.entry(*b).or_default().push((score, s.realized, bench_r, s.quote.ticker.clone()));
+            names.insert(s.quote.ticker.as_str());
+        }
+    }
+    names
+}
+
 /// Cumulative % return of a benchmark series held `years` from the first session on/after `from`. `None`
 /// if `from` predates the series or no full forward window remains — mirrors the ticker walk (line ~208).
 fn benchmark_fwd(dates: &[chrono::NaiveDate], closes: &[f64], from: chrono::NaiveDate, years: i64) -> Option<f64> {
@@ -3759,15 +3780,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             // (#566) coins never join the book above, so their line ranks them as their own cohort, untrimmed
             // (no P/E for the value floor), over the same calendar
             let mut all = by_bucket.clone();
-            let mut coin_names = std::collections::HashSet::new();
-            for (b, group) in &coins {
-                let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
-                for (s, scored) in group.iter().zip(picks::growth_scores_ranked(&quotes, tuning)) {
-                    let (Some(score), Some(bench_r)) = (scored, benchmark_fwd(bd, bc, s.date, years)) else { continue };
-                    all.entry(*b).or_default().push((score, s.realized, bench_r, s.quote.ticker.clone()));
-                    coin_names.insert(s.quote.ticker.as_str());
-                }
-            }
+            let coin_names = merge_coin_cohort(&mut all, &coins, |d| benchmark_fwd(bd, bc, d, years), tuning);
             let class_of = |b: i32, t: &str| {
                 if coin_names.contains(t) { Some(0) } else { sample_of.get(&b).and_then(|m| m.get(t)).map(|s| picks::asset_class(&s.quote)) }
             };
@@ -8545,6 +8558,23 @@ mod tests {
         );
         // n = 2: the equal-weight multiple (2.0 + 0.5) / 2 over 2 years
         assert_eq!(class_book_lines(&by_bucket, &calendar, class_of, 2, 2)[0], "  BOOK stock b1 +11.8 pts/yr | A +100% B -50%");
+    }
+
+    /// (#874) A cohort sample joins `all` scored on its own quote and benchmarked by `bench`, its ticker comes
+    /// back for the class closure, and a sample the benchmark has no window for joins nothing. The helper is
+    /// class-blind, so a stock sample stands in for a coin.
+    #[test]
+    fn merge_coin_cohort_adds_scored_samples_and_names_them() {
+        let tuning = shipped_hard();
+        let s = synthetic_samples().into_iter().find(|s| growth_score(&s.quote, &tuning).is_some()).expect("a scoring sample");
+        let score = growth_score(&s.quote, &tuning).unwrap();
+        let coins = BTreeMap::from([(1, vec![&s])]);
+        let mut all = BTreeMap::new();
+        let names = merge_coin_cohort(&mut all, &coins, |_| Some(10.0), &tuning);
+        assert_eq!(names, HashSet::from([s.quote.ticker.as_str()]));
+        assert_eq!(all[&1], [(score, s.realized, 10.0, s.quote.ticker.clone())]);
+        let mut none = BTreeMap::new();
+        assert!(merge_coin_cohort(&mut none, &coins, |_| None, &tuning).is_empty() && none.is_empty());
     }
 
     #[test]
