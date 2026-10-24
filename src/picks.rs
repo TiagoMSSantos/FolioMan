@@ -6457,7 +6457,7 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     let size_cap = crate::config::hold_size_sleeve_ter();
     let factor_on = crate::config::hold_factor_sleeve();
     let sector_on = crate::config::hold_sector_sleeve();
-    let nasdaq_sleeve = crate::config::hold_per_tier_nasdaq();
+    let nasdaq_cap = crate::config::hold_per_tier_nasdaq();
     let counts: Vec<String> = SLEEVE
         .iter()
         .zip(supply.iter())
@@ -6465,7 +6465,7 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
         .zip(benches.iter())
         .zip(no_bench.iter())
         .enumerate()
-        .filter(|(t, _)| core::sleeve_visible(*t, size_cap, factor_on, sector_on, country_cap, nasdaq_sleeve))
+        .filter(|(t, _)| core::sleeve_visible(*t, size_cap, factor_on, sector_on, country_cap, nasdaq_cap))
         .map(|(_, ((((name, n), fams), bs), miss))| {
             let gap = if *miss > 0 { format!("/{miss}?") } else { String::new() };
             format!("{name} {n} ({}f, {}b{gap})", fams.len(), bs.len())
@@ -6534,7 +6534,6 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     // Nasdaq-100 sleeve is the bottom rung — behind single-country 11. Silent when off, so the
     // (#237) line is byte-identical. (#197)'s rule is why this block is not optional: the header must
     // quote the cap the filter APPLIED, or the line inverts its own meaning.
-    let nasdaq_cap = crate::config::hold_per_tier_nasdaq();
     if nasdaq_cap > 0 {
         caps.push(format!("≤{nasdaq_cap} for Nasdaq-100"));
     }
@@ -6568,8 +6567,8 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
         quotes,
         crate::config::hold_allow_swap(),
         crate::config::hold_allow_unknown_ter(),
-        crate::config::hold_per_tier_country(),
-        crate::config::hold_per_tier_developed(),
+        country_cap,
+        developed_cap,
     );
     if !geo_miss.is_empty() {
         println!("  GEO blind spot — {} ETFs carry no GEO token yet clear every other leg (top 15 by AUM):",
