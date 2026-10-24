@@ -3278,7 +3278,9 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
     }
     match pick_sweep_winner(&results, baseline) {
         Some(w) => {
-            println!("  -> WINNER: {w}. Set `growth_fund_factor: {w}` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm.");
+            // (#961) `fund` in the confirm command: without it every fund_factor is None and `tune` drops
+            // growth_fund_weight as inert, so the confirm run would never search the weight it names.
+            println!("  -> WINNER: {w}. Set `growth_fund_factor: {w}` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.");
             // (Item 10) best-of-N haircut: the winner is the MAX of N tried factors, so its edge is inflated
             // by selection. Re-bootstrap the winner's tilt but read a Šidák-tightened tail (5/N instead of
             // 5) — if THAT band straddles 0 the "win" is within best-of-N luck, ship nothing anyway.
