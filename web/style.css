@@ -67,10 +67,10 @@
     :is(#stocks, #etfs, #crypto, #core) :is(th, td):nth-child(2) { left: var(--left1); }
     :is(#stocks, #etfs, #crypto, #core) :is(th, td):nth-child(3) { left: var(--left2); }
   }
-  /* (#250) …and the CORE table has FOUR leading label columns (RANK, NAME, TICKER, MARKET)
-     plus three trailing ones (USE, REPL, DOM), which is how the terminal block aligns them. */
-  #core th:nth-child(4), #core td:nth-child(4),
-  #core th:nth-last-child(-n+3), #core td:nth-last-child(-n+3) { text-align: left; }
+  /* (#250) …and the CORE table's fund text columns are labels too: MARKET (6) and USE REPL DOM
+     (11-13). (#932) Counted from the front: SCORE and MISSES now sit before MARKET, and TOP10%,
+     TD-1Y, TD-5Y and REPORTS after DOM, so the old 4th and last-three counts hit numbers. */
+  #core :is(th, td):is(:nth-child(6), :nth-child(n+11):nth-child(-n+13)) { text-align: left; }
   .empty { padding: .6rem; color: var(--muted); }
   .stale {
     background: var(--warn-bg);
