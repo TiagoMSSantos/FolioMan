@@ -167,17 +167,23 @@ jobs:
           sed 's/\(need=.\[\)"[^"]*"/\1"zzz-renamed"/' automerge.yml > "$t/automerge.yml"
           if out=$(guard ci.yml "$t/automerge.yml"); then echo "guard passed a need entry no job reports"; exit 1; fi
           grep -q zzz-renamed <<<"$out" || { echo "guard failed without naming the renamed entry: $out"; exit 1; }
-      # (#854) The mutation gate's picker on made-up lists, budget 6. Nine mutants are over budget, so the
-      # legs grade halves of the old shard 1/2. One mutant leaves leg 1 nothing, and an empty list (a
-      # diff with no Rust) grades nothing on either leg.
-      - name: Mutation gate splits its budget across two legs
+      # (#855) The mutation gate's picker on made-up lists, budget 6. Tiered: 2 struct-field, 3 other and
+      # 5 fn-value mutants over two files must grade 3 + 3, with the same picks on both legs: every other
+      # mutant and one fn-value (the struct-field pair rides along unfiltered). Six struct-field mutants
+      # fill the budget, so the legs fall back to halves of the old shard 1/2. One mutant leaves leg 1
+      # nothing, and an empty list (a diff with no Rust) grades nothing on either leg.
+      - name: Mutation gate picks the kinds that survive
         run: |
           p=.github/scripts/mutants-pick.py
           t=$(mktemp -d)
           mk() { jq -n '$ARGS.positional | to_entries | map({name: "m\(.key)", file: (.value | split(":")[0]), genre: (.value | split(":")[1])})' --args "$@"; }
           legs() { python3 -I "$p" 6 0 < "$1" > "$t/0" && python3 -I "$p" 6 1 < "$1" > "$t/1" && echo "$(head -1 "$t/0") $(head -1 "$t/1")"; }
+          mk a:StructField a:StructField a:BinaryOperator b:BinaryOperator b:UnaryOperator b:FnValue b:FnValue b:FnValue b:FnValue b:FnValue > "$t/l.json"
+          [ "$(legs "$t/l.json")" = "3 3" ] || { echo "tiered legs did not grade 3 + 3:"; cat "$t/0" "$t/1"; exit 1; }
+          [ "$(sed -n '/^-F$/{n;p}' "$t/0" | tr '\n' ' ')" = '^m2$ ^m3$ ^m4$ ^m5$ ' ] || { echo "tiered picks are not the 3 others and 1 fn-value:"; cat "$t/0"; exit 1; }
+          cmp <(grep -A1 -x -- -F "$t/0") <(grep -A1 -x -- -F "$t/1") || { echo "the legs picked different mutants"; exit 1; }
           mk a:StructField a:StructField a:StructField a:StructField a:StructField a:StructField a:BinaryOperator b:BinaryOperator b:FnValue > "$t/l.json"
-          if [ "$(legs "$t/l.json")" != "2 2" ] || ! grep -qx 1/4 "$t/0" || ! grep -qx 3/4 "$t/1"; then echo "over budget did not grade halves of shard 1/2:"; cat "$t/0" "$t/1"; exit 1; fi
+          if [ "$(legs "$t/l.json")" != "2 2" ] || ! grep -qx 1/4 "$t/0" || ! grep -qx 3/4 "$t/1"; then echo "full struct fields did not fall back to halves of shard 1/2:"; cat "$t/0" "$t/1"; exit 1; fi
           mk a:FnValue > "$t/l.json"
           [ "$(legs "$t/l.json")" = "1 0" ] || { echo "one mutant did not go to leg 0 alone:"; cat "$t/0" "$t/1"; exit 1; }
           : > "$t/l.json"
@@ -754,8 +760,8 @@ jobs:
           # every mutant that --lib lets through pays it. The price is a slower cold tree (~50s -> ~125s).
           printf '[profile.mutants.package."*"]\nopt-level = 2\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
           # List first, and print the count into the summary: a slow run then reads as "big diff", not
-          # as a hang. `--list` only parses, so this costs seconds. (#854) As JSON, for the picker
-          # below.
+          # as a hang. `--list` only parses, so this costs seconds. (#855) As JSON: the picker below
+          # reads each mutant's genre and file from it.
           #
           # The error is NOT discarded, and that is deliberate. `--in-diff` hard-errors with "Diff
           # content doesn't match source file" when the diff and the tree disagree, and piping its
@@ -820,8 +826,9 @@ jobs:
           # (#854) BUDGET is per push, and the two legs split it: each grades its half on its own runner
           # and pays its own baseline, so a full budget costs each leg one baseline and 3 mutants.
           #
-          # .github/scripts/mutants-pick.py splits the work. Within the budget each leg grades half the
-          # list; over it each grades half of the old shard 1/N, so the two together grade that shard.
+          # (#855) Over budget, the picker no longer takes a plain shard. It fills the budget with the
+          # mutant kinds that survive, round-robin across files, and only then with fn-value mutants;
+          # see .github/scripts/mutants-pick.py. Within the budget it grades everything, as before.
           # Its stdout: the leg's expected count, the summary note, then cargo-mutants arguments, one
           # per line, so `mapfile` keeps each regex whole and an array needs no word-splitting.
           BUDGET=6
@@ -941,8 +948,9 @@ jobs:
             exit 1
           fi
           # (#854) Last, so a short run still prints its survivors first. The picker predicted the
-          # count from the same list, so a gap means the shard graded other mutants than it listed,
-          # or the 17m wrapper cut the run short.
+          # count from the same list, so a gap means the run graded other mutants than the picker
+          # chose, or the 17m wrapper cut it short. (#855) A pick that escaped its `-F` filter or
+          # matched nothing is the first kind.
           if [ "${graded}" -ne "${expected}" ]; then
             echo "graded ${graded}, expected ${expected}: the run graded other mutants than the picker chose, or the 17m wrapper cut it short" >&2
             exit 1
