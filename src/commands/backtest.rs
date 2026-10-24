@@ -755,14 +755,16 @@ struct Args {
     tickers: Vec<String>,
 }
 
-/// First purely-numeric arg = holdout years; the keyword `universe` = test the live screen universe
+/// First purely-numeric arg in 1..=100 = holdout years; the keyword `universe` = test the live screen universe
 /// (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); `pit` = score each
 /// cutoff against the index as it stood that day; everything else = explicit tickers to test.
 fn parse_args(args: &[String]) -> Args {
     let mut a_ = Args { years: 5, ..Default::default() };
     for a in args {
         match a.parse::<i64>() {
-            Ok(y) if a_.tickers.is_empty() && y > 0 => a_.years = y,
+            // (#948) past 100 is a typo (a date, say), not a horizon: it overflowed `forward_return`'s
+            // date maths into a panic after the whole fetch. It falls through to the ticker list.
+            Ok(y) if a_.tickers.is_empty() && (1..=100).contains(&y) => a_.years = y,
             _ if a.eq_ignore_ascii_case("universe") => a_.wide = true,
             _ if a.eq_ignore_ascii_case("long") => a_.long = true,
             _ if a.eq_ignore_ascii_case("fund") => a_.fund = true,
@@ -9059,6 +9061,10 @@ mod tests {
         assert_eq!(p("0").years, 5, "a zero horizon must be rejected, not accepted as 0 years");
         assert_eq!(p("0").tickers, vec!["0"]);
         assert_eq!(p("-3").years, 5);
+        // (#948) and past 100 years is a typo, not a walk: 100 is a horizon, 101 and a date are names.
+        assert_eq!(p("100").years, 100);
+        assert_eq!(p("101").years, 5);
+        assert_eq!(p("20260101").tickers, vec!["20260101"]);
 
         // everything unrecognised is a ticker, in order, unchanged
         let mixed = p("AAPL MSFT tune 20");
