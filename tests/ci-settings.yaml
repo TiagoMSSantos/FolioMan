@@ -8756,7 +8756,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 201ef6833b78 (#887), graded 2026-10-24 by two runs, same five inputs. Run
+  # LAST GRADED SHA: daac5a66a962 (#897), graded 2026-10-24 by run 40095429474, same five inputs, since
+  # 41f3e43 (the commits between 201ef68 and 41f3e43 changed tests and web files only), `files` =
+  # src/commands/backtest.rs src/commands/mod.rs src/core.rs src/fetch.rs src/picks.rs: 44 in scope = 42
+  # caught + 2 unviable (core.rs Quote::stub -> Default::default(), fetch.rs quote_one ->
+  # Default::default()), 0 missed, 0 timeout.
+  # BEFORE THAT: 201ef6833b78 (#887), graded 2026-10-24 by two runs, same five inputs. Run
   # 40087848951 (on 17040bd, since 6254c44, `files` = src/commands/screen.rs src/picks.rs): 105 in scope =
   # 104 caught + 1 unviable (picks.rs score_parts_hard -> Some(Default::default()), ScoreParts has no
   # Default). Run 40088596948 (on 201ef68, since 17040bd, `files` = src/commands/backtest.rs
