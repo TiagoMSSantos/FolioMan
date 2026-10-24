@@ -104,6 +104,9 @@
     border-radius: 4px;
     padding: .15rem .3rem;
   }
+  /* (#939) iOS Safari zooms the page into any focused control under 16px, and `.topn`'s are
+     12.8px, so typing in the filter or why box left the phone view zoomed in. */
+  @media (pointer: coarse) { .topn :is(select, input) { font-size: 16px; } }
   #glossary dt { color: var(--fg); font-weight: 600; margin-top: .5rem; }
   #glossary dt.group { margin-top: 1.25rem; text-decoration: underline; }
   #glossary dd { margin: 0 0 0 1.5rem; }
