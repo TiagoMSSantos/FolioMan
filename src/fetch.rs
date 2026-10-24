@@ -1259,7 +1259,7 @@ async fn sec_ttm_eps_filed(client: &Client, urls: &Urls, ticker: &str, splits: &
     // (ORLY's −5.66, see `ttm_eps_from_concept`). A cache bump is the only way a fix here reaches a box
     // that has already run — and a negative cached EPS is invisible, since the `pe` cell just drops it.
     // (#84) "no expiry" is no longer true on the LIVE path: `evict_stale_sec_caches` drops this file
-    // after ~30 staggered days, which is what makes a TTM roll actually trail the twelve months in
+    // after a staggered 24-47 hours (#547), which is what makes a TTM roll actually trail the twelve months in
     // front of it rather than the twelve months this box first happened to see. The rest of the note
     // stands — a bad roll still survives up to a TTL, and a version bump is still the instant fix.
     // (#424) `_ttmeps4`: v3 holds rolls on the FILINGS' split basis, which a later split leaves N times too
@@ -1885,7 +1885,7 @@ fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
 
 // The SEC transport pair. `offline()` is checked HERE, in the two functions every SEC path funnels
 // through, for the same reason `get_json`/`get_text` check it: OFFLINE has to mean no socket, and the
-// eight call sites above are easy to add a ninth to without noticing. Without this an offline run
+// two dozen call sites are easy to add one more to without noticing. Without this an offline run
 // still reached sec.gov whenever the local `.sec_cache` missed — which is precisely the case a frozen
 // -data pin hits on a machine that has never run live, so the pin's hermeticity depended on the
 // developer's cache being warm.
@@ -6297,10 +6297,10 @@ fn merge_predecessor_rows(mut rows: Vec<core::FundRow>, old: Vec<core::FundRow>)
 }
 
 /// Annual `FundRow`s for a US ticker from SEC XBRL company-facts. DISK-CACHED as compact parsed rows
-/// (`.sec_cache/{ticker}_facts.json`) — NOT the multi-MB raw payload — append-only history, so the
+/// (`.sec_cache/{ticker}_facts26.json`) — NOT the multi-MB raw payload — append-only history, so the
 /// BACKTEST reuses it forever (its as-of quarters cannot go stale). (#84) The LIVE path no longer
 /// does: append-only is not complete, and each filer's newest fiscal year appears once a year, so
-/// `evict_stale_sec_caches` expires this file after ~30 staggered days for live callers only.
+/// `evict_stale_sec_caches` expires this file after a staggered 24-47 hours (#547) for live callers only.
 /// Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     // (#410) shortcut: warm-up bridge. A cache-key rename misses every filer at once and the budget
@@ -6424,11 +6424,11 @@ async fn fetch_sec_facts_fresh(client: &Client, urls: &Urls, ticker: &str) -> Op
     // unknown when interest is paid under none: a facts15 row holds the fake net cash, same trap.
     // (#420) facts17 reads EBIT as pretax + interest where no operating-income tag exists, and interest
     // under InterestExpenseNonoperating: a facts16 row holds None op_margin for KLAC/LLY, same trap.
-    // (#426) facts23 carries the pretax margin `core::strip_noncore` reads: a facts17 row loads it as None
+    // (#426) facts18 carries the pretax margin `core::strip_noncore` reads: a facts17 row loads it as None
     // and would keep GAAP EPS forever, same trap.
-    // (#478) facts23 marks a bank or insurer per period, not forever: a facts19 row holds None op_margin
+    // (#478) facts20 marks a bank or insurer per period, not forever: a facts19 row holds None op_margin
     // for NUE/HRB, and none of the interest, SBC and REIT capex tags it added, same trap.
-    // (#503) facts23 reads the newer taxonomy, the majority unit, IFRS 15 revenue and five more debt
+    // (#503) facts21 reads the newer taxonomy, the majority unit, IFRS 15 revenue and five more debt
     // tags: a facts20 row holds TM at FY2013 and CDNS with no debt, same trap.
     // (#703) facts23 reads EBIT from profit + tax + interest, convertible debt, interest as a magnitude
     // and the raw debt: a facts22 row holds None op_margin for WELL/NVR and SMCI with no debt, same trap.
@@ -6438,7 +6438,7 @@ async fn fetch_sec_facts_fresh(client: &Client, urls: &Urls, ticker: &str) -> Op
     // row has none, so `sec_line_filed_gate` would serve it whole.
     // (#785) facts26 dates a late EPS or share line by its own filing: a facts25 row restates it from
     // revenue's day, so a split between the two divides it twice.
-    // `fetch_sec_facts_rows` serves facts17 as a bridge while the budget works through the universe.
+    // `fetch_sec_facts_rows` serves the older keys as a bridge while the budget works through the universe.
     // Old *_facts{3,4,5,6,7,8,9,10,11,12,13}.json files are orphaned (few KB each); refetch amortizes over
     // runs under SEC_FETCH_BUDGET.
     let cache = sec_cache_path(&format!("{ticker}_facts26"));
@@ -15831,15 +15831,15 @@ pub(crate) mod tests {
 
     /// Every `Urls` field pointed at ONE loopback stub. Setting all of them is the safety property, not
     /// a chore: a fetch under test can only reach the address it was handed, so a field the test author
-    /// did not think about still cannot leave the machine. `Urls` has 32 required fields, no
-    /// `serde(default)` and `deny_unknown_fields`, so adding a field fails here — loudly, in one place —
+    /// did not think about still cannot leave the machine. `Urls` has `deny_unknown_fields`, so a renamed
+    /// field fails here, and so does a new field without `serde(default)` — loudly, in one place —
     /// instead of quietly leaving a live production endpoint reachable from a unit test.
     ///
     /// Built by deserializing rather than by struct literal so a renamed field is a test failure with
     /// the field name in it, and so this stays one line per field.
     ///
-    /// `openfigi_mapping` is the exception that proves the point and MUST stay listed: it carries
-    /// `#[serde(default)]`, so omitting it here does not fail — it silently deserializes to the live
+    /// Most fields carry `#[serde(default)]`, so omitting one here does not fail. `openfigi_mapping` is
+    /// why they MUST stay listed: omitting it does not fail — it silently deserializes to the live
     /// `api.openfigi.com` endpoint and every EU-listing test starts POSTing to Bloomberg. A defaulted
     /// field is exactly the field the author does not think about, so list defaulted ones too.
     pub(crate) fn stub_urls(base: &str) -> Urls {
@@ -16244,9 +16244,6 @@ pub(crate) mod tests {
         assert_eq!(revs(&got), want(&[("2014-11-02", 40.0), ("2015-11-01", 41.0), ("2016-10-30", 31.0), ("2017-10-29", 32.0), ("2018-11-04", 21.0)]));
     }
 
-    /// `yahoo_fund_facts_fill`'s CACHE lane — the whole function bar the fetch itself, and the lane a
-    /// real `screen` run spends almost all its time in once the weekly cache is warm.
-    ///
     /// The two ISIN-cache writes at the end of `fetch_xetra_etfs`. Both guards return nothing and the
     /// function hands back only a ticker list, so the FILES are the only place they are observable —
     /// same stance as the SEC cache test above.
@@ -16307,6 +16304,9 @@ pub(crate) mod tests {
         assert!(!pos.exists(), "and must not be cached as the fund's symbol");
     }
 
+    /// `yahoo_fund_facts_fill`'s CACHE lane — the whole function bar the fetch itself, and the lane a
+    /// real `screen` run spends almost all its time in once the weekly cache is warm.
+    ///
     /// The handshake fails closed here: `yahoo_query2` is the justETF stub, whose root answers 200 with
     /// no `Set-Cookie`. So the function returns whatever the cache and justETF gave it.
     ///
