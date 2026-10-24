@@ -135,8 +135,10 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
       if (tip) td.title = tip; // (#542) a REPORTS cell's hover: the description and last annual report; (#543) a MISSES cell's: each missed gate's value vs its bar. Text only
       else if (/^(n\/a|—|burn)/.test(cell)) td.title = why(help[h], cell); // (#718)
       else if (h !== "NAME" && h !== "TICKER") td.title = hover(help, h, String(cell)); // (#732) NAME and TICKER link; their link is the hover
-      // (#474) a RANK cell's hover reads its position, then what each of its flags means
-      if (h === "RANK" && cell) {
+      // (#474) a RANK cell's hover reads its position, then what each of its flags means. (#933) Only
+      // where RANK is a position in this table: Intraday ranks per market and Exposure ranks names
+      // only, so those keep their own help's hover from the line above.
+      if (h === "RANK" && cell && (!help.RANK || help.RANK.startsWith("Position in this table"))) {
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);
         td.title = ["rank " + n + " in this table", ...[...marks].filter((f) => flags[f]).map((f) => f + " " + flags[f])].join("\n");
       }
@@ -221,8 +223,9 @@ function apply(n) {
   stick();
 }
 
-// (#445) Column groups for the three ranked tables, finviz-style. A header NOT listed here shows in
-// every view, so RANK NAME TICKER BUY% (and any column added later) can never be hidden by accident.
+// (#445) Column groups for the nine ranked tables (the three lanes and the six in `view()`),
+// finviz-style. A header NOT listed here shows in every view, so RANK NAME TICKER BUY% (and any
+// column added later) can never be hidden by accident.
 // (#493) A header may sit in several views, space-separated: `cash` regroups the cash-flow and debt
 // columns that `value` and `risk` split, so a phone reader finds them in one pick.
 const VIEW = {
