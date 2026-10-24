@@ -63,12 +63,11 @@ env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
 
-# Least privilege, plus exactly what deploy-pages needs: `pages: write` to publish and `id-token:
-# write` for the OIDC token it trades for a deployment. `contents: read` is the checkout.
+# Least privilege: `contents: read` is the checkout. `pages: write` and `id-token: write`, which
+# deploy-pages needs to publish and to trade an OIDC token for a deployment, belong to the `deploy` job
+# alone. `publish` builds crates and holds the API keys, so it must not be able to deploy.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # One deployment at a time, and NEVER cancel one in flight: a half-finished Pages deployment is how a
 # site ends up serving a partial artifact. A superseded run waits its turn instead.
@@ -82,11 +81,11 @@ jobs:
     # ~2 min build + a full-universe fetch that measures ~5 min warm; 45 leaves room for a bad
     # throttling day without letting a wedged socket burn the 6-hour default.
     timeout-minutes: 45
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url || steps.deploy-retry.outputs.page_url }}
     outputs:
       clean: ${{ steps.validate.outputs.clean }}
+      # `deploy` reads the artifact's name from here, not from its own `github.run_attempt`: a re-run of
+      # a failed `deploy` alone is attempt 2, while the artifact was uploaded under attempt 1's name.
+      artifact: github-pages-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -476,35 +475,22 @@ jobs:
           path: _site
           name: github-pages-${{ github.run_attempt }}
 
-      # (#485) ONE RETRY. GitHub's Pages backend sometimes answers a good artifact with "Deployment
-      # failed, try again later." (run 37316867519: build green, publish red, a re-run deployed it).
-      # The first attempt may fail without reddening the run; the second, a minute later, may not.
-      - id: deploy
-        continue-on-error: true
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
-        with:
-          artifact_name: github-pages-${{ github.run_attempt }}
-      - if: steps.deploy.outcome == 'failure'
-        run: sleep 60
-      - id: deploy-retry
-        if: steps.deploy.outcome == 'failure'
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
-        with:
-          artifact_name: github-pages-${{ github.run_attempt }}
-
       # (#333) Hand the journal to the `record` job. The file is TRACKED, so the checkout above put
       # the existing record in the workspace and `screen` has just appended to it — or not, if a run
       # earlier today already did. Either way it exists, and `if-no-files-found: error` makes its
       # absence a red run rather than a day that silently went unrecorded.
       #
-      # LAST, AFTER THE DEPLOY, ON PURPOSE: publishing the page is this workflow's job and recording
-      # the journal is a passenger, so a broken upload must never be what takes the site down. The
-      # first attempt at this sat before `Assemble the site` and reddened the run without deploying.
+      # AFTER THE PAGE ARTIFACT, AND `continue-on-error`, ON PURPOSE: publishing the page is this
+      # workflow's job and recording the journal is a passenger, so a broken upload must never be what
+      # keeps `deploy` from running (it needs this job green). The first attempt at this sat before
+      # `Assemble the site` and reddened the run without deploying; a failed upload now costs the day's
+      # line instead, because `record` fails on the missing artifact.
       #
       # `include-hidden-files` IS LOAD-BEARING: upload-artifact skips dotfiles by default, so without
       # it this step reports "No files were found with the provided path" for a file that is sitting
       # right there in the workspace — which is exactly how that first attempt failed.
       - name: Upload the journal
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: screen-journal
@@ -512,6 +498,39 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+  # THE DEPLOY, APART FROM `publish`, SO THE JOB THAT RUNS DEPENDENCY CODE HOLDS NO DEPLOY RIGHTS. `publish`
+  # runs `cargo build`, `cargo install` and the screen with the API keys; a crate bumped and auto-merged
+  # runs its build script there. Holding `pages: write` and `id-token: write` it could have published
+  # arbitrary content to the site. This job runs no repo code and checks nothing out: it only hands the
+  # uploaded artifact to deploy-pages. Job-level permissions REPLACE the workflow block, so it holds
+  # these two and not even `contents: read`. The `github-pages` environment (main only) moved with it.
+  deploy:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy-retry.outputs.page_url }}
+    steps:
+      # (#485) ONE RETRY. GitHub's Pages backend sometimes answers a good artifact with "Deployment
+      # failed, try again later." (run 37316867519: build green, publish red, a re-run deployed it).
+      # The first attempt may fail without reddening the run; the second, a minute later, may not.
+      - id: deploy
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        with:
+          artifact_name: ${{ needs.publish.outputs.artifact }}
+      - if: steps.deploy.outcome == 'failure'
+        run: sleep 60
+      - id: deploy-retry
+        if: steps.deploy.outcome == 'failure'
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        with:
+          artifact_name: ${{ needs.publish.outputs.artifact }}
 
   # (#333) COMMIT THE DAY'S JOURNAL LINE BACK, so the forward record survives the runner.
   #
@@ -529,16 +548,16 @@ jobs:
   # no newer than main's and pushes nothing.
   #
   # A SECOND JOB RATHER THAN A STEP IN `publish`, and the reason is the FMP key. Job-level permissions
-  # REPLACE the workflow block, so this job holds `contents: write` and none of publish's
-  # `pages: write` / `id-token: write` — while `publish`, which is the job that sees
-  # `secrets.FMP_API_KEY`, keeps `contents: read`. Nothing that can push to main ever holds the key.
+  # REPLACE the workflow block, so this job holds `contents: write` and nothing else — while `publish`,
+  # which is the job that sees `secrets.FMP_API_KEY`, keeps `contents: read`, and `deploy` alone holds
+  # `pages: write` / `id-token: write`. Nothing that can push to main ever holds the key.
   #
   # NO LOOP: a push authored by GITHUB_TOKEN does not trigger workflows, so this cannot re-enter
   # `on: push`. If that ever changed, the same-date guard above makes the triggered run a no-op.
   # The workflow-level `concurrency: pages` serialises runs, so two of our own pushes cannot race;
   # the rebase-and-retry below is for a HUMAN push landing between this job's checkout and its push.
   record:
-    needs: publish
+    needs: [publish, deploy]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -620,8 +639,8 @@ jobs:
   # only on `push: branches: [main]`, the cron and dispatch.
   #
   # (#132) NO `needs:`, SO THIS RACES THE DEPLOY — CHOSEN, NOT OVERLOOKED. A publish that dies at the
-  # fetch or at `deploy-pages` does not stop the sweep, so a red run can leave no earlier run in the
-  # history to diff against — only itself, until the next run sweeps it too.
+  # fetch, or a deploy that dies at `deploy-pages`, does not stop the sweep, so a red run can leave
+  # no earlier run in the history to diff against — only itself, until the next run sweeps it too.
   #
   # Deleting a run does NOT delete its Pages deployment or take the site down. The live page is served
   # from Pages storage, not from the run's artifact: deployment 5949614221 is still listed under the
@@ -630,7 +649,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Job-level permissions REPLACE the workflow block, so this job holds `actions: write` and none of
-    # the publish job's `pages: write` / `id-token: write`. Deleting runs must not carry deploy rights.
+    # the deploy job's `pages: write` / `id-token: write`. Deleting runs must not carry deploy rights.
     permissions:
       actions: write
     steps:

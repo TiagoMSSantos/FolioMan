@@ -82,8 +82,8 @@ permissions:
 # alone (dev profile only).
 # (#354) Third-party actions are pinned to a commit SHA, the tag it was cut from in the trailing
 # comment, and .github/dependabot.yml bumps them in one grouped PR a month. A moving tag runs
-# whatever its owner pushes next, and pages.yml runs rust-cache beside `pages: write` and
-# `id-token: write`. taiki-e/install-action installs its own manifest's tool versions, so a
+# whatever its owner pushes next, and pages.yml's `deploy` job runs deploy-pages holding
+# `pages: write` and `id-token: write`. taiki-e/install-action installs its own manifest's tool versions, so a
 # tool it installs moves only when the action's pin does.
 # timeout-minutes on every job (round 63): without one, a wedged cargo fetch or a hung live API
 # read burns the 6-hour default runner ceiling. Values are ~3-4x the warm-cache norm so only a
