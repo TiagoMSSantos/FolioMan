@@ -1357,7 +1357,8 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     if refusal_reason(quote).is_some() {
         return None;
     }
-    // (#20) UNKNOWN turnover -> excluded from the growth lane, full stop (independent of any floor). The
+    // (#20) UNKNOWN turnover -> excluded from the growth lane, full stop (independent of any floor):
+    // (#869) `refusal_reason` above refuses it as "no-turnover", so only a known turnover gets here. The
     // lane's thesis is a deep-liquid, multi-decade-holdable compounder (it even pays a liquidity BONUS),
     // and a name whose turnover Yahoo never served can't be assessed as one. The backtest stays
     // unaffected: backtest_quote sets a SENTINEL turnover (never None there), so this is a LIVE-only gate
@@ -1368,10 +1369,8 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // past this gate with a 0 floor -> the identical-horizon artifact those listings ride is caught
     // downstream by #23.
     let turn_floor = turnover_floor(quote, tuning); // (#247) per-class; stocks read their own
-    match quote.avg_turnover_eur {
-        None => return None, // untradeable / turnover unknown -> not a deep-liquid compounder
-        Some(v) if v < turn_floor => return None,
-        _ => {}
+    if quote.avg_turnover_eur.is_some_and(|v| v < turn_floor) {
+        return None;
     }
     // (#33) minimum listing age. Checked EARLY so a too-young name rejects with an explicit reason
     // (mirrored in gate_failures) instead of silently `?`-bailing at long_leg_fixed below. age_years
