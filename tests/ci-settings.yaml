@@ -8769,7 +8769,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 8b773df88937 (#960), graded 2026-10-24 by run 40124636444, same five inputs, since
+  # LAST GRADED SHA: 7ad2a9512923 (#968), graded 2026-10-24 by run 40127710492, same five inputs, since
+  # 8b773df, `files` = src/commands/backtest.rs src/commands/screen.rs src/fetch.rs src/main.rs
+  # src/picks.rs: 12 in scope = 12 caught, all in backtest.rs (`bench_is_tr` 3 and `report_vs_benchmark` 1
+  # for (#968), `sized_record_line` 3, `verdict_line` 2, `missed_winner_reasons` 2, `tune_growth` 1),
+  # 0 unviable, 0 missed, 0 timeout.
+  # BEFORE THAT: 8b773df88937 (#960), graded 2026-10-24 by run 40124636444, same five inputs, since
   # c744606, `files` = src/commands/backtest.rs src/commands/screen.rs src/commands/track.rs
   # src/config.rs src/core.rs src/fetch.rs src/main.rs src/picks.rs: 10 in scope = 10 caught (the (#953)
   # `mvrv_rows` date guard: 7 on its map return, 3 on the cutoff `<`), 0 unviable, 0 missed, 0 timeout.
