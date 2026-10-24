@@ -1,7 +1,7 @@
 # CANONICAL BASE config — the full, documented, shared configuration. NO secrets: ntfy_topic is a dummy
-# (the tests never push), every URL below is a public, unauthenticated endpoint. THREE consumers:
-#   - network-smoke (per-PR): only urls.yahoo_chart is exercised.
-#   - backtest-gate (nightly + push/PR): runs `backtest 12 universe`, scoring with buy_heuristic below.
+# (the tests never push), every URL below is a public, unauthenticated endpoint. Consumers:
+#   - ci.yml (no cron): the tests, and backtest-gate = `backtest {20,12,8} universe winners` + an `8 universe fund` leg, scored with buy_heuristic below.
+#   - the Pages `screen` publish (pages.yml), probe.yml and the mutation census, which use this file as their config.
 #   - the private config/settings.yaml INHERITS this file (config::load deep-merges it as the base), so the
 #     gitignored local overlay only OVERRIDES what it changes. By convention it now carries ONLY the
 #     watchlist (tickers), the table column layout (widths), and any local secret (a real ntfy_topic) or
@@ -9,7 +9,7 @@
 # Omitted knobs fall back to the code's #[serde(default)] (== the shipped defaults).
 #
 # A/B'ING A KNOB — WHERE YOU PUT THE ARM FILE CHANGES THE ANSWER (learned the hard way 2026-08-03).
-# `config::data_path` (config.rs:707) resolves the on-disk caches from the config file's GRANDPARENT
+# `config::data_path` resolves the on-disk caches from the config file's GRANDPARENT
 # directory. `tests/<x>-ci-settings.yaml` has an empty grandparent, so it falls through to the CWD and
 # reads the repo-root caches. An arm parked in /tmp or a job dir resolves to THAT tree instead — a cold,
 # separate cache. A cold `.long_history_skip.json` makes `screen` fetch the monthly series it would
