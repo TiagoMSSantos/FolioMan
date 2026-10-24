@@ -464,25 +464,6 @@ fn graded_row(g: &Graded) -> String {
     }
 }
 
-/// (#285) The CORE half of the report as a printable block: the buy-and-hold shortlist graded on the
-/// same windows, against the same index, with the same arithmetic as the momentum table above it.
-///
-/// WHY IT EXISTS. `size` spills every point its caps could not deploy — routinely two thirds of
-/// gross — over the first `spill_cut()` rows of the CORE list, and the screen calls that list the
-/// twenty-year instrument. Nothing had ever recorded it: `journal_core_list` shipped OFF, so on the
-/// author's own journal 13 of 13 lines carried the momentum book and 0 of 13 carried the CORE one.
-/// The lane is also backtest-ungradeable BY CONSTRUCTION — `backtest::stamp_asset_class` fills name,
-/// instrument type and sector only, so a reconstructed quote carries no TER and dies on the CORE
-/// admission leg — which leaves this live journal as the only record of it that will ever exist.
-///
-/// THE EMPTY CASE PRINTS A SENTENCE AND NEVER A TABLE. An empty table with a 0.0% in it reads as a
-/// measured result, and "nothing recorded" is the opposite of a measurement. It also says how many
-/// lines carry a CORE list, because "the knob is off" and "the knob is on but the record is a day
-/// old" are different problems with different fixes and only the user can tell them apart.
-///
-/// DELIBERATELY NOT FOLDED INTO `verdict_stats`. That fold is shared with the screen's trust line,
-/// which is a claim about the book BUY NOW bought (#322); mixing the CORE list into it would silently
-/// move a number two surfaces currently agree on, which is the exact drift its own doc exists to prevent.
 /// (#286) One lane, graded across every journalled run: `(runs carrying this lane, runs, printed
 /// rows)`. The arithmetic of "grade them all and format each" is shared; the WORDS are not, because
 /// each lane owes the reader a different sentence about what it is and how it is weighted. Two
@@ -507,6 +488,26 @@ fn graded_rows(
     (snaps.iter().filter(|s| !rows_of(s).is_empty()).count(), snaps.len(), rows)
 }
 
+/// (#285) The CORE half of the report as a printable block: the buy-and-hold shortlist graded on the
+/// same windows, against the same index, with the same arithmetic as the momentum table above it.
+///
+/// WHY IT EXISTS. `size` spills every point its caps could not deploy — routinely two thirds of
+/// gross — over the first `spill_cut()` rows of the CORE list, and the screen calls that list the
+/// twenty-year instrument. Nothing had ever recorded it: `journal_core_list` shipped OFF, so on the
+/// author's own journal 13 of 13 lines carried the momentum book and 0 of 13 carried the CORE one.
+/// The lane is also backtest-ungradeable BY CONSTRUCTION — `backtest::stamp_asset_class` fills name,
+/// instrument type and sector only, so a reconstructed quote carries no TER and dies on the CORE
+/// admission leg — which leaves this live journal as the only record of it that will ever exist.
+///
+/// THE EMPTY CASE PRINTS A SENTENCE AND NEVER A TABLE. An empty table with a 0.0% in it reads as a
+/// measured result, and "nothing recorded" is the opposite of a measurement. It also says how many
+/// lines carry a CORE list, because "the knob is off" and "the knob is on but the record is a day
+/// old" are different problems with different fixes and only the user can tell them apart.
+///
+/// DELIBERATELY NOT FOLDED INTO `verdict_stats`. That fold is shared with the screen's trust line,
+/// which is a claim about the book BUY NOW bought (#322); mixing the CORE list into it would silently
+/// move a number two surfaces currently agree on, which is the exact drift its own doc exists to prevent.
+///
 /// (#289) …and it grades the rows `size` FUNDS, which is not the same thing as the first `cut` of
 /// them. `size` selects through `screen::last_core`, which honours `sizing.spill_per_tier`; this
 /// grader had its own `.take(cut)`, so with the knob on it measured three all-world trackers while

@@ -483,7 +483,7 @@ fn n_eff_tag(on: bool, windows: usize, years: i64) -> String {
 ///
 /// A maximum over 13 candidates is biased upward by selection whether or not anyone says so; the only
 /// question is whether the reader is told. `sweep_fund_factor` already answers its own version of this
-/// with a Šidák-tightened band over 14 factors.
+/// with a Šidák-tightened band over every `FUND_FACTORS` entry.
 ///
 /// (#120) WHAT THIS TAG NOW CAVEATS, AND WHAT IT NO LONGER DOES. It was written when [`VERDICT_TOP`]
 /// was the argmax over [`TOP_LADDER`], and it flagged the shipped basket as an unhaircut 13-way
@@ -3503,8 +3503,6 @@ fn bench_drawdown_at(dates: &[chrono::NaiveDate], closes: &[f64], date: chrono::
     last.map(|c| (c / hi - 1.0) * 100.0)
 }
 
-/// (#40) ABSOLUTE goal metric — the one the peer-relative lanes never measure. The stated purpose is
-/// "out-return an S&P500 buy-and-hold", but every lane above de-means the level away (SELECTION, not the
 /// (#140) The GRADED redundancy skip — the twin of the `picks::lane_split` `growth_corr_cap` trim,
 /// sharing `core::decorrelate_keep` so the served rule, the CORR-CAP probe and this one cannot
 /// disagree about what "correlated" means ((#3j)/(#41)). Keep the best-scoring rows whose trailing
@@ -3537,11 +3535,6 @@ fn ranked_multiple(m: &[f64]) -> f64 {
     m.iter().enumerate().map(|(r, x)| (k - r as f64) * x).sum::<f64>() / (k * (k + 1.0) / 2.0)
 }
 
-/// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
-/// `years`, and does that beat holding ^GSPC over the SAME window? Per pick, excess = its annualized
-/// return minus what ^GSPC did from the same cutoff. Top-N per ~6mo bucket; report mean pick/SPY CAGR,
-/// excess, win-rate, worst bucket, and the early-vs-late OOS split. Read the STRESS run: the picks come
-/// from today's survivors (biased UP), ^GSPC is the true index, so a non-stress win is optimistic.
 /// (#149) THE RULER'S OWN BLIND SPOT, reported so no receipt can bank a free pass off it. The
 /// ABSOLUTE top-N table grades an EQUAL-WEIGHT basket, which is SET-invariant: reordering names
 /// INSIDE the basket cannot move one number it prints. A ranking knob is therefore only measurable
@@ -3572,6 +3565,13 @@ fn basket_vacuity(pools: &[usize], basket: usize) -> (usize, usize, usize, bool)
     (saturated, substitutable, median, saturated * 2 > pools.len())
 }
 
+/// (#40) ABSOLUTE goal metric — the one the peer-relative lanes never measure. The stated purpose is
+/// "out-return an S&P500 buy-and-hold", but every lane above de-means the level away (SELECTION, not the
+/// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
+/// `years`, and does that beat holding ^GSPC over the SAME window? Per pick, excess = its annualized
+/// return minus what ^GSPC did from the same cutoff. Top-N per ~6mo bucket; report mean pick/SPY CAGR,
+/// excess, win-rate, worst bucket, and the early-vs-late OOS split. Read the STRESS run: the picks come
+/// from today's survivors (biased UP), ^GSPC is the true index, so a non-stress win is optimistic.
 fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
     // name the benchmark honestly: ^SP500TR when the run meters total return (use_adjusted_close).
@@ -4021,8 +4021,8 @@ fn median(mut v: Vec<f64>) -> f64 {
 /// `margin_stability` is `-std(net_margin)` in single digits. Ranking factors BY THAT GAP therefore
 /// ranked them by scale, which is how `accrual_gap` (+0.00 | -0.08) came to be recorded DEAD beside
 /// `peg_yield` (+468.92) in (#159). This statistic is invariant under any MONOTONE transform, so a
-/// rescaling, a sign convention or an outlier cannot move it and the 24 factors become comparable to
-/// one another. Full re-reading of (#159)'s table: the (#165) block in tests/ci-settings.yaml.
+/// rescaling, a sign convention or an outlier cannot move it and every factor becomes comparable to
+/// every other. Full re-reading of (#159)'s table: the (#165) block in tests/ci-settings.yaml.
 ///
 /// A GATE IS A THRESHOLD, and this is exactly how well the best single threshold on the factor could
 /// separate the two cohorts — the question the table is asked, not a proxy for it. 0.5 = no
@@ -5313,10 +5313,6 @@ fn report_notch_tail(samples: &[Sample], years: i64, tuning: &BuyHeuristic) {
     println!("  (Receipt (#325): this stands in for `track`'s forward half. A notch ships on REOPEN SIGNAL here AND its NOTCH BOOK guard at 20y, 12y and 8y AND a green backtest gate; one notch a round)");
 }
 
-/// (#44 Phase C) Grade each FREE as-of fundamental factor on the HELD-BOOK metric: within the
-/// growth-gated universe, rank by the factor (not the score), hold the top-N, and compare its held-book
-/// excess-vs-S&P500 to ranking by `growth_score`. A factor whose held-book excess BEATS the score with
-/// both OOS halves + is a better selector for a 15y no-sell book — a ship candidate for the fund tilt.
 /// (round 108) ENTRY-STATE — the WHEN dimension, never measured before this round: every prior lane
 /// conditioned on the PICK; this conditions on what the MARKET looked like the day money went in.
 /// Buckets are classed by the benchmark's drawdown from its running high at the bucket's first
@@ -5760,6 +5756,11 @@ fn report_roll(
     lane("SIZED", sized_programs)
 }
 
+/// (#44 Phase C) Grade each FREE as-of fundamental factor on the HELD-BOOK metric: within the
+/// growth-gated universe, rank by the factor (not the score), hold the top-N, and compare its held-book
+/// excess-vs-S&P500 to ranking by `growth_score`. A factor whose held-book excess BEATS the score with
+/// both OOS halves + is a better selector for a 15y no-sell book — a ship candidate for the fund tilt.
+///
 /// Only the free SEC/income-statement factors are listed (roe, the round-107 survival levels and — since
 /// (#43) — roic are all SEC-computed; `FundRow::roic`, the PREMIUM field, is still never populated and is
 /// not what the roic row reads). Runs only under `fund` (else `s.fund` is None everywhere).
@@ -8518,12 +8519,6 @@ mod tests {
         assert_eq!(bootstrap_block(20, &pinned), 1, "an override does NOT track the hold");
     }
 
-    /// (#75) The value brake's graded trim, on two buckets whose peg cohorts do not overlap at all —
-    /// bucket 1 spans 10..50, bucket 2 spans 100..500. That gap is the whole point: a POOLED percentile
-    /// would floor both at 50 and so cut nothing from bucket 2 while gutting bucket 1, which is the one
-    /// way this brake could quietly stop being cross-sectional. The boundary name (peg exactly ON the
-    /// floor) is kept, matching `drop_bottom_book`'s `if v < t { skip }`, and the unjudgeable name is
-    /// kept because unjudgeable is not a verdict.
     /// (#140) The graded redundancy skip's contract: IDENTITY at the shipped `growth_corr_cap: 0.0`
     /// (the goldens depend on it), drops the second copy of a bet once armed and refills from below,
     /// still honours `n`, and never blocks on an unjudgeable pair. `report_vs_benchmark` returns `()`
@@ -8580,6 +8575,12 @@ mod tests {
         assert!(merge_coin_cohort(&mut none, &coins, |_| None, &tuning).is_empty() && none.is_empty());
     }
 
+    /// (#75) The value brake's graded trim, on two buckets whose peg cohorts do not overlap at all —
+    /// bucket 1 spans 10..50, bucket 2 spans 100..500. That gap is the whole point: a POOLED percentile
+    /// would floor both at 50 and so cut nothing from bucket 2 while gutting bucket 1, which is the one
+    /// way this brake could quietly stop being cross-sectional. The boundary name (peg exactly ON the
+    /// floor) is kept, matching `drop_bottom_book`'s `if v < t { skip }`, and the unjudgeable name is
+    /// kept because unjudgeable is not a verdict.
     #[test]
     fn value_floor_trims_each_bucket_against_its_own_cohort() {
         let row = |b: i32, tk: &str, peg: Option<f64>| (b, 1.0, 2.0, 3.0, tk.to_string(), peg);

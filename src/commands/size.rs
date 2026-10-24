@@ -65,20 +65,6 @@ pub(crate) fn size_source(
 }
 
 
-/// (#287) The vetted 20-year holds the stranded budget does NOT reach, as one printable line.
-///
-/// `size` funds `spill_names` CORE rows and the shortlist holds more — on 2026-09-12, 3 funded out of
-/// 20. The unfunded 17 are not rejects: every one cleared the same hold screen this run and is printed
-/// by `screen`'s CORE table. What a bare ticker list cannot show is that they are not all the SAME
-/// bet — `last_core` walks a breadth-major list, so rows past the funded head are a fourth all-world
-/// wrapper first and genuinely different markets (developed, emerging, regional) after. Grouping by
-/// tier is what makes that visible, and it is the whole content of the line.
-///
-/// Pure and gradeable, unlike the `#[mutants::skip]` `run` that prints it. Empty input -> `None`, so
-/// a shortlist the spill exhausts prints nothing rather than an empty sentence. Tier order, not
-/// count order: the list is breadth-major and re-sorting it by size would hide that shape. A row
-/// whose tier is unknown (a state file predating `core_tier`) lands in a trailing unlabelled group
-/// rather than being dropped or guessed at — non-negotiable #5.
 /// (#288) How many tickers per breadth tier the unfunded-rows line names before falling back to a
 /// bare count. Two: one name can look like a coincidence, two show the sleeve's shape, and the line
 /// has to fit on a terminal beside twelve other sleeves.
@@ -171,6 +157,20 @@ pub(crate) fn buy_weights(sized: &[(String, f64)], core: &[(usize, String, Optio
     sized.iter().cloned().chain(trackers).collect()
 }
 
+/// (#287) The vetted 20-year holds the stranded budget does NOT reach, as one printable line.
+///
+/// `size` funds `spill_names` CORE rows and the shortlist holds more — on 2026-09-12, 3 funded out of
+/// 20. The unfunded 17 are not rejects: every one cleared the same hold screen this run and is printed
+/// by `screen`'s CORE table. What a bare ticker list cannot show is that they are not all the SAME
+/// bet — `last_core` walks a breadth-major list, so rows past the funded head are a fourth all-world
+/// wrapper first and genuinely different markets (developed, emerging, regional) after. Grouping by
+/// tier is what makes that visible, and it is the whole content of the line.
+///
+/// Pure and gradeable, unlike the `#[mutants::skip]` `run` that prints it. Empty input -> `None`, so
+/// a shortlist the spill exhausts prints nothing rather than an empty sentence. Tier order, not
+/// count order: the list is breadth-major and re-sorting it by size would hide that shape. A row
+/// whose tier is unknown (a state file predating `core_tier`) lands in a trailing unlabelled group
+/// rather than being dropped or guessed at — non-negotiable #5.
 pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Option<String> {
     if rest.is_empty() {
         return None;

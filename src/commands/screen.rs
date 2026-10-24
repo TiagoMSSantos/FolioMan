@@ -153,45 +153,6 @@ fn spill_repl_note(repl: Option<&str>) -> Option<&'static str> {
         .then_some("swap-replicated: counterparty exposure, and the US-withholding credit is tier-3 only")
 }
 
-/// (#246) The broadest rows of the CORE shortlist as the last `screen` run left it, plus that run's
-/// date and how each fund replicates: `(date, [(core index, ticker, note)])`. [`picks::hold_core_list`] sorts the
-/// shortlist breadth-major, so index 0 is the widest tracker on it — the one instrument a stranded
-/// equity budget can go into without anyone picking a bet. `size` reads it to NAME a home for the
-/// budget its caps cannot deploy (`(#245)` measured that at 67% of gross, 62 points of it
-/// stock-class budget with no eligible single names). `size` does the file read itself — its `run`
-/// is `#[mutants::skip]`, so the I/O costs nothing to grade — and hands the bytes here, which keeps
-/// this half pure and its test free of a scratch-dir write. `None` on every not-known path: no
-/// state file yet, a corrupt one (`size` and `screen` warn on it from [`parse_state`]), a state predating
-/// the round-55 `core` field, or a run that printed no CORE table. Display only: it moves no weight
-/// and reads no price.
-///
-/// `(#253)` skips any CORE ticker already sized in the table above it, taking the next one down.
-/// While `(#246)` only NAMED this row, a duplicate was harmless prose; now that the row carries the
-/// whole remainder, naming a ticker that already has a sized line would silently double-buy it —
-/// the CORE shortlist and the ranked buy list are both drawn from the same ETF universe, so the
-/// overlap is not hypothetical. `None` gains one more arm with that: every CORE candidate is
-/// already in the table, which means the remainder has no home the caller is not already funding.
-///
-/// `(#259)` adds the third element, and it needed NO new state. The lookup is `fund_meta`, which
-/// round 54 already keyed on `tracked` = watchlist ∪ [`crate::core::hold_suitable`] — and
-/// [`picks::hold_core_list`] admits on `hold_suitable` too, so CORE ⊆ tracked ⊆ `fund_meta` by
-/// construction. That containment holds at BOTH settings of `hold_allow_swap`: with the knob off no
-/// swap fund is CORE in the first place, and with it on (which `tests/ci-settings.yaml` ships) the
-/// replication leg is inert for CORE and `tracked` alike, so the two sets move together. It is read
-/// off the ticker the walk-down SETTLED on, never the one it skipped past.
-///
-/// `(#261)` returns `n` rows instead of one, and the caller splits the remainder equally across them.
-/// The CORE sort is breadth-major, so rows 1..n are the SAME all-world exposure from a DIFFERENT
-/// issuer with a different replication method — which is the only thing the split buys, and the
-/// reason it is worth buying: `(#253)` shipped this row carrying the whole remainder and recorded in
-/// its own HONEST EDGES that "67% of gross in one wrapper is counterparty and provider risk that no
-/// gate in this repo measures". Nothing here diversifies MARKET risk; three all-world trackers are
-/// one market. Fewer than `n` survivors -> what exists, never `None` for a short list.
-///
-/// `(#261)` also carries the CORE INDEX, which fixes a quiet defect. `(#253)`'s walk-down could
-/// settle on `core[2]` while the caller printed a hardcoded "CORE #1", so a row that had skipped two
-/// already-sized names advertised itself as the broadest one. The index is the position in the
-/// SHORTLIST, not in the returned vec, so the skip stays visible.
 /// `(#289)` WHICH of a run's open CORE rows the spill budget funds, as positions into `tiers`.
 ///
 /// Split out of [`last_core`] because `size` is no longer the only caller. `track` grades the CORE
@@ -241,16 +202,57 @@ pub(crate) fn journal_core_rows<'a>(all: &'a [String], tiers: &[Option<u8>], top
     all.iter().enumerate().filter(|(i, _)| *i < top || funded.contains(i)).map(|(_, t)| t).collect()
 }
 
-/// `(#288)` takes `per_tier`, which answers the criticism `(#261)`'s own doc makes of itself three
-/// paragraphs up — "Nothing here diversifies MARKET risk; three all-world trackers are one market."
+/// (#246) The broadest rows of the CORE shortlist as the last `screen` run left it, plus that run's
+/// date and how each fund replicates: `(date, [(core index, ticker, note)])`. [`picks::hold_core_list`] sorts the
+/// shortlist breadth-major, so index 0 is the widest tracker on it — the one instrument a stranded
+/// equity budget can go into without anyone picking a bet. `size` reads it to NAME a home for the
+/// budget its caps cannot deploy (`(#245)` measured that at 67% of gross, 62 points of it
+/// stock-class budget with no eligible single names). `size` does the file read itself — its `run`
+/// is `#[mutants::skip]`, so the I/O costs nothing to grade — and hands the bytes here, which keeps
+/// this half pure and its test free of a scratch-dir write. `None` on every not-known path: no
+/// state file yet, a corrupt one (`size` and `screen` warn on it from [`parse_state`]), a state predating
+/// the round-55 `core` field, or a run that printed no CORE table. Display only: it moves no weight
+/// and reads no price.
+///
+/// `(#253)` skips any CORE ticker already sized in the table above it, taking the next one down.
+/// While `(#246)` only NAMED this row, a duplicate was harmless prose; now that the row carries the
+/// whole remainder, naming a ticker that already has a sized line would silently double-buy it —
+/// the CORE shortlist and the ranked buy list are both drawn from the same ETF universe, so the
+/// overlap is not hypothetical. `None` gains one more arm with that: every CORE candidate is
+/// already in the table, which means the remainder has no home the caller is not already funding.
+///
+/// `(#259)` adds the third element, and it needed NO new state. The lookup is `fund_meta`, which
+/// round 54 already keyed on `tracked` = watchlist ∪ [`crate::core::hold_suitable`] — and
+/// [`picks::hold_core_list`] admits on `hold_suitable` too, so CORE ⊆ tracked ⊆ `fund_meta` by
+/// construction. That containment holds at BOTH settings of `hold_allow_swap`: with the knob off no
+/// swap fund is CORE in the first place, and with it on (which `tests/ci-settings.yaml` ships) the
+/// replication leg is inert for CORE and `tracked` alike, so the two sets move together. It is read
+/// off the ticker the walk-down SETTLED on, never the one it skipped past.
+///
+/// `(#261)` returns `n` rows instead of one, and the caller splits the remainder equally across them.
+/// The CORE sort is breadth-major, so rows 1..n are the SAME all-world exposure from a DIFFERENT
+/// issuer with a different replication method — which is the only thing the split buys, and the
+/// reason it is worth buying: `(#253)` shipped this row carrying the whole remainder and recorded in
+/// its own HONEST EDGES that "67% of gross in one wrapper is counterparty and provider risk that no
+/// gate in this repo measures". Nothing here diversifies MARKET risk; three all-world trackers are
+/// one market. Fewer than `n` survivors -> what exists, never `None` for a short list.
+///
+/// `(#261)` also carries the CORE INDEX, which fixes a quiet defect. `(#253)`'s walk-down could
+/// settle on `core[2]` while the caller printed a hardcoded "CORE #1", so a row that had skipped two
+/// already-sized names advertised itself as the broadest one. The index is the position in the
+/// SHORTLIST, not in the returned vec, so the skip stays visible.
+///
+/// `(#288)` takes `per_tier`, which answers the criticism `(#261)`'s own doc makes of itself
+/// above — "Nothing here diversifies MARKET risk; three all-world trackers are one market."
 /// With it set, the walk stops at the FIRST unsized row of each DISTINCT breadth tier instead of the
 /// first `n` rows outright, so the same money buys all-world + developed + emerging rather than three
-/// wrappers on one index. It is `false` by default and the false arm is the `(#261)` walk verbatim
-/// (non-negotiable #1). Fewer distinct tiers than `n` funds what exists rather than padding.
+/// wrappers on one index. It shipped `false`, and the false arm is the `(#261)` walk verbatim
+/// (non-negotiable #1); `(#289)` made it the default. Fewer distinct tiers than `n` funds what exists
+/// rather than padding.
 ///
 /// A row whose tier is unknown cannot be grouped, so a state file predating `(#287)`'s `core_tier`
 /// DEGRADES to the walk-down rather than guessing a market for it — non-negotiable #5. That is the
-/// `picked.is_empty()` fallback below, which also covers `per_tier: false`, so there is exactly one
+/// `picked.is_empty()` fallback in [`spill_picks`], which also covers `per_tier: false`, so there is exactly one
 /// place that decides "the first `n` rows" (non-negotiable #4).
 ///
 /// `(#288)` also reads `core_all` in preference to `core`. `screen` journals BOTH: `core` is the
@@ -3153,8 +3155,8 @@ pub async fn run(args: Vec<String>) {
     // not rank. The one cohort a reader actually asks about ("great record, where did it go?") and the
     // only one no other block could name: the funnel names SOLE-blockers, near-miss needs exactly one
     // gate, the two-gate tail needs both close, the down-year tail needs a sole `1Y+`, and the leg-floor
-    // tails need their own floor to fire. AMZN at 8 fails `cagr` AND `peg`, with PEG 3.37 against a 1.60
-    // ceiling — gross, not narrow — so it is counted in two funnel rows and named in none of them.
+    // tails need their own floor to fire. AMZN at 8 fails `cagr` AND `peg`, with PEG 3.37 against the then 1.60
+    // ceiling (2.0 since (#552)) — gross, not narrow — so it is counted in two funnel rows and named in none of them.
     // Printed after the pin block because the pin's bill is the more specific claim about the same names.
     {
         const PROVEN_CAP: usize = 20;
@@ -4120,7 +4122,6 @@ mod tests {
         assert!(line(20.0, 2.0, Some(30.0)).contains("Deploy still reads the drawdown axis alone"));
     }
 
-    /// (round 109) entry-state classes + exact boundaries: <5 near-high, 5–15 pullback, ≥15 drawdown.
     /// (#326) The LIVE fill for the regime valve. It is the twin of `backtest::stamp_regime`, and the
     /// failure it guards against is silence: `stats_8y` and `aum_eur` are filled on exactly one path
     /// each and are therefore blind on the other, and a valve whose market fields were never written
@@ -4144,6 +4145,7 @@ mod tests {
         assert_eq!((none[0].bench_1y_pct, none[0].bench_range_pct), (None, None), "no index -> valve inert, floors absolute");
     }
 
+    /// (round 109) entry-state classes + exact boundaries: <5 near-high, 5–15 pullback, ≥15 drawdown.
     #[test]
     fn entry_state_classes_and_boundaries() {
         assert!(entry_state_line(0.0).contains("NEAR-HIGH"));
@@ -4201,11 +4203,6 @@ mod tests {
         assert!(zero_budget.contains("free €400") && !zero_budget.contains("deploy"));
     }
 
-    /// (round 116) order-glue semantics: empty book prints nothing; (#297) each row buys the deploy €
-    /// × its BUY NOW weight (qty = € ÷ price) across both brokers; (#298) a Binance row prints that €
-    /// itself, priced or not, tagged only when strictly under Binance's minimum; missing deploy,
-    /// missing or zero price, or missing symbol degrade to placeholders (never a guessed number), and
-    /// the unheld footnote only prints when earned.
     /// (#388) Switch lines: the cheapest SUITABLE same-index fund wins (a cheaper Dist class and a cheaper
     /// other-index fund are both passed over), a positive edge prints the reason and both commands, a
     /// fund that is already its own cheapest twin (edge exactly 0) and a big-gain holding stay silent.
@@ -4263,6 +4260,11 @@ mod tests {
         assert!(switch_lines(&skipped, &quotes, &sym, 28.0).is_none());
     }
 
+    /// (round 116) order-glue semantics: empty book prints nothing; (#297) each row buys the deploy €
+    /// × its BUY NOW weight (qty = € ÷ price) across both brokers; (#298) a Binance row prints that €
+    /// itself, priced or not, tagged only when strictly under Binance's minimum; missing deploy,
+    /// missing or zero price, or missing symbol degrade to placeholders (never a guessed number), and
+    /// the unheld footnote only prints when earned.
     #[test]
     fn order_glue_semantics() {
         assert!(order_glue(&[], Some(1000.0)).is_none());
@@ -4403,8 +4405,6 @@ mod tests {
         assert!(!pe.contains_key("CSPX.L"), "same index, different fund: {pe:?}");
     }
 
-    /// (#343) Discovery is off in both regimes, so the one line `run` prints about the lane says so
-    /// and counts nothing.
     /// (#467) A shadow row reaches the pool on the exact ticker or through a Xetra twin's US symbol; a pool
     /// name no table prints, and a row the pool lacks, add nothing.
     #[test]
@@ -4418,6 +4418,8 @@ mod tests {
         assert_eq!(got, ["AJG", "APC.DE"].iter().map(|t| t.to_string()).collect());
     }
 
+    /// (#343) Discovery is off in both regimes, so the one line `run` prints about the lane says so
+    /// and counts nothing.
     #[test]
     fn journal_proxies_reports_discovery_off() {
         let line = journal_proxies(&[], &config::BuyHeuristic::default());
@@ -5076,7 +5078,7 @@ mod tests {
         assert!(floor[2].contains("AMZN ") && floor[2].contains("5Y +25.0%") && floor[2].contains("· also: range"));
         assert!(!floor[2].contains("AMZN.DE"), "one row per FUND — the second venue is the same name");
         assert!(floor[3].contains("growth_min_5y_pct` 75"), "the footer names the knob at its LIVE value: {}", floor[3]);
-        // floor off -> the gate never fails -> the block self-suppresses (this is the shipped 8Y case)
+        // floor off -> the gate never fails -> the block self-suppresses (the 8Y knob at its code default; (#315) ships 42.22)
         assert!(leg_floor_lines(&quotes, &pins, &tuning, "8Y+", "8Y", "growth_min_8y_pct", tuning.growth_min_8y_pct).is_empty());
 
         // (#343) the "top N of M" note fires PAST each cap, never AT it
