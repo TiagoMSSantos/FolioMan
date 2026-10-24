@@ -447,8 +447,12 @@ jobs:
           # step went 154s -> 176s while integration-tests, unchanged, went 170s -> 192s, so nothing
           # past runner noise. The build-lock wait it removes was not idle: cli's tests run while lib +
           # fixture still compile, and after a prebuild they run beside the fixture (96s -> 124s).
-          cargo llvm-cov --no-report --locked --lib --test backtest_fixture & a=$!
-          cargo llvm-cov --no-report --locked --test cli & b=$!
+          # (#861) The lib tests ride with cli, not with the fixture. The fixture's ~103s run is the
+          # step's long pole, and on ccc90d3 it started 69.7s in: its call built the lib test binary
+          # too, after waiting out cli's build on the lock. Now its call builds one binary. The lib
+          # (~5s) and cli (~9s, since (#856)) runs fit in the fixture's shadow.
+          cargo llvm-cov --no-report --locked --test backtest_fixture & a=$!
+          cargo llvm-cov --no-report --locked --lib --test cli & b=$!
           wait "$a" || gate=$?
           wait "$b" || gate=$?
           cargo llvm-cov report --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
