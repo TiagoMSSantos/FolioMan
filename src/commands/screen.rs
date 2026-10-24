@@ -1359,6 +1359,16 @@ fn persistent_leaders(
         .collect()
 }
 
+/// (#872) A name's rank (position within the top-[`track::BOOK`] slice, +1) in each snapshot that
+/// carries it, in journal order. A snapshot that ranks it below the book, or not at all, adds no
+/// point: the cut r28 / r29 / r31 and `track::grade` share.
+fn book_ranks(t: &str, journal: &[crate::commands::track::Snapshot]) -> Vec<usize> {
+    journal
+        .iter()
+        .filter_map(|s| s.rows.iter().take(crate::commands::track::BOOK).position(|(r, _)| r == t).map(|p| p + 1))
+        .collect()
+}
+
 /// (round 29) Rank DIRECTION for today's top names — which are climbing toward #1 vs fading down
 /// the book across the journal. Orthogonal to the persistent-leaders footer (top-10 MEMBERSHIP)
 /// and the trust line (RETURN): a name can hold the book durably yet be deteriorating, a caution
@@ -1378,16 +1388,7 @@ fn rank_trend(
     let mut climbers = Vec::new();
     let mut faders = Vec::new();
     for t in today_top {
-        let ranks: Vec<usize> = journal
-            .iter()
-            .filter_map(|s| {
-                s.rows
-                    .iter()
-                    .take(crate::commands::track::BOOK)
-                    .position(|(r, _)| r == t)
-                    .map(|p| p + 1)
-            })
-            .collect();
+        let ranks = book_ranks(t, journal);
         if ranks.len() < min_pts {
             continue; // a trend needs enough points to be non-trivial
         }
@@ -1457,16 +1458,7 @@ fn mean_ranks(
     let mut out: Vec<(String, f64, usize)> = today_top
         .iter()
         .filter_map(|t| {
-            let ranks: Vec<usize> = journal
-                .iter()
-                .filter_map(|s| {
-                    s.rows
-                        .iter()
-                        .take(crate::commands::track::BOOK)
-                        .position(|(r, _)| r == t)
-                        .map(|p| p + 1)
-                })
-                .collect();
+            let ranks = book_ranks(t, journal);
             if ranks.len() < min_pts {
                 return None; // a 1-2 screen mean is trivial
             }
