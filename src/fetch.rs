@@ -257,6 +257,12 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
             if v.pointer("/chart/result/0/timestamp").is_some() {
                 return Some(v);
             }
+            // (#895) Yahoo's own "Not Found" is an answer, not a blip (`long_cache_keeps` trusts it for the
+            // monthly path since #431); the retry below is for a throttle body. Each dead crypto pair and
+            // each no-data symbol used to cost a second GET plus the pause.
+            if is_not_found(&v) {
+                return None;
+            }
         }
         if attempt == 0 {
             tokio::time::sleep(StdDuration::from_millis(RETRY_PAUSE_MS)).await;
@@ -325,7 +331,12 @@ pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Opti
 /// ignores the HTTP status, so a throttle or error body also parses, and cached it would blank the
 /// name's long-history columns for the whole 7-day TTL. Same lesson as (#377), on the Yahoo side.
 fn long_cache_keeps(v: &Value) -> bool {
-    v.pointer("/chart/result/0/timestamp").is_some() || v.pointer("/chart/error/code").and_then(Value::as_str) == Some("Not Found")
+    v.pointer("/chart/result/0/timestamp").is_some() || is_not_found(v)
+}
+
+/// (#895) Yahoo's definitive answer for a symbol it does not list: `chart.error.code` is "Not Found".
+fn is_not_found(v: &Value) -> bool {
+    v.pointer("/chart/error/code").and_then(Value::as_str) == Some("Not Found")
 }
 
 /// `parse_chart` against a payload still in its raw bytes — the one place the deferred parse happens.
@@ -15641,6 +15652,25 @@ pub(crate) mod tests {
         let asked: Vec<String> = asked.try_iter().collect();
         let n = |t: &str| asked.iter().filter(|r| r.contains(t)).count();
         assert_eq!((n(tt), n(tn)), (2, 1), "the throttle body was asked twice, the Not Found once");
+    }
+
+    /// (#895) The short chart path retries a body that carries neither bars nor an answer (a throttle, a
+    /// garbled reply) once, but Yahoo's own "Not Found" is final: one request, no pause.
+    #[tokio::test]
+    async fn chart_json_asks_once_for_a_not_found_and_twice_for_anything_else() {
+        let (base, client, asked) = routed_stub(vec![
+            ("/QQNF/", r#"{"chart":{"result":null,"error":{"code":"Not Found","description":"No data found"}}}"#),
+            ("/QQTH/", r#"{"chart":{"result":null,"error":{"code":"Too Many Requests","description":"Rate limited"}}}"#),
+            ("/QQGB/", "garbled {"),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        for t in ["QQNF", "QQTH", "QQGB"] {
+            assert!(chart_json(&client, &urls, t, "10y").await.is_none(), "{t}: no chart either way");
+        }
+        let asked: Vec<String> = asked.try_iter().collect();
+        let n = |t: &str| asked.iter().filter(|r| r.contains(t)).count();
+        assert_eq!((n("/QQNF/"), n("/QQTH/"), n("/QQGB/")), (1, 2, 2), "Not Found asked once, the throttle and the garbled body twice");
     }
 
     /// (#397) The venue table on the shapes OpenFIGI served for the Vanguard and Amundi S&P 500
