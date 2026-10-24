@@ -158,11 +158,15 @@ pub fn explain(overlay: &str, universe: &str, query: &str) -> Result<String, Str
             "No pool row matches \"{q}\". The pool keeps one listing per company, often a European one (NVIDIA is NVD.DE): try the company name."
         ));
     };
+    // (#894) the upload's pins as `screen` maps them, a pool row or else the pool's line of the same
+    // fund, so the box explains the ranking the tables beside it print
+    let pins: Vec<String> =
+        s.tickers.iter().filter_map(|p| if u.quotes.iter().any(|q| &q.ticker == p) { Some(p.clone()) } else { u.aliases.get(p).cloned() }).collect();
     let (text, _) = picks::render(&u.quotes, s.top_picks, &s.buy_heuristic, &s.widths, RenderCtx {
         nupl: u.nupl,
         sectors: &s.sectors,
         sector_of: &HashMap::new(),
-        pinned: &[],
+        pinned: &pins,
         owned: &Owned::default(),
         explain: Some(&t),
         show_hold_core: false,
@@ -597,6 +601,23 @@ mod tests {
         assert!(why("NOPE").starts_with("No pool row matches \"NOPE\". The pool keeps one listing per company"));
         assert!(why("").starts_with("No pool row matches \"\""), "an empty box matches no name");
         assert!(explain("tickers: [", &u, "aapl").is_err_and(|e| e.starts_with("settings.yaml:")));
+    }
+
+    /// (#894) The why box reads the upload's pins, as the tables beside it do: a pinned twin the same-name
+    /// dedup would drop is a ranked row, so it explains with its score walkthrough, whether pinned by its
+    /// own ticker or by another venue's line.
+    #[test]
+    fn explain_reads_the_uploads_pins() {
+        let mut twin = winner();
+        twin.ticker = "NVD.F".into();
+        let quotes = [winner(), twin];
+        let aliases = HashMap::from([("NVD.X".to_string(), "NVD.F".to_string())]);
+        let u = snapshot(serde_yaml::from_str(CI).ok(), &quotes, None, &FundPeMap::new(), Some(0.3), &[], &[], &aliases, &HashMap::new());
+        let walk = "how the SCORE was computed — NVIDIA Corp (NVD.F)";
+        let why = |overlay: &str| explain(overlay, &u, "NVD.F").expect("explains");
+        assert!(!why("").contains(walk), "not vacuous: unpinned, the same-name twin is dropped: {}", why(""));
+        assert!(why("tickers: [NVD.F]\n").contains(walk), "{}", why("tickers: [NVD.F]\n"));
+        assert!(why("tickers: [NVD.X]\n").contains(walk), "a pin on another venue's line pins the pool's row");
     }
 
     /// An upload that is not a usable config is an error the page prints, never a quiet default rank.
