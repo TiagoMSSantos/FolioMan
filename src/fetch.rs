@@ -8241,20 +8241,9 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
     if offline() {
         return Vec::new();
     }
-    // the table's columns, in order; index 2 (symbol) is what core::euronext_lisbon_symbols reads.
-    // Raw body (not reqwest `.form()`) so the `args[...]` key keeps its literal brackets, matching the
-    // request the page's JS sends.
-    let body = "args[display_datapoints]=name,isin,symbol,market,lastPrice,precentDayChange,lastTradeTime\
-                &draw=1&start=0&length=1000&iDisplayLength=1000&iDisplayStart=0";
     let mut last_status = String::from("no response");
     for attempt in 0..2 {
-        let resp = client
-            .post(&urls.euronext_lisbon)
-            .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-            .header("X-Requested-With", "XMLHttpRequest")
-            .body(body)
-            .send()
-            .await;
+        let resp = euronext_lisbon_request(client, urls).send().await;
         if let Ok(r) = resp {
             last_status = r.status().to_string();
             // success = non-empty tickers, so a 200 with empty/missing aaData retries too
@@ -8271,6 +8260,21 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
     }
     eprintln!("fetch: Euronext Lisbon failed after 2 attempts (last status: {last_status}) — Lisbon stocks absent from the screen");
     Vec::new()
+}
+
+/// (#862) The Lisbon table POST, built in one place so its drift net in tests/network.rs sends the
+/// very request the screen sends.
+pub fn euronext_lisbon_request(client: &Client, urls: &Urls) -> reqwest::RequestBuilder {
+    // the table's columns, in order; index 2 (symbol) is what core::euronext_lisbon_symbols reads.
+    // Raw body (not reqwest `.form()`) so the `args[...]` key keeps its literal brackets, matching the
+    // request the page's JS sends.
+    let body = "args[display_datapoints]=name,isin,symbol,market,lastPrice,precentDayChange,lastTradeTime\
+                &draw=1&start=0&length=1000&iDisplayLength=1000&iDisplayStart=0";
+    client
+        .post(&urls.euronext_lisbon)
+        .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .body(body)
 }
 
 /// Euronext ETF list ("track") -> ISINs for the ETF universe. Second venue source beside Börse

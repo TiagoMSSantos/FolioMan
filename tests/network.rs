@@ -497,6 +497,20 @@ async fn nupl_parses() {
     assert!((-1.0..2.0).contains(&nupl), "implausible NUPL value: {nupl}");
 }
 
+/// (#862) Euronext Lisbon drift net. `fetch_euronext_lisbon` degrades to an empty list on any failure,
+/// with one stderr line, so a reshaped table silently drops every `.LS` name from the screen (32 in
+/// the 2026-10 universe). The stub tests pin the parser on a canned reply, never the live shape.
+/// Sends the screen's own request; the floor is half the live count, so a thin day still passes.
+#[tokio::test]
+async fn euronext_lisbon_parses() {
+    let settings = config::load();
+    let Some(v) = live_json(fetch::euronext_lisbon_request(&fetch::client(), &settings.urls), "Euronext Lisbon").await else {
+        return;
+    };
+    let n = core::euronext_lisbon_symbols(&v).len();
+    assert!(n >= 15, "API DRIFT [Euronext Lisbon]: healthy reply parsed to {n} symbols, want >= 15");
+}
+
 /// (round 79) Euribor drift net. `fetch_euribor_3m` scrapes euribor-rates.eu HTML (fragile, says
 /// its own doc) for the check footer's Certificados de Aforro baseline; a page redesign = silent
 /// permanent None. Healthy endpoint + no parsable rate = red.
