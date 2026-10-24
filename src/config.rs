@@ -487,6 +487,7 @@ pub struct BuyHeuristic {
     pub growth_fund_extra: Vec<FundTerm>,
     pub fund_source: String,         // (Item 22) WHICH fundamentals feed BOTH the `backtest <set> fund` lane AND the live `screen`/`check` fund tilt: "fmp" (DEFAULT, unchanged — global coverage, quarterly, 250-call/day cap, needs FMP_API_KEY) | "sec" (SEC EDGAR XBRL — free, no key, no daily cap, ~19y annual history, US filers only). The SAME source feeds backtest + live (one router) so the validated and served signal can't drift (train-serve skew). Switching to "sec" is a DATA-SOURCE change: re-run `backtest <set> fund` to re-validate the factor on SEC's annual rows BEFORE raising growth_fund_weight — the FMP-validated weight does NOT carry over. Unknown value -> "fmp". With weight 0 (default) this is inert either way.
     pub growth_mom121_weight: f64,   // (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-term-reversal month). Price-only, so unlike the BACKTEST-BLIND div/ROE/fund tilts this one IS validated end-to-end (backtest_quote reconstructs 1Y/1M). 0 = off (DEFAULT, no behavior change). Raise only on +ablation-Δ + both-half-positive OOS via `backtest <set>` / `tune`
+    #[serde(deserialize_with = "cap")] // (#957) the last `clamp(0.0, cap)` top without the (#840) guard
     pub growth_mom121_cap: f64,      // (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank
     pub growth_smoothness_weight: f64, // (E) additive reward per unit of trend_r2 (R² of the log-price trend fit, 0..1; 0 also = no history) — pays names whose long climb is a straight line over equal-CAGR rollercoaster. Price-only and reconstructed in backtest_quote -> validated end-to-end: 2/5/10/20 sweep peaked at 5 (Δedge +13.2 same-batch, rho intact; 20 collapsed). 0 = off (DEFAULT); ci-settings ALSO ships 0.0 — (#62) zeroed this term on 2026-08-10 (the sweep above is 2/5/10/20 and never tested zero), so default and shipped now agree and this knob is off everywhere
     pub growth_underwater_weight: f64, // additive PENALTY per year of the longest below-prior-peak stretch (core::longest_underwater_yrs — the drawdown-DURATION twin of the maxdd depth cap). Price-only, reconstructed in backtest_quote on the daily cadence -> validated end-to-end. Standalone probe (backtest universe fund, 2026-07-19): n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +; candidate lane run at 0.3 same-batch: edge +25.5->+27.5, rho intact, both OOS halves + worst era improved. 0 = off (DEFAULT); ci-settings ships the validated 0.3
@@ -2921,6 +2922,10 @@ mod tests {
         assert_eq!(parse("0").ok(), Some(0.0));
         assert!(parse("-1").is_err_and(|e| e.to_string().contains("a cap must be 0 or more, got -1")));
         assert!(parse(".nan").is_err());
+        // (#957) the 12-1 cap is absent from tests/ci-settings.yaml, so the every-knob sweep never fed it -1
+        let mom = |v: &str| serde_yaml::from_str::<BuyHeuristic>(&format!("growth_mom121_cap: {v}\n")).map(|b| b.growth_mom121_cap);
+        assert_eq!(mom("0").ok(), Some(0.0));
+        assert!(mom("-1").is_err_and(|e| e.to_string().contains("a cap must be 0 or more, got -1")));
     }
 
     /// (#773) A base that is there but does not parse refuses (`None`, so `load` exits) instead of
