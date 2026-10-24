@@ -15543,8 +15543,8 @@ pub(crate) mod tests {
         assert!(out.is_empty(), "{out:?}");
     }
 
-    /// (#76) The EU-listing cache, both branches. ONE test, two phases, because both own the same
-    /// `.eu_listing_cache.json` in the shared scratch root and would race as two `#[test]`s — same
+    /// (#76) The EU-listing cache, every branch. ONE test, six phases, because all of them own the same
+    /// `.eu_listing_cache.json` in the shared scratch root and would race as separate `#[test]`s — same
     /// reason as `regulatory_isins_serve_a_fresh_cache_and_never_shrink` above.
     ///
     /// The dead port is the assertion in phase 1, not scaffolding: a fully cached call must consult
@@ -15552,6 +15552,8 @@ pub(crate) mod tests {
     /// pins the negative-caching rule the single-file design rests on — a symbol OpenFIGI ANSWERS as
     /// unresolvable is remembered as the empty string rather than left absent, so it is asked about
     /// exactly once ever — and (#682) its other half: a dead endpoint is no answer, so nothing is banked.
+    /// Phases 3 to 6 then re-check known twins (#404), re-ask a pre-Frankfurt miss once (#460), answer
+    /// both OpenFIGI hops, and run the universe's EU swap off the same file.
     #[tokio::test]
     async fn resolve_eu_listings_serves_its_cache_and_remembers_misses() {
         pin_throttle();
@@ -15889,11 +15891,11 @@ pub(crate) mod tests {
         );
     }
 
-    /// The regulatory ETF list's disk cache, both branches — reachable for the first time now that
+    /// The regulatory ETF list's disk cache, every branch — reachable for the first time now that
     /// `config::data_path` re-roots into a scratch dir under test.
     ///
-    /// ONE test, two phases, because both phases own the same `.regulatory_isins.json` in the one
-    /// shared scratch root: as two `#[test]`s they would race each other.
+    /// ONE test, six phases, because all of them own the same `.regulatory_isins.json` in the one
+    /// shared scratch root: as separate `#[test]`s they would race each other.
     ///
     /// The seeded ISINs are in REVERSE sort order, and that is the whole discriminator. The fresh
     /// branch returns `cached.isins` verbatim; every other path through this function ends in
@@ -16262,9 +16264,10 @@ pub(crate) mod tests {
     /// `stub_server` grants. The trailing `BF_TER`/`BF_AUM`/`BF_META`/`YH_TER`/`YH_AUM` sets do land,
     /// but only ever as empty maps here, which every reader treats identically to unset.
     ///
-    /// Two phases, one test: they share both cache files under the scratch root, and that root
-    /// OUTLIVES the run — so each phase deletes what it is about to assert on. Without that, the
-    /// second run of the suite would grade files the first run left behind and pass on nothing.
+    /// Three phases, one test: they share both cache files under the scratch root, and that root
+    /// OUTLIVES the run — so phases 1 and 2 each delete what they are about to assert on, and phase 3
+    /// relies on phase 2 having left the positive cache absent. Without that, the second run of the
+    /// suite would grade files the first run left behind and pass on nothing.
     #[tokio::test]
     async fn fresh_resolutions_are_cached_and_definitive_misses_are_remembered() {
         let _own = ISIN_CACHE_LOCK.lock().await;
@@ -16390,13 +16393,14 @@ pub(crate) mod tests {
         // for, and no assertion here could tell that apart from a pass that had been deleted.
         //
         // `stub_urls` points EVERY url field at the stub, `justetf_profile` included; it carries no
-        // `{isin}` placeholder, so all three ISINs resolve to the same canned page. That is what makes
+        // `{isin}` placeholder, so every ISIN resolves to the same canned page. That is what makes
         // the TER/AUM below (0.20 / 1.6988e10) the justETF signature — no seeded cache row holds either.
         //
-        // ISINs for exactly three symbols, and the omissions are load-bearing. PASTCAP.DE and CORRUPT.DE
-        // stay unresolvable so their staleness assertions keep meaning "nothing served it"; ATCAP.DE
-        // stays unresolvable so the residual filter is graded on which symbols it ADMITS rather than on
-        // what a request would have returned for a fund already filled from cache.
+        // ISINs for exactly four symbols (YDAY.DE's has no hole to fill, so it is never asked), and the
+        // omissions are load-bearing. PASTCAP.DE and CORRUPT.DE stay unresolvable so their staleness
+        // assertions keep meaning "nothing served it"; ATCAP.DE stays unresolvable so the residual filter
+        // is graded on which symbols it ADMITS rather than on what a request would have returned for a
+        // fund already filled from cache.
         let (justetf_url, client) = stub_server(
             "<span data-testid=\"tl_etf-basics_value_ter\">0.20% p.a.</span>\
              <tr data-testid=\"etf-basics_row_fund-size\"><td><div>EUR 16,988 m </div></td></tr>",
@@ -19292,8 +19296,8 @@ pub(crate) mod tests {
         assert_eq!(got, (Some(100.0 / 2.25), Some(15.0)));
     }
 
-    /// The three conditional branches of the per-quote fund lane, each behind its own factor name: the insider count read
-    /// off the Form-4 cache, the SEC trailing EPS replacing the annual one for `earnings_yield`, and a filer whose books
+    /// The three conditional branches of the per-quote fund lane: the insider count read off the Form-4 cache and the SEC
+    /// trailing EPS replacing the annual one for `earnings_yield`, each behind its own factor name, and a filer whose books
     /// are in a different currency than the quote (the rate is fetched, and the price is divided in the books' currency).
     ///
     /// The last one only fires when the ranking feed is SEC (the census config); on the bare default the FMP rows carry no
