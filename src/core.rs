@@ -3053,9 +3053,6 @@ pub fn hold_suitable(q: &Quote) -> bool {
     hold_miss_reason(q).is_none()
 }
 
-/// (round 49) The FIRST hold-core leg this quote fails, as a printable reason — None = passes all
-/// (i.e. `hold_suitable`). Single source of truth: hold_suitable IS this function's is_none(), so
-/// the H flag and the printed reason can never disagree. Leg order = cheapest check first, and the
 /// (#199) The CORE admission legs, in the order [`hold_miss_leg`] walks them, indexed BY the number
 /// it returns. Display labels for the funnel line — short on purpose, because all six print on one
 /// row. A seventh tally slot past the end is "qualified"; see [`picks::hold_funnel`].
@@ -3087,6 +3084,9 @@ pub const ALL_WORLD_TIER: u8 = 0;
 /// (#296) The US tier, the one `size::spill_split` weights above the others. Named for the same reason.
 pub const US_TIER: u8 = 3;
 
+/// (round 49) The FIRST hold-core leg this quote fails, as a printable reason — None = passes all
+/// (i.e. `hold_suitable`). Single source of truth: hold_suitable IS this function's is_none(), so
+/// the H flag and the printed reason can never disagree. Leg order = cheapest check first, and the
 /// TER cap note lives here: `hold_max_ter` ships 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the
 /// canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%). The reason
 /// string formats the cap from the knob, so it cannot quote a number the check did not use.
@@ -4469,18 +4469,18 @@ fn red_flags(now: &FundRow, prev: Option<&FundRow>, rev_yoy: Option<f64>, buybac
     ]
 }
 
+/// (#784) The rows as they could be read at `cutoff` under `sec_line_filed_gate`: a row with a line filed
+/// after the cutoff is served as its strict twin. shortcut: clones every row per call; borrow the untouched
+/// ones if the walk slows.
+fn rows_at(rows: &[FundRow], cutoff: NaiveDate) -> Vec<FundRow> {
+    rows.iter().map(|r| r.strict.as_deref().filter(|_| r.full_from > Some(cutoff)).unwrap_or(r).clone()).collect()
+}
+
 /// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. The
 /// as-of row `now` (`fund_as_of`) and every older row (`back(k)`, found by fiscal period, #676) are read
 /// only when filed by `cutoff`, so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
 /// growth needs a positive base to be meaningful, so a non-positive denominator -> None, never a
 /// garbage ratio. note: EPS CAGR only when both endpoints are positive (a sign flip isn't a CAGR).
-/// (#784) The rows as they could be read at `cutoff` under `sec_line_filed_gate`: a row with a line filed
-/// after the cutoff is served as its strict twin. shortcut: clones every row per call; borrow the untouched
-/// ones if the knob ships and the walk slows.
-fn rows_at(rows: &[FundRow], cutoff: NaiveDate) -> Vec<FundRow> {
-    rows.iter().map(|r| r.strict.as_deref().filter(|_| r.full_from > Some(cutoff)).unwrap_or(r).clone()).collect()
-}
-
 pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactors {
     let held;
     let rows = if crate::config::sec_line_filed_gate() {

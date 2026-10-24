@@ -1337,7 +1337,7 @@ pub(crate) fn accel_raw(return_1y: f64, long_cagr: f64, tuning: &BuyHeuristic) -
 /// that set: a name AT/NEAR its own range high, with a strong proven long-term CAGR, still climbing.
 ///
 /// ```text
-///   base  = growth_trend_weight × capped_trend(long_cagr)   [cap 0 = uncapped, shipped]
+///   base  = growth_trend_weight × capped_trend(long_cagr)   [cap 0 = uncapped; ships 30.0]
 ///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
 ///         + quality_reward                                                     // (F) ROE profitability tilt (SIGHTED, ablation-graded; see below)
 ///   score = base × proximity × value(E) × geomean(trust, overext)   // (#4) geomean of the penalties
@@ -1974,6 +1974,8 @@ pub fn implied_growth_pct(quote: &Quote, tuning: &BuyHeuristic, years: u32, requ
     Some(((pe / tuning.ref_pe).powf(1.0 / f64::from(years)) * (1.0 + required_pct / 100.0) - 1.0) * 100.0)
 }
 
+type WeightDim = (&'static str, fn(&BuyHeuristic) -> f64, fn(&mut BuyHeuristic, f64));
+
 /// (#107) The ADDITIVE and MULTIPLICATIVE tilt weights of `score_parts`, as (label, get, set) — the
 /// perturbation set for `rank_robustness`. This is every knob whose units are "how much does this term
 /// count", so scaling one by a few percent is a meaningful question ("what if I'd weighted quality 10%
@@ -1981,7 +1983,6 @@ pub fn implied_growth_pct(quote: &Quote, tuning: &BuyHeuristic, years: u32, requ
 /// moving one changes the POPULATION rather than the order within it, and the honest statistic for that
 /// is P(name survives), not a rank spread. Caps are excluded for the same reason a cap is not a weight —
 /// `long_trend_cap: 0` means OFF, and 0 × 1.15 is still 0, so a multiplicative draw cannot explore it.
-type WeightDim = (&'static str, fn(&BuyHeuristic) -> f64, fn(&mut BuyHeuristic, f64));
 pub(crate) const WEIGHT_DIMS: [WeightDim; 13] = [
     ("growth_trend_weight", |t| t.growth_trend_weight, |t, v| t.growth_trend_weight = v),
     ("growth_accel_weight", |t| t.growth_accel_weight, |t, v| t.growth_accel_weight = v),
@@ -1997,6 +1998,17 @@ pub(crate) const WEIGHT_DIMS: [WeightDim; 13] = [
     ("growth_proximity_weight", |t| t.growth_proximity_weight, |t, v| t.growth_proximity_weight = v),
     ("growth_turnover_weight", |t| t.growth_turnover_weight, |t, v| t.growth_turnover_weight = v),
 ];
+
+/// (#344) One draw of `rank_robustness`'s perturbed tuning: every `WEIGHT_DIMS` weight scaled by
+/// `0.8 + 0.4u` for a fresh `u` in [0, 1). Lifted so the scaling can be graded on a fixed `u` — inline,
+/// its arithmetic only ever reached a test through a rank IQR, which no mutant of it moved.
+fn jittered(tuning: &BuyHeuristic, next: &mut impl FnMut() -> f64) -> BuyHeuristic {
+    let mut t = tuning.clone();
+    for (_, get, set) in WEIGHT_DIMS {
+        set(&mut t, get(tuning) * (0.8 + 0.4 * next()));
+    }
+    t
+}
 
 /// (#107 / round 3 §3) Rank robustness. McLean & Pontiff put the out-of-sample decay of a published
 /// predictor at 26%, and 58% after publication. This project's defence is walk-forward, OOS halves and
@@ -2020,17 +2032,6 @@ pub(crate) const WEIGHT_DIMS: [WeightDim; 13] = [
 /// Seeded xorshift64, same stream shape as `tune_growth`'s search, so a re-run reproduces exactly.
 /// Quartiles come from `backtest::percentile` (nearest-rank) — one definition, not two.
 /// Returns ticker -> (median rank, q1, q3), 1-based ranks. Empty when `k == 0` (the shipped state).
-/// (#344) One draw of `rank_robustness`'s perturbed tuning: every `WEIGHT_DIMS` weight scaled by
-/// `0.8 + 0.4u` for a fresh `u` in [0, 1). Lifted so the scaling can be graded on a fixed `u` — inline,
-/// its arithmetic only ever reached a test through a rank IQR, which no mutant of it moved.
-fn jittered(tuning: &BuyHeuristic, next: &mut impl FnMut() -> f64) -> BuyHeuristic {
-    let mut t = tuning.clone();
-    for (_, get, set) in WEIGHT_DIMS {
-        set(&mut t, get(tuning) * (0.8 + 0.4 * next()));
-    }
-    t
-}
-
 pub fn rank_robustness(
     quotes: &[Quote],
     tuning: &BuyHeuristic,
@@ -2194,6 +2195,15 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
     Some((perf_pct(quote, "1Y")?, long_cagr_from(quote, tuning, long_cum, long_years), quote.range_pct))
 }
 
+/// (#54) One name's [`pin_dropped`] bill.
+pub struct PinDrop {
+    pub broke: Vec<&'static str>, // gates that fail PINNED and would pass on the longest leg
+    pub why: String,              // ...and their reasons, joined — the pin's own bill
+    pub still: Vec<&'static str>, // gates failing at 0 too: setting the knob back is NOT enough
+    pub pinned: (f64, f64),       // (CAGR %/yr, window years) under the pin
+    pub free: (f64, f64),         // (CAGR %/yr, window years) on the longest leg
+}
+
 /// (#54) What the CAGR PIN costs, BY NAME: names failing at least one gate under the pin that the SAME
 /// name would clear on its longest leg. `None` when the pin is off, when the name ranks under the pin,
 /// when the pin breaks nothing new, or when it is not assessable at all.
@@ -2238,14 +2248,6 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
 /// shortcut: evaluates the gates twice per name rather than threading a second CAGR through the scorer.
 /// This is a printed footer over a few thousand quotes, so the second pass is free at this scale, and it
 /// keeps the edge-validated path untouched — the same bargain `growth_near_miss` already took.
-pub struct PinDrop {
-    pub broke: Vec<&'static str>, // gates that fail PINNED and would pass on the longest leg
-    pub why: String,              // ...and their reasons, joined — the pin's own bill
-    pub still: Vec<&'static str>, // gates failing at 0 too: setting the knob back is NOT enough
-    pub pinned: (f64, f64),       // (CAGR %/yr, window years) under the pin
-    pub free: (f64, f64),         // (CAGR %/yr, window years) on the longest leg
-}
-
 pub fn pin_dropped(quote: &Quote, tuning: &BuyHeuristic) -> Option<PinDrop> {
     if tuning.fixed_cagr_years == 0 {
         return None; // no pin -> nothing to attribute to it
@@ -2286,13 +2288,16 @@ pub fn pin_dropped(quote: &Quote, tuning: &BuyHeuristic) -> Option<PinDrop> {
 /// aggregate (screen.rs, `refusal_reason(q).unwrap_or("no-1Y")`); this names it per-quote.
 pub fn unranked_reason(quote: &Quote, tuning: &BuyHeuristic) -> String {
     match gate_failures(quote, tuning) {
-        // `refusal_reason` covers three of the four ways out; the fourth (missing 1Y leg) is the only
+        // `refusal_reason` covers every structural way out; the other (a missing 1Y leg) is the only
         // remaining `?`-bail in `gate_failures`, so this fallback is exact rather than a guess.
         None => refusal_reason(quote).unwrap_or("no 1Y history").to_string(),
         Some(f) if f.is_empty() => "clears every gate".to_string(),
         Some(f) => f.iter().map(|(g, w, _)| format!("{g}: {w}")).collect::<Vec<_>>().join("; "),
     }
 }
+
+/// (#55) The shortest leg, in years, that counts as a proven record (`growth_min_leg_years` if longer).
+pub const PROVEN_MIN_YEARS: f64 = 5.0;
 
 /// (#55) A name with a PROVEN long record that still didn't rank: (long CAGR %/yr, that leg's years,
 /// every gate it fails). `None` = it ranks, it has no long record, or its record doesn't clear the
@@ -2315,8 +2320,6 @@ pub fn unranked_reason(quote: &Quote, tuning: &BuyHeuristic) -> String {
 /// would let the pin hide the names this list exists to surface. Compared against the SAME per-class
 /// floor `gate_failures` uses, so "proven" here means the lane's own definition of proven, not a
 /// second opinion invented for a footer.
-pub const PROVEN_MIN_YEARS: f64 = 5.0;
-
 pub fn proven_but_unranked(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f64, f64, String)> {
     let fails = gate_failures(quote, tuning)?; // refusals stay out: a 3x ETF is excluded on purpose
     if fails.is_empty() {
@@ -2396,8 +2399,8 @@ pub fn refusal_reason(quote: &Quote) -> Option<&'static str> {
 }
 
 /// Every growth gate this quote FAILS, in gate order: (gate_name, human "why", is_close_miss).
-/// `None` = not assessable as a growth candidate at all (leveraged / stablecoin / unknown turnover /
-/// no 1Y data — see `refusal_reason`); a name with no 5y+ leg returns a single "history" fail (so a
+/// `None` = not assessable as a growth candidate at all (a structural refusal from
+/// `refusal_reason`, or no 1Y data); a name with no 5y+ leg returns a single "history" fail (so a
 /// pinned young ETF explains its 0.0 rather than vanishing); empty vec = clears every gate. Shared by
 /// the near-miss tail above and `check`'s held-name gate review, so a held name that would no longer
 /// rank gets flagged with the same wording the screen tail uses.
@@ -5947,7 +5950,7 @@ pub fn narrow_census(quotes: &[Quote]) -> Vec<(&'static str, usize)> {
 /// admission leg. Sorted by AUM descending, ties by ticker.
 ///
 /// `narrow_census` prices what the REFUSE-list costs. This prices what the ACCEPT-list MISSES, which
-/// is the strictly harder half: `core::GEO` is 22 hand-written provider strings matched by plain
+/// is the strictly harder half: `core::GEO` holds hand-written provider strings matched by plain
 /// `contains`, with no hyphen or whitespace normalisation, so "all-country" cannot match a fund named
 /// "All Country World" and "global all cap" cannot match "Prime Global". Whether such funds are
 /// actually in the pond has never been measured — it cannot be, offline, because no fund NAMES are
@@ -9772,7 +9775,7 @@ mod tests {
 
     // (S-8Y) the pin re-runs the CAGR floor on the 8-year window, so a name whose full record clears
     // the floor but whose 8Y window doesn't gets NO pinned score — that was the bare "n/a" in the
-    // column. (Floor here is the Rust default 8.0; the shipped config raises it to 14.0.)
+    // column. (Floor here is the Rust default 8.0; the shipped config raises it to 19.0.)
     // Dropping the floor (what `print_picks` builds for S-8Y) scores it anyway. The live assert is the
     // guard: it proves the name is scoreable and the pin is the ONLY reason the bare version is None.
     // The strong leg is 20Y, not 10Y: since the ladder moved to 20/8/5 an 8Y leg OUTRANKS a 10Y one,
