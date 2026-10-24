@@ -61,7 +61,8 @@ try {
   const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits", "intraday"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);
-  const drift = Object.keys(want).filter((k) => !["generated", ...ci].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
+  // (#950) over both payloads' keys: a table only the engine writes is drift too, not a silent extra
+  const drift = Object.keys({ ...want, ...got }).filter((k) => !["generated", ...ci].includes(k) && JSON.stringify(got[k]) !== JSON.stringify(want[k]));
   if (drift.length) {
     console.error("the engine drifts from screen on: " + drift.join(", "));
     process.exit(1);
