@@ -9790,7 +9790,7 @@ mod tests {
         let start = NaiveDate::from_ymd_opt(2000, 7, 1).unwrap();
         let months = |a: NaiveDate, b: NaiveDate| f64::from((b.year() - a.year()) * 12 + b.month() as i32 - a.month() as i32);
         let grow = |from, to| Some(2.0_f64.powf(months(from, to) / 120.0));
-        let p = dca_program(start, |d, _| Some(d), |_: &NaiveDate, from, to| grow(from, to), &grow, 0.0, &[]).unwrap();
+        let p = dca_program(start, |d, _| Some(d), |_: &NaiveDate, from, to| grow(from, to), grow, 0.0, &[]).unwrap();
         let want = (0..96).map(|m| 2.0_f64.powf(f64::from(240 - m) / 120.0)).sum::<f64>();
         let close = |got: f64| (got - want).abs() < 1e-9;
         assert!(close(p.hold) && close(p.roll) && close(p.index), "{want}: {} {} {}", p.hold, p.roll, p.index);
