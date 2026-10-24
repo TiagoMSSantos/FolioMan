@@ -1530,9 +1530,9 @@ const REGULATORY_ISINS_PATH: &str = ".regulatory_isins.json";
 /// run (round-36 flakiness lesson) — see the resolution block in `fetch_xetra_etfs`.
 const ISIN_NEG_CACHE_PATH: &str = ".isin_negative_cache.json";
 
-/// Weekly Yahoo quoteSummary fund facts (`{sym: ["YYYY-MM-DD", ter%|null, aum|null]}`) for funds
+/// Daily Yahoo quoteSummary fund facts (`{sym: ["YYYY-MM-DD", ter%|null, aum|null]}`) for funds
 /// whose BF facts are missing — see `yahoo_fund_facts_fill`. Both-None rows are cached too, so a
-/// factless fund costs one request a week, not one per run.
+/// factless fund costs one request a day, not one per run.
 const FUND_FACTS_CACHE_PATH: &str = ".fund_facts_cache.json";
 
 /// (G) One FMP income-statement row -> FundRow. Margins are derived (FMP's free tier doesn't serve the
@@ -7168,7 +7168,7 @@ fn parse_yahoo_fund_facts(v: &Value) -> (Option<f64>, Option<f64>) {
 /// from Yahoo quoteSummary into SEPARATE fallback maps (`YH_TER`/`YH_AUM`) — never merged into the BF
 /// maps, because `expense_ratio`/`aum_eur` feed the SCORE (ter_damp ^20 drag) and the AUM gate: a
 /// first merged run moved live ranks (PEA 3->9, score 7.3->6.8), and the scoring lane is closed.
-/// Fallback facts are DISPLAY + H/CORE only, read via `Quote::ter_shown`/`aum_shown`. Weekly disk
+/// Fallback facts are DISPLAY + H/CORE only, read via `Quote::ter_shown`/`aum_shown`. Daily disk
 /// cache + per-run request budget so a cold universe converges over a few runs instead of stampeding
 /// Yahoo. USE/REPL stay BF-only (Yahoo lacks them), so factless venue funds still can't earn the H
 /// flag — the win is honest TER/AUM cells.
@@ -7452,9 +7452,9 @@ fn parse_fund_category(v: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// (round 56) Weekly `{sym: ["YYYY-MM-DD", [[holding, weight]...], [[sector, weight]...], stock_bond]}`
+/// (round 56) Daily `{sym: ["YYYY-MM-DD", [[holding, weight]...], [[sector, weight]...], stock_bond]}`
 /// cache for `yahoo_top_holdings`; empty lists are cached too, so a fund Yahoo has no holdings for
-/// costs one request a week.
+/// costs one request a day.
 /// (round 57) the row schema gained per-holding weights; an old symbols-only cache fails to
 /// deserialize and is treated as empty — one refetch of the ~30 printed picks heals it.
 /// (sector tilt) same healing path again: rows gained the sector weightings + equity/bond split
@@ -7530,7 +7530,7 @@ async fn quote_summary_json(client: &Client, urls: &Urls, sym: &str, modules: &s
 }
 
 /// (round 66) Single-symbol live topHoldings fetch — the cacheless core of `yahoo_top_holdings`,
-/// public so the network smoke test can probe the payload without touching the weekly cache.
+/// public so the network smoke test can probe the payload without touching the daily cache.
 /// `Err` = environmental (transport/handshake/throttle — skip, retry later); `Ok(empty)` = HTTP 200
 /// whose body yielded no holdings, which for a major equity ETF means the payload shape drifted.
 pub async fn top_holdings_live(client: &Client, urls: &Urls, sym: &str) -> Result<Vec<(String, f64)>, String> {
@@ -7553,7 +7553,7 @@ pub(crate) async fn fund_composition_live(
 
 /// (drift net) Single-symbol live fund-facts fetch — the cacheless core of the
 /// `yahoo_fund_facts_fill` fallback, public so the network smoke test can probe the quoteSummary
-/// fundProfile/summaryDetail payload without touching the weekly cache. Err = environmental
+/// fundProfile/summaryDetail payload without touching the daily cache. Err = environmental
 /// (crumb/transport/throttle — skip, retry later); Ok((None, None)) = HTTP 200 whose body yielded
 /// neither TER nor AUM, which for a major equity ETF means the payload shape drifted.
 pub async fn fund_facts_live(
@@ -16314,7 +16314,7 @@ pub(crate) mod tests {
     }
 
     /// `yahoo_fund_facts_fill`'s CACHE lane — the whole function bar the fetch itself, and the lane a
-    /// real `screen` run spends almost all its time in once the weekly cache is warm.
+    /// real `screen` run spends almost all its time in once the daily cache is warm.
     ///
     /// The handshake fails closed here: `yahoo_query2` is the justETF stub, whose root answers 200 with
     /// no `Set-Cookie`. So the function returns whatever the cache and justETF gave it.

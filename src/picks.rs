@@ -2972,7 +2972,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
     s.push_str("  base = trend + accel + risk + quality + dividend + fund + mom121 + smooth\n");
     // The formula string tracks the cap knob: printing `min(CAGR, cap)` while `long_trend_cap` is 0
-    // (off, shipped) would advertise a clamp that is not running — the same class of lie the `cagr`
+    // (off; 30 ships since (#3k)) would advertise a clamp that is not running — the same class of lie the `cagr`
     // column told for months. Padded to keep the `=` column aligned with the rows below.
     s.push_str(&format!("    trend    = growth_trend_weight × {:<21} = {:.2} × {:.2} = {:.2}\n",
         if tuning.long_trend_cap > 0.0 { "min(CAGR, cap)" } else { "CAGR (cap off)" },

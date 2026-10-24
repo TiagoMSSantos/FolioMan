@@ -97,7 +97,7 @@ pub async fn run(args: Vec<String>) {
 
     // (round 58) what's inside the wrapper: top-10 holdings with weights for the checked ETFs —
     // `check` is the single-fund buy-decision view and showed nothing below the fund name. Same
-    // weekly-cached Yahoo topHoldings the screen's overlap footer uses (direct by symbol, no BF
+    // daily-refetched Yahoo topHoldings the screen's overlap footer uses (direct by symbol, no BF
     // dependency, so it works on this path). Display-only; funds Yahoo has no holdings for are
     // simply absent.
     let etfs: Vec<String> =

@@ -1026,8 +1026,8 @@ fn fac_section(
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
          BACKTEST re-grade on `universe fund pit` — never a direct ship — when {REOPEN_LINES}+ monthly lines AND\n  \
-         {REOPEN_LINES}+ chained links each read mean AND median above 0. Eleven rows read at once, so one can\n  \
-         clear by chance; the backtest re-grade is the guard against that.\n\n  \
+         {REOPEN_LINES}+ chained links each read mean AND median above 0. Every verdict row reads at once, so one\n  \
+         can clear by chance; the backtest re-grade is the guard against that.\n\n  \
          Pre-registered by (#436) before its first line: `brk` re-opens as a score-term BACKTEST re-grade, never\n  \
          a direct ship, only when its row clears that same bar AND {BRK_MIN_NAMES}+ distinct brk names have been\n  \
          journalled ({brk_n} so far) AND the spread survives a rank-slice read. Any miss records a refusal.\n  \

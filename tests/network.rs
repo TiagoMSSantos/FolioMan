@@ -181,7 +181,7 @@ async fn full_quote_build() {
 
 /// (round 66) topHoldings drift net. The holdings pipeline (screen's overlap/concentration footers,
 /// check's holdings block) degrades SILENTLY by design: any parse miss becomes an empty list that the
-/// weekly cache then serves for a week — if Yahoo reshapes the quoteSummary topHoldings payload, the
+/// cache then serves for up to 3 days — if Yahoo reshapes the quoteSummary topHoldings payload, the
 /// footers just vanish and nothing ever reds. This is the one place that failure mode turns into a
 /// red build. Uses the cacheless `top_holdings_live` core, so the run never touches (or is fooled by)
 /// `.holdings_cache.json`. Same contract as the probes above: environmental -> skip, 200-but-empty
