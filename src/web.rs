@@ -355,6 +355,10 @@ mod tests {
         let up = engine("page_min_cagr: 21.0\nreit_min_cagr: 3.0\nbuy_heuristic:\n  growth_min_cagr: 7.0\n", &q);
         assert_eq!((&up["page_min_cagr"], &up["reit_cagr_floor"], &up["cagr_floor"]), (&serde_json::json!(21.0), &serde_json::json!(3.0), &serde_json::json!(7.0)));
         assert_ne!(ci["page_min_cagr"], up["page_min_cagr"], "not vacuous: CI's floor is not 21");
+        // (#915) and the Social table greys under its own floor: buy's, unless `social_heuristic` names one
+        assert_eq!(up["social_cagr_floor"], serde_json::json!(7.0), "inherits the upload's buy floor");
+        let own = engine("buy_heuristic:\n  growth_min_cagr: 7.0\nsocial_heuristic:\n  growth_min_cagr: 11.0\n", &q);
+        assert_eq!((&own["cagr_floor"], &own["social_cagr_floor"]), (&serde_json::json!(7.0), &serde_json::json!(11.0)));
     }
 
     /// (#461) The US twins ride in universe.json, so the engine fills the n/a cells `screen` fills, with
