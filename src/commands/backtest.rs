@@ -90,8 +90,8 @@ const DCA_MONTHS: u32 = 96;
 const MIN_VERDICT_TICKERS: usize = 500;
 
 /// Every string `tests/network.rs::backtest_edge_holds` locates a graded number by. The gate has no
-/// parser — it string-searches this report — so each of these is load-bearing, and TEN OF THE
-/// FOURTEEN fail SOFT when one goes missing:
+/// parser — it string-searches this report — so each of these is load-bearing, and (#910) FOURTEEN OF
+/// THE NINETEEN fail SOFT when one goes missing:
 ///
 /// - `tickers:`, `── GROWTH`, `windows scored:` — `return false`, i.e. SKIP, i.e. **GREEN**. These
 ///   three are deliberately soft: they are the throttle guard, and a live wide run that Yahoo
@@ -100,7 +100,8 @@ const MIN_VERDICT_TICKERS: usize = 500;
 ///   nothing at all, forever, silently.
 /// - `n=`, `peer-relative`, and the three `growth_*_->off` labels — the gate re-probe WARN just
 ///   stops firing.
-/// - `top-10 `, `excess`, (#565) `passer lift`, `passer OOS early`, `passer OOS late` — panic only under `forced`.
+/// - `top-10 `, `excess`, (#565) `passer lift`, `passer OOS early`, `passer OOS late`, (#315) `vs Série E
+///   best case (top-10): beat` — panic only under `forced`.
 ///   `tuning adds`, `early rho`, `late rho` still print over the whole crowd; CI no longer asserts on them.
 /// - `->  edge` and (#565) `->  passer edge` — the only two that are hard unconditionally.
 ///
@@ -11362,7 +11363,7 @@ mod tests {
         assert!((m2 - 2.0).abs() < 1e-9 && (med2 - 2.0).abs() < 1e-9, "even count -> midpoint of the pair");
     }
 
-    /// (#10) `newly_admitted_mean` must isolate exactly the names a LOOSER gate newly admits (rejected
+    /// (#10) `newly_admitted_stats` must isolate exactly the names a LOOSER gate newly admits (rejected
     /// under `base`, accepted under `relaxed`) and average their forward return — the signal that a gate
     /// is too tight. Synthetic gate: admit dd > growth_min_cagr, so lowering that threshold admits more.
     fn cagr_gate(q: &Quote, t: &BuyHeuristic) -> Option<f64> {

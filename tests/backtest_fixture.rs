@@ -825,7 +825,7 @@ fn backtest_8y_fund_samples_ignore_the_future() {
 /// number it grades. Until now, "every marker is in the golden" was prose in this file's module doc,
 /// verified once by hand and never again. It was also incomplete: it named 7 of the 14.
 ///
-/// The failure this closes is specific. Ten of the fourteen markers fail SOFT in the gate, and three
+/// The failure this closes is specific. (#910) Fourteen of the nineteen markers fail SOFT in the gate, and three
 /// of those (`tickers:`, `── GROWTH`, `windows scored:`) make it `return false` — SKIP — which is
 /// GREEN. Those three are soft on purpose: they are the throttle guard, and a live wide run that
 /// Yahoo throttles must skip rather than red. The problem is that a RENAME and a THROTTLE are then

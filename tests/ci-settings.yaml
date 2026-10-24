@@ -1107,9 +1107,11 @@ widths:
     - 1d          # % vs 1 day ago
     - 1w          # % vs 1 week ago
     - 1m          # % vs 1 month ago
+    # - 1y        # (#910) % vs 1 year ago (hidden: listed so this block names every key)
     - 2y          # % vs 2 years ago
     - 5y          # % vs 5 years ago
     - 8y          # % vs 8 years ago
+    # - 10y       # (#910) % vs 10 years ago (hidden)
     - 20y         # % vs 20 years ago
     # (#541) after the lead columns, the order a 20y buy-and-hold reads: fund, business, price, survival, ride, recent, housekeeping
     # -- fund (the ETF table; stock lanes hide these)
