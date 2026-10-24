@@ -733,7 +733,7 @@ fn screen_warns_when_it_cannot_append_the_journal() {
 }
 
 /// A `.screen_state.json` as the last `screen` run left it: a two-name BUY NOW book at 30% + 20%, and a
-/// five-row CORE shortlist over four breadth tiers (0 all-world, 1 developed, 3 US). C1 is swap-replicated.
+/// five-row CORE shortlist over three breadth tiers (0 all-world, 1 developed, 3 US). C1 is swap-replicated.
 const SIZE_STATE: &str = r#"{"date":"2026-10-19","passing":[],"fund_meta":{"C1":[null,"Swap"]},"core_all":["C1","C2","C3","C4","C5"],"core_tier":{"C1":0,"C2":0,"C3":3,"C4":1,"C5":1},"buy_now":[["AAA",30.0],["BBB",20.0]]}"#;
 
 /// Bare `size` prints the book `screen` journalled, at that run's weights, and sends the 50% the two
