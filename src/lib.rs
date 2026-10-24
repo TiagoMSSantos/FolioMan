@@ -8,7 +8,7 @@
 // in CI still denies the real-defect groups (correctness/suspicious/perf). Upgrade path: if any of these
 // ever masks a genuine issue, drop the allow and fix the spot.
 //   doc_lazy_continuation  — rustdoc markdown nit on `//!` list lines; docs render fine.
-//   too_many_arguments     — wide fns (quotes/10, print_lane/8) are the real surface; a params struct churns callers.
+//   too_many_arguments     — wide fns (quotes/11, print_lane/11) are the real surface; a params struct churns callers.
 //   type_complexity        — dense tuple/fn-ptr types; aliased where it reads better, allowed elsewhere.
 //   items_after_test_module — fetch.rs grew its fns after the mid-file test mod; org-only, compiles identically.
 #![allow(

@@ -344,11 +344,6 @@ pub(crate) fn inflation_web_rows(
         .collect()
 }
 
-/// (#486) The page's Bonds table: per market, the newest 10Y yield and what a constant-maturity 10Y
-/// government bond returned over each [`core::BOND_YEARS`] span, in its own currency, compounded
-/// (`core::bond_index`). "USA in EUR" follows USA: the same dollar index divided by USD per EUR, so it
-/// carries the currency swing a euro holder took, and stops where EXUSEU does (1999). Display only.
-/// `AS OF` is the newest month; ⚠ STALE past 6 months, as a dead series still prints its last numbers.
 /// (#488) A return cell as `+6.2%`, but one that rounds to nothing prints `0.0%`: the US 10Y's
 /// -0.04% read "-0.0%" on the page and looked like a bug.
 fn signed_pct(v: f64) -> String {
@@ -356,6 +351,12 @@ fn signed_pct(v: f64) -> String {
     if &s[1..] == "0.0%" { s[1..].to_string() } else { s }
 }
 
+/// (#486) The page's Bonds table: per market, the newest 10Y yield and what a constant-maturity 10Y
+/// government bond returned over each [`core::BOND_YEARS`] span, in its own currency, compounded
+/// (`core::bond_index`). "USA in EUR" follows USA: the same dollar index divided by USD per EUR, so it
+/// carries the currency swing a euro holder took, and stops where EXUSEU does (1999). Display only.
+/// `AS OF` is the newest month; ⚠ STALE past 6 months, as a dead series still prints its last numbers.
+///
 /// (#736) `inflations` is [`inflation_web_rows`]' input. A span's hover adds its yearly rate after the
 /// inflation of the currency's region: US CPI for USA, Portugal's for Portugal, EU HICP for the euro
 /// markets and for USA in EUR, whose euros a euro holder spends.
