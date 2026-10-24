@@ -374,14 +374,14 @@ jobs:
   # Summary table + HTML land even on a red (if: always()) so you can see WHICH lines fell.
   # Own cache key: llvm-cov builds with -C instrument-coverage, so its target artifacts must not
   # poison the shared plain-build cache the other jobs restore.
-  # Scope: lib unit tests + tests/cli.rs. cli.rs drives the COMPILED binary via CARGO_BIN_EXE_folioman,
-  # and cargo-llvm-cov instruments that binary too — so main.rs dispatch, arg parsing and the `trade`
-  # confirm guards are counted (they read as 0% under a bare --lib).
-  # Target scope is EXPLICIT (--lib --test cli) to keep this job fully OFFLINE. It used to come free:
-  # tests/network.rs was #[ignore]d, so a bare llvm-cov never ran it. Those nets are unguarded now, and
-  # an online coverage job would make the ratchet below flap on the weather — a Yahoo outage covers the
-  # skip arms instead of the parse arms, TOTAL moves, and a BLOCKING gate reds for a reason that has
-  # nothing to do with the commit. Naming the targets keeps the number deterministic.
+  # Scope: lib unit tests + tests/cli.rs + tests/backtest_fixture.rs. cli.rs drives the COMPILED
+  # binary via CARGO_BIN_EXE_folioman, and cargo-llvm-cov instruments that binary too — so main.rs
+  # dispatch, arg parsing and the `trade` confirm guards are counted (they read as 0% under a bare --lib).
+  # Target scope is EXPLICIT (--lib --test cli --test backtest_fixture) to keep this job fully OFFLINE.
+  # It used to come free: tests/network.rs was #[ignore]d, so a bare llvm-cov never ran it. Those nets
+  # are unguarded now, and an online coverage job would make the ratchet below flap on the weather — a
+  # Yahoo outage covers the skip arms instead of the parse arms, TOTAL moves, and a BLOCKING gate reds
+  # for a reason that has nothing to do with the commit. Naming the targets keeps the number deterministic.
   coverage:
     runs-on: ubuntu-24.04
     # (#566) 30 -> 60: the soft gates (#564) score every failer through the full gate list, waiver and
