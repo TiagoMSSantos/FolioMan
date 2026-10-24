@@ -11704,10 +11704,11 @@ mod tests {
     /// and no real fund names" — true until the class stamping landed, false the moment it did. Both
     /// were load-bearing: knobs get set by judgement precisely BECAUSE they are believed unsweepable.
     ///
-    /// The whole question reduces to one fact nobody wrote down: `core::backtest_quote` fills 18 fields
+    /// The whole question reduces to one fact nobody wrote down: `core::backtest_quote` fills 23 fields
     /// (perf, drawdown_pct, range_pct, volatility_pct, downside_dev_pct, below/above_ma_pct, trend_r2,
-    /// trend_cagr, life_cagr, capped_cagr, max_drawdown_pct, roll5y/10y_pos_pct, worst_5y/10y_pct,
-    /// underwater_yrs on the daily path, and a sentinel avg_turnover_eur) and leaves the rest at
+    /// trend_cagr, life_cagr, capped_cagr, tr_cagr, max_drawdown_pct, max_daily_1m, roll5y/10y_pos_pct,
+    /// worst_5y/10y_pct, underwater_yrs on the daily path, age_years, price_eur, div_eur, and a sentinel
+    /// avg_turnover_eur) and leaves the rest at
     /// `Quote::stub` defaults, so any gate reading an unfilled field can never fire. This pin turns
     /// that into an assertion, in BOTH directions — a live gate going silently dead is the ETF bug's
     /// exact shape, and a false "inert" claim is how the receipts rotted.
@@ -11727,8 +11728,8 @@ mod tests {
     /// hide behind the one word:
     ///   (a) FIELD NEVER FILLED — dead on this path, no fixture can rescue it. `growth_min_aum_etf`
     ///       (aum_eur), `growth_ter_drag` (expense_ratio), `growth_fx_damp` (quote_currency),
-    ///       `growth_min_age_years` (age_years), `growth_min_range_pct_8y` (stats_8y). None of those
-    ///       five is assigned anywhere in this file; `growth_max_peg` (quote.fund) joins them on the
+    ///       `growth_min_range_pct_8y` (stats_8y). None of those four is assigned by
+    ///       `core::backtest_quote` (`growth_min_age_years` left this list when (#182) filled age_years); `growth_max_peg` (quote.fund) joins them on the
     ///       price-only path only, per SCOPE above.
     ///   (b) SCOPED TO ANOTHER CLASS — correct by construction, and the thing round 1's bug broke: the
     ///       `if crypto {…} else {…}` selectors (maxdd cap, 1M knife, 1Y/range/CAGR floors, vol cap),

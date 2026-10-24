@@ -5409,7 +5409,7 @@ mod tests {
     /// split-neutral while a journaled close is not, so a 2:1 split halved the price leg and the
     /// footer printed roughly +100% net inflow that never happened, flattering a name on a buy
     /// surface. There is now ONE read, restated once, shared by all six. A seventh call site would
-    /// silently re-open the hole, so count them here rather than trust review — `run` is 1400 lines
+    /// silently re-open the hole, so count them here rather than trust review — `run` is nearly 2000 lines
     /// and the mutation gate skips it, so this file gets no other structural grading.
     ///
     /// Both needles are assembled with `concat!` ON PURPOSE: written as single literals they would

@@ -19,7 +19,8 @@ Bankrupt rows already in the CSV are kept as they are (append-only), so a later 
 move a graded event. Wipeout rows are recomputed on every run, since a name can recover.
 
 WHY A COUNT FLOOR IS A HARD REFUSAL. A search that silently returns a tenth of the filings writes a
-file that looks plausible and grades a different question. Under 500 bankrupt rows, nothing is written.
+file that looks plausible and grades a different question. Under `MIN_BANKRUPT` (400) bankrupt
+rows, nothing is written.
 
 Not wired into the binary: run it by hand, commit the CSV it writes.
 """

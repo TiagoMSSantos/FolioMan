@@ -2597,8 +2597,8 @@ pub const COUNTRY_TIER: u8 = NASDAQ_TIER - 1;
 /// NO TER ceiling of its own — [`ter_cap_for`] untouched, the stance `(#217)`, `(#218)` and `(#227)`
 /// all took. Every fund the census admits prices at 0.20%-0.23% against the BASE 0.25% cap, so there
 /// is nothing here to walk upward, and `hold_max_ter` DOES NOT MOVE: the four funds sitting at
-/// 0.30%-0.33% (CSNDX.SW, EQAC.SW, PUST.PA, EXXT.DE) STAY OUT, which is the trade ci-settings:4629
-/// already refused once for a sleeve whose funds sat five basis points over.
+/// 0.30%-0.33% (CSNDX.SW, EQAC.SW, PUST.PA, EXXT.DE) STAY OUT, which is the trade the `hold_factor_sleeve` note in
+/// ci-settings (NO TER CEILING, DELIBERATELY) already refused once for a sleeve whose funds sat five basis points over.
 pub const NASDAQ_TIER: u8 = HOLD_TIERS as u8 - 1;
 
 /// (#227) STRUCTURALLY THE INVERSE of the other three optional sleeves, and that is the whole trick.
@@ -5610,8 +5610,9 @@ fn pit_splice_trim(on: bool, ticker: &str) -> bool {
 /// Build a Quote AS OF index `as_of` (inclusive) from the full history, filling ONLY the price-derived
 /// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=as_of]`
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. note:
-/// dividends / turnover / P/E / ROE are NOT reconstructed (no clean as-of source), so those score
-/// terms go neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
+/// P/E and ROE are NOT reconstructed (no clean as-of source) and turnover is a uniform sentinel, so
+/// those score terms go neutral here; dividends ARE, from the payouts dated on or before `as_of`
+/// (see (D) below). The backtest validates the PRICE-based heuristic, which is the bulk of it.
 ///
 /// (#88) `windows` is the SECOND half of the same train/serve skew `perf_nominal` closes. "so the
 /// backtest scores a name exactly as the live tool would have on that day" — the sentence above — was
