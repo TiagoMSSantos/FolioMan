@@ -90,7 +90,9 @@ fn run_isolated(name: &str, overlay: &str, files: &[(&str, &str)], args: &[&str]
 /// `body` and every other call fails the way a dead network does.
 fn run_stubbed(name: &str, body: &'static str, files: &[(&str, &str)], args: &[&str]) -> (i32, String, String) {
     let proxy = format!("http://{}", stub_server(body));
-    let overlay = "urls:\n  yahoo_chart: \"http://stub.invalid/{ticker}?range={range}\"\n  ntfy: \"http://stub.invalid/{topic}\"\n";
+    // (#856) Both pacers off (0 = no pacing): every request lands on the loopback stub, so the 10 and
+    // 8 req/s defaults only add wall time. Before `urls:`, as in `run_routed`.
+    let overlay = "fetch_requests_per_second: 0.0\nsec_requests_per_second: 0.0\nurls:\n  yahoo_chart: \"http://stub.invalid/{ticker}?range={range}\"\n  ntfy: \"http://stub.invalid/{topic}\"\n";
     let mut cmd = isolated_cmd(name, overlay, files);
     for k in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
         cmd.env(k, &proxy);
@@ -562,7 +564,8 @@ fn run_routed(
     args: &[&str],
 ) -> (i32, String, String) {
     let proxy = format!("http://{}", stub_routed(routes));
-    let overlay = format!("urls:\n  yahoo_chart: \"http://stub.invalid/{{ticker}}?range={{range}}\"\n  ntfy: \"http://stub.invalid/{{topic}}\"\n{extra}");
+    // (#856) Pacers off, as in `run_stubbed`. They go before `urls:` because `extra` continues it.
+    let overlay = format!("fetch_requests_per_second: 0.0\nsec_requests_per_second: 0.0\nurls:\n  yahoo_chart: \"http://stub.invalid/{{ticker}}?range={{range}}\"\n  ntfy: \"http://stub.invalid/{{topic}}\"\n{extra}");
     let mut cmd = isolated_cmd(name, &overlay, files);
     for d in dirs {
         std::fs::create_dir_all(isolated_root(name).join(d)).expect("seed dir");
