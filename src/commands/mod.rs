@@ -322,7 +322,7 @@ pub(crate) fn inflation_web_rows(
         .iter()
         .filter_map(|want| inflations.iter().find(|(label, _)| label == want))
         .map(|(label, series)| {
-            let (year, latest, _, _) = crate::core::inflation_summary(series);
+            let (year, latest) = crate::core::inflation_summary(series);
             // (#639) a series too short for the span is —; n/a = a dead feed, every cell
             let cum = |years| match crate::core::inflation_compounded(series, years) {
                 None if !series.is_empty() => "—".to_string(),
@@ -481,7 +481,7 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
     let heads: String = ys.iter().map(|y| format!(" {:>9}", format!("{y}Y"))).collect();
     println!("  {:<9} {:>9}{heads}", "", "latest");
     for (label, series) in &inflations {
-        let (ly, lv, _, _) = core::inflation_summary(series);
+        let (ly, lv) = core::inflation_summary(series);
         let cums: String =
             ys.iter().map(|&y| format!(" {:>9}", pct(core::inflation_compounded(series, y)))).collect();
         let note = if series.is_empty() {

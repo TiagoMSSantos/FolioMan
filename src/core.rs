@@ -3382,21 +3382,10 @@ pub fn ca_base_rate(euribor_3m: f64, mult: Option<f64>, spread: f64, cap: Option
     Some(f64::max(0.0, cap.map_or(raw, |c| f64::min(raw, c))))
 }
 
-/// (latest_year, latest_rate, avg_last_10y, avg_last_30y) from {year->rate}.
-/// Averages use however many of the last N years are present. Nones if empty.
-pub fn inflation_summary(
-    series: &BTreeMap<i32, f64>,
-) -> (Option<i32>, Option<f64>, Option<f64>, Option<f64>) {
-    if series.is_empty() {
-        return (None, None, None, None);
-    }
-    let years: Vec<i32> = series.keys().cloned().collect(); // BTreeMap keys are sorted
-    let avg = |n: usize| -> f64 {
-        let tail = &years[years.len().saturating_sub(n)..];
-        tail.iter().map(|y| series[y]).sum::<f64>() / tail.len() as f64
-    };
-    let last = *years.last().expect("years non-empty: series.is_empty() guarded above");
-    (Some(last), Some(series[&last]), Some(avg(10)), Some(avg(30)))
+/// (latest_year, latest_rate) from {year->rate}. Nones if empty. (#891) The 10y/30y averages it once
+/// returned had no reader outside its own test (both callers dropped them), so they are gone.
+pub fn inflation_summary(series: &BTreeMap<i32, f64>) -> (Option<i32>, Option<f64>) {
+    series.last_key_value().map_or((None, None), |(&y, &v)| (Some(y), Some(v)))
 }
 
 /// Cumulative price rise over the last `years` years, compounding each year's annual CPI
@@ -10611,11 +10600,10 @@ mod tests {
     assert_eq!(d, e);
 
     let series: BTreeMap<i32, f64> = [(2018, 1.0), (2019, 2.0), (2020, 3.0)].into();
-    let (ly, lv, a10, a30) = inflation_summary(&series);
+    let (ly, lv) = inflation_summary(&series);
     assert_eq!(ly, Some(2020));
     assert_eq!(lv, Some(3.0));
-    assert!((a10.unwrap() - 2.0).abs() < 1e-9 && (a30.unwrap() - 2.0).abs() < 1e-9);
-    assert_eq!(inflation_summary(&BTreeMap::new()), (None, None, None, None));
+    assert_eq!(inflation_summary(&BTreeMap::new()), (None, None));
 
     // compounded: last 2 = (1.02)(1.03)-1 = 5.06%; exactly-len = full product
     assert!((inflation_compounded(&series, 2).unwrap() - 5.06).abs() < 1e-9);
