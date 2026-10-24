@@ -5943,9 +5943,10 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
     use std::collections::BTreeMap;
     let ctx = instance_contexts(xml);
     // (fiscal year end, dimension key) -> value, first tag in the list wins (US_GAAP_TAGS order is
-    // load-bearing: diluted before basic). `ni` is keyed on the year alone and takes ONLY the
-    // undimensioned fact — the consolidated bottom line every class's product is measured against.
-    let per_class = |names: &[&str], undimensioned_only: bool| -> BTreeMap<(NaiveDate, String), f64> {
+    // load-bearing: diluted before basic). `ni` is read at the empty dimension key only, the
+    // undimensioned fact: the consolidated bottom line every class's product is measured against.
+    // (#865) Its per-class rows are never looked up, so no filter skips them.
+    let per_class = |names: &[&str]| -> BTreeMap<(NaiveDate, String), f64> {
         let mut m: BTreeMap<(NaiveDate, String), f64> = BTreeMap::new();
         for tag in names {
             let Ok(re) = regex::Regex::new(&format!(r#"<(?:[\w-]+:)?{tag}\s[^>]*contextRef="([^"]+)"[^>]*>([^<]*)</"#)) else {
@@ -5955,17 +5956,14 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
                 let (Some((end, dims)), Ok(val)) = (ctx.get(&f[1]), f[2].trim().parse::<f64>()) else {
                     continue;
                 };
-                if undimensioned_only && !dims.is_empty() {
-                    continue;
-                }
                 m.entry((*end, dims.clone())).or_insert(val);
             }
         }
         m
     };
-    let eps = per_class(tags.eps, false);
-    let shares = per_class(tags.shares, false);
-    let ni = per_class(tags.ni, true);
+    let eps = per_class(tags.eps);
+    let shares = per_class(tags.shares);
+    let ni = per_class(tags.ni);
     // every class that tagged an EPS this fiscal year, grouped so they can be compared against each other
     let mut by_year: BTreeMap<NaiveDate, Vec<(f64, Option<f64>)>> = BTreeMap::new();
     for ((end, dims), e) in &eps {
