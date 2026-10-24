@@ -95,7 +95,7 @@ env:
 
 jobs:
   census:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 350 of GitHub's 360; the step's own 330m SIGINT fires first, so a shard that overruns still
     # writes what it graded.
     timeout-minutes: 350
@@ -175,7 +175,7 @@ jobs:
   report:
     needs: census
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

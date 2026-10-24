@@ -47,7 +47,7 @@ permissions:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Default setup's rust analysis lands in ~1 min at the `default` suite; security-and-quality is
     # slower on 39.6k lines of Rust. 30 is ci.yml's 3-4x rule applied to that, so only a genuine hang
     # trips it rather than a slow morning.
@@ -131,7 +131,7 @@ jobs:
   # to the id list to retain the newest run.
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       actions: write   # gh run delete; the analyze job keeps its own, narrower set

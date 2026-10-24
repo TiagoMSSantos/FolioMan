@@ -36,7 +36,9 @@ concurrency:
 permissions:
   contents: read
 
-# note: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
+# note: ubuntu-24.04 ships a stable Rust toolchain, so no install step needed. (#853) every
+# job pins the image: probe.yml blesses the goldens that ci.yml compares, so both must run on one
+# image, and ubuntu-latest rolls to a new release on its own schedule.
 # rust-cache with a shared key: the test jobs restore ONE common warm cache from prior runs
 # (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
 # at job end — so cross-run reuse is the win; within-run hand-off would require `needs: build`.
@@ -92,7 +94,7 @@ jobs:
   # Rust-centric taiki-e/install-action can't serve it (not in its manifest, and the cargo-binstall
   # fallback fails — it's not a crate).
   actionlint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -192,7 +194,7 @@ jobs:
           echo "journal record: newer, same, older, empty and missing main journals all behave"
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
@@ -209,7 +211,7 @@ jobs:
   # (single-line method chains, aligned trailing comments) that rustfmt-default would explode across
   # hundreds of lines — cosmetic churn, no bug caught. clippy stays; it finds real defects.
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -225,7 +227,7 @@ jobs:
   # does not compile for the browser. (#392) Checks web/engine, the crate Pages builds, into ./target,
   # the only directory rust-cache keeps.
   wasm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#841) job level; see the note above `jobs:`
@@ -265,7 +267,7 @@ jobs:
   # is ever unfixable (no patched release, not exploitable here): commit an `audit.toml` with an
   # `[advisories] ignore = ["RUSTSEC-..."]` entry and a comment saying why.
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -284,7 +286,7 @@ jobs:
   # could depend on a knob being OFF and stay green in CI while failing on every developer machine.
   # One regime everywhere is the point; do not drop this env back off.
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
@@ -313,7 +315,7 @@ jobs:
   # heuristic is read from it. A red here is closed by making the code tolerate a missing config,
   # NEVER by giving this job a FOLIOMAN_CONFIG; that would delete the only check of the class.
   unit-tests-configless:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only   # (#635) job level; see the note above `jobs:`
@@ -347,7 +349,7 @@ jobs:
   # skip arms instead of the parse arms, TOTAL moves, and a BLOCKING gate reds for a reason that has
   # nothing to do with the commit. Naming the targets keeps the number deterministic.
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # (#566) 30 -> 60: the soft gates (#564) score every failer through the full gate list, waiver and
     # dock, so the instrumented fund-lane goldens went from ~3 to ~20 min (34bfee8 cancelled twice at 30).
     timeout-minutes: 60
@@ -462,7 +464,7 @@ jobs:
   # FOLIOMAN_CONFIG because config/settings.yaml is gitignored (private ntfy topic) — point config::load()
   # at the checked-in, secret-free fixture.
   integration-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # (#566) 25 -> 45: the debug fund-lane goldens went from ~3 to ~19 min once the soft gates (#564)
     # scored every failer (34bfee8 cancelled twice at 25, every finished test green).
     timeout-minutes: 45
@@ -513,7 +515,7 @@ jobs:
   # two read it off disk (~127s each). That is why this costs ~+4 min and not 3x. Do not collapse it
   # back to a single run to "save time"; the saving is small and the coverage loss is the whole point.
   backtest-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60   # cold release build + one wide-universe fetch + three walk-forward horizons
     steps:
       - uses: actions/checkout@v7
@@ -621,7 +623,7 @@ jobs:
   # (564s) is the tail without the wait. And `needs` SKIPS a job on failure instead of failing it,
   # so a red dependency used to lose the grade on a push.
   mutants:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 20 is the CEILING THE GATE IS DESIGNED AROUND, not a guess at how long it takes. Measured
     # capacity at that ceiling has fallen with every crate growth — 24 mutants, then ~13, now ~7 (see
     # the BUDGET block for all three); anything larger is sharded down rather than run into the timeout.
@@ -944,7 +946,7 @@ jobs:
   # the same inputs on the same commit prints the same list).
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       actions: write   # gh run delete; other jobs keep the default read-only token
