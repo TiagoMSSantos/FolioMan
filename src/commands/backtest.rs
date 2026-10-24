@@ -7359,12 +7359,23 @@ fn weight_sweep(samples: &[Sample], tuning: &BuyHeuristic) {
     }
 }
 
+/// (#890) The flag a gate-sweep row carries: TOO TIGHT only when the newly admitted cohort's mean AND median
+/// are both positive, SPLIT when they disagree (tail-driven), nothing when both are non-positive.
+fn sweep_tag(mean: f64, med: f64) -> &'static str {
+    match (mean > 0.0, med > 0.0) {
+        (true, true) => "  <- TOO TIGHT (loosen this gate)",
+        (false, false) => "",
+        _ => "  <- SPLIT (tail-driven, read the median)",
+    }
+}
+
 /// (#10) WHICH growth gate is too tight? #9 gives the aggregate verdict; this breaks it down per gate.
 /// For each numeric gate, loosen its threshold one notch (relative to the loaded tuning, so a settings.yaml
 /// override is respected) and report the mean forward peer-relative return of the names that loosening
 /// NEWLY admits. A POSITIVE mean = that gate was discarding winners -> loosen it in settings.yaml and
 /// re-validate (the lane OOS + #9's aggregate must still hold); ≤0 = the gate is correctly keeping junk
 /// out, leave it. Pure measurement, no ranking change; reuses the ablation `Knob` pattern + `growth_score`.
+#[mutants::skip] // printing only; `sweep_tag` carries the test
 fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob], accepted_med: Option<f64>) {
     println!("\n── GATE SWEEP (loosen each gate one notch -> fwd return of the names it NEWLY admits) ──");
     println!("  positive = the gate was too tight (newly-admitted beat the field); ≤0 = it's keeping junk out.");
@@ -7397,11 +7408,7 @@ fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob], accepte
             loosen(&mut t);
             match newly_admitted_stats(samples, growth_score, tuning, &t) {
                 Some((n, mean, med)) => {
-                    let tag = match (mean > 0.0, med > 0.0) {
-                        (true, true) => "  <- TOO TIGHT (loosen this gate)",
-                        (false, false) => "",
-                        _ => "  <- SPLIT (tail-driven, read the median)",
-                    };
+                    let tag = sweep_tag(mean, med);
                     // (#151) the comparative column. Absent when the audit could not run, never
                     // faked with a 0.0 default — "no baseline" and "a baseline of zero" are the two
                     // different answers this whole receipt is about.
@@ -11336,6 +11343,17 @@ mod tests {
         assert!(gap_verdict(-5.0, 1.0, "yes", "no").starts_with("SPLIT"), "mean − / median + -> SPLIT");
         // exactly 0 counts as non-positive on both sides, so a dead-flat gap reads as the negative verdict
         assert_eq!(gap_verdict(0.0, 0.0, "yes", "no"), "no");
+    }
+
+    /// (#890) The gate-sweep flag by quadrant of (mean, median): both positive = TOO TIGHT, both non-positive =
+    /// no flag, a sign split = SPLIT, and exactly 0 counts as non-positive on both sides.
+    #[test]
+    fn sweep_tag_quadrants() {
+        assert_eq!(sweep_tag(1.0, 1.0), "  <- TOO TIGHT (loosen this gate)");
+        assert_eq!(sweep_tag(-1.0, -1.0), "");
+        assert_eq!(sweep_tag(1.0, -1.0), "  <- SPLIT (tail-driven, read the median)");
+        assert_eq!(sweep_tag(-1.0, 1.0), "  <- SPLIT (tail-driven, read the median)");
+        assert_eq!(sweep_tag(0.0, 0.0), "");
     }
 
     /// `cohort_stats` returns (mean, median) and the two part ways on skew — the whole premise of the
