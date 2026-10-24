@@ -265,4 +265,5 @@ lane has to beat over a multi-decade hold (#798).
 
 1. **No auto-trading** — `trade` is manual and confirm-gated; a signal never fires an order.
 2. **Raw headlines, no sentiment NLP** (NLP = Natural Language Processing).
-3. **Secrets in env, never in the repo** (broker keys + ntfy topic stay out of `settings.yaml`).
+3. **Secrets in env, never in the repo** (broker keys come from env; the ntfy topic lives only in the
+   gitignored `config/settings.yaml`, never in the committed `tests/ci-settings.yaml`).
