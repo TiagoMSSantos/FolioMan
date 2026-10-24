@@ -592,7 +592,7 @@ impl Default for BuyHeuristic {
             // gates
             min_1y_pct: 0.0,
             growth_regime_slack_pct: None,  // (#326) OFF: the absolute floors stand at every date, exactly as before the valve existed
-            growth_min_1y_pct: 0.0,        // the value the growth lane hardcoded before this knob existed -> neutral default AND live behaviour at once. Loosening it is measured-negative (see the field doc); ci-settings ships 0.0 with the receipt
+            growth_min_1y_pct: 0.0,        // the value the growth lane hardcoded before this knob existed -> neutral default AND live behaviour at once. Loosening it is measured-negative (see the field doc); ci-settings ships -0.3 since (#457) (books identical to 0.0)
             min_1y_pct_crypto: -60.0,      // crypto routinely swings -40% in a year without breaking
             max_1m_drop_pct: -15.0,
             max_1m_drop_pct_crypto: -35.0, // alts routinely shed -20..-30% in a month without breaking
@@ -1870,9 +1870,6 @@ pub fn hold_size_sleeve_ter() -> f64 {
     })
 }
 
-/// (#197) see [`hold_name_tokens`] for why these are free accessors. `hold_core_list` and
-/// `print_hold_core` take `&[Quote]` and no `tuning`, and the header line quotes this same number,
-/// so routing both through one reader is what stops the printed cap and the applied cap drifting.
 /// (#207) the all-world sleeve's own row cap; 0 = inherit [`hold_per_tier`]. Free accessor for the
 /// same reason as its twin — `hold_core_list` takes no `tuning`, and the header line quotes this
 /// number too, so one reader is what stops the printed cap and the applied cap drifting apart.
@@ -2073,6 +2070,9 @@ pub fn hold_per_tier_nasdaq() -> usize {
     })
 }
 
+/// (#197) see [`hold_name_tokens`] for why these are free accessors. `hold_core_list` and
+/// `print_hold_core` take `&[Quote]` and no `tuning`, and the header line quotes this same number,
+/// so routing both through one reader is what stops the printed cap and the applied cap drifting.
 #[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn hold_per_tier() -> usize {
     use std::sync::OnceLock;
@@ -2273,10 +2273,6 @@ pub fn life_cagr_max_years() -> f64 {
     })
 }
 
-/// (history_proxy) Process-once read of the young-listing -> older-twin map. Read once per quote in
-/// the screen fan-out, so parse the config ONCE, not thousands of times. SOFT — a missing/invalid
-/// config yields an empty map (no splices), so it never panics in unit tests where the gitignored
-/// settings.yaml is absent.
 /// (#327) Pairs a previous `screen` discovered, merged UNDER the curated ones: a human entry always
 /// wins, so turning the knob on can never silently override a hand-picked twin. Split out of the
 /// accessor because the accessor is a process-wide `OnceLock` no test can flip — the MERGE is a
@@ -2291,6 +2287,10 @@ pub fn merge_auto_proxies(
     curated
 }
 
+/// (history_proxy) Process-once read of the young-listing -> older-twin map. Read once per quote in
+/// the screen fan-out, so parse the config ONCE, not thousands of times. SOFT — a missing/invalid
+/// config yields an empty map (no splices), so it never panics in unit tests where the gitignored
+/// settings.yaml is absent.
 #[mutants::skip]
 pub fn history_proxy() -> &'static BTreeMap<String, String> {
     use std::sync::OnceLock;

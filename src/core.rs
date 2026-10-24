@@ -2711,15 +2711,6 @@ fn factor_sleeve_tier(n: &str, first: &str, on: bool) -> Option<u8> {
     FACTOR_GEO.contains(&geo_hit(n)?).then_some(FACTOR_TIER)
 }
 
-/// (#202) Does the census line print this sleeve? An optional sleeve is HIDDEN while its knob is
-/// off, so a lane with both off prints byte-identically to its eight-sleeve self — non-negotiable #1.
-/// Every GEOGRAPHIC sleeve always prints, empty or not: round 118's rule, because an absent sleeve
-/// and one the pond cannot fill are different facts and the reader needs to tell them apart.
-///
-/// (#217) Was `sleeves_shown`, a COUNT consumed by `.take(n)`. A count cannot express TWO
-/// INDEPENDENTLY optional sleeves — size OFF with factor ON is a live combination and would have
-/// printed the factor cell under the size cell's LABEL, silently. The predicate is the same rule
-/// stated per-tier, and it is what makes the two knobs orthogonal instead of ordered.
 /// (#239) The `NARROW` token this sleeve claims back, spelled ONCE and read by both
 /// [`nasdaq_sleeve_tier`] and [`sleeve_family_of`] — non-negotiable #4, so the sleeve and the family
 /// key it produces cannot drift apart the way two literals would.
@@ -2762,6 +2753,15 @@ fn nasdaq_sleeve_tier(n: &str, first: &str, cap: usize) -> Option<u8> {
     Some(NASDAQ_TIER)
 }
 
+/// (#202) Does the census line print this sleeve? An optional sleeve is HIDDEN while its knob is
+/// off, so a lane with both off prints byte-identically to its eight-sleeve self — non-negotiable #1.
+/// Every GEOGRAPHIC sleeve always prints, empty or not: round 118's rule, because an absent sleeve
+/// and one the pond cannot fill are different facts and the reader needs to tell them apart.
+///
+/// (#217) Was `sleeves_shown`, a COUNT consumed by `.take(n)`. A count cannot express TWO
+/// INDEPENDENTLY optional sleeves — size OFF with factor ON is a live combination and would have
+/// printed the factor cell under the size cell's LABEL, silently. The predicate is the same rule
+/// stated per-tier, and it is what makes the two knobs orthogonal instead of ordered.
 pub fn sleeve_visible(
     tier: usize,
     size_cap: f64,
@@ -2783,10 +2783,6 @@ pub fn sleeve_visible(
     }
 }
 
-/// (#202) Which TER ceiling a sleeve is judged against. Takes both caps rather than reading them,
-/// so the choice itself is a pure function the mutation gate can reach — the knob is a process-wide
-/// `OnceLock` read from config, so a test cannot flip it and an unreachable branch here would be an
-/// ungraded one.
 /// (#207) How many rows a sleeve may print. Tier 0 (all-world) can carry its own ceiling because it
 /// is the only sleeve where an extra row is a DIFFERENT product rather than another wrapper of what
 /// is already shown: ACWI, ACWI IMI and FTSE All-World track different universes, and (#207) admitted
@@ -2874,6 +2870,10 @@ pub fn tier_cap(
     }
 }
 
+/// (#202) Which TER ceiling a sleeve is judged against. Takes both caps rather than reading them,
+/// so the choice itself is a pure function the mutation gate can reach — the knob is a process-wide
+/// `OnceLock` read from config, so a test cannot flip it and an unreachable branch here would be an
+/// ungraded one.
 fn ter_cap_for(tier: u8, size_cap: f64, base_cap: f64) -> f64 {
     if tier == SIZE_TIER {
         size_cap
@@ -3147,9 +3147,6 @@ pub fn hold_miss_leg_with(
     hold_miss_leg_at(q, tier, allow_swap, allow_unknown_ter, size_cap)
 }
 
-/// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
-/// breadth one, split out so [`hold_miss_but_breadth`] can ask the other five without re-spelling a
-/// single one of them (non-negotiable #4). `tier` is read at exactly one site, [`ter_cap_for`].
 /// (#269) The EFFECTIVE CORE admission AUM floor: the relaxed floor when it is armed, else the
 /// strict one. ONE definition (non-negotiable #4) — the AUM leg filters on it, the leg's printed
 /// reason quotes it, and four tests assert against it. Those three disagreeing is exactly how a
@@ -3178,6 +3175,9 @@ pub fn hold_aum_floor_label(floor: f64) -> String {
     s.strip_suffix(".0").unwrap_or(s.as_str()).to_string()
 }
 
+/// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
+/// breadth one, split out so [`hold_miss_but_breadth`] can ask the other five without re-spelling a
+/// single one of them (non-negotiable #4). `tier` is read at exactly one site, [`ter_cap_for`].
 fn hold_miss_leg_at(
     q: &Quote,
     tier: u8,
