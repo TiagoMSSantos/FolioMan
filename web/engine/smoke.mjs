@@ -18,6 +18,21 @@ import path from "node:path";
     process.exit(1);
   }
 }
+// (#903) and so do its own console.asserts (the CSV formula guard, the hovers, the CAGR bar...), which a
+// browser only logs: the whole file runs on stub globals, every assert in it must run and hold.
+{
+  const src = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
+  const bad = [];
+  let n = 0;
+  const el = () => ({ options: [], value: "", checked: false, style: {}, dataset: {}, append() {}, replaceChildren() {}, querySelector: () => null, closest: () => null });
+  const doc = { getElementById: el, createElement: el, querySelectorAll: () => [] };
+  new Function("document", "location", "matchMedia", "fetch", "console", "history", src)(doc, { search: "", hash: "" }, () => ({ matches: true }), () => Promise.reject(new Error("no network in smoke")), { assert: (ok, m) => (n++, ok || bad.push(m)) }, {});
+  const want = src.match(/console\.assert\(/g).length;
+  if (n !== want || bad.length) {
+    console.error(`web/app.js asserts: ${n} of ${want} ran; failed: ` + bad.join(" | "));
+    process.exit(1);
+  }
+}
 
 const site = path.resolve(process.argv[2]);
 // --target web emits an ES module under a .js name; the copy gives node an unambiguous .mjs
