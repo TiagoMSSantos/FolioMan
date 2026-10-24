@@ -167,6 +167,21 @@ jobs:
           sed 's/\(need=.\[\)"[^"]*"/\1"zzz-renamed"/' automerge.yml > "$t/automerge.yml"
           if out=$(guard ci.yml "$t/automerge.yml"); then echo "guard passed a need entry no job reports"; exit 1; fi
           grep -q zzz-renamed <<<"$out" || { echo "guard failed without naming the renamed entry: $out"; exit 1; }
+      # (#854) The mutation gate's picker on made-up lists, budget 6. Nine mutants are over budget, so the
+      # legs grade halves of the old shard 1/2. One mutant leaves leg 1 nothing, and an empty list (a
+      # diff with no Rust) grades nothing on either leg.
+      - name: Mutation gate splits its budget across two legs
+        run: |
+          p=.github/scripts/mutants-pick.py
+          t=$(mktemp -d)
+          mk() { jq -n '$ARGS.positional | to_entries | map({name: "m\(.key)", file: (.value | split(":")[0]), genre: (.value | split(":")[1])})' --args "$@"; }
+          legs() { python3 -I "$p" 6 0 < "$1" > "$t/0" && python3 -I "$p" 6 1 < "$1" > "$t/1" && echo "$(head -1 "$t/0") $(head -1 "$t/1")"; }
+          mk a:StructField a:StructField a:StructField a:StructField a:StructField a:StructField a:BinaryOperator b:BinaryOperator b:FnValue > "$t/l.json"
+          if [ "$(legs "$t/l.json")" != "2 2" ] || ! grep -qx 1/4 "$t/0" || ! grep -qx 3/4 "$t/1"; then echo "over budget did not grade halves of shard 1/2:"; cat "$t/0" "$t/1"; exit 1; fi
+          mk a:FnValue > "$t/l.json"
+          [ "$(legs "$t/l.json")" = "1 0" ] || { echo "one mutant did not go to leg 0 alone:"; cat "$t/0" "$t/1"; exit 1; }
+          : > "$t/l.json"
+          [ "$(legs "$t/l.json")" = "0 0" ] || { echo "an empty list graded something:"; cat "$t/0" "$t/1"; exit 1; }
       # (#637) pages.yml's `record` job appends the run's last journal line only when it is dated after main's
       # last one (#605). That test is .github/scripts/journal-newer-line.sh, which the job sources, so it runs
       # here the same way (under `bash -e`) on throwaway journals: an edit that copies the run's file, appends
@@ -623,6 +638,15 @@ jobs:
   # (564s) is the tail without the wait. And `needs` SKIPS a job on failure instead of failing it,
   # so a red dependency used to lose the grade on a push.
   mutants:
+    # (#854) Two legs on two runners, each grading its half of the push's budget (the picker in the
+    # gate step decides which half). One leg ran 248s on a full-budget push: setup, list and upload
+    # ~34s, baseline 91s, 6 mutants 122s. Half the mutants per leg should end each near 186s, inside
+    # coverage's ~200s; expected, not yet measured. Both legs restore the cache; leg 0 alone saves it.
+    name: mutants ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     runs-on: ubuntu-24.04
     # 20 is the CEILING THE GATE IS DESIGNED AROUND, not a guess at how long it takes. Measured
     # capacity at that ceiling has fallen with every crate growth — 24 mutants, then ~13, now ~7 (see
@@ -670,8 +694,9 @@ jobs:
           # shortcut: a src push with no mutants in its diff (comments only) right after a lock bump
           # can still do that; the cost is rebuilding the bumped crates each run until the next bump.
           # Upgrade: decide save-if from a `cargo mutants --list` run before this step.
+          # (#854) Leg 0 alone saves: the two legs build the same dependencies, and (#353) wants one writer.
           shared-key: folioman-mutants
-          save-if: ${{ github.ref == 'refs/heads/main' && steps.src.outputs.changed == 'true' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && steps.src.outputs.changed == 'true' && matrix.shard == 0 }}
       - name: mutation gate — changed code must be covered by the suite
         env:
           # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a
@@ -715,6 +740,7 @@ jobs:
           # doesn't depend on the tree's path. On f6bd520, cold, the baseline built 154 crates in
           # 130s, and the second tree paid 151s more to grade one mutant.
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          LEG: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           if [ -z "${BASE}" ] || [ "${BASE}" = "0000000000000000000000000000000000000000" ] \
@@ -727,8 +753,9 @@ jobs:
           # 247.8s with unoptimised dependencies and 83.3s with optimised ones (census baseline), and
           # every mutant that --lib lets through pays it. The price is a slower cold tree (~50s -> ~125s).
           printf '[profile.mutants.package."*"]\nopt-level = 2\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
-          # Count first, into the summary: a slow run then reads as "big diff", not as a hang. `--list`
-          # only parses, so this costs seconds.
+          # List first, and print the count into the summary: a slow run then reads as "big diff", not
+          # as a hang. `--list` only parses, so this costs seconds. (#854) As JSON, for the picker
+          # below.
           #
           # The error is NOT discarded, and that is deliberate. `--in-diff` hard-errors with "Diff
           # content doesn't match source file" when the diff and the tree disagree, and piping its
@@ -736,23 +763,10 @@ jobs:
           # as "nothing to grade" and PASS. A gate that goes green because its input was unreadable is
           # the same class of bug as the marker SKIPs this round set out to close, so: listing failure
           # is a RED, and only a genuine empty list is a pass.
-          if ! cargo mutants --list --in-diff push.diff > mutant-list.txt 2> mutant-list.err; then
+          if ! cargo mutants --list --json --in-diff push.diff > mutant-list.json 2> mutant-list.err; then
             echo "cargo mutants --list failed — grading nothing is NOT a pass:" >&2
             cat mutant-list.err >&2
             exit 1
-          fi
-          n=$(wc -l < mutant-list.txt)
-          {
-            echo '```text'
-            echo "base ${BASE}"
-            echo "${n} mutants in the changed lines"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # A push that touches no Rust generates nothing to grade. That is a PASS, not an error —
-          # without this guard a README-only commit would red the build.
-          if [ "${n}" -eq 0 ]; then
-            echo "no mutants in the diff — nothing to grade" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
           fi
           # OVERSIZE FALLBACK. A refactor push can generate hundreds of mutants, and the honest
           # failure there is a graded slice, not a cancellation: a job killed by the timeout produces
@@ -803,16 +817,28 @@ jobs:
           # mutant ~5-11s build + ~9s test, so the full budget of 6 took a 166s step and a 177s job, level
           # with backtest-gate (176s). The key hashes Cargo.lock: re-read this after a lock bump lands.
           #
-          # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
-          # arguments, and quoting it would pass one empty argument in the common case where no shard
-          # is wanted. `"${SHARD[@]}"` expands to nothing at all when empty, and needs no splitting.
+          # (#854) BUDGET is per push, and the two legs split it: each grades its half on its own runner
+          # and pays its own baseline, so a full budget costs each leg one baseline and 3 mutants.
+          #
+          # .github/scripts/mutants-pick.py splits the work. Within the budget each leg grades half the
+          # list; over it each grades half of the old shard 1/N, so the two together grade that shard.
+          # Its stdout: the leg's expected count, the summary note, then cargo-mutants arguments, one
+          # per line, so `mapfile` keeps each regex whole and an array needs no word-splitting.
           BUDGET=6
-          SHARD=()
-          if [ "${n}" -gt "${BUDGET}" ]; then
-            shards=$(( (n + BUDGET - 1) / BUDGET ))
-            SHARD=(--shard "1/${shards}" --sharding round-robin)
-            echo "${n} mutants exceeds the ${BUDGET} budget — grading shard 1/${shards}" \
-              | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 -I .github/scripts/mutants-pick.py "${BUDGET}" "${LEG}" < mutant-list.json > pick.txt
+          mapfile -t PICK < pick.txt
+          expected=${PICK[0]}
+          {
+            echo '```text'
+            echo "base ${BASE}"
+            echo "${PICK[1]}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          # A push that touches no Rust generates nothing to grade. That is a PASS, not an error —
+          # without this guard a README-only commit would red the build. So is leg 1 of a one-mutant
+          # diff: the other leg grades it.
+          if [ "${expected}" -eq 0 ]; then
+            exit 0
           fi
           # --lib + the frozen-data goldens are the killing suite: both are offline and deterministic.
           # network.rs is deliberately NOT in it — a mutant "surviving" because Yahoo throttled would be
@@ -850,8 +876,9 @@ jobs:
           # SIGINT is the fix: cargo-mutants stops cleanly and finishes writing its result files.
           # Confirmed twice — interrupted at 206/218 locally and cancelled at 24/31 on the runner,
           # both leaving complete caught/missed files, because those files are appended as each
-          # mutant finishes rather than written at the end. So an overrun now degrades to "graded 16
-          # mutants, 0 survived" instead of to silence. 17m leaves ~3 minutes under timeout-minutes
+          # mutant finishes rather than written at the end. So an overrun degrades to "graded 16 of 18
+          # mutants, 0 survived" instead of to silence. (#854) It still reds, on the count check
+          # below, but with its survivor list in hand. 17m leaves ~3 minutes under timeout-minutes
           # for the 11s setup and the artifact upload.
           #
           # (#427) NO `--timeout`, and the baseline runs: cargo-mutants derives the timeout as a multiple
@@ -877,7 +904,7 @@ jobs:
           # cargo twice. `cargo mutants --list` names the same mutants under both argument lists
           # (33967 on the whole tree when checked, byte-identical) and the Test phase runs the same
           # command as before. The saving is EXPECTED, not yet measured. On the first code push after
-          # this lands, the mutants-out artifact's log/baseline.log must show a Build line ending
+          # this lands, a mutants-out-N artifact's log/baseline.log must show a Build line ending
           # `--lib --test=backtest_fixture`, no rustc line for tests/cli.rs or tests/network.rs, and
           # src/main.rs once, not twice (a9d2bab compiled seven targets there, now four). Then read
           # "Unmutated baseline in Xs build" against 48s on a9d2bab (32s in the note above) and each
@@ -885,7 +912,7 @@ jobs:
           # no mutants and is unchanged.
           rc=0
           timeout --signal=INT --kill-after=60s 17m \
-            cargo mutants "${SHARD[@]}" --in-diff push.diff -j 1 --copy-target=false \
+            cargo mutants "${PICK[@]:2}" --in-diff push.diff -j 1 --copy-target=false \
               --profile mutants --cargo-arg=--lib --cargo-arg=--test=backtest_fixture \
               -- -- --skip backtest_fund_report --skip backtest_8y_fund_samples || rc=$?
           # THE FILES ARE THE VERDICT, not the exit code: under `timeout` the code conflates
@@ -902,9 +929,8 @@ jobs:
           fi
           graded=$(cat mutants.out/*.txt | wc -l)   # caught + missed + timeout + unviable
           missed=$(wc -l < mutants.out/missed.txt)
-          # Not "of ${n}" — when sharded, n counts the whole diff and this run only ever saw a slice
-          # of it. The shard line above already says which.
-          echo "graded ${graded} mutants, ${missed} survived (exit ${rc})" \
+          # "of ${expected}": this leg's share, not the diff's count. The note above gives that.
+          echo "graded ${graded} of ${expected} mutants, ${missed} survived (exit ${rc})" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "${graded}" -eq 0 ]; then
             echo "nothing was graded — treating as a failure, not a pass" >&2
@@ -914,10 +940,17 @@ jobs:
             tee -a "$GITHUB_STEP_SUMMARY" < mutants.out/missed.txt >&2
             exit 1
           fi
+          # (#854) Last, so a short run still prints its survivors first. The picker predicted the
+          # count from the same list, so a gap means the shard graded other mutants than it listed,
+          # or the 17m wrapper cut the run short.
+          if [ "${graded}" -ne "${expected}" ]; then
+            echo "graded ${graded}, expected ${expected}: the run graded other mutants than the picker chose, or the 17m wrapper cut it short" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         if: always()   # the survivor list is the whole point of a red — keep it
         with:
-          name: mutants-out
+          name: mutants-out-${{ matrix.shard }}
           path: mutants.out
           retention-days: 14
 

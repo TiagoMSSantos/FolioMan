@@ -8,8 +8,8 @@ list ran and succeeded. The list rots in two directions, and they fail in opposi
   - a `need` entry no job reports any more (a renamed job) can never be satisfied: every bot PR idles
     for good. That fails closed, but only shows as "why does nothing merge".
 This reads ci.yml's jobs and codeql.yml's check names and compares both ways. A check run is named by
-its job's `name:`, else the job key, and a matrix adds " (leg)" through the name template; ci.yml's
-jobs carry neither. `cleanup-runs` is the one job `need` leaves out: it runs on main only, so a PR
+its job's `name:`, else the job key, and a matrix adds " (leg)" through the name template; in ci.yml
+only `mutants` carries both since (#854), as "mutants 0" and "mutants 1". `cleanup-runs` is the one job `need` leaves out: it runs on main only, so a PR
 never has that check.
 
 No YAML library: the runner image does not promise PyYAML, so this reads the 2-space job keys under
