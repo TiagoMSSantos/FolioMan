@@ -1501,7 +1501,7 @@ pub async fn run(args: Vec<String>) {
     let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
     // (#751) fetched before the walk, which rolls a dead series' last close into it
     // (#804) `backtest_tr_ruler` grades on the total-return index too, with price-only selection
-    let bench_sym = if crate::config::use_adjusted_close() || tuning.backtest_tr_ruler { "^SP500TR" } else { "^GSPC" };
+    let bench_sym = if bench_is_tr(crate::config::use_adjusted_close(), tuning) { "^SP500TR" } else { "^GSPC" };
     let bench = if monthly {
         fetch::fetch_history_long(&client, &settings.urls, bench_sym).await
     } else {
@@ -3573,6 +3573,13 @@ fn basket_vacuity(pools: &[usize], basket: usize) -> (usize, usize, usize, bool)
     (saturated, substitutable, median, saturated * 2 > pools.len())
 }
 
+/// (#968) The benchmark is the S&P 500 total-return index whenever the run meters total return, through
+/// the selection (`use_adjusted_close`) or the ruler alone (#804). `run` fetched ^SP500TR on either while
+/// `report_vs_benchmark` named it ^GSPC under the ruler alone; both now read this one test.
+fn bench_is_tr(adjusted_close: bool, tuning: &BuyHeuristic) -> bool {
+    adjusted_close || tuning.backtest_tr_ruler
+}
+
 /// (#40) ABSOLUTE goal metric — the one the peer-relative lanes never measure. The stated purpose is
 /// "out-return an S&P500 buy-and-hold", but every lane above de-means the level away (SELECTION, not the
 /// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
@@ -3582,8 +3589,8 @@ fn basket_vacuity(pools: &[usize], basket: usize) -> (usize, usize, usize, bool)
 /// from today's survivors (biased UP), ^GSPC is the true index, so a non-stress win is optimistic.
 fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
-    // name the benchmark honestly: ^SP500TR when the run meters total return (use_adjusted_close).
-    let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR total-return" } else { "^GSPC" };
+    // name the benchmark honestly: the series `run` fetched, by the same test it fetched it with
+    let bench_sym = if bench_is_tr(crate::config::use_adjusted_close(), tuning) { "^SP500TR total-return" } else { "^GSPC" };
     if bd.len() < 2 {
         println!("\n── vs S&P500 (ABSOLUTE) ──  no {bench_sym} history fetched — skipping the benchmark leg.");
         return;
@@ -12858,6 +12865,18 @@ mod tests {
 
     /// The report fns that return or print only past a guard: no benchmark, no scorable pool, no trail. Each
     /// must decline quietly rather than index into an empty series or fabricate a row.
+    /// (#968) Either total-return knob names the total-return index; only both off is price-only.
+    #[test]
+    fn either_total_return_knob_names_the_tr_benchmark() {
+        let mut t = shipped_hard();
+        t.backtest_tr_ruler = false;
+        assert!(!bench_is_tr(false, &t), "both off: the price-only ^GSPC");
+        assert!(bench_is_tr(true, &t), "adjusted close alone");
+        t.backtest_tr_ruler = true;
+        assert!(bench_is_tr(false, &t), "ruler alone: the missed case");
+        assert!(bench_is_tr(true, &t));
+    }
+
     #[test]
     fn report_helpers_decline_without_a_benchmark_or_a_scorable_pool() {
         let (samples, tuning, bench) = (synthetic_samples(), shipped_hard(), synthetic_bench());
