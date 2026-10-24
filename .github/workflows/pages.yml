@@ -281,7 +281,7 @@ jobs:
       # under its own key whenever its entry had been evicted, leaving every later build cold. So a push
       # that moves web/engine alone builds the engine below without rust-cache: slower, never red.
       - if: steps.bin.outputs.cache-hit != 'true'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # (#701) The crate at opt-level 1, its dependencies still at 3. An override for this package leaves
       # their artifacts valid, so rust-cache still serves them. Run 39068294070 spent 62s of this step on
       # the crate alone. Its Screen then used 28s of CPU in a 173s wall clock, and its 8799 paced calls
