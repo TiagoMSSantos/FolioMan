@@ -148,7 +148,7 @@ fn suffix_country(suf: &str) -> Option<&'static str> {
 
 /// (#112) Yahoo ticker suffix -> the currency that venue QUOTES in. Deliberately a second table over
 /// the same suffixes rather than a country -> currency map on top of `suffix_country`: the two answer
-/// different questions (Sweden and Denmark are EU and are not euro; four venues share EUR), and a hop
+/// different questions (Sweden and Denmark are EU and are not euro; many venues share EUR), and a hop
 /// through country would make the euro bloc look like a coincidence instead of a fact. Kept adjacent
 /// to `suffix_country` for the same reason `EU_MARKETS` below is — an edit to either literal sees the
 /// other, and a venue added to one and not the other reads as a country with no currency.
@@ -6001,7 +6001,7 @@ mod tests {
     /// thing the footer that reads this exists to stop.
     #[test]
     fn an_unknown_venue_has_no_currency_rather_than_a_guessed_one() {
-        // four venues share EUR, and that is a fact about the euro, not a coincidence worth deriving
+        // every euro venue shares EUR, and that is a fact about the euro, not a coincidence worth deriving
         for suf in ["DE", "F", "PA", "AS", "MI", "MC", "VI", "LS", "BR", "HE", "IR"] {
             assert_eq!(listing_currency(&format!("X.{suf}")), Some("EUR"), "{suf} is in the euro bloc");
         }
@@ -8380,11 +8380,6 @@ mod tests {
             "(#272) and a covered twin still keys on its index");
     }
 
-    /// (#271) `(#269)` shipped `hold_effective_aum_floor` with its ARMING TEST ungraded: the guard's
-    /// own tests thread `strict`/`relaxed` straight into `retain_new_family_only`, so they never call
-    /// this helper and CI's mutation gate MISSED `replace > with <` at core.rs:2686. That mutant is not
-    /// cosmetic — under `relaxed < 0.0` a live 5e8 fails the test, the helper returns `strict`, and the
-    /// whole relaxed floor is silently OFF while every other test still passes. Spell all four arms.
     /// (#273) `aum_floor_for` is the DECISION the sector floor knob buys, so it is graded here and
     /// directly — `(#271)`'s lesson, which cost a MISSED mutant when a knob was threaded into a call
     /// site while the helper that interpreted it went ungraded. Spell every arm: the sleeve it scopes
@@ -8402,6 +8397,11 @@ mod tests {
         assert_eq!(aum_floor_for(SECTOR_TIER, 2e9, 1e9), 1e9, "…kills `min` -> `max`");
     }
 
+    /// (#271) `(#269)` shipped `hold_effective_aum_floor` with its ARMING TEST ungraded: the guard's
+    /// own tests thread `strict`/`relaxed` straight into `retain_new_family_only`, so they never call
+    /// this helper and CI's mutation gate MISSED its `replace > with <`. That mutant is not cosmetic —
+    /// under `relaxed < 0.0` a live 5e8 fails the test, the helper returns `strict`, and the whole
+    /// relaxed floor is silently OFF while every other test still passes. Spell all four arms.
     #[test]
     fn the_relaxed_aum_floor_arms_only_on_a_positive_value() {
         // armed: the knob LOWERS the bar, which is the only thing it may ever do

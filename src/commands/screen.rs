@@ -4374,8 +4374,8 @@ mod tests {
         assert_eq!(deploy_multiplier(15.0), 2.0);
     }
 
-    /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point
-    /// wobble, coverage churn (None<->Some) and unknown-both stay silent.
+    /// The alert journal appends one dated, trimmed line per alert, writes nothing when there are
+    /// none, and only warns when the path cannot be written.
     #[test]
     fn journal_appends_dated_trimmed_lines() {
         // (#343) Owns `.screen_alerts.log` in the lib-test scratch root; nothing else here touches it.
@@ -4434,6 +4434,8 @@ mod tests {
         assert!(line.ends_with("discovery OFF (history_proxy_auto) — suggestions only, nothing spliced"), "{line}");
     }
 
+    /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point
+    /// wobble, coverage churn (None<->Some) and unknown-both stay silent.
     #[test]
     fn fact_alerts_semantics() {
         let m = |rows: &[(&str, Option<f64>, Option<f64>)]| -> HashMap<String, (Option<f64>, Option<f64>)> {
@@ -5502,7 +5504,7 @@ mod tests {
         assert!(small_aum_names(&["EDGE.L".into()], &[edge]).is_empty());
     }
 
-    /// (funnel) The tally's four claims: the arithmetic CLOSES (`scanned = refused + failed +
+    /// (funnel) The tally's claims: the arithmetic CLOSES (`scanned = refused + failed +
     /// cleared` — a funnel that doesn't reconcile is silently losing names and can't aim a knob),
     /// a 1-fail name is the only kind that lands in sole-blocked, a 2-fail name lands in the fail
     /// counts of BOTH gates and in neither sole column, a refusal lands only in its own bucket, and
@@ -5875,19 +5877,6 @@ mod tests {
         assert!(old.is_some() && !corrupt);
     }
 
-    /// (#246) the CORE handoff to `size`: the BROADEST row (the shortlist is breadth-major, so
-    /// index 0) plus the run date, so a stale shortlist is visible rather than silent. Every
-    /// not-known path answers None — no state file, a corrupt one, and a state whose `core` is
-    /// empty (written before round 55, or by a run that printed no CORE table).
-    ///
-    /// `(#253)` added the skip over already-sized tickers, so the two arms that matter are pinned
-    /// with the match AWAY from index 0 of a multi-element list: a one-element `sized` matching
-    /// `core[0]` would pass with the filter inverted.
-    ///
-    /// `(#259)` added the replication note, read off `fund_meta`. The arm worth the most here is
-    /// the LAST one: the note must describe the ticker the walk-down settled on, not the one it
-    /// skipped past. It is pinned in BOTH directions (skipped-swap -> no note, skipped-physical ->
-    /// note) because a single direction passes just as well if the lookup reads `core[0]` blindly.
     /// `(#289)` The spill selection itself, now that two surfaces share it.
     ///
     /// Reachable only through a state-file fixture until this round, which is why the tilt could sit
@@ -5919,6 +5908,19 @@ mod tests {
         assert!(spill_picks(&[], 3, true).is_empty());
     }
 
+    /// (#246) the CORE handoff to `size`: the BROADEST row (the shortlist is breadth-major, so
+    /// index 0) plus the run date, so a stale shortlist is visible rather than silent. Every
+    /// not-known path answers None — no state file, a corrupt one, and a state whose `core` is
+    /// empty (written before round 55, or by a run that printed no CORE table).
+    ///
+    /// `(#253)` added the skip over already-sized tickers, so the two arms that matter are pinned
+    /// with the match AWAY from index 0 of a multi-element list: a one-element `sized` matching
+    /// `core[0]` would pass with the filter inverted.
+    ///
+    /// `(#259)` added the replication note, read off `fund_meta`. The arm worth the most here is
+    /// the LAST one: the note must describe the ticker the walk-down settled on, not the one it
+    /// skipped past. It is pinned in BOTH directions (skipped-swap -> no note, skipped-physical ->
+    /// note) because a single direction passes just as well if the lookup reads `core[0]` blindly.
     #[test]
     fn last_core_hands_size_the_broadest_row() {
         let state_repl = |core: Vec<String>, meta: &[(&str, &str)]| {

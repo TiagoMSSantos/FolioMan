@@ -12745,14 +12745,15 @@ mod tests {
         assert_eq!(tickers(&six), ["XUTC.DE", "N.DE", "S"], "at 6 the world fund joins the clique");
     }
 
-    /// (QA) `col_cell` VALUE arms the `screen_columns_config` test leaves at n/a (it uses a bare stub):
-    /// the number-formatting columns + the ≥1000% no-decimal path + the unknown-key fallback.
+    /// (#743) A cell that rounds to zero loses its minus; a real negative, a +, n/a and "-" are untouched.
     #[test]
     fn unsign_zero_drops_the_minus_only_off_a_zero() {
         let got = ["-0.0%", "-0x", "-0%ⁱ", "-0.00%", "-0.0ˢ", "-0.05%", "-10%", "+0.0%", "n/a", "-"].map(|c| unsign_zero(c.to_string()));
         assert_eq!(got, ["0.0%", "0x", "0%ⁱ", "0.00%", "0.0ˢ", "-0.05%", "-10%", "+0.0%", "n/a", "-"]);
     }
 
+    /// (QA) `col_cell` VALUE arms the `screen_columns_config` test leaves at n/a (it uses a bare stub):
+    /// the number-formatting columns + the ≥1000% no-decimal path + the unknown-key fallback.
     #[test]
     fn col_cell_value_arms() {
         let mut q = Quote::stub("AAA", "€12.34", "", "Alpha");
@@ -15102,7 +15103,7 @@ mod tests {
                 Some(("75% in 8y range (need ≥80%)", true))),
             ("range8y stops calling 30pp short close", "range8y", r8_k, 80.0, r8(50.0),
                 Some(("50% in 8y range (need ≥80%)", false))),
-            // PERF LEGS -- the shipped floors: 1Y > 0, 1M > -15, 5Y > 0
+            // PERF LEGS -- the floors this table arms: 1Y > 0, 1M > -15, 5Y > 0 (not the ci-settings values)
             ("1Y calls a small loss close", "1Y+", keep, 0.0, perf(&[("1M", 2.0), ("1Y", -5.0), ("5Y", 200.0)]),
                 Some(("1Y -5.0% (need >0.0%)", true))),
             ("1Y stops at its 10pp margin", "1Y+", keep, 0.0, perf(&[("1M", 2.0), ("1Y", -10.0), ("5Y", 200.0)]),
