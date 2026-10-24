@@ -63,7 +63,7 @@ pub fn client_long() -> Client {
 /// up as a changed sample count, never as a silent live fetch that quietly re-baselines the golden.
 ///
 /// Guarded in each transport helper below (`get_json`, `get_text`, `get_text_as`, `post_json_with`,
-/// `get_with`), in `chart_json` and the SEC pair, and again in every seam that bypasses them
+/// `get_with`), in `chart_json` and the SEC pair's `sec_send`, and again in every seam that bypasses them
 /// (`yahoo_crumb`, `borse_frankfurt_post`, ...), rather than at the call sites. (#945) Not one funnel:
 /// a new outbound path that skips these helpers needs its own `offline()` check. A `None` from these
 /// is already the fetch-failed path every caller handles, so nothing downstream needs a new state.
@@ -1884,12 +1884,12 @@ fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
     crate::config::data_path(".sec_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
 }
 
-// The SEC transport pair. `offline()` is checked HERE, in the two functions every SEC path funnels
-// through, for the same reason `get_json`/`get_text` check it: OFFLINE has to mean no socket, and the
-// two dozen call sites are easy to add one more to without noticing. Without this an offline run
-// still reached sec.gov whenever the local `.sec_cache` missed — which is precisely the case a frozen
-// -data pin hits on a machine that has never run live, so the pin's hermeticity depended on the
-// developer's cache being warm.
+// The SEC transport pair. `offline()` is checked in `sec_send` below, which both of them (and so
+// every SEC path) go through, for the same reason `get_json`/`get_text` check it: OFFLINE has to
+// mean no socket, and the two dozen call sites are easy to add one more to without noticing.
+// Without this an offline run still reached sec.gov whenever the local `.sec_cache` missed —
+// which is precisely the case a frozen-data pin hits on a machine that has never run live, so
+// the pin's hermeticity depended on the developer's cache being warm.
 // (#386) A non-2xx is no answer: a 404 on a missing instance or a 403 rate-limit page was read as SEC's
 // body, parsed to nothing, and `fetch_sec_instance_eps` cached that `[]` with no TTL. shortcut: a filing
 // that truly has no `_htm.xml` now retries each run (2 fetches, inside `SEC_FETCH_BUDGET`); cache a 404
@@ -7305,8 +7305,8 @@ async fn yahoo_fund_facts_fill(
     (ter_map, aum_map)
 }
 
-/// Best-effort write-back of the fund-facts cache. Two callers (the Yahoo pass and the justETF one),
-/// so it is a fn rather than the same three lines twice. A read-only dir just costs next run a refetch.
+/// Best-effort write-back of the fund-facts cache, called once at the end of `yahoo_fund_facts_fill`
+/// (after the justETF mop-up). A read-only dir just costs next run a refetch.
 fn write_fund_facts_cache(cache: &HashMap<String, (String, Option<f64>, Option<f64>)>) {
     if let Ok(json) = serde_json::to_string(cache) {
         let _ = std::fs::write(crate::config::data_path(FUND_FACTS_CACHE_PATH), json);
