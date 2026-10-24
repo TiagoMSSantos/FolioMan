@@ -16757,6 +16757,35 @@ pub(crate) mod tests {
         );
     }
 
+    /// (#859) `cached_feed`'s third answer, the one the test above never reaches: a live fetch that
+    /// fails or parses empty falls back to an aged copy, and never overwrites it. A broken fallback
+    /// fails nothing; a BLS throttle just turns a whole inflation column into ERROR for the run.
+    /// The futures stand in for the network, so no stub is needed. Own cache name, seeded and deleted here.
+    #[tokio::test]
+    async fn cached_feed_serves_an_aged_copy_when_the_live_answer_is_a_dud() {
+        let name = "test_cached_feed_aged";
+        let parse = |d: &Value| d["v"].as_f64().map(|v| BTreeMap::from([(2020, v)])).unwrap_or_default();
+        let aged = serde_json::json!({"v": 1});
+        macro_cache_write(name, &aged);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(macro_cache_path(name))
+            .expect("reopen to age")
+            .set_modified(SystemTime::now() - StdDuration::from_secs(25 * 3600))
+            .expect("backdate mtime");
+        let one = BTreeMap::from([(2020, 1.0)]);
+        assert_eq!(cached_feed(name, parse, async { None }).await, one, "a failed fetch serves the aged copy");
+        assert_eq!(cached_feed(name, parse, async { Some(serde_json::json!({})) }).await, one, "so does a reply that parses empty");
+        assert_eq!(macro_cache_read(name), Some(aged), "a dud is never banked over the copy");
+        assert!(!macro_cache_fresh(name), "the copy keeps its age");
+        // A day-fresh copy that parses empty is no answer either: the live one is asked and banked.
+        macro_cache_write(name, &serde_json::json!({}));
+        assert_eq!(cached_feed(name, parse, async { Some(serde_json::json!({"v": 2})) }).await, BTreeMap::from([(2020, 2.0)]));
+        assert_eq!(macro_cache_read(name), Some(serde_json::json!({"v": 2})));
+        let _ = std::fs::remove_file(macro_cache_path(name));
+        assert_eq!(cached_feed(name, parse, async { None }).await, BTreeMap::new(), "no copy at all: an empty map");
+    }
+
     /// (#486) One FRED series on the stub: asked by its id, parsed off CSV, and banked under its own
     /// `fred_{id}` name as a JSON string, so the next run's day-cache read parses the same text.
     #[tokio::test]
@@ -17274,6 +17303,39 @@ pub(crate) mod tests {
         assert_eq!(q.avg_turnover_eur, None, "no rate -> no EUR turnover for the gate to believe");
         assert_eq!(q.close_native, Some(0.5), "the native close is still known and still reported");
         assert!(q.price.ends_with('?'), "the price string says it is unconverted: {}", q.price);
+    }
+
+    /// (#859) The EQUITY arm of `quote_one`, which none of its other tests take: every one of them leaves
+    /// `instrumentType` out. `fetch_ratios_sec` is pinned on its own, but not that the quote calls it,
+    /// or with which close. Break that wiring and every stock row's P/E goes n/a with the suite green.
+    /// The seeded SEC caches answer, so the dead stub port is never asked for the FMP fallback.
+    #[tokio::test]
+    async fn quote_one_takes_an_equitys_pe_and_quality_from_the_sec_caches() {
+        pin_throttle();
+        seed_cik_map();
+        const BARS: &str = r#"{"chart":{"result":[{
+            "timestamp":[1577836800,1577923200,1578009600],
+            "indicators":{"quote":[{"close":[45.0,55.0,50.0],"volume":[100,200,300]}]},
+            "meta":{"currency":"USD","instrumentType":"EQUITY"}
+        }]}}"#;
+        let row = r#"[{"filed":"2026-02-01","period_end":"2025-12-31","eps":3.0,"roe":20.0,"roa":5.0,"net_margin":10.0,"op_margin":15.0,"pretax_margin":20.0,"currency":"USD"}]"#;
+        let t = "ZZQUOTEEQ";
+        let mut seeded = Vec::new();
+        for (sidecar, body) in [("facts19", row), ("ttmeps4", "4.0")] {
+            let p = sec_cache_path(&format!("{t}_{sidecar}"));
+            std::fs::write(&p, body).expect("seed sec cache");
+            seeded.push(p);
+        }
+        let (base, client) = stub_server(BARS);
+        let w = BTreeMap::new();
+        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), t, 30, 0, false, false, &w, None, false).await;
+        for p in seeded {
+            let _ = std::fs::remove_file(p);
+        }
+        // the LAST close over the TTM roll: 50 / 4, not 45 / 4 or the annual row's 50 / 3
+        assert_eq!(q.pe_ratio, Some(12.5));
+        // (#491) the same core-earnings quality as `fetch_ratios_sec_divides_the_close_by_the_trailing_eps`
+        assert_eq!(q.roe, Some(15.0));
     }
 
     /// (#690) The quote fan-out's order, which the test below can't see: it pins one name in flight.
