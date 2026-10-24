@@ -551,13 +551,14 @@ fn rebalance_tag(years: i64, per_rebalance: bool) -> String {
 /// exists to detect. `tune`'s per-split `demean` does not help here — it removes the PEER MEAN, and this
 /// leak is in the label itself.
 ///
-/// ONE definition, four call sites (`sweep_fund_factor`, `tune_growth`, `weight_curve`, `report_lane`),
-/// because a purge applied at three of four boundaries is a purge nobody can reason about. Only the
+/// ONE definition, called at every split (`sweep_fund_factor`, `tune_growth`, `weight_curve`,
+/// `report_lane`, `report_fund_lane`, `emit_probe`; (#947) nine sites in those six), because a purge
+/// applied at some boundaries and not others is a purge nobody can reason about. Only the
 /// EARLIER side loses rows: the later side is the evidence being read, and trimming it would shrink the
 /// very sample whose independence this is buying.
 ///
 /// `months <= 0` returns `cut` untouched — the default, byte-identical, no allocation, no date maths.
-/// Rows must be date-ordered, which both callers' inputs already are (`samples` is built in cutoff order
+/// Rows must be date-ordered, which every caller's input already is (`samples` is built in cutoff order
 /// and `scored` preserves it); `partition_point` is a binary search over that order.
 fn purged_cut<T>(rows: &[T], cut: usize, months: i64, date_of: fn(&T) -> chrono::NaiveDate) -> usize {
     if months <= 0 || cut == 0 || cut >= rows.len() {
