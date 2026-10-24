@@ -8756,7 +8756,15 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 8f41a6b40279 (#873), graded 2026-10-24 by run 40086362754, same five inputs with
+  # LAST GRADED SHA: 201ef6833b78 (#887), graded 2026-10-24 by two runs, same five inputs. Run
+  # 40087848951 (on 17040bd, since 6254c44, `files` = src/commands/screen.rs src/picks.rs): 105 in scope =
+  # 104 caught + 1 unviable (picks.rs score_parts_hard -> Some(Default::default()), ScoreParts has no
+  # Default). Run 40088596948 (on 201ef68, since 17040bd, `files` = src/commands/backtest.rs
+  # src/commands/track.rs src/core.rs src/fetch.rs src/heuristics/intraday.rs src/picks.rs): 50 in scope =
+  # 47 caught + 3 unviable (core.rs trend_streak `-` -> `+` and `-` -> `/` at 5962:102, fetch.rs quote_one ->
+  # Default::default()). 0 missed, 0 timeout in both, so the 20 triaged survivors listed under 9d27269
+  # stand wherever the range left their lines alone.
+  # BEFORE THAT: 8f41a6b40279 (#873), graded 2026-10-24 by run 40086362754, same five inputs with
   # `files` = src/commands/backtest.rs src/core.rs src/fetch.rs src/lib.rs (every src file changed since
   # 9d27269): 29 in scope = 28 caught + 1 unviable (fetch.rs euronext_lisbon_request -> Default::default(),
   # RequestBuilder has no Default), 0 missed, 0 timeout. The 20 triaged survivors listed under the
