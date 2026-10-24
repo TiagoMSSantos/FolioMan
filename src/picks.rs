@@ -9345,6 +9345,8 @@ mod tests {
     // (A) trend_health: 0 at the decay (zero) threshold, 1 at a flat/rising trend
     assert_eq!(trend_health(tuning.health_zero_cagr, tuning.health_zero_cagr), 0.0);
     assert_eq!(trend_health(0.0, tuning.health_zero_cagr), 1.0);
+    // (#868) 8/10 of the way up the ramp: the divide, not a product that clamps to 1
+    assert_eq!(trend_health(-2.0, -10.0), 0.8);
     // (B) sustained-decline dock: 1Y & 5Y both deep-red is docked below an equal coin that's recovering
     let mut bleeder = quote(40.0, &[("1Y", -50.0), ("5Y", -60.0), ("10Y", 200.0)]);
     bleeder.ticker = "LTC-EUR".into();
