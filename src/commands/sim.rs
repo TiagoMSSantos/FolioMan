@@ -299,7 +299,7 @@ pub(crate) fn digest_line(
 /// `#[mutants::skip]` for the reason spelled out on `track::run`: a command entry point is reachable
 /// only from `main.rs`, the gate kills with `--lib --test backtest_fixture`, and so `replace run with
 /// ()` cannot be killed by anything anyone writes. The gradeable logic lives in `ledger`,
-/// `event_now`, `summary_line` and `track::adjust_for_splits`; this is the wiring.
+/// `event_now`, `digest_line` and `track::adjust_for_splits`; this is the wiring.
 #[mutants::skip]
 pub async fn run(_args: Vec<String>) {
     let settings = config::load();

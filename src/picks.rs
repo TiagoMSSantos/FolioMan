@@ -9704,8 +9704,8 @@ mod tests {
     assert_eq!(long_leg(&two_year, 1.0), Some((60.0, 2.0))); // LONGEST available, not shortest — floor, not pin
     // THE SECOND PENALTY, unconfigured and easy to forget: a 1Y-rung name's long CAGR IS its 1Y return,
     // so `accel = clamp(return_1y − long_cagr, ..)` is identically ZERO and the heaviest term in the
-    // score (growth_accel_weight 0.65) is structurally dead for exactly this cohort. Read the young-dock
-    // curve knowing the dock is not the only thing holding these names down.
+    // score (growth_accel_weight, 0.50 in ci-settings) is structurally dead for exactly this cohort.
+    // Read the young-dock curve knowing the dock is not the only thing holding these names down.
     let floor1 = BuyHeuristic { growth_min_leg_years: 1.0, ..BuyHeuristic::default() };
     assert!((long_cagr_pct(&one_year, &floor1).unwrap() - 30.0).abs() < 1e-9); // == the 1Y leg -> accel term is 0
     assert!(long_cagr_pct(&one_year, &BuyHeuristic::default()).is_none()); // ...and nothing at all at floor 5

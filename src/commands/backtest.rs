@@ -402,7 +402,7 @@ struct Sample {
     date: chrono::NaiveDate,
     realized: f64, // raw forward return %
     relative: f64, // (#1) realized minus its cutoff-bucket peer mean -> SELECTION, not regime beta
-    // `Arc`, because Samples are BULK-CLONED and a Quote is 69 fields of mostly-heap Strings. The fund
+    // `Arc`, because Samples are BULK-CLONED and a Quote is 87 fields of mostly-heap Strings. The fund
     // lane alone does `samples.to_vec()` once per factor and once per weight rung, and
     // `hold_period_sweep` builds six Samples per cutoff that differ only in `realized`. Sharing makes
     // those a refcount bump. The three sites that write `quote.fund_factor` use `Arc::make_mut`, so
@@ -7390,10 +7390,11 @@ fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob], accepte
         println!("  vs shipped = newly-admitted median MINUS the accepted cohort's median ({a:+.1}); >0 = no worse than what the gates already keep.");
     }
     // Each row re-scores EVERY sample twice (once at the shipped tuning, once loosened), so at wide-run
-    // sample counts the ten gates cost ~24 ms apiece — 237 ms, which measured as the largest single
-    // stage in a wide run after the cache load and the walk itself. They are also completely
-    // independent: `newly_admitted_stats` is a pure filter+mean+median over a borrowed slice, with no
-    // shared state and no PRNG, so nothing here is order-sensitive the way the bootstrap stages are.
+    // sample counts a gate costs ~24 ms: 237 ms for the ten `gate_notches` held when this was
+    // measured (fourteen now), the largest single stage in a wide run after the cache load and the
+    // walk itself. They are also completely independent: `newly_admitted_stats` is a pure
+    // filter+mean+median over a borrowed slice, with no shared state and no PRNG, so nothing here is
+    // order-sensitive the way the bootstrap stages are.
     // Format into rows and print after: `par_iter().collect()` preserves input order, so the rows land
     // in the gate order they always did — printing from inside the workers is what would scramble them.
     // (The base scoring is still repeated per gate; hoisting it would save about half again, and is the
