@@ -4,7 +4,9 @@ name: Pages
 #
 # SEPARATE FROM ci.yml ON PURPOSE, and the reason is isolation, not the trigger: nothing in ci.yml
 # should have to wait on a ~15-minute network run, and nothing here should be able to break one. The
-# two files share no job, no cache key and no permission set.
+# two files share no job and no permission set. They do share caches, each written by one side only:
+# this file writes the fetch, ipo and wikidata caches that ci.yml's backtest-gate restores read-only,
+# and backtest-gate writes the monthly history cache that this file restores read-only.
 #
 # This file now runs on push as well, so BE CLEAR ABOUT WHAT A RED RUN HERE MEANS. It still gates
 # nothing — no pull_request trigger, no required check, no merge to block — but a throttled fetch or
