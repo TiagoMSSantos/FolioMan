@@ -1121,13 +1121,13 @@ async fn cached_fund_json(client: &Client, url_tmpl: &str, ticker: &str, tag: &s
     if let Some(v) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
         return Some(v); // cache hit -> no network, no budget spend
     }
-    let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let key = nonempty_key(std::env::var("FMP_API_KEY").ok())?;
     if FUND_FETCHES.fetch_add(1, Ordering::Relaxed) >= FUND_FETCH_BUDGET {
         return None; // over the daily budget -> degrade to n/a for the rest of this run
     }
     let url = url_tmpl.replace("{ticker}", ticker).replace("{key}", &key);
     let v = get_json(client, &url).await?;
-    let real = v.get(0).unwrap_or(&v).get("Error Message").is_none() && !v.is_null();
+    let real = fmp_real(&v);
     if real {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -1135,6 +1135,12 @@ async fn cached_fund_json(client: &Client, url_tmpl: &str, ticker: &str, tag: &s
         let _ = std::fs::write(&path, v.to_string());
     }
     real.then_some(v)
+}
+
+/// (#896) A real FMP payload: not an error object ({"Error Message":..}, bare or first of an array) and not
+/// null. Pure, so the cache-poisoning guard is tested without a key or a socket.
+fn fmp_real(v: &Value) -> bool {
+    v.get(0).unwrap_or(v).get("Error Message").is_none() && !v.is_null()
 }
 
 /// (E) Trailing P/E for an EQUITY from FMP `stable/ratios-ttm`, the fallback when SEC has neither number.
@@ -1537,7 +1543,7 @@ pub async fn fetch_fundamentals_history(client: &Client, urls: &Urls, ticker: &s
     let v = match std::fs::read_to_string(fund_cache_path(ticker)).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
         Some(v) => v, // cache hit -> no network, no budget spend
         None => {
-            let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
+            let key = nonempty_key(std::env::var("FMP_API_KEY").ok())?;
             if FUND_FETCHES.fetch_add(1, Ordering::Relaxed) >= FUND_FETCH_BUDGET {
                 return None; // over the daily budget -> degrade to price-only for the rest of this run
             }
@@ -12699,6 +12705,16 @@ pub(crate) mod tests {
         let got = (fetch_ratios(&client, &urls, "ZZRATIOS").await, fetch_ratios(&client, &urls, "ZZRATIOS0").await);
         let _ = (std::fs::remove_file(good), std::fs::remove_file(zero));
         assert_eq!(got, ((Some(12.5), None), (None, None)));
+    }
+
+    /// (#896) The banking guard of `cached_fund_json`: only a real payload is written, so an FMP "Limit Reach"
+    /// object (bare or first of an array) or a null never poisons the week-long cache.
+    #[test]
+    fn fmp_real_refuses_an_error_object_and_null() {
+        assert!(fmp_real(&serde_json::json!([{"priceToEarningsRatioTTM": 12.5}])));
+        assert!(!fmp_real(&serde_json::json!({"Error Message": "Limit Reach"})));
+        assert!(!fmp_real(&serde_json::json!([{"Error Message": "x"}])));
+        assert!(!fmp_real(&Value::Null));
     }
 
     /// (#358) `fetch_ratios_sec` off seeded SEC caches: the P/E divides the close by the TTM roll (4.0,
