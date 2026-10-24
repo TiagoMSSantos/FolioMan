@@ -62,10 +62,11 @@ pub fn client_long() -> Client {
 /// BY CONSTRUCTION rather than by luck: a fixture ticker missing from the committed cache must show
 /// up as a changed sample count, never as a silent live fetch that quietly re-baselines the golden.
 ///
-/// Guarded HERE, at the three helpers, rather than at the ~dozen call sites — every remote read in
-/// the project funnels through one of them, so this is both the smaller diff and the stronger claim.
-/// A `None` from these is already the fetch-failed path every caller handles, so nothing downstream
-/// needs to learn a new state.
+/// Guarded in each transport helper below (`get_json`, `get_text`, `get_text_as`, `post_json_with`,
+/// `get_with`), in `chart_json` and the SEC pair, and again in every seam that bypasses them
+/// (`yahoo_crumb`, `borse_frankfurt_post`, ...), rather than at the call sites. (#945) Not one funnel:
+/// a new outbound path that skips these helpers needs its own `offline()` check. A `None` from these
+/// is already the fetch-failed path every caller handles, so nothing downstream needs a new state.
 ///
 /// Read once: the variable cannot change mid-process, and a per-call `var()` would sit inside the
 /// wide fetch's hot loop.
@@ -15997,7 +15998,7 @@ pub(crate) mod tests {
     /// The dead port is an assertion, not scaffolding — the seeded `_tickers.json` must be served from
     /// disk, so any fetch attempt fails the test rather than reaching sec.gov. And a CIK is asserted by
     /// VALUE: an empty-but-`Some` string is exactly what a broken zero-pad or a short-circuited lookup
-    /// returns, and it reads as "resolved" at all six call sites.
+    /// returns, and it reads as "resolved" at every call site.
     #[tokio::test]
     async fn sec_cik_resolves_a_us_ticker_and_a_swapped_xetra_symbol() {
         pin_throttle();
