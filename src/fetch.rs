@@ -3825,7 +3825,7 @@ const HOLDER_SINCE: &str = "1999-01-01";
 /// (#737) The first quarter SEC's 13F carries an XML information table; an older report is text.
 const XML_13F_SINCE: &str = "2013-06-30";
 /// (#518) SEC calls a `backtest … holders` run may spend: the cold history is (#737) ~7,400 filings
-/// (84 managers' 13Fs since [`HOLDER_SINCE`], Berkshire's Form 4s, their filing lists), on top of the
+/// (83 managers' 13Fs since [`HOLDER_SINCE`], Berkshire's Form 4s, their filing lists), on top of the
 /// fund lane's [`SEC_FETCH_BUDGET`]. ~16 minutes cold at the 8 req/s pacer; a warm cache spends nothing.
 pub const HOLDER_FETCH_BUDGET: usize = 12000;
 
@@ -10578,7 +10578,6 @@ pub(crate) mod tests {
         assert_eq!(asked.iter().filter(|r| r.starts_with("GET /mvrv/eth ")).count(), 2, "one retry, no more");
     }
 
-    /// Signing + concurrency + throttle asserts (no live calls). White-box via `use super::*`.
     #[test]
     fn bf_ter_parse() {
     use serde_json::json;
@@ -11279,6 +11278,7 @@ pub(crate) mod tests {
         assert_eq!(ttm_eps_from_concept(&huge, today, &[]), Some(39_000.0 + 31_000.0 - 28_000.0));
     }
 
+    /// Signing + concurrency + throttle asserts (no live calls). White-box via `use super::*`.
     #[test]
     fn signing_and_pacing() {
     use md5::{Digest, Md5};
@@ -19551,8 +19551,6 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
     out
 }
 
-/// Best-effort live 3-month Euribor (%). Returns (rate, is_live); falls back on failure.
-/// note: scrapes euribor-rates.eu HTML — fragile, hence the config fallback.
 /// Live 3-month Euribor (%) scraped from euribor-rates.eu. `None` on any failure — NO config
 /// fallback: a stale hand-entered rate silently poisons the Certificados de Aforro table, so the
 /// caller must surface the error instead.
@@ -19562,9 +19560,6 @@ pub async fn fetch_euribor_3m(client: &Client, urls: &Urls) -> Option<f64> {
     re.captures(&html)?[1].parse::<f64>().ok()
 }
 
-/// {year -> annual CPI %} for the USA from the BLS public API (CPI-U index, converted to a
-/// YoY rate in `core::parse_bls_cpi`); empty on failure. Monthly source, so it reaches the
-/// current year — unlike the World Bank's ~1.5y-lagged annual series it replaced.
 /// Disk cache for slow-moving macro series (monthly CPI/HICP): a same-day copy skips the network,
 /// and on a live failure (throttle/outage) any older copy still beats an ERROR row in the footer.
 /// Born from BLS: its keyless cap is 25 req/day per SHARED IP, so repeated screen runs redden USA.
@@ -19648,6 +19643,9 @@ fn nonempty_key(v: Option<String>) -> Option<String> {
     v.filter(|k| !k.is_empty())
 }
 
+/// {year -> annual CPI %} for the USA from the BLS public API (CPI-U index, converted to a
+/// YoY rate in `core::parse_bls_cpi`); empty on failure. Monthly source, so it reaches the
+/// current year — unlike the World Bank's ~1.5y-lagged annual series it replaced.
 pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
     use chrono::Datelike;
     // POST-based (year window in the body), so it drives the macro cache by hand instead of cached_macro.
