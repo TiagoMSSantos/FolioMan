@@ -8700,6 +8700,8 @@ mod tests {
     fn benchmark_math() {
         // (1.10^12 − 1)·100 cumulative -> back to +10%/yr; a −100% window annualizes to −100, not NaN.
         assert!((ann((1.10_f64.powi(12) - 1.0) * 100.0, 12) - 10.0).abs() < 1e-6);
+        // (#867) below −100% cumulative the wealth base clamps at 0: no NaN root
+        assert_eq!(ann(-150.0, 3), -100.0);
         assert!((ann(-100.0, 12) - (-100.0)).abs() < 1e-9);
         let dates: Vec<NaiveDate> = (0..15).map(|k| ymd(2000 + k, 1, 3)).collect();
         let closes: Vec<f64> = (0..15).map(|k| 100.0 * 1.08_f64.powi(k)).collect(); // +8%/yr
@@ -9153,6 +9155,10 @@ mod tests {
     #[test]
     fn blend_winners_split_held_winners_by_half() {
         assert_eq!(winner_bar(vec![10.0, 40.0, 30.0, 20.0], 50.0), Some(30.0));
+        // (#867) 1.2 places rounds UP to the 2nd best; at least the best one wins; at 100% the bar is the worst
+        assert_eq!(winner_bar(vec![10.0, 40.0, 30.0, 20.0], 30.0), Some(30.0));
+        assert_eq!(winner_bar(vec![10.0, 40.0, 30.0, 20.0], 0.0), Some(40.0));
+        assert_eq!(winner_bar(vec![10.0, 40.0, 30.0, 20.0], 100.0), Some(10.0));
         assert_eq!(winner_bar(Vec::new(), 5.0), None);
         let (a, b, c) = (ymd(2010, 1, 5), ymd(2011, 1, 6), ymd(2012, 1, 7));
         // shipped score = `score`, open score = `score + add` (`swap_scorer`); the momentum key is the 1Y leg
