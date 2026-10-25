@@ -1408,7 +1408,7 @@ fn ttm_eps_from_concept(j: &Value, today: NaiveDate, splits: &[(NaiveDate, f64)]
 async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -> Option<f64> {
     // Börse Frankfurt TER (captured for free during the universe build) first — it covers the EU UCITS
     // ETFs FMP's US-centric free tier leaves n/a. FMP fallback for US-listed ETFs not in the BF list.
-    if let Some(t) = bf_ter_cascade(BF_TER.get(), &BF_TER_NAMES, ticker, name) {
+    if let Some(t) = bf_ter_cascade(BF_TER.get(), &BF_TER_NAMES, BF_SYM_NAME.get(), ticker, name) {
         return Some(t);
     }
     let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
@@ -1434,9 +1434,15 @@ async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -
 /// (#850) Generic over the value, because AUM and the USE/REPL/bench facts ride the same Börse
 /// Frankfurt row and walk the same four rungs: `bf_aum` and `bf_meta` were two hand copies of this
 /// cascade over globals, and their rungs could not be graded at all.
+///
+/// (#1036) `sib_names` is symbol -> BF fund name, and rung 2 reads it. A mnemonic is unique per issuer,
+/// not per market: PRAC.L is Invesco Preferred Shares and PRAC.DE an Amundi corporate bond fund, and the
+/// stem rung lent PRAC.L the Amundi fund's 0.07% TER over its own 0.5%. 9 of the 17 stem inheritances in
+/// the 2026-10-25 pond were a different fund.
 fn bf_ter_cascade<T: Clone + PartialEq>(
     map: Option<&HashMap<String, T>>,
     names: &std::sync::OnceLock<Vec<(String, T)>>,
+    sib_names: Option<&HashMap<String, String>>,
     ticker: &str,
     name: &str,
 ) -> Option<T> {
@@ -1445,15 +1451,35 @@ fn bf_ter_cascade<T: Clone + PartialEq>(
             // A pinned EU listing often sits on a different venue than the map's ISIN-resolved one
             // (SPYL.DE pinned, map holds SPYL.L): issuers keep one mnemonic per fund across venues, so
             // a same-stem hit is the same fund's TER. ETF-classified quotes only (the caller gates on
-            // `is_etf`) — an equity ticker could stem-collide.
+            // `is_etf`) — an equity ticker could stem-collide. (#1036) A sibling whose BF name is known
+            // must also be the same issuer's fund; an unknown name keeps the old behaviour.
             let stem = ticker.split_once('.')?.0;
-            map?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, t)| t.clone())
+            map?.iter()
+                .find(|(k, _)| {
+                    k.split('.').next() == Some(stem)
+                        && sib_names.and_then(|s| s.get(*k)).is_none_or(|bf| same_issuer(name, bf))
+                })
+                .map(|(_, t)| t.clone())
         })
         // Last BF resort: unique fund-name prefix (rescues VVSM.DE, whose venue the symbol map can't
         // reach). Retry without Yahoo's umbrella-company prefix: "Amundi Index Solutions - Amundi S&P
         // 500 Swap UCITS ETF EUR Acc" — BF lists only the part after " - " (rescues AUM5.DE, 0.15%).
         .or_else(|| bf_by_name(names, name))
         .or_else(|| bf_by_name(names, name.split_once(" - ")?.1))
+}
+
+/// (#1036) Rung 2's issuer check: the BF name's first word equals the Yahoo name's first word, either
+/// whole or after Yahoo's umbrella prefix ("Multi Units Luxembourg - Amundi STOXX Europe 600 …" is an
+/// Amundi fund). "State Street" reads as "spdr", the word Yahoo names SPDR funds by. A BF name with
+/// no word tells nothing, so it agrees.
+fn same_issuer(yahoo: &str, bf: &str) -> bool {
+    let word = |s: &str| match s.split_whitespace().next().map(str::to_lowercase) {
+        Some(w) if w == "state" => Some("spdr".to_string()),
+        w => w,
+    };
+    let Some(bf) = word(bf) else { return true };
+    let hit = |s: &str| word(s).as_deref() == Some(bf.as_str());
+    hit(yahoo) || yahoo.split_once(" - ").is_some_and(|(_, rest)| hit(rest))
 }
 
 /// (#206) FMP's `expenseRatio` as a PERCENT. The ratio arrives as a decimal fraction and the ×100
@@ -6985,6 +7011,10 @@ static BF_META_NAMES: std::sync::OnceLock<Vec<(String, BfMeta)>> = std::sync::On
 /// — `bf_meta` must NOT read this, or a factless row would start shadowing the name fallback.
 static BF_ROW_NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
+/// (#1036) Resolved-Yahoo-symbol -> lowercased BF fund name, from the same etp_search rows. Rung 2 of
+/// `bf_ter_cascade` reads it to check that a same-stem sibling is the same issuer's fund.
+static BF_SYM_NAME: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+
 /// Yahoo-name -> BF value via name prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
 /// UCITS ETF" vs BF's "… - USD Acc"). None unless every BF row starting with that name AGREES.
 ///
@@ -7702,7 +7732,7 @@ pub async fn yahoo_top_holdings(
 /// fallback: its free tier doesn't serve fund size.
 #[mutants::skip] // (#850) reads process-wide OnceLocks no test can set — `bf_ter_cascade` is graded.
 fn bf_aum(ticker: &str, name: &str) -> Option<f64> {
-    bf_ter_cascade(BF_AUM.get(), &BF_AUM_NAMES, ticker, name)
+    bf_ter_cascade(BF_AUM.get(), &BF_AUM_NAMES, BF_SYM_NAME.get(), ticker, name)
 }
 
 /// Exact Börse-Frankfurt AUM map hit — same "presence proves ETP" semantics as `bf_ter_exact_in`.
@@ -7714,7 +7744,7 @@ fn bf_aum_exact(ticker: &str) -> Option<f64> {
 /// (USE/REPL/bench) the TER's cascade over the meta maps — the facts ride the same etp_search row.
 #[mutants::skip] // (#850) as `bf_aum`.
 fn bf_meta(ticker: &str, name: &str) -> BfMeta {
-    bf_ter_cascade(BF_META.get(), &BF_META_NAMES, ticker, name).unwrap_or_default()
+    bf_ter_cascade(BF_META.get(), &BF_META_NAMES, BF_SYM_NAME.get(), ticker, name).unwrap_or_default()
 }
 
 /// (#45) Why `bf_meta` came back empty for one fund. Four causes print an identical `n/a` today, and
@@ -8098,6 +8128,7 @@ pub async fn fetch_xetra_etfs(
     // come free here (no per-name FMP call, which doesn't cover them anyway). first_keys = the first
     // row's field names, logged ONLY if zero TERs parse, so a renamed BF field self-diagnoses in one run.
     let mut first_keys = String::new();
+    let mut bf_name_of: HashMap<String, String> = HashMap::new(); // (#1036) ISIN -> lowercased BF name
     let rows: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
         Some(j) => match j.get("data").and_then(|d| d.as_array()) {
             Some(arr) => {
@@ -8145,6 +8176,13 @@ pub async fn fetch_xetra_etfs(
                     }
                     first_keys = fields.join(",");
                 }
+                bf_name_of = arr
+                    .iter()
+                    .filter_map(|r| {
+                        let name = r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase();
+                        Some((r.get("isin")?.as_str()?.to_string(), name))
+                    })
+                    .collect();
                 arr.iter().filter_map(|r| Some((r.get("isin")?.as_str()?.to_string(), bf_row_ter(r), bf_row_aum(r), bf_row_meta(r)))).collect()
             }
             None => Vec::new(),
@@ -8288,6 +8326,7 @@ pub async fn fetch_xetra_etfs(
     let _ = YH_TER.set(yh_ter);
     let _ = YH_AUM.set(yh_aum);
     let ter_n = ter_map.len();
+    let _ = BF_SYM_NAME.set(isin_of.iter().filter_map(|(sym, isin)| Some((sym.clone(), bf_name_of.get(isin)?.clone()))).collect());
     let _ = BF_TER.set(ter_map);
     let _ = BF_AUM.set(aum_map);
     let _ = BF_META.set(meta_map);
@@ -10082,10 +10121,14 @@ pub(crate) mod tests {
             ("amundi s&p 500 swap ucits etf eur acc".to_string(), 0.15),
         ]);
         let m = Some(&map);
+        // (#1036) SPYL.L's BF name is known, IUSN.DE's is not
+        let sib_map: std::collections::HashMap<String, String> =
+            [("SPYL.L".to_string(), "spdr s&p 500 ucits etf - usd acc".to_string())].into_iter().collect();
+        let sib = Some(&sib_map);
         let umbrella = "Amundi Index Solutions - Amundi S&P 500 Swap UCITS ETF EUR Acc";
 
         // rung 1: the exact resolved symbol
-        assert_eq!(bf_ter_cascade(m, &names, "IUSN.DE", "iShares MSCI World Small Cap UCITS ETF"), Some(0.35));
+        assert_eq!(bf_ter_cascade(m, &names, sib, "IUSN.DE", "iShares MSCI World Small Cap UCITS ETF"), Some(0.35));
         // (#211) …and rung 1 DIRECTLY, because through the cascade it cannot be graded at all: break
         // the exact lookup and rung 2 re-finds the very same row by stem and returns the very same
         // TER, so `bf_ter_exact_in -> None` survived this whole test. A rung that another rung can
@@ -10094,20 +10137,41 @@ pub(crate) mod tests {
         assert_eq!(bf_ter_exact_in(m, "IUSN"), None, "exact means exact — the stem is rung 2's job");
         assert_eq!(bf_ter_exact_in::<f64>(None, "IUSN.DE"), None, "no map loaded, no hit");
         // rung 2: same stem, different venue — pinned .DE, map holds only .L
-        assert_eq!(bf_ter_cascade(m, &names, "SPYL.DE", "SPDR S&P 500 UCITS ETF"), Some(0.03));
+        assert_eq!(bf_ter_cascade(m, &names, sib, "SPYL.DE", "SPDR S&P 500 UCITS ETF"), Some(0.03));
         // rung 3: no symbol hit at all, unique fund-name prefix
-        assert_eq!(bf_ter_cascade(m, &names, "VVSM.SG", "VanEck Semiconductor UCITS ETF"), Some(0.35));
+        assert_eq!(bf_ter_cascade(m, &names, sib, "VVSM.SG", "VanEck Semiconductor UCITS ETF"), Some(0.35));
         // rung 4: BF lists only the part after " - ", so the umbrella name has to be retried without it
-        assert_eq!(bf_ter_cascade(m, &names, "AUM5.DE", umbrella), Some(0.15));
+        assert_eq!(bf_ter_cascade(m, &names, sib, "AUM5.DE", umbrella), Some(0.15));
         // ...and rung 3 must MISS that umbrella name, or rung 4 is dead code that grades as live
         assert_eq!(bf_by_name(&names, umbrella), None);
 
         // nothing hits -> None, which is what sends fetch_expense on to the FMP network fallback
-        assert_eq!(bf_ter_cascade(m, &names, "ZZZZ.DE", "Some Fund Nobody Lists"), None);
+        assert_eq!(bf_ter_cascade(m, &names, sib, "ZZZZ.DE", "Some Fund Nobody Lists"), None);
         // an absent symbol map must not stop the name rungs
-        assert_eq!(bf_ter_cascade(None, &names, "VVSM.SG", "VanEck Semiconductor UCITS ETF"), Some(0.35));
+        assert_eq!(bf_ter_cascade(None, &names, sib, "VVSM.SG", "VanEck Semiconductor UCITS ETF"), Some(0.35));
         // a venue-less ticker has no stem to scan on: SPYL must NOT reach SPYL.L
-        assert_eq!(bf_ter_cascade(m, &names, "SPYL", "Some Fund Nobody Lists"), None);
+        assert_eq!(bf_ter_cascade(m, &names, sib, "SPYL", "Some Fund Nobody Lists"), None);
+        // (#1036) same stem, other issuer: PRAC.L (Invesco) must not take PRAC.DE's (Amundi) TER
+        assert_eq!(bf_ter_cascade(m, &names, sib, "SPYL.MI", "Invesco Preferred Shares UCITS ETF"), None);
+        // ...while a sibling with no known name still lends, as before: IUSN.DE has no entry in `sib`
+        assert_eq!(bf_ter_cascade(m, &names, sib, "IUSN.MI", "Some Fund Nobody Lists"), Some(0.35));
+        assert_eq!(bf_ter_cascade(m, &names, None, "SPYL.MI", "Invesco Preferred Shares UCITS ETF"), Some(0.03));
+    }
+
+    /// (#1036) The issuer word that rung 2 of `bf_ter_cascade` compares.
+    #[test]
+    fn same_issuer_reads_the_first_word_whole_or_past_the_umbrella() {
+        // BF's " - USD Acc" is a share-class suffix, not an umbrella: the BF name is never split
+        assert!(same_issuer("SPDR S&P 500 UCITS ETF", "spdr s&p 500 ucits etf - usd acc"));
+        assert!(!same_issuer("Invesco Preferred Shares UCITS ETF USD Acc", "amundi core eur corporate bond ucits etf"));
+        // Yahoo's umbrella prefix hides the issuer, so the word past " - " counts too
+        let umbrella = "Multi Units Luxembourg - Amundi STOXX Europe 600 Utilities UCITS ETF Acc";
+        assert!(same_issuer(umbrella, "amundi stoxx europe 600 utilities ucits etf acc"));
+        assert!(!same_issuer(umbrella, "ishares stoxx europe 600 utilities ucits etf"));
+        // "State Street" names the SPDR range on BF; a non-SPDR fund still differs
+        assert!(same_issuer("SPDR MSCI World UCITS ETF", "state street spdr msci world ucits etf"));
+        assert!(!same_issuer("iShares Spain Govt Bond UCITS ETF", "state street blackstone euro aaa clo ucits etf"));
+        assert!(same_issuer("Any Fund", ""), "a BF name with no word tells nothing");
     }
 
     /// (#76) The EU-listing swap's three pure halves, on the exact payload shapes the live services
@@ -16329,8 +16393,8 @@ pub(crate) mod tests {
     /// `OnceLock`s (`BF_TER_NAMES`, `BF_AUM_NAMES`, `BF_META_NAMES`, `BF_ROW_NAMES`) that
     /// `bf_ter_name_lookup` and `bf_meta_miss_buckets` already own are never written. Only
     /// `urls.yahoo_search` is redirected to the stub, so each phase spends exactly the ONE connection
-    /// `stub_server` grants. The trailing `BF_TER`/`BF_AUM`/`BF_META`/`YH_TER`/`YH_AUM` sets do land,
-    /// but only ever as empty maps here, which every reader treats identically to unset.
+    /// `stub_server` grants. The trailing `BF_SYM_NAME`/`BF_TER`/`BF_AUM`/`BF_META`/`YH_TER`/`YH_AUM`
+    /// sets do land, but only ever as empty maps here, which every reader treats identically to unset.
     ///
     /// Three phases, one test: they share both cache files under the scratch root, and that root
     /// OUTLIVES the run — so phases 1 and 2 each delete what they are about to assert on, and phase 3
