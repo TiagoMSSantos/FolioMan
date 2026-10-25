@@ -2942,7 +2942,7 @@ pub async fn run(args: Vec<String>) {
     // the previous run — the two fund events a never-sell holder must actually react to.
     let tracked: Vec<&Quote> = quotes
         .iter()
-        .filter(|q| settings.tickers.contains(&q.ticker) || crate::core::hold_suitable(q))
+        .filter(|q| fact_tracked(&settings.tickers, q))
         .collect();
     let facts: std::collections::HashMap<String, (Option<f64>, Option<f64>)> =
         tracked.iter().map(|q| (q.ticker.clone(), (q.ter_shown(), q.aum_shown()))).collect();
@@ -3710,6 +3710,12 @@ fn journal_order(ranked: &[String], sized: &[(String, f64)], shipped: &[String],
     }
 }
 
+/// (#1052) Whether the (round 50) fact-drift alerts watch `q`: a `pinned` watchlist name, or a fund
+/// `hold_suitable` flags. Out of `run`'s skip-tagged body so the either-or is graded.
+fn fact_tracked(pinned: &[String], q: &Quote) -> bool {
+    pinned.contains(&q.ticker) || core::hold_suitable(q)
+}
+
 /// (#663) The names last month's line grades (`prior`, via `track::unpriced_graded`) that this run holds
 /// on no list: not `fetched` (`quotes`, and the stale listings cut from it, which stay unpriced as before),
 /// not `queued` for the side fetch. The universe dropped them since, so `exit` and `carry` journalled each
@@ -4290,6 +4296,9 @@ mod tests {
         let spx = fund("CSP1.AS", "iShares Core S&P 500 UCITS ETF USD (Acc)", "s&p 500", 0.03, 10.0);
         let vusa = fund("VUSA.AS", "Vanguard S&P 500 UCITS ETF USD Acc", "s&p 500", 0.07, 100.0);
         assert!(core::hold_suitable(&twin) && core::hold_suitable(&spx) && !core::hold_suitable(&dist), "fixture");
+        // (#1052) the fact-drift alerts watch a pinned name or a hold-suitable fund, either one alone
+        let pins = ["VWRL.AS".to_string()];
+        assert!(fact_tracked(&pins, &dist) && fact_tracked(&[], &twin) && !fact_tracked(&[], &dist));
         let quotes = vec![held.clone(), dearer, dist, twin.clone(), spx, vusa.clone()];
         let sym = |t: &str| (t == "SWRD.AS").then(|| "SWRDa_EQ".to_string());
         let rows = [
