@@ -8769,7 +8769,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: c45d68a71983 (#1047), graded 2026-10-25 by run 40209326124, same five inputs, since
+  # LAST GRADED SHA: 209d77e895fd (#1052), graded 2026-10-25 by run 40211088903, same five inputs, since
+  # c45d68a, `files` = src/commands/backtest.rs src/commands/screen.rs: 17 in scope = 16 caught
+  # (`proxy_guard` 2 for (#1049), `journal_order` 5 for (#1050), `prior_screens` 6 for (#1051),
+  # `fact_tracked` 3 for (#1052)), 1 unviable (`prior_screens` -> `Some(vec![Default::default()])` does
+  # not build), 0 missed, 0 timeout. (#1057) records it.
+  # BEFORE THAT: c45d68a71983 (#1047), graded 2026-10-25 by run 40209326124, same five inputs, since
   # 7865b95, `files` = src/commands/backtest.rs src/heuristics/intraday.rs src/commands/screen.rs src/core.rs
   # src/picks.rs src/fetch.rs src/commands/alert.rs src/commands/size.rs: 23 in scope = 19 caught
   # (`band_verdict` 5 for (#1045), `rate_for` 6 for (#1046), `Quote::is_failed` 5 plus `book_picks` 2 and
