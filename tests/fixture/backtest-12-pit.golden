@@ -8,7 +8,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   Spearman(score, peer-relative): +0.01   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative +6.8 pts  vs  bottom-half -20.4 pts  ->  edge +27.1 pts
   90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
-  net of cost: edge +27.1 − turnover 61% × 20bps = net +27.0 pts
+  net of cost: edge +27.1 − turnover 53% × 20bps = net +27.0 pts
   winsorized edge (1/99 clamp): +25.0 pts
   recall of the pool's extreme winners (what the ranking MISSED):
     held book     vs top 1%  winners (n=38   ): recall 29%   capture 21%
@@ -37,7 +37,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   Spearman(score, peer-relative): +0.07   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative +13.2 pts  vs  bottom-half -18.7 pts  ->  edge +32.0 pts
   90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
-  net of cost: edge +32.0 − turnover 48% × 20bps = net +31.9 pts
+  net of cost: edge +32.0 − turnover 34% × 20bps = net +31.9 pts
   winsorized edge (1/99 clamp): +26.9 pts
   recall of the pool's extreme winners (what the ranking MISSED):
     held book     vs top 1%  winners (n=38   ): recall 68%   capture 65%
