@@ -3896,10 +3896,12 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
 
 /// (#75) The value brake's cohort trim, pure for testability for a reason worth recording: its first
 /// mutation audit reported SIX survivors on the two comparisons below, and every one of them was
-/// unkillable rather than merely unkilled. [`report_vs_benchmark`] returns `()` and only prints, the
-/// knob ships at `0.0`, and `fund` — which this brake needs to see a single `peg_yield` — cannot run
-/// offline (`tests/backtest_fixture.rs`), so no test could reach the comparisons in place. Split out,
-/// they take arguments and answer with a value, which is the whole difference.
+/// unkillable rather than merely unkilled. [`report_vs_benchmark`] returns `()` and only prints, and
+/// only the fund goldens run the `fund` lane this brake needs to see a single `peg_yield` (frozen SEC
+/// rows since (#364)), which the gate skips ((#590)), so no test it runs could reach the comparisons
+/// in place. Split out, they take arguments and answer with a value, which is the whole difference.
+/// ((#997) this used to say the knob ships at `0.0`, true until (#126) shipped 40.0, and that `fund`
+/// cannot run offline.)
 ///
 /// ONE FLOOR PER BUCKET, never pooled: the floor is a cross-sectional statement about a single
 /// rebalance window, and a pooled percentile would let a cheap 2009 cohort exile an expensive 2021 one
