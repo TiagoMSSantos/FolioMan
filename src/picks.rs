@@ -10917,7 +10917,7 @@ mod tests {
         assert_eq!(rank_mark(0, &coin, &none, &owned, &t), "1", "a coin is judged by the crypto cap");
 
         // ORDER, which is what the legend below the table reads against and what a scanning eye
-        // relies on. All eight at once, on one row.
+        // relies on. Seven flags at once, on one row.
         // note the fund is URANIUM, not gold: `is_commodity` reads COMMODITY_FUND_TOKENS, and "gold"
         // is in METAL_TOKENS — which belongs to `is_commodity_etf`, a different predicate.
         let mut all = Quote::stub("ETFX.L", "£100.00", "", "Global X Uranium UCITS ETF");
@@ -12868,7 +12868,7 @@ mod tests {
         hot.perf = legs(&[("5Y", 400.0)]);
         assert_eq!(cc("leg", &hot, 0.0, None, ""), "+30%");
         assert!(core::cagr(400.0, 5.0) > 37.0, "the cap must be what clamps this, not a weak leg");
-        // (#3h) and with the cap OFF (0, the SHIPPED live value) the same row prints its raw leg CAGR.
+        // (#3h) and with the cap OFF (0; 30 ships since (#3k)) the same row prints its raw leg CAGR.
         // This is the only assert that fails if `capped_trend`'s zero-guard regresses — without it
         // `long_cagr.min(0.0)` is 0.0 for every positive CAGR, so the cell would read "+0%" and BOTH
         // trend terms would be silently gutted while the table still printed plausible scores.
@@ -13483,7 +13483,7 @@ mod tests {
     /// (#144) `compose_score` factor by factor. Every existing fixture leaves ter/commodity/fx/acc_damp
     /// at 1.0 and `liq_bonus` at 0.0 — at those values `*` and `/` compute the same number and so do
     /// `+` and `-`, so the composition was structurally untestable through a `Quote`. Building the
-    /// `ScoreParts` directly with eight DISTINCT non-1.0 damps and a non-zero bonus is what makes each
+    /// `ScoreParts` directly with every damp DISTINCT and non-1.0 and a non-zero bonus is what makes each
     /// factor observable.
     ///
     /// The expected values are written in the SAME association order as the code on purpose: float
@@ -13508,7 +13508,7 @@ mod tests {
         let plain = BuyHeuristic::default();
         assert!(!plain.growth_allow_negative_scores, "the shipped lane is the else branch");
         let want = 8.0 * 0.9 * 0.8 * 0.7 * 0.6 * 0.5 * 0.4 * 0.3 * 1.2 + 2.0;
-        assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all eight damps and the boost, and ADDS the bonus");
+        assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all seven damps and the boost, and ADDS the bonus");
 
         // (#86) a negative base takes NO damp — and with a non-zero bonus the sign of the `+` shows.
         let neg = BuyHeuristic { growth_allow_negative_scores: true, ..BuyHeuristic::default() };
@@ -13734,7 +13734,7 @@ mod tests {
     ///   * ROCK carries BOTH advantages, so no reweighting of the two can demote it — median 1, and an
     ///     IQR of zero width. A perturbation study that cannot report "this one is not in question" is
     ///     useless, because every name would look fragile.
-    ///   * SMOOTH and QUALITY are tied EXACTLY at the shipped weights and differ only in which term
+    ///   * SMOOTH and QUALITY are tied EXACTLY at the test's weights and differ only in which term
     ///     carries their points, so which of them ranks #2 is decided purely by the draw. Their IQR
     ///     must be strictly wider than ROCK's — that gap IS the finding the footer prints.
     ///   * the two names are otherwise byte-identical (same perf, same turnover, same range), so the
@@ -13764,7 +13764,7 @@ mod tests {
         assert_eq!(
             growth_score(&pool[1], &t),
             growth_score(&pool[2], &t),
-            "the two contenders must be EXACTLY tied at the shipped weights, or the test proves nothing"
+            "the two contenders must be EXACTLY tied at these weights, or the test proves nothing"
         );
 
         assert!(rank_robustness(&pool, &t, 0).is_empty(), "k = 0 is the shipped state: no work, no output");
@@ -14648,7 +14648,7 @@ mod tests {
             }
         }
 
-        // the refusal bucket must name the cause, and must fire for exactly the structural five
+        // the refusal bucket must name the cause, and must fire for exactly the structural six
         assert_eq!(refusal_reason(&clean), None);
         assert_eq!(refusal_reason(&leveraged), Some("leveraged"));
         assert_eq!(refusal_reason(&commodity), Some("commodity"));
@@ -15338,7 +15338,7 @@ mod tests {
             "(#234) is the receipt on this key's own line, 7 -> 9, the family count read off a census re-run, and (#283) raised it 16 -> 17, switzerland being the seventeenth family; live screen measured; no golden reaches the CORE sleeve; re-measure on a live screen, then update this pin"
         );
 
-        // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
+        // …and that the lane still SCORES under them. Gates this strict are one typo away from
         // an empty table, which no value assert above would notice.
         let mut strong = gate_fixture();
         strong.perf = legs(&[("1M", 2.0), ("1Y", 30.0), ("5Y", 300.0), ("8Y", 500.0)]);
@@ -15992,15 +15992,13 @@ mod tests {
         assert!(discover_proxies(&thin, &tuning).is_empty());
     }
 
-    /// (#327) The oscillation guard. A rescued fund passes the gate it was rescued from, so discovery
-    /// stops naming it — and a wholesale journal would then forget it and un-splice it next run. This
-    /// is the measured failure (154 pairs, then 7), reduced to three names.
     #[test]
     fn ep_fair_ratio_mirrors_the_sec_rate_rule() {
         let rows = |v: &[(&str, f64)]| v.iter().map(|(p, f)| (p.to_string(), *f)).collect::<Vec<_>>();
         // SAP-like: 5y back doubled, rows out of order; FCF 8000 on a 200000 cap
         let sap = rows(&[("2025-12-31", 8000.0), ("2019-12-31", 1.0), ("2020-12-31", 4000.0), ("2024-12-31", -50.0), ("FY?", 9e9)]);
         // (#522) the base is the median of the newest 3 years (4000 of 4000 / −50 / 8000), the rate this year's
+        // 8000 over 2020's 4000, a doubling in 5 years
         let want = 4000.0 / 200000.0 * dcf_multiple(crate::core::cagr(100.0, 5.0));
         // near, not equal: the literal `want` lets LLVM fold `powf` at compile time, a ULP off runtime libm
         let near = |got: Option<(f64, String)>, want: f64, m: &str| assert!(got.as_ref().is_some_and(|(r, s)| (r - want).abs() < 1e-12 && s == m), "{got:?} vs {want}{m}");
@@ -16022,6 +16020,9 @@ mod tests {
         assert_eq!(ep_fair_ratio(&[], 1e5), None);
     }
 
+    /// (#327) The oscillation guard. A rescued fund passes the gate it was rescued from, so discovery
+    /// stops naming it — and a wholesale journal would then forget it and un-splice it next run. This
+    /// is the measured failure (154 pairs, then 7), reduced to three names.
     #[test]
     fn carry_proxies_keeps_a_pair_that_is_already_in_force() {
         let q = |tk: &str, on: bool| {
