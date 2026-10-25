@@ -1030,7 +1030,7 @@ fn backtest_edge_holds() {
     // below 8 the run switches to daily cadence and pays a SECOND full fetch.
     //
     // (#347) The universe LIST was the part that was not free: every child fetched it live (~80s warm,
-    // ~167s cold) to walk it for ~5s. `UNIVERSE` makes the first horizon's fetch the other two's list.
+    // ~167s cold) to walk it for ~5s. `UNIVERSE` makes the first horizon's fetch the later legs' list.
     // Removed up front so no earlier run's list is ever graded, and after any skipped horizon so a
     // throttled fetch is refetched by the next horizon instead of inherited by it.
     //
