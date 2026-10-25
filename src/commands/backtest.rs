@@ -9968,7 +9968,7 @@ mod tests {
         assert!((cost_pts(0.5, 20, false) - 0.1).abs() < 1e-12);
         assert_eq!(rebalance_tag(20, false), "", "OFF adds NOTHING — goldens are the proof");
 
-        // ON: ~6mo buckets, so 2 per year of hold. A 0.15pt charge on a 20y run becomes 4.0pt.
+        // ON: ~6mo buckets, so 2 per year of hold. A 0.1pt charge on a 20y run becomes 4.0pt.
         assert_eq!(rebalances(20, true), 40);
         assert!((cost_pts(0.5, 20, true) - 4.0).abs() < 1e-12);
         assert_eq!(rebalance_tag(20, true), " × 40 rebalances");
