@@ -8769,7 +8769,11 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 333423d15840 (#1030), graded 2026-10-25 by run 40189728370, same five inputs, since
+  # LAST GRADED SHA: a715433cc3d5 (#1032), graded 2026-10-25 by run 40192110741, same five inputs, since
+  # 333423d, `files` = src/commands/report.rs: 7 in scope = 7 caught (`render_fund` 7 for (#1032), among
+  # them the `"xyzzy"` body swap the push's diff gate left ungraded at budget 6 of 7), 0 unviable,
+  # 0 missed, 0 timeout.
+  # BEFORE THAT: 333423d15840 (#1030), graded 2026-10-25 by run 40189728370, same five inputs, since
   # 3fb64de, `files` = src/commands/screen.rs src/commands/sim.rs src/commands/alert.rs: 131 in scope = 130
   # caught (`fact_alerts` 8 for (#1024), `cash_line` 3 for (#1025), `stability_tag` 6 for (#1026),
   # `rank_trend` 91 for (#1027) and (#1028), `buy_event` 10 for (#1029), `off_hi_shown` 7,
