@@ -1716,11 +1716,7 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
         let pond: Vec<intraday::Member> = charts
             .iter()
             .filter_map(|(tk, c)| {
-                let fx = match c.currency.as_str() {
-                    "EUR" => 1.0,
-                    "USD" => usd?,
-                    _ => return None,
-                };
+                let fx = intraday::rate_for(&c.currency, usd)?;
                 Some((*tk, c, fx, (market == "US").then(|| spans[*tk].as_slice())))
             })
             .collect();

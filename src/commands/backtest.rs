@@ -2529,11 +2529,7 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         let pond: Vec<intraday::Member> = charts
             .iter()
             .filter_map(|(tk, c)| {
-                let fx = match c.currency.as_str() {
-                    "EUR" => 1.0,
-                    "USD" => usd,
-                    _ => return None,
-                };
+                let fx = intraday::rate_for(&c.currency, Some(usd))?;
                 Some((*tk, c, fx, (market == "US").then(|| spans[*tk].as_slice())))
             })
             .collect();

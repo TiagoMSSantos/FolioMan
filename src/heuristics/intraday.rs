@@ -328,6 +328,17 @@ pub fn closed(market: &str, now: NaiveTime) -> bool {
     (now.hour(), now.minute()) >= if market == "US" { (21, 30) } else { (17, 0) }
 }
 
+/// (#1046) EUR per unit of a chart's `currency`: 1 for EUR, `usd` (EUR per USD, None when the FX quote
+/// failed) for USD, and None for anything else, which drops the name from the pond. Out of the skip-tagged
+/// `screen` and `backtest` shells so a deleted arm is graded.
+pub fn rate_for(currency: &str, usd: Option<f64>) -> Option<f64> {
+    match currency {
+        "EUR" => Some(1.0),
+        "USD" => usd,
+        _ => None,
+    }
+}
+
 /// (#825) The date in `SINCE_FILE`, or `today` when the file is missing or holds no date.
 pub fn since(today: NaiveDate) -> NaiveDate {
     std::fs::read_to_string(crate::config::data_path(SINCE_FILE)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(today)
@@ -788,6 +799,14 @@ mod tests {
         let at = |h, m| NaiveTime::from_hms_opt(h, m, 0).unwrap();
         assert!(!closed("EU", at(16, 59)) && closed("EU", at(17, 0)));
         assert!(!closed("US", at(17, 0)) && !closed("US", at(21, 29)) && closed("US", at(21, 30)));
+    }
+
+    #[test]
+    fn only_eur_and_a_quoted_usd_have_a_rate() {
+        assert_eq!(rate_for("EUR", None), Some(1.0));
+        assert_eq!(rate_for("USD", Some(0.9)), Some(0.9));
+        assert_eq!(rate_for("USD", None), None, "a failed FX quote drops the USD names");
+        assert_eq!(rate_for("GBP", Some(0.9)), None);
     }
 
     #[test]
