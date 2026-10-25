@@ -7987,10 +7987,16 @@ fn merge_isin_lists(
     );
     let extra_n = top.len() - total.min(cap);
     // speculative (regulatory-only) ISINs last; the set doubles as the negative-cache eligibility
-    // check inside the resolution closure (caller already removed venue-list overlaps).
-    let spec_set: std::collections::HashSet<String> =
-        speculative_isins.into_iter().filter(|isin| !bf_isins.contains(isin)).collect();
-    top.extend(spec_set.iter().cloned().map(|isin| (isin, None, None, BfMeta::default())));
+    // check inside the resolution closure (caller already removed venue-list overlaps). (#1019) They
+    // keep the order they came in: walking the set instead put the tail in hash order, and the fact
+    // fill's budget cut lands inside it, so which regulatory funds got TER and AUM followed the seed.
+    let mut spec_set = std::collections::HashSet::new();
+    top.extend(
+        speculative_isins
+            .into_iter()
+            .filter(|isin| !bf_isins.contains(isin) && spec_set.insert(isin.clone()))
+            .map(|isin| (isin, None, None, BfMeta::default())),
+    );
     (top, extra_n, spec_set)
 }
 
@@ -10698,6 +10704,18 @@ pub(crate) mod tests {
         // as parsed. `dom` alone is the weakest case, so it is the one worth pinning.
         assert!(carries_fund_facts(&BfMeta { dom: Some("IE".into()), ..BfMeta::default() }));
         assert!(carries_fund_facts(&BfMeta { use_of: Some("Acc"), ..BfMeta::default() }));
+    }
+
+    /// (#1019) The speculative tail keeps its input order, a repeat dropped. The fact fill's budget
+    /// cut lands inside it, so a tail in hash order changed which funds got filled from run to run.
+    #[test]
+    fn the_speculative_tail_keeps_its_input_order() {
+        let spec: Vec<String> = (0..30).map(|i| format!("FR{i:02}")).collect();
+        let mut input = spec.clone();
+        input.push("FR00".into());
+        let (top, extra_n, spec_set) = merge_isin_lists(Vec::new(), Vec::new(), input, 0);
+        let isins: Vec<String> = top.into_iter().map(|(i, ..)| i).collect();
+        assert_eq!((isins, extra_n, spec_set.len()), (spec, 0, 30));
     }
 
     /// The 30-day negative cache, at the exact day it expires and on both sides of it.
