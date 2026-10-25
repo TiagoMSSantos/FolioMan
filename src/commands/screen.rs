@@ -3808,11 +3808,21 @@ fn valuation_state_line(anchor: &str, index_pe: f64, euribor: f64, off_hi: Optio
     ))
 }
 
+/// (#1030) `off_hi` as the entry-state lines print it: one decimal, cut toward zero, never
+/// rounded up. [`entry_state_class`] reads the raw value, so a reading of 4.96 printed as `{:.1}`
+/// showed "5.0% off its high — NEAR-HIGH"; cut, it shows 4.9, and 14.96 shows 14.9 beside PULLBACK.
+pub(crate) fn off_hi_shown(off_hi: f64) -> f64 {
+    (off_hi * 10.0).floor() / 10.0
+}
+
 /// (round 109→112) One-line entry-state read for the near-high footer. Delegates to
 /// [`entry_state_class`]; format is unchanged so the alert scans the same as the other footers.
 fn entry_state_line(off_hi: f64) -> String {
     let (state, read) = entry_state_class(off_hi);
-    format!("Entry state: S&P 500 {off_hi:.1}% off its high — {state}. {read}. NOT advice.")
+    format!(
+        "Entry state: S&P 500 {:.1}% off its high — {state}. {read}. NOT advice.",
+        off_hi_shown(off_hi)
+    )
 }
 
 /// (#326) Copy the market's state onto every quote, so the regime valve (`picks::regime_floor`) can read
@@ -3881,7 +3891,8 @@ fn entry_state_banner(off_hi: f64) -> Option<String> {
     let (state, read) = entry_state_class(off_hi);
     let rule = "=".repeat(72);
     Some(format!(
-        "\n{rule}\n  ENTRY STATE: {state} — S&P 500 {off_hi:.1}% off its high\n  {read}. NOT advice.\n{rule}"
+        "\n{rule}\n  ENTRY STATE: {state} — S&P 500 {:.1}% off its high\n  {read}. NOT advice.\n{rule}",
+        off_hi_shown(off_hi)
     ))
 }
 
@@ -4187,6 +4198,10 @@ mod tests {
         assert!(entry_state_line(14.9).contains("PULLBACK"));
         assert!(entry_state_line(15.0).contains("DRAWDOWN"));
         assert!(entry_state_line(7.0).contains("7.0% off"));
+        // (#1030) just under an edge, the printed percent is cut, never rounded up past it
+        assert!(entry_state_line(4.96).contains("4.9% off its high — NEAR-HIGH"));
+        let edge = entry_state_banner(14.96).expect("14.96 is a pullback");
+        assert!(edge.contains("PULLBACK — S&P 500 14.9% off"));
     }
 
     /// (round 112) the top banner fires ONLY for actionable states (≥5% off) and carries the state name

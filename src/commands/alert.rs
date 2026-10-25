@@ -1,7 +1,7 @@
 //! `alert [TICKERS]` — ntfy.sh push for tickers >= drop_pct below their trailing high, plus a
 //! market-level entry-state flip ping when the S&P 500 crosses a near-high/pullback/drawdown line.
 
-use crate::commands::screen::entry_state_class;
+use crate::commands::screen::{entry_state_class, off_hi_shown};
 use crate::{config, fetch};
 
 /// (round 113) Last pushed market entry state, one word in the working dir — same local-file
@@ -126,7 +126,10 @@ pub async fn run(args: Vec<String>) {
                 &client,
                 &settings.urls,
                 &settings.ntfy_topic,
-                &format!("Market {state}: S&P 500 {off_hi:.1}% off high"),
+                &format!(
+                    "Market {state}: S&P 500 {:.1}% off high",
+                    off_hi_shown(off_hi)
+                ),
                 &format!("{read}. NOT advice."),
             )
             .await;
