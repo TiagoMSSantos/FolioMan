@@ -244,8 +244,9 @@ pub(crate) struct Verdict {
     pub(crate) sized: Option<SizedVerdict>,
 }
 
-/// (#309) The SIZED row as journaled. `sizing_fp` fingerprints the `sizing:` block beside `tuning_fp`,
-/// because the caps and the spill move this row without touching a single `buy_heuristic` knob.
+/// (#309) The SIZED row as journaled. `sizing_fp` fingerprints the `sizing:` block (and since (#1060)
+/// `top_picks`, see [`sizing_fingerprint`]) beside `tuning_fp`, because the caps, the spill and the width
+/// move this row without touching a single `buy_heuristic` knob.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct SizedVerdict {
     pub(crate) windows: usize,
@@ -274,6 +275,13 @@ pub(crate) type Journal = std::collections::BTreeMap<i64, Verdict>;
 /// knob changed since the run means the cited numbers were never earned by the current settings.
 pub(crate) fn tuning_fingerprint(t: &impl serde::Serialize) -> String {
     serde_json::to_string(t).unwrap_or_default()
+}
+
+/// (#1060) The SIZED row's fingerprint: the `sizing:` block AND `top_picks`, because [`sized_buckets`] cuts
+/// each bucket at `top_picks` before the caps run, so a moved width changes the row with every `sizing:`
+/// knob untouched. A row journaled before this fingerprinted the block alone, so it warns until rerun.
+pub(crate) fn sizing_fingerprint(sz: &config::Sizing, top: usize) -> String {
+    tuning_fingerprint(&(sz, top))
 }
 
 /// Malformed/corrupt JSON is an EMPTY journal — a broken file must SILENCE the screen line, never
@@ -371,7 +379,7 @@ pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool) -> String
 
 /// (#309) The graded record of the book `screen`'s BUY NOW block prints: every journaled horizon's SIZED
 /// row, longest first, each with its own run date (a `backtest 8` run updates only its row). A row earned
-/// on other `buy_heuristic` or `sizing:` settings warns instead of passing as current. `None` when no row
+/// on other `buy_heuristic`, `sizing:` or `top_picks` settings warns instead of passing as current. `None` when no row
 /// carries a SIZED record, which is every journal written before (#309).
 pub(crate) fn sized_record_line(j: &Journal, tuning_fp: &str, sizing_fp: &str) -> Option<String> {
     let rows: Vec<(&Verdict, &SizedVerdict)> = j.values().rev().filter_map(|v| v.sized.as_ref().map(|s| (v, s))).collect();
@@ -5530,7 +5538,7 @@ fn report_sized_book(
             sized.len(),
         );
         // (#309) a point-in-time run journals this to SIZED_FILE, so `screen` can cite it under BUY NOW.
-        return Some(SizedVerdict { windows: sized.len(), book: b, excess: e, worst: wo, deployed, sizing_fp: tuning_fingerprint(sz), roll: None });
+        return Some(SizedVerdict { windows: sized.len(), book: b, excess: e, worst: wo, deployed, sizing_fp: sizing_fingerprint(sz, top), roll: None });
     }
     None
 }
@@ -9931,7 +9939,9 @@ mod tests {
         assert_eq!(sized_record_line(&Journal::from([(12, stub_verdict(12, VERDICT_TOP))]), tf, "S"), None, "a pre-(#309) journal stays silent");
         let mut moved = config::Sizing::default();
         moved.max_name_pct += 1.0;
-        assert_ne!(tuning_fingerprint(&config::Sizing::default()), tuning_fingerprint(&moved), "a moved cap must change the sizing fingerprint");
+        let base = sizing_fingerprint(&config::Sizing::default(), 25);
+        assert_ne!(base, sizing_fingerprint(&moved, 25), "a moved cap must change the sizing fingerprint");
+        assert_ne!(base, sizing_fingerprint(&config::Sizing::default(), 20), "(#1060) a moved top_picks cuts the book, so it must too");
     }
 
     /// (#91) The effective trial count, on the two window counts the finding names, plus the two things

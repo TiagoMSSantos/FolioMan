@@ -3027,7 +3027,7 @@ pub async fn run(args: Vec<String>) {
         );
         let (tuning_fp, sizing_fp) = (
             crate::commands::backtest::tuning_fingerprint(&settings.buy_heuristic),
-            crate::commands::backtest::tuning_fingerprint(&settings.sizing),
+            crate::commands::backtest::sizing_fingerprint(&settings.sizing, settings.top_picks),
         );
         if let Some(line) = crate::commands::backtest::sized_record_line(&journal, &tuning_fp, &sizing_fp) {
             println!("{line}");
