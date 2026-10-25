@@ -70,7 +70,7 @@ pub async fn run(args: Vec<String>) {
     let before = alerted.clone();
     let mut priced = 0;
     for quote in fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, None, settings.inflation_adjust.score_on_nominal).await { // news on: alert body shows headlines; keys on price drop, not returns
-        if quote.price == "err" || quote.price == "no data" {
+        if quote.is_failed() {
             continue; // a stub quote reads drop_pct 0.0 — treating that as a recovery would fake-clear the dedup
         }
         priced += 1;
@@ -117,7 +117,7 @@ pub async fn run(args: Vec<String>) {
         false, false, &settings.anchor_windows, None, settings.inflation_adjust.score_on_nominal,
     )
     .await;
-    if let Some(q) = spx.first().filter(|q| q.price != "err" && q.price != "no data") {
+    if let Some(q) = spx.first().filter(|q| !q.is_failed()) {
         let off_hi = q.drawdown_pct;
         let (state, read) = entry_state_class(off_hi);
         let prev = std::fs::read_to_string(crate::config::data_path(ALERT_STATE_FILE)).ok();

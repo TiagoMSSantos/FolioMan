@@ -512,6 +512,11 @@ impl Quote {
         }
     }
 
+    /// (#1047) The fetch stored the `err` or `no data` stub in place of a price.
+    pub fn is_failed(&self) -> bool {
+        self.price == "err" || self.price == "no data"
+    }
+
     /// TER as SHOWN: BF first, Yahoo fallback second. For display cells + the H/CORE flag only —
     /// never feed this into scoring/gates (they stay on the raw BF `expense_ratio` so momentum ranks
     /// are byte-identical with pre-fallback runs).
@@ -6010,6 +6015,12 @@ mod tests {
 
     /// (#473) universe.json carries the buyer count on the flagged names alone, and the wasm engine
     /// reads it back unchanged.
+    #[test]
+    fn only_the_err_and_no_data_stubs_are_failed() {
+        assert!(Quote::stub("X", "err", "", "X").is_failed() && Quote::stub("X", "no data", "", "X").is_failed());
+        assert!(!Quote::stub("X", "€1", "", "X").is_failed());
+    }
+
     #[test]
     fn super_buyers_rides_universe_json_only_when_set() {
         let plain = Quote::stub("A", "€1", "", "A");

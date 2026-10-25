@@ -504,7 +504,7 @@ pub async fn run(args: Vec<String>) {
     .await;
     let off_hi = spx
         .first()
-        .filter(|q| q.price != "err" && q.price != "no data")
+        .filter(|q| !q.is_failed())
         .map(|q| q.drawdown_pct);
     if let Some(line) = crate::commands::screen::deploy_line(settings.monthly_deploy_eur, off_hi) {
         println!("{line}");

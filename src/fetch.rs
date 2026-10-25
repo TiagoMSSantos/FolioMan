@@ -19776,7 +19776,7 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
     // recovered 0/57 once paced). They gate out the same as before; we just don't waste a pass on them.
     let dead: Vec<&str> = out
         .iter()
-        .filter(|quote| quote.price == "err" || quote.price == "no data")
+        .filter(|quote| quote.is_failed())
         .map(|quote| quote.ticker.as_str())
         .collect();
     if !dead.is_empty() {

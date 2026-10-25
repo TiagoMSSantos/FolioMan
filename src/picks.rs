@@ -6675,7 +6675,7 @@ fn book_picks<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic, nupl: Option<f64>,
     // err/no-data quotes (a bad symbol like a suffix-less ETF) — nothing to compare, don't show a blank row.
     let growth_scorer = |quote: &Quote, tuning: &BuyHeuristic| {
         growth_score(quote, tuning).map(|s| crypto_adjust(quote, s, tuning, cfactor, btc_1y)).or_else(|| {
-            let usable = quote.price != "err" && quote.price != "no data";
+            let usable = !quote.is_failed();
             (usable && pinned_set.contains(quote.ticker.as_str())).then_some(f64::MIN_POSITIVE)
         })
     };

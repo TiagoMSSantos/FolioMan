@@ -1915,7 +1915,7 @@ pub async fn run(args: Vec<String>) {
     if settings.eu_listing_us_series {
         let swapped: Vec<(String, String)> = quotes
             .iter()
-            .filter(|q| q.price != "err" && q.price != "no data")
+            .filter(|q| !q.is_failed())
             .map(|q| (q.ticker.clone(), fetch::us_symbol(&q.ticker)))
             .filter(|(eu, us)| !us.eq_ignore_ascii_case(eu))
             .collect();
@@ -1928,7 +1928,7 @@ pub async fn run(args: Vec<String>) {
                 &client, &settings.urls, &fx_cache, &us_lines, settings.dip_days, settings.high_days, false, false,
                 &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
             ).await)
-            .filter(|(_, q)| q.price != "err" && q.price != "no data")
+            .filter(|(_, q)| !q.is_failed())
             .collect();
         eprintln!("screen: (#608) {} of {} European lines scored on their US series, the rest on their own; {} SEC GETs", us_of.len(), us_lines.len(), fetch::sec_stats().0 - sec0);
         quotes = quotes.into_iter().map(|q| match us_of.get(&q.ticker) { Some(us) => fetch::adopt_us_series(q, us.clone()), None => q }).collect();
@@ -2156,11 +2156,11 @@ pub async fn run(args: Vec<String>) {
         .into_iter()
         .map(|(eu, _)| eu)
         .zip(side)
-        .filter(|(_, q)| q.price != "err" && q.price != "no data")
+        .filter(|(_, q)| !q.is_failed())
         .collect();
     let (dropped_px, mut shadow_extra): (Vec<Quote>, Vec<Quote>) = rest
         .into_iter()
-        .filter(|q| q.price != "err" && q.price != "no data")
+        .filter(|q| !q.is_failed())
         .partition(|q| dropped.contains(&q.ticker));
     let extra_set: std::collections::HashSet<String> = shadow_extra.iter().map(|q| q.ticker.clone()).collect();
     fetch::enrich_fund_factor(&client, &settings.urls, &mut shadow_extra, &settings.buy_heuristic).await;
@@ -2176,7 +2176,7 @@ pub async fn run(args: Vec<String>) {
     let etfs_no_ter = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF") && q.ter_shown().is_none()).count();
     // names fetch swallowed to an err/no-data stub (quote_one self-swallows a bad ticker) — otherwise
     // invisible in aggregate: each surfaces only as one "err" row buried in a class table.
-    let no_data = quotes.iter().filter(|q| q.price == "err" || q.price == "no data").count();
+    let no_data = quotes.iter().filter(|q| q.is_failed()).count();
     println!(
         "Data quality: {} names | {no_data} no data | {stocks_no_pe} stocks missing P/E | {etfs_no_ter} ETFs missing TER | {} stale dropped (>{}d)",
         quotes.len(), fresh_before.saturating_sub(quotes.len()), settings.stale_days
