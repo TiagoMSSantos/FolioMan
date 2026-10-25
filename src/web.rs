@@ -146,10 +146,12 @@ pub fn explain(overlay: &str, universe: &str, query: &str) -> Result<String, Str
     // a name that STARTS with the query first: "nvidia" is NVIDIA Corporation, not a 3x short ETP on it
     let mut named: Vec<&Quote> = u.quotes.iter().filter(|x| !low.is_empty() && x.name.to_lowercase().contains(&low)).collect();
     named.sort_by_key(|x| !x.name.to_lowercase().starts_with(&low));
+    // (#1072) a class share typed as brokers and Nasdaq spell it (`BRK.B`) is Yahoo's `BRK-B` in the pool
+    let dashed = q.replace('.', "-");
     let hit = u
         .quotes
         .iter()
-        .find(|x| x.ticker.eq_ignore_ascii_case(q))
+        .find(|x| x.ticker.eq_ignore_ascii_case(q) || x.ticker.eq_ignore_ascii_case(&dashed))
         .map(|x| x.ticker.clone())
         .or_else(|| u.aliases.iter().find(|(k, _)| k.eq_ignore_ascii_case(q)).map(|(_, v)| v.clone()));
     let by_name = hit.is_none();
@@ -609,6 +611,18 @@ mod tests {
         assert!(why("NOPE").starts_with("No pool row matches \"NOPE\". The pool keeps one listing per company"));
         assert!(why("").starts_with("No pool row matches \"\""), "an empty box matches no name");
         assert!(explain("tickers: [", &u, "aapl").is_err_and(|e| e.starts_with("settings.yaml:")));
+    }
+
+    /// (#1072) A class share typed with a dot finds the pool's dashed row by its ticker. Before, `brk.b` fell
+    /// through to the name match, and no name holds it, so the box answered "No pool row matches".
+    #[test]
+    fn explain_finds_a_class_share_typed_with_a_dot() {
+        let mut brk = winner();
+        brk.ticker = "BRK-B".into();
+        let u = universe(&[brk]);
+        let hit = explain("", &u, "BRK-B").expect("explains");
+        assert!(!hit.starts_with("No pool row"), "not vacuous: {hit}");
+        assert_eq!(explain("", &u, "brk.b").expect("explains"), hit);
     }
 
     /// (#894) The why box reads the upload's pins, as the tables beside it do: a pinned twin the same-name
