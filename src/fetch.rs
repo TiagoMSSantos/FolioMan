@@ -3591,6 +3591,18 @@ async fn edinet_scan(client: &Client, base: &str, hdr: &[(&str, &str)], day: Nai
     true
 }
 
+/// (#520) The forward scan's first day: two days before the cached `hi` (those lists may still grow),
+/// today on a cold cache, never before [`EDINET_FIRST`].
+fn edinet_start(hi: Option<NaiveDate>, today: NaiveDate, first: NaiveDate) -> NaiveDate {
+    hi.map_or(today, |h| h - chrono::Duration::days(2)).max(first)
+}
+
+/// (#520) The backfill's next day: the day before `lo`, while lists are left in the budget and `lo` is
+/// still after [`EDINET_FIRST`].
+fn edinet_back(lo: Option<NaiveDate>, first: NaiveDate, budget: usize) -> Option<NaiveDate> {
+    lo.filter(|l| budget > 0 && *l > first).and_then(|l| l.pred_opt())
+}
+
 /// (#520) Berkshire's Japan stakes for the Berkshire table. Off with no `urls.edinet_api` (every golden
 /// stays byte-identical; CI sets it) or no `EDINET_API_KEY`. Each run rescans the two days before `hi`
 /// through today (today's list still grows), then walks `lo` back toward [`EDINET_FIRST`], all within
@@ -3610,7 +3622,7 @@ async fn fetch_edinet_brk(client: &Client, urls: &Urls) -> Vec<BrkRow> {
     let date = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
     let (first, today) = (date(EDINET_FIRST).expect("literal date"), chrono::Utc::now().date_naive());
     let (mut lo, mut hi, mut budget) = (date(&lo), date(&hi), EDINET_DAY_BUDGET);
-    let start = hi.map_or(today, |h| h - chrono::Duration::days(2)).max(first);
+    let start = edinet_start(hi, today, first);
     for d in start.iter_days().take_while(|d| *d <= today) {
         if budget == 0 || !edinet_scan(client, &urls.edinet_api, &hdr, d, &mut hits).await {
             break;
@@ -3619,7 +3631,7 @@ async fn fetch_edinet_brk(client: &Client, urls: &Urls) -> Vec<BrkRow> {
         hi = hi.max(Some(d));
         lo = lo.or(Some(d));
     }
-    while let Some(d) = lo.filter(|l| budget > 0 && *l > first).and_then(|l| l.pred_opt()) {
+    while let Some(d) = edinet_back(lo, first, budget) {
         if !edinet_scan(client, &urls.edinet_api, &hdr, d, &mut hits).await {
             break;
         }
@@ -14395,6 +14407,21 @@ pub(crate) mod tests {
         assert_eq!(parse_edinet_doc(&zip(utf16(csv("－")))), want(0.0));
         assert_eq!(parse_edinet_doc(&zip(b"\"jplvh_cor:NameOfIssuer\"\t\"x\"".to_vec())), None);
         assert_eq!(parse_edinet_doc(b"{\"statusCode\": 401}"), None);
+    }
+
+    /// (#520) The scan edges: forward from two days before `hi` (today when cold, never before the
+    /// first day); back one day at a time while budget is left and `lo` is after the first day.
+    #[test]
+    fn edinet_edges_rescan_two_days_and_stop_at_the_first_day() {
+        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        let (first, today) = (d(2020, 8, 1), d(2026, 10, 25));
+        assert_eq!(edinet_start(None, today, first), today);
+        assert_eq!(edinet_start(Some(d(2024, 3, 10)), today, first), d(2024, 3, 8));
+        assert_eq!(edinet_start(Some(first), today, first), first);
+        assert_eq!(edinet_back(Some(d(2024, 3, 10)), first, 1), Some(d(2024, 3, 9)));
+        assert_eq!(edinet_back(Some(first), first, 1), None);
+        assert_eq!(edinet_back(Some(d(2024, 3, 10)), first, 0), None);
+        assert_eq!(edinet_back(None, first, 1), None);
     }
 
     /// (#520) One row per issuer from its newest report. Prior shares: the newest report with an earlier
