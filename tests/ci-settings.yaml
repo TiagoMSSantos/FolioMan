@@ -8769,7 +8769,13 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 7865b95300ae (#1043), graded 2026-10-25 by run 40207685928, same five inputs, since
+  # LAST GRADED SHA: c45d68a71983 (#1047), graded 2026-10-25 by run 40209326124, same five inputs, since
+  # 7865b95, `files` = src/commands/backtest.rs src/heuristics/intraday.rs src/commands/screen.rs src/core.rs
+  # src/picks.rs src/fetch.rs src/commands/alert.rs src/commands/size.rs: 23 in scope = 19 caught
+  # (`band_verdict` 5 for (#1045), `rate_for` 6 for (#1046), `Quote::is_failed` 5 plus `book_picks` 2 and
+  # `quotes` 1 at its call sites for (#1047)), 4 unviable (`quotes` and `book_picks` -> `Default::default()`
+  # rows do not build), 0 missed, 0 timeout.
+  # BEFORE THAT: 7865b95300ae (#1043), graded 2026-10-25 by run 40207685928, same five inputs, since
   # 8d1d957, `files` = src/fetch.rs: 7 in scope = 7 caught (`holder_boosts_off` 7 for (#1043), among them
   # the `-> false` swap the push's diff gate left ungraded at budget 6 of 7), 0 unviable, 0 missed,
   # 0 timeout.
