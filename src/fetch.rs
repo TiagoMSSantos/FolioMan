@@ -142,7 +142,7 @@ async fn get_with(client: &Client, url: &str, headers: &[(&str, &str)]) -> Optio
 /// Global outbound-request pacer. The concurrency cap bounds how many requests are *in flight*, but
 /// nothing stopped 64 of them launching in the same millisecond — that burst is what Yahoo 429s into
 /// err stubs (forcing the reactive re-fetch pass). This proactively spaces request *launches* ≥
-/// `min_interval` apart: a single shared "next free slot" instant that each request claims-and-bumps
+/// `1 / rate` apart: a single shared "next free slot" instant that each request claims-and-bumps
 /// under a short lock, then releases the lock and sleeps until its slot. N concurrent tasks therefore
 /// leave the gate evenly spaced at the configured rate instead of all at once. Rate from config
 /// (`fetch_requests_per_second`); 0 disables it. note: one Mutex<Instant>, no token-bucket crate.
