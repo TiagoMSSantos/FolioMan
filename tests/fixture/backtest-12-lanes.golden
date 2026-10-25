@@ -280,9 +280,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   any corporate PAC (info)                  0      NaN      NaN    NaN |      0      NaN      NaN    NaN
 
 ── PRICE-RISK (closes-derived, standalone probes) ──
-  consistency_5y n=1315  rho -0.10  edge -133.3  OOS -0.36 | -0.15
-  consistency_10y n=584   rho -0.14  edge -191.7  OOS -0.22 | -0.12
-  worst_5y       n=1315  rho -0.01  edge -128.0  OOS -0.39 | -0.02
+  consistency_5y n=1315  rho -0.09  edge -132.5  OOS -0.35 | -0.13
+  consistency_10y n=584   rho -0.09  edge -186.6  OOS -0.19 | -0.06
+  worst_5y       n=1315  rho +0.01  edge -85.5  OOS -0.36 | -0.01
   underwater_neg n/a (only 0 cutoffs carry this stat)
   downside_dev_neg n=1657  rho +0.16  edge -16.2  OOS -0.03 | +0.33
   sortino        n=1650  rho -0.08  edge -136.0  OOS -0.39 | +0.09

@@ -234,9 +234,9 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   gap  mean +7.0 | med -41.2 pts  ->  SPLIT — mean (+7.0) and median (-41.2) disagree: the gap is driven by the tail, not the typical name. Read the median.
 
 ── PRICE-RISK (closes-derived, standalone probes) ──
-  consistency_5y n=1814  rho -0.01  edge -47.6  OOS -0.20 | +0.07
-  consistency_10y n=966   rho -0.06  edge -68.6  OOS -0.07 | -0.06
-  worst_5y       n=1814  rho +0.08  edge -43.1  OOS -0.18 | +0.18
+  consistency_5y n=1814  rho +0.01  edge -42.2  OOS -0.19 | +0.10
+  consistency_10y n=966   rho -0.02  edge -63.7  OOS -0.06 | -0.01
+  worst_5y       n=1814  rho +0.08  edge -37.4  OOS -0.16 | +0.18
   underwater_neg n/a (only 0 cutoffs carry this stat)
   downside_dev_neg n=2172  rho +0.09  edge -11.9  OOS -0.05 | +0.27
   sortino        n=2162  rho -0.05  edge -45.6  OOS -0.32 | +0.14
