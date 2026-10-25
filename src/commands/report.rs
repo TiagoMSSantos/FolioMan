@@ -87,7 +87,7 @@ pub async fn run(args: Vec<String>) {
                     fetch::fund_facts_ext_live(&client, &settings.urls, ticker).await.unwrap_or((None, None, None));
                 let (holdings, sectors, stock_bond, _fund_pe) =
                     fetch::fund_composition_live(&client, &settings.urls, ticker).await.unwrap_or_default();
-                if ter.is_some() || aum.is_some() || !holdings.is_empty() || !sectors.is_empty() {
+                if fund_has_data(ter, aum, &holdings, &sectors) {
                     print!(
                         "{}",
                         render_fund(ticker, ter, aum, category.as_deref(), &holdings, &sectors, stock_bond)
@@ -399,6 +399,12 @@ fn render_fund(
         out.push('\n');
     }
     out
+}
+
+/// [`render_fund`]'s gate: any one of TER, AUM, holdings or sectors earns the profile; none keeps the
+/// caller's no-data line.
+fn fund_has_data(ter: Option<f64>, aum: Option<f64>, holdings: &[(String, f64)], sectors: &[(String, f64)]) -> bool {
+    ter.is_some() || aum.is_some() || !holdings.is_empty() || !sectors.is_empty()
 }
 
 /// (round 6) The growth lane's VERDICT on this one name — the thing a report drill-in never said,
@@ -871,6 +877,17 @@ mod tests {
         assert!(bare.contains("market: -  cagr - (-)  1y -  5y -  10y -  vol -  maxdd -"), "{bare}");
         assert!(bare.contains("abv-200wk -  off-hi at high  turnover -"), "{bare}");
         assert!(!bare.contains("stale"), "{bare}"); // no close date -> no marker, never a false flag
+    }
+
+    /// The fund profile prints when any one field arrived, and only then.
+    #[test]
+    fn fund_has_data_needs_any_one_field() {
+        let row = [("AAPL".to_string(), 0.2)];
+        assert!(!fund_has_data(None, None, &[], &[]));
+        assert!(fund_has_data(Some(0.2), None, &[], &[]));
+        assert!(fund_has_data(None, Some(1.0), &[], &[]));
+        assert!(fund_has_data(None, None, &row, &[]));
+        assert!(fund_has_data(None, None, &[], &row));
     }
 
     /// (data round / round 7) fund profile: TER/AUM/category on the facts line; equity/bond split
