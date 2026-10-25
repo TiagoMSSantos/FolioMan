@@ -890,12 +890,14 @@ pub struct Urls {
     #[serde(default = "default_bf_salt")]
     pub bf_salt: String,
     // justETF ETF profile page (GET, keyless HTML, `{isin}` substituted) -> TER + fund size for the
-    // funds Börse Frankfurt does not list. The THIRD source for these two facts, and now the only
-    // working one: BF answers most, Yahoo used to fill the holes, and Yahoo's crumb handshake is dead
-    // (`fc.yahoo.com` stopped setting the session cookie). HTML, so it is scraped off two stable
-    // `data-testid` anchors — see `parse_justetf_facts`, which returns None on any shape change rather
-    // than guessing. Display + H/CORE only, exactly like the Yahoo fallback it stands in for: these
-    // never reach the score. Defaulted so an older settings.yaml loads.
+    // funds Börse Frankfurt does not list. The THIRD source for these two facts: BF answers most,
+    // Yahoo fills what it can, and justETF mops up whatever still has no TER or no AUM
+    // (`yahoo_fund_facts_fill`). ((#998) this used to call it the only working one because Yahoo's
+    // crumb handshake was dead; the handshake was repaired, and (#453) it is dead only on the Pages
+    // runner.) HTML, so it is scraped off two stable `data-testid` anchors — see
+    // `parse_justetf_facts`, which returns None on any shape change rather than guessing. Display +
+    // H/CORE only, exactly like the Yahoo source beside it: these never reach the score. Defaulted so
+    // an older settings.yaml loads.
     #[serde(default = "default_justetf_profile_url")]
     pub justetf_profile: String,
     // (#438) Wikimedia's per-article monthly pageviews, `{article}` = the encoded English Wikipedia title.
