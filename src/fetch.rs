@@ -9501,6 +9501,10 @@ const FRANKFURT_EXCH_CODE: &str = "GF";
 /// with the Frankfurt fallback. Empty value, so every reader of the map treats it as a miss.
 const EU_GF_MARK: &str = "__gf460";
 
+/// (#1073) Marker key in [`EU_LISTING_CACHE_PATH`]: present once every cached class-share miss (`BRK-B`)
+/// has been re-asked in OpenFIGI's spelling (`BRK/B`). Empty value, like [`EU_GF_MARK`].
+const EU_CLASS_MARK: &str = "__class1073";
+
 /// (EU listing) The Xetra common-stock line inside one OpenFIGI share-class response, as a Yahoo
 /// symbol. Pure, so the venue rule is testable without a network: `GY` + `Common Stock` -> `<t>.DE`.
 ///
@@ -9632,14 +9636,25 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         .unwrap_or_default();
     // (#460) Once, every cached miss is asked again: it was a miss before the Frankfurt fallback existed.
     let regrade = !cache.contains_key(EU_GF_MARK);
-    let mut todo: Vec<String> =
-        syms.iter().filter(|s| cache.get(*s).is_none_or(|e| regrade && e.is_empty())).cloned().collect();
+    // (#1073) Once, every cached class-share miss is asked again: hop 1 sent Yahoo's `BRK-B`, which
+    // OpenFIGI answers "No identifier found." for, so BRK-B, BF-B and LEN-B were cached as misses.
+    let class_regrade = !cache.contains_key(EU_CLASS_MARK);
+    let mut todo: Vec<String> = syms
+        .iter()
+        .filter(|s| {
+            cache
+                .get(*s)
+                .is_none_or(|e| e.is_empty() && (regrade || (class_regrade && s.contains('-'))))
+        })
+        .cloned()
+        .collect();
     // (#848) Offline, OpenFIGI never answers, so hop 1 only paced: 2.5 s a chunk for nothing. Known twins
     // still take the chart check below, which the long-history cache serves offline.
     if offline() {
         todo.clear();
     }
     cache.insert(EU_GF_MARK.into(), String::new());
+    cache.insert(EU_CLASS_MARK.into(), String::new());
     // (#404) Every KNOWN twin goes back through the chart check below, not just the new ones. Yahoo
     // restarted some Xetra series in 2026 (1170.DE Arista and 49V.DE Vertiv now start 2026-08-20), and a
     // twin checked once and cached forever kept 84 established US names on a months-old chart that the
@@ -9672,7 +9687,8 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
         pace = FIGI_PACE_MS;
         let jobs = chunk
             .iter()
-            .map(|t| serde_json::json!({"idType": "TICKER", "idValue": t, "exchCode": "US"}))
+            // (#1073) OpenFIGI spells a class share with a slash (`BRK/B`); the cache stays on Yahoo's dash.
+            .map(|t| serde_json::json!({"idType": "TICKER", "idValue": t.replace('-', "/"), "exchCode": "US"}))
             .collect();
         for (sym, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, None, jobs).await) {
             let row = data.as_ref().and_then(|d| d.get(0));
@@ -15728,8 +15744,9 @@ pub(crate) mod tests {
     /// pins the negative-caching rule the single-file design rests on — a symbol OpenFIGI ANSWERS as
     /// unresolvable is remembered as the empty string rather than left absent, so it is asked about
     /// exactly once ever — and (#682) its other half: a dead endpoint is no answer, so nothing is banked.
-    /// Phases 3 to 6 then re-check known twins (#404), re-ask a pre-Frankfurt miss once (#460), answer
-    /// both OpenFIGI hops, and run the universe's EU swap off the same file.
+    /// Phases 3 to 6 then re-check known twins (#404), re-ask a pre-Frankfurt miss once (#460) and a
+    /// class-share miss once (#1073), answer both OpenFIGI hops, and run the universe's EU swap off the
+    /// same file.
     #[tokio::test]
     async fn resolve_eu_listings_serves_its_cache_and_remembers_misses() {
         pin_throttle();
@@ -15738,7 +15755,7 @@ pub(crate) mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
 
         // 1. every symbol already known -> the file is served verbatim and nothing is fetched
-        std::fs::write(&path, r#"{"GOOGL":"ABEA.DE","BRK-B":"","__gf460":""}"#).expect("seed cache");
+        std::fs::write(&path, r#"{"GOOGL":"ABEA.DE","BRK-B":"","__gf460":"","__class1073":""}"#).expect("seed cache");
         let got = resolve_eu_listings(&client, &urls, &["GOOGL".to_string(), "BRK-B".to_string()]).await;
         assert_eq!(got["GOOGL"], "ABEA.DE");
         assert_eq!(got["BRK-B"], "", "an empty value is a remembered miss, not a cache gap");
@@ -15800,6 +15817,33 @@ pub(crate) mod tests {
         assert_eq!(asked(), 1, "the old miss went back to OpenFIGI");
         resolve_eu_listings(&client, &urls, &syms).await;
         assert_eq!(asked(), 0, "the marker is persisted, so the re-ask happens once");
+
+        // 4b. (#1073) A class-share miss cached before hop 1 sent OpenFIGI's spelling is asked once more, as
+        // `BRK/B`; a plain miss past both markers is not.
+        std::fs::write(&path, r#"{"__gf460":"","QQOLD":"","BRK-B":""}"#).expect("seed cache");
+        let syms = ["QQOLD", "BRK-B"].map(String::from);
+        let posts = || {
+            requests
+                .try_iter()
+                .filter(|r| r.starts_with("POST"))
+                .collect::<Vec<_>>()
+        };
+        resolve_eu_listings(&client, &urls, &syms).await;
+        let first = posts();
+        assert_eq!(first.len(), 1, "one OpenFIGI request, for the class share");
+        assert!(
+            first[0].contains("\"BRK/B\"") && !first[0].contains("BRK-B"),
+            "hop 1 asks in OpenFIGI's spelling"
+        );
+        assert!(
+            !first[0].contains("QQOLD"),
+            "a plain miss past both markers is not asked again"
+        );
+        resolve_eu_listings(&client, &urls, &syms).await;
+        assert!(
+            posts().is_empty(),
+            "the marker is persisted, so the re-ask happens once"
+        );
 
         // 5. Both OpenFIGI hops answer. The stub cannot tell the hops apart (it routes on the request line), so the
         // one reply serves both: row 0 is a share class with a Xetra line, row 1 one with a Paris line only, row 2
