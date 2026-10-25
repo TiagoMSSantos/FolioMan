@@ -2231,9 +2231,10 @@ pub fn sleeve_family_at(q: &Quote, by_benchmark: bool) -> Option<&str> {
 /// `on == false` returns the identity order — today's behaviour byte-for-byte, which is what
 /// non-negotiable #1 requires of the knob that feeds this.
 ///
-/// RE-ORDERS, NEVER DROPS, and that is the whole design: the family key is `GEO`'s own token and
-/// therefore COARSE. Europe prints "FTSE Developed Europe" and "FTSE Developed Europe ex UK" under
-/// ONE token though they are different indices, so a hard one-per-family cap would delete a real row
+/// RE-ORDERS, NEVER DROPS, and that is the whole design: the family key is `sleeve_family_at`'s, the
+/// benchmark index when the fund names one and else `GEO`'s own token, and that fallback is COARSE.
+/// "MSCI World" and "MSCI World IMI" print under ONE `msci world` token though they are different
+/// indices, so a hard one-per-family cap would delete a real row
 /// to satisfy a key that cannot see the difference. Here every candidate still appears and the cap
 /// still fills; only the contested slot changes hands.
 ///
@@ -3180,7 +3181,8 @@ pub fn hold_aum_floor_label(floor: f64) -> String {
 
 /// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
 /// breadth one, split out so [`hold_miss_but_breadth`] can ask the other five without re-spelling a
-/// single one of them (non-negotiable #4). `tier` is read at exactly one site, [`ter_cap_for`].
+/// single one of them (non-negotiable #4). `tier` is read at exactly two sites, [`ter_cap_for`] and
+/// [`aum_floor_for`].
 fn hold_miss_leg_at(
     q: &Quote,
     tier: u8,

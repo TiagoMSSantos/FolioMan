@@ -989,7 +989,8 @@ pub struct Urls {
     // SET THIS to a real "app contact@email" — SEC blocks generic/empty agents. Placeholder works in dev
     // but be a good citizen before any wide run.
     #[serde(default = "default_sec_user_agent")]
-    pub sec_user_agent: String,    // (#450) Nasdaq's next earnings date for the EARN cell. Keyless, no handshake. {sym} = US ticker.
+    pub sec_user_agent: String,
+    // (#450) Nasdaq's next earnings date for the EARN cell. Keyless, no handshake. {sym} = US ticker.
     #[serde(default = "default_nasdaq_earnings_url")]
     pub nasdaq_earnings: String,
     // (#465) a fund's yearly tracking difference for the TD-1Y/TD-5Y cells. Keyless HTML. {isin} = the fund's ISIN.
@@ -1306,12 +1307,12 @@ fn default_hn_stories_url() -> String {
     "https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=created_at_i%3E{since},points%3E100&hitsPerPage=1000".to_string()
 }
 
-/// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
-/// probed that answers "which European line is this US ticker" correctly and consistently.
 fn default_yahoo_query2() -> String {
     "https://query2.finance.yahoo.com".to_string()
 }
 
+/// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
+/// probed that answers "which European line is this US ticker" correctly and consistently.
 fn default_openfigi_mapping() -> String {
     "https://api.openfigi.com/v3/mapping".to_string()
 }
@@ -2026,8 +2027,7 @@ pub fn hold_per_tier_europe() -> usize {
 /// `--lib` suite cannot choose, so the mutant replacing this with whatever it currently ships at is
 /// unkillable rather than merely unkilled. The DECISION is `core::tier_cap`, which takes the cap as
 /// an argument and is graded there — the same threading (#204) used for `hold_size_sleeve_ter`.
-/// Its two elder twins `hold_per_tier` and `hold_per_tier_all_world` carry no skip only because
-/// neither has been inside a diff since it landed, so `--in-diff` has never re-graded them.
+/// Its two elder twins `hold_per_tier` and `hold_per_tier_all_world` carry the same skip since (#343).
 #[mutants::skip]
 pub fn hold_per_tier_sector() -> usize {
     use std::sync::OnceLock;
