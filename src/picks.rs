@@ -171,26 +171,6 @@ pub fn peg_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     long_leg_fixed(quote, window, tuning.growth_min_leg_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
-/// (#192) The CAGR floor `growth_min_cagr` judges THIS quote against — one definition for every reader
-/// (#962: `score_parts_hard`, `proven_but_unranked`, `gate_fails` and `bridge_hint_lines` today).
-///
-/// The floor used to be spelled out as its own `if crypto {..} else {..}` at each of the three sites
-/// that read it (`score_parts`, `gate_failures`, `long_leg_floors`). That is exactly the shape
-/// non-negotiable #4 forbids: three copies of one number, free to drift, and the #2 mirror between the
-/// scorer and `gate_failures` held only by their happening to be typed the same. Adding a third class
-/// would have made three edits where one is correct, so the resolution moved here first.
-///
-/// CLASS ORDER IS CRYPTO, THEN ETF, THEN EQUITY, and the order is load-bearing rather than stylistic:
-/// `quote_is_etf` reads a name/instrument-type stamp that a coin can carry (a spot-crypto ETP is a
-/// fund by every test we have), so asking "crypto?" second would route BTC-EUR through the fund floor.
-/// The coin floor is the looser of the two, so the mistake would be silent — a tightening, not a panic.
-///
-/// `growth_min_cagr_etf` 0.0 = INHERIT the equity floor, NOT "off". This is a MIN bar: a 0 floor
-/// admits everything, so 0-as-off would make the DEFAULT a relaxation and break non-negotiable #1's
-/// byte-identical lane. The `_etf` knobs that do mean "off" at 0 are all MAX bars, where 0 is neutral.
-/// Both legs of the gate read this — the long rung and the whole-life `life_leg_cagr` bar — because
-/// they are one knob judged twice, and splitting the classes on only one leg would let a fund clear
-/// the rung it was admitted for and die on the other.
 /// (#326) THE REGIME VALVE, one expression for both gates that use it and for their `gate_failures`
 /// mirrors — so the four sites cannot drift the way the 1Y+ and range expressions are warned about
 /// below. `shipped` is the floor the config carries, `market` the INDEX's counterpart at this quote's
@@ -297,6 +277,26 @@ pub(crate) fn sector_floors(quotes: &[&Quote], tuning: &BuyHeuristic, k: usize, 
         .collect()
 }
 
+/// (#192) The CAGR floor `growth_min_cagr` judges THIS quote against — one definition for every reader
+/// (#962: `score_parts_hard`, `proven_but_unranked`, `gate_fails` and `bridge_hint_lines` today).
+///
+/// The floor used to be spelled out as its own `if crypto {..} else {..}` at each of the three sites
+/// that read it (`score_parts`, `gate_failures`, `long_leg_floors`). That is exactly the shape
+/// non-negotiable #4 forbids: three copies of one number, free to drift, and the #2 mirror between the
+/// scorer and `gate_failures` held only by their happening to be typed the same. Adding a third class
+/// would have made three edits where one is correct, so the resolution moved here first.
+///
+/// CLASS ORDER IS CRYPTO, THEN ETF, THEN EQUITY, and the order is load-bearing rather than stylistic:
+/// `quote_is_etf` reads a name/instrument-type stamp that a coin can carry (a spot-crypto ETP is a
+/// fund by every test we have), so asking "crypto?" second would route BTC-EUR through the fund floor.
+/// The coin floor is the looser of the two, so the mistake would be silent — a tightening, not a panic.
+///
+/// `growth_min_cagr_etf` 0.0 = INHERIT the equity floor, NOT "off". This is a MIN bar: a 0 floor
+/// admits everything, so 0-as-off would make the DEFAULT a relaxation and break non-negotiable #1's
+/// byte-identical lane. The `_etf` knobs that do mean "off" at 0 are all MAX bars, where 0 is neutral.
+/// Both legs of the gate read this — the long rung and the whole-life `life_leg_cagr` bar — because
+/// they are one knob judged twice, and splitting the classes on only one leg would let a fund clear
+/// the rung it was admitted for and die on the other.
 pub(crate) fn min_cagr_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     if is_currency_quoted(&quote.ticker) {
         tuning.growth_min_cagr_crypto

@@ -12864,8 +12864,6 @@ mod tests {
         assert!(book_multiples(&m, 0).is_empty(), "a zero-name book has no pair either");
     }
 
-    /// The report fns that return or print only past a guard: no benchmark, no scorable pool, no trail. Each
-    /// must decline quietly rather than index into an empty series or fabricate a row.
     /// (#968) Either total-return knob names the total-return index; only both off is price-only.
     #[test]
     fn either_total_return_knob_names_the_tr_benchmark() {
@@ -12878,6 +12876,8 @@ mod tests {
         assert!(bench_is_tr(true, &t));
     }
 
+    /// The report fns that return or print only past a guard: no benchmark, no scorable pool, no trail. Each
+    /// must decline quietly rather than index into an empty series or fabricate a row.
     #[test]
     fn report_helpers_decline_without_a_benchmark_or_a_scorable_pool() {
         let (samples, tuning, bench) = (synthetic_samples(), shipped_hard(), synthetic_bench());
