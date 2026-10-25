@@ -1131,9 +1131,11 @@ fn may_write_verdict(wide: bool, pit: bool, resolved: usize) -> bool {
 /// `pit` run without them gets no sample from a member that delisted inside its window, so its SIZED
 /// record read the survivors only, the one pool `SIZED_FILE` exists to keep out of BUY NOW. (#1061) And
 /// only with `fund`: without it no cutoff gets an as-of P/E, so the shipped PEG gate and the value factor
-/// read missing and pass every name, and the record grades a book `size` never funds.
-fn may_write_sized(wide: bool, pit: bool, dead: bool, fund: bool, resolved: usize) -> bool {
-    pit && dead && fund && may_write_verdict(wide, false, resolved)
+/// read missing and pass every name, and the record grades a book `size` never funds. (#1062) And never
+/// from the `deadflat` arm: it walks the dead names with no crash cut, a sensitivity probe of
+/// [`DEAD_PENALTY`], so its record is a kinder book than the shipped ruler grades.
+fn may_write_sized(wide: bool, pit: bool, dead: bool, dead_flat: bool, fund: bool, resolved: usize) -> bool {
+    pit && dead && !dead_flat && fund && may_write_verdict(wide, false, resolved)
 }
 
 /// Why a wide run declined to journal. A `String` and not an `if` at the call site because the call
@@ -2169,7 +2171,10 @@ pub async fn run(args: Vec<String>) {
         if pit && dead && !fund && may_write_verdict(wide, false, tickers.len()) {
             eprintln!("backtest: SIZED record NOT journaled — a `pit dead` run without `fund` has no as-of P/E, so no PEG gate; add `fund` to journal it");
         }
-        may_write_sized(wide, pit, dead, fund, tickers.len()).then_some(SIZED_FILE)
+        if pit && dead_flat && may_write_verdict(wide, false, tickers.len()) {
+            eprintln!("backtest: SIZED record NOT journaled — `deadflat` is the no-crash-cut probe arm; run `dead` to journal it");
+        }
+        may_write_sized(wide, pit, dead, dead_flat, fund, tickers.len()).then_some(SIZED_FILE)
     };
     if let (Some(file), Some((book, excess, win, worst, oos_early, oos_late, windows))) = (journal, verdict) {
         write_verdict(
@@ -9022,12 +9027,14 @@ mod tests {
         assert!(!may_write_verdict(true, true, MIN_VERDICT_TICKERS), "a PIT run is a different claim, not a better sample");
         assert!(!may_write_verdict(true, true, MIN_VERDICT_TICKERS * 10));
         // (#788) the SIZED twin is that PIT run, deep enough, AND with the dead names walked
-        assert!(may_write_sized(true, true, true, true, MIN_VERDICT_TICKERS));
-        assert!(!may_write_sized(true, true, false, true, MIN_VERDICT_TICKERS), "a survivor-only PIT run");
-        assert!(!may_write_sized(true, false, true, true, MIN_VERDICT_TICKERS), "not a PIT run");
-        assert!(!may_write_sized(true, true, true, true, MIN_VERDICT_TICKERS - 1), "a thin one");
+        assert!(may_write_sized(true, true, true, false, true, MIN_VERDICT_TICKERS));
+        assert!(!may_write_sized(true, true, false, false, true, MIN_VERDICT_TICKERS), "a survivor-only PIT run");
+        assert!(!may_write_sized(true, false, true, false, true, MIN_VERDICT_TICKERS), "not a PIT run");
+        assert!(!may_write_sized(true, true, true, false, true, MIN_VERDICT_TICKERS - 1), "a thin one");
         // (#1061) and with `fund`, or the PEG gate never fires and the record grades another book
-        assert!(!may_write_sized(true, true, true, false, MIN_VERDICT_TICKERS), "a price-only PIT run");
+        assert!(!may_write_sized(true, true, true, false, false, MIN_VERDICT_TICKERS), "a price-only PIT run");
+        // (#1062) and with the crash cut the shipped ruler charges, never the `deadflat` probe's none
+        assert!(!may_write_sized(true, true, true, true, true, MIN_VERDICT_TICKERS), "the no-crash-cut arm");
         // and the refusal SAYS WHICH, or a reader debugs the ticker count that was never the problem
         assert!(no_verdict_reason(true, MIN_VERDICT_TICKERS).contains("POINT-IN-TIME"));
         assert!(no_verdict_reason(false, 3).contains("only 3 tickers resolved"));
