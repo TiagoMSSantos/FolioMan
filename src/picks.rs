@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 ///
 /// (#49) 1Y is the bottom rung, and it carries a SECOND penalty nobody configured. A 1Y-rung name
 /// has `long_cagr == return_1y` by construction, so `accel = return_1y − long_cagr` is identically
-/// ZERO — the heaviest term in the growth score (weight 0.65 shipped) is structurally dead for
+/// ZERO — the heaviest term in the growth score (weight 0.50 shipped) is structurally dead for
 /// exactly these names. That is on top of whatever `trust_factor` docks them. Read the young-dock
 /// curve knowing the dock is not the only thing holding these names down.
 ///
@@ -364,7 +364,7 @@ pub struct FundPe {
     pub as_of: Option<chrono::NaiveDate>,
 }
 
-/// Look-through P/E per fund ticker. Aliased because it rides through six signatures.
+/// Look-through P/E per fund ticker. Aliased because many signatures carry it.
 pub type FundPeMap = HashMap<String, FundPe>;
 
 impl From<f64> for FundPe {
@@ -3360,7 +3360,7 @@ struct ColSpec {
 }
 
 /// Every available column, canonical order. `widths.columns` picks a subset/order by key; the analytics
-/// columns past the price/perf block (vol/maxdd/r2/abv-ma/pe/roe/div) are OFF unless listed. All are
+/// columns past the price/perf block (vol/r2/abv-ma/pe/roe/div) are OFF unless listed. All are
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
@@ -3680,9 +3680,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // proven long-term CAGR (%/yr) from the ranked leg — the annualized trend the ranking actually
         // rewards, shown so a reader sees "+14%/yr" and not just a +1344% cumulative blob. This is
         // EXACTLY what `trend_term` multiplies (`--explain`: "trend = growth_trend_weight × CAGR").
-        // Goes through `capped_trend`, so it tracks `long_trend_cap` whatever it is set to — 30.0 (shipped) (#270)
-        // prints the raw leg CAGR, a positive cap prints the clamped one. The cell must never re-derive
-        // this: matching the arithmetic is the only reason the column exists.
+        // Goes through `capped_trend`, so it tracks `long_trend_cap` whatever it is set to — 0 (off)
+        // prints the raw leg CAGR, a positive cap (30.0 shipped, (#270)) prints the clamped one. The
+        // cell must never re-derive this: matching the arithmetic is the only reason the column exists.
         "leg" => long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years).map_or("n/a".to_string(), |(c, y)| {
             format!("{:+.0}%", capped_trend(long_cagr_from(quote, tuning, c, y), tuning))
         }),
@@ -4126,8 +4126,7 @@ fn row_cells(cols: &[&ColSpec], quote: &Quote, score: f64, alt: Option<f64>, mar
 /// entire CPU half is 0.06s. Paying that, and deleting a mutant nothing could grade, is the trade.
 ///
 /// S-8Y: the same heuristic with the CAGR window (and, via `trust_factor`, the required record)
-/// pinned to 8 years — a second READ on each row, never a ranking input. Built once per table and
-/// only when the column is on, so a table without it pays nothing.
+/// pinned to 8 years — a second READ on each row, never a ranking input. Built once per table.
 ///
 /// The CAGR floor is neutralized so EVERY printed row gets a number. Pinning changes exactly one
 /// input, `long_cagr`, and `growth_min_cagr` is the only gate that reads it (the others test range,
@@ -4295,11 +4294,6 @@ fn cap_book<'a>(picks: Vec<(&'a Quote, f64)>, cap: usize, pinned: &HashSet<&str>
     sector_cap(picks, cap, |(q, _)| if pinned.contains(q.ticker.as_str()) { None } else { stock_sector(q) })
 }
 
-/// Print ONE lane's ranked picks SPLIT per asset class (stocks / [tech stocks] / ETFs / crypto) so a
-/// +9400% crypto can't crowd out equities and a basket fund isn't ranked head-to-head with a single
-/// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
-/// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
-/// `kind` names the lane in each title ("buy candidates" / "growth candidates").
 /// Split a ranked lane into its three printable tables and apply every DISPLAY trim (score floors,
 /// ETF sector filter, redundancy skip). Split out of `print_lane` so the trims are assertable: they
 /// are the only knobs in the tool whose effect used to exist purely as printed text.
@@ -4655,6 +4649,12 @@ fn unshown_ranked<'a>(ranked: &[(&'a Quote, f64)], printed: &[&str]) -> Vec<(&'a
     ranked.iter().copied().filter(|(q, _)| !printed.contains(&q.ticker.as_str())).collect()
 }
 
+/// Print ONE lane's ranked picks SPLIT per asset class (stocks / [tech stocks] / ETFs / crypto) so a
+/// +9400% crypto can't crowd out equities and a basket fund isn't ranked head-to-head with a single
+/// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
+/// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
+/// `kind` names the lane in each title ("buy candidates" / "growth candidates").
+///
 /// UNGRADEABLE, hence the skip — the same story as [`print_picks`] below it, and (#79) proven the
 /// same way: `replace print_lane with ()` was graded 2026-08-17 against `--lib --test
 /// backtest_fixture` and MISSED, because every effect this has is a `println!` and the killing suite
@@ -6186,11 +6186,11 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // fourth tier panicked on index-out-of-bounds instead of merely mis-printing.
     // (#66) …and the ELEMENT type was the same bug a second time, on the same line. The counter is
     // incremented once per distinct fund NAME in a tier and was a `u8`, so the 256th name in one tier
-    // wrapped it to 0 and the tier silently admitted three more rows. The two profiles disagree about
+    // wrapped it to 0 and the tier silently admitted three more rows. The two profiles disagreed about
     // what that means, which is why no test could have caught it: `[profile.mutants]` inherits `dev`
     // and has overflow-checks ON, so `cargo t` would have panicked — while `[profile.release]`, the
-    // binary that actually runs the daily screen, sets only opt-level and lto, leaving them OFF to wrap
-    // in silence. A `usize` counter cannot reach either outcome and costs nothing.
+    // binary that actually runs the daily screen, then set only opt-level and lto, leaving them OFF to
+    // wrap in silence; (#68) turned them on there too. A `usize` counter cannot reach either outcome.
     // (#214) fill each sleeve family-first before the cap runs, so a sleeve spends its three slots
     // on three INDICES where it has three. Off by default -> `family_first_order` returns the
     // identity and this is a no-op, which is non-negotiable #1.
@@ -6624,15 +6624,6 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     }
 }
 
-/// Print the Top-N GROWTH picks split per asset class (stocks / ETFs / crypto). The growth lane —
-/// proven compounders at/near their own ~10y high still climbing — is the ONLY lane with a validated
-/// forward edge for a 20yr+ buy-and-hold (walk-forward rho +0.26, top-vs-bottom-half +108 pts). The
-/// old on-sale "buy the dip" lane was dropped: its walk-forward edge is NEGATIVE (-72 pts), i.e.
-/// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
-/// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
-/// the crypto rows when the market is euphoric.
-/// Returns (score-math walkthrough for the caller to print last, this run's ranked top-`n`
-/// tickers — round 68: the screen diffs the latter against its previous run's state).
 /// The per-run display context for `render`: the peripheral inputs (market sentiment, sector filter,
 /// pinned/owned overlays, --explain target, core-shortlist toggle) bundled so the hot path stays
 /// `render(quotes, n, tuning, w, ctx)`. Named fields also kill the call-site bool blindness the old
@@ -6705,6 +6696,15 @@ pub fn shown_stocks(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Width
     serde_json::json!(web_top(picks, n, w, &[], tuning, &set, &Owned::default(), &HashMap::new(), &[], &[]).stocks)
 }
 
+/// Print the Top-N GROWTH picks split per asset class (stocks / ETFs / crypto). The growth lane —
+/// proven compounders at/near their own ~10y high still climbing — is the ONLY lane with a validated
+/// forward edge for a 20yr+ buy-and-hold (walk-forward rho +0.26, top-vs-bottom-half +108 pts). The
+/// old on-sale "buy the dip" lane was dropped: its walk-forward edge is NEGATIVE (-72 pts), i.e.
+/// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
+/// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
+/// the crypto rows when the market is euphoric.
+/// Returns (score-math walkthrough for the caller to print last, this run's ranked top-`n`
+/// tickers — round 68: the screen diffs the latter against its previous run's state).
 pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
@@ -6856,7 +6856,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
 /// Vol-target, NOT Kelly — Kelly needs a forward return distribution we don't have and overbets
 /// noise. A missing or near-zero vol is floored at `MIN_VOL` so a no-history name can't grab the
 /// whole basket; a non-positive score contributes 0. Empty in -> empty out; an all-zero pool -> all
-/// zeros (no NaN). `scored` = `(growth score, volatility_pct, cluster)`; weights are aligned to it.
+/// zeros (no NaN).
 ///
 /// (Item 6) CORRELATION-AWARE: the asset class is one risk bucket, and vol-target only splits WITHIN a
 /// bucket, so five names that move together don't draw 5× the money of one independent name.
@@ -6871,7 +6871,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
 /// class, a fund counting its weight x the share of its top look-through sector.
 ///
 /// (#262) `max_name_pct` is a per-ISSUER cap, and this function is not what makes it one: the CALLER
-/// hands over an already-deduped list (`size::first_per_issuer`), so one row here is one issuer. Passing
+/// hands over an already-deduped list (`first_per_issuer`), so one row here is one issuer. Passing
 /// two listings of the same company still clamps them independently and still yields 2× the cap — that
 /// is the bug `(#262)` fixed one level up, deliberately, so that a dropped twin never draws a share of
 /// its class budget in the first place.
@@ -7319,7 +7319,7 @@ pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
 
 /// (#286) THE EXECUTED BOOK: which candidates `size` actually funds, and at what weight. Every line
 /// of it was lifted VERBATIM out of `run`, and the lift is the point. `run` is `#[mutants::skip]` —
-/// it is wiring, and the attribute below says so in its own words — so the scoring, the crypto
+/// it is wiring, and its own skip doc says so — so the scoring, the crypto
 /// adjust, the issuer dedup and the weighting have all sat where the mutation gate cannot reach
 /// them. Here the gate grades them.
 ///
