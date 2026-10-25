@@ -8159,8 +8159,11 @@ pub async fn fetch_xetra_etfs(
     // Err(Some(isin)) = definitive Yahoo miss on a speculative ISIN -> negative-cache write-back;
     // Err(None) = everything else dropped (cached negative, transport error, .SG fallback).
     type Resolved = (String, Option<f64>, Option<f64>, BfMeta, Option<String>);
-    let outcomes: Vec<Result<Resolved, Option<String>>> = stream::iter(top)
-        .map(|(isin, ter, aum, mut meta)| async move {
+    // (#1017) In `top`'s order, turnover first: `yahoo_fund_facts_fill` below cuts its refetch list at
+    // BUDGET in `tickers` order, so a completion-order list let fetch latency pick which funds' TER and AUM
+    // holes filled. Two ISINs on one symbol also write `ter_map` last-wins.
+    let outcomes: Vec<Result<Resolved, Option<String>>> = in_input_order(
+        top.into_iter().map(|(isin, ter, aum, mut meta)| async move {
             // domicile rides the ISIN every source already carries — set it here so BF, venue-list and
             // regulatory funds all get it, on both the cache-hit and fresh-resolution paths.
             meta.dom = isin_domicile(&isin);
@@ -8184,10 +8187,10 @@ pub async fn fetch_xetra_etfs(
                 Some(_) => Err(None), // Stuttgart-only — see usable_symbol
                 None => Err(definitive_miss(speculative, &v).then(|| isin.clone())),
             }
-        })
-        .buffer_unordered(fetch_concurrency())
-        .collect()
-        .await;
+        }),
+        fetch_concurrency(),
+    )
+    .await;
     let mut resolved: Vec<Resolved> = Vec::new();
     let mut misses: Vec<String> = Vec::new();
     for o in outcomes {
