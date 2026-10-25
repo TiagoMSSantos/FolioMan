@@ -1595,6 +1595,17 @@ fn small_aum_names<'q>(names: &'q [String], quotes: &[core::Quote]) -> Vec<(&'q 
         .collect()
 }
 
+/// (#1079) One survival-footer cell. At `{:.0}` a €99.6M fund printed "€100M" under the "AUM under
+/// €100M" header, so a cell in millions takes [`picks::bar_dp`]'s precision against that line.
+fn small_aum_cell(a: f64) -> String {
+    if a >= 1e6 {
+        let d = picks::bar_dp(a / 1e6, 100.0, 0);
+        format!("€{:.d$}M", a / 1e6)
+    } else {
+        format!("€{:.0}K", a / 1e3)
+    }
+}
+
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
 /// fund silently doubles those positions (the `o` marker only catches the same ticker, sector
 /// tilt only the sector). Per fund: the shared names with their in-fund weights + the summed
@@ -2869,10 +2880,7 @@ pub async fn run(args: Vec<String>) {
         if !small.is_empty() {
             let cells = small
                 .iter()
-                .map(|(t, a)| {
-                    let amt = if *a >= 1e6 { format!("€{:.0}M", a / 1e6) } else { format!("€{:.0}K", a / 1e3) };
-                    format!("{} {amt}", footer_label(t, &ranked_now))
-                })
+                .map(|(t, a)| format!("{} {}", footer_label(t, &ranked_now), small_aum_cell(*a)))
                 .collect::<Vec<_>>()
                 .join(", ");
             println!("\nFund survival — AUM under €100M (liquidation/closure risk over a decades hold; a forced exit is a taxable event): {cells}");
@@ -5639,6 +5647,10 @@ mod tests {
         let mut edge = Quote::stub("EDGE.L", "1", "", "Edge Fund");
         edge.aum_eur = Some(1e8);
         assert!(small_aum_names(&["EDGE.L".into()], &[edge]).is_empty());
+        // (#1079) A cell under the line never prints the line itself.
+        for (a, want) in [(99.6e6, "€99.6M"), (6e7, "€60M"), (1e6, "€1M"), (5e5, "€500K")] {
+            assert_eq!(small_aum_cell(a), want, "{a}");
+        }
     }
 
     /// (funnel) The tally's claims: the arithmetic CLOSES (`scanned = refused + failed +

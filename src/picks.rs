@@ -2412,7 +2412,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
 /// (#1078) Decimals at which a failing value and its bar print apart, from `dp` up to `dp + 3`. At a
 /// fixed `dp` a 79.6 range read "80% in range (need ≥80%)", a reason that looks like a pass. Both round
 /// at one precision, which keeps their order, so strings that differ never invert it.
-fn bar_dp(v: f64, bar: f64, dp: usize) -> usize {
+pub(crate) fn bar_dp(v: f64, bar: f64, dp: usize) -> usize {
     (dp..=dp + 3)
         .find(|&d| format!("{v:.d$}") != format!("{bar:.d$}"))
         .unwrap_or(dp)
