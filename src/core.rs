@@ -969,24 +969,29 @@ pub fn max_drawdown_pct(closes: &[f64]) -> f64 {
     worst
 }
 
+/// (#1009) The step between window starts in the two rolling walks: one week of bars, which is 5
+/// daily sessions and every bar of a monthly series (one bar already spans a month). It was the
+/// literal 5 on both cadences, so the backtest's MONTHLY runs started a window only every fifth
+/// month: the hit rate sampled a fifth of its windows, and the worst window could only read milder.
+fn bars_per_week(bars_per_year: usize) -> usize {
+    (bars_per_year * 5 / 252).max(1)
+}
+
 /// (consistency footers) % of rolling ~`win_years`-year windows (`bars_per_year` bars/yr — 252 daily, 12 monthly) whose
-/// endpoint return is positive, stepped weekly (5 sessions) so overlapping duplicates don't
-/// drown short histories. The literal buy-and-hold question: how often did N patient years
+/// endpoint return is positive, stepped one week of bars at a time (`bars_per_week`) so overlapping
+/// duplicates don't drown short histories. The literal buy-and-hold question: how often did N patient years
 /// pay? NOMINAL, not inflation-adjusted — the footer labels say so. None = history shorter
 /// than one window (no windows means no claim, never a fake 100%); a non-positive close on
 /// either end skips that window (halted/bad bars).
 pub fn rolling_positive_pct(closes: &[f64], win_years: usize, bars_per_year: usize) -> Option<f64> {
     let win = win_years * bars_per_year;
-    const STEP: usize = 5;
     let (mut pos, mut n) = (0usize, 0usize);
-    let mut i = 0;
-    while i + win < closes.len() {
+    for i in (0..closes.len().saturating_sub(win)).step_by(bars_per_week(bars_per_year)) {
         let (a, b) = (closes[i], closes[i + win]);
         if a > 0.0 && b > 0.0 {
             n += 1;
             pos += (b > a) as usize;
         }
-        i += STEP;
     }
     (n > 0).then(|| 100.0 * pos as f64 / n as f64)
 }
@@ -1024,20 +1029,17 @@ pub fn longest_underwater_yrs(closes: &[f64], bars_per_year: usize) -> Option<f6
 
 /// (worst-Ny) The single worst rolling ~`win_years`-year (nominal) outcome — severity twin of
 /// `rolling_positive_pct`'s frequency ("97% of windows positive; the worst one did −12%").
-/// Same win/STEP walk and skip rules: a window with a non-positive close on either end is
+/// Same win/`bars_per_week` walk and skip rules: a window with a non-positive close on either end is
 /// skipped; `None` when no full window exists — no claim, never a fake number.
 pub fn worst_rolling_pct(closes: &[f64], win_years: usize, bars_per_year: usize) -> Option<f64> {
     let win = win_years * bars_per_year;
-    const STEP: usize = 5;
     let mut worst: Option<f64> = None;
-    let mut i = 0;
-    while i + win < closes.len() {
+    for i in (0..closes.len().saturating_sub(win)).step_by(bars_per_week(bars_per_year)) {
         let (a, b) = (closes[i], closes[i + win]);
         if a > 0.0 && b > 0.0 {
             let r = 100.0 * (b / a - 1.0);
             worst = Some(worst.map_or(r, |w: f64| w.min(r)));
         }
-        i += STEP;
     }
     worst
 }
@@ -6326,6 +6328,28 @@ mod tests {
         assert!(worst_rolling_pct(&[1.0, 0.0], 1, 1).is_none());
         // (r16) decade fork: a 5y-window-deep series carries NO 10y claim
         assert!(worst_rolling_pct(&closes, 10, 252).is_none());
+    }
+
+    /// (#1009) Both walks start a window once a WEEK of bars: every 5th daily session, but every
+    /// MONTHLY bar. One layout per cadence, three windows: window 0 flat, window 1 +100%, window 2
+    /// -50%. The monthly walk sees all three; the daily walk starts only window 0, since bars 1 and 2
+    /// are not weekly starts. Stepping 5 monthly bars, as before (#1009), read 0% and 0.0 here.
+    #[test]
+    fn rolling_walks_step_a_week_of_bars() {
+        let three_windows = |bars_per_year: usize| {
+            let win = 5 * bars_per_year;
+            let mut c = vec![1.0; win + 3];
+            c[win + 1] = 2.0; // window 1: 1 -> 2
+            c[2] = 2.0;
+            c[win + 2] = 1.0; // window 2: 2 -> 1
+            c
+        };
+        let monthly = three_windows(12);
+        assert_eq!(rolling_positive_pct(&monthly, 5, 12), Some(100.0 / 3.0));
+        assert_eq!(worst_rolling_pct(&monthly, 5, 12), Some(-50.0));
+        let daily = three_windows(252);
+        assert_eq!(rolling_positive_pct(&daily, 5, 252), Some(0.0));
+        assert_eq!(worst_rolling_pct(&daily, 5, 252), Some(0.0));
     }
 
     /// (r11) `calendar_year_returns`: complete-year pairs only — the current (partial) year and
