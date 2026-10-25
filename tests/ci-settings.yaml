@@ -8769,7 +8769,10 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 9a6c18fd8b4f (#1020), graded 2026-10-25 by run 40183318093, same five inputs, since
+  # LAST GRADED SHA: b1c86ab355ee (#1022), graded 2026-10-25 by run 40185197861, same five inputs, since
+  # c46aca7, `files` = src/core.rs: 10 in scope = 10 caught (`hold_miss_leg_at` 8 and
+  # `hold_aum_floor_label` 2 for (#1022)), 0 unviable, 0 missed, 0 timeout.
+  # BEFORE THAT: 9a6c18fd8b4f (#1020), graded 2026-10-25 by run 40183318093, same five inputs, since
   # 12ed544, `files` = src/commands/screen.rs src/fetch.rs: 28 in scope = 28 caught (`merge_isin_lists`
   # 14 for (#1019), `isin_by_symbol` 5, `cached_isin_by_symbol` 5, `fetch_xetra_etfs` 3 and
   # `enrich_etf_cells` 1 for (#1020); its screen.rs site sits in the skip-tagged `run`), 0 unviable, 0
