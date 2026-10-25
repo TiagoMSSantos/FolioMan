@@ -3904,6 +3904,8 @@ pub(crate) fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> 
 /// entry-scaled €) the line says whether the cash covers it or by how much it falls short; with
 /// no budget it just states the balance. Display-only, no ranking effect. Trading212 only — the
 /// ETF deploy broker; Binance (crypto) cash is a different budget, deferred.
+/// (#1025) The shortfall prints rounded UP, so cash a few cents under the deploy reads "€1 short",
+/// never "€0 short".
 fn cash_line(deploy_scaled: Option<f64>, t212_free: Option<f64>) -> Option<String> {
     let free = t212_free?;
     Some(match deploy_scaled {
@@ -3911,7 +3913,7 @@ fn cash_line(deploy_scaled: Option<f64>, t212_free: Option<f64>) -> Option<Strin
             let verdict = if free >= d {
                 format!("covers this month's €{d:.0} deploy")
             } else {
-                format!("€{:.0} short of the €{d:.0} deploy", d - free)
+                format!("€{:.0} short of the €{d:.0} deploy", (d - free).ceil())
             };
             format!("\n  Broker cash — Trading212 free €{free:.0}, {verdict}.")
         }
@@ -4218,6 +4220,9 @@ mod tests {
         assert!(covers.contains("free €600") && covers.contains("covers this month's €500 deploy"));
         let short = cash_line(Some(500.0), Some(300.0)).unwrap();
         assert!(short.contains("free €300") && short.contains("€200 short of the €500 deploy"));
+        // (#1025) 40 cents short is short by €1, not by €0
+        let cents = cash_line(Some(1000.0), Some(999.6)).unwrap();
+        assert!(cents.contains("€1 short of the €1000 deploy"), "{cents}");
         let no_budget = cash_line(None, Some(400.0)).unwrap();
         assert!(no_budget.contains("free €400") && !no_budget.contains("deploy"));
         // zero budget is "unset", same as None → balance only, no verdict
