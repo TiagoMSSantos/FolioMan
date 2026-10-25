@@ -10986,8 +10986,9 @@ mod tests {
         assert_eq!(percentile(&s, 95.0), 95.0);
         assert!(percentile(&[], 50.0).is_nan());
         // p above 100 clamps to the last element instead of indexing past the end. Unreachable from the
-        // shipped callers (all pass 1/5/50/95/99), so the clamp is dead code the report pin can never
-        // exercise — the mutation audit flags it as unkilled, and this is the only way to observe it.
+        // shipped callers (deciles, medians, quartiles, 1/99 trims and the bootstrap band's tails, all
+        // inside 0..=100), so the clamp is dead code the report pin can never exercise — the mutation
+        // audit flags it as unkilled, and this is the only way to observe it.
         assert_eq!(percentile(&s, 150.0), 100.0);
     }
 
@@ -12242,9 +12243,9 @@ mod tests {
     }
 
     /// The SHIPPED tuning, not the code defaults. `BuyHeuristic::default()` is deliberately neutral —
-    /// its field docs read "0 = off (DEFAULT); ci-settings ships 5.0" — so a test that scored with it
-    /// would grade a tuning nobody runs. Same raw-parse the config pins use (no merge, no
-    /// FOLIOMAN_CONFIG, no race with the other tests in this file).
+    /// `growth_value_floor_pct` reads "0 = off (default)" there while ci-settings ships 40.0 — so a test
+    /// that scored with it would grade a tuning nobody runs. Same raw-parse the config pins use (no merge,
+    /// no FOLIOMAN_CONFIG, no race with the other tests in this file).
     fn shipped_tuning() -> BuyHeuristic {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
         let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
