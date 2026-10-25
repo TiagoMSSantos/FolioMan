@@ -7273,7 +7273,7 @@ fn sized_splice_sides<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: b
 
 /// (#495) The book order `Sizing::head_skip_commodity` funds. Rows are `(is_coin, is_commodity)` in score order; a
 /// commodity name that would land among the first [`HEAD`] non-coin rows is parked right after them, in its own
-/// order, so the head's double share goes to the next earnings-led name. Coins keep their places, and a book too
+/// order, so the head's tilted share goes to the next earnings-led name. Coins keep their places, and a book too
 /// short to fill the head with other names hands parked rows the head after all.
 pub(crate) fn head_skip(rows: &[(bool, bool)]) -> Vec<usize> {
     let (mut order, mut parked, mut seen) = (Vec::new(), Vec::new(), 0);

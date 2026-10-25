@@ -1186,9 +1186,9 @@ fn ladder(snap: &Snapshot) -> Rows<'_> {
 }
 
 /// (#335) The seventh table: THE RANK LADDER, the forward half of backtest's top-N ladder and rank-1
-/// head-to-head. The book since (#321)/(#322) is 25 names with the first `size::HEAD` paid double, and
-/// both of those rest on in-sample rank slices only. Every line already journals the whole ranked book
-/// in order, so this needs no new field and grades every line on disk.
+/// head-to-head. The book since (#321)/(#322) is 25 names with the first `size::HEAD` tilted up by
+/// `sizing.head_weight`, and both of those rest on in-sample rank slices only. Every line already
+/// journals the whole ranked book in order, so this needs no new field and grades every line on disk.
 fn ladder_section(
     snaps: &[Snapshot],
     today: chrono::NaiveDate,
@@ -1221,7 +1221,7 @@ fn ladder_section(
     }
     format!(
         "\n  Rank ladder (#335) — each run's executed book cut by rank: 1-{head} (the names `head_weight` pays\n  \
-         double), {}-{BOOK}, and the tail past {BOOK}. Coins and unbought pins out, each slice equal-weight on\n  \
+         more), {}-{BOOK}, and the tail past {BOOK}. Coins and unbought pins out, each slice equal-weight on\n  \
          the SAME line, same windows, one line a month, lower slice minus higher. Pre-registered: a gap\n  \
          flags REOPEN SIGNAL at {REOPEN_LINES}+ lines AND (#338) {REOPEN_LINES}+ chained links, each with mean AND\n  \
          median above 0. `6-10 minus 1-5` re-opens (#322) `head_weight`, the tilt paying the wrong five\n  \
@@ -1810,9 +1810,9 @@ pub async fn run(args: Vec<String>) {
         Some(_) => format!("{}{}", summary_line(wins, graded_n, excess_sum), trials_note(&snaps, today, &px_now, spx_now)),
     };
     println!("\n  summary: {summary}");
-    // (#285) and the CORE list. Printed LAST, below the summary, because that summary is the bought
-    // book's verdict and belongs next to the bought book's table — a second table wedged between
-    // them would invite the reader to attribute one to the other.
+    // (#285) and the CORE list. Printed right below the summary, never between it and the verdict table,
+    // because that summary is the bought book's verdict and belongs next to the bought book's table — a
+    // second table wedged between them would invite the reader to attribute one to the other.
     // (#289) the tier lookup, built off the quotes already fetched above — one source for the fund
     // name, and none for the tier beyond `core::hold_breadth_tier` itself.
     let tier_of = |t: &str| {
