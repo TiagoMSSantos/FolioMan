@@ -1063,7 +1063,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
                 core::per_cadence(crate::config::growth_brake_min_sessions(), bars_yr),
             ),
         ),
-        ma200d_pct: core::short_ma_pct(&chart.closes),
+        ma200d_pct: core::short_ma_pct(&chart.closes, long_ma),
         // (E) trailing P/E (SEC EDGAR first, FMP_API_KEY fallback; None -> neutral value tilt).
         pe_ratio: pe,
         // (#45) MVRV is stamped LATER, in the screen enrichment block, not here: it comes from one bulk

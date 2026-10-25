@@ -887,10 +887,12 @@ pub fn stretch_window(len: usize, n: usize, min: usize) -> usize {
     }
 }
 
-/// (#505) A name listed under `LONG_MA_SESSIONS` sessions has no 200-week average, so ABV-MA read n/a for
+/// (#505) A name listed under its `long_ma` 200-week window has no 200-week average, so ABV-MA read n/a for
 /// every young stock. Display only: the signed % vs the 200-session average, the same two helpers.
-pub fn short_ma_pct(closes: &[f64]) -> Option<f64> {
-    (closes.len() < crate::config::LONG_MA_SESSIONS && closes.len() >= 200)
+/// (#1040) `long_ma` is the chart's own window, 1448 bars for a coin since (#1034): with the stock
+/// 1000 here, a coin holding 1000..1447 closes had neither average and read n/a.
+pub fn short_ma_pct(closes: &[f64], long_ma: usize) -> Option<f64> {
+    (closes.len() < long_ma && closes.len() >= 200)
         .then(|| above_long_ma_pct(closes, 200) - below_long_ma_pct(closes, 200))
 }
 
@@ -7606,15 +7608,21 @@ mod tests {
         near(no_gw.int_book_ttm, 500.0 + 1417.0 / 3.0);
     }
 
-    /// (#505) 200..LONG_MA_SESSIONS closes read signed vs the 200-session mean; outside that, None
+    /// (#505) 200..long_ma closes read signed vs the 200-session mean; outside that, None
     #[test]
     fn short_ma_pct_covers_only_the_young() {
         let flat = |n: usize, last: f64| -> Vec<f64> { (0..n).map(|i| if i + 1 == n { last } else { 100.0 }).collect() };
-        assert_eq!(short_ma_pct(&flat(199, 100.0)), None, "under 200 closes");
-        assert_eq!(short_ma_pct(&flat(crate::config::LONG_MA_SESSIONS, 100.0)), None, "the 200-week one exists");
+        let stock = crate::config::LONG_MA_SESSIONS;
+        assert_eq!(short_ma_pct(&flat(199, 100.0), stock), None, "under 200 closes");
+        assert_eq!(short_ma_pct(&flat(stock, 100.0), stock), None, "the 200-week one exists");
         let r = |x: Option<f64>| x.map(|v| (v * 100.0).round() / 100.0);
-        assert_eq!(r(short_ma_pct(&flat(200, 299.0))), Some(196.05), "mean 100.995: +196%");
-        assert_eq!(r(short_ma_pct(&flat(500, 1.0))), Some(-99.0), "below reads negative");
+        assert_eq!(r(short_ma_pct(&flat(200, 299.0), stock)), Some(196.05), "mean 100.995: +196%");
+        assert_eq!(r(short_ma_pct(&flat(500, 1.0), stock)), Some(-99.0), "below reads negative");
+        // (#1040) a coin's 200 weeks are 1448 daily bars: 1200 closes still read the 200-day average
+        let coin = per_cadence(stock, 365);
+        assert_eq!(coin, 1448);
+        assert_eq!(r(short_ma_pct(&flat(1200, 1.0), coin)), Some(-99.0), "a coin under its 200 weeks");
+        assert_eq!(short_ma_pct(&flat(coin, 1.0), coin), None, "the coin's 200-week one exists");
     }
 
     /// (#522) FAIR's base is the median margin of the newest 3 fiscal years × this year's revenue, so a
