@@ -3102,9 +3102,11 @@ pub async fn run(args: Vec<String>) {
     // (E) LONG-LEG FLOOR tails: what the 5Y and 8Y cumulative bars cost, by name. Every block above
     // filters on a narrow miss, a small failure count, or both, and the 5Y bar satisfies neither — it
     // fails 2161 names, sole-blocks ZERO, and the names worth seeing miss it grossly (AMZN +24.7%
-    // against a +75 bar). So the tightest live gate in the tool was the one with no table. Printed last
-    // because it is the loosest and longest list. The 8Y call is silent at `growth_min_8y_pct: -1e9`, the code
-    // default; ci-settings sets it ((#315), 42.22), so it prints — same helper, one line.
+    // against a +75 bar). So the tightest live gate in the tool was the one with no table. Printed last of
+    // the gate-keyed tails because it is the loosest and longest list; the (#54) pin bill and the (#55)
+    // proven-record tail key on no single gate and follow it. The 8Y call is silent at
+    // `growth_min_8y_pct: -1e9`, the code default; ci-settings sets it ((#315), 42.22), so it prints —
+    // same helper, one line.
     for (tag, label, knob, floor) in [
         ("5Y+", "5Y", "growth_min_5y_pct", settings.buy_heuristic.growth_min_5y_pct),
         ("8Y+", "8Y", "growth_min_8y_pct", settings.buy_heuristic.growth_min_8y_pct),
