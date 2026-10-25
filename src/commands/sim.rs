@@ -89,6 +89,9 @@ pub(crate) fn monthly_firsts(snaps: &[Snapshot]) -> BTreeMap<(i32, u32), &Snapsh
 /// as `track`); so does a coin lot under Binance's order minimum, once, which only grows the rest.
 /// Each lot pays `fee_of` × its slice out of that slice. Returns None when nothing is buyable so the
 /// caller can keep that month's income as pending cash instead of vaporising it.
+/// (#1029) A coin slice of exactly the minimum buys, as `screen` orders it: the sized weights sum
+/// to 100 only up to float dust, so 7 equal names at €35 read €4.999999999999999 each, and a
+/// 1e-9 slack keeps that a buy.
 fn buy_event(
     snap: &Snapshot,
     budget: f64,
@@ -113,7 +116,7 @@ fn buy_event(
         book.into_iter().filter_map(|(t, w)| price(&t).filter(|p| *p > 0.0).map(|p| (t, p, w))).collect();
     let sum: f64 = priced.iter().map(|(.., w)| w).sum();
     priced.retain(|(t, _, w)| {
-        !crate::picks::is_currency_quoted(t) || budget * w / sum >= crate::broker::binance::MIN_ORDER_EUR
+        !crate::picks::is_currency_quoted(t) || budget * w / sum >= crate::broker::binance::MIN_ORDER_EUR - 1e-9
     });
     if priced.is_empty() {
         return None;
@@ -620,6 +623,14 @@ mod tests {
             ..snap("2026-07-16", None, None, &[("A", Some(1.0)), ("BTC-EUR", Some(1.0))])
         };
         assert_eq!(buy_event(&heavy, 10.0, 1.0, false, &sz, &no_tier, &no_fee).expect("both buy").lots.len(), 2);
+        // (#1029) 7 equal sized names at €35 are €5 each, though the weights sum a hair over 100
+        let names = ["BTC-EUR", "A", "B", "C", "D", "E", "F"];
+        let even = Snapshot {
+            sized: names.iter().map(|t| (t.to_string(), 100.0 / 7.0)).collect(),
+            ..snap("2026-07-16", None, None, &names.map(|t| (t, Some(1.0))))
+        };
+        let e = buy_event(&even, 35.0, 1.0, false, &sz, &no_tier, &no_fee).expect("all buy");
+        assert_eq!(e.lots.len(), 7);
 
         // (#300) a line carrying `sized` buys the BUY NOW book: the picks at their sized weights, priced
         // off `rows`, then the funded CORE rows at `spill_split` of the remaining 30, priced off `core`,
