@@ -15245,7 +15245,7 @@ mod tests {
         );
         assert!(
             (tuning.growth_trend_weight - tuning.growth_accel_beta * tuning.growth_accel_weight + 0.35).abs() < 1e-12,
-            "the shipped lane's CAGR slope is −0.35/%%yr and the (#70) and (#98) receipts both quote it — recompute both if this moves"
+            "the shipped lane's CAGR slope is −0.35 per %/yr and the (#70)/(#98) receipts both quote it — recompute both if this moves"
         );
         assert_eq!(tuning.growth_trend_weight, 0.15, "0.15 survived a v2 grid — 0.35/0.55/0.70 all REFUSED on the top-3 worst window, and 0.35 also breaks the 8y h2h guard; read the (#70) receipt, and note that rising lane edge is not a reason to move this");
 
