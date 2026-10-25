@@ -10444,7 +10444,7 @@ mod tests {
         assert_eq!(perf_pct(&q, "5Y"), Some(97.4), "filled -> the score reads the undeflated leg");
         assert_eq!(perf_pct(&q, "20Y"), Some(859.9));
         assert_eq!(q.perf[i_of("5Y")], real[i_of("5Y")], "the REAL vec is untouched — it still feeds the % columns");
-        // and the gate moves with it: the 20Y rung's CAGR is ~2.4 pts/yr higher in nominal terms, which
+        // and the gate moves with it: the 20Y rung's CAGR is ~2.6 pts/yr higher in nominal terms, which
         // is the whole finding — one `growth_min_cagr` was being read against two different units.
         let t = BuyHeuristic { fixed_cagr_years: 20, ..BuyHeuristic::default() };
         let nom = long_cagr_pct(&q, &t).unwrap();
@@ -13839,7 +13839,7 @@ mod tests {
         }
 
         // END TO END. eps 1.00 at a price of 100 -> earnings yield 1%, so peg_yield IS the CAGR and the
-        // printed PEG is 100/CAGR: 3.33 on the 20Y rung, 5.29 on the 8Y one. A ceiling between the two
+        // printed PEG is 100/CAGR: 3.29 on the 20Y rung, 5.29 on the 8Y one. A ceiling between the two
         // admits the name on its stale rate and refuses it on its current one — the AMZN row, exactly.
         let fill = |t: &BuyHeuristic| core::peg_yield(Some(1.0), peg_cagr_pct(&q, t), 100.0);
         let (loose, pinned) = (fill(&base).unwrap(), fill(&BuyHeuristic { peg_cagr_years: 8, ..base.clone() }).unwrap());
