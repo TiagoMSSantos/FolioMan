@@ -8769,7 +8769,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: abd34cbb240a (#1062), graded 2026-10-25 by run 40217149502, same five inputs, since
+  # LAST GRADED SHA: d0491edb9817 (#1066, the rebless on top of (#1065); its src is (#1065)'s), graded
+  # 2026-10-25 by run 40221337799, same five inputs, since af485ba, `files` = src/core.rs: 27 in scope = 23
+  # caught (`red_flags` 12 for (#1064), `fund_factors` 11 for (#1065)), 4 unviable (`-` -> `+` and `-` -> `/`
+  # on the two `NaiveDate - NaiveDate` spans in `fund_factors` do not build), 0 missed, 0 timeout. (#1068)
+  # records it.
+  # BEFORE THAT: abd34cbb240a (#1062), graded 2026-10-25 by run 40217149502, same five inputs, since
   # 31b6ce2, `files` = src/commands/backtest.rs src/commands/screen.rs: 11 in scope = 10 caught
   # (`sizing_fingerprint` 2 and `report_sized_book` 1 for (#1060), `may_write_sized` 7 for (#1061)/(#1062)),
   # 1 unviable (`report_sized_book` -> `Some(Default::default())` does not build, `SizedVerdict` has no
