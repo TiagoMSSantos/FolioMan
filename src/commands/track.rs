@@ -1894,7 +1894,7 @@ mod tests {
     }
 
     /// (#323) The same snapshot with a journalled near-miss tail — the half `screen` writes from
-    /// `near_miss_tail`.
+    /// `notch_cohorts` since (#324); the printed `near_miss_tail` is never journalled.
     fn with_near(mut s: Snapshot, near: &[(&str, Option<f64>, &str)]) -> Snapshot {
         s.near = near.iter().map(|(t, p, g)| (t.to_string(), *p, g.to_string())).collect();
         s

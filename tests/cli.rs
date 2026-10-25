@@ -520,7 +520,7 @@ const SPLIT_CHART: &str = r#"{"chart":{"result":[{"timestamp":[1577836800,157792
 /// A chart that closes on its high: 0% under it, so no dip and a NEAR-HIGH entry state.
 const RISING_CHART: &str = r#"{"chart":{"result":[{"timestamp":[1577836800,1577923200,1578009600,1578096000],"indicators":{"quote":[{"close":[100,101,102,103],"volume":[1000,1000,1000,1000]}]},"meta":{"currency":"EUR"}}]}}"#;
 
-/// An index that quadruples-and-more over the window, so a book that lost money is far BEHIND it.
+/// An index that more than doubles over the window, so a book that lost money is far BEHIND it.
 const RISING_SPX: &str = r#"{"chart":{"result":[{"timestamp":[1577836800,1577923200,1578009600,1578096000],"indicators":{"quote":[{"close":[4000,5000,6000,9000],"volume":[1000,1000,1000,1000]}]},"meta":{"currency":"EUR"}}]}}"#;
 
 /// DIP_CHART tagged as a fund by Yahoo's own `instrumentType`, which is what routes a name into the ETF table.
@@ -958,7 +958,7 @@ fn report_prints_the_annual_table_and_the_verdict_for_cached_statements() {
 /// Rows filed BEFORE a split are put on today's share basis with the chart's own split list, so the oldest year reads
 /// one basis with the rest (4.00 filed in 2023, a 2:1 split in 2024, prints 2.00 beside the post-split 2.20). The
 /// filings are in USD and the listing trades in EUR, so the close is converted first: the stub answers every pair
-/// with the 51.2 close, which makes the USD per EUR rate 51.2 and the converted close exactly 1.00.
+/// with the 51.2 close, which makes the rate 51.2 EUR per USD and the converted close 51.2 / 51.2, exactly 1.00.
 #[test]
 fn report_restates_pre_split_eps_and_prices_the_close_in_the_filers_currency() {
     let name = "report-split-restate";
