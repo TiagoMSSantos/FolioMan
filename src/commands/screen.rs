@@ -3363,7 +3363,8 @@ pub async fn run(args: Vec<String>) {
     // is where the note belongs — but it MUST happen, because a trust line that quietly disagreed
     // with `track` would be worse than either. It rewrites `snap.rows` PRICES only, so the four
     // rank-based footers (which read positions, not prices) are unaffected either way; sharing one
-    // restated copy is safe because `adjust_for_splits` is idempotent (see `track.rs`).
+    // restated copy is safe because it is restated exactly once: a second pass over the same copy
+    // would divide its prices again (see `track.rs`).
     let (mut snaps, _) = crate::commands::track::read_snapshots();
     crate::commands::track::adjust_for_splits(
         &mut snaps,
@@ -5437,8 +5438,8 @@ mod tests {
         let restatements = src.matches(concat!("adjust_for_splits", "(")).count();
         assert_eq!(
             restatements, 1,
-            "one read, one restatement; found {restatements} calls to adjust_for_splits. Two would \
-             still be correct (it is idempotent), but they mean two journals again."
+            "one read, one restatement; found {restatements} calls to adjust_for_splits. A second \
+             call on the same copy would divide its prices again: the restatement is not idempotent."
         );
     }
 
@@ -5541,7 +5542,7 @@ mod tests {
         };
         let clean = q("CLEAN", "Clean Corp", "EQUITY");
         // ZDEEP sorts LAST alphabetically and AAA.L first, so a flat sort would print AAA.L, SOL-EUR,
-        // ZDEEP — the ordering this test exists to reject. Class order must beat the alphabet.
+        // YDEEP, ZDEEP — the ordering this test exists to reject. Class order must beat the alphabet.
         let mut dd = q("ZDEEP", "Deep Corp", "EQUITY");
         dd.max_drawdown_pct = 95.0; // one gate, alone
         let mut dd2 = q("YDEEP", "Deeper Corp", "EQUITY"); // second stock -> pins the intra-class ", "
