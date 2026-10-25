@@ -6188,12 +6188,6 @@ mod tests {
         assert_eq!(tr_life_cagr(&[], &[], 5.0), None);
     }
 
-    /// (#3l) capped_life_cagr: the window clamps to the LAST `max_years`, so a 40y series with a
-    /// hot first decade reads LOWER capped than whole-life; a name younger than the cap keeps its
-    /// whole life (min(age, cap)); 0.0 is off (None -> callers fall back to the rung, byte-inert);
-    /// under 5y of history is None (pool guard — the rung ladder never ranked a name without a 5Y
-    /// leg, and the window swap must not admit 6-month names); the cut lands at the first bar
-    /// AT/AFTER `last − max_years`, never before it.
     #[test]
     fn age_years_is_days_over_365_25() {
         let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
@@ -6208,6 +6202,12 @@ mod tests {
         assert_eq!(age_years(&[]), None);
     }
 
+    /// (#3l) capped_life_cagr: the window clamps to the LAST `max_years`, so a 40y series with a
+    /// hot first decade reads LOWER capped than whole-life; a name younger than the cap keeps its
+    /// whole life (min(age, cap)); 0.0 is off (None -> callers fall back to the rung, byte-inert);
+    /// under 5y of history is None (pool guard — the rung ladder never ranked a name without a 5Y
+    /// leg, and the window swap must not admit 6-month names); the cut lands at the first bar
+    /// AT/AFTER `last − max_years`, never before it.
     #[test]
     fn capped_life_cagr_windows() {
         let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
@@ -8219,7 +8219,6 @@ mod tests {
         assert_eq!(pac_cycle(d("2008-01-01")), 2006);
     }
 
-    /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.
     /// (PIT) The membership parser and its HALF-OPEN boundary. The boundary is the entire correctness
     /// claim of the small source file — `sp500_spans`' doc records that reading `end` as INCLUSIVE
     /// mis-rebuilds 604 of the publisher's 2718 snapshots — and that measurement lives in a comment,
@@ -8418,6 +8417,7 @@ mod tests {
             "(#271) a relaxed floor ABOVE the strict one is a no-op — kills `min` -> `max`");
     }
 
+    /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.
     #[test]
     fn pure_logic() {
     assert!((pct_from_high(&[100.0, 80.0, 95.0]) - 5.0).abs() < 1e-9);
@@ -8561,7 +8561,7 @@ mod tests {
     // pinned directly, on `geo_tier_at`, in the (#218) block below.
     assert!(!hold("VanEck Semiconductor UCITS ETF", Some(0.35), Some("Full"), Some("Acc"), Some(2.5e9))); // sector, no geography
     // (#239) CONFIG-DEPENDENT now, and spelled off the knob for the reason the swap and
-    // minimum-volatility lines above are: the code default is 0 and tests/ci-settings.yaml ships 1,
+    // minimum-volatility lines above are: the code default is 0 and tests/ci-settings.yaml opens it,
     // so a hardcoded `!` would assert the opposite of the shipped answer in one of the two regimes
     // CI runs. This is NASD.L's shape, the largest fund the Nasdaq-100 sleeve admits (EUR 5.7B); the
     // knob-off placement is pinned directly, on `geo_tier_at`, in the (#239) block below.
@@ -10434,7 +10434,7 @@ mod tests {
     }
     assert!((volatility_pct(&steps, 30).unwrap() - 2.0).abs() < 1e-9);
     // The window is the last n RETURNS, so a -90% bar in front of the eight sits outside it at n = 8
-    // (one return fewer reads 1.79, one more reads the crash).
+    // (one return fewer reads 1.76, one more reads the crash).
     let mut crash = vec![1000.0];
     crash.extend_from_slice(&steps);
     assert!((volatility_pct(&crash, 8).unwrap() - 2.0).abs() < 1e-9);
