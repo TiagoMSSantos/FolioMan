@@ -3002,8 +3002,9 @@ mod tests {
     /// at all answers 0 ("size the pool yourself") instead of exiting or panicking.
     ///
     /// The present-config arm reads the committed fixture and moves only the one key, because
-    /// `Settings` is `deny_unknown_fields` with a dozen required keys — a synthetic mapping big
-    /// enough to parse would pin the mapping rather than the lookup.
+    /// `Settings` is `deny_unknown_fields` with seven required keys, one of them the twelve-key
+    /// `urls` block — a synthetic mapping big enough to parse would pin the mapping rather than
+    /// the lookup.
     #[test]
     fn compute_threads_falls_back_to_auto_instead_of_exiting() {
         let fixture = ci_settings_path();
@@ -3026,7 +3027,7 @@ mod tests {
     /// them keep most of them from ever running — which is exactly how a stubbed `default_universe_size`
     /// returning 0 would reach a user with an older settings.yaml and silently empty their universe.
     /// Called directly rather than round-tripped through YAML: `Settings`/`Urls` are
-    /// `deny_unknown_fields` with a dozen required keys each, and a fixture that big would pin the
+    /// `deny_unknown_fields` with 7 and 12 required keys, and a fixture that big would pin the
     /// fixture, not the defaults.
     #[test]
     fn serde_defaults_are_the_documented_values() {
