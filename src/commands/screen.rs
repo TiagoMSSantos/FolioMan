@@ -3180,7 +3180,7 @@ pub async fn run(args: Vec<String>) {
             // LONGEST record first, best CAGR within it. Sorting by CAGR alone was measured and dropped:
             // it buries the 20Y names under 5Y momentum (live 2026-08-07, the whole top of the list was
             // 5Y coins and a 42%/yr 5Y run), and the longest record is precisely the strongest version of
-            // the claim this block makes. The rungs are few (20/10/8/5), so this reads as cohorts.
+            // the claim this block makes. The rungs are few (20/8/5), so this reads as cohorts.
             proven.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| b.1.total_cmp(&a.1)).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
             let more = if proven.len() > PROVEN_CAP { format!(" (top {PROVEN_CAP} of {})", proven.len()) } else { String::new() };
             println!("\nDidn't rank despite a proven long record (≥{:.0}Y leg){more}:", picks::PROVEN_MIN_YEARS);
