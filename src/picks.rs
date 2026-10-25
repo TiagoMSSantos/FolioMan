@@ -6360,93 +6360,8 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
          then domicile (IE first, withholding) → cheapest TER → largest AUM. One all-world fund IS a \
          whole book; the sleeves below it are for building one yourself. NOT advice):"
     );
-    // (round 118) supply per sleeve, BEFORE the cap. Without it the block is unreadable: three rows
-    // in a sleeve means "three shown of possibly forty", and an absent sleeve is indistinguishable
-    // from one the universe genuinely cannot fill (Asia-Pacific in a EU-buyable pond). The old
-    // hardcoded 3-tier cap silently truncated for exactly this reason and nothing said so.
-    let mut supply = [0usize; core::HOLD_TIERS];
-    // (#214) …and how many distinct INDEX FAMILIES that supply spans. The cap is documented as
-    // existing "so no index family crowds out the others" but it counts FUNDS, so a sleeve reading
-    // `13 (2f)` is one where 13 funds track only 2 indices and the third slot cannot help but
-    // repeat. It is also the instrument (#197) never had: that round refused a taller table because
-    // 20 of the 22 hidden rows were WRAPPERS, and a sleeve whose family count EXCEEDS its cap is a
-    // sleeve where the next row would be a new index instead.
-    //
-    // (#216) THE SAME QUESTION BELOW THE CAP, and the answer is the same. Three sleeves sit UNDER
-    // their cap for want of supply — ex-US 2/3, Asia-Pacific 1/3, small-cap 1/3 (now 2/3) — and a
-    // throwaway probe (this census, re-keyed by `core::hold_miss_leg`'s leg for the funds that pass
-    // leg 0 and die later) priced all 30 of their near-misses. NOT ONE would add an index family:
-    //   ex-US        18 near-miss — both incumbents (EXUS.DE, IXUA.DE) are MSCI World ex USA, and
-    //                13 of the 18 are a third wrapper of it. The only genuine second family, FTSE
-    //                All-World ex US, exists in this pond ONLY as Dist (VXUD) or EUR 0.0B (AWEX.DE).
-    //   Asia-Pacific  8 near-miss — ALL EIGHT are MSCI Pacific ex Japan, the incumbent's own index.
-    //                The closest (PACUA.SW, 0.30% against the 0.25% cap) is a wrapper priced ABOVE
-    //                the 0.20% incumbent, so admitting it would be strictly worse advice.
-    //   small-cap     4 near-miss — ALL FOUR are MSCI World Small Cap, WSML.L's index; and (#210)
-    //                pre-registers that its TER ceiling is not walked upward to fill the sleeve.
-    //                (#229) AMENDS THIS ONE, and the amendment is a limit of the census and not a
-    //                reversal of it: this probe re-keys funds that PASS LEG 0, and a regional small
-    //                cap was refused AT leg 0 by (#210)'s `SIZE_GEO`, so it was never in the four.
-    //                Deleting that array put XXSC.DE (MSCI *Europe* Small Cap, €3.0B, 0.30%, Acc)
-    //                in — a genuine second family, taking the sleeve to 2/3. The TER ceiling was
-    //                HELD at 0.35 exactly as pre-registered; nothing here was walked. Every other
-    //                line above stands: (#226) measured ex-US and Asia-Pacific as EXHAUSTED.
-    // So the printed rows are the CORRECT rows, and (#197)/(#214)'s wrapper finding holds BELOW the
-    // cap as well as above it. Do not re-argue a taller table, a looser AUM floor or a sleeve-local
-    // TER ceiling for these three without first re-running that probe: the refusal is the supply,
-    // not the knobs. What the probe DID find is the misfile `core::NARROW`'s (#216) block records.
-    //
-    // (#237) …AND THE SAME COUNT KEYED ON THE INDEX ITSELF. `core::sleeve_family_of` keys a non-tilt
-    // fund on its GEO TOKEN, and that key is COARSE by construction — [`family_first_order`]'s own doc
-    // records "FTSE Developed Europe" and "FTSE Developed Europe ex UK" collapsing into ONE family
-    // though they are different indices. `Quote::benchmark` is BF's own index name, already captured
-    // for `history_proxy`'s twin hints and therefore free here. `Xf` is what the cap follows today
-    // under (#220); `Yb` is what it WOULD follow if a family were an index rather than a geography.
-    // Printing both is the only way to ask whether this table should be a menu of EXPOSURES or of
-    // PRODUCTS without shipping the answer first — and it ships no answer: this line is DISPLAY ONLY
-    // and no admission, cap or order reads it.
-    //
-    // THE `/N?` SUFFIX IS THE DENOMINATOR, NOT DECORATION — (#151)'s lesson, which cost a round.
-    // `benchmark` is absent on part of the pond, and `fetch::bf_row_meta` puts the sibling
-    // `replicationMethod` at ~70% coverage, so the gap is expected to bite.
-    //
-    // (#280) …AND UNTIL THIS ROUND THE NUMERATOR WAS A COPY OF `Xf`, so the denominator had nothing
-    // to divide. The uncovered funds used to be inserted into `benches` under their GEO-token
-    // fallback — which is the very string `fam` already holds whenever `hold_family_key_benchmark`
-    // is ON, the lane that ships. `Yb` therefore could not disagree with `Xf` by construction, and
-    // the live run confirmed it: EQUAL IN 13 OF 13 SLEEVES. A column built to ask "exposures or
-    // products?" answered nothing in the only configuration anyone runs.
-    //
-    // Counting the COVERED funds only is what makes the pair readable. `Yb` is now the distinct
-    // indices BF actually named, `/N?` is how many funds it named none for, and `Xf - Yb` is the
-    // number a future round needs before it can argue that resolving those names would buy a row:
-    // families keyed on a WORD rather than on an index. Still DISPLAY ONLY — no admission, cap or
-    // order reads any of the three.
-    let mut families: Vec<HashSet<&str>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
-    let mut benches: Vec<HashSet<String>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
-    let mut no_bench = [0usize; core::HOLD_TIERS];
-    for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
-        let t = core::hold_breadth_tier(&q.name) as usize;
-        supply[t] += 1;
-        // (#272) `Xf` must report the key the LANE ACTUALLY USED, not the one it used to use. This
-        // line read `sleeve_family_of` directly while the table keyed on `sleeve_family_at`, and a
-        // census that contradicts the table it explains is worse than no census — this function's
-        // own doc says so, and `(#229)` is the round that paid for it.
-        let fam = core::sleeve_family_at(q, crate::config::hold_family_key_benchmark()).unwrap_or("?");
-        families[t].insert(fam);
-        match q.benchmark.as_deref() {
-            Some(b) => {
-                benches[t].insert(b.to_string());
-            }
-            // (#280) no BF index name: tally the fund and count it as NO INDEX. It used to be
-            // inserted here under `fam`, which made `Yb` a restatement of `Xf` — see the block above.
-            None => no_bench[t] += 1,
-        }
-    }
+    // (round 118) supply per sleeve, BEFORE the cap: see [`sleeve_supply_cells`].
     let country_cap = crate::config::hold_per_tier_country();
-    const SLEEVE: [&str; core::HOLD_TIERS] =
-        ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pacific",
-         "small-cap", "world factor", "world sector", "single-country", "Nasdaq-100"];
     // (#202) SLEEVE now carries OPTIONAL sleeves: with a knob off the line must print exactly the
     // eight geographic cells it always did. The rule is `core::sleeve_visible`, never a literal —
     // the same one-number-one-reader rule the cap in the header below follows.
@@ -6458,18 +6373,11 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     let factor_on = crate::config::hold_factor_sleeve();
     let sector_on = crate::config::hold_sector_sleeve();
     let nasdaq_cap = crate::config::hold_per_tier_nasdaq();
-    let counts: Vec<String> = SLEEVE
-        .iter()
-        .zip(supply.iter())
-        .zip(families.iter())
-        .zip(benches.iter())
-        .zip(no_bench.iter())
+    let counts: Vec<String> = sleeve_supply_cells(quotes, crate::config::hold_family_key_benchmark())
+        .into_iter()
         .enumerate()
         .filter(|(t, _)| core::sleeve_visible(*t, size_cap, factor_on, sector_on, country_cap, nasdaq_cap))
-        .map(|(_, ((((name, n), fams), bs), miss))| {
-            let gap = if *miss > 0 { format!("/{miss}?") } else { String::new() };
-            format!("{name} {n} ({}f, {}b{gap})", fams.len(), bs.len())
-        })
+        .map(|(_, cell)| cell)
         .collect();
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
     // the cap hid, and a header quoting a different number than the filter applied would invert it.
@@ -6611,17 +6519,130 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     // (#201) the filter reads `geo_hit`, NOT `is_broad_index_name`: the latter is already false for
     // anything a narrow token refused, so pinning exactly the candidate this diagnosis exists for — a
     // world fund carrying one disqualifying word — printed nothing at all.
-    let near: Vec<&Quote> = quotes.iter()
-        .filter(|q| {
-            pinned.contains(q.ticker.as_str()) && quote_is_etf(q)
-                && core::geo_hit(&q.name.to_lowercase()).is_some()
-        })
-        .collect();
-    for q in near {
+    for q in pinned_broad_etfs(quotes, pinned) {
         if let Some(reason) = near_miss_reason(q) {
             println!("  {:<9} not hold-core: {reason}", truncate(&q.ticker, 9));
         }
     }
+}
+
+
+/// (#1056) `print_hold_core`'s supply census, one cell per tier in ladder order: the funds that pass
+/// the CORE legs before the cap, the distinct index families they span, and the distinct benchmark
+/// indices with the `/N?` count of funds that name none. Every tier is returned; hiding an optional
+/// sleeve stays with `core::sleeve_visible` at the call site, and so does the config read, because
+/// threading a knob into the caller grades the caller (#271). Pure and gradeable, per the rule
+/// (#198)'s doc comment set for `print_hold_core`: (#272) and (#280) were both bugs in this tally.
+fn sleeve_supply_cells(quotes: &[Quote], by_benchmark: bool) -> Vec<String> {
+    // (round 118) supply per sleeve, BEFORE the cap. Without it the block is unreadable: three rows
+    // in a sleeve means "three shown of possibly forty", and an absent sleeve is indistinguishable
+    // from one the universe genuinely cannot fill (Asia-Pacific in a EU-buyable pond). The old
+    // hardcoded 3-tier cap silently truncated for exactly this reason and nothing said so.
+    let mut supply = [0usize; core::HOLD_TIERS];
+    // (#214) …and how many distinct INDEX FAMILIES that supply spans. The cap is documented as
+    // existing "so no index family crowds out the others" but it counts FUNDS, so a sleeve reading
+    // `13 (2f)` is one where 13 funds track only 2 indices and the third slot cannot help but
+    // repeat. It is also the instrument (#197) never had: that round refused a taller table because
+    // 20 of the 22 hidden rows were WRAPPERS, and a sleeve whose family count EXCEEDS its cap is a
+    // sleeve where the next row would be a new index instead.
+    //
+    // (#216) THE SAME QUESTION BELOW THE CAP, and the answer is the same. Three sleeves sit UNDER
+    // their cap for want of supply — ex-US 2/3, Asia-Pacific 1/3, small-cap 1/3 (now 2/3) — and a
+    // throwaway probe (this census, re-keyed by `core::hold_miss_leg`'s leg for the funds that pass
+    // leg 0 and die later) priced all 30 of their near-misses. NOT ONE would add an index family:
+    //   ex-US        18 near-miss — both incumbents (EXUS.DE, IXUA.DE) are MSCI World ex USA, and
+    //                13 of the 18 are a third wrapper of it. The only genuine second family, FTSE
+    //                All-World ex US, exists in this pond ONLY as Dist (VXUD) or EUR 0.0B (AWEX.DE).
+    //   Asia-Pacific  8 near-miss — ALL EIGHT are MSCI Pacific ex Japan, the incumbent's own index.
+    //                The closest (PACUA.SW, 0.30% against the 0.25% cap) is a wrapper priced ABOVE
+    //                the 0.20% incumbent, so admitting it would be strictly worse advice.
+    //   small-cap     4 near-miss — ALL FOUR are MSCI World Small Cap, WSML.L's index; and (#210)
+    //                pre-registers that its TER ceiling is not walked upward to fill the sleeve.
+    //                (#229) AMENDS THIS ONE, and the amendment is a limit of the census and not a
+    //                reversal of it: this probe re-keys funds that PASS LEG 0, and a regional small
+    //                cap was refused AT leg 0 by (#210)'s `SIZE_GEO`, so it was never in the four.
+    //                Deleting that array put XXSC.DE (MSCI *Europe* Small Cap, €3.0B, 0.30%, Acc)
+    //                in — a genuine second family, taking the sleeve to 2/3. The TER ceiling was
+    //                HELD at 0.35 exactly as pre-registered; nothing here was walked. Every other
+    //                line above stands: (#226) measured ex-US and Asia-Pacific as EXHAUSTED.
+    // So the printed rows are the CORRECT rows, and (#197)/(#214)'s wrapper finding holds BELOW the
+    // cap as well as above it. Do not re-argue a taller table, a looser AUM floor or a sleeve-local
+    // TER ceiling for these three without first re-running that probe: the refusal is the supply,
+    // not the knobs. What the probe DID find is the misfile `core::NARROW`'s (#216) block records.
+    //
+    // (#237) …AND THE SAME COUNT KEYED ON THE INDEX ITSELF. `core::sleeve_family_of` keys a non-tilt
+    // fund on its GEO TOKEN, and that key is COARSE by construction — [`family_first_order`]'s own doc
+    // records "FTSE Developed Europe" and "FTSE Developed Europe ex UK" collapsing into ONE family
+    // though they are different indices. `Quote::benchmark` is BF's own index name, already captured
+    // for `history_proxy`'s twin hints and therefore free here. `Xf` is what the cap follows today
+    // under (#220); `Yb` is what it WOULD follow if a family were an index rather than a geography.
+    // Printing both is the only way to ask whether this table should be a menu of EXPOSURES or of
+    // PRODUCTS without shipping the answer first — and it ships no answer: this line is DISPLAY ONLY
+    // and no admission, cap or order reads it.
+    //
+    // THE `/N?` SUFFIX IS THE DENOMINATOR, NOT DECORATION — (#151)'s lesson, which cost a round.
+    // `benchmark` is absent on part of the pond, and `fetch::bf_row_meta` puts the sibling
+    // `replicationMethod` at ~70% coverage, so the gap is expected to bite.
+    //
+    // (#280) …AND UNTIL THIS ROUND THE NUMERATOR WAS A COPY OF `Xf`, so the denominator had nothing
+    // to divide. The uncovered funds used to be inserted into `benches` under their GEO-token
+    // fallback — which is the very string `fam` already holds whenever `hold_family_key_benchmark`
+    // is ON, the lane that ships. `Yb` therefore could not disagree with `Xf` by construction, and
+    // the live run confirmed it: EQUAL IN 13 OF 13 SLEEVES. A column built to ask "exposures or
+    // products?" answered nothing in the only configuration anyone runs.
+    //
+    // Counting the COVERED funds only is what makes the pair readable. `Yb` is now the distinct
+    // indices BF actually named, `/N?` is how many funds it named none for, and `Xf - Yb` is the
+    // number a future round needs before it can argue that resolving those names would buy a row:
+    // families keyed on a WORD rather than on an index. Still DISPLAY ONLY — no admission, cap or
+    // order reads any of the three.
+    let mut families: Vec<HashSet<&str>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
+    let mut benches: Vec<HashSet<String>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
+    let mut no_bench = [0usize; core::HOLD_TIERS];
+    for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
+        let t = core::hold_breadth_tier(&q.name) as usize;
+        supply[t] += 1;
+        // (#272) `Xf` must report the key the LANE ACTUALLY USED, not the one it used to use. This
+        // line read `sleeve_family_of` directly while the table keyed on `sleeve_family_at`, and a
+        // census that contradicts the table it explains is worse than no census — this function's
+        // own doc says so, and `(#229)` is the round that paid for it.
+        let fam = core::sleeve_family_at(q, by_benchmark).unwrap_or("?");
+        families[t].insert(fam);
+        match q.benchmark.as_deref() {
+            Some(b) => {
+                benches[t].insert(b.to_string());
+            }
+            // (#280) no BF index name: tally the fund and count it as NO INDEX. It used to be
+            // inserted here under `fam`, which made `Yb` a restatement of `Xf` — see the block above.
+            None => no_bench[t] += 1,
+        }
+    }
+    const SLEEVE: [&str; core::HOLD_TIERS] =
+        ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pacific",
+         "small-cap", "world factor", "world sector", "single-country", "Nasdaq-100"];
+    SLEEVE
+        .iter()
+        .zip(supply.iter())
+        .zip(families.iter())
+        .zip(benches.iter())
+        .zip(no_bench.iter())
+        .map(|((((name, n), fams), bs), miss)| {
+            let gap = if *miss > 0 { format!("/{miss}?") } else { String::new() };
+            format!("{name} {n} ({}f, {}b{gap})", fams.len(), bs.len())
+        })
+        .collect()
+}
+
+/// (#1056) The pinned funds `print_hold_core` diagnoses as near-misses: pinned, a fund, and naming a
+/// geography. (#201) is why the last leg reads `geo_hit` and not `is_broad_index_name`. Pure and
+/// gradeable, per the rule (#198)'s doc comment set for `print_hold_core`.
+fn pinned_broad_etfs<'a>(quotes: &'a [Quote], pinned: &HashSet<&str>) -> Vec<&'a Quote> {
+    quotes.iter()
+        .filter(|q| {
+            pinned.contains(q.ticker.as_str()) && quote_is_etf(q)
+                && core::geo_hit(&q.name.to_lowercase()).is_some()
+        })
+        .collect()
 }
 
 /// The per-run display context for `render`: the peripheral inputs (market sentiment, sector filter,
@@ -12301,6 +12322,35 @@ mod tests {
         assert_eq!(cell(&q), "—", "a flat leg is no growth either");
         q.perf = legs(&[("5Y", 400.0)]);
         assert_eq!(cell(&q), "n/a", "growth exists, the gate still declined");
+    }
+
+    /// (#1056) The supply census counts only funds that pass both `eu_buyable` and the CORE legs: the
+    /// Dist all-world fund is EU-buyable but fails the Acc leg, so it must not reach the all-world cell.
+    /// A fund with no benchmark adds no `b` and prints in the `/N?` gap; an empty tier prints no gap.
+    #[test]
+    fn sleeve_supply_cells_count_core_funds_and_the_benchmark_gap() {
+        let mut vwce = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        vwce.benchmark = Some("FTSE All-World".to_string());
+        let mut vwrl = core_etf("VWRL.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        vwrl.use_of_profits = Some("Dist");
+        let quotes = [vwce, vwrl, core_etf("IWDA.DE", "iShares Core MSCI World UCITS ETF", 60e9, 0.20)];
+        let cells = sleeve_supply_cells(&quotes, true);
+        assert_eq!(cells.len(), core::HOLD_TIERS);
+        assert_eq!(cells[0], "all-world 1 (1f, 1b)");
+        assert_eq!(cells[1], "developed 1 (1f, 0b/1?)");
+        assert_eq!(cells[2], "emerging 0 (0f, 0b)");
+    }
+
+    /// (#1056) A near-miss row needs all three: a pin, a fund, and a geography in the name.
+    #[test]
+    fn pinned_broad_etfs_needs_a_pin_a_fund_and_a_geography() {
+        let quotes = [
+            core_etf("VWRL.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22),
+            core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), // not pinned
+            Quote::stub("AAPL", "€1", "", "Apple Inc."),                            // not a fund
+        ];
+        let pinned: HashSet<&str> = ["VWRL.DE", "AAPL"].into_iter().collect();
+        assert_eq!(tickers(&pinned_broad_etfs(&quotes, &pinned)), ["VWRL.DE"]);
     }
 
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + the per-tier cap, and the
