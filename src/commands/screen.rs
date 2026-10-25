@@ -1605,6 +1605,8 @@ fn crossover_lines(
 
 /// (round 50) TER hike worth flagging: ≥0.05 pp is a real fee decision (Vanguard-scale cuts/hikes
 /// move in 0.05+ steps), below is basis-point noise / rounding drift in the source.
+/// (#1024) `fact_alerts` compares with a 1e-9 slack: TERs are 4-dp (`fetch::ter_pct`), and
+/// 0.25 - 0.20 is 0.04999999999999999 in f64, so half of all exact 5 bp hikes missed the bar.
 const TER_HIKE_PP: f64 = 0.05;
 /// (round 50) AUM collapse worth flagging: a halving since last run. Normal market drawdown moves
 /// AUM tens of %, not −50% between screens — that scale means redemptions/closure risk.
@@ -1630,7 +1632,7 @@ fn fact_alerts(
         let (pt, pa) = prev[t];
         let (ct, ca) = cur[t];
         if let (Some(p), Some(c)) = (pt, ct) {
-            if c - p >= TER_HIKE_PP {
+            if c - p >= TER_HIKE_PP - 1e-9 {
                 out.push(format!("ALERT {t}: TER {p:.2}% -> {c:.2}% (fee hike compounds against a hold)"));
             }
         }
@@ -4474,6 +4476,12 @@ mod tests {
             "ALERT VUAA.DE: TER 0.07% -> 0.15% (fee hike compounds against a hold)".to_string(),
         ]);
         assert!(fact_alerts(&prev, &prev).is_empty()); // no drift -> no alerts
+        // (#1024) an exact 5 bp hike fires even where the f64 difference lands just under 0.05;
+        // 4 bp stays silent
+        let one = |ter: f64| m(&[("F.DE", Some(ter), None)]);
+        let hike = fact_alerts(&one(0.20), &one(0.25));
+        assert_eq!(hike, ["ALERT F.DE: TER 0.20% -> 0.25% (fee hike compounds against a hold)"]);
+        assert!(fact_alerts(&one(0.20), &one(0.24)).is_empty());
         // (#343) a zero prior AUM is no baseline, so a zero today is not a collapse from it
         let zero = m(&[("ZERO.DE", None, Some(0.0))]);
         assert!(fact_alerts(&zero, &zero).is_empty());
