@@ -15552,7 +15552,7 @@ pub(crate) mod tests {
 
     /// (#76) The EU-listing cache, every branch. ONE test, six phases, because all of them own the same
     /// `.eu_listing_cache.json` in the shared scratch root and would race as separate `#[test]`s — same
-    /// reason as `regulatory_isins_serve_a_fresh_cache_and_never_shrink` above.
+    /// reason as `regulatory_isins_serve_a_fresh_cache_and_never_shrink` below.
     ///
     /// The dead port is the assertion in phase 1, not scaffolding: a fully cached call must consult
     /// OpenFIGI zero times, and the only way to prove "zero" is to make any call fail. Phase 2 then
