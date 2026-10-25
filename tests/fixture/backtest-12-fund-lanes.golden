@@ -340,8 +340,8 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   exp_neg        TEST edge +161.5 (w 0.249)  OOS +0.22 | +0.20
   op_rd          TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   discipline     TEST edge +150.4 (w 0.249)  OOS +0.22 | +0.15
-  fair_yield     TEST edge +165.5 (w 0.025)  OOS +0.22 | +0.20
-  oe_fair_yield  TEST edge +165.5 (w 0.025)  OOS +0.22 | +0.20
+  fair_yield     TEST edge +163.0 (w 0.022)  OOS +0.22 | +0.20
+  oe_fair_yield  TEST edge +163.0 (w 0.022)  OOS +0.22 | +0.20
   fcf_cap_yield  TEST edge +155.7 (w 0.276)  OOS +0.23 | +0.20
   low_turnover   TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   rnd_growth     TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
@@ -686,8 +686,8 @@ WINNERS HELD (#606): 15.8% of 507 blend book slots are winners (base 5%); score 
     noa                   winners n=15   med    -45.61   losers n=9    med    -63.63   AUC  0.61
     op_leverage           winners n=12   med     54.59   losers n=8    med     42.83   AUC  0.54
     discipline            winners n=4    med      2.93   losers n=7    med      0.97   AUC  0.54
-    fair_yield            winners n=9    med     83.03   losers n=4    med    139.70   AUC  0.36
-    oe_fair_yield         winners n=9    med     83.03   losers n=4    med    139.70   AUC  0.36
+    fair_yield            winners n=9    med     83.03   losers n=5    med    154.95   AUC  0.33
+    oe_fair_yield         winners n=9    med     83.03   losers n=5    med    154.95   AUC  0.33
     fcf_cap_yield         winners n=13   med      7.87   losers n=8    med      1.79   AUC  0.71
     low_turnover          winners n=15   med     -1.62   losers n=9    med     -2.84   AUC  0.66
     composite             winners n=13   med      9.33   losers n=8    med      9.46   AUC  0.51
@@ -759,8 +759,8 @@ WINNERS HELD (#606): 15.8% of 507 blend book slots are winners (base 5%); score 
   lynch_yield    book +6.0%/yr  excess -5.7  win 33%  worst -16.2  OOS -16.2/-0.4   (n=22)  same-set score excess -5.7 OOS -16.2/-0.4, 7 rows/window
   exp_neg        book +8.2%/yr  excess -3.6  win 67%  worst -16.2  OOS -16.2/+2.8   (n=36)  same-set score excess -5.2 OOS -16.2/+0.3, 12 rows/window
   discipline     book +9.6%/yr  excess -1.9  win 38%  worst -4.5  OOS -2.4/-1.4   (n=159)  same-set score excess -1.1 OOS -3.1/+0.9, 20 rows/window
-  fair_yield     book +8.4%/yr  excess -3.1  win 0%  worst -10.5  OOS -4.2/-2.3   (n=160)  same-set score excess -1.9 OOS -2.0/-1.9, 18 rows/window
-  oe_fair_yield  book +8.4%/yr  excess -3.1  win 0%  worst -10.5  OOS -4.2/-2.3   (n=160)  same-set score excess -1.9 OOS -2.0/-1.9, 18 rows/window
+  fair_yield     book +8.2%/yr  excess -3.4  win 0%  worst -7.6  OOS -4.7/-2.3   (n=164)  same-set score excess -2.1 OOS -2.3/-1.9, 18 rows/window
+  oe_fair_yield  book +8.2%/yr  excess -3.4  win 0%  worst -7.6  OOS -4.7/-2.3   (n=164)  same-set score excess -2.1 OOS -2.3/-1.9, 18 rows/window
   fcf_cap_yield  book +9.1%/yr  excess -2.5  win 11%  worst -7.6  OOS -3.8/-1.4   (n=211)  same-set score excess -1.9 OOS -2.6/-1.3, 23 rows/window
   low_turnover   book +10.0%/yr  excess -1.6  win 22%  worst -7.6  OOS -2.2/-1.1   (n=245)  same-set score excess +0.2 OOS -0.7/+1.0, 27 rows/window
   no book: insider_net_buys_90d n=0, rnd_yield n=0, payout_yield n=0, mscore n=0, sbc n=0, goodwill n=0, org_cap n=0, int_yield n=0, sgr_yield n=0, op_rd n=0, rnd_growth n=0, low_dro n=0, capex_light n=0 — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)
