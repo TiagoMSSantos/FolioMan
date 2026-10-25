@@ -8519,16 +8519,6 @@ pub async fn fetch_regulatory_etf_isins(client: &Client, urls: &Urls) -> Vec<Str
     all
 }
 
-/// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
-/// CoinGecko + the S&P 500 constituents CSV (single companies) + the top-`cap` EU-buyable UCITS ETFs
-/// by turnover from Börse Frankfurt plus the Euronext-only funds BF doesn't list
-/// (`fetch_xetra_etfs` + `fetch_euronext_etf_isins`). Symbols normalised to Yahoo form (`btc` ->
-/// `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur`. The old
-/// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
-/// Sorted + deduped; empty if all sources fail. Also returns the Xetra-ETF ticker set so the caller
-/// can force-classify them as ETF — Yahoo mislabels some (e.g. structured products) as `EQUITY`, which
-/// would otherwise leak them into the stocks table past the sector filter — and the ticker -> GICS
-/// sector map (constituent-CSV stocks only) so the stocks table can print its sector mix.
 /// (Item 18/32) The equity ponds: S&P 500 plus any extra same-format constituent CSVs from config, each
 /// row a (Yahoo symbol, GICS sector). Sequential — 1-3 URLs, negligible next to the universe fan-out —
 /// and a failed/empty CSV just drops its pond instead of crashing. A CSV (Symbol first, sector col 3) and
@@ -9312,13 +9302,6 @@ pub async fn sector_map(client: &Client, urls: &Urls) -> std::collections::HashM
 /// `LONG_CACHE_TTL_DAYS`' if that ever actually bites.
 const SP500_HISTORY_CACHE_PATH: &str = ".sp500_history.json";
 
-/// (PIT) Point-in-time S&P 500 membership: ticker -> the half-open spans it was in the index for.
-/// Empty when the source is unreachable AND nothing is cached — the caller must treat that as "no PIT
-/// data, run as before", never as "nobody was ever a member", which would score an empty universe.
-///
-/// One small GET, once per machine. `screen` never calls this: the live screen wants today's members
-/// and `sp500_csv` already answers that. This exists for `backtest … universe pit`, whose whole job is
-/// to stop scoring 1996 with a pool chosen in 2026.
 /// (#173) EXTRA point-in-time membership sources (`Urls.membership_csv`), merged into the S&P 500 map
 /// below. An entry starting with `http` is fetched; anything else is read from DISK, which is what
 /// lets a locally reconstructed index (`tests/sp400_spans.csv`, built offline by
@@ -9363,6 +9346,13 @@ pub async fn fetch_sp500_history(client: &Client, urls: &Urls) -> core::MemberSp
     core::merge_spans(base, fetch_membership_extra(client, urls).await)
 }
 
+/// (PIT) Point-in-time S&P 500 membership: ticker -> the half-open spans it was in the index for.
+/// Empty when the source is unreachable AND nothing is cached — the caller must treat that as "no PIT
+/// data, run as before", never as "nobody was ever a member", which would score an empty universe.
+///
+/// One small GET, once per machine. This exists for `backtest … universe pit`, whose whole job is to
+/// stop scoring 1996 with a pool chosen in 2026. The live ranking wants today's members, which
+/// `sp500_csv` already answers; `screen` reads this map only for the (#811) Intraday table's US pond.
 async fn fetch_sp500_base(client: &Client, urls: &Urls) -> core::MemberSpans {
     let path = crate::config::data_path(SP500_HISTORY_CACHE_PATH);
     let cached = std::fs::read_to_string(&path)
@@ -9844,6 +9834,16 @@ pub(crate) fn adopt_us_series(own: Quote, us: Quote) -> Quote {
     }
 }
 
+/// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
+/// CoinGecko + the S&P 500 constituents CSV (single companies) + the top-`cap` EU-buyable UCITS ETFs
+/// by turnover from Börse Frankfurt plus the Euronext-only funds BF doesn't list
+/// (`fetch_xetra_etfs` + `fetch_euronext_etf_isins`). Symbols normalised to Yahoo form (`btc` ->
+/// `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur`. The old
+/// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
+/// Sorted + deduped; empty if all sources fail. Also returns the Xetra-ETF ticker set so the caller
+/// can force-classify them as ETF — Yahoo mislabels some (e.g. structured products) as `EQUITY`, which
+/// would otherwise leak them into the stocks table past the sector filter — and the ticker -> GICS
+/// sector map (constituent-CSV stocks only) so the stocks table can print its sector mix.
 pub async fn fetch_universe(
     client: &Client,
     urls: &Urls,
@@ -14963,12 +14963,13 @@ pub(crate) mod tests {
         // ts in unix seconds: 2020-01-01, -02, -03. The middle close is null -> that bar is dropped
         // entirely (date AND volume skip with it). Volume array is short (len 2) -> the 3rd bar's
         // volume falls back to 0.0. Dividend events are out of date order -> must come out sorted.
-        // adjclose is PRESENT but differs from close: with use_adjusted_close defaulting false (no
-        // settings.yaml in CI -> false), parse_chart must IGNORE it and use raw close (Item 21 inert
+        // adjclose is PRESENT but differs from close: with use_adjusted_close false (the default, and
+        // ci-settings ships false too), parse_chart must IGNORE it and use raw close (Item 21 inert
         // default — the validated edge is raw-close-calibrated; the flag is the only thing that flips it).
         // (splice) closes stay under the trimmer's 2.0×/wk bar on purpose: splice_max_weekly_rate is
-        // config-dependent (0.0 in CI, ci-settings' 2.0 on a dev box), and the trim logic has its own
-        // core::splice_trim_start tests — this fixture must parse identically in both environments.
+        // config-dependent (0.0 in the configless CI job, ci-settings' 2.0 in the pinned ones), and
+        // the trim logic has its own core::splice_trim_start tests — this fixture must parse
+        // identically in both.
         let j = json!({"chart": {"result": [{
             "timestamp": [1577836800, 1577923200, 1578009600],
             "indicators": {
@@ -15115,11 +15116,12 @@ pub(crate) mod tests {
 
     /// Pin the pacer OFF. MUST be called by any test that can reach the transport: `throttle()`
     /// hard-calls `config::load()`, and `config/settings.yaml` is the gitignored local overlay, so
-    /// it is absent on CI and on any fresh clone. That call no longer panics — it prints and
-    /// `exit(1)`s, which in a test binary kills the whole PROCESS instead of failing one test, so
-    /// forgetting this is worse than it used to be. A zero interval returns before the config read,
-    /// and it keeps these tests independent of the operator's `fetch_requests_per_second`, which
-    /// would otherwise sleep between them at whatever rate that box is configured for.
+    /// no settings file loads on a fresh clone or in the configless CI job. That call no longer
+    /// panics — it prints and `exit(1)`s, which in a test binary kills the whole PROCESS instead of
+    /// failing one test, so forgetting this is worse than it used to be. A zero interval returns
+    /// before the config read, and it keeps these tests independent of the operator's
+    /// `fetch_requests_per_second`, which would otherwise sleep between them at whatever rate that
+    /// box is configured for.
     /// `set` losing the race to another test is fine — both write the same value.
     fn pin_throttle() {
         let _ = THROTTLE.set((Mutex::new(Instant::now()), StdDuration::ZERO));
@@ -15128,9 +15130,9 @@ pub(crate) mod tests {
 
     /// The SECOND `config::load()` landmine on the transport, and the one `pin_throttle` does not
     /// cover: `fetch_concurrency()` reads `fetch_concurrency_multiplier`, so it `exit(1)`s the whole
-    /// test process when `settings.yaml` is absent — which is CI, and any fresh clone. Only tests
+    /// test process when no settings file loads — the configless CI job, and any fresh clone. Only tests
     /// reaching a `buffer_unordered` fan-out (`fetch_universe`, `fetch_xetra_etfs`) hit it, and only
-    /// with no config, so it passes locally and kills the binary on CI. Pin it with both.
+    /// with no config, so it passes locally and kills the binary in the configless job. Pin it with both.
     fn pin_fetch_concurrency() {
         let _ = FETCH_CONCURRENCY.set(1);
     }
@@ -16647,10 +16649,10 @@ pub(crate) mod tests {
     ///
     /// BOTH source caches are seeded, and that is the point rather than belt-and-braces:
     /// `fetch_fundamentals_ranked` routes on `config::fund_source()`, which reads the operator's
-    /// GITIGNORED `settings.yaml` — "sec" on this box, the "fmp" default on CI, and a process-wide
-    /// `OnceLock` either way. Seeding one cache writes a test that passes on whichever machine
-    /// happens to agree with it. Both paths are made to yield the same eps, so the assertions below
-    /// hold under either routing.
+    /// GITIGNORED `settings.yaml` — "sec" on this box and in the pinned CI jobs, the "fmp" fallback in
+    /// the configless one, and a process-wide `OnceLock` either way. Seeding one cache writes a test
+    /// that passes on whichever machine happens to agree with it. Both paths are made to yield the
+    /// same eps, so the assertions below hold under either routing.
     ///
     /// Owns `.fmp_cache` and the AAA/BBB entries of `.sec_cache` in the shared scratch root.
     #[tokio::test]
