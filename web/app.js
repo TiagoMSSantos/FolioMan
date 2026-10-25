@@ -1,4 +1,5 @@
-// The payload is {generated, stocks, etfs, crypto}, each lane a list of ROWS and each row a list of
+// The payload's lanes are {stocks, etfs, crypto}; `generated` and the other keys feed the rest of
+// the page. Each lane is a list of ROWS and each row a list of
 // [header, cell] pairs — exactly the cells the terminal prints for that row, so nothing is
 // reformatted here. (#143) A lane was a single row until then; every row of a lane carries the same
 // headers in the same order, which is why the head is read off row 0.
@@ -174,10 +175,12 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
 // the inflation table, so `?top=1` would publish the USA row and hide the EU one — the deflator, on
 // the view most likely to be bookmarked. (#438) The Attention table was cut too; (#441) the Berkshire table
 // was not, since the default N of 3 hid 11 of 14. (#525) Every table under the lanes ranks its own rows.
-// (#539) N cuts every asset table, lanes and those below alike; Exposure stays whole and `all` is no cut.
+// (#539) N cuts every asset table, lanes and those below alike; Exposure and (#811) Intraday stay whole
+// and `all` is no cut.
 // (#393) Cut on the RANK, not the row's position: a sort reorders the top N, never swaps who is in it.
-// (#445) A filter query overrides the cut in every table but inflation and (#486) bonds: a row shows iff its TICKER or
-// NAME holds the query, so a name the chooser hid can still be found. An empty query is the cut alone.
+// (#445) A filter query overrides the cut in every table but inflation, (#486) bonds and (#811) intraday: a row
+// shows iff its TICKER or NAME holds the query, so a name the chooser hid can still be found. An empty
+// query is the cut alone.
 // (#502) The shadow tables mark a row whose CAGR is under the stock lane's floor (`growth_min_cagr`); (#525) the
 // REITs table's floor is `reit_min_cagr`. The row is greyed, never hidden (it hid until #525), and an n/a CAGR
 // is not marked. (#530) The CAGR read is TR-CAGR, the page's one return column; the floors ride in every
