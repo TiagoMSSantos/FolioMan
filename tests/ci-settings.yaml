@@ -8769,7 +8769,10 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 920a5a04a8e9 (#1038), graded 2026-10-25 by run 40201393519, same five inputs, since
+  # LAST GRADED SHA: fd58a6a6047b (#1040), graded 2026-10-25 by run 40203457503, same five inputs, since
+  # 5dbd25c, `files` = src/core.rs src/fetch.rs: 10 in scope = 9 caught (`short_ma_pct` 9 for (#1040)),
+  # 1 unviable (`quote_one` -> `Default::default()` does not build), 0 missed, 0 timeout.
+  # BEFORE THAT: 920a5a04a8e9 (#1038), graded 2026-10-25 by run 40201393519, same five inputs, since
   # 22cc6b6, `files` = src/commands/backtest.rs src/commands/track.rs src/config.rs src/core.rs src/fetch.rs
   # src/picks.rs: 129 in scope = 127 caught (`daily_bars_per_year` 2 for (#1034); `notch_tail` 37,
   # `monthly_gaps` 39, `verdict_rows` 5 and `chain_section` 4 for (#1035); `same_issuer` 7,
