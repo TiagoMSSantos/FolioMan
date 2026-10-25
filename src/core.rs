@@ -325,7 +325,7 @@ pub struct Quote {
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
     pub downside_dev_pct: Option<f64>, // (r39) per-bar downside deviation — `volatility_pct` counting only DOWN moves. BACKTEST-PROBE-ONLY (Sortino candidate); no score path and no live fill read it, so it is None everywhere except `backtest_quote`
     pub roll5y_pos_pct: Option<f64>,   // (consistency) % of rolling ~5y windows with a positive NOMINAL return, from the same closes. DISPLAY-ONLY footer ("how often did 5 patient years pay?"); None = <5y of history — never a fake 100%
-    pub underwater_yrs: Option<f64>,   // (underwater) longest stretch below the prior peak, in years (~252 sessions/yr), ongoing stretch counts. DISPLAY-ONLY footer — MAXDD's missing twin: depth says how far down, this says how LONG the pain lasted. None = <2 usable closes
+    pub underwater_yrs: Option<f64>,   // (underwater) longest stretch below the prior peak, in years (~252 sessions/yr, 365 bars for a coin), ongoing stretch counts. DISPLAY-ONLY footer — MAXDD's missing twin: depth says how far down, this says how LONG the pain lasted. None = <2 usable closes
     pub worst_5y_pct: Option<f64>,     // (worst-5y) single worst rolling ~5y NOMINAL outcome (%), severity twin of roll5y_pos_pct's frequency. DISPLAY-ONLY footer; None = <5y of history — no claim
     pub roll10y_pos_pct: Option<f64>,  // (10y-consistency, r16) same walk at the DECADE horizon the book is actually held for. DISPLAY-ONLY footer; None = <10y of history — never a fake 100%
     pub worst_10y_pct: Option<f64>,    // (worst-10y, r16) single worst rolling ~10y NOMINAL outcome (%), severity twin at the decade horizon. DISPLAY-ONLY footer; None = <10y of history — no claim
@@ -1115,8 +1115,19 @@ fn span_to_bars(span_days: usize, cadence: usize) -> usize {
 }
 
 /// (#833) The same conversion with no floor: 0 stays 0, so an off knob stays off (`span_to_bars` would read 1).
-fn per_cadence(sessions: usize, cadence: usize) -> usize {
+pub fn per_cadence(sessions: usize, cadence: usize) -> usize {
     sessions * cadence / 252
+}
+
+/// (#1034) Bars per calendar year of a live daily chart: a coin trades 7 days a week, a stock or fund
+/// ~252 sessions. With 252 for a coin, its underwater years read 1.45x long and its 200-week average
+/// spanned 2.74 years, while the monthly backtest scales that window to the stock's span.
+pub fn daily_bars_per_year(ticker: &str) -> usize {
+    if crate::picks::is_currency_quoted(ticker) {
+        365
+    } else {
+        252
+    }
 }
 
 /// Mean of the last `n` closes (n clamped to [1, len]). Split from `measure_endpoint` so the math is
@@ -11035,6 +11046,20 @@ mod tests {
         assert_eq!(per_cadence(504, 252), 504);
         assert_eq!(per_cadence(504, 12), 24);
         assert_eq!(per_cadence(0, 12), 0);
+    }
+
+    /// (#1034) A coin's daily chart counts 365 bars a year, so its 200-week window is 1448 bars; a stock,
+    /// a dashed share class and a fund keep 252 and the 1000-session window.
+    #[test]
+    fn a_coin_counts_365_daily_bars_a_year() {
+        assert_eq!(daily_bars_per_year("BTC-EUR"), 365);
+        assert_eq!(daily_bars_per_year("ETH-USD"), 365);
+        assert_eq!(daily_bars_per_year("AAPL"), 252);
+        assert_eq!(daily_bars_per_year("BRK-B"), 252);
+        assert_eq!(daily_bars_per_year("VWCE.DE"), 252);
+        let n = crate::config::LONG_MA_SESSIONS;
+        assert_eq!(per_cadence(n, daily_bars_per_year("BTC-EUR")), 1448);
+        assert_eq!(per_cadence(n, daily_bars_per_year("AAPL")), 1000);
     }
 
     /// An average at or below zero reads 0 from both stretch gauges instead of a ratio over it; the two

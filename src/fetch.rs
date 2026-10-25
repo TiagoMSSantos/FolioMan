@@ -941,6 +941,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // downstream cannot re-slice, it has to be precomputed here. `i == 0` means nothing in the payload
     // predates the cutoff, i.e. the name's whole record already IS its 8-year window: leave None and the
     // column falls back to the full-window stats, exactly like `long_leg_fixed` falls back on its CAGR leg.
+    // (#1034) the chart's own bars a year (365 for a coin) and the 200-week window in those bars
+    let bars_yr = core::daily_bars_per_year(ticker);
+    let long_ma = core::per_cadence(crate::config::LONG_MA_SESSIONS, bars_yr);
     let stats_8y = chart
         .dates
         .last()
@@ -950,7 +953,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             range_pct: core::price_pct_rank(&chart.closes[i..]),
             trend_r2: core::trend_r2(&chart.closes[i..]),
             max_drawdown_pct: core::max_drawdown_pct(&chart.closes[i..]),
-            underwater_yrs: core::longest_underwater_yrs(&chart.closes[i..], 252),
+            underwater_yrs: core::longest_underwater_yrs(&chart.closes[i..], bars_yr),
         });
 
     let cur_close = *chart.closes.last().unwrap();
@@ -1049,15 +1052,15 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (P4) the same helper the backtest calls, at the live 21-session month — one definition, two paths
         max_daily_1m: core::max_daily_pct(&chart.closes, 21),
         // (C) % below the ~200wk SMA — structural "cheap vs long trend" entry signal (FX-agnostic ratio).
-        below_ma_pct: core::below_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
+        below_ma_pct: core::below_long_ma_pct(&chart.closes, long_ma),
         // (1) % ABOVE the ~200wk SMA — overextension brake for the growth lane (far above trend = stretched).
         // (#833) a young name may read its stretch against all its closes; off by default
         above_ma_pct: core::above_long_ma_pct(
             &chart.closes,
             core::stretch_window(
                 chart.closes.len(),
-                crate::config::LONG_MA_SESSIONS,
-                crate::config::growth_brake_min_sessions(),
+                long_ma,
+                core::per_cadence(crate::config::growth_brake_min_sessions(), bars_yr),
             ),
         ),
         ma200d_pct: core::short_ma_pct(&chart.closes),
@@ -1107,18 +1110,18 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (A/C) zero-extra-fetch quality scalars from the SAME closes: log-trend R² (steadiness) and
         // worst historical drawdown (pain). Feed the consistency multiplier + Calmar reward.
         trend_r2: core::trend_r2(&chart.closes),
-        // (#14) annualized log-trend slope CAGR (endpoint-robust); daily live bars -> cadence 252,
-        // matching backtest_quote's per-cadence call so the live rank and the validation agree.
-        trend_cagr: core::trend_cagr(&chart.closes, 252),
+        // (#14) annualized log-trend slope CAGR (endpoint-robust); daily live bars -> the chart's own
+        // cadence, matching backtest_quote's per-cadence call so the live rank and the validation agree.
+        trend_cagr: core::trend_cagr(&chart.closes, bars_yr),
         max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
         downside_dev_pct: None, // (r39) backtest-probe-only — no score path or footer reads it, so the live fetch doesn't pay for it
         // (consistency) % of rolling 5y/10y windows positive, same closes — the screen's footer
         // stats; the 10y pair (r16) is the decade horizon the book is actually held for.
-        roll5y_pos_pct: core::rolling_positive_pct(&chart.closes, 5, 252),
-        underwater_yrs: core::longest_underwater_yrs(&chart.closes, 252),
-        worst_5y_pct: core::worst_rolling_pct(&chart.closes, 5, 252),
-        roll10y_pos_pct: core::rolling_positive_pct(&chart.closes, 10, 252),
-        worst_10y_pct: core::worst_rolling_pct(&chart.closes, 10, 252),
+        roll5y_pos_pct: core::rolling_positive_pct(&chart.closes, 5, bars_yr),
+        underwater_yrs: core::longest_underwater_yrs(&chart.closes, bars_yr),
+        worst_5y_pct: core::worst_rolling_pct(&chart.closes, 5, bars_yr),
+        roll10y_pos_pct: core::rolling_positive_pct(&chart.closes, 10, bars_yr),
+        worst_10y_pct: core::worst_rolling_pct(&chart.closes, 10, bars_yr),
         year_returns: core::calendar_year_returns(&chart.dates, &chart.closes),
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
         fund: None,        // (G+) same: `enrich_fund_factor` fills it on the paths that fetch fundamentals
