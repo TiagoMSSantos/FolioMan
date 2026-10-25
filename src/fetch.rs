@@ -4885,12 +4885,18 @@ pub fn social_table(feeds: SocialFeeds, urls: &Urls, quotes: &mut [Quote]) -> Va
     soc_table(&rows, label)
 }
 
+/// (#1043) `stamp_13f`'s early return, apart from its skip-tagged shell so the gate grades it: one boost
+/// off 1.0 is enough to fetch, or `size` and `check` would rank without the `W` flag `screen` scores.
+fn holder_boosts_off(tuning: &crate::config::BuyHeuristic) -> bool {
+    tuning.growth_brk_held_boost == 1.0 && tuning.growth_superinvestor_boost == 1.0 && tuning.growth_social_boost == 1.0
+}
+
 /// (#472) The 13F flags for a command that ranks but prints no 13F table (`size`, `check`), so its book
 /// carries the same `growth_brk_held_boost`/`growth_superinvestor_boost`/(#473) `growth_social_boost`
 /// `screen` scores. No request while every knob is off.
 #[mutants::skip] // async network shell over `fetch_brk`/`fetch_social`/`social_table`
 pub async fn stamp_13f(client: &Client, urls: &Urls, quotes: &mut [Quote], tuning: &crate::config::BuyHeuristic) {
-    if tuning.growth_brk_held_boost == 1.0 && tuning.growth_superinvestor_boost == 1.0 && tuning.growth_social_boost == 1.0 {
+    if holder_boosts_off(tuning) {
         return;
     }
     let (bought, held, _) = fetch_brk(client, urls).await;
@@ -19581,6 +19587,25 @@ pub(crate) mod tests {
         let page = r#"<script type="application/ld+json">[{"@type":"Organization","name":"Benzinga"},{"@type":"NewsArticle","headline":"5 Stocks","datePublished":"2026-10-10T08:58:29.000-04:00","url":"https://www.benzinga.com/a","mentions":[{"@type":"Corporation","name":"Berkshire","tickerSymbol":"BRK.B"}]}]</script>"#;
         let got = buzz_tips(page, NaiveDate::parse_from_str("2026-10-12", "%Y-%m-%d").expect("date"));
         assert_eq!(got.iter().map(|t| (t.us.as_str(), t.day.as_str())).collect::<Vec<_>>(), [("BRK-B", "2026-10-10")]);
+    }
+
+    /// (#1043) Only all three boosts at 1.0 skip the 13F fetch; any one on its own fetches.
+    #[test]
+    fn holder_boosts_off_only_while_every_boost_is_one() {
+        let off = crate::config::BuyHeuristic {
+            growth_brk_held_boost: 1.0,
+            growth_superinvestor_boost: 1.0,
+            growth_social_boost: 1.0,
+            ..crate::config::BuyHeuristic::default()
+        };
+        assert!(holder_boosts_off(&off));
+        for on in [
+            crate::config::BuyHeuristic { growth_brk_held_boost: 1.2, ..off.clone() },
+            crate::config::BuyHeuristic { growth_superinvestor_boost: 1.5, ..off.clone() },
+            crate::config::BuyHeuristic { growth_social_boost: 1.25, ..off.clone() },
+        ] {
+            assert!(!holder_boosts_off(&on), "one boost on is enough to fetch");
+        }
     }
 
     /// With every 13F boost at 1.0 the stamp returns before any request, so a flag already on a quote is left alone (a real pass over an
