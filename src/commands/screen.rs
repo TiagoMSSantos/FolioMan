@@ -2381,14 +2381,7 @@ pub async fn run(args: Vec<String>) {
     // the state `web::screen` re-derives from; see that fn for the two stamps it replays.
     // (#397) plus each ETF's other venues, so an uploaded pin on one still finds its pool row. OpenFIGI
     // is asked only with a key, which only the Pages job holds; a local run serves what is cached.
-    let isin_of: std::collections::HashMap<String, String> =
-        std::fs::read_to_string(config::data_path(fetch::ISIN_CACHE_PATH))
-            .ok()
-            .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s).ok())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(isin, sym)| (sym, isin))
-            .collect();
+    let isin_of = fetch::cached_isin_by_symbol();
     let etfs: Vec<String> =
         quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF")).map(|q| q.ticker.clone()).collect();
     let figi_key = std::env::var("OPENFIGI_API_KEY").ok().filter(|k| !k.is_empty());
@@ -2840,12 +2833,7 @@ pub async fn run(args: Vec<String>) {
         let catalog: std::collections::HashSet<String> =
             crate::broker::trading212::instruments_cached(&client).await.into_iter().map(|i| i.isin).collect();
         if !catalog.is_empty() {
-            let isin_of: std::collections::HashMap<String, String> =
-                std::fs::read_to_string(crate::config::data_path(crate::fetch::ISIN_CACHE_PATH))
-                    .ok()
-                    .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s).ok())
-                    .map(|m| m.into_iter().map(|(isin, sym)| (sym, isin)).collect())
-                    .unwrap_or_default();
+            let isin_of = crate::fetch::cached_isin_by_symbol();
             let missing = t212_missing(&footer_names, &isin_of, &catalog);
             if !missing.is_empty() {
                 let names =
@@ -3318,14 +3306,10 @@ pub async fn run(args: Vec<String>) {
         } else {
             Vec::new()
         };
-        let isin_of: std::collections::HashMap<String, String> = if instruments.is_empty() {
+        let isin_of = if instruments.is_empty() {
             Default::default()
         } else {
-            std::fs::read_to_string(crate::config::data_path(crate::fetch::ISIN_CACHE_PATH))
-                .ok()
-                .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s).ok())
-                .map(|m| m.into_iter().map(|(isin, sym)| (sym, isin)).collect())
-                .unwrap_or_default()
+            crate::fetch::cached_isin_by_symbol()
         };
         // (round 118) tally which resolution rung produced each symbol — the stderr report below
         // makes a keyed verification run self-explaining and turns a silent resolver miss (stale

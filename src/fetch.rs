@@ -1516,6 +1516,29 @@ fn fund_cache_path(ticker: &str) -> std::path::PathBuf {
 /// Only POSITIVE resolutions live here — see the cache block in `fetch_xetra_etfs`.
 pub(crate) const ISIN_CACHE_PATH: &str = ".isin_cache.json";
 
+/// The ISIN cache turned around, symbol -> ISIN. (#1020) Some symbols are the target of two ISINs
+/// (ACWL.L of FR0011093418 and LU1829220133), and a plain collect kept whichever the map yielded
+/// last, so the justETF cells, the fund link and the Trading 212 lookup of such a fund keyed on a
+/// different ISIN from one run to the next. The smallest ISIN wins: arbitrary, but the same each run.
+pub(crate) fn isin_by_symbol(cache: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut pairs: Vec<(&String, &String)> = cache.iter().collect();
+    pairs.sort_unstable();
+    let mut out = HashMap::new();
+    for (isin, sym) in pairs {
+        out.entry(sym.clone()).or_insert_with(|| isin.clone());
+    }
+    out
+}
+
+/// [`isin_by_symbol`] of the cache on disk; empty when the file is missing or unreadable.
+pub(crate) fn cached_isin_by_symbol() -> HashMap<String, String> {
+    let cache: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(ISIN_CACHE_PATH))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    isin_by_symbol(&cache)
+}
+
 /// Last-good venue ISIN lists (`{"euronext": [...], "six": [...]}`), the fallback when a venue
 /// endpoint has an outage — see the store block in `fetch_universe`.
 const VENUE_ISINS_PATH: &str = ".venue_isins.json";
@@ -2714,12 +2737,7 @@ pub async fn enrich_etf_cells(
     tuning: &crate::config::BuyHeuristic,
 ) {
     let read = |p: &str| std::fs::read_to_string(crate::config::data_path(p)).ok();
-    let isins: HashMap<String, String> = read(ISIN_CACHE_PATH)
-        .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(isin, sym)| (sym, isin))
-        .collect();
+    let isins = cached_isin_by_symbol();
     let mut cache: HashMap<String, (String, Vec<f64>)> =
         read(TD_CACHE_PATH).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mut je: HashMap<String, JustEtfRow> =
@@ -8229,8 +8247,7 @@ pub async fn fetch_xetra_etfs(
     // resolved FOR THE FIRST TIME this run, and ISIN->symbol is cached forever precisely because it never
     // changes — so on any warm run `fresh` is empty, `isin_of` was empty, and justETF could not key a
     // single lookup. It reported "answered for 0 non-BF funds" with nothing wrong at either end.
-    let mut isin_of: HashMap<String, String> =
-        isin_cache.iter().map(|(isin, sym)| (sym.clone(), isin.clone())).collect();
+    let mut isin_of = isin_by_symbol(&isin_cache);
     if !fresh.is_empty() {
         let mut isin_cache = isin_cache;
         isin_cache.extend(fresh);
@@ -10716,6 +10733,26 @@ pub(crate) mod tests {
         let (top, extra_n, spec_set) = merge_isin_lists(Vec::new(), Vec::new(), input, 0);
         let isins: Vec<String> = top.into_iter().map(|(i, ..)| i).collect();
         assert_eq!((isins, extra_n, spec_set.len()), (spec, 0, 30));
+    }
+
+    /// (#1020) A symbol two ISINs resolve to keeps the smallest one, whatever order the cache map
+    /// yields. Every fresh map draws its own hash seed, so 32 of them agree only when the rule holds.
+    #[test]
+    fn a_symbol_with_two_isins_keeps_the_smallest_on_every_map() {
+        let mut pairs: Vec<(String, String)> =
+            (0..24).map(|i| (format!("IE{i:02}"), format!("T{i}"))).collect();
+        for i in 0..8 {
+            pairs.push((format!("LU{i:02}"), format!("S{i}")));
+            pairs.push((format!("FR{i:02}"), format!("S{i}")));
+        }
+        let want: HashMap<String, String> = (0..8)
+            .map(|i| (format!("S{i}"), format!("FR{i:02}")))
+            .chain((0..24).map(|i| (format!("T{i}"), format!("IE{i:02}"))))
+            .collect();
+        for _ in 0..32 {
+            let cache: HashMap<String, String> = pairs.iter().cloned().collect();
+            assert_eq!(isin_by_symbol(&cache), want);
+        }
     }
 
     /// The 30-day negative cache, at the exact day it expires and on both sides of it.
