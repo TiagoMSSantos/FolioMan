@@ -2346,10 +2346,9 @@ async fn hold_period_sweep(
     eprintln!("backtest: hold-period sweep over {HOLDS:?}y windows ({} tickers)…", tickers.len());
     // FETCH FIRST, WALK SECOND, for the same reason the validated path does it (see the long note
     // there): this stream is polled by ONE task, so leaving `sweep_cutoffs` inside it ran six forward
-    // windows per ticker on one thread of eight. `buffer_unordered` yields completion order and rayon's
-    // `collect` preserves its input order, so `all` below sees the sequence it always did — and the
-    // halflife golden is what verifies that, since `demean` and the pooled stats read that order.
-    let fetched: Vec<_> = stream::iter(tickers.iter())
+    // windows per ticker on one thread of eight. rayon's `collect` preserves its input order, so `demean`
+    // and the pooled stats read the order `fetched` holds.
+    let mut fetched: Vec<_> = stream::iter(tickers.iter())
         .map(|tk| async move {
             // (FX) price-only sweep — no filing joined, no currency needed, so a monthly payload can
             // stay in its bytes until the walk. (#46) the class fields ARE needed: this walk de-means
@@ -2365,6 +2364,10 @@ async fn hold_period_sweep(
         .buffer_unordered(fetch::fetch_concurrency())
         .collect()
         .await;
+    // (#1015) `buffer_unordered` yields completion order, which live is fetch latency: the (#342) sort the
+    // validated path got never reached this one. `tests/backtest_fixture.rs` runs a Z-A pool against the
+    // halflife golden.
+    fetched.sort_by_key(|f| f.as_ref().map(|x| x.0));
     let per_ticker: Vec<Vec<(i64, Sample)>> = fetched
         .into_par_iter()
         .flatten()

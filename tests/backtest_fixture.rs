@@ -403,6 +403,17 @@ fn backtest_tune_report_ignores_pool_order() {
     pin_at(&fixture_copy("reversed-12-tune", true), &["12", "tune"], "backtest-12-tune.golden", None);
 }
 
+/// (#1015) The same for the hold-period sweep, which fetches on its own.
+#[test]
+fn backtest_halflife_report_ignores_pool_order() {
+    pin_at(
+        &fixture_copy("reversed-12-halflife", true),
+        &["12", "halflife"],
+        "backtest-12-halflife.golden",
+        None,
+    );
+}
+
 /// 20y is the horizon SHIP RULE v2 leads on and the screen footer quotes. Longest forward window ->
 /// fewest cutoffs survive it, so it exercises the thin end of the rung ladder.
 #[test]
