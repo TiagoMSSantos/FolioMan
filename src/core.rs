@@ -6195,7 +6195,7 @@ mod tests {
         let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
         // (#182) the gate `growth_min_age_years` reads this number and nothing else re-derives it,
         // so the DIVISOR is the whole contract. 731 days across a leap year is 2.0013y — pinned
-        // tightly enough that `%` (-> 365.75) or `*` (-> 267_047) cannot survive.
+        // tightly enough that `%` (-> 0.5) or `*` (-> 266_998) cannot survive.
         let two_years = vec![ymd(2020, 1, 1), ymd(2022, 1, 1)];
         assert!((age_years(&two_years).unwrap() - 2.0013).abs() < 1e-3, "{:?}", age_years(&two_years));
         // a single bar is 0.0, NOT None: per non-negotiable #5 a None PASSES the age gate, so the
@@ -7154,7 +7154,7 @@ mod tests {
         gap[3] = FundRow { eps: Some(-1.0), ..gap[3].clone() };
         assert!(fund_factors(&gap, cutoff, 5).eps_growth.unwrap() < 0.0);
         // buyback_yield reads the same comparative: shares 100 -> 300 across a 3:1 whose prior was
-        // restated to 297 is a 1% BUYBACK, not a 200% issuance.
+        // restated to 303 is a 1% BUYBACK, not a 200% issuance.
         let split_row = vec![FundRow {
             filed: NaiveDate::from_ymd_opt(2026, 2, 20).unwrap(),
             period_end: NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
@@ -7286,7 +7286,7 @@ mod tests {
         // 1000 revenue at a 30% FCF margin = 300 of cash over 100 shares = 3.00/share, against 3.00 of
         // EPS: every cent of the reported profit arrived as cash.
         assert!(gap(r(1000.0, 30.0, 3.0, 100.0)).unwrap().abs() < 1e-9);
-        // same earnings, a tenth of the cash -> (3.00 − 0.50)/3.00 = 0.833 of the profit is an accrual
+        // same earnings, a sixth of the cash -> (3.00 − 0.50)/3.00 = 0.833 of the profit is an accrual
         assert!((gap(r(1000.0, 5.0, 3.0, 100.0)).unwrap() + 0.8333333333).abs() < 1e-9);
         // cash AHEAD of earnings reads positive — a depreciating-asset filer is not penalised for it
         assert!((gap(r(1000.0, 30.0, 1.0, 100.0)).unwrap() - 2.0).abs() < 1e-9);
@@ -9181,24 +9181,24 @@ mod tests {
     assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 5, "(#220) the sector sleeve takes its own cap");
     assert_eq!(tier_cap(10, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 5, "…and it is tier 10 that does so, spelled as a literal");
     assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 3, "the sleeve below it is untouched");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 3, "the sleeve above it is untouched");
     // (#228) the FACTOR override, pinned on the literal tier as well as the symbolic one for
     // (#220)'s stated reason — 9 is the literal `FACTOR_TIER` this ladder ships, and a mutation
     // rewriting that constant would drag a purely symbolic assertion along with it.
     assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 4, "(#228) the factor sleeve takes its own cap");
     assert_eq!(tier_cap(9, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 4, "…and it is tier 9 that does so, spelled as a literal");
     assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 3, "the sleeve below IT is untouched too");
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 3, "the sleeve above IT is untouched too");
     // (#230) the SIZE override, pinned on the literal tier as well as the symbolic one for (#220)'s
     // stated reason — 8 is the literal `SIZE_TIER` this ladder ships, and a mutation rewriting that
     // constant would drag a purely symbolic assertion along with it.
     assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 4, "(#230) the small-cap sleeve takes its own cap");
     assert_eq!(tier_cap(8, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 4, "…and it is tier 8 that does so, spelled as a literal");
     assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 3, "the sleeve ABOVE it is untouched");
-    assert_eq!(tier_cap(7, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 3, "…and the Asia-Pacific sleeve below it is too");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 3, "the sleeve BELOW it is untouched");
+    assert_eq!(tier_cap(7, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 3, "…and the Asia-Pacific sleeve above it is too");
     assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 4, 0, 0, 0, 0), 7, "all-world keeps its precedence over the size override");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 3, "…and so is the one above");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 3, "…and so is the one below");
     assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 4, 5, 9, 0), 7,
         "all-world keeps its precedence over ALL THREE later overrides");
     assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 0, 5, 0, 0), 7, "all-world keeps its precedence over the sector override");
@@ -9896,7 +9896,7 @@ mod tests {
     assert_eq!(geo_tier_at(ru2k, 0.35, true, true, 9, 1, 0), Some(SIZE_TIER),
         "(#240) RU2K.L — a US SMALL-CAP index was filing in the US BROAD sleeve; the SIZE entry re-files it");
     // THE ORDERING IS LOAD-BEARING, and this pin is what says so out loud. R2US.L is a PRINTED CORE
-    // row whose name carries BOTH "small" (index 14) and "russell 2000" (appended last). `narrow_hit`
+    // row whose name carries BOTH "small" (index 19) and "russell 2000" (index 51). `narrow_hit`
     // returns the FIRST, so the fund keeps the rescue it already had — that is the entire ZERO
     // REMOVALS argument for this token, and a later reorder of NARROW would break it in silence.
     let r2us = "state street spdr russell 2000 us small cap ucits etf";
