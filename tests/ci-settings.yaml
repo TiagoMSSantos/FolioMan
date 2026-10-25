@@ -8769,7 +8769,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: e6fc4f23f1bc (#976), graded 2026-10-25 by run 40147708715, same five inputs, since
+  # LAST GRADED SHA: 92a44c83bd93 (#1010), graded 2026-10-25 by run 40177487570, same five inputs, since
+  # e6fc4f2, `files` = src/commands/backtest.rs src/commands/report.rs src/commands/screen.rs
+  # src/commands/track.rs src/config.rs src/core.rs src/fetch.rs src/picks.rs: 24 in scope = 24 caught
+  # (core.rs `bars_per_week` 6, `rolling_positive_pct` 6 and `worst_rolling_pct` 6 for (#1009), report.rs
+  # `render_annual` 4 for (#994), track.rs `ladder_section` 2 for (#993)), 0 unviable, 0 missed, 0 timeout.
+  # BEFORE THAT: e6fc4f23f1bc (#976), graded 2026-10-25 by run 40147708715, same five inputs, since
   # 7ad2a95, `files` = src/commands/check.rs src/commands/track.rs src/config.rs src/core.rs src/fetch.rs
   # src/picks.rs: 9 in scope = 8 caught (picks.rs `explain_growth_score` 3, `col_cell` 2 and
   # `hold_core_list` 1, track.rs `fac_section` 2: the function-level mutants of the fns the (#969)-(#976)
