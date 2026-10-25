@@ -6825,9 +6825,12 @@ fn bootstrap_edge_ci(
     Some((percentile(&edges, lo_p), percentile(&edges, hi_p)))
 }
 
-/// (Item 9) Per-rebalance turnover fraction of the lane's HELD set: 1 − mean Jaccard of the top-half
-/// tickers between consecutive ~6mo buckets. 1.0 = the whole book is replaced each period (max cost),
-/// 0.0 = the same names are held (free). <2 measurable buckets -> 0.0 (can't measure; charge nothing).
+/// (Item 9) Per-rebalance turnover fraction of the lane's HELD set: 1 − mean share kept of the top-half
+/// tickers between consecutive ~6mo buckets, kept = |a ∩ b| / max(|a|, |b|). (#1075) That is the
+/// one-way turnover of an equal-weight book; the Jaccard |a ∩ b| / |a ∪ b| it replaced read above the
+/// traded share (one swap in a top-10 read 18%, not 10%). 1.0 = the whole book is replaced each period
+/// (max cost), 0.0 = the same names are held (free). <2 measurable buckets -> 0.0 (can't measure;
+/// charge nothing).
 /// Pure; feeds the net-of-cost line so a churny edge can't read positive once the spread is paid.
 fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
     let mut by_bucket: BTreeMap<i32, Vec<(&str, f64)>> = BTreeMap::new();
@@ -6847,14 +6850,12 @@ fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
         return 0.0;
     }
     let pairs = tops.len() - 1;
-    let jac_sum: f64 = tops
+    // every set is non-empty (filtered above), so the larger size is never 0.
+    let kept_sum: f64 = tops
         .windows(2)
-        .map(|w| {
-            let u = w[0].union(&w[1]).count();
-            if u == 0 { 1.0 } else { w[0].intersection(&w[1]).count() as f64 / u as f64 }
-        })
+        .map(|w| w[0].intersection(&w[1]).count() as f64 / w[0].len().max(w[1].len()) as f64)
         .sum();
-    1.0 - jac_sum / pairs as f64
+    1.0 - kept_sum / pairs as f64
 }
 
 /// (#104) RECALL and CAPTURE of the pool's extreme winners — the one question this report has never
@@ -11064,12 +11065,14 @@ mod tests {
         assert_eq!(percentile(&s, 150.0), 100.0);
     }
 
-    /// (Item 9) `turnover_frac` = 1 − mean Jaccard of consecutive buckets' top-half tickers. Two ~6mo
-    /// buckets holding {A,B} then {A,C} overlap 1/3 -> turnover 2/3; a single bucket can't be measured -> 0.
+    /// (Item 9) `turnover_frac` = 1 − mean share kept of consecutive buckets' top-half tickers. Two ~6mo
+    /// buckets holding {A,B} then {A,C} keep 1 of 2 -> turnover 1/2 (#1075; the old Jaccard read 2/3); a
+    /// single bucket can't be measured -> 0.
     #[test]
     fn turnover_frac_consecutive_buckets() {
+        // month 13 on is 2021, so a case can span three ~6mo buckets.
         let mk = |t: &str, m: u32| Sample {
-            date: ymd(2020, m, 1),
+            date: ymd(2020 + (m as i32 - 1) / 12, (m - 1) % 12 + 1, 1),
             realized: 0.0,
             relative: 0.0,
             quote: Arc::new(Quote::stub(t, "1", "", t)),
@@ -11080,8 +11083,19 @@ mod tests {
         let s = [mk("A", 1), mk("B", 2), mk("C", 3), mk("D", 4), mk("A", 7), mk("C", 8), mk("E", 9), mk("F", 10)];
         let scored: Vec<(&Sample, f64)> =
             s.iter().enumerate().map(|(i, smp)| (smp, if i % 4 < 2 { 9.0 } else { 1.0 })).collect();
-        assert!((turnover_frac(&scored) - 2.0 / 3.0).abs() < 1e-9, "got {}", turnover_frac(&scored));
+        assert!((turnover_frac(&scored) - 0.5).abs() < 1e-9, "got {}", turnover_frac(&scored));
         assert_eq!(turnover_frac(&scored[..4]), 0.0); // single bucket -> unmeasurable -> 0
+        // (#1075) Unequal halves over three buckets: {A,B} -> {A,C,E,G} keeps 1 of the larger book's 4,
+        // then {A,C,E,G} -> {A,C} keeps 2 of 4, so turnover = 1 − (1/4 + 2/4) / 2 = 5/8. Jaccard read
+        // 13/20 and a smaller-side denominator would read 1/4.
+        let u = [
+            ("A", 1), ("B", 2), ("C", 3), ("D", 4), ("A", 7), ("C", 7), ("E", 8), ("G", 8), ("H", 9), ("I", 9),
+            ("J", 10), ("K", 10), ("A", 13), ("C", 13), ("X", 14), ("Y", 14),
+        ]
+        .map(|(t, m)| mk(t, m));
+        let scored: Vec<(&Sample, f64)> =
+            u.iter().enumerate().map(|(i, smp)| (smp, if matches!(i, 0..2 | 4..8 | 12..14) { 9.0 } else { 1.0 })).collect();
+        assert!((turnover_frac(&scored) - 0.625).abs() < 1e-9, "got {}", turnover_frac(&scored));
     }
 
     /// (Item 12) `winsor_edge` clamps the 1/99 tails so one extreme row can't BE the edge. 100 modest rows
