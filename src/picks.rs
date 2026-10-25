@@ -14362,13 +14362,14 @@ mod tests {
         };
         assert!(growth_score(&with_turnover(100_000.0), &armed).is_some());
         assert!(growth_score(&with_turnover(99_999.0), &armed).is_none(), "the stock floor must bite");
-        // the mirror must say the same thing, and quote the STOCK floor in its printed reason
+        // the mirror must say the same thing, and quote the STOCK floor in its printed reason. (#1080) Since
+        // (#1078) a €99,999 miss prints at three decimals, the first precision that sets it apart from €100K.
         let (_, reason, _) = gate_failures(&with_turnover(99_999.0), &armed)
             .unwrap()
             .into_iter()
             .find(|(g, _, _)| *g == "liquidity")
             .expect("the mirror must fire the same gate the scorer did");
-        assert!(reason.contains("floor \u{20ac}100K"), "the reason prints the per-class floor, got {reason}");
+        assert!(reason.contains("(floor \u{20ac}100.000K)"), "the reason prints the per-class floor, got {reason}");
 
         // The mirror's third field is the NEAR-MISS flag, `turnover >= floor / 2` — pin it, and pin that
         // sitting EXACTLY on the floor is not below it, or that boundary is free to drift.
