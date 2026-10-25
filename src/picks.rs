@@ -12625,9 +12625,9 @@ mod tests {
     /// it back to 0 and the tier silently admitted three more rows. 300 distinct S&P 500 names is the
     /// smallest input that crosses the boundary; the cap must still read exactly the TIER-3 cap.
     ///
-    /// This pin is the ONLY cover for that arithmetic, because the two profiles disagree about it: under
-    /// `cargo t` (mutants profile, inherits dev) overflow-checks are on and the pre-fix line PANICS here,
-    /// while `--release` leaves them off and would have wrapped in silence with no test able to see it.
+    /// This pin is the ONLY cover for that arithmetic. Under `cargo t` (mutants profile, inherits dev)
+    /// overflow-checks are on and the pre-fix line PANICS here; `--release` then left them off and would
+    /// have wrapped in silence with no test able to see it, until (#68) turned them on there too.
     #[test]
     fn hold_core_tier_cap_survives_more_than_255_names_in_one_tier() {
         let quotes: Vec<Quote> = (0..300)
@@ -14508,7 +14508,7 @@ mod tests {
 
     /// (#278) The OTHER direction of non-negotiable #2, and the coverage hole it closes.
     ///
-    /// `gate_failures_agrees_with_the_scorer` sweeps ten quotes across three tunings, but every one of
+    /// `gate_failures_agrees_with_the_scorer` sweeps its quote table across three tunings, but every one of
     /// those tunings leaves the FUNDAMENTALS knobs at their defaults — `growth_max_peg` and
     /// `growth_require_peg` — plus `growth_min_age_years`, `growth_min_aum_etf`,
     /// `growth_min_range_pct_8y`, `growth_max_vol` and `growth_max_daily_1m`. Seven gates whose
@@ -14696,7 +14696,7 @@ mod tests {
     }
 
     /// (#340) The same one claim as `gate_failures_agrees_with_the_scorer`, on RANDOM draws instead of
-    /// ten hand-picked quotes. Every field a gate reads and every knob that arms one is drawn from a
+    /// its hand-picked quotes. Every field a gate reads and every knob that arms one is drawn from a
     /// small grid that holds its line, so draws land EXACTLY on a line often (the `<` vs `<=` case a
     /// hand-picked row has to aim for), armed knobs meet missing fields, coins meet equity knobs, and
     /// several gates fire at once. Seeded xorshift64, `rank_robustness`' stream, so a failure names a
