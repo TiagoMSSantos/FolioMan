@@ -4655,7 +4655,7 @@ fn unshown_ranked<'a>(ranked: &[(&'a Quote, f64)], printed: &[&str]) -> Vec<(&'a
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
 ///
-/// UNGRADEABLE, hence the skip — the same story as [`print_picks`] below it, and (#79) proven the
+/// UNGRADEABLE, hence the skip — the same story as its callee [`print_picks`], and (#79) proven the
 /// same way: `replace print_lane with ()` was graded 2026-08-17 against `--lib --test
 /// backtest_fixture` and MISSED, because every effect this has is a `println!` and the killing suite
 /// cannot read this binary's stdout. Its decisions have all moved out to functions the gate CAN
