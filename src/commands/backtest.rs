@@ -3605,6 +3605,16 @@ fn bench_is_tr(adjusted_close: bool, tuning: &BuyHeuristic) -> bool {
     adjusted_close || tuning.backtest_tr_ruler
 }
 
+/// (#1082) The skip line when fewer than 8 gated picks have a benchmark window. It names the series
+/// `run` fetched, as the rest of `report_vs_benchmark` does; under a total-return run it said ^GSPC.
+fn bench_too_few(rows: usize, bench_sym: &str) -> Option<String> {
+    if rows < 8 {
+        Some(format!("\n── vs S&P500 (ABSOLUTE) ──  only {rows} gated picks have a {bench_sym} window — too few."))
+    } else {
+        None
+    }
+}
+
 /// (#40) ABSOLUTE goal metric — the one the peer-relative lanes never measure. The stated purpose is
 /// "out-return an S&P500 buy-and-hold", but every lane above de-means the level away (SELECTION, not the
 /// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
@@ -3670,8 +3680,8 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             rows.push((*b, score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
         }
     }
-    if rows.len() < 8 {
-        println!("\n── vs S&P500 (ABSOLUTE) ──  only {} gated picks have a ^GSPC window — too few.", rows.len());
+    if let Some(line) = bench_too_few(rows.len(), bench_sym) {
+        println!("{line}");
         return;
     }
     // (#75) VALUE BRAKE — the GRADED twin of the `picks::lane_split` trim, sharing `core::pct_floor` so
@@ -12983,6 +12993,16 @@ mod tests {
         t.backtest_tr_ruler = true;
         assert!(bench_is_tr(false, &t), "ruler alone: the missed case");
         assert!(bench_is_tr(true, &t));
+    }
+
+    /// (#1082) The too-few line names the fetched series and fires below 8 rows only.
+    #[test]
+    fn too_few_bench_rows_names_the_fetched_series() {
+        let line = bench_too_few(7, "^SP500TR total-return").expect("7 rows are too few");
+        assert!(line.contains("only 7 gated picks have a ^SP500TR total-return window"), "{line}");
+        assert!(!line.contains("^GSPC"), "{line}");
+        assert!(bench_too_few(8, "^GSPC").is_none(), "8 rows are enough");
+        assert!(bench_too_few(9, "^GSPC").is_none());
     }
 
     /// The report fns that return or print only past a guard: no benchmark, no scorable pool, no trail. Each
