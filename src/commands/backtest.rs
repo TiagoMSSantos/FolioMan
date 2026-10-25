@@ -8894,9 +8894,11 @@ mod tests {
             stamped.iter().flatten().any(|v| (v - stamped.iter().flatten().next().expect("a stamped cutoff")).abs() > 1e-9),
             "different cutoffs must read different market states, not one run-wide number: {stamped:?}"
         );
+        // (#1058) The first cutoff (1988-01) predates the series (2000-01), so neither stamp can be
+        // measured there. The old `range none || 1y some` held on any 1Y value once the range read None.
         assert!(
-            samples.iter().filter(|s| s.date < first + chrono::Duration::days(1)).all(|s| s.quote.bench_range_pct.is_none() || s.quote.bench_1y_pct.is_some()),
-            "a cutoff the series cannot reach back a full year from keeps None"
+            samples.iter().filter(|s| s.date == first).all(|s| s.quote.bench_1y_pct.is_none() && s.quote.bench_range_pct.is_none()),
+            "a cutoff the series cannot reach back a full year from keeps None, not a neighbour's value"
         );
     }
 
