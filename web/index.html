@@ -100,14 +100,18 @@
   <div id="attention"></div>
   <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
        (#442) Every holding now, with the `W` flag and the track brkh row. -->
-  <h2 title="Every stock in Berkshire Hathaway's newest 13F filing, best buy score first, with what changed vs the quarter before. Held names rank a little higher (growth_brk_held_boost in settings); weeks old by filing rules" id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
+  <h2 title="Every stock in Berkshire Hathaway's newest 13F filing plus its Form 4 buys and Japan stakes, best buy score first, with what changed vs the quarter before. Held names rank a little higher (growth_brk_held_boost in settings); weeks old by filing rules" id="h-berkshire">Berkshire holdings — shadow, NOT a buy signal</h2>
   <details class="note" id="berkshire-note">
     <summary>about this table</summary>
-    Every stock in Berkshire Hathaway's newest 13F. A 13F lists US-listed holdings only, so its
-    Japanese trading houses and its wholly owned companies are not here. WEIGHT is the holding's
-    share of the 13F's reported value. STATUS compares it with the quarter before: new, added (more
+    Every stock in Berkshire Hathaway's newest 13F, plus two kinds of row no 13F lists: a stake a Form 4
+    net buy of the last 90 days opened (STATUS new (Form 4)) and its Japanese trading-house stakes,
+    read from Japan's EDINET large-holding reports. Its wholly owned companies
+    are not here. WEIGHT is the holding's share of the 13F's reported value, — for a row no 13F lists.
+    STATUS compares it with the quarter before (a Japan stake with its report before): new, added (more
     than 5% more shares), trimmed (below 95% of the shares) or held (a forward split counts as held),
-    and SHARES Δ is that change. BOUGHT is the newest quarter it was bought in over the last 4, or —.
+    and SHARES Δ is that change. BOUGHT is the trade date of a Form 4 buy, the day of a grown Japan
+    stake's newest report (EDINET), the newest quarter it was bought in over the last 4, before the
+    oldest of those quarters when it was bought in none of them, or —.
     A 13F is filed up to 45 days after its quarter ends, so the table is already weeks old. ETFs are
     left out. A name the screen does not price shows OpenFIGI's upper-case issuer name. A held stock ranks a little higher above
     (growth_brk_held_boost), and an uploaded settings.yaml does not change this table.
