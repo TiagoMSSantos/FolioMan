@@ -197,9 +197,22 @@ pub(crate) fn spill_picks(tiers: &[Option<u8>], n: usize, per_tier: bool) -> Vec
 /// is the first row of that tier in `all` exactly when that row is kept, which this guarantees. At
 /// `spill_names: 4` the US tier's first row sat at index 21 of 99 on 2026-09-13, past a 20-row prefix,
 /// so without it `size` bought four trackers while `track` graded three.
-pub(crate) fn journal_core_rows<'a>(all: &'a [String], tiers: &[Option<u8>], top: usize, cut: usize, per_tier: bool) -> Vec<&'a String> {
-    let funded = spill_picks(tiers, cut, per_tier);
-    all.iter().enumerate().filter(|(i, _)| *i < top || funded.contains(i)).map(|(_, t)| t).collect()
+///
+/// (#1013) Rows already sized in the ranked book drop first, the `(#253)` skip [`last_core`] applies.
+/// `track` and `sim` re-run [`spill_picks`] on this list and never consult `sized`, so a sized ETF
+/// journalled here was graded twice and bought twice, and the next row `size` funded was unrecorded.
+pub(crate) fn journal_core_rows<'a>(
+    all: &'a [String],
+    tiers: &[Option<u8>],
+    sized: &[String],
+    top: usize,
+    cut: usize,
+    per_tier: bool,
+) -> Vec<&'a String> {
+    let open: Vec<(&String, Option<u8>)> =
+        all.iter().zip(tiers.iter().copied()).filter(|(t, _)| !sized.contains(*t)).collect();
+    let funded = spill_picks(&open.iter().map(|(_, k)| *k).collect::<Vec<_>>(), cut, per_tier);
+    open.into_iter().enumerate().filter(|(i, _)| *i < top || funded.contains(i)).map(|(_, (t, _))| t).collect()
 }
 
 /// (#246) The broadest rows of the CORE shortlist as the last `screen` run left it, plus that run's
@@ -2503,7 +2516,9 @@ pub async fn run(args: Vec<String>) {
         core: if settings.buy_heuristic.journal_core_list {
             // (#292) the prefix PLUS every row `size` funds past it, or `track` grades fewer trackers than `size` buys.
             let tiers: Vec<Option<u8>> = core_all.iter().map(|t| core_tier.get(t).copied()).collect();
-            journal_core_rows(&core_all, &tiers, settings.top_picks, settings.sizing.spill_cut(), settings.sizing.spill_per_tier)
+            let sized: Vec<String> = sized_now.iter().map(|(t, _)| t.clone()).collect();
+            let (cut, per_tier) = (settings.sizing.spill_cut(), settings.sizing.spill_per_tier);
+            journal_core_rows(&core_all, &tiers, &sized, settings.top_picks, cut, per_tier)
                 .into_iter()
                 .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
                 .collect()
@@ -6154,11 +6169,23 @@ mod tests {
         let all: Vec<String> = ["AW1", "AW2", "AW3", "DEV", "US"].iter().map(|t| t.to_string()).collect();
         let tiers = [Some(0), Some(0), Some(0), Some(1), Some(3)];
         let rows = |cut: usize, per_tier: bool| -> Vec<&str> {
-            journal_core_rows(&all, &tiers, 2, cut, per_tier).into_iter().map(|t| t.as_str()).collect()
+            journal_core_rows(&all, &tiers, &[], 2, cut, per_tier).into_iter().map(|t| t.as_str()).collect()
         };
         assert_eq!(rows(3, true), ["AW1", "AW2", "DEV", "US"]);
         // the walk-down funds a prefix of the list, so a cut of 3 reaches AW3 and nothing past it
         assert_eq!(rows(3, false), ["AW1", "AW2", "AW3"]);
+        // (#1013) DEV is sized in the ranked book, so `size` skips it and the next row down takes the slot
+        let all = ["AW1", "AW2", "AW3", "DEV", "US", "DEV2"].map(String::from);
+        let tiers = [Some(0), Some(0), Some(0), Some(1), Some(3), Some(1)];
+        let sized = ["DEV".to_string()];
+        let open = |cut: usize, per_tier: bool| -> Vec<&str> {
+            journal_core_rows(&all, &tiers, &sized, 2, cut, per_tier)
+                .into_iter()
+                .map(|t| t.as_str())
+                .collect()
+        };
+        assert_eq!(open(3, true), ["AW1", "AW2", "US", "DEV2"]);
+        assert_eq!(open(4, false), ["AW1", "AW2", "AW3", "US"]);
     }
 
     /// (#288) the spill's SELECTION, the half of it that decides which markets the remainder buys.
