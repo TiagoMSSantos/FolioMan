@@ -2789,8 +2789,8 @@ mod tests {
     /// because the property that matters is what a settings file WITHOUT the key resolves to.
     ///
     /// Defaulted rather than required so an existing private settings.yaml keeps loading: `Urls` is
-    /// `deny_unknown_fields` and every other field is mandatory, so a bare addition would have broken
-    /// every deployed config on upgrade.
+    /// `deny_unknown_fields` and every other field was mandatory when this landed, so a bare addition
+    /// would have broken every deployed config on upgrade.
     #[test]
     fn openfigi_endpoint_defaults_to_the_live_mapping_service() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");

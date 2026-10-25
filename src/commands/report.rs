@@ -587,7 +587,7 @@ mod tests {
     }
 
     /// (round 115) valuation/tilt receipt: eps_ttm 2.0 over close 100 -> earnings_yield +2.0%; with
-    /// the shipped tilt config (factor "earnings_yield", weight 1.0, cap 30) the pts clause mirrors
+    /// a tilt config of factor "earnings_yield", weight 1.0 and the default cap 30 the pts clause mirrors
     /// the score's own clamp (picks.rs: weight * ey.clamp(0.0, cap)) -> "+2.0 pts". Weight 0 (the
     /// struct default) must print the ratio WITHOUT a pts clause — it isn't actually weighed.
     #[test]
