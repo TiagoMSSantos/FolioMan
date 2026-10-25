@@ -375,8 +375,9 @@ fn render_fund(
     if let Some((stock, bond)) = stock_bond {
         // (round 7) fractions -> %; equity vs bond is the buy-and-hold class question the sector-tech
         // table can't answer. bond only when it actually holds some (an equity ETF reads ~100/0).
+        // (#1032) `>`, not `>=`: an exact 0.5% prints "0" under `{:.0}` (ties round to even).
         out.push_str(&format!("  assets: equity {:.0}%", stock * 100.0));
-        if bond * 100.0 >= 0.5 {
+        if bond * 100.0 > 0.5 {
             out.push_str(&format!("  bond {:.0}%", bond * 100.0));
         }
         out.push('\n');
@@ -900,6 +901,12 @@ mod tests {
         // a real bond holding IS shown (mixed fund).
         let mixed = render_fund("AGGH.L", Some(0.1), None, None, &[], &[], Some((0.4, 0.6)));
         assert!(mixed.contains("assets: equity 40%  bond 60%"), "{mixed}");
+
+        // (#1032) an exact 0.5% bond would print "bond 0%", so it stays hidden; 0.6% shows as 1%.
+        let tie = render_fund("X.L", None, None, None, &[], &[], Some((0.995, 0.005)));
+        assert!(!tie.contains("bond"), "{tie}");
+        let some = render_fund("X.L", None, None, None, &[], &[], Some((0.994, 0.006)));
+        assert!(some.contains("assets: equity 99%  bond 1%"), "{some}");
     }
 
     /// (round 61) formatter semantics: unit tier picked by magnitude (sign preserved, tier chosen
