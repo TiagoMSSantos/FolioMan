@@ -858,13 +858,6 @@ fn too_few_samples(n: usize) -> bool {
     n < MIN_SAMPLES
 }
 
-/// Does this run get to overwrite `.backtest_verdict.json`, which the screen's method footer quotes?
-///
-/// Both halves survived the audit and both are real. `&&`->`||` lets a plain watchlist run
-/// (`backtest 12 AAPL`) publish a verdict over the gate's wide one. `>=`->`<` inverts the floor, so
-/// the ONLY runs that publish are the thin ones the floor exists to reject — a Yahoo-throttled wide
-/// run resolving a few hundred names instead of ~4900 is indistinguishable from a healthy one in the
-/// file, and the footer goes on citing it for days.
 /// (PIT) The point-in-time pool: today's index members LEAVE, every name that was EVER a member
 /// ARRIVES — the dead ones included. That swap is the whole feature. `fetch_universe`'s equity pond is
 /// `sp500_csv`, a list of the ~503 companies still in the index TODAY, so scoring a 1996 cutoff against
@@ -1109,6 +1102,14 @@ fn dead_multiple(
     Some(closes[last] / entry * penalty * roll)
 }
 
+/// Does this run get to overwrite `.backtest_verdict.json`, which the screen's method footer quotes?
+///
+/// Both halves survived the audit and both are real. `&&`->`||` lets a plain watchlist run
+/// (`backtest 12 AAPL`) publish a verdict over the gate's wide one. `>=`->`<` inverts the floor, so
+/// the ONLY runs that publish are the thin ones the floor exists to reject — a Yahoo-throttled wide
+/// run resolving a few hundred names instead of ~4900 is indistinguishable from a healthy one in the
+/// file, and the footer goes on citing it for days.
+///
 /// (PIT) `pit` is the third refusal, and it is not about sample size. A point-in-time run answers a
 /// DIFFERENT question than the screen footer asks — the footer quotes this journal to say what the
 /// live method does on the live universe, and a PIT verdict is a lower number measured on a pool the
@@ -3440,7 +3441,7 @@ fn merge_coin_cohort<'a>(
 }
 
 /// Cumulative % return of a benchmark series held `years` from the first session on/after `from`. `None`
-/// if `from` predates the series or no full forward window remains — mirrors the ticker walk (line ~208).
+/// if `from` predates the series or no full forward window remains — mirrors the ticker walk in `sweep_cutoffs`.
 fn benchmark_fwd(dates: &[chrono::NaiveDate], closes: &[f64], from: chrono::NaiveDate, years: i64) -> Option<f64> {
     let i = dates.iter().position(|d| *d >= from)?;
     let target = dates[i] + chrono::Duration::days(years * 365);
@@ -5954,7 +5955,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
 
     // BLEND sweep: pure-value beat pure-score standalone — but pure-value alone risks value-traps the
     // gates miss, so find the growth_fund_weight KNEE where tilting growth_score toward the baked
-    // fund_factor (= growth_fund_factor, `earnings_yield` on the SEC feed) peaks the held book. Only
+    // fund_factor (= growth_fund_factor, `peg_yield` in ci-settings) peaks the held book. Only
     // growth_fund_weight varies; quote.fund_factor is fixed at sample-build to the configured factor.
     let mut have_ff = false;
     for s in samples {
@@ -6598,11 +6599,6 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     }
 }
 
-/// Report one lane: filter the samples to the cutoffs this lane's gates admit, score them, and print
-/// the peer-relative Spearman, the top/bottom-half edge, the out-of-sample (early-vs-late) split, and
-/// the per-term ablation. `samples` must already be in date order (for the OOS split). Mutating a
-/// score WEIGHT never changes a GATE, so the gated row set stays fixed across the ablation -> the rho
-/// is comparable term-to-term.
 /// One ablation knob: a name + a fn that zeroes its weight in a `BuyHeuristic` copy.
 /// BOXED, not a plain `fn` pointer: `growth_fund_extra` is a config-driven LIST, so its ablation rows
 /// have to be generated per configured term and each needs to capture its own index — which a fn
@@ -7091,15 +7087,6 @@ fn missed_winner_reasons(
     (w_mult > 0.0 && !rows.is_empty()).then_some(MissTable { rows, pairs, by_count, w_n, w_mult })
 }
 
-/// (#9) Do the hard growth GATES actually select winners? Every rho/edge the lanes print is computed
-/// over GATED-IN names only (`report_lane` drops the `None`s), so a gate that quietly discards future
-/// winners is invisible. This partitions the FULL de-meaned sample by whether `scorer` admits it
-/// (Some = passed the gates, None = rejected) and compares the two groups' mean forward peer-relative
-/// return. ACCEPTED mean ≫ REJECTED mean = the gates pick winners; gap ≈ 0 or negative = the gates are
-/// shrinking the pool for no edge (e.g. the 80% range gate dropping a great compounder that's merely in a
-/// 20% correction). Pure measurement — no ranking change. Returns the gap (accepted − rejected) for the
-/// test; None when either side has too few rows to mean. Generic over the scorer so it's unit-testable
-/// without building quotes that clear growth_score's gate maze (same pattern as `lane_metrics`).
 /// Mean AND median of a cohort's forward peer-relative returns. Both, always. `relative` over a
 /// multi-decade window is heavily right-skewed — one 40-bagger moves a 400-name mean by more than the
 /// other 399 combined — so the mean can sit on the far side of zero from the typical name. Every other
@@ -7252,6 +7239,15 @@ fn held_loser_factors(
         .collect()
 }
 
+/// (#9) Do the hard growth GATES actually select winners? Every rho/edge the lanes print is computed
+/// over GATED-IN names only (`report_lane` drops the `None`s), so a gate that quietly discards future
+/// winners is invisible. This partitions the FULL de-meaned sample by whether `scorer` admits it
+/// (Some = passed the gates, None = rejected) and compares the two groups' mean forward peer-relative
+/// return. ACCEPTED mean ≫ REJECTED mean = the gates pick winners; gap ≈ 0 or negative = the gates are
+/// shrinking the pool for no edge (e.g. the 80% range gate dropping a great compounder that's merely in a
+/// 20% correction). Pure measurement — no ranking change. Returns the gap (accepted − rejected) for the
+/// test; None when either side has too few rows to mean. Generic over the scorer so it's unit-testable
+/// without building quotes that clear growth_score's gate maze (same pattern as `lane_metrics`).
 fn gate_audit(
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
@@ -7443,8 +7439,8 @@ fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob], accepte
 }
 
 /// (#3g) The growth lane's edge/rho as ONE knob is swept across a ladder. The ablation above answers
-/// "does removing this term hurt?"; `tune` answers "what is the argmax?" — across 8 dims perturbed at
-/// once, so each dim's own contribution is confounded. NEITHER can tell a sharp peak from a plateau,
+/// "does removing this term hurt?"; `tune` answers "what is the argmax?" — across every searched dim perturbed
+/// at once, so each dim's own contribution is confounded. NEITHER can tell a sharp peak from a plateau,
 /// and that is the entire question when asking whether a tilt can carry more authority: a plateau says
 /// the shipped value is leaving edge on the table, a peak says it IS the ceiling.
 ///
@@ -7516,6 +7512,11 @@ fn weight_curve(
     println!("   SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)");
 }
 
+/// Report one lane: filter the samples to the cutoffs this lane's gates admit, score them, and print
+/// the peer-relative Spearman, the top/bottom-half edge, the out-of-sample (early-vs-late) split, and
+/// the per-term ablation. `samples` must already be in date order (for the OOS split). Mutating a
+/// score WEIGHT never changes a GATE, so the gated row set stays fixed across the ablation -> the rho
+/// is comparable term-to-term.
 fn report_lane(
     label: &str,
     samples: &[Sample],
