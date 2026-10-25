@@ -188,9 +188,9 @@ fn fixture_tickers() -> Vec<String> {
 /// someone regenerates, and a renamed key or a re-shaped list would surface at the worst moment.
 ///
 /// It is not the only guard on the config-vs-cache invariant — a ticker added here without a regen
-/// already reds 8 goldens, because the binary asks for a name the frozen cache does not hold and
+/// already reds the goldens, because the binary asks for a name the frozen cache does not hold and
 /// `FOLIOMAN_OFFLINE=1` forbids the fetch. What this buys over that is one named failure that says
-/// which list is wrong, instead of eight diffs that say the numbers moved.
+/// which list is wrong, instead of a diff per golden that says the numbers moved.
 #[test]
 fn fixture_tickers_are_exactly_the_frozen_cache() {
     let path = fixture_dir().join(".long_history_cache.json");
