@@ -915,8 +915,9 @@ jobs:
           # sized to a ~25s fixture and hid every fixture-reaching mutant once the fixture outgrew it.
           # A TIMEOUT is not a MISSED, so too tight a cap hides a survivor rather than reddening the gate.
           #
-          # (#590) The gate skips the six fund-lane goldens (`backtest_fund_report*` and
-          # `backtest_8y_fund_samples*`); integration-tests and coverage still run them on every push.
+          # (#590) The gate skips the fund-lane goldens (`backtest_fund_report*` and
+          # `backtest_8y_fund_samples*`, eight tests today); integration-tests and coverage still run them
+          # on every push.
           # They were ~93% of the fixture's thread time. On 392547b the baseline built in 127s and
           # tested in 354.7s (lib 8.9s, fixture 345.6s), so this job was CI's tail (wall 652s, with
           # integration-tests done at ~351s), and the auto-set timeout (5x the baseline, ~30 min)

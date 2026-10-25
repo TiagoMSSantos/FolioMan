@@ -1,6 +1,6 @@
 name: Profile
 
-# (#594) Where the fund walk spends its CPU. The six fund goldens are most of coverage's test time, and
+# (#594) Where the fund walk spends its CPU. The fund goldens are most of coverage's test time, and
 # coverage is the CI wall; backtest-gate's release 8y fund leg is ~111s of CPU. No local build may run, so
 # the profile runs here: perf samples `backtest 12 fund` over a fresh copy of the frozen fixture, offline
 # (the run backtest_fund_report_is_pinned diffs), once at the dev profile (coverage's code without its

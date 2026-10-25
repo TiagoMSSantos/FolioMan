@@ -1,6 +1,7 @@
 name: Pages
 
-# Publish `screen`'s three #1 rows (stocks / ETFs / crypto) to the repo's GitHub Pages site.
+# Publish `screen`'s ranked tables (the stocks / ETFs / crypto lanes and the tables below them) to the
+# repo's GitHub Pages site.
 #
 # SEPARATE FROM ci.yml ON PURPOSE, and the reason is isolation, not the trigger: nothing in ci.yml
 # should have to wait on a ~15-minute network run, and nothing here should be able to break one. The
@@ -535,8 +536,9 @@ jobs:
   # (#333) COMMIT THE DAY'S JOURNAL LINE BACK, so the forward record survives the runner.
   #
   # `screen` appends one line per day to `.screen_snapshots.jsonl` and that line is the ONLY record
-  # all five of `track`'s forward sections read — the verdict book, the CORE shortlist, the flat twin,
-  # the notch shadow covering all 14 gate refusals, and (#332)'s PEG shadow. Every one of them needs
+  # every one of `track`'s forward sections reads. There were five when this job landed — the verdict
+  # book, the CORE shortlist, the flat twin, the notch shadow covering all 14 gate refusals, and
+  # (#332)'s PEG shadow — and fourteen sections follow the verdict book today. Each of those five needs
   # 12 MONTHLY lines before its verdict can say anything but "wait" (`track::REOPEN_LINES`). Until
   # this job existed the line died with the ephemeral runner, and the record accrued only when someone
   # ran `screen` locally and kept the file — which it did not survive: 48 lines spanning
