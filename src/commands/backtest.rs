@@ -4913,6 +4913,20 @@ fn bar_column(is_base: bool, bar: Option<f64>) -> String {
     }
 }
 
+/// (#1049) The `guard` cell for one row of `report_proxy_books`, out of that skip-tagged body for
+/// `bar_column`'s reason. It stays on (#324)'s flat bar: the borrowed cohort is a SPLIT of the cleared
+/// book, not an admission out of the refused pool, so (#329)'s refused-pool null would not describe it.
+/// The own-history row is the base and prints nothing.
+fn proxy_guard(is_base: bool, base: &(f64, f64, f64, f64, f64, f64, f64), st: &(f64, f64, f64, f64, f64, f64, f64)) -> &'static str {
+    if is_base {
+        ""
+    } else if guard_holds(base, st, None) {
+        "  guard pass"
+    } else {
+        "  guard FAIL"
+    }
+}
+
 /// (#324) Prints `notch_books` with each row's `guard_holds`. Print-only, so `replace with ()` is unkillable; the
 /// arithmetic and the bar are tested in those two.
 #[mutants::skip]
@@ -5271,9 +5285,7 @@ fn report_proxy_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
     println!("\n── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held {years}y ──");
     for (l, n, st) in rows {
         let (b, _, e, w, wo, el, la) = st;
-        // (#329) stays on (#324)'s flat bar: the borrowed cohort is a SPLIT of the cleared book, not an
-        // admission out of the refused pool, so a refused-pool null would not describe this row.
-        let guard = if l == "own history" { "" } else if guard_holds(&base, &st, None) { "  guard pass" } else { "  guard FAIL" };
+        let guard = proxy_guard(l == "own history", &base, &st);
         println!("  {l:<12} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
     }
     println!("  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y. Keeps (#324)'s flat bar: this row SPLITS the cleared book rather than admitting out of the refused pool, so (#329)'s matched-n null does not describe it)");
@@ -12585,6 +12597,17 @@ mod tests {
         assert!(at(2.0, -6.0, Some(2.0)) && !at(1.99, -6.0, Some(2.0)));
         // the worst-window leg still refuses, whichever bar the excess leg is read against
         assert!(!at(9.9, -6.01, Some(0.0)) && !at(9.9, -6.01, None));
+    }
+
+    /// (#1049) The proxy table's guard cell: blank on the base row, then (#324)'s flat bar on both legs.
+    #[test]
+    fn proxy_guard_is_blank_on_the_base_row_and_reads_the_flat_bar() {
+        let base = (0.0, 0.0, 1.0, 0.0, -5.0, 0.0, 0.0);
+        let at = |e: f64, w: f64| (0.0, 0.0, e, 0.0, w, 0.0, 0.0);
+        assert_eq!(proxy_guard(true, &base, &at(0.0, -9.0)), "");
+        assert_eq!(proxy_guard(false, &base, &at(0.9, -6.0)), "  guard pass");
+        assert_eq!(proxy_guard(false, &base, &at(0.89, -6.0)), "  guard FAIL");
+        assert_eq!(proxy_guard(false, &base, &at(0.9, -6.01)), "  guard FAIL");
     }
 
     /// (#329) `n` identical rows in bucket `b`: realized `r`%, benchmark `bench`%. At `years = 1` `ann`
