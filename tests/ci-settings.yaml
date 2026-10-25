@@ -8769,7 +8769,11 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 156c9435819d (#1076, the rebless on top of (#1075); its src is (#1075)'s), graded
+  # LAST GRADED SHA: 6b736acf0e0c (#1080), graded 2026-10-25 by run 40236981730, same five inputs, since
+  # 17c4f05, `files` = src/picks.rs src/commands/screen.rs: 60 in scope = 60 caught (`gate_fails` 40,
+  # `aum_reason` 7, `bar_dp` 5 and `leg_floor_lines` 3 for (#1078); `small_aum_cell` 5 for (#1079)),
+  # 0 unviable, 0 missed, 0 timeout. (#1080) is test-only. (#1081) records it.
+  # BEFORE THAT: 156c9435819d (#1076, the rebless on top of (#1075); its src is (#1075)'s), graded
   # 2026-10-25 by run 40232143565, same five inputs, since dbbd52f, `files` = src/commands/backtest.rs:
   # 11 in scope = 11 caught (`turnover_frac` 11 for (#1075)), 0 unviable, 0 missed, 0 timeout. (#1077)
   # records it.
