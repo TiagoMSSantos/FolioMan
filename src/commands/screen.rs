@@ -5287,13 +5287,25 @@ mod tests {
         assert!(down.is_empty(), "{down:?}");
 
         // (#1027) a move of exactly one band claims, though the thirds sum a hair short of it:
-        // FADE [1,2,2] then [2,3,3], CLIMB [9,9,8] then [8,8,7]
-        let ranks = [(1, 9), (2, 9), (2, 8), (2, 8), (3, 8), (3, 7)];
+        // FADE [1,2,2] then [2,3,3], CLIMB [9,9,8] then [8,8,7]. (#1028) A two-thirds move stays
+        // silent both ways: SLIP [4,4,4] then [4,5,5], DRIFT [7,7,7] then [7,6,6]
+        let ranks = [
+            (1, 9, 4, 7),
+            (2, 9, 4, 7),
+            (2, 8, 4, 7),
+            (2, 8, 4, 7),
+            (3, 8, 5, 6),
+            (3, 7, 5, 6),
+        ];
         let thirds: Vec<_> = (1..)
             .zip(ranks)
-            .map(|(d, (f, c))| snap(&format!("2026-07-0{d}"), &[("FADE", f), ("CLIMB", c)]))
+            .map(|(d, (f, c, s, r))| {
+                let at = [("FADE", f), ("CLIMB", c), ("SLIP", s), ("DRIFT", r)];
+                snap(&format!("2026-07-0{d}"), &at)
+            })
             .collect();
-        let (up, down) = rank_trend(&["FADE".to_string(), "CLIMB".to_string()], &thirds, 3, 1.0);
+        let today = ["FADE", "CLIMB", "SLIP", "DRIFT"].map(String::from);
+        let (up, down) = rank_trend(&today, &thirds, 3, 1.0);
         assert_eq!(up, vec![("CLIMB".to_string(), 9, 7)]);
         assert_eq!(down, vec![("FADE".to_string(), 1, 3)]);
     }
