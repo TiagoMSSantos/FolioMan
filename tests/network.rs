@@ -210,7 +210,7 @@ async fn yahoo_top_holdings_parses() {
 }
 
 /// (tests round 3) SEC drift net. `fetch_fundamentals_sec` feeds the ONE validated ranking tilt
-/// (earnings_yield, fund_source "sec"): a live XBRL payload reshape makes `fund_factor` None and the
+/// (peg_yield, fund_source "sec"): a live XBRL payload reshape makes `fund_factor` None and the
 /// tilt goes silently OFF while every offline parse pin stays green — this is the only place that
 /// failure mode reds. Uses the cacheless `sec_facts_live` core, so the run never tests the disk
 /// cache instead of the wire. Environmental (CIK map down/throttle) -> skip; fetched-but-unparsable
@@ -224,12 +224,12 @@ async fn sec_facts_parse() {
             assert!(
                 rows.len() >= 5,
                 "AAPL: only {} annual facts rows parsed (a major US filer carries ~19y) — \
-                 companyfacts payload drifted (the earnings_yield tilt is starving)",
+                 companyfacts payload drifted (the peg_yield tilt is starving)",
                 rows.len()
             );
             assert!(
                 rows.iter().any(|r| r.eps.is_some()),
-                "AAPL: facts parsed but no EPS in any row — the earnings_yield numerator is gone \
+                "AAPL: facts parsed but no EPS in any row — the peg_yield EPS input is gone \
                  (the ranking tilt is silently OFF right now)"
             );
         }

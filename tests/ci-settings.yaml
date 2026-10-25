@@ -1129,7 +1129,7 @@ widths:
     - capex       # (#545) capex ÷ operating cash flow, trailing 12 months from the 10-Qs (SEC stocks); above growth_capex_ocf_max scores × growth_capex_ocf_penalty
     - opm         # (#463) operating margin % (stocks only) — pricing power before interest and tax
     - net         # newest complete-FY net margin % (stocks only) — profitability quality
-    - roe         # trailing return-on-equity (needs FMP key; else n/a) — quality
+    - roe         # trailing return-on-equity (SEC filings only since (#814); else n/a) — quality
     - rev5y       # (#463) revenue CAGR over the last 5 filed years (stocks only) — proven top-line compounding
     - fcf5y       # (#484) free-cash-flow CAGR over the last 5 filed years, both ends positive (stocks only)
     # -- price, closed by the entry-timing pair
