@@ -2493,12 +2493,7 @@ pub async fn run(args: Vec<String>) {
     // (#584) the blended book's momentum names join the journalled rows in the book's interleaved order, so
     // `track` prices and grades the book that was bought; `shipped` keeps the shipped-only order beside it
     let blend = settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book;
-    let journal_rows: Vec<String> = if blend {
-        let mom: Vec<&str> = sized_now.iter().map(|(t, _)| t.as_str()).filter(|t| !shipped_now.iter().any(|r| r == t)).collect();
-        picks::splice_order(&ranked_now.iter().map(String::as_str).collect::<Vec<_>>(), &mom, false, settings.buy_heuristic.growth_momentum_slots, usize::MAX).into_iter().map(str::to_string).collect()
-    } else {
-        ranked_now.clone()
-    };
+    let journal_rows = journal_order(&ranked_now, &sized_now, &shipped_now, blend, settings.buy_heuristic.growth_momentum_slots);
     let px = |t: &String| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur));
     // (#663) `exit` and `carry` read one close, off every list this run priced
     let close = |t: &str| close_eur(&[&quotes, &shadow_extra, &dropped_px], t);
@@ -3693,6 +3688,18 @@ pub async fn run(args: Vec<String>) {
     // and nobody there can act on it. The nets themselves run in CI's integration job on each push.
     if let Some(nag) = net_nag(stamp.as_deref(), now_secs).filter(|_| std::env::var_os("GITHUB_ACTIONS").is_none()) {
         eprintln!("{nag}");
+    }
+}
+
+/// (#1050) The rows a run journals, out of `run`'s skip-tagged body so the momentum filter is graded. With
+/// `blend`, the `sized` book's names the `shipped` book does not hold are its momentum half, spliced into
+/// `ranked` in the book's interleaved order; without it, `ranked` as it stands.
+fn journal_order(ranked: &[String], sized: &[(String, f64)], shipped: &[String], blend: bool, slots: usize) -> Vec<String> {
+    if blend {
+        let mom: Vec<&str> = sized.iter().map(|(t, _)| t.as_str()).filter(|t| !shipped.iter().any(|r| r == t)).collect();
+        picks::splice_order(&ranked.iter().map(String::as_str).collect::<Vec<_>>(), &mom, false, slots, usize::MAX).into_iter().map(str::to_string).collect()
+    } else {
+        ranked.to_vec()
     }
 }
 
@@ -5534,6 +5541,17 @@ mod tests {
             "one read, one restatement; found {restatements} calls to adjust_for_splits. A second \
              call on the same copy would divide its prices again: the restatement is not idempotent."
         );
+    }
+
+    /// (#1050) Blended, the sized book's one name the shipped book lacks takes the first momentum slot; a
+    /// shipped name is never spliced twice. Unblended, the ranked rows stand.
+    #[test]
+    fn journal_order_splices_only_the_momentum_half() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let (ranked, shipped) = (v(&["A", "B", "C"]), v(&["A", "B", "C"]));
+        let sized: Vec<(String, f64)> = ["A", "M", "B", "C"].iter().map(|t| (t.to_string(), 25.0)).collect();
+        assert_eq!(journal_order(&ranked, &sized, &shipped, true, 5), v(&["A", "M", "B", "C"]));
+        assert_eq!(journal_order(&ranked, &sized, &shipped, false, 5), ranked);
     }
 
     /// (#663) The side fetch is what last month's line grades and no list holds: a name on any fetched
