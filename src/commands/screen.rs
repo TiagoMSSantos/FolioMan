@@ -483,6 +483,7 @@ fn currency_mix(
     book: &[String],
     quotes: &[Quote],
     holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+    home: &dyn Fn(&str) -> String,
 ) -> Vec<(String, f64)> {
     let mut acc: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     let mut rows = 0.0;
@@ -506,13 +507,20 @@ fn currency_mix(
             _ if picks::quote_is_etf(quote) => add("?".to_string(), 1.0),
             // a stock's own quote currency is a real answer straight from Yahoo, so it beats the
             // suffix guess; `to_uppercase` is what collapses LSE's pence quote (GBp) onto GBP, which
-            // is the same FX exposure under a different unit
+            // is the same FX exposure under a different unit. (#1012) Except on a Xetra twin, which `home`
+            // maps to its US line: NVD.DE is quoted in EUR and is dollars, as `exposure_rows` counts it
             _ => {
-                let ccy = quote
-                    .quote_currency
-                    .as_deref()
-                    .filter(|c| !c.is_empty())
-                    .map(str::to_uppercase)
+                let ccy = Some(home(ticker))
+                    .filter(|us| us != ticker)
+                    .and_then(|us| core::listing_currency(&us))
+                    .map(str::to_string)
+                    .or_else(|| {
+                        quote
+                            .quote_currency
+                            .as_deref()
+                            .filter(|c| !c.is_empty())
+                            .map(str::to_uppercase)
+                    })
                     .or_else(|| core::listing_currency(&quote.ticker).map(str::to_string))
                     .unwrap_or_else(|| "?".to_string());
                 add(ccy, 1.0);
@@ -535,8 +543,9 @@ fn currency_mix_line(
     book: &[String],
     quotes: &[Quote],
     holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+    home: &dyn Fn(&str) -> String,
 ) -> Option<String> {
-    let mix = currency_mix(book, quotes, holdings);
+    let mix = currency_mix(book, quotes, holdings, home);
     if mix.is_empty() {
         return None;
     }
@@ -3600,7 +3609,7 @@ pub async fn run(args: Vec<String>) {
     // concentration should tilt the rank is a measured question, and this is how the data to answer it
     // becomes visible. Silent at false, which is the shipped state.
     if settings.buy_heuristic.print_currency_mix {
-        if let Some(line) = currency_mix_line(&today_top, &quotes, &holdings) {
+        if let Some(line) = currency_mix_line(&today_top, &quotes, &holdings, &fetch::us_symbol) {
             println!("\n{line}");
         }
     }
@@ -4773,7 +4782,8 @@ mod tests {
         // DARK.DE is deliberately absent from `holdings` -> unknown, never its EUR listing
         let book: Vec<String> =
             ["SPYL.DE", "DARK.DE", "VOD.L", "BTC-EUR"].iter().map(|s| (*s).to_string()).collect();
-        let mix: HashMap<String, f64> = currency_mix(&book, &quotes, &holdings).into_iter().collect();
+        let home = |t: &str| t.to_string();
+        let mix: HashMap<String, f64> = currency_mix(&book, &quotes, &holdings, &home).into_iter().collect();
         // SPYL.DE's 0.32/0.40 US slice = 0.8 of one row out of four
         assert!((mix["USD"] - 0.20).abs() < 1e-9, "the listing is EUR and the exposure is USD: {mix:?}");
         assert!((mix["EUR"] - 0.05).abs() < 1e-9, "only the ASML leg is really EUR: {mix:?}");
@@ -4782,23 +4792,23 @@ mod tests {
         assert!((mix["?"] - 0.25).abs() < 1e-9, "a fund with no look-through is unknown: {mix:?}");
         assert!((mix.values().sum::<f64>() - 1.0).abs() < 1e-9, "shares must exhaust the book: {mix:?}");
         // ordering is share-desc then alphabetical, so the reader meets the biggest slice first
-        let ordered = currency_mix(&book, &quotes, &holdings);
+        let ordered = currency_mix(&book, &quotes, &holdings, &home);
         assert_eq!(ordered[0].0, "?", "0.25 three ways -> alphabetical, and `?` must not be hidden");
-        let line = currency_mix_line(&book, &quotes, &holdings).expect("a non-empty book prints");
+        let line = currency_mix_line(&book, &quotes, &holdings, &home).expect("a non-empty book prints");
         assert!(line.contains("USD 20%"), "{line}");
         assert!(line.contains("≥40% of each fund"), "coverage quotes the WORST fund: {line}");
         // no rows resolvable -> no line at all, rather than a footer claiming a 0% book
-        assert_eq!(currency_mix_line(&book, &[], &holdings), None);
+        assert_eq!(currency_mix_line(&book, &[], &holdings, &home), None);
         // no fund in the book -> nothing extrapolated, so no coverage clause to disclaim
         let solo = vec!["VOD.L".to_string()];
-        let line = currency_mix_line(&solo, &quotes, &HashMap::new()).unwrap();
+        let line = currency_mix_line(&solo, &quotes, &HashMap::new(), &home).unwrap();
         assert!(line.contains("GBP 100%") && !line.contains("look-through covers"), "{line}");
     }
 
     /// (#343) The edges the test above walks past: a fund whose top-10 weights were all omitted is
     /// unknown (never NaN shares) and covers nothing; a STOCK is its own quote currency even when a
     /// holdings entry exists for it; and a blank quote currency falls back to the listing suffix
-    /// instead of printing an empty key.
+    /// instead of printing an empty key. (#1012) A Xetra twin is its US line's currency, not its EUR quote.
     #[test]
     fn currency_mix_edges() {
         let q = |ticker: &str, kind: &str, ccy: &str| {
@@ -4807,17 +4817,31 @@ mod tests {
             x.quote_currency = Some(ccy.into());
             x
         };
-        let quotes = vec![q("ZERO.DE", "ETF", "EUR"), q("VOD.L", "EQUITY", "GBp"), q("SAP.DE", "EQUITY", "")];
+        let quotes = vec![
+            q("ZERO.DE", "ETF", "EUR"),
+            q("VOD.L", "EQUITY", "GBp"),
+            q("SAP.DE", "EQUITY", ""),
+            q("NVD.DE", "EQUITY", "EUR"),
+        ];
         let mut holdings: HashMap<String, Vec<(String, f64)>> = HashMap::new();
         holdings.insert("ZERO.DE".into(), vec![("AAPL".into(), 0.0), ("MSFT".into(), 0.0)]);
         holdings.insert("VOD.L".into(), vec![("AAPL".into(), 0.5)]);
-        let book: Vec<String> = ["ZERO.DE", "VOD.L", "SAP.DE"].iter().map(|s| (*s).to_string()).collect();
-        let mix: HashMap<String, f64> = currency_mix(&book, &quotes, &holdings).into_iter().collect();
-        assert_eq!(mix.len(), 3, "{mix:?}");
-        for (ccy, why) in [("?", "all-zero weights = no look-through"), ("GBP", "a stock is its own quote currency"), ("EUR", "a blank quote currency falls back to the suffix")] {
-            assert!((mix[ccy] - 1.0 / 3.0).abs() < 1e-9, "{why}: {mix:?}");
+        let book: Vec<String> = ["ZERO.DE", "VOD.L", "SAP.DE", "NVD.DE"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let home = |t: &str| if t == "NVD.DE" { "NVDA".to_string() } else { t.to_string() };
+        let mix: HashMap<String, f64> = currency_mix(&book, &quotes, &holdings, &home).into_iter().collect();
+        assert_eq!(mix.len(), 4, "{mix:?}");
+        for (ccy, why) in [
+            ("?", "all-zero weights = no look-through"),
+            ("GBP", "a stock is its own quote currency"),
+            ("EUR", "a blank quote currency falls back to the suffix"),
+            ("USD", "a Xetra twin is its US line's dollars"),
+        ] {
+            assert!((mix[ccy] - 0.25).abs() < 1e-9, "{why}: {mix:?}");
         }
-        let line = currency_mix_line(&["ZERO.DE".to_string()], &quotes, &holdings).unwrap();
+        let line = currency_mix_line(&["ZERO.DE".to_string()], &quotes, &holdings, &home).unwrap();
         assert!(!line.contains("look-through covers"), "a zero-weight fund covers nothing: {line}");
     }
 
