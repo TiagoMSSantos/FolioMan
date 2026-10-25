@@ -1428,6 +1428,8 @@ pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
 /// FIRDS funnel, which screens thousands of US/CA/Asia funds listed on EU MTFs out of the dumps, and
 /// (#102) by the CORE admission rule's UCITS leg: "not on this list" is this file's ONE definition of
 /// a fund domicile a European can hold, and two readers of it must not drift into two lists.
+/// (#1037) The UCITS leg alone also refuses CH, GB, JE, GG and XS, which are not EU domiciles; they
+/// stay off this list because the FIRDS funnel keeps Swiss funds in the pond.
 pub const NON_EU: [&str; 17] = [
     "US", "CA", "HK", "JP", "SG", "KY", "AU", "IL", "ZA", "TW", "KR", "IN", "TH", "MY", "CN", "BM",
     "VG",
@@ -3207,8 +3209,12 @@ fn hold_miss_leg_at(
 ) -> Option<(usize, String)> {
     // (#102) the name token, OR — behind the knob — an EU domicile, which is the FACT the token is a
     // proxy for. `domicile: None` still falls back to the name, so missing data cannot newly pass.
+    // (#1037) NON_EU is a blocklist, so "not on it" also passed Swiss, UK and Channel Islands funds
+    // and XS (ETP/ETC note) ISINs; none of those is a UCITS domicile.
     let eu_domiciled = crate::config::hold_ucits_or_domicile()
-        && q.domicile.as_deref().is_some_and(|d| d.len() >= 2 && !NON_EU.contains(&&d[..2]));
+        && q.domicile.as_deref().is_some_and(|d| {
+            d.len() >= 2 && !NON_EU.contains(&&d[..2]) && !matches!(&d[..2], "CH" | "GB" | "JE" | "GG" | "XS")
+        });
     if !q.name.to_lowercase().contains("ucits") && !eu_domiciled {
         return Some((1, "no UCITS token in the name".into()));
     }

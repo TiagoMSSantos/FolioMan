@@ -11520,6 +11520,14 @@ buy_heuristic:
                                  #   REVERT: set false, which restores name-token-only and drops CSUS.SW
                                  #   back out of the pond. Nothing else reads the flag; `config.rs` keeps
                                  #   false as its config-less Default (same split as `print_h2h_mid_ladder`).
+                                 # 
+                                 #   (#1037) "OFF THE NON_EU LIST" WAS READ AS "EU-DOMICILED", AND IT IS NOT. NON_EU is a
+                                 #   17-prefix blocklist, so CH, GB, JE, GG and XS (an ETP/ETC note's ISIN) passed this arm
+                                 #   too. Re-asked on the live pond as the receipt above demands: ~300 token-free ETF names sat
+                                 #   on those five prefixes against ~180 on IE/LU/DE, and ONE reached CORE -- SPIA.SW, UBS Core
+                                 #   SPI ETF, a Swiss-law fund and not a UCITS. The arm now refuses the five as well; shared
+                                 #   NON_EU is untouched because the FIRDS funnel keeps Swiss funds in the pond. SPIA.SW leaves
+                                 #   CORE and SW2CHB.SW (LU, UCITS in the name) keeps the Swiss row.
   hold_allow_swap: true          # (#233 / MEASURED 2026-09-04, LIVE THREE-ARM A/B) — admit SWAP-BASED
                                  # (synthetic) ETFs to the CORE lane. Round 53 refused them outright for
                                  # counterparty risk over a decades hold; this arm prices the other side

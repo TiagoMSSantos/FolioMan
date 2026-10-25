@@ -12382,6 +12382,9 @@ mod tests {
         let armed = crate::config::hold_ucits_or_domicile();
         assert_eq!(leg1("IE") != Some(1), armed, "an IE domicile passes leg 1 exactly when the knob is armed");
         assert_eq!(leg1("US"), Some(1), "a non-EU domicile never stands in for the token");
+        // (#1037) off the NON_EU blocklist is not the same as EU: a Swiss fund or an XS note is no UCITS.
+        assert_eq!(leg1("CH"), Some(1), "a Swiss domicile never stands in for the token");
+        assert_eq!(leg1("XS"), Some(1), "an XS note never stands in for the token");
         assert_eq!(leg1("I"), Some(1), "a one-letter domicile is refused, never sliced");
     }
 
