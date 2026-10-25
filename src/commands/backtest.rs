@@ -3132,6 +3132,17 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
+/// (#1045) The verdict on the haircut band, out of `sweep_fund_factor` for the same reason as
+/// `sidak_tail`: inline, a `>` turned `>=` read a zero-floor band as a WINNER and no test could run it.
+/// Strict: a band whose floor touches 0 is still best-of-N luck.
+fn band_verdict(lo: f64) -> &'static str {
+    if lo > 0.0 {
+        "survives multiple testing -> trust the WINNER"
+    } else {
+        "within best-of-N luck -> SHIP NOTHING despite the raw winner"
+    }
+}
+
 const FUND_FACTORS: [&str; 53] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
@@ -3308,11 +3319,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
             let (lo_p, hi_p) = sidak_tail(FUND_FACTORS.len());
             let block = bootstrap_block(years, &tun);
             if let Some((lo, hi)) = bootstrap_edge_ci(&s, growth_score, &tun, 1000, lo_p, hi_p, block) {
-                let verdict = if lo > 0.0 {
-                    "survives multiple testing -> trust the WINNER"
-                } else {
-                    "within best-of-N luck -> SHIP NOTHING despite the raw winner"
-                };
+                let verdict = band_verdict(lo);
                 println!("  multiple-testing band (best of {} factors): [{lo:+.1} … {hi:+.1}] pts  ({verdict})", FUND_FACTORS.len());
             }
         }
@@ -8516,6 +8523,15 @@ mod tests {
         // the whole point. A `-` flipped to `+` here would tighten the band and pass a losing winner.
         assert!(sidak_tail(14).0 < sidak_tail(10).0 && sidak_tail(14).1 > sidak_tail(10).1);
         assert_eq!(sidak_tail(0), (5.0, 95.0), "no candidates -> no division by zero");
+    }
+
+    /// (#1045) Only a band floor strictly above 0 trusts the winner; a floor AT 0 straddles it.
+    #[test]
+    fn band_verdict_trusts_only_a_floor_above_zero() {
+        assert!(band_verdict(0.1).starts_with("survives"), "{}", band_verdict(0.1));
+        for lo in [0.0, -0.1] {
+            assert!(band_verdict(lo).starts_with("within best-of-N luck"), "{lo}: {}", band_verdict(lo));
+        }
     }
 
     /// (#119) The wire itself. `bootstrap_block` is what turns a knob that could only ever hold ONE
