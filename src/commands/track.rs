@@ -1108,7 +1108,8 @@ type Pairs<'a> = Vec<(&'a str, Rows<'a>, Rows<'a>)>;
 
 /// (#335) Per label: `(label, monthly lines, mean gap, median gap)`, a gap being one line's second list
 /// minus its first, both graded to today. The fold behind every per-label table: one line a month, a
-/// side that cannot grade contributes nothing (a missing gap is not a zero one), nearest-rank median.
+/// side that cannot grade contributes nothing (a missing gap is not a zero one). (#1035) The median is
+/// [`crate::core::median`], an even count's two middle gaps averaged, not nearest-rank's upper one.
 fn monthly_gaps<'a>(
     snaps: &'a [Snapshot],
     today: chrono::NaiveDate,
@@ -1129,7 +1130,7 @@ fn monthly_gaps<'a>(
         .map(|(g, mut v)| {
             v.sort_by(f64::total_cmp);
             let mean = v.iter().sum::<f64>() / v.len() as f64;
-            (g.to_string(), v.len(), mean, crate::commands::backtest::percentile(&v, 50.0))
+            (g.to_string(), v.len(), mean, crate::core::median(v).unwrap_or(f64::NAN))
         })
         .collect()
 }
@@ -1165,7 +1166,7 @@ fn verdict_rows(
             let mut v = links.remove(&g).unwrap_or_default();
             v.sort_by(f64::total_cmp);
             let k = v.len();
-            let (cm, cmed) = if k == 0 { (0.0, 0.0) } else { (v.iter().sum::<f64>() / k as f64, crate::commands::backtest::percentile(&v, 50.0)) };
+            let (cm, cmed) = if k == 0 { (0.0, 0.0) } else { (v.iter().sum::<f64>() / k as f64, crate::core::median(v).unwrap_or(f64::NAN)) };
             let verdict = if decides.is_none_or(|d| d == g) { both_verdict((n, mean, med), (k, cm, cmed)) } else { "inform only" };
             format!(
                 "\n    {g:<width$} {n:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  | {k:>3} link(s)  mean {cm:>+7.1}pp  median {cmed:>+7.1}pp  {verdict}"
@@ -1621,7 +1622,7 @@ fn chain_section(snaps: &[Snapshot]) -> String {
     let footer = match ex.len() {
         0 => "\n  no link carries an S&P leg at both ends yet — nothing to compare.".to_string(),
         k => {
-            let (mean, med) = (ex.iter().sum::<f64>() / k as f64, crate::commands::backtest::percentile(&ex, 50.0));
+            let (mean, med) = (ex.iter().sum::<f64>() / k as f64, crate::core::median(ex).unwrap_or(f64::NAN));
             let verdict = match clears(k, mean, med) {
                 None => "needs 12 links",
                 Some(true) => "BEATS S&P",
@@ -1928,7 +1929,7 @@ mod tests {
     /// (#335) Slices by rank on one line, lower minus higher: head +10, 6-10 +30, tail -10 read +20 and
     /// -30. The coin at #3 and the unbought pin would each move a slice if they were counted. A later
     /// same-month line is not a second trial; a July line from before `sized` grades on `rows` alone
-    /// and adds +30 to the first gap only (no tail), so it reads mean 25.0 and nearest-rank median 30.0.
+    /// and adds +30 to the first gap only (no tail), so it reads mean 25.0 and median 25.0 (#1035).
     #[test]
     fn ladder_section_grades_rank_slices_within_a_line() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
@@ -1955,7 +1956,7 @@ mod tests {
         let out = ladder_section(&[june, rerun, july], today, &px, Some(100.0));
         let line = |label: &str| out.lines().find(|l| l.trim_start().starts_with(label)).unwrap_or_default().to_string();
         let mid = line("6-10 minus 1-5");
-        assert!(mid.contains("  2 line(s)") && mid.contains("mean   +25.0pp") && mid.contains("median   +30.0pp"), "{out}");
+        assert!(mid.contains("  2 line(s)") && mid.contains("mean   +25.0pp") && mid.contains("median   +25.0pp"), "{out}");
         assert!(mid.contains("needs 12 lines"), "{mid}");
         let tail = line("11-25 minus 1-10");
         assert!(tail.contains("  1 line(s)") && tail.contains("mean   -30.0pp") && tail.contains("median   -30.0pp"), "{out}");
@@ -2085,8 +2086,8 @@ mod tests {
         assert_eq!(
             read(None),
             [
-                "a 2 line(s) mean -15.5pp median -11.0pp | 2 link(s) mean +6.0pp median +22.0pp needs 12 lines",
-                "b 2 line(s) mean +4.5pp median +30.0pp | 2 link(s) mean -0.5pp median +10.0pp needs 12 lines",
+                "a 2 line(s) mean -15.5pp median -15.5pp | 2 link(s) mean +6.0pp median +6.0pp needs 12 lines",
+                "b 2 line(s) mean +4.5pp median +4.5pp | 2 link(s) mean -0.5pp median -0.5pp needs 12 lines",
                 "c 1 line(s) mean +29.0pp median +29.0pp | 0 link(s) mean +0.0pp median +0.0pp needs 12 lines",
             ]
         );
@@ -2132,8 +2133,8 @@ mod tests {
         assert!(out.contains("1 of 2 run(s)"), "{out}");
     }
 
-    /// (#334) Entrants minus displaced, one line a month: +10 then +20 reads mean 15.0 and nearest-rank
-    /// median 20.0. A month without swaps counts toward the total, not the journalled; a notch whose
+    /// (#334) Entrants minus displaced, one line a month: +10 then +20 reads mean 15.0 and median
+    /// 15.0 (#1035). A month without swaps counts toward the total, not the journalled; a notch whose
     /// displaced side cannot price grades NOTHING rather than a zero.
     #[test]
     fn swap_section_grades_entrants_against_the_displaced() {
@@ -2160,7 +2161,7 @@ mod tests {
         let out = swap_section(&snaps, today, &px, Some(100.0));
         assert!(out.contains("Journalled on 2 of 3 run(s)."), "{out}");
         let q = out.lines().find(|l| l.trim_start().starts_with("q x0")).unwrap_or_default();
-        assert!(q.contains("  2 line(s)") && q.contains("mean   +15.0pp") && q.contains("median   +20.0pp"), "{q}");
+        assert!(q.contains("  2 line(s)") && q.contains("mean   +15.0pp") && q.contains("median   +15.0pp"), "{q}");
         assert!(q.contains("needs 12 lines"), "{q}");
         assert!(!out.contains("p x2"), "an unpriced side is no gap, not a zero one: {out}");
     }
@@ -3239,7 +3240,7 @@ mod tests {
 
     /// (#323) One gap per MONTH, from the line `monthly_firsts` keeps (a later same-month line whose
     /// shadow doubled must not enter); a line whose book cannot grade adds nothing, and nor does a gate
-    /// whose shadow cannot; mean and nearest-rank median over what is left.
+    /// whose shadow cannot; mean and median over what is left.
     #[test]
     fn gate_verdicts_read_one_line_a_month() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
@@ -3297,9 +3298,9 @@ mod tests {
         // Sep: A +20, B -10 -> +5 against +10. Oct: A -50 against 110 -> 99.
         assert!(out.contains("\n    2026-09-21  2026-10-01    10    +5.0   +10.0    -5.0   2/2"), "{out}");
         assert!(out.contains("\n    2026-10-01  2026-11-02    32   -50.0   -10.0   -40.0   1/3"), "{out}");
-        // 1.05 x 0.5 and 1.1 x 0.9; nearest-rank median of two is the upper one.
+        // 1.05 x 0.5 and 1.1 x 0.9; (#1035) a median of two is their mean.
         assert!(
-            out.contains("links 2 | compounded book -47.5% vs S&P -1.0% | monthly excess mean -22.5pp  median -5.0pp  needs 12 links"),
+            out.contains("links 2 | compounded book -47.5% vs S&P -1.0% | monthly excess mean -22.5pp  median -22.5pp  needs 12 links"),
             "{out}"
         );
         assert!(chain_section(&snaps[..2]).contains("nothing gradeable yet"), "one month is no link");

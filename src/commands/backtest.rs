@@ -5281,7 +5281,8 @@ fn report_proxy_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
 /// closes), and `track` only starts in 2026. A short run (`backtest 1 long ...`) holds those entries. Per ~6-month
 /// bucket after `since`: the notch cohort's mean `realized` minus the cleared book's (the gap `track` reads, cohort
 /// minus the book), a line only where both sides hold a name. Pool and cohort rule are `notch_books`'. Row: (tag,
-/// lines, mean gap, median gap), `track::monthly_gaps`' shape, for each notch with at least one line.
+/// lines, mean gap, median gap), `track::monthly_gaps`' shape and (#1035) its averaged median, for each notch with
+/// at least one line.
 fn notch_tail(samples: &[Sample], since: chrono::NaiveDate, tuning: &BuyHeuristic) -> Vec<(&'static str, usize, f64, f64)> {
     let notches = notch_tunings(tuning);
     let mut cleared: std::collections::BTreeMap<i32, Vec<f64>> = Default::default();
@@ -5304,7 +5305,8 @@ fn notch_tail(samples: &[Sample], since: chrono::NaiveDate, tuning: &BuyHeuristi
         .filter_map(|((tag, _), cohort)| {
             let mut gaps: Vec<f64> = cohort.iter().filter_map(|(b, v)| cleared.get(b).map(|k| mean(v) - mean(k))).collect();
             gaps.sort_by(f64::total_cmp);
-            (!gaps.is_empty()).then(|| (*tag, gaps.len(), mean(&gaps), percentile(&gaps, 50.0)))
+            let (n, m) = (gaps.len(), mean(&gaps));
+            crate::core::median(gaps).map(|med| (*tag, n, m, med))
         })
         .collect()
 }
@@ -12517,21 +12519,32 @@ mod tests {
         let mut dates: Vec<chrono::NaiveDate> = samples.iter().map(|s| s.date).collect();
         dates.sort();
         let (first, mid, last) = (dates[0], dates[dates.len() / 2], dates[dates.len() - 1]);
-        let lines = |since: chrono::NaiveDate, t: &BuyHeuristic| {
-            let after: Vec<&Sample> = samples.iter().filter(|s| s.date > since && picks::asset_class(&s.quote) != 0).collect();
-            let cleared: std::collections::BTreeSet<i32> = after.iter().filter(|s| growth_score(&s.quote, &tuning).is_some()).map(|s| bucket(s.date)).collect();
-            let cohort: std::collections::BTreeSet<i32> = after.iter().filter(|s| growth_score(&s.quote, &tuning).is_none() && growth_score(&s.quote, t).is_some()).map(|s| bucket(s.date)).collect();
-            cohort.intersection(&cleared).count()
+        let gaps = |since: chrono::NaiveDate, t: &BuyHeuristic| {
+            let (mut cleared, mut cohort) = (std::collections::BTreeMap::<i32, Vec<f64>>::new(), std::collections::BTreeMap::<i32, Vec<f64>>::new());
+            for s in samples.iter().filter(|s| s.date > since && picks::asset_class(&s.quote) != 0) {
+                let side = if growth_score(&s.quote, &tuning).is_some() {
+                    &mut cleared
+                } else if growth_score(&s.quote, t).is_some() {
+                    &mut cohort
+                } else {
+                    continue;
+                };
+                side.entry(bucket(s.date)).or_default().push(s.realized);
+            }
+            let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+            cohort.iter().filter_map(|(b, v)| cleared.get(b).map(|k| mean(v) - mean(k))).collect::<Vec<f64>>()
         };
+        // (#1035) The median is the recount's, not a pin: 26 and 6 lines are even counts, read as the two middle gaps' mean.
         for (since, pins) in [
-            (first.pred_opt().unwrap(), [("cagr", 15, -256.895200120187, -226.014181682842), ("1Y+", 26, 826.404569217314, 795.020641750035)]),
-            (mid, [("cagr", 6, -138.124976295149, 206.849918000722), ("1Y+", 15, 704.172422548712, 380.238989311686)]),
+            (first.pred_opt().unwrap(), [("cagr", 15, -256.895200120187), ("1Y+", 26, 826.404569217314)]),
+            (mid, [("cagr", 6, -138.124976295149), ("1Y+", 15, 704.172422548712)]),
         ] {
             let rows = notch_tail(&samples, since, &tuning);
-            let want: Vec<(&str, usize)> = notch_tunings(&tuning).iter().map(|(tag, t)| (*tag, lines(since, t))).filter(|(_, n)| *n > 0).collect();
-            assert_eq!(rows.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(), want, "since {since}");
-            for ((tag, n, mean, median), (ptag, pn, pmean, pmedian)) in rows.iter().zip(pins) {
-                assert!((*tag, *n) == (ptag, pn) && (mean - pmean).abs() < 1e-9 && (median - pmedian).abs() < 1e-9, "since {since}: {rows:?}");
+            let want: Vec<(&str, Vec<f64>)> = notch_tunings(&tuning).iter().map(|(tag, t)| (*tag, gaps(since, t))).filter(|(_, g)| !g.is_empty()).collect();
+            assert_eq!(rows.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(), want.iter().map(|(tag, g)| (*tag, g.len())).collect::<Vec<_>>(), "since {since}");
+            for (((tag, n, mean, median), (ptag, pn, pmean)), (_, g)) in rows.iter().zip(pins).zip(&want) {
+                let recount = crate::core::median(g.clone()).unwrap_or(f64::NAN);
+                assert!((*tag, *n) == (ptag, pn) && (mean - pmean).abs() < 1e-9 && (median - recount).abs() < 1e-9, "since {since}: {rows:?}");
             }
         }
         assert!(notch_tail(&samples, last, &tuning).is_empty(), "nothing is after the last entry");
