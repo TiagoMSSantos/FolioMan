@@ -3602,6 +3602,9 @@ async fn fetch_edinet_brk(client: &Client, urls: &Urls) -> Vec<BrkRow> {
 // - (#475) New 13D/13G stakes: the same managers' original SCHEDULE 13D/13G filings of the last
 //   [`SOC_STAKE_DAYS`], one more buyer each. ARK's net buys and openinsider's cluster buys of a pooled
 //   stock are tips, like a video. Twelve more channels' videos pool with Dumb Money Live's.
+// - (#483) ApeWisdom's Reddit/4chan mention surges, Google Trends' daily US RSS trends whose whole
+//   title is a pooled stock, and Hacker News stories naming one; (#516) a developer climbing Apple's
+//   US top-free chart.
 // - (#536) Benzinga's weekly "stocks investors couldn't stop buzzing about" tickers, and ApeWisdom's
 //   loudest names beside its surges.
 
@@ -9835,9 +9838,11 @@ pub(crate) fn adopt_us_series(own: Quote, us: Quote) -> Quote {
 }
 
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
-/// CoinGecko + the S&P 500 constituents CSV (single companies) + the top-`cap` EU-buyable UCITS ETFs
-/// by turnover from Börse Frankfurt plus the Euronext-only funds BF doesn't list
-/// (`fetch_xetra_etfs` + `fetch_euronext_etf_isins`). Symbols normalised to Yahoo form (`btc` ->
+/// CoinGecko + the S&P 500 constituents CSV and any extra constituent ponds from config (single
+/// companies, `constituent_ponds`) + the Euronext Lisbon equities (`fetch_euronext_lisbon`) + the
+/// top-`cap` EU-buyable UCITS ETFs by turnover from Börse Frankfurt plus the Euronext, SIX and
+/// regulatory-list funds BF doesn't list (`fetch_xetra_etfs` fed by `fetch_euronext_etf_isins`,
+/// `fetch_six_etf_isins` and `fetch_regulatory_etf_isins`). Symbols normalised to Yahoo form (`btc` ->
 /// `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur`. The old
 /// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
 /// Sorted + deduped; empty if all sources fail. Also returns the Xetra-ETF ticker set so the caller
