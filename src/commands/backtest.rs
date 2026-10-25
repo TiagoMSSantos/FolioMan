@@ -6292,6 +6292,16 @@ fn union_book(rows: &[(String, f64, Option<f64>, f64, f64)], g: usize, v: usize)
     Some((book, spy, picked.len(), overlap))
 }
 
+/// (#1067) Means of four chronological quarters of `x` that together cover every element: quarter q is
+/// `len*q/4 .. len*(q+1)/4`, the split `report_lane`'s era table uses. The `chunks(len / 4).take(4)`
+/// this replaces dropped the newest `len % 4` values, so nine windows printed a last quarter of two.
+fn quarter_means(x: &[f64]) -> Vec<f64> {
+    (0..4)
+        .map(|q| &x[x.len() * q / 4..x.len() * (q + 1) / 4])
+        .map(|s| s.iter().sum::<f64>() / s.len().max(1) as f64)
+        .collect()
+}
+
 /// (round 106) TWO-STYLE HELD BOOK — the no-borrow structural lever. The growth_score book and the
 /// pure earnings_yield book pick mostly DIFFERENT names (the round-45 receipt: grafting value INTO
 /// the score was flat precisely because the value edge lives in a different book, not in reordering
@@ -6377,8 +6387,10 @@ fn report_two_style_book(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     // value book's excess, plus how thin its per-bucket pick pool runs (a 3-name "book" is not a book).
     let vexcess: Vec<f64> = by_variant[1].values().map(|(_, e)| *e).collect();
     if vexcess.len() >= 8 {
-        let parts: Vec<String> =
-            vexcess.chunks((vexcess.len() / 4).max(1)).take(4).map(|c| format!("{:+.1}", mean(c))).collect();
+        let parts: Vec<String> = quarter_means(&vexcess)
+            .iter()
+            .map(|m| format!("{m:+.1}"))
+            .collect();
         let ns: Vec<f64> = buckets.values().map(|rows| rows.iter().filter(|r| r.2.is_some()).count() as f64).collect();
         let nmin = ns.iter().cloned().fold(f64::INFINITY, f64::min);
         println!(
@@ -10717,6 +10729,9 @@ mod tests {
         let spy = vec![("A".to_string(), 9.0, None, 0.0, 20.0), ("B".to_string(), 5.0, None, 0.0, 40.0)];
         let (_, s, n, _) = union_book(&spy, 2, 0).unwrap();
         assert!((s - 1.3).abs() < 1e-9 && n == 2, "{s} {n}");
+        // (#1067) nine windows: the last quarter holds three, so the newest window is in it.
+        let nine = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        assert_eq!(quarter_means(&nine), [1.5, 3.5, 5.5, 8.0]);
     }
 
     /// (round 108) `bench_drawdown_at`: at the high -> 0, halved -> −50 at the trough, recovered ->
