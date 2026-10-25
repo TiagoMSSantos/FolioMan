@@ -1463,6 +1463,19 @@ fn book_stability(journal: &[crate::commands::track::Snapshot]) -> Option<f64> {
     Some(sum / pairs as f64)
 }
 
+/// (#1026) The [`book_stability`] tag, read off the percent the footer prints: a ratio that sums
+/// to 0.7999999999999999 prints "80%" and so reads "stable", not "moderate churn".
+fn stability_tag(ratio: f64) -> &'static str {
+    let pct = (ratio * 100.0).round();
+    if pct >= 80.0 {
+        "stable"
+    } else if pct >= 60.0 {
+        "moderate churn"
+    } else {
+        "churny — ranks are noisy"
+    }
+}
+
 /// (round 31) Mean book RANK — a name's AVERAGE position in the top-[`track::BOOK`] slice across
 /// the journal, the LEVEL the slope/churn footers don't read. r29 rank-trend reports direction and
 /// r30 reports book stability, but a name can be flat (r29 silent) yet durably sit at #2 vs #8 —
@@ -3510,13 +3523,7 @@ pub async fn run(args: Vec<String>) {
                 let book = crate::commands::track::BOOK;
                 let k = snaps.len();
                 let pct = ratio * 100.0;
-                let tag = if ratio >= 0.8 {
-                    "stable"
-                } else if ratio >= 0.6 {
-                    "moderate churn"
-                } else {
-                    "churny — ranks are noisy"
-                };
+                let tag = stability_tag(ratio);
                 println!(
                     "\nTop-{book} stability — holds {pct:.0}% of its names screen-to-screen \
                      across the last {k} screens ({tag})"
@@ -5328,6 +5335,19 @@ mod tests {
         assert_eq!(book_stability(&[snap("d1", &[]), snap("d2", &["A"]), snap("d3", &["A"])]), Some(1.0));
         // every pair skipped → no pair compared at all → None
         assert_eq!(book_stability(&[snap("d1", &[]), snap("d2", &["A"])]), None);
+    }
+
+    /// (#1026) the stability tag reads the percent the footer prints, so a ratio that sums to just
+    /// under 0.8 (it prints "80%") is "stable"; the 60% band edge works the same way.
+    #[test]
+    fn stability_tag_reads_the_printed_percent() {
+        let summed = (0.5 + 0.9 + 1.0) / 3.0;
+        assert!(summed < 0.8);
+        assert_eq!(stability_tag(summed), "stable");
+        assert_eq!(stability_tag(0.8), "stable");
+        assert_eq!(stability_tag(0.79), "moderate churn");
+        assert_eq!(stability_tag(0.6), "moderate churn");
+        assert_eq!(stability_tag(0.59), "churny — ranks are noisy");
     }
 
     /// (round 31) mean book rank: a name's average top-BOOK position across the journal, best-seated
