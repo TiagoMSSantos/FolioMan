@@ -4490,6 +4490,8 @@ pub const FAIL_FLAGS: [char; 6] = ['L', '2', 'B', 'I', 'R', 'D'];
 /// (#728) The six red flags, fixed before the census ran: a loss, a second loss year running, an
 /// operating cash burn, interest cover under 1.5x, revenue down over 10% on the year, and a share count
 /// up over 10%. `prev` is the fiscal year before `now`.
+/// (#1064) D carries a 1e-9 slack: an exact 10% issuance reads -10.000000000000009 through `yoy_pct`
+/// (110/100 rounds up), while R's exact 10% fall reads -9.999999999999998 and stays clean.
 fn red_flags(now: &FundRow, prev: Option<&FundRow>, rev_yoy: Option<f64>, buyback_yield: Option<f64>) -> [bool; 6] {
     let loss = |r: &FundRow| r.net_margin.is_some_and(|m| m < 0.0);
     [
@@ -4498,7 +4500,7 @@ fn red_flags(now: &FundRow, prev: Option<&FundRow>, rev_yoy: Option<f64>, buybac
         now.ocf_margin.is_some_and(|m| m < 0.0),
         now.interest_cover.is_some_and(|c| c < 1.5),
         rev_yoy.is_some_and(|g| g < -10.0),
-        buyback_yield.is_some_and(|b| b < -10.0),
+        buyback_yield.is_some_and(|b| b < -10.0 - 1e-9),
     ]
 }
 
@@ -6500,6 +6502,15 @@ mod tests {
         assert_eq!(red_flags(&r(-0.1, 0.0, 9.0), Some(&r(0.0, 0.0, 9.0)), Some(0.0), Some(0.0)), [true, false, false, false, false, false], "a first loss");
         assert!(!red_flags(&r(-0.1, 0.0, 9.0), None, Some(0.0), Some(0.0))[1], "no prior year");
         assert_eq!(red_flags(&FundRow::default(), None, None, None), [false; 6]);
+        // (#1064) the share and revenue bounds as `yoy_pct` computes them: 100 -> 110 shares is exactly 10%, not over
+        let d = |now, prior| yoy_pct(Some(now), Some(prior)).map(|v| -v);
+        let (clean, rev) = (r(0.0, 0.0, 1.5), yoy_pct(Some(90.0), Some(100.0)));
+        let exact = red_flags(&clean, None, rev, d(110.0, 100.0));
+        assert_eq!(exact, [false; 6], "an exact 10% move reads clean");
+        let over = red_flags(&clean, None, None, d(110.1, 100.0))[5];
+        let edge = red_flags(&clean, None, None, Some(-10.0 - 1e-9))[5];
+        assert!(over, "10.1% more shares is over the bound");
+        assert!(!edge, "the slack edge itself reads clean");
     }
 
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None
