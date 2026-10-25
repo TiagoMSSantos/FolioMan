@@ -882,9 +882,12 @@ fn check_footer_marks_a_frozen_inflation_feed_stale_and_a_current_one_healthy() 
 }
 
 /// With `inflation_adjust` off there is no HICP series at all, so `perf` neither fetches nor labels one.
+/// (#1042) The series IS on file here, as in the labelling twin below: with an empty cache the label is
+/// skipped by the non-empty check alone, so this passed with the `enabled` guard deleted.
 #[test]
 fn perf_skips_the_hicp_series_when_inflation_adjustment_is_off() {
-    let (code, stdout, stderr) = run_isolated("perf-no-hicp", "inflation_adjust:\n  enabled: false\n", &[], &["perf", "AAA"]);
+    let feeds = [("eu_hicp2", EU_HICP_CURRENT)];
+    let (code, stdout, stderr) = run_macro_seeded("perf-no-hicp", "inflation_adjust:\n  enabled: false\n", &feeds, &["perf", "AAA"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("AAA [AAA]"), "{stdout}");
     assert!(!stdout.contains("inflation-adjusted"), "{stdout}");
