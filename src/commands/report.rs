@@ -213,7 +213,7 @@ fn render_annual(
             yoy(sh_yoy),
         ));
     }
-    if annual.iter().any(|a| a.quarters < 4) {
+    if annual.iter().any(|a| (2..4).contains(&a.quarters)) {
         out.push_str("  (* = incomplete fiscal year: fewer than 4 quarters reported)\n");
     }
     if annual.iter().any(|a| a.shares.is_some()) {
@@ -564,6 +564,26 @@ mod tests {
         // (#343) and a rollup with NO full year still owes it — the note is about the partial row
         let (only, _) = render("ACME", "FMP", &rows[4..]);
         assert!(only.contains("incomplete fiscal year"), "footnote missing: {only}");
+    }
+
+    /// (#994) A SEC rollup has one annual row per year (1 quarter), a full year that carries no `*`, so
+    /// it owes no footnote for a mark it never prints.
+    #[test]
+    fn whole_sec_years_owe_no_incomplete_footnote() {
+        let rows = [
+            quarter(2024, 12, Some(400.0), Some(4.0)),
+            quarter(2025, 12, Some(480.0), Some(6.0)),
+        ];
+        let (out, has_table) = render("ACME", "SEC EDGAR", &rows);
+        assert!(has_table, "{out}");
+        assert!(
+            !out.contains(" 2024*") && !out.contains(" 2025*"),
+            "a whole year is never marked: {out}"
+        );
+        assert!(
+            !out.contains("incomplete fiscal year"),
+            "no mark, no footnote: {out}"
+        );
     }
 
     /// (round 89 note) no rows to roll up -> the explanatory note prints under the header and the
