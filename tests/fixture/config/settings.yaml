@@ -21,7 +21,7 @@
 # locally on a warm cache, drifting whenever the market moves. Deleting this file therefore costs a
 # FOLIOMAN_DATA_ROOT knob in production code serving only tests, PLUS either 200 tickers on every
 # pin() argv or the test universe moved into the shipped ci-settings.yaml where screen and check
-# would read it. Both are worse than one 219-line manifest. Keep it.
+# would read it. Both are worse than one manifest. Keep it.
 #
 # THIS LIST IS THE ONE DEFINITION OF THE FIXTURE UNIVERSE. The binary under test reads it as its
 # universe, and `regen_backtest_fixture` in tests/backtest_fixture.rs reads it FROM HERE to rebuild
