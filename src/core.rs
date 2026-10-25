@@ -4556,11 +4556,14 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     // (#498) ...and when the yrs-back row filed NO FCF figure (a company-private capex tag the free API
     // omits: NVDA's FY2013-21), the OLDEST newer row >= 3y before `now` that has one stands in, over its
     // own span. A burn is a figure, so it still reads None; no such row -> None, as before.
+    // (#1065) Both spans below (1085 and 720 days) take 10 days short of whole years, as (#676)'s windows
+    // do: three 52-week fiscal years end 1092 days apart and two end 728, so SNDK read n/a in REV-5Y,
+    // FCF-5Y and FAIR for a year.
     let fcf_from = match (now, long_ago) {
         (Some(n), Some(old)) if old.fcf_margin.is_none() => rows
             .iter()
             .filter(|r| r.filed <= cutoff && r.fcf_margin.is_some() && r.period_end > old.period_end)
-            .filter(|r| (n.period_end - r.period_end).num_days() >= 3 * 365)
+            .filter(|r| (n.period_end - r.period_end).num_days() >= 1085)
             .min_by_key(|r| r.period_end)
             .map(|r| (r, (n.period_end - r.period_end).num_days() as f64 / 365.25)),
         _ => long_ago.map(|r| (r, yrs as f64)),
@@ -4569,7 +4572,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     // (#505) no row `yrs` back at all (HOOD, RDDT, SNDK): the oldest row 2+ years before `now`, over its span
     let first_2y = now.filter(|_| long_ago.is_none()).and_then(|n| {
         rows.iter()
-            .filter(|r| r.filed <= cutoff && (n.period_end - r.period_end).num_days() >= 730)
+            .filter(|r| r.filed <= cutoff && (n.period_end - r.period_end).num_days() >= 720)
             .min_by_key(|r| r.period_end)
             .map(|r| (r, (n.period_end - r.period_end).num_days() as f64 / 365.25))
     });
@@ -7735,6 +7738,13 @@ mod tests {
         };
         assert_eq!(short(&[at(2021, Some(10.0)), at(2022, Some(15.0)), now.clone()]), (None, None, Some((0.0, 3.0)), Some((26.0, 3.0))));
         assert_eq!(short(&[at(2022, Some(10.0)), now.clone()]).3, Some((41.5, 2.0)), "exactly 730 days stands in");
+        // (#1065) 10 days short of whole years still counts: two 52-week years are 728 days, three 1092
+        let back = |days, y| FundRow { period_end: now.period_end - Duration::days(days), ..at(y, Some(10.0)) };
+        assert_eq!(short(&[back(728, 2022), now.clone()]).3.map(|(_, s)| s), Some(1.99), "two 52-week years");
+        assert!(short(&[back(720, 2022), now.clone()]).3.is_some());
+        assert_eq!(short(&[back(719, 2022), now.clone()]).3, None);
+        assert!(g(&[at(2019, None), back(1085, 2021), now.clone()]).is_some(), "a stand-in 10 days short of 3y");
+        assert_eq!(g(&[at(2019, None), back(1084, 2021), now.clone()]), None);
         assert_eq!(short(&[at(2023, Some(10.0)), now.clone()]).3, None, "1 year is too short");
         assert_eq!(short(&[at(2021, Some(-1.0)), now.clone()]).3, None, "a burn at the old end");
         assert_eq!(short(&nvda).2, None, "a row 5y back exists: the full rate's job, never the short one");
