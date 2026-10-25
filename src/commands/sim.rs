@@ -299,6 +299,32 @@ pub(crate) fn digest_line(
     )
 }
 
+/// SUMMARY's index verdict and coverage note: a gap under 0.05 pp prints as ±0.0, so it reads level.
+fn vs_index_verdict(ex: f64, b_n: usize, events: usize) -> (String, String) {
+    let coverage = if b_n < events {
+        format!(" — benchmark covers {b_n}/{events} buys")
+    } else {
+        String::new()
+    };
+    let verdict = if ex.abs() < 0.05 {
+        "level with the index so far".to_string()
+    } else if ex >= 0.05 {
+        format!("screen ahead by {ex:+.1} pp")
+    } else {
+        format!("screen behind by {ex:+.1} pp")
+    };
+    (verdict, coverage)
+}
+
+/// SUMMARY's (#315) Série E verdict: n/a until a position is priced, else the P/L gap in pp.
+fn vs_serie_e(priced_cost: f64, pl_pct: f64, e_pct: f64) -> String {
+    match pl_pct - e_pct {
+        _ if priced_cost <= 0.0 => "n/a (no position priced)".to_string(),
+        d if d >= 0.0 => format!("screen ahead by {d:+.1} pp"),
+        d => format!("screen behind by {d:+.1} pp"),
+    }
+}
+
 /// `#[mutants::skip]` for the reason spelled out on `track::run`: a command entry point is reachable
 /// only from `main.rs`, the gate kills with `--lib --test backtest_fixture`, and so `replace run with
 /// ()` cannot be killed by anything anyone writes. The gradeable logic lives in `ledger`,
@@ -458,18 +484,7 @@ pub async fn run(_args: Vec<String>) {
             let b_value = b_units * spx_now;
             let b_pct = 100.0 * (b_value / b_cost - 1.0);
             let ex = pl_pct - b_pct;
-            let coverage = if b_n < led.events.len() {
-                format!(" — benchmark covers {b_n}/{} buys", led.events.len())
-            } else {
-                String::new()
-            };
-            let verdict = if ex.abs() < 0.05 {
-                "level with the index so far".to_string()
-            } else if ex > 0.0 {
-                format!("screen ahead by {ex:+.1} pp")
-            } else {
-                format!("screen behind by {ex:+.1} pp")
-            };
+            let (verdict, coverage) = vs_index_verdict(ex, b_n, led.events.len());
             println!(
                 "  same money into the S&P 500 instead: €{b_value:.0} ({b_pct:+.1}%)  →  {verdict}{coverage}"
             );
@@ -480,11 +495,7 @@ pub async fn run(_args: Vec<String>) {
     let e_cost: f64 = led.events.iter().map(|e| e.deployed).sum();
     let e_value = serie_e_value(&led.events, today);
     let e_pct = if e_cost > 0.0 { 100.0 * (e_value / e_cost - 1.0) } else { 0.0 };
-    let e_vs = match pl_pct - e_pct {
-        _ if priced_cost <= 0.0 => "n/a (no position priced)".to_string(),
-        d if d >= 0.0 => format!("screen ahead by {d:+.1} pp"),
-        d => format!("screen behind by {d:+.1} pp"),
-    };
+    let e_vs = vs_serie_e(priced_cost, pl_pct, e_pct);
     println!(
         "  same money at Série E best case {:.1}%/yr: €{e_value:.0} ({e_pct:+.1}%)  →  {e_vs}",
         crate::core::serie_e_best_pct()
@@ -875,6 +886,24 @@ mod tests {
         let line = digest_line(300.0, "2026-05-10", 450.0, 597.2, None, 1, 2);
         assert!(line.contains("vs index n/a"));
         assert!(line.contains("(priced 1/2)"));
+    }
+
+    /// SUMMARY verdicts: the index line reads level inside ±0.05 pp and notes partial coverage; the Série E
+    /// line is n/a until a position is priced and calls a zero gap ahead.
+    #[test]
+    fn summary_verdicts_split_at_their_bands() {
+        assert_eq!(vs_index_verdict(0.04, 4, 4).0, "level with the index so far");
+        assert_eq!(vs_index_verdict(0.0, 4, 4).0, "level with the index so far");
+        assert_eq!(vs_index_verdict(-0.04, 4, 4).0, "level with the index so far");
+        assert!(vs_index_verdict(0.05, 4, 4).0.starts_with("screen ahead"));
+        assert_eq!(vs_index_verdict(0.5, 4, 4).0, "screen ahead by +0.5 pp");
+        assert_eq!(vs_index_verdict(-0.5, 4, 4).0, "screen behind by -0.5 pp");
+        assert_eq!(vs_index_verdict(0.5, 3, 4).1, " — benchmark covers 3/4 buys");
+        assert_eq!(vs_index_verdict(0.5, 4, 4).1, "");
+        assert_eq!(vs_serie_e(0.0, 5.0, 1.0), "n/a (no position priced)");
+        assert_eq!(vs_serie_e(100.0, 5.0, 1.0), "screen ahead by +4.0 pp");
+        assert_eq!(vs_serie_e(100.0, 1.0, 5.0), "screen behind by -4.0 pp");
+        assert_eq!(vs_serie_e(100.0, 1.0, 1.0), "screen ahead by +0.0 pp");
     }
 
     /// ym()/next_ym(): month parsing + December rollover.
