@@ -1400,6 +1400,8 @@ fn book_ranks(t: &str, journal: &[crate::commands::track::Snapshot]) -> Vec<usiz
 /// r28 and `track::grade` use). A claim needs `>= min_pts` appearances; earlier-half mean vs
 /// later-half mean decides, with a `band`-rank deadband so a flat drift stays silent. Returns
 /// (climbers, faders), each `(ticker, first_rank, last_rank)` as first→last evidence.
+/// (#1027) A move of exactly `band` counts: the half means are thirds, so ranks [1,2,2] then
+/// [2,3,3] differ by 0.9999999999999998, and a 1e-9 slack keeps that a fade.
 fn rank_trend(
     today_top: &[String],
     journal: &[crate::commands::track::Snapshot],
@@ -1417,9 +1419,9 @@ fn rank_trend(
         let mean = |xs: &[usize]| xs.iter().sum::<usize>() as f64 / xs.len() as f64;
         let (mean_e, mean_l) = (mean(&ranks[..m]), mean(&ranks[m..]));
         let entry = (t.clone(), ranks[0], *ranks.last().unwrap());
-        if mean_l <= mean_e - band {
+        if mean_l <= mean_e - band + 1e-9 {
             climbers.push(entry); // later ranks are NUMERICALLY smaller = higher up the book
-        } else if mean_l >= mean_e + band {
+        } else if mean_l >= mean_e + band - 1e-9 {
             faders.push(entry);
         }
     }
@@ -5283,6 +5285,17 @@ mod tests {
         let (up, down) = rank_trend(&["EDGE".to_string(), "ODD".to_string()], &edge, 3, 1.5);
         assert_eq!(up, vec![("EDGE".to_string(), 9, 1)]);
         assert!(down.is_empty(), "{down:?}");
+
+        // (#1027) a move of exactly one band claims, though the thirds sum a hair short of it:
+        // FADE [1,2,2] then [2,3,3], CLIMB [9,9,8] then [8,8,7]
+        let ranks = [(1, 9), (2, 9), (2, 8), (2, 8), (3, 8), (3, 7)];
+        let thirds: Vec<_> = (1..)
+            .zip(ranks)
+            .map(|(d, (f, c))| snap(&format!("2026-07-0{d}"), &[("FADE", f), ("CLIMB", c)]))
+            .collect();
+        let (up, down) = rank_trend(&["FADE".to_string(), "CLIMB".to_string()], &thirds, 3, 1.0);
+        assert_eq!(up, vec![("CLIMB".to_string(), 9, 7)]);
+        assert_eq!(down, vec![("FADE".to_string(), 1, 3)]);
     }
 
     /// (round 30) book stability: averaged top-BOOK name-retention between consecutive screens.
