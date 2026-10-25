@@ -7173,7 +7173,8 @@ fn parse_justetf_facts(html: &str) -> (Option<f64>, Option<f64>) {
             .collect();
         t.parse::<f64>().ok().filter(|v: &f64| v.is_finite() && *v > 0.0)
     }
-    let ter = between(html, "tl_etf-basics_value_ter\">", "<").and_then(lead_num);
+    // (#1038) the live page nests a span of the same testid inside the div, so the first slice is a blank.
+    let ter = between_all(html, "tl_etf-basics_value_ter\">", "<").into_iter().find_map(lead_num);
     let aum = between(html, "etf-basics_row_fund-size", "</tr>").and_then(|row| {
         let cell = between(row, "<div>", "<")?.trim(); // "EUR 16,988 m "
         let rest = cell.split_once(' ')?.1; // drop the currency word
@@ -10402,6 +10403,13 @@ pub(crate) mod tests {
         let (ter, aum) = parse_justetf_facts(page);
         assert_eq!(ter, Some(0.15), "percent, not a fraction — same units as BF's TER");
         assert_eq!(aum, Some(1.6988e10), "millions -> absolute, same units as bf_row_aum");
+
+        // (#1038) today's page wraps a span of the SAME testid in the div; the wrapper's slice is a blank
+        let nested = page.replace(
+            r#"data-testid="tl_etf-basics_value_ter">0.15% p.a.</div>"#,
+            r#"data-testid="tl_etf-basics_value_ter"> <span data-testid="tl_etf-basics_value_ter">0.20% p.a.</span> </div>"#,
+        );
+        assert_eq!(parse_justetf_facts(&nested).0, Some(0.2), "the nested span's TER, not the wrapper's blank");
 
         // billions suffix, and a fund with no thousands separator
         let bn = page.replace("EUR 16,988 m", "USD 3.5 bn");
