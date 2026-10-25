@@ -74,7 +74,7 @@ pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
 /// (#309) The POINT-IN-TIME twin: wide `pit` runs journal here, each row carrying its SIZED record, and
 /// `screen` prints those under BUY NOW. Kept apart so a PIT number never restates the method footer's
 /// claim (see [`may_write_verdict`]), and a survivor-universe number never grades the book bought.
-/// (#788) `pit dead` runs only, see [`may_write_sized`].
+/// (#788)/(#1061) `fund pit dead` runs only, see [`may_write_sized`].
 pub(crate) const SIZED_FILE: &str = ".backtest_sized.json";
 /// (#310) The roll point the census graded: sell the whole book after this many years, pay the tax, and
 /// re-buy that day's screen. Fixed a priori, never swept — picking the best of several is the (#120) argmax.
@@ -1129,9 +1129,11 @@ fn may_write_verdict(wide: bool, pit: bool, resolved: usize) -> bool {
 
 /// (#788) The SIZED twin's rule: the verdict's floor, on a `pit` run that also walks the `dead` names. A
 /// `pit` run without them gets no sample from a member that delisted inside its window, so its SIZED
-/// record read the survivors only, the one pool `SIZED_FILE` exists to keep out of BUY NOW.
-fn may_write_sized(wide: bool, pit: bool, dead: bool, resolved: usize) -> bool {
-    pit && dead && may_write_verdict(wide, false, resolved)
+/// record read the survivors only, the one pool `SIZED_FILE` exists to keep out of BUY NOW. (#1061) And
+/// only with `fund`: without it no cutoff gets an as-of P/E, so the shipped PEG gate and the value factor
+/// read missing and pass every name, and the record grades a book `size` never funds.
+fn may_write_sized(wide: bool, pit: bool, dead: bool, fund: bool, resolved: usize) -> bool {
+    pit && dead && fund && may_write_verdict(wide, false, resolved)
 }
 
 /// Why a wide run declined to journal. A `String` and not an `if` at the call site because the call
@@ -2164,7 +2166,10 @@ pub async fn run(args: Vec<String>) {
         if pit && !dead && may_write_verdict(wide, false, tickers.len()) {
             eprintln!("backtest: SIZED record NOT journaled — a `pit` run without `dead` scores survivors only; add `dead` to journal it");
         }
-        may_write_sized(wide, pit, dead, tickers.len()).then_some(SIZED_FILE)
+        if pit && dead && !fund && may_write_verdict(wide, false, tickers.len()) {
+            eprintln!("backtest: SIZED record NOT journaled — a `pit dead` run without `fund` has no as-of P/E, so no PEG gate; add `fund` to journal it");
+        }
+        may_write_sized(wide, pit, dead, fund, tickers.len()).then_some(SIZED_FILE)
     };
     if let (Some(file), Some((book, excess, win, worst, oos_early, oos_late, windows))) = (journal, verdict) {
         write_verdict(
@@ -9017,10 +9022,12 @@ mod tests {
         assert!(!may_write_verdict(true, true, MIN_VERDICT_TICKERS), "a PIT run is a different claim, not a better sample");
         assert!(!may_write_verdict(true, true, MIN_VERDICT_TICKERS * 10));
         // (#788) the SIZED twin is that PIT run, deep enough, AND with the dead names walked
-        assert!(may_write_sized(true, true, true, MIN_VERDICT_TICKERS));
-        assert!(!may_write_sized(true, true, false, MIN_VERDICT_TICKERS), "a survivor-only PIT run");
-        assert!(!may_write_sized(true, false, true, MIN_VERDICT_TICKERS), "not a PIT run");
-        assert!(!may_write_sized(true, true, true, MIN_VERDICT_TICKERS - 1), "a thin one");
+        assert!(may_write_sized(true, true, true, true, MIN_VERDICT_TICKERS));
+        assert!(!may_write_sized(true, true, false, true, MIN_VERDICT_TICKERS), "a survivor-only PIT run");
+        assert!(!may_write_sized(true, false, true, true, MIN_VERDICT_TICKERS), "not a PIT run");
+        assert!(!may_write_sized(true, true, true, true, MIN_VERDICT_TICKERS - 1), "a thin one");
+        // (#1061) and with `fund`, or the PEG gate never fires and the record grades another book
+        assert!(!may_write_sized(true, true, true, false, MIN_VERDICT_TICKERS), "a price-only PIT run");
         // and the refusal SAYS WHICH, or a reader debugs the ticker count that was never the problem
         assert!(no_verdict_reason(true, MIN_VERDICT_TICKERS).contains("POINT-IN-TIME"));
         assert!(no_verdict_reason(false, 3).contains("only 3 tickers resolved"));
