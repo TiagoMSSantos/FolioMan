@@ -714,7 +714,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   combo  5g+5v               book +11.7%/yr  excess +2.1  win 71%  worst -10.8  OOS -0.7/+4.8  (mean size 3.9, overlap 0.0/window)
   combo  10g+10v             book +11.5%/yr  excess +1.8  win 75%  worst -10.8  OOS -0.7/+4.3  (mean size 6.6, overlap 0.2/window)
   window corr (growth vs value book, spearman) -0.53 over 9 shared windows
-  value-book era slices (chronological quarters, excess %/yr) -5.2 / -2.8 / -2.7 / -1.3   ey rows/window min 0 mean 2.7
+  value-book era slices (chronological quarters, excess %/yr) -5.2 / -2.8 / -2.7 / -0.6   ey rows/window min 0 mean 2.7
   (ship rule: the combo becomes PORTFOLIO GUIDANCE — buy both books, never-sell — ONLY if the STRESS
    combo book ≥ the growth book with OOS both + and worst no deeper. Never a score/gate/knob change.)
 
