@@ -8769,7 +8769,11 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 1fcffbc37a02 (#1073), graded 2026-10-25 by run 40228197433, same five inputs, since
+  # LAST GRADED SHA: 156c9435819d (#1076, the rebless on top of (#1075); its src is (#1075)'s), graded
+  # 2026-10-25 by run 40232143565, same five inputs, since dbbd52f, `files` = src/commands/backtest.rs:
+  # 11 in scope = 11 caught (`turnover_frac` 11 for (#1075)), 0 unviable, 0 missed, 0 timeout. (#1077)
+  # records it.
+  # BEFORE THAT: 1fcffbc37a02 (#1073), graded 2026-10-25 by run 40228197433, same five inputs, since
   # 2d175aa, `files` = src/fetch.rs: 10 in scope = 10 caught (`resolve_eu_listings` 10 for (#1073): its 5
   # HashMap returns, the 2 `!` on the marker checks and 3 boolean swaps in the class-share re-ask filter),
   # 0 unviable, 0 missed, 0 timeout. (#1072)'s 3 mutants were graded by its push's diff gate, 3 of 3.
