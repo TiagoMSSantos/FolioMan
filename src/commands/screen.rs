@@ -1349,6 +1349,14 @@ fn footer_names(ranked: &[String], pinned: &[String]) -> Vec<String> {
     ranked.iter().chain(pinned.iter().filter(|p| !ranked.contains(p))).cloned().collect()
 }
 
+/// (#1051) The journal's screens dated before `run_date`, out of `run`'s skip-tagged body so the cut is
+/// graded: today's own line (just written) is left out so the persistent-leaders frequency stays
+/// out-of-sample, and fewer than 2 past screens is `None`, since a persistence claim needs history.
+fn prior_screens(snaps: &[crate::commands::track::Snapshot], run_date: &str) -> Option<Vec<crate::commands::track::Snapshot>> {
+    let past: Vec<_> = snaps.iter().filter(|s| s.date.as_str() < run_date).cloned().collect();
+    (past.len() >= 2).then_some(past)
+}
+
 /// (round 28) Which of today's top rows have DURABLY held a top-10 rank across the journal —
 /// the frequency the trust line's return-grade and the single-step membership diff don't show.
 /// For each `today_top` ticker (rank order preserved), the fraction of `past` snapshots whose own
@@ -3461,8 +3469,7 @@ pub async fn run(args: Vec<String>) {
     // thin journal can't read as a long record. Zero fetch; silent under 2 past screens or an
     // empty durable set.
     {
-        let past: Vec<_> = snaps.iter().filter(|s| s.date < run_date).cloned().collect();
-        if past.len() >= 2 {
+        if let Some(past) = prior_screens(&snaps, &run_date) {
             let leaders = persistent_leaders(&today_top, &past, 0.8);
             if !leaders.is_empty() {
                 let k = past.len();
@@ -5252,6 +5259,11 @@ mod tests {
             vec!["HALF".to_string(), "ALL".to_string(), "MOST".to_string()]
         );
         assert!(persistent_leaders(&today, &[], 0.8).is_empty()); // no history → no claim
+        // (#1051) the footer reads only screens strictly before today, and only from 2 of them
+        let dates = |run: &str| prior_screens(&past, run).map(|v| v.into_iter().map(|s| s.date).collect::<Vec<_>>());
+        assert_eq!(dates("2026-06-05"), Some(["2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04"].map(String::from).to_vec()));
+        assert_eq!(dates("2026-06-03"), Some(["2026-06-01", "2026-06-02"].map(String::from).to_vec()));
+        assert_eq!(dates("2026-06-02"), None);
     }
 
     /// (round 29) rank trend: a name whose later-half mean rank beats its earlier-half by ≥ band is
