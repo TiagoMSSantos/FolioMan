@@ -988,7 +988,8 @@ fn leg_floor_lines(quotes: &[Quote], pinned: &[String], tuning: &config::BuyHeur
     }
     // the knob and its LIVE value, never a hardcoded threshold — the block exists to make a gate's cost
     // visible, and a footer naming a number the run didn't use would misdirect the very edit it invites.
-    out.push(format!("  (knob `{knob}` {floor:.0} — loosening it re-admits these; receipt in ci-settings)"));
+    // (#1078) exact, not `.0`: the shipped 8Y floor 42.22 printed as 42.
+    out.push(format!("  (knob `{knob}` {floor} — loosening it re-admits these; receipt in ci-settings)"));
     out
 }
 

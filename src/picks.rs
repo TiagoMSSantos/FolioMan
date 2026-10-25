@@ -2409,6 +2409,27 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     gate_fails(quote, tuning, true)
 }
 
+/// (#1078) Decimals at which a failing value and its bar print apart, from `dp` up to `dp + 3`. At a
+/// fixed `dp` a 79.6 range read "80% in range (need ≥80%)", a reason that looks like a pass. Both round
+/// at one precision, which keeps their order, so strings that differ never invert it.
+fn bar_dp(v: f64, bar: f64, dp: usize) -> usize {
+    (dp..=dp + 3)
+        .find(|&d| format!("{v:.d$}") != format!("{bar:.d$}"))
+        .unwrap_or(dp)
+}
+
+/// (#1078) The AUM gate's reason. `turnover_cell` rounds €99.6M and a €100M floor both to "€100M", so a
+/// tie prints both in millions at [`bar_dp`]'s precision instead.
+fn aum_reason(a: f64, floor: f64) -> String {
+    let (mut cell, mut need) = (turnover_cell(Some(a)), turnover_cell(Some(floor)));
+    if cell == need {
+        let (a, floor) = (a / 1e6, floor / 1e6);
+        let d = bar_dp(a, floor, 1);
+        (cell, need) = (format!("€{a:.d$}M"), format!("€{floor:.d$}M"));
+    }
+    format!("{cell} fund — liquidation/merge risk over a decades hold (need ≥ {need})")
+}
+
 /// [`gate_failures`]; `why` false leaves every reason empty, for a reader that wants the tags alone.
 fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'static str, String, bool)>> {
     // (#569) soft scoring runs this twice per failing stock and reads only the tags: formatting the
@@ -2473,13 +2494,19 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
         if let Some(a) = quote.aum_eur.filter(|&a| a < tuning.growth_min_aum_etf) {
             fails.push((
                 "aum",
-                format!("{} fund — liquidation/merge risk over a decades hold (need ≥ {})", turnover_cell(Some(a)), turnover_cell(Some(tuning.growth_min_aum_etf))),
+                if why {
+                    aum_reason(a, tuning.growth_min_aum_etf)
+                } else {
+                    String::new()
+                },
                 a >= tuning.growth_min_aum_etf * 0.5,
             ));
         }
     }
+    // (#1078) every value-vs-bar reason prints at `bar_dp`'s precision, so a miss never reads as its bar.
+    // Inside `format!`'s arguments it costs nothing when `why` is false.
     if quote.range_pct < min_range {
-        fails.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range), quote.range_pct >= min_range - 10.0));
+        fails.push(("range", format!("{:.d$}% in range (need ≥{:.d$}%)", quote.range_pct, min_range, d = bar_dp(quote.range_pct, min_range, 0)), quote.range_pct >= min_range - 10.0));
     }
     // (S-8Y) mirror of the 8y-window range bar. MUST stay the same expression as `score_parts`' copy —
     // the two disagreeing means a name is silently dropped from the ranking while the tail claims it
@@ -2487,14 +2514,14 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     let min_range_8y = if crypto { tuning.growth_min_range_pct_8y_crypto } else { tuning.growth_min_range_pct_8y };
     if min_range_8y > 0.0 {
         if let Some(s) = quote.stats_8y.as_ref().filter(|s| s.range_pct < min_range_8y) {
-            fails.push(("range8y", format!("{:.0}% in 8y range (need ≥{:.0}%)", s.range_pct, min_range_8y), s.range_pct >= min_range_8y - 10.0));
+            fails.push(("range8y", format!("{:.d$}% in 8y range (need ≥{:.d$}%)", s.range_pct, min_range_8y, d = bar_dp(s.range_pct, min_range_8y, 0)), s.range_pct >= min_range_8y - 10.0));
         }
     }
     if long_cagr < min_cagr {
         // close = within 1.5 pp of the floor. 4.0 flooded the screen tail with ~55 "10%/yr vs a 14%
         // bar" rows — that's a different asset class, not a near miss; 1.5 keeps the genuine
         // one-notch-out compounders (13.9 vs 14.0) and nothing else.
-        fails.push(("cagr", format!("{long_cagr:.1}%/yr (need ≥{min_cagr:.1}%)"), long_cagr >= min_cagr - 1.5));
+        fails.push(("cagr", format!("{long_cagr:.d$}%/yr (need ≥{min_cagr:.d$}%)", d = bar_dp(long_cagr, min_cagr, 1)), long_cagr >= min_cagr - 1.5));
     }
     // (#3i) the whole-life half of the same floor. REQUIRED, not decorative: without it a name rejected
     // by the life bar drops out of the table with no reason printed anywhere. Same 1.5pp near-miss margin
@@ -2506,7 +2533,7 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     // string that names a measurement the tool did not take.
     if let Some(l) = life_leg_cagr(quote).filter(|&l| l < min_cagr) {
         let span = if quote.capped_cagr.is_some() { "in its capped window" } else { "since listing" };
-        fails.push(("cagr-life", format!("{l:.1}%/yr {span} (need ≥{min_cagr:.1}%)"), l >= min_cagr - 1.5));
+        fails.push(("cagr-life", format!("{l:.d$}%/yr {span} (need ≥{min_cagr:.d$}%)", d = bar_dp(l, min_cagr, 1)), l >= min_cagr - 1.5));
     }
     if return_1y <= y1_floor {
         fails.push(("1Y+", format!("1Y {return_1y:+.1}% (need >{y1_floor:.1}%)"), return_1y > y1_floor - 10.0));
@@ -2529,14 +2556,15 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
         }
     }
     // mirror of the `long_leg_floors` loop in `score_parts` — same table, so the two cannot disagree.
+    // (#1078) The floor prints exact: at `.0` the shipped 42.22 read "need >42%" beside a failing +42.2%.
     for (label, tag, floor) in long_leg_floors(tuning, crypto) {
         if let Some(p) = perf_pct(quote, label).filter(|p| *p <= floor) {
-            fails.push((tag, format!("{label} {p:+.1}% (need >{floor:.0}%)"), p > floor - 15.0));
+            fails.push((tag, format!("{label} {p:+.d$}% (need >{floor}%)", d = bar_dp(p, floor, 1)), p > floor - 15.0));
         }
     }
     let turn_floor = turnover_floor(quote, tuning); // (#247) mirrors the scorer's per-class floor
     if turnover < turn_floor {
-        fails.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, turn_floor / 1e3), turnover >= turn_floor * 0.5));
+        fails.push(("liquidity", format!("€{:.d$}K/day (floor €{:.d$}K)", turnover / 1e3, turn_floor / 1e3, d = bar_dp(turnover / 1e3, turn_floor / 1e3, 0)), turnover >= turn_floor * 0.5));
     }
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
         fails.push(("stretch", format!("+{:.0}% above 200wk SMA (ceiling +{:.0}%)", quote.above_ma_pct, tuning.growth_max_above_ma), quote.above_ma_pct <= tuning.growth_max_above_ma + 25.0));
@@ -15105,6 +15133,21 @@ mod tests {
         }
     }
 
+    /// (#1078) A failing value prints at the first precision that tells it from its bar, three decimals
+    /// past the base at most; a value that ties its bar even there keeps the base.
+    #[test]
+    fn bar_dp_prints_a_miss_apart_from_its_bar() {
+        for (v, bar, dp, want) in [
+            (75.0, 80.0, 0, 0),
+            (79.6, 80.0, 0, 1),
+            (79.999, 80.0, 0, 3),
+            (79.9999, 80.0, 0, 0),
+            (13.96, 14.0, 1, 2),
+        ] {
+            assert_eq!(bar_dp(v, bar, dp), want, "{v} vs {bar} from {dp} decimals");
+        }
+    }
+
     /// (#339) Every growth gate the mutation census found graded on one side of its line only. Three row
     /// kinds, each killing its own mutant family:
     /// - EXACTLY on the line clears (a `<`/`>` turned `<=`/`>=` rejects it, and the mirror check sees
@@ -15149,6 +15192,9 @@ mod tests {
         let mvrv_k: Set = |t, v| t.crypto_max_mvrv = v;
         let peg_k: Set = |t, v| t.growth_max_peg = v;
         let dd_k: Set = |t, v| t.growth_maxdd_cap = v;
+        let range_k: Set = |t, v| t.growth_min_range_pct = v;
+        let y5_k: Set = |t, v| t.growth_min_5y_pct = v;
+        let liq_k: Set = |t, v| t.min_avg_turnover_eur_stock = v;
 
         // (label, gate tag, knob, knob value, quote, expected verdict) -- None clears, Some((reason, close)) rejects
         let cases: &[(&str, &str, Set, f64, Quote, Option<(&str, bool)>)] = &[
@@ -15156,6 +15202,13 @@ mod tests {
             ("young spares a name exactly its age", "young", age_k, 5.0, with(|q| q.age_years = Some(5.0)), None),
             ("aum spares a fund exactly on it", "aum", aum_k, 1e8, etf("FUND.DE", 1e8), None),
             ("aum ignores a coin filed as an ETF", "aum", aum_k, 1e8, etf("XYZ-EUR", 5e6), None),
+            // (#1078) a miss that rounds onto its bar prints the digits that tell them apart
+            ("aum prints a tie in millions", "aum", aum_k, 1e8, etf("FUND.DE", 99.6e6),
+                Some(("€99.6M fund — liquidation/merge risk over a decades hold (need ≥ €100.0M)", true))),
+            ("aum keeps the table's cells apart from a tie", "aum", aum_k, 1e8, etf("FUND.DE", 6e7),
+                Some(("€60M fund — liquidation/merge risk over a decades hold (need ≥ €100M)", true))),
+            ("range prints the decimal a rounded miss hides", "range", range_k, 80.0, with(|q| q.range_pct = 79.6),
+                Some(("79.6% in range (need ≥80.0%)", true))),
             ("range8y spares a name exactly on it", "range8y", r8_k, 80.0, r8(80.0), None),
             ("range8y calls 5pp short close", "range8y", r8_k, 80.0, r8(75.0),
                 Some(("75% in 8y range (need ≥80%)", true))),
@@ -15174,6 +15227,10 @@ mod tests {
                 Some(("5Y -5.0% (need >0%)", true))),
             ("5Y stops at its 15pp margin", "5Y+", keep, 0.0, perf(&[("1M", 2.0), ("1Y", 20.0), ("5Y", -15.0)]),
                 Some(("5Y -15.0% (need >0%)", false))),
+            ("5Y prints a fractional floor exact", "5Y+", y5_k, 42.22, perf(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 42.2)]),
+                Some(("5Y +42.20% (need >42.22%)", true))),
+            ("liquidity prints the decimal a rounded miss hides", "liquidity", liq_k, 1e5, with(|q| q.avg_turnover_eur = Some(99_600.0)),
+                Some(("€99.6K/day (floor €100.0K)", true))),
             ("a 0.5% flat bar is not an artifact", "artifact", keep, 0.0,
                 perf(&[("1D", 0.5), ("1W", 0.5), ("1M", 0.5), ("1Y", 20.0), ("5Y", 200.0)]), None),
             // STRETCH
