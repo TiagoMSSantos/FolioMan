@@ -3176,9 +3176,11 @@ pub fn hold_effective_aum_floor(strict: f64, relaxed: f64) -> f64 {
 /// dropped, so the 1e9 default still prints "€1B floor" exactly as it always has (non-negotiable #1)
 /// while 5e8 prints "€0.5B". `strip_suffix` and not `trim_end_matches`: the latter eats BOTH zeros
 /// of "10.0". Shared with the tests so a fixture cannot pin a spelling the message does not use.
+/// (#1022) …now to the nearest €1M with no trailing zeros, and the fund's own AUM is spelled by the
+/// same helper. One decimal printed "AUM €0.5B < €0.5B floor" for a fund €1M under the 5e8 floor,
+/// and the 9e7 sector-sleeve floor as "€0.1B"; now they read "€0.499B < €0.5B" and "€0.09B".
 pub fn hold_aum_floor_label(floor: f64) -> String {
-    let s = format!("{:.1}", floor / 1e9);
-    s.strip_suffix(".0").unwrap_or(s.as_str()).to_string()
+    format!("{}", (floor / 1e6).round() / 1e3)
 }
 
 /// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
@@ -3269,8 +3271,8 @@ fn hold_miss_leg_at(
     );
     if let Some(a) = q.aum_shown() {
         if a < min_aum {
-            let floor = hold_aum_floor_label(min_aum);
-            return Some((5, format!("AUM €{:.1}B < €{floor}B floor", a / 1e9)));
+            let (aum, floor) = (hold_aum_floor_label(a), hold_aum_floor_label(min_aum));
+            return Some((5, format!("AUM €{aum}B < €{floor}B floor")));
         }
     }
     None
@@ -7958,6 +7960,8 @@ mod tests {
         assert_eq!(hold_aum_floor_label(1e9), "1");
         assert_eq!(hold_aum_floor_label(5e8), "0.5");
         assert_eq!(hold_aum_floor_label(1e10), "10");
+        assert_eq!(hold_aum_floor_label(9e7), "0.09", "(#1022) the sector floor is not €0.1B");
+        assert_eq!(hold_aum_floor_label(4.99e8), "0.499", "(#1022) €1M under 5e8 is not 0.5");
         let rec = "<FinInstrmGnlAttrbts><Id>IE00BJ0KDQ92</Id><FullNm>Xtrackers MSCI World ETF 1C</FullNm><ClssfctnTp>CEOGMS</ClssfctnTp></FinInstrmGnlAttrbts>";
         assert_eq!(firds_etf_isins(rec), vec!["IE00BJ0KDQ92".to_string()], "an ETF token alone is enough");
         let bls = |prior: &str| serde_json::json!({"Results": {"series": [{"data": [
@@ -10072,7 +10076,9 @@ mod tests {
         "the floor is inclusive at exactly its own value, unchanged by the rewrite or by (#269)");
     let just_under = aum_floor - 1e6;
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(just_under)).as_deref(),
-        Some(format!("AUM €{:.1}B < €{lbl}B floor", just_under / 1e9).as_str()), "and just under it still refuses");
+        Some(format!("AUM €{}B < €{lbl}B floor", hold_aum_floor_label(just_under)).as_str()),
+        "and just under it still refuses");
+    assert_ne!(hold_aum_floor_label(just_under), lbl, "(#1022) and the two sides never print the same number");
 
     // hold_breadth_tier: broadest (all-world/ACWI) sorts first, then the geographic sleeves
     assert_eq!(hold_breadth_tier("Vanguard FTSE All-World UCITS ETF"), 0);
