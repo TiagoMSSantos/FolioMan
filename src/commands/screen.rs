@@ -2062,8 +2062,9 @@ pub async fn run(args: Vec<String>) {
     filled.extend(mom.iter().cloned());
     let booked: std::collections::HashSet<String> = targets.union(&mom).cloned().collect();
     // (#461) display only: the US line of every printed or shadow-table stock the pool holds on a European
-    // line, so `stamp_us_twin` can fill the cells that line leaves n/a (often its 10Y/20Y legs)
-    let shown: std::collections::HashSet<String> = [&attention, &berkshire, &social]
+    // line, so `stamp_us_twin` can fill the cells that line leaves n/a (often its 10Y/20Y legs).
+    // (#1016) Sorted: `unpriced` below walks it, and the SEC-budgeted lanes enrich `shadow_extra` in that order
+    let shown: std::collections::BTreeSet<String> = [&attention, &berkshire, &social]
         .iter()
         .flat_map(|t| t.as_array().into_iter().flatten())
         .filter_map(|r| r.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str().map(String::from))
