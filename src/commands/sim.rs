@@ -383,7 +383,7 @@ pub async fn run(_args: Vec<String>) {
     );
 
     // (#300) the tier off the quotes just fetched, exactly as `track::run` builds it.
-    let tier_of = |t: &str| quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name));
+    let tier_of = |t: &str| crate::commands::track::tier_of_quote(&quotes, t);
     let fee_of = |t: &str| fee_rate(t, quotes.iter().find(|q| q.ticker == t).and_then(|q| q.quote_currency.as_deref()));
     let led = ledger(&snaps, base, now_key, &settings.sizing, &tier_of, &fee_of);
     if led.events.is_empty() {

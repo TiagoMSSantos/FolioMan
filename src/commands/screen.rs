@@ -3462,7 +3462,7 @@ pub async fn run(args: Vec<String>) {
                 let now_ym = (chrono::Datelike::year(&today), chrono::Datelike::month(&today));
                 // (#300) the tier off this run's quotes, as `track` builds it, so a journalled BUY NOW
                 // book replays with the trackers `size` funded.
-                let tier_of = |t: &str| quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name));
+                let tier_of = |t: &str| crate::commands::track::tier_of_quote(&quotes, t);
                 // (#302) each lot pays its broker's fee, off the same quotes.
                 let fee_of = |t: &str| {
                     crate::commands::sim::fee_rate(t, quotes.iter().find(|q| q.ticker == t).and_then(|q| q.quote_currency.as_deref()))

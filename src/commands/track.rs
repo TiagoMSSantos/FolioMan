@@ -397,6 +397,13 @@ fn near_rows<'a>(snap: &'a Snapshot, gate: Option<&str>) -> Vec<(&'a str, Option
     snap.near.iter().filter(|(.., g)| gate.is_none_or(|w| w == g)).map(|(t, p, _)| (t.as_str(), *p, 1.0)).collect()
 }
 
+/// (#1100) The CORE breadth tier of journalled ticker `t`, off the quotes `run` fetched, for `track`,
+/// `sim` and the screen's digest alike. A failed fetch's stub carries the ticker as its name, which
+/// `hold_breadth_tier` reads as `FACTOR_TIER`, a market it guessed, so only a live quote answers.
+pub(crate) fn tier_of_quote(quotes: &[crate::core::Quote], t: &str) -> Option<u8> {
+    quotes.iter().find(|q| q.ticker == t).filter(|q| !q.is_failed()).map(|q| crate::core::hold_breadth_tier(&q.name))
+}
+
 /// (#322) Every ticker `run` prices: each line's graded lanes and the benchmark. `sized` was graded
 /// but never FETCHED — only `rows.take(BOOK)` and `core` were — so a bought name ranked past ten had
 /// no price today and dropped out of the executed book silently (2 of 12 on the 2026-09-13 line;
@@ -519,8 +526,8 @@ fn graded_rows(
 ///
 /// `tier_of` is passed the way `px_now` is, and for the same reason: the tier is a pure function of
 /// the fund NAME, the names arrive with the quotes `run` already fetched, and re-deriving them here
-/// would be a second source for one fact. A ticker with no quote answers `None` and is simply not
-/// groupable — with every tier `None` the selection degrades to the old prefix, which is what a
+/// would be a second source for one fact. A ticker with no quote, or only a failed fetch's stub
+/// (#1100), answers `None` and is simply not groupable — with every tier `None` the selection degrades to the old prefix, which is what a
 /// journal line whose funds no longer quote must do rather than grade a market it guessed.
 fn core_section(
     snaps: &[Snapshot],
@@ -1816,9 +1823,7 @@ pub async fn run(args: Vec<String>) {
     // second table wedged between them would invite the reader to attribute one to the other.
     // (#289) the tier lookup, built off the quotes already fetched above — one source for the fund
     // name, and none for the tier beyond `core::hold_breadth_tier` itself.
-    let tier_of = |t: &str| {
-        quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name))
-    };
+    let tier_of = |t: &str| tier_of_quote(&quotes, t);
     println!(
         "{}",
         core_section(&snaps, core_cut, settings.sizing.spill_per_tier, today, &px_now, &tier_of, spx_now)
@@ -3077,6 +3082,20 @@ mod tests {
         let (wins, n, sum) = verdict_stats(&[snap("2026-06-16", Some(100.0), &rows)], today, &px, Some(102.0));
         assert_eq!((wins, n), (0, 1));
         assert!((sum - (-10.0 - 2.0)).abs() < 1e-9, "the top-10 at -10.0 against +2.0: {sum}");
+    }
+
+    /// (#1100) A failed fetch's stub names the ticker, which `hold_breadth_tier` reads as `FACTOR_TIER`, a
+    /// distinct tier `spill_picks` would fund; it answers `None`, as a name with no quote at all does.
+    #[test]
+    fn tier_of_quote_reads_no_tier_off_a_failed_fetch() {
+        use crate::core::{hold_breadth_tier, Quote, FACTOR_TIER};
+        let world = "iShares MSCI World UCITS ETF";
+        let quotes = [Quote::stub("W", "\u{20ac}1.00", "", world), Quote::stub("GONE", "err", "", "GONE"), Quote::stub("ND", "no data", "", world)];
+        assert_eq!(hold_breadth_tier("GONE"), FACTOR_TIER, "the stub's name alone reads as a real tier");
+        assert_eq!(tier_of_quote(&quotes, "W"), Some(hold_breadth_tier(world)));
+        assert_eq!(tier_of_quote(&quotes, "GONE"), None, "a failed fetch is not groupable");
+        assert_eq!(tier_of_quote(&quotes, "ND"), None, "nor is a quote with no data");
+        assert_eq!(tier_of_quote(&quotes, "ABSENT"), None);
     }
 
     /// (#322) `run` prices exactly this set. The rank-11 row is fetched only because it was BOUGHT —
