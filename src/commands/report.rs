@@ -317,6 +317,7 @@ fn render_annual(
 /// zero new network. Zeroed trend fields (stub/short history) print "-"/"at high", never a
 /// fabricated 0. Report MARKS a stale price instead of dropping the listing like `screen` does —
 /// the user asked for this ticker by name; `~` mirrors the screen table's bridged-history glyph.
+/// (#1111) R² too: a stub's 0 printed as "r2 0.00".
 /// Pure formatting.
 fn market_line(q: &core::Quote, today: chrono::NaiveDate, stale_days: i64) -> String {
     let h = |label: &str| {
@@ -334,7 +335,7 @@ fn market_line(q: &core::Quote, today: chrono::NaiveDate, stale_days: i64) -> St
         .map(|days| format!(" (stale {days}d)"))
         .unwrap_or_default();
     format!(
-        "\n{} — market: {}{}  cagr {}{} ({})  1y {}  5y {}  10y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}  turnover {}",
+        "\n{} — market: {}{}  cagr {}{} ({})  1y {}  5y {}  10y {}  vol {}  maxdd {}  r2 {}  abv-200wk {}  off-hi {}  turnover {}",
         q.ticker,
         q.price_eur.map(|p| format!("€{p:.2}")).unwrap_or_else(|| "-".into()),
         stale,
@@ -346,7 +347,7 @@ fn market_line(q: &core::Quote, today: chrono::NaiveDate, stale_days: i64) -> St
         yoy(h("10Y")),
         q.volatility_pct.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "-".into()),
         if q.max_drawdown_pct > 0.0 { format!("-{:.0}%", q.max_drawdown_pct) } else { "-".into() },
-        q.trend_r2,
+        if q.trend_r2 > 0.0 { format!("{:.2}", q.trend_r2) } else { "-".into() },
         if q.above_ma_pct > 0.0 { format!("+{:.0}%", q.above_ma_pct) } else { "-".into() },
         if q.drawdown_pct > 0.0 { format!("-{:.1}%", q.drawdown_pct) } else { "at high".into() },
         q.avg_turnover_eur.map(|t| format!("€{}", humanize(t))).unwrap_or_else(|| "-".into()),
@@ -886,7 +887,7 @@ mod tests {
         assert!(!gate_off.contains("stale"), "{gate_off}");
 
         let bare = market_line(&core::Quote::stub("X", "err", "", "X"), today, 5);
-        assert!(bare.contains("market: -  cagr - (-)  1y -  5y -  10y -  vol -  maxdd -"), "{bare}");
+        assert!(bare.contains("market: -  cagr - (-)  1y -  5y -  10y -  vol -  maxdd -  r2 -"), "{bare}");
         assert!(bare.contains("abv-200wk -  off-hi at high  turnover -"), "{bare}");
         assert!(!bare.contains("stale"), "{bare}"); // no close date -> no marker, never a false flag
     }
