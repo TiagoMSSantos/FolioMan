@@ -3427,8 +3427,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: standard deviation of daily returns over the last 252 sessions (a daily figure, not annualized); n/a = too few closes on the chart" },
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart; n/a = no daily chart, or one that never fell below a previous high" },
     // (#447) the footer's hold-pain stats on the page. None = under 5 years of closes, never a fake 100%
-    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of all rolling 5-year windows that ended above where they started; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
-    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change in the record: what a buyer at the wrong moment sat on after 5 years; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
+    // (#1089) both run on the ~10-year daily chart (`fetch::quote_one`), never the older monthly back-fill
+    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of the rolling 5-year windows on the ~10-year daily chart that ended above where they started; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
+    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change on the ~10-year daily chart: what a buyer at the wrong moment sat on after 5 years; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
     ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in; — = under 200 trading days listed" },
