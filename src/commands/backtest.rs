@@ -767,12 +767,14 @@ struct Args {
     dead: bool,
     dead_flat: bool,
     intraday: bool,
+    time: bool,
     tickers: Vec<String>,
 }
 
 /// First purely-numeric arg in 1..=100 = holdout years; the keyword `universe` = test the live screen universe
 /// (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); `pit` = score each
-/// cutoff against the index as it stood that day; everything else = explicit tickers to test.
+/// cutoff against the index as it stood that day; everything else = explicit tickers to test. (#1118) `time`
+/// = wall seconds per phase on stderr.
 fn parse_args(args: &[String]) -> Args {
     let mut a_ = Args { years: 5, ..Default::default() };
     for a in args {
@@ -796,6 +798,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("dead") => a_.dead = true, // (#751) walk dead members on tests/dead-members.csv
             _ if a.eq_ignore_ascii_case("deadflat") => (a_.dead, a_.dead_flat) = (true, true), // (#752) ... with no crash cut
             _ if a.eq_ignore_ascii_case("intraday") => a_.intraday = true, // (#809) open-to-close keys on 10y daily bars
+            _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -1224,8 +1227,18 @@ pub async fn run(args: Vec<String>) {
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
     let Args {
-        years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, mut tickers,
+        years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, time, mut tickers,
     } = parse_args(&args);
+    // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
+    // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
+    let mut mark = std::time::Instant::now();
+    let mut lap = |what: &str| {
+        if time {
+            let now = std::time::Instant::now();
+            eprintln!("backtest: time {:7.1}s {what}", (now - mark).as_secs_f64());
+            mark = now;
+        }
+    };
     if intraday {
         intraday_ruler(&client, &settings).await;
         return;
@@ -1346,6 +1359,7 @@ pub async fn run(args: Vec<String>) {
         hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, tuning, &etf_set, &sector_of, &anchor_windows)
             .await;
         fetch::long_cache_save(); // this path fetches too — flush before the early return
+        lap("halflife");
         return;
     }
 
@@ -1529,6 +1543,7 @@ pub async fn run(args: Vec<String>) {
     .map(|c| (c.dates, c.closes))
     .unwrap_or_default();
     let dead_terminals = std::sync::atomic::AtomicUsize::new(0);
+    lap("fetch");
     // (#310) the walk takes its horizon and BORROWS the fetch: (#311) a `2 × ROLL_YEARS` run walks the same history
     // again at 0y, every cutoff, for `report_roll`'s DCA books. Every other run walks once, exactly as before.
     let walk = |years: i64| -> Vec<Vec<Sample>> { fetched
@@ -1732,6 +1747,7 @@ pub async fn run(args: Vec<String>) {
         })
         .collect() };
     let per_ticker = walk(years);
+    lap("walk");
 
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
     if too_few_samples(samples.len()) {
@@ -1753,6 +1769,7 @@ pub async fn run(args: Vec<String>) {
     // stamp is written and never read, so each number below is unchanged — and the SECTOR BOOK row can
     // still price the door for free by re-scoring with the knob flipped.
     stamp_sector_cohorts(&mut samples, &bench, tuning);
+    lap("stamps");
     if let Some(p) = std::env::var_os("FOLIOMAN_BACKTEST_SAMPLES") {
         write_samples(&samples, p.as_ref()); // (#529) the look-ahead test's seam; unset = no-op
         return; // (#857) the test reads only the samples file, so the reports below are wasted wall time
@@ -1764,6 +1781,7 @@ pub async fn run(args: Vec<String>) {
     // BEFORE the whole-sample de-mean below.
     if tune {
         tune_growth(&samples, tuning);
+        lap("tune");
         return;
     }
     // (#311) the DCA ruler's books: every point-in-time cutoff (a 0y walk needs no forward window), date-sorted for
@@ -1789,6 +1807,7 @@ pub async fn run(args: Vec<String>) {
     // if the bucket map and the fill ever drift apart. Cheap, runs in release.
     let rel_sum: f64 = samples.iter().map(|s| s.relative).sum();
     assert!(rel_sum.abs() < 1e-3 * samples.len() as f64, "de-mean broken: relatives sum to {rel_sum}");
+    lap("books");
 
     // HEAD-TO-HEAD: report both lanes against the SAME peer-relative returns. The on-sale lane buys
     // pullbacks; the growth lane buys near-high compounders still climbing. Whichever has the higher
@@ -1967,8 +1986,11 @@ pub async fn run(args: Vec<String>) {
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
     let gate_loosen: Vec<Knob> = picks::gate_notches().into_iter().map(|(_, label, f)| knob(label, f)).collect();
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs, years);
+    lap("lane ON-SALE");
     report_onsale_book(&samples, &bench, years, tuning);
+    lap("on-sale book");
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs, years);
+    lap("lane GROWTH");
     // (#3g) the two levers that decide how hard a HIGH-CAGR name is rewarded: the slope and the ceiling.
     // Swept as curves because the ablation only prices removal and `tune` only reports a confounded
     // argmax — neither distinguishes a plateau (room to push) from a peak (already at the ceiling).
@@ -2080,26 +2102,36 @@ pub async fn run(args: Vec<String>) {
          2026-07-15 state. 1.5 = the ORIGINAL weight, cut for being oversized on a blind term.\n  \
          READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.",
     );
+    lap("weight curves");
     let accepted_med = gate_audit(&samples, growth_score, tuning).map(|(_, _, amed)| amed); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen, accepted_med); // (#10) which specific gate is too tight?
+    lap("gate audit + sweep");
     weight_sweep(&samples, tuning); // (#334) which shipped ranking weight is mis-set?
+    lap("weight sweep");
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     entry_probe(&samples, growth_score, tuning); // (#820) does a fresh pass lag a confirmed one?
     book_entry_probe(&samples, picks::growth_scores_ranked, tuning, &picks::gates_off(tuning)); // (#821) does a name new to the book lag one it already held?
+    lap("exit + entry probes");
     if fund_lane_on(fund, insider) {
         report_fund_lane(&samples, tuning.split_purge_months);
+        lap("fund lane");
         sweep_fund_factor(&samples, tuning, years); // (G) which factor pays THROUGH the growth lane, held-out
+        lap("fund factor sweep");
     }
     if holders {
         report_holder_cohorts(&samples, &holder_txs, years, tuning);
+        lap("holders");
     }
     if pac {
         report_pac(&client, &settings.urls, &samples, years, tuning).await;
+        lap("pac");
     }
     if failures {
         report_failures(&client, &settings.urls, &samples).await;
+        lap("failures");
     }
     report_risk_lane(&samples, tuning.split_purge_months); // closes-derived risk stats, standalone — no fundamentals needed
+    lap("risk lane");
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
     // (survivorship-clean), matched to the sample cadence. realized is untouched by de-mean.
     // (Phase E) with use_adjusted_close on, the picks' realized returns include dividends, so the fair
@@ -2108,22 +2140,29 @@ pub async fn run(args: Vec<String>) {
     // (#326) the fetch itself moved UP, to just after the walk: the regime valve needs the index series
     // before anything scores a sample. `bench` is still the same series, used by every report below.
     report_vs_benchmark(&samples, &bench, years, tuning);
+    lap("vs benchmark");
     if rivals {
         report_rivals(&samples, &bench, years, tuning);
+        lap("rivals");
     }
     if winners {
         report_winners(&samples, &bench, years, tuning);
+        lap("winners");
     }
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
+    lap("relative strength");
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
+    lap("entry state");
     // (#324) the in-sample guard for the notch shadow `track` grades forward
     report_notch_books(&samples, &bench, years, tuning);
     report_proxy_books(&samples, &bench, years, tuning);
     report_sector_books(&samples, &bench, years, tuning);
+    lap("notch + proxy + sector books");
     // (#325) the forward half, replayed on the entries no graded horizon closes (short runs only)
     report_notch_tail(&samples, years, tuning);
+    lap("notch tail");
     // (#308) the indexes the spill's trackers follow, so the SIZED remainder earns what `size` buys with
     // it: all-world / developed / emerging per tier, the US tier on `bench` itself, weighted by
     // `size::spill_split`. Free Yahoo series; MSCI EM has no free history, so VEIEX (from 1994). Price-only,
@@ -2145,12 +2184,14 @@ pub async fn run(args: Vec<String>) {
         Vec::new()
     };
     let sized = report_sized_book(&samples, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
+    lap("sized book");
     if !spill.is_empty() {
         let name = |t: u8| spill_leg(t).and(SPILL_LEGS.get(usize::from(t))).map_or(bench_sym, |l| l.1);
         let legs: Vec<String> = tiers.iter().zip(&spill).map(|(t, (w, _))| format!("{} {:.0}%", name(*t), w * 100.0)).collect();
         println!("  {:<28} (#308) the remainder above earns the spill's index legs, price-only: {}", "", legs.join(" · "));
     }
     let roll = report_roll(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill, rivals, (dead_end, dead_penalty));
+    lap("roll");
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -2201,11 +2242,14 @@ pub async fn run(args: Vec<String>) {
     }
     // (round 112) the DIVERSIFICATION dimension: does de-correlating the held book beat plain rank order?
     report_corr_cap(&samples, &bench, years, tuning);
+    lap("corr cap");
     if fund_lane_on(fund, insider) {
         // (#44 Phase C) grade the FREE fundamental factors on the ABSOLUTE held-book, not peer-relative.
         report_book_by_factor(&samples, &bench, years, tuning);
+        lap("book by factor");
         // (round 106) the no-borrow structural lever: growth book + value book held side by side.
         report_two_style_book(&samples, &bench, years, tuning);
+        lap("two-style book");
     }
 
     println!("\nCaveats:");
@@ -9135,6 +9179,7 @@ mod tests {
             "(#752) deadflat is the dead arm, uncut"
         );
         assert!(p("intraday").intraday && !p("intraday").wide && !p("12").intraday);
+        assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
         // and each keyword sets ONLY its own flag: `pit` and `stress` are opposite treatments of the
@@ -9170,7 +9215,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday time");
         assert_eq!(
             all,
             Args {
@@ -9191,6 +9236,7 @@ mod tests {
                 dead_flat: true,
                 failures: true,
                 intraday: true,
+                time: true,
                 tickers: vec![]
             }
         );

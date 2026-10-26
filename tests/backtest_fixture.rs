@@ -1039,14 +1039,19 @@ fn backtest_proxy_discovery_and_sector_drop_complete() {
 /// `cgt_hold_schedule` makes the after-tax footer name the rates the never-sell and rotation arms pay. The
 /// schedule ships off, so the default golden never shows the taxed footer; the run is checked structurally.
 /// (#1114) The deciles ship on, and the arm still sets them so it does not lean on the shipped value.
+/// (#1118) `time` rides along: each phase prints its wall seconds on stderr, which `report_at` folds in.
 #[test]
 fn backtest_report_prints_book_deciles_and_the_taxed_hold() {
     let extra = "buy_heuristic:\n  print_book_deciles: true\n  cgt_hold_schedule:\n  - min_years: 5\n    excluded_pct: 50\n";
     let cfg = fixture_copy_with("deciles-and-cgt-12", extra);
-    let out = report_at(&cfg, &["12"], None);
+    let out = report_at(&cfg, &["12", "time"], None);
     assert!(out.contains("terminal-multiple distribution across windows"), "the decile block is missing:\n{out}");
     assert!(out.contains("P(book < 1.0×)"), "the decile rows are missing");
     assert!(out.contains("[held 12y taxed at"), "the after-tax footer does not name the schedule's rates:\n{out}");
+    for phase in ["fetch", "walk", "vs benchmark", "roll"] {
+        let line = format!("s {phase}");
+        assert!(out.lines().any(|l| l.starts_with("backtest: time ") && l.ends_with(&line)), "(#1118) no `time` line for {phase}:\n{out}");
+    }
 }
 
 /// `insider` standalone: seeded Form 4 rows reach the samples, so the factor sweep measures
