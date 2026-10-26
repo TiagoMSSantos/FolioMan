@@ -22654,6 +22654,21 @@ buy_heuristic:
                                  #   sixth flag, turnover change, was left out: the backtest's turnover is one sentinel for
                                  #   every name, so it could never be graded. 0 = off, every score bit-identical (x 1.0 is
                                  #   exact); a negative weight is off too. `explain` prints the flags that fired. (#1136)
+                                 #   (#1137) PRE-REGISTERED 2026-10-26, before any data. HYPOTHESIS: names whose run-up shows
+                                 #   the crash markers (Greenwood, Shleifer and You 2019) lose more often, so docking them lifts the
+                                 #   book's bad tail without cutting its winners.
+                                 #   ARMS, two batches, years 20 12 8, growth_bubble_weight 0 (control), 0.5 and 1.0: batch A
+                                 #   `universe fund pit winners rivals`; batch B `universe fund pit dead winners rivals`. `windows
+                                 #   scored` must match across a batch's arms.
+                                 #   PRIMARY, each batch: the top-10 book row's `worst` above the control at 2+ of the 3 horizons and
+                                 #   below it at none, and its `win N% of M` (1 - P(book < index)) not lower at any horizon.
+                                 #   GUARD, every arm and horizon: the book's excess mean and median >= control -0.5, the GROWTH
+                                 #   lane's Spearman >= control -0.02, held-book capture vs top-1% winners not lower, WINNERS HELD
+                                 #   >= control -2.0, the rival (j) row's mean and median >= control -0.5, Serie E 90/90/80. An arm
+                                 #   that prints every graded row equal to the control is VACUOUS, not a pass.
+                                 #   ON A PASS in both batches: the arm with the higher summed `worst` wins (a tie goes to 0.5), then
+                                 #   one owner question, which also asks whether to serialize `vol_change` for the page engine; it
+                                 #   ships with a golden rebless. ON A FAIL: the weight stays 0.
   growth_turnover_weight: 0.0    # (L) ZEROED 2026-07-02 after a live A/B (screen at 0.5 vs 0.0): the ln(turnover/€1B) tilt is
                                  #   BACKTEST-BLIND (backtest quotes carry no turnover) and the A/B showed it does NOT do its
                                  #   claimed job — it's reward-only, so illiquid junk (ROX.DE €11K/day) sat in the ETF table
