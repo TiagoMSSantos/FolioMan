@@ -13,6 +13,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   recall of the pool's extreme winners (what the ranking MISSED):
     held book     vs top 1%  winners (n=72   ): recall 38%   capture 11%
     held book     vs ≥10×    winners (n=152  ): recall 28%   capture 14%
+  base rate at the 19%/yr bar: 12/176 (7%) of names that had cleared it cleared it again over 20y, vs 7% of the whole pool -> the record carries NOTHING — a trailing bar is not a forecast here
   vs null model (tuning off): rho -0.16  edge -628.1 pts  ->  tuning adds +173.6 pts
   out-of-sample (split 2000-01-01): early rho -0.17  |  late rho -0.02
   gate passers only  ->  passer edge -454.6 pts  ->  passer lift +173.6 pts  |  passer OOS early -0.17  |  passer OOS late -0.02
@@ -69,6 +70,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
+  base rate at the 19%/yr bar: 12/176 (7%) of names that had cleared it cleared it again over 20y, vs 7% of the whole pool -> the record carries NOTHING — a trailing bar is not a forecast here
   vs null model (tuning off): rho +0.11  edge -468.5 pts  ->  tuning adds +4.9 pts
   out-of-sample (split 2001-07-01): early rho -0.13  |  late rho +0.14
   gate passers only  ->  passer edge -322.2 pts  ->  passer lift +146.4 pts  |  passer OOS early -0.03  |  passer OOS late +0.57
@@ -239,7 +241,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   sortino        n=814   rho -0.34  edge -1491.7  OOS -0.48 | -0.17
   sharpe_ref     n=821   rho -0.37  edge -1508.5  OOS -0.47 | -0.24
 
-── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 20y no-sell, vs ^GSPC) ──
+── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 20y no-sell, vs ^GSPC) [best of 13, unhaircut] ──
   POOL CENSUS (#149): 71 bucket(s), median gated pool 2, graded basket 10 -> 46 saturated (pool <= basket), 424 substitutable name(s); the rank-1 h2h GUARD below reads off the other 25
   POOL CENSUS (#149): VACUOUS — the median bucket has nobody outside the basket, so a RANKING knob CANNOT be adjudicated on this column; record VACUOUS, never "held". Gates (pool-changing) and MAX/COUNT statistics still answer, but (#151) AMENDS the rank-1 h2h out of that exemption: its denominator is the 25 non-saturated bucket(s) above, so on a saturated column it is not unaffected — it is a COUNT over the residue. Read that n before leaning on the GUARD.
   top-1  book +9.6%/yr  vs S&P500 +8.1%/yr  ->  excess +1.5 (med +0.3) pts/yr   win 58% of 71   worst -5.4   OOS +0.5/+2.5   rode 0 zeros/71 holds
@@ -401,12 +403,26 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   top-40 book +11.6%/yr  vs S&P500 +8.1%/yr  ->  excess +3.5 (med +3.0) pts/yr   win 86% of 71   worst -3.4   OOS +2.3/+4.7   rode 26 zeros/766 holds
   top-45 book +11.6%/yr  vs S&P500 +8.1%/yr  ->  excess +3.5 (med +3.0) pts/yr   win 86% of 71   worst -3.4   OOS +2.3/+4.7   rode 27 zeros/771 holds
   top-50 book +11.6%/yr  vs S&P500 +8.1%/yr  ->  excess +3.5 (med +3.0) pts/yr   win 86% of 71   worst -3.4   OOS +2.3/+4.7   rode 27 zeros/771 holds
+  terminal-multiple distribution across windows (the MEAN above is one number out of these):
+    top-1  d10 2.57×  median 4.97×  d90 18.25×   P(book < index) 42%   P(book < 1.0×) 0%   of 71
+    top-2  d10 3.17×  median 7.74×  d90 18.95×   P(book < index) 27%   P(book < 1.0×) 0%   of 71
+    top-3  d10 2.98×  median 7.33×  d90 18.38×   P(book < index) 28%   P(book < 1.0×) 0%   of 71
+    top-5  d10 2.91×  median 7.20×  d90 18.95×   P(book < index) 23%   P(book < 1.0×) 0%   of 71
+    top-10 d10 3.71×  median 6.97×  d90 18.29×   P(book < index) 20%   P(book < 1.0×) 0%   of 71
+    top-15 d10 3.61×  median 7.95×  d90 20.21×   P(book < index) 21%   P(book < 1.0×) 0%   of 71
+    top-20 d10 3.64×  median 8.19×  d90 18.95×   P(book < index) 15%   P(book < 1.0×) 0%   of 71
+    top-25 d10 3.71×  median 8.24×  d90 18.95×   P(book < index) 17%   P(book < 1.0×) 0%   of 71
+    top-30 d10 3.75×  median 8.74×  d90 18.95×   P(book < index) 15%   P(book < 1.0×) 0%   of 71
+    top-35 d10 3.75×  median 8.80×  d90 18.95×   P(book < index) 14%   P(book < 1.0×) 0%   of 71
+    top-40 d10 3.75×  median 8.80×  d90 18.95×   P(book < index) 14%   P(book < 1.0×) 0%   of 71
+    top-45 d10 3.75×  median 8.80×  d90 18.95×   P(book < index) 14%   P(book < 1.0×) 0%   of 71
+    top-50 d10 3.75×  median 8.80×  d90 18.95×   P(book < index) 14%   P(book < 1.0×) 0%   of 71
   rank-slice (DISJOINT books, excess vs ^GSPC; mean|median across windows — median is lottery-ticket-immune):
-    rank 1      excess +1.5|+0.3 pts/yr   win 58% of 71
-    rank 2-5    excess +2.2|+1.9 pts/yr   win 80% of 71
-    rank 6-10   excess +1.2|+0.5 pts/yr   win 56% of 25
-    rank 11-20  excess +5.0|+4.1 pts/yr   win 80% of 25
-    rank 21-50  excess +7.6|+6.8 pts/yr   win 94% of 18
+    rank 1      excess +1.5|+0.3 pts/yr   win 58% of 71  n_eff 1.8
+    rank 2-5    excess +2.2|+1.9 pts/yr   win 80% of 71  n_eff 1.8
+    rank 6-10   excess +1.2|+0.5 pts/yr   win 56% of 25  n_eff 0.6
+    rank 11-20  excess +5.0|+4.1 pts/yr   win 80% of 25  n_eff 0.6
+    rank 21-50  excess +7.6|+6.8 pts/yr   win 94% of 18  n_eff 0.5
     head-to-head same-window (no averaging artifact): #1 beat the 11-20 book in 8/25 (32%), the 2-5 book did in 11/25 (44%) — >50% = the top of the list is genuinely better than its middle
     head-to-head vs the 6-10 book (#135): #1 beat it in 16/25 (64%), the 2-5 book did in 14/25 (56%) — denominator 25 here vs 25 for the 11-20 line above
   after-tax (28% PT, top-10 book): never-sell +9.9%/yr vs yearly-rotation +8.3%/yr -> deferral edge +1.6 pts/yr
@@ -418,11 +434,11 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   rel_str_5y     n=627   rho -0.00  edge -317.0  OOS -0.19 | +0.19
 
 ── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-10 growth book held 20y) ──
-  near-high (dd > -5%)         book +9.3%/yr  excess +2.7  win 88%  worst -0.9  OOS +2.1/+3.2   (windows 26, mean entry dd -0.2%)
-  pullback  (-15 < dd <= -5%)  book +8.4%/yr  excess +2.9  win 75%  worst -0.0  OOS +0.6/+5.2   (windows 4, mean entry dd -10.2%)
-  drawdown  (dd <= -15%)       book +9.6%/yr  excess +1.8  win 77%  worst -1.5  OOS +1.9/+1.7   (windows 13, mean entry dd -25.8%)
-  all entries                  book +10.5%/yr  excess +2.4  win 80%  worst -3.4  OOS +2.3/+2.5   (windows 71) [unconditional]
-  all entries (top-10)         book +10.5%/yr  excess +2.4  win 80%  worst -3.4  OOS +2.3/+2.5   (windows 71) [unconditional, JOURNALED]
+  near-high (dd > -5%)         book +9.3%/yr  excess +2.7  win 88%  worst -0.9  OOS +2.1/+3.2   (windows 26  n_eff 0.7, mean entry dd -0.2%)
+  pullback  (-15 < dd <= -5%)  book +8.4%/yr  excess +2.9  win 75%  worst -0.0  OOS +0.6/+5.2   (windows 4  n_eff 0.1, mean entry dd -10.2%)
+  drawdown  (dd <= -15%)       book +9.6%/yr  excess +1.8  win 77%  worst -1.5  OOS +1.9/+1.7   (windows 13  n_eff 0.3, mean entry dd -25.8%)
+  all entries                  book +10.5%/yr  excess +2.4  win 80%  worst -3.4  OOS +2.3/+2.5   (windows 71  n_eff 1.8) [unconditional]
+  all entries (top-10)         book +10.5%/yr  excess +2.4  win 80%  worst -3.4  OOS +2.3/+2.5   (windows 71  n_eff 1.8) [unconditional, JOURNALED]
   (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
 
@@ -460,6 +476,13 @@ Caveats:
   • In-sample: knobs were hand-tuned on today's data; even the OOS split shares the regime.
   • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,
     so realized returns are biased UP. Treat the edge as optimistic. Re-run with `stress` to inject losers.
+  • Acquisition truncation (#112, UNMEASURED): the most common way a 20-year single-stock hold
+    actually ENDS is neither bankruptcy nor a sell decision — it is being ACQUIRED. Compounding
+    stops at a one-time premium, and the deal CRYSTALLISES the gain: it pays, on a date the holder
+    never chose, the tax the deferral edge above assumes stays deferred. Nothing in this walk models
+    a takeout, so every multi-year hold in the tables is one that was ALLOWED to run — optimistic in
+    the same direction as the line above, by an amount this data cannot size. It argues mildly toward
+    LARGER names (harder to swallow), the reasoning `growth_min_aum_etf` already accepts for funds.
   • Price-only (#6): no as-of P/E reconstructed, so the `value` multiplier is ×1.0 here; as-of DIVIDENDS are live since #53 and every dividend row below is real.
   • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.
   • Long-horizon (MAX monthly): only names alive for the FULL 20y window enter, so
