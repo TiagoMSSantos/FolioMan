@@ -3191,7 +3191,7 @@ mod tests {
             "perf_fill_coverage_pct", "normal_volatility_pct", "discount_cap", "momentum_knife",
             "sustained_decline_pct", "sustained_decline_penalty", "deep_decline_pct",
             "deep_decline_penalty", "min_score", "tax_keep_other", "ref_pe",
-            "growth_btc_outperf_weight", "weight", "growth_max_vol", "growth_turnover_weight",
+            "growth_btc_outperf_weight", "weight", "growth_max_vol",
             "nupl_euphoria", "nupl_damp_floor", "nupl_capitulation", "nupl_boost_ceiling",
             "calmar_weight", "calmar_cap", "prefer_eur", "half_life_days", "mcap_pivot_eur",
             "runup_cap_pct", "universe_size", "fetch_concurrency_multiplier", "compute_threads",
