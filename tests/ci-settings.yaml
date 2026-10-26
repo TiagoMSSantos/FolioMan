@@ -8769,7 +8769,13 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 017429532ded (#1098), graded 2026-10-26 by run 40304457505, same five inputs, since
+  # LAST GRADED SHA: ba918a9ee529 (#1105), graded 2026-10-26 by run 40317548223, same five inputs, since
+  # 2806ff5, `files` = src/commands/track.rs src/commands/sim.rs src/commands/screen.rs src/fetch.rs
+  # src/picks.rs src/heuristics/social.rs: 41 in scope = 40 caught (`score` 17 for (#1105), `brk_rows` 7 for
+  # (#1101), `bridge_hint_lines` 6 for (#1104), `soc_quote` 5 for (#1102), `tier_of_quote` 5 for (#1100);
+  # (#1103) edits the skip-tagged `run`), 1 unviable (`soc_quote` -> a leaked default Quote), 0 missed,
+  # 0 timeout. (#1106) records it.
+  # BEFORE THAT: 017429532ded (#1098), graded 2026-10-26 by run 40304457505, same five inputs, since
   # 80ed3a6, `files` = src/commands/screen.rs src/picks.rs: 7 in scope = 7 caught (`lane_misses` 7 for
   # (#1097); (#1096) edits the skip-tagged `run`, (#1098) a const help string), 0 unviable, 0 missed,
   # 0 timeout. (#1099) records it.
