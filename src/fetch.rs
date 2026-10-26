@@ -3429,9 +3429,11 @@ pub async fn fetch_brk(client: &Client, urls: &Urls) -> (HashSet<String>, HashSe
     let eu: HashMap<String, String> =
         read(&crate::config::data_path(EU_LISTING_CACHE_PATH)).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let (mut bought, mut holds) = (brk_tickers(&cusips, &ticker_of, &eu), brk_tickers(&held, &ticker_of, &eu));
+    // (#1087) the oldest of the BRK_QUARTERS report dates is only the baseline, so buys span one change fewer
     eprintln!(
-        "fetch: Berkshire 13F: {} CUSIPs bought in the last {BRK_QUARTERS} quarters -> {} symbols; {} held -> {} symbols",
+        "fetch: Berkshire 13F: {} CUSIPs bought over the last {} quarter-to-quarter changes -> {} symbols; {} held -> {} symbols",
         cusips.len(),
+        BRK_QUARTERS - 1,
         bought.len(),
         held.len(),
         holds.len()
