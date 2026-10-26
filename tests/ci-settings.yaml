@@ -15127,6 +15127,37 @@ buy_heuristic:
                                  #   not the ship rule. Same cause, same day: two runs disagreed on the ETF pond
                                  #   (2022 vs 2032 regulatory extras), which is why the 12y BUY-lane rows differ
                                  #   between the arms and are NOT read here.
+                                 #
+                                 #   (#1131) PRE-REGISTERED 2026-10-26, before any data. (#176)'s re-open
+                                 #   condition now holds: since the soft-gate ruler (#564) the median gated
+                                 #   pool is 255 at 12y and 260 at 8y, with 0 of 38 and 0 of 46 buckets
+                                 #   saturated (control 40403662709). The same run's weight sweep reads
+                                 #   `sharpe_weight x0` RE-PROBE at 8y (med +29.4) and SPLIT at 12y (med -14.7).
+                                 #   HYPOTHESIS: in live's units, under a cap that does not bind for nearly
+                                 #   every passer, the sharpe term ranks something the book can use.
+                                 #   ARMS, same batch, `universe fund pit winners rivals` at 12y and 8y:
+                                 #   control; this knob true at the shipped caps; this knob true with
+                                 #   sharpe_cap 7.9, 23.8 and 31.7, which are 0.5, 1.5 and 2.0 per year
+                                 #   (a daily stdev times sqrt(252) is a yearly one, so 15 is ~0.95 per year);
+                                 #   and sharpe_weight 0 with this knob off, which prices deleting the term.
+                                 #   sharpe_cap_etf stays 9: (#37) fitted it on live daily stdev, the units
+                                 #   this knob restates to. `windows scored` must match across all six.
+                                 #   PRIMARY, cap arms: the top-10 book row's excess median AND mean >= the
+                                 #   control at 12y and 8y, at least one of the four higher, and the book's
+                                 #   two OOS halves keep the control's signs. Of the passers, the highest
+                                 #   12y + 8y median sum wins; a tie goes to the cap nearest 15.
+                                 #   PRIMARY, weight-0 arm: the same four numbers within 0.1 of the control
+                                 #   or above. A pass there only means the term carries nothing.
+                                 #   GUARD, every arm: worst window >= control -1.0, WINNERS HELD >= control
+                                 #   -2.0, the rival (j) row's mean and median >= control -0.5, held-book
+                                 #   capture vs top-1% winners not lower, Serie E 90/90/80. An arm that
+                                 #   prints every graded row equal to the control is VACUOUS, not a pass.
+                                 #   ON A PASS: one owner question, then this knob and the winning cap ship
+                                 #   as ONE change with a golden rebless. Live moves only through the cap,
+                                 #   since live is bit-identical in this knob. A weight-0 pass is a separate
+                                 #   owner question: deleting the term moves the live ETF and crypto rows.
+                                 #   ON A FAIL: this stays off, and sharpe_weight and both caps keep their
+                                 #   values.
   print_edge_annualized: true    # (#96) Display only, ON since (#1114). No run had been read with it on —
                                  # but unlike its neighbours this one CANNOT change a decision, because
                                  # nothing scored reads it. OFF kept the goldens byte-identical.
