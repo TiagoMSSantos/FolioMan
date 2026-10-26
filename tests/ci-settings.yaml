@@ -20389,6 +20389,16 @@ buy_heuristic:
                              #   NOT ARMED: a stock neutral for `quality_neutral`. It needs the covered filers' ROE
                              #   median under clamp(0, quality_cap), the (#43) census never run for roe, and no printed
                              #   line gives it.
+                             # (#1130) RESULT 2026-10-26: INERT, so a FAIL by the rule above; the value stays false.
+                             #   Probes on 1fd90ed: control 40403662709, arm 40403666547, `windows scored` equal in
+                             #   both (12y 10437/5150, 8y 13654/9176). Every PRIMARY and GUARD row prints the same in
+                             #   both arms: top-10 book 12y excess +3.4 (med +3.2) worst -4.0, 8y +3.1 (med +2.9)
+                             #   worst -6.6; held-book capture, WINNERS HELD (12.6% / 10.7%), Serie E (74% / 85%) and
+                             #   the rival (j) row are unchanged. So the 4.325 pts never change which names the book
+                             #   holds. Only the sample-level GROWTH lane moves, at 8y alone and slightly for the
+                             #   worse: edge +24.7 -> +24.4 pts, passer edge +85.6 -> +84.5, late OOS +0.19 -> +0.17.
+                             #   The live ETF and crypto tables are the only rows it would move, and no ruler here
+                             #   grades them. Re-open only with a ruler that does.
   # (#43) ROIC — the FIRST non-empty `growth_fund_extra` entry, so the mechanism stops being inert here.
   #   WHAT IT IS: pre-tax EBIT / (equity + net debt), derived in core::roic_return from levels already
   #   cached (no refetch, no cache-key bump). Equity is reconstructed as NI / ROE, which is signed right
