@@ -1294,7 +1294,7 @@ struct ScoreParts {
     overext: f64,      // min(above_ma_pct, overext_cap), floored at 0
     overext_cap: f64,  // the class's overextension cap
     overext_damp: f64, // 1 − (overext/cap)×(1−floor)
-    damp: f64,         // geomean(trust, overext_damp)
+    damp: f64,         // trust^growth_trust_exp × overext_damp^growth_overext_exp (#1133); at 0.5 each, geomean(trust, overext_damp)
     liq_bonus: f64,    // (L) turnover_weight × ln(max(turnover/1e9, 1))
     ter_damp: f64,     // (T) ETF cost drag (1−TER)^20; 1.0 for stocks/crypto/None or when growth_ter_drag off
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
@@ -1760,7 +1760,14 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     //  backtest universe ablation (467 win) said BOTH edge-negative: removing R² lifted edge +45.6->+68.0
     //  & rho +0.18->+0.20; removing mom-confirm lifted edge +5.9. R² docks exactly the parabolic
     //  compounders this lane exists to surface, and accel already encodes momentum -> dropped both.)
-    let damp = combine_damps(&[trust, overext_damp]);
+    // (#1133) Each slot carries its own exponent: damp = trust^wt × overext_damp^wo. `combine_damps`
+    // square-roots a 2-slot product, so each damp enters raised to 2w; at the shipped 0.5 that is
+    // powf(1.0), which is exact, so the damp is the old geomean bit for bit. A negative exponent would
+    // reward the stretch the brake docks, so it clamps to 0 (the slot off). `value`, `ter_damp`,
+    // `commodity_damp`, `fx_damp` and `acc_damp` multiply outside at exponent 1 by design: each is
+    // written at the size it is meant to deliver.
+    let slot = |d: f64, w: f64| d.powf(2.0 * w.max(0.0));
+    let damp = combine_damps(&[slot(trust, tuning.growth_trust_exp), slot(overext_damp, tuning.growth_overext_exp)]);
     // (#8) folding proximity + value into this geomean cost edge +103.2->+79.2; (#819) retired that knob.
     // (T) TER cost drag — ETF-only, BACKTEST-BLIND. The expense ratio is the ONE cost certain to
     // compound against a decades hold, so dock the score by the actual 20-year wealth multiple it eats:
@@ -3103,8 +3110,10 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         s.push_str("  overext_damp = (brake off, cap 0)                       = 1.000\n");
         say(&mut s, "Ran-too-far brake: off in today's settings.");
     }
-    s.push_str(&format!("  geomean(trust, overext_damp) = √({:.3} × {:.3})         = {:.3}\n", p.trust, p.overext_damp, p.damp));
-    say(&mut s, "Blends the two brakes as the square root of their product, so one harsh brake counts only half as hard.");
+    let (wt, wo) = (tuning.growth_trust_exp.max(0.0), tuning.growth_overext_exp.max(0.0)); // (#1133)
+    s.push_str(&format!("  damp         = trust^{wt:.2} × overext_damp^{wo:.2}          = {:.3}^{wt:.2} × {:.3}^{wo:.2} = {:.3}\n",
+        p.trust, p.overext_damp, p.damp));
+    say(&mut s, "Blends the two brakes, each raised to its exponent. At 0.5 each that is the square root of their product, so one harsh brake counts only half as hard.");
     s.push_str(&format!("  liq_bonus    = growth_turnover_weight × ln(max(turn/1e9,1)) = {:.2}\n", p.liq_bonus));
     let turn = quote.avg_turnover_eur.unwrap_or(0.0) / 1e9;
     say(&mut s, &if tuning.growth_turnover_weight == 0.0 {
@@ -15566,6 +15575,18 @@ mod tests {
         // `above_ma_pct` reaches the score through the brake and nothing else, so floor 1.0 must make a
         // maximally-stretched name score EXACTLY its at-trend twin. That identity is what "1.0 = off" means.
         assert!((of(1.0) - s(&hot(), &d)).abs() < 1e-9, "floor 1.0 = brake off, not merely weaker");
+
+        // (#1133) growth_trust_exp / growth_overext_exp — each damp slot's exponent. At the shipped 0.5 the
+        // damp is the old 2-slot geomean bit for bit; at 1.0 the written numbers are the delivered ones;
+        // 0 turns a slot off, and a negative exponent is the slot off, never a reward for the stretch.
+        let parts = |t: &BuyHeuristic| score_parts(&stretched, t).expect("fixture clears every gate");
+        let (trust, o) = (parts(&d).trust, parts(&d).overext_damp);
+        assert_eq!(parts(&d).damp, combine_damps(&[trust, o]), "0.5 = the pre-(#1133) geomean, bit for bit");
+        let face = BuyHeuristic { growth_trust_exp: 1.0, growth_overext_exp: 1.0, ..d.clone() };
+        assert!((parts(&face).damp - trust * o).abs() < 1e-12, "1.0 = the written numbers at face value");
+        let off = BuyHeuristic { growth_overext_exp: 0.0, ..d.clone() };
+        assert!((parts(&off).damp - trust.sqrt()).abs() < 1e-12, "0 = the brake slot off");
+        assert_eq!(parts(&BuyHeuristic { growth_overext_exp: -1.0, ..d.clone() }).damp, parts(&off).damp);
 
         // (M) growth_mom121_cap — clamps 12-1 momentum (here (1.40/1.02−1) = +37.3) before weighting.
         // Inert at the shipped weight 0, so arm the weight to see the cap at all.

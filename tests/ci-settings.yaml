@@ -22589,7 +22589,8 @@ buy_heuristic:
                                  #   AND THE SLOT COUNT IS A FREE PARAMETER: `picks.rs` records that adding
                                  #   or removing a CONSTANT-1.0 slot moved edge +98 -> +109. Wiring an
                                  #   inert term reorders the book, so `combine_damps`' arity is itself an
-                                 #   unswept knob nobody declared.
+                                 #   unswept knob nobody declared. (#1133) It is declared now: the
+                                 #   per-slot exponents growth_trust_exp / growth_overext_exp below.
                                  # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
@@ -22611,6 +22612,13 @@ buy_heuristic:
                                  #   corruption, half the report lost mid-file). Re-run ALONE it exited clean and
                                  #   reproduced edge +631.6 EXACTLY, so the abort hit output teardown, not the maths.
                                  #   Same session had rustc SIGSEGV under memory pressure: environmental, not config.
+  growth_trust_exp: 0.5          # (#1133) the trust dock's exponent in the growth damp, `damp =
+                                 #   trust^this × overext_damp^growth_overext_exp`. 0.5 is the old 2-slot
+                                 #   geometric mean bit for bit, so the 0.5 trust cliff delivers 0.707 and
+                                 #   the 0.05 floor above delivers 0.224. 1.0 = the written number at face
+                                 #   value; 0 = the slot off. `value`, `ter`, `commodity`, `fx` and `acc`
+                                 #   multiply outside the damp at exponent 1 by design.
+  growth_overext_exp: 0.5        # (#1133) the overextension brake's exponent in that damp; see above.
   growth_turnover_weight: 0.0    # (L) ZEROED 2026-07-02 after a live A/B (screen at 0.5 vs 0.0): the ln(turnover/€1B) tilt is
                                  #   BACKTEST-BLIND (backtest quotes carry no turnover) and the A/B showed it does NOT do its
                                  #   claimed job — it's reward-only, so illiquid junk (ROX.DE €11K/day) sat in the ETF table
