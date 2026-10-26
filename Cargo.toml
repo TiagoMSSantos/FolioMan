@@ -2,6 +2,7 @@
 name = "folioman"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.98"  # (#1123) the toolchain CI and the release builds run on; an older cargo says so instead of failing mid-build
 description = "Personal investment-review CLI (price/perf/screen/alert) + opt-in live trading (trade212/binance)."
 
 [[bin]]
@@ -41,6 +42,16 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 # would not reach; the table covers every target, including tests, from one place.
 [lints.rust]
 unsafe_code = "forbid"
+
+# (#1123) Clippy's cosmetic lints, carved out for every target (moved here from lib.rs, which reached the
+# library only). They flag no bugs, only code shape, and churn a dense, working codebase. `-D warnings` in
+# CI still denies the real-defect groups (correctness/suspicious/perf). If one ever masks a real issue,
+# drop its line and fix the spot.
+[lints.clippy]
+doc_lazy_continuation = "allow"    # rustdoc markdown nit on `//!` list lines; docs render fine
+too_many_arguments = "allow"       # wide fns (quotes/11, print_lane/11) are the real surface; a params struct churns callers
+type_complexity = "allow"          # dense tuple/fn-ptr types; aliased where it reads better
+items_after_test_module = "allow"  # fetch.rs grew its fns after the mid-file test mod; compiles identically
 
 [profile.release]
 opt-level = 3

@@ -26,9 +26,6 @@
 //! The deterministic half of its old job (did a code or knob edit change the scoring) split off into
 //! `shipped_tuning_scores_fixture_unchanged` in src/commands/backtest.rs, offline, 0.02s.
 
-// note: separate test crate, so the lib's crate-root allow doesn't reach here. Same call: docs render fine.
-#![allow(clippy::doc_lazy_continuation)]
-
 use folioman::commands::backtest::markers;
 use folioman::{config, core, fetch};
 use serde_json::Value;
