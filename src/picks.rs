@@ -3090,10 +3090,11 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         s.push_str(&format!("  overext_damp = 1 − (min(above_MA,cap)/cap)×(1−floor)    = 1 − ({:.1}/{:.0})×(1−{:.2}) = {:.3}\n",
             p.overext, p.overext_cap, tuning.growth_overext_floor, p.overext_damp));
         if p.overext > 0.0 {
+            // (#1084) the distance itself: `p.overext` stops at the cap, so a name 150% above read "100%"
             say(&mut s, &format!(
                 "Ran-too-far brake: the price is {:.1}% above its ~200-week average (full brake at {:.0}%). \
                  Prices far above it often fall back, so the score is cut, at most to ×{:.2}.",
-                p.overext, p.overext_cap, tuning.growth_overext_floor));
+                quote.above_ma_pct, p.overext_cap, tuning.growth_overext_floor));
         } else {
             say(&mut s, "Ran-too-far brake: the price is not above its ~200-week average, so no cut.");
         }
@@ -10830,6 +10831,9 @@ mod tests {
         assert!(!base.contains("Base is below 0"));
         let ran = Quote { above_ma_pct: 40.0, ..q.clone() };
         assert!(ex(&ran, &d).contains("the price is 40.0% above its ~200-week average (full brake at 100%)"));
+        // (#1084) past the cap it still prints how far above, not the cap
+        let far = Quote { above_ma_pct: 150.0, ..q.clone() };
+        assert!(ex(&far, &d).contains("the price is 150.0% above its ~200-week average (full brake at 100%)"));
         // (#1083) the long-run row names the scored window, not the whole record
         assert!(base.contains("Long-run growth: its average yearly price gain over its longest scored window (the LEG column), "), "{base}");
         let zero = Quote { above_ma_pct: 200.0, ..q.clone() };
