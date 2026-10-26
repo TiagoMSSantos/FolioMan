@@ -22619,6 +22619,23 @@ buy_heuristic:
                                  #   value; 0 = the slot off. `value`, `ter`, `commodity`, `fx` and `acc`
                                  #   multiply outside the damp at exponent 1 by design.
   growth_overext_exp: 0.5        # (#1133) the overextension brake's exponent in that damp; see above.
+                                 #   (#1134) PRE-REGISTERED 2026-10-26, before any data. HYPOTHESIS: the
+                                 #   square root that halves both docks is an accident of the slot count,
+                                 #   and a brake or a trust dock nearer face value ranks a better book.
+                                 #   ARMS, same batch, `universe fund pit winners rivals` at 12y and 8y, as
+                                 #   (growth_trust_exp, growth_overext_exp): control (0.5, 0.5); (0.5, 0.75);
+                                 #   (0.5, 1.0); (1.0, 0.5); (1.0, 0.75); (1.0, 1.0). `windows scored` must
+                                 #   match across all six.
+                                 #   PRIMARY: the top-10 book row's excess median AND mean >= the control
+                                 #   at 12y and 8y, at least one of the four higher, and the book's two OOS
+                                 #   halves keep the control's signs. Of the passers, the highest 12y + 8y
+                                 #   median sum wins; a tie goes to the arm nearest (0.5, 0.5).
+                                 #   GUARD, every arm: worst window >= control -1.0, WINNERS HELD >= control
+                                 #   -2.0, the rival (j) row's mean and median >= control -0.5, held-book
+                                 #   capture vs top-1% winners not lower, Serie E 90/90/80. An arm that
+                                 #   prints every graded row equal to the control is VACUOUS, not a pass.
+                                 #   ON A PASS: one owner question, then the winning exponents ship with a
+                                 #   golden rebless. ON A FAIL: both stay 0.5.
   growth_turnover_weight: 0.0    # (L) ZEROED 2026-07-02 after a live A/B (screen at 0.5 vs 0.0): the ln(turnover/€1B) tilt is
                                  #   BACKTEST-BLIND (backtest quotes carry no turnover) and the A/B showed it does NOT do its
                                  #   claimed job — it's reward-only, so illiquid junk (ROX.DE €11K/day) sat in the ETF table
