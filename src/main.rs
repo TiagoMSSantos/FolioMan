@@ -11,6 +11,7 @@
 //!   folioman track [--push]        grade every past `screen` BUY NOW book (at its sizes; top-10 on lines older than the sized journal) vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
 //!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
+//!   folioman config show [--diff]  base + overlay settings paths, then the merged YAML; --diff = only the overlay values that move the base
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; type `yes` to send)
 //!
 //! No TICKERS -> uses config/settings.yaml watchlist. Edit that file for defaults.
@@ -36,6 +37,7 @@ folioman — review ETF/stock/crypto holdings. Read-only except `trade` (live or
   folioman track [--push]        grade every past `screen` BUY NOW book (at its sizes; top-10 on lines older than the sized journal) vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
   folioman accounts              cash available + holdings per broker (read-only; env creds)
+  folioman config show [--diff]  base + overlay settings paths, then the merged YAML; --diff = only the overlay values that move the base
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; brokers:
                                  trading212 | binance | tr (login only, orders not implemented) — creds from env; type `yes` to send)
 
@@ -96,6 +98,7 @@ async fn dispatch() {
         "track" => commands::track::run(rest).await,
         "sim" => commands::sim::run(rest).await,
         "trade" => commands::trade::run(rest).await,
+        "config" => commands::config::run(rest),
         "help" | "--help" | "-h" => println!("{USAGE}"), // asked-for help exits 0 below; unknown commands keep exit 2
         _ => {
             println!("{USAGE}");

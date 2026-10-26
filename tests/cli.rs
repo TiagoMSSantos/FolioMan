@@ -234,6 +234,22 @@ fn accounts_without_creds_skips_all_brokers_exit_0() {
     assert_eq!(stdout.matches("(skipped)").count(), 3, "expected 3 skipped brokers: {stdout}");
 }
 
+/// (#1119) `config show --diff` names the overlay value that moves the shipped base and counts it; a value
+/// equal to the base is not a difference. Plain `show` prints the merged YAML under both paths.
+#[test]
+fn config_show_prints_the_merge_and_the_overlay_diff() {
+    let overlay = "buy_heuristic:\n  growth_min_cagr: 17.0\n  growth_min_cagr_crypto: 0.0\n";
+    let (code, stdout, stderr) = run_isolated("config-show-diff", overlay, &[], &["config", "show", "--diff"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("\nbuy_heuristic.growth_min_cagr: 19.0 -> 17.0\noverlay values that differ from the base: 1\n"), "{stdout}");
+    let (code, stdout, stderr) = run_isolated("config-show", "{}", &[], &["config", "show"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.starts_with("base:    ") && stdout.contains("tests/ci-settings.yaml\noverlay: "), "{stdout}");
+    assert!(stdout.contains("config-show/config/settings.yaml\n") && stdout.contains("\n  growth_min_cagr: 19.0\n"), "{stdout}");
+    let (code, _, _) = run_isolated("config-show-bad", "{}", &[], &["config", "shw"]);
+    assert_eq!(code, 2, "a typo'd subcommand is a usage error");
+}
+
 #[test]
 fn screen_unknown_flag_exit_2() {
     // rejected at arg parse, BEFORE config loading or any network call — a typo'd flag must not
