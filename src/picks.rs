@@ -3449,7 +3449,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue, from the last annual report (a REPORTS ᵉ row reads its newest year with a cash flow, which can trail its income statement by a year); negative = burning cash; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
     // (#545) the trailing twelve months from the 10-Qs, not the annual report: AI build-outs move capex inside a year
     ColSpec { key: "capex", hdr: "CAPEX/OCF", width: 9, right: true, help: "Stocks: capital expenditure ÷ operating cash flow over the trailing twelve months (the last annual report plus the 10-Q quarters since); above 100% the business spends more than it brings in. Above growth_capex_ocf_max the score is multiplied by growth_capex_ocf_penalty; hover for the TTM and the latest quarter alone; burn = operating cash flow at or below 0; n/a = neither SEC 10-Q cash lines nor Eulerpool's annual cash flow carry it; — = a fund or coin, which files no company accounts, or a filer that reports as a bank or insurer" },
-    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA or no cash filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; no debt = no debt filed and no interest line; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow (last annual report) ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
@@ -3466,7 +3466,7 @@ const COLUMNS: &[ColSpec] = &[
     // (#540) display only: the link is stamped by `stamp_site`, off `profile.cik`
     ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report). Hover (desktop) for the company's description and its last annual report's revenue, net income, free cash flow and net debt; ᵉ = fundamentals from Eulerpool's annual statements, not a filing this page read" },
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA or no cash filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price; — = under a year listed; n/a = a year or more listed, but no dividend history or euro price was fetched" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it; — = a stock or coin, not a fund" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it; — = a stock or coin, not a fund" },
@@ -3861,8 +3861,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "fcfy" => fund.and_then(|f| f.fcf_ttm.zip(f.cap_fund)).map_or("n/a".to_string(), |(c, m)| format!("{:.1}%", c / m * 100.0)),
         "ps" => fund.and_then(|f| f.cap_fund.zip(f.revenue_ttm.filter(|r| *r > 0.0))).map_or("n/a".to_string(), |(m, r)| format!("{:.1}x", m / r)),
         "evebitda" | "nde" if ebitda_loss(quote) => "loss".to_string(),
+        // (#1109) net debt is None only when no cash is filed (unfiled debt already reads 0 inside it), so
+        // market value alone would drop the cash leg: n/a, as ND/EBITDA prints for the same rows
         "evebitda" => fund
-            .and_then(|f| f.cap_fund.map(|m| m + f.net_debt.unwrap_or(0.0)).zip(f.ebitda_ttm))
+            .and_then(|f| Some((f.cap_fund? + f.net_debt?, f.ebitda_ttm?)))
             .map_or("n/a".to_string(), |(ev, e)| format!("{:.1}x", ev / e)),
         "earn" => quote.next_earnings.map_or("n/a".to_string(), |d| d.format("%m-%d").to_string()),
         "ins" => quote.insider_90d.map_or("n/a".to_string(), |(b, s)| format!("{b}/{s}")),
@@ -8259,7 +8261,7 @@ mod tests {
         assert_eq!(cc("ps", &st, 0.0, None, ""), "2.5x");
         assert_eq!(cc("evebitda", &st, 0.0, None, ""), "7.4x", "net cash -30 lowers EV to 370");
         st.fund.as_mut().unwrap().net_debt = None;
-        assert_eq!(cc("evebitda", &st, 0.0, None, ""), "8.0x", "no debt filed reads as zero");
+        assert_eq!(cc("evebitda", &st, 0.0, None, ""), "n/a", "(#1109) no cash filed, no EV");
         let f = st.fund.as_mut().unwrap();
         f.revenue_ttm = Some(0.0);
         f.ebitda_ttm = Some(0.0);
