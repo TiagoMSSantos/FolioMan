@@ -8769,7 +8769,11 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 14a6beff2d76 (#1094), graded 2026-10-26 by run 40301332520, same five inputs, since
+  # LAST GRADED SHA: 017429532ded (#1098), graded 2026-10-26 by run 40304457505, same five inputs, since
+  # 80ed3a6, `files` = src/commands/screen.rs src/picks.rs: 7 in scope = 7 caught (`lane_misses` 7 for
+  # (#1097); (#1096) edits the skip-tagged `run`, (#1098) a const help string), 0 unviable, 0 missed,
+  # 0 timeout. (#1099) records it.
+  # BEFORE THAT: 14a6beff2d76 (#1094), graded 2026-10-26 by run 40301332520, same five inputs, since
   # 7760d49, `files` = src/picks.rs: 11 in scope = 11 caught (`web_help` 11 for (#1092)/(#1093); (#1094)
   # edits a const only), 0 unviable, 0 missed, 0 timeout. (#1095) records it.
   # BEFORE THAT: af9664ba6efd (#1090), graded 2026-10-26 by run 40298537960, same five inputs, since
