@@ -4626,9 +4626,13 @@ fn soc_hits<'a>(
 }
 
 /// (#444) The pooled quote for a US symbol: the symbol itself, or its Xetra twin when the EU swap
-/// ([`EU_LISTING_CACHE_PATH`], "" = no twin) renamed the pool row onto it.
+/// ([`EU_LISTING_CACHE_PATH`], "" = no twin) renamed the pool row onto it. (#1102) A failed fetch's stub
+/// is no quote: its name is only the ticker, which the Social table printed as NAME.
 fn soc_quote<'a>(us: &str, eu: &HashMap<String, String>, quotes: &'a [Quote]) -> Option<&'a Quote> {
-    quotes.iter().find(|q| q.ticker == us || eu.get(us) == Some(&q.ticker))
+    quotes
+        .iter()
+        .filter(|q| !q.is_failed())
+        .find(|q| q.ticker == us || eu.get(us) == Some(&q.ticker))
 }
 
 /// (#444) The merged row for a stock, added on first sight under its pooled ticker and name.
@@ -14834,6 +14838,10 @@ pub(crate) mod tests {
         assert_eq!(table[6][2], serde_json::json!(["NAME", "—"]));
         help_titles("social", &table[0]);
         assert_eq!(soc_table(&rows, "superinvestors (SEC 13F)")[3][3], serde_json::json!(["SOURCES", "superinvestors (SEC 13F) 9"]));
+        // (#1102) a failed fetch's stub is no quote: MSFT keeps the superinvestor list's name, not its ticker
+        let failed = [Quote::stub("MSFT", "err", "", "MSFT")];
+        let rows = soc_merge(&[], &[], &supers, &[], &[], &eu, &failed);
+        assert_eq!(rows.iter().find(|r| r.ticker == "MSFT").map(|r| r.name.as_str()), Some("Microsoft"));
     }
 
     #[test]
