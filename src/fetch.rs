@@ -3236,12 +3236,13 @@ fn brk_quarter(report: &str) -> String {
 /// quote for the ticker or its twin, (#441) else OpenFIGI's name (6 of 14 buys were unpooled and read
 /// "—"), "—" only when both lack one. A pooled non-equity (the SPY
 /// and VOO the insurers hold) is dropped as [`stamp_brk`] drops it. (#442) Every holding, largest
-/// WEIGHT first (its share of the whole 13F, dropped rows included), then the ticker.
+/// WEIGHT first (its share of the whole 13F, dropped rows included), then the ticker. (#1101) A failed
+/// fetch's stub is no quote: its empty type read as a non-equity and dropped the holding's row.
 pub fn brk_rows(holdings: &[BrkRow], quotes: &[Quote]) -> Value {
     let total: u128 = holdings.iter().map(|h| u128::from(h.value)).sum();
     let mut rows: Vec<(&BrkRow, Option<&Quote>)> = holdings
         .iter()
-        .map(|h| (h, quotes.iter().find(|q| q.ticker == h.ticker || (!h.twin.is_empty() && q.ticker == h.twin))))
+        .map(|h| (h, quotes.iter().filter(|q| !q.is_failed()).find(|q| q.ticker == h.ticker || (!h.twin.is_empty() && q.ticker == h.twin))))
         .filter(|(_, q)| q.is_none_or(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY")))
         .collect();
     rows.sort_by(|(a, _), (b, _)| b.value.cmp(&a.value).then_with(|| a.ticker.cmp(&b.ticker)));
@@ -14308,6 +14309,9 @@ pub(crate) mod tests {
             ])
         );
         help_titles("berkshire", &brk_rows(&holdings, &quotes)[0]);
+        // (#1101) a failed fetch's stub is no quote: LEN keeps its row and OpenFIGI's name
+        let failed = [Quote::stub("LEN", "err", "", "LEN")];
+        assert_eq!(brk_rows(&holdings[3..4], &failed)[0][2], serde_json::json!(["NAME", "LENNAR CORP-A"]));
         let zero = [BrkRow { filing: String::new(), since: String::new(), ..b("X", "", "", "", 1, 1, 0) }];
         assert_eq!(brk_rows(&zero, &[])[0][3], serde_json::json!(["WEIGHT", "—"]), "no value in hand, no weight");
         assert_eq!(brk_rows(&zero, &[])[0][2], serde_json::json!(["NAME", "—"]), "(#455) no filing, no link");
