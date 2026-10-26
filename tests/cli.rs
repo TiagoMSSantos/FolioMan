@@ -1047,7 +1047,8 @@ fn screen_without_arguments_counts_the_universe_and_reports_the_wikidata_pond_cu
 }
 
 /// With every optional feed dead the run still finishes, and the closing DEGRADED line names each one so a
-/// weakened run reads differently from a normal one. A coin with no MVRV is counted on stdout.
+/// weakened run reads differently from a normal one. A coin with no MVRV is counted on stdout. (#1103) The
+/// 13F too: without it the shipped `growth_brk_held_boost` scores no name.
 #[test]
 fn screen_degraded_line_names_the_dead_feeds() {
     let (code, stdout, stderr) = run_isolated("screen-degraded-feeds", "{}\n", &[], &["screen", "BTC-EUR"]);
@@ -1056,6 +1057,7 @@ fn screen_degraded_line_names_the_dead_feeds() {
     assert!(degraded.contains("NUPL feed down (crypto euphoria damping off)"), "{degraded}");
     assert!(degraded.contains("EU HICP feed down (inflation adjustment off)"), "{degraded}");
     assert!(degraded.contains("MVRV feed down (crypto_max_mvrv ceiling off; every coin passes it)"), "{degraded}");
+    assert!(degraded.contains("Berkshire 13F feed down (growth_brk_held_boost off; no w or W marks)"), "{degraded}");
     assert!(stdout.contains("Crypto valuation: 0 of 1 coins carry an MVRV (the rest pass the ceiling free)"), "{stdout}");
 }
 
@@ -1077,6 +1079,7 @@ fn screen_marks_a_frozen_eu_hicp_feed_stale_in_the_degraded_line() {
 /// The optional stages announce themselves only while their knob is on: the same run with the US-series
 /// scoring, the stale-listing drop and the CORE journal switched off skips the (#608) line. (#816) The
 /// fund tilt line prints at weight 0 too: the fundamentals it reports feed the gates, not just the tilt.
+/// (#1103) A `growth_brk_held_boost` of 1.0 keeps the empty 13F off the DEGRADED line.
 #[test]
 fn screen_with_its_optional_stages_switched_off_skips_their_lines() {
     let (code, _, stderr) = run_isolated("screen-switches-on", "{}\n", &[], &["screen", "AAA"]);
@@ -1084,11 +1087,13 @@ fn screen_with_its_optional_stages_switched_off_skips_their_lines() {
     assert!(stderr.contains("screen: (#608)") && stderr.contains("screen: fund tilt ("), "the shipped config runs both stages: {stderr}");
     let off = concat!(
         "eu_listing_us_series: false\nstale_days: 0\nbuy_heuristic:\n",
-        "  growth_fund_weight: 0\n  growth_momentum_interleave: false\n  journal_core_list: false\n"
+        "  growth_fund_weight: 0\n  growth_momentum_interleave: false\n  journal_core_list: false\n",
+        "  growth_brk_held_boost: 1.0\n"
     );
     let (code, _, stderr) = run_isolated("screen-switches-off", off, &[], &["screen", "AAA"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(!stderr.contains("screen: (#608)"), "{stderr}");
+    assert!(!stderr.contains("Berkshire 13F feed down"), "(#1103) a boost of 1.0 loses nothing to an empty 13F: {stderr}");
     assert!(stderr.contains("screen: fund tilt ("), "(#816) weight 0 still fetches the fundamentals the gates read: {stderr}");
     assert!(isolated_root("screen-switches-off").join(".screen_snapshots.jsonl").is_file(), "the ranking is journalled either way");
 }

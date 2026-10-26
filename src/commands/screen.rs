@@ -2429,6 +2429,13 @@ pub async fn run(args: Vec<String>) {
     if mvrv_uncovered {
         degraded.push("MVRV feed down (crypto_max_mvrv ceiling off; every coin passes it)".to_string());
     }
+    // (#1103) `fetch_brk` fails closed, so one unreadable 13F empties `brk_held` and the shipped `W` boost
+    // scores no name this run. A boost of 1.0 loses nothing to it.
+    if brk_held.is_empty() && settings.buy_heuristic.growth_brk_held_boost != 1.0 {
+        degraded.push(
+            "Berkshire 13F feed down (growth_brk_held_boost off; no w or W marks)".to_string(),
+        );
+    }
     // (#79) the web payload's home: the same gitignored data dir `.screen_state.json` uses, written
     // on every run rather than behind a flag — it is one small file, and a knob nobody sets is a knob
     // not worth having. The Pages workflow copies it next to `web/index.html` and deploys.
