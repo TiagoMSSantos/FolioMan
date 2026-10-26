@@ -217,7 +217,8 @@ fn render_annual(
         out.push_str("  (* = incomplete fiscal year: fewer than 4 quarters reported)\n");
     }
     if annual.iter().any(|a| a.shares.is_some()) {
-        out.push_str("  (SHΔ% = YoY share-count change, sign-flipped: + = buying back, - = diluting; a swing >40% (split/M&A) prints \"-\")\n");
+        // (#1107) Only the `sh_delta` fallback blanks a >40% swing; a filing's own comparative prints it.
+        out.push_str("  (SHΔ% = YoY share-count change, sign-flipped: + = buying back, - = diluting; with no same-filing comparative, a swing >40% (split/M&A) prints \"-\")\n");
     }
 
     // grower profile — the as-of factors (5y lookback matches the live enrich). Of everything on
@@ -833,6 +834,17 @@ mod tests {
         // on the ROW: the grower profile's buyback_yield prints +10.0% too, whatever this column says
         let row = out.lines().find(|l| l.trim_start().starts_with("2025")).unwrap();
         assert!(row.ends_with("+10.0%"), "same-filing SHΔ% must flip sign like sh_delta: {out}");
+
+        // (#1107) a filing's own comparative is real issuance: a 100 -> 150 acquisition prints, and the
+        // legend scopes its "-" to the fallback
+        let acquired = vec![
+            quarter_sh(2024, 6, Some(100.0), Some(100.0)),
+            core::FundRow { prior_shares: Some(100.0), ..quarter_sh(2025, 6, Some(100.0), Some(150.0)) },
+        ];
+        let (out, _) = render("ACME", "FMP", &acquired);
+        let row = out.lines().find(|l| l.trim_start().starts_with("2025")).unwrap();
+        assert!(row.ends_with("-50.0%"), "{out}");
+        assert!(out.contains("with no same-filing comparative, a swing >40%"), "{out}");
     }
 
     /// (data round) market line: a populated quote renders every cell in screen-column semantics
