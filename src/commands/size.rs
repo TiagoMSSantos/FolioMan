@@ -379,14 +379,16 @@ pub async fn run(args: Vec<String>) {
             sz.budget_stock, sz.budget_etf, sz.budget_crypto, sz.max_name_pct, sz.max_sector_pct,
         );
     }
-    println!("  {:<10} {:>7} {:>7} {:>7}  CAP", "TICKER", "SCORE", "VOL", "SIZE%");
+    let deploy = settings.monthly_deploy_eur;
+    println!("  {:<10} {:>7} {:>7} {:>7}{}  CAP", "TICKER", "SCORE", "VOL", "SIZE%", eur_cell(None, deploy));
     for &(q, s, w, cap) in &book {
         println!(
-            "  {:<10} {:>7} {:>7} {:>6.1}%  {}",
+            "  {:<10} {:>7} {:>7} {:>6.1}%{}  {}",
             q.ticker,
             s.map_or("—".to_string(), |s| format!("{s:.1}")),
             q.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
             w,
+            eur_cell(Some(w), deploy),
             cap.map_or(String::new(), |c| format!("cap: {c}")),
         );
     }
@@ -394,7 +396,7 @@ pub async fn run(args: Vec<String>) {
     // too few names in a class the remainder has nowhere to go that respects the caps — and printing 100
     // when the rows sum to 40 would hide exactly the fact these caps exist to surface.
     let total: f64 = book.iter().map(|(_, _, w, _)| w).sum();
-    println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL", "", "", total);
+    println!("  {:<10} {:>7} {:>7} {:>6.1}%{}", "TOTAL", "", "", total, eur_cell(Some(total), deploy));
     if total < 99.5 {
         // (#246) ... and say WHERE it goes. Cash is the one asset guaranteed to lose over 20 years,
         // so a remainder with no destination is the most expensive thing this command can print —
@@ -455,12 +457,13 @@ pub async fn run(args: Vec<String>) {
                 for ((i, core, repl, _), each) in rows.into_iter().zip(spill_split(rest, &tiers)) {
                     let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
                     println!(
-                        "  {core:<10} {dash:>7} {dash:>7} {each:>6.1}%  broad-market · CORE #{rank}, {date} screen{note}",
+                        "  {core:<10} {dash:>7} {dash:>7} {each:>6.1}%{eur}  broad-market · CORE #{rank}, {date} screen{note}",
                         dash = "—",
                         rank = i + 1,
+                        eur = eur_cell(Some(each), deploy),
                     );
                 }
-                println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL+", "", "", total + rest);
+                println!("  {:<10} {:>7} {:>7} {:>6.1}%{}", "TOTAL+", "", "", total + rest, eur_cell(Some(total + rest), deploy));
                 // (#288) name the markets when they differ. `(#261)` hardcoded "all-world", which was
                 // true only because `screen` never journalled anything else within reach of the walk.
                 // `None` = every funded row is all-world (or unlabelled), which is what the default
@@ -545,6 +548,17 @@ pub async fn run(args: Vec<String>) {
     }
 }
 
+/// (#1122) The EUR/MO cell of the sizes table: a SIZE% share of the base `monthly_deploy_eur`, before the
+/// entry-state multiplier the DEPLOY THIS MONTH line applies. `None` = the header. No budget (<= 0) = no
+/// column, so an unset budget prints the table as before.
+fn eur_cell(w: Option<f64>, deploy: f64) -> String {
+    match w {
+        _ if deploy <= 0.0 => String::new(),
+        Some(w) => format!(" {:>8.0}", w * deploy / 100.0),
+        None => format!(" {:>8}", "EUR/MO"),
+    }
+}
+
 /// (round 114) The gap table, pure for testing. `sized` = (display ticker, class-prefixed base key,
 /// EUR price, suggested SIZE%); `held` = (key, broker label, qty). ACTUAL% is each matched holding's
 /// share of the matched holdings' total EUR value — held names the sized list doesn't cover have no
@@ -579,11 +593,13 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
             let gap = actual - sugg;
             // (#292) the tags steer NEW money, never a sale. The backtest never trims a winner, and
             // selling one realises the tax the never-sell book defers (+1.1 pts/yr after tax at 20y).
+            // (#1122) The band is inclusive: a held name DRIFT_PP or more off its split is tagged.
+            const DRIFT_PP: f64 = 5.0;
             let tag = if v == 0.0 {
                 "  not held"
-            } else if gap > 5.0 {
+            } else if gap >= DRIFT_PP {
                 "  overweight: let it run"
-            } else if gap < -5.0 {
+            } else if gap <= -DRIFT_PP {
                 "  underweight: add new money"
             } else {
                 ""
@@ -1121,7 +1137,7 @@ pub(crate) mod tests {
     /// nobody holds. Graded 2026-08-19: these four mutants survived that test —
     /// `173:23 > -> >=`, `182:27 > -> >=`, `184:27 < -> ==`, `184:27 < -> <=`.
     ///
-    /// The ±5pt band is EXCLUSIVE, so a gap of exactly ±5.0 must carry NO tag; the underweight arm
+    /// (#1122) The ±5pt band is INCLUSIVE, so a gap of exactly ±5.0 carries the tag; the underweight arm
     /// needs a row that is actually held, because `v == 0.0` claims every unheld row first; and the
     /// "no EUR price" flag keys off the HOLDING, not off the missing price — a name nobody holds
     /// reads "not held" even when its price is unknown.
@@ -1133,8 +1149,8 @@ pub(crate) mod tests {
         let s = |d: &str, k: &str, p: Option<f64>, w: f64| (d.to_string(), k.to_string(), p, w);
         let h = |k: &str, l: &str, q: f64| (k.to_string(), l.to_string(), q);
         let sized = vec![
-            s("EDGEHI", "s:hi", Some(20.0), 20.0), // 25.0 - 20 = +5.0 exactly -> NO tag
-            s("EDGELO", "s:lo", Some(20.0), 30.0), // 25.0 - 30 = -5.0 exactly -> NO tag
+            s("EDGEHI", "s:hi", Some(20.0), 20.0), // 25.0 - 20 = +5.0 exactly -> overweight
+            s("EDGELO", "s:lo", Some(20.0), 30.0), // 25.0 - 30 = -5.0 exactly -> underweight
             s("DEEPLO", "s:deep", Some(20.0), 40.0), // 25.0 - 40 = -15.0 -> underweight (SIZE% sums to 100)
             s("BIG", "s:big", Some(20.0), 10.0),   // 25.0 - 10 = +15.0 -> overweight
             s("GHOST", "s:ghost", None, 0.0),      // no price AND unheld -> "not held", not flagged
@@ -1154,8 +1170,8 @@ pub(crate) mod tests {
                 .unwrap_or_else(|| panic!("no row for {name}: {out:?}"));
             line.trim_end().rsplit('%').next().unwrap().trim().to_string()
         };
-        assert_eq!(tag("EDGEHI"), "", "+5.0 is the edge and the band excludes it: {out:?}");
-        assert_eq!(tag("EDGELO"), "", "-5.0 likewise: {out:?}");
+        assert_eq!(tag("EDGEHI"), "overweight: let it run", "(#1122) +5.0 is the edge and the band includes it: {out:?}");
+        assert_eq!(tag("EDGELO"), "underweight: add new money", "-5.0 likewise: {out:?}");
         assert_eq!(tag("DEEPLO"), "underweight: add new money", "{out:?}");
         assert_eq!(tag("BIG"), "overweight: let it run", "{out:?}");
         assert_eq!(tag("GHOST"), "not held", "unheld outranks unpriced: {out:?}");
@@ -1165,10 +1181,20 @@ pub(crate) mod tests {
     /// name's share of the sized total, the base ACTUAL% uses. Read raw, both rows showed +42.0% overweight.
     #[test]
     fn allocation_gap_rescales_sugg_to_the_sized_total() {
+        // (#1122) a gap inside the band carries no tag
         let s = |d: &str, k: &str| (d.to_string(), k.to_string(), Some(10.0), 8.0);
         let h = |k: &str| (k.to_string(), k.to_string(), 1.0);
         let out = allocation_gap_lines(&[s("A", "s:a"), s("B", "s:b")], &[h("s:a"), h("s:b")]).join("\n");
         assert!(out.contains("\n  A                  10    50.0%    50.0%    +0.0%\n  B "), "{out}");
         assert!(out.ends_with("\n  B                  10    50.0%    50.0%    +0.0%"), "{out}");
+    }
+
+    /// (#1122) EUR/MO = SIZE% of the base monthly budget; no budget prints no column, header included.
+    #[test]
+    fn eur_cell_is_a_share_of_the_monthly_budget() {
+        assert_eq!(eur_cell(Some(12.5), 0.0), "");
+        assert_eq!(eur_cell(None, -1.0), "");
+        assert_eq!(eur_cell(Some(12.5), 800.0), "      100");
+        assert_eq!(eur_cell(None, 800.0), "   EUR/MO");
     }
 }

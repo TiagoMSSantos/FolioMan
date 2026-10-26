@@ -794,6 +794,7 @@ fn size_prints_the_journalled_book_and_spills_the_rest_over_the_core_markets() {
     assert!(line_with(&stdout, "  C4 ").contains("12.5%") && line_with(&stdout, "  C4 ").contains("CORE #4"), "{stdout}");
     assert!(!stdout.contains("  C2 ") && !stdout.contains("  C5 "), "one tracker per market, so the second row of a tier is not funded: {stdout}");
     assert!(line_with(&stdout, "  TOTAL+").contains("100.0%"), "{stdout}");
+    assert!(!stdout.contains("EUR/MO"), "(#1122) no monthly budget, no EUR column: {stdout}");
     let home = "the 50.0% the caps could not deploy, split over 3 trackers, across all-world + US + developed, the US one at 2x the others";
     assert!(stdout.contains(home), "{stdout}");
     let skipped = "(2 more row(s) cleared the 20-year hold screen this run and get nothing — 3 funded above: 1 all-world (C2) · 1 developed (C5).";
@@ -803,7 +804,8 @@ fn size_prints_the_journalled_book_and_spills_the_rest_over_the_core_markets() {
 /// The vol-target book (equal weight off) prints its class budgets, and with no CORE shortlist on file the
 /// unallocated part has no home. Inflation adjustment off skips the HICP fetch, and a set deploy base
 /// prints the deploy line, whose entry state stays unknown offline. (#816) The fundamentals enrichment
-/// runs at any fund-tilt weight, so the overlay no longer zeroes it.
+/// runs at any fund-tilt weight, so the overlay no longer zeroes it. (#1122) The budget adds an EUR/MO
+/// column: each row's SIZE% of it.
 #[test]
 fn size_vol_target_book_reports_unallocated_budget_and_the_deploy_line() {
     let overlay = "sizing:\n  equal_weight_book: false\nmonthly_deploy_eur: 1000\ninflation_adjust:\n  enabled: false\n";
@@ -814,6 +816,8 @@ fn size_vol_target_book_reports_unallocated_budget_and_the_deploy_line() {
     assert!(stdout.contains(" stock/ETF/crypto (renormalised over the classes present)"), "{stdout}");
     assert!(stdout.contains("(50.0% unallocated — the caps bind and no name in those classes can take more"), "{stdout}");
     assert!(!stdout.contains("TOTAL+"), "no tracker takes the remainder: {stdout}");
+    assert!(line_with(&stdout, "  TICKER ").contains("SIZE%   EUR/MO  CAP"), "{stdout}");
+    assert!(line_with(&stdout, "  TOTAL ").contains("50.0%      500"), "{stdout}");
     assert!(stdout.contains("DEPLOY THIS MONTH: €1000 — base × 1 (S&P 500 entry state unavailable this run)"), "{stdout}");
 }
 
