@@ -2852,8 +2852,9 @@ pub fn bridge_hint_lines(
             Some((
                 twin_cagr,
                 age,
+                // (#1104) `{:+.0}`: the pinned lane hints at any twin, and a falling index's printed "+-3%/yr"
                 format!(
-                    "  hint: {} tracks the same index as {} ({}, {:.0}y, +{:.0}%/yr) — consider settings.yaml history_proxy: {}: {} (verify same currency first)",
+                    "  hint: {} tracks the same index as {} ({}, {:.0}y, {:+.0}%/yr) — consider settings.yaml history_proxy: {}: {} (verify same currency first)",
                     q.ticker, twin.ticker, bench, age, twin_cagr, q.ticker, twin.ticker
                 ),
             ))
