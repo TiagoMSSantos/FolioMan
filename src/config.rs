@@ -1222,8 +1222,9 @@ fn default_fundamentals_quality_url() -> String {
 }
 
 /// Default (G) historical statements endpoint: FMP `stable/income-statement` quarterly. limit=48 =
-/// ~12y of quarters in ONE call (cheap on the 250/day free budget; cached forever after). Free-tier
-/// reachable; `period=quarter` on key-metrics/ratios is premium, so only income-statement is sourced.
+/// ~12y of quarters in ONE call (cheap on the 250/day free budget; cached forever after). `period=quarter`
+/// on key-metrics/ratios is premium, so only income-statement is sourced. (#1108) The free tier now
+/// refuses `limit=48` too, so this answers only a paid key.
 fn default_fundamentals_history_url() -> String {
     "https://financialmodelingprep.com/stable/income-statement?symbol={ticker}&period=quarter&limit=48&apikey={key}".to_string()
 }

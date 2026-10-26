@@ -1624,6 +1624,10 @@ fn parse_fund_row(v: &Value) -> Option<core::FundRow> {
 /// see) — this + the per-run budget cap is what keeps a wide run under FMP's 250-calls/day free limit.
 /// None unless FMP_API_KEY is set AND real rows parse (an error/premium object caches nothing).
 /// note: flat-file cache, no TTL; add expiry only if a stale newest-quarter ever matters.
+/// (#1108) FMP's free tier now refuses `limit=48` (HTTP 402 "Premium Query Parameter", 2026-10-26), so a
+/// free key reads None here and `report` falls to SEC EDGAR. A paid key brings the quarterly rows back,
+/// and then `fund_factors`' `eps_ttm` is ONE quarter's EPS (nothing sums four), so `earnings_yield`,
+/// `peg_yield` and `report`'s verdict tilt read about a quarter of their annual size.
 pub async fn fetch_fundamentals_history(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
     let v = match std::fs::read_to_string(fund_cache_path(ticker)).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
