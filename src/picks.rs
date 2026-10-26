@@ -5045,7 +5045,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("LEADS", "Lead underwriters, as Nasdaq lists them; two of Goldman Sachs, Morgan Stanley, J.P. Morgan, BofA and Citigroup keep a deal of any filed size in this table; — = no public S-1 yet (a confidential filer)"),
         ("AUDITOR", "The firm auditing the financial statements in the S-1; — = no public S-1 yet (a confidential filer)"),
         ("FILING", "The newest public S-1/F-1 (or amendment) and its date; — = no public S-1 yet (a confidential filer); click to open it on sec.gov"),
-        ("FY", "Latest full fiscal year in the S-1's summary financial table; REV to EQUITY are read from it; — = no public S-1 yet; n/a = the table could not be read"),
+        ("FY", "Latest full fiscal year in the S-1's summary financial table; REV and NET are read from it (the % columns are trailing twelve months, CASH to EQUITY at the newest balance-sheet date); — = no public S-1 yet; n/a = the table could not be read"),
         ("INTERIM", "The newest interim period in that table (9M 2026 = nine months to a date in 2026); the ratios add it and drop the same period a year before, to read the trailing twelve months. — = fiscal year only, or no public S-1 yet; n/a = the table could not be read"),
         ("REV", "Revenue in that fiscal year; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
         ("REV-YoY", "Revenue growth: the interim period vs the same period a year before, or the fiscal year vs the one before when there is no interim; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
