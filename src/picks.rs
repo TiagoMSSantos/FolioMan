@@ -3497,7 +3497,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions; n/a = no traded volume on the chart" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
     // (#576) stocks only: under growth_gate_soft a stock that fails gates still ranks, docked per gate
-    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Stocks: how many buy gates the row fails, and which (0 = it passes all). A stock that misses gates still ranks, its SCORE cut by growth_gate_soft once per gate missed; the why box prints each gate's value against its bar" },
+    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Stocks: how many buy gates the row fails, and which (0 = it passes all). A stock that misses gates still ranks, its SCORE cut by growth_gate_soft once per gate missed, unless one is artifact or exchange, which no waiver lifts; the why box prints each gate's value against its bar; refused = no waiver can score the row (a kind the screen never buys, no trading volume served, or no 1Y figure)" },
     // DIAGNOSTIC: the long-CAGR window (and the trust leg) pinned to 8Y. Never ranked on, and scored WITHOUT
     // the 8Y CAGR admission floor so every row carries a comparable number
     ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true, help: "The same score on an 8-year window, for comparison; never ranked on. † = under 8 years of record, so it is the full-history score" },
