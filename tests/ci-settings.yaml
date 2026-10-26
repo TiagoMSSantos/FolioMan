@@ -15158,6 +15158,26 @@ buy_heuristic:
                                  #   owner question: deleting the term moves the live ETF and crypto rows.
                                  #   ON A FAIL: this stays off, and sharpe_weight and both caps keep their
                                  #   values.
+                                 #   (#1132) RESULT 2026-10-26: every cap arm FAILS, so this stays off. The
+                                 #   weight-0 arm PASSES, which only says the term carries nothing in the book.
+                                 #   Probes on 0cb9ad2, `windows scored` equal in all six (12y 10437/5150, 8y
+                                 #   13654/9176): control 40405139868, knob 40405143968, cap 7.9 40405148169,
+                                 #   cap 23.8 40405153079, cap 31.7 40405157707, sharpe_weight 0 40405162272.
+                                 #   Top-10 book excess, mean (med), 12y then 8y:
+                                 #     control         +3.4 (+3.2)   +3.1 (+2.9)
+                                 #     knob, shipped   +3.1 (+2.7)   +2.7 (+2.6)
+                                 #     cap 7.9         +3.4 (+3.1)   +3.2 (+3.1)
+                                 #     cap 23.8        +3.2 (+2.7)   +3.0 (+2.9)
+                                 #     cap 31.7        +3.2 (+2.7)   +3.0 (+2.9)
+                                 #     weight 0        +3.4 (+3.2)   +3.2 (+2.9)
+                                 #   Cap 7.9 comes closest, but its 12y median is 0.1 below the control. Worst
+                                 #   windows read -4.0 and -6.6 in every arm. The knob also drags the ON-SALE
+                                 #   top-10 book: 12y +1.9 -> +1.1, worst -6.1 -> -8.3. The weight-0 arm holds
+                                 #   every GUARD: WINNERS HELD 12.4% / 10.7% vs 12.6% / 10.7%, the (j) row
+                                 #   within 0.1, held-book capture 5% / 5% as the control, Serie E 74% / 87% vs
+                                 #   74% / 85%. It is not VACUOUS: its 8y mean, WINNERS HELD and (j) rows move.
+                                 #   Deleting the term still moves the live ETF and crypto rows, which no ruler
+                                 #   here grades, so that waits for the owner and sharpe_weight keeps its value.
   print_edge_annualized: true    # (#96) Display only, ON since (#1114). No run had been read with it on —
                                  # but unlike its neighbours this one CANNOT change a decision, because
                                  # nothing scored reads it. OFF kept the goldens byte-identical.
