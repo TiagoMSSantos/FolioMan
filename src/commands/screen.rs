@@ -593,7 +593,8 @@ fn currency_mix_line(
 ///   RANK, SCORE and MISSES; the other kinds are not assets, so those three cells stay blank.
 ///
 /// A fund with no data lands in its kind's `?` row, NAMED (#257): a blank beats a guess, and nothing is
-/// borrowed from a twin. Display only: nothing reads it back.
+/// borrowed from a twin. (#1086) So does a listing on a venue `core::listing_currency` does not know,
+/// a fund's holding or a direct buy, named by symbol. Display only: nothing reads it back.
 fn exposure_rows(
     book: &[(String, f64)],
     quotes: &[Quote],
@@ -610,6 +611,7 @@ fn exposure_rows(
     let mut names: std::collections::BTreeMap<String, (f64, f64, usize)> = Default::default();
     let mut funds: HashMap<String, Vec<(String, f64)>> = HashMap::new();
     let (mut no_sector, mut no_holdings, mut ungrouped) = (Vec::new(), Vec::new(), Vec::new());
+    let mut no_venue = std::collections::BTreeSet::new();
     let add = |m: &mut HashMap<String, f64>, k: &str, w: f64| *m.entry(k.to_string()).or_default() += w;
     for (t, w) in book {
         let Some(q) = quotes.iter().find(|q| &q.ticker == t) else { continue };
@@ -627,7 +629,11 @@ fn exposure_rows(
                     no_sector.push(t.as_str());
                 }
             }
-            add(&mut ccy, core::listing_currency(&us).unwrap_or("?"), *w);
+            let c = core::listing_currency(&us);
+            if c.is_none() {
+                no_venue.insert(t.as_str());
+            }
+            add(&mut ccy, c.unwrap_or("?"), *w);
             names.entry(us).or_default().0 += w;
             continue;
         }
@@ -646,7 +652,11 @@ fn exposure_rows(
         let total: f64 = hs.iter().map(|(_, x)| x).sum();
         if total > 0.0 {
             for (sym, x) in hs {
-                add(&mut ccy, core::listing_currency(sym).unwrap_or("?"), w * x / total);
+                let c = core::listing_currency(sym);
+                if c.is_none() {
+                    no_venue.insert(sym.as_str());
+                }
+                add(&mut ccy, c.unwrap_or("?"), w * x / total);
                 let e = names.entry(sym.clone()).or_default();
                 (e.1, e.2) = (e.1 + w * x, e.2 + 1);
             }
@@ -669,12 +679,21 @@ fn exposure_rows(
     };
     let weight = |ts: &[&str]| ts.iter().filter_map(|t| book.iter().find(|(b, _)| b == t)).map(|(_, w)| w).sum::<f64>();
     let mut rows = Vec::new();
-    for (kind, mix, blind, why) in [
-        ("sector", sector, &no_sector, "no sector data"),
-        ("currency", ccy, &no_holdings, "no holdings served"),
+    let no_venue: Vec<&str> = no_venue.into_iter().collect();
+    let ccy_why = [("no holdings served", &no_holdings), ("unrecognised venue", &no_venue)];
+    for (kind, mix, blind) in [
+        ("sector", sector, &[("no sector data", &no_sector)][..]),
+        ("currency", ccy, &ccy_why[..]),
     ] {
         for (name, w) in heaviest(mix) {
-            let detail = if name == "?" { format!("{why}: {}", blind.join(" ")) } else { String::new() };
+            // (#1086) every cause that fed the `?` row, each with its names
+            let named = blind.iter().filter(|(_, ts)| !ts.is_empty());
+            let named = named.map(|(why, ts)| format!("{why}: {}", ts.join(" ")));
+            let detail = if name == "?" {
+                named.collect::<Vec<_>>().join("; ")
+            } else {
+                String::new()
+            };
             rows.push(row(Default::default(), kind, &name, w, detail));
         }
     }
@@ -4687,6 +4706,23 @@ mod tests {
         let held = exposure_rows(&[("W.L".into(), 1.0)], &[etf("W.L")], &HashMap::from([("W.L".into(), ten)]), &mix, &home, &d);
         let shown: Vec<&str> = held.as_array().expect("rows").iter().filter(|r| r[1][1] == "name").map(|r| r[2][1].as_str().expect("a symbol")).collect();
         assert_eq!((shown.len(), shown.contains(&"AAA"), shown.contains(&"N10")), (10, false, true), "{shown:?}");
+        // (#1086) a venue with no known currency also feeds the `?` currency row, a fund's holding or a
+        // direct buy, and is named beside the fund with nothing served
+        let em_hold = [("2330.TW", 0.5), ("TSM", 0.5)].map(|(s, w)| (s.to_string(), w));
+        let em = HashMap::from([("EM.L".into(), em_hold.to_vec())]);
+        let book = [("EM.L", 60.0), ("BLIND.L", 20.0), ("X.ZZ", 20.0)];
+        let book = book.map(|(t, w)| (t.to_string(), w));
+        let quotes = [etf("EM.L"), etf("BLIND.L"), stock("X.ZZ", Some("Financials"))];
+        let rows = exposure_rows(&book, &quotes, &em, &mix, &home, &d);
+        let unknown: Vec<[&str; 2]> = rows
+            .as_array()
+            .expect("rows")
+            .iter()
+            .filter(|r| r[1][1] == "currency" && r[2][1] == "?")
+            .map(|r| [5, 6].map(|i| r[i][1].as_str().expect("a string cell")))
+            .collect();
+        let why = "no holdings served: BLIND.L; unrecognised venue: 2330.TW X.ZZ";
+        assert_eq!(unknown, [["70.0%", why]]);
     }
 
     /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the

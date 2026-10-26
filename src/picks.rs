@@ -5056,7 +5056,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     let exposure = fixed(&[
         ("RANK", "A name row's position by the buy heuristic, the ruler CORE ranks on; blank on sector, currency and one-bet rows, which are not assets"),
         ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),
-        ("NAME", "The sector, currency, group size or company ticker; ? = the data source served nothing for the funds named in DETAIL"),
+        ("NAME", "The sector, currency, group size or company ticker; ? = no data served, or a listing on a venue with no known currency, for the names in DETAIL"),
         ("SCORE", RANK_SCORE_HELP),
         ("MISSES", RANK_MISSES_HELP),
         ("BUY%", "Share of the BUY% book. A name's share is a lower bound: a fund counts only its top-10 holdings"),
