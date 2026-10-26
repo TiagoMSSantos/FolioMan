@@ -1742,6 +1742,16 @@ pub fn show(diff: bool) -> Result<String, String> {
     Ok(out)
 }
 
+/// (#1125) The merged config parsed ONCE per process for the process-once accessors below. Each used to
+/// deserialize the whole `Settings` for its one field. `None` = a missing or invalid config, so every
+/// accessor keeps its soft default.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+fn ambient() -> Option<&'static Settings> {
+    static S: std::sync::OnceLock<Option<Settings>> = std::sync::OnceLock::new();
+    S.get_or_init(|| merged_config().and_then(|v| serde_yaml::from_value::<Settings>(v).ok()))
+        .as_ref()
+}
+
 /// (Item 21) Process-once read of the adjusted-close probe flag. SOFT — a missing/invalid config
 /// yields false (the validated raw-close default), so it never panics in unit tests where the
 /// gitignored settings.yaml is absent. `parse_chart` reads this to prefer Yahoo adjclose; flipping it
@@ -1751,8 +1761,7 @@ pub fn use_adjusted_close() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.use_adjusted_close)
             .unwrap_or(false)
     })
@@ -1764,8 +1773,7 @@ pub fn splice_max_weekly_rate() -> f64 {
     use std::sync::OnceLock;
     static RATE: OnceLock<f64> = OnceLock::new();
     *RATE.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.splice_max_weekly_rate)
             .unwrap_or(0.0)
     })
@@ -1779,8 +1787,7 @@ pub fn stock_turnover_floor() -> f64 {
     use std::sync::OnceLock;
     static FLOOR: OnceLock<f64> = OnceLock::new();
     *FLOOR.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| match s.buy_heuristic.min_avg_turnover_eur_stock {
                 f if f > 0.0 => f,
                 _ => s.buy_heuristic.min_avg_turnover_eur,
@@ -1796,8 +1803,7 @@ pub fn flat_run_max_years() -> f64 {
     use std::sync::OnceLock;
     static YEARS: OnceLock<f64> = OnceLock::new();
     *YEARS.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.flat_run_max_years)
             .unwrap_or(0.0)
     })
@@ -1812,8 +1818,7 @@ pub fn hold_name_tokens() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_name_tokens)
             .unwrap_or(false)
     })
@@ -1825,8 +1830,7 @@ pub fn hold_ucits_or_domicile() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_ucits_or_domicile)
             .unwrap_or(false)
     })
@@ -1838,8 +1842,7 @@ pub fn hold_max_ter() -> f64 {
     use std::sync::OnceLock;
     static CAP: OnceLock<f64> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_max_ter)
             .unwrap_or(0.25)
     })
@@ -1851,8 +1854,7 @@ pub fn hold_min_aum_eur() -> f64 {
     use std::sync::OnceLock;
     static FLOOR: OnceLock<f64> = OnceLock::new();
     *FLOOR.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_min_aum_eur)
             .unwrap_or(1e9)
     })
@@ -1870,8 +1872,7 @@ pub fn hold_min_aum_eur_new_family() -> f64 {
     use std::sync::OnceLock;
     static FLOOR: OnceLock<f64> = OnceLock::new();
     *FLOOR.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_min_aum_eur_new_family)
             .unwrap_or(0.0)
     })
@@ -1895,8 +1896,7 @@ pub fn hold_sector_sleeve_aum() -> f64 {
     use std::sync::OnceLock;
     static FLOOR: OnceLock<f64> = OnceLock::new();
     *FLOOR.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_sector_sleeve_aum)
             .unwrap_or(0.0)
     })
@@ -1913,8 +1913,7 @@ pub fn hold_issuer_share_class_codes() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_issuer_share_class_codes)
             .unwrap_or(false)
     })
@@ -1928,8 +1927,7 @@ pub fn hold_size_sleeve_ter() -> f64 {
     use std::sync::OnceLock;
     static CAP: OnceLock<f64> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_size_sleeve_ter)
             .unwrap_or(0.0)
     })
@@ -1943,8 +1941,7 @@ pub fn hold_per_tier_all_world() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_all_world)
             .unwrap_or(0)
     })
@@ -1960,8 +1957,7 @@ pub fn hold_per_tier_developed() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_developed)
             .unwrap_or(0)
     })
@@ -1976,8 +1972,7 @@ pub fn hold_per_tier_us() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_us)
             .unwrap_or(0)
     })
@@ -1992,8 +1987,7 @@ pub fn hold_allow_swap() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_allow_swap)
             .unwrap_or(false)
     })
@@ -2008,8 +2002,7 @@ pub fn hold_allow_unknown_ter() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_allow_unknown_ter)
             .unwrap_or(false)
     })
@@ -2023,8 +2016,7 @@ pub fn hold_us_swap_ter_credit() -> f64 {
     use std::sync::OnceLock;
     static CREDIT: OnceLock<f64> = OnceLock::new();
     *CREDIT.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_us_swap_ter_credit)
             .unwrap_or(0.0)
     })
@@ -2039,8 +2031,7 @@ pub fn hold_per_tier_size() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_size)
             .unwrap_or(0)
     })
@@ -2055,8 +2046,7 @@ pub fn hold_per_tier_factor() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_factor)
             .unwrap_or(0)
     })
@@ -2072,8 +2062,7 @@ pub fn hold_per_tier_europe() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_europe)
             .unwrap_or(0)
     })
@@ -2093,8 +2082,7 @@ pub fn hold_per_tier_sector() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_sector)
             .unwrap_or(0)
     })
@@ -2110,8 +2098,7 @@ pub fn hold_per_tier_country() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_country)
             .unwrap_or(0)
     })
@@ -2127,8 +2114,7 @@ pub fn hold_per_tier_nasdaq() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier_nasdaq)
             .unwrap_or(0)
     })
@@ -2142,8 +2128,7 @@ pub fn hold_per_tier() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
     *CAP.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_per_tier)
             .unwrap_or(3)
     })
@@ -2162,8 +2147,7 @@ pub fn hold_factor_sleeve() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_factor_sleeve)
             .unwrap_or(false)
     })
@@ -2178,8 +2162,7 @@ pub fn hold_sector_sleeve() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_sector_sleeve)
             .unwrap_or(false)
     })
@@ -2200,8 +2183,7 @@ pub fn hold_family_first() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_family_first)
             .unwrap_or(false)
     })
@@ -2229,8 +2211,7 @@ pub fn hold_family_key_benchmark() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.hold_family_key_benchmark)
             .unwrap_or(false)
     })
@@ -2243,8 +2224,7 @@ pub fn vol_daily_equivalent() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.vol_daily_equivalent)
             .unwrap_or(false)
     })
@@ -2257,8 +2237,7 @@ pub fn growth_brake_min_sessions() -> usize {
     use std::sync::OnceLock;
     static MIN: OnceLock<usize> = OnceLock::new();
     *MIN.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.growth_brake_min_sessions)
             .unwrap_or(0)
     })
@@ -2271,8 +2250,7 @@ pub fn backtest_drop_lookahead_sector() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.backtest_drop_lookahead_sector)
             .unwrap_or(false)
     })
@@ -2286,8 +2264,7 @@ pub fn splice_trim_point_in_time() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.splice_trim_point_in_time)
             .unwrap_or(false)
     })
@@ -2301,8 +2278,7 @@ pub fn sec_line_filed_gate() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.sec_line_filed_gate)
             .unwrap_or(false)
     })
@@ -2316,8 +2292,7 @@ pub fn demean_by_market() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.demean_by_market)
             .unwrap_or(false)
     })
@@ -2330,8 +2305,7 @@ pub fn life_cagr_max_years() -> f64 {
     use std::sync::OnceLock;
     static YEARS: OnceLock<f64> = OnceLock::new();
     *YEARS.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.life_cagr_max_years)
             .unwrap_or(0.0)
     })
@@ -2360,9 +2334,8 @@ pub fn history_proxy() -> &'static BTreeMap<String, String> {
     use std::sync::OnceLock;
     static MAP: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     MAP.get_or_init(|| {
-        let map = merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
-            .map(|s| s.history_proxy)
+        let map = ambient()
+            .map(|s| s.history_proxy.clone())
             .unwrap_or_default();
         if history_proxy_auto() {
             merge_auto_proxies(map, auto_proxy_load())
@@ -2378,12 +2351,7 @@ pub fn history_proxy() -> &'static BTreeMap<String, String> {
 pub fn history_proxy_auto() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
-            .map(|s| s.history_proxy_auto)
-            .unwrap_or(false)
-    })
+    *ON.get_or_init(|| ambient().map(|s| s.history_proxy_auto).unwrap_or(false))
 }
 
 /// (#327) Where `screen` journals the twins it discovered. Beside the other state files, so a probe
@@ -2417,9 +2385,8 @@ pub fn fund_source() -> String {
     use std::sync::OnceLock;
     static SRC: OnceLock<String> = OnceLock::new();
     SRC.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
-            .map(|s| s.buy_heuristic.fund_source)
+        ambient()
+            .map(|s| s.buy_heuristic.fund_source.clone())
             .unwrap_or_else(|| "fmp".to_string())
     })
     .clone()
@@ -2473,8 +2440,7 @@ pub fn endpoint_smooth_days() -> usize {
     use std::sync::OnceLock;
     static N: OnceLock<usize> = OnceLock::new();
     *N.get_or_init(|| {
-        merged_config()
-            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+        ambient()
             .map(|s| s.buy_heuristic.endpoint_smooth_days)
             .unwrap_or(1)
     })
