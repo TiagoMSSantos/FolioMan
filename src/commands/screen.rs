@@ -2036,11 +2036,16 @@ pub async fn run(args: Vec<String>) {
     // fields nothing reads, and with it on the 1Y+ and range floors are capped by the index's own
     // numbers. It MUST stay above the pre-rank — stamping later would gate the live book on a valve
     // the ranking never saw, which is the train/serve split this repo keeps chasing out of corners.
-    let spx = fetch::quotes(
+    // (#1096) A failed fetch comes back as a stub priced "err" and 0% off its high, which printed a NEAR-HIGH
+    // entry state and journalled it as measured. Dropped here, every reader below sees no index, as its doc says.
+    let spx: Vec<Quote> = fetch::quotes(
         &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
         false, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
     )
-    .await;
+    .await
+    .into_iter()
+    .filter(|q| !q.is_failed())
+    .collect();
     stamp_regime(&mut quotes, spx.first());
     // (#328) the sector door's cohort, hoisted here for exactly the reason the regime stamp above is:
     // it must sit ABOVE every `growth_score` in this function, or the live book would be gated on a

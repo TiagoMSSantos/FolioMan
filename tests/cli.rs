@@ -422,6 +422,8 @@ fn screen_ranks_and_journals_offline() {
     // (#359) No Trading212 key (stripped), so no cash figure: the line stays silent rather than print a
     // balance nobody fetched.
     assert!(!stdout.contains("Broker cash"), "cash line without a key: {stdout}");
+    // (#1096) Offline, ^GSPC comes back as an "err" stub: no index, so no entry state, never a 0.0% NEAR-HIGH one.
+    assert!(!stdout.contains("off its high"), "a failed index fetch printed an entry state: {stdout}");
     assert!(
         isolated_root("screen-offline").join(".screen_snapshots.jsonl").is_file(),
         "screen must journal its ranking — and into the DATA ROOT, not the repo: {stdout}"
