@@ -14,6 +14,7 @@
 //!   folioman config show [--diff]  base + overlay settings paths, then the merged YAML; --diff = only the overlay values that move the base
 //!   folioman explain TICKER...     `screen --explain` without a fetch: each name's gates and SCORE arithmetic off the last `screen` run's saved pool; a name or another venue's line also matches
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; type `yes` to send)
+//!   folioman --version             the crate version
 //!
 //! No TICKERS -> uses config/settings.yaml watchlist. Edit that file for defaults.
 //!
@@ -42,6 +43,7 @@ folioman — review ETF/stock/crypto holdings. Read-only except `trade` (live or
   folioman explain TICKER...     `screen --explain` without a fetch: each name's gates and SCORE arithmetic off the last `screen` run's saved pool; a name or another venue's line also matches
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; brokers:
                                  trading212 | binance | tr (login only, orders not implemented) — creds from env; type `yes` to send)
+  folioman --version             the crate version
 
 No TICKERS -> uses config/settings.yaml watchlist.";
 
@@ -103,6 +105,7 @@ async fn dispatch() {
         "config" => commands::config::run(rest),
         "explain" => commands::explain::run(rest),
         "help" | "--help" | "-h" => println!("{USAGE}"), // asked-for help exits 0 below; unknown commands keep exit 2
+        "--version" | "-V" => println!("folioman {}", env!("CARGO_PKG_VERSION")), // (#1124)
         _ => {
             println!("{USAGE}");
             std::process::exit(2);

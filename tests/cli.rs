@@ -198,6 +198,11 @@ fn help_prints_usage_exit_0() {
         assert_eq!(code, 0, "{flag} should exit 0");
         assert!(stdout.contains("folioman — review"), "usage banner missing for {flag}: {stdout}");
     }
+    // (#1124) the version flags print the crate version alone and exit 0
+    for flag in ["--version", "-V"] {
+        let (code, stdout, _) = run(&[flag], None);
+        assert_eq!((code, stdout.as_str()), (0, format!("folioman {}\n", env!("CARGO_PKG_VERSION")).as_str()), "{flag}");
+    }
 }
 
 #[test]

@@ -115,6 +115,13 @@ schedule is the dedup; a failed push just retries next month):
 0 9 1 * * cd /path/to/folioman && ./target/release/folioman track --push >> /tmp/folioman.log 2>&1
 ```
 
+### `sim` — paper-DCA of the screen's advice
+
+`folioman sim` replays `.screen_snapshots.jsonl` as a pretend monthly saver: each month
+`monthly_deploy_eur` times the entry-state multiplier buys that month's first BUY NOW book (else the
+first snapshot's equal-weight top-10) at the journalled prices, less broker fees, and compounds it
+against an S&P 500 DCA of the same cashflows. No state of its own; price-only; NOT advice.
+
 ### Run-to-run alerts (`screen`)
 
 `screen` remembers its previous run in `.screen_state.json` (repo root, gitignored) and prints
