@@ -3736,9 +3736,9 @@ buy_heuristic:
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
                                  #   (#599) 2.0 REFUSED on rival (j): 0/6 cells, harmed 4/6. Receipt: the (#599) block.
   # (#819) retired: growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
-  print_acquisition_hazard: false # (#112 / round 3 §9) UNMEASURED, and unmeasurABLE from this data —
-                                 # which is the point. Ships OFF, which is the caveat block every
-                                 # golden holds. Prose only; no gate, no score term, no journal field.
+  print_acquisition_hazard: true  # (#112 / round 3 §9) UNMEASURED, and unmeasurABLE from this data —
+                                 # which is the point. Display only, ON since (#1114); OFF was the older
+                                 # caveat block. Prose only; no gate, no score term, no journal field.
                                  #
                                  #   THE HAZARD NOBODY NAMES. `#5` and `#6` are both about holds that
                                  #   ended BADLY and never entered the pool. This is the opposite
@@ -3763,7 +3763,7 @@ buy_heuristic:
                                  #   the footer is admitting it does not have. A hazard that cannot be
                                  #   quantified from the data should be NAMED, not silently priced at
                                  #   zero, and silently-at-zero is what OFF does — hence a knob whose
-                                 #   only defect is that it starts off.
+                                 #   only defect was that it started off, until (#1114).
                                  #
                                  #   THE ONE DIRECTIONAL READ it does support: it argues mildly toward
                                  #   LARGER names, which are harder to swallow. That is not a new
@@ -3777,8 +3777,8 @@ buy_heuristic:
                                  #   after-tax footer with holds truncated at the deal and taxed there.
                                  #   Until that exists the honest output is a named caveat.
                                  #   REVERT: set false.
-  print_currency_mix: false      # (#112 / round 3 §9) UNMEASURED — display only, and deliberately
-                                 # NOT a score input. Ships OFF, which is today's footer set.
+  print_currency_mix: true       # (#112 / round 3 §9) UNMEASURED — display only, and deliberately
+                                 # NOT a score input. ON since (#1114); OFF was the older footer set.
                                  #
                                  #   THE UNDISPLAYED POSITION. A EUR investor holding a US-heavy book
                                  #   for twenty years carries a large unhedged currency bet, and no
@@ -3820,8 +3820,8 @@ buy_heuristic:
                                  #   multi-currency pool before it could be swept at all, which is the
                                  #   real reason this ships as a printed line and not a weight.
                                  #   REVERT: set false.
-  print_base_rates: false        # (#111 / round 3 §8) UNMEASURED — the instrument has not been read
-                                 # yet. Ships OFF, which is the report every golden holds. Display
+  print_base_rates: true         # (#111 / round 3 §8) Display only, ON since (#1114); the instrument
+                                 # was read at (#124) below. OFF was the report the goldens held. Display
                                  # only; no score, no gate, no journal field.
                                  #
                                  #   THE MISSING DENOMINATOR. This lane's whole thesis is that a long
@@ -3863,7 +3863,7 @@ buy_heuristic:
                                  # print_n_eff), and picking a value is a sweep this did not run. It DOES establish
                                  # that the bar is the thing to sweep, ahead of adding any new factor - which is
                                  # what the round that read it concluded, against its own prior.
-                                 # Knob stays false. REVERT: set false.
+                                 # Knob stayed false until (#1114) turned it on for display. REVERT: set false.
                                  # 
                                  # (#194) CROSS-SECTIONAL ADMISSION FOR THE STOCK LANE — REFUSED 2026-09-01 WITHOUT
                                  # BUILDING IT, on this knob's own reading plus the free sweep. Recorded here because
@@ -3916,8 +3916,8 @@ buy_heuristic:
                                  # 6-10 do NOT sink. That is a cheap check available on every run already (read the rank slices
                                  # beside the h2h, per (#187)). A sweep flag is not that evidence and never was.
                                  # Nothing was built, so there is nothing to revert.
-  implied_growth_years: 0        # (#111 / round 3 §8) UNMEASURED — an unfitted judgement value,
-  implied_growth_required_pct: 8.0 # shipping OFF (0 = no line), which is today's ranking footer.
+  implied_growth_years: 10       # (#111 / round 3 §8) UNMEASURED — an unfitted judgement value,
+  implied_growth_required_pct: 8.0 # display only, ON since (#1114) at 10 years (0 = no line).
                                  #
                                  #   WHAT IT PRINTS: for each of today's top-10 with a P/E, the EPS
                                  #   growth rate the CURRENT price already pays for, beside what the
@@ -3944,6 +3944,7 @@ buy_heuristic:
                                  #   printed answer moves one-for-one with the latter, which is why
                                  #   the line prints both assumptions beside the result instead of
                                  #   presenting a number. 8.0 is a plain long-run equity hurdle.
+                                 #   (#1114) 10 years is a judgement horizon, not a fitted one.
                                  #   REVERT: set implied_growth_years to 0.
   entry_excess_yield_band: 0.0   # (#110 / round 3 §7) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is the one-axis footer every golden holds.
@@ -4148,10 +4149,9 @@ buy_heuristic:
                                  #   publication, which is the point — so it is a ship-rule decision
                                  #   graded on `backtest universe` at 20y/12y/8y, not a print knob.
                                  #   REVERT: set 0.
-  print_book_deciles: false      # (#106 / round 3 §4) UNMEASURED — an unfitted judgement value,
-                                 # shipping OFF, which is the mean-only ladder every golden holds.
-                                 # Display-only, so "unmeasured" means the instrument has not been read
-                                 # yet, not that a value is unfitted.
+  print_book_deciles: true       # (#106 / round 3 §4) Display only, ON since (#1114); OFF was the
+                                 # mean-only ladder the goldens held. "Unmeasured" meant the instrument
+                                 # had not been read yet, not that a value is unfitted.
                                  #
                                  #   THE DEFECT, and it is arithmetic rather than an empirical claim.
                                  #   The per-bucket statistic this report computes is right: a held book
@@ -4199,7 +4199,7 @@ buy_heuristic:
                                  # that treated rungs 15-50 as distinct baskets was reading one basket 9 times.
                                  # Read beside (#104)'s capture numbers from the same runs: a book that cannot be
                                  # widened cannot hold winners it was never allowed to admit.
-                                 # Knob stays false. REVERT: set false.
+                                 # Knob stayed false until (#1114) turned it on for display. REVERT: set false.
                                  # (#136) MEASURED 2026-08-25 — the basket question, put to the DISTRIBUTION and REFUSED.
                                  #   WHY THE ROUND RAN. Round 10's mean ladder showed top-5 beating top-10 on the PIT lane at
                                  #   every horizon, and at 20y/12y beating the MORE concentrated top-3 too. An interior knee is
@@ -4285,8 +4285,8 @@ buy_heuristic:
                                  #   What the admission ceiling does imply is that `check` will usually have fewer than 20 gated
                                  #   candidates to list at a cutoff, which makes top_picks: 20 harmless rather than wrong.
                                  #
-                                 #   REVERT: set false (it already is — this knob ships OFF and stays OFF; it was read through an
-                                 #   overlay, never shipped true). If a future round wants to re-open basket size, the bar above and
+                                 #   REVERT: set false (this knob shipped OFF until (#1114) turned it on for display; here it was
+                                 #   read through an overlay, never shipped true). If a future round wants to re-open basket size, the bar above and
                                  #   the no-stable-peak table are the prior: bring a mechanism, not an argmax.
                                  #
                                  #   (#180) THE TOP-5 COLUMN, READ 2026-08-31 TO PRICE THE ONE NUMBER IN THE STACK
@@ -15122,9 +15122,9 @@ buy_heuristic:
                                  #   not the ship rule. Same cause, same day: two runs disagreed on the ETF pond
                                  #   (2022 vs 2032 regulatory extras), which is why the 12y BUY-lane rows differ
                                  #   between the arms and are NOT read here.
-  print_edge_annualized: false   # (#96) UNMEASURED in the sense that no run has been read with it on —
+  print_edge_annualized: true    # (#96) Display only, ON since (#1114). No run had been read with it on —
                                  # but unlike its neighbours this one CANNOT change a decision, because
-                                 # nothing scored reads it. Shipping OFF keeps the goldens byte-identical.
+                                 # nothing scored reads it. OFF kept the goldens byte-identical.
                                  #
                                  #   THE DEFECT: `edge` and `top-N excess` are both printed as "pts" and
                                  #   are not the same unit. `edge` is a spread of CUMULATIVE returns over
@@ -15500,8 +15500,8 @@ buy_heuristic:
                                  #   before trusting it, `MUTUALFUND` + digits is a Yahoo naming artefact, not a
                                  #   contract. Turning it ON is only defensible on a PIT run, and on this data buys
                                  #   a cleaner sample and the same answer.
-  print_selection_count: false   # (#92) NOTHING TO MEASURE in the display half — a display knob shipping
-                                 #   OFF, byte-identical output, every golden pins it. But it names a
+  print_selection_count: true    # (#92) NOTHING TO MEASURE in the display half — a display knob, ON
+                                 #   since (#1114); OFF was byte-identical output. But it names a
                                  #   real UNMEASURED debt, recorded here because the fix needs runs this
                                  #   repo has not made. Sibling of (#91): that one says how many trials a
                                  #   number rests on, this one says how many candidates it beat.
@@ -15555,9 +15555,9 @@ buy_heuristic:
                                  #   THIS KNOB SURVIVES THE PAYMENT, with a narrower job: the caveat now
                                  #   prints only on the ladder TABLE header, warning the READER off an
                                  #   argmax the repo no longer makes. It came off the screen footer.
-  print_n_eff: false             # (#91) NOTHING TO MEASURE — a display knob, shipping OFF, which is
-                                 #   today's output byte-for-byte and is what every golden in
-                                 #   tests/fixture pins. It adds no gate, no score term and no journal
+  print_n_eff: true              # (#91) NOTHING TO MEASURE — a display knob, ON since (#1114). OFF was
+                                 #   the output byte-for-byte that every golden in
+                                 #   tests/fixture pinned before. It adds no gate, no score term and no journal
                                  #   field; turning it on appends a tag to five lines and changes no
                                  #   number anywhere. Third of the (#89)/(#90) set: all three are about
                                  #   whether the numbers that JUDGE a knob are honest.
@@ -15607,8 +15607,8 @@ buy_heuristic:
                                  # cannot ADJUDICATE between two knob values, and that knob-grading work belongs at
                                  # 12y/8y where n_eff clears 1. Anyone re-reading a 20y refusal in this file should
                                  # price it against 0.5.
-                                 # Knob stays false: reading an instrument is not a reason to ship its output into
-                                 # every golden. REVERT: set false.
+                                 # Knob stayed false until (#1114): the owner turned the instruments on so every later
+                                 # decision is read beside them. REVERT: set false.
   print_h2h_mid_ladder: true     # (#135) MEASURED 2026-08-24 — and it is the measurement the SHIP RULE v2
                                  # block at the top of this file asked for in writing: "any future rule that
                                  # grades on the PIT pool needs a guard whose sample size it can state".

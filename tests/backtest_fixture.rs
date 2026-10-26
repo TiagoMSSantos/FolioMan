@@ -1036,8 +1036,9 @@ fn backtest_proxy_discovery_and_sector_drop_complete() {
 }
 
 /// `print_book_deciles` prints the terminal-multiple distribution beside the ladder, and a non-empty
-/// `cgt_hold_schedule` makes the after-tax footer name the rates the never-sell and rotation arms pay. Both
-/// ship off, so the default golden never shows them; the run is checked structurally.
+/// `cgt_hold_schedule` makes the after-tax footer name the rates the never-sell and rotation arms pay. The
+/// schedule ships off, so the default golden never shows the taxed footer; the run is checked structurally.
+/// (#1114) The deciles ship on, and the arm still sets them so it does not lean on the shipped value.
 #[test]
 fn backtest_report_prints_book_deciles_and_the_taxed_hold() {
     let extra = "buy_heuristic:\n  print_book_deciles: true\n  cgt_hold_schedule:\n  - min_years: 5\n    excluded_pct: 50\n";
