@@ -88,6 +88,21 @@ fn membership_diff(label: &str, prev_date: &str, prev: &[String], now: &[String]
     ))
 }
 
+/// (#1121) The reorder [`membership_diff`] stays silent on, as its own line: each name in both lists that
+/// moved 3 or more places, `NVDA #2->#9`, biggest move first (a tie keeps today's order). None when no
+/// name moved that far, which covers a missing baseline.
+fn rank_moves(prev_date: &str, prev: &[String], now: &[String]) -> Option<String> {
+    let mut moves: Vec<(usize, usize, &str)> = now
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| prev.iter().position(|p| p == t).map(|j| (j, i, t.as_str())))
+        .filter(|(j, i, _)| j.abs_diff(*i) >= 3)
+        .collect();
+    moves.sort_by_key(|(j, i, _)| std::cmp::Reverse(j.abs_diff(*i)));
+    let named: Vec<String> = moves.iter().map(|(j, i, t)| format!("{t} #{}->#{}", j + 1, i + 1)).collect();
+    (!named.is_empty()).then(|| format!("Ranking moves since {prev_date}: {}", named.join(" ")))
+}
+
 pub(crate) const SCREEN_STATE_FILE: &str = ".screen_state.json";
 
 /// (round 56) Permanent record of every alert this command ever printed. Each alert fires exactly
@@ -3017,6 +3032,10 @@ pub async fn run(args: Vec<String>) {
         if let Some(line) = membership_diff("Ranking membership", &prev.date, &prev.ranked, &ranked_now) {
             println!("{line}");
             journal(&run_date, &[line]);
+        }
+        // (#1121) stdout only: a reorder is market drift, so the journal keeps to membership
+        if let Some(line) = rank_moves(&prev.date, &prev.ranked, &ranked_now) {
+            println!("{line}");
         }
     }
 
@@ -6523,5 +6542,16 @@ mod tests {
             membership_diff("CORE shortlist", "d", &v(&["A"]), &v(&[])).unwrap(),
             "CORE shortlist changed since d: -A" // pure dropout: no dangling "+" prefix
         );
+    }
+
+    /// (#1121) Only names in both lists that moved 3+ places print, biggest move first: F's 2 places, the
+    /// new X and the dropped G are not moves, and no baseline is silent.
+    #[test]
+    fn rank_moves_semantics() {
+        let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let (prev, now) = (v(&["A", "B", "C", "D", "E", "F", "G"]), v(&["D", "B", "C", "F", "E", "A", "X"]));
+        assert_eq!(rank_moves("2026-07-10", &prev, &now).unwrap(), "Ranking moves since 2026-07-10: A #1->#6 D #4->#1");
+        assert!(rank_moves("d", &prev, &prev).is_none());
+        assert!(rank_moves("d", &[], &now).is_none());
     }
 }
