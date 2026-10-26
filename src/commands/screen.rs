@@ -1395,7 +1395,7 @@ fn prior_screens(snaps: &[crate::commands::track::Snapshot], run_date: &str) -> 
 /// (round 28) Which of today's top rows have DURABLY held a top-10 rank across the journal —
 /// the frequency the trust line's return-grade and the single-step membership diff don't show.
 /// For each `today_top` ticker (rank order preserved), the fraction of `past` snapshots whose own
-/// top-[`track::BOOK`] rows carried it; kept when `>= min_frac`. A name sitting at rank 11+ in a
+/// top-[`track::BOOK`](super::track::BOOK) rows carried it; kept when `>= min_frac`. A name sitting at rank 11+ in a
 /// snapshot does NOT count (the book is the top-10, same cut the journal is graded on). Empty
 /// `past` → empty: a persistence claim needs history.
 fn persistent_leaders(
@@ -1424,7 +1424,7 @@ fn persistent_leaders(
         .collect()
 }
 
-/// (#872) A name's rank (position within the top-[`track::BOOK`] slice, +1) in each snapshot that
+/// (#872) A name's rank (position within the top-[`track::BOOK`](super::track::BOOK) slice, +1) in each snapshot that
 /// carries it, in journal order. A snapshot that ranks it below the book, or not at all, adds no
 /// point: the cut r28 / r29 / r31 and `track::grade` share.
 fn book_ranks(t: &str, journal: &[crate::commands::track::Snapshot]) -> Vec<usize> {
@@ -1439,7 +1439,7 @@ fn book_ranks(t: &str, journal: &[crate::commands::track::Snapshot]) -> Vec<usiz
 /// and the trust line (RETURN): a name can hold the book durably yet be deteriorating, a caution
 /// for a 20yr anchor. `journal` is chronological and includes today's row, so the trend ends at
 /// today's rank. For each `today_top` ticker (today-order kept), its rank in each snapshot =
-/// position within the top-[`track::BOOK`] slice, +1 (a name below the book has NO rank — same cut
+/// position within the top-[`track::BOOK`](super::track::BOOK) slice, +1 (a name below the book has NO rank — same cut
 /// r28 and `track::grade` use). A claim needs `>= min_pts` appearances; earlier-half mean vs
 /// later-half mean decides, with a `band`-rank deadband so a flat drift stays silent. Returns
 /// (climbers, faders), each `(ticker, first_rank, last_rank)` as first→last evidence.
@@ -1471,11 +1471,11 @@ fn rank_trend(
     (climbers, faders)
 }
 
-/// (round 30) Book STABILITY — how much of the top-[`track::BOOK`] set carries over between
+/// (round 30) Book STABILITY — how much of the top-[`track::BOOK`](super::track::BOOK) set carries over between
 /// consecutive screens, averaged across the journal. A meta-confidence number ABOUT the ranking
 /// (does it reshuffle every screen?), orthogonal to the persistent-leaders footer (which names
 /// hold), the rank-trend footer (which way a name moves), and the trust line (return). Retention
-/// per pair = |A ∩ B| / min(|A|, |B|) over the two top-[`track::BOOK`] slices — scored against the
+/// per pair = |A ∩ B| / min(|A|, |B|) over the two top-[`track::BOOK`](super::track::BOOK) slices — scored against the
 /// SMALLER book so a short snapshot (some days store < 10 rows) reads as fewer slots, not churn.
 /// `None` if fewer than two comparable screens.
 fn book_stability(journal: &[crate::commands::track::Snapshot]) -> Option<f64> {
@@ -1521,12 +1521,12 @@ fn stability_tag(ratio: f64) -> &'static str {
     }
 }
 
-/// (round 31) Mean book RANK — a name's AVERAGE position in the top-[`track::BOOK`] slice across
+/// (round 31) Mean book RANK — a name's AVERAGE position in the top-[`track::BOOK`](super::track::BOOK) slice across
 /// the journal, the LEVEL the slope/churn footers don't read. r29 rank-trend reports direction and
 /// r30 reports book stability, but a name can be flat (r29 silent) yet durably sit at #2 vs #8 —
 /// same r28 "persistent" bucket, opposite conviction. Reorders today's top by where each name has
 /// SAT on average, so a one-day spike (high today, mid on average) sorts below a durable resident.
-/// Rank per snapshot = position within the top-[`track::BOOK`] slice, +1 (a below-book name adds no
+/// Rank per snapshot = position within the top-[`track::BOOK`](super::track::BOOK) slice, +1 (a below-book name adds no
 /// point — same cut r28/r29/r30 and `track::grade` use). A name needs `>= min_pts` appearances for a
 /// non-trivial mean. Returns (ticker, mean_rank, appearances), best-seated (lowest mean) first.
 fn mean_ranks(
@@ -1557,7 +1557,7 @@ fn mean_ranks(
 /// = money arriving (smart-money validation + closure-risk comfort for a 20yr hold), < 0 = bleeding
 /// assets (a fund shrinking toward liquidation before a decades hold ends). Orthogonal to every
 /// other footer — those read RANK and price-RETURN, never the asset base. AUM is rank-independent,
-/// so points are gathered from ALL rows (not the top-[`track::BOOK`] cut the rank footers use). A
+/// so points are gathered from ALL rows (not the top-[`track::BOOK`](super::track::BOOK) cut the rank footers use). A
 /// name needs ≥ 2 qualifying points; funds only (stocks/crypto journal `None` AUM and drop out).
 /// Returns (ticker, net_flow_pct, points), biggest inflow first; empty when nothing qualifies.
 fn fund_flow_lines(

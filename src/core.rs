@@ -166,7 +166,7 @@ fn suffix_currency(suf: &str) -> Option<&'static str> {
 }
 
 /// (#112) The currency a listing trades in, from its ticker alone. No suffix = a US line = USD, the
-/// same assumption [`market`] makes one function down. `None` is an UNRECOGNISED venue, printed as
+/// same assumption [`market_of`] makes. `None` is an UNRECOGNISED venue, printed as
 /// unknown rather than guessed: a wrong currency here is silently a wrong FX exposure, and the
 /// currency-mix footer would rather show a `?` slice than a confident lie.
 ///
@@ -3081,7 +3081,7 @@ pub fn hold_suitable(q: &Quote) -> bool {
 
 /// (#199) The CORE admission legs, in the order [`hold_miss_leg`] walks them, indexed BY the number
 /// it returns. Display labels for the funnel line — short on purpose, because all six print on one
-/// row. A seventh tally slot past the end is "qualified"; see [`picks::hold_funnel`].
+/// row. A seventh tally slot past the end is "qualified"; see [`picks::hold_funnel`](crate::picks::hold_funnel).
 pub const HOLD_LEGS: [&str; 6] =
     ["not broad-index", "no UCITS", "TER", "replication", "not Acc", "AUM"];
 
@@ -3128,7 +3128,7 @@ pub fn hold_miss_reason(q: &Quote) -> Option<String> {
 ///
 /// The index exists because nothing could bucket the verdict before: the message is formatted with
 /// live values ("TER 0.30% > 0.25% cap"), so a tally keyed on it would key on the fund's numbers.
-/// [`picks::hold_funnel`] reads the index and nothing else. Ten rounds of admission work guessed
+/// [`picks::hold_funnel`](crate::picks::hold_funnel) reads the index and nothing else. Ten rounds of admission work guessed
 /// which leg was binding because this number was thrown away on every one of the ~4300 funds that
 /// computes it.
 pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {

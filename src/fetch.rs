@@ -2605,7 +2605,7 @@ async fn ep_get(client: &Client, url: &str, hdr: &[(&str, &str)]) -> Result<Opti
     }
 }
 
-/// (#519) DISPLAY ONLY: FAIR ÷ price ([`picks::ep_fair_ratio`]) for the non-US stocks SEC filed no FCF for, stamped
+/// (#519) DISPLAY ONLY: FAIR ÷ price ([`picks::ep_fair_ratio`](crate::picks::ep_fair_ratio)) for the non-US stocks SEC filed no FCF for, stamped
 /// as `ep_fair` on pooled stock rows (never `fund`, which is scored) and returned for every non-US top-10
 /// holding of `holdings`, which the ETF look-through averages. Cash flow refetched every 30 days, the
 /// market cap daily, ~5k calls a month on a 100k quota. No `EULERPOOL_API_KEY` = lane off, one log line.
@@ -3761,7 +3761,7 @@ pub struct SocRow {
 
 /// (#443) The feed's entries, newest first as YouTube lists them: (published day, title, title + " " +
 /// description, (#455) its watch link or ""), entities decoded. An entry missing a title or date is skipped.
-/// (#536) A description line holding a link is dropped: "Instagram: https://..." is boilerplate, not talk.
+/// (#536) A description line holding a link is dropped: `Instagram: https://...` is boilerplate, not talk.
 fn soc_videos(xml: &str) -> Vec<(String, String, String, String)> {
     let field = |e: &str, tag: &str| {
         regex::Regex::new(&format!(r"(?s)<{tag}>(.*?)</{tag}>"))

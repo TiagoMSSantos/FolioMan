@@ -255,6 +255,22 @@ jobs:
           shared-key: folioman-lint   # (#353) clippy's check output is not a build's; lint's alone
       - run: cargo clippy --locked --all-targets -- -D warnings
 
+  # (#1126) rustdoc gate. Only rustdoc resolves a doc comment's [`links`]: clippy and the tests never
+  # read them, so a renamed or moved item left its links dangling with nothing red. Private items
+  # too, because most of this crate's docs sit on them, and a pub doc that links a private helper
+  # then resolves instead of warning. The bin shares the lib's name, so cargo documents the lib only.
+  doc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: folioman-doc   # (#353) rustdoc's output serves no other job; doc's alone
+      - run: cargo doc --locked --no-deps --document-private-items
+
   # (#390) The page's engine builds this crate for wasm32 (only config/core/picks go in). Pages
   # builds it when the source moves but must never block the site on it, so a break has to show HERE,
   # on the push that caused it: a `commands`/`fetch` import creeping into picks, or a dependency that
