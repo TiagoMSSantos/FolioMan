@@ -8769,7 +8769,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: d162d81b9db7 (#1111), graded 2026-10-26 by run 40330816306, same five inputs, since
+  # LAST GRADED SHA: 4761333235fe (#1127), graded 2026-10-26 by run 40398741669, same five inputs, since
+  # d162d81, `files` = every src file (#1113)-(#1127) touched: 44 in scope = 42 caught (`overlay_diff` 8,
+  # `rank_moves` 6, `allocation_gap_lines` 6, `eur_cell` 5, `parse_args` 3, `hold_max_ter` 3,
+  # `hold_min_aum_eur` 3, `splice_max_weekly_rate` 3, `flat_run_max_years` 3, `endpoint_smooth_days` 2),
+  # 2 unviable (the two match-arm deletions in `eur_cell`), 0 missed, 0 timeout. (#1128) records it.
+  # BEFORE THAT: d162d81b9db7 (#1111), graded 2026-10-26 by run 40330816306, same five inputs, since
   # 7d2d3d3, `files` = src/picks.rs src/commands/report.rs: 7 in scope = 7 caught (`col_cell` 5 for the
   # EV/EBITDA cell of (#1109), `market_line` 2 for (#1111)), 0 unviable, 0 missed, 0 timeout. (#1112)
   # records it.
