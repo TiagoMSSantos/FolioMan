@@ -3006,8 +3006,10 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         if tuning.long_trend_cap > 0.0 { "min(CAGR, cap)" } else { "CAGR (cap off)" },
         tuning.growth_trend_weight, p.trend, p.trend_term));
     let cap = if tuning.long_trend_cap > 0.0 { format!(", counted up to {:.0}%/yr", tuning.long_trend_cap) } else { String::new() };
+    // (#1083) `long_cagr` is the scored leg (20Y, else 8Y, else 5Y), the LEG column's window; it is the whole
+    // record only under `use_life_cagr`, which ships off.
     say(&mut s, &plain(tuning.growth_trend_weight != 0.0, p.trend_term,
-        &format!("Long-run growth: its average yearly price gain over its whole record, {:.1}%/yr{cap}", p.long_cagr),
+        &format!("Long-run growth: its average yearly price gain over its longest scored window (the LEG column), {:.1}%/yr{cap}", p.long_cagr),
         "no long-run gain"));
     // (#98) the trailing parenthetical tracks `growth_accel_beta` for the same reason the `trend` row
     // above tracks the cap knob: printing a plain `1Y − CAGR` while the leg subtracts a FRACTION of the
@@ -10828,6 +10830,8 @@ mod tests {
         assert!(!base.contains("Base is below 0"));
         let ran = Quote { above_ma_pct: 40.0, ..q.clone() };
         assert!(ex(&ran, &d).contains("the price is 40.0% above its ~200-week average (full brake at 100%)"));
+        // (#1083) the long-run row names the scored window, not the whole record
+        assert!(base.contains("Long-run growth: its average yearly price gain over its longest scored window (the LEG column), "), "{base}");
         let zero = Quote { above_ma_pct: 200.0, ..q.clone() };
         let z = ex(&zero, &BuyHeuristic { growth_overext_floor: 0.0, ..d.clone() });
         assert!(z.contains("Cut to zero by trust and ran-too-far brakes."), "{z}");
