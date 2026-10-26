@@ -145,7 +145,7 @@ async fn get_with(client: &Client, url: &str, headers: &[(&str, &str)]) -> Optio
 /// `1 / rate` apart: a single shared "next free slot" instant that each request claims-and-bumps
 /// under a short lock, then releases the lock and sleeps until its slot. N concurrent tasks therefore
 /// leave the gate evenly spaced at the configured rate instead of all at once. Rate from config
-/// (`fetch_requests_per_second`); 0 disables it. note: one Mutex<Instant>, no token-bucket crate.
+/// (`fetch_requests_per_second`); 0 disables it. note: one `Mutex<Instant>`, no token-bucket crate.
 static THROTTLE: std::sync::OnceLock<(Mutex<Instant>, StdDuration)> = std::sync::OnceLock::new();
 
 /// Pure slot math (testable, no clock/lock): claim the launch instant for a request arriving at `now`

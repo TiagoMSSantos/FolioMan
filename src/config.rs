@@ -1951,7 +1951,7 @@ pub fn hold_per_tier_all_world() -> usize {
 /// [`hold_per_tier`] and leave that arm inert. Same `#[mutants::skip]` as its seven twins and for the
 /// same reason: the value is a process-wide `OnceLock` no test can flip, so every branch reading it
 /// off-default is one the mutation gate cannot reach. The cap is THREADED as an argument into
-/// [`crate::core::tier_cap`] and [`crate::core::geo_tier_at`], and graded there instead.
+/// [`crate::core::tier_cap`] and `crate::core::geo_tier_at`, and graded there instead.
 #[mutants::skip]
 pub fn hold_per_tier_developed() -> usize {
     use std::sync::OnceLock;

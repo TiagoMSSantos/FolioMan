@@ -1038,7 +1038,7 @@ fn trust_factor(quote: &Quote, crypto: bool, fixed_years: u32, ladder: bool, you
     }
 }
 
-/// (#4) Combine the pure penalty multipliers (each ∈[0,1]) as a GEOMETRIC MEAN, not a raw product, so
+/// (#4) Combine the pure penalty multipliers (each ∈ `[0,1]`) as a GEOMETRIC MEAN, not a raw product, so
 /// several mild damps can't compound multiplicatively toward ~0 and silently delete an otherwise
 /// strong pick — the bug that dropped BTC, where trust × overext × consistency stacked to near-zero.
 /// geomean(all 1.0) = 1.0; a lone 0.5 damp costs 0.5^(1/n), not 0.5; the combined penalty is bounded
@@ -1156,7 +1156,7 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 ///   `discount_cap`), then scaled by **discount_weight** (#4, default 0.35): the walk-forward backtest found
 ///   deepest-dip ranking is BACKWARDS on peer-relative selection, so the direct dip reward is demoted toward
 ///   the trend/quality terms (set 1.0 to restore the old weight). The OFF-HI column (`drawdown_pct`) is display only.
-/// - **trend_health** ∈ [0,1] — fades the discount as the long trend's CAGR weakens (`health_zero_cagr`).
+/// - **trend_health** ∈ `[0,1]` — fades the discount as the long trend's CAGR weakens (`health_zero_cagr`).
 /// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
 ///   weekly timing is noise at a decades horizon).
 /// - **long_reward** — (A) reward for the long leg's CAGR (annualized, comparable across spans;
@@ -7119,7 +7119,7 @@ pub fn size_weights(
         .collect()
 }
 
-/// (Item 8) Jaccard overlap of the top-`n` tickers of two ranked lists: |∩| / |∪| in [0,1]. 1.0 = the
+/// (Item 8) Jaccard overlap of the top-`n` tickers of two ranked lists: |∩| / |∪| in `[0,1]`. 1.0 = the
 /// same names (stable); low = churn — paid in spread+fees, and a sign a knob change reshuffled the picks
 /// (overfit smell). Both empty -> 1.0 (nothing changed). Pure.
 fn rank_jaccard(prev: &[String], now: &[String], n: usize) -> f64 {

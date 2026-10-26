@@ -1443,8 +1443,8 @@ fn book_ranks(t: &str, journal: &[crate::commands::track::Snapshot]) -> Vec<usiz
 /// r28 and `track::grade` use). A claim needs `>= min_pts` appearances; earlier-half mean vs
 /// later-half mean decides, with a `band`-rank deadband so a flat drift stays silent. Returns
 /// (climbers, faders), each `(ticker, first_rank, last_rank)` as first→last evidence.
-/// (#1027) A move of exactly `band` counts: the half means are thirds, so ranks [1,2,2] then
-/// [2,3,3] differ by 0.9999999999999998, and a 1e-9 slack keeps that a fade.
+/// (#1027) A move of exactly `band` counts: the half means are thirds, so ranks `[1,2,2]` then
+/// `[2,3,3]` differ by 0.9999999999999998, and a 1e-9 slack keeps that a fade.
 fn rank_trend(
     today_top: &[String],
     journal: &[crate::commands::track::Snapshot],

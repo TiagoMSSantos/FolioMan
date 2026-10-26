@@ -307,8 +307,9 @@ fn infl_years(eu: Option<usize>) -> Vec<usize> {
 /// Rows are `(header, cell)` pairs — the SAME shape the three lanes use — so `web/index.html` renders
 /// this with the table builder it already has and no cell is formatted in two places.
 ///
-/// Nothing here derives a number: [`core::inflation_summary`], [`core::inflation_compounded`] and
-/// [`core::infl_series_stale`] are the three helpers the footer itself calls, and [`pct`] is the
+/// Nothing here derives a number: [`crate::core::inflation_summary`],
+/// [`crate::core::inflation_compounded`] and [`crate::core::infl_series_stale`] are the three helpers
+/// the footer itself calls, and [`pct`] is the
 /// footer's own formatter. `AS OF` carries the footer's three states (healthy year / frozen feed /
 /// dead feed) because a dead feed reaches the page as a row of `n/a` cells, and a page with no other
 /// tell would publish that as if it were measured.
@@ -354,7 +355,7 @@ fn signed_pct(v: f64) -> String {
 }
 
 /// (#486) The page's Bonds table: per market, the newest 10Y yield and what a constant-maturity 10Y
-/// government bond returned over each [`core::BOND_YEARS`] span, in its own currency, compounded
+/// government bond returned over each [`crate::core::BOND_YEARS`] span, in its own currency, compounded
 /// (`core::bond_index`). "USA in EUR" follows USA: the same dollar index divided by USD per EUR, so it
 /// carries the currency swing a euro holder took, and stops where EXUSEU does (1999). Display only.
 /// `AS OF` is the newest month; ⚠ STALE past 6 months, as a dead series still prints its last numbers.

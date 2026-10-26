@@ -257,13 +257,15 @@ jobs:
 
   # (#1126) rustdoc gate. Only rustdoc resolves a doc comment's [`links`]: clippy and the tests never
   # read them, so a renamed or moved item left its links dangling with nothing red. Private items
-  # too, because most of this crate's docs sit on them, and a pub doc that links a private helper
-  # then resolves instead of warning. The bin shares the lib's name, so cargo documents the lib only.
+  # too, because most of this crate's docs sit on them. (#1127) rustdoc still flags a pub doc that
+  # links a private helper (79 such links on the first run), though with private items documented
+  # the link renders; that one lint is allowed. A private item in ANOTHER module does not resolve at
+  # all and stays red. The bin shares the lib's name, so cargo documents the lib only.
   doc:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      RUSTDOCFLAGS: -D warnings
+      RUSTDOCFLAGS: -D warnings -A rustdoc::private-intra-doc-links
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
