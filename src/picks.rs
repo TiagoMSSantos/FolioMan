@@ -1300,9 +1300,10 @@ struct ScoreParts {
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
     acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
+    bubble: f64,       // (#1136) max(1 − growth_bubble_weight × flags/5, 0.5), flags from [`bubble_flags`]; 1.0 at the shipped weight 0
     holder_boost: f64, // (#472) growth_brk_held_boost on a `brk_held` stock × growth_superinvestor_boost per step of `super_buyers` × (#473) growth_social_boost on a `social_tip` one × (#545) growth_capex_ocf_penalty above growth_capex_ocf_max; 1.0 otherwise / knobs off / every backtest quote
     gate_soft: f64,    // (#563) f^n, n = knob gates waived to score this name ([`waived`]); 1.0 = it cleared every gate, or `growth_gate_soft` is 0 and it never got here
-    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost + liq_bonus. (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
+    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp × holder_boost × bubble + liq_bonus. (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
 /// (#98) The acceleration leg, and the ONE definition of it — `score_parts` computes it, nothing else
@@ -1809,6 +1810,9 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     };
     let (brk_boost, super_boost, social_boost, capex_damp) = holder_boosts(quote, tuning);
     let holder_boost = brk_boost * super_boost * social_boost * capex_damp;
+    // (#1136) the bubble damp: each fired flag takes a fifth of the weight off, never below half the score.
+    // A negative weight is off. At the shipped 0 it is exactly 1.0, so every score keeps its bits.
+    let bubble = (1.0 - tuning.growth_bubble_weight.max(0.0) * bubble_flags(quote).len() as f64 / 5.0).max(0.5);
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
     // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
@@ -1852,7 +1856,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, gate_soft: 1.0, score: 0.0,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, holder_boost, bubble, gate_soft: 1.0, score: 0.0,
     };
     parts.score = compose_score(&parts, tuning);
     Some(parts)
@@ -1901,6 +1905,30 @@ fn holder_boosts(quote: &Quote, tuning: &BuyHeuristic) -> (f64, f64, f64, f64) {
     (brk, sup, soc, capex)
 }
 
+/// (#1136) The bubble damp's flags that fire on `quote`, read off the run-up itself: a 2Y return of 100% or
+/// more, a last-6M pace above the 18 months before it (both annualised), a year's volatility at 1.5x or
+/// more the year before's, net share issuance above 2% a year, and a listing under 7 years old. Missing
+/// data leaves a flag off. No turnover-change flag: every backtest quote carries the same sentinel
+/// turnover, so that flag could never be graded.
+fn bubble_flags(quote: &Quote) -> Vec<&'static str> {
+    let (p6, p2) = (perf_pct(quote, "6M"), perf_pct(quote, "2Y"));
+    // 6M growth squared is its yearly pace; the 18 months before it grew g2 / g6, to the 12/18 power a year
+    let pace = p6.zip(p2).is_some_and(|(a, b)| {
+        let (g6, g2) = (1.0 + a / 100.0, 1.0 + b / 100.0);
+        g6.powi(2) > (g2 / g6).powf(2.0 / 3.0)
+    });
+    [
+        ("2Y run-up", p2.is_some_and(|p| p >= 100.0)),
+        ("6M pace", pace),
+        ("vol jump", quote.vol_change.is_some_and(|v| v >= 1.5)),
+        ("issuance", quote.fund.as_ref().and_then(|f| f.buyback_yield).is_some_and(|b| b < -2.0)),
+        ("young", quote.age_years.is_some_and(|a| a < 7.0)),
+    ]
+    .into_iter()
+    .filter_map(|(name, on)| on.then_some(name))
+    .collect()
+}
+
 /// (#144) `base` and the multiplier stack -> the ranked score: the ONE definition of that
 /// composition, which `score_parts` builds (non-negotiable #4).
 ///
@@ -1911,7 +1939,7 @@ fn compose_score(p: &ScoreParts, tuning: &BuyHeuristic) -> f64 {
     let s = if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
         p.base + p.liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
     } else {
-        p.base * p.proximity * p.value * p.damp * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost + p.liq_bonus
+        p.base * p.proximity * p.value * p.damp * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp * p.holder_boost * p.bubble + p.liq_bonus
     };
     // (#563) the soft-gate dock LAST, on the whole score: dividing a negative one keeps it pushing down.
     // At 1.0 both `*` and `/` are exact, so a name that cleared its gates keeps its bits.
@@ -3185,6 +3213,14 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         String::new()
     };
+    // (#1136) the bubble damp, printed only when a flag fires at a set weight
+    let bubble_frag = if p.bubble != 1.0 {
+        s.push_str(&format!("  bubble       = 1 − weight × flags/5, floor 0.5          = {:.3}\n", p.bubble));
+        say(&mut s, &format!("Run-up warning signs: {}.", bubble_flags(quote).join(", ")));
+        format!(" × {:.3}", p.bubble)
+    } else {
+        String::new()
+    };
     // (#576) the soft-gate dock multiplies the WHOLE score last (`compose_score`), so the SCORE line
     // wraps the product in brackets; a name that cleared its gates keeps its old line
     let dock = p.gate_soft;
@@ -3196,7 +3232,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         ("", String::new())
     };
-    s.push_str(&format!("\n  SCORE = {open}{:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag} + {:.2}{dock_frag} = {:.2}\n",
+    s.push_str(&format!("\n  SCORE = {open}{:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag}{holder_frag}{bubble_frag} + {:.2}{dock_frag} = {:.2}\n",
         p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     if (displayed - p.score).abs() > 1e-6 {
         s.push_str(&format!("  crypto NUPL + BTC-relative adjustment: {:.2} → {displayed:.2} (the table value)\n", p.score));
@@ -3232,7 +3268,7 @@ fn in_short(p: &ScoreParts, tuning: &BuyHeuristic) -> String {
         s.push_str("    · Base is below 0, so no multiplier applies.\n");
     } else {
         let mut cuts = vec![("price position", p.proximity), ("cheapness", p.value), ("trust and ran-too-far brakes", p.damp)];
-        cuts.extend([("fund fee", p.ter_damp), ("raw-material price", p.commodity_damp), ("currency", p.fx_damp), ("dividend tax", p.acc_damp)]);
+        cuts.extend([("fund fee", p.ter_damp), ("raw-material price", p.commodity_damp), ("currency", p.fx_damp), ("dividend tax", p.acc_damp), ("bubble flags", p.bubble)]);
         let (n, f) = cuts.into_iter().min_by(|a, b| a.1.total_cmp(&b.1)).expect("the dock list is never empty");
         if f >= 1.0 {
             s.push_str("    · No multiplier cuts it.\n");
@@ -8619,6 +8655,7 @@ mod tests {
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,
             max_daily_1m: None, // (P4) unknown worst day -> the spike gate passes, as unknown vol does
+            vol_change: None,   // (#1136) unknown -> the bubble damp's volatility flag stays off
             pe_ratio: None,
             mvrv: None, // (#45) no MVRV -> the crypto ceiling passes these fixtures free; the gate's own tests set it
             roe: None,
@@ -10753,7 +10790,7 @@ mod tests {
             explain_growth_score(q, t, s + bump).expect("a scoring row explains")
         };
         let base = ex(&q, &d, 0.0);
-        for quiet in ["×CAGR", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "bonuses      =", "crypto NUPL", "brake off"] {
+        for quiet in ["×CAGR", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "bonuses      =", "bubble       =", "crypto NUPL", "brake off"] {
             assert!(!base.contains(quiet), "default must not print {quiet:?}:\n{base}");
         }
         assert!(base.contains("overext_damp = 1 − ("), "{base}");
@@ -10777,6 +10814,9 @@ mod tests {
         assert!(ex(&dist, &acc, 0.0).contains("acc_damp     ="));
         let held = Quote { brk_held: true, ..q.clone() };
         assert!(ex(&held, &BuyHeuristic { growth_brk_held_boost: 1.2, ..d.clone() }, 0.0).contains("bonuses      ="));
+        let young = Quote { age_years: Some(3.0), ..q.clone() };
+        let b = ex(&young, &BuyHeuristic { growth_bubble_weight: 1.0, ..d.clone() }, 0.0);
+        assert!(b.contains("bubble       =") && b.contains("Run-up warning signs: young."), "(#1136) {b}");
         assert!(ex(&q, &d, 1.0).contains("crypto NUPL"), "a displayed value off the score says why");
     }
 
@@ -13625,12 +13665,13 @@ mod tests {
         p.fx_damp = 0.4;
         p.acc_damp = 0.3;
         p.holder_boost = 1.2;
+        p.bubble = 0.5;
         p.liq_bonus = 2.0;
 
         let plain = BuyHeuristic::default();
         assert!(!plain.growth_allow_negative_scores, "the shipped lane is the else branch");
-        let want = 8.0 * 0.9 * 0.8 * 0.7 * 0.6 * 0.5 * 0.4 * 0.3 * 1.2 + 2.0;
-        assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all seven damps and the boost, and ADDS the bonus");
+        let want = 8.0 * 0.9 * 0.8 * 0.7 * 0.6 * 0.5 * 0.4 * 0.3 * 1.2 * 0.5 + 2.0;
+        assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all seven damps, the boost and (#1136) the bubble damp, and ADDS the bonus");
 
         // (#86) a negative base takes NO damp — and with a non-zero bonus the sign of the `+` shows.
         let neg = BuyHeuristic { growth_allow_negative_scores: true, ..BuyHeuristic::default() };
@@ -13640,6 +13681,36 @@ mod tests {
         // ...and the knob is what selects it: same parts, knob off, back to the damped branch.
         p.base = 8.0;
         assert_eq!(compose_score(&p, &neg), compose_score(&p, &plain), "a POSITIVE base ignores the knob entirely");
+    }
+
+    /// (#1136) Each bubble flag at its edge, and the damp's weight: five flags at weight 1 hit the 0.5 floor,
+    /// two at 0.5 take a fifth off, and a negative weight is off.
+    #[test]
+    fn bubble_flags_fire_at_their_edges_and_the_weight_scales_the_damp() {
+        let with = |legs_: &[(&str, f64)]| Quote { perf: legs(legs_), ..gate_fixture() };
+        assert!(bubble_flags(&gate_fixture()).is_empty(), "no 6M or 2Y leg, no age, no fund: nothing fires");
+        assert!(bubble_flags(&with(&[("6M", 0.0), ("2Y", 0.0)])).is_empty(), "a flat run keeps an equal pace");
+        assert_eq!(bubble_flags(&with(&[("6M", 20.0), ("2Y", 60.0)])), ["6M pace"]);
+        assert_eq!(bubble_flags(&with(&[("6M", 10.0), ("2Y", 100.0)])), ["2Y run-up"], "100% fires; the slower last 6M does not");
+        let q = |vol: f64, buyback: f64, age: f64| Quote {
+            vol_change: Some(vol),
+            fund: Some(crate::core::FundFactors { buyback_yield: Some(buyback), ..crate::core::FundFactors::default() }),
+            age_years: Some(age),
+            ..gate_fixture()
+        };
+        assert!(bubble_flags(&q(1.49, -2.0, 7.0)).is_empty(), "just under each edge");
+        assert_eq!(bubble_flags(&q(1.5, -3.0, 3.0)), ["vol jump", "issuance", "young"]);
+
+        let open = gates_off(&BuyHeuristic::default());
+        let bubble = |q: &Quote, w: f64| score_parts(q, &BuyHeuristic { growth_bubble_weight: w, ..open.clone() }).expect("scores").bubble;
+        let mut all = q(2.0, -3.0, 3.0);
+        all.perf = legs(&[("1M", 2.0), ("6M", 20.0), ("1Y", 20.0), ("2Y", 100.0), ("5Y", 200.0)]);
+        assert_eq!(bubble_flags(&all).len(), 5);
+        assert_eq!(bubble(&all, 1.0), 0.5);
+        let two = q(1.0, -3.0, 3.0);
+        assert!((bubble(&two, 0.5) - 0.8).abs() < 1e-12, "{}", bubble(&two, 0.5));
+        assert_eq!(bubble(&two, -1.0), 1.0);
+        assert_eq!(bubble(&two, 0.0), 1.0);
     }
 
     /// (#545) the capex penalty: above the bar (71% at 70) or an OCF burn takes the knob, at or under it,
@@ -14988,7 +15059,7 @@ mod tests {
     /// `growth_acc_drag` switched on, because that damp is the constant 1.0 under the other two.
     ///
     /// For every `Some` result `score` is finite, and `trust`, `overext_damp`, `damp`, `ter_damp`,
-    /// `commodity_damp`, `fx_damp`, `acc_damp` and `gate_soft` each lie in [0, 1].
+    /// `commodity_damp`, `fx_damp`, `acc_damp`, `bubble` and `gate_soft` each lie in [0, 1].
     /// `proximity`, `value` and `holder_boost` are not asserted: they are knob-set multipliers that may
     /// exceed 1 on purpose. The draws stay inside the data domain: no NaN or infinity, perf legs above
     /// -100%, positive peg yields, and no TER below zero. Every TER source converts through
@@ -15000,8 +15071,8 @@ mod tests {
     #[test]
     fn score_parts_keeps_every_damp_in_the_unit_interval_on_random_draws() {
         const DRAWS: usize = 2000;
-        const FIELDS: [&str; 8] = [
-            "trust", "overext_damp", "damp", "ter_damp", "commodity_damp", "fx_damp", "acc_damp", "gate_soft",
+        const FIELDS: [&str; 9] = [
+            "trust", "overext_damp", "damp", "ter_damp", "commodity_damp", "fx_damp", "acc_damp", "bubble", "gate_soft",
         ];
         // `wild` is drawn per quote: when set, each value has an even chance of coming from its edge list
         struct Rng {
@@ -15022,10 +15093,10 @@ mod tests {
         let raw: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
         let shipped: BuyHeuristic = serde_yaml::from_value(raw["buy_heuristic"].clone())
             .expect("fixture's buy_heuristic parses as BuyHeuristic (deny_unknown_fields catches typos)");
-        let open = BuyHeuristic { growth_acc_drag: true, ..gates_off(&shipped) };
+        let open = BuyHeuristic { growth_acc_drag: true, growth_bubble_weight: 1.0, ..gates_off(&shipped) };
         let arms = [("default", BuyHeuristic::default()), ("shipped", shipped), ("open", open)];
         let mut r = Rng { s: 0x9E37_79B9_7F4A_7C15, wild: false };
-        let (mut scored, mut below) = ([0usize; 3], [false; 8]);
+        let (mut scored, mut below) = ([0usize; 3], [false; 9]);
         for i in 0..DRAWS {
             r.wild = r.hit(0.5);
             let mut q = gate_fixture();
@@ -15092,7 +15163,7 @@ mod tests {
                 scored[a] += 1;
                 assert!(p.score.is_finite(), "draw {i}, {arm}: score {} is not finite for {q:?}", p.score);
                 let damps = [
-                    p.trust, p.overext_damp, p.damp, p.ter_damp, p.commodity_damp, p.fx_damp, p.acc_damp, p.gate_soft,
+                    p.trust, p.overext_damp, p.damp, p.ter_damp, p.commodity_damp, p.fx_damp, p.acc_damp, p.bubble, p.gate_soft,
                 ];
                 for (k, x) in damps.into_iter().enumerate() {
                     assert!((0.0..=1.0).contains(&x), "draw {i}, {arm}: {} = {x} leaves [0, 1] for {q:?}", FIELDS[k]);

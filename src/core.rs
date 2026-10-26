@@ -312,6 +312,11 @@ pub struct Quote {
     // measures a level stretch, and a name can sit calm and near its mean on both while having printed one
     // +38% day last week. That lottery-ticket day is the documented signal, and nothing in the tree sees it.
     pub max_daily_1m: Option<f64>,
+    /// (#1136) The bubble damp's volatility flag: the stdev of the last year's bar returns over that of the
+    /// year before ([`vol_change`]). Not serialized, so the page payload is unchanged and the in-browser
+    /// engine reads None, which leaves the flag off there.
+    #[serde(skip)]
+    pub vol_change: Option<f64>,
     pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
     pub ma200d_pct: Option<f64>,       // (#505) signed % vs the 200-SESSION SMA, only for a name listed under the 200 weeks above_ma_pct needs. DISPLAY ONLY, the ABV-MA cell's ᵈ
     pub above_ma_pct: f64,             // % ABOVE the ~200-week SMA (overextension "how far it ran"); 0 if at/below or history too short. Growth-lane brake on blow-off tops
@@ -336,7 +341,7 @@ pub struct Quote {
     // `fund_factor` stays because the factor SWEEP injects a value there directly, per candidate
     // factor, without rebuilding FundFactors — that machinery keeps working untouched.
     pub fund: Option<FundFactors>,
-    pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
+    pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; the `yrs` column, the `growth_min_age_years` gate and (#1136) the bubble damp's `young` flag. Filled in the backtest too, over the `[..=as_of]` slice. None = no data / stub
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history, via `core::life_cagr`. NOT display-only since (#3i)/(#3j): the `cagr` column, the `growth_min_cagr` whole-life bar, and the growth RANK when `use_life_cagr` is on. Filled in the backtest too (same fn, `[..=as_of]` slice) -> train==serve. None = <6mo history / non-positive first close / stub
     pub young_ret_pct: Option<f64>,    // (#507) plain % since the first close for a name listed under the 6 months `life_cagr` needs, any age down to one bar (0%). DISPLAY ONLY, the CAGR cell's ⁱ
     pub capped_cagr: Option<f64>,      // (#3l/#73) endpoint CAGR over the last min(age, life_cagr_max_years) years, via `core::capped_life_cagr`. ONE reader: `picks::life_leg_cagr`, i.e. `growth_min_cagr`'s whole-life reject bar — (#73) repointed this field from the RANK (where (#3l) measured it at -66 edge and shipped it off) to that bar. Filled at the same two sites as `life_cagr` (fetch + backtest_quote), same knob read via the free accessor -> train==serve. None = knob off / <5y of history, and the bar then falls back to the uncapped `life_cagr` it always used -> the pool is unchanged at 0 and young names never move
@@ -453,6 +458,7 @@ impl Quote {
             avg_turnover_eur: None,
             volatility_pct: None,
             max_daily_1m: None,
+            vol_change: None,
             below_ma_pct: 0.0,
             ma200d_pct: None,
             above_ma_pct: 0.0,
@@ -5729,6 +5735,8 @@ pub fn backtest_quote(
     // wearing the same field name. The gate reading it is therefore only meaningful on the daily lane;
     // a monthly sweep of it is measuring something else and must not be pooled with a daily one.
     quote.max_daily_1m = max_daily_pct(c, (cadence / 12).max(1));
+    // (#1136) a ratio of two stdevs on the same bars, so the bar length cancels and needs no rescale
+    quote.vol_change = vol_change(c, cadence);
     let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;
     quote.below_ma_pct = below_long_ma_pct(c, long_ma);
     // (#833) the young-name floor scales with the cadence exactly as the window does
@@ -5884,6 +5892,15 @@ pub fn max_daily_pct(closes: &[f64], n: usize) -> Option<f64> {
         .map(|i| (closes[i] - closes[i - 1]) / closes[i - 1] * 100.0)
         .filter(|r| r.is_finite())
         .max_by(|a, b| a.total_cmp(b))
+}
+
+/// (#1136) Volatility change: [`volatility_pct`] over the last `n` returns divided by the same over the `n`
+/// before them, so a name whose swing doubled reads 2.0. None when the closes hold under two full windows
+/// or the earlier window never moved (a zero divisor).
+pub fn vol_change(closes: &[f64], n: usize) -> Option<f64> {
+    let prior = closes.len().checked_sub(n).filter(|&k| k > n)?;
+    let before = volatility_pct(&closes[..prior], n).filter(|&v| v > 0.0)?;
+    Some(volatility_pct(closes, n)? / before)
 }
 
 /// (r39 probe) Downside twin of `volatility_pct` — same window, same per-bar % units, but only the
@@ -10562,6 +10579,14 @@ mod tests {
     assert_eq!(max_daily_pct(&[100.0, 150.0, 153.0], 1), Some(2.0));
     // a name that only fell still HAS a biggest move — the least-negative one, not None and not 0
     assert!((max_daily_pct(&[100.0, 90.0, 81.0], 30).unwrap() + 10.0).abs() < 1e-9);
+
+    // (#1136) the same swing in both windows reads 1.0; a calm year then a wild one reads far above it
+    assert_eq!(vol_change(&[100.0, 110.0, 100.0, 110.0, 100.0], 2), Some(1.0));
+    assert!(vol_change(&[100.0, 101.0, 100.0, 110.0, 100.0], 2).is_some_and(|v| v > 5.0));
+    // two windows need 2n+1 closes; at 2n the earlier one is short
+    assert_eq!(vol_change(&[100.0, 110.0, 100.0, 110.0, 100.0, 110.0], 3), None);
+    // a flat earlier window is a zero divisor
+    assert_eq!(vol_change(&[100.0, 100.0, 100.0, 110.0, 100.0], 2), None);
 
     assert_eq!(pct_cell(Some(&("€10.00".to_string(), 5.0))), "+5.0%");
     assert_eq!(pct_cell(None), "n/a");

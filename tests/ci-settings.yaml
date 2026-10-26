@@ -22646,6 +22646,14 @@ buy_heuristic:
                                  #   control's +4.8, under the -0.5 bar (its mean +4.0 vs +4.3 holds). Its other
                                  #   guards hold: worst -3.0/-3.5 vs -4.0/-6.6, WINNERS HELD 12.1/10.7% vs
                                  #   12.6/10.7%, capture 6/7% vs 5/5%. Both exponents stay 0.5.
+  growth_bubble_weight: 0.0      # (#1136) the bubble damp: the growth score keeps max(1 - this x flags/5,
+                                 #   0.5) of itself. The five flags read the run-up itself: a 2Y return of 100% or more,
+                                 #   a last-6M pace above the 18 months before it (both annualised), a year's volatility at
+                                 #   1.5x or more the year before's (`vol_change`, filled live and in the backtest), net
+                                 #   share issuance above 2% a year (`buyback_yield` < -2), and a listing under 7 years. A
+                                 #   sixth flag, turnover change, was left out: the backtest's turnover is one sentinel for
+                                 #   every name, so it could never be graded. 0 = off, every score bit-identical (x 1.0 is
+                                 #   exact); a negative weight is off too. `explain` prints the flags that fired. (#1136)
   growth_turnover_weight: 0.0    # (L) ZEROED 2026-07-02 after a live A/B (screen at 0.5 vs 0.0): the ln(turnover/€1B) tilt is
                                  #   BACKTEST-BLIND (backtest quotes carry no turnover) and the A/B showed it does NOT do its
                                  #   claimed job — it's reward-only, so illiquid junk (ROX.DE €11K/day) sat in the ETF table

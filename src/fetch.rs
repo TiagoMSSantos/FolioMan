@@ -1051,6 +1051,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         volatility_pct: core::volatility_pct(&chart.closes, 252),
         // (P4) the same helper the backtest calls, at the live 21-session month — one definition, two paths
         max_daily_1m: core::max_daily_pct(&chart.closes, 21),
+        // (#1136) the bubble damp's volatility flag, over the same ~1 trading year as volatility_pct
+        vol_change: core::vol_change(&chart.closes, 252),
         // (C) % below the ~200wk SMA — structural "cheap vs long trend" entry signal (FX-agnostic ratio).
         below_ma_pct: core::below_long_ma_pct(&chart.closes, long_ma),
         // (1) % ABOVE the ~200wk SMA — overextension brake for the growth lane (far above trend = stretched).
