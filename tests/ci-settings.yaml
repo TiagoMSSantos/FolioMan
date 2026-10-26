@@ -5154,7 +5154,7 @@ buy_heuristic:
                                  #   SHIPPED lane at -5.9 excess, exiting 0 with a complete-looking report.
                                  #   Check `windows scored` (2084/6060/12223 growth-lane here).
   print_recall_capture: true     # (#104 / round 3 §1) UNMEASURED — an unfitted judgement value,
-                                 # shipping OFF, which is today's report and what every golden holds.
+                                 # ON since (#154) below; OFF was the report every golden held before it.
                                  # It is display-only, so "unmeasured" here means the INSTRUMENT has
                                  # not been read yet, not that a value is unfitted: turning it on
                                  # measures something nothing else in this file can see.
@@ -7011,7 +7011,7 @@ buy_heuristic:
                                  #  floor) and 12y Série E (3 points). The 20y early OOS half is now negative; the assert reds only when both are.
                                  #  Every ship or refuse verdict before this line was graded on the staggered walk, and its numbers do not carry over.
   journal_core_list: true       # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
-                                 # shipping OFF, which is what every line already sitting in a user's
+                                 # ON since (#285) below; OFF was what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
                                  # there never will be: it does not change a number, it starts a record.
                                  #

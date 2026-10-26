@@ -3142,4 +3142,65 @@ mod tests {
             assert_eq!(got, &curated);
         }
     }
+
+    /// (#1117) Every knob in `tests/ci-settings.yaml` names a receipt: a `#N`, a round, an Item, `(PIT)` or
+    /// `(QA)`, on its own line or in the comments around it. `NO_RECEIPT` lists the knobs that predate the
+    /// habit, and it may only shrink: a new knob with no receipt reds here, and so does a listed knob that
+    /// has gained one. A `print_*` knob's first paragraph must also agree with its value: `true` cannot say
+    /// it ships OFF (bar "OFF in config.rs", the serde default) and `false` cannot say "ON since".
+    #[test]
+    fn every_ci_settings_knob_names_a_receipt_that_agrees_with_its_value() {
+        const NO_RECEIPT: &[&str] = &[
+            "name", "name_etf", "ticker", "market", "price", "headline", "score", "high_days",
+            "drawdown_pct", "dip_days", "drop_pct", "monthly_deploy_eur", "budget_stock",
+            "budget_etf", "budget_crypto", "min_long_pct", "min_long_pct_crypto",
+            "perf_fill_coverage_pct", "normal_volatility_pct", "discount_cap", "momentum_knife",
+            "sustained_decline_pct", "sustained_decline_penalty", "deep_decline_pct",
+            "deep_decline_penalty", "min_score", "tax_keep_other", "ref_pe",
+            "growth_btc_outperf_weight", "weight", "growth_max_vol", "growth_turnover_weight",
+            "nupl_euphoria", "nupl_damp_floor", "nupl_capitulation", "nupl_boost_ceiling",
+            "calmar_weight", "calmar_cap", "prefer_eur", "half_life_days", "mcap_pivot_eur",
+            "runup_cap_pct", "universe_size", "fetch_concurrency_multiplier", "compute_threads",
+            "sectors", "ntfy_topic", "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote",
+            "euribor", "us_cpi", "pt_cpi", "eu_hicp", "coingecko_markets", "euronext_lisbon",
+            "ntfy",
+        ];
+        fn comment(l: &str) -> bool {
+            l.trim().starts_with('#')
+        }
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        let lines: Vec<&str> = text.lines().collect();
+        let key = regex::Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*):(\s|$)").expect("literal regex");
+        let receipt = regex::Regex::new(r"#\d+\b|round \d+|Item \d+|\(PIT\)|\(QA\)").expect("literal regex");
+        let ships_off = regex::Regex::new(r"[Ss]hip(?:s|ping) OFF( in config\.rs)?").expect("literal regex");
+        let (mut missing, mut contradicts) = (std::collections::BTreeSet::new(), Vec::new());
+        for (i, &line) in lines.iter().enumerate() {
+            let Some(m) = key.captures(line) else { continue };
+            let name = m.get(1).map_or("", |g| g.as_str());
+            let value = line[m.get(0).map_or(0, |g| g.end())..].split('#').next().unwrap_or("").trim();
+            if value.is_empty() {
+                continue;
+            }
+            let after = lines[i + 1..].iter().copied().take_while(|&l| comment(l) || l.trim().is_empty());
+            let before = lines[..i].iter().rev().copied().take_while(|&l| comment(l));
+            if !std::iter::once(line).chain(after).chain(before).any(|l| receipt.is_match(l)) {
+                missing.insert(name);
+            }
+            if name.starts_with("print_") {
+                let head = lines[i + 1..].iter().copied().take_while(|&l| comment(l) && l.trim() != "#");
+                let para = std::iter::once(line).chain(head).collect::<Vec<_>>().join(" ");
+                let says_off = ships_off.captures_iter(&para).any(|c| c.get(1).is_none());
+                if (value == "true" && says_off) || (value == "false" && para.contains("ON since")) {
+                    contradicts.push(format!("line {}: {name}: {value}", i + 1));
+                }
+            }
+        }
+        let listed: std::collections::BTreeSet<&str> = NO_RECEIPT.iter().copied().collect();
+        let new: Vec<_> = missing.difference(&listed).collect();
+        let gained: Vec<_> = listed.difference(&missing).collect();
+        assert!(new.is_empty(), "knobs with no receipt in tests/ci-settings.yaml; name one beside the value: {new:?}");
+        assert!(gained.is_empty(), "these knobs name a receipt now; drop them from NO_RECEIPT: {gained:?}");
+        assert!(contradicts.is_empty(), "a print_* receipt contradicts its value: {contradicts:?}");
+    }
 }
