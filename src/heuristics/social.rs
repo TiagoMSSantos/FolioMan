@@ -14,6 +14,7 @@
 //! - material: `1 / (1 + max(0, log10(MCAP / mcap_pivot_eur)))`: a trend moves a €1B company, not a
 //!   €3T one;
 //! - unpriced: `1 − clamp(1M % / runup_cap_pct, 0, 1)`: a name already up that much has been noticed.
+//!   (#1105) An unknown 1M % (a failed fetch, no quote, under a month of history) reads as half the cap.
 //!   The loud sources (`Reddit`, `Benzinga buzz`) multiply it by `loud_penalty`, because a crowd that
 //!   is already talking is the market noticing.
 //!
@@ -39,7 +40,8 @@ const LOUD: [&str; 2] = ["Reddit", "Benzinga buzz"];
 pub const SOC_HELP: &str = "(#538) The social-arbitrage score, which orders this table: sources × freshness × materiality × \
      unpriced. Sources counts the SOURCES entries; freshness halves every `half_life_days` since NEWEST; materiality \
      falls with each 10× of market cap over `mcap_pivot_eur`; unpriced falls to 0 as the 1M run-up nears \
-     `runup_cap_pct` and is cut by `loud_penalty` when Reddit or Benzinga buzz is a source. A short-horizon \
+     `runup_cap_pct` (an unknown 1M reads half priced) and is cut by `loud_penalty` when Reddit or Benzinga buzz \
+     is a source. A short-horizon \
      (about one quarter) attention signal, not a 20y one: it never reaches the lanes or BUY NOW. Graded forward \
      by track `soct`. NOT advice.";
 
@@ -120,7 +122,8 @@ pub fn score(sources: &str, newest: &str, mcap_eur: Option<f64>, mom_pct: Option
     let pivot = k.mcap_pivot_eur.max(1.0);
     let mcap = mcap_eur.filter(|m| *m > 0.0).unwrap_or(pivot * 10.0);
     let material = 1.0 / (1.0 + (mcap / pivot).log10().max(0.0));
-    let run = if k.runup_cap_pct > 0.0 { (mom_pct.unwrap_or(0.0) / k.runup_cap_pct).clamp(0.0, 1.0) } else { 0.0 };
+    // shortcut: (#1105) an unknown 1M move reads half the run-up cap, a neutral guess, never a flat 0% (unpriced)
+    let run = if k.runup_cap_pct > 0.0 { (mom_pct.unwrap_or(k.runup_cap_pct / 2.0) / k.runup_cap_pct).clamp(0.0, 1.0) } else { 0.0 };
     let loud = if entries.iter().any(|e| LOUD.contains(e)) { k.loud_penalty } else { 1.0 };
     Some(entries.len() as f64 * fresh * material * (1.0 - run) * loud)
 }
@@ -140,7 +143,8 @@ mod tests {
         let s = |src: &str, newest: &str, mcap: Option<f64>, mom: Option<f64>| score(src, newest, mcap, mom, asof, &k).unwrap();
         assert_eq!(s("ARK; insiders; hand list", "2026-10-10", Some(1e9), Some(0.0)), 3.0, "breadth counts entries");
         assert_eq!(s("ARK", "2026-09-10", Some(1e9), Some(-5.0)), 0.5, "30 days = one half-life; a fall is not a run-up");
-        assert_eq!(s("ARK", "2026-10-12", Some(1e9), None), 1.0, "a future date is fresh, never fresher");
+        assert_eq!(s("ARK", "2026-10-12", Some(1e9), Some(0.0)), 1.0, "a future date is fresh, never fresher");
+        assert_eq!(s("ARK", "2026-10-10", Some(1e9), None), 0.5, "(#1105) an unknown 1M move reads half priced");
         assert_eq!(s("ARK", "2026-10-10", Some(2e10), Some(0.0)), 0.5, "10× the pivot halves materiality");
         assert_eq!(s("ARK", "2026-10-10", None, Some(0.0)), 0.5, "unknown cap reads 10× the pivot");
         assert_eq!(s("ARK", "2026-10-10", Some(0.0), Some(0.0)), 0.5, "a zero cap is unknown, never the smallest");
