@@ -20372,6 +20372,23 @@ buy_heuristic:
                              #   REVERT RULE: it is at the revert value. Turn it on ONLY in the same change that
                              #   raises a neutral above 0.0, and check it on a live `screen` by watching the
                              #   CRYPTO and ETF tables, not the stock one — those are the only rows it moves.
+                             # (#1129) PRE-REGISTERED 2026-10-26, before any data. "INERT" above is wrong for the roic
+                             #   extra: `growth_fund_extra` fills its 17.3 neutral through `missing_fundamental`, so today
+                             #   every ETF and coin banks 0.25 x 17.3 = 4.325 pts inside `base` (the receipt's own third
+                             #   sentence), and true takes them away. `quality` and the primary fund term fill 0.0 either
+                             #   way, so the roic extra is the only term this arm moves, and only on ETF and coin rows.
+                             #   HYPOTHESIS: a basket priced on a stock's median ROIC is flattered against stocks in a
+                             #   mixed book; scoring it on price terms alone lifts or holds the book.
+                             #   ARMS, same batch, `universe fund pit winners rivals` at 12y and 8y: control (shipped)
+                             #   and this knob true. `windows scored` must match between the two.
+                             #   PRIMARY: the top-10 book row, excess median AND mean vs the control, both >= 0 at 12y
+                             #   and 8y; the GROWTH lane's capture not lower. GUARD: worst window >= control -1.0,
+                             #   WINNERS HELD >= control -2.0, Serie E 90/90/80. `inert` (no ETF reaches the top 10 in
+                             #   either arm) is not a pass: the knob then moves only the live ETF and crypto tables.
+                             #   ON A PASS: one owner question, then true ships with a golden rebless. A FAIL keeps false.
+                             #   NOT ARMED: a stock neutral for `quality_neutral`. It needs the covered filers' ROE
+                             #   median under clamp(0, quality_cap), the (#43) census never run for roe, and no printed
+                             #   line gives it.
   # (#43) ROIC — the FIRST non-empty `growth_fund_extra` entry, so the mechanism stops being inert here.
   #   WHAT IT IS: pre-tax EBIT / (equity + net debt), derived in core::roic_return from levels already
   #   cached (no refetch, no cache-key bump). Equity is reconstructed as NI / ROE, which is signed right
