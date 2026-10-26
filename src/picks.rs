@@ -4929,7 +4929,12 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         .iter()
         .map(|c| {
             let text = match c.key {
-                "1d" | "1w" | "1m" => format!("Nominal — {}; a dash = listed for less than that", c.help),
+                "1d" => format!("Nominal — {}; a dash = listed for less than that", c.help),
+                // (#1090) `core::horizon_changes` averages the closes around the start date (`anchor_windows`)
+                "1w" | "1m" => format!(
+                    "Nominal — {}; the start is an average of the closes around that date; a dash = listed for less than that",
+                    c.help
+                ),
                 "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => format!(
                     "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return; a dash = the record is shorter than the span; n/a = the record spans it but has no usable price at its start",
                     c.help
