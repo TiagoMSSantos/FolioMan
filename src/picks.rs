@@ -5625,9 +5625,19 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
 
 /// (#576) A lane row's MISSES cell: the gates [`waived`] lifts for it, the n that `score_parts` docks
 /// growth_gate_soft^n by. "0" = it cleared every gate; "refused" = a pinned row no waiver can score.
+/// (#1097) Then any gate it still fails ([`UNWAIVABLE`]), once, as [`rank_row`] counts them: a row failing
+/// `artifact` or `exchange` alone printed "0" here and "1: artifact" in the RANK table.
 fn lane_misses(quote: &Quote, tuning: &BuyHeuristic) -> String {
     match waived(quote, tuning, false) {
-        Some((_, tags, _)) if !tags.is_empty() => format!("{}: {}", tags.len(), tags.iter().map(|g| g.0).collect::<Vec<_>>().join(", ")),
+        Some((_, tags, left)) if !(tags.is_empty() && left.is_empty()) => {
+            let mut g: Vec<&str> = tags.iter().map(|g| g.0).collect();
+            for f in &left {
+                if !g.contains(&f.0) {
+                    g.push(f.0);
+                }
+            }
+            format!("{}: {}", g.len(), g.join(", "))
+        }
         Some(_) => "0".to_string(),
         None => "refused".to_string(),
     }
@@ -13406,6 +13416,11 @@ mod tests {
         assert_eq!(lane_misses(&range, &soft), "1: range");
         assert_eq!(lane_misses(&lev, &soft), "refused");
         assert_eq!(col_cell("misses", &range, 0.0, None, "", &soft, &HashMap::new()), "1: range", "the column prints it");
+        let mut art = gate_fixture();
+        art.perf = legs(&[("1D", 2.0), ("1W", 2.0), ("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
+        let m = lane_misses(&art, &soft);
+        assert!(m.contains("artifact"), "(#1097) a gate no waiver lifts is counted, not \"0\": {m}");
+        assert_eq!(m, rank_row(Some(&art), &soft, &[]).2, "the lane and RANK MISSES cells agree");
 
         let docked = growth_score(&range, &soft).expect("soft, a range failer scores");
         let (key, cell, misses, _) = rank_row(Some(&range), &soft, &[]);
