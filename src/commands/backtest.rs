@@ -141,6 +141,9 @@ pub mod markers {
     /// (#315) The Série E best-case row: the share of start dates whose top-10 book beat 4.5%/yr. Starts with "vs",
     /// never `VERDICT_ROW`, so the book row stays the first `top-10 ` line the gate finds.
     pub const SERIE_E: &str = "vs Série E best case (top-10): beat";
+    /// (#1116) The head of the book's decile table. It prints under `print_book_deciles`, ON in
+    /// `tests/ci-settings.yaml` since (#1114), so the 12y golden holds it.
+    pub const BOOK_DECILES: &str = "terminal-multiple distribution across windows";
     /// (#316) The 20y DCA rows of the book BUY NOW buys. The name pads to 7, so "SIZED   roll" never matches. Not in
     /// [`super::GATE_MARKERS`]: that list is pinned against the 12y golden, and these print at 20y only.
     pub const SIZED_DCA: &str = "SIZED   never-sell";
@@ -186,6 +189,7 @@ pub const GATE_MARKERS: &[&str] = &[
     markers::ABLATED_GATES[1],
     markers::ABLATED_GATES[2],
     markers::SERIE_E,
+    markers::BOOK_DECILES,
 ];
 
 /// The basket sizes the ABSOLUTE top-N table grades, and therefore the set [`VERDICT_TOP`] was
