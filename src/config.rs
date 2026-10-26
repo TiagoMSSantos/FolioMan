@@ -2534,7 +2534,10 @@ mod tests {
     /// path silently re-roots state on the process cwd (the cwd-scatter class the anchor was
     /// shipped to kill; this scan caught two live regressions on its first run: screen's
     /// .isin_cache.json read and picks' turnover-note cache). Main code only — test modules
-    /// (everything after a file's first `#[cfg(test)]`) may use scratch files freely.
+    /// (a column-0 `#[cfg(test)]` `mod`, which rustfmt closes on a column-0 `}`) may use scratch files
+    /// freely. (#1113) The scan once stopped at a file's first `#[cfg(test)]`, so it never read the ~7500
+    /// lines of main code past a test-only fn (core.rs, fetch.rs) or past a test module (fetch.rs,
+    /// commands/mod.rs).
     #[test]
     fn working_dotfiles_anchor_through_data_path() {
         let fs_ops = ["read_to_string(", "fs::write(", "File::open(", "File::create(",
@@ -2548,8 +2551,15 @@ mod tests {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == "rs") {
                     let text = std::fs::read_to_string(&path).expect("read source file");
-                    let main_code = text.split("#[cfg(test)]").next().unwrap_or("");
-                    for (i, line) in main_code.lines().enumerate() {
+                    let (mut prev, mut in_test) = ("", false);
+                    for (i, line) in text.lines().enumerate() {
+                        let opens_test =
+                            prev == "#[cfg(test)]" && line.contains("mod ") && line.ends_with('{');
+                        prev = line;
+                        if in_test || opens_test {
+                            in_test = line != "}";
+                            continue;
+                        }
                         if line.trim_start().starts_with("//") || line.contains("data_path") {
                             continue;
                         }
