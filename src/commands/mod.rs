@@ -6,6 +6,7 @@ pub mod alert;
 pub mod backtest;
 pub mod check;
 pub mod config;
+pub mod explain;
 pub mod perf;
 pub mod report;
 pub mod screen;

@@ -250,6 +250,29 @@ fn config_show_prints_the_merge_and_the_overlay_diff() {
     assert_eq!(code, 2, "a typo'd subcommand is a usage error");
 }
 
+/// (#1120) `explain` answers off the pool the last `screen` saved, one block per name with a blank line
+/// between, and fetches nothing. Before any `screen` it says what to run and exits 1. No name is a usage error.
+#[test]
+fn explain_reads_the_saved_pool_and_needs_a_screen_first() {
+    let (code, _, stderr) = run_isolated("explain-none", "{}", &[], &["explain", "AAPL"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("run `folioman screen` first"), "{stderr}");
+    let pool = serde_json::json!({
+        "generated": "2026-10-26T00:00:00Z",
+        "base": repo_file("tests/ci-settings.yaml"),
+        "quotes": [],
+        "fund_pe": {},
+        "inflation": [],
+        "degraded": [],
+    })
+    .to_string();
+    let (code, stdout, stderr) = run_isolated("explain-pool", "{}", &[(".screen_universe.json", &pool)], &["explain", "AAPL", "Apple"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.starts_with("No pool row matches \"AAPL\". ") && stdout.contains(".\n\nNo pool row matches \"Apple\". "), "{stdout}");
+    let (code, _, _) = run_isolated("explain-bare", "{}", &[], &["explain"]);
+    assert_eq!(code, 2, "no name is a usage error");
+}
+
 #[test]
 fn screen_unknown_flag_exit_2() {
     // rejected at arg parse, BEFORE config loading or any network call — a typo'd flag must not

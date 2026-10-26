@@ -12,6 +12,7 @@
 //!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
 //!   folioman config show [--diff]  base + overlay settings paths, then the merged YAML; --diff = only the overlay values that move the base
+//!   folioman explain TICKER...     `screen --explain` without a fetch: each name's gates and SCORE arithmetic off the last `screen` run's saved pool; a name or another venue's line also matches
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; type `yes` to send)
 //!
 //! No TICKERS -> uses config/settings.yaml watchlist. Edit that file for defaults.
@@ -38,6 +39,7 @@ folioman — review ETF/stock/crypto holdings. Read-only except `trade` (live or
   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
   folioman accounts              cash available + holdings per broker (read-only; env creds)
   folioman config show [--diff]  base + overlay settings paths, then the merged YAML; --diff = only the overlay values that move the base
+  folioman explain TICKER...     `screen --explain` without a fetch: each name's gates and SCORE arithmetic off the last `screen` run's saved pool; a name or another venue's line also matches
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; brokers:
                                  trading212 | binance | tr (login only, orders not implemented) — creds from env; type `yes` to send)
 
@@ -99,6 +101,7 @@ async fn dispatch() {
         "sim" => commands::sim::run(rest).await,
         "trade" => commands::trade::run(rest).await,
         "config" => commands::config::run(rest),
+        "explain" => commands::explain::run(rest),
         "help" | "--help" | "-h" => println!("{USAGE}"), // asked-for help exits 0 below; unknown commands keep exit 2
         _ => {
             println!("{USAGE}");
