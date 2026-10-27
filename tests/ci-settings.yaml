@@ -8797,7 +8797,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: c3f2263571ed (#1155), graded 2026-10-27 by run 40493379954, same five inputs, since
+  # LAST GRADED SHA: 36aed9b0fb41 (#1188), graded 2026-10-27 by run 40561604727, same five inputs, since
+  # c3f2263, `files` = every src file (#1188) touched (src/commands/size.rs src/picks.rs src/web.rs): 8 in
+  # scope = 6 caught (`buy_list` 3, `stamp_buy` 3), 2 unviable (`buy_list` 140:13 `+=` -> `*=` or `-=` on a
+  # String does not build), 0 missed, 0 timeout. The web.rs change was a test pin, so it adds no mutant.
+  # (#1190) records it.
+  # BEFORE THAT: c3f2263571ed (#1155), graded 2026-10-27 by run 40493379954, same five inputs, since
   # 175df6d, `files` = every src file (#1153)-(#1157), (#1186) and (#1187) touched (src/commands/backtest.rs
   # src/commands/screen.rs src/commands/size.rs src/config.rs src/picks.rs): 87 in scope = 84 caught
   # (`size_relief` 14, `min_cagr_floor` 10, `pool_share_pct` 10, `whole_shares` 9, `digest_lines` 9,
