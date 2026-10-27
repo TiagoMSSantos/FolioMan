@@ -3066,7 +3066,8 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         "too little history or gain to reward"));
     s.push_str(&format!("    quality  = quality_weight × ROE                       = {:.2}\n", p.quality));
     say(&mut s, &plain(tuning.quality_weight != 0.0, p.quality,
-        "Profitability: yearly profit as a % of the owners' money (return on equity, ROE)",
+        // (#1147) core::quality_return swaps in ROA when equity is no credible denominator; name both
+        "Profitability: yearly profit as a % of the owners' money (ROE), or of all its assets (ROA) when equity is too thin to trust",
         "no profit figures (funds and coins have none) or no profit"));
     let (keep, tier) = tax_keep(quote, tuning); // (D) same call dividend_reward scored on -> label can't drift
     s.push_str(&format!("    dividend = dividend_weight × min(1Y yield, cap) × keep = {:.2}   (PT tax keep {keep:.2} — {tier})\n", p.dividend));
