@@ -8797,7 +8797,13 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 36aed9b0fb41 (#1188), graded 2026-10-27 by run 40561604727, same five inputs, since
+  # LAST GRADED SHA: e4c3ffb6cd66 (#1197), graded 2026-10-27 by run 40586268513, same five inputs, since
+  # 36aed9b, `files` = every src file (#1191)-(#1196) touched (src/config.rs src/fetch.rs
+  # src/heuristics/intraday.rs src/picks.rs): 94 in scope = 94 caught (`web_rows` 27, `gains` 17,
+  # `parse_sec_facts` 13, `up_share` 13, `web_help` 11, `key` 9, `chart_range` 4), 0 unviable, 0 missed,
+  # 0 timeout. The (#1196) gate graded a 6-mutant slice of its 60; this grades all of them. The config.rs
+  # change was a comment, so it adds no mutant. (#1198) records it.
+  # BEFORE THAT: 36aed9b0fb41 (#1188), graded 2026-10-27 by run 40561604727, same five inputs, since
   # c3f2263, `files` = every src file (#1188) touched (src/commands/size.rs src/picks.rs src/web.rs): 8 in
   # scope = 6 caught (`buy_list` 3, `stamp_buy` 3), 2 unviable (`buy_list` 140:13 `+=` -> `*=` or `-=` on a
   # String does not build), 0 missed, 0 timeout. The web.rs change was a test pin, so it adds no mutant.
