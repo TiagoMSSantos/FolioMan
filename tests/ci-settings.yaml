@@ -6770,6 +6770,12 @@ buy_heuristic:
                                  #  VERDICT: the momentum half's losers are names this pool holds no as-of fundamentals for, so no fundamental dock can
                                  #  reach them; nothing to ask. REOPEN only when as-of fundamentals cover them (losers n >= 10 in all 4 cells); the re-run
                                  #  is `universe fund pit winners` and `universe fund stress winners`, years 12 8.
+                                 #  RE-RUN 2026-10-27 (#1159), owner ask, same bar: probe runs 40508011740 (pit) and 40508016252 (stress) on adf3c91.
+                                 #  NO LEAD, 0 of 52 factors; the bar fails on coverage again. GROWTH windows scored pit 10437/13654, stress 16484/20548
+                                 #  (12y/8y), on (#790)'s half-year grid, so they do not match the 10-19 counts. The momentum half lost money in 65 of
+                                 #  190 slots (pit 12y), 74 of 230 (pit 8y), 44 of 376 (stress 12y) and 64 of 416 (stress 8y). The most losers any factor
+                                 #  carries is 6, 13, 0 and 3; stress 12y prints no factor row at all. Only pit 8y reaches losers n >= 10 (34 factors, 10
+                                 #  of them at |AUC-0.5| >= 0.10, best composite 0.27, mscore 0.68, op_margin 0.34). The VERDICT stands; nothing to ask.
                                  #── (#741) PRE-REGISTERED 2026-10-19, before any run — DOES A FREE FACTOR RANK BETTER THAN growth_score ON ITS OWN SET? ──
                                  #  WHY: the owner asks to spot good assets better and rank them higher. In the `held-book by FACTOR` table of the
                                  #  (#740) runs, seven rows beat the growth_score baseline's excess in all 4 cells (pit/stress x 12y/8y): roic
