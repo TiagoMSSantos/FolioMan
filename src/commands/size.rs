@@ -137,7 +137,7 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
             None => "growth pick".to_string(),
             Some((.., repl, tier)) => format!("{} tracker{}", tier_label(*tier), repl.map(|r| format!(" · {r}")).unwrap_or_default()),
         };
-        out += &format!("\n  {t:<10} {w:>5.1}%  {what}");
+        out += &format!("\n  {t:<10} {w:>6.2}%  {what}");
     }
     let rest = 100.0 - book.iter().map(|(_, w)| w).sum::<f64>();
     if trackers == 0 && rest >= 0.5 {
@@ -1016,13 +1016,13 @@ pub(crate) mod tests {
         let core = [(0, "WEBN.DE".to_string(), None, Some(ALL_WORLD_TIER)), (21, "SPXS.L".to_string(), Some("swap"), Some(US_TIER))];
         let w = |t: &str, w: f64| (t.to_string(), w);
         assert_eq!(buy_weights(&picks, &core), vec![w("NVD.DE", 5.6), w("IITU.L", 4.4), w("WEBN.DE", 30.0), w("SPXS.L", 60.0)]);
-        let head = "  NVD.DE       5.6%  growth pick\n  IITU.L       4.4%  growth pick";
+        let head = "  NVD.DE       5.60%  growth pick\n  IITU.L       4.40%  growth pick";
         assert_eq!(
             buy_list(&picks, &core).as_deref(),
             Some(
                 format!(
                     "BUY NOW — the 20-year book: 2 pick(s) + 2 tracker(s), % of gross. NOT advice\n{head}\n  \
-                     WEBN.DE     30.0%  all-world tracker\n  SPXS.L      60.0%  US tracker · swap"
+                     WEBN.DE     30.00%  all-world tracker\n  SPXS.L      60.00%  US tracker · swap"
                 )
                 .as_str()
             )
@@ -1045,7 +1045,7 @@ pub(crate) mod tests {
             buy_list(&full, &core).as_deref(),
             Some(
                 "BUY NOW — the 20-year book: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n  \
-                 A.DE        60.0%  growth pick\n  B.DE        40.0%  growth pick"
+                 A.DE        60.00%  growth pick\n  B.DE        40.00%  growth pick"
             )
         );
         let edge = [("A.DE".to_string(), 99.5)];

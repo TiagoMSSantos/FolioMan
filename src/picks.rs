@@ -5252,7 +5252,7 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
         rows.retain_mut(|row| {
             let Some(cells) = row.as_array_mut() else { return true };
             let Some(at) = cells.iter().position(|c| c[0] == "TICKER") else { return true };
-            let w = sized.iter().find(|(t, _)| cells[at][1] == t.as_str()).map(|(_, w)| format!("{w:.1}%")).unwrap_or_default();
+            let w = sized.iter().find(|(t, _)| cells[at][1] == t.as_str()).map(|(_, w)| format!("{w:.2}%")).unwrap_or_default();
             let flags = |c: &serde_json::Value| c[1].as_str().unwrap_or_default().trim_start_matches(|d: char| d.is_ascii_digit()).contains('b');
             if w.is_empty() && cells.iter().any(|c| c[0] == "RANK" && flags(c)) {
                 cut += 1;
@@ -11690,9 +11690,9 @@ mod tests {
             "help": {"lanes": {"SCORE": "x"}},
         });
         stamp_buy(&mut p, &[("AAA".to_string(), 7.04), ("BTC-EUR".to_string(), 2.46)]);
-        assert_eq!(p["stocks"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAA"], ["BUY%", "7.0%"], ["SCORE", "9.0"]]));
+        assert_eq!(p["stocks"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAA"], ["BUY%", "7.04%"], ["SCORE", "9.0"]]));
         assert_eq!(p["stocks"][1], serde_json::json!([["RANK", "2*"], ["TICKER", "PIN"], ["BUY%", ""]]));
-        assert_eq!(p["crypto"][0], serde_json::json!([["TICKER", "BTC-EUR"], ["BUY%", "2.5%"]]));
+        assert_eq!(p["crypto"][0], serde_json::json!([["TICKER", "BTC-EUR"], ["BUY%", "2.46%"]]));
         assert_eq!(p["core"], serde_json::json!([[["TICKER", "VWCE.DE"]]]), "CORE is not the book");
         assert!(p.get("etfs").is_none(), "an absent lane stays absent");
         assert_eq!(p["help"]["lanes"]["BUY%"], BUY_HELP);

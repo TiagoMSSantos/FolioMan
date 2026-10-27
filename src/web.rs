@@ -437,7 +437,7 @@ mod tests {
     fn buy_share_is_the_sized_book_and_leaves_with_it() {
         let q = pool();
         let got = engine("tickers: [AAPL]\n", &q);
-        assert_eq!(cell(&got, "stocks", "NVD.DE", "BUY%"), "100.0%");
+        assert_eq!(cell(&got, "stocks", "NVD.DE", "BUY%"), "100.00%");
         assert_eq!(cell(&got, "stocks", "AAPL", "RANK"), "2*#", "not vacuous: the pinned row is on the table");
         assert_eq!(cell(&got, "stocks", "AAPL", "BUY%"), "", "a gated pin is not funded");
         let vol = engine("sizing:\n  equal_weight_book: false\n", &q);
