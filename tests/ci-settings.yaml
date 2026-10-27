@@ -1435,6 +1435,13 @@ sizing:
                       #   top-1 slice reads -0.3 excess against +3.1 for ranks 2-5. Read only by
                       #   `picks::sized_splice` (BUY NOW, the S+inter and S+after DCA lanes); `sized_book` and the
                       #   SIZED lane never see it. Ships only on its own pre-registered probe and an owner yes.
+                      #   (#1144) INCONCLUSIVE 2026-10-27, stays false. Probes on 863d2b3, years 20: pit dead
+                      #   control 40471633846 / arm 40471647300, stress control 40471659449 / arm 40471671825.
+                      #   Bar: S+inter never-sell mean AND median each +0.2 or better on both lanes. Read:
+                      #   pit mean +4.5 -> +4.8, median +4.3 -> +4.4; stress mean +6.3 -> +6.4, median +6.5 ->
+                      #   +6.8. Only 2 of 4 cleared, and stress worst fell +1.5 -> +0.9 (OOS early +3.4 ->
+                      #   +2.6). SIZED, windows (2992/5690, 5181/9208), Serie E and WINNERS HELD are equal
+                      #   across arms, so the knob is wired where it should be. Re-ask only on a new ruler.
   #── (#558) RE-GRADED 2026-10-11 — 24 GATE ARMS AND 30 WEIGHT ARMS ON BOTH LANES; head_weight 2 -> 4 SHIPPED ──
   #  Same standing ask: more good assets to buy now and hold 20+ years, most profit. WHY NOW. Most gate and weight
   #  grades in this file predate (#424) (split look-ahead) and (#426) (core EPS), so they were measured on biased data.
