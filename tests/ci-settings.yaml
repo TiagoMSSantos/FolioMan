@@ -4120,9 +4120,18 @@ buy_heuristic:
                                  #   CONFIRM WITH AN ACCOUNTANT FIRST. Nothing in this repo has, and
                                  #   the shipped empty list is that fact written down rather than
                                  #   assumed away. REVERT: set [].
-  rank_perturb_k: 0              # (#107 / round 3 §3) UNMEASURED — an unfitted judgement value,
-                                 # shipping OFF, which is the point-estimate ranking every golden
-                                 # holds. Display-only and it does NOT reorder the book.
+  rank_perturb_k: 50             # (#107 / round 3 §3) Display only, ON since (#1153); OFF was the
+                                 # point-estimate ranking with no error bar. It does NOT reorder the
+                                 # book, and no golden reads it: only `screen` prints the footer.
+                                 #
+                                 #   (#1153) WHY 50 AND NOT 200. The footer reports quartiles by
+                                 #   nearest rank over k draws, so 50 draws already put a dozen
+                                 #   samples in each tail; past that the printed IQR moves by a rank
+                                 #   or two, never by the tens that mark a knob artefact. The draw is
+                                 #   seeded, so a re-run prints the same line. Cost is 50 universe
+                                 #   re-scores, a few seconds of CPU on a run whose wall clock is the
+                                 #   network. Watch the printed IQRs over the first runs; raise k if a
+                                 #   name's band still jumps between days with the same pool.
                                  #
                                  #   THE GAP. McLean & Pontiff put a published predictor's decay at 26%
                                  #   out-of-sample and 58% post-publication. The defences here are real
