@@ -4439,28 +4439,44 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
     );
     let stats = |xs: &[f64]| (xs.iter().sum::<f64>() / xs.len().max(1) as f64, median(xs.to_vec()));
     let (ship_mean, ship_med) = stats(&books[0]);
+    // (#1149) the random draws come first so every row can print where it ranks among them
+    let draws = random_books(&pond, VERDICT_TOP, years);
+    let mut means: Vec<f64> = draws.iter().map(|d| d.0).collect();
+    let mut meds: Vec<f64> = draws.iter().map(|d| d.1).collect();
+    let (p95_mean, p95_med) = (percentile95(&mut means).unwrap_or(f64::NAN), percentile95(&mut meds).unwrap_or(f64::NAN));
     for (name, xs) in RIVALS.iter().zip(&books) {
         let (mean, med) = stats(xs);
         let win = xs.iter().filter(|x| **x > 0.0).count() as f64 / xs.len().max(1) as f64 * 100.0;
         let worst = xs.iter().copied().fold(f64::INFINITY, f64::min);
         let tag = if rival_wins(mean - ship_mean, med - ship_med) { "AHEAD" } else { "-" };
+        let p = if xs.is_empty() { "n/a  ".to_string() } else { format!("{:.3}", p_at_least(&means, mean)) };
         println!(
-            "  {name:<27} n {:>3}  excess {mean:+.1} (med {med:+.1}) pts/yr  win {win:.0}%  worst {worst:+.1}  vs plain shipped {:+.1}/{:+.1} {tag}",
+            "  {name:<27} n {:>3}  excess {mean:+.1} (med {med:+.1}) pts/yr  win {win:.0}%  worst {worst:+.1}  p {p}  vs plain shipped {:+.1}/{:+.1} {tag}",
             xs.len(),
             mean - ship_mean,
             med - ship_med
         );
     }
-    let draws = random_books(&pond, VERDICT_TOP, years);
-    let mut means: Vec<f64> = draws.iter().map(|d| d.0).collect();
-    let mut meds: Vec<f64> = draws.iter().map(|d| d.1).collect();
-    let (p95_mean, p95_med) = (percentile95(&mut means).unwrap_or(f64::NAN), percentile95(&mut meds).unwrap_or(f64::NAN));
     println!(
-        "  (e) random pond x{PLACEBO_DRAWS}         excess {:+.1} (med {:+.1}) pts/yr  p95 {p95_mean:+.1} (med {p95_med:+.1})  plain shipped {} the p95",
-        median(means),
-        median(meds),
+        "  (e) random pond x{PLACEBO_DRAWS}         excess {:+.1} (med {:+.1}) pts/yr  p5..p95 {:+.1}..{p95_mean:+.1} (med {:+.1}..{p95_med:+.1})  plain shipped {} the p95",
+        median(means.clone()),
+        median(meds.clone()),
+        percentile(&means, 5.0),
+        percentile(&meds, 5.0),
         if ship_mean > p95_mean && ship_med > p95_med { "ABOVE" } else { "NOT above" }
     );
+    println!(
+        "  p = the share of the {PLACEBO_DRAWS} random books whose mean excess is at or above the row's, counting the row as one more draw. {} rows are tested against one pond, so the 5% bar split across them is p < {:.4}; {PLACEBO_DRAWS} draws cannot print a p below {:.4}.",
+        RIVALS.len(),
+        0.05 / RIVALS.len() as f64,
+        1.0 / (PLACEBO_DRAWS + 1) as f64
+    );
+}
+
+/// (#1149) One-sided permutation p-value of `x` against `draws`: the draws at or above it, plus `x` itself
+/// as one more draw, over all of them. A row above every draw reads 1/(n+1), never 0.
+fn p_at_least(draws: &[f64], x: f64) -> f64 {
+    (draws.iter().filter(|d| **d >= x).count() + 1) as f64 / (draws.len() + 1) as f64
 }
 
 /// (#583) The `winners` report's rows, in print order. [`winner_leaks`] files every stock under exactly one.
@@ -9496,6 +9512,9 @@ mod tests {
         let draws = random_books(&two, 1, 1);
         assert_eq!(draws, random_books(&two, 1, 1), "seeded: the same pond draws the same books");
         assert!(draws.iter().any(|d| d.0 > 50.0) && draws.iter().any(|d| d.0 < 50.0), "both names get drawn");
+        // (#1149) two of three draws reach 2.0 (a tie counts), so (2 + 1) / 4; above every draw is the 1/(n+1) floor
+        assert_eq!(p_at_least(&[1.0, 2.0, 3.0], 2.0), 0.75);
+        assert_eq!(p_at_least(&[1.0, 2.0, 3.0], 9.0), 0.25);
     }
 
     /// (#560) `rival_books` on a stand-in scorer (shipped = `range_pct`, open adds `avg_turnover_eur`).
