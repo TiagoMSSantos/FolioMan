@@ -2236,10 +2236,12 @@ pub async fn run(args: Vec<String>) {
     // names fetch swallowed to an err/no-data stub (quote_one self-swallows a bad ticker) — otherwise
     // invisible in aggregate: each surfaces only as one "err" row buried in a class table.
     let no_data = quotes.iter().filter(|q| q.is_failed()).count();
-    println!(
+    // (#1186) kept in a variable: the closing digest repeats this exact line.
+    let data_quality = format!(
         "Data quality: {} names | {no_data} no data | {stocks_no_pe} stocks missing P/E | {etfs_no_ter} ETFs missing TER | {} stale dropped (>{}d)",
         quotes.len(), fresh_before.saturating_sub(quotes.len()), settings.stale_days
     );
+    println!("{data_quality}");
 
     // Bitcoin NUPL: whole-market crypto sentiment gauge. Fetched BEFORE render so it can damp the
     // crypto rows (high NUPL = euphoric top), then also printed as the footer line.
@@ -3021,6 +3023,10 @@ pub async fn run(args: Vec<String>) {
     // (round 55) CORE membership diff: joins/dropouts of the shortlist above since the last run.
     // Silent when the previous state predates the field (empty prev — everything would read as new).
     // `core_now` itself is built before render (the holdings fetch needs it).
+    // (#1186) held in a variable: the closing digest repeats this line.
+    let moves_line = prior
+        .as_ref()
+        .and_then(|prev| rank_moves(&prev.date, &prev.ranked, &ranked_now));
     if let Some(prev) = &prior {
         if let Some(line) = membership_diff("CORE shortlist", &prev.date, &prev.core, &core_now) {
             println!("\n{line}");
@@ -3034,7 +3040,7 @@ pub async fn run(args: Vec<String>) {
             journal(&run_date, &[line]);
         }
         // (#1121) stdout only: a reorder is market drift, so the journal keeps to membership
-        if let Some(line) = rank_moves(&prev.date, &prev.ranked, &ranked_now) {
+        if let Some(line) = &moves_line {
             println!("{line}");
         }
     }
@@ -3714,6 +3720,20 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#1186) the actionable lines above, repeated in one block at the end of the run. Every value is the
+    // one already printed (the same variables or the same pure call), never a second derivation. Stdout
+    // only: the web payload and the state files are written long before this point.
+    for line in digest_lines(
+        spx_off_hi,
+        deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, total)| total),
+        &crate::commands::size::buy_weights(&sized_now, &buy_core),
+        moves_line.as_deref(),
+        &data_quality,
+        &degraded,
+    ) {
+        println!("{line}");
+    }
+
     // Conviction bridge: the per-name depth lives in other subcommands, but nothing on this
     // surface said so — the ranking is where a pick decision starts, so the pointer belongs here.
     println!(
@@ -4023,6 +4043,60 @@ fn cash_line(deploy_scaled: Option<f64>, t212_free: Option<f64>) -> Option<Strin
         }
         _ => format!("\n  Broker cash — Trading212 free €{free:.0}."),
     })
+}
+
+/// (#1186) How many BUY NOW names the closing digest spells out before folding the rest into `+N more`.
+const DIGEST_NAMES: usize = 5;
+
+/// (#1186) The closing digest: the lines a reader acts on, repeated in one block at the end of the run
+/// because the run spreads them over many others. It computes no figure of its own. `off_hi`, `deploy` and
+/// `book` are the values the entry-state, deploy and BUY NOW blocks were printed from; `moves` is the (#1121) line as printed
+/// (`None` without a baseline or a move); `quality` is the data-quality line as printed; `degraded` is the list
+/// the closing stderr line names. The entry state reads [`entry_state_class`] and [`off_hi_shown`], the same
+/// pair the banner and footer read, so the digest cannot name another state. An unavailable index fetch says so
+/// and never prints a percentage. Seven lines at most, each indented under the heading.
+fn digest_lines(
+    off_hi: Option<f64>,
+    deploy: Option<f64>,
+    book: &[(String, f64)],
+    moves: Option<&str>,
+    quality: &str,
+    degraded: &[String],
+) -> Vec<String> {
+    let mut out =
+        vec!["\nDIGEST — the actionable lines of this run, repeated. NOT advice.".to_string()];
+    out.push(match off_hi {
+        Some(off) => format!(
+            "  Entry state: {} — S&P 500 {:.1}% off its high",
+            entry_state_class(off).0,
+            off_hi_shown(off)
+        ),
+        None => "  Entry state: unavailable this run".to_string(),
+    });
+    out.extend(deploy.map(|d| format!("  Deploy this month: €{d:.0}")));
+    let shown = book
+        .iter()
+        .take(DIGEST_NAMES)
+        .map(|(t, w)| format!("{t} {w:.1}%"))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    out.push(match book.len() {
+        0 => "  Buy now: nothing this run".to_string(),
+        n if n > DIGEST_NAMES => format!("  Buy now: {shown} · +{} more", n - DIGEST_NAMES),
+        _ => format!("  Buy now: {shown}"),
+    });
+    out.extend(moves.map(|m| format!("  {m}")));
+    out.push(format!("  {quality}"));
+    out.push(if degraded.is_empty() {
+        "  Feeds: none degraded".to_string()
+    } else {
+        format!(
+            "  Feeds: {} degraded — {}",
+            degraded.len(),
+            degraded.join("; ")
+        )
+    });
+    out
 }
 
 /// (tests round 5) The deploy composition — knob gate (≤0 = unset), unknown-state ×1 fallback,
@@ -6562,5 +6636,69 @@ mod tests {
         assert_eq!(rank_moves("2026-07-10", &prev, &now).unwrap(), "Ranking moves since 2026-07-10: A #1->#6 D #4->#1");
         assert!(rank_moves("d", &prev, &prev).is_none());
         assert!(rank_moves("d", &[], &now).is_none());
+    }
+
+    /// (#1186) The closing digest repeats the blocks above it: the state name and the cut percentage from the
+    /// shared classifier, the deploy figure only when one is set, the first five BUY NOW names with `+N more`
+    /// past them, the moves line only when there is one, the data-quality line as given, and the degraded
+    /// feeds by name. A run that could not read the index prints no percentage at all.
+    #[test]
+    fn digest_lines_semantics() {
+        let book = |n: usize| {
+            (0..n)
+                .map(|i| (format!("T{i}"), 10.0 - i as f64))
+                .collect::<Vec<_>>()
+        };
+        let quality = "Data quality: 9 names | 0 no data";
+        let feeds = vec!["NUPL feed down".to_string(), "MVRV feed down".to_string()];
+        let full = digest_lines(
+            Some(16.04),
+            Some(600.0),
+            &book(3),
+            Some("Ranking moves since d: A #1->#6"),
+            quality,
+            &feeds,
+        );
+        assert_eq!(
+            full,
+            vec![
+                "\nDIGEST — the actionable lines of this run, repeated. NOT advice.",
+                "  Entry state: DRAWDOWN — S&P 500 16.0% off its high",
+                "  Deploy this month: €600",
+                "  Buy now: T0 10.0% · T1 9.0% · T2 8.0%",
+                "  Ranking moves since d: A #1->#6",
+                "  Data quality: 9 names | 0 no data",
+                "  Feeds: 2 degraded — NUPL feed down; MVRV feed down",
+            ]
+        );
+        // nothing optional: no deploy line, no moves line, no names, no index reading, no degraded feed
+        let quiet = digest_lines(None, None, &[], None, quality, &[]);
+        assert_eq!(
+            quiet,
+            vec![
+                "\nDIGEST — the actionable lines of this run, repeated. NOT advice.",
+                "  Entry state: unavailable this run",
+                "  Buy now: nothing this run",
+                "  Data quality: 9 names | 0 no data",
+                "  Feeds: none degraded",
+            ]
+        );
+        assert!(!quiet.join("\n").contains("off its high"));
+        // the state name and the cut percentage follow the classifier: 4.96 shows 4.9 beside NEAR-HIGH
+        let state = |off: f64| digest_lines(Some(off), None, &[], None, quality, &[])[1].clone();
+        assert_eq!(
+            state(4.96),
+            "  Entry state: NEAR-HIGH — S&P 500 4.9% off its high"
+        );
+        assert_eq!(
+            state(5.0),
+            "  Entry state: PULLBACK — S&P 500 5.0% off its high"
+        );
+        // five names print whole; the sixth and later fold into a count of the rest
+        let buy = |n: usize| digest_lines(None, None, &book(n), None, quality, &[])[2].clone();
+        let five = "  Buy now: T0 10.0% · T1 9.0% · T2 8.0% · T3 7.0% · T4 6.0%";
+        assert_eq!(buy(5), five);
+        assert_eq!(buy(6), format!("{five} · +1 more"));
+        assert_eq!(buy(8), format!("{five} · +3 more"));
     }
 }
