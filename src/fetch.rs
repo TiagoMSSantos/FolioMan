@@ -5243,6 +5243,8 @@ struct FactTags {
     intexp: &'static [&'static str],
     debt_nc: &'static [&'static str],
     debt_cur: &'static [&'static str],
+    // (#1191) each read on its own, and the debt is the larger of the legs and any of them
+    debt_total: &'static [&'static str],
     cash: &'static [&'static str],
     // (#410) duration lines: R&D, and net payout's three legs (dividends, buybacks, share issuance)
     rnd: &'static [&'static str],
@@ -5365,6 +5367,16 @@ const US_GAAP_TAGS: FactTags = FactTags {
                "ConvertibleDebtNoncurrent", "ConvertibleLongTermNotesPayable"],
     debt_cur: &["LongTermDebtCurrent", "DebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent",
                 "ShortTermBorrowings", "CommercialPaper", "ConvertibleDebtCurrent"],
+    // (#1191) a filer whose picked legs miss part of its debt still files the total: HST's LongTermDebt
+    // tag carries 25% of the debt its notes, credit line and secured loans sum to, against 99% under
+    // DebtAndCapitalLeaseObligations; ITT's current leg is a 0 current portion beside its commercial
+    // paper; HTZ and LKQ file only the total. CY2025 frames, 421 pond filers with a total: 410 move under
+    // 5%, and all 11 movers side with the total on a line it does not read (maturities, the missed leg).
+    // shortcut: the component legs are not summed. Adding SecuredDebt and LineOfCredit matches the total
+    // at 19 of 45 filers and overshoots it at 10, so DLR, EXR, ESS, BXP, O and MAA still read one leg.
+    // Nor is a LongTermDebt equal to its current leg counted once: LLYVA's is the same debt twice, SWKS's
+    // is two equal tranches.
+    debt_total: &["LongTermDebt", "DebtAndCapitalLeaseObligations"],
     cash: &["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
     // (#410) Excluding-acquired FIRST: a same-day tie keeps the first tag, and JNJ files only its acquired
     // in-process R&D under the bare tag (FY2025 0.11B vs 14.7B organic), which read as 0.1% of revenue.
@@ -5440,6 +5452,7 @@ const IFRS_TAGS: FactTags = FactTags {
     debt_nc: &["LongtermBorrowings", "Borrowings"],
     debt_cur: &["CurrentPortionOfLongtermBorrowings", "ShorttermBorrowings",
                 "CurrentBorrowingsAndCurrentPortionOfNoncurrentBorrowings"], // (#720) VIK's one current line
+    debt_total: &[],
     cash: &["CashAndCashEquivalents"],
     rnd: &["ResearchAndDevelopmentExpense"],
     div: &["DividendsPaidClassifiedAsFinancingActivities",
@@ -5768,12 +5781,13 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
         let (t, i) = (tax.get(&end).map_or(0.0, |t| t.1), intexp.get(&end).map_or(0.0, |i| i.1));
         op.entry(end).or_insert((filed, p + t + i, None));
     }
-    // Instant balance items: debt (noncurrent + current, collected separately — the total-debt tag is
-    // only the fallback inside the noncurrent map) and cash. A missing debt tag reads as 0 debt, which
+    // Instant balance items: debt (noncurrent + current, collected separately, and since (#1191) each
+    // total tag on its own, a floor under their sum) and cash. A missing debt tag reads as 0 debt, which
     // can only make net_cash_rev OPTIMISTIC — a reject-the-worst gate then under-rejects, never wrongly
     // rejects, so the failure direction is safe. Cash is the parse anchor: no cash line -> None.
     let debt_nc = collect_instant(tags.debt_nc, &money);
     let debt_cur = collect_instant(tags.debt_cur, &money);
+    let debt_total: Vec<_> = tags.debt_total.iter().map(|t| collect_instant(&[*t], &money)).collect();
     let cash = collect_instant(tags.cash, &money);
     // (#410) R&D and net payout, duration lines. XBRL states payments and proceeds as positive values.
     let rnd = collect(tags.rnd, &money);
@@ -5821,9 +5835,10 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
             // 51.8% for ~17.5%). One absent leg of two still reads 0, and no interest line is no evidence.
             // (#723) Unless EBIT covers that interest over 100x: NYT pays $0.1M on $0.4B of EBIT and files
             // no debt, so it reads 0 and ND/EBITDA prints its net cash.
-            let debt = match (at(&debt_nc), at(&debt_cur)) {
-                (None, None) if at(&intexp).is_some_and(|i| i > 0.0 && at(&op).is_none_or(|o| o / i <= 100.0)) => None,
-                (nc, cur) => Some(nc.unwrap_or(0.0) + cur.unwrap_or(0.0)),
+            let total = debt_total.iter().filter_map(&at).reduce(f64::max);
+            let debt = match (at(&debt_nc), at(&debt_cur), total) {
+                (None, None, None) if at(&intexp).is_some_and(|i| i > 0.0 && at(&op).is_none_or(|o| o / i <= 100.0)) => None,
+                (nc, cur, total) => Some((nc.unwrap_or(0.0) + cur.unwrap_or(0.0)).max(total.unwrap_or(0.0))),
             };
             // (#454) no D&A total -> depreciation plus amortization, for EBITDA and FFO (`dep_rate` keeps the
             // total). shortcut: a missing amortization reads 0, which understates both for a filer with big
@@ -11845,6 +11860,14 @@ pub(crate) mod tests {
         assert_eq!(read(&[("ConvertibleDebtCurrent", 20.0)], Some(10.0)), (Some(-80.0), Some(8.0)), "SHOP's tag");
         assert_eq!(row(&[("LongTermDebtNoncurrent", 300.0), ("ShortTermBorrowings", 30.0)], None).debt, Some(330.0));
         assert_eq!((row(&[], None).debt, row(&[], Some(10.0)).debt), (Some(0.0), None), "debt-free, then unknown");
+        // (#1191) the larger of the legs and each total: HST's partial LongTermDebt under its whole
+        // DebtAndCapitalLeaseObligations, ITT's 0 current portion beside its paper, HTZ's total alone
+        assert_eq!(row(&[("LongTermDebt", 250.0), ("DebtAndCapitalLeaseObligations", 990.0)], Some(10.0)).debt, Some(990.0), "HST");
+        assert_eq!(row(&[("LongTermDebtNoncurrent", 670.0), ("LongTermDebtCurrent", 0.0), ("CommercialPaper", 330.0),
+                         ("DebtAndCapitalLeaseObligations", 1000.0)], None).debt, Some(1000.0), "ITT");
+        assert_eq!(row(&[("DebtAndCapitalLeaseObligations", 500.0)], Some(10.0)).debt, Some(500.0), "HTZ: the total is known debt");
+        assert_eq!(row(&[("LongTermDebt", 300.0), ("DebtCurrent", 100.0)], None).debt, Some(400.0),
+                   "a LongTermDebt filed as the noncurrent leg keeps its current leg");
     }
 
     /// (#85) `supersedes`, the tie-break itself. All four combinations, because the two that involve an
