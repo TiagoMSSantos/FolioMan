@@ -821,6 +821,10 @@ pub struct Urls {
     // and USD per EUR. Defaulted so an older settings.yaml still loads.
     #[serde(default = "default_fred")]
     pub fred: String,
+    // (#1150) Frankfurter's keyless ECB reference rates, `{cur}` = ISO code: `eur_rate` asks it only when
+    // both Yahoo pairs missed. Defaulted so an older settings.yaml still loads.
+    #[serde(default = "default_ecb_fx")]
+    pub ecb_fx: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
     pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe (the base equity pond)
     // (Item 18) EXTRA equity constituent CSVs in the SAME column layout (Symbol, _, GICS Sector, …) —
@@ -1331,6 +1335,10 @@ fn default_openfigi_mapping() -> String {
 
 fn default_fred() -> String {
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}".to_string()
+}
+
+fn default_ecb_fx() -> String {
+    "https://api.frankfurter.dev/v1/latest?from={cur}&to=EUR".to_string()
 }
 
 /// Default request-signing salt, lifted from the Börse Frankfurt web bundle (`tracing.salt`). Public
@@ -2846,6 +2854,9 @@ mod tests {
         // (#486) FRED likewise, `{id}` and all: without it every Bonds row would fetch one page
         assert!(!text.contains("fred:"), "fixture must exercise the DEFAULT");
         assert_eq!(settings.urls.fred, "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}");
+        // (#1150) and the ECB fallback for a currency Yahoo has no pair for today
+        assert!(!text.contains("ecb_fx:"), "fixture must exercise the DEFAULT");
+        assert_eq!(settings.urls.ecb_fx, "https://api.frankfurter.dev/v1/latest?from={cur}&to=EUR");
     }
 
     /// (TER/AUM) Same story as the OpenFIGI pin above, and the same reason it needs one: `serde(default)`

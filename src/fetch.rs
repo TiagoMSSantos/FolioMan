@@ -599,8 +599,15 @@ fn fx_scale(cur: &str) -> f64 {
     if cur == "GBp" || cur == "GBX" { 0.01 } else { 1.0 }
 }
 
-/// EUR per 1 unit of `cur`. 1.0 for EUR; None if Yahoo has no FX pair, and None for an UNKNOWN
-/// currency. Only a hit is cached — the cache holds the plain pound rate under "GBP"; the pence
+/// (#1150) EUR per 1 unit of `cur` at the ECB's daily reference rate, served keyless by Frankfurter.
+/// None on any failure, and for a rate that is not a positive number.
+async fn ecb_rate(client: &Client, urls: &Urls, cur: &str) -> Option<f64> {
+    let j = get_json(client, &urls.ecb_fx.replace("{cur}", cur)).await?;
+    j.get("rates")?.get("EUR")?.as_f64().filter(|r| *r > 0.0)
+}
+
+/// EUR per 1 unit of `cur`. 1.0 for EUR; None if neither Yahoo nor the ECB has a rate, and None for an
+/// UNKNOWN currency. Only a hit is cached — the cache holds the plain pound rate under "GBP"; the pence
 /// scale is applied on read, never stored. A miss is asked again by the next caller.
 pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) -> Option<f64> {
     // (#81) An empty `cur` used to be read as EUR, which returned a rate of 1.0 — an assumption
@@ -624,6 +631,11 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
             rate = Some(if invert { 1.0 / px } else { px });
             break;
         }
+    }
+    // (#1150) Both pairs missed, so the ECB's reference rate stands in. It is fixed once a working day, so
+    // it fills a Yahoo outage and never reprices a currency Yahoo answers for.
+    if rate.is_none() {
+        rate = ecb_rate(client, urls, &cur).await;
     }
     // (#761) A miss used to be banked too, and `quotes` warms "USD" once up front: one FX blip there
     // (both pairs, both tries) left every USD row unpriced for the whole run, with no warning, and the
@@ -16116,8 +16128,8 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 56] = [
-            "openfigi_mapping", "fred",
+        const FIELDS: [&str; 57] = [
+            "openfigi_mapping", "fred", "ecb_fx",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "yahoo_query2", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals_quality",
@@ -17462,6 +17474,31 @@ pub(crate) mod tests {
         let (up, client, _) = routed_stub(vec![("USDEUR", chart_body(&[(d, 0.9)], &[], "USD"))]);
         urls.yahoo_chart = format!("{up}{{ticker}}/{{range}}");
         assert_eq!(eur_rate(&client, &urls, "USD", &fx).await, Some(0.9), "asked again, and answered");
+    }
+
+    /// (#1150) The ECB stands in only when both Yahoo pairs miss, and only with a positive rate. USD and
+    /// SEK have no Yahoo pair here; GBP has one, and the stub serves the ECB a different pound rate.
+    #[tokio::test]
+    async fn eur_rate_falls_back_to_the_ecb_only_when_both_pairs_miss() {
+        let d = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let (base, client, _) = routed_stub(vec![
+            ("ecb/USD", r#"{"rates":{"EUR":0.9}}"#),
+            ("ecb/SEK", r#"{"rates":{"EUR":0.0}}"#),
+            ("ecb/GBP", r#"{"rates":{"EUR":2.0}}"#),
+            ("GBPEUR", chart_body(&[(d, 1.2)], &[], "GBP")),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        urls.ecb_fx = format!("{base}ecb/{{cur}}");
+        let fx = fx_cache();
+        let usd = eur_rate(&client, &urls, "USD", &fx).await;
+        assert_eq!(usd, Some(0.9), "no Yahoo pair, so the ECB's rate");
+        let banked = fx.lock().await.get("USD").copied().flatten();
+        assert_eq!(banked, Some(0.9), "banked like any hit");
+        let sek = eur_rate(&client, &urls, "SEK", &fx).await;
+        assert_eq!(sek, None, "a zero rate is no rate");
+        let gbp = eur_rate(&client, &urls, "GBP", &fx).await;
+        assert_eq!(gbp, Some(1.2), "Yahoo answered, so the ECB is never read");
     }
 
     /// (#358) `eur_rate_series`' two short answers. EUR is the identity and asks for nothing, even with
