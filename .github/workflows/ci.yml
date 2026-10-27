@@ -1047,6 +1047,7 @@ jobs:
         with:
           name: mutants-out-${{ matrix.shard }}
           path: mutants.out
+          if-no-files-found: ignore   # a diff with no mutants writes no mutants.out
           retention-days: 14
 
   # Actions housekeeping: each main run supersedes the history, so delete this workflow's older
