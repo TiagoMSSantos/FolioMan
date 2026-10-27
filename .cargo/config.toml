@@ -10,13 +10,18 @@
 # fuse a mul+add into an FMA nor reassociate a sum — it can only widen operations whose order is
 # already provably unchanged. The frozen-data goldens in tests/fixture/ are what verify that claim; if one moves,
 # this flag comes back out rather than the golden being re-blessed.
-[build]
+#
+# (#1181) Scoped to the one triple it is true for, not to `[build]`: an arm64 compiler (an M-series
+# laptop, an arm runner) does not know the cpu `x86-64-v3` and warns on every compile, and `[build]`
+# would hand it to every target.
+[target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=x86-64-v3"]
 
-# (#392) …which cargo hands to EVERY target, the page's wasm engine included, and there an x86 cpu
-# builds a module wasm-bindgen cannot finish ("failed to find the
-# `__wbindgen_externref_table_dealloc` function"). A target entry REPLACES `build.rustflags` rather
-# than adding to it, so this puts wasm back on its own default cpu.
+# (#392) The wasm engine must not get an x86 cpu: it builds a module wasm-bindgen cannot finish
+# ("failed to find the `__wbindgen_externref_table_dealloc` function"). Before (#1181) the x86 flag sat
+# in `[build]`, which cargo hands to EVERY target, and this entry put wasm back on its own default cpu
+# (a target entry REPLACES `build.rustflags` rather than adding to it). The flag is scoped now, so the
+# entry restates a default; it stays so that a `[build]` flag added later cannot reach wasm again.
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-cpu=generic"]
 

@@ -19,8 +19,9 @@ permissions:
 env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
-  # RUSTFLAGS replaces .cargo/config.toml's build.rustflags, so it restates target-cpu. Frame pointers let
-  # perf walk whole call chains cheaply; the golden check below shows they move no number.
+  # RUSTFLAGS replaces .cargo/config.toml's target.x86_64-unknown-linux-gnu rustflags, so it restates
+  # target-cpu. Frame pointers let perf walk whole call chains cheaply; the golden check below shows
+  # they move no number.
   RUSTFLAGS: "-C target-cpu=x86-64-v3 -C force-frame-pointers=yes"
 
 jobs:

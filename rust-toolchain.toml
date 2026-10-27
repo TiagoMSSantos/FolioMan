@@ -1,0 +1,15 @@
+# (#1181) The toolchain every cargo and rustc call in this tree runs on.
+#
+# `stable`, not a version number, on purpose: the CI image (ubuntu-24.04) preinstalls the stable
+# channel, so this file selects the toolchain the runner already has, which was 1.99.0 on the last green
+# run. A pinned `1.99.0` is a different toolchain name to rustup, one the image does not have, so every
+# job of every workflow would have to download it first, and a rustup that does not install the active
+# toolchain by itself would stop there. The floor that does not move is `rust-version` in Cargo.toml,
+# which the `msrv` job builds against.
+#
+# The components: clippy is what the lint job runs; rustfmt is for editors (CI runs no `cargo fmt
+# --check`, see ci.yml). The wasm32 target is not listed because only the wasm job needs it and that
+# job adds it itself.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
