@@ -821,7 +821,7 @@ fn size_vol_target_book_reports_unallocated_budget_and_the_deploy_line() {
     assert!(stdout.contains(" stock/ETF/crypto (renormalised over the classes present)"), "{stdout}");
     assert!(stdout.contains("(50.0% unallocated — the caps bind and no name in those classes can take more"), "{stdout}");
     assert!(!stdout.contains("TOTAL+"), "no tracker takes the remainder: {stdout}");
-    assert!(line_with(&stdout, "  TICKER ").contains("SIZE%   EUR/MO  CAP"), "{stdout}");
+    assert!(line_with(&stdout, "  TICKER ").contains("SIZE%   EUR/MO SHARES  CAP"), "{stdout}");
     assert!(line_with(&stdout, "  TOTAL ").contains("50.0%      500"), "{stdout}");
     assert!(stdout.contains("DEPLOY THIS MONTH: €1000 — base × 1 (S&P 500 entry state unavailable this run)"), "{stdout}");
 }

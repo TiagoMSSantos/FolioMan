@@ -380,15 +380,24 @@ pub async fn run(args: Vec<String>) {
         );
     }
     let deploy = settings.monthly_deploy_eur;
-    println!("  {:<10} {:>7} {:>7} {:>7}{}  CAP", "TICKER", "SCORE", "VOL", "SIZE%", eur_cell(None, deploy));
+    println!(
+        "  {:<10} {:>7} {:>7} {:>7}{}{}  CAP",
+        "TICKER",
+        "SCORE",
+        "VOL",
+        "SIZE%",
+        eur_cell(None, deploy),
+        shares_cell(None, None, deploy)
+    );
     for &(q, s, w, cap) in &book {
         println!(
-            "  {:<10} {:>7} {:>7} {:>6.1}%{}  {}",
+            "  {:<10} {:>7} {:>7} {:>6.1}%{}{}  {}",
             q.ticker,
             s.map_or("—".to_string(), |s| format!("{s:.1}")),
             q.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
             w,
             eur_cell(Some(w), deploy),
+            shares_cell(Some(w), q.price_eur, deploy),
             cap.map_or(String::new(), |c| format!("cap: {c}")),
         );
     }
@@ -457,10 +466,12 @@ pub async fn run(args: Vec<String>) {
                 for ((i, core, repl, _), each) in rows.into_iter().zip(spill_split(rest, &tiers)) {
                     let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
                     println!(
-                        "  {core:<10} {dash:>7} {dash:>7} {each:>6.1}%{eur}  broad-market · CORE #{rank}, {date} screen{note}",
+                        "  {core:<10} {dash:>7} {dash:>7} {each:>6.1}%{eur}{shares}  broad-market · CORE #{rank}, {date} screen{note}",
                         dash = "—",
                         rank = i + 1,
                         eur = eur_cell(Some(each), deploy),
+                        // (#1187) a CORE row comes off the state file: no quote this run, so no price to divide by
+                        shares = shares_cell(Some(each), None, deploy),
                     );
                 }
                 println!("  {:<10} {:>7} {:>7} {:>6.1}%{}", "TOTAL+", "", "", total + rest, eur_cell(Some(total + rest), deploy));
@@ -548,14 +559,43 @@ pub async fn run(args: Vec<String>) {
     }
 }
 
+/// (#1187) The EUR a SIZE% share of the base budget is: ONE definition for the EUR/MO cell and the SHARES cell,
+/// so the two columns cannot read different amounts.
+fn row_eur(w: f64, deploy: f64) -> f64 {
+    w * deploy / 100.0
+}
+
 /// (#1122) The EUR/MO cell of the sizes table: a SIZE% share of the base `monthly_deploy_eur`, before the
 /// entry-state multiplier the DEPLOY THIS MONTH line applies. `None` = the header. No budget (<= 0) = no
 /// column, so an unset budget prints the table as before.
 fn eur_cell(w: Option<f64>, deploy: f64) -> String {
     match w {
         _ if deploy <= 0.0 => String::new(),
-        Some(w) => format!(" {:>8.0}", w * deploy / 100.0),
+        Some(w) => format!(" {:>8.0}", row_eur(w, deploy)),
         None => format!(" {:>8}", "EUR/MO"),
+    }
+}
+
+/// (#1187) Whole units `eur` buys at `price_eur`, rounded down so the count never overspends. `None` when the
+/// run has no usable price for the name: absent, zero, negative or not a number. A price is never guessed.
+fn whole_shares(eur: f64, price_eur: Option<f64>) -> Option<u64> {
+    let price = price_eur.filter(|p| p.is_finite() && *p > 0.0)?;
+    Some((eur / price).floor() as u64)
+}
+
+/// (#1187) The SHARES cell after EUR/MO: the whole units its EUR/MO share buys at this run's EUR price, `—`
+/// when the row has no price (a CORE tracker read back from the state file, a fund or coin whose FX is
+/// unknown). `None` for `w` = the header. No budget (<= 0) = no column, like EUR/MO. Display only: the weights
+/// are final before this prints. The count divides the unrounded EUR, and a broker that sells fractions can
+/// still fill a row this cell reads as 0.
+fn shares_cell(w: Option<f64>, price_eur: Option<f64>, deploy: f64) -> String {
+    match w {
+        _ if deploy <= 0.0 => String::new(),
+        Some(w) => match whole_shares(row_eur(w, deploy), price_eur) {
+            Some(n) => format!(" {n:>6}"),
+            None => format!(" {:>6}", "—"),
+        },
+        None => format!(" {:>6}", "SHARES"),
     }
 }
 
@@ -1196,5 +1236,34 @@ pub(crate) mod tests {
         assert_eq!(eur_cell(None, -1.0), "");
         assert_eq!(eur_cell(Some(12.5), 800.0), "      100");
         assert_eq!(eur_cell(None, 800.0), "   EUR/MO");
+    }
+
+    /// (#1187) Whole units are the EUR over the price rounded down; a missing, zero, negative or non-finite
+    /// price has no count rather than a guessed one.
+    #[test]
+    fn whole_shares_round_down_and_need_a_usable_price() {
+        assert_eq!(whole_shares(100.0, Some(40.0)), Some(2));
+        assert_eq!(whole_shares(80.0, Some(40.0)), Some(2)); // an exact multiple is not cut short
+        assert_eq!(whole_shares(39.9, Some(40.0)), Some(0)); // below one unit is zero, not absent
+        assert_eq!(whole_shares(100.0, None), None);
+        assert_eq!(whole_shares(100.0, Some(0.0)), None);
+        assert_eq!(whole_shares(100.0, Some(-5.0)), None);
+        assert_eq!(whole_shares(100.0, Some(f64::NAN)), None);
+        assert_eq!(whole_shares(100.0, Some(f64::INFINITY)), None);
+    }
+
+    /// (#1187) SHARES = whole units of the row's EUR/MO share at its EUR price; `—` without a price, the
+    /// header on `None`, and no column at all without a budget, so an unset budget prints the table as before.
+    #[test]
+    fn shares_cell_counts_units_of_the_rows_monthly_share() {
+        assert_eq!(shares_cell(Some(12.5), Some(40.0), 0.0), "");
+        assert_eq!(shares_cell(None, None, -1.0), "");
+        // 12.5% of 800 = 100 EUR at 40 EUR a unit
+        assert_eq!(shares_cell(Some(12.5), Some(40.0), 800.0), "      2");
+        assert_eq!(shares_cell(Some(12.5), None, 800.0), "      —");
+        assert_eq!(shares_cell(Some(2.5), Some(40.0), 800.0), "      0"); // 20 EUR buys no whole unit
+        assert_eq!(shares_cell(None, None, 800.0), " SHARES");
+        // the count reads the amount EUR/MO prints, from the one definition
+        assert_eq!(row_eur(12.5, 800.0), 100.0);
     }
 }
