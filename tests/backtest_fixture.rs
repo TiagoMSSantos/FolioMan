@@ -982,14 +982,21 @@ fn goldens_hold_only_the_known_nan_and_inf_cells() {
     }
 }
 
-/// (#751) The `dead` arm over the archive of dead S&P members. The five extra names are in
+/// (#751) The `dead` arm over the archive of dead S&P members. The extra names are in
 /// `.sp500_history.json` and in `tests/dead-members.csv` but not in the frozen Yahoo cache, so each is
 /// filled from the archive: ARG, TE and SWY end dead, BEAM and MIL are the crash and reused-ticker cases.
+/// (#1185) Ten more takeover exits stand beside them: each left the index within a month of its last
+/// bar and sat in it for 100 or more monthly bars, so the walk pays a terminal return at many cutoffs per
+/// name. FRX never paid a dividend, EMC and BRCM paid a few, the rest paid steadily. They are extra tickers
+/// on this run only: the other goldens grade a pool Yahoo answers for, and the walk pays a terminal return
+/// only to names filled from the archive, which needs `pit` and `dead`.
 #[test]
 fn backtest_dead_report_is_pinned() {
     let mut args: Vec<String> = ["12", "pit", "dead"].map(String::from).to_vec();
     args.extend(fixture_tickers());
     args.extend(["ARG", "BEAM", "MIL", "TE", "SWY"].map(String::from));
+    args.extend(["BRCM", "EMC", "FDO", "FRX", "HAR"].map(String::from));
+    args.extend(["HCBK", "LLTC", "POM", "SPLS", "WFM"].map(String::from));
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     pin(&args, "backtest-12-dead.golden");
 }
