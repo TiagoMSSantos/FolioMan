@@ -416,7 +416,7 @@ fn fill_last_close(j: &mut Value) -> Option<()> {
     Some(())
 }
 
-/// Parse a Yahoo chart payload into aligned dates+closes (null closes dropped) + meta.
+/// Parse a Yahoo chart payload into aligned dates+closes (null and non-positive closes dropped) + meta.
 ///
 /// `pub` for the network drift net, which health-probes the chart endpoint and then has to assert the
 /// parser still eats what came back. Handing it THIS fn instead of `fetch_history` means the body it
@@ -449,7 +449,9 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     let mut volumes = Vec::new();
     let (mut opens, mut highs, mut lows) = (Vec::new(), Vec::new(), Vec::new());
     for (i, (t, c)) in ts.iter().zip(closes_arr).enumerate() {
-        if let (Some(secs), Some(close)) = (t.as_i64(), c.as_f64()) {
+        // (#1146) a zero or negative close is a bad print, not a price: kept, it reads as a -100% session
+        // and every ratio over it divides by zero. Dropped like a null close, its legs with it.
+        if let (Some(secs), Some(close)) = (t.as_i64(), c.as_f64().filter(|c| *c > 0.0)) {
             if let Some(date) = bar_date(secs, off) {
                 dates.push(date);
                 closes.push(close);
@@ -15246,6 +15248,15 @@ pub(crate) mod tests {
         assert_eq!(ohlc.lows[0], 8.5);
         assert!(ohlc.lows[1].is_nan());
         assert!(c.opens.iter().all(|o| o.is_nan()) && c.opens.len() == 2, "no open array -> NaN per kept bar");
+        // (#1146) a zero and a negative close drop with their volume and open, like a null one
+        let bad = parse_chart(&json!({"chart": {"result": [{
+            "timestamp": [1577836800, 1577923200, 1578009600, 1578096000],
+            "indicators": {"quote": [{"close": [10.0, 0.0, -1.0, 12.0], "volume": [1, 2, 3, 4], "open": [9.0, 1.0, 2.0, 11.0]}]}
+        }]}}), "X").unwrap();
+        assert_eq!(
+            (bad.closes, bad.volumes, bad.opens),
+            (vec![10.0, 12.0], vec![1.0, 4.0], vec![9.0, 11.0])
+        );
         // no events object at all -> empty, never a phantom split (this is the overwhelming case)
         assert!(parse_chart(&json!({"chart": {"result": [{
             "timestamp": [1577836800], "indicators": {"quote": [{"close": [10.0]}]}
