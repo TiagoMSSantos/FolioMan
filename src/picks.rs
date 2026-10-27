@@ -11707,7 +11707,7 @@ mod tests {
         let mut p = serde_json::json!({"stocks": [row("1", "A"), row("2#b", "B"), row("3b", "C"), row("4", "D")]});
         stamp_buy(&mut p, &[("A".to_string(), 50.0), ("C".to_string(), 50.0)]);
         let got: Vec<(&str, &str)> = p["stocks"].as_array().unwrap().iter().map(|r| (r[0][1].as_str().unwrap(), r[2][1].as_str().unwrap())).collect();
-        assert_eq!(got, [("1", "50.0%"), ("2b", "50.0%"), ("3", "")]);
+        assert_eq!(got, [("1", "50.00%"), ("2b", "50.00%"), ("3", "")]);
     }
 
     /// (#446) INDEX lands after BUY% (after TICKER when BUY% is absent) on ETF rows only: a shared
