@@ -17908,7 +17908,9 @@ pub(crate) mod tests {
         assert_eq!(q.drawdown_pct, core::pct_from_high(&closes));
 
         let q = quote_one(&client, &urls, &fx, &tk("ZERO"), 30, 0, false, false, &w, None, false).await;
-        assert_eq!(q.mom_pct, None, "a zero close a month back has no percentage change");
+        // (#1146) the zero close never reaches the quote: parse_chart drops it, so a month back is the 1.0
+        // before it, and 1.0 now is no change at all
+        assert_eq!(q.mom_pct, Some(0.0), "a zero close a month back is skipped, not divided by");
 
         // (#358) a chart that answers with no bars is "no data", never a quote built on nothing
         let q = quote_one(&client, &urls, &fx, &tk("EMPTY"), 30, 0, false, false, &w, None, false).await;
