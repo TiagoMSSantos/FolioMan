@@ -5401,6 +5401,10 @@ const US_GAAP_TAGS: FactTags = FactTags {
     // AdvertisingExpense is left out: it is a note disclosure INSIDE selling and marketing
     sm: &["SellingAndMarketingExpense", "MarketingExpense", "MarketingAndAdvertisingExpense"],
     ga: &["GeneralAndAdministrativeExpense"],
+    // shortcut: (#1192) 12 filers on the page tag pretax only as its Domestic and Foreign halves (MCD,
+    // ORCL, PYPL, ITW, BR, DECK, LH, PSX) or as Domestic alone (NVR, PHM, NI, ES), so their EPS is never
+    // stripped: ORCL, BR and PYPL by 11-18% on their newest year. None of them ranks, and a strip only
+    // lowers EPS; sum the halves once one does.
     pretax: &["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
               "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
     // deposit interest, a bank's expense total, an insurer's claims and premiums: any one of them marks a
@@ -5468,8 +5472,11 @@ const IFRS_TAGS: FactTags = FactTags {
     gw: &["Goodwill"],
     sm: &["SellingExpense", "DistributionCosts"],
     ga: &["AdministrativeExpense"],
-    // shortcut: no EBIT fallback here. The (#420) census was us-gaap only; `ProfitLossBeforeTax` is the
-    // pretax line to add once a 20-F filer missing its operating line is measured.
+    // shortcut: no EBIT fallback and no (#426) strip here. (#1192) `ProfitLossBeforeTax` is the line to
+    // add, measured on the 23 IFRS filers on the page on 2026-10-27: it would strip 9 of the 20 that file
+    // it by 5% or more on their newest year (UL, SAP, DEO, BUD, SONY), TM by half because its finance
+    // arm's interest is an operating cost, and none of them ranks. A strip only lowers EPS, so it cannot
+    // admit a name; map it, with a captive-finance guard, once one of them ranks.
     pretax: &[],
     // (#720) a bank's loan interest and deposit cost, filed by KSPI, NU, BBVA, ING, SAN and RY and by none
     // of the 37 IFRS filers that are not banks. Not `DepositsFromCustomers`: PAC, an airport, files it.
