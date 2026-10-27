@@ -14697,6 +14697,17 @@ buy_heuristic:
                                  #   the old book; the (#606) WINNERS HELD floors and the (j) bars
                                  #   were pre-registered on it. S+inter, S+after and SIZED are
                                  #   unchanged (`picks::sized_splice`).
+                                 #   (#1142) MEASURED 2026-10-27, nothing shipped: does the 20y DCA
+                                 #   lead of 12-1 momentum alone over S+inter hold on the stress
+                                 #   lane? Pit reads +1.2 mean / +0.9 median / +0.7 worst, and
+                                 #   +1.2/+0.7/+0.7 with dead names. Bar, pre-registered: mom12-1
+                                 #   never-sell minus S+inter >= +0.5 on mean AND median, worst no
+                                 #   lower. Probe 40469646395 on 436bb21, `20 universe fund stress
+                                 #   winners rivals`, windows scored 5181/9208, 72 programs: mom12-1
+                                 #   +6.8 (med +6.3, worst +1.5, OOS +3.0/+10.5), S+inter +6.3 (med
+                                 #   +6.5, worst +1.5, OOS +3.4/+9.2). Mean +0.5, median -0.2, worst
+                                 #   equal: FAIL on the median. 5 stays; the momentum share waits for
+                                 #   the `mblend` track.
   growth_sector_cap: 0          # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the
