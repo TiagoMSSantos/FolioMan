@@ -17875,6 +17875,33 @@ buy_heuristic:
                                  #   review's fixture numbers (200 survivors) are not a grade; this PIT run is.
                                  #   REOPEN only if BUY NOW's input is no longer cut at `top_picks`, so admission can add names instead of swapping
                                  #   them. Grade that cut first, not this floor.
+  growth_min_cagr_size_slope: 0.0 # (#1154) GATE (stocks only): points taken off the growth_min_cagr floor per tenfold
+                                 #   of market cap above growth_min_cagr_size_pivot. 0.0 = off and byte-identical: no
+                                 #   relief, every floor reads as before. Resolved once in `picks::min_cagr_floor`, so the
+                                 #   flat floor and the sector floor both take it; ETFs and coins never do.
+                                 #   WHY. A 19%/yr bar asks a trillion-dollar company to grow like a five-billion one.
+                                 #   Size relief is the one admission lever this lane has not graded. It is still an
+                                 #   admission lever, so the five refusals and the 1/N dilution of (#192)/(#266) are the
+                                 #   prior: expect FAIL.
+                                 #   WHERE IT CAN MOVE. The cap is `FundFactors.mcap` (the backtest fills it on the `fund`
+                                 #   leg only: as-of shares x close, trading currency), else share count x price_eur (live
+                                 #   only: backtest quotes carry no share count). So `universe`, `pit` and every golden
+                                 #   stay byte-identical at any slope; only the `fund` leg and the live screen can move.
+                                 #   PRE-REGISTERED 2026-10-27, before any arm ran. probe.yml on one sha, years "12 8",
+                                 #   args "universe fund pit winners rivals": a control (knobs "") and two arms, slope 1
+                                 #   and slope 2 (pivot 1e10, so a 1e12 cap drops the floor by 2 or 4 points).
+                                 #   VOID if `windows scored` differs from the control on any leg, or if `universe` or
+                                 #   `pit` moves at all (the scope claim above would then be false).
+                                 #   PRIMARY, fund leg, 12y AND 8y: the SIZED row's book excess median AND mean above the
+                                 #   control, and rank 1 moving UP, the (#266) re-open test. Equal is not a pass: an
+                                 #   admission arm that only holds is dilution not yet seen.
+                                 #   GUARDS: worst window >= control -1.0, WINNERS HELD >= control -2.0, Série E 90/90/80.
+                                 #   SHIP only on PASS at both horizons for one slope. Otherwise the knob stays 0.0 and
+                                 #   the verdict lands here.
+  growth_min_cagr_size_pivot: 10000000000 # (#1154) the cap where size relief starts, in the cap's own currency
+                                 #   (trading currency in the backtest, EUR live; see the `shortcut:` in picks.rs). Inert
+                                 #   while the slope is 0.0. A plain integer because serde_yaml and the python reader
+                                 #   disagree on exponent spellings.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
                                  #   (#3k) 2026-07-29 LOWERED 0.35 -> 0.15 — the WINNER'S-CURSE CURE. New
                                  #   rank-slice/head-to-head instrumentation proved rank 1 was the WORST

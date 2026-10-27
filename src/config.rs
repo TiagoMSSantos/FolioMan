@@ -584,6 +584,11 @@ pub struct BuyHeuristic {
     pub calmar_cap: f64,             // (C) cap on that CAGR/max-drawdown ratio fed into the reward
 
     pub prefer_eur: bool,            // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
+
+    // (#1154) growth GATE (stocks only): lowers `growth_min_cagr` by this many %/yr per tenfold of market cap above `growth_min_cagr_size_pivot`, so a 1T name at slope 2 and pivot 10B is judged against a bar 4 points lower. WHY: one absolute 19%/yr bar asks a trillion-dollar company to compound like a small one, and size alone caps how fast a company can keep growing. It can only LOWER the floor, so it can only add names. Reads `FundFactors.mcap` (the backtest's as-of cap, `fund` lane only, trading currency), else share count x `price_eur` live. Funds and coins keep their own floors. UNMEASURED: 0 = off (default) and ci-settings ships 0 until a pre-registered probe passes; see the (#1154) receipt in tests/ci-settings.yaml
+    pub growth_min_cagr_size_slope: f64,
+    // (#1154) the market cap at which `growth_min_cagr_size_slope` starts to lower the floor; at or below it the floor is unchanged. 0 = the slope never applies
+    pub growth_min_cagr_size_pivot: f64,
 }
 
 /// (E) Hard clamp bounds on the P/E value tilt, so one absurdly cheap/expensive P/E can't swamp the
@@ -788,6 +793,9 @@ impl Default for BuyHeuristic {
             calmar_weight: 1.0,            // (C) cut further — the Calmar (CAGR/maxDD) tilt is mildly harmful in BOTH lanes on the wide sample too (Δ+0.02/+0.03); kept at 1.0 for a little long-hold drawdown-awareness. CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+0.4
             calmar_cap: 2.0,               // (C) cap the CAGR/max-drawdown ratio
             prefer_eur: true,
+            // (#1154) OFF, byte-identical: slope 0 means no size relief, so the floor is the shipped number; the pivot (10 billion) is where relief would start if armed
+            growth_min_cagr_size_slope: 0.0,
+            growth_min_cagr_size_pivot: 1e10,
         }
     }
 }

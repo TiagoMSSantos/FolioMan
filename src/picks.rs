@@ -308,9 +308,25 @@ pub(crate) fn min_cagr_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
         // 20y verdict, against 380 of 4619 stock samples). Same number as before for funds either way.
         if tuning.growth_min_cagr_etf > 0.0 { tuning.growth_min_cagr_etf } else { tuning.growth_min_cagr }
     } else if tuning.growth_sector_leaders > 0 {
-        sector_floor(tuning.growth_min_cagr, quote.growth_sector_floor)
+        sector_floor(tuning.growth_min_cagr, quote.growth_sector_floor) - size_relief(quote, tuning)
     } else {
-        tuning.growth_min_cagr
+        tuning.growth_min_cagr - size_relief(quote, tuning)
+    }
+}
+
+/// (#1154) %/yr the equity floor drops for size: `growth_min_cagr_size_slope` per tenfold of market cap
+/// above `growth_min_cagr_size_pivot`, never below 0, so it can only lower the floor. No cap reads 0.
+/// shortcut: the backtest's cap is in the trading currency (USD for the US pool) and the live one is
+/// share count x `price_eur`, so the pivot means a slightly different size in each; an FX-aware pivot
+/// would fix it if the knob ever ships.
+fn size_relief(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    let pivot = tuning.growth_min_cagr_size_pivot;
+    let live = || share_count(quote).zip(quote.price_eur).map(|(n, p)| n * p);
+    let cap = quote.fund.as_ref().and_then(|f| f.mcap).or_else(live);
+    let tenfolds = |c: f64| (c / pivot).log10().max(0.0);
+    match cap {
+        Some(c) if pivot > 0.0 => (tuning.growth_min_cagr_size_slope * tenfolds(c)).max(0.0),
+        _ => 0.0,
     }
 }
 
@@ -13638,6 +13654,49 @@ mod tests {
         let fails = gate_failures(&leader, &t).expect("assessable");
         assert!(!fails.iter().any(|(g, _, _)| g.starts_with("cagr")), "the door did open the CAGR gate");
         assert!(fails.iter().any(|(g, _, _)| *g == "range"), "…and the range gate still refuses it: {fails:?}");
+    }
+
+    /// (#1154) The size slope lowers the equity floor per tenfold of cap above the pivot, from the
+    /// backtest's as-of cap first and live share count x EUR price second. Off (slope 0), below the
+    /// pivot, pivot 0, and every fund or coin keep the shipped floor.
+    #[test]
+    fn size_slope_lowers_only_a_big_stocks_floor() {
+        let mut t = BuyHeuristic {
+            growth_min_cagr: 19.0,
+            ..BuyHeuristic::default()
+        };
+        let capped = |cap: f64| Quote {
+            fund: Some(crate::core::FundFactors {
+                mcap: Some(cap),
+                ..crate::core::FundFactors::default()
+            }),
+            ..sector_stock("BIG", "Energy", 100.0)
+        };
+        let (big, small) = (capped(1e13), capped(1e9));
+        assert_eq!(min_cagr_floor(&big, &t), 19.0, "slope 0 is off");
+        t.growth_min_cagr_size_slope = 2.0;
+        // three tenfolds above the 1e10 pivot at 2 points each
+        assert_eq!(min_cagr_floor(&big, &t), 13.0);
+        assert_eq!(min_cagr_floor(&small, &t), 19.0, "below the pivot");
+        let live = Quote {
+            shares_out: Some(1e9),
+            price_eur: Some(1e3),
+            ..sector_stock("LIVE", "Energy", 100.0)
+        };
+        // live: share count x EUR price is 1e12, two tenfolds
+        assert_eq!(min_cagr_floor(&live, &t), 15.0);
+        t.growth_sector_leaders = 1;
+        assert_eq!(min_cagr_floor(&big, &t), 13.0, "the sector door too");
+        t.growth_sector_leaders = 0;
+        let mut etf = capped(1e13);
+        etf.instrument_type = "ETF".into();
+        assert_eq!(min_cagr_floor(&etf, &t), 19.0, "a fund's own floor");
+        let mut coin = capped(1e13);
+        coin.ticker = "BTC-EUR".into();
+        let crypto = t.growth_min_cagr_crypto;
+        assert_eq!(min_cagr_floor(&coin, &t), crypto, "a coin's own floor");
+        t.growth_min_cagr_size_pivot = 0.0;
+        assert_eq!(min_cagr_floor(&big, &t), 19.0, "pivot 0 is off");
     }
 
     /// (#144) `n` gate-clearing names whose only difference is the 5Y leg, so exactly ONE additive
