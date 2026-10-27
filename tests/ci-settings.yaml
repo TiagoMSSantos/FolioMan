@@ -8782,7 +8782,13 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 437f2762fffd (#1140), graded 2026-10-27 by run 40465327334, same five inputs, since
+  # LAST GRADED SHA: e40af88245ce (#1146), graded 2026-10-27 by run 40482884862, regex `.`, no exclude,
+  # tests `--lib --test backtest_fixture`, since 9780e22, `files` = every src file (#1145)-(#1148) touched
+  # (src/commands/backtest.rs src/core.rs src/fetch.rs src/picks.rs): 17 in scope = 15 caught
+  # (`dividend_sums` 7, `parse_chart` 4, `explain_growth_score` 4), 2 unviable (the `Default` returns of
+  # `backtest_quote` and `parse_chart`), 0 missed, 0 timeout. (#1148) is a comment and adds no mutant.
+  # (#1151) records it.
+  # BEFORE THAT: 437f2762fffd (#1140), graded 2026-10-27 by run 40465327334, same five inputs, since
   # 4761333, `files` = every src file (#1129)-(#1140) touched: 159 in scope = 155 caught (`fetch_universe`
   # 45, `bubble_flags` 27, `compose_score` 23, `merge_isin_lists` 12, `vol_change` 12, `web_help` 11,
   # `score_parts_hard` 9, `web_track` 6, `explain_growth_score` 4, `chain_section` 2, `chain_footer` 2,
