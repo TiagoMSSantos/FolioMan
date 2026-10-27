@@ -25,7 +25,7 @@
 
 use crate::core;
 use crate::fetch::Chart;
-use chrono::{NaiveDate, NaiveTime, Timelike};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use std::collections::{BTreeMap, HashMap};
 
 /// How many names each market's book holds.
@@ -319,13 +319,27 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
         .collect()
 }
 
-/// (#823) Whether `market`'s session dated today is over at `now`, UTC: from 17:00 for EU (17:30
-/// Frankfurt is 15:30 UTC in summer time, 16:30 in winter) and 21:30 for US (16:00 New York is 20:00 or
-/// 21:00), past the closing auction and a delayed chart either way.
-/// shortcut: fixed UTC hours, so in summer time a closed session waits an hour longer than it must;
-/// each exchange's time-zone rules would cut that hour.
-pub fn closed(market: &str, now: NaiveTime) -> bool {
-    (now.hour(), now.minute()) >= if market == "US" { (21, 30) } else { (17, 0) }
+/// (#823) Whether `market`'s session dated today is over at `now`, UTC: half an hour past the close, 17:30
+/// Frankfurt for EU and 16:00 New York for US, which clears the closing auction and a delayed chart.
+/// (#1180) That is 17:00 UTC for EU and 21:30 UTC for US in winter time and an hour earlier in summer time.
+pub fn closed(market: &str, now: NaiveDateTime) -> bool {
+    let winter: (u32, u32) = if market == "US" { (21, 30) } else { (17, 0) };
+    (now.hour(), now.minute()) >= (winter.0 - u32::from(summer_time(market, now)), winter.1)
+}
+
+/// (#1180) Whether `market`'s exchange runs on summer time at `now`, UTC. US: from the second Sunday of
+/// March 07:00 UTC to the first Sunday of November 06:00 UTC. EU: from the last Sunday of March 01:00 UTC
+/// to the last Sunday of October 01:00 UTC.
+fn summer_time(market: &str, now: NaiveDateTime) -> bool {
+    let sunday = |m, n| NaiveDate::from_weekday_of_month_opt(now.year(), m, Weekday::Sun, n);
+    // the last Sunday of a month is the one a week before the next month's first
+    let last = |m: u32| sunday(m + 1, 1).map(|d| d - Duration::days(7));
+    let at = |d: Option<NaiveDate>, h| d.and_then(|d| d.and_hms_opt(h, 0, 0));
+    let (from, to) = match market {
+        "US" => (at(sunday(3, 2), 7), at(sunday(11, 1), 6)),
+        _ => (at(last(3), 1), at(last(10), 1)),
+    };
+    matches!((from, to), (Some(from), Some(to)) if from <= now && now < to)
 }
 
 /// (#1046) EUR per unit of a chart's `currency`: 1 for EUR, `usd` (EUR per USD, None when the FX quote
@@ -794,11 +808,69 @@ mod tests {
         assert_eq!(since(d(5)), d(5));
     }
 
+    /// `year`-`month`-`day` at `hour`:`min`, UTC.
+    fn utc(year: i32, month: u32, day: u32, hour: u32, min: u32) -> NaiveDateTime {
+        let date = NaiveDate::from_ymd_opt(year, month, day).unwrap();
+        date.and_hms_opt(hour, min, 0).unwrap()
+    }
+
+    /// (#1180) Half an hour past the close on the exchange's own clock: winter 17:00 and 21:30 UTC, summer
+    /// 16:00 and 20:30 UTC. Each row is the first minute of 2026 that counts as closed: the day before a
+    /// switch is on the old clock, the switch day on the new one, and between the two markets' switches
+    /// (US 03-08 and 11-01, EU 03-29 and 10-25) only one of them is on summer time.
     #[test]
-    fn a_session_is_closed_from_a_fixed_utc_hour() {
-        let at = |h, m| NaiveTime::from_hms_opt(h, m, 0).unwrap();
-        assert!(!closed("EU", at(16, 59)) && closed("EU", at(17, 0)));
-        assert!(!closed("US", at(17, 0)) && !closed("US", at(21, 29)) && closed("US", at(21, 30)));
+    fn a_session_is_closed_half_an_hour_after_the_exchange_closes() {
+        let first_closed = [
+            ("EU", 1, 15, 17, 0),
+            ("US", 1, 15, 21, 30),
+            ("EU", 7, 15, 16, 0),
+            ("US", 7, 15, 20, 30),
+            ("US", 3, 7, 21, 30),
+            ("US", 3, 8, 20, 30),
+            ("US", 10, 31, 20, 30),
+            ("US", 11, 1, 21, 30),
+            ("EU", 3, 28, 17, 0),
+            ("EU", 3, 29, 16, 0),
+            ("EU", 10, 24, 16, 0),
+            ("EU", 10, 25, 17, 0),
+            ("US", 3, 20, 20, 30),
+            ("EU", 3, 20, 17, 0),
+            ("US", 10, 28, 20, 30),
+            ("EU", 10, 28, 17, 0),
+        ];
+        for (market, m, d, h, mi) in first_closed {
+            let (shut, from) = (|t| closed(market, t), utc(2026, m, d, h, mi));
+            let before = from - Duration::minutes(1);
+            assert!(!shut(before) && shut(from), "{market} {m}-{d}");
+        }
+    }
+
+    /// (#1180) The switch instants themselves, which no close time reaches, and years where the last
+    /// Sunday of March is the 25th (2029) and the 31st (2024).
+    #[test]
+    fn summer_time_starts_and_ends_on_the_switch_instants() {
+        let starts = [
+            ("US", 2026, 3, 8, 7),
+            ("EU", 2026, 3, 29, 1),
+            ("EU", 2029, 3, 25, 1),
+            ("EU", 2024, 3, 31, 1),
+        ];
+        for (market, y, m, d, h) in starts {
+            let on = |h, mi| summer_time(market, utc(y, m, d, h, mi));
+            assert!(!on(h - 1, 59) && on(h, 0), "{market} {y}-{m}-{d} starts");
+        }
+        let ends = [
+            ("US", 2026, 11, 1, 6),
+            ("EU", 2026, 10, 25, 1),
+            ("EU", 2024, 10, 27, 1),
+        ];
+        for (market, y, m, d, h) in ends {
+            let on = |h, mi| summer_time(market, utc(y, m, d, h, mi));
+            assert!(on(h - 1, 59) && !on(h, 0), "{market} {y}-{m}-{d} ends");
+        }
+        for (market, m, d) in [("US", 1, 1), ("US", 12, 31), ("EU", 1, 1), ("EU", 12, 31)] {
+            assert!(!summer_time(market, utc(2026, m, d, 12, 0)));
+        }
     }
 
     #[test]

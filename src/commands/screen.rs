@@ -1775,7 +1775,7 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             })
             .collect();
         let book = intraday::rank(k, &pond, today);
-        let until = if intraday::closed(market, chrono::Utc::now().time()) { today.succ_opt().unwrap_or(today) } else { today };
+        let until = if intraday::closed(market, chrono::Utc::now().naive_utc()) { today.succ_opt().unwrap_or(today) } else { today };
         let fx = if market == "US" { usd.unwrap_or(f64::NAN) } else { 1.0 };
         rows.extend(intraday::web_rows(market, k, &book, since, until, fx, today));
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
