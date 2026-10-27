@@ -58,7 +58,8 @@ try {
   // (#538) `social_cagr_floor` too: the Social table's, off `social_heuristic` over `buy_heuristic`.
   // (#746) `braked` is graded, glossary included: the engine builds it off its own Stocks rows, as screen does.
   // (#811) `intraday`, from Yahoo's daily bars, ranked by screen alone.
-  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits", "intraday"];
+  // (#1140) `track` and `track_note`, from the journal, which the engine does not read.
+  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits", "intraday", "track", "track_note"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);
   // (#950) over both payloads' keys: a table only the engine writes is drift too, not a silent extra

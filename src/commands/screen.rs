@@ -3469,6 +3469,15 @@ pub async fn run(args: Vec<String>) {
             };
             let spx_now = spx.first().and_then(|q| q.price_eur).filter(|p| *p > 0.0);
             let (wins, n, sum) = crate::commands::track::verdict_stats(&snaps, today, &px_now, spx_now);
+            // (#1140) the page's Track record table off the same quotes, patched into the payload written above
+            let (rows, note) = crate::commands::track::web_track(&snaps, today, &px_now, spx_now);
+            if let Some(mut top) = std::fs::read_to_string(&web_out).ok().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
+                top["track"] = serde_json::json!(rows);
+                top["track_note"] = serde_json::json!(note);
+                if let Ok(json) = serde_json::to_string_pretty(&top) {
+                    let _ = std::fs::write(&web_out, json);
+                }
+            }
             if n > 0 {
                 // (#146) the trials caveat rides with the number, same helper `track` prints, so the
                 // two surfaces cannot quote one fold with two different confidences. This is the line

@@ -5140,6 +5140,17 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         let span = if *y == 1 { "year" } else { "years" };
         (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield, then that yearly rate after inflation (US CPI for USA, Portugal's CPI for Portugal, EU HICP for the rest and for USA in EUR); — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
     }));
+    // (#1140) `commands::track::web_track`
+    let track = fixed(&[
+        ("KIND", "to today = one journalled day's bought book, held from that day to this run at today's prices; chained = one month's bought book, held to the next month's first journalled line and priced off that line's own closes, so chained windows follow one another"),
+        ("FROM", "The day the book was journalled and bought"),
+        ("TO", "The day it was priced: this run's date for a to today row, the next month's first journalled line for a chained row"),
+        ("DAYS", "Days held, FROM to TO"),
+        ("N", "Book names priced at both ends / names in the book; a name with no price drops out, which flatters the book"),
+        ("BOOK", "The book's price return over the window, each name at its weight in the bought book, in euros; dividends not counted"),
+        ("S&P 500", "The S&P 500's price return over the same two days, in euros; n/a = no S&P close journalled at one end"),
+        ("EXCESS", "BOOK minus S&P 500, in points; above 0 = the book beat the index; n/a = no S&P leg"),
+    ]);
     BTreeMap::from([
         ("lanes", lanes),
         ("flags", RANK_FLAGS.iter().map(|(f, what)| (f.to_string(), what.to_string())).collect()),
@@ -5155,6 +5166,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("upcoming", upcoming),
         ("exposure", exposure),
         ("intraday", intraday),
+        ("track", track),
     ])
 }
 

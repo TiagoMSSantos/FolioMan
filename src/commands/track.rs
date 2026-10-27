@@ -1622,11 +1622,26 @@ fn chain_section(snaps: &[Snapshot]) -> String {
             )
         })
         .collect();
+    let footer = chain_footer(&links);
+    format!(
+        "\n  Chained record (#336) — each month's executed book held to the NEXT month's graded line and priced\n  \
+         from that line's journalled closes (`rows`, and `exit` for the names it dropped), S&P leg the same\n  \
+         two days. The windows follow one another, so N links are N draws, not the ~1 the verdict table is\n  \
+         worth. Pre-registered: BEATS S&P at {REOPEN_LINES}+ links with mean AND median monthly excess above 0,\n  \
+         else TRAILS. Inform only: no gate, trust line or push reads it. Unpriced names drop, N shows how\n  \
+         many. EUR seat, price-only. NOT advice.\n\n    \
+         held from   to          days  book %   S&P %  excess   N{body}{footer}"
+    )
+}
+
+/// (#336) The chained record's closing line: the links with an S&P leg compounded, their monthly
+/// excess, and the pre-registered verdict. (#1140) Its own fn so the page's note quotes the same line.
+fn chain_footer(links: &[(String, usize, Graded)]) -> String {
     let both: Vec<(f64, f64)> = links.iter().filter_map(|(.., g)| g.spy_pct.map(|s| (g.book_pct, s))).collect();
     let compound = |leg: fn(&(f64, f64)) -> f64| 100.0 * (both.iter().map(|r| 1.0 + leg(r) / 100.0).product::<f64>() - 1.0);
     let mut ex: Vec<f64> = both.iter().map(|(b, s)| b - s).collect();
     ex.sort_by(f64::total_cmp);
-    let footer = match ex.len() {
+    match ex.len() {
         0 => "\n  no link carries an S&P leg at both ends yet — nothing to compare.".to_string(),
         k => {
             let (mean, med) = (ex.iter().sum::<f64>() / k as f64, crate::core::median(ex).unwrap_or(f64::NAN));
@@ -1641,16 +1656,56 @@ fn chain_section(snaps: &[Snapshot]) -> String {
                 compound(|r| r.1)
             )
         }
+    }
+}
+
+/// (#1140) The page's Track record table as `[header, cell]` rows: each journalled book graded to
+/// today, the verdict table's windows, then the chained links. Its note is the trust line's verdict,
+/// its trials caveat and the chained footer on one line. The same `grade` calls as `track` and the
+/// trust line, so the page cannot quote other numbers.
+pub(crate) fn web_track(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> (Vec<Vec<serde_json::Value>>, String) {
+    let pct =
+        |v: Option<f64>, unit: &str| v.map_or("n/a".to_string(), |v| format!("{v:+.1}{unit}"));
+    let row = |kind: &str, to: &str, held: usize, g: &Graded| {
+        vec![
+            serde_json::json!(["KIND", kind]),
+            serde_json::json!(["FROM", g.date]),
+            serde_json::json!(["TO", to]),
+            serde_json::json!(["DAYS", g.days.to_string()]),
+            serde_json::json!(["N", format!("{}/{held}", g.priced)]),
+            serde_json::json!(["BOOK", pct(Some(g.book_pct), "%")]),
+            serde_json::json!(["S&P 500", pct(g.spy_pct, "%")]),
+            serde_json::json!(["EXCESS", pct(g.spy_pct.map(|s| g.book_pct - s), "pp")]),
+        ]
     };
-    format!(
-        "\n  Chained record (#336) — each month's executed book held to the NEXT month's graded line and priced\n  \
-         from that line's journalled closes (`rows`, and `exit` for the names it dropped), S&P leg the same\n  \
-         two days. The windows follow one another, so N links are N draws, not the ~1 the verdict table is\n  \
-         worth. Pre-registered: BEATS S&P at {REOPEN_LINES}+ links with mean AND median monthly excess above 0,\n  \
-         else TRAILS. Inform only: no gate, trust line or push reads it. Unpriced names drop, N shows how\n  \
-         many. EUR seat, price-only. NOT advice.\n\n    \
-         held from   to          days  book %   S&P %  excess   N{body}{footer}"
-    )
+    let now = today.to_string();
+    let links = chain_links(snaps);
+    let rows = snaps
+        .iter()
+        .filter_map(|s| {
+            let book = book_rows(s);
+            grade(s, &book, usize::MAX, today, px_now, spx_now)
+                .map(|g| row("to today", &now, book.len(), &g))
+        })
+        .chain(
+            links
+                .iter()
+                .map(|(to, held, g)| row("chained", to, *held, g)),
+        )
+        .collect();
+    let (wins, n, sum) = verdict_stats(snaps, today, px_now, spx_now);
+    let note = format!(
+        "{}{} Chained record: {}",
+        summary_line(wins, n, sum),
+        trials_note(snaps, today, px_now, spx_now),
+        chain_footer(&links)
+    );
+    (rows, note.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
@@ -3350,6 +3405,137 @@ mod tests {
         let mut blind = months(3, 1.02, 1.01);
         blind.iter_mut().for_each(|s| s.spx = None);
         assert!(chain_section(&blind).ends_with("nothing to compare."), "no S&P leg anywhere");
+    }
+
+    /// (#1140) The page's table: to-today rows in journal order, then the chained links, every cell
+    /// spelled; the note is the trust line and the chained footer on one line.
+    #[test]
+    fn web_track_lists_both_windows_and_one_line_note() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 21).expect("a real date");
+        let px = |t: &str| (t == "A").then_some(126.0);
+        let cells = |r: &Vec<serde_json::Value>| {
+            r.iter()
+                .map(|c| c[1].as_str().expect("a text cell").to_string())
+                .collect::<Vec<_>>()
+        };
+        let snaps = vec![
+            snap(
+                "2026-09-21",
+                Some(100.0),
+                &[("A", Some(100.0)), ("B", Some(100.0))],
+            ),
+            snap(
+                "2026-10-01",
+                Some(110.0),
+                &[("A", Some(120.0)), ("B", Some(90.0))],
+            ),
+        ];
+        let (rows, note) = web_track(&snaps, today, &px, Some(121.0));
+        assert_eq!(
+            rows[0]
+                .iter()
+                .map(|c| c[0].as_str().expect("a header"))
+                .collect::<std::collections::BTreeSet<_>>(),
+            crate::picks::web_help(false, &[])["track"]
+                .keys()
+                .map(String::as_str)
+                .collect(),
+            "every column has its hover text"
+        );
+        // A 126/100 against 121/100, B unpriced today; then A 126/120 against 121/110.
+        assert_eq!(
+            cells(&rows[0]),
+            [
+                "to today",
+                "2026-09-21",
+                "2026-10-21",
+                "30",
+                "1/2",
+                "+26.0%",
+                "+21.0%",
+                "+5.0pp"
+            ]
+        );
+        assert_eq!(
+            cells(&rows[1]),
+            [
+                "to today",
+                "2026-10-01",
+                "2026-10-21",
+                "20",
+                "1/2",
+                "+5.0%",
+                "+10.0%",
+                "-5.0pp"
+            ]
+        );
+        // Sep's book at Oct's closes: A +20, B -10.
+        assert_eq!(
+            cells(&rows[2]),
+            [
+                "chained",
+                "2026-09-21",
+                "2026-10-01",
+                "10",
+                "2/2",
+                "+5.0%",
+                "+10.0%",
+                "-5.0pp"
+            ]
+        );
+        assert_eq!(rows.len(), 3);
+        assert!(
+            note.starts_with("book beat the index in 1/2 windows (50%), mean excess "),
+            "{note}"
+        );
+        assert!(
+            note.contains(". ~0.3 effective trials — every window above ends TODAY"),
+            "{note}"
+        );
+        assert!(
+            note.ends_with(" Chained record: links 1 | compounded book +5.0% vs S&P +10.0% | monthly excess mean -5.0pp median -5.0pp needs 12 links"),
+            "{note}"
+        );
+        assert!(!note.contains('\n') && !note.contains("  "), "{note}");
+        // No S&P close anywhere: the legs print n/a and the note says nothing is compared.
+        let blind: Vec<Snapshot> = snaps
+            .into_iter()
+            .map(|mut s| {
+                s.spx = None;
+                s
+            })
+            .collect();
+        let (rows, note) = web_track(&blind, today, &px, None);
+        assert_eq!(
+            cells(&rows[1]),
+            [
+                "to today",
+                "2026-10-01",
+                "2026-10-21",
+                "20",
+                "1/2",
+                "+5.0%",
+                "n/a",
+                "n/a"
+            ]
+        );
+        assert_eq!(
+            cells(&rows[2]),
+            [
+                "chained",
+                "2026-09-21",
+                "2026-10-01",
+                "10",
+                "2/2",
+                "+5.0%",
+                "n/a",
+                "n/a"
+            ]
+        );
+        assert_eq!(
+            note,
+            "nothing gradeable yet — snapshots need at least one day of age (and priced rows). Chained record: no link carries an S&P leg at both ends yet — nothing to compare."
+        );
     }
 
     /// (#285) `graded_row` is the ONE row formatter. The BEAT? decision is its only judgement and
