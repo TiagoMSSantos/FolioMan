@@ -703,3 +703,13 @@ jobs:
               | jq -rs 'group_by(.display_title | sub(" - Update #[0-9]+$"; ""))[] | sort_by(.created_at) | reverse | .[1:][] | .id'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
+          # (#1189) CACHE CAP, NEWEST TWO PER FAMILY: every run saves each `folioman-<family>-<run_id>`
+          # cache anew and every reader restores by prefix, which takes the newest, so the older copies
+          # are never read again. 105 copies of each had piled up by 2026-10-27, 4.7 GB of a 10 GB repo
+          # cap, and GitHub evicts by last use, so after two days with no push the rust-cache entries
+          # went before them and the next push built cold. A family is the key minus its last
+          # `-` segment, per ref; rust-cache's own keys start `v0-rust-` and are not touched.
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | startswith("folioman-"))' \
+              | jq -rs 'group_by([.ref, (.key | sub("-[^-]+$"; ""))])[] | sort_by(.created_at) | reverse | .[2:][] | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id" --silent || true
+          done
