@@ -5441,10 +5441,15 @@ const IFRS_TAGS: FactTags = FactTags {
     gp: &["GrossProfit"],
     op: &["ProfitLossFromOperatingActivities"],
     dna: &["DepreciationAndAmortisationExpense", "AdjustmentsForDepreciationAndAmortisationExpense"], // (#720) the cash flow's add-back
-    ni: &["ProfitLoss", "ProfitLossAttributableToOwnersOfParent"],
+    // (#1193) the parent's share first, as us-gaap's NetIncomeLoss and StockholdersEquity are: the
+    // consolidated lines carry the minority partners' profit, so BP's FY2025 net income read 23.5x what
+    // its shareholders earned, and BHP's, BUD's and FER's 1.24-1.30x. ProfitLoss and Equity still fill a
+    // filer with no minority holders (NVO, BIRK). shortcut: DEO tags the parent line for FY2018-2021 only,
+    // so its series mixes the two bases, about 5% apart.
+    ni: &["ProfitLossAttributableToOwnersOfParent", "ProfitLoss"],
     eps: &["DilutedEarningsLossPerShare", "BasicEarningsLossPerShare"],
     shares: &["AdjustedWeightedAverageShares", "WeightedAverageShares"],
-    eq: &["Equity", "EquityAttributableToOwnersOfParent"],
+    eq: &["EquityAttributableToOwnersOfParent", "Equity"],
     // same tag string as us-gaap. Starts LATER than Equity for several IFRS filers (AZN 2015 vs 2014,
     // NVS 2017, NVO 2020), so early rows carry ROE but no ROA — missing stays None, never a fake 0.
     assets: &["Assets"],
@@ -13924,6 +13929,23 @@ pub(crate) mod tests {
         assert_eq!(rows[0].roe, Some(20.0)); // 5900/29500
         assert_eq!(rows[0].roa, Some(10.0)); // 5900/59000
         assert_eq!(rows[0].fcf_margin, None); // no capex tag -> None, never "ocf is the whole FCF"
+    }
+
+    /// (#1193) An IFRS filer with minority holders files the consolidated lines AND the parent's share;
+    /// the parent's share wins, as us-gaap's NetIncomeLoss does. Each mix of the four lines gives a
+    /// different ROE (parent/parent 20, consolidated 25, mixed 16.7 or 30), so this pins both picks.
+    #[test]
+    fn sec_facts_ifrs_reads_the_parents_share() {
+        use serde_json::json;
+        let flow = |v: f64| json!({"units": {"USD": [
+            {"start": "2025-01-01", "end": "2025-12-31", "val": v, "form": "20-F", "filed": "2026-03-01"}]}});
+        let inst = |v: f64| json!({"units": {"USD": [{"end": "2025-12-31", "val": v, "form": "20-F", "filed": "2026-03-01"}]}});
+        let j = json!({"facts": {"ifrs-full": {
+            "Revenue": flow(10000.0), "ProfitLoss": flow(1500.0), "ProfitLossAttributableToOwnersOfParent": flow(1000.0),
+            "Equity": inst(6000.0), "EquityAttributableToOwnersOfParent": inst(5000.0), "Assets": inst(20000.0),
+        }}});
+        let rows = parse_sec_facts(&j);
+        assert_eq!((rows[0].net_margin, rows[0].roe, rows[0].roa), (Some(10.0), Some(20.0), Some(5.0)));
     }
 
     /// (Item 4) `parse_form4_txns` pairs each transaction's date with its code and keeps only P/S. Two
