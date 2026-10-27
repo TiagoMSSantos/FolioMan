@@ -5703,10 +5703,10 @@ pub fn backtest_quote(
     // `dates.last()` and keeps only `ex_date <= last`, and `d` is the `[..=as_of]` slice — so a payout
     // after the cutoff cannot reach the score. Pass the full `dates` here and it silently would.
     //
-    // Native currency on BOTH sides (`rate: None`, close as the price), and the yield is a ratio, so
-    // the units cancel and no FX is needed. `price_eur` is read by exactly two things in picks.rs —
+    // Native currency on BOTH sides (`rate: Some(1.0)`, close as the price), and the yield is a ratio,
+    // so the units cancel and no FX is needed. `price_eur` is read by exactly two things in picks.rs —
     // the dividend score term and the `div` display column — so filling it moves nothing else.
-    quote.div_eur = dividend_sums(divs, d, None);
+    quote.div_eur = dividend_sums(divs, d, Some(1.0));
     quote.price_eur = c.last().copied();
     quote.perf = horizon_changes(d, c, None, windows, None); // calendar-based -> cadence-agnostic
     quote.drawdown_pct = pct_from_high(c); // all-time anchor as of the `as_of` index
@@ -5941,12 +5941,13 @@ pub fn dividends_in_window(divs: &[(NaiveDate, f64)], dates: &[NaiveDate], days:
     Some(divs.iter().filter(|(d, _)| *d > start && *d <= last).map(|(_, a)| a).sum())
 }
 
-/// Total dividends/share in EUR for each DIV_HORIZON (native sum × `rate`; left native if
-/// FX unknown, mirroring the price column). `None` per horizon = history too short.
+/// Total dividends/share in EUR for each DIV_HORIZON (native sum × `rate`). `None` per horizon =
+/// history too short, or (#1145) FX unknown: a native GBp sum labelled EUR would read ~85x high
+/// beside a pence-converted price, so no rate means no EUR sum, the same rule as `price_eur`.
 pub fn dividend_sums(divs: &[(NaiveDate, f64)], dates: &[NaiveDate], rate: Option<f64>) -> Vec<Option<f64>> {
     DIV_HORIZONS
         .iter()
-        .map(|(_, days)| dividends_in_window(divs, dates, *days).map(|s| s * rate.unwrap_or(1.0)))
+        .map(|(_, days)| Some(dividends_in_window(divs, dates, *days)? * rate?))
         .collect()
 }
 
@@ -10605,6 +10606,9 @@ mod tests {
     let sums = dividend_sums(&divs, &ddates, Some(2.0)); // rate 2.0 -> EUR
     assert_eq!(sums[0], Some(4.0)); // 1Y: 2.0 * 2.0
     assert_eq!(sums[1], None); // 5Y short history
+    assert_eq!(dividend_sums(&divs, &ddates, Some(3.0))[0], Some(6.0)); // a product: 2.0 + 3.0 would read 5
+    // (#1145) no FX rate -> no EUR sum, even where the window is covered
+    assert_eq!(dividend_sums(&divs, &ddates, None), vec![None; DIV_HORIZONS.len()]);
     // yield: 1Y €4 paid / 1yr / €40 price = 10%; 5Y short -> None; no price -> all None
     let yields = dividend_yields(&sums, Some(40.0));
     assert!((yields[0].unwrap() - 10.0).abs() < 1e-9);
