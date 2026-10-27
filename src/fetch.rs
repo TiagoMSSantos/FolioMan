@@ -8048,7 +8048,8 @@ fn carries_fund_facts(m: &BfMeta) -> bool {
 }
 
 /// Merge the venue-list and regulatory ISINs into BF's own top-`cap` rows, dropping any BF already
-/// returned, and report how many extras each group contributed.
+/// returned, and report how many extras each group contributed. (#1139) A regulatory ISIN a venue list
+/// also carries is dropped too: only one on no venue list is speculative.
 ///
 /// Pure, and split out because all three of its decisions survive inline. Dropping either `!` re-adds
 /// every ISIN BF already answered, so the same fund is searched twice, occupies two universe slots
@@ -8062,7 +8063,7 @@ fn merge_isin_lists(
     cap: usize,
 ) -> (Vec<BfRow>, usize, std::collections::HashSet<String>) {
     let total = rows.len();
-    let bf_isins: std::collections::HashSet<String> = rows.iter().map(|(isin, ..)| isin.clone()).collect();
+    let mut bf_isins: std::collections::HashSet<String> = rows.iter().map(|(isin, ..)| isin.clone()).collect();
     let mut top: Vec<BfRow> = rows.into_iter().take(cap).collect();
     top.extend(
         extra_isins
@@ -8071,8 +8072,9 @@ fn merge_isin_lists(
             .map(|isin| (isin, None, None, BfMeta::default())),
     );
     let extra_n = top.len() - total.min(cap);
+    bf_isins.extend(top.iter().map(|(isin, ..)| isin.clone()));
     // speculative (regulatory-only) ISINs last; the set doubles as the negative-cache eligibility
-    // check inside the resolution closure (caller already removed venue-list overlaps). (#1019) They
+    // check inside the resolution closure, so a venue-listed miss keeps retrying every run. (#1019) They
     // keep the order they came in: walking the set instead put the tail in hash order, and the fact
     // fill's budget cut lands inside it, so which regulatory funds got TER and AUM followed the seed.
     let mut spec_set = std::collections::HashSet::new();
@@ -8143,7 +8145,7 @@ fn no_ter_parsed(ter_n: usize, first_keys: &str) -> bool {
 /// `extra_isins` = ISINs from other venue lists (Euronext/SIX) merged in AFTER the BF top-`cap`
 /// cut — they ride the same ISIN->Yahoo bridge but carry no BF facts (TER/AUM/USE/REPL/benchmark
 /// all None -> honest n/a cells; the AUM gate never gates None by design). `speculative_isins` =
-/// regulatory-sourced (FIRDS) ISINs on no venue list: same posture, except their definitive
+/// regulatory-sourced (FIRDS) ISINs, kept only when on no venue list: same posture, except their definitive
 /// Yahoo misses are negative-cached for 30 days — roughly half never resolve, and retrying ~1k
 /// dead searches every run would cost minutes forever.
 pub async fn fetch_xetra_etfs(
@@ -9963,7 +9965,8 @@ pub(crate) fn adopt_us_series(own: Quote, us: Quote) -> Quote {
 /// `fetch_six_etf_isins` and `fetch_regulatory_etf_isins`). Symbols normalised to Yahoo form (`btc` ->
 /// `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur`. The old
 /// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
-/// Sorted + deduped; empty if all sources fail. Also returns the Xetra-ETF ticker set so the caller
+/// Sorted + deduped; empty if all sources fail. (#1139) A dead CoinGecko serves its last-good coin list
+/// from the venue store, as a dead venue list does. Also returns the Xetra-ETF ticker set so the caller
 /// can force-classify them as ETF — Yahoo mislabels some (e.g. structured products) as `EQUITY`, which
 /// would otherwise leak them into the stocks table past the sector filter — and the ticker -> GICS
 /// sector map (constituent-CSV stocks only) so the stocks table can print its sector mix.
@@ -10007,10 +10010,13 @@ pub async fn fetch_universe(
     // Each list is backed by its last-good copy on disk: a transient venue outage (Euronext 503'd
     // a whole run) must not silently shrink the universe — membership stays stable, the list
     // refreshes whenever the venue answers again.
-    let (euronext_isins, six_isins, regulatory_isins, (ponds, stocks_took)) = tokio::join!(
+    // (#1139) CoinGecko's coin list rides in this join so it shares the store: a dead feed keeps the
+    // last-good coins on the screen instead of dropping the crypto tables.
+    let (euronext_isins, six_isins, regulatory_isins, cg, (ponds, stocks_took)) = tokio::join!(
         fetch_euronext_etf_isins(client, urls),
         fetch_six_etf_isins(client, urls),
         fetch_regulatory_etf_isins(client, urls),
+        get_json(client, &cg_url),
         stocks,
     );
     let lists_took = started.elapsed();
@@ -10020,12 +10026,23 @@ pub async fn fetch_universe(
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
     let mut dirty = false;
-    let mut lists = [("euronext", euronext_isins), ("six", six_isins)];
+    let coins: Vec<String> = cg
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c.get("symbol").and_then(|s| s.as_str()).map(str::to_string))
+        .collect();
+    let mut lists = [
+        ("euronext", euronext_isins),
+        ("six", six_isins),
+        ("coingecko", coins),
+    ];
     for (venue, list) in &mut lists {
         if list.is_empty() {
-            *list = store.get(*venue).cloned().unwrap_or_default();
-            if !list.is_empty() {
-                eprintln!("fetch: {venue} venue list unavailable — using last-good copy ({} ISINs)", list.len());
+            if let Some(kept) = store.get(*venue) {
+                eprintln!("fetch: {venue} venue list unavailable — using last-good copy ({} entries)", kept.len());
+                *list = kept.clone();
             }
         } else if store.get(*venue) != Some(list) {
             store.insert(venue.to_string(), list.clone());
@@ -10037,20 +10054,13 @@ pub async fn fetch_universe(
             let _ = std::fs::write(crate::config::data_path(VENUE_ISINS_PATH), json);
         }
     }
-    let [(_, euronext_isins), (_, six_isins)] = lists;
+    let [(_, euronext_isins), (_, six_isins), (_, coins)] = lists;
     let mut extra_isins = euronext_isins;
     extra_isins.extend(six_isins);
     extra_isins.sort();
     extra_isins.dedup();
-    // regulatory ISINs not on any venue list are SPECULATIVE: nobody vouches they trade anywhere
-    // Yahoo covers, so their definitive misses get TTL-negative-cached inside fetch_xetra_etfs
-    // (venue-list misses keep retrying every run).
-    let extra_set: std::collections::HashSet<&String> = extra_isins.iter().collect();
-    let speculative_isins: Vec<String> =
-        regulatory_isins.into_iter().filter(|i| !extra_set.contains(i)).collect();
-    let (cg, etfs, lisbon) = tokio::join!(
-        get_json(client, &cg_url),
-        fetch_xetra_etfs(client, urls, cap, extra_isins, speculative_isins),
+    let (etfs, lisbon) = tokio::join!(
+        fetch_xetra_etfs(client, urls, cap, extra_isins, regulatory_isins),
         fetch_euronext_lisbon(client, urls),
     );
     // The universe prints nothing until the ETF bridge's summary line, so the publish log showed one
@@ -10065,17 +10075,18 @@ pub async fn fetch_universe(
     );
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
-    // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form).
+    // crypto: CoinGecko market-cap-ranked symbols -> SYMBOL-<EUR|USD> (Yahoo crypto form).
     // Every other universe leg warns when it degrades — this one must too, or the crypto
     // tables just vanish with no clue whether that's the market or a dead feed.
-    match cg.as_ref().and_then(|v| v.as_array()) {
-        Some(arr) if !arr.is_empty() => {
-            out.extend(arr.iter().take(cap).filter_map(|c| {
-                c.get("symbol").and_then(|s| s.as_str()).map(|s| format!("{}-{crypto_cur}", s.to_uppercase()))
-            }));
-        }
-        _ => eprintln!("fetch: CoinGecko returned nothing — crypto absent from the screen"),
+    if coins.is_empty() {
+        eprintln!("fetch: CoinGecko returned nothing and no last-good copy — crypto absent from the screen");
     }
+    out.extend(
+        coins
+            .iter()
+            .take(cap)
+            .map(|s| format!("{}-{crypto_cur}", s.to_uppercase())),
+    );
     // stocks: each constituent CSV -> Yahoo symbol, kept only if the row's GICS sector passes `sectors`
     // (empty = all). Filtering HERE means a sector-restricted screen never even fetches the other
     // sectors' companies. `.take(cap)` AFTER the filter so cap counts matching names per pond, not raw rows.
@@ -10828,7 +10839,8 @@ pub(crate) mod tests {
         let (top, extra_n, spec_set) = merge_isin_lists(
             rows,
             vec!["IE00B".into(), "LU00X".into()], // IE00B is BF's own and must not come back
-            vec!["IE00C".into(), "FR00Y".into()], // IE00C is BF's own too, despite being cut by the cap
+            // IE00C is BF's own too, despite being cut by the cap; (#1139) LU00X rides a venue list
+            vec!["IE00C".into(), "FR00Y".into(), "LU00X".into()],
             2,
         );
         let isins: Vec<&str> = top.iter().map(|(i, ..)| i.as_str()).collect();
@@ -15900,7 +15912,9 @@ pub(crate) mod tests {
         let mut urls = stub_urls("http://127.0.0.1:1/");
         urls.sp500_csv = format!("{base}pond.csv");
         std::fs::write(&path, r#"{"__gf460":"","QQUSA":"QQEUA.DE","QQUSB":""}"#).expect("seed cache");
+        let venue = VENUE_STORE_LOCK.lock().await;
         let (universe, _, sectors) = fetch_universe(&client, &urls, 10, true, true, &[]).await;
+        drop(venue);
         assert_eq!(universe, ["QQEUA.DE", "QQUSB"], "the twin replaces its US line, the miss keeps it");
         assert_eq!((sectors["QQEUA.DE"].as_str(), sectors["QQUSB"].as_str()), ("Information Technology", "Financials"), "the sector travels with the swap");
         // Safe to delete again: `seed_cik_map` no longer reads this file, it sets `EU_TO_US` directly.
@@ -17056,6 +17070,10 @@ pub(crate) mod tests {
         assert!(insider.exists(), "the insider lane is not selected — its cache must not be touched at all");
     }
 
+    /// (#1139) `.venue_isins.json` is ONE shared file in the scratch root, and a stored coin list reaches the
+    /// universe of any test whose CoinGecko is down: every `fetch_universe` test holds this for its whole run.
+    static VENUE_STORE_LOCK: Mutex<()> = Mutex::const_new(());
+
     /// The round-36 rule, asserted where it is actually enforced: a venue outage must NEVER shrink
     /// the universe. Every fetcher here is pointed at an unbound port, which is the outage — and the
     /// last-good `.venue_isins.json` must come through it BYTE-IDENTICAL. A run that overwrote it
@@ -17076,6 +17094,7 @@ pub(crate) mod tests {
     /// `bf_meta_miss_buckets` keep ownership of theirs.
     #[tokio::test]
     async fn a_venue_outage_never_shrinks_the_stored_universe() {
+        let _own = VENUE_STORE_LOCK.lock().await;
         pin_throttle();
         pin_fetch_concurrency(); // this call fans out — see the helper for why it is not optional
         let store = crate::config::data_path(VENUE_ISINS_PATH);
@@ -17108,6 +17127,9 @@ pub(crate) mod tests {
         urls.coingecko_markets = base;
         let (universe, _, _) = fetch_universe(&client, &urls, 10, true, false, &[]).await;
         assert_eq!(universe, ["BTC-EUR", "ETH-EUR"], "the one answering leg must reach the caller");
+        let stored: HashMap<String, Vec<String>> =
+            serde_json::from_str(&std::fs::read_to_string(&store).expect("store")).expect("json");
+        assert_eq!(stored["coingecko"], ["btc", "eth"], "(#1139) CoinGecko answered, so its coins are stored");
         // (#881) a universe that does not prefer EUR names its coins off the USD pair
         let (usd, _, _) = fetch_universe(&client, &urls, 10, false, false, &[]).await;
         assert_eq!(usd, ["BTC-USD", "ETH-USD"], "prefer_eur off -> the USD pair");
@@ -17116,11 +17138,16 @@ pub(crate) mod tests {
         let (base, client) = stub_server(r#"{"rowData":[["IE00BK5BQT80","Vanguard FTSE All-World UCITS ETF"]]}"#);
         let mut urls = stub_urls("http://127.0.0.1:1/");
         urls.six_funds = base;
-        fetch_universe(&client, &urls, 10, true, false, &[]).await;
+        let (universe, _, _) = fetch_universe(&client, &urls, 10, true, false, &[]).await;
         let stored: HashMap<String, Vec<String>> =
             serde_json::from_str(&std::fs::read_to_string(&store).expect("store")).expect("json");
         assert_eq!(stored["six"], ["IE00BK5BQT80"], "SIX answered with a new list, so it is stored");
         assert_eq!(stored["euronext"], ["LU0378437502", "IE00B4L5Y983"], "the last-good Euronext list is untouched");
+        // (#1139) CoinGecko is down in this leg: its last-good coins come back and stay stored
+        assert_eq!(universe, ["BTC-EUR", "ETH-EUR"], "a dead CoinGecko serves its last-good coins");
+        assert_eq!(stored["coingecko"], ["btc", "eth"]);
+        // the other universe tests run with CoinGecko down and expect no coins
+        std::fs::write(&store, seeded).expect("restore the seed");
     }
 
     /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
@@ -19343,6 +19370,7 @@ pub(crate) mod tests {
     /// with no sector column files its names under "other", and a dotted class share is spelled the Yahoo way.
     #[tokio::test]
     async fn fetch_universe_lists_each_stock_pond_with_the_sector_of_the_first_pond_that_has_it() {
+        let _own = VENUE_STORE_LOCK.lock().await;
         pin_throttle();
         pin_fetch_concurrency();
         let sp500 = "Symbol,Security,GICS Sector\nAAPL,Apple Inc.,Information Technology\nJPM,JPMorgan Chase,Financials\nBRK.B,Berkshire Hathaway,Financials\nQQCAP,Past The Cap,Financials\n";
