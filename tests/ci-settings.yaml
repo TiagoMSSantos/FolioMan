@@ -17912,6 +17912,20 @@ buy_heuristic:
                                  #   GUARDS: worst window >= control -1.0, WINNERS HELD >= control -2.0, Série E 90/90/80.
                                  #   SHIP only on PASS at both horizons for one slope. Otherwise the knob stays 0.0 and
                                  #   the verdict lands here.
+                                 #   (#1156) GRADED 2026-10-27, FAIL at both slopes; the knob stays 0.0. probe.yml on
+                                 #   4cd043f: control 40489669445, slope 1 40489673189, slope 2 40489676726. `windows
+                                 #   scored` matched on every leg (12y 5150/10437, 8y 9176/13654). The control's pond
+                                 #   held one more ETF (6308 vs 6307, a justETF answer), which is drift, not the knob.
+                                 #   12y: every book row equal to the control in both arms. Top-10 +3.4 (med +3.2),
+                                 #   SIZED +3.5 worst -3.5, WINNERS HELD 12.6%, Série E 74% of 38.
+                                 #   8y: SIZED +3.0 in all three (worst -7.3 / -7.1 / -7.0). Only slope 2 moved the
+                                 #   plain top-10, +3.1 (med +2.9) to +3.2 (med +3.3), with SIZED OOS +3.0 to +2.9.
+                                 #   PRIMARY needs the SIZED row ABOVE the control at both horizons. It held equal
+                                 #   at both, so the relief admits no name the book funds. The headline edge did move
+                                 #   between the arms (12y +20.7 to +20.6). This is expected: every section of a
+                                 #   `fund` run carries the cap, so this probe could not test the scope claim above:
+                                 #   no section ran without `fund`. REOPEN only with a reason the 12y book would move,
+                                 #   since both arms left it untouched.
   growth_min_cagr_size_pivot: 10000000000 # (#1154) the cap where size relief starts, in the cap's own currency
                                  #   (trading currency in the backtest, EUR live; see the `shortcut:` in picks.rs). Inert
                                  #   while the slope is 0.0. A plain integer because serde_yaml and the python reader
