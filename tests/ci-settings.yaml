@@ -8791,7 +8791,12 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: e40af88245ce (#1146), graded 2026-10-27 by run 40482884862, regex `.`, no exclude,
+  # LAST GRADED SHA: 175df6d11e66 (#1185), graded 2026-10-27 by run 40486875131, same five inputs, since
+  # e40af88, `files` = every src file (#1149), (#1150) and (#1180) touched (src/commands/backtest.rs
+  # src/commands/screen.rs src/config.rs src/fetch.rs src/heuristics/intraday.rs src/picks.rs): 47 in scope =
+  # 46 caught (`web_help` 11, `p_at_least` 10, `ecb_rate` 7, `closed` 6, `summer_time` 6, `eur_rate` 4,
+  # `default_ecb_fx` 2), 1 unviable (`summer_time` 336:52 `-` -> `/`), 0 missed, 0 timeout. (#1152) records it.
+  # BEFORE THAT: e40af88245ce (#1146), graded 2026-10-27 by run 40482884862, regex `.`, no exclude,
   # tests `--lib --test backtest_fixture`, since 9780e22, `files` = every src file (#1145)-(#1148) touched
   # (src/commands/backtest.rs src/core.rs src/fetch.rs src/picks.rs): 17 in scope = 15 caught
   # (`dividend_sums` 7, `parse_chart` 4, `explain_growth_score` 4), 2 unviable (the `Default` returns of
