@@ -3766,6 +3766,13 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         );
     }
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
+    // (#1155) each bucket's top-1% winners, cut from the whole non-crypto pool the gates chose from,
+    // and per rung, per booked bucket, whether the book below holds one of them
+    let winners: BTreeMap<i32, HashSet<&str>> = by_cutoff
+        .iter()
+        .map(|(b, g)| (*b, top_winners(g, 0.01)))
+        .collect();
+    let mut in_book: Vec<(usize, Vec<bool>)> = Vec::new();
     // (#41/#43) EQUAL-WEIGHT HELD-BOOK return — the correct metric for a no-sell hold. A held book earns
     // ann(mean of terminal MULTIPLES), NOT mean of per-name CAGRs: a 20× winner in the book covers twenty
     // −100% zeros, and a name that goes to 0 contributes its full weight lost (1/N), not its scary CAGR.
@@ -3775,6 +3782,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     let mut book_lines = std::collections::BTreeMap::new(); // (#564) per bucket: the verdict book, names + cum %
     for &n in TOP_LADDER {
         let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
+        let mut hits = Vec::new();
         let (mut zeros, mut held) = (0usize, 0usize);
         let mut zero_names: Vec<String> = Vec::new(); // (#zeros) names ≤−90% at top-10 -> union across horizons = true distinct death count
         let mut multiples: Vec<f64> = Vec::new();
@@ -3804,6 +3812,11 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             if take == 0 {
                 continue;
             }
+            hits.push(
+                winners
+                    .get(b)
+                    .is_some_and(|w| p.iter().any(|x| w.contains(x.3.as_str()))),
+            );
             let book_cum = mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>()); // equal-weight terminal multiple
             let spy_cum = mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>());
             multiples.push(book_cum);
@@ -3824,6 +3837,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             }
             held += take;
         }
+        in_book.push((n, hits));
         if n == 10 && !zero_names.is_empty() {
             // (#466) Never lead with `markers::VERDICT_ROW`: this prints BEFORE the book row, so a
             // `top-10 zero names` spelling was the line the gate parsed, found no `excess`, and red.
@@ -3888,6 +3902,9 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             };
             class_book_lines(&all, &calendar, class_of, n, years).iter().for_each(|l| println!("{l}"));
         }
+    }
+    if let Some(line) = winner_in_book_line(&in_book) {
+        println!("{line}");
     }
     // (#106) (round 3 §4) the DISTRIBUTION behind the ladder above. Every row printed so far quotes a
     // MEAN across buckets, and `VERDICT_TOP` is the argmax of one of those means over these 13 rungs.
@@ -7004,6 +7021,44 @@ fn recall_capture(
         }
     }
     (w_n > 0 && w_mult > 0.0).then(|| (hit_n as f64 / w_n as f64, hit_mult / w_mult, w_n))
+}
+
+/// (#1155) The tickers of a bucket's best `frac` share by realized return: the winner cut [`recall_capture`]
+/// makes, rounded and never under one name. A bucket under two rows has no winner, as there.
+fn top_winners<'a>(group: &[&'a Sample], frac: f64) -> HashSet<&'a str> {
+    if group.len() < 2 {
+        return HashSet::new();
+    }
+    let mut rows = group.to_vec();
+    rows.sort_by(|a, z| z.realized.total_cmp(&a.realized));
+    let k = ((rows.len() as f64 * frac).round() as usize).clamp(1, rows.len());
+    rows.into_iter()
+        .take(k)
+        .map(|s| s.quote.ticker.as_str())
+        .collect()
+}
+
+/// (#1155) The skew reading of the top-N ladder: per rung, the share of booked windows whose book holds at
+/// least one of its window's top-1% winners. Under the skew a long hold lives in, a book that never holds
+/// one cannot carry the wealth the few winners make, whatever its mean says. `None` when no rung booked
+/// a window. Display only.
+fn winner_in_book_line(per_rung: &[(usize, Vec<bool>)]) -> Option<String> {
+    let booked: Vec<&(usize, Vec<bool>)> = per_rung
+        .iter()
+        .filter(|(_, hits)| !hits.is_empty())
+        .collect();
+    let windows = booked.first()?.1.len();
+    let cells: Vec<String> = booked
+        .iter()
+        .map(|(n, hits)| {
+            let share = hits.iter().filter(|h| **h).count() as f64 / hits.len() as f64;
+            format!("top-{n} {:.0}%", share * 100.0)
+        })
+        .collect();
+    Some(format!(
+        "  WINNER IN BOOK (#1155): share of the {windows} booked windows whose book holds a top-1% winner | {}",
+        cells.join(" · ")
+    ))
 }
 
 /// One attribution row. A STRUCT and not the 5-tuple this started as, for a mutation-gate reason
@@ -10181,6 +10236,44 @@ mod tests {
         assert!(recall_capture(&pool[2..], &hold(&["C"]), 1, 1.0, 10.0).is_none());
         // a single-row bucket is skipped: recall over one name is 0 or 1 and means neither.
         assert!(recall_capture(&pool[..1], &hold(&["BIG"]), 1, 1.0, 0.0).is_none());
+    }
+
+    /// (#1155) The winner cut is `recall_capture`'s: the best `frac` share by realized return, rounded,
+    /// never under one name, none in a bucket under two rows. The ladder line is, per rung, the share of
+    /// booked windows whose book held one; a rung that booked nothing prints no cell.
+    #[test]
+    fn winner_in_book_semantics() {
+        let row = |t: &'static str, realized: f64| Sample {
+            date: ymd(2010, 1, 1),
+            realized,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: None,
+            trail: Vec::new(),
+        };
+        let pool = [row("C", 100.0), row("BIG", 900.0), row("MID", 400.0)];
+        let refs: Vec<&Sample> = pool.iter().collect();
+        let set = |names: &[&'static str]| names.iter().copied().collect::<HashSet<&str>>();
+        let best = set(&["BIG"]);
+        assert_eq!(top_winners(&refs, 0.34), best); // a third of three rows is one
+        assert_eq!(top_winners(&refs, 0.5), set(&["BIG", "MID"])); // 1.5 rounds to 2
+        assert_eq!(top_winners(&refs[..2], 0.01), best); // a tiny share keeps one
+        assert!(top_winners(&refs[..1], 1.0).is_empty()); // one row is no winner
+        assert!(top_winners(&[], 1.0).is_empty());
+
+        assert_eq!(winner_in_book_line(&[]), None);
+        assert_eq!(winner_in_book_line(&[(1, vec![])]), None, "no rung booked");
+        let rungs = [
+            (1, vec![true, false, false, false]),
+            (2, vec![]),
+            (3, vec![true, true, false, true]),
+        ];
+        assert_eq!(
+            winner_in_book_line(&rungs).as_deref(),
+            Some(
+                "  WINNER IN BOOK (#1155): share of the 4 booked windows whose book holds a top-1% winner | top-1 25% · top-3 75%"
+            )
+        );
     }
 
     /// (#127) The attribution that turns "the lane missed 96% of the extreme wealth" into something
