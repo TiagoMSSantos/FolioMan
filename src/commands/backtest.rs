@@ -676,6 +676,11 @@ fn demean(samples: &mut [Sample]) {
     demean_with(samples, crate::config::demean_by_market());
 }
 
+/// (#1148) The peer mean includes the row itself. Leaving it out would give `realized - (sum - realized)
+/// / (n - 1)`, which is exactly `n / (n - 1)` times the value below: the same sign and the same order
+/// inside a group, scaled by under 1% on any group of 100 or more and by 8/7 on a smallest
+/// `MIN_PEER_GROUP` market slice. Since (#790) every cutoff in a bucket sits on its first bar, so the
+/// group is already one cutoff-day cross-section. Kept as is: the rescale moves every golden and no rank.
 fn demean_with(samples: &mut [Sample], by_market: bool) {
     let key = |s: &Sample| (bucket(s.date), picks::asset_class(&s.quote));
     let mut sums: HashMap<(i32, u8), (f64, usize)> = HashMap::new();
