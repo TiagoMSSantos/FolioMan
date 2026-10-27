@@ -8769,7 +8769,13 @@ buy_heuristic:
   #
   # PROOF RULE: a re-run with the same five inputs on the fixing commit lists 998 in scope (tests only;
   # nothing mutable moved) and 0 missed.
-  # LAST GRADED SHA: 4761333235fe (#1127), graded 2026-10-26 by run 40398741669, same five inputs, since
+  # LAST GRADED SHA: 437f2762fffd (#1140), graded 2026-10-27 by run 40465327334, same five inputs, since
+  # 4761333, `files` = every src file (#1129)-(#1140) touched: 159 in scope = 155 caught (`fetch_universe`
+  # 45, `bubble_flags` 27, `compose_score` 23, `merge_isin_lists` 12, `vol_change` 12, `web_help` 11,
+  # `score_parts_hard` 9, `web_track` 6, `explain_growth_score` 4, `chain_section` 2, `chain_footer` 2,
+  # `in_short` 2), 4 unviable (the `Default` returns of `Quote::stub`, `backtest_quote`, `quote_one` and
+  # `score_parts_hard`), 0 missed, 0 timeout. (#1141) records it.
+  # BEFORE THAT: 4761333235fe (#1127), graded 2026-10-26 by run 40398741669, same five inputs, since
   # d162d81, `files` = every src file (#1113)-(#1127) touched: 44 in scope = 42 caught (`overlay_diff` 8,
   # `rank_moves` 6, `allocation_gap_lines` 6, `eur_cell` 5, `parse_args` 3, `hold_max_ter` 3,
   # `hold_min_aum_eur` 3, `splice_max_weekly_rate` 3, `flat_run_max_years` 3, `endpoint_smooth_days` 2),
