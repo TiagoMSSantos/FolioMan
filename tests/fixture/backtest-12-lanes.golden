@@ -512,21 +512,22 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 
 ── RIVALS (#560): equal-weight top-10 books on one pond, HOLD 12y no-sell, excess vs the index ──
   pond: 87 bucket(s) where the shipped lane holds a name, median 3 scoreable names each
-  shipped (plain top-10)      n  87  excess +2.0 (med +3.1) pts/yr  win 75%  worst -10.8  vs plain shipped +0.0/+0.0 -
-  (d) gates-off shipped       n  87  excess +2.0 (med +2.3) pts/yr  win 72%  worst -10.8  vs plain shipped -0.0/-0.8 -
-  (a) momentum 12-1           n  87  excess +1.8 (med +2.2) pts/yr  win 69%  worst -10.8  vs plain shipped -0.2/-0.9 -
-  (b) quality (ROE fallback)  n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  vs plain shipped -2.0/NaN -
-  (c) value E/P               n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  vs plain shipped -2.0/NaN -
-  (f) revenue CAGR            n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  vs plain shipped -2.0/NaN -
-  (g) momentum x quality      n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  vs plain shipped -2.0/NaN -
-  (h) TR life CAGR            n  87  excess +1.6 (med +2.7) pts/yr  win 74%  worst -10.8  vs plain shipped -0.4/-0.4 -
-  (i) TR life CAGR, 10Y+      n  85  excess +0.3 (med +0.5) pts/yr  win 59%  worst -10.8  vs plain shipped -1.7/-2.6 -
-  (j) 5 shipped + 5 momentum  n  87  excess +2.2 (med +3.1) pts/yr  win 76%  worst -10.8  vs plain shipped +0.1/+0.0 -
-  (k) 5 TR life + 5 momentum  n  87  excess +1.8 (med +2.2) pts/yr  win 72%  worst -10.8  vs plain shipped -0.2/-0.9 -
-  (l) integrated score + mom  n  87  excess +1.7 (med +1.6) pts/yr  win 72%  worst -10.8  vs plain shipped -0.3/-1.5 -
-  (m) (j), score half by mom  n  87  excess +1.9 (med +2.6) pts/yr  win 76%  worst -10.8  vs plain shipped -0.1/-0.6 -
-  (n) (j), mom half by score  n  87  excess +1.9 (med +1.8) pts/yr  win 74%  worst -10.8  vs plain shipped -0.1/-1.3 -
-  (e) random pond x200         excess +1.6 (med +1.7) pts/yr  p95 +2.1 (med +2.5)  plain shipped NOT above the p95
+  shipped (plain top-10)      n  87  excess +2.0 (med +3.1) pts/yr  win 75%  worst -10.8  p 0.119  vs plain shipped +0.0/+0.0 -
+  (d) gates-off shipped       n  87  excess +2.0 (med +2.3) pts/yr  win 72%  worst -10.8  p 0.134  vs plain shipped -0.0/-0.8 -
+  (a) momentum 12-1           n  87  excess +1.8 (med +2.2) pts/yr  win 69%  worst -10.8  p 0.274  vs plain shipped -0.2/-0.9 -
+  (b) quality (ROE fallback)  n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  p n/a    vs plain shipped -2.0/NaN -
+  (c) value E/P               n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  p n/a    vs plain shipped -2.0/NaN -
+  (f) revenue CAGR            n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  p n/a    vs plain shipped -2.0/NaN -
+  (g) momentum x quality      n   0  excess -0.0 (med NaN) pts/yr  win 0%  worst +inf  p n/a    vs plain shipped -2.0/NaN -
+  (h) TR life CAGR            n  87  excess +1.6 (med +2.7) pts/yr  win 74%  worst -10.8  p 0.537  vs plain shipped -0.4/-0.4 -
+  (i) TR life CAGR, 10Y+      n  85  excess +0.3 (med +0.5) pts/yr  win 59%  worst -10.8  p 1.000  vs plain shipped -1.7/-2.6 -
+  (j) 5 shipped + 5 momentum  n  87  excess +2.2 (med +3.1) pts/yr  win 76%  worst -10.8  p 0.050  vs plain shipped +0.1/+0.0 -
+  (k) 5 TR life + 5 momentum  n  87  excess +1.8 (med +2.2) pts/yr  win 72%  worst -10.8  p 0.289  vs plain shipped -0.2/-0.9 -
+  (l) integrated score + mom  n  87  excess +1.7 (med +1.6) pts/yr  win 72%  worst -10.8  p 0.398  vs plain shipped -0.3/-1.5 -
+  (m) (j), score half by mom  n  87  excess +1.9 (med +2.6) pts/yr  win 76%  worst -10.8  p 0.199  vs plain shipped -0.1/-0.6 -
+  (n) (j), mom half by score  n  87  excess +1.9 (med +1.8) pts/yr  win 74%  worst -10.8  p 0.244  vs plain shipped -0.1/-1.3 -
+  (e) random pond x200         excess +1.6 (med +1.7) pts/yr  p5..p95 +1.1..+2.1 (med +1.2..+2.5)  plain shipped NOT above the p95
+  p = the share of the 200 random books whose mean excess is at or above the row's, counting the row as one more draw. 14 rows are tested against one pond, so the 5% bar split across them is p < 0.0036; 200 draws cannot print a p below 0.0050.
 
 ── WINNERS (#583): each window's top 5% stocks by real forward return, filed by what keeps them out of the shipped top-10 book; gap = own CAGR minus the window's book, pts/yr, HOLD 12y ──
   held (in the top-10 book)  winners   71 ( 51%) gap +6.0 (med +3.6) | all   507 gap -3.2 (med -2.6) beat book 36% | cagr-life 59, cagr 52, 5Y+ 37, 8Y+ 25, 1Y+ 21, range 17
