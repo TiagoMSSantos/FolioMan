@@ -335,6 +335,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   top-40 book +5.4%/yr  vs S&P500 +6.6%/yr  ->  excess -1.2 (med -0.6) pts/yr   win 20% of 41   worst -5.9   OOS -0.2/-2.1   rode 34 zeros/926 holds
   top-45 book +5.4%/yr  vs S&P500 +6.6%/yr  ->  excess -1.2 (med -0.6) pts/yr   win 20% of 41   worst -5.9   OOS -0.2/-2.1   rode 34 zeros/926 holds
   top-50 book +5.4%/yr  vs S&P500 +6.6%/yr  ->  excess -1.2 (med -0.6) pts/yr   win 20% of 41   worst -5.9   OOS -0.2/-2.1   rode 34 zeros/926 holds
+  WINNER IN BOOK (#1155): share of the 41 booked windows whose book holds a top-1% winner | top-1 10% · top-2 20% · top-3 29% · top-5 39% · top-10 61% · top-15 76% · top-20 78% · top-25 85% · top-30 88% · top-35 88% · top-40 88% · top-45 88% · top-50 88%
   terminal-multiple distribution across windows (the MEAN above is one number out of these):
     top-1  d10 0.23×  median 1.64×  d90 4.83×   P(book < index) 61%   P(book < 1.0×) 41%   of 41
     top-2  d10 0.67×  median 1.56×  d90 4.34×   P(book < index) 61%   P(book < 1.0×) 22%   of 41
