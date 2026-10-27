@@ -7363,7 +7363,7 @@ pub(crate) fn splice_sides<T: Copy + PartialEq>(sized: &[T], mom: &[T], after: b
 /// Only non-coin rows are spliced, since the head counts only them; coins go first and keep their weight. A
 /// momentum twin of a book row the splice places, on either side ([`first_per_issuer`]'s key), is dropped before
 /// [`splice_order`], so its slot goes to the next momentum name; (#744) a twin of a row past the cut (the blend
-/// places about half of `book_names` from the score side) keeps its slot. Then a commodity leaves the head as `sized_book` parks it, and
+/// places about half of `book_names` from the score side) keeps its slot. Then a commodity leaves the head as `sized_book` parks it, (#1143) so does rank 1 under `head_park_first`, and
 /// [`equal_weights`] re-splits the non-coin rows with the head share. Weights in %.
 pub(crate) fn sized_splice<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: bool, slots: usize, sz: &crate::config::Sizing) -> Vec<(&'a str, f64)> {
     sized_splice_sides(book, mom, after, slots, sz).into_iter().map(|r| (r.0, r.1)).collect()
@@ -7390,11 +7390,11 @@ fn sized_splice_sides<'a>(book: &[(&'a Quote, f64)], mom: &[&'a Quote], after: b
     let m: Vec<&str> = mom.iter().map(|q| q.ticker.as_str()).collect();
     let spliced = splice_sides(&s, &m, after, slots, sz.book_cut()).into_iter().map(|(t, by_m)| (rows[t].0, rows[t].1, by_m));
     let order: Vec<(&Quote, f64, bool)> = coins.into_iter().map(|r| (r.0, r.1, false)).chain(spliced).collect();
-    let order: Vec<(&Quote, f64, bool)> = if sz.head_skip_commodity {
-        head_skip(&order.iter().map(|r| (coin(r.0), is_commodity(r.0))).collect::<Vec<_>>()).into_iter().map(|i| order[i]).collect()
-    } else {
-        order
-    };
+    // (#1143) the shipped side leads, so the first non-coin row is score rank 1; `head_park_first` parks it with
+    // the commodities. No flag set = no row moves.
+    let first = order.iter().position(|r| !coin(r.0)).filter(|_| sz.head_park_first);
+    let park: Vec<(bool, bool)> = order.iter().enumerate().map(|(i, r)| (coin(r.0), (sz.head_skip_commodity && is_commodity(r.0)) || Some(i) == first)).collect();
+    let order: Vec<(&Quote, f64, bool)> = head_skip(&park).into_iter().map(|i| order[i]).collect();
     let eq = equal_weights(&order.iter().map(|r| (coin(r.0), r.1)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
     order.into_iter().zip(eq).filter_map(|(r, w)| Some((r.0.ticker.as_str(), w?, r.2))).collect()
 }

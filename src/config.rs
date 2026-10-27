@@ -105,6 +105,8 @@ pub struct Sizing {
     pub head_weight: f64, // (#322) what each of the equal-weight book's first `size::HEAD` non-coin names weighs against a later name's 1: 2.0 pays ranks 1-5 double. Read through `head_share`. 1.0 = the flat (#313) book, the DEFAULT. See the (#322) receipt
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `sizing_fp` journaled before (#495) still matches
     pub head_skip_commodity: bool, // (#495) the equal-weight book never seats a commodity-price name (`picks::is_commodity`, the `c` flag) among its first `size::HEAD` non-coin rows: it moves to just after them, so it is still bought at a tail share and the head's `head_weight` goes to the next name. false = score order, the DEFAULT
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `sizing_fp` journaled before (#1143) still matches
+    pub head_park_first: bool, // (#1143) the blended book's first non-coin row (score rank 1: the shipped side leads) takes no head share: `picks::sized_splice` parks it just after the first `size::HEAD` non-coin rows, as (#495) parks a commodity, and the next name takes the head share. Read there only, so `sized_book` and the SIZED lane never see it. Off = the shipped order
 }
 
 /// The budget, cap and spill defaults are the SHIPPED policy, not a neutral off-state — the one
@@ -127,6 +129,7 @@ impl Default for Sizing {
             book_names: 10, // (#317) the graded top-10
             head_weight: 1.0, // (#322) flat
             head_skip_commodity: false, // (#495) opt-in
+            head_park_first: false, // (#1143) opt-in
         }
     }
 }

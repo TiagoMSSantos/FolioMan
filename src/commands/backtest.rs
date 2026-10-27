@@ -9606,6 +9606,10 @@ mod tests {
         let got = picks::sized_splice(&book, &[&six[5]], true, 5, &sz);
         assert_eq!(got.iter().map(|r| r.0).collect::<Vec<_>>(), ["P", "Q", "R", "S", "T", "U"]);
         assert_eq!(got.iter().map(|r| (r.1 * 0.16).round()).collect::<Vec<_>>(), [3.0, 3.0, 3.0, 3.0, 3.0, 1.0], "5 heads x 3 + 1 tail = 16 shares");
+        // (#1143) interleaved P U Q R S T: `head_park_first` seats score rank 1 (P) just after the head, at the tail share
+        let got = picks::sized_splice(&book, &[&six[5]], false, 5, &config::Sizing { head_park_first: true, ..sz.clone() });
+        assert_eq!(got.iter().map(|r| r.0).collect::<Vec<_>>(), ["U", "Q", "R", "S", "T", "P"]);
+        assert_eq!(got.iter().map(|r| (r.1 * 0.16).round()).collect::<Vec<_>>(), [3.0, 3.0, 3.0, 3.0, 3.0, 1.0]);
         // a coin keeps its weight and takes no head slot, a momentum coin is dropped; a commodity head name is parked behind the head
         let mut oil = Quote::stub("P", "1", "", "P");
         oil.sector = Some("Energy".into());
