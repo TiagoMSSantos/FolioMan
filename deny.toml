@@ -1,0 +1,41 @@
+# (#1182) cargo-deny configuration, read by ci.yml's `deny` job over the committed Cargo.lock.
+# The RustSec gate stays in the `audit` job. This file covers what cargo-audit does not read: the
+# licenses the dependency tree carries, where every crate comes from, and duplicate versions.
+# Only the root workspace is covered. web/engine has its own lock, and neither gate reads it.
+# Only long-standing keys are used, so an upgrade of the tool is unlikely to red the job on the schema
+# alone.
+
+[advisories]
+# cargo-audit already reports unmaintained crates as warnings. Here the default scope would gate the
+# workspace's own direct dependencies on it, and serde_yaml is archived upstream by choice (see
+# Cargo.toml). A vulnerability is always an error.
+unmaintained = "none"
+yanked = "warn"
+
+[licenses]
+# What the tree carries today. A crate with several `OR` alternatives passes on any one of them, so
+# only the licenses some crate cannot avoid are listed: ISC (rustls-webpki), BSD-3-Clause (subtle),
+# Unicode-3.0 (icu_*), Zlib (zlib-rs), CDLA-Permissive-2.0 (webpki-roots), plus MIT and Apache-2.0.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+]
+
+# The folioman crate declares no license. Cargo.toml's `publish = false` marks it private, and this
+# skips private workspace crates.
+[licenses.private]
+ignore = true
+
+[bans]
+# Two versions of one crate are a build-size and audit-surface smell, not a defect.
+multiple-versions = "warn"
+
+[sources]
+# crates.io only: no git dependencies and no other registry.
+unknown-registry = "deny"
+unknown-git = "deny"

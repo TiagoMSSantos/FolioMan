@@ -10,6 +10,12 @@
 //! Skips print to stderr, which `cargo test` swallows on a pass — use `-- --nocapture` to read them
 //! (CI does), or a net that has been silently skipping for months looks exactly like a passing one.
 //!
+//! (#1182) The default stays always-on, but a run that must stay off the network on purpose (a train,
+//! a metered link, a sandbox that would only report transport errors) can say so: `FOLIOMAN_NET_TESTS=0`
+//! skips every live test green and prints one `SKIPPED` line per test, the same line shape a transport
+//! error prints. Unset, or any other value, changes nothing. `FOLIOMAN_BACKTEST_GATE=1` still wins over
+//! the opt-out for `backtest_edge_holds`, because a gate that skipped silently would stop gating.
+//!
 //! Every raw probe goes through `fetch::throttle`, the same pacer production uses, so the file cannot
 //! open an unpaced side channel. Whole run is ~10 Yahoo calls against the 4757 a single `screen` does.
 //!
@@ -46,6 +52,16 @@ fn stamp_run() {
             .unwrap_or(0);
         let _ = std::fs::write(config::data_path(config::NET_STAMP_FILE), now.to_string());
     });
+}
+
+/// (#1182) The opt-out: true when `FOLIOMAN_NET_TESTS=0`, after printing the skip line. Every live test
+/// opens with `if net_opt_out(..) { return; }`, so the skip is green and visible under `--nocapture`.
+fn net_opt_out(test: &str) -> bool {
+    let off = std::env::var("FOLIOMAN_NET_TESTS").is_ok_and(|v| v == "0");
+    if off {
+        eprintln!("network smoke [{test}] SKIPPED — FOLIOMAN_NET_TESTS=0");
+    }
+    off
 }
 
 enum Probe {
@@ -108,6 +124,9 @@ fn healthy_or_skip(p: Probe, ctx: &str) -> Option<Value> {
 
 #[tokio::test]
 async fn yahoo_history_parses() {
+    if net_opt_out("yahoo_history_parses") {
+        return;
+    }
     for ticker in ["AAPL", "BTC-USD"] {
         let Some(body) = healthy_or_skip(probe_yahoo(ticker).await, ticker) else {
             continue; // endpoint throttled for this symbol — don't fail the suite
@@ -140,6 +159,9 @@ async fn yahoo_history_parses() {
 
 #[tokio::test]
 async fn fx_rate_resolves() {
+    if net_opt_out("fx_rate_resolves") {
+        return;
+    }
     // FX resolves via the same Yahoo chart endpoint (USDEUR=X) -> gate on its health first. The body
     // is discarded here on purpose: `eur_rate` owns cache lookup + rate selection, not just the parse,
     // so this one genuinely needs the real call rather than the probe's payload.
@@ -154,6 +176,9 @@ async fn fx_rate_resolves() {
 
 #[tokio::test]
 async fn full_quote_build() {
+    if net_opt_out("full_quote_build") {
+        return;
+    }
     if healthy_or_skip(probe_yahoo("AAPL").await, "full_quote_build").is_none() {
         return;
     }
@@ -185,6 +210,9 @@ async fn full_quote_build() {
 /// on a major equity ETF -> FAIL (drift).
 #[tokio::test]
 async fn yahoo_top_holdings_parses() {
+    if net_opt_out("yahoo_top_holdings_parses") {
+        return;
+    }
     stamp_run();
     // a symbol the screen actually prints (sector-tech table) — the exact payload class the footers eat
     const SYM: &str = "IITU.L";
@@ -214,6 +242,9 @@ async fn yahoo_top_holdings_parses() {
 /// on a major US filer -> FAIL (drift).
 #[tokio::test]
 async fn sec_facts_parse() {
+    if net_opt_out("sec_facts_parse") {
+        return;
+    }
     stamp_run();
     match fetch::sec_facts_live(&fetch::client(), &config::load().urls, "AAPL").await {
         Err(why) => eprintln!("network smoke [SEC facts AAPL] SKIPPED — {why}"),
@@ -241,6 +272,9 @@ async fn sec_facts_parse() {
 /// ~33 against a ~$170 close: a 10x-cheap P/E the fund tilt ranks as value. Either fetch failing -> skip.
 #[tokio::test]
 async fn sec_rows_restate_onto_the_chart_split_basis() {
+    if net_opt_out("sec_rows_restate_onto_the_chart_split_basis") {
+        return;
+    }
     stamp_run();
     let (client, urls) = (fetch::client(), config::load().urls);
     let Some(chart) = fetch::fetch_history(&client, &urls, "AVGO").await else {
@@ -284,6 +318,9 @@ async fn sec_rows_restate_onto_the_chart_split_basis() {
 /// with no 20-F in the index, or a cover that stopped saying four, fails.
 #[tokio::test]
 async fn ads_ratio_matches_the_20f_cover() {
+    if net_opt_out("ads_ratio_matches_the_20f_cover") {
+        return;
+    }
     let urls = config::load().urls;
     let get = |url: String| fetch::client().get(url).header(reqwest::header::USER_AGENT, urls.sec_user_agent.as_str());
     let Some(resp) = probe(get(urls.sec_submissions.replace("{cik}", "0001737806")), "ads PDD submissions").await else {
@@ -315,6 +352,9 @@ async fn ads_ratio_matches_the_20f_cover() {
 /// the day SEC serves it clean the count assertion says so, and the second assertion is the net left.
 #[tokio::test]
 async fn sec_share_scale_is_repaired_live() {
+    if net_opt_out("sec_share_scale_is_repaired_live") {
+        return;
+    }
     stamp_run();
     let (client, urls) = (fetch::client(), config::load().urls);
     let mut rows = match fetch::sec_facts_live(&client, &urls, "MCD").await {
@@ -335,6 +375,9 @@ async fn sec_share_scale_is_repaired_live() {
 /// tag moved or the strip stopped reading it; near 0 = the operating-income tag did.
 #[tokio::test]
 async fn sec_core_factor_strips_googl_gains() {
+    if net_opt_out("sec_core_factor_strips_googl_gains") {
+        return;
+    }
     use chrono::Datelike;
     stamp_run();
     let (client, urls) = (fetch::client(), config::load().urls);
@@ -355,6 +398,9 @@ async fn sec_core_factor_strips_googl_gains() {
 /// 200-but-factless on a major equity ETF -> FAIL (drift).
 #[tokio::test]
 async fn yahoo_fund_facts_parse() {
+    if net_opt_out("yahoo_fund_facts_parse") {
+        return;
+    }
     stamp_run();
     match fetch::fund_facts_live(&fetch::client(), &config::load().urls, "IITU.L").await {
         Err(why) => eprintln!("network smoke [fund facts IITU.L] SKIPPED — {why}"),
@@ -424,6 +470,9 @@ async fn live_json(req: reqwest::RequestBuilder, ctx: &str) -> Option<Value> {
 
 #[tokio::test]
 async fn inflation_eu_parses() {
+    if net_opt_out("inflation_eu_parses") {
+        return;
+    }
     let settings = config::load();
     let Some(d) = live_json(fetch::client().get(&settings.urls.eu_hicp), "Eurostat HICP").await else {
         return;
@@ -433,6 +482,9 @@ async fn inflation_eu_parses() {
 
 #[tokio::test]
 async fn inflation_pt_parses() {
+    if net_opt_out("inflation_pt_parses") {
+        return;
+    }
     let settings = config::load();
     let Some(d) = live_json(fetch::client().get(&settings.urls.pt_cpi), "BPstat PT CPI").await else {
         return;
@@ -445,6 +497,9 @@ async fn inflation_pt_parses() {
 /// the parser, so a reply that loses `status` altogether fails instead of skipping forever.
 #[tokio::test]
 async fn inflation_us_parses() {
+    if net_opt_out("inflation_us_parses") {
+        return;
+    }
     use chrono::Datelike;
     let settings = config::load();
     let now = chrono::Utc::now().year();
@@ -470,6 +525,9 @@ async fn inflation_us_parses() {
 /// S&P 500 is 503 rows live; each extra pond only has to be non-empty.
 #[tokio::test]
 async fn constituent_ponds_parse() {
+    if net_opt_out("constituent_ponds_parse") {
+        return;
+    }
     let settings = config::load();
     let urls = &settings.urls;
     for url in std::iter::once(&urls.sp500_csv).chain(&urls.constituents_csv).filter(|u| u.starts_with("http")) {
@@ -485,6 +543,9 @@ async fn constituent_ponds_parse() {
 /// reshape would quietly disable the euphoria brake forever. Healthy endpoint + None parse = red.
 #[tokio::test]
 async fn nupl_parses() {
+    if net_opt_out("nupl_parses") {
+        return;
+    }
     let settings = config::load();
     if !probe_url(&settings.urls.nupl, "NUPL").await {
         return;
@@ -501,6 +562,9 @@ async fn nupl_parses() {
 /// Sends the screen's own request; the floor is half the live count, so a thin day still passes.
 #[tokio::test]
 async fn euronext_lisbon_parses() {
+    if net_opt_out("euronext_lisbon_parses") {
+        return;
+    }
     let settings = config::load();
     let Some(v) = live_json(fetch::euronext_lisbon_request(&fetch::client(), &settings.urls), "Euronext Lisbon").await else {
         return;
@@ -514,6 +578,9 @@ async fn euronext_lisbon_parses() {
 /// permanent None. Healthy endpoint + no parsable rate = red.
 #[tokio::test]
 async fn euribor_parses() {
+    if net_opt_out("euribor_parses") {
+        return;
+    }
     let settings = config::load();
     if !probe_url(&settings.urls.euribor, "Euribor 3M").await {
         return;
@@ -577,6 +644,9 @@ fn sec_throttled_skips_only_a_partial_refusal() {
 #[test]
 fn backtest_edge_holds() {
     let forced = std::env::var("FOLIOMAN_BACKTEST_GATE").is_ok();
+    if !forced && net_opt_out("backtest_edge_holds") {
+        return;
+    }
     if !forced && cfg!(debug_assertions) {
         eprintln!(
             "backtest-gate SKIPPED — debug build; the wide walk-forward is 127s release / 355s debug. \

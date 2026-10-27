@@ -70,7 +70,7 @@ jobs:
           last=$(api "actions/workflows/ci.yml/runs?branch=main&status=completed&per_page=30" \
             | jq -r '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")][0].conclusion // "none"')
           if [ "${last}" != success ] && [ "${last}" != none ]; then echo "ci.yml: last main run is ${last}, holding"; exit 0; fi
-          need='["build","lint","doc","wasm","audit","actionlint","unit-tests","unit-tests-configless","coverage","integration-tests","backtest-gate","mutants 0","mutants 1","Analyze (rust)"]'
+          need='["build","lint","doc","wasm","audit","deny","msrv","actionlint","unit-tests","unit-tests-configless","coverage","integration-tests","backtest-gate","mutants 0","mutants 1","Analyze (rust)"]'
           gh pr list --base main --state open --limit 50 \
             --json number,author,headRefName,headRefOid,isDraft,isCrossRepository,mergeable \
             --jq '.[] | select((.isDraft | not) and (.isCrossRepository | not)

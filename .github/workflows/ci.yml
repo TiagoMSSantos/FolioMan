@@ -3,6 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
+    # (#1183) The two files pages.yml's `record` job commits on its own: the day's journal line and the
+    # Intraday start date. A push that changes nothing else runs no suite, because no code, test or
+    # workflow moved. A push that also touches any other path still runs everything, as does every PR,
+    # which has no filter so a required check is never left pending. Today those bot commits trigger
+    # nothing anyway (a GITHUB_TOKEN push starts no workflow), so this covers a person committing the
+    # journal alone, and a day the bot's push gets a token that does start workflows. Tests write their
+    # journals into scratch directories, not these files. The journal stays on main.
+    paths-ignore:
+      - .screen_snapshots.jsonl
+      - .intraday_since
   pull_request:
     branches: [main]
   workflow_dispatch: {}    # let it be run on demand from the Actions tab
@@ -329,6 +339,42 @@ jobs:
           # reds this job before Dependabot's monthly bump, bump the action; never pin the tool back.
           tool: cargo-audit
       - run: cargo audit
+
+  # (#1182) cargo-deny over the committed Cargo.lock, configured by deny.toml. `audit` above stays the
+  # RustSec gate; this one adds what cargo-audit does not read: the licenses the tree carries, where
+  # every crate comes from (crates.io only), and a warning when one crate is built in two versions.
+  # Only the root workspace is covered. web/engine has its own lock, and neither gate reads it.
+  # Unversioned tool, like cargo-audit: it follows the action's pin.
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-deny
+      - run: cargo deny check
+
+  # (#1182) MSRV gate. Cargo.toml's `rust-version` is what an older cargo is told, and no job built on
+  # it, so a newer std API or syntax could land unseen. This builds the library on exactly that
+  # release (its newest patch), read from Cargo.toml so a bump there moves the job with it. Dev
+  # profile and no tests: the library is what a dependent crate would compile. RUSTUP_TOOLCHAIN
+  # beats rust-toolchain.toml, so the pin there does not apply. Its own cache key, and its only writer.
+  msrv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install the rust-version from Cargo.toml
+        run: |
+          v=$(sed -n 's/^rust-version *= *"\([0-9.]*\)".*/\1/p' Cargo.toml)
+          test -n "${v}" || { echo "no rust-version in Cargo.toml"; exit 1; }
+          rustup toolchain install "${v}" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=${v}" >> "${GITHUB_ENV}"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: folioman-msrv
+      - run: cargo build --locked --lib
 
   # (#171) FOLIOMAN_CONFIG for the same reason integration-tests sets it below: config/settings.yaml is
   # gitignored, so WITHOUT it config::load() resolves nothing on a runner and every knob accessor falls

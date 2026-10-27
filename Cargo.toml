@@ -3,6 +3,7 @@ name = "folioman"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.98"  # (#1123) the toolchain CI and the release builds run on; an older cargo says so instead of failing mid-build
+publish = false  # (#1182) never pushed to a registry; deny.toml's `[licenses.private]` skips the crate's own missing license
 description = "Personal investment-review CLI (price/perf/screen/alert) + opt-in live trading (trade212/binance)."
 
 [[bin]]
