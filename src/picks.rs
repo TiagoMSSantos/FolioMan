@@ -5135,7 +5135,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     ]);
     // (#811) `heuristics::intraday::web_rows`
     let intraday = fixed(&[
-        ("RANK", "Position in its market by RIGHT/FAIL, (right+1)/(right+fail+2) highest first, ties by KEY; the 10 names are the top 10 by KEY"),
+        ("RANK", "Position in its market by GAIN/LOSS, up/(up+down) highest first, ties by KEY; the 10 names are the top 10 by KEY"),
         ("MARKET", "US = an S&P 500 member today; EU = a DAX 40, CAC 40 or Euro Stoxx 50 member; each market ranks its own top 10"),
         ("TICKER", ticker),
         ("NAME", "The company's name, as Yahoo lists it; click to open the company's own website (or its Wikipedia article) when one is found, else its Yahoo quote"),
@@ -5144,7 +5144,8 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock; hover a cell for the hours on your own clock"),
         ("DATA TO", "The window RIGHT/FAIL counts, on this name's own bars: from the start date to the last session counted; before the exchange closes that is the last completed session the key read, after it the session this row is for"),
         ("RIGHT/FAIL", "How this name's sessions went since the start date, open to close before costs, right/fail; every session on its own bars, whether or not it made this table that day; right = it closed above its open; fail = it closed at or below its open; today's session counts once its exchange has closed (half an hour after the close: 17:00 UTC for EU and 21:30 UTC for US in winter time, an hour earlier in summer time); the start date is the Pages workflow's since input"),
-        ("SCORE", "The hit share the rows sort by, (right+1)/(right+fail+2) as a percent: every name starts at 50% and nears its plain right share as its sessions add up; 9/1 = 83%; 1/0 = 67%; 0/0 = 50%"),
+        ("GAIN/LOSS", "The same sessions as RIGHT/FAIL, each one's open-to-close % change added up: the up days' gains/the down and flat days' losses, before costs, not compounded; the rows sort on gains/(gains+losses), so +60%/-40% ranks above +30%/-30%; gains above losses means the up days outweighed the down days; hover a cell for the averages, the gain factor and both sums after the backtest's round-trip cost"),
+        ("SCORE", "The hit share, (right+1)/(right+fail+2) as a percent: every name starts at 50% and nears its plain right share as its sessions add up; 9/1 = 83%; 1/0 = 67%; 0/0 = 50%; it counts days only, so a name can score above 50% and still lose when its down days are bigger; GAIN/LOSS weighs the moves"),
     ]);
     // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
     let mut bonds: BTreeMap<String, String> = fixed(&[

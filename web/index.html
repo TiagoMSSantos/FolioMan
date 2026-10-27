@@ -267,8 +267,11 @@
     after the close: 17:00 UTC for EU and 21:30 UTC for US in winter time, an hour earlier in summer time.
     Yahoo leaves an EU session's last close empty until the next open, so the table takes it from the
     quote's latest price. DATA TO is the window RIGHT/FAIL counts, from the start date to the
-    last session counted. The rows are ordered by SCORE, that record's (right+1)/(right+fail+2) as a
-    percent, highest first, ties by KEY. The table ranks on K7 (receipt #832), the share of the last 252
+    last session counted. GAIN/LOSS adds up the same sessions' % moves, open to close before costs: the
+    up days' gains against the down days' losses, since a name can close up on most days and still lose
+    when its down days are bigger (hover it for the averages and the sums after costs). The rows are
+    ordered by it, gains/(gains+losses) highest first, ties by KEY (receipt #1196). SCORE is the
+    day count's share, (right+1)/(right+fail+2) as a percent. The table ranks on K7 (receipt #832), the share of the last 252
     sessions that closed above their open: on the 10-year backtest its ten names closed up about 1.7
     percentage points more often than the EU list as a whole, and 1.2 more than the S&amp;P 500 as a whole,
     just short of the backtest's bar in the US.

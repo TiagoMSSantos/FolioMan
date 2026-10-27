@@ -23180,6 +23180,27 @@ social_heuristic:
 # volume spike closes up less often than the pond. Flipping the sign gains nothing: the low-shock book
 # sits on the pond's own hit share. The effect lives in the high-shock tail, and only in the US. The
 # page keeps K7.
+#
+# (#1196) USER DECISION 2026-10-27: the table weighs the moves, not only the days. Asked on ABI.BR (KEY
+# +60.71%, RIGHT/FAIL 130/80, SCORE 62%): did its up days, added up, beat its down days? KEY, RIGHT/FAIL
+# and SCORE all count sessions, so a name can close up on most days and still lose. A new GAIN/LOSS cell
+# adds up each session's open-to-close % change since the start date, up days on the left and down or
+# flat days on the right, before costs like RIGHT/FAIL. Rows now sort on up / (up + down), ties in key
+# order, a name with no move last. SCORE stays the up-day share and no longer orders the table. The hover
+# gives the gain factor, up / down = (up days / down days) x (avg up / avg down), and both sums net of
+# the backtest's round trip (50 bp US, 20 bp EU). Display only: the 10 names are still the top 10 by KEY,
+# and the table stays a shadow that no journal line, ruler or buy reads.
+#
+# (#1197) PROBE 2026-10-27, record only: K12 gain share 1y = up / (up + down) of the last 252 sessions'
+# open-to-close log moves, the (#1196) order as a key. `backtest N intraday` grades it beside K1-K11; the
+# page keeps K7. Pre-registered before the run, on the gross line, since every key loses net of cost.
+# Read the K12 line as `book net X bp/day (gross G) t T halves H1|H2 all-names gross A`. Its t and halves
+# are net, and the cost is a constant, so gross t = G x T / X and each gross half = net half + cost. K12
+# passes a market when G > A, gross t >= 3 and both gross halves > 0, and it must pass in US and EU. The
+# EU pass must also clear the (#830) survivor check: addition = max(US* G - US G, 0), and EU stands only
+# if (G - addition) x T / X >= 3 and G - addition > A. A pass in both markets puts one question to the
+# owner (intraday_key: 12); a fail is recorded here and the page keeps K7. K1-K11 must re-read the (#836)
+# table unchanged.
 intraday_key: 7
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait

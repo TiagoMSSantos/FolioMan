@@ -13,6 +13,7 @@
 //! - K10 low volume shock: (#836) minus the last session's volume over the mean of the 20 before it.
 //!   Attention-driven buying lifts the open and reverses in the day (Berkman et al., JFQA 2012), so a
 //!   quiet name ranks first. K11 is the same ratio with the sign flipped, the falsifier.
+//! - K12 gain share 1y: (#1197) the last 252 sessions' up moves added up, over up plus down moves.
 //!
 //! The pond is stocks with a 30-session average turnover (close × volume, in EUR) of at least
 //! `MIN_TURNOVER_EUR`: the US side is the S&P 500 as it stood each day, the EU side the static
@@ -22,6 +23,8 @@
 //! page's Intraday table, a shadow, and journals it; `track` grades each journalled book on its session.
 //! (#825) The table's RIGHT/FAIL column counts from the date in `SINCE_FILE`, which the Pages
 //! workflow's `since` input sets; (#827) every session of each book name since then, on its own bars.
+//! (#1196) Its GAIN/LOSS column adds up the same sessions' % moves, up days against down days, and the
+//! rows sort on it, since a name can close up on most days and still lose.
 
 use crate::core;
 use crate::fetch::Chart;
@@ -39,9 +42,9 @@ pub const MIN_TURNOVER_EUR: f64 = 5e6;
 /// waits for its own history.
 const WARMUP: usize = 30;
 /// Key names, `KEYS[k - 1]` for key `k`.
-pub const KEYS: [&str; 11] = [
+pub const KEYS: [&str; 12] = [
     "K1 tug of war", "K2 calm range", "K3 5d intraday", "K4 hit share", "K5 tug 1y", "K6 tug 2y", "K7 hit 1y", "K8 hit 2y", "K9 day Sharpe",
-    "K10 low volume shock", "K11 high volume shock",
+    "K10 low volume shock", "K11 high volume shock", "K12 gain share 1y",
 ];
 /// (#825) The one-line file holding the date the RIGHT/FAIL column counts from, `YYYY-MM-DD`.
 pub const SINCE_FILE: &str = ".intraday_since";
@@ -91,7 +94,9 @@ fn ln(a: f64, b: f64) -> Option<f64> {
 /// Key `k` for the session at bar `i`, from bars before `i` only. None for an unknown key, too little
 /// history, or a missing print in the window. (#828) K5-K8 are K1's tug and K4's hit share over 252 and
 /// 504 sessions. (#829) K9 is None on a window with no spread, so a NaN never ranks first. (#836) K10 and
-/// K11 are None when any of their 21 volume prints is missing or zero.
+/// K11 are None when any of their 21 volume prints is missing or zero. (#1197) K12 is the share of the
+/// last 252 sessions' open-to-close log moves, added up as distances, that the up ones make; None on a
+/// window with no move.
 /// shortcut: each key re-sums its whole window, so a 2y key costs 504 steps a bar in the walk; a running
 /// sum would remove that.
 pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
@@ -116,12 +121,23 @@ pub fn key(k: u8, c: &Chart, i: usize) -> Option<f64> {
         7 => hit(252),
         8 => hit(504),
         9 if i >= 63 => stats(&(i - 63..i).map(co).collect::<Option<Vec<f64>>>()?).map(|s| s.t / 63f64.sqrt()).filter(|x| x.is_finite()),
+        12 if i >= 252 => up_share(gains(&(i - 252..i).map(co).collect::<Option<Vec<f64>>>()?, 0.0)),
         10 | 11 if i >= 21 => {
             let shock = pos(c.volumes[i - 1])? / ((i - 21..i - 1).map(|j| pos(c.volumes[j])).sum::<Option<f64>>()? / 20.0);
             Some(if k == 10 { -shock } else { shock })
         }
         _ => None,
     }
+}
+
+/// (#1196) The moves above `cut` and the moves below it, each added up as its distance from `cut`: (up, down).
+fn gains(xs: &[f64], cut: f64) -> (f64, f64) {
+    xs.iter().fold((0.0, 0.0), |(u, d), x| (u + (x - cut).max(0.0), d + (cut - x).max(0.0)))
+}
+
+/// (#1196) up / (up + down), None when nothing moved.
+fn up_share((u, d): (f64, f64)) -> Option<f64> {
+    (u + d > 0.0).then_some(u / (u + d))
 }
 
 /// (#824) K1's two sums for the session at bar `i`, the page's KEY hover: the last 21 sessions'
@@ -280,21 +296,46 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 /// [`tug`] sums as the KEY hover; (#832) K7's count of up sessions. (#825) The rows in order of hit share, (right + 1) / (right + fail + 2),
 /// ties in key order. (#826) That share as the SCORE cell, and DATA TO as the window the record counts,
 /// `since` to the last bar before `until`. (#827) The record is every session in that window on the
-/// name's own bars: right = it closed above its open, before costs, fail = at or below it.
+/// name's own bars: right = it closed above its open, before costs, fail = at or below it. (#1196) The
+/// rows now sort on GAIN/LOSS instead: the window's up moves and down moves, each session's % change
+/// added up, ordered by up / (up + down), ties in key order; a name with no move at all sorts last. Its
+/// hover adds the averages and both sums net of the market's round trip, `COST_BPS_US` or `COST_BPS_EU`.
 pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveDate, until: NaiveDate, fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
     use serde_json::json;
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
+    let cost = if market == "US" { COST_BPS_US } else { COST_BPS_EU };
     let share = |(r, f): (usize, usize)| (r + 1) as f64 / (r + f + 2) as f64;
-    let tally = |c: &Chart| {
-        (completed(c, since)..completed(c, until))
-            .filter_map(|i| session_return(c, i))
-            .fold((0usize, 0usize), |(r, f), x| if x > 0.0 { (r + 1, f) } else { (r, f + 1) })
-    };
-    let mut v: Vec<_> = book.iter().map(|b| (b, tally(b.2))).collect();
-    v.sort_by(|a, b| share(b.1).total_cmp(&share(a.1)));
+    let mut v: Vec<_> = book
+        .iter()
+        .map(|b| {
+            let xs: Vec<f64> = (completed(b.2, since)..completed(b.2, until)).filter_map(|i| session_return(b.2, i)).collect();
+            let ud = gains(&xs, 0.0);
+            (b, xs, ud)
+        })
+        .collect();
+    // a name with no move at all sorts last
+    v.sort_by(|a, b| up_share(b.2).unwrap_or(-1.0).total_cmp(&up_share(a.2).unwrap_or(-1.0)));
+    let ratio = |a: f64, b: f64| if b > 0.0 { format!("{:.2}", a / b) } else { "—".into() };
+    let avg = |s: f64, n: usize, sign: &str| if n > 0 { format!("{sign}{:.2}%", s * 100.0 / n as f64) } else { "—".into() };
     v.into_iter()
         .enumerate()
-        .map(|(n, ((tk, x, c), (r, f)))| {
+        .map(|(n, ((tk, x, c), xs, (u, d)))| {
+            let r = xs.iter().filter(|&&s| s > 0.0).count();
+            let f = xs.len() - r;
+            let (nu, nd) = gains(&xs, cost / 1e4);
+            let gain = format!(
+                "{r} up days added up {:+.1}% (avg {}); {f} down or flat days -{:.1}% (avg {}); since {since}, open to close, before costs\ngain factor {} = up ÷ down = ({r}/{f} days) × ({}/{} avg move)\nafter the backtest's {cost:.0} bp a round trip: {:+.1}%/-{:.1}%, gain factor {}\n(each session's % change added up, not compounded)",
+                u * 100.0,
+                avg(u, r, "+"),
+                d * 100.0,
+                avg(d, f, "-"),
+                ratio(u, d),
+                avg(u, r, ""),
+                avg(d, f, ""),
+                nu * 100.0,
+                nd * 100.0,
+                ratio(nu, nd)
+            );
             let tip = match tug(c, completed(c, today)).map(|(d, n)| (d * 100.0, n * 100.0)) {
                 Some((d, n)) if k == 1 => format!(
                     "K1 tug of war, last 21 sessions:\nday moves (open to close) added up: {d:+.2}%\nnight moves (close to next open) added up: {n:+.2}%\nkey = day - night = {d:+.2} - ({n:+.2}) = {:+.2}%\nhigh = it rose while the exchange was open and fell while it was shut\n(each move is a log return, so they add exactly; a small move is about its % change)",
@@ -313,6 +354,7 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
                 json!(["SESSION", hours]),
                 json!(["DATA TO", format!("{since} – {}", c.dates[completed(c, until) - 1])]),
                 json!(["RIGHT/FAIL", format!("{r}/{f}"), null, format!("{r} right, {f} failed since {since}: all {} sessions, right = closed above its open", r + f)]),
+                json!(["GAIN/LOSS", format!("{:+.1}%/-{:.1}%", u * 100.0, d * 100.0), null, gain]),
                 json!(["SCORE", format!("{:.0}%", share((r, f)) * 100.0)]),
             ]
         })
@@ -365,7 +407,7 @@ pub fn since(today: NaiveDate) -> NaiveDate {
 pub fn chart_range(since: NaiveDate, today: NaiveDate, k: u8) -> &'static str {
     let window: i64 = match k {
         4 | 9 => 63,
-        5 | 7 => 253,
+        5 | 7 | 12 => 253,
         6 | 8 => 505,
         _ => 22,
     };
@@ -487,7 +529,7 @@ mod tests {
         // the first bar each key can read, and one before it
         assert!(key(1, &c, 21).is_none() && key(2, &c, 19).is_none() && key(3, &c, 4).is_none());
         assert!(key(1, &c, 22).is_some() && key(2, &c, 20).is_some() && key(3, &c, 5).is_some());
-        assert!(key(0, &c, 30).is_none() && key(12, &c, 30).is_none());
+        assert!(key(0, &c, 30).is_none() && key(13, &c, 30).is_none());
         // (#825) K4 against a plain count; bar 22 is flat (open = close = 101), so it counts as a miss
         let c = wavy(70);
         assert_eq!((c.opens[22], c.closes[22]), (101.0, 101.0));
@@ -520,6 +562,18 @@ mod tests {
                 assert!((key(k, &c, i).unwrap() - want).abs() < 1e-12, "K{k} at {i}");
             }
         }
+        // (#1197) K12 against plain sums: the window's up log moves over up plus down
+        for i in [252, 509] {
+            let up: f64 = (i - 252..i).map(co).filter(|x| *x > 0.0).sum();
+            let down: f64 = (i - 252..i).map(co).filter(|x| *x < 0.0).map(f64::abs).sum();
+            let k12 = key(12, &c, i).unwrap();
+            assert!((k12 - up / (up + down)).abs() < 1e-12 && k12 > 0.0 && k12 < 1.0, "K12 at {i}");
+        }
+        assert!(key(12, &c, 251).is_none());
+        assert!(key(12, &chart(&[100.0; 300], &[100.0; 300], 1e5), 299).is_none(), "nothing moved");
+        let mut gap = c.clone();
+        gap.closes[300] = f64::NAN;
+        assert!(key(12, &gap, 300).is_some() && key(12, &gap, 301).is_none() && key(12, &gap, 509).is_none());
         // a missing print inside the window voids the key; one at the session itself does not
         let mut gap = wavy(40);
         gap.opens[25] = f64::NAN;
@@ -702,17 +756,18 @@ mod tests {
         c.name = "Acme".into();
         let mut up = chart(&[100.0; 31], &[101.0; 31], 1e5);
         up.name = "Up".into();
-        // (#827) every session from bar 1 (2026-01-02) to bar 30: B's 30 up outranks ACME's 22 in 30 (its four
-        // flat bars, 4, 12, 22 and 23, are fails), though ACME's key is higher
+        // (#827) every session from bar 1 (2026-01-02) to bar 30: ACME's 22 up in 30 (its four flat bars, 4, 12,
+        // 22 and 23, are fails); (#1196) B, which never fell, outranks it on GAIN/LOSS though ACME's key is
+        // higher, and B's hover prints — for every ratio over its zero losses
         let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &up)], d(1), d(31), 2.0, d(31));
         assert_eq!(
             serde_json::json!(rows),
             serde_json::json!([
-                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Up"], ["PRICE(EUR)", "€202.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "30/0", null, "30 right, 0 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["SCORE", "97%"]],
-                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "22/8", null, "22 right, 8 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["SCORE", "72%"]],
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Up"], ["PRICE(EUR)", "€202.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "30/0", null, "30 right, 0 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+30.0%/-0.0%", null, "30 up days added up +30.0% (avg +1.00%); 0 down or flat days -0.0% (avg —); since 2026-01-02, open to close, before costs\ngain factor — = up ÷ down = (30/0 days) × (1.00%/— avg move)\nafter the backtest's 50 bp a round trip: +15.0%/-0.0%, gain factor —\n(each session's % change added up, not compounded)"], ["SCORE", "97%"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "22/8", null, "22 right, 8 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+124.5%/-4.8%", null, "22 up days added up +124.5% (avg +5.66%); 8 down or flat days -4.8% (avg -0.60%); since 2026-01-02, open to close, before costs\ngain factor 25.80 = up ÷ down = (22/8 days) × (5.66%/0.60% avg move)\nafter the backtest's 50 bp a round trip: +113.5%/-8.8%, gain factor 12.86\n(each session's % change added up, not compounded)"], ["SCORE", "72%"]],
             ])
         );
-        // equal hit shares keep key order
+        // equal gain shares keep key order
         let order: Vec<_> = web_rows("EU", 3, &[("Y", 0.0, &c), ("X", 0.0, &c)], d(1), d(31), 1.0, d(31)).iter().map(|r| r[2][1].as_str().unwrap().to_string()).collect();
         assert_eq!(order, ["Y", "X"]);
         // too few sessions for K1's hover sums: it names the key; (#826) the session dated today closed, so
@@ -720,7 +775,7 @@ mod tests {
         // `until` both closed up, and neither counts
         let eu = web_rows("EU", 1, &[("X", 0.0, &c)], d(1), d(21), 1.0, d(20));
         assert_eq!((eu[0][1][1].as_str(), eu[0][5][3].as_str()), (Some("EU"), Some("K1 tug of war")));
-        assert_eq!((eu[0][6][1].as_str(), eu[0][7][1].as_str(), eu[0][8][1].as_str(), eu[0][9][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-02 – 2026-01-21"), Some("16/4"), Some("77%")));
+        assert_eq!((eu[0][6][1].as_str(), eu[0][7][1].as_str(), eu[0][8][1].as_str(), eu[0][10][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-02 – 2026-01-21"), Some("16/4"), Some("77%")));
         // (#824) 21 sessions behind it: the hover works the number out
         let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], d(1), d(31), 1.0, d(31));
         assert_eq!(k1[0][4][1], "€103.00");
@@ -731,6 +786,32 @@ mod tests {
         // (#452) the page's hover text keys on exactly these headers
         let heads: std::collections::BTreeSet<&str> = rows[0].iter().map(|c| c[0].as_str().unwrap()).collect();
         assert_eq!(crate::picks::web_help(false, &[])["intraday"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads);
+    }
+
+    /// (#1196) Rows sort on the moves added up, not on the day count: a name up on two days in three by a
+    /// little ranks below one up on one day in three by a lot, and a name that never moved sorts last.
+    #[test]
+    fn rows_sort_on_gains_over_losses_not_on_the_day_count() {
+        let o = [100.0; 31];
+        // bar 0 sits before `since`; bars 1-30 count
+        let small = chart(&o, &[[100.1; 21].as_slice(), &[99.0; 10]].concat(), 1e5);
+        let big = chart(&o, &[[103.0; 11].as_slice(), &[99.5; 20]].concat(), 1e5);
+        let flat = chart(&o, &o, 1e5);
+        let down = chart(&o, &[99.0; 31], 1e5);
+        let book = [("SMALL", 4.0, &small), ("FLAT", 3.0, &flat), ("DOWN", 2.0, &down), ("BIG", 1.0, &big)];
+        let rows = web_rows("EU", 3, &book, d(1), d(31), 1.0, d(31));
+        let cells: Vec<_> = rows.iter().map(|r| (r[2][1].as_str().unwrap(), r[8][1].as_str().unwrap(), r[9][1].as_str().unwrap(), r[10][1].as_str().unwrap())).collect();
+        assert_eq!(
+            cells,
+            [
+                ("BIG", "10/20", "+30.0%/-10.0%", "34%"),
+                ("SMALL", "20/10", "+2.0%/-10.0%", "66%"),
+                ("DOWN", "0/30", "+0.0%/-30.0%", "3%"),
+                ("FLAT", "0/30", "+0.0%/-0.0%", "3%"),
+            ]
+        );
+        // the hover's net sums pay the EU's 20 bp a session: BIG's 10 up days keep 2.8% each
+        assert!(rows[0][9][3].as_str().unwrap().contains("after the backtest's 20 bp a round trip: +28.0%/-14.0%, gain factor 2.00"));
     }
 
     /// A weekend line and the Monday line after it reach one session; the first one grades it.
@@ -797,7 +878,7 @@ mod tests {
         let at = |k| chart_range(today, today, k);
         assert_eq!([at(1), at(2), at(3)], ["3mo"; 3], "60 days still rule the short keys");
         assert_eq!([at(4), at(9)], ["6mo"; 2], "63 x 3 / 2 = 94 days");
-        assert_eq!([at(5), at(7)], ["2y"; 2]);
+        assert_eq!([at(5), at(7), at(12)], ["2y"; 3]);
         assert_eq!([at(6), at(8)], ["5y"; 2], "505 x 3 / 2 = 757 days");
         assert_eq!(chart_range(d(0), d(1767), 8), "10y", "the longer reach wins");
     }
