@@ -3635,6 +3635,13 @@ pub async fn run(args: Vec<String>) {
             settings.buy_heuristic.implied_growth_years,
             settings.buy_heuristic.implied_growth_required_pct,
         );
+        // (#1157) the base rate: what every name this line could print for (a positive P/E) has
+        // delivered on that same leg, so a pick's implied growth reads against the pool's own record
+        let pool: Vec<f64> = quotes
+            .iter()
+            .filter(|q| q.pe_ratio.is_some_and(|p| p > 0.0))
+            .filter_map(|q| picks::long_cagr_pct(q, &settings.buy_heuristic))
+            .collect();
         let rows: Vec<String> = ranked_now
             .iter()
             .take(crate::commands::track::BOOK)
@@ -3645,14 +3652,18 @@ pub async fn run(args: Vec<String>) {
                 // term scores and the LEG column prints — never a second CAGR computed at a read site.
                 let delivered = picks::long_cagr_pct(q, &settings.buy_heuristic)
                     .map_or_else(|| "n/a".to_string(), |c| format!("{c:+.0}%/yr"));
-                Some(format!("{} implies {implied:+.0}%/yr (delivered {delivered})", q.ticker))
+                let base = pool_share_pct(&pool, implied)
+                    .map_or_else(String::new, |s| format!("; {s:.0}% of the pool did"));
+                Some(format!("{} implies {implied:+.0}%/yr (delivered {delivered}{base})", q.ticker))
             })
             .collect();
         if !rows.is_empty() {
             println!(
                 "\nWhat the price already pays for — EPS growth implied over {yrs}y at a {req:.0}%/yr required return, \
-                 with the multiple reverting to ref_pe {:.0} (dividends ignored, so this is conservative for a payer):",
-                settings.buy_heuristic.ref_pe
+                 with the multiple reverting to ref_pe {:.0} (dividends ignored, so this is conservative for a payer). \
+                 `% of the pool did` = share of the {} names with a P/E whose delivered leg reached that rate:",
+                settings.buy_heuristic.ref_pe,
+                pool.len()
             );
             println!("  {}", rows.join(" · "));
         }
@@ -4019,6 +4030,13 @@ pub(crate) fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> 
             "\n  DEPLOY THIS MONTH: €{total:.0} — base × {mult} (S&P 500 entry state unavailable this run). NOT advice."
         ),
     })
+}
+
+/// (#1157) The share, in percent, of `pool` at or above `rate`: how common the growth a price implies is
+/// in the pool's own delivered record. `None` for an empty pool, which has no record to read.
+fn pool_share_pct(pool: &[f64], rate: f64) -> Option<f64> {
+    (!pool.is_empty())
+        .then(|| pool.iter().filter(|c| **c >= rate).count() as f64 / pool.len() as f64 * 100.0)
 }
 
 /// (round 118) Broker free-cash line, printed under the deploy figure so the month's deploy
@@ -6700,5 +6718,18 @@ mod tests {
         assert_eq!(buy(5), five);
         assert_eq!(buy(6), format!("{five} · +1 more"));
         assert_eq!(buy(8), format!("{five} · +3 more"));
+    }
+
+    /// (#1157) The pool base rate counts the names at or above the implied rate, as a percent of the
+    /// pool; an empty pool has no record and prints nothing.
+    #[test]
+    fn pool_share_pct_semantics() {
+        let pool = [10.0, 20.0, 30.0, 40.0];
+        assert_eq!(pool_share_pct(&[], 5.0), None);
+        assert_eq!(pool_share_pct(&pool, 25.0), Some(50.0));
+        // a name that delivered exactly the implied rate reached it
+        assert_eq!(pool_share_pct(&pool, 20.0), Some(75.0));
+        assert_eq!(pool_share_pct(&pool, 45.0), Some(0.0));
+        assert_eq!(pool_share_pct(&pool, -5.0), Some(100.0));
     }
 }
