@@ -3564,8 +3564,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions; n/a = no traded volume on the chart" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
-    // (#576) stocks only: under growth_gate_soft a stock that fails gates still ranks, docked per gate
-    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Stocks: how many buy gates the row fails, and which (0 = it passes all). A stock that misses gates still ranks, its SCORE cut by growth_gate_soft once per gate missed, unless one is artifact or exchange, which no waiver lifts; the why box prints each gate's value against its bar; refused = no waiver can score the row (a kind the screen never buys, no trading volume served, or no 1Y figure)" },
+    // (#576) under growth_gate_soft a stock that fails gates still ranks, docked per gate; (#1203) ETFs print 0
+    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Stocks: how many buy gates the row fails, and which (0 = it passes all). A stock that misses gates still ranks, its SCORE cut by growth_gate_soft once per gate missed, unless one is artifact or exchange, which no waiver lifts; the why box prints each gate's value against its bar; refused = no waiver can score the row (a kind the screen never buys, no trading volume served, or no 1Y figure). ETFs score hard, so a ranked ETF row reads 0" },
     // DIAGNOSTIC: the long-CAGR window (and the trust leg) pinned to 8Y. Never ranked on, and scored WITHOUT
     // the 8Y CAGR admission floor so every row carries a comparable number
     ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true, help: "The same score on an 8-year window, for comparison; never ranked on. † = under 8 years of record, so it is the full-history score" },
@@ -4685,9 +4685,10 @@ fn dcf_raw(g_pct: f64) -> f64 {
 // builds the same three tables and a page that hides a different column set is a page that quietly
 // stops being the terminal's row.
 const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10", "td1y", "td5y"];
-// (#576) `misses` in both: ETFs and coins score hard at any growth_gate_soft, so a ranked row always reads 0
+// (#576) ETFs and coins score hard at any growth_gate_soft, so a ranked row always reads 0 MISSES. (#1203) The
+// ETF lane prints it anyway, on purpose, beside the stock lane's; coins still hide it.
 const HIDE_ETF: &[&str] =
-    &["misses", "pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "capex", "nde", "icov", "sector", "ins",
+    &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "capex", "nde", "icov", "sector", "ins",
     "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "redf", "sbc", "fcf5y", "target", "short",
     "fair_oe", "mos_oe", "fair_cap", "impl_g", "payout", "fcfpay"];
 const HIDE_CRYPTO: &[&str] = &[
@@ -11995,6 +11996,14 @@ mod tests {
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
         assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
         assert!(p.get("attention").is_none(), "an absent table stays absent");
+    }
+
+    /// (#1203) The ETF lane prints MISSES on purpose (a ranked ETF reads 0); the crypto lane still hides it.
+    #[test]
+    fn misses_shows_on_the_etf_lane_not_on_crypto() {
+        let w = Widths { columns: vec!["misses".into()], ..Widths::default() };
+        assert_eq!(lane_columns(&w, HIDE_ETF).iter().map(|c| c.hdr).collect::<Vec<_>>(), ["MISSES"]);
+        assert!(lane_columns(&w, HIDE_CRYPTO).is_empty());
     }
 
     /// (#1202) A shadow row's S-8Y is its own 8-year score, the cell the lane prints for it; an unpriced

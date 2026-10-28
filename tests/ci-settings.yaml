@@ -1178,7 +1178,7 @@ widths:
     - turnover    # avg daily turnover (EUR) — liquidity
     - reports     # (#540) annual/quarterly reports link: the EDGAR page for an SEC filer, else a Google search (display only)
     - score       # the growth ranking score
-    - misses      # (#576) stocks: gates the row fails; under growth_gate_soft each one docks its SCORE once
+    - misses      # (#576) stocks: gates the row fails; under growth_gate_soft each one docks its SCORE once; (#1203) ETFs read 0
     - score8y     # the 8-year growth ranking score
   #── (#1199) USER DECISION 2026-10-28: A BETA COLUMN ON EVERY TABLE WITH A PRICE SERIES ──
   #  WHY: the owner asked to fill the page tables' missing columns. BETA was planned at (#472) and never
@@ -1218,6 +1218,13 @@ widths:
   #  Young keeps the column: a young soft admit can score.
   #  DISPLAY ONLY: the shadow rank, SCORE, MISSES and the SOC book stay as they were.
   #  REVERT RULE: put `score8y` back in HIDE_SHADOW and pass `None` for the cell's 8-year score.
+  #── (#1203) USER DECISION 2026-10-28: MISSES ON THE ETF LANE ──
+  #  WHY: the Stocks table prints MISSES and the ETFS table beside it did not. The owner chose parity and
+  #  accepts that the cell reads 0 on a ranked ETF row: ETFs score hard at any growth_gate_soft.
+  #  BUILT: HIDE_ETF drops `misses`, so the ETF lane prints the lane's own MISSES cell, on the page and in
+  #  the terminal ETF table alike. The crypto lane still hides it. CORE prints its own MISSES already.
+  #  DISPLAY ONLY: no gate, dock, rank or size changes.
+  #  REVERT RULE: put `misses` back in HIDE_ETF.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
