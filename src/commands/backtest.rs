@@ -2575,8 +2575,9 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
 /// pond adds. Pre-registered: an EU hit pass stands only if its diff, less that key's addition, still
 /// clears t 3 at the EU line's own noise (diff x 3 / t).
 ///
-/// (#1212) EXIT HOURS last: today's members and `EU_POND` on 2y of 60m bars, each bar end's mean move from
-/// the open, the census the `intraday_exit_*` knobs are picked from.
+/// (#1212) The hours census last: today's members and `EU_POND` on 2y of 60m bars. (#1214) Each window's mean
+/// move, from a buy at the open or a bar end to a sell at a later bar end, the census the Intraday table's
+/// hour knobs are picked from.
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::intraday
 async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     use crate::heuristics::intraday;
@@ -2623,11 +2624,12 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
             }
         }
     }
-    // (#1212) the census the `intraday_exit_*` knobs are picked from: today's members, as on the page
-    println!("\n── (#1212) EXIT HOURS: buy at the open, sell at each 60m bar's end, every name equal weight, 2y ──");
-    for (market, names, cost, knob) in
+    // (#1214) the census the Intraday table's hour knobs are picked from: today's members, as on the page
+    println!("\n── (#1214) BUY AND SELL HOURS: buy at the open or a 60m bar's end, sell at a later one, every name equal weight, 2y ──");
+    for (market, names, cost, exit) in
         [("US", intraday::us_pond(&spans, today), intraday::COST_BPS_US, settings.intraday_exit_us), ("EU", eu, intraday::COST_BPS_EU, settings.intraday_exit_eu)]
     {
+        let knob = (config::session(market).0, exit);
         let mut got: Vec<(&str, _)> = stream::iter(&names)
             .map(|tk| async move { Some((tk.as_str(), intraday::day_moves(market, &fetch::fetch_hourly(client, &settings.urls, tk, "2y").await?))) })
             .buffer_unordered(fetch::fetch_concurrency())

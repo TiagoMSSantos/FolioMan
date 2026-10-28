@@ -26,8 +26,9 @@
 //! (#1196) Its GAIN/LOSS column adds up the same sessions' % moves, up days against down days, and the
 //! rows sort on it, since a name can close up on most days and still lose.
 //! (#1212) Two more columns sell the same sessions at a set hour, `intraday_exit_us` New York time and
-//! `intraday_exit_eu` Frankfurt time, on each book name's 60m bars; `backtest N intraday` ends on the EXIT
-//! HOURS census the two knobs are picked from. Display only, like the rest of the table.
+//! `intraday_exit_eu` Frankfurt time, on each book name's 60m bars; `backtest N intraday` ends on the
+//! hours census the two knobs are picked from, (#1214) every buy hour and later sell hour. Display only,
+//! like the rest of the table.
 
 use crate::config::session;
 use crate::core;
@@ -502,7 +503,8 @@ fn offset(market: &str, utc: NaiveDateTime) -> i64 {
 /// (#1212) Each full session in 60m `bars` (start in UTC seconds, open, close): its move from the open to
 /// the end of every bar, keyed by that end in minutes on the exchange's clock. A session needs a bar that
 /// starts at the open and one that ends at the close, so a half day, or a session missing its first or
-/// last bar, drops out.
+/// last bar, drops out. (#1214) The open itself is keyed too, at 0, so a buy at any key and a sell at a
+/// later one is `(1 + sell) / (1 + buy) - 1`.
 pub fn day_moves(market: &str, bars: &[(i64, f64, f64)]) -> BTreeMap<NaiveDate, BTreeMap<u32, f64>> {
     let (open, close) = session(market);
     let mut days: BTreeMap<NaiveDate, Vec<(u32, f64, f64)>> = BTreeMap::new();
@@ -517,7 +519,8 @@ pub fn day_moves(market: &str, bars: &[(i64, f64, f64)]) -> BTreeMap<NaiveDate, 
     days.into_iter()
         .filter_map(|(d, b)| {
             let o = pos(b.iter().find(|x| x.0 == open)?.1)?;
-            let ends: BTreeMap<u32, f64> = b.iter().filter_map(|&(m, _, c)| Some(((m + 60).min(close), pos(c)? / o - 1.0))).collect();
+            let ends: BTreeMap<u32, f64> =
+                std::iter::once((open, 0.0)).chain(b.iter().filter_map(|&(m, _, c)| Some(((m + 60).min(close), pos(c)? / o - 1.0)))).collect();
             ends.contains_key(&close).then_some((d, ends))
         })
         .collect()
@@ -587,31 +590,36 @@ pub fn stamp_exits(rows: &mut [Vec<serde_json::Value>], hourly: &HashMap<String,
     }
 }
 
-/// (#1212) The `backtest N intraday` EXIT HOURS lines for one market. On each session before `today` that a
-/// name's 60m bars carry in full ([`day_moves`]), the mean move from the open to each bar end over every
-/// name with that bar, equal weight. Per bar end: gross bp and its t, net € a session at €1,000 after the
-/// round trip, the halves, and the mean gain over selling every name at the close that session, with its
-/// t. The best gross hour and the `knob` hour are marked.
-pub fn hours_report(market: &str, names: &[BTreeMap<NaiveDate, BTreeMap<u32, f64>>], today: NaiveDate, cost_bps: f64, knob: u32) -> String {
-    let close = session(market).1;
-    let mut days: BTreeMap<NaiveDate, BTreeMap<u32, Vec<f64>>> = BTreeMap::new();
+/// (#1212) The `backtest N intraday` hours lines for one market. (#1214) On each session before `today` that
+/// a name's 60m bars carry in full ([`day_moves`]), every window from a buy at the open or a bar end to a
+/// sell at a later bar end: its mean move over every name with both bars, equal weight. Per window: gross bp
+/// and its t, net € a session at €1,000 after the round trip, the halves, and the mean gain over buying the
+/// same names at the open and selling them at the close that session, with its t. The best gross window
+/// and the `knob` window, (buy, sell), are marked.
+pub fn hours_report(market: &str, names: &[BTreeMap<NaiveDate, BTreeMap<u32, f64>>], today: NaiveDate, cost_bps: f64, knob: (u32, u32)) -> String {
+    let (open, close) = session(market);
+    let mut days: BTreeMap<NaiveDate, BTreeMap<(u32, u32), Vec<(f64, f64)>>> = BTreeMap::new();
     for (d, ends) in names.iter().flat_map(|n| n.range(..today)) {
-        for (e, x) in ends {
-            days.entry(*d).or_default().entry(*e).or_default().push(*x);
+        let Some(&day) = ends.get(&close) else { continue };
+        for (&b, &x) in ends.range(..close) {
+            for (&s, &y) in ends.range(b + 1..) {
+                let r = (1.0 + y) / (1.0 + x) - 1.0;
+                days.entry(*d).or_default().entry((b, s)).or_default().push((r, r - day));
+            }
         }
     }
-    let ends: std::collections::BTreeSet<u32> = days.values().flat_map(|e| e.keys().copied()).collect();
-    let rows: Vec<(u32, Stats, Stats)> = ends
+    let windows: std::collections::BTreeSet<(u32, u32)> = days.values().flat_map(|w| w.keys().copied()).collect();
+    let rows: Vec<((u32, u32), Stats, Stats)> = windows
         .into_iter()
-        .filter_map(|e| {
+        .filter_map(|w| {
             let (s, v): (Vec<f64>, Vec<f64>) = days
                 .values()
                 .filter_map(|x| {
-                    let m = mean(x.get(&e)?);
-                    Some((m, m - mean(x.get(&close)?)))
+                    let (r, g): (Vec<f64>, Vec<f64>) = x.get(&w)?.iter().copied().unzip();
+                    Some((mean(&r), mean(&g)))
                 })
                 .unzip();
-            Some((e, stats(&s)?, stats(&v)?))
+            Some((w, stats(&s)?, stats(&v)?))
         })
         .collect();
     let (Some(best), Some((first, last))) = (
@@ -620,19 +628,20 @@ pub fn hours_report(market: &str, names: &[BTreeMap<NaiveDate, BTreeMap<u32, f64
     ) else {
         return format!("  {market}: no two sessions with 60m bars");
     };
+    let hm = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
     let mut out = format!("  {market}: {} names, {} sessions {first}..{last}; cost {cost_bps} bp a round trip", names.len(), days.len());
-    for (e, s, v) in rows {
-        let vs = if e == close { "the close".to_string() } else { format!("vs close {:+.2} bp (t {:+.2})", v.mean * 1e4, v.t) };
-        let mark = match (e == best, e == knob) {
+    for (w, s, v) in rows {
+        let vs = if w == (open, close) { "open to close".to_string() } else { format!("vs open-close {:+.2} bp (t {:+.2})", v.mean * 1e4, v.t) };
+        let mark = match (w == best, w == knob) {
             (true, true) => "  <- best, the knob",
             (true, false) => "  <- best",
             (false, true) => "  <- the knob",
             _ => "",
         };
         out += &format!(
-            "\n  {market} {:02}:{:02}  {} sessions  gross {:+.2} bp (t {:+.2})  net {:+.2} €/session  halves {:+.2}|{:+.2}  {vs}{mark}",
-            e / 60,
-            e % 60,
+            "\n  {market} {}-{}  {} sessions  gross {:+.2} bp (t {:+.2})  net {:+.2} €/session  halves {:+.2}|{:+.2}  {vs}{mark}",
+            hm(w.0),
+            hm(w.1),
             s.n,
             s.mean * 1e4,
             s.t,
@@ -1169,8 +1178,9 @@ mod tests {
         bars.iter().map(|&(h, c)| ((open + Duration::hours(h)).and_utc().timestamp(), o, c)).collect()
     }
 
+    /// US sessions as [`day_moves`] keys them, the open at 0 and each `(end, move)`.
     fn moves(days: &[(usize, Vec<(u32, f64)>)]) -> BTreeMap<NaiveDate, BTreeMap<u32, f64>> {
-        days.iter().map(|(i, e)| (d(*i), e.iter().copied().collect())).collect()
+        days.iter().map(|(i, e)| (d(*i), std::iter::once((570, 0.0)).chain(e.iter().copied()).collect())).collect()
     }
 
     #[test]
@@ -1213,8 +1223,8 @@ mod tests {
         bars.extend(session_bars(utc(2026, 11, 3, 14, 30), 200.0, &[(0, 202.0), (1, 204.0)]));
         bars.extend(session_bars(utc(2026, 11, 4, 14, 30), 200.0, &[(1, 202.0), (6, 204.0)]));
         let want = BTreeMap::from([
-            (date(10, 30), BTreeMap::from([(630, 101.0 / 100.0 - 1.0), (960, 104.0 / 100.0 - 1.0)])),
-            (date(11, 2), BTreeMap::from([(630, 202.0 / 200.0 - 1.0), (960, 190.0 / 200.0 - 1.0)])),
+            (date(10, 30), BTreeMap::from([(570, 0.0), (630, 101.0 / 100.0 - 1.0), (960, 104.0 / 100.0 - 1.0)])),
+            (date(11, 2), BTreeMap::from([(570, 0.0), (630, 202.0 / 200.0 - 1.0), (960, 190.0 / 200.0 - 1.0)])),
         ]);
         assert_eq!(day_moves("US", &bars), want);
         // Frankfurt runs two hours ahead of UTC on summer time, one after 2026-10-25; its last bar starts at 17:00
@@ -1224,8 +1234,8 @@ mod tests {
         ]
         .concat();
         let want = BTreeMap::from([
-            (date(10, 23), BTreeMap::from([(600, 50.5 / 50.0 - 1.0), (960, 51.0 / 50.0 - 1.0), (1050, 49.0 / 50.0 - 1.0)])),
-            (date(10, 26), BTreeMap::from([(600, 50.5 / 50.0 - 1.0), (960, 52.0 / 50.0 - 1.0), (1050, 53.0 / 50.0 - 1.0)])),
+            (date(10, 23), BTreeMap::from([(540, 0.0), (600, 50.5 / 50.0 - 1.0), (960, 51.0 / 50.0 - 1.0), (1050, 49.0 / 50.0 - 1.0)])),
+            (date(10, 26), BTreeMap::from([(540, 0.0), (600, 50.5 / 50.0 - 1.0), (960, 52.0 / 50.0 - 1.0), (1050, 53.0 / 50.0 - 1.0)])),
         ]);
         assert_eq!(day_moves("EU", &eu), want);
     }
@@ -1265,22 +1275,24 @@ mod tests {
     }
 
     #[test]
-    fn hours_report_grades_each_bar_end_against_the_close() {
+    fn hours_report_grades_each_buy_and_sell_window_against_open_to_close() {
         let names = [
             moves(&[(1, vec![(870, 0.010), (960, 0.000)]), (2, vec![(870, 0.030), (960, 0.010)]), (3, vec![(870, 0.000), (960, 0.015)]), (4, vec![(870, 9.0), (960, 9.0)])]),
             moves(&[(1, vec![(630, 0.005), (870, 0.030), (960, 0.020)]), (2, vec![(870, 0.010), (960, 0.010)])]),
         ];
-        // a session on or after `today` is left out, and 10:30 has one session, so no t
+        // a session on or after `today` is left out, every window with 10:30 in it has one session, so no t,
+        // and a buy at 14:30 earns the move on from there: 1.02 / 1.03 - 1 for the second name on day 1
         assert_eq!(
-            hours_report("US", &names, d(4), 50.0, 870),
+            hours_report("US", &names, d(4), 50.0, (570, 870)),
             "  US: 2 names, 3 sessions 2026-01-02..2026-01-04; cost 50 bp a round trip\
-             \n  US 14:30  3 sessions  gross +133.33 bp (t +2.00)  net +8.33 €/session  halves +200.00|+100.00  vs close +16.67 bp (t +0.20)  <- best, the knob\
-             \n  US 16:00  3 sessions  gross +116.67 bp (t +7.00)  net +6.67 €/session  halves +100.00|+125.00  the close"
+             \n  US 09:30-14:30  3 sessions  gross +133.33 bp (t +2.00)  net +8.33 €/session  halves +200.00|+100.00  vs open-close +16.67 bp (t +0.20)  <- best, the knob\
+             \n  US 09:30-16:00  3 sessions  gross +116.67 bp (t +7.00)  net +6.67 €/session  halves +100.00|+125.00  open to close\
+             \n  US 14:30-16:00  3 sessions  gross -15.05 bp (t -0.18)  net -6.50 €/session  halves -98.05|+26.46  vs open-close -131.71 bp (t -2.00)"
         );
-        let report = hours_report("US", &names, d(4), 50.0, 960);
-        let marks: Vec<&str> = report.lines().skip(1).map(|l| &l[l.rfind("  ").unwrap()..]).collect();
-        assert_eq!(marks, ["  <- best", "  <- the knob"]);
-        assert_eq!(hours_report("US", &names, d(2), 50.0, 870), "  US: no two sessions with 60m bars");
-        assert_eq!(hours_report("EU", &[], d(4), 20.0, 960), "  EU: no two sessions with 60m bars");
+        let report = hours_report("US", &names, d(4), 50.0, (870, 960));
+        let marks: Vec<(bool, bool)> = report.lines().skip(1).map(|l| (l.ends_with("  <- best"), l.ends_with("  <- the knob"))).collect();
+        assert_eq!(marks, [(true, false), (false, false), (false, true)]);
+        assert_eq!(hours_report("US", &names, d(2), 50.0, (570, 870)), "  US: no two sessions with 60m bars");
+        assert_eq!(hours_report("EU", &[], d(4), 20.0, (540, 960)), "  EU: no two sessions with 60m bars");
     }
 }
