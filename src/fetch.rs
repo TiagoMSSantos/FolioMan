@@ -5240,6 +5240,8 @@ struct FactTags {
     assets: &'static [&'static str],
     ocf: &'static [&'static str],
     capex: &'static [&'static str],
+    // (#1195) a line filed apart from the capex line, read on its own: the capex is the larger of the two
+    capex_floor: &'static [&'static str],
     intexp: &'static [&'static str],
     debt_nc: &'static [&'static str],
     debt_cur: &'static [&'static str],
@@ -5342,6 +5344,12 @@ const US_GAAP_TAGS: FactTags = FactTags {
              "PaymentsToAcquireOtherPropertyPlantAndEquipment", "PaymentsToAcquireOtherProductiveAssets",
              "PaymentsForCapitalImprovements", "PaymentsToDevelopRealEstateAssets",
              "SegmentExpenditureAdditionToLongLivedAssets", "PaymentsForProceedsFromProductiveAssets"],
+    // (#1195) AEP files its construction spend under its own line (FY2025 1.22x its operating cash flow,
+    // matching Nasdaq's capex) and 0.41 of it under PaymentsToAcquireProductiveAssets, which read as
+    // positive free cash flow. 4 pond filers carry the line: it fixes AEP, LUV and ED keep their larger
+    // line, and WELL reads its larger leg where Nasdaq prints both summed. shortcut: never summed, so WELL
+    // reads 0.51-0.71 of Nasdaq's capex.
+    capex_floor: &["PaymentsForConstructionInProcess"],
     // (#420) the 2023 taxonomy split interest into operating and nonoperating, and most filers moved to
     // the second: interest_cover read 25.8% of the pool's equities. Last, so a tie keeps the old names.
     // (#478) MCO files only the borrowings line; KR, LEN, DAL only the cash paid, the last resort
@@ -5465,6 +5473,7 @@ const IFRS_TAGS: FactTags = FactTags {
     // (#720) then KSPI's one line for PP&E, intangibles and investment property together
     capex: &["PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
              "PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets"],
+    capex_floor: &[],
     intexp: &["InterestExpense", "FinanceCosts"], // (#703) EQX files only finance costs
     debt_nc: &["LongtermBorrowings", "Borrowings"],
     debt_cur: &["CurrentPortionOfLongtermBorrowings", "ShorttermBorrowings",
@@ -5752,7 +5761,10 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     let assets = collect_instant(tags.assets, &money);
     // (round 107) survival inputs. Duration lines: operating cash flow, capex, interest expense.
     let ocf = collect(tags.ocf, &money);
-    let capex = collect(tags.capex, &money);
+    let mut capex = collect(tags.capex, &money);
+    for (end, v) in collect(tags.capex_floor, &money) {
+        capex.entry(end).and_modify(|c| c.1 = c.1.max(v.1)).or_insert(v);
+    }
     // (#703) a magnitude: LKQ, DIS and FTV file the expense negative
     let intexp: std::collections::BTreeMap<_, _> =
         collect(tags.intexp, &money).into_iter().map(|(end, (filed, i, prior))| (end, (filed, i.abs(), prior))).collect();
@@ -5994,7 +6006,10 @@ fn cash_ttm(g: &Value, tags: &FactTags, money: &str, fy_end: NaiveDate) -> Optio
         }
         m
     };
-    let (ocf, capex) = (spans(tags.ocf), spans(tags.capex));
+    let (ocf, mut capex) = (spans(tags.ocf), spans(tags.capex));
+    for (k, v) in spans(tags.capex_floor) {
+        capex.entry(k).and_modify(|c| c.2 = c.2.max(v.2)).or_insert(v);
+    }
     let both = |k: &(NaiveDate, NaiveDate)| {
         let (&(_, fo, o), &(_, fc, c)) = (ocf.get(k)?, capex.get(k)?);
         Some((fo.max(fc), o, c))
@@ -11837,6 +11852,11 @@ pub(crate) mod tests {
         assert_eq!(read(&[("PaymentsToAcquirePropertyPlantAndEquipment", 50.0), ("PaymentsToAcquireOtherPropertyPlantAndEquipment", 100.0)]).1,
                    Some(25.0), "the old name wins a same-day tie");
         assert_eq!(read(&[("SegmentExpenditureAdditionToLongLivedAssets", 100.0)]).1, Some(20.0), "(#703) URI's segment note");
+        // (#1195) the construction line floors the capex: AEP's sliver under it, LUV's sliver beside it, alone
+        assert_eq!(read(&[("PaymentsToAcquireProductiveAssets", 40.0), ("PaymentsForConstructionInProcess", 100.0)]).1, Some(20.0), "AEP");
+        assert_eq!(read(&[("PaymentsToAcquirePropertyPlantAndEquipment", 100.0), ("PaymentsForConstructionInProcess", 10.0)]).1,
+                   Some(20.0), "LUV");
+        assert_eq!(read(&[("PaymentsForConstructionInProcess", 100.0)]).1, Some(20.0), "the line alone");
     }
 
     /// (#419) Debt under the tags MPC, ORCL and KO moved to is read, the old names still win a same-day
@@ -12881,6 +12901,14 @@ pub(crate) mod tests {
         o.insert(0, fact("2025-01-01", "2025-12-31", "10-K", "2027-02-03", 170.0));
         o.push(fact("2025-01-01", "2025-06-30", "10-Q", "2026-07-23", 70.0));
         assert_eq!(got(&restated), got(&facts(true)), "a later comparative never restates the span");
+        // (#1195) the construction line under each span floors the capex, and a smaller one never lowers it
+        let mut cip = facts(false);
+        cip["PaymentsForConstructionInProcess"] = cip["PaymentsToAcquirePropertyPlantAndEquipment"].clone();
+        cip["PaymentsToAcquirePropertyPlantAndEquipment"] = json!({"units": {"USD": [fact("2025-01-01", "2025-12-31", "10-K", "2026-02-04", 1.0)]}});
+        assert_eq!(got(&cip), got(&facts(false)), "AEP");
+        let mut small = facts(false);
+        small["PaymentsForConstructionInProcess"] = json!({"units": {"USD": [fact("2025-01-01", "2025-12-31", "10-K", "2026-02-04", 1.0)]}});
+        assert_eq!(got(&small), got(&facts(false)), "LUV");
         // the year-ago span ends a year before, so Q1 2025 is never it
         let mut q1 = facts(true);
         for (tag, v) in [("NetCashProvidedByUsedInOperatingActivities", 30.0), ("PaymentsToAcquirePropertyPlantAndEquipment", 20.0)] {
