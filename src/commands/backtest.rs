@@ -2577,7 +2577,8 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
 ///
 /// (#1212) The hours census last: today's members and `EU_POND` on 2y of 60m bars. (#1214) Each window's mean
 /// move, from a buy at the open or a bar end to a sell at a later bar end, the census the Intraday table's
-/// hour knobs are picked from.
+/// hour knobs are picked from. (#1215) Then the holds census: the same bars, and the 10y daily ones, held
+/// from the buy session to up to 21 sessions on, every name and the `intraday_key` book.
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::intraday
 async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     use crate::heuristics::intraday;
@@ -2593,6 +2594,8 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         "\n── (#809) INTRADAY: buy at the open, sell at the close, top {} equal weight, net of cost ──",
         intraday::BOOK
     );
+    // (#1215) per market, the book the holds census grades on 60m bars and its daily lines
+    let mut held = Vec::new();
     // the walk sorts each session by key then ticker, so fetch completion order cannot move a number
     for (market, names, cost) in [("US", &us, intraday::COST_BPS_US), ("EU", &eu, intraday::COST_BPS_EU)] {
         let charts: Vec<(&str, fetch::Chart)> = stream::iter(names)
@@ -2612,34 +2615,52 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         for k in 1..=intraday::KEYS.len() as u8 {
             println!("{}", intraday::report(market, k, &intraday::walk(k, &pond, today), cost));
         }
+        // today's members, each ranked every day: US*, and (#1215) the pond the holds census's book is ranked on
+        let now: Vec<intraday::Member> = pond
+            .iter()
+            .filter(|m| m.3.is_none_or(|s| core::sp500_member_at(s, today)))
+            .map(|&(tk, c, fx, _)| (tk, c, fx, None))
+            .collect();
         if market == "US" {
-            let now: Vec<intraday::Member> = pond
-                .iter()
-                .filter(|m| m.3.is_some_and(|s| core::sp500_member_at(s, today)))
-                .map(|&(tk, c, fx, _)| (tk, c, fx, None))
-                .collect();
             println!("  US* pond: {} of today's members, each ranked every day (survivor-biased, as EU)", now.len());
             for k in 1..=intraday::KEYS.len() as u8 {
                 println!("{}", intraday::report("US*", k, &intraday::walk(k, &now, today), cost));
             }
         }
+        let k = settings.intraday_key;
+        held.push((intraday::books(k, &now, today), intraday::daily_holds(market, k, &pond, today, cost, &intraday::HOLDS)));
     }
     // (#1214) the census the Intraday table's hour knobs are picked from: today's members, as on the page
     println!("\n── (#1214) BUY AND SELL HOURS: buy at the open or a 60m bar's end, sell at a later one, every name equal weight, 2y ──");
-    for (market, names, cost, exit) in
+    let mut holds = Vec::new();
+    for ((market, names, cost, exit), (books, daily)) in
         [("US", intraday::us_pond(&spans, today), intraday::COST_BPS_US, settings.intraday_exit_us), ("EU", eu, intraday::COST_BPS_EU, settings.intraday_exit_eu)]
+            .into_iter()
+            .zip(&held)
     {
         let knob = (config::session(market).0, exit);
-        let mut got: Vec<(&str, _)> = stream::iter(&names)
-            .map(|tk| async move { Some((tk.as_str(), intraday::day_moves(market, &fetch::fetch_hourly(client, &settings.urls, tk, "2y").await?))) })
+        let mut got: Vec<(&str, _, _)> = stream::iter(&names)
+            .map(|tk| async move {
+                let bars = fetch::fetch_hourly(client, &settings.urls, tk, "2y").await?;
+                Some((tk.as_str(), intraday::day_moves(market, &bars), intraday::day_prices(market, &bars)))
+            })
             .buffer_unordered(fetch::fetch_concurrency())
             .filter_map(std::future::ready)
             .collect()
             .await;
         // the means add up in ticker order, so fetch completion order cannot move a digit
         got.sort_by(|a, b| a.0.cmp(b.0));
-        let days: Vec<_> = got.into_iter().map(|g| g.1).collect();
+        let (days, prices): (Vec<_>, Vec<_>) = got.into_iter().map(|(tk, m, p)| (m, (tk, p))).unzip();
         println!("{}", intraday::hours_report(market, &days, today, cost, knob));
+        holds.push(format!("{}\n{daily}", intraday::holds_report(market, &prices, books, today, cost, &intraday::HOLDS)));
+    }
+    println!("\n── (#1215) HOLDS: buy on one session, sell on it or H sessions on, every name equal weight and the intraday_key book, one round trip ──");
+    println!("  CAVEATS: a long hold mostly earns the market's drift, which the whole-span line prices; the best of up");
+    println!("  to 64 (US) or 100 (EU) hour pairs wins partly by luck, so read it beside open-close; the 60m side is");
+    println!("  today's members, so survivor-biased; holds start every H sessions, one phase, and halves split by count;");
+    println!("  the daily lines run open to close on 10y of bars, the US side on the index as it stood each day.");
+    for h in holds {
+        println!("{h}");
     }
 }
 

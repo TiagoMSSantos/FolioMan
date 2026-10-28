@@ -28,7 +28,8 @@
 //! (#1212) Two more columns sell the same sessions at a set hour, `intraday_exit_us` New York time and
 //! `intraday_exit_eu` Frankfurt time, on each book name's 60m bars; `backtest N intraday` ends on the
 //! hours census the two knobs are picked from, (#1214) every buy hour and later sell hour. Display only,
-//! like the rest of the table.
+//! like the rest of the table. (#1215) The census then holds past the session: a buy on one session and a
+//! sell up to `HOLDS` sessions on, at every hour pair on the 60m bars and open to close on the daily ones.
 
 use crate::config::session;
 use crate::core;
@@ -74,6 +75,12 @@ pub const EU_POND: &[&str] = &[
 /// One pond member: ticker, daily chart, EUR per unit of its currency, and its index spans (`None` =
 /// a member every day).
 pub type Member<'a> = (&'a str, &'a Chart, f64, Option<&'a [(NaiveDate, Option<NaiveDate>)]>);
+
+/// (#1215) A name's full 60m sessions, each as its prices keyed by minutes on the exchange's clock.
+pub type Prices = BTreeMap<NaiveDate, BTreeMap<u32, f64>>;
+
+/// (#1215) The hold lengths the census grades: sessions between the buy session and the sell session.
+pub const HOLDS: [usize; 7] = [0, 1, 2, 5, 10, 15, 21];
 
 /// One graded session: how many names ranked, the gross mean open-to-close return of the book and of
 /// every ranked name, and (#829) the share of each that closed above its open.
@@ -155,7 +162,12 @@ fn tug(c: &Chart, i: usize) -> Option<(f64, f64)> {
 
 /// The realized open-to-close return of the session at bar `i`.
 pub fn session_return(c: &Chart, i: usize) -> Option<f64> {
-    Some(pos(c.closes[i])? / pos(c.opens[i])? - 1.0)
+    held_return(c, i, 0)
+}
+
+/// (#1215) Bought at bar `i`'s open and sold at the close of the bar `h` after it.
+fn held_return(c: &Chart, i: usize, h: usize) -> Option<f64> {
+    Some(pos(*c.closes.get(i + h)?)? / pos(c.opens[i])? - 1.0)
 }
 
 /// How many bars are completed sessions, dated before `today`. A bar dated today may still be trading.
@@ -179,15 +191,16 @@ fn mean(xs: &[f64]) -> f64 {
 }
 
 /// Each session dated on or after `since` and before `until`, with every member that ranks on key `k`
-/// that day as (ticker, key, open-to-close return), in rank order.
-fn sessions<'a>(k: u8, pond: &[Member<'a>], since: NaiveDate, until: NaiveDate) -> BTreeMap<NaiveDate, Vec<(&'a str, f64, f64)>> {
+/// that day as (ticker, key, open-to-close return), in rank order. (#1215) The return runs to the close
+/// `h` sessions on, a bar that must be completed before `until` too.
+fn sessions<'a>(k: u8, pond: &[Member<'a>], since: NaiveDate, until: NaiveDate, h: usize) -> BTreeMap<NaiveDate, Vec<(&'a str, f64, f64)>> {
     let mut by: BTreeMap<NaiveDate, Vec<(&str, f64, f64)>> = BTreeMap::new();
     for &(tk, c, fx, spans) in pond {
-        for i in completed(c, since)..completed(c, until) {
+        for i in completed(c, since)..completed(c, until).saturating_sub(h) {
             if spans.is_some_and(|s| !core::sp500_member_at(s, c.dates[i])) || !liquid(c, i, fx) {
                 continue;
             }
-            if let (Some(score), Some(r)) = (key(k, c, i), session_return(c, i)) {
+            if let (Some(score), Some(r)) = (key(k, c, i), held_return(c, i, h)) {
                 by.entry(c.dates[i]).or_default().push((tk, score, r));
             }
         }
@@ -200,7 +213,12 @@ fn sessions<'a>(k: u8, pond: &[Member<'a>], since: NaiveDate, until: NaiveDate) 
 
 /// Every completed session where at least `BOOK` names rank on key `k`, in date order.
 pub fn walk(k: u8, pond: &[Member], today: NaiveDate) -> Vec<Day> {
-    sessions(k, pond, NaiveDate::MIN, today)
+    walk_held(k, pond, today, 0)
+}
+
+/// (#1215) [`walk`] with each name held from the open to the close `h` sessions on.
+pub fn walk_held(k: u8, pond: &[Member], today: NaiveDate, h: usize) -> Vec<Day> {
+    sessions(k, pond, NaiveDate::MIN, today, h)
         .into_iter()
         .filter(|(_, v)| v.len() >= BOOK)
         .map(|(date, v)| {
@@ -208,6 +226,15 @@ pub fn walk(k: u8, pond: &[Member], today: NaiveDate) -> Vec<Day> {
             let up = |xs: &[f64]| xs.iter().filter(|&&r| r > 0.0).count() as f64 / xs.len() as f64;
             Day { date, n: v.len(), book: mean(&rs[..BOOK]), all: mean(&rs), hit: up(&rs[..BOOK]), all_hit: up(&rs) }
         })
+        .collect()
+}
+
+/// (#1215) The book [`walk`] holds on each session: its top `BOOK` tickers, in rank order.
+pub fn books(k: u8, pond: &[Member], today: NaiveDate) -> BTreeMap<NaiveDate, Vec<String>> {
+    sessions(k, pond, NaiveDate::MIN, today, 0)
+        .into_iter()
+        .filter(|(_, v)| v.len() >= BOOK)
+        .map(|(d, v)| (d, v[..BOOK].iter().map(|x| x.0.to_string()).collect()))
         .collect()
 }
 
@@ -506,6 +533,12 @@ fn offset(market: &str, utc: NaiveDateTime) -> i64 {
 /// last bar, drops out. (#1214) The open itself is keyed too, at 0, so a buy at any key and a sell at a
 /// later one is `(1 + sell) / (1 + buy) - 1`.
 pub fn day_moves(market: &str, bars: &[(i64, f64, f64)]) -> BTreeMap<NaiveDate, BTreeMap<u32, f64>> {
+    let open = session(market).0;
+    day_prices(market, bars).into_iter().map(|(d, p)| (d, p.iter().map(|(&m, &x)| (m, x / p[&open] - 1.0)).collect())).collect()
+}
+
+/// (#1215) [`day_moves`]'s sessions as prices: the open's at the open, and each bar's close at its end.
+pub fn day_prices(market: &str, bars: &[(i64, f64, f64)]) -> Prices {
     let (open, close) = session(market);
     let mut days: BTreeMap<NaiveDate, Vec<(u32, f64, f64)>> = BTreeMap::new();
     for &(t, o, c) in bars {
@@ -519,8 +552,7 @@ pub fn day_moves(market: &str, bars: &[(i64, f64, f64)]) -> BTreeMap<NaiveDate, 
     days.into_iter()
         .filter_map(|(d, b)| {
             let o = pos(b.iter().find(|x| x.0 == open)?.1)?;
-            let ends: BTreeMap<u32, f64> =
-                std::iter::once((open, 0.0)).chain(b.iter().filter_map(|&(m, _, c)| Some(((m + 60).min(close), pos(c)? / o - 1.0)))).collect();
+            let ends: BTreeMap<u32, f64> = std::iter::once((open, o)).chain(b.iter().filter_map(|&(m, _, c)| Some(((m + 60).min(close), pos(c)?)))).collect();
             ends.contains_key(&close).then_some((d, ends))
         })
         .collect()
@@ -654,6 +686,109 @@ pub fn hours_report(market: &str, names: &[BTreeMap<NaiveDate, BTreeMap<u32, f64
         );
     }
     out
+}
+
+/// (#1215) One graded hold length, `s` the gross return a hold and `h` the sessions after the buy session:
+/// net € at €1,000 after one round trip, a hold and a session held, a same-session hold counting as one.
+fn hold_line(label: &str, s: &Stats, cost_bps: f64, h: usize) -> String {
+    let net = (s.mean * 1e4 - cost_bps) / 10.0;
+    format!(
+        "{label}  {} holds  gross {:+.2} bp (t {:+.2})  net {:+.2} € a hold, {:+.2} € a session  halves {:+.2}|{:+.2}",
+        s.n,
+        s.mean * 1e4,
+        s.t,
+        net,
+        net / h.max(1) as f64,
+        s.h1 * 1e4,
+        s.h2 * 1e4
+    )
+}
+
+/// (#1215) The `backtest N intraday` holds lines for one market, on each name's [`day_prices`] before
+/// `today`. For each `h` in `holds`, a buy at any key of one session and a sell at any key `h` sessions on
+/// (a later key when `h` is 0): its mean return over every name with both prices, equal weight, and over
+/// the names in that session's `books` entry. A hold starts every `h` sessions (every session for 0), so
+/// none overlaps the next. Per `h` and name set, the best gross pair and the open to close one. Before
+/// them, the whole span: each name bought at the first session's open and sold at the last one's close.
+/// shortcut: one phase per hold length; the other `h - 1` phases would use every start.
+pub fn holds_report(market: &str, names: &[(&str, Prices)], books: &BTreeMap<NaiveDate, Vec<String>>, today: NaiveDate, cost_bps: f64, holds: &[usize]) -> String {
+    let (open, close) = session(market);
+    let cal: Vec<NaiveDate> = names.iter().flat_map(|n| n.1.range(..today).map(|x| *x.0)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let &[first, .., last] = &cal[..] else {
+        return format!("  {market}: no two sessions with 60m bars");
+    };
+    let hm = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+    let mut out = format!("  {market}: {} names, {} sessions {first}..{last}; cost {cost_bps} bp a round trip", names.len(), cal.len());
+    let span: Vec<f64> = names.iter().filter_map(|(_, p)| Some(p.get(&last)?.get(&close)? / p.get(&first)?.get(&open)? - 1.0)).collect();
+    out += &if span.is_empty() {
+        format!("\n  {market} whole span: no name has both the first session and the last")
+    } else {
+        let gross = mean(&span) * 1e4;
+        format!(
+            "\n  {market} whole span: {} names bought at the first open and sold at the last close  gross {gross:+.1} bp  net {:+.2} € a session over {}",
+            span.len(),
+            (gross - cost_bps) / 10.0 / (cal.len() - 1) as f64,
+            cal.len() - 1
+        )
+    };
+    for &h in holds {
+        let (mut pond, mut book) = (BTreeMap::<(u32, u32), Vec<f64>>::new(), BTreeMap::new());
+        for c in (0..cal.len().saturating_sub(h)).step_by(h.max(1)) {
+            let held = books.get(&cal[c]);
+            let mut day: BTreeMap<_, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
+            for (tk, p) in names {
+                let (Some(a), Some(b)) = (p.get(&cal[c]), p.get(&cal[c + h])) else { continue };
+                let in_book = held.is_some_and(|v| v.iter().any(|x| x == tk));
+                for (&kb, &pb) in a {
+                    for (&ks, &ps) in b.range(if h == 0 { kb + 1 } else { 0 }..) {
+                        let e = day.entry((kb, ks)).or_default();
+                        e.0.push(ps / pb - 1.0);
+                        if in_book {
+                            e.1.push(ps / pb - 1.0);
+                        }
+                    }
+                }
+            }
+            for (w, (all, bk)) in day {
+                pond.entry(w).or_default().push(mean(&all));
+                if !bk.is_empty() {
+                    book.entry(w).or_default().push(mean(&bk));
+                }
+            }
+        }
+        for (set, by) in [("pond", &pond), ("book", &book)] {
+            let label = format!("  {market} {set} sell day +{h}");
+            let rows: Vec<((u32, u32), Stats)> = by.iter().filter_map(|(w, xs)| Some((*w, stats(xs)?))).collect();
+            out += &match (rows.iter().max_by(|a, b| a.1.mean.total_cmp(&b.1.mean)), rows.iter().find(|r| r.0 == (open, close))) {
+                (Some(b), Some(o)) => format!(
+                    "\n{}\n{}",
+                    hold_line(&format!("{label}  best {}-{}", hm(b.0.0), hm(b.0.1)), &b.1, cost_bps, h),
+                    hold_line(&format!("{label}  open-close"), &o.1, cost_bps, h)
+                ),
+                _ => format!("\n{label}  no two holds"),
+            };
+        }
+    }
+    out
+}
+
+/// (#1215) The same hold lengths on daily bars, the [`walk_held`] sessions every `h` sessions (every
+/// session for 0), bought at the open and sold at the close `h` sessions on: the whole ranked pond equal
+/// weight, then key `k`'s book.
+/// shortcut: one phase per hold length, as in [`holds_report`].
+pub fn daily_holds(market: &str, k: u8, pond: &[Member], today: NaiveDate, cost_bps: f64, holds: &[usize]) -> String {
+    let mut out = Vec::new();
+    for &h in holds {
+        let days: Vec<Day> = walk_held(k, pond, today, h).into_iter().step_by(h.max(1)).collect();
+        for (set, xs) in [("pond", days.iter().map(|d| d.all).collect::<Vec<f64>>()), ("book", days.iter().map(|d| d.book).collect())] {
+            let label = format!("  {market} daily {set} sell day +{h} open-close");
+            out.push(match stats(&xs) {
+                Some(s) => hold_line(&label, &s, cost_bps, h),
+                None => format!("{label}  no two holds"),
+            });
+        }
+    }
+    out.join("\n")
 }
 
 #[cfg(test)]
@@ -840,6 +975,9 @@ mod tests {
         // (#829) N00 closes flat at its open, a miss
         assert_eq!((day.hit, day.all_hit), (1.0, 11.0 / 12.0));
         assert!(walk(3, &all_in, d(30)).is_empty(), "bar 30 dated today is not completed");
+        // (#1215) the book that session, in rank order
+        let top: Vec<String> = (2..12).rev().map(|n| format!("N{n:02}")).collect();
+        assert_eq!(books(3, &all_in, d(31)), BTreeMap::from([(d(30), top)]));
 
         // a name out of the index that day, and a name under the floor, both drop out
         let out = [(d(0), Some(d(30)))];
@@ -859,6 +997,39 @@ mod tests {
         pond[9].1 = &thin;
         pond[11].3 = Some(&out);
         assert!(walk(3, &pond, d(31)).is_empty());
+        assert!(books(3, &pond, d(31)).is_empty());
+    }
+
+    /// (#1215) Twelve names that open at 100 every session and close at 100 (1 + n f) on the last five.
+    #[test]
+    fn daily_holds_sell_h_sessions_on_and_start_a_hold_every_h_sessions() {
+        let names: Vec<String> = (0..12).map(|n| format!("N{n:02}")).collect();
+        let f = [0.01, 0.005, -0.0025, 0.004, -0.002];
+        let charts: Vec<Chart> = (0..12)
+            .map(|n| {
+                let mut c = [100.0 * (1.0 + n as f64 / 1000.0); 35];
+                for (j, x) in f.iter().enumerate() {
+                    c[30 + j] = 100.0 * (1.0 + n as f64 * x);
+                }
+                chart(&[100.0; 35], &c, 1e5)
+            })
+            .collect();
+        let pond: Vec<Member> = names.iter().zip(&charts).map(|(t, c)| (t.as_str(), c, 1.0, None)).collect();
+        let held = walk_held(3, &pond, d(35), 1);
+        assert_eq!(held.iter().map(|x| x.date).collect::<Vec<_>>(), [d(30), d(31), d(32), d(33)], "bar 34 has no close a session on");
+        assert!((held[0].book - (2..12).sum::<usize>() as f64 * 0.005 / 10.0).abs() < 1e-12, "sold at bar 31's close");
+        // a hold of two sessions starts on bars 30 and 32 and sells at 32 and 34; three sessions is one hold
+        assert_eq!(
+            daily_holds("US", 3, &pond, d(35), 50.0, &[0, 1, 2, 3]),
+            "  US daily pond sell day +0 open-close  5 holds  gross +159.50 bp (t +1.24)  net +10.95 € a hold, +10.95 € a session  halves +412.50|-9.17\
+             \n  US daily book sell day +0 open-close  5 holds  gross +188.50 bp (t +1.24)  net +13.85 € a hold, +13.85 € a session  halves +487.50|-10.83\
+             \n  US daily pond sell day +1 open-close  4 holds  gross +61.88 bp (t +0.57)  net +1.19 € a hold, +1.19 € a session  halves +68.75|+55.00\
+             \n  US daily book sell day +1 open-close  4 holds  gross +73.13 bp (t +0.57)  net +2.31 € a hold, +2.31 € a session  halves +81.25|+65.00\
+             \n  US daily pond sell day +2 open-close  2 holds  gross -123.75 bp (t -9.00)  net -17.37 € a hold, -8.69 € a session  halves -137.50|-110.00\
+             \n  US daily book sell day +2 open-close  2 holds  gross -146.25 bp (t -9.00)  net -19.62 € a hold, -9.81 € a session  halves -162.50|-130.00\
+             \n  US daily pond sell day +3 open-close  no two holds\
+             \n  US daily book sell day +3 open-close  no two holds"
+        );
     }
 
     #[test]
@@ -1230,6 +1401,12 @@ mod tests {
             (date(11, 2), BTreeMap::from([(570, 0.0), (630, 202.0 / 200.0 - 1.0), (960, 190.0 / 200.0 - 1.0)])),
         ]);
         assert_eq!(day_moves("US", &bars), want);
+        // (#1215) the same keys on the prices themselves
+        let prices = BTreeMap::from([
+            (date(10, 30), BTreeMap::from([(570, 100.0), (630, 101.0), (960, 104.0)])),
+            (date(11, 2), BTreeMap::from([(570, 200.0), (630, 202.0), (960, 190.0)])),
+        ]);
+        assert_eq!(day_prices("US", &bars), prices);
         // Frankfurt runs two hours ahead of UTC on summer time, one after 2026-10-25; its last bar starts at 17:00
         let eu = [
             session_bars(utc(2026, 10, 23, 7, 0), 50.0, &[(0, 50.5), (6, 51.0), (8, 49.0)]),
@@ -1241,6 +1418,11 @@ mod tests {
             (date(10, 26), BTreeMap::from([(540, 0.0), (600, 50.5 / 50.0 - 1.0), (960, 52.0 / 50.0 - 1.0), (1050, 53.0 / 50.0 - 1.0)])),
         ]);
         assert_eq!(day_moves("EU", &eu), want);
+        let prices = BTreeMap::from([
+            (date(10, 23), BTreeMap::from([(540, 50.0), (600, 50.5), (960, 51.0), (1050, 49.0)])),
+            (date(10, 26), BTreeMap::from([(540, 50.0), (600, 50.5), (960, 52.0), (1050, 53.0)])),
+        ]);
+        assert_eq!(day_prices("EU", &eu), prices);
     }
 
     #[test]
@@ -1297,5 +1479,81 @@ mod tests {
         assert_eq!(marks, [(true, false), (false, false), (false, true)]);
         assert_eq!(hours_report("US", &names, d(2), 50.0, (570, 870)), "  US: no two sessions with 60m bars");
         assert_eq!(hours_report("EU", &[], d(4), 20.0, (540, 960)), "  EU: no two sessions with 60m bars");
+    }
+
+    /// (#1215) Sessions as [`day_prices`] keys them.
+    fn prices(days: &[(usize, Vec<(u32, f64)>)]) -> Prices {
+        days.iter().map(|(i, e)| (d(*i), e.iter().copied().collect())).collect()
+    }
+
+    #[test]
+    fn holds_report_grades_every_buy_key_against_every_sell_key_h_sessions_on() {
+        // A falls through its first two sessions and B through its second and last, the book's sessions, so
+        // every same-session book pair loses; C has no first or second session; the session on `today` is out
+        let names = [
+            (
+                "A",
+                prices(&[
+                    (1, vec![(570, 102.0), (870, 101.0), (960, 100.0)]),
+                    (2, vec![(570, 101.0), (870, 100.5), (960, 99.0)]),
+                    (3, vec![(570, 103.5), (870, 106.0), (960, 104.0)]),
+                    (4, vec![(570, 104.0), (870, 103.0), (960, 102.0)]),
+                    (5, vec![(570, 102.0), (870, 105.0), (960, 107.0)]),
+                    (6, vec![(570, 1e3), (870, 1e3), (960, 1e3)]),
+                ]),
+            ),
+            (
+                "B",
+                prices(&[
+                    (1, vec![(570, 50.0), (870, 51.0), (960, 50.5)]),
+                    (2, vec![(570, 50.5), (870, 50.0), (960, 49.0)]),
+                    (3, vec![(570, 49.0), (960, 50.0)]),
+                    (4, vec![(570, 50.0), (870, 52.0), (960, 51.0)]),
+                    (5, vec![(570, 52.0), (870, 51.0), (960, 50.5)]),
+                ]),
+            ),
+            (
+                "C",
+                prices(&[
+                    (3, vec![(570, 20.0), (870, 19.8), (960, 20.6)]),
+                    (4, vec![(570, 20.6), (870, 21.0), (960, 20.8)]),
+                    (5, vec![(570, 21.0), (870, 21.2), (960, 20.9)]),
+                ]),
+            ),
+        ];
+        let held = |v: &[&str]| v.iter().map(|t| t.to_string()).collect::<Vec<String>>();
+        // the book holds no name with prices on the third session, and nothing on the fourth
+        let books = BTreeMap::from([(d(1), held(&["A"])), (d(2), held(&["A", "B"])), (d(3), held(&["Z"])), (d(5), held(&["B"]))]);
+        // a hold of a session or more may sell at an earlier key than it bought at: 16:00 to 14:30 the next day
+        assert_eq!(
+            holds_report("US", &names, &books, d(6), 50.0, &[0, 1, 2, 5]),
+            "  US: 3 names, 5 sessions 2026-01-02..2026-01-06; cost 50 bp a round trip\
+             \n  US whole span: 2 names bought at the first open and sold at the last close  gross +295.1 bp  net +6.13 € a session over 4\
+             \n  US pond sell day +0  best 09:30-14:30  5 holds  gross +55.84 bp (t +1.46)  net +0.58 € a hold, +0.58 € a session  halves -11.64|+100.82\
+             \n  US pond sell day +0  open-close  5 holds  gross -5.03 bp (t -0.07)  net -5.50 € a hold, -5.50 € a session  halves -147.78|+90.14\
+             \n  US book sell day +0  best 09:30-14:30  3 holds  gross -121.53 bp (t -3.37)  net -17.15 € a hold, -17.15 € a session  halves -98.04|-133.28\
+             \n  US book sell day +0  open-close  3 holds  gross -244.02 bp (t -9.13)  net -29.40 € a hold, -29.40 € a session  halves -196.08|-267.99\
+             \n  US pond sell day +1  best 16:00-14:30  4 holds  gross +252.68 bp (t +1.60)  net +20.27 € a hold, +20.27 € a session  halves +341.28|+164.07\
+             \n  US pond sell day +1  open-close  4 holds  gross +62.77 bp (t +0.59)  net +1.28 € a hold, +1.28 € a session  halves -74.02|+199.55\
+             \n  US book sell day +1  best 16:00-14:30  2 holds  gross +378.54 bp (t +1.15)  net +32.85 € a hold, +32.85 € a session  halves +50.00|+707.07\
+             \n  US book sell day +1  open-close  2 holds  gross -97.55 bp (t -0.50)  net -14.76 € a hold, -14.76 € a session  halves -294.12|+99.01\
+             \n  US pond sell day +2  best 14:30-14:30  2 holds  gross +400.71 bp (t +4.25)  net +35.07 € a hold, +17.54 € a session  halves +495.05|+306.37\
+             \n  US pond sell day +2  open-close  2 holds  gross +231.40 bp (t +1.74)  net +18.14 € a hold, +9.07 € a session  halves +98.04|+364.76\
+             \n  US book sell day +2  no two holds\
+             \n  US pond sell day +5  no two holds\
+             \n  US book sell day +5  no two holds"
+        );
+        assert_eq!(holds_report("US", &names, &books, d(2), 50.0, &[0]), "  US: no two sessions with 60m bars");
+        assert_eq!(holds_report("EU", &[], &BTreeMap::new(), d(6), 20.0, &[0]), "  EU: no two sessions with 60m bars");
+        // no name has both ends of the span
+        let apart = [("P", prices(&[(1, vec![(540, 10.0), (1050, 10.0)])])), ("Q", prices(&[(2, vec![(540, 10.0), (1050, 11.0)])]))];
+        assert_eq!(
+            holds_report("EU", &apart, &BTreeMap::new(), d(3), 20.0, &[0]),
+            "  EU: 2 names, 2 sessions 2026-01-02..2026-01-03; cost 20 bp a round trip\
+             \n  EU whole span: no name has both the first session and the last\
+             \n  EU pond sell day +0  best 09:00-17:30  2 holds  gross +500.00 bp (t +1.00)  net +48.00 € a hold, +48.00 € a session  halves +0.00|+1000.00\
+             \n  EU pond sell day +0  open-close  2 holds  gross +500.00 bp (t +1.00)  net +48.00 € a hold, +48.00 € a session  halves +0.00|+1000.00\
+             \n  EU book sell day +0  no two holds"
+        );
     }
 }
