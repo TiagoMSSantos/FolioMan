@@ -1263,6 +1263,14 @@ widths:
   #  the table listed it. The help line calls that hindsight.
   #  DISPLAY ONLY: no figure changes; the table stays off trade, size, BUY NOW and the broker.
   #  REVERT RULE: restore the (#1206) wording of the hover and the help line.
+  #── (#1208) USER DECISION 2026-10-28: P/L(EUR) HOVER GIVES THE AVERAGE A SESSION ──
+  #  WHY: the owner asked whether MRNA's +€977.41 is all 206 sessions of €1,000 day trades earned. It is,
+  #  about €4.74 a session after costs and €9.74 before, so the edge a session is thinner than its €5
+  #  round trip. A total alone hid that.
+  #  BUILT: the P/L(EUR) hover appends "about {net ÷ sessions} a session ({gross ÷ sessions} before
+  #  costs)"; a row with no session divides by one and reads +€0.00. The help line names the average.
+  #  DISPLAY ONLY: no cell, rank or figure changes; the table stays off trade, size, BUY NOW and the broker.
+  #  REVERT RULE: drop the clause, its two arguments and the `per` closure, and the help line's addition.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
