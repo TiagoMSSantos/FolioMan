@@ -1253,6 +1253,16 @@ widths:
   #  DISPLAY ONLY: the intraday key, rank, journal and track never read it, and the table stays off
   #  trade, size, BUY NOW and the broker.
   #  REVERT RULE: drop the P/L(EUR) cell and its help line.
+  #── (#1207) USER DECISION 2026-10-28: P/L(EUR) SPELLS OUT ITS STAKE AND ITS HINDSIGHT ──
+  #  WHY: the owner asked what MRNA's +€977.41 meant. It is a fresh €1,000 traded open to close on all
+  #  206 sessions since 2026-01-02, +€2,007.41 before costs less 206 × €5 of round trips. The cell never
+  #  said the stake is refilled each session, nor that it counts every session of the name, so it reads
+  #  in hindsight and is not what following the table day by day would have earned.
+  #  BUILT: the P/L(EUR) hover and its help line now say a fresh €1,000 each session (a gain is not
+  #  reinvested, a loss is topped back up) and that every session of the name counts, not only the days
+  #  the table listed it. The help line calls that hindsight.
+  #  DISPLAY ONLY: no figure changes; the table stays off trade, size, BUY NOW and the broker.
+  #  REVERT RULE: restore the (#1206) wording of the hover and the help line.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
