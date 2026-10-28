@@ -5376,7 +5376,15 @@ const US_GAAP_TAGS: FactTags = FactTags {
     // at 19 of 45 filers and overshoots it at 10, so DLR, EXR, ESS, BXP, O and MAA still read one leg.
     // Nor is a LongTermDebt equal to its current leg counted once: LLYVA's is the same debt twice, SWKS's
     // is two equal tranches.
-    debt_total: &["LongTermDebt", "DebtAndCapitalLeaseObligations"],
+    // (#1194) then the two combined totals 13 pond filers carry beside partial legs: KVUE files only its
+    // current portion (9% of the debt) under a leg we read, BG's and SHW's LongTermDebt leaves out their
+    // short-term borrowings, and GM, STT and PGR file no other debt line at all. CY2025 frames against
+    // Nasdaq: of 11 movers, 7 now match within 10% and CRBG, GS and JPM land closer. USB moves to 3.5x
+    // Nasdaq's figure, which for a bank prints only the short-term borrowings. shortcut: the last name
+    // leaves out short-term borrowings and is a floor, not a sum, so JPM and USB read their long-term
+    // debt without them.
+    debt_total: &["LongTermDebt", "DebtAndCapitalLeaseObligations", "DebtLongtermAndShorttermCombinedAmount",
+                  "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"],
     cash: &["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
     // (#410) Excluding-acquired FIRST: a same-day tie keeps the first tag, and JNJ files only its acquired
     // in-process R&D under the bare tag (FY2025 0.11B vs 14.7B organic), which read as 0.1% of revenue.
@@ -11880,6 +11888,11 @@ pub(crate) mod tests {
         assert_eq!(row(&[("DebtAndCapitalLeaseObligations", 500.0)], Some(10.0)).debt, Some(500.0), "HTZ: the total is known debt");
         assert_eq!(row(&[("LongTermDebt", 300.0), ("DebtCurrent", 100.0)], None).debt, Some(400.0),
                    "a LongTermDebt filed as the noncurrent leg keeps its current leg");
+        // (#1194) the combined totals: KVUE's current portion alone under its whole debt, GM's total alone
+        assert_eq!(row(&[("LongTermDebtCurrent", 90.0), ("DebtLongtermAndShorttermCombinedAmount", 1000.0)], Some(10.0)).debt,
+                   Some(1000.0), "KVUE");
+        assert_eq!(row(&[("LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities", 500.0)], Some(10.0)).debt,
+                   Some(500.0), "GM: the total is known debt");
     }
 
     /// (#85) `supersedes`, the tie-break itself. All four combinations, because the two that involve an
