@@ -2574,6 +2574,9 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
 /// as a member every day: the way `EU_POND` is built. A key's US* minus US hit diff is what a static
 /// pond adds. Pre-registered: an EU hit pass stands only if its diff, less that key's addition, still
 /// clears t 3 at the EU line's own noise (diff x 3 / t).
+///
+/// (#1212) EXIT HOURS last: today's members and `EU_POND` on 2y of 60m bars, each bar end's mean move from
+/// the open, the census the `intraday_exit_*` knobs are picked from.
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::intraday
 async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     use crate::heuristics::intraday;
@@ -2619,6 +2622,22 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
                 println!("{}", intraday::report("US*", k, &intraday::walk(k, &now, today), cost));
             }
         }
+    }
+    // (#1212) the census the `intraday_exit_*` knobs are picked from: today's members, as on the page
+    println!("\n── (#1212) EXIT HOURS: buy at the open, sell at each 60m bar's end, every name equal weight, 2y ──");
+    for (market, names, cost, knob) in
+        [("US", intraday::us_pond(&spans, today), intraday::COST_BPS_US, settings.intraday_exit_us), ("EU", eu, intraday::COST_BPS_EU, settings.intraday_exit_eu)]
+    {
+        let mut got: Vec<(&str, _)> = stream::iter(&names)
+            .map(|tk| async move { Some((tk.as_str(), intraday::day_moves(market, &fetch::fetch_hourly(client, &settings.urls, tk, "2y").await?))) })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        // the means add up in ticker order, so fetch completion order cannot move a digit
+        got.sort_by(|a, b| a.0.cmp(b.0));
+        let days: Vec<_> = got.into_iter().map(|g| g.1).collect();
+        println!("{}", intraday::hours_report(market, &days, today, cost, knob));
     }
 }
 

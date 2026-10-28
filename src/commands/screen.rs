@@ -1748,7 +1748,8 @@ fn meta_alerts(
 /// session counts once the exchange closes, read off the UTC clock. (#824) Each book name as a bare
 /// quote, its profile looked up as the pool's are, for the NAME link; a market's prices convert at its
 /// one currency's rate. (#827) The bars reach back to `since` for the RIGHT/FAIL column, which counts
-/// every session on each book name's own bars, so the US pond is today's members only.
+/// every session on each book name's own bars, so the US pond is today's members only. (#1212) Each book
+/// name's 2y of 60m bars fill the exit-hour columns.
 #[mutants::skip] // network shell; `rank`, `web_rows` and their tests live in heuristics::intraday
 async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate, since: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>, Vec<Quote>) {
     use crate::heuristics::intraday;
@@ -1757,7 +1758,8 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
     let range = intraday::chart_range(since, today, k);
     let (mut rows, mut pairs, mut stubs) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut asked, mut got) = (0, 0); // names asked for, names whose bars came back
+    let (mut asked, mut got, mut hours) = (0, 0, 0); // names asked for, names whose bars came back, book names with 60m bars
+    let exits = [("US", settings.intraday_exit_us), ("EU", settings.intraday_exit_eu)];
     for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)
             .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk, range).await?)) })
@@ -1777,11 +1779,20 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
         let book = intraday::rank(k, &pond, today);
         let until = if intraday::closed(market, chrono::Utc::now().naive_utc()) { today.succ_opt().unwrap_or(today) } else { today };
         let fx = if market == "US" { usd.unwrap_or(f64::NAN) } else { 1.0 };
-        rows.extend(intraday::web_rows(market, k, &book, since, until, fx, today));
+        let mut book_rows = intraday::web_rows(market, k, &book, since, until, fx, today);
+        let hourly: std::collections::HashMap<String, Vec<(i64, f64, f64)>> = futures::stream::iter(&book)
+            .map(|&(tk, ..)| async move { Some((tk.to_string(), fetch::fetch_hourly(client, &settings.urls, tk, "2y").await?)) })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        hours += hourly.len();
+        intraday::stamp_exits(&mut book_rows, &hourly, &exits, since, until, today);
+        rows.extend(book_rows);
         pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
         stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
     }
-    eprintln!("screen: intraday: fetched {got} of {asked} names, {} from the quote path's charts", fetch::recent_served());
+    eprintln!("screen: intraday: fetched {got} of {asked} names, {} from the quote path's charts; 60m bars for {hours} of {} book names", fetch::recent_served(), pairs.len());
     let targets = stubs.iter().map(|q| q.ticker.clone()).collect();
     fetch::enrich_profile(client, &settings.urls, &mut stubs, &targets).await;
     (rows, pairs, stubs)
@@ -2565,6 +2576,11 @@ pub async fn run(args: Vec<String>) {
         // (#825) the column's header hover names the day it counts from, as each cell's does
         if let Some(h) = top["help"]["intraday"]["RIGHT/FAIL"].as_str().map(str::to_owned) {
             top["help"]["intraday"]["RIGHT/FAIL"] = serde_json::json!(format!("Counted since {intra_since}. {h}"));
+        }
+        // (#1212) the exit columns' headers name the hour, so their help is keyed at run time
+        for (m, exit) in [("US", settings.intraday_exit_us), ("EU", settings.intraday_exit_eu)] {
+            let (head, help) = (crate::heuristics::intraday::exit_head(m, exit, intra_today), crate::heuristics::intraday::exit_help(m, exit));
+            top["help"]["intraday"][head] = serde_json::json!(help);
         }
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["braked"], &top["reits"]], &quotes, &fetch::us_symbol);

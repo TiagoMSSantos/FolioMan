@@ -25,7 +25,11 @@
 //! workflow's `since` input sets; (#827) every session of each book name since then, on its own bars.
 //! (#1196) Its GAIN/LOSS column adds up the same sessions' % moves, up days against down days, and the
 //! rows sort on it, since a name can close up on most days and still lose.
+//! (#1212) Two more columns sell the same sessions at a set hour, `intraday_exit_us` New York time and
+//! `intraday_exit_eu` Frankfurt time, on each book name's 60m bars; `backtest N intraday` ends on the EXIT
+//! HOURS census the two knobs are picked from. Display only, like the rest of the table.
 
+use crate::config::session;
 use crate::core;
 use crate::fetch::Chart;
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Timelike, Weekday};
@@ -486,6 +490,158 @@ pub fn track_line(market: &str, days: &[(NaiveDate, f64)], thin: usize, cost_bps
     } else {
         line
     }
+}
+
+/// (#1212) Minutes `market`'s exchange clock runs ahead of UTC at `utc`: New York -300 and Frankfurt +60,
+/// an hour more on summer time.
+fn offset(market: &str, utc: NaiveDateTime) -> i64 {
+    let winter = if market == "US" { -300 } else { 60 };
+    winter + 60 * i64::from(summer_time(market, utc))
+}
+
+/// (#1212) Each full session in 60m `bars` (start in UTC seconds, open, close): its move from the open to
+/// the end of every bar, keyed by that end in minutes on the exchange's clock. A session needs a bar that
+/// starts at the open and one that ends at the close, so a half day, or a session missing its first or
+/// last bar, drops out.
+pub fn day_moves(market: &str, bars: &[(i64, f64, f64)]) -> BTreeMap<NaiveDate, BTreeMap<u32, f64>> {
+    let (open, close) = session(market);
+    let mut days: BTreeMap<NaiveDate, Vec<(u32, f64, f64)>> = BTreeMap::new();
+    for &(t, o, c) in bars {
+        let Some(utc) = chrono::DateTime::from_timestamp(t, 0).map(|d| d.naive_utc()) else { continue };
+        let at = utc + Duration::minutes(offset(market, utc));
+        let m = at.hour() * 60 + at.minute();
+        if (open..close).contains(&m) {
+            days.entry(at.date()).or_default().push((m, o, c));
+        }
+    }
+    days.into_iter()
+        .filter_map(|(d, b)| {
+            let o = pos(b.iter().find(|x| x.0 == open)?.1)?;
+            let ends: BTreeMap<u32, f64> = b.iter().filter_map(|&(m, _, c)| Some(((m + 60).min(close), pos(c)? / o - 1.0))).collect();
+            ends.contains_key(&close).then_some((d, ends))
+        })
+        .collect()
+}
+
+/// (#1212) An exit column's header, the hour on the exchange's clock and on Portugal's: `P/L 14:30 NY
+/// (18:30 PT)`. Portugal keeps UTC in winter and UTC+1 in summer, on the EU's switch dates. Both clocks
+/// are read at noon UTC on `today`, and no clock switches on a trading day.
+pub fn exit_head(market: &str, exit: u32, today: NaiveDate) -> String {
+    let noon = today.and_hms_opt(12, 0, 0).unwrap_or_default();
+    let pt = (i64::from(exit) - offset(market, noon) + 60 * i64::from(summer_time("EU", noon))).rem_euclid(1440);
+    let city = if market == "US" { "NY" } else { "FRA" };
+    format!("P/L {:02}:{:02} {city} ({:02}:{:02} PT)", exit / 60, exit % 60, pt / 60, pt % 60)
+}
+
+/// (#1212) The header hover for `market`'s exit column.
+pub fn exit_help(market: &str, exit: u32) -> String {
+    let (clock, other) = if market == "US" { ("New York", "EU") } else { ("Frankfurt", "US") };
+    format!(
+        "The same sessions as P/L(EUR), sold at {:02}:{:02} {clock} time instead of at the close: €1,000 bought at each open, every gain and loss added up after the round trip, from Yahoo's 60m bars, so a half day drops out; {market} rows only, — on {other} rows; PT = the same moment on Portugal's clock this week. Hindsight, as P/L(EUR) is; hover a cell for the same sessions sold at the close. The hour is the intraday_exit_{} knob, picked from a 2-year census of every 60m bar end (receipt #1212): every hour lost money after costs, and none beat the close by a significant margin",
+        exit / 60,
+        exit % 60,
+        market.to_lowercase()
+    )
+}
+
+/// (#1212) Two cells on each row, after P/L(EUR): each `exits` market's P/L sold at its exit hour, in euros
+/// after the round trip, over the sessions in `since..until` that the row's 60m bars in `hourly` carry in
+/// full. A row of the other market reads —, and so does a name with no such session. The hover puts the
+/// same sessions sold at the close beside it.
+pub fn stamp_exits(rows: &mut [Vec<serde_json::Value>], hourly: &HashMap<String, Vec<(i64, f64, f64)>>, exits: &[(&str, u32)], since: NaiveDate, until: NaiveDate, today: NaiveDate) {
+    use serde_json::json;
+    let eur = |x: f64| format!("{}€{}", if x < 0.0 { "-" } else { "+" }, core::fmt_money2(x.abs()));
+    for row in rows.iter_mut() {
+        let (market, tk) = (row[1][1].as_str().unwrap_or("").to_string(), row[2][1].as_str().unwrap_or(""));
+        let days = hourly.get(tk).map(|b| day_moves(&market, b)).unwrap_or_default();
+        let cells: Vec<serde_json::Value> = exits
+            .iter()
+            .map(|&(m, exit)| {
+                let head = exit_head(m, exit, today);
+                let close = session(m).1;
+                let xs: Vec<(f64, f64)> = days.iter().filter(|(d, _)| (since..until).contains(*d)).filter_map(|(_, e)| Some((*e.get(&exit)?, *e.get(&close)?))).collect();
+                if m != market || xs.is_empty() {
+                    return json!([head, "—"]);
+                }
+                let (n, cost) = (xs.len(), if m == "US" { COST_BPS_US } else { COST_BPS_EU });
+                let fee = n as f64 * cost / 10.0;
+                let (gross, at_close) = (xs.iter().map(|x| x.0).sum::<f64>() * 1000.0, xs.iter().map(|x| x.1).sum::<f64>() * 1000.0);
+                let tip = format!(
+                    "€1,000 bought at the open and sold at {:02}:{:02} {} time, each of the {n} sessions since {since} on this name's 60m bars: {} before costs; the backtest's {cost:.0} bp a round trip costs {n} × €{} = €{}; {} after, about {} a session\nsold at the close instead, the same {n} sessions: {} after costs, so this hour made {} against the close\n(hindsight, as P/L(EUR) is: the key picked these names from these sessions; a half day, or a session missing its first or last bar, drops out, so the count can sit under P/L(EUR)'s)",
+                    exit / 60,
+                    exit % 60,
+                    if m == "US" { "New York" } else { "Frankfurt" },
+                    eur(gross),
+                    core::fmt_money2(cost / 10.0),
+                    core::fmt_money2(fee),
+                    eur(gross - fee),
+                    eur((gross - fee) / n as f64),
+                    eur(at_close - fee),
+                    eur(gross - at_close)
+                );
+                json!([head, eur(gross - fee), null, tip])
+            })
+            .collect();
+        let at = row.iter().position(|c| c[0] == "P/L(EUR)").map_or(row.len(), |i| i + 1);
+        row.splice(at..at, cells);
+    }
+}
+
+/// (#1212) The `backtest N intraday` EXIT HOURS lines for one market. On each session before `today` that a
+/// name's 60m bars carry in full ([`day_moves`]), the mean move from the open to each bar end over every
+/// name with that bar, equal weight. Per bar end: gross bp and its t, net € a session at €1,000 after the
+/// round trip, the halves, and the mean gain over selling every name at the close that session, with its
+/// t. The best gross hour and the `knob` hour are marked.
+pub fn hours_report(market: &str, names: &[BTreeMap<NaiveDate, BTreeMap<u32, f64>>], today: NaiveDate, cost_bps: f64, knob: u32) -> String {
+    let close = session(market).1;
+    let mut days: BTreeMap<NaiveDate, BTreeMap<u32, Vec<f64>>> = BTreeMap::new();
+    for (d, ends) in names.iter().flat_map(|n| n.range(..today)) {
+        for (e, x) in ends {
+            days.entry(*d).or_default().entry(*e).or_default().push(*x);
+        }
+    }
+    let ends: std::collections::BTreeSet<u32> = days.values().flat_map(|e| e.keys().copied()).collect();
+    let rows: Vec<(u32, Stats, Stats)> = ends
+        .into_iter()
+        .filter_map(|e| {
+            let (s, v): (Vec<f64>, Vec<f64>) = days
+                .values()
+                .filter_map(|x| {
+                    let m = mean(x.get(&e)?);
+                    Some((m, m - mean(x.get(&close)?)))
+                })
+                .unzip();
+            Some((e, stats(&s)?, stats(&v)?))
+        })
+        .collect();
+    let (Some(best), Some((first, last))) = (
+        rows.iter().max_by(|a, b| a.1.mean.total_cmp(&b.1.mean)).map(|r| r.0),
+        days.keys().next().zip(days.keys().next_back()),
+    ) else {
+        return format!("  {market}: no two sessions with 60m bars");
+    };
+    let mut out = format!("  {market}: {} names, {} sessions {first}..{last}; cost {cost_bps} bp a round trip", names.len(), days.len());
+    for (e, s, v) in rows {
+        let vs = if e == close { "the close".to_string() } else { format!("vs close {:+.2} bp (t {:+.2})", v.mean * 1e4, v.t) };
+        let mark = match (e == best, e == knob) {
+            (true, true) => "  <- best, the knob",
+            (true, false) => "  <- best",
+            (false, true) => "  <- the knob",
+            _ => "",
+        };
+        out += &format!(
+            "\n  {market} {:02}:{:02}  {} sessions  gross {:+.2} bp (t {:+.2})  net {:+.2} €/session  halves {:+.2}|{:+.2}  {vs}{mark}",
+            e / 60,
+            e % 60,
+            s.n,
+            s.mean * 1e4,
+            s.t,
+            (s.mean * 1e4 - cost_bps) / 10.0,
+            s.h1 * 1e4,
+            s.h2 * 1e4
+        );
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1005,5 +1161,125 @@ mod tests {
             track_line("EU", &days[..1], 1, 20.0),
             "  EU: 1 session(s) graded; the t needs 2  (1 of 1 sessions graded on fewer names than the book held, or on two dates)"
         );
+    }
+
+    /// (#1212) One session's 60m bars: each `(h, c)` starts `h` hours after `open` (UTC) and closes at `c`;
+    /// every bar opens at `o`, so the bar at `h` = 0 gives the session's open.
+    fn session_bars(open: NaiveDateTime, o: f64, bars: &[(i64, f64)]) -> Vec<(i64, f64, f64)> {
+        bars.iter().map(|&(h, c)| ((open + Duration::hours(h)).and_utc().timestamp(), o, c)).collect()
+    }
+
+    fn moves(days: &[(usize, Vec<(u32, f64)>)]) -> BTreeMap<NaiveDate, BTreeMap<u32, f64>> {
+        days.iter().map(|(i, e)| (d(*i), e.iter().copied().collect())).collect()
+    }
+
+    #[test]
+    fn bar_end_is_a_whole_hour_after_the_open_or_the_close() {
+        assert_eq!((session("US"), session("EU")), ((570, 960), (540, 1050)));
+        let ends = |market| (0..=1440).filter(|&m| crate::config::bar_end(market, m)).collect::<Vec<u32>>();
+        assert_eq!(ends("US"), [630, 690, 750, 810, 870, 930, 960]);
+        assert_eq!(ends("EU"), [600, 660, 720, 780, 840, 900, 960, 1020, 1050]);
+    }
+
+    #[test]
+    fn exit_head_names_both_clocks() {
+        let on = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        // New York leaves summer time on 2026-11-01, a week after Portugal, and enters it three weeks before
+        assert_eq!(exit_head("US", 870, on(10, 28)), "P/L 14:30 NY (18:30 PT)");
+        assert_eq!(exit_head("US", 870, on(11, 2)), "P/L 14:30 NY (19:30 PT)");
+        assert_eq!(exit_head("US", 870, on(7, 1)), "P/L 14:30 NY (19:30 PT)");
+        assert_eq!(exit_head("US", 960, on(3, 20)), "P/L 16:00 NY (20:00 PT)");
+        for day in [on(7, 1), on(12, 1)] {
+            assert_eq!(exit_head("EU", 960, day), "P/L 16:00 FRA (15:00 PT)");
+        }
+        assert_eq!(exit_head("EU", 600, on(1, 5)), "P/L 10:00 FRA (09:00 PT)");
+        for (market, exit, clock, knob, other) in [("US", 870, "14:30 New York", "us", "EU"), ("EU", 960, "16:00 Frankfurt", "eu", "US")] {
+            let h = exit_help(market, exit);
+            assert!(h.contains(&format!("sold at {clock} time")) && h.contains(&format!("{market} rows only, — on {other} rows")) && h.contains(&format!("intraday_exit_{knob} knob")), "{h}");
+        }
+    }
+
+    #[test]
+    fn day_moves_keys_each_bar_end_on_the_exchange_clock() {
+        let date = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        let ts = |t: NaiveDateTime| t.and_utc().timestamp();
+        // 13:30 UTC is 09:30 New York on summer time, 14:30 UTC after 2026-11-01; a bar with no close is skipped
+        let mut bars = session_bars(utc(2026, 10, 30, 13, 30), 100.0, &[(0, 101.0), (3, f64::NAN), (6, 104.0)]);
+        // a bar before the open, and one from the close on, are not the session's
+        bars.push((ts(utc(2026, 10, 30, 12, 30)), 50.0, 50.0));
+        bars.push((ts(utc(2026, 10, 30, 20, 0)), 999.0, 999.0));
+        bars.extend(session_bars(utc(2026, 11, 2, 14, 30), 200.0, &[(0, 202.0), (6, 190.0)]));
+        // a half day has no last bar, and this session misses its first
+        bars.extend(session_bars(utc(2026, 11, 3, 14, 30), 200.0, &[(0, 202.0), (1, 204.0)]));
+        bars.extend(session_bars(utc(2026, 11, 4, 14, 30), 200.0, &[(1, 202.0), (6, 204.0)]));
+        let want = BTreeMap::from([
+            (date(10, 30), BTreeMap::from([(630, 101.0 / 100.0 - 1.0), (960, 104.0 / 100.0 - 1.0)])),
+            (date(11, 2), BTreeMap::from([(630, 202.0 / 200.0 - 1.0), (960, 190.0 / 200.0 - 1.0)])),
+        ]);
+        assert_eq!(day_moves("US", &bars), want);
+        // Frankfurt runs two hours ahead of UTC on summer time, one after 2026-10-25; its last bar starts at 17:00
+        let eu = [
+            session_bars(utc(2026, 10, 23, 7, 0), 50.0, &[(0, 50.5), (6, 51.0), (8, 49.0)]),
+            session_bars(utc(2026, 10, 26, 8, 0), 50.0, &[(0, 50.5), (6, 52.0), (8, 53.0)]),
+        ]
+        .concat();
+        let want = BTreeMap::from([
+            (date(10, 23), BTreeMap::from([(600, 50.5 / 50.0 - 1.0), (960, 51.0 / 50.0 - 1.0), (1050, 49.0 / 50.0 - 1.0)])),
+            (date(10, 26), BTreeMap::from([(600, 50.5 / 50.0 - 1.0), (960, 52.0 / 50.0 - 1.0), (1050, 53.0 / 50.0 - 1.0)])),
+        ]);
+        assert_eq!(day_moves("EU", &eu), want);
+    }
+
+    #[test]
+    fn stamp_exits_puts_each_market_sold_at_its_hour_after_pl() {
+        use serde_json::json;
+        let row = |market: &str, tk: &str| vec![json!(["RANK", "1"]), json!(["MARKET", market]), json!(["TICKER", tk]), json!(["P/L(EUR)", "+€1.00"]), json!(["SCORE", "50%"])];
+        let mut rows = vec![row("US", "AAA"), row("EU", "EEE"), row("US", "BBB")];
+        let us = |m, d, h| utc(2026, m, d, h, 30);
+        // 09:30 New York is 13:30 UTC before 2026-11-01 and 14:30 after; the first and last sessions sit outside since..until
+        let hourly = HashMap::from([
+            (
+                "AAA".to_string(),
+                [
+                    session_bars(us(10, 29, 13), 100.0, &[(0, 100.0), (4, 150.0), (6, 150.0)]),
+                    session_bars(us(10, 30, 13), 100.0, &[(0, 100.0), (4, 104.0), (6, 101.0)]),
+                    session_bars(us(11, 2, 14), 100.0, &[(0, 100.0), (4, 99.0), (6, 103.0)]),
+                    session_bars(us(11, 3, 14), 100.0, &[(0, 100.0), (4, 150.0), (6, 150.0)]),
+                ]
+                .concat(),
+            ),
+            // 09:00 Frankfurt is 08:00 UTC after 2026-10-25
+            ("EEE".to_string(), session_bars(utc(2026, 10, 30, 8, 0), 50.0, &[(0, 50.0), (6, 51.0), (8, 49.0)])),
+        ]);
+        let on = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        stamp_exits(&mut rows, &hourly, &[("US", 870), ("EU", 960)], on(10, 30), on(11, 3), on(11, 2));
+        let (us_head, eu_head) = ("P/L 14:30 NY (19:30 PT)", "P/L 16:00 FRA (15:00 PT)");
+        let hindsight = "(hindsight, as P/L(EUR) is: the key picked these names from these sessions; a half day, or a session missing its first or last bar, drops out, so the count can sit under P/L(EUR)'s)";
+        let tip_us = format!("€1,000 bought at the open and sold at 14:30 New York time, each of the 2 sessions since 2026-10-30 on this name's 60m bars: +€30.00 before costs; the backtest's 50 bp a round trip costs 2 × €5.00 = €10.00; +€20.00 after, about +€10.00 a session\nsold at the close instead, the same 2 sessions: +€30.00 after costs, so this hour made -€10.00 against the close\n{hindsight}");
+        let tip_eu = format!("€1,000 bought at the open and sold at 16:00 Frankfurt time, each of the 1 sessions since 2026-10-30 on this name's 60m bars: +€20.00 before costs; the backtest's 20 bp a round trip costs 1 × €2.00 = €2.00; +€18.00 after, about +€18.00 a session\nsold at the close instead, the same 1 sessions: -€22.00 after costs, so this hour made +€40.00 against the close\n{hindsight}");
+        let score = json!(["SCORE", "50%"]);
+        assert_eq!(rows[0][4..], [json!([us_head, "+€20.00", null, tip_us]), json!([eu_head, "—"]), score.clone()]);
+        assert_eq!(rows[1][4..], [json!([us_head, "—"]), json!([eu_head, "+€18.00", null, tip_eu]), score.clone()]);
+        // a name with no 60m bars
+        assert_eq!(rows[2][4..], [json!([us_head, "—"]), json!([eu_head, "—"]), score]);
+    }
+
+    #[test]
+    fn hours_report_grades_each_bar_end_against_the_close() {
+        let names = [
+            moves(&[(1, vec![(870, 0.010), (960, 0.000)]), (2, vec![(870, 0.030), (960, 0.010)]), (3, vec![(870, 0.000), (960, 0.015)]), (4, vec![(870, 9.0), (960, 9.0)])]),
+            moves(&[(1, vec![(630, 0.005), (870, 0.030), (960, 0.020)]), (2, vec![(870, 0.010), (960, 0.010)])]),
+        ];
+        // a session on or after `today` is left out, and 10:30 has one session, so no t
+        assert_eq!(
+            hours_report("US", &names, d(4), 50.0, 870),
+            "  US: 2 names, 3 sessions 2026-01-02..2026-01-04; cost 50 bp a round trip\
+             \n  US 14:30  3 sessions  gross +133.33 bp (t +2.00)  net +8.33 €/session  halves +200.00|+100.00  vs close +16.67 bp (t +0.20)  <- best, the knob\
+             \n  US 16:00  3 sessions  gross +116.67 bp (t +7.00)  net +6.67 €/session  halves +100.00|+125.00  the close"
+        );
+        let marks: Vec<&str> = hours_report("US", &names, d(4), 50.0, 960).lines().skip(1).map(|l| &l[l.rfind("  ").unwrap()..]).collect();
+        assert_eq!(marks, ["  <- best", "  <- the knob"]);
+        assert_eq!(hours_report("US", &names, d(2), 50.0, 870), "  US: no two sessions with 60m bars");
+        assert_eq!(hours_report("EU", &[], d(4), 20.0, 960), "  EU: no two sessions with 60m bars");
     }
 }

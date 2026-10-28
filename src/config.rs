@@ -52,6 +52,10 @@ pub struct Settings {
     pub social_heuristic: serde_yaml::Value, // (#538) the Social table's own heuristic, as written: `half_life_days` (0 = OFF, the DEFAULT), `mcap_pivot_eur`, `runup_cap_pct`, `loud_penalty`, plus any `buy_heuristic` key as an override for the Social table only (an unset one inherits). Read it through `Settings::social`; see `heuristics::social`
     #[serde(default)]
     pub intraday_key: u8, // (#811) the Intraday shadow table: which `heuristics::intraday` key ranks today's open-to-close book (1 = K1, 2 = K2, 3 = K3, 4 = K4, 5-8 = (#828) K1/K4 over a year and two, 9 = (#829) day Sharpe, 10 = (#836) low volume shock, 11 = its falsifier, 12 = (#1197) gain share over a year). 0 = off (the DEFAULT): screen fetches nothing for it and the page table stays empty. Shadow only, every key lost net of cost on the (#810) ruler
+    #[serde(default = "default_exit_us", deserialize_with = "exit_us")]
+    pub intraday_exit_us: u32, // (#1212) the Intraday table's US exit column: the P/L sold at this New York time, "HH:MM", instead of at the close. Minutes after midnight once parsed; must end a 60m bar (10:30 to 15:30, or 16:00). Display only
+    #[serde(default = "default_exit_eu", deserialize_with = "exit_eu")]
+    pub intraday_exit_eu: u32, // (#1212) the same for EU rows, Frankfurt time (10:00 to 17:00, or 17:30)
     #[serde(default)]
     pub anchor_windows: BTreeMap<String, i64>, // per-horizon ±days averaged around the anchor date; missing label = built-in default (see core::default_anchor_half)
     #[serde(default)]
@@ -197,6 +201,52 @@ fn cap<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
     } else {
         Err(serde::de::Error::custom(format!("a cap must be 0 or more, got {v}")))
     }
+}
+
+fn default_exit_us() -> u32 {
+    870
+}
+
+fn default_exit_eu() -> u32 {
+    960
+}
+
+/// (#1212) An Intraday market's regular session on its exchange's own clock, in minutes after midnight:
+/// 09:30-16:00 New York (`US`), 09:00-17:30 Frankfurt (any other market). It lives here, not in
+/// `heuristics::intraday`, which the page engine does not build, since the exit knobs parse with every
+/// settings file.
+pub fn session(market: &str) -> (u32, u32) {
+    if market == "US" {
+        (570, 960)
+    } else {
+        (540, 1050)
+    }
+}
+
+/// (#1212) Whether `exit`, minutes after midnight on `market`'s clock, ends one of its 60m bars: a whole
+/// number of hours after the open, or the close itself, which ends the last bar half an hour after it starts.
+pub fn bar_end(market: &str, exit: u32) -> bool {
+    let (open, close) = session(market);
+    open < exit && exit <= close && ((exit - open) % 60 == 0 || exit == close)
+}
+
+/// (#1212) An Intraday exit hour, "HH:MM" on `market`'s exchange clock, as minutes after midnight. The
+/// parse refuses one that does not end a 60m bar, since no bar would carry it and every cell would read —.
+fn exit_at<'de, D: serde::Deserializer<'de>>(d: D, market: &str) -> Result<u32, D::Error> {
+    let v = String::deserialize(d)?;
+    v.split_once(':')
+        .filter(|(h, m)| h.len() == 2 && m.len() == 2)
+        .and_then(|(h, m)| Some(h.parse::<u32>().ok()? * 60 + m.parse::<u32>().ok().filter(|&m| m < 60)?))
+        .filter(|&e| bar_end(market, e))
+        .ok_or_else(|| serde::de::Error::custom(format!("intraday_exit_{}: {v:?} is not the end of a {market} 60m bar", market.to_lowercase())))
+}
+
+fn exit_us<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    exit_at(d, "US")
+}
+
+fn exit_eu<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    exit_at(d, "EU")
 }
 
 fn default_top_picks() -> usize {
@@ -806,7 +856,7 @@ impl Default for BuyHeuristic {
 #[serde(deny_unknown_fields)] // a typo'd key must error, not silently fall back to the default
 pub struct Urls {
     pub yahoo_chart: String,   // {ticker} {range}
-    pub yahoo_intraday: String, // {ticker} — hourly bars (~2d) for the screen 1h/6h/12h columns
+    pub yahoo_intraday: String, // {ticker} {range} — hourly bars (5d) for the screen 1h/6h/12h columns, (#1212) 2y for the Intraday exit columns
     pub yahoo_search: String,  // {ticker}
     pub yahoo_quote: String,   // {ticker} (human quote page, for `perf`)
     // (#782) Yahoo's quoteSummary host: the cookie+crumb handshake and every fund-facts and topHoldings
@@ -2830,6 +2880,38 @@ mod tests {
         );
         assert_eq!(override_path(Some("")), None, "empty -> ignored, falls back to discovery");
         assert_eq!(override_path(None), None, "unset -> discovery");
+    }
+
+    /// (#1212) The exit hours parse to minutes on their own market's clock, a missing one to its default
+    /// and the fixture to the shipped pair; one that ends no 60m bar, or is no "HH:MM" time, is refused
+    /// naming the knob.
+    #[test]
+    fn intraday_exit_must_end_a_bar() {
+        #[derive(Deserialize)]
+        struct W {
+            #[serde(default = "default_exit_us", deserialize_with = "exit_us")]
+            us: u32,
+            #[serde(default = "default_exit_eu", deserialize_with = "exit_eu")]
+            eu: u32,
+        }
+        let w: W = serde_yaml::from_str("us: \"10:30\"\neu: \"17:30\"").unwrap();
+        assert_eq!((w.us, w.eu), (630, 1050));
+        let w: W = serde_yaml::from_str("{}").unwrap();
+        assert_eq!((w.us, w.eu), (870, 960));
+        for (us, eu) in [
+            ("14:00", "16:00"), ("16:30", "16:00"), ("09:30", "16:00"), ("014:30", "16:00"), ("14:030", "16:00"),
+            ("14:30", "16:30"), ("14:30", "09:00"), ("14:30", "16:60"), ("14:30", "1600"), ("x", "16:00"),
+        ] {
+            let e = serde_yaml::from_str::<W>(&format!("us: \"{us}\"\neu: \"{eu}\"")).err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(e.contains("is not the end of a"), "{us} {eu}: {e}");
+        }
+        let e = serde_yaml::from_str::<W>("us: \"14:00\"").err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(e.contains("intraday_exit_us: \"14:00\" is not the end of a US 60m bar"), "{e}");
+        let e = serde_yaml::from_str::<W>("eu: \"16:30\"").err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(e.contains("intraday_exit_eu: \"16:30\" is not the end of a EU 60m bar"), "{e}");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let ci: Settings = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!((ci.intraday_exit_us, ci.intraday_exit_eu), (870, 960));
     }
 
     /// Pins the deny_unknown_fields guard: a typo'd top-level key must ERROR naming the field, never

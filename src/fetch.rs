@@ -561,12 +561,23 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
 /// Intraday hourly closes (chronological) from the configured intraday chart URL. None on
 /// failure; null closes dropped. Used only for the 1h/6h/12h columns (bar-count, not time).
 async fn intraday_closes(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<f64>> {
-    let url = urls.yahoo_intraday.replace("{ticker}", ticker);
+    let url = urls.yahoo_intraday.replace("{ticker}", ticker).replace("{range}", "5d");
     let j = get_json(client, &url).await?;
     let closes = j
         .get("chart")?.get("result")?.get(0)?
         .get("indicators")?.get("quote")?.get(0)?.get("close")?.as_array()?;
     Some(closes.iter().filter_map(|c| c.as_f64()).collect())
+}
+
+/// (#1212) `ticker`'s 60m bars over Yahoo's `range` (`2y` at most) as (start in UTC seconds, open, close),
+/// a bar missing its open or close dropped. None when the chart fails or carries no timestamps.
+pub async fn fetch_hourly(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Vec<(i64, f64, f64)>> {
+    let url = urls.yahoo_intraday.replace("{ticker}", ticker).replace("{range}", range);
+    let j = get_json(client, &url).await?;
+    let r = j.get("chart")?.get("result")?.get(0)?;
+    let q = r.get("indicators")?.get("quote")?.get(0)?;
+    let (t, o, c) = (r.get("timestamp")?.as_array()?, q.get("open")?.as_array()?, q.get("close")?.as_array()?);
+    Some(t.iter().zip(o).zip(c).filter_map(|((t, o), c)| Some((t.as_i64()?, o.as_f64()?, c.as_f64()?))).collect())
 }
 
 pub async fn fetch_news(client: &Client, urls: &Urls, ticker: &str) -> Vec<String> {
@@ -17481,6 +17492,15 @@ pub(crate) mod tests {
         let (base, client) =
             stub_server(r#"{"chart":{"result":[{"indicators":{"quote":[{"close":[1.5,null,2.5]}]}}]}}"#);
         assert_eq!(intraday_closes(&client, &stub_urls(&base), "TST").await, Some(vec![1.5, 2.5]));
+    }
+
+    /// (#1212) Each bar's start, open and close in step; a bar missing either price drops out.
+    #[tokio::test]
+    async fn fetch_hourly_pairs_each_bar_with_its_start() {
+        let (base, client) = stub_server(
+            r#"{"chart":{"result":[{"timestamp":[100,200,300],"indicators":{"quote":[{"open":[1.0,null,3.0],"close":[1.5,2.5,3.5]}]}}]}}"#,
+        );
+        assert_eq!(fetch_hourly(&client, &stub_urls(&base), "TST", "2y").await, Some(vec![(100, 1.0, 1.5), (300, 3.0, 3.5)]));
     }
 
     /// The as-of FX series on the FIRST pair tried (`{CUR}EUR=X`, uninverted), so the rate lands as
