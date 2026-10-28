@@ -823,7 +823,7 @@ pub fn slices(cal: &[NaiveDate]) -> BTreeMap<NaiveDate, Vec<&'static str>> {
                 v.push(SLICES[wd]);
             }
             if Some(ym(&d)) != edges.0 && Some(ym(&d)) != edges.1 {
-                let month: Vec<&NaiveDate> = cal.iter().filter(|x| ym(*x) == ym(&d)).collect();
+                let month: Vec<&NaiveDate> = cal.iter().filter(|x| ym(x) == ym(&d)).collect();
                 let j = month.partition_point(|x| **x < d);
                 v.push(if j < 4 || j + 2 >= month.len() { "month turn" } else { "rest of month" });
             }
