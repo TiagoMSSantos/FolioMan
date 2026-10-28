@@ -23371,6 +23371,9 @@ intraday_key: 7
 # Halves of the two best: US 14:30 +3.25|+4.83, EU 16:00 -0.39|+5.91. Every hour lost money after costs.
 # None beats the close by a significant margin (best t 1.88), and none clears the (#809) bar of a gross
 # t >= 3, so this is no new key and no trade.
+# RE-RUN on CI the next day (probe 40708728480, `backtest 2 intraday`, US 492 / EU 498 sessions to
+# 2026-10-27): US 14:30 best again (+4.09, t 1.19; vs close +2.47, t 1.93). EU 14:00 now edges
+# 16:00, +2.25 (0.88) against +1.98 (0.64). The EU pick sits inside noise, so the knob stays at 16:00.
 # BUILT: two Intraday columns after P/L(EUR), `P/L 14:30 NY (18:30 PT)` and `P/L 16:00 FRA (15:00 PT)`.
 # Each shows the same sessions as P/L(EUR), sold at the knob's hour, from each book name's own 2y of 60m
 # bars, in euros after the round trip; the other market's rows read —. The PT hour follows both
