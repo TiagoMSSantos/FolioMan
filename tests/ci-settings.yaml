@@ -1271,6 +1271,18 @@ widths:
   #  costs)"; a row with no session divides by one and reads +€0.00. The help line names the average.
   #  DISPLAY ONLY: no cell, rank or figure changes; the table stays off trade, size, BUY NOW and the broker.
   #  REVERT RULE: drop the clause, its two arguments and the `per` closure, and the help line's addition.
+  #── (#1209) USER DECISION 2026-10-28: INS-B/S AND EARN ON THE SHADOW TABLES ──
+  #  WHY: a whole-page check found INS-B/S and EARN printed on the Stocks table only. The 296 tickers
+  #  that sit on Attention, Berkshire, Braked, REITs, Social and Young but not on Stocks read neither,
+  #  because screen fetched both for the booked rows alone and HIDE_SHADOW dropped the two columns.
+  #  BUILT: HIDE_SHADOW keeps INS-B/S and EARN. screen asks Nasdaq's earnings date for the shadow rows
+  #  after the booked ones, and walks their Form 4s after every other SEC reader before the CEO pay read,
+  #  plus the side-fetched rows no pool line holds. The two help lines name what n/a now means.
+  #  DISPLAY ONLY: no score, gate, rank, book, journal line or golden reads either field.
+  #  COST: the first run of a day asks Nasdaq ~300 more dates. The cold SEC fill is ~200 US names at
+  #  ~15 Form 4s each, ~3000 requests, spread over about 7 runs at the ~450 the budget leaves a run; a
+  #  warm week costs none.
+  #  REVERT RULE: put "ins" and "earn" back in HIDE_SHADOW and drop the four added fetch calls.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a

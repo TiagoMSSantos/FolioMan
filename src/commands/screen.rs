@@ -2122,7 +2122,7 @@ pub async fn run(args: Vec<String>) {
     // (#603) and the blended book's momentum half, which `stamp_momentum` gives page rows: the score top above
     // misses most of it, so FLEX, VRT, TER, GLW.DE and AMC.DE printed MCAP, NET%, REV-YoY, EPS-YoY, BUYBK,
     // SHORT% and TARGET% n/a, and AMC.DE its 8Y/20Y (the US-twin fill below). (#705) INS-B/S and EARN read
-    // it too (`booked`); the shadow tables still go without both.
+    // it too (`booked`), then (#1209) the shadow tables' rows, below.
     // shortcut: the order's first `book_cut` names hold every name a momentum slot can reach unless an issuer
     // twin is skipped ahead of one; widen if an `m` row reads n/a again
     let mom: std::collections::HashSet<String> = if settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book {
@@ -2186,8 +2186,10 @@ pub async fn run(args: Vec<String>) {
             // (#469) display only: the NAME link plus the SHORT%/TARGET% facts, 7-day cache, same pool as above
             fetch::enrich_profile(&client, &settings.urls, &mut quotes, &filled).await;
             let profile = lanes.elapsed();
-            // (#449) display only: the EARN cell
+            // (#449) display only: the EARN cell. (#1209) Then the shadow tables' rows: no SEC budget, and the
+            // booked rows are already in the day's cache, so they are asked first.
             fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &booked).await;
+            fetch::enrich_earnings(&client, &settings.urls, &mut quotes, &filled).await;
             (income, insider, profile, lanes.elapsed())
         },
         fetch::quotes(
@@ -2227,6 +2229,13 @@ pub async fn run(args: Vec<String>) {
     fetch::enrich_profile(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
     // (#707) a side-fetched stock with no SEC row (Social, Berkshire tables) reads Eulerpool's statements too
     fetch::enrich_eulerpool_fcf(&client, &settings.urls, &mut shadow_extra, &Default::default(), &settings.buy_heuristic).await;
+    // (#1209) display only: INS-B/S and EARN on the shadow tables' rows, after every other SEC reader above, so
+    // the Form 4 walk spends only what the booked rows left of the budget. A cached walk costs no request.
+    // shortcut: a cold week can spend the rest of the budget here, so the (#842) CEO pay read below waits a
+    // run; give this walk its own slice if a journal line reads pay n/a.
+    fetch::enrich_insider(&client, &settings.urls, &mut quotes, &filled).await;
+    fetch::enrich_insider(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
+    fetch::enrich_earnings(&client, &settings.urls, &mut shadow_extra, &extra_set).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER

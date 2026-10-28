@@ -398,7 +398,7 @@ pub struct Quote {
     pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
     pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
     pub shares_out: Option<f64>,       // (#395) units outstanding, for the MCAP cell (× price_eur): a stock's newest complete-FY diluted weighted-average share count (same rollup and scoping as rev_yoy), a coin's CoinGecko circulating supply. DISPLAY-ONLY; None for funds, which show AUM instead
-    pub insider_90d: Option<(u32, u32)>, // (#448) open-market insider (buys, sales) dated in the 90 days to today, from SEC Form 4s. DISPLAY-ONLY: `fetch::enrich_insider` fills the printed stock rows only; None = no SEC coverage or a run that hit the fetch budget
+    pub insider_90d: Option<(u32, u32)>, // (#448) open-market insider (buys, sales) dated in the 90 days to today, from SEC Form 4s. DISPLAY-ONLY: `fetch::enrich_insider` fills the printed and (#1209) shadow-table stock rows only; None = no SEC coverage or a run that hit the fetch budget
     pub top10: Option<f64>, // (#465) % of the fund held in its 10 biggest holdings (Yahoo topHoldings). DISPLAY-ONLY: `fetch::enrich_etf_cells` fills the printed ETF + CORE funds and their other listings
     #[serde(default)]
     pub td_years: Vec<f64>, // (#465) yearly tracking difference %, oldest year first (trackingdifferences.com). DISPLAY-ONLY, same rows as top10
@@ -407,7 +407,7 @@ pub struct Quote {
     pub look_fair: Option<f64>, // (#521) an ETF's FAIR ÷ price, its top-10 holdings' own stock FAIR weight-averaged (`picks::look_through_fair`). DISPLAY-ONLY: `fetch::enrich_etf_cells` fills the same rows as top10
     pub ep_fair: Option<(f64, String)>, // (#519) a non-US stock's FAIR ÷ price + span marker from Eulerpool's annual FCF (`picks::ep_fair_ratio`), where SEC filed no FCF. DISPLAY-ONLY: never `fund`, which is scored; `fetch::enrich_eulerpool_fcf` fills pooled stock rows
     pub ep_fund: Option<FundFactors>, // (#707) `fund_factors` over Eulerpool's annual statements, for a stock with no SEC fiscal-year row (non-US, or US before its first 10-K). DISPLAY-ONLY: the cells read it before `fund`, which stays the scored one; `fetch::enrich_eulerpool_fcf` fills pooled stock rows
-    pub next_earnings: Option<NaiveDate>, // (#449) next scheduled earnings report, from Nasdaq's earnings calendar since (#450). DISPLAY-ONLY: `fetch::enrich_earnings` fills the printed stock rows only
+    pub next_earnings: Option<NaiveDate>, // (#449) next scheduled earnings report, from Nasdaq's earnings calendar since (#450). DISPLAY-ONLY: `fetch::enrich_earnings` fills the printed and (#1209) shadow-table stock rows only
     #[serde(default)]
     pub profile: Profile, // (#469) DISPLAY-ONLY: the NAME link + SHORT%/TARGET% facts, printed and shadow-table rows only
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy

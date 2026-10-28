@@ -3558,9 +3558,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
     // (#489) display only
     ColSpec { key: "short", hdr: "SHORT%", width: 7, right: true, help: "Stocks: shares sold short as % of shares outstanding, from FINRA's newest twice-monthly settlement (US listings; a Xetra twin reads its US parent). High short interest has historically come before weaker returns; n/a = no FINRA position (a non-US listing), or no share count; — = a fund or coin" },
-    // (#448)/(#449) display only, the printed stock rows
-    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage, or a row outside the score top and the pinned tickers (only those are fetched)" },
-    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Nasdaq. The price often jumps on the day; n/a = no date published yet, or a row outside the score top and the pinned tickers (only those are fetched)" },
+    // (#448)/(#449) display only, the printed stock rows and (#1209) the shadow tables
+    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage, or a walk SEC's per-run request cap cut short (asked again next run)" },
+    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Nasdaq. The price often jumps on the day; n/a = no date published yet, or Nasdaq refused the request (asked again next run)" },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions; n/a = no traded volume on the chart" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
@@ -5808,11 +5808,10 @@ pub fn young_line(quotes: &[Quote], n: usize) -> String {
     format!("young (<{YOUNG_YEARS:.0}y listed, shadow, NOT ranked): {} stock(s), by revenue growth: {}", all.len(), head.join(", "))
 }
 
-/// (#458) Columns the shadow tables leave out: their own TICKER/NAME already lead the row, RANK/SCORE
-/// rank a lane these rows are not in, and INS-B/S/EARN are fetched for printed stocks only, so they would
-/// read n/a on nearly every shadow row. (#1202) S-8Y shows: each row's own 8-year score, read as the
-/// lane reads it.
-const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "misses", "ins", "earn"];
+/// (#458) Columns the shadow tables leave out: their own TICKER/NAME already lead the row, and RANK/SCORE
+/// rank a lane these rows are not in. (#1202) S-8Y shows: each row's own 8-year score, read as the lane
+/// reads it. (#1209) INS-B/S and EARN show: screen fetches them for the shadow rows too.
+const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "misses"];
 
 /// (#639) ...and the Young table these too: every row there is listed under [`YOUNG_YEARS`], so its
 /// 8Y/10Y/20Y legs and 5-year window stats cannot exist yet and would read — on every row.
@@ -12016,7 +12015,9 @@ mod tests {
     #[test]
     fn stamp_shadow_cols_append_the_stock_columns_by_ticker_or_twin() {
         let q = |t: &str, sector: &str| Quote { sector: Some(sector.to_string()), ..Quote::stub(t, "€1", "", t) };
-        let quotes = [q("APC.DE", "Information Technology"), q("HOOD", "Financials")];
+        // (#1209) the twin carries its US parent's INS-B/S and EARN, as the stock lane prints them
+        let apc = Quote { insider_90d: Some((1, 3)), next_earnings: chrono::NaiveDate::from_ymd_opt(2026, 10, 29), ..q("APC.DE", "Information Technology") };
+        let quotes = [apc, q("HOOD", "Financials")];
         let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
         let w = Widths { columns: vec!["rank".into(), "ticker".into(), "sector".into(), "score".into(), "ins".into(), "earn".into(), "ter".into()], ..Widths::default() };
         let mut p = serde_json::json!({
@@ -12030,10 +12031,10 @@ mod tests {
         // (#525) no NAME cell here, so SCORE and MISSES go last; (#537) a stub has no turnover and no record
         let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "2: no-turnover, history", null, NO_RECORD_HOVER])];
         let [rs, rm] = refused();
-        assert_eq!(p["berkshire"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], rs, rm]), "a US filing finds its Xetra twin");
-        assert_eq!(p["berkshire"][1], serde_json::json!([["RANK", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
+        assert_eq!(p["berkshire"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], ["INS-B/S", "1/3"], ["EARN", "10-29"], rs, rm]), "a US filing finds its Xetra twin");
+        assert_eq!(p["berkshire"][1], serde_json::json!([["RANK", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["INS-B/S", "n/a"], ["EARN", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
         let [rs, rm] = refused();
-        assert_eq!(p["social"][0], serde_json::json!([["RANK", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"], rs, rm]));
+        assert_eq!(p["social"][0], serde_json::json!([["RANK", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"], ["INS-B/S", "n/a"], ["EARN", "n/a"], rs, rm]));
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
         assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
         assert!(p.get("attention").is_none(), "an absent table stays absent");

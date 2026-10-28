@@ -2223,7 +2223,8 @@ fn filed_before(cell: Option<&Value>, day: NaiveDate) -> bool {
 }
 
 /// (#448) DISPLAY ONLY: the INS-B/S cell, open-market insider (buys, sales) dated in the last 90 days.
-/// `targets` is screen's printed stock rows, so ~25 names, each refetched weekly off `{ticker}_f4raw`.
+/// `targets` is screen's printed stock rows, so ~25 names, then (#1209) the shadow tables' ~300, each
+/// refetched weekly off `{ticker}_f4raw`.
 /// Screen calls this after the SEC fundamentals and the 13F lane, which spend `SEC_FETCH_BUDGET` first.
 /// `sec_cik` maps a Xetra twin to its US filer, so a swapped name still gets its count.
 pub async fn enrich_insider(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
@@ -2260,8 +2261,8 @@ fn next_earnings(v: &Value, today: NaiveDate) -> Option<NaiveDate> {
 /// that cache step would re-key it and refetch every SEC fact.
 const EARNINGS_CACHE: &str = "nasdaq_earnings";
 
-/// (#449) DISPLAY ONLY: the EARN cell, each printed stock row's next earnings date. ~25 GETs a day; a
-/// refused one leaves n/a.
+/// (#449) DISPLAY ONLY: the EARN cell, each printed stock row's next earnings date. ~25 GETs a day, ~300
+/// more since (#1209) added the shadow tables' rows; a refused one leaves n/a.
 /// (#450) Off Nasdaq, not Yahoo's `calendarEvents`: on the Pages runner the Yahoo crumb handshake
 /// failed for every row, and Nasdaq needs no handshake.
 /// (#688) 4 in flight, not one at a time: back to back, the 25 GETs took 50s of the publish job (run
