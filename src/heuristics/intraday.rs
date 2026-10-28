@@ -1277,7 +1277,8 @@ mod tests {
              \n  US 14:30  3 sessions  gross +133.33 bp (t +2.00)  net +8.33 €/session  halves +200.00|+100.00  vs close +16.67 bp (t +0.20)  <- best, the knob\
              \n  US 16:00  3 sessions  gross +116.67 bp (t +7.00)  net +6.67 €/session  halves +100.00|+125.00  the close"
         );
-        let marks: Vec<&str> = hours_report("US", &names, d(4), 50.0, 960).lines().skip(1).map(|l| &l[l.rfind("  ").unwrap()..]).collect();
+        let report = hours_report("US", &names, d(4), 50.0, 960);
+        let marks: Vec<&str> = report.lines().skip(1).map(|l| &l[l.rfind("  ").unwrap()..]).collect();
         assert_eq!(marks, ["  <- best", "  <- the knob"]);
         assert_eq!(hours_report("US", &names, d(2), 50.0, 870), "  US: no two sessions with 60m bars");
         assert_eq!(hours_report("EU", &[], d(4), 20.0, 960), "  EU: no two sessions with 60m bars");
