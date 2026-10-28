@@ -1225,6 +1225,14 @@ widths:
   #  the terminal ETF table alike. The crypto lane still hides it. CORE prints its own MISSES already.
   #  DISPLAY ONLY: no gate, dock, rank or size changes.
   #  REVERT RULE: put `misses` back in HIDE_ETF.
+  #── (#1204) USER DECISION 2026-10-28: SECTOR ON THE INTRADAY TABLE ──
+  #  WHY: every stock table names the sector and the Intraday table did not. The owner chose to add it.
+  #  BUILT: `intraday::web_rows` prints SECTOR as n/a after NAME; `stamp_site`, which already walks the
+  #  Intraday rows with their own quotes for the NAME link, names it through `shown_sector`, the lanes'
+  #  rule. A row without a found quote or a sector keeps n/a. The table has its own help line.
+  #  DISPLAY ONLY: the intraday key, rank, journal and track never read it, and the table stays off
+  #  trade, size, BUY NOW and the broker.
+  #  REVERT RULE: drop the SECTOR cell, its help line and the `stamp_site` arm.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a

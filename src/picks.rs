@@ -5164,6 +5164,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("MARKET", "US = an S&P 500 member today; EU = a DAX 40, CAC 40 or Euro Stoxx 50 member; each market ranks its own top 10"),
         ("TICKER", ticker),
         ("NAME", "The company's name, as Yahoo lists it; click to open the company's own website (or its Wikipedia article) when one is found, else its Yahoo quote"),
+        ("SECTOR", "GICS sector, from the company's Nasdaq profile when the universe list has none; n/a = no source names it"),
         ("PRICE(EUR)", "Last close, converted to euros; while the session trades, Yahoo's latest price"),
         ("KEY", "The intraday key the run ranks on, higher first; hover a cell for how its number was worked out (K1 and K7 work it out; the other keys show their name). K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions; K4 hit share = the share of the last 63 sessions that closed above their open; K7 hit 1y = the share of the last 252 sessions that closed above their open, the key this table ranks on"),
         ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock; hover a cell for the hours on your own clock"),
@@ -5943,6 +5944,12 @@ pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn
                 if let Some(tip) = q.and_then(|q| capex_tip(q)) {
                     cell.truncate(2);
                     cell.extend([serde_json::Value::Null, tip.into()]);
+                }
+            }
+            // (#1204) the Intraday rows carry SECTOR as n/a; a found quote names it, as the lanes' cell does
+            if table == "intraday" {
+                if let Some((cell, sector)) = cells.iter_mut().find(|c| c[0] == "SECTOR").zip(q.and_then(|q| shown_sector(q))) {
+                    cell[1] = sector.into();
                 }
             }
             let Some(site) = q.and_then(|q| q.profile.site.clone()).filter(|u| u.starts_with("https://")) else { continue };
@@ -11829,6 +11836,21 @@ mod tests {
         for (t, i) in [("stocks", 1), ("stocks", 2), ("berkshire", 1)] {
             assert_eq!(p[t][i][1], serde_json::json!(["NAME", "n", "https://old"]), "{t}[{i}] untouched");
         }
+    }
+
+    /// (#1204) An Intraday row's SECTOR is named off its quote, by exact ticker or Xetra twin; an unfound or
+    /// sectorless row keeps n/a, and no other table's SECTOR is touched.
+    #[test]
+    fn stamp_site_names_the_intraday_sector() {
+        let q = |t: &str, sector: Option<&str>| Quote { sector: sector.map(String::from), ..Quote::stub(t, "€1", "", t) };
+        let quotes = [q("APC.DE", Some("Information Technology")), q("SAP.DE", None)];
+        let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
+        let row = |t: &str| serde_json::json!([["TICKER", t], ["SECTOR", "n/a"]]);
+        let mut p = serde_json::json!({"intraday": [row("AAPL"), row("SAP.DE"), row("ZZ")], "stocks": [row("APC.DE")]});
+        stamp_site(&mut p, &quotes, &us);
+        let sector = |t: &str, i: usize| p[t][i][1][1].clone();
+        assert_eq!(sector("intraday", 0), shown_sector(&quotes[0]).unwrap().as_str());
+        assert_eq!([sector("intraday", 1), sector("intraday", 2), sector("stocks", 0)], ["n/a", "n/a", "n/a"]);
     }
 
     /// (#540) REPORTS links the EDGAR page on a CIK (a Xetra twin's too), else a Google search on the
