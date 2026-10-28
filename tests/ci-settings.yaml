@@ -23459,6 +23459,45 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # reaches rank, BUY NOW, trade, size or the broker. A re-ask of the intraday table still needs a NEW key
 # at gross t >= 3.
 
+# (#1216) CALENDAR CENSUS, 2026-10-28, record only, no knob.
+# WHY: the owner asked which intraday rule pays most regardless of asset, when to buy and when to sell,
+# and whether any calendar slice of the same-session trade pays after costs.
+# CENSUS (`backtest N intraday` prints it as CALENDAR after HOLDS; CI probe 40775378887 on ccfcbe7,
+# `backtest 2 intraday`): the (#1214) 60m bars, 2y to 2026-10-27, 503 US and 105 EU names, every
+# same-session buy hour against every later sell hour, in 9 slices: Mon to Fri, month turn (the first 4
+# and last 2 sessions of a month) against the rest of the month, the session before a market holiday, and
+# the third-Friday expiry. Two name sets, every name equal weight (pond) and the intraday_key K7 top 10
+# (book); 28 US and 45 EU pairs a slice, 1,314 pair lines in all. Plus 10y of daily bars open to close
+# per slice, the US side on the index as it stood each day. The bar, all four: net > 0 at the 50 / 20 bp
+# round trip, gross t >= 3, both halves net > 0, and the slice's 10y daily open-close mean above the
+# all-sessions mean for the same name set.
+# Gross bp (t) / net EUR a session at EUR 1,000 / halves:
+#   US pond   every slice loses net; least bad pre-holiday 09:30-14:30  +15.77 (1.46) / -3.42, 23 sessions
+#   US book   Mon 09:30-16:00       +18.15 (1.44) / -3.19 / +15.86|+20.39
+#   US book   expiry 10:30-12:30    +20.39 (2.30) / -2.96 / +22.16|+18.63, 22 sessions
+#   EU pond   pre-holiday 09:00-17:30  +35.50 (1.17) / +1.55 / -15.25|+77.78, 11 sessions; every other slice loses net
+#   EU book   Mon 10:00-17:00       +23.54 (3.50) / +0.35 / +20.98|+26.04   clears the bar
+#   EU book   Mon 10:00-17:30       +24.23 (3.91) / +0.42 / +20.69|+27.69   clears the bar
+#   EU book   Mon 09:00-17:30       +26.47 (3.19) / +0.65 / +19.11|+33.69   first half under the cost
+#   EU book   every day 09:00-17:30  +6.68 (1.77) / -1.33                   the (#1215) +0 line
+#   EU daily book Mon open-close, 10y  +10.39 (2.70) / -0.96, 6.20 bp above the average day
+# No 10y daily slice pays net in either market or name set: the best EU gross is +10.62 bp against a 20 bp
+# round trip.
+# VERDICT: 2 of 1,314 slice pairs clear the bar, and they are one finding: the EU K7 book bought on a
+# Monday at 10:00 Frankfurt and sold at 17:00 or at the close. A one-sided t >= 3 has about 0.2% odds a
+# pair with no edge, so about 2 of 1,314 independent pairs pass it by luck; one cluster is what noise
+# gives. It is also the book whose 60m side is today's members, so survivor-biased, and which drifts up a
+# month at a time in (#1215). On 10y of daily bars the same book's Monday open-close earns half the cost
+# (+10.39 bp, net -0.96 EUR). It pays EUR 0.35 to 0.42 a Monday on EUR 1,000, about EUR 20 a year, and a
+# round trip about 4 bp dearer than the assumed 20 bp erases it. Every US slice and every EU pond slice with
+# more than 11 sessions loses after costs. The (#1214) answer stands: no same-session pair of hours pays
+# net on any weekday or calendar slice that the data can tell from luck.
+# The weekday sessions add to the session count (US 492, EU 498), and month turn plus rest of month to
+# that count less the two edge months; the HOLDS +0 lines match (#1215) within one day's drift (US pond
+# best +4.09 against +4.03).
+# No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker. A re-ask of
+# the intraday table still needs a NEW key at gross t >= 3.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
