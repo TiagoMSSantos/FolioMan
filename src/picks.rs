@@ -3556,7 +3556,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "sbc", hdr: "SBC%", width: 6, right: true, help: "Stocks: stock-based pay as % of revenue, a real cost that reported earnings leave out and that dilutes owners every year; n/a = no stock-pay line filed (every REPORTS ᵉ row, and filers that tag none); — = a fund or coin, which files no company accounts" },
     ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares; n/a = no share count for both newest years, or a jump over 40% with no restated comparative (a merger or a split); — = a fund or coin, which files no company accounts" },
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
-    ColSpec { key: "range", hdr: "RANGE%", width: 7, right: true, help: "(#1210) Where today's close ranks among this name's own closes of the ~10-year window: 100 = at its high, 0 = at its low. The buy heuristic needs at least growth_min_range_pct (coins: growth_min_range_pct_crypto), and the score shrinks with it (× RANGE%/100 at growth_proximity_weight 1); n/a = under a year of closes" },
+    ColSpec { key: "range", hdr: "RANGE%", width: 7, right: true, help: "(#1210) Where today's close ranks among this name's own closes of the ~10-year window: 100 = at its high, 0 = at its low. The buy heuristic needs at least growth_min_range_pct (coins: growth_min_range_pct_crypto), and the score shrinks with it (× RANGE%/100 at growth_proximity_weight 1); — = under a year of closes, n/a = no close a year back, as 1Y spells them" },
     // (#489) display only
     ColSpec { key: "short", hdr: "SHORT%", width: 7, right: true, help: "Stocks: shares sold short as % of shares outstanding, from FINRA's newest twice-monthly settlement (US listings; a Xetra twin reads its US parent). High short interest has historically come before weaker returns; n/a = no FINRA position (a non-US listing), or no share count; — = a fund or coin" },
     // (#448)/(#449) display only, the printed stock rows and (#1209) the shadow tables
@@ -4099,7 +4099,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "short" => short_pct(quote).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "buyback" => quote.buyback_yoy.or_else(|| ep.and_then(|f| f.buyback_yield)).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
-        "range" => perf_pct(quote, "1Y").map_or("n/a".to_string(), |_| format!("{:.1}%", quote.range_pct)),
+        "range" => perf_pct(quote, "1Y").map_or_else(|| short_or_na(quote, 1.0), |_| format!("{:.1}%", quote.range_pct)),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
         "score" => format!("{score:.1}"),
@@ -13180,6 +13180,9 @@ mod tests {
         let mut r = q.clone();
         r.perf = legs(&[("1Y", 5.0)]);
         assert_eq!(cc("range", &r, 0.0, None, ""), "85.3%");
+        r.perf = legs(&[]);
+        r.age_years = Some(0.5);
+        assert_eq!(cc("range", &r, 0.0, None, ""), "—", "under a year, as 1Y prints it");
         assert_eq!(cc("upside", &q, 0.0, None, ""), format!("+{:.1}%", upside_to_high(12.5)));
         q.avg_turnover_eur = Some(3.4e9);
         assert_eq!(cc("turnover", &q, 0.0, None, ""), "€3.4B");

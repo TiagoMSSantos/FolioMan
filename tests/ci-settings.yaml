@@ -1290,7 +1290,8 @@ widths:
   #  in its own ~10y closes feeds the growth_min_range_pct gate and multiplies the score at
   #  growth_proximity_weight 1; OFF-HI is a different measure, the distance below the high.
   #  BUILT: the 1y key is listed, so 1Y prints. A new RANGE% column (key range, one decimal) reads the
-  #  percentile, n/a where the name has no 1Y leg, the same precondition the range gate takes. Both reach
+  #  percentile, blank where the name has no 1Y leg (the range gate's own precondition), spelled as 1Y: —
+  #  for a record under a year, n/a for a missing close a year back. Both reach
   #  every lane, CORE and the shadow tables; the page files 1Y under the returns view, RANGE% under risk.
   #  DISPLAY ONLY: no score, gate, rank, book, journal line or golden reads the new cells.
   #  COST: no fetch; two cells a row.
