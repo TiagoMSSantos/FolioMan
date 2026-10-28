@@ -2911,7 +2911,7 @@ mod tests {
         assert!(e.contains("intraday_exit_eu: \"16:30\" is not the end of a EU 60m bar"), "{e}");
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
         let ci: Settings = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!((ci.intraday_exit_us, ci.intraday_exit_eu), (870, 960));
+        assert_eq!((ci.intraday_exit_us, ci.intraday_exit_eu), (870, 840));
     }
 
     /// Pins the deny_unknown_fields guard: a typo'd top-level key must ERROR naming the field, never

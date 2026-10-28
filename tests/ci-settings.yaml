@@ -23383,8 +23383,33 @@ intraday_key: 7
 # 16:00, EU 10:00 to 17:00 or 17:30). Re-pick from the EXIT HOURS table, not from the page.
 # DISPLAY ONLY: no rank, key, journal line, BUY NOW, trade, size or broker reads them.
 # REVERT RULE: drop both columns; the knobs cost nothing while unread.
+
+# (#1214) USER DECISION 2026-10-28: THE INTRADAY P/L COLUMNS SELL AT THE CENSUS'S BEST HOUR, AND NAME THE BUY AT THE OPEN.
+# WHY: the owner asked for the best hour to buy and the best hour to sell in each market, and chose that
+# the page follow the winner.
+# CENSUS (`backtest N intraday` now prints it as BUY AND SELL HOURS; CI probe 40753473374 on 86a7f23,
+# `backtest 2 intraday`): today's 503 S&P 500 members and 104 EU_POND names on Yahoo's 60m bars, 2y to
+# 2026-10-27, every name equal weight, bought at the open or at a 60m bar's end and sold at a later one:
+# 28 US pairs over 492 sessions, 45 EU pairs over 498. Gross bp (t) / net EUR a session at EUR 1,000
+# after the 50 / 20 bp round trip / halves / mean gain over open to close, bp (t):
+#   US 09:30-14:30 +4.09 (1.19) / -4.59 / +3.55|+4.63 / +2.33 (1.82)   the best of 28
+#   US 09:30-16:00 +1.62 (0.42) / -4.84 / +2.27|+0.97 / open to close  11th
+#   EU 09:00-14:00 +2.25 (0.88) / -1.77 / +1.73|+2.78 / +1.18 (0.63)   the best of 45
+#   EU 09:00-16:00 +2.00 (0.65) / -1.80 / -0.36|+4.35 / +0.92 (0.70)   the old knob, 2nd with 15:00
+#   EU 09:00-17:30 +1.08 (0.34) / -1.89 / +2.24|-0.09 / open to close  11th
+# The open is the best buy hour in both markets: the top 5 US pairs and the top 7 EU pairs all buy there,
+# and the best later buy is US 11:30-14:30 +2.08 (6th) and EU 11:00-14:00 +1.39 (8th). Every pair lost
+# money after costs, and none clears the (#809) bar of a gross t >= 3. With 28 and 45 pairs to pick
+# from, the top one wins partly by luck: EU 14:00 beats 16:00 by 0.25 bp, inside noise, though 14:00 is
+# the one of the two up in both halves.
+# BUILT: intraday_exit_eu moves from 16:00 to 14:00 Frankfurt time; US stays at 14:30 New York time. Both
+# headers name the buy at the open as well: `P/L 09:30-14:30 NY (13:30-18:30 PT)` and
+# `P/L 09:00-14:00 FRA (08:00-13:00 PT)`. No buy-hour knob, since the best buy hour is the open, where the
+# columns already buy; add one only if a re-run of this census puts the best pair's buy after the open.
+# DISPLAY ONLY: no rank, key, journal line, BUY NOW, trade, size or broker reads them.
+# REVERT RULE: intraday_exit_eu back to "16:00"; the open in the header is display text only.
 intraday_exit_us: "14:30" # (#1212) New York time
-intraday_exit_eu: "16:00" # (#1212) Frankfurt time
+intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 
 # (#1213) USER DECISION 2026-10-28: AN INTRADAY SESSION CELL ALSO PRINTS ITS HOURS ON THE READER'S CLOCK.
 # WHY: the owner asked which Intraday name is the most profitable and at what hours to buy and sell, and

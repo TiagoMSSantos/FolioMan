@@ -528,19 +528,22 @@ pub fn day_moves(market: &str, bars: &[(i64, f64, f64)]) -> BTreeMap<NaiveDate, 
 
 /// (#1212) An exit column's header, the hour on the exchange's clock and on Portugal's: `P/L 14:30 NY
 /// (18:30 PT)`. Portugal keeps UTC in winter and UTC+1 in summer, on the EU's switch dates. Both clocks
-/// are read at noon UTC on `today`, and no clock switches on a trading day.
+/// are read at noon UTC on `today`, and no clock switches on a trading day. (#1214) It names the buy at the
+/// open as well: `P/L 09:30-14:30 NY (13:30-18:30 PT)`.
 pub fn exit_head(market: &str, exit: u32, today: NaiveDate) -> String {
     let noon = today.and_hms_opt(12, 0, 0).unwrap_or_default();
-    let pt = (i64::from(exit) - offset(market, noon) + 60 * i64::from(summer_time("EU", noon))).rem_euclid(1440);
+    let pt = |m: u32| (i64::from(m) - offset(market, noon) + 60 * i64::from(summer_time("EU", noon))).rem_euclid(1440);
+    let hm = |m: i64| format!("{:02}:{:02}", m / 60, m % 60);
     let city = if market == "US" { "NY" } else { "FRA" };
-    format!("P/L {:02}:{:02} {city} ({:02}:{:02} PT)", exit / 60, exit % 60, pt / 60, pt % 60)
+    let open = session(market).0;
+    format!("P/L {}-{} {city} ({}-{} PT)", hm(open.into()), hm(exit.into()), hm(pt(open)), hm(pt(exit)))
 }
 
 /// (#1212) The header hover for `market`'s exit column.
 pub fn exit_help(market: &str, exit: u32) -> String {
     let (clock, other) = if market == "US" { ("New York", "EU") } else { ("Frankfurt", "US") };
     format!(
-        "The same sessions as P/L(EUR), sold at {:02}:{:02} {clock} time instead of at the close: €1,000 bought at each open, every gain and loss added up after the round trip, from Yahoo's 60m bars, so a half day drops out; {market} rows only, — on {other} rows; PT = the same moment on Portugal's clock this week. Hindsight, as P/L(EUR) is; hover a cell for the same sessions sold at the close. The hour is the intraday_exit_{} knob, picked from a 2-year census of every 60m bar end (receipt #1212): every hour lost money after costs, and none beat the close by a significant margin",
+        "The same sessions as P/L(EUR), sold at {:02}:{:02} {clock} time instead of at the close: €1,000 bought at each open, every gain and loss added up after the round trip, from Yahoo's 60m bars, so a half day drops out; {market} rows only, — on {other} rows; PT = the same moments on Portugal's clock this week. Hindsight, as P/L(EUR) is; hover a cell for the same sessions sold at the close. The hour is the intraday_exit_{} knob: buying at the open and selling then was the best pair in a 2-year census of every buy hour and later sell hour (receipt #1214), yet every pair lost money after costs, and none beat open to close by a significant margin",
         exit / 60,
         exit % 60,
         market.to_lowercase()
@@ -1195,14 +1198,14 @@ mod tests {
     fn exit_head_names_both_clocks() {
         let on = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
         // New York leaves summer time on 2026-11-01, a week after Portugal, and enters it three weeks before
-        assert_eq!(exit_head("US", 870, on(10, 28)), "P/L 14:30 NY (18:30 PT)");
-        assert_eq!(exit_head("US", 870, on(11, 2)), "P/L 14:30 NY (19:30 PT)");
-        assert_eq!(exit_head("US", 870, on(7, 1)), "P/L 14:30 NY (19:30 PT)");
-        assert_eq!(exit_head("US", 960, on(3, 20)), "P/L 16:00 NY (20:00 PT)");
+        assert_eq!(exit_head("US", 870, on(10, 28)), "P/L 09:30-14:30 NY (13:30-18:30 PT)");
+        assert_eq!(exit_head("US", 870, on(11, 2)), "P/L 09:30-14:30 NY (14:30-19:30 PT)");
+        assert_eq!(exit_head("US", 870, on(7, 1)), "P/L 09:30-14:30 NY (14:30-19:30 PT)");
+        assert_eq!(exit_head("US", 960, on(3, 20)), "P/L 09:30-16:00 NY (13:30-20:00 PT)");
         for day in [on(7, 1), on(12, 1)] {
-            assert_eq!(exit_head("EU", 960, day), "P/L 16:00 FRA (15:00 PT)");
+            assert_eq!(exit_head("EU", 960, day), "P/L 09:00-16:00 FRA (08:00-15:00 PT)");
         }
-        assert_eq!(exit_head("EU", 600, on(1, 5)), "P/L 10:00 FRA (09:00 PT)");
+        assert_eq!(exit_head("EU", 600, on(1, 5)), "P/L 09:00-10:00 FRA (08:00-09:00 PT)");
         for (market, exit, clock, knob, other) in [("US", 870, "14:30 New York", "us", "EU"), ("EU", 960, "16:00 Frankfurt", "eu", "US")] {
             let h = exit_help(market, exit);
             assert!(h.contains(&format!("sold at {clock} time")) && h.contains(&format!("{market} rows only, — on {other} rows")) && h.contains(&format!("intraday_exit_{knob} knob")), "{h}");
@@ -1263,7 +1266,7 @@ mod tests {
         ]);
         let on = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
         stamp_exits(&mut rows, &hourly, &[("US", 870), ("EU", 960)], on(10, 30), on(11, 3), on(11, 2));
-        let (us_head, eu_head) = ("P/L 14:30 NY (19:30 PT)", "P/L 16:00 FRA (15:00 PT)");
+        let (us_head, eu_head) = ("P/L 09:30-14:30 NY (14:30-19:30 PT)", "P/L 09:00-16:00 FRA (08:00-15:00 PT)");
         let hindsight = "(hindsight, as P/L(EUR) is: the key picked these names from these sessions; a half day, or a session missing its first or last bar, drops out, so the count can sit under P/L(EUR)'s)";
         let tip_us = format!("€1,000 bought at the open and sold at 14:30 New York time, each of the 2 sessions since 2026-10-30 on this name's 60m bars: +€30.00 before costs; the backtest's 50 bp a round trip costs 2 × €5.00 = €10.00; +€20.00 after, about +€10.00 a session\nsold at the close instead, the same 2 sessions: +€30.00 after costs, so this hour made -€10.00 against the close\n{hindsight}");
         let tip_eu = format!("€1,000 bought at the open and sold at 16:00 Frankfurt time, each of the 1 sessions since 2026-10-30 on this name's 60m bars: +€20.00 before costs; the backtest's 20 bp a round trip costs 1 × €2.00 = €2.00; +€18.00 after, about +€18.00 a session\nsold at the close instead, the same 1 sessions: -€22.00 after costs, so this hour made +€40.00 against the close\n{hindsight}");
