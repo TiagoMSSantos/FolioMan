@@ -234,9 +234,9 @@ function apply(n) {
 // columns that `value` and `risk` split, so a phone reader finds them in one pick.
 const VIEW = {
   MARKET: "overview", SECTOR: "overview", DOM: "overview", EARN: "overview", "PRICE(EUR)": "overview", SCORE: "overview",
-  CAGR: "returns", YRS: "returns", "1D": "returns", "1W": "returns", "1M": "returns", "2Y": "returns",
+  CAGR: "returns", YRS: "returns", "1D": "returns", "1W": "returns", "1M": "returns", "1Y": "returns", "2Y": "returns",
   "5Y": "returns", "8Y": "returns", "20Y": "returns", "S-8Y": "returns",
-  VOL: "risk", BETA: "risk", MAXDD: "risk", R2: "risk", "ABV-MA": "risk", "OFF-HI": "risk", TURNOVER: "risk",
+  VOL: "risk", BETA: "risk", MAXDD: "risk", R2: "risk", "ABV-MA": "risk", "OFF-HI": "risk", "RANGE%": "risk", TURNOVER: "risk",
   "5Y-WIN%": "risk", "WORST-5Y": "risk", "UW-YRS": "risk", "ND/EBITDA": "risk cash", "INT-COV": "risk cash", "SHORT%": "risk", "RED-FLAGS": "risk",
   MCAP: "value", "P/E": "value", PEG: "value", "ROE/A": "value", "REV-YoY": "value", "REV-5Y": "value", "FCF-5Y": "value cash", "OP%": "value", "MARGIN-TREND": "value", "M-SCORE": "risk", "SBC%": "value", "EPS-YoY": "value",
   "NET%": "value", DIV: "value", BUYBK: "value", TER: "value", AUM: "value", USE: "value", REPL: "value",

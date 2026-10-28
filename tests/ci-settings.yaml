@@ -1107,7 +1107,7 @@ widths:
     - 1d          # % vs 1 day ago
     - 1w          # % vs 1 week ago
     - 1m          # % vs 1 month ago
-    # - 1y        # (#910) % vs 1 year ago (hidden: listed so this block names every key)
+    - 1y          # % vs 1 year ago; (#1210) shown: the 1Y gate reads it
     - 2y          # % vs 2 years ago
     - 5y          # % vs 5 years ago
     - 8y          # % vs 8 years ago
@@ -1147,6 +1147,7 @@ widths:
     - fair_cap    # (#522) intrinsic equity value of the whole company, FAIR × shares, beside MCAP; Bitcoin its realized cap (display only)
     - target      # (#489) consensus analyst target vs price, 3+ analysts (stocks only; display only)
     - off-hi      # % below its OFF-HI high
+    - range       # (#1210) the close's percentile in its own ~10y closes, 0-100: the range gate and the score's proximity term read it (display only)
     # - upside      # room back to that high (NOT a forecast)
     - abv-ma      # % above the 200wk SMA — overextension / blow-off gauge
     # -- survival
@@ -1173,8 +1174,8 @@ widths:
     - div         # trailing-1Y dividend yield
     - payout      # (#1200) DIV × P/E, the share of earnings paid out (stocks only; display only)
     - fcfpay      # (#1200) DIV ÷ FCF-YLD, the share of free cash flow paid out (stocks only; display only)
-    - ins         # (#448) insider open-market buys/sales, last 90 days, SEC Form 4 (printed stock rows)
-    - earn        # (#449) next earnings date, MM-DD (printed stock rows)
+    - ins         # (#448) insider open-market buys/sales, last 90 days, SEC Form 4 (printed stock rows and, since (#1209), the shadow tables)
+    - earn        # (#449) next earnings date, MM-DD (printed stock rows and, since (#1209), the shadow tables)
     - turnover    # avg daily turnover (EUR) — liquidity
     - reports     # (#540) annual/quarterly reports link: the EDGAR page for an SEC filer, else a Google search (display only)
     - score       # the growth ranking score
@@ -1283,6 +1284,17 @@ widths:
   #  ~15 Form 4s each, ~3000 requests, spread over about 7 runs at the ~450 the budget leaves a run; a
   #  warm week costs none.
   #  REVERT RULE: put "ins" and "earn" back in HIDE_SHADOW and drop the four added fetch calls.
+  #── (#1210) USER DECISION 2026-10-28: 1Y AND RANGE% ON THE PAGE ──
+  #  WHY: a whole-page check found two values the buy heuristic reads shown on no table. The 1Y return
+  #  feeds the growth_min_1y_pct gate, and (#910) only listed its key commented out. A close's percentile
+  #  in its own ~10y closes feeds the growth_min_range_pct gate and multiplies the score at
+  #  growth_proximity_weight 1; OFF-HI is a different measure, the distance below the high.
+  #  BUILT: the 1y key is listed, so 1Y prints. A new RANGE% column (key range, one decimal) reads the
+  #  percentile, n/a where the name has no 1Y leg, the same precondition the range gate takes. Both reach
+  #  every lane, CORE and the shadow tables; the page files 1Y under the returns view, RANGE% under risk.
+  #  DISPLAY ONLY: no score, gate, rank, book, journal line or golden reads the new cells.
+  #  COST: no fetch; two cells a row.
+  #  REVERT RULE: comment out 1y again and drop the range key, its ColSpec and its col_cell arm.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
