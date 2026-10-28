@@ -5793,10 +5793,11 @@ pub fn young_line(quotes: &[Quote], n: usize) -> String {
     format!("young (<{YOUNG_YEARS:.0}y listed, shadow, NOT ranked): {} stock(s), by revenue growth: {}", all.len(), head.join(", "))
 }
 
-/// (#458) Columns the shadow tables leave out: their own TICKER/NAME already lead the row, RANK/SCORE/S-8Y
+/// (#458) Columns the shadow tables leave out: their own TICKER/NAME already lead the row, RANK/SCORE
 /// rank a lane these rows are not in, and INS-B/S/EARN are fetched for printed stocks only, so they would
-/// read n/a on nearly every shadow row.
-const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "misses", "score8y", "ins", "earn"];
+/// read n/a on nearly every shadow row. (#1202) S-8Y shows: each row's own 8-year score, read as the
+/// lane reads it.
+const HIDE_SHADOW: &[&str] = &["rank", "ticker", "name", "score", "misses", "ins", "earn"];
 
 /// (#639) ...and the Young table these too: every row there is listed under [`YOUNG_YEARS`], so its
 /// 8Y/10Y/20Y legs and 5-year window stats cannot exist yet and would read — on every row.
@@ -5828,6 +5829,7 @@ pub fn stamp_shadow_cols(
     for table in ["attention", "berkshire", "social", "young", "braked", "reits"] {
         // (#538) the Social table reads `social_heuristic` over `buy_heuristic`; every other table the original
         let (tuning, soc_on) = if table == "social" { (&soc.buy, soc.on()) } else { (tuning, false) };
+        let t8 = tuning_8y(tuning);
         let cols: Vec<&ColSpec> = cols.iter().copied().filter(|c| table != "young" || !HIDE_YOUNG.contains(&c.key)).collect();
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         let mut keyed: Vec<(RankKey, f64, (String, Option<f64>), serde_json::Value)> = Vec::new();
@@ -5840,8 +5842,9 @@ pub fn stamp_shadow_cols(
                 let mcap = quote.and_then(|q| q.shares_out.zip(q.price_eur)).map(|(n, p)| n * p);
                 social::score(&text("SOURCES"), &text("NEWEST"), mcap, quote.and_then(|q| q.mom_pct), asof, soc).unwrap_or(0.0)
             });
+            let s8 = quote.and_then(|q| growth_score(&as_8y_window(q), &t8)); // (#1202)
             for c in &cols {
-                let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, None, "", tuning, fund_pe));
+                let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, s8, "", tuning, fund_pe));
                 cells.push(serde_json::json!([c.hdr, cell]));
             }
             let (key, score, misses, hover) = rank_row(quote, tuning, pool);
@@ -11992,6 +11995,30 @@ mod tests {
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "HOOD"]]]), "the lanes are untouched");
         assert_eq!([&p["help"]["berkshire"]["SECTOR"], &p["help"]["social"]["SECTOR"]], ["the sector", "the sector"]);
         assert!(p.get("attention").is_none(), "an absent table stays absent");
+    }
+
+    /// (#1202) A shadow row's S-8Y is its own 8-year score, the cell the lane prints for it; an unpriced
+    /// row reads n/a.
+    #[test]
+    fn stamp_shadow_cols_read_the_8_year_score() {
+        // the fixture `as_8y_window_lower_range_scores_lower` proves scoreable
+        let mut q = Quote::stub("BIG", "€1", "", "n");
+        q.perf = legs(&[("1Y", 30.0), ("5Y", 120.0), ("8Y", 300.0), ("10Y", 400.0)]);
+        (q.range_pct, q.avg_turnover_eur) = (98.0, Some(5e9));
+        let (w, t) = (Widths { columns: vec!["ticker".into(), "score8y".into()], ..Widths::default() }, BuyHeuristic::default());
+        let s8 = growth_score(&as_8y_window(&q), &tuning_8y(&t));
+        assert!(s8.is_some(), "not vacuous: the row scores on 8 years");
+        let mut p = serde_json::json!({"attention": [[["RANK", "1"], ["TICKER", "ZZ"]], [["RANK", "2"], ["TICKER", "BIG"]]], "help": {"lanes": {"S-8Y": "s"}}});
+        let off = social::resolve(&t, &serde_yaml::Value::Null).unwrap();
+        let quotes = std::slice::from_ref(&q);
+        stamp_shadow_cols(&mut p, quotes, quotes, &w, &t, &off, &FundPeMap::new(), &|x: &str| x.to_string());
+        let s8y = |ticker: &str| {
+            let row = p["attention"].as_array().unwrap().iter().find(|r| row_ticker(r) == Some(ticker)).unwrap();
+            row.as_array().unwrap().iter().find(|c| c[0] == "S-8Y").map(|c| c[1].clone())
+        };
+        assert_eq!(s8y("BIG"), Some(col_cell("score8y", &q, 0.0, s8, "", &t, &FundPeMap::new()).into()));
+        assert_eq!(s8y("ZZ"), Some("n/a".into()));
+        assert_eq!(p["help"]["attention"]["S-8Y"], "s");
     }
 
     /// (#538) With SOC on, the Social table ranks by SOC and keeps the 20y position in RANK-20Y; the

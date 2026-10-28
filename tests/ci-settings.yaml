@@ -1210,6 +1210,14 @@ widths:
   #  DISPLAY ONLY: no gate, trim, anchor or footer reads `core_pe`; CORE's rows, order and sleeves stay.
   #  A swap fund past the gated set reads no P/E (no index twin is borrowed for it).
   #  REVERT RULE: drop the `stamp_core_cols` calls in both builders and the `core_pe` map.
+  #── (#1202) USER DECISION 2026-10-28: S-8Y ON THE SHADOW TABLES ──
+  #  WHY: the shadow tables (Attention, Berkshire, Social, Young, Braked, REITs) hid S-8Y, so a name there
+  #  could not be read on the 8-year window the lanes print beside it. The owner chose to show it.
+  #  BUILT: HIDE_SHADOW drops `score8y`; `stamp_shadow_cols` scores each row's own 8-year window under the
+  #  table's tuning (Social reads `social_heuristic`) and prints the lane's cell; an unpriced row reads n/a.
+  #  Young keeps the column: a young soft admit can score.
+  #  DISPLAY ONLY: the shadow rank, SCORE, MISSES and the SOC book stay as they were.
+  #  REVERT RULE: put `score8y` back in HIDE_SHADOW and pass `None` for the cell's 8-year score.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
