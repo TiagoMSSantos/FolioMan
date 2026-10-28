@@ -23424,6 +23424,41 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # DISPLAY ONLY: no payload, rank, key, Rust or golden change.
 # REVERT RULE: drop the `td[data-local]` rule in web/style.css and the dataset line in web/app.js.
 
+# (#1215) HOLD-LENGTH CENSUS, 2026-10-28, record only, no knob.
+# WHY: the owner asked whether buying on one session and selling 1, 2, 5, 10, 15 or 21 sessions later
+# pays more than the Intraday table's same-session trade, and which hold pays most.
+# CENSUS (`backtest N intraday` prints it as HOLDS after BUY AND SELL HOURS; CI probe 40765844700 on
+# cb445eb, `backtest 2 intraday`): the (#1214) 60m bars, 2y to 2026-10-27, 503 US and 105 EU names, every
+# buy hour on the buy session against every sell hour H sessions on; plus 10y of daily bars, open to
+# close, the US side on the index as it stood each day. Two name sets: every name equal weight (pond) and
+# the intraday_key K7 top 10 (book). A hold starts every H sessions, one phase, and pays one 50 / 20 bp
+# round trip. Ranked on net EUR a session held at EUR 1,000 (net a hold over max(H, 1)).
+# Gross bp (t) / net EUR a hold / net EUR a session / halves:
+#   US whole span, 492 names bought at the first open, sold at the last close  +3330.9 / net +0.67 a session
+#   US book +21  13:30-09:30 best  +209.83 (1.83) / +15.98 / +0.76 / +23.70|+380.45
+#   US book +21  open-close        +145.06 (1.18) /  +9.51 / +0.45 / -66.58|+339.07
+#   US pond +21  16:00-09:30 best  +142.56 (1.70) /  +9.26 / +0.44 / +167.92|+119.32
+#   US pond +0   09:30-14:30 best    +4.03 (1.18) /  -4.60 / -4.60 / +3.55|+4.51   the (#1214) trade
+#   US daily book +21 open-close   +127.41 (2.44) /  +7.74 / +0.37; pond +110.79 (2.15) / +6.08 / +0.29
+#   EU whole span, 104 names                                                   +1984.8 / net +0.39 a session
+#   EU book +21  10:00-17:00 best  +258.91 (3.73) / +23.89 / +1.14 / +318.40|+204.38
+#   EU book +21  open-close        +245.26 (3.46) / +22.53 / +1.07 / +302.36|+192.93
+#   EU pond +21  10:00-17:00 best   +73.17 (1.15) /  +5.32 / +0.25 / +99.38|+49.14
+#   EU pond +0   09:00-16:00 best    +2.45 (0.80) /  -1.75 / -1.75 / -0.35|+5.24   the (#1214) trade
+#   EU daily book +21 open-close   +130.81 (2.63) / +11.08 / +0.53; pond +76.11 (1.45) / +5.61 / +0.27
+# VERDICT: every hold of 0 to 2 sessions loses after costs, in both markets, on both name sets, on 60m and
+# daily bars. The sign turns from about 5 to 10 sessions on, as one round trip spreads over more sessions
+# and the market's drift adds up, and 21 sessions pays most a session everywhere. That is drift, not
+# timing: no US pond hold beats buying every name once for the 2y (+0.44 vs +0.67), and only the K7
+# book's best pair does (+0.76), carried by one half. The EU K7 book a month at a time (+1.07 open-close,
+# t 3.46, both halves up) beats EU buy-and-hold (+0.39), but its 60m side is today's members, so
+# survivor-biased, and its 10y daily line halves it (+0.53, t 2.63). The +0 lines match BUY AND SELL
+# HOURS to the digit. This run's best EU same-session sell is 16:00 (+2.45 vs +2.35 at the 14:00 knob),
+# inside the (#1214) noise, so the knob stays.
+# No knob and no page column: the Intraday table stays a same-session hindsight display, and nothing here
+# reaches rank, BUY NOW, trade, size or the broker. A re-ask of the intraday table still needs a NEW key
+# at gross t >= 3.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
