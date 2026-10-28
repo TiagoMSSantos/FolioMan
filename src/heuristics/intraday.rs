@@ -300,6 +300,8 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 /// rows now sort on GAIN/LOSS instead: the window's up moves and down moves, each session's % change
 /// added up, ordered by up / (up + down), ties in key order; a name with no move at all sorts last. Its
 /// hover adds the averages and both sums net of the market's round trip, `COST_BPS_US` or `COST_BPS_EU`.
+/// (#1206) P/L(EUR) is the same sessions in euros: €1,000 bought at each open and sold at the close,
+/// each % change times €1,000 added up after that round trip; its hover adds the figure before costs.
 pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveDate, until: NaiveDate, fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
     use serde_json::json;
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
@@ -317,6 +319,7 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
     v.sort_by(|a, b| up_share(b.2).unwrap_or(-1.0).total_cmp(&up_share(a.2).unwrap_or(-1.0)));
     let ratio = |a: f64, b: f64| if b > 0.0 { format!("{:.2}", a / b) } else { "—".into() };
     let avg = |s: f64, n: usize, sign: &str| if n > 0 { format!("{sign}{:.2}%", s * 100.0 / n as f64) } else { "—".into() };
+    let eur = |x: f64| format!("{}€{}", if x < 0.0 { "-" } else { "+" }, core::fmt_money2(x.abs()));
     v.into_iter()
         .enumerate()
         .map(|(n, ((tk, x, c), xs, (u, d)))| {
@@ -335,6 +338,17 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
                 nu * 100.0,
                 nd * 100.0,
                 ratio(nu, nd)
+            );
+            // shortcut: the euro stake earns the session's % change in the listing's currency, so a US row
+            // leaves out the euro's move inside the session; counting it would need EUR/USD bars per session
+            let pl = format!(
+                "€1,000 bought at the open and sold at the close, each of the {} sessions since {since}: {} before costs; the backtest's {cost:.0} bp a round trip costs {} × €{} = €{}; {} after\n(each session's % change × €1,000 added up, not compounded; a US row leaves out the euro's move inside the session)",
+                r + f,
+                eur((u - d) * 1000.0),
+                r + f,
+                core::fmt_money2(cost / 10.0),
+                core::fmt_money2((r + f) as f64 * cost / 10.0),
+                eur((nu - nd) * 1000.0)
             );
             let tip = match tug(c, completed(c, today)).map(|(d, n)| (d * 100.0, n * 100.0)) {
                 Some((d, n)) if k == 1 => format!(
@@ -356,6 +370,7 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
                 json!(["DATA TO", format!("{since} – {}", c.dates[completed(c, until) - 1])]),
                 json!(["RIGHT/FAIL", format!("{r}/{f}"), null, format!("{r} right, {f} failed since {since}: all {} sessions, right = closed above its open", r + f)]),
                 json!(["GAIN/LOSS", format!("{:+.1}%/-{:.1}%", u * 100.0, d * 100.0), null, gain]),
+                json!(["P/L(EUR)", eur((nu - nd) * 1000.0), null, pl]),
                 json!(["SCORE", format!("{:.0}%", share((r, f)) * 100.0)]),
             ]
         })
@@ -764,8 +779,8 @@ mod tests {
         assert_eq!(
             serde_json::json!(rows),
             serde_json::json!([
-                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Up"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€202.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "30/0", null, "30 right, 0 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+30.0%/-0.0%", null, "30 up days added up +30.0% (avg +1.00%); 0 down or flat days -0.0% (avg —); since 2026-01-02, open to close, before costs\ngain factor — = up ÷ down = (30/0 days) × (1.00%/— avg move)\nafter the backtest's 50 bp a round trip: +15.0%/-0.0%, gain factor —\n(each session's % change added up, not compounded)"], ["SCORE", "97%"]],
-                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "22/8", null, "22 right, 8 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+124.5%/-4.8%", null, "22 up days added up +124.5% (avg +5.66%); 8 down or flat days -4.8% (avg -0.60%); since 2026-01-02, open to close, before costs\ngain factor 25.80 = up ÷ down = (22/8 days) × (5.66%/0.60% avg move)\nafter the backtest's 50 bp a round trip: +113.5%/-8.8%, gain factor 12.86\n(each session's % change added up, not compounded)"], ["SCORE", "72%"]],
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Up"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€202.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "30/0", null, "30 right, 0 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+30.0%/-0.0%", null, "30 up days added up +30.0% (avg +1.00%); 0 down or flat days -0.0% (avg —); since 2026-01-02, open to close, before costs\ngain factor — = up ÷ down = (30/0 days) × (1.00%/— avg move)\nafter the backtest's 50 bp a round trip: +15.0%/-0.0%, gain factor —\n(each session's % change added up, not compounded)"], ["P/L(EUR)", "+€150.00", null, "€1,000 bought at the open and sold at the close, each of the 30 sessions since 2026-01-02: +€300.00 before costs; the backtest's 50 bp a round trip costs 30 × €5.00 = €150.00; +€150.00 after\n(each session's % change × €1,000 added up, not compounded; a US row leaves out the euro's move inside the session)"], ["SCORE", "97%"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "22/8", null, "22 right, 8 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+124.5%/-4.8%", null, "22 up days added up +124.5% (avg +5.66%); 8 down or flat days -4.8% (avg -0.60%); since 2026-01-02, open to close, before costs\ngain factor 25.80 = up ÷ down = (22/8 days) × (5.66%/0.60% avg move)\nafter the backtest's 50 bp a round trip: +113.5%/-8.8%, gain factor 12.86\n(each session's % change added up, not compounded)"], ["P/L(EUR)", "+€1,046.85", null, "€1,000 bought at the open and sold at the close, each of the 30 sessions since 2026-01-02: +€1,196.85 before costs; the backtest's 50 bp a round trip costs 30 × €5.00 = €150.00; +€1,046.85 after\n(each session's % change × €1,000 added up, not compounded; a US row leaves out the euro's move inside the session)"], ["SCORE", "72%"]],
             ])
         );
         // equal gain shares keep key order
@@ -776,7 +791,7 @@ mod tests {
         // `until` both closed up, and neither counts
         let eu = web_rows("EU", 1, &[("X", 0.0, &c)], d(1), d(21), 1.0, d(20));
         assert_eq!((eu[0][1][1].as_str(), eu[0][6][3].as_str()), (Some("EU"), Some("K1 tug of war")));
-        assert_eq!((eu[0][7][1].as_str(), eu[0][8][1].as_str(), eu[0][9][1].as_str(), eu[0][11][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-02 – 2026-01-21"), Some("16/4"), Some("77%")));
+        assert_eq!((eu[0][7][1].as_str(), eu[0][8][1].as_str(), eu[0][9][1].as_str(), eu[0][12][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-02 – 2026-01-21"), Some("16/4"), Some("77%")));
         // (#824) 21 sessions behind it: the hover works the number out
         let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], d(1), d(31), 1.0, d(31));
         assert_eq!(k1[0][5][1], "€103.00");
@@ -801,18 +816,20 @@ mod tests {
         let down = chart(&o, &[99.0; 31], 1e5);
         let book = [("SMALL", 4.0, &small), ("FLAT", 3.0, &flat), ("DOWN", 2.0, &down), ("BIG", 1.0, &big)];
         let rows = web_rows("EU", 3, &book, d(1), d(31), 1.0, d(31));
-        let cells: Vec<_> = rows.iter().map(|r| (r[2][1].as_str().unwrap(), r[9][1].as_str().unwrap(), r[10][1].as_str().unwrap(), r[11][1].as_str().unwrap())).collect();
+        let cells: Vec<_> = rows.iter().map(|r| (r[2][1].as_str().unwrap(), r[9][1].as_str().unwrap(), r[10][1].as_str().unwrap(), r[11][1].as_str().unwrap(), r[12][1].as_str().unwrap())).collect();
         assert_eq!(
             cells,
             [
-                ("BIG", "10/20", "+30.0%/-10.0%", "34%"),
-                ("SMALL", "20/10", "+2.0%/-10.0%", "66%"),
-                ("DOWN", "0/30", "+0.0%/-30.0%", "3%"),
-                ("FLAT", "0/30", "+0.0%/-0.0%", "3%"),
+                ("BIG", "10/20", "+30.0%/-10.0%", "+€140.00", "34%"),
+                ("SMALL", "20/10", "+2.0%/-10.0%", "-€140.00", "66%"),
+                ("DOWN", "0/30", "+0.0%/-30.0%", "-€360.00", "3%"),
+                ("FLAT", "0/30", "+0.0%/-0.0%", "-€60.00", "3%"),
             ]
         );
         // the hover's net sums pay the EU's 20 bp a session: BIG's 10 up days keep 2.8% each
         assert!(rows[0][10][3].as_str().unwrap().contains("after the backtest's 20 bp a round trip: +28.0%/-14.0%, gain factor 2.00"));
+        // (#1206) €1,000 a session: FLAT never moved, so it reads +€0.00 before costs and pays 30 × €2.00
+        assert!(rows[3][11][3].as_str().unwrap().contains(": +€0.00 before costs; the backtest's 20 bp a round trip costs 30 × €2.00 = €60.00; -€60.00 after"));
     }
 
     /// A weekend line and the Monday line after it reach one session; the first one grades it.

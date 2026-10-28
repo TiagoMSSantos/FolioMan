@@ -1243,6 +1243,16 @@ widths:
   #  stay CI's, BUY% included, as their SCORE does.
   #  DISPLAY ONLY: the book, BUY NOW, sizing and the lanes' rows stay as they were.
   #  REVERT RULE: drop the second loop in `stamp_buy`; the call may stay where it is.
+  #── (#1206) USER DECISION 2026-10-28: P/L(EUR) ON THE INTRADAY TABLE ──
+  #  WHY: GAIN/LOSS adds up the up and the down % moves but never says what the sessions made or lost in
+  #  money. The owner asked for the whole profit, a loss as a negative value, in euros.
+  #  BUILT: `intraday::web_rows` prints P/L(EUR) after GAIN/LOSS: €1,000 bought at each session's open and
+  #  sold at its close, over the same sessions, each % change times €1,000 added up, not compounded, net
+  #  of the backtest's round trip (COST_BPS_US 50, COST_BPS_EU 20). The hover gives the figure before
+  #  costs and the cost total. A US row leaves out the euro's move inside the session.
+  #  DISPLAY ONLY: the intraday key, rank, journal and track never read it, and the table stays off
+  #  trade, size, BUY NOW and the broker.
+  #  REVERT RULE: drop the P/L(EUR) cell and its help line.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
