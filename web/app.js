@@ -228,7 +228,8 @@ function apply(n) {
 
 // (#445) Column groups for the nine ranked tables (the three lanes and the six in `view()`),
 // finviz-style. A header NOT listed here shows in every view, so RANK NAME TICKER BUY% (and any
-// column added later) can never be hidden by accident.
+// column added later) can never be hidden by accident. (#1201) CORE joins them, now that it
+// carries the ETF lane's columns.
 // (#493) A header may sit in several views, space-separated: `cash` regroups the cash-flow and debt
 // columns that `value` and `risk` split, so a phone reader finds them in one pick.
 const VIEW = {
@@ -244,7 +245,7 @@ const VIEW = {
   "FCF-YLD": "value cash", "P/S": "value", "EV/EBITDA": "value", "PAYOUT%": "value cash", "FCF-PAY%": "value cash",
 };
 function view(v) {
-  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #crypto, #attention, #berkshire, #social, #young, #braked, #reits) table")) {
+  for (const t of document.querySelectorAll(":is(#stocks, #etfs, #core, #crypto, #attention, #berkshire, #social, #young, #braked, #reits) table")) {
     const hide = [...t.rows[0].cells].map((th) => v !== "all" && th.textContent in VIEW && !VIEW[th.textContent].split(" ").includes(v));
     for (const tr of t.rows) [...tr.cells].forEach((c, i) => (c.hidden = hide[i]));
   }

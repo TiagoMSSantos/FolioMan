@@ -27,6 +27,10 @@ pub struct Universe {
     /// ^GSPC, which the sector door reads its backstop CAGR off.
     pub spx: Option<Quote>,
     pub fund_pe: FundPeMap,
+    /// (#1201) CORE's funds past the gated set: their look-through P/E, display only
+    /// ([`picks::stamp_core_cols`]). A universe written before it reads empty.
+    #[serde(default)]
+    pub core_pe: FundPeMap,
     pub nupl: Option<f64>,
     pub inflation: Vec<Vec<(String, String)>>,
     pub degraded: Vec<String>,
@@ -48,6 +52,7 @@ pub fn snapshot(
     quotes: &[Quote],
     spx: Option<&Quote>,
     fund_pe: &FundPeMap,
+    core_pe: &FundPeMap,
     nupl: Option<f64>,
     inflation: &[Vec<(String, String)>],
     degraded: &[String],
@@ -60,6 +65,7 @@ pub fn snapshot(
         quotes: quotes.to_vec(),
         spx: spx.cloned(),
         fund_pe: fund_pe.clone(),
+        core_pe: core_pe.clone(),
         nupl,
         inflation: inflation.to_vec(),
         degraded: degraded.to_vec(),
@@ -105,6 +111,7 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     });
     let mut top: serde_json::Value =
         out.into_inner().and_then(|j| serde_json::from_str(&j).ok()).ok_or("render built no payload")?;
+    picks::stamp_core_cols(&mut top, &u.quotes, &s.widths, bh, &u.fund_pe, &u.core_pe); // (#1201)
     let soc = s.social().map_err(|e| format!("settings.yaml: {e}"))?;
     // (#746) the upload's own Braked table, off the shipped rows before (#584) momentum rows join them, as
     // `screen` builds it: without it the page kept CI's
@@ -288,7 +295,7 @@ mod tests {
         let infl = vec![vec![("REGION".to_string(), "EU".to_string())]];
         let degraded = ["MVRV feed down".to_string()];
         let aliases = HashMap::from([("VWCE.L".to_string(), "VWCE.DE".to_string())]);
-        snapshot(serde_yaml::from_str(CI).ok(), quotes, None, &FundPeMap::new(), Some(0.3), &infl, &degraded, &aliases, &HashMap::new())
+        snapshot(serde_yaml::from_str(CI).ok(), quotes, None, &FundPeMap::new(), &FundPeMap::new(), Some(0.3), &infl, &degraded, &aliases, &HashMap::new())
     }
 
     /// What `screen` itself would have published for this pool, pinned set and cut.
@@ -310,6 +317,7 @@ mod tests {
             web_degraded: &["MVRV feed down".to_string()],
         });
         let mut v: serde_json::Value = serde_json::from_str(&out.into_inner()).expect("render built the payload");
+        picks::stamp_core_cols(&mut v, quotes, &s.widths, &s.buy_heuristic, &FundPeMap::new(), &FundPeMap::new()); // (#1201)
         v["braked"] = picks::braked_rows(&v["stocks"], quotes, pinned, &s.buy_heuristic); // (#746)
         // (#403) the BUY% `screen` stamps from its own sized book, with its real look-through map
         let book = picks::buy_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new());
@@ -379,7 +387,7 @@ mod tests {
         };
         let nvda = Quote { sector: Some("Information Technology".into()), ..Quote::stub("NVDA", "$1", "", "NVIDIA") };
         let twins = HashMap::from([("NVD.DE".to_string(), nvda)]);
-        let with = snapshot(serde_yaml::from_str(CI).ok(), &q, None, &FundPeMap::new(), Some(0.3), &[], &[], &HashMap::new(), &twins);
+        let with = snapshot(serde_yaml::from_str(CI).ok(), &q, None, &FundPeMap::new(), &FundPeMap::new(), Some(0.3), &[], &[], &HashMap::new(), &twins);
         assert_eq!(sector(&universe(&q)), Some("n/a".into()), "not vacuous: the European line has no sector");
         assert_eq!(sector(&with), Some("Information Technology$".into()));
     }
@@ -634,7 +642,7 @@ mod tests {
         twin.ticker = "NVD.F".into();
         let quotes = [winner(), twin];
         let aliases = HashMap::from([("NVD.X".to_string(), "NVD.F".to_string())]);
-        let u = snapshot(serde_yaml::from_str(CI).ok(), &quotes, None, &FundPeMap::new(), Some(0.3), &[], &[], &aliases, &HashMap::new());
+        let u = snapshot(serde_yaml::from_str(CI).ok(), &quotes, None, &FundPeMap::new(), &FundPeMap::new(), Some(0.3), &[], &[], &aliases, &HashMap::new());
         let walk = "how the SCORE was computed — NVIDIA Corp (NVD.F)";
         let why = |overlay: &str| explain(overlay, &u, "NVD.F").expect("explains");
         assert!(!why("").contains(walk), "not vacuous: unpinned, the same-name twin is dropped: {}", why(""));

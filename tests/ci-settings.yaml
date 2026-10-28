@@ -1199,6 +1199,17 @@ widths:
   #  DISPLAY ONLY: both read the DIV, P/E and FCF-YLD cells' own inputs; nothing scores, gates or sizes on
   #  them.
   #  REVERT RULE: drop the two column lines and the two `col_cell` arms.
+  #── (#1201) USER DECISION 2026-10-28: CORE CARRIES THE ETF LANE'S COLUMNS ──
+  #  WHY: the CORE table printed its fund facts only, so a broad fund there could not be read against the
+  #  ETFS row beside it: no price legs, no BETA, no FAIR/MOS%/PEG. The owner chose ETFS parity.
+  #  BUILT: `stamp_core_cols` appends every column of this layout the ETF lane prints (HIDE_ETF applied)
+  #  that a CORE row lacks, through the lane's own cells, S-8Y included, and copies the lane's help for
+  #  the added headers only. INDEX joins it (`stamp_index`, CORE's rows counted among themselves). The PEG
+  #  of a fund past the gated set reads `core_pe`: the second holdings call's P/E mix, kept instead of
+  #  dropped and carried in universe.json. Where both maps hold a fund, the gated `fund_pe` wins.
+  #  DISPLAY ONLY: no gate, trim, anchor or footer reads `core_pe`; CORE's rows, order and sleeves stay.
+  #  A swap fund past the gated set reads no P/E (no index twin is borrowed for it).
+  #  REVERT RULE: drop the `stamp_core_cols` calls in both builders and the `core_pe` map.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a

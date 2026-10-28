@@ -5486,9 +5486,17 @@ fn one_per_index(rows: &[&Quote], overlap: usize) -> Vec<bool> {
 /// prints its own wording, and a ×N cell adds ` · TICKER`, the lowest TER among the group's euro lines
 /// (every line when none is euro). Display only: stamped
 /// by both payload builders, like [`stamp_buy`], so an upload keeps it. A lane the payload lacks stays
-/// absent.
+/// absent. (#1201) The CORE table gets it too, its rows counted among themselves.
 pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
-    let Some(rows) = payload.get_mut("etfs").and_then(serde_json::Value::as_array_mut) else { return };
+    for (table, help) in [("etfs", "lanes"), ("core", "core")] {
+        let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
+        index_cells(rows, quotes);
+        payload["help"][help]["INDEX"] = INDEX_HELP.into();
+    }
+}
+
+/// (#446) [`stamp_index`]'s cells for one table's rows.
+fn index_cells(rows: &mut [serde_json::Value], quotes: &[Quote]) {
     let named = |row: &serde_json::Value| {
         let t = row.as_array()?.iter().find(|c| c[0] == "TICKER")?[1].as_str()?;
         let q = quotes.iter().find(|q| q.ticker == t)?;
@@ -5514,7 +5522,36 @@ pub fn stamp_index(payload: &mut serde_json::Value, quotes: &[Quote]) {
         let at = after("BUY%").or_else(|| after("TICKER")).map_or(cells.len(), |i| i + 1);
         cells.insert(at, serde_json::json!(["INDEX", cell]));
     }
-    payload["help"]["lanes"]["INDEX"] = INDEX_HELP.into();
+}
+
+/// (#1201) The CORE table's missing ETF columns: each header of the ETF lane's layout a CORE row lacks is
+/// appended through the same [`col_cell`] the lane prints with, S-8Y re-read on 8 years as there, and
+/// the lane's help copied into CORE's glossary. `core_pe` is the P/E mix of CORE's funds past the gated
+/// set, DISPLAY ONLY: `fund_pe`, the map the gates read, wins where both hold a fund. A row finds its
+/// quote by exact ticker and reads n/a without one. Display only: stamped by both payload builders, so
+/// an upload keeps it. shortcut: a swap fund past the gated set reads no P/E, where `fund_pe` borrows
+/// an index twin's; that costs a third holdings call.
+pub fn stamp_core_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &Widths, tuning: &BuyHeuristic, fund_pe: &FundPeMap, core_pe: &FundPeMap) {
+    let pe: FundPeMap = core_pe.iter().chain(fund_pe).map(|(t, p)| (t.clone(), p.clone())).collect();
+    let (cols, t8) = (lane_columns(w, HIDE_ETF), tuning_8y(tuning));
+    let Some(rows) = payload.get_mut("core").and_then(serde_json::Value::as_array_mut) else { return };
+    let mut added = Vec::new();
+    for row in rows {
+        let quote = row_ticker(row).and_then(|t| quotes.iter().find(|q| q.ticker == t));
+        let s8 = quote.and_then(|q| growth_score(&as_8y_window(q), &t8));
+        let Some(cells) = row.as_array_mut() else { continue };
+        for c in &cols {
+            if cells.iter().any(|x| x[0] == c.hdr) {
+                continue;
+            }
+            let cell = quote.map_or_else(|| "n/a".to_string(), |q| col_cell(c.key, q, 0.0, s8, "", tuning, &pe));
+            cells.push(serde_json::json!([c.hdr, cell]));
+            added.push(c.hdr);
+        }
+    }
+    for h in added {
+        payload["help"]["core"][h] = payload["help"]["lanes"][h].clone();
+    }
 }
 
 /// (#500) Listing age under which a stock is "young": the shortest leg the `history` gate ranks on
@@ -12246,6 +12283,7 @@ mod tests {
         let etf = |t: &str| serde_json::json!([["RANK", "1"], ["TICKER", t], ["BUY%", "3.2%"], ["SCORE", "1.0"]]);
         let mut p = serde_json::json!({
             "etfs": [etf("A"), etf("B"), etf("C"), etf("D"), etf("E"), etf("ZZ"), [["TICKER", "B"]]],
+            "core": [[["TICKER", "A"]], [["TICKER", "C"]]],
             "stocks": [[["TICKER", "A"]]],
             "help": {"lanes": {"SCORE": "x"}},
         });
@@ -12258,9 +12296,13 @@ mod tests {
         assert_eq!(p["stocks"], serde_json::json!([[["TICKER", "A"]]]), "stocks carry no index");
         assert_eq!(p["help"]["lanes"]["INDEX"], INDEX_HELP);
         assert_eq!(p["help"]["lanes"]["SCORE"], "x");
+        // (#1201) CORE's rows count among themselves: A has no same-index twin there
+        assert_eq!(p["core"], serde_json::json!([[["TICKER", "A"], ["INDEX", "nasdaq 100 index"]], [["TICKER", "C"], ["INDEX", "msci world index"]]]));
+        assert_eq!(p["help"]["core"]["INDEX"], INDEX_HELP);
         let mut bare = serde_json::json!({"help": {}});
         stamp_index(&mut bare, &quotes);
         assert!(bare.get("etfs").is_none() && bare["help"].get("lanes").is_none(), "an absent lane stays absent");
+        assert!(bare.get("core").is_none() && bare["help"].get("core").is_none());
         // (#490) D's justETF wording joins A/B's group; E's MSCI-World-like name stays apart; the cheapest
         // euro line wins over a cheaper USD line; a pair with no TER gets no suffix
         let etf_q = |t: &str, ter: Option<f64>, ccy: &str| Quote {
@@ -12303,6 +12345,53 @@ mod tests {
         assert_eq!(pick(&[&dist, &acc]), Some("A".into()), "justETF's USE token counts too");
         dist2.use_of_profits = Some("Dist");
         assert_eq!(pick(&[&dist2, &dist]), Some("B".into()), "no accumulating line: the cheapest of all");
+    }
+
+    /// (#1201) A CORE row gains the ETF lane's columns it lacks, through the lane's own cells: BETA, S-8Y,
+    /// and a PEG off the display-only `core_pe`, where the gated `fund_pe` wins. A header CORE already
+    /// prints is not added twice, an unpriced row reads n/a, and only the added headers take the lane's help.
+    #[test]
+    fn stamp_core_cols_add_the_etf_columns_a_core_row_lacks() {
+        let mut q = core_etf("F.L", "Broad UCITS ETF Acc", 5e9, 0.07);
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        q.profile.beta = Some(0.95);
+        let cols = ["rank", "ticker", "name", "score", "misses", "ter", "pe", "beta", "peg", "score8y"];
+        let w = Widths { columns: cols.map(String::from).to_vec(), ..Widths::default() };
+        let row = |t: &str| serde_json::json!([["RANK", "1"], ["NAME", t], ["TICKER", t], ["SCORE", "1.0"], ["MISSES", "0"], ["TER", "0.07%"]]);
+        let fresh = || {
+            serde_json::json!({
+                "core": [row("F.L"), row("ZZ")],
+                "etfs": [row("F.L")],
+                "help": {"lanes": {"BETA": "b", "PEG": "p", "S-8Y": "s", "NAME": "lane name", "TER": "lane ter"}, "core": {"NAME": "core name"}},
+            })
+        };
+        let pe = |v: f64| -> FundPeMap { [("F.L".to_string(), FundPe::from(v))].into_iter().collect() };
+        let t = BuyHeuristic::default();
+        let stamp = |fund_pe: &FundPeMap, core_pe: &FundPeMap| {
+            let mut p = fresh();
+            stamp_core_cols(&mut p, std::slice::from_ref(&q), &w, &t, fund_pe, core_pe);
+            p
+        };
+        let peg = |v: f64| col_cell("peg", &q, 0.0, None, "", &t, &pe(v));
+        assert_ne!(peg(25.0), peg(50.0), "not vacuous: the P/E moves the PEG");
+        assert_ne!(peg(25.0), col_cell("peg", &q, 0.0, None, "", &t, &FundPeMap::new()));
+        let s8 = col_cell("score8y", &q, 0.0, growth_score(&as_8y_window(&q), &tuning_8y(&t)), "", &t, &FundPeMap::new());
+        let added = |peg: String| [serde_json::json!(["BETA", "0.95"]), serde_json::json!(["PEG", peg]), serde_json::json!(["S-8Y", s8.clone()])];
+        let p = stamp(&FundPeMap::new(), &pe(25.0));
+        let mut want = row("F.L").as_array().unwrap().clone();
+        want.extend(added(peg(25.0)));
+        assert_eq!(p["core"][0], serde_json::Value::Array(want), "TER and MISSES are CORE's own, not added twice");
+        let mut unpriced = row("ZZ").as_array().unwrap().clone();
+        unpriced.extend(["BETA", "PEG", "S-8Y"].map(|h| serde_json::json!([h, "n/a"])));
+        assert_eq!(p["core"][1], serde_json::Value::Array(unpriced));
+        assert_eq!(p["etfs"], fresh()["etfs"], "the lane is untouched");
+        assert_eq!(stamp(&pe(50.0), &pe(25.0))["core"][0][7][1], peg(50.0), "the gated map wins");
+        assert_eq!([&p["help"]["core"]["BETA"], &p["help"]["core"]["PEG"], &p["help"]["core"]["S-8Y"]], ["b", "p", "s"]);
+        assert_eq!(p["help"]["core"]["NAME"], "core name", "CORE's own help stays");
+        assert!(p["help"]["core"].get("TER").is_none(), "only an added header takes the lane's help");
+        let mut bare = serde_json::json!({"help": {}});
+        stamp_core_cols(&mut bare, &[q.clone()], &w, &t, &FundPeMap::new(), &FundPeMap::new());
+        assert_eq!(bare, serde_json::json!({"help": {}}), "an absent table stays absent");
     }
 
     /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and

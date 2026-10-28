@@ -2393,12 +2393,19 @@ pub async fn run(args: Vec<String>) {
         (holdings, mix, syms)
     };
     // (#465) TOP10% + TD-1Y/TD-5Y, display only, on Quote so universe.json carries them to the engine.
-    // (#468) The CORE table prints all of `core_all`, so its funds past `bench` take a second holdings call
-    // whose fund P/E mix is DROPPED: the PEG trim, the look-through anchor and the overlap footers still
-    // read `bench`'s `holdings`/`mix` only, and no gate moves.
+    // (#468) The CORE table prints all of `core_all`, so its funds past `bench` take a second holdings call.
+    // (#1201) Its fund P/E mix is kept as `core_pe`, DISPLAY ONLY: CORE's FAIR/MOS%/PEG cells read it. The PEG
+    // trim, the look-through anchor and the overlap footers still read `bench`'s `holdings`/`mix` only, and no
+    // gate moves.
     let extra: Vec<String> = core_all.iter().filter(|t| !bench.contains(t)).cloned().collect();
     let mut cells = holdings.clone();
-    cells.extend(fetch::yahoo_top_holdings(&client, &settings.urls, &extra).await.0);
+    let (more, extra_mix) = fetch::yahoo_top_holdings(&client, &settings.urls, &extra).await;
+    cells.extend(more);
+    let mut core_pe: picks::FundPeMap = extra_mix
+        .iter()
+        .filter_map(|(t, (_, _, pe, as_of))| pe.map(|p| (t.clone(), picks::FundPe { as_of: *as_of, ..picks::FundPe::from(p) })))
+        .collect();
+    fill_venue_listings(&mut core_pe, &quotes);
     let funds: Vec<String> = bench.iter().chain(&extra).cloned().collect();
     fetch::enrich_etf_cells(&client, &settings.urls, &mut quotes, &funds, &cells, &settings.buy_heuristic).await;
     let mut fund_pe: picks::FundPeMap = mix
@@ -2480,7 +2487,7 @@ pub async fn run(args: Vec<String>) {
     }
     let _ = std::fs::write(
         crate::config::data_path(".screen_universe.json"),
-        crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded, &aliases, &twins),
+        crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, &core_pe, nupl, &infl_rows, &degraded, &aliases, &twins),
     );
     // (#403) captured, not written: the page's BUY% column is stamped onto it once `sized_now` exists
     let web_json = std::cell::RefCell::new(None);
@@ -2522,6 +2529,7 @@ pub async fn run(args: Vec<String>) {
     };
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
+        crate::picks::stamp_core_cols(&mut top, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe, &core_pe); // (#1201)
         // (#580) the Braked table reads the shipped rows, before (#584) momentum rows join them
         let braked = crate::picks::braked_rows(&top["stocks"], &quotes, &settings.tickers, &settings.buy_heuristic);
         crate::picks::stamp_momentum(&mut top, &sized_now, &shipped_now, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe);
