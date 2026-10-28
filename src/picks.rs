@@ -3488,6 +3488,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "20y", hdr: "20Y", width: 8, right: true, help: "total price change over the last 20 years, not per year" },
     ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true, help: "Years of price history since listing: how much record backs CAGR and LEG" },
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: standard deviation of daily returns over the last 252 sessions (a daily figure, not annualized); n/a = too few closes on the chart" },
+    // (#1199) `Profile::beta`, stamped by `screen`. Display only
+    ColSpec { key: "beta", hdr: "BETA", width: 5, right: true, help: "Market risk: how far the monthly price change moved per 1% move of the S&P 500 over the last 36 months (covariance ÷ the index's variance); 1 = moves with the index, above 1 = swings harder, below 1 = calmer, negative = moves against it. Each line is read in its own currency against the index in dollars, so a euro line's figure carries the dollar's moves too; — = under 24 months of record shared with the index" },
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart; n/a = no daily chart, or one that never fell below a previous high" },
     // (#447) the footer's hold-pain stats on the page. None = under 5 years of closes, never a fake 100%
     // (#1089) both run on the ~10-year daily chart (`fetch::quote_one`), never the older monthly back-fill
@@ -3530,6 +3532,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts" },
     ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA or no cash filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price; — = under a year listed; n/a = a year or more listed, but no dividend history or euro price was fetched" },
+    // (#1200) the dividend against what pays for it, off the DIV, P/E and FCF-YLD cells. Display only
+    ColSpec { key: "payout", hdr: "PAYOUT%", width: 8, right: true, help: "Stocks: share of the year's earnings paid out as dividends, DIV × P/E; over 100% = paying out more than it earns; 0% = pays no dividend; loss = earnings at or below 0; — = under a year listed, or a fund or coin, which files no company accounts; n/a = no P/E or no dividend history" },
+    ColSpec { key: "fcfpay", hdr: "FCF-PAY%", width: 9, right: true, help: "Stocks: share of the year's free cash flow paid out as dividends, DIV ÷ FCF-YLD; over 100% = the dividend outruns the cash the business makes; 0% = pays no dividend; burn = free cash flow at or below 0; — = under a year listed, or a fund or coin, which files no company accounts; n/a = no free cash flow filed or no dividend history" },
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it; — = a stock or coin, not a fund" },
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it; — = a stock or coin, not a fund" },
     ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class; Acc = reinvests income (tax deferred); Dist = pays it out (taxed yearly); n/a = neither Börse Frankfurt nor justETF lists this fund; — = a stock or coin, not a fund" },
@@ -3760,6 +3765,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
     let stock_only_na = is_etf || is_crypto; // P/E, ROE don't apply here (PEG now splits equity/fund — see below)
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
     let crypto_only_na = is_equity || is_etf; // MVRV doesn't apply here — realized cap is an on-chain quantity
+    let pe_now = quote.pe_ratio.or_else(|| ep.and_then(|f| f.earnings_yield).filter(|y| *y > 0.0).map(|y| 100.0 / y));
     unsign_zero(match key {
         "rank" => mark.to_string(),
         "name" => clean_name(quote),
@@ -3804,6 +3810,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
                 ),
             }
         }
+        "beta" => quote.profile.beta.map_or("—".to_string(), |b| format!("{b:.2}")), // (#1199) none = under 24 months
         "vol" => quote.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "maxdd" => {
             if quote.max_drawdown_pct > 0.0 {
@@ -3834,7 +3841,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // (#506) a loss-maker has no P/E, and "n/a" read as missing data: "loss" says the filing was read.
         // (#735) `lossᵒ` = the loss sits below a healthy operating line (OP and FCF above 0, interest
         // covered 2x or no debt), as LU2.DE: usually a one-off charge, write-down or tax
-        "pe" => match (quote.pe_ratio.or_else(|| ep.and_then(|f| f.earnings_yield).filter(|y| *y > 0.0).map(|y| 100.0 / y)), fund.and_then(|f| f.eps_ttm)) {
+        "pe" => match (pe_now, fund.and_then(|f| f.eps_ttm)) {
             (Some(v), _) => format!("{v:.1}"),
             (None, Some(e)) if e <= 0.0 => match fund {
                 Some(f) if f.op_margin.is_some_and(|m| m > 0.0) && f.fcf_margin.is_some_and(|m| m > 0.0)
@@ -3955,6 +3962,23 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             .and_then(|o| *o)
             // An FX-scaled sum can land a hair below zero ("-0.00%" on every non-payer); [`unsign_zero`] drops that sign.
             .map_or_else(|| short_or_na(quote, 1.0), |d| format!("{d:.2}%")), // (#702) under a year listed: "—"
+        // (#1200) the share of earnings (DIV × P/E) and of free cash flow (DIV ÷ FCF-YLD) the dividend takes
+        "payout" | "fcfpay" if stock_only_na => "—".to_string(),
+        "payout" | "fcfpay" => match core::dividend_yields(&quote.div_eur, quote.price_eur).first().and_then(|o| *o) {
+            None => short_or_na(quote, 1.0),
+            Some(d) if key == "payout" => match (pe_now, fund.and_then(|f| f.eps_ttm)) {
+                (Some(v), _) => format!("{:.0}%", d * v),
+                _ if d <= 0.0 => "0%".to_string(),
+                (None, Some(e)) if e <= 0.0 => "loss".to_string(),
+                _ => "n/a".to_string(),
+            },
+            Some(d) => match fund.and_then(|f| f.fcf_ttm.zip(f.cap_fund)) {
+                Some((c, m)) if c > 0.0 => format!("{:.0}%", d * m / c),
+                _ if d <= 0.0 => "0%".to_string(),
+                Some(_) => "burn".to_string(),
+                None => "n/a".to_string(),
+            },
+        },
         // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
         // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
         "ter" if etf_only_na => "—".to_string(),
@@ -4665,11 +4689,11 @@ const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv", "dom", "top10
 const HIDE_ETF: &[&str] =
     &["misses", "pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv", "mcap", "roic", "fcf", "capex", "nde", "icov", "sector", "ins",
     "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "redf", "sbc", "fcf5y", "target", "short",
-    "fair_oe", "mos_oe", "fair_cap", "impl_g"];
+    "fair_oe", "mos_oe", "fair_cap", "impl_g", "payout", "fcfpay"];
 const HIDE_CRYPTO: &[&str] = &[
     "misses", "pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom", "roic", "fcf", "capex", "nde",
     "icov", "sector", "ins", "earn", "fcfy", "ps", "evebitda", "rev5y", "opm", "mtrend", "mscore", "redf", "sbc", "top10", "td1y", "td5y",
-    "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g", "reports",
+    "fcf5y", "target", "short", "fair_oe", "mos_oe", "impl_g", "reports", "payout", "fcfpay",
 ];
 
 /// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
@@ -7685,6 +7709,34 @@ mod tests {
     /// not against a hand-built config that could drift from them.
     fn cc(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) -> String {
         col_cell(key, quote, score, alt, mark, &BuyHeuristic::default(), &HashMap::new())
+    }
+
+    /// (#1199) BETA prints two decimals or `—`; (#1200) PAYOUT% and FCF-PAY% tell a payer, a non-payer,
+    /// a loss, a cash burn and a gap apart, and do not apply to a fund.
+    #[test]
+    fn beta_and_payout_cells() {
+        let cells = |q: &Quote| [cc("payout", q, 0.0, None, ""), cc("fcfpay", q, 0.0, None, "")];
+        let mut q = Quote::stub("P", "€1", "", "Payer");
+        assert_eq!(cc("beta", &q, 0.0, None, ""), "—", "under 24 shared months");
+        q.profile.beta = Some(1.234);
+        assert_eq!(cc("beta", &q, 0.0, None, ""), "1.23");
+        assert_eq!(cells(&q), ["n/a", "n/a"], "no price, no yield");
+        q.price_eur = Some(100.0);
+        q.div_eur = vec![Some(2.0)];
+        assert_eq!(cells(&q), ["n/a", "n/a"], "a payer with no P/E and no FCF");
+        q.pe_ratio = Some(25.0);
+        q.fund = Some(core::FundFactors { fcf_ttm: Some(40.0), cap_fund: Some(1000.0), ..Default::default() });
+        assert_eq!(cells(&q), ["50%", "50%"], "2% x 25 of earnings; 2% x 1000 / 40 of free cash flow");
+        q.pe_ratio = None;
+        q.fund.as_mut().unwrap().eps_ttm = Some(2.0);
+        assert_eq!(cc("payout", &q, 0.0, None, ""), "n/a", "earnings but no P/E is a gap, not a loss");
+        q.fund.as_mut().unwrap().eps_ttm = Some(0.0);
+        q.fund.as_mut().unwrap().fcf_ttm = Some(0.0);
+        assert_eq!(cells(&q), ["loss", "burn"], "no earnings and no free cash to pay out of");
+        q.div_eur = vec![Some(-0.0)];
+        assert_eq!(cells(&q), ["0%", "0%"], "a non-payer takes nothing, loss or burn");
+        q.instrument_type = "ETF".into();
+        assert_eq!(cells(&q), ["—", "—"]);
     }
 
     /// (round 110) owned-overlay base normalizers: Trading212 `BASE_MARKET_EQ` and Yahoo

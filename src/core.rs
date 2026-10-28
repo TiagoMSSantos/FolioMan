@@ -238,6 +238,8 @@ pub struct Profile {
     pub ter: Option<f64>,          // (#621) justETF's TER in %, read by the TER cells only when neither BF nor Yahoo has one; never by a gate or the score
     #[serde(default)]
     pub aum: Option<f64>,          // (#621) justETF's fund size in EUR, read by the AUM cells only when neither BF nor Yahoo has one; never by a gate or the score
+    #[serde(default)]
+    pub beta: Option<f64>,         // (#1199) `core::beta` of `trail_monthly` on the S&P 500's, stamped by `screen` like `cik`; the BETA cell only, never a gate or the score
 }
 
 // (#473) serde's skip test for a count: universe.json carries `super_buyers` on the flagged names alone.
@@ -587,6 +589,22 @@ pub fn corr_tail(a: &[f64], b: &[f64]) -> Option<f64> {
         return None;
     }
     pearson(&a[a.len() - k..], &b[b.len() - k..])
+}
+
+/// (#1199) The BETA cell: how far a name's monthly return moves per 1% of the index's, cov ÷ var over
+/// the trailing months both tails share, aligned on their newest month like [`corr_tail`]. None under
+/// 24 shared months or on a flat index. Display only: no gate or score reads it.
+/// shortcut: aligns on each tail's newest month, so a name whose last close is a month stale pairs each
+/// month with the index's next one; dated tails would fix it.
+pub fn beta(a: &[f64], m: &[f64]) -> Option<f64> {
+    let k = a.len().min(m.len());
+    if k < 24 {
+        return None;
+    }
+    let (a, m) = (&a[a.len() - k..], &m[m.len() - k..]);
+    let mm = m.iter().sum::<f64>() / k as f64; // the name's own mean drops out: the index's deviations sum to 0
+    let var: f64 = m.iter().map(|y| (y - mm) * (y - mm)).sum();
+    (var > 0.0).then(|| a.iter().zip(m).map(|(x, y)| x * (y - mm)).sum::<f64>() / var)
 }
 
 /// (#41) Greedy redundancy skip: walk `trails` in RANKED order and keep an entry only if its
@@ -10426,6 +10444,17 @@ mod tests {
     assert!((corr_tail(&up, &down).unwrap() + 1.0).abs() < 1e-9);
     assert!(corr_tail(&up[..11], &down[..11]).is_none(), "under 12 overlapping months = no verdict");
     assert!(corr_tail(&[7.0; 13], &up).is_none(), "a flat series correlates with nothing");
+
+    // (#1199) beta: cov / var of the index, on the shared tail, 24 months of evidence required
+    let mkt: Vec<f64> = (0..30).map(|i| ((i * 7) % 11) as f64 - 5.0).collect();
+    let twice: Vec<f64> = mkt.iter().map(|m| 1.0 + 2.0 * m).collect();
+    assert!((beta(&twice, &mkt).unwrap() - 2.0).abs() < 1e-9, "a name moving 2x the index reads 2");
+    assert!((beta(&twice[4..], &mkt).unwrap() - 2.0).abs() < 1e-9, "unequal lengths pair the newest months");
+    assert!((beta(&[3.0; 30], &mkt).unwrap()).abs() < 1e-9, "a flat name reads 0");
+    let late: Vec<f64> = mkt[6..].iter().map(|m| -m).collect();
+    assert!((beta(&late, &mkt).unwrap() + 1.0).abs() < 1e-9, "24 shared months is enough");
+    assert!(beta(&late[1..], &mkt).is_none(), "23 shared months is no verdict");
+    assert!(beta(&twice, &[1.0; 30]).is_none(), "a flat index has no beta");
 
     // decorrelate_keep: drops the SECOND COPY of a bet, keeps everything else. The comparison is on
     // SIGNED rho, not |rho| — an anti-correlated name is diversification, not redundancy, so `down`

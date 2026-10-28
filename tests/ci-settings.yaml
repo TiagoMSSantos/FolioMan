@@ -1163,6 +1163,7 @@ widths:
     - win5y       # (#447) % of rolling 5y windows that ended up — how often patience paid
     - uw          # (#447) longest stretch below a prior high, years — how LONG the MAXDD lasted
     - vol         # daily-return stdev (~1y) — risk / "normal swing"
+    - beta        # (#1199) 36m monthly beta on the S&P 500, own currency vs USD (display only)
     - r2          # log-trend steadiness 0..1 — smooth compounder vs lumpy
     # -- recent: one fiscal year, noise on a 20y hold
     - rev-yoy     # newest complete-FY revenue growth vs prior FY (stocks only; report pipeline, top rows enriched)
@@ -1170,6 +1171,8 @@ widths:
     - mtrend      # (#463) operating margin now minus a year earlier, pp (stocks only) — widening or shrinking
     # -- housekeeping
     - div         # trailing-1Y dividend yield
+    - payout      # (#1200) DIV × P/E, the share of earnings paid out (stocks only; display only)
+    - fcfpay      # (#1200) DIV ÷ FCF-YLD, the share of free cash flow paid out (stocks only; display only)
     - ins         # (#448) insider open-market buys/sales, last 90 days, SEC Form 4 (printed stock rows)
     - earn        # (#449) next earnings date, MM-DD (printed stock rows)
     - turnover    # avg daily turnover (EUR) — liquidity
@@ -1177,6 +1180,25 @@ widths:
     - score       # the growth ranking score
     - misses      # (#576) stocks: gates the row fails; under growth_gate_soft each one docks its SCORE once
     - score8y     # the 8-year growth ranking score
+  #── (#1199) USER DECISION 2026-10-28: A BETA COLUMN ON EVERY TABLE WITH A PRICE SERIES ──
+  #  WHY: the owner asked to fill the page tables' missing columns. BETA was planned at (#472) and never
+  #  built; the owner chose it, 36 months against the S&P 500.
+  #  BUILT: `core::beta` = cov ÷ var of a line's `trail_monthly` against the ^GSPC quote's, over the
+  #  newest months both tails share; none under 24 months or on a flat index. `screen` stamps it on
+  #  `Profile::beta`, beside `cik`, so universe.json carries it to the page engine. The cell prints two
+  #  decimals, `—` under 24 months. The returns are each line's own currency (fetch.rs), so a euro or Xetra
+  #  line reads local currency against the USD index, the dollar's moves included; the help says so.
+  #  DISPLAY ONLY: no gate, tilt, size or score term reads it, and the backtest's quotes carry none.
+  #  REVERT RULE: drop the `beta` column line, the stamp loop in `screen` and the `Profile` field.
+  #── (#1200) USER DECISION 2026-10-28: PAYOUT% AND FCF-PAY%, THE DIVIDEND AGAINST WHAT PAYS FOR IT ──
+  #  WHY: the second never-built column of (#472). A high DIV reads as a gift until it outruns earnings.
+  #  BUILT: PAYOUT% = DIV × P/E (the share of earnings paid out), `loss` when EPS is at or below 0. FCF-PAY%
+  #  = DIV ÷ FCF-YLD (the share of free cash flow paid out), `burn` when free cash is at or below 0. A
+  #  non-payer reads 0% in both; under a year listed reads `—` like DIV. Stocks only: hidden on the ETF and
+  #  crypto lanes (HIDE_ETF, HIDE_CRYPTO), `—` on a fund row.
+  #  DISPLAY ONLY: both read the DIV, P/E and FCF-YLD cells' own inputs; nothing scores, gates or sizes on
+  #  them.
+  #  REVERT RULE: drop the two column lines and the two `col_cell` arms.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a

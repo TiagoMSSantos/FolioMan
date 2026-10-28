@@ -2472,6 +2472,12 @@ pub async fn run(args: Vec<String>) {
     for q in quotes.iter_mut().chain(shadow_extra.iter_mut()).filter(|q| !q.instrument_type.eq_ignore_ascii_case("ETF")) {
         q.profile.cik = fetch::cached_cik(&q.ticker);
     }
+    // (#1199) BETA, display only: each line's trailing monthly returns on the S&P 500's, each in its own
+    // currency, so a euro line's figure carries the dollar's moves too. Riding universe.json like `cik`.
+    let spx_trail: &[f64] = spx.first().map_or(&[], |q| &q.trail_monthly);
+    for q in quotes.iter_mut().chain(shadow_extra.iter_mut()) {
+        q.profile.beta = core::beta(&q.trail_monthly, spx_trail);
+    }
     let _ = std::fs::write(
         crate::config::data_path(".screen_universe.json"),
         crate::web::snapshot(crate::config::merged_config(), &quotes, spx.first(), &fund_pe, nupl, &infl_rows, &degraded, &aliases, &twins),
