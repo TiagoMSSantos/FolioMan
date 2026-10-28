@@ -5269,9 +5269,10 @@ const BUY_HELP: &str = "Share of new money the 20-year book puts here, the termi
 /// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
 /// wrote it, by both of its builders (`screen`, `web::screen`), because the book is sized off the slice
-/// `render` returns. CORE is untouched: the equal-weight book funds no tracker. A lane the payload lacks
-/// stays absent. (#745) A `b` row the book leaves unfunded is dropped and every later RANK moves up: `web_top`
-/// flags `b` off the score-only book, and the (#584) blend funds only about half of it from the score side.
+/// `render` returns. A lane the payload lacks stays absent. (#745) A `b` row the book leaves unfunded is
+/// dropped and every later RANK moves up: `web_top` flags `b` off the score-only book, and the (#584) blend
+/// funds only about half of it from the score side. (#1205) CORE and the shadow tables get the column too,
+/// stamped after [`stamp_shadow_cols`] builds them; no row is dropped there.
 pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
     for lane in ["stocks", "etfs", "crypto"] {
         let Some(rows) = payload.get_mut(lane).and_then(serde_json::Value::as_array_mut) else { continue };
@@ -5291,6 +5292,17 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
         });
     }
     payload["help"]["lanes"]["BUY%"] = BUY_HELP.into();
+    // shortcut: exact ticker only, so a US shadow row whose Xetra twin the book buys reads blank; passing
+    // `stamp_site`'s `us` fn would find it
+    for table in ["core", "attention", "berkshire", "social", "young", "braked", "reits"] {
+        let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
+        for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
+            let Some(at) = cells.iter().position(|c| c[0] == "TICKER") else { continue };
+            let w = sized.iter().find(|(t, _)| cells[at][1] == t.as_str()).map(|(_, w)| format!("{w:.2}%")).unwrap_or_default();
+            cells.insert(at + 1, serde_json::json!(["BUY%", w]));
+        }
+        payload["help"][table]["BUY%"] = BUY_HELP.into();
+    }
 }
 
 /// (#584) A page row's TICKER cell.
@@ -11780,24 +11792,30 @@ mod tests {
     }
 
     /// (#403) BUY% lands right after TICKER on every lane row, a funded row carries its weight to one
-    /// decimal (the terminal's BUY NOW spelling), an unfunded pin reads "", and CORE plus an absent lane
-    /// are left alone. The help entry rides with the column.
+    /// decimal (the terminal's BUY NOW spelling), an unfunded pin reads "", and an absent lane is left
+    /// alone. The help entry rides with the column. (#1205) CORE and the shadow tables get it too, each
+    /// table its own help entry, and an unfunded `b` row there stays.
     #[test]
     fn stamp_buy_puts_the_book_weight_after_the_ticker() {
         let mut p = serde_json::json!({
             "stocks": [[["RANK", "1"], ["TICKER", "AAA"], ["SCORE", "9.0"]], [["RANK", "2*"], ["TICKER", "PIN"]]],
             "crypto": [[["TICKER", "BTC-EUR"]]],
-            "core": [[["TICKER", "VWCE.DE"]]],
-            "help": {"lanes": {"SCORE": "x"}},
+            "core": [[["TICKER", "VWCE.DE"], ["TER", "0.22%"]]],
+            "attention": [[["RANK", "1"], ["TICKER", "AAA"], ["NAME", "a"]], [["RANK", "2b"], ["TICKER", "ZZ"]]],
+            "help": {"lanes": {"SCORE": "x"}, "core": {"TER": "t"}},
         });
-        stamp_buy(&mut p, &[("AAA".to_string(), 7.04), ("BTC-EUR".to_string(), 2.46)]);
+        stamp_buy(&mut p, &[("AAA".to_string(), 7.04), ("BTC-EUR".to_string(), 2.46), ("VWCE.DE".to_string(), 1.5)]);
         assert_eq!(p["stocks"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAA"], ["BUY%", "7.04%"], ["SCORE", "9.0"]]));
         assert_eq!(p["stocks"][1], serde_json::json!([["RANK", "2*"], ["TICKER", "PIN"], ["BUY%", ""]]));
         assert_eq!(p["crypto"][0], serde_json::json!([["TICKER", "BTC-EUR"], ["BUY%", "2.46%"]]));
-        assert_eq!(p["core"], serde_json::json!([[["TICKER", "VWCE.DE"]]]), "CORE is not the book");
-        assert!(p.get("etfs").is_none(), "an absent lane stays absent");
+        assert_eq!(p["core"], serde_json::json!([[["TICKER", "VWCE.DE"], ["BUY%", "1.50%"], ["TER", "0.22%"]]]));
+        let attention = serde_json::json!([[["RANK", "1"], ["TICKER", "AAA"], ["BUY%", "7.04%"], ["NAME", "a"]], [["RANK", "2b"], ["TICKER", "ZZ"], ["BUY%", ""]]]);
+        assert_eq!(p["attention"], attention, "a shadow table drops no row");
+        assert!(p.get("etfs").is_none() && p.get("berkshire").is_none(), "an absent table stays absent");
         assert_eq!(p["help"]["lanes"]["BUY%"], BUY_HELP);
-        assert_eq!(p["help"]["lanes"]["SCORE"], "x", "the other entries stay");
+        assert_eq!([&p["help"]["core"]["BUY%"], &p["help"]["attention"]["BUY%"]], [BUY_HELP, BUY_HELP]);
+        assert!(p["help"].get("berkshire").is_none(), "no help for an absent table");
+        assert_eq!([&p["help"]["lanes"]["SCORE"], &p["help"]["core"]["TER"]], ["x", "t"], "the other entries stay");
     }
 
     /// (#745) A `b` row the book does not fund is dropped and later ranks move up; a funded `b` row and an

@@ -2533,8 +2533,6 @@ pub async fn run(args: Vec<String>) {
         // (#580) the Braked table reads the shipped rows, before (#584) momentum rows join them
         let braked = crate::picks::braked_rows(&top["stocks"], &quotes, &settings.tickers, &settings.buy_heuristic);
         crate::picks::stamp_momentum(&mut top, &sized_now, &shipped_now, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe);
-        crate::picks::stamp_buy(&mut top, &sized_now);
-        crate::picks::stamp_index(&mut top, &quotes); // (#446) the ETF rows' INDEX, after BUY%
         top["exposure"] = exposure_rows(&sized_now, &quotes, &holdings, &mix, &fetch::us_symbol, &settings.buy_heuristic);
         top["attention"] = attention;
         top["berkshire"] = berkshire;
@@ -2563,6 +2561,8 @@ pub async fn run(args: Vec<String>) {
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["braked"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
         soc_book = crate::picks::stamp_shadow_cols(&mut top, &shadow_quotes, &quotes, &settings.widths, &settings.buy_heuristic, &soc, &fund_pe, &fetch::us_symbol);
+        crate::picks::stamp_buy(&mut top, &sized_now); // (#1205) after the shadow tables, which carry it too
+        crate::picks::stamp_index(&mut top, &quotes); // (#446) the ETF rows' INDEX, after BUY%
         crate::picks::stamp_us_twin(&mut top, &twins, &settings.widths, &settings.buy_heuristic, &fund_pe);
         crate::picks::stamp_site(&mut top, &quotes, &fetch::us_symbol); // (#469) after every table is set
         crate::picks::stamp_site(&mut top, &shadow_extra, &fetch::us_symbol);

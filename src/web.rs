@@ -119,14 +119,16 @@ pub fn screen(overlay: &str, universe: &str) -> Result<String, String> {
     // (#403) The equal-weight book never reads the fund look-through, so an empty map replays `screen`'s
     // BUY NOW exactly. The vol-target book caps fund sectors by holdings the page does not carry, so an
     // upload that turns it on gets no BUY% column rather than a wrong one.
-    if s.sizing.equal_weight_book {
-        let book = picks::buy_book(&ranked, &u.quotes, bh, &s.sizing, u.nupl, &HashMap::new());
+    let book = s.sizing.equal_weight_book.then(|| picks::buy_book(&ranked, &u.quotes, bh, &s.sizing, u.nupl, &HashMap::new()));
+    if let Some(book) = &book {
         let shipped = picks::shipped_book(&ranked, &u.quotes, bh, &s.sizing, u.nupl, &HashMap::new()); // (#585)
-        picks::stamp_momentum(&mut top, &book, &shipped, &u.quotes, &s.widths, bh, &u.fund_pe); // (#584)
-        picks::stamp_buy(&mut top, &book);
+        picks::stamp_momentum(&mut top, book, &shipped, &u.quotes, &s.widths, bh, &u.fund_pe); // (#584)
+    }
+    picks::stamp_shadow_cols(&mut top, &u.quotes, &u.quotes, &s.widths, bh, &soc, &u.fund_pe, &|t: &str| t.to_string()); // (#746) Braked's
+    if let Some(book) = &book {
+        picks::stamp_buy(&mut top, book); // (#1205) after the shadow tables, which carry it too
     }
     picks::stamp_index(&mut top, &u.quotes); // (#446) after BUY%, which it sits beside
-    picks::stamp_shadow_cols(&mut top, &u.quotes, &u.quotes, &s.widths, bh, &soc, &u.fund_pe, &|t: &str| t.to_string()); // (#746) Braked's
     picks::stamp_us_twin(&mut top, &u.twins, &s.widths, bh, &u.fund_pe);
     // (#469) every re-ranked row's quote carries its own site, so the exact ticker finds it
     picks::stamp_site(&mut top, &u.quotes, &|t: &str| t.to_string());
@@ -323,10 +325,10 @@ mod tests {
         let book = picks::buy_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new());
         let shipped = picks::shipped_book(&ranked, quotes, &s.buy_heuristic, &s.sizing, Some(0.3), &HashMap::new());
         picks::stamp_momentum(&mut v, &book, &shipped, quotes, &s.widths, &s.buy_heuristic, &FundPeMap::new()); // (#584)
-        picks::stamp_buy(&mut v, &book);
-        picks::stamp_index(&mut v, quotes);
         let soc = s.social().unwrap();
         picks::stamp_shadow_cols(&mut v, quotes, quotes, &s.widths, &s.buy_heuristic, &soc, &FundPeMap::new(), &|t: &str| t.to_string());
+        picks::stamp_buy(&mut v, &book);
+        picks::stamp_index(&mut v, quotes);
         picks::stamp_site(&mut v, quotes, &|t: &str| t.to_string()); // (#540) the REPORTS links, as `screen` stamps them
         v["generated"] = serde_json::Value::Null;
         v["cagr_floor"] = serde_json::json!(s.buy_heuristic.growth_min_cagr);

@@ -1233,6 +1233,16 @@ widths:
   #  DISPLAY ONLY: the intraday key, rank, journal and track never read it, and the table stays off
   #  trade, size, BUY NOW and the broker.
   #  REVERT RULE: drop the SECTOR cell, its help line and the `stamp_site` arm.
+  #── (#1205) USER DECISION 2026-10-28: BUY% ON THE SHADOW TABLES AND CORE ──
+  #  WHY: only the three lanes showed BUY%, so a name on CORE or a shadow table could not be checked
+  #  against the book without finding it on a lane. The owner chose to show it there too.
+  #  BUILT: `stamp_buy` also walks CORE and the six shadow tables, after `stamp_shadow_cols` builds them,
+  #  in both builders: the book's weight right after TICKER, blank when the book does not fund the row.
+  #  No row is dropped there, `b` or not. The match is on the exact ticker, so a US shadow row whose
+  #  Xetra twin the book buys reads blank. An upload re-stamps CORE and Braked; the other shadow tables
+  #  stay CI's, BUY% included, as their SCORE does.
+  #  DISPLAY ONLY: the book, BUY NOW, sizing and the lanes' rows stay as they were.
+  #  REVERT RULE: drop the second loop in `stamp_buy`; the call may stay where it is.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
