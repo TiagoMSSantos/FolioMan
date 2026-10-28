@@ -23386,6 +23386,19 @@ intraday_key: 7
 intraday_exit_us: "14:30" # (#1212) New York time
 intraday_exit_eu: "16:00" # (#1212) Frankfurt time
 
+# (#1213) USER DECISION 2026-10-28: AN INTRADAY SESSION CELL ALSO PRINTS ITS HOURS ON THE READER'S CLOCK.
+# WHY: the owner asked which Intraday name is the most profitable and at what hours to buy and sell, and
+# found the table unclear. Hindsight since 2026-01-02, EUR 1,000 a session after costs: US MRNA +977.41
+# sold at the close (+529.17 at 14:30 NY), the only US row in profit; EU ABI.BR +265.45 at the close, and
+# ERF.PA +211.97 at 16:00 FRA, the best EU exit cell. Buy at the open, sell at the close or at the exit
+# column's hour. The open and close on the reader's clock lived only in the SESSION hover, which a phone
+# never shows. RANK sorts on the GAIN/LOSS ratio; tapping the P/L(EUR) header sorts on euros.
+# BUILT: a second, muted line under `09:30-16:00 New York`, such as `13:30-20:00 your time`, from the
+# same browser clock as the hover. A CSS `::after`, so the sort key and the filter still read the
+# exchange's hours. The (#824) clock-change-day shortcut applies to it as well.
+# DISPLAY ONLY: no payload, rank, key, Rust or golden change.
+# REVERT RULE: drop the `td[data-local]` rule in web/style.css and the dataset line in web/app.js.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

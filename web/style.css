@@ -118,6 +118,8 @@
   td a.tv::before { content: "📈"; }
   /* (#525) a shadow row whose CAGR is under its table's floor: shown in rank order, greyed */
   tr.below td { color: var(--muted); }
+  /* (#1213) an Intraday SESSION's hours on the reader's clock, a second line, `::after` for the same reason */
+  td[data-local]::after { content: attr(data-local); display: block; font-size: .8rem; color: var(--muted); }
   td.new::after {
     content: "new";
     margin-left: .4rem;

@@ -87,15 +87,22 @@ function wall(h, m, zone, now = new Date()) {
   const p = Object.fromEntries(fmt.formatToParts(now).map((x) => [x.type, +x.value]));
   return Date.UTC(p.year, p.month - 1, p.day, h, m) - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(now / 6e4) * 6e4);
 }
-function local(cell) {
+// (#1213) `hours` is the bare `13:30-20:00` on the reader's clock, which the cell also prints
+// under the exchange's hours: a phone never shows the hover.
+function hours(cell) {
   const [, a, b, c, d, city] = String(cell).match(/^(\d\d):(\d\d)-(\d\d):(\d\d) (.+)$/) ?? [];
   if (!ZONES[city]) return "";
   const at = (h, m) => new Date(wall(+h, +m, ZONES[city])).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  return cell + " = " + at(a, b) + "-" + at(c, d) + " your time (" + Intl.DateTimeFormat().resolvedOptions().timeZone + ")";
+  return at(a, b) + "-" + at(c, d);
+}
+function local(cell) {
+  const mine = hours(cell);
+  return mine && cell + " = " + mine + " your time (" + Intl.DateTimeFormat().resolvedOptions().timeZone + ")";
 }
 console.assert(
   wall(9, 30, "America/New_York", new Date(Date.UTC(2026, 0, 15, 12))) === Date.UTC(2026, 0, 15, 14, 30) &&
     wall(17, 30, "Europe/Berlin", new Date(Date.UTC(2026, 6, 15, 12))) === Date.UTC(2026, 6, 15, 15, 30) &&
+    /^\d\d:\d\d-\d\d:\d\d$/.test(hours("09:30-16:00 New York")) && hours("09:00-17:30 Tokyo") === "" &&
     local("09:30-16:00 New York").startsWith("09:30-16:00 New York = ") && local("09:00-17:30 Tokyo") === "",
   "a SESSION hover misreads its exchange's clock",
 );
@@ -144,6 +151,7 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
         td.title = ["rank " + n + " in this table", ...[...marks].filter((f) => flags[f]).map((f) => f + " " + flags[f])].join("\n");
       }
       if (h === "SESSION") td.title = local(cell) || td.title; // (#824) the Intraday hours on the reader's own clock
+      if (h === "SESSION" && hours(cell)) td.dataset.local = hours(cell) + " your time"; // (#1213) and in the cell
       // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo. (#455) A shadow
       // table's cell may carry its source page as a third element; only https ever becomes a link.
       // (#482) A NAME with no page of its own links the row's Yahoo quote, and so does an Exposure
