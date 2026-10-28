@@ -2578,7 +2578,9 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
 /// (#1212) The hours census last: today's members and `EU_POND` on 2y of 60m bars. (#1214) Each window's mean
 /// move, from a buy at the open or a bar end to a sell at a later bar end, the census the Intraday table's
 /// hour knobs are picked from. (#1215) Then the holds census: the same bars, and the 10y daily ones, held
-/// from the buy session to up to 21 sessions on, every name and the `intraday_key` book.
+/// from the buy session to up to 21 sessions on, every name and the `intraday_key` book. (#1216) Last, the
+/// calendar census: the same-session hour pairs split by weekday, month turn, pre-holiday and expiry, each
+/// slice checked against the average day on the 10y daily bars.
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::intraday
 async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     use crate::heuristics::intraday;
@@ -2594,7 +2596,8 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         "\n── (#809) INTRADAY: buy at the open, sell at the close, top {} equal weight, net of cost ──",
         intraday::BOOK
     );
-    // (#1215) per market, the book the holds census grades on 60m bars and its daily lines
+    // (#1215) per market, the book the holds census grades on 60m bars and its daily lines; (#1216) and the
+    // calendar census's daily lines with each slice's check
     let mut held = Vec::new();
     // the walk sorts each session by key then ticker, so fetch completion order cannot move a number
     for (market, names, cost) in [("US", &us, intraday::COST_BPS_US), ("EU", &eu, intraday::COST_BPS_EU)] {
@@ -2628,12 +2631,16 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
             }
         }
         let k = settings.intraday_key;
-        held.push((intraday::books(k, &now, today), intraday::daily_holds(market, k, &pond, today, cost, &intraday::HOLDS)));
+        held.push((
+            intraday::books(k, &now, today),
+            intraday::daily_holds(market, k, &pond, today, cost, &intraday::HOLDS),
+            intraday::daily_slices(market, k, &pond, today, cost),
+        ));
     }
     // (#1214) the census the Intraday table's hour knobs are picked from: today's members, as on the page
     println!("\n── (#1214) BUY AND SELL HOURS: buy at the open or a 60m bar's end, sell at a later one, every name equal weight, 2y ──");
-    let mut holds = Vec::new();
-    for ((market, names, cost, exit), (books, daily)) in
+    let (mut holds, mut cals) = (Vec::new(), Vec::new());
+    for ((market, names, cost, exit), (books, daily, (by_day, beat))) in
         [("US", intraday::us_pond(&spans, today), intraday::COST_BPS_US, settings.intraday_exit_us), ("EU", eu, intraday::COST_BPS_EU, settings.intraday_exit_eu)]
             .into_iter()
             .zip(&held)
@@ -2653,6 +2660,7 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         let (days, prices): (Vec<_>, Vec<_>) = got.into_iter().map(|(tk, m, p)| (m, (tk, p))).unzip();
         println!("{}", intraday::hours_report(market, &days, today, cost, knob));
         holds.push(format!("{}\n{daily}", intraday::holds_report(market, &prices, books, today, cost, &intraday::HOLDS)));
+        cals.push(format!("{by_day}\n{}", intraday::calendar_report(market, &prices, books, today, cost, beat)));
     }
     println!("\n── (#1215) HOLDS: buy on one session, sell on it or H sessions on, every name equal weight and the intraday_key book, one round trip ──");
     println!("  CAVEATS: a long hold mostly earns the market's drift, which the whole-span line prices; the best of up");
@@ -2661,6 +2669,14 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     println!("  the daily lines run open to close on 10y of bars, the US side on the index as it stood each day.");
     for h in holds {
         println!("{h}");
+    }
+    println!("\n── (#1216) CALENDAR: buy and sell in the same session, split by weekday, month turn, pre-holiday and expiry, every name equal weight and the intraday_key book ──");
+    println!("  CAVEATS: 28 (US) or 45 (EU) hour pairs in each of 9 slices and 2 name sets, about 1,300 in all, so some");
+    println!("  clear t ≥ 3 by luck, which the halves and the daily check are there to catch; the 60m side is today's");
+    println!("  members, so survivor-biased; a half day drops out of the 60m sessions, so the one before it reads as");
+    println!("  pre-holiday; the daily lines run open to close on 10y of bars, the US side on the index as it stood each day.");
+    for c in cals {
+        println!("{c}");
     }
 }
 

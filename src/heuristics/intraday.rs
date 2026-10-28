@@ -30,6 +30,7 @@
 //! hours census the two knobs are picked from, (#1214) every buy hour and later sell hour. Display only,
 //! like the rest of the table. (#1215) The census then holds past the session: a buy on one session and a
 //! sell up to `HOLDS` sessions on, at every hour pair on the 60m bars and open to close on the daily ones.
+//! (#1216) Last, the same-session hour pairs split by calendar slice: weekday, month turn, pre-holiday, expiry.
 
 use crate::config::session;
 use crate::core;
@@ -704,6 +705,32 @@ fn hold_line(label: &str, s: &Stats, cost_bps: f64, h: usize) -> String {
     )
 }
 
+/// (#1215) Every session before `today` that any name has prices on, in date order.
+fn sessions_before(names: &[(&str, Prices)], today: NaiveDate) -> Vec<NaiveDate> {
+    names.iter().flat_map(|n| n.1.range(..today).map(|x| *x.0)).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+}
+
+/// (#1215) Each pair of a buy key on session `a` and a sell key on session `b`, a later key when they are
+/// the same session: the mean return over every name with both sessions, equal weight, and over the
+/// `held` names, `None` when none of them has both.
+fn pair_means(names: &[(&str, Prices)], held: Option<&Vec<String>>, a: NaiveDate, b: NaiveDate) -> BTreeMap<(u32, u32), (f64, Option<f64>)> {
+    let mut day: BTreeMap<_, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
+    for (tk, p) in names {
+        let (Some(buy), Some(sell)) = (p.get(&a), p.get(&b)) else { continue };
+        let in_book = held.is_some_and(|v| v.iter().any(|x| x == tk));
+        for (&kb, &pb) in buy {
+            for (&ks, &ps) in sell.range(if a == b { kb + 1 } else { 0 }..) {
+                let e = day.entry((kb, ks)).or_default();
+                e.0.push(ps / pb - 1.0);
+                if in_book {
+                    e.1.push(ps / pb - 1.0);
+                }
+            }
+        }
+    }
+    day.into_iter().map(|(w, (all, bk))| (w, (mean(&all), (!bk.is_empty()).then(|| mean(&bk))))).collect()
+}
+
 /// (#1215) The `backtest N intraday` holds lines for one market, on each name's [`day_prices`] before
 /// `today`. For each `h` in `holds`, a buy at any key of one session and a sell at any key `h` sessions on
 /// (a later key when `h` is 0): its mean return over every name with both prices, equal weight, and over
@@ -713,7 +740,7 @@ fn hold_line(label: &str, s: &Stats, cost_bps: f64, h: usize) -> String {
 /// shortcut: one phase per hold length; the other `h - 1` phases would use every start.
 pub fn holds_report(market: &str, names: &[(&str, Prices)], books: &BTreeMap<NaiveDate, Vec<String>>, today: NaiveDate, cost_bps: f64, holds: &[usize]) -> String {
     let (open, close) = session(market);
-    let cal: Vec<NaiveDate> = names.iter().flat_map(|n| n.1.range(..today).map(|x| *x.0)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let cal = sessions_before(names, today);
     let &[first, .., last] = &cal[..] else {
         return format!("  {market}: no two sessions with 60m bars");
     };
@@ -734,25 +761,10 @@ pub fn holds_report(market: &str, names: &[(&str, Prices)], books: &BTreeMap<Nai
     for &h in holds {
         let (mut pond, mut book): (BTreeMap<(u32, u32), Vec<f64>>, BTreeMap<(u32, u32), Vec<f64>>) = Default::default();
         for c in (0..cal.len().saturating_sub(h)).step_by(h.max(1)) {
-            let held = books.get(&cal[c]);
-            let mut day: BTreeMap<_, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
-            for (tk, p) in names {
-                let (Some(a), Some(b)) = (p.get(&cal[c]), p.get(&cal[c + h])) else { continue };
-                let in_book = held.is_some_and(|v| v.iter().any(|x| x == tk));
-                for (&kb, &pb) in a {
-                    for (&ks, &ps) in b.range(if h == 0 { kb + 1 } else { 0 }..) {
-                        let e = day.entry((kb, ks)).or_default();
-                        e.0.push(ps / pb - 1.0);
-                        if in_book {
-                            e.1.push(ps / pb - 1.0);
-                        }
-                    }
-                }
-            }
-            for (w, (all, bk)) in day {
-                pond.entry(w).or_default().push(mean(&all));
-                if !bk.is_empty() {
-                    book.entry(w).or_default().push(mean(&bk));
+            for (w, (all, bk)) in pair_means(names, books.get(&cal[c]), cal[c], cal[c + h]) {
+                pond.entry(w).or_default().push(all);
+                if let Some(b) = bk {
+                    book.entry(w).or_default().push(b);
                 }
             }
         }
@@ -789,6 +801,138 @@ pub fn daily_holds(market: &str, k: u8, pond: &[Member], today: NaiveDate, cost_
         }
     }
     out.join("\n")
+}
+
+/// (#1216) The calendar slices the census splits sessions by, in report order.
+pub const SLICES: [&str; 9] = ["Mon", "Tue", "Wed", "Thu", "Fri", "month turn", "rest of month", "pre-holiday", "expiry"];
+
+/// (#1216) Each session's [`SLICES`] tags, in that order: its weekday; in a month of `n` sessions, the first
+/// 4 and last 2 are the month turn and the rest the rest of the month; a session is pre-holiday when its
+/// next weekday (the Monday after a Friday) is missing from `cal` but before its last session; a Friday
+/// dated the 15th to the 21st is the expiry.
+/// shortcut: `cal`'s first and last months may be partial, so their sessions carry no month tag, and an
+/// expiry moved to the Thursday by a Friday holiday is missed. A holiday table would close both.
+pub fn slices(cal: &[NaiveDate]) -> BTreeMap<NaiveDate, Vec<&'static str>> {
+    let ym = |d: &NaiveDate| (d.year(), d.month());
+    let edges = (cal.first().map(ym), cal.last().map(ym));
+    cal.iter()
+        .map(|&d| {
+            let mut v = Vec::new();
+            let wd = d.weekday().num_days_from_monday() as usize;
+            if wd < 5 {
+                v.push(SLICES[wd]);
+            }
+            if Some(ym(&d)) != edges.0 && Some(ym(&d)) != edges.1 {
+                let month: Vec<&NaiveDate> = cal.iter().filter(|x| ym(*x) == ym(&d)).collect();
+                let j = month.partition_point(|x| **x < d);
+                v.push(if j < 4 || j + 2 >= month.len() { "month turn" } else { "rest of month" });
+            }
+            let next = d + Duration::days(if d.weekday() == Weekday::Fri { 3 } else { 1 });
+            if matches!(cal.binary_search(&next), Err(i) if i < cal.len()) {
+                v.push("pre-holiday");
+            }
+            if d.weekday() == Weekday::Fri && (15..=21).contains(&d.day()) {
+                v.push("expiry");
+            }
+            (d, v)
+        })
+        .collect()
+}
+
+/// (#1216) One graded slice, `s` the gross return a session: net € a session at €1,000 after the round trip.
+fn session_line(label: &str, s: &Stats, cost_bps: f64) -> String {
+    format!(
+        "{label}  {} sessions  gross {:+.2} bp (t {:+.2})  net {:+.2} €/session  halves {:+.2}|{:+.2}",
+        s.n,
+        s.mean * 1e4,
+        s.t,
+        (s.mean * 1e4 - cost_bps) / 10.0,
+        s.h1 * 1e4,
+        s.h2 * 1e4
+    )
+}
+
+/// (#1216) The calendar bar on a slice pair's gross `s`: above `cost_bps` at t ≥ 3, in both halves, and
+/// `beat`, its slice beat the average day open to close on the daily bars.
+fn clears(s: &Stats, cost_bps: f64, beat: bool) -> bool {
+    let pays = |x: f64| x * 1e4 > cost_bps;
+    pays(s.mean) && s.t >= 3.0 && pays(s.h1) && pays(s.h2) && beat
+}
+
+/// (#1216) Each slice on daily bars, the [`walk`] sessions bought at the open and sold at the close: the whole
+/// ranked pond equal weight, then key `k`'s book, against every session's mean. With the lines, whether
+/// each (slice, name set) beat that mean, the last part of [`calendar_report`]'s bar.
+pub fn daily_slices(market: &str, k: u8, pond: &[Member], today: NaiveDate, cost_bps: f64) -> (String, BTreeMap<(&'static str, &'static str), bool>) {
+    let days = walk(k, pond, today);
+    let tags = slices(&days.iter().map(|d| d.date).collect::<Vec<_>>());
+    let (mut out, mut beat) = (Vec::new(), BTreeMap::new());
+    for (set, xs) in [("pond", days.iter().map(|d| d.all).collect::<Vec<f64>>()), ("book", days.iter().map(|d| d.book).collect())] {
+        let every = mean(&xs);
+        for sl in SLICES {
+            let ys: Vec<f64> = days.iter().zip(&xs).filter(|(d, _)| tags[&d.date].contains(&sl)).map(|x| *x.1).collect();
+            let label = format!("  {market} daily {set} {sl} open-close");
+            let s = stats(&ys);
+            beat.insert((sl, set), s.as_ref().is_some_and(|s| s.mean > every));
+            out.push(match s {
+                Some(s) => format!("{}  vs every session {:+.2} bp", session_line(&label, &s, cost_bps), (s.mean - every) * 1e4),
+                None => format!("{label}  no two sessions"),
+            });
+        }
+    }
+    (out.join("\n"), beat)
+}
+
+/// (#1216) The `backtest N intraday` calendar lines for one market: every buy key and later sell key in the
+/// same session on each name's [`day_prices`] before `today`, as in [`holds_report`], split by the
+/// [`slices`] each session carries, over every name equal weight and over the session's `books` entry. A
+/// pair is marked when it [`clears`] the bar, `daily` holding whether its slice beat the average day
+/// ([`daily_slices`]), and each slice and name set's best gross pair is marked.
+pub fn calendar_report(market: &str, names: &[(&str, Prices)], books: &BTreeMap<NaiveDate, Vec<String>>, today: NaiveDate, cost_bps: f64, daily: &BTreeMap<(&str, &str), bool>) -> String {
+    let cal = sessions_before(names, today);
+    let &[first, .., last] = &cal[..] else {
+        return format!("  {market}: no two sessions with 60m bars");
+    };
+    let tags = slices(&cal);
+    let mut by: BTreeMap<(&str, &str), BTreeMap<(u32, u32), Vec<f64>>> = BTreeMap::new();
+    for d in &cal {
+        for (w, (all, bk)) in pair_means(names, books.get(d), *d, *d) {
+            for &sl in &tags[d] {
+                by.entry((sl, "pond")).or_default().entry(w).or_default().push(all);
+                if let Some(b) = bk {
+                    by.entry((sl, "book")).or_default().entry(w).or_default().push(b);
+                }
+            }
+        }
+    }
+    let hm = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+    let mut out = format!(
+        "  {market}: {} names, {} sessions {first}..{last}; cost {cost_bps} bp a round trip; bar: net > 0, t ≥ 3, both halves net > 0, the slice beat the average day on 10y daily",
+        names.len(),
+        cal.len()
+    );
+    let (mut graded, mut pass) = (0, 0);
+    for sl in SLICES {
+        for set in ["pond", "book"] {
+            let label = format!("  {market} {set} {sl}");
+            let rows: Vec<((u32, u32), Stats)> = by.get(&(sl, set)).into_iter().flatten().filter_map(|(w, xs)| Some((*w, stats(xs)?))).collect();
+            let Some(best) = rows.iter().max_by(|a, b| a.1.mean.total_cmp(&b.1.mean)).map(|r| r.0) else {
+                out += &format!("\n{label}  no two sessions");
+                continue;
+            };
+            for (w, s) in &rows {
+                let ok = clears(s, cost_bps, daily.get(&(sl, set)) == Some(&true));
+                graded += 1;
+                pass += usize::from(ok);
+                out += &format!(
+                    "\n{}{}{}",
+                    session_line(&format!("{label} {}-{}", hm(w.0), hm(w.1)), s, cost_bps),
+                    if *w == best { "  <- best" } else { "" },
+                    if ok { "  <- clears the bar" } else { "" }
+                );
+            }
+        }
+    }
+    out + &format!("\n  {market}: {pass} of {graded} slice pairs clear the bar")
 }
 
 #[cfg(test)]
@@ -1555,5 +1699,171 @@ mod tests {
              \n  EU pond sell day +0  open-close  2 holds  gross +500.00 bp (t +1.00)  net +48.00 € a hold, +48.00 € a session  halves +0.00|+1000.00\
              \n  EU book sell day +0  no two holds"
         );
+    }
+
+    #[test]
+    fn slices_tag_each_session_by_weekday_month_turn_pre_holiday_and_expiry() {
+        // the weekdays from 01-26 to 03-03 less Monday 02-09 and Tuesday 02-17; January and March are the edge
+        // months, so they carry no month tag
+        let day = |m: u32, dd: u32| NaiveDate::from_ymd_opt(2026, m, dd).unwrap();
+        let cal: Vec<NaiveDate> = (0..37)
+            .map(|i| day(1, 26) + Duration::days(i))
+            .filter(|x| x.weekday().num_days_from_monday() < 5 && *x != day(2, 9) && *x != day(2, 17))
+            .collect();
+        assert_eq!(
+            slices(&cal).iter().map(|(x, v)| format!("{x} {}", v.join(", "))).collect::<Vec<_>>(),
+            [
+                "2026-01-26 Mon",
+                "2026-01-27 Tue",
+                "2026-01-28 Wed",
+                "2026-01-29 Thu",
+                "2026-01-30 Fri",
+                "2026-02-02 Mon, month turn",
+                "2026-02-03 Tue, month turn",
+                "2026-02-04 Wed, month turn",
+                "2026-02-05 Thu, month turn",
+                "2026-02-06 Fri, rest of month, pre-holiday",
+                "2026-02-10 Tue, rest of month",
+                "2026-02-11 Wed, rest of month",
+                "2026-02-12 Thu, rest of month",
+                "2026-02-13 Fri, rest of month",
+                "2026-02-16 Mon, rest of month, pre-holiday",
+                "2026-02-18 Wed, rest of month",
+                "2026-02-19 Thu, rest of month",
+                "2026-02-20 Fri, rest of month, expiry",
+                "2026-02-23 Mon, rest of month",
+                "2026-02-24 Tue, rest of month",
+                "2026-02-25 Wed, rest of month",
+                "2026-02-26 Thu, month turn",
+                "2026-02-27 Fri, month turn",
+                "2026-03-02 Mon",
+                "2026-03-03 Tue",
+            ]
+        );
+        assert!(slices(&[]).is_empty());
+    }
+
+    #[test]
+    fn clears_needs_net_t_both_halves_and_the_daily_slice() {
+        let ok = Stats { n: 2, mean: 0.0078125, t: 3.0, h1: 0.0078125, h2: 0.0078125 };
+        assert!(clears(&ok, 78.0, true));
+        assert!(clears(&Stats { t: 4.0, ..ok }, 78.0, true));
+        // a gross mean equal to the cost nets nothing
+        assert!(!clears(&ok, 78.125, true));
+        assert!(!clears(&ok, 78.0, false));
+        assert!(!clears(&Stats { mean: 0.0, ..ok }, 78.0, true));
+        assert!(!clears(&Stats { t: 2.99, ..ok }, 78.0, true));
+        assert!(!clears(&Stats { h1: 0.0, ..ok }, 78.0, true));
+        assert!(!clears(&Stats { h2: 0.0, ..ok }, 78.0, true));
+    }
+
+    #[test]
+    fn calendar_report_grades_every_same_session_pair_per_slice_and_name_set() {
+        // two Fridays and two Mondays of one month, so no month tag; the first Monday's Tuesday is missing, the
+        // one pre-holiday session; C starts on the second Friday; the session on `today` is out
+        let names = [
+            (
+                "A",
+                prices(&[
+                    (1, vec![(570, 100.0), (870, 101.0), (960, 100.5)]),
+                    (4, vec![(570, 100.0), (870, 101.2), (960, 100.8)]),
+                    (8, vec![(570, 100.0), (870, 101.0), (960, 101.5)]),
+                    (11, vec![(570, 100.0), (870, 101.1), (960, 101.0)]),
+                    (15, vec![(570, 1e3), (870, 1e3), (960, 1e3)]),
+                ]),
+            ),
+            (
+                "B",
+                prices(&[
+                    (1, vec![(570, 50.0), (870, 50.3), (960, 49.9)]),
+                    (4, vec![(570, 50.0), (870, 50.4), (960, 50.05)]),
+                    (8, vec![(570, 50.0), (870, 50.45), (960, 50.6)]),
+                    (11, vec![(570, 50.0), (870, 50.55), (960, 50.0)]),
+                ]),
+            ),
+            ("C", prices(&[(8, vec![(570, 20.0), (870, 20.16), (960, 20.1)]), (11, vec![(570, 20.0), (870, 20.3), (960, 20.2)])])),
+        ];
+        let held = |v: &[&str]| v.iter().map(|t| t.to_string()).collect::<Vec<String>>();
+        // the book holds no name with prices on the second Friday, so its Friday has one session
+        let books = BTreeMap::from([(d(1), held(&["A"])), (d(4), held(&["A", "B"])), (d(8), held(&["Z"])), (d(11), held(&["B"]))]);
+        // Friday's pond 09:30-14:30 pays at t ≥ 3 in both halves but its slice lost to the average day, and
+        // Monday's pond 09:30-16:00 pays at t ≥ 3 but not in its first half
+        let daily = BTreeMap::from([(("Mon", "pond"), true), (("Mon", "book"), true), (("Fri", "pond"), false)]);
+        assert_eq!(
+            calendar_report("US", &names, &books, d(15), 50.0, &daily),
+            "  US: 3 names, 4 sessions 2026-01-02..2026-01-12; cost 50 bp a round trip; bar: net > 0, t ≥ 3, both halves net > 0, the slice beat the average day on 10y daily\
+             \n  US pond Mon 09:30-14:30  2 sessions  gross +111.67 bp (t +9.57)  net +6.17 €/session  halves +100.00|+123.33  <- best  <- clears the bar\
+             \n  US pond Mon 09:30-16:00  2 sessions  gross +55.83 bp (t +5.15)  net +0.58 €/session  halves +45.00|+66.67\
+             \n  US pond Mon 14:30-16:00  2 sessions  gross -55.24 bp (t -73.64)  net -10.52 €/session  halves -54.49|-55.99\
+             \n  US book Mon 09:30-14:30  2 sessions  gross +105.00 bp (t +21.00)  net +5.50 €/session  halves +100.00|+110.00  <- best  <- clears the bar\
+             \n  US book Mon 09:30-16:00  2 sessions  gross +22.50 bp (t +1.00)  net -2.75 €/session  halves +45.00|+0.00\
+             \n  US book Mon 14:30-16:00  2 sessions  gross -81.64 bp (t -3.01)  net -13.16 €/session  halves -54.49|-108.80\
+             \n  US pond Tue  no two sessions\
+             \n  US book Tue  no two sessions\
+             \n  US pond Wed  no two sessions\
+             \n  US book Wed  no two sessions\
+             \n  US pond Thu  no two sessions\
+             \n  US book Thu  no two sessions\
+             \n  US pond Fri 09:30-14:30  2 sessions  gross +85.00 bp (t +17.00)  net +3.50 €/session  halves +80.00|+90.00  <- best\
+             \n  US pond Fri 09:30-16:00  2 sessions  gross +60.83 bp (t +1.33)  net +1.08 €/session  halves +15.00|+106.67\
+             \n  US pond Fri 14:30-16:00  2 sessions  gross -24.01 bp (t -0.59)  net -7.40 €/session  halves -64.51|+16.49\
+             \n  US book Fri  no two sessions\
+             \n  US pond month turn  no two sessions\
+             \n  US book month turn  no two sessions\
+             \n  US pond rest of month  no two sessions\
+             \n  US book rest of month  no two sessions\
+             \n  US pond pre-holiday  no two sessions\
+             \n  US book pre-holiday  no two sessions\
+             \n  US pond expiry  no two sessions\
+             \n  US book expiry  no two sessions\
+             \n  US: 2 of 9 slice pairs clear the bar"
+        );
+        assert_eq!(calendar_report("US", &names, &books, d(4), 50.0, &daily), "  US: no two sessions with 60m bars");
+        assert_eq!(calendar_report("EU", &[], &BTreeMap::new(), d(15), 20.0, &daily), "  EU: no two sessions with 60m bars");
+    }
+
+    /// (#1216) Twelve names that open at 1 every session and close at 1 + n g / 1024 on the last 21, every
+    /// return exact in binary, so the Wednesday to Friday slices tie the average day to the last bit.
+    #[test]
+    fn daily_slices_grade_each_slice_open_to_close_against_every_session() {
+        let names: Vec<String> = (0..12).map(|n| format!("N{n:02}")).collect();
+        // bars 30 to 50 run from Saturday 01-31 to Friday 02-20: a weekend carries no weekday tag, both months
+        // are edges, and 02-20 is the one expiry
+        let g = [8.0, 8.0, 9.0, 5.0, 6.0, 4.0, 9.0, 8.0, 8.0, 10.0, 6.0, 8.0, 12.0, 7.0, 8.0, 8.0, 11.0, 7.0, 10.0, 8.0, 8.0];
+        let charts: Vec<Chart> = (0..12)
+            .map(|n| {
+                let mut c = [1.0 + n as f64 / 1000.0; 51];
+                for (j, x) in g.iter().enumerate() {
+                    c[30 + j] = 1.0 + n as f64 * x / 1024.0;
+                }
+                chart(&[1.0; 51], &c, 1e7)
+            })
+            .collect();
+        let pond: Vec<Member> = names.iter().zip(&charts).map(|(t, c)| (t.as_str(), c, 1.0, None)).collect();
+        let (lines, beat) = daily_slices("US", 3, &pond, d(51), 50.0);
+        assert_eq!(
+            lines,
+            "  US daily pond Mon open-close  3 sessions  gross +537.11 bp (t +17.32)  net +48.71 €/session  halves +483.40|+563.96  vs every session +107.42 bp\
+             \n  US daily pond Tue open-close  3 sessions  gross +322.27 bp (t +10.39)  net +27.23 €/session  halves +268.55|+349.12  vs every session -107.42 bp\
+             \n  US daily pond Wed open-close  3 sessions  gross +429.69 bp (t +6.93)  net +37.97 €/session  halves +322.27|+483.40  vs every session +0.00 bp\
+             \n  US daily pond Thu open-close  3 sessions  gross +429.69 bp (t +3.46)  net +37.97 €/session  halves +214.84|+537.11  vs every session +0.00 bp\
+             \n  US daily pond Fri open-close  3 sessions  gross +429.69 bp (t +13.86)  net +37.97 €/session  halves +483.40|+402.83  vs every session +0.00 bp\
+             \n  US daily pond month turn open-close  no two sessions\
+             \n  US daily pond rest of month open-close  no two sessions\
+             \n  US daily pond pre-holiday open-close  no two sessions\
+             \n  US daily pond expiry open-close  no two sessions\
+             \n  US daily book Mon open-close  3 sessions  gross +634.77 bp (t +17.32)  net +58.48 €/session  halves +571.29|+666.50  vs every session +126.95 bp\
+             \n  US daily book Tue open-close  3 sessions  gross +380.86 bp (t +10.39)  net +33.09 €/session  halves +317.38|+412.60  vs every session -126.95 bp\
+             \n  US daily book Wed open-close  3 sessions  gross +507.81 bp (t +6.93)  net +45.78 €/session  halves +380.86|+571.29  vs every session +0.00 bp\
+             \n  US daily book Thu open-close  3 sessions  gross +507.81 bp (t +3.46)  net +45.78 €/session  halves +253.91|+634.77  vs every session +0.00 bp\
+             \n  US daily book Fri open-close  3 sessions  gross +507.81 bp (t +13.86)  net +45.78 €/session  halves +571.29|+476.07  vs every session +0.00 bp\
+             \n  US daily book month turn open-close  no two sessions\
+             \n  US daily book rest of month open-close  no two sessions\
+             \n  US daily book pre-holiday open-close  no two sessions\
+             \n  US daily book expiry open-close  no two sessions"
+        );
+        // a tie with the average day does not beat it
+        assert_eq!(beat.len(), 18);
+        assert_eq!(beat.iter().filter(|x| *x.1).map(|x| *x.0).collect::<Vec<_>>(), [("Mon", "book"), ("Mon", "pond")]);
     }
 }
