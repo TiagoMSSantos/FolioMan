@@ -227,7 +227,7 @@ pub fn session(market: &str) -> (u32, u32) {
 /// number of hours after the open, or the close itself, which ends the last bar half an hour after it starts.
 pub fn bar_end(market: &str, exit: u32) -> bool {
     let (open, close) = session(market);
-    open < exit && exit <= close && ((exit - open).is_multiple_of(60) || exit == close)
+    open < exit && exit <= close && (exit % 60 == open % 60 || exit == close)
 }
 
 /// (#1212) An Intraday exit hour, "HH:MM" on `market`'s exchange clock, as minutes after midnight. The
