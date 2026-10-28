@@ -732,7 +732,7 @@ pub fn holds_report(market: &str, names: &[(&str, Prices)], books: &BTreeMap<Nai
         )
     };
     for &h in holds {
-        let (mut pond, mut book) = (BTreeMap::<(u32, u32), Vec<f64>>::new(), BTreeMap::new());
+        let (mut pond, mut book): (BTreeMap<(u32, u32), Vec<f64>>, BTreeMap<(u32, u32), Vec<f64>>) = Default::default();
         for c in (0..cal.len().saturating_sub(h)).step_by(h.max(1)) {
             let held = books.get(&cal[c]);
             let mut day: BTreeMap<_, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
