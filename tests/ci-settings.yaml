@@ -1296,6 +1296,20 @@ widths:
   #  DISPLAY ONLY: no score, gate, rank, book, journal line or golden reads the new cells.
   #  COST: no fetch; two cells a row.
   #  REVERT RULE: comment out 1y again and drop the range key, its ColSpec and its col_cell arm.
+  #── (#1211) USER DECISION 2026-10-28: THE INTRADAY NOTE PRICES THE BACKTEST IN EUROS ──
+  #  WHY: the owner asked whether the Intraday US #1's +€977.41 P/L(EUR) traded every session and earned
+  #  only that. It did: 206 sessions since 2026-01-02 at €1,000 each, +€2,007.41 before costs less
+  #  206 × €5, about €4.74 a session, under the €5 round trip. 16 of the 20 rows read negative after
+  #  costs that day, every one of them positive before. The gross and per-session figures sit only in
+  #  hovers, which a phone never shows, and the table's note never named P/L(EUR) and gave the
+  #  backtest's loss in basis points only.
+  #  BUILT: two passages in the note. One says what P/L(EUR) adds up and that it is hindsight: the key
+  #  picked the names from the sessions it counts. The other puts K7's 10-year backtest (#828, US -48.3
+  #  and EU -15.9 bp a day after costs) in euros: about €4.80 and €1.60 a session, €970 and €320 over
+  #  200 sessions.
+  #  DISPLAY ONLY: page prose; no cell, rank, key, journal line or golden changes.
+  #  COST: none.
+  #  REVERT RULE: drop the two passages.
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a

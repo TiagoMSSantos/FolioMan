@@ -270,7 +270,11 @@
     last session counted. GAIN/LOSS adds up the same sessions' % moves, open to close before costs: the
     up days' gains against the down days' losses, since a name can close up on most days and still lose
     when its down days are bigger (hover it for the averages and the sums after costs). The rows are
-    ordered by it, gains/(gains+losses) highest first, ties by KEY (receipt #1196). SCORE is the
+    ordered by it, gains/(gains+losses) highest first, ties by KEY (receipt #1196). P/L(EUR) puts the same
+    sessions in euros: a fresh €1,000 bought at each open and sold at the close, after the round trip (€5 in
+    the US, €2 in the EU), never compounded. It is hindsight: the key picked these names from the very
+    sessions P/L(EUR) counts, so the top rows read well by construction, and a row up before costs can end
+    down after them (receipt #1211). SCORE is the
     day count's share, (right+1)/(right+fail+2) as a percent. The table ranks on K7 (receipt #832), the share of the last 252
     sessions that closed above their open: on the 10-year backtest its ten names closed up about 1.7
     percentage points more often than the EU list as a whole, and 1.2 more than the S&amp;P 500 as a whole,
@@ -280,7 +284,9 @@
     The 10-year backtest (receipt #810) lost on every key and market once a round trip is paid: about
     −49 to −52 basis points a day in the US at 50 bp of cost, −16 to −20 in the EU at 20 bp. The best
     of them, K1 on the EU list, earned +4.3 bp a day before costs, which a round trip of more than
-    4.3 bp wipes out. The backtest also leans optimistic: today's members only on the EU side, Yahoo's
+    4.3 bp wipes out. In euros, at €1,000 a session, K7, the key the table ranks on (receipt #828), lost
+    about €4.80 a US session and €1.60 an EU one: about €970 and €320 over 200 sessions. Those are the
+    figures to set against P/L(EUR), which is hindsight. The backtest also leans optimistic: today's members only on the EU side, Yahoo's
     first print as the open, and one exchange rate for every day. The table is here so <code>track</code>
     can grade it on sessions that had not happened when it ranked; it is not advice and nothing here
     places an order.
