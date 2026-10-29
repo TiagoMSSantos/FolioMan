@@ -23545,6 +23545,57 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker. It is a
 # census, not a timing rule.
 
+# (#1218) TRADING-RULES CENSUS, 2026-10-29, record only, no knob.
+# WHY: the owner asked how traders profit, and whether a trading rule can reach a 100x run that holding
+# cannot.
+# CENSUS (`backtest N universe traderules` prints it; CI probe 40844240796 on 29ee6b9,
+# `backtest 20 universe traderules`): 5907 of 6430 names on 10y of daily bars, 47 settings each at 1x, 2x
+# and 3x; 5912 on max monthly bars, trend 3m/6m/9m/12m and buy-and-hold at 1x; 2y of 60m bars on the US
+# pond (503 names) and the EU pond (105), swing and buy-and-hold, 13 settings at 3 leverages. Rules: trend
+# (the N-month return above 0, flipped only at a month end), average (the close above its N-bar mean),
+# breakout (buy a new N-bar or all-time high close, sell k volatility units under the peak since entry),
+# swing (buy after a 5-bar fall or a low RSI(2), sell on the bounce or after N bars). Signals read the close
+# and trade the next open. Cash earns ^IRX; leverage borrows at ^IRX + 2.5 pts and rebalances each bar;
+# long or cash only. Classes, sets, costs and dividends as (#1217). Each line ranks on its net %/yr less
+# buy-and-hold 1x on the same names and days. The bar: excess > 0, t >= 3 on the monthly excess, both
+# halves > 0. Ruin: a name's own equity draws down 90% or more.
+# 1 of 1976 lines clears the bar: the crypto book's daily close above its 50-bar mean at 2x, one name over
+# 6 months, +112.3%/yr, excess +134.2, t 4.8. One name for six months among 1976 tries is luck sized, and
+# the crypto class set clears 0 of 141, so no rule is eligible for a table.
+# Daily bars, net %/yr / worst drawdown %, buy-and-hold 1x | 2x | 3x; then the best rule by excess:
+#   stock                  +18.6/37 | +28.6/64 | +32.5/80, 446 of 588 ruined;  trend 12m 3x +2.0, t 0.3
+#   REIT stock             +7.8/42 | +4.8/70 | -3.5/86;  trend 3m 1x -2.9
+#   equity ETF             +9.9/43 | +9.5/69 | +6.1/84;  trend 6m 1x -3.9
+#   bond ETF               +2.2/16 | -1.1 | -7.0;  breakout all-time stop 8 2x +1.4, t 1.1
+#   gold/commodity ETF     +12.6/26 | +17.9/48 | +18.3/63;  trend 1m 3x +12.4, t 2.1, drawdown 30
+#   REIT fund              +2.8 | -1.9 | -8.6;  breakout 126 stop 5 1x -0.3
+#   crypto                 +59.8/88 | +24.7/99 | -34.4/100;  breakout 20 stop 3 3x +96.1, t 1.7, 26 of 30
+#                          ruined
+#   S&P 500 point-in-time  +12.2/40 | +15.0/67 | +13.8/83;  trend 12m 3x -3.7
+#   S&P 500 today          +16.7 | +24.3 | +26.2;  trend 12m 3x +0.5, t 0.1
+#   US pond 60m            +15.9/18 | +22.9/36 | +27.4/50;  swing fall 10% exit 5 1x -12.4
+#   EU pond 60m            +9.3/15 | +10.1 | +7.5;  best swing -5.2
+# Monthly bars: every trend line trails buy-and-hold (stock trend 12m -13.4 at t -6.4, S&P point-in-time
+# -8.1 at t -3.1). At 1x every rule trails buy-and-hold in every set. A trend rule cuts the drawdown with
+# the return (stock trend 12m 1x: drawdown 24 against 37, -7.5 pts/yr). Leverage lifts the mean of a
+# strong set and ruins most of its names.
+# 10x AND 100x RUNS inside 5 years: stock 320 of 620 names ran 10x, 28 ran 100x; S&P 500 point-in-time 145
+# of 764 and 6; S&P 500 today 303 of 503 and 27; crypto 26 of 34 and 7; equity ETF 5 of 3187 and 1; bond
+# ETF and REIT fund none. Two 100x runs read like price breaks and were not checked: MCIC 850x inside 1998
+# and the equity ETF EL45.DE 356x. Median share of a run kept, point-in-time S&P (10 runs inside the daily
+# bars) at 1x: trend 78%, average 75%, breakout 84%, swing 20%; buy-and-hold 2x 157%, 3x 184%. Crypto (15
+# runs) at 3x: every rule but breakout (20%) kept nothing. No rule at 1x keeps a whole run; only leverage
+# on a name that ran reads above 100%, and the same leverage ruins most names that did not.
+# CAVEATS: (a) in the book and point-in-time sets a levered name's equity starts at the chart start, so a
+# name wiped before it joins the set never enters, and those levered lines read high. (b) a set with no
+# names at a leverage (crypto book 2x and 3x) prints +0.0 and a false excess instead of no names. The
+# volatility unit is the 10-bar mean close move, not a high-low ATR, and the all-time high is the highest
+# close on the chart. About 2000 lines were tried, so luck alone prints a t of 3 a few times. None of these
+# can turn the verdict into a pass.
+# VERDICT: no trend, average, breakout or swing rule beats buying and holding the same names net of cost,
+# at any leverage, in any set. A 100x came from holding a name that ran; the rules kept less of it. No
+# table ships. No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
