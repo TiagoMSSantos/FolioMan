@@ -883,6 +883,10 @@ pub struct Urls {
     // both Yahoo pairs missed. Defaulted so an older settings.yaml still loads.
     #[serde(default = "default_ecb_fx")]
     pub ecb_fx: String,
+    // (#1219) the Shiller monthly table's mirror: the S&P 500's dividend before ^SP500TR starts, for
+    // `backtest leverage`. Defaulted so an older settings.yaml still loads.
+    #[serde(default = "default_shiller")]
+    pub shiller: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
     pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe (the base equity pond)
     // (Item 18) EXTRA equity constituent CSVs in the SAME column layout (Symbol, _, GICS Sector, …) —
@@ -1397,6 +1401,10 @@ fn default_fred() -> String {
 
 fn default_ecb_fx() -> String {
     "https://api.frankfurter.dev/v1/latest?from={cur}&to=EUR".to_string()
+}
+
+fn default_shiller() -> String {
+    "https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv".to_string()
 }
 
 /// Default request-signing salt, lifted from the Börse Frankfurt web bundle (`tracing.salt`). Public
@@ -2947,6 +2955,9 @@ mod tests {
         // (#1150) and the ECB fallback for a currency Yahoo has no pair for today
         assert!(!text.contains("ecb_fx:"), "fixture must exercise the DEFAULT");
         assert_eq!(settings.urls.ecb_fx, "https://api.frankfurter.dev/v1/latest?from={cur}&to=EUR");
+        // (#1219) and the leverage census's dividend table
+        assert!(!text.contains("shiller:"), "fixture must exercise the DEFAULT");
+        assert_eq!(settings.urls.shiller, "https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv");
     }
 
     /// (TER/AUM) Same story as the OpenFIGI pin above, and the same reason it needs one: `serde(default)`

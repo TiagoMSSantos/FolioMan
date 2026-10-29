@@ -8,7 +8,8 @@
 //! lane, BUY NOW, the page or a trade.
 
 use super::intraday::stats;
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::{Datelike, Duration, Months, NaiveDate};
+use std::collections::BTreeMap;
 
 /// What a rule pays a year to borrow, on top of the bill rate, for each unit above 1x.
 pub const SPREAD: f64 = 0.025;
@@ -316,6 +317,165 @@ pub fn cash_on(irx: &[(NaiveDate, f64)], dates: &[NaiveDate]) -> Vec<f64> {
     dates.iter().map(|d| irx.partition_point(|x| x.0 <= *d).checked_sub(1).map_or(0.0, |k| irx[k].1 / 100.0)).collect()
 }
 
+/// (#1219) THE LEVERAGE CENSUS: does a daily-reset fund at 1.25x to 3x the S&P 500's total return end
+/// richer than 1x, and how often? Two borrow models: a swap ETF that pays the bill rate on the borrowed
+/// part and its 0.60%/yr fee on the whole fund (Xtrackers S&P 500 2x Leveraged Daily Swap UCITS), and a
+/// margin loan at the bill rate plus [`SPREAD`].
+pub const COSTS: [(&str, f64, f64); 2] = [("etf", 0.0, 0.006), ("margin", SPREAD, 0.0)];
+/// (#1219) The leverages the census prices.
+pub const LEVELS: [f64; 4] = [1.25, 1.5, 2.0, 3.0];
+
+/// (#1219) The value `m`, keyed year * 12 + month0, holds for `d`'s month or the latest before it; 0
+/// before the first.
+pub fn on_month(m: &BTreeMap<i32, f64>, d: NaiveDate) -> f64 {
+    m.range(..=d.year() * 12 + d.month0() as i32).next_back().map_or(0.0, |x| *x.1)
+}
+
+/// (#1219) Each bar's total return on `px`'s dates, the first 0. Until `tr` has a close on or before the
+/// bar before, a bar pays its price move plus `yld`'s dividend yield for its month over its calendar
+/// days; from then on, `tr`'s move between its last closes on or before the two dates.
+pub fn splice(px: &[(NaiveDate, f64)], yld: &BTreeMap<i32, f64>, tr: &[(NaiveDate, f64)]) -> Vec<f64> {
+    let at = |d: NaiveDate| tr[tr.partition_point(|x| x.0 <= d) - 1].1;
+    let moves = px.windows(2).map(|w| {
+        let ((d0, p0), (d1, p1)) = (w[0], w[1]);
+        if tr.first().is_some_and(|t| t.0 <= d0) {
+            at(d1) / at(d0) - 1.0
+        } else {
+            p1 / p0 - 1.0 + on_month(yld, d1) * (d1 - d0).num_days() as f64 / 365.25
+        }
+    });
+    std::iter::once(0.0).chain(moves).collect()
+}
+
+/// (#1219) What a fund held at `lev` times 1x returns `rs`, reset every bar, pays each bar: less the
+/// bill rate `cash` plus `spread` on the borrowed part and `fee` on the whole fund, each a fraction a
+/// year over the bar's calendar days. The first bar's 0, and no bar loses more than everything.
+pub fn levered(dates: &[NaiveDate], rs: &[f64], cash: &[f64], lev: f64, spread: f64, fee: f64) -> Vec<f64> {
+    let bar = |i: usize| {
+        let years = (dates[i] - dates[i - 1]).num_days() as f64 / 365.25;
+        (lev * rs[i] - ((lev - 1.0) * (cash[i] + spread) + fee) * years).max(-1.0)
+    };
+    std::iter::once(0.0).chain((1..rs.len()).map(bar)).collect()
+}
+
+/// (#1219) The bars that open a month: the first, and each dated in another month than the one before.
+pub fn firsts(dates: &[NaiveDate]) -> Vec<usize> {
+    (0..dates.len()).filter(|&i| i == 0 || (dates[i].year(), dates[i].month()) != (dates[i - 1].year(), dates[i - 1].month())).collect()
+}
+
+/// (#1219) Every `years`-year window: from each month's first bar to the first bar at least that long
+/// after it. A start with no such bar opens none.
+pub fn windows(dates: &[NaiveDate], years: u32) -> Vec<(usize, usize)> {
+    let end = |s: usize| dates.partition_point(|d| *d < dates[s] + Months::new(12 * years));
+    firsts(dates).into_iter().map(|s| (s, end(s))).filter(|w| w.1 < dates.len()).collect()
+}
+
+/// (#1219) The deepest fall below a running peak along `le`, a log equity curve, as a fraction.
+pub fn drawdown(le: &[f64]) -> f64 {
+    let mut peak = f64::NEG_INFINITY;
+    le.iter().fold(0.0, |dd, &x| {
+        peak = peak.max(x);
+        f64::max(dd, 1.0 - (x - peak).exp())
+    })
+}
+
+/// (#1219) Why a 20y line misses the bar, `None` when it clears it: it ends richer than 1x in 80% or
+/// more of the windows in each half, its worst window ends no poorer than 1x's worst, and no window
+/// falls 90% or more.
+pub fn misses(halves: (f64, f64), worst: f64, worst_1x: f64, wipes: usize) -> Option<&'static str> {
+    if !(halves.0 >= 0.8 && halves.1 >= 0.8) {
+        Some("beats 1x in under 80% of a half")
+    } else if worst < worst_1x {
+        Some("its worst window ends poorer")
+    } else if wipes > 0 {
+        Some("a window falls 90%")
+    } else {
+        None
+    }
+}
+
+/// (#1219) The census text on 1x total returns `rs` and bill rate `cash`, for each of `horizons` in years:
+/// 1x, then each borrow model and leverage, paid in at once on a window's first bar ("lump") or one
+/// equal sum on each month's first bar ("monthly"). Lump reads %/yr, monthly the end value over what
+/// was paid in. Each line's halves split its windows at `split`; drawdowns and wipe-outs read the fund's
+/// own path. Only `horizons[0]` is graded.
+pub fn lever_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], horizons: &[u32], split: NaiveDate) -> String {
+    let starts = firsts(dates);
+    let mut out = vec![format!(
+        "\n── (#1219) LEVERAGE CENSUS: S&P 500 total return from {}, {} bars, rebalanced every bar; 1x has no fee ──",
+        dates[0],
+        dates.len()
+    )];
+    let mut clear = 0;
+    for (h, &years) in horizons.iter().enumerate() {
+        let ws = windows(dates, years);
+        // each window's lump multiple, monthly multiple of what was paid in, drawdown, and whether it fell 90%
+        let grade = |rs: &[f64]| -> Vec<(f64, f64, f64, bool)> {
+            let mut sum = 0.0;
+            let le: Vec<f64> = rs.iter().map(|r| {
+                sum += (1.0 + r).max(1e-9).ln();
+                sum
+            }).collect();
+            ws.iter().map(|&(s, e)| {
+                let ks = &starts[starts.partition_point(|&k| k < s)..starts.partition_point(|&k| k < e)];
+                let monthly = ks.iter().map(|&k| (le[e] - le[k]).exp()).sum::<f64>() / ks.len() as f64;
+                ((le[e] - le[s]).exp(), monthly, drawdown(&le[s..=e]), ruined(&rs[s + 1..=e]))
+            }).collect()
+        };
+        let base = grade(rs);
+        let lines: Vec<(String, Vec<(f64, f64, f64, bool)>)> = COSTS.iter().flat_map(|&(cost, spread, fee)| {
+            LEVELS.map(|lev| (format!("{lev}x {cost}"), grade(&levered(dates, rs, cash, lev, spread, fee))))
+        }).collect();
+        let late: Vec<bool> = ws.iter().map(|w| dates[w.0] >= split).collect();
+        let deepest = |g: &[(f64, f64, f64, bool)]| g.iter().map(|x| x.2).fold(0.0, f64::max) * 100.0;
+        for money in ["lump", "monthly"] {
+            let pick = |g: &[(f64, f64, f64, bool)]| -> Vec<f64> { g.iter().map(|x| if money == "lump" { x.0 } else { x.1 }).collect() };
+            let show = |x: f64| if money == "lump" { format!("{:+.1}%/yr", (x.powf(1.0 / years as f64) - 1.0) * 100.0) } else { format!("{x:.2}x paid in") };
+            let worst = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+            let one = pick(&base);
+            let (med_1x, worst_1x) = (crate::core::median(one.clone()).unwrap_or(f64::NAN), worst(&one));
+            out.push(format!(
+                "  {years}y 1x {money}: {} windows, median {}, worst {}, worst drawdown {:.0}%",
+                ws.len(),
+                show(med_1x),
+                show(worst_1x),
+                deepest(&base)
+            ));
+            for (label, g) in &lines {
+                let v = pick(g);
+                let share = |half: Option<bool>| {
+                    let of: Vec<bool> = v.iter().zip(&one).zip(&late).filter(|x| half.is_none_or(|h| *x.1 == h)).map(|((a, b), _)| a > b).collect();
+                    of.iter().filter(|b| **b).count() as f64 / of.len() as f64
+                };
+                let (halves, wipes) = ((share(Some(false)), share(Some(true))), g.iter().filter(|x| x.3).count());
+                let mut line = format!(
+                    "  {years}y {label} {money}: beats 1x in {:.0}% (before {split} {:.0}% | after {:.0}%), median {} vs {}, worst {} vs {}, worst drawdown {:.0}%, {wipes} wipe-outs",
+                    share(None) * 100.0,
+                    halves.0 * 100.0,
+                    halves.1 * 100.0,
+                    show(crate::core::median(v.clone()).unwrap_or(f64::NAN)),
+                    show(med_1x),
+                    show(worst(&v)),
+                    show(worst_1x),
+                    deepest(g)
+                );
+                if h == 0 {
+                    let why = misses(halves, worst(&v), worst_1x, wipes);
+                    clear += usize::from(why.is_none());
+                    line += &format!(": {}", why.map_or("passes the bar".to_string(), |w| format!("fails, {w}")));
+                }
+                out.push(line);
+            }
+        }
+    }
+    out.push(format!(
+        "  {clear} of {} lines clear the bar (beat 1x in 80% of {}y windows in both halves, worst window no poorer, no 90% fall)",
+        2 * COSTS.len() * LEVELS.len(),
+        horizons[0]
+    ));
+    out.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,5 +683,106 @@ mod tests {
     fn cash_carries_the_last_bill_close_forward_in_percent() {
         let irx = [(d(2024, 1, 2), 5.0), (d(2024, 1, 4), 4.0)];
         assert_eq!(cash_on(&irx, &[d(2024, 1, 1), d(2024, 1, 2), d(2024, 1, 3), d(2024, 1, 4), d(2024, 1, 9)]), [0.0, 0.05, 0.05, 0.04, 0.04]);
+    }
+
+    #[test]
+    fn a_month_reads_its_own_value_or_the_latest_before_it() {
+        let m = BTreeMap::from([(2000 * 12 + 2, 0.5), (2000 * 12 + 5, 0.25)]);
+        assert_eq!([d(2000, 2, 28), d(2000, 3, 1), d(2000, 5, 31), d(2000, 6, 1), d(2001, 1, 1)].map(|x| on_month(&m, x)), [0.0, 0.5, 0.5, 0.25, 0.25]);
+    }
+
+    #[test]
+    fn splice_pays_price_plus_dividend_yield_until_the_total_return_series_starts() {
+        let px = [(d(2000, 1, 1), 100.0), (d(2000, 1, 5), 110.0), (d(2000, 1, 21), 99.0)];
+        let yld = BTreeMap::from([(2000 * 12, 0.0365)]);
+        let first = 110.0 / 100.0 - 1.0 + 0.0365 * 4.0 / 365.25;
+        close(&splice(&px, &yld, &[(d(2000, 1, 5), 50.0), (d(2000, 1, 21), 55.0)]), &[0.0, first, 55.0 / 50.0 - 1.0]);
+        close(&splice(&px, &yld, &[]), &[0.0, first, 99.0 / 110.0 - 1.0 + 0.0365 * 16.0 / 365.25]);
+    }
+
+    #[test]
+    fn a_levered_bar_pays_the_borrow_and_the_fee_and_loses_at_most_everything() {
+        let dates = [d(2000, 1, 1), d(2000, 1, 11), d(2000, 1, 21)];
+        let (rs, cash) = ([0.0, 0.1, -0.5], [0.0, 0.04, 0.04]);
+        close(&levered(&dates, &rs, &cash, 1.0, 0.0, 0.0), &rs);
+        close(&levered(&dates, &rs, &cash, 2.0, 0.025, 0.006), &[0.0, 2.0 * 0.1 - (0.065 + 0.006) * (10.0 / 365.25), -1.0]);
+    }
+
+    #[test]
+    fn a_month_opens_on_its_first_bar_and_a_window_ends_a_full_term_on() {
+        assert_eq!(firsts(&[d(2000, 1, 30), d(2000, 1, 31), d(2000, 2, 1), d(2000, 2, 2), d(2001, 2, 1)]), [0, 2, 4]);
+        let dates = [d(2000, 1, 3), d(2000, 1, 20), d(2000, 2, 1), d(2002, 1, 2), d(2002, 1, 3), d(2002, 2, 1)];
+        assert_eq!(windows(&dates, 2), [(0, 4), (2, 5)]);
+    }
+
+    #[test]
+    fn drawdown_is_the_deepest_fall_below_a_running_peak() {
+        assert!((drawdown(&[0.0, 2f64.ln(), 0.0, 1.5f64.ln()]) - 0.5).abs() < 1e-12);
+        assert!((drawdown(&[0.0, -0.5]) - (1.0 - (-0.5f64).exp())).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_bar_takes_80_percent_in_each_half_a_worst_no_poorer_and_no_wipe_out() {
+        let under = Some("beats 1x in under 80% of a half");
+        assert_eq!(misses((0.8, 0.8), 1.0, 1.0, 0), None);
+        assert_eq!((misses((0.79, 0.9), 1.0, 1.0, 0), misses((0.9, 0.79), 1.0, 1.0, 0)), (under, under));
+        assert_eq!(misses((0.9, 0.9), 0.99, 1.0, 0), Some("its worst window ends poorer"));
+        assert_eq!(misses((0.9, 0.9), 1.0, 1.0, 1), Some("a window falls 90%"));
+    }
+
+    #[test]
+    fn the_leverage_census_grades_the_first_horizon_and_counts_the_lines_that_clear_it() {
+        // a crash on the second month's first bar wipes 3x out, and chop from bar 80 drags the levered lines
+        let dates: Vec<NaiveDate> = (0..62).flat_map(|m| [1, 16].map(|day| d(2000 + m / 12, (m % 12 + 1) as u32, day))).collect();
+        let rs: Vec<f64> = (0..dates.len()).map(|i| match i {
+            0 => 0.0,
+            2 => -0.34,
+            i if i >= 80 => 0.008 + if i % 2 == 1 { 0.07 } else { -0.07 },
+            _ => 0.008,
+        }).collect();
+        let cash: Vec<f64> = (0..dates.len()).map(|i| if i < 60 { 0.03 } else { 0.01 }).collect();
+        let want = r"
+── (#1219) LEVERAGE CENSUS: S&P 500 total return from 2000-01-01, 124 bars, rebalanced every bar; 1x has no fee ──
+  1y 1x lump: 50 windows, median +21.1%/yr, worst -20.7%/yr, worst drawdown 34%
+  1y 1.25x etf lump: beats 1x in 90% (before 2002-02-01 96% | after 84%), median +25.3%/yr vs +21.1%/yr, worst -28.7%/yr vs -20.7%/yr, worst drawdown 43%, 0 wipe-outs: fails, its worst window ends poorer
+  1y 1.5x etf lump: beats 1x in 90% (before 2002-02-01 96% | after 84%), median +30.4%/yr vs +21.1%/yr, worst -36.9%/yr vs -20.7%/yr, worst drawdown 51%, 0 wipe-outs: fails, its worst window ends poorer
+  1y 2x etf lump: beats 1x in 88% (before 2002-02-01 96% | after 80%), median +41.3%/yr vs +21.1%/yr, worst -55.7%/yr vs -20.7%/yr, worst drawdown 68%, 0 wipe-outs: fails, its worst window ends poorer
+  1y 3x etf lump: beats 1x in 66% (before 2002-02-01 96% | after 36%), median +65.6%/yr vs +21.1%/yr, worst -100.0%/yr vs -20.7%/yr, worst drawdown 100%, 1 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 1.25x margin lump: beats 1x in 90% (before 2002-02-01 96% | after 84%), median +25.3%/yr vs +21.1%/yr, worst -28.7%/yr vs -20.7%/yr, worst drawdown 43%, 0 wipe-outs: fails, its worst window ends poorer
+  1y 1.5x margin lump: beats 1x in 88% (before 2002-02-01 96% | after 80%), median +29.6%/yr vs +21.1%/yr, worst -37.3%/yr vs -20.7%/yr, worst drawdown 51%, 0 wipe-outs: fails, its worst window ends poorer
+  1y 2x margin lump: beats 1x in 66% (before 2002-02-01 96% | after 36%), median +38.7%/yr vs +21.1%/yr, worst -56.6%/yr vs -20.7%/yr, worst drawdown 68%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 3x margin lump: beats 1x in 62% (before 2002-02-01 96% | after 28%), median +58.7%/yr vs +21.1%/yr, worst -100.0%/yr vs -20.7%/yr, worst drawdown 100%, 1 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 1x monthly: 50 windows, median 1.11x paid in, worst 1.03x paid in, worst drawdown 34%
+  1y 1.25x etf monthly: beats 1x in 90% (before 2002-02-01 100% | after 80%), median 1.13x paid in vs 1.11x paid in, worst 1.04x paid in vs 1.03x paid in, worst drawdown 43%, 0 wipe-outs: passes the bar
+  1y 1.5x etf monthly: beats 1x in 90% (before 2002-02-01 100% | after 80%), median 1.16x paid in vs 1.11x paid in, worst 1.04x paid in vs 1.03x paid in, worst drawdown 51%, 0 wipe-outs: passes the bar
+  1y 2x etf monthly: beats 1x in 82% (before 2002-02-01 100% | after 64%), median 1.21x paid in vs 1.11x paid in, worst 1.03x paid in vs 1.03x paid in, worst drawdown 68%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 3x etf monthly: beats 1x in 60% (before 2002-02-01 100% | after 20%), median 1.33x paid in vs 1.11x paid in, worst 0.97x paid in vs 1.03x paid in, worst drawdown 100%, 1 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 1.25x margin monthly: beats 1x in 88% (before 2002-02-01 100% | after 76%), median 1.13x paid in vs 1.11x paid in, worst 1.04x paid in vs 1.03x paid in, worst drawdown 43%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 1.5x margin monthly: beats 1x in 84% (before 2002-02-01 100% | after 68%), median 1.15x paid in vs 1.11x paid in, worst 1.04x paid in vs 1.03x paid in, worst drawdown 51%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 2x margin monthly: beats 1x in 60% (before 2002-02-01 100% | after 20%), median 1.20x paid in vs 1.11x paid in, worst 1.02x paid in vs 1.03x paid in, worst drawdown 68%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  1y 3x margin monthly: beats 1x in 58% (before 2002-02-01 100% | after 16%), median 1.30x paid in vs 1.11x paid in, worst 0.95x paid in vs 1.03x paid in, worst drawdown 100%, 1 wipe-outs: fails, beats 1x in under 80% of a half
+  2y 1x lump: 38 windows, median +15.8%/yr, worst -2.0%/yr, worst drawdown 34%
+  2y 1.25x etf lump: beats 1x in 97% (before 2002-02-01 96% | after 100%), median +18.5%/yr vs +15.8%/yr, worst -5.5%/yr vs -2.0%/yr, worst drawdown 43%, 0 wipe-outs
+  2y 1.5x etf lump: beats 1x in 97% (before 2002-02-01 96% | after 100%), median +21.8%/yr vs +15.8%/yr, worst -9.3%/yr vs -2.0%/yr, worst drawdown 51%, 0 wipe-outs
+  2y 2x etf lump: beats 1x in 89% (before 2002-02-01 96% | after 77%), median +28.3%/yr vs +15.8%/yr, worst -20.9%/yr vs -2.0%/yr, worst drawdown 68%, 0 wipe-outs
+  2y 3x etf lump: beats 1x in 79% (before 2002-02-01 96% | after 46%), median +40.1%/yr vs +15.8%/yr, worst -100.0%/yr vs -2.0%/yr, worst drawdown 100%, 1 wipe-outs
+  2y 1.25x margin lump: beats 1x in 97% (before 2002-02-01 96% | after 100%), median +18.5%/yr vs +15.8%/yr, worst -5.5%/yr vs -2.0%/yr, worst drawdown 43%, 0 wipe-outs
+  2y 1.5x margin lump: beats 1x in 92% (before 2002-02-01 96% | after 85%), median +21.1%/yr vs +15.8%/yr, worst -9.9%/yr vs -2.0%/yr, worst drawdown 51%, 0 wipe-outs
+  2y 2x margin lump: beats 1x in 84% (before 2002-02-01 96% | after 62%), median +25.9%/yr vs +15.8%/yr, worst -22.4%/yr vs -2.0%/yr, worst drawdown 68%, 0 wipe-outs
+  2y 3x margin lump: beats 1x in 71% (before 2002-02-01 96% | after 23%), median +34.2%/yr vs +15.8%/yr, worst -100.0%/yr vs -2.0%/yr, worst drawdown 100%, 1 wipe-outs
+  2y 1x monthly: 38 windows, median 1.14x paid in, worst 1.13x paid in, worst drawdown 34%
+  2y 1.25x etf monthly: beats 1x in 100% (before 2002-02-01 100% | after 100%), median 1.16x paid in vs 1.14x paid in, worst 1.14x paid in vs 1.13x paid in, worst drawdown 43%, 0 wipe-outs
+  2y 1.5x etf monthly: beats 1x in 100% (before 2002-02-01 100% | after 100%), median 1.19x paid in vs 1.14x paid in, worst 1.14x paid in vs 1.13x paid in, worst drawdown 51%, 0 wipe-outs
+  2y 2x etf monthly: beats 1x in 84% (before 2002-02-01 100% | after 54%), median 1.24x paid in vs 1.14x paid in, worst 1.13x paid in vs 1.13x paid in, worst drawdown 68%, 0 wipe-outs
+  2y 3x etf monthly: beats 1x in 66% (before 2002-02-01 100% | after 0%), median 1.33x paid in vs 1.14x paid in, worst 1.01x paid in vs 1.13x paid in, worst drawdown 100%, 1 wipe-outs
+  2y 1.25x margin monthly: beats 1x in 100% (before 2002-02-01 100% | after 100%), median 1.16x paid in vs 1.14x paid in, worst 1.14x paid in vs 1.13x paid in, worst drawdown 43%, 0 wipe-outs
+  2y 1.5x margin monthly: beats 1x in 100% (before 2002-02-01 100% | after 100%), median 1.18x paid in vs 1.14x paid in, worst 1.13x paid in vs 1.13x paid in, worst drawdown 51%, 0 wipe-outs
+  2y 2x margin monthly: beats 1x in 71% (before 2002-02-01 100% | after 15%), median 1.21x paid in vs 1.14x paid in, worst 1.11x paid in vs 1.13x paid in, worst drawdown 68%, 0 wipe-outs
+  2y 3x margin monthly: beats 1x in 61% (before 2002-02-01 92% | after 0%), median 1.26x paid in vs 1.14x paid in, worst 0.96x paid in vs 1.13x paid in, worst drawdown 100%, 1 wipe-outs
+  2 of 16 lines clear the bar (beat 1x in 80% of 1y windows in both halves, worst window no poorer, no 90% fall)";
+        assert_eq!(lever_report(&dates, &rs, &cash, &[1, 2], d(2002, 2, 1)), want);
+        // margin at a bill rate of minus the spread borrows for free, so on flat closes it ties 1x and never beats it
+        let flat = lever_report(&days(731), &[0.0; 731], &[-SPREAD; 731], &[1], d(2024, 7, 1));
+        assert!(flat.contains("1y 2x margin lump: beats 1x in 0% (before 2024-07-01 0% | after 0%)"), "{flat}");
     }
 }

@@ -16233,8 +16233,8 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 57] = [
-            "openfigi_mapping", "fred", "ecb_fx",
+        const FIELDS: [&str; 58] = [
+            "openfigi_mapping", "fred", "ecb_fx", "shiller",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "yahoo_query2", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals_quality",
@@ -19979,6 +19979,16 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
     Some(chart)
 }
 
+/// (#1219) [`fetch_history`] from `from` to today rather than the last 10 years: Yahoo serves daily bars
+/// on an explicit `period1`/`period2` span, where `range=max` coarsens them to months.
+#[mutants::skip] // network shell, offline-guarded by chart_json
+pub async fn fetch_history_since(client: &Client, urls: &Urls, ticker: &str, from: NaiveDate) -> Option<Chart> {
+    let span = format!("period1={}&period2={}", from.and_hms_opt(0, 0, 0)?.and_utc().timestamp(), chrono::Utc::now().timestamp() + 86_400);
+    let urls = Urls { yahoo_chart: urls.yahoo_chart.replace("range={range}", &span), ..urls.clone() };
+    let chart = parse_chart(&chart_json(client, &urls, ticker, "").await?, ticker)?;
+    (!chart.closes.is_empty()).then_some(chart)
+}
+
 /// (#811) `fetch_history` on a shorter range: the last daily bars the intraday table ranks on, without
 /// the 10y download per name. (#825) `range` is a Yahoo chart range, `intraday::chart_range`'s pick.
 /// (#826) The last bar's null close is filled from the quote first ([`fill_last_close`]).
@@ -20279,6 +20289,20 @@ pub async fn fetch_fred(client: &Client, template: &str, ua: &str, id: &str) -> 
         r.text().await.ok().map(Value::String)
     };
     cached_feed(&format!("fred_{id}"), crate::core::parse_fred_monthly, live).await
+}
+
+/// (#1219) The S&P 500's dividend yield by month since 1871, from the Shiller table's mirror, through
+/// the day cache (`core::parse_shiller_yield`).
+#[mutants::skip] // network shell
+pub async fn fetch_shiller_yield(client: &Client, url: &str) -> BTreeMap<i32, f64> {
+    let live = async {
+        if offline() {
+            return None;
+        }
+        throttle().await;
+        client.get(url).send().await.ok()?.text().await.ok().map(Value::String)
+    };
+    cached_feed("shiller", crate::core::parse_shiller_yield, live).await
 }
 
 /// (#486) The Bonds table's 10Y government yields, in the page's row order. USA is the Treasury's

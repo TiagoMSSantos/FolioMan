@@ -366,6 +366,15 @@ fn census_reports_finish_offline_and_ignore_thread_count() {
     }
 }
 
+/// (#1219) The leverage census offline: the frozen cache holds none of its five sources, so it names what
+/// it lacks and stops before the pool fetch.
+#[test]
+fn leverage_census_offline_names_the_sources_it_lacks() {
+    let got = report_at(&fixture_copy("census-leverage", false), &["20", "leverage"], None);
+    assert!(got.contains("(#1219) leverage census: ") && got.contains(" unavailable"), "{got}");
+    assert!(!got.contains("LEVERAGE CENSUS"), "{got}");
+}
+
 /// (#342) A copy of the fixture in a dir of its own, its `tickers:` list run Z-A when `reverse`.
 /// Offline, the fetch completes in input order, so a Z-A copy is what a live run's latency does to the
 /// pool: same names, another order. Text splice, not a serde round-trip, so nothing but the order can

@@ -774,6 +774,7 @@ struct Args {
     intraday: bool,
     holdwindows: bool,
     traderules: bool,
+    leverage: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -807,6 +808,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("intraday") => a_.intraday = true, // (#809) open-to-close keys on 10y daily bars
             _ if a.eq_ignore_ascii_case("holdwindows") => a_.holdwindows = true, // (#1217) every calendar hold per asset class
             _ if a.eq_ignore_ascii_case("traderules") => a_.traderules = true, // (#1218) trend, breakout and swing rules at 1x-3x
+            _ if a.eq_ignore_ascii_case("leverage") => a_.leverage = true, // (#1219) daily-reset 1.25x-3x S&P total return vs 1x
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ => a_.tickers.push(a.clone()),
         }
@@ -1237,7 +1239,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        time, mut tickers,
+        leverage, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1251,6 +1253,10 @@ pub async fn run(args: Vec<String>) {
     };
     if intraday {
         intraday_ruler(&client, &settings).await;
+        return;
+    }
+    if leverage {
+        leverage_census(&client, &settings).await;
         return;
     }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
@@ -2582,6 +2588,42 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
             (*name, cohort_side(a.iter().map(|x| x.1).collect()), cohort_side(b.iter().map(|x| x.1).collect()))
         })
         .collect()
+}
+
+/// (#1219) The leverage census: the S&P 500's daily closes since 1928, ^SP500TR's from 1988 and the
+/// Shiller dividend yield before it, at 1.25x to 3x against 1x over every 20y and 30y window, borrowing
+/// at the NBER short-term yield until 1934 and the 3-month bill rate (TB3MS) after. Every source is
+/// fetched before any is read, so an offline run names each one it lacks.
+#[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::rules
+async fn leverage_census(client: &reqwest::Client, settings: &config::Settings) {
+    use crate::heuristics::rules;
+    use chrono::NaiveDate;
+    let d = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+    let u = &settings.urls;
+    let px = fetch::fetch_history_since(client, u, "^GSPC", d(1927, 12)).await;
+    let tr = fetch::fetch_history_since(client, u, "^SP500TR", d(1988, 1)).await;
+    let yld = fetch::fetch_shiller_yield(client, &u.shiller).await;
+    let mut bills = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "M1329AUSM193NNBR").await;
+    let tb = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "TB3MS").await;
+    let gone = [("^GSPC", px.is_none()), ("^SP500TR", tr.is_none()), ("Shiller dividends", yld.is_empty()), ("NBER yields", bills.is_empty()), ("TB3MS", tb.is_empty())];
+    let missing: Vec<&str> = gone.iter().filter(|g| g.1).map(|g| g.0).collect();
+    let (Some(px), Some(tr), true) = (px, tr, missing.is_empty()) else {
+        println!("(#1219) leverage census: {} unavailable", missing.join(", "));
+        return;
+    };
+    bills.extend(tb); // TB3MS wins the 1934 overlap
+    let pair = |c: &fetch::Chart| c.dates.iter().copied().zip(c.closes.iter().copied()).collect::<Vec<_>>();
+    let (px, tr) = (pair(&px), pair(&tr));
+    let dates: Vec<NaiveDate> = px.iter().map(|x| x.0).collect();
+    let rs = rules::splice(&px, &yld, &tr);
+    let cash: Vec<f64> = dates.iter().map(|&x| rules::on_month(&bills, x) / 100.0).collect();
+    // the splice check: price plus the Shiller yield against ^SP500TR over the years both cover
+    let from = dates.partition_point(|x| *x <= tr[0].0);
+    let years = (dates[dates.len() - 1] - dates[from - 1]).num_days() as f64 / 365.25;
+    let pa = |rs: &[f64]| ((rs[from..].iter().map(|r| r.ln_1p()).sum::<f64>() / years).exp() - 1.0) * 100.0;
+    let (got, want) = (pa(&rules::splice(&px, &yld, &[])), pa(&rs));
+    println!("(#1219) splice check from {}: price plus Shiller dividends {got:+.2}%/yr, ^SP500TR {want:+.2}%/yr, gap {:+.2} pts", dates[from - 1], got - want);
+    println!("{}", rules::lever_report(&dates, &rs, &cash, &[20, 30], d(1967, 1)));
 }
 
 /// (#809) `backtest N intraday`: every intraday key graded on 10y of daily bars, per market, against the
@@ -9864,6 +9906,7 @@ mod tests {
         assert!(p("intraday").intraday && !p("intraday").wide && !p("12").intraday);
         assert!(p("holdwindows").holdwindows && !p("holdwindows").intraday && !p("12").holdwindows);
         assert!(p("traderules").traderules && !p("traderules").holdwindows && !p("12").traderules);
+        assert!(p("leverage").leverage && !p("traderules").leverage && !p("leverage").traderules);
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -9900,7 +9943,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage time");
         assert_eq!(
             all,
             Args {
@@ -9923,6 +9966,7 @@ mod tests {
                 intraday: true,
                 holdwindows: true,
                 traderules: true,
+                leverage: true,
                 time: true,
                 tickers: vec![]
             }

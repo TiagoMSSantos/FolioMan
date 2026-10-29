@@ -3475,6 +3475,22 @@ pub fn parse_fred_monthly(v: &Value) -> BTreeMap<i32, f64> {
         .collect()
 }
 
+/// (#1219) The S&P 500's dividend yield a year by month, keyed as [`parse_fred_monthly`], from the
+/// Shiller monthly table (`Date,SP500,Dividend,...`, the dividend a trailing year's): Dividend over
+/// SP500, for months that print both above 0.
+pub fn parse_shiller_yield(v: &Value) -> BTreeMap<i32, f64> {
+    v.as_str()
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.split(',').map(str::trim);
+            let date = NaiveDate::parse_from_str(f.next()?, "%Y-%m-%d").ok()?;
+            let (px, div): (f64, f64) = (f.next()?.parse().ok()?, f.next()?.parse().ok()?);
+            (px > 0.0 && div > 0.0).then(|| (date.year() * 12 + date.month0() as i32, div / px))
+        })
+        .collect()
+}
+
 /// (#486) One month's total return on a constant-maturity 10Y government bond: bought at par last
 /// month, so its coupon `c` is last month's yield, and sold a month older at this month's yield `y`
 /// (both % a year). Coupon accrual plus the price change; annual coupons and compounding. This is the
@@ -11295,6 +11311,8 @@ fn bond_index_rebuilds_a_10y_return_from_yields() {
     let csv = Value::String("observation_date,GS10\n1953-04-01,2.83\n1953-05-01,.\nbad\n1953-06-01, 3.11 \n".into());
     assert_eq!(parse_fred_monthly(&csv), BTreeMap::from([(1953 * 12 + 3, 2.83), (1953 * 12 + 5, 3.11)]));
     assert!(parse_fred_monthly(&Value::Null).is_empty());
+    let shiller = "Date,SP500,Dividend,Earnings\n1871-01-01,4.44,0.26,0.4\n1871-02-01,4.5,,0.4\n1871-03-01,4.61,0,0.4\n1871-04-01,0,0.26,0.4\n1871-05-01, 5.2 ,0.26,\n";
+    assert_eq!(parse_shiller_yield(&Value::String(shiller.into())), BTreeMap::from([(1871 * 12, 0.26 / 4.44), (1871 * 12 + 4, 0.26 / 5.2)]));
 
     assert!(close(bond_month_return(6.0, 6.0), 0.005));
     assert!(close(bond_month_return(5.0, 6.0), -0.06898120137880402), "{}", bond_month_return(5.0, 6.0));
