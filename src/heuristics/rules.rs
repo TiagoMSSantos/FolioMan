@@ -379,9 +379,12 @@ mod tests {
 
     #[test]
     fn breakout_buys_a_new_high_after_10_moves_and_stops_k_units_below_its_peak() {
-        // the unit is 10 here, so 115 holds above the 130 peak's 110 stop
+        // the unit is 10.5 at the 115 close, so 115 holds above the 130 peak's 109 stop
         let c = [100.0, 110.0, 100.0, 110.0, 100.0, 110.0, 100.0, 110.0, 100.0, 110.0, 105.0, 120.0, 130.0, 115.0, 100.0, 90.0];
         assert_eq!(marks(&positions(Rule::Breakout { bars: Some(3), k: 2.0 }, &days(16), &c)), "FFFFFFFFFFFTTTFF");
+        // the unit is 1.125 at the 10.75 close, so it sits on the 13 peak's stop, which is no exit
+        let c = [10.0, 11.0, 10.0, 11.0, 10.0, 11.0, 10.0, 11.0, 10.0, 11.0, 12.0, 13.0, 10.75];
+        assert_eq!(marks(&positions(Rule::Breakout { bars: Some(3), k: 2.0 }, &days(13), &c)), "FFFFFFFFFFTTT");
         // 11.5 tops the last 3 closes but not the first
         let c = [20.0, 11.0, 10.0, 11.0, 10.0, 11.0, 10.0, 11.0, 10.0, 11.0, 10.5, 11.5];
         assert_eq!(marks(&positions(Rule::Breakout { bars: Some(3), k: 100.0 }, &days(12), &c)), "FFFFFFFFFFFT");
@@ -451,7 +454,8 @@ mod tests {
             }
             t
         };
-        let hold = at(&[(0, (0.02, 1)), (31, (0.01, 1)), (60, (-0.01, 1)), (91, (0.03, 1)), (92, (0.01, 1))], 93);
+        // two names a day, so a day's return is its sum over its count
+        let hold = at(&[(0, (0.04, 2)), (31, (0.02, 2)), (60, (-0.02, 2)), (91, (0.06, 2)), (92, (0.02, 2))], 93);
         // the rule's names are gone on the last day, which reads 0
         let rule = at(&[(0, (0.06, 2)), (31, (0.04, 2)), (60, (-0.06, 2)), (91, (0.04, 2))], 92);
         let s = score("stock trend 12m 2x", &rule, &hold, d(2024, 1, 1), 1, 2);
@@ -464,6 +468,9 @@ mod tests {
         let two = at(&[(0, (0.02, 1)), (31, (0.01, 1))], 32);
         let s = score("x", &two, &two, d(2024, 1, 1), 0, 1);
         assert_eq!((s.text.as_str(), s.excess), ("  x  too few months", None));
+        // day 30 is Jan 31, so January holds two days and the 4 days read 3 months
+        let gap = at(&[(0, (0.01, 1)), (30, (0.01, 1)), (60, (0.01, 1)), (91, (0.01, 1))], 92);
+        assert!(score("x", &gap, &gap, d(2024, 1, 1), 0, 1).text.starts_with("  x  3 months  "));
     }
 
     fn line(text: &str, excess: Option<f64>, t: Option<f64>, halves: (f64, f64)) -> Score {
