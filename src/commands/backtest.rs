@@ -10323,7 +10323,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options time");
         assert_eq!(
             all,
             Args {
@@ -10350,6 +10350,7 @@ mod tests {
                 lifecycle: true,
                 bestpick: true,
                 rolls: true,
+                options: true,
                 time: true,
                 tickers: vec![]
             }
