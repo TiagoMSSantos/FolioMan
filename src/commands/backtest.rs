@@ -772,6 +772,7 @@ struct Args {
     dead: bool,
     dead_flat: bool,
     intraday: bool,
+    holdwindows: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -803,6 +804,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("dead") => a_.dead = true, // (#751) walk dead members on tests/dead-members.csv
             _ if a.eq_ignore_ascii_case("deadflat") => (a_.dead, a_.dead_flat) = (true, true), // (#752) ... with no crash cut
             _ if a.eq_ignore_ascii_case("intraday") => a_.intraday = true, // (#809) open-to-close keys on 10y daily bars
+            _ if a.eq_ignore_ascii_case("holdwindows") => a_.holdwindows = true, // (#1217) every calendar hold per asset class
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ => a_.tickers.push(a.clone()),
         }
@@ -1232,7 +1234,8 @@ pub async fn run(args: Vec<String>) {
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
     let Args {
-        years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, time, mut tickers,
+        years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, time,
+        mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1323,6 +1326,13 @@ pub async fn run(args: Vec<String>) {
         (tickers, etf_set, sector_of) = universe;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
+    }
+    // (#1217) the census reads the names and their classes, then none of the walk below
+    if holdwindows {
+        hold_windows(&client, &settings, &tickers, &etf_set, &sector_of, &anchor_windows).await;
+        fetch::long_cache_save();
+        lap("holdwindows");
+        return;
     }
     // (PIT) point-in-time index membership, fetched once (27 KB, cached forever). AN EMPTY MAP IS THE
     // OFF SWITCH: `pit` unset never fetches, an unreachable source returns empty and says so, and every
@@ -2677,6 +2687,224 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     println!("  pre-holiday; the daily lines run open to close on 10y of bars, the US side on the index as it stood each day.");
     for c in cals {
         println!("{c}");
+    }
+}
+
+/// (#1217) `backtest N holdwindows`: buy, hold a calendar span, sell. Every hold in [`holds::HOLDS`] per
+/// asset class, net of one round trip: each class's names equal weight on 10y of daily bars (1d to 6m,
+/// bought and sold at the open or the close) and on the max monthly bars (1m to 20y, close to close); the
+/// S&P 500 as it stood on each buy date against today's members, whose gap is the survivor add; the
+/// screen book, the top [`holds::BOOK`] names per class by growth score at each half-year cutoff, on the
+/// monthly bars; then the (#1215) 60m holds census with stocks and REIT stocks apart. A census: no knob,
+/// lane or trade reads it.
+#[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::holds
+async fn hold_windows(
+    client: &reqwest::Client,
+    settings: &config::Settings,
+    tickers: &[String],
+    etf_set: &HashSet<String>,
+    sector_of: &HashMap<String, String>,
+    windows: &BTreeMap<String, i64>,
+) {
+    use crate::heuristics::{holds, intraday};
+    // a set's index spans: Some keeps only the buys on its member days
+    type Spans<'a> = Option<&'a [(chrono::NaiveDate, Option<chrono::NaiveDate>)]>;
+    // per (set, grid, buy-sell, hold index), every buy date's trades
+    type Accs = BTreeMap<(String, &'static str, &'static str, usize), holds::Acc>;
+    const COMBOS: [(&str, bool, bool); 4] = [("O-O", true, true), ("O-C", true, false), ("C-O", false, true), ("C-C", false, false)];
+    fn fold(acc: &mut Accs, sets: &[(String, Spans<'_>)], s: &holds::Series, grid: &'static str, combos: &[(&'static str, bool, bool)], hs: std::ops::Range<usize>, cost: f64) {
+        for &(combo, buy_open, sell_open) in combos {
+            for (h, &hold) in holds::HOLDS.iter().enumerate().take(hs.end).skip(hs.start) {
+                let all = holds::trades(s, buy_open, sell_open, hold);
+                for (set, spans) in sets {
+                    let kept: Vec<holds::Trade> = all.iter().copied().filter(|t| spans.is_none_or(|sp| core::sp500_member_at(sp, t.0))).collect();
+                    holds::add(acc.entry((set.clone(), grid, combo, h)).or_default(), &kept, cost);
+                }
+            }
+        }
+    }
+    core::set_measure_cadence(12);
+    let (tuning, hurdle, adjusted) = (&settings.buy_heuristic, core::serie_e_best_pct(), config::use_adjusted_close());
+    let today = chrono::Utc::now().date_naive();
+    let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
+    let universe: HashSet<&str> = tickers.iter().map(String::as_str).collect();
+    let mut pool: Vec<&str> = universe.iter().copied().chain(spans.keys().map(String::as_str)).collect();
+    pool.sort_unstable();
+    pool.dedup();
+    // a chart's class (None for a leveraged fund), its round trip as a fraction, and the sets it trades in
+    let place = |tk: &str, c: &fetch::Chart| {
+        let mut q = Quote::stub(tk, "", "", "");
+        stamp_asset_class(&mut q, &c.name, &c.instrument_type, etf_set, sector_of);
+        q.sector = sector_of.get(tk).cloned();
+        let class = holds::class_of(&q);
+        let mut sets: Vec<(String, Spans<'_>)> = class.filter(|_| universe.contains(tk)).map(|c| (c.to_string(), None)).into_iter().collect();
+        if let Some(sp) = spans.get(tk) {
+            sets.push(("S&P 500 point-in-time".to_string(), Some(sp.as_slice())));
+            if core::sp500_member_at(sp, today) {
+                sets.push(("S&P 500 today".to_string(), None));
+            }
+        }
+        (class, holds::cost_bps(class.unwrap_or("stock"), &c.currency) / 1e4, sets)
+    };
+    // drops the bars from `cut` on: today's daily bar and this month's monthly one are still trading
+    let trim = |c: &mut fetch::Chart, cut: chrono::NaiveDate| {
+        let n = c.dates.partition_point(|d| *d < cut);
+        c.dates.truncate(n);
+        c.opens.truncate(n);
+        c.closes.truncate(n);
+    };
+    let charts: Vec<(&str, fetch::Chart)> = stream::iter(&pool)
+        .map(|&tk| async move { Some((tk, fetch::fetch_history_long(client, &settings.urls, tk).await?)) })
+        .buffered(fetch::fetch_concurrency())
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
+    let named: Vec<_> = charts
+        .into_par_iter()
+        .map(|(tk, mut c)| {
+            trim(&mut c, today.with_day(1).unwrap_or(today));
+            let (class, cost, sets) = place(tk, &c);
+            let divs: &[(chrono::NaiveDate, f64)] = if adjusted { &[] } else { &c.divs };
+            let s = holds::series(&c.dates, &c.opens, &c.closes, divs, true);
+            // the screen scores a class name at each half-year cutoff, as the walk does
+            let scores = if class.is_some() && universe.contains(tk) {
+                cutoffs(&c.dates, 36)
+                    .filter_map(|i| {
+                        let mut q = core::backtest_quote(tk, &c.dates, &c.closes, &c.divs, i, 12, windows);
+                        stamp_asset_class(&mut q, &c.name, &c.instrument_type, etf_set, sector_of);
+                        Some((bucket(c.dates[i]), growth_score(&q, tuning)?, i))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            (class, cost, sets, s, scores)
+        })
+        .collect();
+    // sums add up in ticker order, so neither fetch order nor thread count can move a digit
+    let mut acc = Accs::new();
+    for (_, cost, sets, s, _) in &named {
+        fold(&mut acc, sets, s, "monthly", &COMBOS[3..], 3..holds::HOLDS.len(), *cost);
+    }
+    // the book: per class and half-year, the top scores, ties in ticker order, each bought at its cutoff's close
+    let mut scored: BTreeMap<(&str, i32), Vec<(f64, usize, usize)>> = BTreeMap::new();
+    for (n, (class, _, _, _, scores)) in named.iter().enumerate() {
+        for &(b, v, i) in scores {
+            if let Some(c) = class {
+                scored.entry((*c, b)).or_default().push((v, n, i));
+            }
+        }
+    }
+    for ((class, _), mut v) in scored {
+        v.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (_, n, i) in v.into_iter().take(holds::BOOK) {
+            let (_, cost, _, s, _) = &named[n];
+            for (h, &hold) in holds::HOLDS.iter().enumerate().skip(3) {
+                holds::add(acc.entry((format!("{class} book"), "monthly", "C-C", h)).or_default(), holds::trade(s, false, false, i, hold).as_slice(), *cost);
+            }
+        }
+    }
+    // the daily pass folds each 10y chart as it lands, in ticker order, so none is held
+    let mut daily = std::pin::pin!(stream::iter(&pool)
+        .map(|&tk| async move { (tk, fetch::fetch_history(client, &settings.urls, tk).await) })
+        .buffered(fetch::fetch_concurrency()));
+    let mut fetched = 0;
+    while let Some((tk, c)) = daily.next().await {
+        let Some(mut c) = c else { continue };
+        fetched += 1;
+        trim(&mut c, today);
+        let (_, cost, sets) = place(tk, &c);
+        let divs: &[(chrono::NaiveDate, f64)] = if adjusted { &[] } else { &c.divs };
+        fold(&mut acc, &sets, &holds::series(&c.dates, &c.opens, &c.closes, divs, false), "daily", &COMBOS, 0..6, cost);
+    }
+    let lines = |set: &str, with_daily: bool| {
+        let mut out = Vec::new();
+        for (grid, combos, hs) in [("daily", &COMBOS[..], 0..6), ("monthly", &COMBOS[3..], 3..holds::HOLDS.len())] {
+            if grid == "daily" && !with_daily {
+                continue;
+            }
+            for &(combo, ..) in combos {
+                for (h, &hold) in holds::HOLDS.iter().enumerate().take(hs.end).skip(hs.start) {
+                    let a = acc.get(&(set.to_string(), grid, combo, h));
+                    out.push(holds::line(&format!("{set} {grid} {combo}"), a.unwrap_or(&holds::Acc::new()), hold));
+                }
+            }
+        }
+        out
+    };
+    println!("\n── (#1217) HOLD WINDOWS: buy, hold a calendar span, sell; each asset class's names equal weight, net of one round trip ──");
+    println!(
+        "  {fetched} of {} names on 10y daily bars (1d to 6m, bought and sold at the open O or the close C), {} on max monthly bars (1m to 20y, close to close)",
+        pool.len(),
+        named.len()
+    );
+    println!("  CAVEATS: every class is today's universe under today's labels, so its dead names are absent and it reads");
+    println!("  high; the S&P 500 point-in-time set holds every member on its member days, and the survivor add is what");
+    println!("  today's members gain over it. Total return, each dividend reinvested. Cost a round trip: crypto 30 bp, a");
+    println!("  euro line 20 bp, any other 50 bp. A rate compounds the mean log return of each buy date's basket over its");
+    println!("  mean days held; t and halves read starts one hold apart. 1m, 3m and 6m print on both grids, over different");
+    println!("  spans. Série E pays {hurdle:.1}%/yr.");
+    if adjusted {
+        println!("  use_adjusted_close is on: the closes already carry dividends, so none is added; opens stay raw, so O lines mix the two.");
+    }
+    for set in holds::CLASSES.into_iter().chain(["S&P 500 point-in-time", "S&P 500 today"]) {
+        let ls = lines(set, true);
+        for l in &ls {
+            println!("{}", l.text);
+        }
+        println!("{}", holds::verdict(set, &ls, hurdle));
+    }
+    let (pit, now) = (lines("S&P 500 point-in-time", true), lines("S&P 500 today", true));
+    for grid in ["daily", "monthly"] {
+        let gaps: Vec<String> = pit
+            .iter()
+            .zip(&now)
+            .filter(|(p, _)| p.label.ends_with(&format!("{grid} C-C")))
+            .map(|(p, n)| match (p.net, n.net) {
+                (Some(a), Some(b)) => format!("{} {:+.1}", p.hold.0, b - a),
+                _ => format!("{} n/a", p.hold.0),
+            })
+            .collect();
+        println!("  S&P 500 survivor add, {grid} C-C, today's members minus point-in-time: {} pts/yr", gaps.join(", "));
+    }
+    println!(
+        "\n── (#1217) THE SCREEN BOOK: the top {} names per class by growth score at each half-year cutoff, bought at that close, monthly bars ──",
+        holds::BOOK
+    );
+    println!("  CAVEATS: today's universe, so survivor-biased as above; each class's book ranks only that class's names.");
+    for class in holds::CLASSES {
+        let set = format!("{class} book");
+        if !acc.keys().any(|k| k.0 == set) {
+            println!("  {set}: screen never picks this class");
+            continue;
+        }
+        let ls = lines(&set, false);
+        for l in &ls {
+            println!("{}", l.text);
+        }
+        println!("{}", holds::verdict(&set, &ls, hurdle));
+    }
+    println!("\n── (#1217) HOLD WINDOWS ON 60m BARS: the (#1215) holds census, stocks and REIT stocks apart, every name equal weight, 2y, raw prices ──");
+    for (market, names, cost) in [
+        ("US", intraday::us_pond(&spans, today), intraday::COST_BPS_US),
+        ("EU", intraday::EU_POND.iter().map(|t| t.to_string()).collect(), intraday::COST_BPS_EU),
+    ] {
+        let mut got: Vec<(&str, intraday::Prices)> = stream::iter(&names)
+            .map(|tk| async move { Some((tk.as_str(), intraday::day_prices(market, &fetch::fetch_hourly(client, &settings.urls, tk, "2y").await?))) })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        // the means add up in ticker order, so fetch completion order cannot move a digit
+        got.sort_by(|a, b| a.0.cmp(b.0));
+        let (reits, stocks): (Vec<_>, Vec<_>) = got.into_iter().partition(|(tk, _)| sector_of.get(*tk).is_some_and(|s| s.contains("Real Estate")));
+        for (group, names) in [("stock", stocks), ("REIT stock", reits)] {
+            println!("  60m {market} {group}:");
+            // no book here, so its lines all read "no two holds"
+            for l in intraday::holds_report(market, &names, &BTreeMap::new(), today, cost, &intraday::HOLDS).lines().filter(|l| !l.contains(" book sell day")) {
+                println!("{l}");
+            }
+        }
     }
 }
 
@@ -9313,6 +9541,7 @@ mod tests {
             "(#752) deadflat is the dead arm, uncut"
         );
         assert!(p("intraday").intraday && !p("intraday").wide && !p("12").intraday);
+        assert!(p("holdwindows").holdwindows && !p("holdwindows").intraday && !p("12").holdwindows);
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -9349,7 +9578,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows time");
         assert_eq!(
             all,
             Args {
@@ -9370,6 +9599,7 @@ mod tests {
                 dead_flat: true,
                 failures: true,
                 intraday: true,
+                holdwindows: true,
                 time: true,
                 tickers: vec![]
             }

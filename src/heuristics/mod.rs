@@ -8,5 +8,7 @@
 
 // reads `fetch::Chart`, which the wasm page engine does not build
 #[cfg(not(target_family = "wasm"))]
+pub mod holds; // (#1217) read only by `backtest`, and it reads `intraday::stats`
+#[cfg(not(target_family = "wasm"))]
 pub mod intraday;
 pub mod social;
