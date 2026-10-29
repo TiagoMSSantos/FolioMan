@@ -2651,8 +2651,9 @@ async fn leverage_census(client: &reqwest::Client, settings: &config::Settings) 
 }
 
 /// (#1226) The option-selling census: the Cboe S&P 500 BuyWrite (^BXM, covered calls) and PutWrite (^PUT)
-/// indexes against ^SP500TR on each index's own dates over every 20y window. Every source is fetched
-/// before any is read, so an offline run names each one it lacks.
+/// indexes against ^SP500TR on each index's own dates over every 20y window. BXM comes from Cboe's
+/// daily file (from 2002-03), Yahoo's ^BXM being monthly with gaps. Every source is fetched before any
+/// is read, so an offline run names each one it lacks.
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::rules
 async fn option_census(client: &reqwest::Client, settings: &config::Settings) {
     use crate::heuristics::rules;
@@ -2660,18 +2661,19 @@ async fn option_census(client: &reqwest::Client, settings: &config::Settings) {
     let u = &settings.urls;
     let from = NaiveDate::from_ymd_opt(1988, 1, 1).unwrap();
     let tr = fetch::fetch_history_since(client, u, "^SP500TR", from).await;
-    let bxm = fetch::fetch_history_since(client, u, "^BXM", from).await;
+    let bxm = fetch::fetch_cboe(client, &u.cboe, "BXM").await;
     let put = fetch::fetch_history_since(client, u, "^PUT", from).await;
-    let gone = [("^SP500TR", tr.is_none()), ("^BXM", bxm.is_none()), ("^PUT", put.is_none())];
+    let gone = [("^SP500TR", tr.is_none()), ("Cboe BXM", bxm.is_empty()), ("^PUT", put.is_none())];
     let missing: Vec<&str> = gone.iter().filter(|g| g.1).map(|g| g.0).collect();
-    let (Some(tr), Some(bxm), Some(put)) = (tr, bxm, put) else {
+    let (Some(tr), Some(put), false) = (tr, put, bxm.is_empty()) else {
         println!("(#1226) option census: {} unavailable", missing.join(", "));
         return;
     };
     let pair = |c: &fetch::Chart| c.dates.iter().copied().zip(c.closes.iter().copied()).collect::<Vec<_>>();
     let tr = pair(&tr);
-    for (name, c) in [("^BXM", bxm), ("^PUT", put)] {
-        let px: Vec<(NaiveDate, f64)> = pair(&c).into_iter().filter(|x| x.0 >= tr[0].0).collect();
+    let bxm: Vec<(NaiveDate, f64)> = bxm.into_iter().filter_map(|(d, v)| Some((NaiveDate::from_num_days_from_ce_opt(d)?, v))).collect();
+    for (name, c) in [("^BXM", bxm), ("^PUT", pair(&put))] {
+        let px: Vec<(NaiveDate, f64)> = c.into_iter().filter(|x| x.0 >= tr[0].0).collect();
         let dates: Vec<NaiveDate> = px.iter().map(|x| x.0).collect();
         let (sp, rs) = (rules::splice(&px, &BTreeMap::new(), &tr), rules::splice(&px, &BTreeMap::new(), &[]));
         // the whole-span check: Cboe published 1988-06 to 2007-05 as BXM +11.86, PUT +12.65, SPTR +12.30%/yr

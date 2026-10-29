@@ -20306,6 +20306,21 @@ pub async fn fetch_shiller(client: &Client, url: &str, parse: fn(&Value) -> BTre
     cached_feed("shiller", parse, live).await
 }
 
+/// (#1226) One Cboe index's daily history, `{id}` = the index code (`BXM`), through the day cache as
+/// `core::parse_cboe_daily`: Yahoo's ^BXM answers a dated span with one bar and `max` with gapped months.
+#[mutants::skip] // network shell
+pub async fn fetch_cboe(client: &Client, template: &str, id: &str) -> BTreeMap<i32, f64> {
+    let url = template.replace("{id}", id);
+    let live = async {
+        if offline() {
+            return None;
+        }
+        throttle().await;
+        client.get(&url).send().await.ok()?.text().await.ok().map(Value::String)
+    };
+    cached_feed(&format!("cboe_{id}"), crate::core::parse_cboe_daily, live).await
+}
+
 /// (#486) The Bonds table's 10Y government yields, in the page's row order. USA is the Treasury's
 /// constant-maturity series; the five euro markets are the OECD's long-term rate, which IS the
 /// 10-year benchmark for each.

@@ -887,6 +887,10 @@ pub struct Urls {
     // `backtest leverage`. Defaulted so an older settings.yaml still loads.
     #[serde(default = "default_shiller")]
     pub shiller: String,
+    // (#1226) Cboe's daily index histories, `{id}` = the index code: `backtest options` reads BXM there,
+    // Yahoo's ^BXM being monthly with gaps. Defaulted so an older settings.yaml still loads.
+    #[serde(default = "default_cboe")]
+    pub cboe: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
     pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe (the base equity pond)
     // (Item 18) EXTRA equity constituent CSVs in the SAME column layout (Symbol, _, GICS Sector, …) —
@@ -1405,6 +1409,10 @@ fn default_ecb_fx() -> String {
 
 fn default_shiller() -> String {
     "https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv".to_string()
+}
+
+fn default_cboe() -> String {
+    "https://cdn-api.cboe.com/api/global/us_indices/daily_prices/{id}_History.csv".to_string()
 }
 
 /// Default request-signing salt, lifted from the Börse Frankfurt web bundle (`tracing.salt`). Public
@@ -2958,6 +2966,9 @@ mod tests {
         // (#1219) and the leverage census's dividend table
         assert!(!text.contains("shiller:"), "fixture must exercise the DEFAULT");
         assert_eq!(settings.urls.shiller, "https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv");
+        // (#1226) and the option census's Cboe histories
+        assert!(!text.contains("cboe:"), "fixture must exercise the DEFAULT");
+        assert_eq!(settings.urls.cboe, "https://cdn-api.cboe.com/api/global/us_indices/daily_prices/{id}_History.csv");
     }
 
     /// (TER/AUM) Same story as the OpenFIGI pin above, and the same reason it needs one: `serde(default)`

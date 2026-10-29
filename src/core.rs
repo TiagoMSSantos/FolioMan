@@ -3506,6 +3506,21 @@ pub fn parse_shiller_long(v: &Value) -> BTreeMap<i32, f64> {
         .collect()
 }
 
+/// (#1226) A Cboe daily index history (`DATE,BXM`, then `MM/DD/YYYY,close` a day) as {day number
+/// (`num_days_from_ce`) -> close}, for closes above 0; the header and anything unparseable drop out.
+pub fn parse_cboe_daily(v: &Value) -> BTreeMap<i32, f64> {
+    v.as_str()
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let (date, value) = line.split_once(',')?;
+            let date = NaiveDate::parse_from_str(date.trim(), "%m/%d/%Y").ok()?;
+            let px: f64 = value.trim().parse().ok()?;
+            (px > 0.0).then(|| (date.num_days_from_ce(), px))
+        })
+        .collect()
+}
+
 /// (#486) One month's total return on a constant-maturity 10Y government bond: bought at par last
 /// month, so its coupon `c` is last month's yield, and sold a month older at this month's yield `y`
 /// (both % a year). Coupon accrual plus the price change; annual coupons and compounding. This is the
@@ -11315,6 +11330,15 @@ fn switch_edge_prices_the_tax_paid_early() {
     let e = switch_edge(10000.0, 0.0, 0.20, 0.07, 0.28, 0.07, 20);
     assert!(close(e, 660.9815153910313), "{e}");
     assert_eq!(switch_edge(10000.0, 0.0, 0.20, 0.20, 0.28, 0.07, 20), 0.0);
+}
+
+/// (#1226) A Cboe daily history keys US-order dates by day number; the header, a 0 close and a bad row drop out.
+#[test]
+fn cboe_history_keys_us_dates_by_day_number() {
+    let d = |y, m, dd| NaiveDate::from_ymd_opt(y, m, dd).unwrap().num_days_from_ce();
+    let csv = "DATE,BXM\n03/22/2002,1003.04\n03/25/2002, 0 \nbad\n12/31/2002 , 912.5 \n";
+    assert_eq!(parse_cboe_daily(&Value::String(csv.into())), BTreeMap::from([(d(2002, 3, 22), 1003.04), (d(2002, 12, 31), 912.5)]));
+    assert!(parse_cboe_daily(&Value::Null).is_empty());
 }
 
 /// (#486) The Bonds table's arithmetic against a Python replay. A flat yield earns its coupon and
