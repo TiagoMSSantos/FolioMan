@@ -2732,7 +2732,7 @@ mod tests {
         // SAME DAY: €8 a session after 20 bp, 31 sessions in January and 28 in February, minus one €8 hold
         assert!(out.contains("BEST K7 US: 2 monthly links 2026-01-01..2026-02-01  BEST minus BUY&HOLD €+228.00 a name a link  t +19.00  halves €+240.00|€+216.00  (reads after 12 links)"), "{out}");
         assert!(out.contains("BEST BUY NOW: 1 monthly link(s) graded; the t needs 2  (reads after 12 links)"), "{out}");
-        assert_eq!(out.matches("  BEST ").count(), 2, "{out}");
+        assert_eq!(out.lines().filter(|l| l.starts_with("  BEST ")).count(), 2, "{out}");
         assert!(!best_section(&[bare], &priced).contains("  BEST "));
     }
 
