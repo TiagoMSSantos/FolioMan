@@ -23697,6 +23697,38 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # the later half, so it fails the (#1219) bar. No knob and no page column; nothing here reaches rank, BUY
 # NOW, trade, size or the broker.
 
+# (#1222) BEST CENSUS, 2026-10-29, record only, no knob.
+# WHY: (#1221) the page's Trading table prices each name four ways over the sessions it shows (open to
+# close every session, 21-session holds back to back, in on a 200-close trend, bought once) and names
+# the BEST. That is hindsight. The census asks whether the BEST way, picked on a name's last 2 years,
+# keeps beating plain holding of the same name over the next 6 months or the next month.
+# CENSUS (`backtest N bestpick` prints it; CI probe 40905712435 on 27a1d1a, `backtest 10 bestpick`): a
+# step starts every 6 months (or every month) and ends by today. Each pond member in the index on the
+# step's first day, liquid there and with 200 bars before its 2-year window, picks the way with the most
+# euros after cost on that window and trades it over the step. It is graded against buying and holding
+# the same name over the same bars. Both arms are €1,000 a trade in euros at each day's EUR/USD rate,
+# after 50 bp a round trip (US) or 20 bp (EU). One number per step: the mean over names of pick minus
+# hold. The bar is the (#809) one: above zero at t >= 3, in both halves.
+# Ponds: US 605 of 721 S&P 500 members since the start fetched in EUR or USD, median 468 names a step;
+# EU 105 of 105, median 98 names.
+#   US 6m  14 steps 2019-10..2026-04  pick minus hold -€19.00 a name a step  t -2.19  halves -18.21|-19.79
+#          hold alone +€52.39  picked BUY&HOLD 61%, TREND 25%, HOLD 21 14%, same day 0%   FAIL
+#   US 1m  84 steps 2019-10..2026-09  -€2.36  t -1.40  halves -3.27|-1.45  hold alone +€4.24
+#          BUY&HOLD 62%, TREND 25%, HOLD 21 13%, same day 0%   FAIL
+#   EU 6m  14 steps  -€13.74  t -1.20  halves -19.40|-8.09  hold alone +€50.93
+#          BUY&HOLD 45%, TREND 30%, HOLD 21 26%, same day 0%   FAIL
+#   EU 1m  84 steps  -€1.19  t -0.58  halves -1.89|-0.48  hold alone +€5.91
+#          BUY&HOLD 45%, TREND 30%, HOLD 21 25%, same day 0%   FAIL
+# CAVEATS: (a) 10 years of bars, the 200-bar warm-up and the 2-year pick window leave 7 years of steps,
+# 14 at 6 months. (b) A name no longer quoted cannot be fetched, so the US pond leans to survivors; both
+# arms trade the same name, so the lean hits pick and hold alike. (c) Cost is flat per round trip, so a
+# way that trades more pays more, as it would at a broker; no tax.
+# VERDICT: 0 of 4 lines pass, and every line and both halves of each read below zero. When the BEST way
+# on the last 2 years is not buying and holding, switching to it lost against holding the same name, most
+# clearly in the US at 6 months (t -2.19). Opening and closing on the same day was never the BEST on any
+# name. The page's BEST column stays a hindsight label; no knob, and nothing here reaches rank, BUY NOW,
+# trade, size or the broker.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
