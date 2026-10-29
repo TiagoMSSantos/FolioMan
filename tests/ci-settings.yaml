@@ -23596,6 +23596,50 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # at any leverage, in any set. A 100x came from holding a name that ran; the rules kept less of it. No
 # table ships. No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker.
 
+# (#1219) LEVERAGE CENSUS, 2026-10-29, record only, no knob.
+# WHY: the owner asked which trading approach has the best odds of beating buy-and-hold. Every rule in
+# (#1218) trails holding, and leverage on a broad index was the one line left with a higher mean. Ten years
+# of bars cannot say how often it wins, so this census reads a century.
+# CENSUS (`backtest N leverage` prints it; CI probe 40853106887 on f942440, `backtest 20 leverage`): the
+# S&P 500 total return from 1927-12-30, 24824 daily bars, ^GSPC plus the Shiller monthly dividend yield
+# until ^SP500TR starts on 1988-01-04, then ^SP500TR itself. Splice check over 1988 onward: price plus
+# Shiller dividends +11.45%/yr against ^SP500TR +11.48%/yr, a gap of -0.03 pts. A fund held at 1.25x, 1.5x,
+# 2x or 3x resets every bar. Two borrow models: "etf" pays the bill rate on the borrowed part and 0.60%/yr
+# on the whole fund (Xtrackers S&P 500 2x Leveraged Daily Swap UCITS, LU0411078552); "margin" pays the bill
+# rate plus 2.5 pts on the borrowed part. Bills are the NBER short-term yield until 1934, then TB3MS. 1x pays
+# no fee. Every window opens on a month's first bar and ends on the first bar a full term later: 947 of 20y,
+# 827 of 30y. "lump" pays everything in on the first bar and reads %/yr; "monthly" pays one equal sum on each
+# month's first bar and reads the end value over what was paid in. The bar, graded on 20y only: the line
+# ends richer than 1x in 80% or more of the windows in each half (start before 1967-01-01, and from then
+# on), its worst window ends no poorer than 1x's worst, and no window falls 90% or more.
+# 1x, 20y: lump median +11.0%/yr, worst +1.9%/yr; monthly median 3.56x paid in, worst 1.32x; worst
+# drawdown 84% (1929-32).
+# 0 of 16 lines clear the bar. Every line misses all three legs: no half reaches 80% before 1967 (best
+# 72%), every worst window ends poorer than 1x's, and every line falls 90% or more in at least 23 windows.
+# 20y, beats 1x in % of windows (before | after 1967), median, worst, windows falling 90%:
+#   lump    etf     1.25x 67 (61|72) +11.4 +0.4 23; 1.5x 81 (72|89) +12.5 -1.0 34; 2x 79 (72|85) +14.0
+#                   -5.1 46; 3x 62 (69|56) +14.1 -17.9 409
+#           margin  1.25x 65 +11.4 +0.4; 1.5x 61 +11.8 -1.6; 2x 55 +11.9 -6.9; 3x 42 +9.2 -21.5, 629 fall 90%
+#   monthly etf     1.25x 76 (68|84) 3.86x 1.12x; 1.5x 80 (70|89) 4.48x 1.00x; 2x 80 (71|89) 5.82x 0.74x;
+#                   3x 76 (70|81) 7.29x 0.28x
+#           margin  1.25x 75 3.85x 1.12x; 1.5x 74 4.12x 0.92x; 2x 70 4.46x 0.57x; 3x 54 4.19x 0.15x
+# 30y, context only, ungraded: 1x lump median +10.8%/yr, worst +7.7%/yr; monthly 7.29x, worst 3.63x. The
+# etf model at 1.5x and 2x lump beats 1x in 100% of windows, median +12.6 and +14.2, worst +8.2 and +7.8,
+# yet still falls 98% at 2x through 1929-32; monthly 2x beats it in 97%, median 13.54x, worst 3.14x
+# against 3.63x. Margin at 2x beats 1x in 68% (lump) and 71% (monthly); 3x margin trails 1x on median at
+# both. 3x etf lump: 81%, worst +2.4 against +7.7.
+# CAVEATS: (a) the S&P in USD stands for the owner's EUR book; the exchange rate scales 1x and Lx alike,
+# so the odds barely move. (b) The index return is gross of withholding tax and the fund's swap spread is
+# taken as 0 over the bill rate. (c) About 4 independent 20y spans fit in 98 years, so "80% of windows"
+# counts heavily overlapped windows. (d) A 90% fall is the fund's own path; a margin account would be
+# called well before it. (e) Before 1988 a bar's dividend is its month's trailing-year Shiller yield,
+# accrued by calendar day.
+# VERDICT: on 20 years, leverage on the S&P does not beat holding it often enough, in both halves of the
+# century, to justify the deeper falls: the best line (2x etf monthly) wins 80% overall but 71% before
+# 1967, and its worst window returns 0.74x of what was paid in against 1.32x at 1x. Over 30 years the etf
+# model at 1.5x-2x won nearly every window, but only by sitting through a 95-98% fall in 1929-32. No table
+# ships. No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
