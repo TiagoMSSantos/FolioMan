@@ -400,12 +400,24 @@ pub fn misses(halves: (f64, f64), worst: f64, worst_1x: f64, wipes: usize) -> Op
 /// was paid in. Each line's halves split its windows at `split`; drawdowns and wipe-outs read the fund's
 /// own path. Only `horizons[0]` is graded.
 pub fn lever_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], horizons: &[u32], split: NaiveDate) -> String {
-    let starts = firsts(dates);
+    let series: Vec<(String, Vec<f64>)> = COSTS.iter().flat_map(|&(cost, spread, fee)| {
+        LEVELS.map(|lev| (format!("{lev}x {cost}"), levered(dates, rs, cash, lev, spread, fee)))
+    }).collect();
     let mut out = vec![format!(
         "\n── (#1219) LEVERAGE CENSUS: S&P 500 total return from {}, {} bars, rebalanced every bar; 1x has no fee ──",
         dates[0],
         dates.len()
     )];
+    out.extend(versus(dates, rs, "1x", &series, horizons, split));
+    out.join("\n")
+}
+
+/// (#1219) Each of `series`, a label and its returns on `dates`, against `against`'s returns `rs` over
+/// every window of each of `horizons` in years, with a closing count of the lines that clear the bar
+/// at `horizons[0]`.
+fn versus(dates: &[NaiveDate], rs: &[f64], against: &str, series: &[(String, Vec<f64>)], horizons: &[u32], split: NaiveDate) -> Vec<String> {
+    let starts = firsts(dates);
+    let mut out = Vec::new();
     let mut clear = 0;
     for (h, &years) in horizons.iter().enumerate() {
         let ws = windows(dates, years);
@@ -423,9 +435,7 @@ pub fn lever_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], horizons: &[u
             }).collect()
         };
         let base = grade(rs);
-        let lines: Vec<(String, Vec<(f64, f64, f64, bool)>)> = COSTS.iter().flat_map(|&(cost, spread, fee)| {
-            LEVELS.map(|lev| (format!("{lev}x {cost}"), grade(&levered(dates, rs, cash, lev, spread, fee))))
-        }).collect();
+        let lines: Vec<(&String, Vec<(f64, f64, f64, bool)>)> = series.iter().map(|(label, r)| (label, grade(r))).collect();
         let late: Vec<bool> = ws.iter().map(|w| dates[w.0] >= split).collect();
         let deepest = |g: &[(f64, f64, f64, bool)]| g.iter().map(|x| x.2).fold(0.0, f64::max) * 100.0;
         for money in ["lump", "monthly"] {
@@ -435,7 +445,7 @@ pub fn lever_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], horizons: &[u
             let one = pick(&base);
             let (med_1x, worst_1x) = (crate::core::median(one.clone()).unwrap_or(f64::NAN), worst(&one));
             out.push(format!(
-                "  {years}y 1x {money}: {} windows, median {}, worst {}, worst drawdown {:.0}%",
+                "  {years}y {against} {money}: {} windows, median {}, worst {}, worst drawdown {:.0}%",
                 ws.len(),
                 show(med_1x),
                 show(worst_1x),
@@ -449,7 +459,7 @@ pub fn lever_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], horizons: &[u
                 };
                 let (halves, wipes) = ((share(Some(false)), share(Some(true))), g.iter().filter(|x| x.3).count());
                 let mut line = format!(
-                    "  {years}y {label} {money}: beats 1x in {:.0}% (before {split} {:.0}% | after {:.0}%), median {} vs {}, worst {} vs {}, worst drawdown {:.0}%, {wipes} wipe-outs",
+                    "  {years}y {label} {money}: beats {against} in {:.0}% (before {split} {:.0}% | after {:.0}%), median {} vs {}, worst {} vs {}, worst drawdown {:.0}%, {wipes} wipe-outs",
                     share(None) * 100.0,
                     halves.0 * 100.0,
                     halves.1 * 100.0,
@@ -462,17 +472,40 @@ pub fn lever_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], horizons: &[u
                 if h == 0 {
                     let why = misses(halves, worst(&v), worst_1x, wipes);
                     clear += usize::from(why.is_none());
-                    line += &format!(": {}", why.map_or("passes the bar".to_string(), |w| format!("fails, {w}")));
+                    line += &format!(": {}", why.map_or("passes the bar".to_string(), |w| format!("fails, {}", w.replace("1x", against))));
                 }
                 out.push(line);
             }
         }
     }
     out.push(format!(
-        "  {clear} of {} lines clear the bar (beat 1x in 80% of {}y windows in both halves, worst window no poorer, no 90% fall)",
-        2 * COSTS.len() * LEVELS.len(),
+        "  {clear} of {} lines clear the bar (beat {against} in 80% of {}y windows in both halves, worst window no poorer, no 90% fall)",
+        2 * series.len(),
         horizons[0]
     ));
+    out
+}
+
+/// (#1226) The yearly fee a covered-call fund pays over an S&P 500 tracker: Global X S&P 500 Covered Call
+/// UCITS ETF (IE0002L5QB31), the one UCITS fund found on the Cboe BuyWrite index, charges 0.45% against
+/// an S&P 500 tracker's 0.07%.
+pub const OPTION_FEE: f64 = 0.0038;
+
+/// (#1226) THE OPTION-SELLING CENSUS: does `name`, an option-selling index with returns `rs` on `dates`,
+/// end richer than the S&P 500's total return `tr` on the same dates, gross and less [`OPTION_FEE`]? The
+/// (#1219) lines and bar for each of `horizons` in years; each line's halves split its windows at the
+/// middle `horizons[0]`-year window's start.
+pub fn option_report(name: &str, dates: &[NaiveDate], tr: &[f64], rs: &[f64], horizons: &[u32]) -> String {
+    let ws = windows(dates, horizons[0]);
+    let Some(&(mid, _)) = ws.get(ws.len() / 2) else {
+        return format!("(#1226) {name}: no {}y window", horizons[0]);
+    };
+    let series = [
+        (name.to_string(), rs.to_vec()),
+        (format!("{name} less {:.2}%/yr", OPTION_FEE * 100.0), levered(dates, rs, &vec![0.0; rs.len()], 1.0, 0.0, OPTION_FEE)),
+    ];
+    let mut out = vec![format!("\n── (#1226) OPTION-SELLING CENSUS: {name} against S&P 500 total return from {}, {} bars ──", dates[0], dates.len())];
+    out.extend(versus(dates, tr, "S&P TR", &series, horizons, dates[mid]));
     out.join("\n")
 }
 
@@ -978,6 +1011,24 @@ mod tests {
         // margin at a bill rate of minus the spread borrows for free, so on flat closes it ties 1x and never beats it
         let flat = lever_report(&days(731), &[0.0; 731], &[-SPREAD; 731], &[1], d(2024, 7, 1));
         assert!(flat.contains("1y 2x margin lump: beats 1x in 0% (before 2024-07-01 0% | after 0%)"), "{flat}");
+    }
+
+    #[test]
+    fn the_option_census_splits_at_the_middle_window_and_its_fee_line_pays_the_fee() {
+        // 24 one-year windows open 2000-01 to 2001-12, so the halves split at 2001-01-01; the fee costs
+        // 0.000135 to 0.000167 a bar, more than a 0.0001 edge and less than a 0.0005 one
+        let dates: Vec<NaiveDate> = (0..36).flat_map(|m| [1, 16].map(|day| d(2000 + m / 12, (m % 12 + 1) as u32, day))).collect();
+        let on = |edge: f64| -> Vec<f64> { (0..dates.len()).map(|i| if i == 0 { 0.0 } else { 0.004 + edge }).collect() };
+        let tr = on(0.0);
+        let rich = option_report("BXM", &dates, &tr, &on(0.0005), &[1]);
+        assert!(rich.starts_with("\n── (#1226) OPTION-SELLING CENSUS: BXM against S&P 500 total return from 2000-01-01, 72 bars ──\n  1y S&P TR lump: 24 windows, median +10.1%/yr, worst +10.1%/yr, worst drawdown 0%\n"), "{rich}");
+        assert!(rich.contains("\n  1y BXM less 0.38%/yr lump: beats S&P TR in 100% (before 2001-01-01 100% | after 100%), median +11.0%/yr vs +10.1%/yr"), "{rich}");
+        assert!(rich.ends_with("\n  4 of 4 lines clear the bar (beat S&P TR in 80% of 1y windows in both halves, worst window no poorer, no 90% fall)"), "{rich}");
+        let thin = option_report("BXM", &dates, &tr, &on(0.0001), &[1]);
+        assert!(thin.contains("\n  1y BXM less 0.38%/yr lump: beats S&P TR in 0% (before 2001-01-01 0% | after 0%), median +9.9%/yr vs +10.1%/yr, worst +9.9%/yr vs +10.1%/yr, worst drawdown 0%, 0 wipe-outs: fails, beats S&P TR in under 80% of a half\n"), "{thin}");
+        assert!(thin.contains("\n  1y BXM monthly: beats S&P TR in 100% (before 2001-01-01 100% | after 100%), median 1.06x paid in vs 1.05x paid in, worst 1.06x paid in vs 1.05x paid in, worst drawdown 0%, 0 wipe-outs: passes the bar\n"), "{thin}");
+        assert!(thin.contains("\n  2 of 4 lines clear the bar"), "{thin}");
+        assert_eq!(option_report("PUT", &dates[..10], &tr[..10], &tr[..10], &[1]), "(#1226) PUT: no 1y window");
     }
 
     #[test]

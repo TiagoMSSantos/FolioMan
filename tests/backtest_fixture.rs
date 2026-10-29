@@ -383,6 +383,14 @@ fn lifecycle_census_offline_names_the_sources_it_lacks() {
     assert!(!got.contains("LIFECYCLE CENSUS"), "{got}");
 }
 
+/// (#1226) The option census offline: the frozen cache holds none of its three indexes.
+#[test]
+fn option_census_offline_names_the_sources_it_lacks() {
+    let got = report_at(&fixture_copy("census-options", false), &["20", "options"], None);
+    assert!(got.contains("(#1226) option census: ") && got.contains(" unavailable"), "{got}");
+    assert!(!got.contains("OPTION-SELLING CENSUS"), "{got}");
+}
+
 /// (#1222) The best census offline: no EUR/USD history, so it stops before fetching a pond.
 #[test]
 fn best_census_offline_says_it_lacks_eur_usd() {

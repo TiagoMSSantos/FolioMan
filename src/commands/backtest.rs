@@ -778,6 +778,7 @@ struct Args {
     lifecycle: bool,
     bestpick: bool,
     rolls: bool,
+    options: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -815,6 +816,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("lifecycle") => a_.lifecycle = true, // (#1220) Ayres-Nalebuff savers at 200/100 and 200/50
             _ if a.eq_ignore_ascii_case("bestpick") => a_.bestpick = true, // (#1222) the page's BEST picked on 2y, traded the next step
             _ if a.eq_ignore_ascii_case("rolls") => a_.rolls = true, // (#1224) the 20y DCA roll at 3m-10y, sell-all and leavers-only
+            _ if a.eq_ignore_ascii_case("options") => a_.options = true, // (#1226) Cboe BuyWrite and PutWrite vs ^SP500TR over 20y
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ => a_.tickers.push(a.clone()),
         }
@@ -1245,7 +1247,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1271,6 +1273,10 @@ pub async fn run(args: Vec<String>) {
     }
     if bestpick {
         best_census(&client, &settings).await;
+        return;
+    }
+    if options {
+        option_census(&client, &settings).await;
         return;
     }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
@@ -2642,6 +2648,38 @@ async fn leverage_census(client: &reqwest::Client, settings: &config::Settings) 
     let (got, want) = (pa(&rules::splice(&px, &yld, &[])), pa(&rs));
     println!("(#1219) splice check from {}: price plus Shiller dividends {got:+.2}%/yr, ^SP500TR {want:+.2}%/yr, gap {:+.2} pts", dates[from - 1], got - want);
     println!("{}", rules::lever_report(&dates, &rs, &cash, &[20, 30], d(1967, 1)));
+}
+
+/// (#1226) The option-selling census: the Cboe S&P 500 BuyWrite (^BXM, covered calls) and PutWrite (^PUT)
+/// indexes against ^SP500TR on each index's own dates over every 20y window. Every source is fetched
+/// before any is read, so an offline run names each one it lacks.
+#[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::rules
+async fn option_census(client: &reqwest::Client, settings: &config::Settings) {
+    use crate::heuristics::rules;
+    use chrono::NaiveDate;
+    let u = &settings.urls;
+    let from = NaiveDate::from_ymd_opt(1988, 1, 1).unwrap();
+    let tr = fetch::fetch_history_since(client, u, "^SP500TR", from).await;
+    let bxm = fetch::fetch_history_since(client, u, "^BXM", from).await;
+    let put = fetch::fetch_history_since(client, u, "^PUT", from).await;
+    let gone = [("^SP500TR", tr.is_none()), ("^BXM", bxm.is_none()), ("^PUT", put.is_none())];
+    let missing: Vec<&str> = gone.iter().filter(|g| g.1).map(|g| g.0).collect();
+    let (Some(tr), Some(bxm), Some(put)) = (tr, bxm, put) else {
+        println!("(#1226) option census: {} unavailable", missing.join(", "));
+        return;
+    };
+    let pair = |c: &fetch::Chart| c.dates.iter().copied().zip(c.closes.iter().copied()).collect::<Vec<_>>();
+    let tr = pair(&tr);
+    for (name, c) in [("^BXM", bxm), ("^PUT", put)] {
+        let px: Vec<(NaiveDate, f64)> = pair(&c).into_iter().filter(|x| x.0 >= tr[0].0).collect();
+        let dates: Vec<NaiveDate> = px.iter().map(|x| x.0).collect();
+        let (sp, rs) = (rules::splice(&px, &BTreeMap::new(), &tr), rules::splice(&px, &BTreeMap::new(), &[]));
+        // the whole-span check: Cboe published 1988-06 to 2007-05 as BXM +11.86, PUT +12.65, SPTR +12.30%/yr
+        let years = (dates[dates.len() - 1] - dates[0]).num_days() as f64 / 365.25;
+        let pa = |rs: &[f64]| ((rs.iter().map(|r| r.ln_1p()).sum::<f64>() / years).exp() - 1.0) * 100.0;
+        println!("(#1226) {name} from {} to {}: {:+.2}%/yr, ^SP500TR {:+.2}%/yr on its dates", dates[0], dates[dates.len() - 1], pa(&rs), pa(&sp));
+        println!("{}", rules::option_report(name, &dates, &sp, &rs, &[20]));
+    }
 }
 
 /// (#1220) The lifecycle census: the (#1219) S&P 500 total return and bill rate from 1928, the CPI
@@ -10248,6 +10286,7 @@ mod tests {
         assert!(p("lifecycle").lifecycle && !p("leverage").lifecycle && !p("lifecycle").leverage);
         assert!(p("bestpick").bestpick && !p("lifecycle").bestpick && !p("bestpick").lifecycle);
         assert!(p("rolls").rolls && !p("bestpick").rolls && !p("rolls").bestpick);
+        assert!(p("options").options && !p("rolls").options && !p("options").rolls);
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
