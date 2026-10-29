@@ -271,6 +271,9 @@ mod tests {
         // a bad close to reinvest at drops the dividend rather than poison every later price
         let s = series(&dates, &[10.0, 11.0, 12.0], &[0.0, 12.0, 13.0], &[(d(2024, 2, 10), 1.0)], true);
         assert_eq!(s.closes, [0.0, 12.0, 13.0]);
+        // so does one that would scale every later price to zero
+        let s = series(&dates, &[10.0, 11.0, 12.0], &[11.0, 12.0, 13.0], &[(d(2024, 2, 10), -11.0)], true);
+        assert_eq!((s.opens, s.closes), (vec![10.0, 11.0, 12.0], vec![11.0, 12.0, 13.0]));
         // an ex-date on the 1st comes after the month before closed, so that day's open carries it
         let s = series(&dates, &[10.0, 11.0, 12.0], &[11.0, 12.0, 13.0], &[(d(2024, 2, 1), 1.0)], true);
         assert_eq!((s.opens, s.closes), (vec![10.0, 11.0 * m, 12.0 * m], vec![11.0, 12.0 * m, 13.0 * m]));
@@ -289,6 +292,9 @@ mod tests {
         // one start: the last bar has nothing to sell at, and past the end there is no bar
         assert_eq!(trade(&s, false, false, 1, day), Some((dates[1], 15.0 / 12.0 - 1.0, 1)));
         assert_eq!((trade(&s, false, false, 2, day), trade(&s, false, false, 3, day)), (None, None));
+        // a zero price is no price either
+        let s = series(&dates, &[10.0, 0.0, 12.0], &[11.0, 12.0, 15.0], &[], false);
+        assert!(trades(&s, true, true, day).is_empty());
         // monthly: a 1m buy at an open sells at the same month's close
         let dates = [d(2024, 1, 1), d(2024, 2, 1)];
         let s = series(&dates, &[10.0, 11.0], &[11.0, 12.0], &[], true);
@@ -323,6 +329,15 @@ mod tests {
         let l = line("bond ETF daily O-O", &one, ("1d", 1, 0));
         assert_eq!((l.text.as_str(), l.net), ("  bond ETF daily O-O 1d  1 starts  too few", None));
         assert_eq!(line("crypto daily C-C", &Acc::new(), ("1w", 7, 0)).text, "  crypto daily C-C 1w  0 starts  too few");
+        // an odd count's median is its middle basket, an even count's the mean of the middle two; a basket
+        // netting exactly 0 is no win
+        let ms = [d(2020, 1, 1), d(2020, 2, 1), d(2020, 3, 1), d(2020, 4, 1), d(2020, 5, 1)];
+        let five: Vec<Trade> = ms.iter().zip([0.0, 0.01, 0.03, -0.02, 0.04]).map(|(&t, g)| (t, g, 30)).collect();
+        let mut acc = Acc::new();
+        add(&mut acc, &five, 0.0);
+        assert!(line("stock monthly C-C", &acc, ("1m", 0, 1)).text.contains("median +1.00% win 60%"));
+        let four: Acc = acc.iter().take(4).map(|(k, v)| (*k, *v)).collect();
+        assert!(line("stock monthly C-C", &four, ("1m", 0, 1)).text.contains("median +0.50% win 50%"));
     }
 
     fn row(label: &str, hold: Hold, net: Option<f64>, halves: (f64, f64), t: Option<f64>) -> Line {
