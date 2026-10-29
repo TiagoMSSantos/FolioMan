@@ -19,7 +19,7 @@
   <nav class="sub" aria-label="sections">
     <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
-    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Braked</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-intraday">Intraday</a> · <a href="#h-track">Track record</a>
+    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Braked</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-intraday">Trading</a> · <a href="#h-track">Track record</a>
   </nav>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
@@ -252,37 +252,58 @@
   </details>
 
   <!-- (#811) The second buy heuristic's table, `heuristics::intraday`, ranked by screen alone from Yahoo's
-       daily bars, so an upload keeps CI's rows. Shadow only: it never feeds BUY%, `size` or `trade`. -->
-  <h2 title="Each market's top 10 by an intraday key, to buy at the open and sell before the close. A shadow table, graded by track, NOT a buy signal" id="h-intraday">Intraday (shadow, NOT a buy signal)</h2>
+       daily bars, so an upload keeps CI's rows. Shadow only: it never feeds BUY%, `size` or `trade`.
+       (#1221) Called Trading since each row prices four ways to trade the name; the approaches table above
+       it is fixed text in app.js, from the census records. -->
+  <h2 title="Each market's top 10 by an intraday key, each name priced four ways: same session, 21 sessions at a time, on its 200-day average, and bought once. A shadow table, graded by track, NOT a buy signal" id="h-intraday">Trading (shadow, NOT a buy signal)</h2>
+  <h3 title="What each way of trading or holding earned against buying and holding, measured over history after costs. Hover any cell for its detail" id="h-approaches">What each approach earned, from the censuses</h3>
+  <div id="approaches"></div>
   <details class="note">
     <summary>about this table</summary>
-    The names an intraday key ranks highest for one session: buy at the open, sell before the close, the
-    ten names of a market equal weight. US names are today's S&amp;P 500 members, EU names a fixed list of
-    DAX, CAC 40 and Euro Stoxx 50 members; a name must have traded at least €5 million a day on average
-    over the last 30 sessions. KEY is the score that picks the ten (hover it for which key), read only from the
-    sessions completed before the one ranked. The session it ranks for may already be open, or over, when
-    you read this. RIGHT/FAIL counts every session of the name since the start date (hover the column for
-    it), whether or not it made the table that day: right when it closed above its open, fail when it
-    closed at or below it, before costs. Today's session counts once its exchange has closed, half an hour
-    after the close: 17:00 UTC for EU and 21:30 UTC for US in winter time, an hour earlier in summer time.
-    Yahoo leaves an EU session's last close empty until the next open, so the table takes it from the
-    quote's latest price. DATA TO is the window RIGHT/FAIL counts, from the start date to the
-    last session counted. GAIN/LOSS adds up the same sessions' % moves, open to close before costs: the
-    up days' gains against the down days' losses, since a name can close up on most days and still lose
-    when its down days are bigger (hover it for the averages and the sums after costs). The rows are
-    ordered by it, gains/(gains+losses) highest first, ties by KEY (receipt #1196). P/L(EUR) puts the same
-    sessions in euros: a fresh €1,000 bought at each open and sold at the close, after the round trip (€5 in
-    the US, €2 in the EU), never compounded. It is hindsight: the key picked these names from the very
-    sessions P/L(EUR) counts, so the top rows read well by construction, and a row up before costs can end
-    down after them (receipt #1211). The two P/L columns after it buy at the open and sell at a set hour
-    instead of the close, both named in the header on the exchange's clock and on Portugal's; US rows fill
-    the first, EU rows the second. Buying at the open and selling at those hours was the best pair in a
-    2-year census of every buy hour and later sell hour, yet every pair lost money after costs and none
-    beat open to close by a significant margin (receipt #1214). SCORE is the
-    day count's share, (right+1)/(right+fail+2) as a percent. The table ranks on K7 (receipt #832), the share of the last 252
-    sessions that closed above their open: on the 10-year backtest its ten names closed up about 1.7
-    percentage points more often than the EU list as a whole, and 1.2 more than the S&amp;P 500 as a whole,
-    just short of the backtest's bar in the US.
+    The approaches table is what the censuses measured on history, after costs: each way of trading or
+    holding against buying and holding the same thing, the one that passes first, then buying and holding
+    itself, then the ones that fail, each by how near it came. Hover any cell for its detail; RECEIPT names
+    the record in tests/ci-settings.yaml. Only lifecycle 200/50 passes (receipt #1220), and it is a way to
+    save, not to trade: it ends with the mean of a fixed share in stock at a lower spread, and does not
+    out-earn saving all in stock. Holding pays: the S&amp;P 500 as its members stood each day earned about
+    11 to 13%/yr at any hold of 6 months or more (receipt #1217). No trend, average, breakout or swing rule
+    beat holding (receipt #1218), nor did a 1.25x to 3x daily S&amp;P fund over 20 years (receipt #1219),
+    a 21-session hold (receipt #1215) or any calendar slice (receipt #1216).
+    <br><br>
+    The table below it holds the names an intraday key ranks highest for one session, ten per market. US
+    names are today's S&amp;P 500 members, EU names a fixed list of DAX, CAC 40 and Euro Stoxx 50 members;
+    a name must have traded at least €5 million a day on average over the last 30 sessions. KEY is the
+    score that picks the ten (hover it for which key), read only from the sessions completed before the one
+    ranked. The session it ranks for may already be open, or over, when you read this. RIGHT/FAIL counts
+    every session of the name since the start date (hover the column for it), whether or not it made the
+    table that day: right when it closed above its open, fail when it closed at or below it, before costs.
+    Today's session counts once its exchange has closed, half an hour after the close: 17:00 UTC for EU and
+    21:30 UTC for US in winter time, an hour earlier in summer time. Yahoo leaves an EU session's last close
+    empty until the next open, so the table takes it from the quote's latest price. DATA TO is the window
+    RIGHT/FAIL counts, from the start date to the last session counted. GAIN/LOSS adds up the same
+    sessions' % moves, open to close before costs: the up days' gains against the down days' losses, since
+    a name can close up on most days and still lose when its down days are bigger (hover it for the
+    averages and the sums after costs).
+    <br><br>
+    Four columns put the same sessions in euros, €1,000 a trade after each round trip (€5 in the US, €2 in
+    the EU), never compounded. P/L(EUR) buys at each open and sells at that close. HOLD 21 buys at an open
+    and sells at the close of the 21st session, then buys again, back to back (receipt #1215). TREND holds
+    only while the last close sits above the average of the last 200 closes, buying at the next open after
+    a close above it and selling at the next open after a close under it (receipt #1218); +€0.00 means it
+    stayed out. BUY&amp;HOLD buys once at the first open and sells at the last close. BEST names the one
+    of the four that made the name the most, and the rows are ordered by it, most euros first, ties by KEY
+    (receipt #1221). All four are hindsight: the key picked these names from the very sessions they count,
+    so the top rows read well by construction (receipt #1211), and BUY&amp;HOLD over two years is mostly
+    the market's drift, which the approaches table measures over decades. The two P/L columns after
+    P/L(EUR) buy at the open and sell at a set hour instead of the close, both named in the header on the
+    exchange's clock and on Portugal's; US rows fill the first, EU rows the second. Buying at the open and
+    selling at those hours was the best pair in a 2-year census of every buy hour and later sell hour, yet
+    every pair lost money after costs and none beat open to close by a significant margin (receipt #1214).
+    SCORE is the day count's share, (right+1)/(right+fail+2) as a percent.
+    <br><br>
+    The table ranks on K7 (receipt #832), the share of the last 252 sessions that closed above their open:
+    on the 10-year backtest its ten names closed up about 1.7 percentage points more often than the EU list
+    as a whole, and 1.2 more than the S&amp;P 500 as a whole, just short of the backtest's bar in the US.
     KEY and SCORE both count up sessions, so a name that makes the table starts with a high SCORE by
     construction; only the sessions after it ranks test the key. <strong>No key has made money after costs.</strong>
     The 10-year backtest (receipt #810) lost on every key and market once a round trip is paid: about

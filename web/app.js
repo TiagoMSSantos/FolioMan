@@ -215,7 +215,7 @@ function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
   const all = document.getElementById("allrows").checked;
   for (const t of document.querySelectorAll(".scroll table")) {
-    if (t.closest("#inflation, #bonds, #intraday, #track")) continue; // (#811) every intraday row shows, unfiltered; (#1140) every track row
+    if (t.closest("#inflation, #bonds, #intraday, #approaches, #track")) continue; // (#811) every intraday row shows, unfiltered; (#1140) every track row; (#1221) every approach
     const id = t.closest("div[id]").id;
     const cap = id === "exposure" ? Infinity : n;
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
@@ -328,6 +328,7 @@ function stick() {
 // (#734) "past burn" too, and the (#717) runway ("burn 14.4y"), which had sorted as text. (#735) "lossᵒ" too. (#736) TR-CAGR's short-history ʸ reads its number.
 // (#823) A RIGHT/FAIL (or INS-B/S) count `7/3` sorts as its share 7/(7+3); 0/0 measured nothing, so it sorts last.
 // (#1196) A GAIN/LOSS `+60.0%/-40.0%` sorts the same way, 60/(60+40); +0.0%/-0.0% sorts last.
+// (#1221) A Trading BEST cell `BUY&HOLD +€280.18` sorts on its euros.
 const NUM = /^≈?([+-]?)[€$]?([\d,]*\.?\d+)(?:([KMBT])(?: r)?)?[%~†‡#!xHbmc*owWs$⁰¹²³⁴⁵⁶⁷⁸⁹ᵈⁱʷˢʸpᵇeᶠⁿ°]*$/;
 function key(cell) {
   if (["", "n/a", "—", "loss", "lossᵒ"].includes(cell) || /^(past )?burn( |$)/.test(cell)) return null;
@@ -337,6 +338,8 @@ function key(cell) {
   if (gl) return +gl[1] + +gl[2] ? gl[1] / (+gl[1] + +gl[2]) : null;
   const mc = /^(\d+): /.exec(cell);
   if (mc) return +mc[1];
+  const best = /^[A-Z][A-Z&/()\d ]* ([+-]€[\d,.]+)$/.exec(cell);
+  if (best) return key(best[1]);
   const m = NUM.exec(cell);
   return m ? +(m[1] + m[2].replaceAll(",", "")) * ({ K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[m[3]] || 1) : cell;
 }
@@ -350,6 +353,10 @@ console.assert(
   key("$2.9B") === 2.9e9 && key("-$367.1M") === -367.1e6 && key("$100.0B r") === 100e9 && key("$12K") === 12e3 && key("2027 r") === "2027 r" &&
     key("+25%ᶠ") === 25 && key("-41%ⁿ⁰") === -41 && key("€36.5Bᶠ") === 36.5e9 && key("10: a, b") > key("9: c") && key("0") === 0,
   "sort key misreads a dollar, ᶠ, ⁿ or N: list cell",
+);
+console.assert(
+  key("BUY&HOLD +€280.18") === 280.18 && key("P/L(EUR) -€1,046.85") === -1046.85 && key("HOLD 21 +€9.00") === 9 && key("TREND +€0.00") === 0,
+  "sort key misreads a Trading BEST cell",
 );
 // (#735) A book this tilted is one bet, whatever its name count: the lines the Stocks banner prints,
 // off the exposure rows (largest first in each KIND). CI's payload only, like the table it reads.
@@ -429,6 +436,94 @@ function chooser(max, dflt) {
   document.getElementById("topn-box").hidden = false; // (#539) `all` is a choice even at one row
   apply(topN(sel.value));
 }
+
+// (#1221) What the censuses measured, above the Trading table: each way of trading or holding against
+// buying and holding, net of costs. Fixed text, not a payload: the figures are the census records in
+// tests/ci-settings.yaml under each receipt, and change only when a census is re-run. Ordered by verdict,
+// then by how near each came to beating buy and hold. Every cell hovers its detail.
+const APPROACH_HELP = {
+  APPROACH: "A way of trading or holding that a census measured on history, net of costs. Rows run passes first, then buy and hold itself, then fails, each by how near it came",
+  "WHAT YOU DO": "What the approach does with the money, in plain words. Hover a cell for the exact rule",
+  "RESULT VS BUY&HOLD": "What it earned against buying and holding the same thing over the same years, after costs. Hover a cell for every line the census printed",
+  "WORST FALL": "The deepest fall from a peak the census found along the way. — = the census did not measure it",
+  VERDICT: "PASSES = it cleared its census's bar; BASELINE = buying and holding, the line to beat; FAILS = it did not beat buying and holding often enough, or fell too far",
+  RECEIPT: "The census's receipt number: its method, every figure and its caveats are recorded under it in tests/ci-settings.yaml",
+};
+const approach = (cells) => Object.keys(APPROACH_HELP).map((h, i) => [h, cells[i][0], null, cells[i][1]]);
+const APPROACHES = [
+  [
+    ["Lifecycle 200/50", "Ayres and Nalebuff's lifecycle saver (Diversification Across Time, 2010): 682 savers aged 23 to 64, one starting each month from 1928 to 1984, the S&P 500 and 10-year Treasuries, in real terms"],
+    ["Save monthly; borrow young, down to 50% in stock by 64", "Each month, save, then hold stock worth half of the savings plus the saving still to come, never more than 2x the savings. Young, that means borrowing; the loan shrinks as savings grow, and at 64 half is in stock, the rest in Treasuries"],
+    ["Same mean as 67-80% in stock, 21-33% less spread", "On all 8 lines (flat or wage pay, a 2x fund or margin, before or after a 28% gains tax) it ends with the mean of a fixed 67-80% in stock at a 21-33% lower SD, and beats the 90/50 target-date glide by +5.5% to +22.6% of certainty equivalent. It does not out-earn saving all in stock: a mean 4.59x what was paid in, against 5.41x median for 100% stock (flat pay, before tax)"],
+    ["—", "— = not measured: the census graded 200/50 on spread and certainty equivalent, not on its deepest fall"],
+    ["PASSES", "It holds both of the paper's claims on 8 of 8 lines. About 2.4 independent 42-year spans fit in 98 years, so the 682 savers are mostly overlapping draws of two histories. NOT advice; nothing here sizes or buys"],
+    ["#1220", "(#1220) LIFECYCLE CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Hold stocks 6 months or more", "Buy and hold, selling no sooner than 6 months: 5,907 names on 10 years of daily bars and their full monthly history, every hold from 1 day to 20 years, one round trip each"],
+    ["Buy, hold at least 6 months, sell", "A longer hold pays the round trip fewer times a year; the gross return barely moves with the hold"],
+    ["S&P 500 point in time 11-13%/yr; 1 week or less loses", "From 6 months on, the honest stock rate, the S&P 500 as its members stood each day, is about 11 to 13%/yr at any hold. Every hold of 1 week or less loses after costs in every class but crypto; in and out daily, close to close, nets -59 to -69%/yr. Today's names read 5 to 7 pts/yr high: the ones that failed are gone"],
+    ["—", "— = not measured by this census"],
+    ["BASELINE", "Holding is the line every approach below is graded against"],
+    ["#1217", "(#1217) HOLD-WINDOW CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Buy & hold S&P 500, 20 years", "The S&P 500 with dividends reinvested since 1928, every 20-year window starting on a month's first day: 947 windows"],
+    ["Buy the index, hold 20 years", "All in on the first day (lump), or one equal sum on each month's first day (monthly)"],
+    ["Median +11.0%/yr, worst +1.9%/yr", "Lump: median +11.0%/yr, worst window +1.9%/yr. Monthly: a median 3.56x what was paid in, worst 1.32x"],
+    ["84% (1929-32)", "The worst fall, 1929 to 1932"],
+    ["BASELINE", "The line the leverage lines below are graded against"],
+    ["#1219", "(#1219) LEVERAGE CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Lifecycle 200/100", "The same 682 savers as 200/50, holding stock worth all of the savings plus the saving still to come"],
+    ["Save monthly; borrow young, up to 2x, to 100% in stock by 64", "Each month, save, then hold stock worth the savings plus the saving still to come, never more than 2x the savings. At 64 it is all in stock"],
+    ["Beats 100% stock for every saver before tax: 8.86x vs 5.41x", "Before tax with the 2x fund, it ends richer than saving all in stock for 100% of savers, the worst included: a median 8.86x what was paid in against 5.41x. After tax or at margin rates it beats 100% stock for under 80% of savers starting after 1956. 0 of 8 lines clear the bar"],
+    ["98-99%; 45 savers fall 90% or more", "On every line, 45 savers' accounts fall 90% or more from a peak, down to 98-99%. A real broker would call the margin loan well before that"],
+    ["FAILS", "It fails the bar of beating 100% stock for 80% of savers in each half, with no saver ending poorer and no 90% fall"],
+    ["#1220", "(#1220) LIFECYCLE CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Hold a 2x S&P 500 fund, 20 years", "1.25x, 1.5x, 2x or 3x the S&P 500 reset every day, borrowing like a 2x fund (bills plus 0.60%/yr) or a margin loan (bills plus 2.5 pts), over the same 947 windows as buy and hold"],
+    ["Buy a 2x daily fund, hold 20 years", "The fund doubles each day's move and pays for the borrowed half; all in on the first day or one sum a month"],
+    ["Beats 1x in 79% of windows (72% before 1967); worst -5.1%/yr", "2x fund, lump: richer than 1x in 79% of windows (72% before 1967, 85% after), median +14.0%/yr against +11.0, worst window -5.1%/yr against +1.9. The best line, 2x monthly, wins 80% (71% before 1967), its worst window 0.74x paid in against 1.32x. 0 of 16 lines clear the bar"],
+    ["90% or more, in 46 windows", "Lump 2x falls 90% or more in 46 of 947 windows; even 1.25x falls 91% in 1929-32, where 1x falls 84%"],
+    ["FAILS", "It fails the bar of beating 1x in 80% of windows in each half, the worst window no poorer than 1x's, and no 90% fall"],
+    ["#1219", "(#1219) LEVERAGE CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Hold 21 sessions", "2 years of hourly bars on 503 US and 105 EU names, and 10 years of daily bars: every hold of 0 to 21 sessions, €1,000 a hold, one round trip each (€5 US, €2 EU)"],
+    ["Buy at an open, sell 21 sessions later, again", "The longest hold the census tried; it paid the most a session in both markets. The HOLD 21 column below prices it per name"],
+    ["US +€0.44 a session vs +€0.67 holding 2 years", "On every US name, the best 21-session hold makes +€0.44 a session held against +€0.67 for buying each name once and holding the 2 years: that is market drift, not timing. The EU K7 book makes +€1.07 against +€0.39 for EU buy and hold, but its hourly names are today's members, so survivor-biased, and 10 years of daily bars halve it (+€0.53). Holds of 0 to 2 sessions lose everywhere"],
+    ["—", "— = not measured by this census"],
+    ["FAILS", "No US hold beats buying and holding; the one EU line that does leans on survivors"],
+    ["#1215", "(#1215) HOLD-LENGTH CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Trend, average, breakout, swing", "5,907 names on 10 years of daily bars and full monthly history, plus 2 years of hourly bars: 47 rules at 1x, 2x and 3x, in or out of cash, net of costs"],
+    ["Hold only while a rule says up", "Trend: in while the last N months rose. Average: in while the close is above its N-bar mean (the TREND column below, at 200 bars). Breakout: buy a new high, sell a set fall from the peak. Swing: buy after a fall, sell on the bounce"],
+    ["Every rule trails buy and hold at 1x; 1 of 1,976 lines passes", "At 1x every rule earns less than holding the same names, in every set; on monthly bars, stocks' 12-month trend trails by 13.4 pts/yr (t -6.4). The one passing line is one crypto name over 6 months at 2x: luck sized"],
+    ["24% vs 37% holding (stock 12m trend)", "A trend rule cuts the fall along with the return: stocks' 12-month trend at 1x falls 24% at worst against 37% for holding, and earns 7.5 pts/yr less. Leverage lifts a strong set's mean and ruins most of its names"],
+    ["FAILS", "No rule beats holding the same names net of costs, at any leverage, in any set"],
+    ["#1218", "(#1218) TRADING-RULES CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Calendar slices", "The same-session trade cut 9 ways (Monday to Friday, the turn of the month against the rest, the session before a holiday, the third-Friday expiry), the K7 book and every name, every buy and sell hour: 1,314 pairs on 2 years of hourly bars, checked against 10 years of daily bars"],
+    ["Trade only on a set day or date", "Buy only on, say, a Monday at 10:00 and sell later that session"],
+    ["2 of 1,314 pass, luck sized; lose on 10 years", "Only the EU K7 book on Mondays, 10:00 to 17:00 or the close, passes: about €0.35-0.42 a Monday on €1,000, about €20 a year. A t of 3 passes about 2 of 1,314 pairs by luck. On 10 years of daily bars it earns half the cost: +10.39 bp, net -€0.96"],
+    ["—", "— = not measured by this census"],
+    ["FAILS", "Every US slice and every EU slice of the whole list with more than 11 sessions loses after costs"],
+    ["#1216", "(#1216) CALENDAR CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
+    ["Intraday, same session", "The Trading table's own trade: the K7 top 10, bought at the open and sold that session. 10 years of daily bars on every key and 2 years of hourly bars on every buy and sell hour"],
+    ["Buy at the open, sell before the close", "One round trip a session: €5 a €1,000 trade in the US, €2 in the EU. The P/L(EUR) column below prices it per name, in hindsight"],
+    ["K7 -€4.80 a US session, -€1.60 an EU one", "At €1,000 a session the K7 book loses about €4.80 a US session and €1.60 an EU one. The 10-year backtest loses on every key: -49 to -52 bp a day in the US, -16 to -20 in the EU. Every buy and sell hour pair loses after costs"],
+    ["—", "— = not measured by this census"],
+    ["FAILS", "No key and no hour pair has made money after costs"],
+    ["#810 #828 #1214", "(#810) the 10-year key backtest, (#828) K7 in euros, (#1214) every buy and sell hour, in tests/ci-settings.yaml"],
+  ],
+].map(approach);
 
 const stamp = (t) => new Date(t).toISOString().replace("T", " ").replace(".000Z", "Z");
 
@@ -531,6 +626,7 @@ function render(data, prev) {
   if (data.intraday) {
     document.getElementById("intraday").replaceChildren(table(data.intraday, "(off, or no name ranked)", help.intraday));
   }
+  document.getElementById("approaches").replaceChildren(table(APPROACHES, undefined, APPROACH_HELP)); // (#1221) fixed text, any payload
   // (#1140) CI's journal, so an upload keeps CI's table
   if (data.track) {
     document.getElementById("track").replaceChildren(table(data.track, "(nothing gradeable yet)", help.track));
@@ -565,7 +661,7 @@ function render(data, prev) {
   for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday", "track"]) {
     if (data[id]) sheet(id, data[id]);
   }
-  glossary(data, help);
+  glossary(data, { ...help, approaches: APPROACH_HELP });
   // (#433) Each table and its scroll box are named by the h2 above them, `h-` + the holder's id.
   for (const t of document.querySelectorAll(".scroll table")) {
     const by = "h-" + t.closest("div[id]").id;
@@ -596,7 +692,8 @@ function glossary(data, help) {
     ["Braked", "braked", [data.braked]],
     ["REITs and SIGIs", "reits", [data.reits]],
     ["Upcoming IPOs", "upcoming", [data.upcoming]],
-    ["Intraday", "intraday", [data.intraday]],
+    ["Trading approaches", "approaches", [APPROACHES]],
+    ["Trading", "intraday", [data.intraday]],
     ["Track record", "track", [data.track]],
   ]) {
     const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];

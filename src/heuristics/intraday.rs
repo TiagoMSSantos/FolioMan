@@ -31,6 +31,8 @@
 //! like the rest of the table. (#1215) The census then holds past the session: a buy on one session and a
 //! sell up to `HOLDS` sessions on, at every hour pair on the 60m bars and open to close on the daily ones.
 //! (#1216) Last, the same-session hour pairs split by calendar slice: weekday, month turn, pre-holiday, expiry.
+//! (#1221) The page calls the table Trading: each row also prices the same sessions held 21 at a time, in on a
+//! 200-close trend and bought once, names the best of the four, and the rows sort on it.
 
 use crate::config::session;
 use crate::core;
@@ -169,6 +171,22 @@ pub fn session_return(c: &Chart, i: usize) -> Option<f64> {
 /// (#1215) Bought at bar `i`'s open and sold at the close of the bar `h` after it.
 fn held_return(c: &Chart, i: usize, h: usize) -> Option<f64> {
     Some(pos(*c.closes.get(i + h)?)? / pos(c.opens[i])? - 1.0)
+}
+
+/// (#1221) The page's TREND trades on bars `s..e`: in on each bar whose previous close sits above the mean of
+/// the 200 closes up to it, bought at the first such bar's open and sold at the open of the first bar out,
+/// or at bar `e - 1`'s close when still in. One return a spell; a bar with fewer than 200 closes behind it is out.
+/// shortcut: on a chart that starts under 200 sessions before `s` the first bars read out; `chart_range`
+/// reaches far enough for K7's 2y chart, a wider reach would fix any other key.
+fn trend(c: &Chart, s: usize, e: usize) -> Vec<f64> {
+    let up = |j: usize| j.checked_sub(200).is_some_and(|a| c.closes[j - 1] > mean(&c.closes[a..j]));
+    let ins: Vec<usize> = (s..e).filter(|&j| up(j)).collect();
+    ins.chunk_by(|a, b| b - a == 1)
+        .filter_map(|run| {
+            let out = run[run.len() - 1] + 1;
+            Some(pos(if out < e { c.opens[out] } else { c.closes[e - 1] })? / pos(c.opens[run[0]])? - 1.0)
+        })
+        .collect()
 }
 
 /// How many bars are completed sessions, dated before `today`. A bar dated today may still be trading.
@@ -337,28 +355,43 @@ pub fn rank<'a>(k: u8, pond: &[Member<'a>], today: NaiveDate) -> Vec<(&'a str, f
 /// each % change times €1,000 added up after that round trip; its hover adds the figure before costs.
 /// (#1207) The hover says the stake is a fresh €1,000 each session and that every session of the name
 /// counts, not only the days the table listed it. (#1208) It also gives the average a session, before
-/// and after costs.
+/// and after costs. (#1221) Three more ways to trade the same sessions, each €1,000 a round trip after the
+/// same cost: HOLD 21 back to back from the first open ([`held_return`] over 21 sessions, the last one cut
+/// at the window's end), TREND ([`trend`]) and BUY&HOLD (the first open to the last close). BEST names the
+/// highest of those three and P/L(EUR), and the rows now sort on its euros, ties in key order.
 pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveDate, until: NaiveDate, fx: f64, today: NaiveDate) -> Vec<Vec<serde_json::Value>> {
     use serde_json::json;
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
     let cost = if market == "US" { COST_BPS_US } else { COST_BPS_EU };
     let share = |(r, f): (usize, usize)| (r + 1) as f64 / (r + f + 2) as f64;
+    let net = |rs: &[f64]| rs.iter().map(|r| (r - cost / 1e4) * 1000.0).sum::<f64>();
     let mut v: Vec<_> = book
         .iter()
         .map(|b| {
-            let xs: Vec<f64> = (completed(b.2, since)..completed(b.2, until)).filter_map(|i| session_return(b.2, i)).collect();
+            let (s, e) = (completed(b.2, since), completed(b.2, until));
+            let xs: Vec<f64> = (s..e).filter_map(|i| session_return(b.2, i)).collect();
             let ud = gains(&xs, 0.0);
-            (b, xs, ud)
+            let holds: Vec<f64> = (s..e).step_by(21).filter_map(|j| held_return(b.2, j, (e - 1 - j).min(20))).collect();
+            let bh = e.checked_sub(s + 1).and_then(|h| held_return(b.2, s, h));
+            let (nu, nd) = gains(&xs, cost / 1e4);
+            let spells = trend(b.2, s, e);
+            let mut best = vec![("P/L(EUR)", (nu - nd) * 1000.0), ("HOLD 21", net(&holds)), ("TREND", net(&spells))];
+            best.extend(bh.map(|r| ("BUY&HOLD", net(&[r]))));
+            best.sort_by(|a, b| b.1.total_cmp(&a.1)); // ties keep this order
+            (b, xs, ud, (s, e, holds, spells, bh), best)
         })
         .collect();
-    // a name with no move at all sorts last
-    v.sort_by(|a, b| up_share(b.2).unwrap_or(-1.0).total_cmp(&up_share(a.2).unwrap_or(-1.0)));
+    v.sort_by(|a, b| b.4[0].1.total_cmp(&a.4[0].1));
     let ratio = |a: f64, b: f64| if b > 0.0 { format!("{:.2}", a / b) } else { "—".into() };
     let avg = |s: f64, n: usize, sign: &str| if n > 0 { format!("{sign}{:.2}%", s * 100.0 / n as f64) } else { "—".into() };
     let eur = |x: f64| format!("{}€{}", if x < 0.0 { "-" } else { "+" }, core::fmt_money2(x.abs()));
+    let trips = |rs: &[f64]| {
+        let (n, fee) = (rs.len(), core::fmt_money2(rs.len() as f64 * cost / 10.0));
+        format!("{} before costs; the backtest's {cost:.0} bp a round trip costs {n} × €{} = €{fee}; {} after", eur(rs.iter().sum::<f64>() * 1000.0), core::fmt_money2(cost / 10.0), eur(net(rs)))
+    };
     v.into_iter()
         .enumerate()
-        .map(|(n, ((tk, x, c), xs, (u, d)))| {
+        .map(|(n, ((tk, x, c), xs, (u, d), (s, e, holds, spells, bh), best))| {
             let r = xs.iter().filter(|&&s| s > 0.0).count();
             let f = xs.len() - r;
             let (nu, nd) = gains(&xs, cost / 1e4);
@@ -410,6 +443,13 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
                 json!(["RIGHT/FAIL", format!("{r}/{f}"), null, format!("{r} right, {f} failed since {since}: all {} sessions, right = closed above its open", r + f)]),
                 json!(["GAIN/LOSS", format!("{:+.1}%/-{:.1}%", u * 100.0, d * 100.0), null, gain]),
                 json!(["P/L(EUR)", eur((nu - nd) * 1000.0), null, pl]),
+                json!(["HOLD 21", eur(net(&holds)), null, format!("€1,000 bought at an open and sold at the close of the 21st session, then bought again at the next open, back to back over the same {} sessions; the last hold ends on the last one: {} holds, {}\n(a fresh €1,000 each hold, not compounded; hindsight, as P/L(EUR) is)", r + f, holds.len(), trips(&holds))]),
+                json!(["TREND", eur(net(&spells)), null, format!("In while the last close sits above the average of the last 200 closes: bought at the next open, sold at the next open after a close under it, or at the last close if still in, over the same {} sessions: {} round trips, {}\n(a fresh €1,000 each round trip, not compounded; 0 round trips = it stayed out and made nothing)", r + f, spells.len(), trips(&spells))]),
+                match bh {
+                    Some(h) => json!(["BUY&HOLD", eur(net(&[h])), null, format!("€1,000 bought at the open on {} and sold at the close on {}, one round trip: {}", c.dates[s], c.dates[e - 1], trips(&[h]))]),
+                    None => json!(["BUY&HOLD", "—"]),
+                },
+                json!(["BEST", format!("{} {}", best[0].0, eur(best[0].1)), null, format!("The best of these ways to trade the name over the same sessions, in euros after costs, highest first:\n{}\n(hindsight: every column counts sessions that are over; the rows sort on this column)", best.iter().map(|(h, x)| format!("{h} {}", eur(*x))).collect::<Vec<_>>().join("\n"))]),
                 json!(["SCORE", format!("{:.0}%", share((r, f)) * 100.0)]),
             ]
         })
@@ -1262,17 +1302,18 @@ mod tests {
         let mut up = chart(&[100.0; 31], &[101.0; 31], 1e5);
         up.name = "Up".into();
         // (#827) every session from bar 1 (2026-01-02) to bar 30: ACME's 22 up in 30 (its four flat bars, 4, 12,
-        // 22 and 23, are fails); (#1196) B, which never fell, outranks it on GAIN/LOSS though ACME's key is
-        // higher, and B's hover prints — for every ratio over its zero losses
+        // 22 and 23, are fails); B never fell, and its hover prints — for every ratio over its zero losses;
+        // (#1221) ACME's BEST, P/L(EUR) +€1,046.85, tops B's +€150.00, so it ranks first though (#1196)
+        // GAIN/LOSS would put B first; HOLD 21 is bars 1-21 then 22-30, and 31 bars leave TREND no 200 closes
         let rows = web_rows("US", 3, &[("ACME", 0.01234, &c), ("B", -0.5, &up)], d(1), d(31), 2.0, d(31));
         assert_eq!(
             serde_json::json!(rows),
             serde_json::json!([
-                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Up"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€202.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "30/0", null, "30 right, 0 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+30.0%/-0.0%", null, "30 up days added up +30.0% (avg +1.00%); 0 down or flat days -0.0% (avg —); since 2026-01-02, open to close, before costs\ngain factor — = up ÷ down = (30/0 days) × (1.00%/— avg move)\nafter the backtest's 50 bp a round trip: +15.0%/-0.0%, gain factor —\n(each session's % change added up, not compounded)"], ["P/L(EUR)", "+€150.00", null, "€1,000 bought at the open and sold at the close, each of the 30 sessions since 2026-01-02: +€300.00 before costs; the backtest's 50 bp a round trip costs 30 × €5.00 = €150.00; +€150.00 after, about +€5.00 a session (+€10.00 before costs)\n(a fresh €1,000 each session, not compounded: a gain is not reinvested, a loss is topped back up; every session of this name, not only the days the table listed it; a US row leaves out the euro's move inside the session)"], ["SCORE", "97%"]],
-                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "22/8", null, "22 right, 8 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+124.5%/-4.8%", null, "22 up days added up +124.5% (avg +5.66%); 8 down or flat days -4.8% (avg -0.60%); since 2026-01-02, open to close, before costs\ngain factor 25.80 = up ÷ down = (22/8 days) × (5.66%/0.60% avg move)\nafter the backtest's 50 bp a round trip: +113.5%/-8.8%, gain factor 12.86\n(each session's % change added up, not compounded)"], ["P/L(EUR)", "+€1,046.85", null, "€1,000 bought at the open and sold at the close, each of the 30 sessions since 2026-01-02: +€1,196.85 before costs; the backtest's 50 bp a round trip costs 30 × €5.00 = €150.00; +€1,046.85 after, about +€34.89 a session (+€39.89 before costs)\n(a fresh €1,000 each session, not compounded: a gain is not reinvested, a loss is topped back up; every session of this name, not only the days the table listed it; a US row leaves out the euro's move inside the session)"], ["SCORE", "72%"]],
+                [["RANK", "1"], ["MARKET", "US"], ["TICKER", "ACME"], ["NAME", "Acme"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€206.00"], ["KEY", "+1.23%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "22/8", null, "22 right, 8 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+124.5%/-4.8%", null, "22 up days added up +124.5% (avg +5.66%); 8 down or flat days -4.8% (avg -0.60%); since 2026-01-02, open to close, before costs\ngain factor 25.80 = up ÷ down = (22/8 days) × (5.66%/0.60% avg move)\nafter the backtest's 50 bp a round trip: +113.5%/-8.8%, gain factor 12.86\n(each session's % change added up, not compounded)"], ["P/L(EUR)", "+€1,046.85", null, "€1,000 bought at the open and sold at the close, each of the 30 sessions since 2026-01-02: +€1,196.85 before costs; the backtest's 50 bp a round trip costs 30 × €5.00 = €150.00; +€1,046.85 after, about +€34.89 a session (+€39.89 before costs)\n(a fresh €1,000 each session, not compounded: a gain is not reinvested, a loss is topped back up; every session of this name, not only the days the table listed it; a US row leaves out the euro's move inside the session)"], ["HOLD 21", "+€89.01", null, "€1,000 bought at an open and sold at the close of the 21st session, then bought again at the next open, back to back over the same 30 sessions; the last hold ends on the last one: 2 holds, +€99.01 before costs; the backtest's 50 bp a round trip costs 2 × €5.00 = €10.00; +€89.01 after\n(a fresh €1,000 each hold, not compounded; hindsight, as P/L(EUR) is)"], ["TREND", "+€0.00", null, "In while the last close sits above the average of the last 200 closes: bought at the next open, sold at the next open after a close under it, or at the last close if still in, over the same 30 sessions: 0 round trips, +€0.00 before costs; the backtest's 50 bp a round trip costs 0 × €5.00 = €0.00; +€0.00 after\n(a fresh €1,000 each round trip, not compounded; 0 round trips = it stayed out and made nothing)"], ["BUY&HOLD", "+€14.80", null, "€1,000 bought at the open on 2026-01-02 and sold at the close on 2026-01-31, one round trip: +€19.80 before costs; the backtest's 50 bp a round trip costs 1 × €5.00 = €5.00; +€14.80 after"], ["BEST", "P/L(EUR) +€1,046.85", null, "The best of these ways to trade the name over the same sessions, in euros after costs, highest first:\nP/L(EUR) +€1,046.85\nHOLD 21 +€89.01\nBUY&HOLD +€14.80\nTREND +€0.00\n(hindsight: every column counts sessions that are over; the rows sort on this column)"], ["SCORE", "72%"]],
+                [["RANK", "2"], ["MARKET", "US"], ["TICKER", "B"], ["NAME", "Up"], ["SECTOR", "n/a"], ["PRICE(EUR)", "€202.00"], ["KEY", "-50.00%", null, "K3 5d intraday"], ["SESSION", "09:30-16:00 New York"], ["DATA TO", "2026-01-02 – 2026-01-31"], ["RIGHT/FAIL", "30/0", null, "30 right, 0 failed since 2026-01-02: all 30 sessions, right = closed above its open"], ["GAIN/LOSS", "+30.0%/-0.0%", null, "30 up days added up +30.0% (avg +1.00%); 0 down or flat days -0.0% (avg —); since 2026-01-02, open to close, before costs\ngain factor — = up ÷ down = (30/0 days) × (1.00%/— avg move)\nafter the backtest's 50 bp a round trip: +15.0%/-0.0%, gain factor —\n(each session's % change added up, not compounded)"], ["P/L(EUR)", "+€150.00", null, "€1,000 bought at the open and sold at the close, each of the 30 sessions since 2026-01-02: +€300.00 before costs; the backtest's 50 bp a round trip costs 30 × €5.00 = €150.00; +€150.00 after, about +€5.00 a session (+€10.00 before costs)\n(a fresh €1,000 each session, not compounded: a gain is not reinvested, a loss is topped back up; every session of this name, not only the days the table listed it; a US row leaves out the euro's move inside the session)"], ["HOLD 21", "+€10.00", null, "€1,000 bought at an open and sold at the close of the 21st session, then bought again at the next open, back to back over the same 30 sessions; the last hold ends on the last one: 2 holds, +€20.00 before costs; the backtest's 50 bp a round trip costs 2 × €5.00 = €10.00; +€10.00 after\n(a fresh €1,000 each hold, not compounded; hindsight, as P/L(EUR) is)"], ["TREND", "+€0.00", null, "In while the last close sits above the average of the last 200 closes: bought at the next open, sold at the next open after a close under it, or at the last close if still in, over the same 30 sessions: 0 round trips, +€0.00 before costs; the backtest's 50 bp a round trip costs 0 × €5.00 = €0.00; +€0.00 after\n(a fresh €1,000 each round trip, not compounded; 0 round trips = it stayed out and made nothing)"], ["BUY&HOLD", "+€5.00", null, "€1,000 bought at the open on 2026-01-02 and sold at the close on 2026-01-31, one round trip: +€10.00 before costs; the backtest's 50 bp a round trip costs 1 × €5.00 = €5.00; +€5.00 after"], ["BEST", "P/L(EUR) +€150.00", null, "The best of these ways to trade the name over the same sessions, in euros after costs, highest first:\nP/L(EUR) +€150.00\nHOLD 21 +€10.00\nBUY&HOLD +€5.00\nTREND +€0.00\n(hindsight: every column counts sessions that are over; the rows sort on this column)"], ["SCORE", "97%"]],
             ])
         );
-        // equal gain shares keep key order
+        // equal BEST keeps key order
         let order: Vec<_> = web_rows("EU", 3, &[("Y", 0.0, &c), ("X", 0.0, &c)], d(1), d(31), 1.0, d(31)).iter().map(|r| r[2][1].as_str().unwrap().to_string()).collect();
         assert_eq!(order, ["Y", "X"]);
         // too few sessions for K1's hover sums: it names the key; (#826) the session dated today closed, so
@@ -1280,7 +1321,7 @@ mod tests {
         // `until` both closed up, and neither counts
         let eu = web_rows("EU", 1, &[("X", 0.0, &c)], d(1), d(21), 1.0, d(20));
         assert_eq!((eu[0][1][1].as_str(), eu[0][6][3].as_str()), (Some("EU"), Some("K1 tug of war")));
-        assert_eq!((eu[0][7][1].as_str(), eu[0][8][1].as_str(), eu[0][9][1].as_str(), eu[0][12][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-02 – 2026-01-21"), Some("16/4"), Some("77%")));
+        assert_eq!((eu[0][7][1].as_str(), eu[0][8][1].as_str(), eu[0][9][1].as_str(), eu[0][16][1].as_str()), (Some("09:00-17:30 Frankfurt"), Some("2026-01-02 – 2026-01-21"), Some("16/4"), Some("77%")));
         // (#824) 21 sessions behind it: the hover works the number out
         let k1 = web_rows("EU", 1, &[("X", key(1, &c, 31).unwrap(), &c)], d(1), d(31), 1.0, d(31));
         assert_eq!(k1[0][5][1], "€103.00");
@@ -1293,34 +1334,58 @@ mod tests {
         assert_eq!(crate::picks::web_help(false, &[])["intraday"].keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(), heads);
     }
 
-    /// (#1196) Rows sort on the moves added up, not on the day count: a name up on two days in three by a
-    /// little ranks below one up on one day in three by a lot, and a name that never moved sorts last.
+    /// (#1196) GAIN/LOSS adds up the moves, not the day count: a name up on two days in three by a little
+    /// reads worse than one up on one day in three by a lot. (#1221) The rows sort on BEST: GAP falls every
+    /// session but gaps up every night, so it ranks first on BUY&HOLD with the lowest key and no up day; the
+    /// three losers tie on TREND's +€0.00, out on 31 bars, and keep key order.
     #[test]
-    fn rows_sort_on_gains_over_losses_not_on_the_day_count() {
+    fn rows_sort_on_the_best_way_to_trade_not_on_gains_or_the_day_count() {
         let o = [100.0; 31];
         // bar 0 sits before `since`; bars 1-30 count
         let small = chart(&o, &[[100.1; 21].as_slice(), &[99.0; 10]].concat(), 1e5);
         let big = chart(&o, &[[103.0; 11].as_slice(), &[99.5; 20]].concat(), 1e5);
         let flat = chart(&o, &o, 1e5);
         let down = chart(&o, &[99.0; 31], 1e5);
-        let book = [("SMALL", 4.0, &small), ("FLAT", 3.0, &flat), ("DOWN", 2.0, &down), ("BIG", 1.0, &big)];
+        let up: Vec<f64> = (0..31).map(|j| 100.0 + j as f64).collect();
+        let gap = chart(&up, &up.iter().map(|x| x - 0.5).collect::<Vec<_>>(), 1e5);
+        let book = [("SMALL", 4.0, &small), ("FLAT", 3.0, &flat), ("DOWN", 2.0, &down), ("BIG", 1.0, &big), ("GAP", 0.5, &gap)];
         let rows = web_rows("EU", 3, &book, d(1), d(31), 1.0, d(31));
-        let cells: Vec<_> = rows.iter().map(|r| (r[2][1].as_str().unwrap(), r[9][1].as_str().unwrap(), r[10][1].as_str().unwrap(), r[11][1].as_str().unwrap(), r[12][1].as_str().unwrap())).collect();
+        let cells: Vec<_> = rows.iter().map(|r| [2, 9, 10, 11, 12, 13, 14, 15].map(|i| r[i][1].as_str().unwrap())).collect();
         assert_eq!(
             cells,
             [
-                ("BIG", "10/20", "+30.0%/-10.0%", "+€140.00", "34%"),
-                ("SMALL", "20/10", "+2.0%/-10.0%", "-€140.00", "66%"),
-                ("DOWN", "0/30", "+0.0%/-30.0%", "-€360.00", "3%"),
-                ("FLAT", "0/30", "+0.0%/-0.0%", "-€60.00", "3%"),
+                ["GAP", "0/30", "+0.0%/-13.1%", "-€190.61", "+€250.54", "+€0.00", "+€280.18", "BUY&HOLD +€280.18"],
+                ["BIG", "10/20", "+30.0%/-10.0%", "+€140.00", "-€14.00", "+€0.00", "-€7.00", "P/L(EUR) +€140.00"],
+                ["SMALL", "20/10", "+2.0%/-10.0%", "-€140.00", "-€24.00", "+€0.00", "-€12.00", "TREND +€0.00"],
+                ["FLAT", "0/30", "+0.0%/-0.0%", "-€60.00", "-€4.00", "+€0.00", "-€2.00", "TREND +€0.00"],
+                ["DOWN", "0/30", "+0.0%/-30.0%", "-€360.00", "-€24.00", "+€0.00", "-€12.00", "TREND +€0.00"],
             ]
         );
         // the hover's net sums pay the EU's 20 bp a session: BIG's 10 up days keep 2.8% each
-        assert!(rows[0][10][3].as_str().unwrap().contains("after the backtest's 20 bp a round trip: +28.0%/-14.0%, gain factor 2.00"));
+        assert!(rows[1][10][3].as_str().unwrap().contains("after the backtest's 20 bp a round trip: +28.0%/-14.0%, gain factor 2.00"));
         // (#1206) €1,000 a session: FLAT never moved, so it reads +€0.00 before costs and pays 30 × €2.00
         assert!(rows[3][11][3].as_str().unwrap().contains(": +€0.00 before costs; the backtest's 20 bp a round trip costs 30 × €2.00 = €60.00; -€60.00 after, about -€2.00 a session (+€0.00 before costs)"));
         // (#1208) BIG's 30 sessions average its +€140.00 and +€200.00
-        assert!(rows[0][11][3].as_str().unwrap().contains("+€140.00 after, about +€4.67 a session (+€6.67 before costs)"));
+        assert!(rows[1][11][3].as_str().unwrap().contains("+€140.00 after, about +€4.67 a session (+€6.67 before costs)"));
+        // (#1221) GAP's one round trip runs from its first open to its last close, and BEST lists all four
+        assert_eq!(rows[0][14][3], "€1,000 bought at the open on 2026-01-02 and sold at the close on 2026-01-31, one round trip: +€282.18 before costs; the backtest's 20 bp a round trip costs 1 × €2.00 = €2.00; +€280.18 after");
+        assert_eq!(rows[0][15][3], "The best of these ways to trade the name over the same sessions, in euros after costs, highest first:\nBUY&HOLD +€280.18\nHOLD 21 +€250.54\nTREND +€0.00\nP/L(EUR) -€190.61\n(hindsight: every column counts sessions that are over; the rows sort on this column)");
+        // a window of one session holds from its open to its close; none leaves BUY&HOLD blank
+        assert_eq!(web_rows("EU", 3, &[("GAP", 0.0, &gap)], d(1), d(2), 1.0, d(31))[0][14][1], "-€6.95");
+        assert_eq!(web_rows("EU", 3, &[("GAP", 0.0, &gap)], d(1), d(1), 1.0, d(31))[0][14], serde_json::json!(["BUY&HOLD", "—"]));
+    }
+
+    /// (#1221) TREND reads the close before each bar against the 200 closes up to it: out on bar 199 (199
+    /// closes behind it), in on bars 200 and 201, out on bar 202 after bar 201's close fell under, back in from
+    /// bar 203 and still in at the end, so the last spell sells at the last close.
+    #[test]
+    fn trend_spells_trade_the_next_open_after_the_close_crosses_its_200_mean() {
+        let o: Vec<f64> = (0..206).map(|j| 100.0 + j as f64).collect();
+        let c = [[100.0; 199].as_slice(), &[120.0, 120.0, 50.0, 120.0, 120.0, 120.0, 120.0]].concat();
+        let ch = chart(&o, &c, 1e5);
+        assert_eq!(trend(&ch, 199, 206), [o[202] / o[200] - 1.0, c[205] / o[203] - 1.0]);
+        assert_eq!(trend(&ch, 199, 202), [c[201] / o[200] - 1.0], "a window that ends in a spell sells at its last close");
+        assert!(trend(&chart(&o, &[100.0; 206], 1e5), 199, 206).is_empty(), "a close level with its mean is out");
     }
 
     /// A weekend line and the Monday line after it reach one session; the first one grades it.
