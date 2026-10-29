@@ -23640,6 +23640,63 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # model at 1.5x-2x won nearly every window, but only by sitting through a 95-98% fall in 1929-32. No table
 # ships. No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker.
 
+# (#1220) LIFECYCLE CENSUS, 2026-10-29, record only, no knob.
+# WHY: (#1219) closed constant leverage on the index. Ayres and Nalebuff ("Diversification Across Time",
+# 2010) argue for a different shape: a young saver borrows to hold stock worth a share of a whole working
+# life's saving, at most 2x what is saved so far, and deleverages as savings grow. On 96 yearly cohorts
+# from 1871 they claim two things: 200/50 ends with the same mean as a fixed 74% in stock at a 21% lower
+# SD, and it beats the 90/50 target-date glide by 11.5% of certainty equivalent at relative risk aversion
+# 4. The owner asked for it to be tested.
+# CENSUS (`backtest N lifecycle` prints it; CI probe 40872421341 on 011d9a7, `backtest 20 lifecycle`): 682
+# savers aged 23 to 64, 504 months each, one starting on each month's first bar from 1928-01 to 1984-10
+# (2.4 independent spans), all in real terms (CPIAUCNS). Stock is the (#1219) S&P 500 total return splice;
+# the rest sits in 10y Treasuries priced from the Shiller long rate, then GS10. Each month the saver puts a
+# real sum aside, either the same sum every month ("flat") or the same share of the Social Security
+# medium earner's scaled wage for that age ("wage", Actuarial Note 2026.3, Table 6), pays last month's
+# tax, then trades to the target. 200/λ holds stock worth λ times savings plus the saving still to come
+# discounted at 2.56%/yr real, never above 2x savings: 200/100 at λ = 1, 200/50 at λ = 0.5. 100/100 holds
+# all savings in stock, λ/λ holds λ of savings, and 90/50 glides from 90% to 50% over the 504 months.
+# Above 1x savings, "etf" holds the (#1219) 2x daily fund (bills on the borrowed half, 0.60%/yr on the
+# fund) and "margin" borrows at bills plus 2.5 pts. An account at or below 0 is sold out and starts again
+# from the next saving. Every line prints before tax ("gross") and after it ("taxed": 28% of each sale's
+# gain at average cost, losses carried forward, everything sold at 64). Results read real end wealth over
+# what was paid in. 200/100 is graded against 100/100 on the (#1219) bar: it beats 100/100 for 80% or more
+# of savers in each half (start before 1956-05-01, and from then on), its worst saver ends no poorer than
+# 100/100's, and no saver's account falls 90% or more from its peak. 200/50 is graded on the paper's two
+# claims: its SD sits below that of the λ/λ twin whose mean is nearest on a 0.01 grid, and its CE at CRRA
+# 4 sits above 90/50's.
+# 100/100, median and worst: flat gross 5.41x, 2.78x; flat taxed 4.04x, 2.16x; wage gross 5.00x, 2.55x;
+# wage taxed 3.75x, 1.94x. Its worst drawdown is 84% on every line.
+# 200/100: 0 of 8 lines clear the bar. % of savers beating 100/100 (before | after 1956-05-01), median,
+# worst, worst drawdown:
+#   gross etf     flat 100 (100|100) 8.86x 3.46x 98%; wage 100 (100|100) 7.81x 3.42x 98%
+#   gross margin  flat 83 (94|73) 7.54x 3.02x 99%; wage 85 (90|79) 6.74x 3.04x 99%
+#   taxed etf     flat 78 (93|63) 4.89x 2.26x 98%; wage 78 (90|66) 4.36x 2.27x 98%
+#   taxed margin  flat 74 (91|58) 5.18x 2.06x 99%; wage 76 (85|67) 4.62x 2.10x 99%
+# The two gross etf lines beat 100/100 for every saver, the worst included, and fail only the last leg:
+# 45 savers' accounts fall 90% or more, on every 200/100 line. Every other line misses 80% in the half
+# after 1956, and taxed margin flat's worst saver also ends poorer (2.06x against 2.16x).
+# 200/50: 8 of 8 lines hold both claims. Mean, SD against the twin's, CE gain over 90/50:
+#   gross etf     flat 4.59x, 1.00 vs 1.26 (78/78), +16.1%; wage 4.30x, 0.88 vs 1.17 (80/80), +22.6%
+#   gross margin  flat 4.44x, 0.97 vs 1.23 (74/74), +12.6%; wage 4.13x, 0.84 vs 1.14 (76/76), +18.4%
+#   taxed etf     flat 2.74x, 0.53 vs 0.71 (70/70), +7.6%; wage 2.62x, 0.48 vs 0.68 (71/71), +12.3%
+#   taxed margin  flat 2.67x, 0.50 vs 0.70 (67/67), +5.5%; wage 2.54x, 0.45 vs 0.67 (68/68), +9.7%
+# The line nearest the paper's own setup (wage pay, cheap borrowing, no tax: wage gross etf) reads
+# stronger than the paper: an 80/80 twin, SD 25% lower, CE +22.6%, against 74/74, 21% and +11.5%.
+# CAVEATS: (a) the S&P and US Treasuries in real USD stand for the owner's EUR book. (b) 2.4 independent
+# 42-year spans fit in 98 years, so 682 savers are heavily overlapped draws of about two histories.
+# (c) The paper borrows at call money plus 0.30 pts and saves until 67; here the cheap line pays bills
+# plus 0.60%/yr on the whole fund, and saving stops at 64. (d) A real margin account would be called well
+# before a 90% fall, and a broker caps the loan; neither is modelled. (e) Dividends are taxed only inside
+# a sale's gain, at one flat rate, with no wrapper and no withholding. (f) The 90% fall is the account's
+# unit value, so a young saver's small early balance can fall 98% and still end ahead on later saving.
+# VERDICT: the paper's two claims hold on US data since 1928 in every variant tried, taxed and with costly
+# margin included: 200/50 ends with the mean of a fixed share at a lower spread and beats the 90/50 glide
+# on certainty equivalent. 200/100 beats an all-stock saver for nearly every saver before tax, but every
+# line leaves 45 savers whose accounts fall 90% or more, and after tax or at margin rates it misses 80% in
+# the later half, so it fails the (#1219) bar. No knob and no page column; nothing here reaches rank, BUY
+# NOW, trade, size or the broker.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
