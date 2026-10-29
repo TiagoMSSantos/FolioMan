@@ -216,6 +216,17 @@ jobs:
         with:
           path: .fail_cache
           key: folioman-fail-${{ github.run_id }}
+      # (#1225) A `pit dead` run journals the SIZED record `screen` cites under BUY NOW, but only on this
+      # runner. Upload it so the row can be copied into a local journal without a local run. It is graded
+      # on tests/ci-settings.yaml, so a local `screen` on other settings prints it with its drift warning.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ !cancelled() && !inputs.bless && contains(inputs.args, 'dead') }}
+        with:
+          name: sized-journal
+          path: .backtest_sized.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 2
       # (#554) A knob ship moves a frozen-data golden, and the CI log prints only its FIRST changed line.
       # This writes every `*report_is_pinned` golden at the dispatched commit, in the debug profile
       # integration-tests checks them in, and uploads them: download, review the diff, commit. Each
