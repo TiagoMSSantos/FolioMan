@@ -23498,6 +23498,53 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker. A re-ask of
 # the intraday table still needs a NEW key at gross t >= 3.
 
+# (#1217) HOLD-WINDOW CENSUS, 2026-10-29, record only, no knob.
+# WHY: the owner asked whether buying, holding a calendar span and selling ever pays, and which span pays
+# the most a year in each asset class, net of one round trip.
+# CENSUS (`backtest N universe holdwindows` prints it; CI probe 40799847021 on 3784f69,
+# `backtest 20 universe holdwindows`): 5907 of 6430 names on 10y of daily bars, holds 1d to 6m bought and
+# sold at the open or the close (O-O, O-C, C-O, C-C); 5912 on max monthly bars, holds 1m to 20y close to
+# close. Seven classes, each equal weight: stock, REIT stock, equity ETF, bond ETF, gold/commodity ETF, REIT
+# fund, crypto; leveraged and inverse funds dropped. Total return, each dividend reinvested. Round trip:
+# crypto 30 bp, a euro line 20 bp, any other 50 bp. A rate compounds the mean log return of each buy date's
+# basket over its mean days held; t and halves read starts one hold apart. The S&P 500 runs twice, point in
+# time (each member on its member days) and today's members, to size the survivor bias every other class
+# carries. A screen book (the top 10 per class by growth score at each half-year cutoff) runs on monthly
+# bars, and a 60m grid repeats the (#1215) holds census with stocks and REIT stocks apart, raw prices.
+# Net %/yr (gross) / t / halves; the best line per class, then the best of 6m or less:
+#   stock                  monthly C-C 1y   +18.1 (+18.6) / 6.7 / +12.5|+20.2; short monthly 6m +16.8 / 6.7
+#   REIT stock             monthly C-C 5y   +14.6 / 4.7 / +13.7|+12.8;  short monthly 6m +14.5 / 5.3
+#   equity ETF             monthly C-C 10y  +11.2 / n/a, 2 spaced holds / +5.6|+3.5; 1y to 5y +5.4 to +6.8;
+#                                           short daily C-O 6m +8.2 / 1.9
+#   bond ETF               monthly C-C 2y   +2.2 / 2.8, misses Série E 4.5;  short monthly 6m +1.7 / 1.5
+#   gold/commodity ETF     daily C-O 6m     +10.7 / 2.3 / +6.3|+13.5, a 2016-2026 span; monthly 1y +5.4
+#   REIT fund              monthly C-C 5y   +4.8 / 0.6, a half loses;  short daily C-O 6m +2.0 / 0.6
+#   crypto                 daily O-C 1m     +112.3 (+119.9) / 3.0 / +352.7|+1.6, flat since 2021
+#   S&P 500 point-in-time  monthly C-C 3m   +14.5 / 1.3 / +31.6|+10.6; 6m +13.2 / 4.2; 1y to 10y +11.0 to +12.1
+#   S&P 500 today          monthly C-C 1y   +18.8 / 6.8;  short monthly 6m +17.9 / 6.9
+# Gross barely moves with the hold (stock daily C-C 1d +16.9, monthly 1y +18.6); the net climbs only because
+# a longer hold pays the round trip fewer times a year. Daily C-C 1d nets -59 to -69%/yr in every class but
+# crypto (-16), 1w -8 to -17%/yr in the same six (crypto +85), and the point-in-time S&P first nets above
+# zero at 1m (+6.3).
+# Survivor add (today's S&P members less point in time, pts/yr): daily C-C 1d +1.4, 1w +3.8, 1m +4.6, 6m
+# +5.2; monthly 1y +6.8, 3y +7.0, 5y +6.5, 10y +6.1. Every line but the point-in-time one reads high by
+# about this much.
+# Screen book: stock monthly C-C 6m +19.3 / 5.4 / +10.8|+17.8; REIT stock 2y +13.5 / 4.9 (6m +12.8 / 4.2);
+# equity ETF 3y +18.1 / 2.7 (6m +17.0 / 3.5). The screen never picks a bond ETF, a gold/commodity ETF or a
+# REIT fund, and its crypto book has one start.
+# 60m, 2y to 2026-10-28, raw: no hold from the same session to 21 sessions out clears net > 0 with t >= 3
+# in US stock (473 names), US REIT stock (30) or EU stock (105). The best US stock line, sell day +21
+# 16:00-09:30, nets EUR 0.48 a session at t 1.77, under the EUR 0.71 of buying at the first open and holding
+# the two years. EU REIT stock has no 60m bars.
+# VERDICT: holding pays and trading in and out does not. Every hold of 1w or less loses after costs in every
+# class but crypto; from 6m on the round trip costs under 1 pt/yr and the rate is flat in stocks, REIT
+# stocks and bond ETFs, so the best hold is wherever noise tops that plateau. Equity ETFs and REIT funds keep
+# rising past 6m on few independent holds. Today's universe reads 5 to 7 pts/yr high: the honest stock rate
+# is the point-in-time S&P, about 11 to 13%/yr at any hold of 6m or more. Bond ETFs and REIT funds miss
+# Série E. The crypto line is today's surviving coins and earned its rate before 2021.
+# No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker. It is a
+# census, not a timing rule.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
