@@ -271,6 +271,9 @@ mod tests {
         // a bad close to reinvest at drops the dividend rather than poison every later price
         let s = series(&dates, &[10.0, 11.0, 12.0], &[0.0, 12.0, 13.0], &[(d(2024, 2, 10), 1.0)], true);
         assert_eq!(s.closes, [0.0, 12.0, 13.0]);
+        // an ex-date on the 1st comes after the month before closed, so that day's open carries it
+        let s = series(&dates, &[10.0, 11.0, 12.0], &[11.0, 12.0, 13.0], &[(d(2024, 2, 1), 1.0)], true);
+        assert_eq!((s.opens, s.closes), (vec![10.0, 11.0 * m, 12.0 * m], vec![11.0, 12.0 * m, 13.0 * m]));
     }
 
     #[test]

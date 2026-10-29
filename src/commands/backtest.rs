@@ -2690,11 +2690,11 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     }
 }
 
-/// (#1217) `backtest N holdwindows`: buy, hold a calendar span, sell. Every hold in [`holds::HOLDS`] per
+/// (#1217) `backtest N holdwindows`: buy, hold a calendar span, sell. Every hold in [`crate::heuristics::holds::HOLDS`] per
 /// asset class, net of one round trip: each class's names equal weight on 10y of daily bars (1d to 6m,
 /// bought and sold at the open or the close) and on the max monthly bars (1m to 20y, close to close); the
 /// S&P 500 as it stood on each buy date against today's members, whose gap is the survivor add; the
-/// screen book, the top [`holds::BOOK`] names per class by growth score at each half-year cutoff, on the
+/// screen book, the top [`crate::heuristics::holds::BOOK`] names per class by growth score at each half-year cutoff, on the
 /// monthly bars; then the (#1215) 60m holds census with stocks and REIT stocks apart. A census: no knob,
 /// lane or trade reads it.
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::holds
