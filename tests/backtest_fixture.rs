@@ -391,6 +391,21 @@ fn best_census_offline_says_it_lacks_eur_usd() {
     assert!(!got.contains("PICKED ON 2y"), "{got}");
 }
 
+/// (#1224) The roll ladder's CONTROL is (#311)'s roll rebuilt on its chain: each book's CONTROL row reads the
+/// same roll, never-sell, Δ, win, worst and OOS as that book's (#311) row in the same run, and the bar prints.
+#[test]
+fn roll_ladder_control_reads_the_shipped_roll() {
+    let got = report_at(&fixture_copy("census-rolls", false), &["20", "rolls"], None);
+    assert!(got.contains("── ROLL LADDER (#1224)"), "{got}");
+    for name in ["top-10", "SIZED"] {
+        let shipped = got.lines().find(|l| l.starts_with(&format!("  {name:<7} roll "))).expect("the (#311) row");
+        let control = got.lines().find(|l| l.starts_with(&format!("  CONTROL {name:<7} 10y"))).expect("the CONTROL row");
+        let tail = &shipped[shipped.find(" roll ").unwrap()..];
+        assert!(control.contains(tail), "{control}\n{shipped}");
+    }
+    assert!(got.lines().any(|l| l.starts_with("  PICK ")), "{got}");
+}
+
 /// (#342) A copy of the fixture in a dir of its own, its `tickers:` list run Z-A when `reverse`.
 /// Offline, the fetch completes in input order, so a Z-A copy is what a live run's latency does to the
 /// pool: same names, another order. Text splice, not a serde round-trip, so nothing but the order can

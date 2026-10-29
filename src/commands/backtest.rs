@@ -777,6 +777,7 @@ struct Args {
     leverage: bool,
     lifecycle: bool,
     bestpick: bool,
+    rolls: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -813,6 +814,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("leverage") => a_.leverage = true, // (#1219) daily-reset 1.25x-3x S&P total return vs 1x
             _ if a.eq_ignore_ascii_case("lifecycle") => a_.lifecycle = true, // (#1220) Ayres-Nalebuff savers at 200/100 and 200/50
             _ if a.eq_ignore_ascii_case("bestpick") => a_.bestpick = true, // (#1222) the page's BEST picked on 2y, traded the next step
+            _ if a.eq_ignore_ascii_case("rolls") => a_.rolls = true, // (#1224) the 20y DCA roll at 3m-10y, sell-all and leavers-only
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ => a_.tickers.push(a.clone()),
         }
@@ -1243,7 +1245,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -2234,6 +2236,10 @@ pub async fn run(args: Vec<String>) {
     }
     let roll = report_roll(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill, rivals, (dead_end, dead_penalty));
     lap("roll");
+    if rolls {
+        report_roll_ladder(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill, (dead_end, dead_penalty));
+        lap("roll ladder");
+    }
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -6656,6 +6662,239 @@ fn report_roll(
     lane("SIZED", sized_programs)
 }
 
+/// (#1224) The share of a book that a roll from `old` to `new` sells: 1 − the weight both books hold, a name's
+/// overlap being the smaller of its two weights. The unfunded remainders earn the same legs ([`book_multiple`]),
+/// so the smaller of the two counts as held too.
+fn turnover(old: &[(&str, f64)], new: &[(&str, f64)]) -> f64 {
+    let rest = |b: &[(&str, f64)]| 1.0 - b.iter().map(|(_, w)| w).sum::<f64>();
+    let kept: f64 = old.iter().filter_map(|(t, w)| Some(w.min(new.iter().find(|(u, _)| u == t)?.1))).sum();
+    (1.0 - kept - rest(old).min(rest(new))).clamp(0.0, 1.0)
+}
+
+/// (#1224) [`dca_program`]'s lots on a `roll`-month cycle: each lot is re-bought into `book(roll date, end)` every
+/// `roll` months until `end = start + 2 × ROLL_MONTHS`. `turn(old, new)` is the share of the lot a roll sells: 1 is
+/// (#311)'s sell-all, [`turnover`] sells only the leavers. The sold share pays the gains tax on its own gain (no
+/// loss credited, (#310)'s rule) and `fee` on its value, and the cost basis of what stays carries over. Never-sell
+/// and the index are [`dca_program`]'s. Returns the program and the mean share a roll sold.
+/// shortcut: `turn` reads the books' target weights, not the drifted ones, the stayers re-weight untaxed, and the
+/// rate counts the hold since the last roll, not each share's own. Sell-all at a flat rate is exact.
+fn dca_chain<B>(
+    start: chrono::NaiveDate,
+    roll: u32,
+    fee: f64,
+    book: impl Fn(chrono::NaiveDate, chrono::NaiveDate) -> Option<B>,
+    value: impl Fn(&B, chrono::NaiveDate, chrono::NaiveDate) -> Option<f64>,
+    turn: impl Fn(&B, &B) -> f64,
+    index: impl Fn(chrono::NaiveDate, chrono::NaiveDate) -> Option<f64>,
+    base: f64,
+    schedule: &[crate::config::CgtRung],
+) -> Option<(Dca, f64)> {
+    let span = 2 * ROLL_MONTHS;
+    let at = |m: u32| start.checked_add_months(chrono::Months::new(m));
+    let end = at(span)?;
+    let rate = |held: u32| cgt_rate(i64::from(held / 12), base, schedule);
+    let mut out = Dca { roll: 0.0, hold: 0.0, index: 0.0 };
+    let (mut traded, mut rolls) = (0.0, 0u32);
+    for m in 0..DCA_MONTHS {
+        let buy = at(m)?;
+        let mut b = book(buy, end)?;
+        let (g, x) = (value(&b, buy, end)?, index(buy, end)?);
+        out.hold += g - rate(span - m) * (g - 1.0).max(0.0);
+        out.index += x - rate(span - m) * (x - 1.0).max(0.0);
+        let (mut last, mut v, mut cost) = (m, 1.0, 1.0);
+        for k in (m + roll..span).step_by(roll as usize) {
+            v *= value(&b, at(last)?, at(k)?)?;
+            let nb = book(at(k)?, end)?;
+            let s = turn(&b, &nb);
+            let paid = rate(k - last) * (s * (v - cost)).max(0.0) + s * v * fee;
+            cost = (1.0 - s) * cost + s * v - paid;
+            v -= paid;
+            (traded, rolls) = (traded + s, rolls + 1);
+            (b, last) = (nb, k);
+        }
+        v *= value(&b, at(last)?, end)?;
+        out.roll += v - rate(span - last) * (v - cost).max(0.0);
+    }
+    Some((out, traded / f64::from(rolls.max(1))))
+}
+
+/// (#1224) The bar, set before the run. `rows` holds each leavers-only rung's SIZED Δ against the shipped roll as
+/// (early-half mean, late-half mean, mean, median, programs), None where it graded nothing. The pick is the best
+/// early mean above zero (the first on a tie). It ships only if its late half, mean and median are all above zero
+/// over at least 12 programs. None when no rung beats the shipped roll on the early half.
+fn pick_rung(rows: &[Option<(f64, f64, f64, f64, usize)>]) -> Option<(usize, bool)> {
+    let (i, (_, late, mean, med, n)) =
+        rows.iter().enumerate().filter_map(|(i, r)| r.filter(|r| r.0 > 0.0).map(|r| (i, r))).min_by(|a, b| b.1.0.total_cmp(&a.1.0))?;
+    Some((i, late > 0.0 && mean > 0.0 && med > 0.0 && n >= 12))
+}
+
+/// (#1224) `backtest 20 rolls`: how often to re-buy the screen. [`report_roll`]'s programs at every rung from 3
+/// months to [`ROLL_YEARS`], two ways: sell-all ((#311)'s rule, each roll sells the whole book) and leavers-only
+/// (each roll sells only the [`turnover`]). Every roll pays one round trip's `holds::cost_bps` on what it sells, so
+/// the 10y sell-all rung is the shipped roll with its fee. CONTROL is that roll without the fee and must read as
+/// (#311)'s lines above. The bar is [`pick_rung`] over the leavers-only rungs' SIZED Δ against the shipped roll. A
+/// print only: nothing reads it, and nothing it prints moves a book.
+#[mutants::skip] // printing; turnover, dca_chain and pick_rung carry the tests
+fn report_roll_ladder(
+    samples: &[Sample],
+    books: &[Sample],
+    series: &HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)>,
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    years: i64,
+    tuning: &BuyHeuristic,
+    sz: &config::Sizing,
+    top: usize,
+    spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
+    dead: (&HashSet<&str>, f64),
+) {
+    use crate::heuristics::holds;
+    use chrono::{Months, NaiveDate};
+    const RUNGS: [u32; 8] = [3, 6, 12, 24, 36, 60, 84, ROLL_MONTHS];
+    const NAMES: [&str; 2] = ["top-10", "SIZED"];
+    if books.is_empty() {
+        return;
+    }
+    let span = 2 * ROLL_MONTHS;
+    let base = tuning.capital_gains_tax_pct / 100.0;
+    let fee = holds::cost_bps("stock", "USD") / 1e4;
+    let legs = if spill.is_empty() { vec![(1.0, bench)] } else { spill.to_vec() };
+    let starts: Vec<NaiveDate> = sized_buckets(samples, bench, years, tuning, sz, top, spill)
+        .into_keys()
+        .filter_map(|b| NaiveDate::from_ymd_opt(b / 2, (b % 2 * 6 + 1) as u32, 1))
+        .collect();
+    let at = |s: NaiveDate, m: u32| s.checked_add_months(Months::new(m));
+    // every month a lot can be bought or re-bought in, with its program's end
+    let keys: Vec<(NaiveDate, u32)> = starts.iter().flat_map(|s| (0..span).map(move |m| (*s, m))).collect();
+    // shortcut: duplicates report_roll's per-month ranking (top-10 and SIZED only) so that function stays
+    // untouched; fold the two into one helper when a pass rewrites report_roll
+    let months: std::collections::BTreeSet<NaiveDate> = keys.iter().filter_map(|(s, m)| at(*s, *m)).collect();
+    let ranked: BTreeMap<NaiveDate, (Vec<&Sample>, Vec<&Sample>)> = months
+        .into_par_iter()
+        .map(|d| {
+            let pool = month_pool(books, d);
+            let quotes: Vec<&Quote> = pool.iter().map(|s| s.quote.as_ref()).collect();
+            let rows: Vec<_> = pool
+                .iter()
+                .zip(picks::growth_scores_ranked(&quotes, tuning))
+                .filter_map(|(s, sc)| Some((0, sc?, 0.0, 0.0, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield))))
+                .collect();
+            let by_tk: HashMap<&str, &Sample> = pool.iter().map(|s| (s.quote.ticker.as_str(), *s)).collect();
+            let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(&0).unwrap_or_default();
+            kept.sort_by(|x, y| y.0.total_cmp(&x.0));
+            let mut sized: Vec<(f64, &Sample)> = pool.iter().filter_map(|s| Some((growth_score(&s.quote, tuning)?, *s))).collect();
+            sized.sort_by(|a, b| b.0.total_cmp(&a.0));
+            (d, (kept.iter().map(|x| by_tk[x.3.as_str()]).collect(), sized.into_iter().map(|x| x.1).collect()))
+        })
+        .collect();
+    let alive = |s: &Sample, d, end| {
+        let tk = s.quote.ticker.as_str();
+        series.get(tk).is_some_and(|x| priced_at_both(x, d, end, dead.0.contains(tk)))
+    };
+    let top10 = |d: NaiveDate, end: NaiveDate| -> Option<Vec<(&str, f64)>> {
+        let v: Vec<&Sample> = ranked.get(&d)?.0.iter().copied().filter(|s| alive(s, d, end)).collect();
+        let v = picks::sector_cap(v, tuning.growth_sector_cap, |s| picks::stock_sector(&s.quote));
+        let trails: Vec<&[f64]> = v.iter().map(|s| s.trail.as_slice()).collect();
+        Some(equal_top(corr_cap_rung(&v, &trails, VERDICT_TOP, tuning.growth_corr_cap).into_iter(), VERDICT_TOP))
+    };
+    let sized = |d: NaiveDate, end: NaiveDate| -> Option<Vec<(&str, f64)>> {
+        let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
+        Some(crate::commands::size::sized_book(&q, tuning, sz, None, picks::btc_1y(q.iter().copied()), &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), w / 100.0)).collect())
+    };
+    // both books once per (month, end), and each one's worth once per sale month: every rung and ruler reads them
+    let held: HashMap<(NaiveDate, NaiveDate), [Option<Vec<(&str, f64)>>; 2]> = keys
+        .par_iter()
+        .filter_map(|(s, m)| Some((at(*s, *m)?, at(*s, span)?)))
+        .map(|(d, e)| ((d, e), [top10(d, e), sized(d, e)]))
+        .collect();
+    let worth: HashMap<((NaiveDate, NaiveDate), NaiveDate), [Option<f64>; 2]> = keys
+        .par_iter()
+        .flat_map_iter(|(s, m)| {
+            let sales: std::collections::BTreeSet<u32> = RUNGS.iter().map(|r| (m + r).min(span)).chain([span]).collect();
+            sales.into_iter().filter_map(move |t| Some((at(*s, *m)?, at(*s, span)?, at(*s, t)?)))
+        })
+        .map(|(d, e, to)| {
+            let b = held.get(&(d, e));
+            (((d, e), to), [0, 1].map(|i| book_multiple(b?[i].as_ref()?, d, to, series, bench, &legs, dead)))
+        })
+        .collect();
+    let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);
+    let book_of = |i: usize, k: &(NaiveDate, NaiveDate)| held.get(k).and_then(|b| b[i].as_deref());
+    let run = |i: usize, roll: u32, fee: f64, leavers: bool| -> BTreeMap<i32, (Dca, f64)> {
+        starts
+            .par_iter()
+            .filter_map(|s| {
+                let program = dca_chain(
+                    *s,
+                    roll,
+                    fee,
+                    |d, e| book_of(i, &(d, e)).map(|_| (d, e)),
+                    |k, _, to| worth.get(&(*k, to))?[i],
+                    |a, b| if leavers { turnover(book_of(i, a).unwrap_or_default(), book_of(i, b).unwrap_or_default()) } else { 1.0 },
+                    index,
+                    base,
+                    &tuning.cgt_hold_schedule,
+                )?;
+                Some((bucket(*s), program))
+            })
+            .collect()
+    };
+    let cum = |w: f64| ((1.0 + dca_irr(w) / 100.0).powf(years as f64) - 1.0) * 100.0;
+    // `a`'s roll against `pick` of its own program and `b`'s, over the starts both graded: book_stats, median Δ, programs
+    let grade = |a: &BTreeMap<i32, (Dca, f64)>, b: &BTreeMap<i32, (Dca, f64)>, pick: fn(&Dca, &Dca) -> f64| {
+        let rows: BTreeMap<i32, Vec<(f64, f64, f64)>> =
+            a.iter().filter_map(|(k, x)| Some((*k, vec![(0.0, cum(x.0.roll), cum(pick(&x.0, &b.get(k)?.0)))]))).collect();
+        let med = median(book_multiples(&rows, 1).iter().map(|(r, h)| ann((r - 1.0) * 100.0, years) - ann((h - 1.0) * 100.0, years)).collect());
+        Some((book_stats(&rows, 1, years)?, med, rows.len()))
+    };
+    let never: fn(&Dca, &Dca) -> f64 = |x, _| x.hold;
+    let line = |label: &str, vs: &str, a: &BTreeMap<i32, (Dca, f64)>, b: &BTreeMap<i32, (Dca, f64)>, pick: fn(&Dca, &Dca) -> f64| {
+        let g = grade(a, b, pick);
+        let sold = a.values().map(|p| p.1).sum::<f64>() / a.len().max(1) as f64 * 100.0;
+        match g {
+            Some(((r, h, d, win, worst, early, late), med, n)) => println!(
+                "  {label:<22} roll {r:+.1}%/yr  vs {vs} {h:+.1}%/yr  ->  {d:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {n}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}   sells {sold:.0}%/roll"
+            ),
+            None => println!("  {label:<22} no program priced"),
+        }
+        g
+    };
+    let rung = |r: u32| if r < 12 { format!("{r}m") } else { format!("{}y", r / 12) };
+    println!(
+        "\n── ROLL LADDER (#1224): (#311)'s {DCA_MONTHS} monthly buys sold at {years}y, each lot re-bought into that month's screen every 3m to {ROLL_YEARS}y, selling the whole book (sell-all) or only the names the new book drops (leavers); a roll pays {:.0} bp on what it sells and {:.0}% on that gain, no loss credited ──",
+        fee * 1e4,
+        tuning.capital_gains_tax_pct
+    );
+    for (i, name) in NAMES.iter().enumerate() {
+        let control = run(i, ROLL_MONTHS, 0.0, false);
+        line(&format!("CONTROL {name:<7} {ROLL_YEARS}y"), "never-sell", &control, &control, never);
+    }
+    let ladder: Vec<[Vec<BTreeMap<i32, (Dca, f64)>>; 2]> =
+        (0..NAMES.len()).map(|i| [false, true].map(|leavers| RUNGS.iter().map(|r| run(i, *r, fee, leavers)).collect())).collect();
+    for (i, name) in NAMES.iter().enumerate() {
+        for (j, ruler) in ["sell-all", "leavers"].iter().enumerate() {
+            for (r, p) in RUNGS.iter().zip(&ladder[i][j]) {
+                line(&format!("{:<4}{name:<7} {ruler}", rung(*r)), "never-sell", p, p, never);
+            }
+        }
+    }
+    let lanes = &ladder[1];
+    let shipped = &lanes[0][RUNGS.len() - 1];
+    println!("  SIZED leavers against the shipped roll (sell-all {ROLL_YEARS}y, with the fee):");
+    let bar: Vec<Option<(f64, f64, f64, f64, usize)>> = RUNGS
+        .iter()
+        .zip(&lanes[1])
+        .map(|(r, p)| line(&format!("{:<4}SIZED   leavers", rung(*r)), "shipped", p, shipped, |_, y| y.roll).map(|((_, _, d, _, _, e, l), med, n)| (e, l, d, med, n)))
+        .collect();
+    match pick_rung(&bar).and_then(|(i, ship)| Some((i, ship, bar[i]?))) {
+        Some((i, ship, (e, l, d, med, n))) => println!(
+            "  PICK {} leavers: early {e:+.1}  late {l:+.1}  mean {d:+.1}  med {med:+.1}  over {n} programs  ->  {}",
+            rung(RUNGS[i]),
+            if ship { "SHIP" } else { "10y STAYS" }
+        ),
+        None => println!("  PICK none: no leavers rung beats the shipped roll on the early half  ->  10y STAYS"),
+    }
+}
+
 /// (#44 Phase C) Grade each FREE as-of fundamental factor on the HELD-BOOK metric: within the
 /// growth-gated universe, rank by the factor (not the score), hold the top-N, and compare its held-book
 /// excess-vs-S&P500 to ranking by `growth_score`. A factor whose held-book excess BEATS the score with
@@ -10008,6 +10247,7 @@ mod tests {
         assert!(p("leverage").leverage && !p("traderules").leverage && !p("leverage").traderules);
         assert!(p("lifecycle").lifecycle && !p("leverage").lifecycle && !p("lifecycle").leverage);
         assert!(p("bestpick").bestpick && !p("lifecycle").bestpick && !p("bestpick").lifecycle);
+        assert!(p("rolls").rolls && !p("bestpick").rolls && !p("rolls").bestpick);
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -10044,7 +10284,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls time");
         assert_eq!(
             all,
             Args {
@@ -10070,6 +10310,7 @@ mod tests {
                 leverage: true,
                 lifecycle: true,
                 bestpick: true,
+                rolls: true,
                 time: true,
                 tickers: vec![]
             }
@@ -10832,6 +11073,98 @@ mod tests {
         assert!(close(p.hold) && close(p.roll) && close(p.index), "{want}: {} {} {}", p.hold, p.roll, p.index);
         let half = dca_program(start, |d, _| Some(d), |_: &NaiveDate, _, _| Some(0.5), |_, _| Some(0.5), 0.5, &[]).unwrap();
         assert_eq!((half.hold, half.roll, half.index), (48.0, 24.0, 48.0));
+    }
+
+    /// (#1224) Sell-all at [`ROLL_MONTHS`] with no fee is [`dca_program`]: its two tests' closures read the same €,
+    /// every roll selling the whole lot. A roll as long as the program never sells, so it is never-sell to the cent.
+    #[test]
+    fn dca_chain_sell_all_at_ten_years_is_dca_program() {
+        let (start, end) = (NaiveDate::from_ymd_opt(2000, 7, 1).unwrap(), NaiveDate::from_ymd_opt(2020, 7, 1).unwrap());
+        let months = |a: NaiveDate, b: NaiveDate| f64::from((b.year() - a.year()) * 12 + b.month() as i32 - a.month() as i32);
+        let rung = [crate::config::CgtRung { min_years: 15.0, excluded_pct: 100.0 }];
+        let all = |_: &NaiveDate, _: &NaiveDate| 1.0;
+        let (p, sold) = dca_chain(
+            start,
+            ROLL_MONTHS,
+            0.0,
+            |d, e| {
+                assert_eq!(e, end);
+                Some(d)
+            },
+            |b: &NaiveDate, from, to| {
+                assert_eq!(*b, from);
+                Some(1.0 + months(from, to) / 120.0)
+            },
+            all,
+            |from, to| Some(1.0 + months(from, to) / 240.0),
+            0.5,
+            &rung,
+        )
+        .unwrap();
+        let close = |got: f64, want: f64| (got - want).abs() < 1e-9;
+        assert!(close(p.hold, 226.375) && close(p.roll, 187.5) && close(p.index, 161.1875) && sold == 1.0, "{} {} {} {sold}", p.hold, p.roll, p.index);
+        let half = |_: &NaiveDate, _, _| Some(0.5);
+        let (h, _) = dca_chain(start, ROLL_MONTHS, 0.0, |d, _| Some(d), half, all, |_, _| Some(0.5), 0.5, &[]).unwrap();
+        assert_eq!((h.hold, h.roll, h.index), (48.0, 24.0, 48.0));
+        let grow = |_: &NaiveDate, from, to| Some(1.0 + months(from, to) / 120.0);
+        let (n, none) = dca_chain(start, 2 * ROLL_MONTHS, 0.0, |d, _| Some(d), grow, all, |_, _| Some(1.0), 0.5, &rung).unwrap();
+        assert!(close(n.roll, 226.375) && n.roll == n.hold && none == 0.0, "{} {} {none}", n.roll, n.hold);
+    }
+
+    /// (#1224) Leavers-only. Every leg doubles, each roll sells half, the rate is 50%. A lot rolled at 60, 120 and
+    /// 180 months: sell half of 2 (tax 0.25, basis 1.25, keeps 1.75), of 3.5 (tax 0.5625, basis 1.8125), of 5.875
+    /// (tax 1.015625, basis 2.828125, keeps 4.859375), then 9.71875 sold whole nets 6.2734375. The 60 lots bought
+    /// before month 60 roll three times, the other 36 twice (3.84375 each): 514.78125. Never-sell nets 1.5 a lot.
+    /// A book that never changes sells nothing, so on one compounding series the roll is never-sell.
+    #[test]
+    fn dca_chain_taxes_only_the_share_a_roll_sells() {
+        let start = NaiveDate::from_ymd_opt(2000, 7, 1).unwrap();
+        let twice = |_: &NaiveDate, _, _| Some(2.0);
+        let (p, sold) = dca_chain(start, 60, 0.0, |d, _| Some(d), twice, |_, _| 0.5, |_, _| Some(1.0), 0.5, &[]).unwrap();
+        assert_eq!((p.roll, p.hold, p.index, sold), (514.78125, 144.0, 96.0, 0.5));
+        let months = |a: NaiveDate, b: NaiveDate| f64::from((b.year() - a.year()) * 12 + b.month() as i32 - a.month() as i32);
+        let grow = |_: &NaiveDate, from, to| Some(2.0_f64.powf(months(from, to) / 120.0));
+        let (q, none) = dca_chain(start, 3, 0.0, |d, _| Some(d), grow, |_, _| 0.0, |_, _| Some(1.0), 0.5, &[]).unwrap();
+        assert!((q.roll - q.hold).abs() < 1e-9 && none == 0.0, "{} {} {none}", q.roll, q.hold);
+    }
+
+    /// (#1224) Untaxed, sell-all, every leg doubling: a lot pays 0.5% of its value at each roll, so the 60 lots that
+    /// roll three times end 16 × 0.995³ and the other 36 8 × 0.995². A missing price drops the program.
+    #[test]
+    fn dca_chain_charges_the_fee_on_each_rolls_sale() {
+        let start = NaiveDate::from_ymd_opt(2000, 7, 1).unwrap();
+        let twice = |_: &NaiveDate, _, _| Some(2.0);
+        let (p, _) = dca_chain(start, 60, 0.005, |d, _| Some(d), twice, |_, _| 1.0, |_, _| Some(1.0), 0.0, &[]).unwrap();
+        let want = 60.0 * 16.0 * 0.995_f64.powi(3) + 36.0 * 8.0 * 0.995_f64.powi(2);
+        assert!((p.roll - want).abs() < 1e-9 && p.hold == 192.0, "{} {want} {}", p.roll, p.hold);
+        let gap = |_: &NaiveDate, from: NaiveDate, _| (from.year() < 2010).then_some(2.0);
+        assert!(dca_chain(start, 60, 0.0, |d, _| Some(d), gap, |_, _| 1.0, |_, _| Some(1.0), 0.0, &[]).is_none());
+    }
+
+    /// (#1224) What a roll sells: nothing of the same book, all of a disjoint one, half where half the weight stays,
+    /// and the unfunded remainders count as held, since both earn the same legs.
+    #[test]
+    fn turnover_is_the_weight_the_new_book_drops() {
+        let book = [("A", 0.6), ("B", 0.4)];
+        assert_eq!(turnover(&book, &book), 0.0);
+        assert_eq!(turnover(&book, &[("C", 0.5), ("D", 0.5)]), 1.0);
+        assert_eq!(turnover(&[("A", 0.5), ("B", 0.5)], &[("A", 0.5), ("C", 0.5)]), 0.5);
+        assert_eq!(turnover(&[("A", 0.5)], &[("B", 0.5)]), 0.5);
+        assert_eq!(turnover(&[], &[]), 0.0);
+    }
+
+    /// (#1224) The bar: the best early half above zero is picked, and it ships only with its late half, mean and
+    /// median above zero over 12 or more programs.
+    #[test]
+    fn pick_rung_takes_the_best_early_half_and_ships_on_all_four() {
+        let row = |early, late, mean, med, n| Some((early, late, mean, med, n));
+        assert_eq!(pick_rung(&[row(0.1, 1.0, 1.0, 1.0, 12), None, row(0.3, 1.0, 1.0, 1.0, 12), row(0.2, 1.0, 1.0, 1.0, 12)]), Some((2, true)));
+        assert_eq!(pick_rung(&[row(0.3, 1.0, 1.0, 1.0, 12), row(0.3, -1.0, 1.0, 1.0, 12)]), Some((0, true)), "a tie keeps the first");
+        assert_eq!(pick_rung(&[row(0.0, 1.0, 1.0, 1.0, 12), row(-0.1, 1.0, 1.0, 1.0, 12), None]), None);
+        assert_eq!(pick_rung(&[row(0.1, 0.0, 1.0, 1.0, 12)]), Some((0, false)));
+        assert_eq!(pick_rung(&[row(0.1, 1.0, 0.0, 1.0, 12)]), Some((0, false)));
+        assert_eq!(pick_rung(&[row(0.1, 1.0, 1.0, 0.0, 12)]), Some((0, false)));
+        assert_eq!(pick_rung(&[row(0.1, 1.0, 1.0, 1.0, 11)]), Some((0, false)));
     }
 
     /// (#309) The BUY NOW record line: longest horizon first, rows without a SIZED record skipped, and
