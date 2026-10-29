@@ -476,6 +476,200 @@ pub fn lever_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], horizons: &[u
     out.join("\n")
 }
 
+/// (#1220) THE LIFECYCLE CENSUS (Ayres and Nalebuff, "Diversification Across Time", 2010): does a saver
+/// from 23 to 64 who holds stock worth λ times savings plus the rest of a working life's saving, never
+/// above 2x savings, end better off than one who holds a fixed share? The rest sits in 10y Treasuries.
+/// A census, not a knob. The wage saver puts the same share of each month's wage aside: the Social
+/// Security medium earner's scaled factors for ages 23 to 64 (Actuarial Note 2026.3, Table 6).
+pub const WAGE: [f64; 42] = [
+    0.436, 0.521, 0.587, 0.645, 0.699, 0.748, 0.791, 0.829, 0.863, 0.895, 0.923, 0.948, 0.970, 0.989, 1.006, 1.020, 1.033, 1.045, 1.055, 1.064, 1.071,
+    1.079, 1.085, 1.089, 1.092, 1.093, 1.093, 1.093, 1.091, 1.086, 1.080, 1.071, 1.060, 1.041, 1.018, 0.993, 0.964, 0.927, 0.878, 0.847, 0.818, 0.790,
+];
+/// (#1220) The real rate a year future saving is discounted at, the paper's.
+pub const REAL_RATE: f64 = 0.0256;
+/// (#1220) The taxed lines' rate on each sale's gain, losses carried forward.
+pub const GAIN_TAX: f64 = 0.28;
+
+/// (#1220) Books a month's net sale `gain` at `rate` against the losses carried: (tax owed, losses
+/// carried) after it.
+fn book(gain: f64, rate: f64, (owed, carry): (f64, f64)) -> (f64, f64) {
+    let net = gain - carry;
+    (owed + rate * net.max(0.0), (-net).max(0.0))
+}
+
+/// (#1220) One saver from month `s` of `mo` (each month's 1x, 2x fund, margin interest and 10y bond
+/// returns) and `price` (the CPI on each month's first bar). In month `j`, `pay[j]` arrives in real
+/// terms, last month's tax is paid, and the account trades to `target(wealth, the rest of the saving at
+/// [`REAL_RATE`], j)` in stock, between 0 and 2x wealth. Stock above wealth is the 2x fund's share, or
+/// borrowed if `margin`; stock below it leaves the rest in bonds. Each sale books its gain at average
+/// cost; an account at or below 0 is sold out and starts again from the next saving; the last month
+/// sells everything. Returns the end wealth over what was paid in, both real, then the deepest fall of
+/// the account's unit value and whether it ever fell 90%.
+pub fn save(mo: &[[f64; 4]], price: &[f64], s: usize, pay: &[f64], target: &dyn Fn(f64, f64, usize) -> f64, margin: bool, rate: f64) -> (f64, f64, bool) {
+    let step = (1.0 + REAL_RATE).powf(-1.0 / 12.0);
+    let mut rest = 0.0;
+    let mut future: Vec<f64> = pay.iter().rev().map(|c| {
+        let w = rest;
+        rest = (rest + c) * step;
+        w
+    }).collect();
+    future.reverse();
+    let (mut h, mut debt, mut tax, mut rets) = ([(0.0f64, 0.0f64); 3], 0.0, (0.0, 0.0), vec![]);
+    let value = |h: &[(f64, f64); 3]| h.iter().map(|x| x.0).sum::<f64>();
+    for (j, (c, w)) in pay.iter().zip(&future).enumerate() {
+        let (m, up) = (mo[s + j], price[s + j] / price[s]);
+        let have = value(&h) - debt + c * up;
+        let paid = tax.0.min(have);
+        let wealth = have - paid;
+        tax.0 -= paid;
+        let x = target(wealth, w * up, j).clamp(0.0, 2.0 * wealth);
+        let over = (x - wealth).max(0.0);
+        let (fund, loan) = if margin { (0.0, over) } else { (over, 0.0) };
+        let mut gain = 0.0;
+        for (k, t) in h.iter_mut().zip([x - 2.0 * fund, fund, (wealth - x).max(0.0)]) {
+            if t < k.0 {
+                gain += (k.0 - t) * (1.0 - k.1 / k.0);
+                k.1 *= t / k.0;
+            } else {
+                k.1 += t - k.0;
+            }
+            k.0 = t;
+        }
+        tax = book(gain, rate, tax);
+        for (k, r) in h.iter_mut().zip([m[0], m[1], m[3]]) {
+            k.0 *= 1.0 + r;
+        }
+        debt = loan * (1.0 + m[2]);
+        let end = value(&h) - debt;
+        if end <= 0.0 {
+            tax = book(h.iter().map(|x| x.0 - x.1).sum(), rate, tax);
+            (h, debt) = ([(0.0, 0.0); 3], 0.0);
+        }
+        rets.push(end / wealth - 1.0);
+    }
+    let left = value(&h) - debt - book(h.iter().map(|x| x.0 - x.1).sum(), rate, tax).0;
+    let mut sum = 0.0;
+    let le: Vec<f64> = std::iter::once(0.0).chain(rets.iter().map(|r| {
+        sum += (1.0 + r).max(1e-9).ln();
+        sum
+    })).collect();
+    (left * price[s] / price[s + pay.len()] / pay.iter().sum::<f64>(), drawdown(&le), ruined(&rets))
+}
+
+/// (#1220) Why a 200/50 line misses the paper's two claims, `None` when it holds both: its SD of end
+/// wealth is below the same-mean fixed share's, and its certainty equivalent above the 90/50 glide's.
+pub fn claims(sd: (f64, f64), ce: (f64, f64)) -> Option<&'static str> {
+    if sd.0 >= sd.1 {
+        Some("its SD is no lower")
+    } else if ce.0 <= ce.1 {
+        Some("its CE is no higher")
+    } else {
+        None
+    }
+}
+
+/// (#1220) The census text on daily 1x total returns `rs` and bill rate `cash`, with the CPI `cpi` and
+/// the 10y yield `long` (% a year) by month: a saver starting on each month's first bar whose 42 years
+/// fit, saving the same real sum each month ("flat") or a share of the wage, before tax ("gross") and
+/// after it. 200/100 is graded against 100/100 on the (#1219) bar, its halves split at `split`; 200/50
+/// against the paper's claims, beside the fixed share whose mean end wealth is nearest on a 0.01 grid
+/// up to 2.
+pub fn lifecycle_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], cpi: &BTreeMap<i32, f64>, long: &BTreeMap<i32, f64>, split: NaiveDate) -> String {
+    let f = firsts(dates);
+    let fund = levered(dates, rs, cash, 2.0, COSTS[0].1, COSTS[0].2);
+    let grow = |v: &[f64], a: usize, b: usize| v[a + 1..=b].iter().map(|r| 1.0 + r).product::<f64>() - 1.0;
+    let mo: Vec<[f64; 4]> = f.windows(2).map(|w| {
+        let years = (dates[w[1]] - dates[w[0]]).num_days() as f64 / 365.25;
+        let bond = crate::core::bond_month_return(on_month(long, dates[w[0]]), on_month(long, dates[w[1]]));
+        [grow(rs, w[0], w[1]), grow(&fund, w[0], w[1]), (cash[w[0]] + COSTS[1].1) * years, bond]
+    }).collect();
+    let price: Vec<f64> = f.iter().map(|&i| on_month(cpi, dates[i])).collect();
+    let n = 12 * WAGE.len();
+    let starts: Vec<usize> = (0..(mo.len() + 1).saturating_sub(n)).collect();
+    let late: Vec<bool> = starts.iter().map(|&s| dates[f[s]] >= split).collect();
+    let month = |s: usize| dates[f[s]].format("%Y-%m");
+    let mut out = vec![format!(
+        "\n── (#1220) LIFECYCLE CENSUS (Ayres–Nalebuff): {} savers aged 23 to 64, one starting each month from {} to {} ({:.1} independent spans), in real terms; 200/λ holds stock worth λ x (savings + the saving still to come at 2.56%/yr real), at most 2x savings, λ/λ holds λ x savings, 90/50 glides from 90% of savings to 50%, the rest sits in 10y Treasuries; above 1x savings, etf holds a 2x daily fund (bills + 0.60%/yr), margin borrows at bills + 2.5 pts; taxed lines pay 28% of each sale's gain and sell out at 64 ──",
+        starts.len(),
+        month(0),
+        month(starts.len().saturating_sub(1)),
+        mo.len() as f64 / n as f64
+    )];
+    let pays = [("flat", vec![1.0; n]), ("wage", WAGE.iter().flat_map(|w| [*w; 12]).collect())];
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let sd = |v: &[f64]| {
+        let m = mean(v);
+        mean(&v.iter().map(|x| (x - m).powi(2)).collect::<Vec<f64>>()).sqrt()
+    };
+    let ce = |v: &[f64]| mean(&v.iter().map(|x| x.max(1e-9).powi(-3)).collect::<Vec<f64>>()).powf(-1.0 / 3.0);
+    let worst = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+    let med = |v: &[f64]| crate::core::median(v.to_vec()).unwrap_or(f64::NAN);
+    let (mut clear, mut hold) = (0, 0);
+    for (path, pay) in &pays {
+        for (tax, rate) in [("gross", 0.0), ("taxed", GAIN_TAX)] {
+            let run = |target: &dyn Fn(f64, f64, usize) -> f64, margin: bool| -> Vec<(f64, f64, bool)> {
+                starts.iter().map(|&s| save(&mo, &price, s, pay, target, margin, rate)).collect()
+            };
+            let ends = |g: &[(f64, f64, bool)]| g.iter().map(|x| x.0).collect::<Vec<f64>>();
+            let deepest = |g: &[(f64, f64, bool)]| g.iter().map(|x| x.1).fold(0.0, f64::max) * 100.0;
+            let base = run(&|w, _, _| w, false);
+            let one = ends(&base);
+            out.push(format!(
+                "  {path} {tax} 100/100: {} savers, median {:.2}x paid in, worst {:.2}x, worst drawdown {:.0}%",
+                one.len(),
+                med(&one),
+                worst(&one),
+                deepest(&base)
+            ));
+            // 503: the last of the 504 months holds 50%
+            let glide = ce(&ends(&run(&|w, _, j| w * (0.9 - 0.4 * j as f64 / 503.0), false)));
+            for (cost, ..) in COSTS {
+                let g = run(&|w, rest, _| w + rest, cost == "margin");
+                let v = ends(&g);
+                // a tie is not a win; total_cmp so only a strictly richer end counts
+                let share = |half: Option<bool>| {
+                    let of: Vec<bool> = v.iter().zip(&one).zip(&late).filter(|x| half.is_none_or(|h| *x.1 == h)).map(|((a, b), _)| a.total_cmp(b).is_gt()).collect();
+                    of.iter().filter(|b| **b).count() as f64 / of.len() as f64
+                };
+                let (halves, wipes) = ((share(Some(false)), share(Some(true))), g.iter().filter(|x| x.2).count());
+                let why = misses(halves, worst(&v), worst(&one), wipes);
+                clear += usize::from(why.is_none());
+                out.push(format!(
+                    "  {path} {tax} 200/100 {cost}: beats 100/100 for {:.0}% of savers (before {split} {:.0}% | after {:.0}%), median {:.2}x vs {:.2}x, worst {:.2}x vs {:.2}x, worst drawdown {:.0}%, {wipes} wipe-outs: {}",
+                    share(None) * 100.0,
+                    halves.0 * 100.0,
+                    halves.1 * 100.0,
+                    med(&v),
+                    med(&one),
+                    worst(&v),
+                    worst(&one),
+                    deepest(&g),
+                    why.map_or("passes the bar".to_string(), |w| format!("fails, {w}"))
+                ));
+            }
+            for (cost, ..) in COSTS {
+                let v = ends(&run(&|w, rest, _| 0.5 * (w + rest), cost == "margin"));
+                let m = mean(&v);
+                let twins = (1..=200).map(|k| (k, ends(&run(&|w, _, _| w * (k as f64 / 100.0), cost == "margin"))));
+                let (k, twin) = twins.min_by(|a, b| (mean(&a.1) - m).abs().total_cmp(&(mean(&b.1) - m).abs())).unwrap();
+                let (s, c) = (sd(&v), ce(&v));
+                let why = claims((s, sd(&twin)), (c, glide));
+                hold += usize::from(why.is_none());
+                out.push(format!(
+                    "  {path} {tax} 200/50 {cost}: mean {m:.2}x paid in, SD {s:.2} vs {:.2} for {k}/{k} (mean {:.2}x), CE at CRRA 4 {c:.2}x vs {glide:.2}x for 90/50 ({:+.1}%): {}",
+                    sd(&twin),
+                    mean(&twin),
+                    (c / glide - 1.0) * 100.0,
+                    why.map_or("holds both claims".to_string(), |w| format!("fails, {w}"))
+                ));
+            }
+        }
+    }
+    out.push(format!("  {clear} of 8 200/100 lines clear the bar (beat 100/100 for 80% of savers in both halves, worst saver no poorer, no 90% fall)"));
+    out.push(format!("  {hold} of 8 200/50 lines hold both claims (SD below the same-mean fixed share's, CE at CRRA 4 above 90/50's)"));
+    out.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -784,5 +978,78 @@ mod tests {
         // margin at a bill rate of minus the spread borrows for free, so on flat closes it ties 1x and never beats it
         let flat = lever_report(&days(731), &[0.0; 731], &[-SPREAD; 731], &[1], d(2024, 7, 1));
         assert!(flat.contains("1y 2x margin lump: beats 1x in 0% (before 2024-07-01 0% | after 0%)"), "{flat}");
+    }
+
+    #[test]
+    fn a_saver_trades_to_the_target_pays_last_month_s_tax_and_carries_losses() {
+        // month 1 sells some of the 2x fund at a gain, month 2 sells at a loss, month 3's gain is partly offset
+        let mo = [[0.0; 4], [0.1, 0.18, 0.004, 0.003], [-0.2, -0.42, 0.005, 0.006], [0.3, 0.58, 0.004, -0.002], [0.4, 0.78, 0.004, 0.004]];
+        let price = [90.0, 100.0, 102.0, 101.0, 104.0, 105.0];
+        let pay = [1.5, 2.0, 0.7, 0.4];
+        let mix = |w: f64, rest: f64, j: usize| [w + rest, w + rest, 0.4 * w, 0.9 * w][j];
+        let got = [save(&mo, &price, 1, &pay, &mix, false, GAIN_TAX), save(&mo, &price, 1, &pay, &mix, true, GAIN_TAX)];
+        close(&[got[0].0, got[0].1, got[1].0, got[1].1], &[1.148623151007553, 0.2646016013725718, 1.1582791606925071, 0.25982012703567026]);
+        assert_eq!([got[0].2, got[1].2], [false, false]);
+    }
+
+    #[test]
+    fn an_account_at_or_below_0_is_sold_out_books_the_loss_and_starts_again() {
+        let price = [90.0, 100.0, 102.0, 101.0, 104.0, 105.0];
+        let pay = [1.5, 2.0, 0.7, 0.4];
+        // 2x on margin falls 60% and owes more than it holds; the 2x fund dies and leaves exactly 0
+        let margin = [[0.0; 4], [-0.6, 0.0, 0.004, 0.0], [0.1, 0.0, 0.004, 0.002], [0.2, 0.0, 0.004, 0.003], [0.1, 0.0, 0.004, 0.001]];
+        let fund = [[0.0; 4], [-0.5, -1.0, 0.004, 0.0], [0.2, 0.4, 0.004, 0.002], [0.1, 0.2, 0.004, 0.003], [0.05, 0.1, 0.004, 0.001]];
+        let a = save(&margin, &price, 1, &pay, &|w, _, _| 2.0 * w, true, GAIN_TAX);
+        let b = save(&fund, &price, 1, &pay, &|w, _, j| [2.0 * w, w, 0.0, w][j], false, GAIN_TAX);
+        close(&[a.0, a.1, b.0, b.1], &[1.1427662462939963, 0.999999999, 0.778361956521739, 0.999999999]);
+        assert!(a.2 && b.2);
+    }
+
+    #[test]
+    fn a_200_50_line_holds_only_below_its_twin_s_sd_and_above_the_glide_s_ce() {
+        let (sd, ce) = (Some("its SD is no lower"), Some("its CE is no higher"));
+        assert_eq!([claims((1.0, 1.0), (2.0, 1.0)), claims((1.1, 1.0), (2.0, 1.0))], [sd, sd]);
+        assert_eq!([claims((0.9, 1.0), (1.0, 1.0)), claims((0.9, 1.0), (0.8, 1.0))], [ce, ce]);
+        assert_eq!(claims((0.9, 1.0), (1.1, 1.0)), None);
+    }
+
+    #[test]
+    fn the_lifecycle_census_grades_200_100_on_the_bar_and_200_50_on_the_paper_s_claims() {
+        // a crash on the second month's first bar, then chop around a 0.47% monthly drift
+        let dates: Vec<NaiveDate> = (0..507).map(|m| d(1990 + m / 12, (m % 12 + 1) as u32, 1)).collect();
+        let rs: Vec<f64> = (0..dates.len()).map(|i| match i {
+            0 => 0.0,
+            1 => -0.4,
+            i if i % 2 == 1 => 0.0047 + 0.03,
+            _ => 0.0047 - 0.03,
+        }).collect();
+        let cash = vec![0.03; dates.len()];
+        let cpi: BTreeMap<i32, f64> = (0..507).step_by(6).map(|k: i32| (1990 * 12 + k, 100.0 * 1.002f64.powf(k as f64))).collect();
+        let long = BTreeMap::from([(1990 * 12, 6.0), (2000 * 12, 4.0), (2010 * 12 + 5, 5.5)]);
+        let want = r"
+── (#1220) LIFECYCLE CENSUS (Ayres–Nalebuff): 3 savers aged 23 to 64, one starting each month from 1990-01 to 1990-03 (1.0 independent spans), in real terms; 200/λ holds stock worth λ x (savings + the saving still to come at 2.56%/yr real), at most 2x savings, λ/λ holds λ x savings, 90/50 glides from 90% of savings to 50%, the rest sits in 10y Treasuries; above 1x savings, etf holds a 2x daily fund (bills + 0.60%/yr), margin borrows at bills + 2.5 pts; taxed lines pay 28% of each sale's gain and sell out at 64 ──
+  flat gross 100/100: 3 savers, median 1.83x paid in, worst 1.82x, worst drawdown 42%
+  flat gross 200/100 etf: beats 100/100 for 100% of savers (before 1990-02-01 100% | after 100%), median 2.03x vs 1.83x, worst 2.02x vs 1.82x, worst drawdown 81%, 0 wipe-outs: passes the bar
+  flat gross 200/100 margin: beats 100/100 for 0% of savers (before 1990-02-01 0% | after 0%), median 1.68x vs 1.83x, worst 1.66x vs 1.82x, worst drawdown 82%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  flat gross 200/50 etf: mean 2.00x paid in, SD 0.02 vs 0.04 for 145/145 (mean 2.00x), CE at CRRA 4 2.00x vs 1.92x for 90/50 (+4.1%): holds both claims
+  flat gross 200/50 margin: mean 1.93x paid in, SD 0.02 vs 0.01 for 44/44 (mean 1.93x), CE at CRRA 4 1.93x vs 1.92x for 90/50 (+0.5%): fails, its SD is no lower
+  flat taxed 100/100: 3 savers, median 1.49x paid in, worst 1.49x, worst drawdown 42%
+  flat taxed 200/100 etf: beats 100/100 for 33% of savers (before 1990-02-01 0% | after 50%), median 1.49x vs 1.49x, worst 1.48x vs 1.49x, worst drawdown 81%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  flat taxed 200/100 margin: beats 100/100 for 0% of savers (before 1990-02-01 0% | after 0%), median 1.23x vs 1.49x, worst 1.22x vs 1.49x, worst drawdown 82%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  flat taxed 200/50 etf: mean 1.49x paid in, SD 0.01 vs 0.01 for 80/80 (mean 1.49x), CE at CRRA 4 1.49x vs 1.48x for 90/50 (+0.6%): holds both claims
+  flat taxed 200/50 margin: mean 1.43x paid in, SD 0.01 vs 0.02 for 110/110 (mean 1.43x), CE at CRRA 4 1.43x vs 1.48x for 90/50 (-3.2%): fails, its CE is no higher
+  wage gross 100/100: 3 savers, median 1.76x paid in, worst 1.75x, worst drawdown 42%
+  wage gross 200/100 etf: beats 100/100 for 100% of savers (before 1990-02-01 100% | after 100%), median 1.94x vs 1.76x, worst 1.93x vs 1.75x, worst drawdown 81%, 0 wipe-outs: passes the bar
+  wage gross 200/100 margin: beats 100/100 for 0% of savers (before 1990-02-01 0% | after 0%), median 1.62x vs 1.76x, worst 1.61x vs 1.75x, worst drawdown 82%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  wage gross 200/50 etf: mean 1.93x paid in, SD 0.01 vs 0.04 for 156/156 (mean 1.93x), CE at CRRA 4 1.93x vs 1.84x for 90/50 (+4.8%): holds both claims
+  wage gross 200/50 margin: mean 1.86x paid in, SD 0.01 vs 0.01 for 46/46 (mean 1.85x), CE at CRRA 4 1.86x vs 1.84x for 90/50 (+0.7%): fails, its SD is no lower
+  wage taxed 100/100: 3 savers, median 1.45x paid in, worst 1.44x, worst drawdown 42%
+  wage taxed 200/100 etf: beats 100/100 for 100% of savers (before 1990-02-01 100% | after 100%), median 1.46x vs 1.45x, worst 1.45x vs 1.44x, worst drawdown 81%, 0 wipe-outs: passes the bar
+  wage taxed 200/100 margin: beats 100/100 for 0% of savers (before 1990-02-01 0% | after 0%), median 1.20x vs 1.45x, worst 1.20x vs 1.44x, worst drawdown 82%, 0 wipe-outs: fails, beats 1x in under 80% of a half
+  wage taxed 200/50 etf: mean 1.46x paid in, SD 0.01 vs 0.02 for 98/98 (mean 1.46x), CE at CRRA 4 1.46x vs 1.44x for 90/50 (+1.3%): holds both claims
+  wage taxed 200/50 margin: mean 1.40x paid in, SD 0.01 vs 0.02 for 109/109 (mean 1.40x), CE at CRRA 4 1.40x vs 1.44x for 90/50 (-3.1%): fails, its CE is no higher
+  3 of 8 200/100 lines clear the bar (beat 100/100 for 80% of savers in both halves, worst saver no poorer, no 90% fall)
+  4 of 8 200/50 lines hold both claims (SD below the same-mean fixed share's, CE at CRRA 4 above 90/50's)";
+        assert_eq!(lifecycle_report(&dates, &rs, &cash, &cpi, &long, d(1990, 2, 1)), want);
     }
 }

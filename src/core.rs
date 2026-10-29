@@ -3491,6 +3491,21 @@ pub fn parse_shiller_yield(v: &Value) -> BTreeMap<i32, f64> {
         .collect()
 }
 
+/// (#1220) The 10y US government yield in % a year by month, keyed as [`parse_fred_monthly`], from the
+/// same Shiller table's sixth column (`Long Interest Rate`), for months that print one above 0.
+pub fn parse_shiller_long(v: &Value) -> BTreeMap<i32, f64> {
+    v.as_str()
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            let date = NaiveDate::parse_from_str(f.first()?, "%Y-%m-%d").ok()?;
+            let y: f64 = f.get(5)?.parse().ok()?;
+            (y > 0.0).then(|| (date.year() * 12 + date.month0() as i32, y))
+        })
+        .collect()
+}
+
 /// (#486) One month's total return on a constant-maturity 10Y government bond: bought at par last
 /// month, so its coupon `c` is last month's yield, and sold a month older at this month's yield `y`
 /// (both % a year). Coupon accrual plus the price change; annual coupons and compounding. This is the
@@ -11313,6 +11328,8 @@ fn bond_index_rebuilds_a_10y_return_from_yields() {
     assert!(parse_fred_monthly(&Value::Null).is_empty());
     let shiller = "Date,SP500,Dividend,Earnings\n1871-01-01,4.44,0.26,0.4\n1871-02-01,4.5,,0.4\n1871-03-01,4.61,0,0.4\n1871-04-01,0,0.26,0.4\n1871-05-01, 5.2 ,0.26,\n";
     assert_eq!(parse_shiller_yield(&Value::String(shiller.into())), BTreeMap::from([(1871 * 12, 0.26 / 4.44), (1871 * 12 + 4, 0.26 / 5.2)]));
+    let long = "Date,SP500,Dividend,Earnings,Consumer Price Index,Long Interest Rate\n1871-01-01,4.44,0.26,0.4,12.46,5.32\n1871-02-01,4.5,0.26,0.4,12.84,\n1871-03-01,4.61,0.26,0.4,13.03,0\n1871-04-01,4.74,0.26,0.4,12.56, 5.33 \n2023-10-01,4269.4,,,,\n";
+    assert_eq!(parse_shiller_long(&Value::String(long.into())), BTreeMap::from([(1871 * 12, 5.32), (1871 * 12 + 3, 5.33)]));
 
     assert!(close(bond_month_return(6.0, 6.0), 0.005));
     assert!(close(bond_month_return(5.0, 6.0), -0.06898120137880402), "{}", bond_month_return(5.0, 6.0));

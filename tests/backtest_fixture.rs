@@ -375,6 +375,14 @@ fn leverage_census_offline_names_the_sources_it_lacks() {
     assert!(!got.contains("LEVERAGE CENSUS"), "{got}");
 }
 
+/// (#1220) The lifecycle census offline: the frozen cache holds none of its eight sources either.
+#[test]
+fn lifecycle_census_offline_names_the_sources_it_lacks() {
+    let got = report_at(&fixture_copy("census-lifecycle", false), &["20", "lifecycle"], None);
+    assert!(got.contains("(#1220) lifecycle census: ") && got.contains(" unavailable"), "{got}");
+    assert!(!got.contains("LIFECYCLE CENSUS"), "{got}");
+}
+
 /// (#342) A copy of the fixture in a dir of its own, its `tickers:` list run Z-A when `reverse`.
 /// Offline, the fetch completes in input order, so a Z-A copy is what a live run's latency does to the
 /// pool: same names, another order. Text splice, not a serde round-trip, so nothing but the order can

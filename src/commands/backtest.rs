@@ -775,6 +775,7 @@ struct Args {
     holdwindows: bool,
     traderules: bool,
     leverage: bool,
+    lifecycle: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -809,6 +810,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("holdwindows") => a_.holdwindows = true, // (#1217) every calendar hold per asset class
             _ if a.eq_ignore_ascii_case("traderules") => a_.traderules = true, // (#1218) trend, breakout and swing rules at 1x-3x
             _ if a.eq_ignore_ascii_case("leverage") => a_.leverage = true, // (#1219) daily-reset 1.25x-3x S&P total return vs 1x
+            _ if a.eq_ignore_ascii_case("lifecycle") => a_.lifecycle = true, // (#1220) Ayres-Nalebuff savers at 200/100 and 200/50
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ => a_.tickers.push(a.clone()),
         }
@@ -1239,7 +1241,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, time, mut tickers,
+        leverage, lifecycle, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1257,6 +1259,10 @@ pub async fn run(args: Vec<String>) {
     }
     if leverage {
         leverage_census(&client, &settings).await;
+        return;
+    }
+    if lifecycle {
+        lifecycle_census(&client, &settings).await;
         return;
     }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
@@ -2602,7 +2608,7 @@ async fn leverage_census(client: &reqwest::Client, settings: &config::Settings) 
     let u = &settings.urls;
     let px = fetch::fetch_history_since(client, u, "^GSPC", d(1927, 12)).await;
     let tr = fetch::fetch_history_since(client, u, "^SP500TR", d(1988, 1)).await;
-    let yld = fetch::fetch_shiller_yield(client, &u.shiller).await;
+    let yld = fetch::fetch_shiller(client, &u.shiller, crate::core::parse_shiller_yield).await;
     let mut bills = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "M1329AUSM193NNBR").await;
     let tb = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "TB3MS").await;
     let gone = [("^GSPC", px.is_none()), ("^SP500TR", tr.is_none()), ("Shiller dividends", yld.is_empty()), ("NBER yields", bills.is_empty()), ("TB3MS", tb.is_empty())];
@@ -2624,6 +2630,50 @@ async fn leverage_census(client: &reqwest::Client, settings: &config::Settings) 
     let (got, want) = (pa(&rules::splice(&px, &yld, &[])), pa(&rs));
     println!("(#1219) splice check from {}: price plus Shiller dividends {got:+.2}%/yr, ^SP500TR {want:+.2}%/yr, gap {:+.2} pts", dates[from - 1], got - want);
     println!("{}", rules::lever_report(&dates, &rs, &cash, &[20, 30], d(1967, 1)));
+}
+
+/// (#1220) The lifecycle census: the (#1219) S&P 500 total return and bill rate from 1928, the CPI
+/// (CPIAUCNS) and the 10y yield (Shiller's until GS10 starts in 1953), for savers aged 23 to 64 at 200/100
+/// and 200/50 against fixed shares and the 90/50 glide. Every source is fetched before any is read, so
+/// an offline run names each one it lacks.
+#[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::rules
+async fn lifecycle_census(client: &reqwest::Client, settings: &config::Settings) {
+    use crate::heuristics::rules;
+    use chrono::NaiveDate;
+    let d = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+    let u = &settings.urls;
+    let px = fetch::fetch_history_since(client, u, "^GSPC", d(1927, 12)).await;
+    let tr = fetch::fetch_history_since(client, u, "^SP500TR", d(1988, 1)).await;
+    let yld = fetch::fetch_shiller(client, &u.shiller, crate::core::parse_shiller_yield).await;
+    let mut long = fetch::fetch_shiller(client, &u.shiller, crate::core::parse_shiller_long).await;
+    let mut bills = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "M1329AUSM193NNBR").await;
+    let tb = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "TB3MS").await;
+    let cpi = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "CPIAUCNS").await;
+    let gs10 = fetch::fetch_fred(client, &u.fred, &u.sec_user_agent, "GS10").await;
+    let gone = [
+        ("^GSPC", px.is_none()),
+        ("^SP500TR", tr.is_none()),
+        ("Shiller dividends", yld.is_empty()),
+        ("Shiller 10y yields", long.is_empty()),
+        ("NBER yields", bills.is_empty()),
+        ("TB3MS", tb.is_empty()),
+        ("CPIAUCNS", cpi.is_empty()),
+        ("GS10", gs10.is_empty()),
+    ];
+    let missing: Vec<&str> = gone.iter().filter(|g| g.1).map(|g| g.0).collect();
+    let (Some(px), Some(tr), true) = (px, tr, missing.is_empty()) else {
+        println!("(#1220) lifecycle census: {} unavailable", missing.join(", "));
+        return;
+    };
+    bills.extend(tb); // TB3MS wins the 1934 overlap
+    long.extend(gs10); // GS10 wins from 1953-04
+    let pair = |c: &fetch::Chart| c.dates.iter().copied().zip(c.closes.iter().copied()).collect::<Vec<_>>();
+    let (px, tr) = (pair(&px), pair(&tr));
+    let dates: Vec<NaiveDate> = px.iter().map(|x| x.0).collect();
+    let rs = rules::splice(&px, &yld, &tr);
+    let cash: Vec<f64> = dates.iter().map(|&x| rules::on_month(&bills, x) / 100.0).collect();
+    let k = dates.partition_point(|x| *x < d(1928, 1));
+    println!("{}", rules::lifecycle_report(&dates[k..], &rs[k..], &cash[k..], &cpi, &long, d(1956, 5)));
 }
 
 /// (#809) `backtest N intraday`: every intraday key graded on 10y of daily bars, per market, against the
@@ -9907,6 +9957,7 @@ mod tests {
         assert!(p("holdwindows").holdwindows && !p("holdwindows").intraday && !p("12").holdwindows);
         assert!(p("traderules").traderules && !p("traderules").holdwindows && !p("12").traderules);
         assert!(p("leverage").leverage && !p("traderules").leverage && !p("leverage").traderules);
+        assert!(p("lifecycle").lifecycle && !p("leverage").lifecycle && !p("lifecycle").leverage);
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -9943,7 +9994,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle time");
         assert_eq!(
             all,
             Args {
@@ -9967,6 +10018,7 @@ mod tests {
                 holdwindows: true,
                 traderules: true,
                 leverage: true,
+                lifecycle: true,
                 time: true,
                 tickers: vec![]
             }

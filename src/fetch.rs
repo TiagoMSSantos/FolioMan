@@ -20291,10 +20291,11 @@ pub async fn fetch_fred(client: &Client, template: &str, ua: &str, id: &str) -> 
     cached_feed(&format!("fred_{id}"), crate::core::parse_fred_monthly, live).await
 }
 
-/// (#1219) The S&P 500's dividend yield by month since 1871, from the Shiller table's mirror, through
-/// the day cache (`core::parse_shiller_yield`).
+/// (#1219) A column of the Shiller monthly table since 1871, from its mirror, through the day cache:
+/// the S&P 500's dividend yield (`core::parse_shiller_yield`) or (#1220) the 10y yield
+/// (`core::parse_shiller_long`). Both parse the one banked payload.
 #[mutants::skip] // network shell
-pub async fn fetch_shiller_yield(client: &Client, url: &str) -> BTreeMap<i32, f64> {
+pub async fn fetch_shiller(client: &Client, url: &str, parse: fn(&Value) -> BTreeMap<i32, f64>) -> BTreeMap<i32, f64> {
     let live = async {
         if offline() {
             return None;
@@ -20302,7 +20303,7 @@ pub async fn fetch_shiller_yield(client: &Client, url: &str) -> BTreeMap<i32, f6
         throttle().await;
         client.get(url).send().await.ok()?.text().await.ok().map(Value::String)
     };
-    cached_feed("shiller", crate::core::parse_shiller_yield, live).await
+    cached_feed("shiller", parse, live).await
 }
 
 /// (#486) The Bonds table's 10Y government yields, in the page's row order. USA is the Treasury's
