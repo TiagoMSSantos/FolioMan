@@ -23771,6 +23771,14 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT: 10y sell-all stays. No shorter roll and no leavers rule ships; no knob, and nothing here reaches
 # rank, BUY NOW, trade, size or the broker. Refreshing the journalled SIZED roll reading needs a
 # `backtest 20 universe fund pit dead` run; this census journals nothing.
+# (#1225) REFRESH, 2026-10-29: probe.yml now uploads the journal a `dead` probe writes, as the
+# `sized-journal` artifact (kept 2 days). CI probe 40941726968 on daf428a, `backtest 20 universe fund pit
+# dead` (323 dead-member series from the archive; the Tiingo cache missed, so it added none):
+#   top-10  roll +8.6%/yr  vs never-sell +9.3%/yr  ->  -0.7 (med -0.4)  win 27% of 22  OOS +0.1/-1.4
+#   SIZED   roll +8.4%/yr  vs never-sell +9.4%/yr  ->  -1.0 (med -0.7)  win 14% of 22  OOS -0.2/-1.8
+# With dead members in the pond the drift holds: the shipped roll trails never-sell on both books. The
+# run's 20y row (SIZED roll -1.0) replaced the 2026-09-21 row (+1.1) in the local journal, so the local
+# `screen` graded-record line now quotes -1.0. 10y sell-all still stays and nothing else moves.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
