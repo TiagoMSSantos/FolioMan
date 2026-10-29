@@ -352,6 +352,20 @@ fn backtest_tune_report_is_bit_identical_on_one_thread() {
     pin_at(&fixture_copy("one-thread-12-tune", false), &["12", "tune"], "backtest-12-tune.golden", Some("1"));
 }
 
+/// (#1217) (#1218) The two censuses on the frozen cache. It holds only monthly bars, so offline the 10y
+/// daily and 60m charts miss and only the monthly grids, the book and the 10x count carry rows. Each run
+/// must still finish, print its last section, and print the same bytes on one worker as on the machine's
+/// count. No golden: no gate reads either census.
+#[test]
+fn census_reports_finish_offline_and_ignore_thread_count() {
+    for (mode, last) in [("holdwindows", "(#1217) HOLD WINDOWS ON 60m BARS"), ("traderules", "(#1218) 10x AND 100x RUNS")] {
+        let got = report_at(&fixture_copy(&format!("census-{mode}"), false), &["12", mode], None);
+        assert!(got.contains(last), "{mode} never printed its last section:\n{got}");
+        let one = report_at(&fixture_copy(&format!("census-{mode}-one"), false), &["12", mode], Some("1"));
+        assert_eq!(got, one, "{mode}: {}", first_difference(&one, &got));
+    }
+}
+
 /// (#342) A copy of the fixture in a dir of its own, its `tickers:` list run Z-A when `reverse`.
 /// Offline, the fetch completes in input order, so a Z-A copy is what a live run's latency does to the
 /// pool: same names, another order. Text splice, not a serde round-trip, so nothing but the order can
