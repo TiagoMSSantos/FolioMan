@@ -23780,6 +23780,47 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # run's 20y row (SIZED roll -1.0) replaced the 2026-09-21 row (+1.1) in the local journal, so the local
 # `screen` graded-record line now quotes -1.0. 10y sell-all still stays and nothing else moves.
 
+# (#1226) OPTION-SELLING CENSUS, 2026-10-29, record only, no knob.
+# WHY: the owner asked how some traders make big profits and chose to test one professional idea. Every
+# other one maps to a lane already graded or closed; selling options on the index was left. (#244) refuses
+# option-overlay funds from CORE by name as a safety rule, but nothing had graded them on return.
+# CENSUS (`backtest N options` prints it; CI probe 40954316977 on 2cd2fea, `backtest 20 options`): the Cboe
+# S&P 500 BuyWrite index (BXM: hold the index, sell a one-month call each month) and PutWrite index (PUT:
+# sell one-month puts fully backed by bills), each against ^SP500TR on its own dates over every 20y window.
+# BXM is Cboe's daily file from 2002-03-22 (Yahoo's ^BXM answers a dated span with one bar and its full
+# range with gapped months); PUT is Yahoo's ^PUT from 1996-08-02. Each index gets a gross line and a line
+# less 0.38%/yr, the gap between the one UCITS BXM fund found (Global X S&P 500 Covered Call UCITS,
+# IE0002L5QB31, TER 0.45%) and a 0.07% S&P tracker. "lump" and "monthly" read as in (#1219), and so does
+# the bar: beat the S&P in 80% or more of the windows in each half, worst window no poorer, no 90% fall.
+# Each half splits at the start of the middle window.
+# Whole span: BXM +6.22%/yr against ^SP500TR +10.11%/yr on its dates (6188 bars to 2026-10-28); PUT
+# +8.57%/yr against +10.43%/yr (7602 bars to 2026-10-29).
+# 0 of 8 lines clear the bar.
+# BXM, 56 windows, split 2004-07-01; S&P TR lump median +10.3%/yr, worst +9.1%/yr, monthly 3.86x paid in,
+# worst 3.00x, worst drawdown 55%. Beats S&P TR in % of windows (before | after), median, worst:
+#   lump     gross 0 (0|0) +5.7 +5.3; less 0.38% 0 (0|0) +5.3 +4.9
+#   monthly  gross 0 (0|0) 1.94x 1.66x; less 0.38% 0 (0|0) 1.85x 1.59x; worst drawdown 40% on every line
+# PUT, 123 windows, split 2001-09-04; S&P TR lump median +9.0%/yr, worst +4.6%/yr, monthly 3.27x paid in,
+# worst 2.14x, worst drawdown 55%:
+#   lump     gross 33 (66|0) +7.1 +4.6; less 0.38% 23 (46|0) +6.7 +4.2
+#   monthly  gross 0 (0|0) 2.16x 1.61x; less 0.38% 0 (0|0) 2.07x 1.53x; worst drawdown 37% on every line
+# No line falls 90% in any window.
+# Published context, ungraded here: Cboe's own 1988-06 to 2007-05 study gives BXM +11.86%/yr, PUT
+# +12.65%/yr and SPTR +12.30%/yr, the one span where put-writing led. First Trust counts BXM behind the S&P
+# in every year the S&P rose 10% or more (14 of 14).
+# CAVEATS: (a) the indexes are in USD while the owner's book is in EUR; the exchange rate scales both lines
+# alike. (b) The indexes are gross of withholding tax, and the fund's swap spread is taken as 0. (c) Tax is
+# not modelled. Held to the end in an accumulating wrapper, both pay 28% on the gain at sale, so the order
+# holds. The one UCITS BXM fund distributes monthly, so it pays 28% on every payout each year and can only
+# fare worse. (d) The windows overlap heavily: BXM's 24.6 years hold 1.2 independent 20y spans, and PUT's
+# 30.2 years hold 1.5. (e) No UCITS put-write fund was confirmed, so the PUT lines name no fund the owner
+# could buy. (f) 1988-2002 is ungraded for BXM: Cboe's daily file starts in 2002.
+# VERDICT: selling S&P options does not beat holding the S&P over 20 years. Covered calls trail in every
+# window, by 4.6 pts/yr at the median lump, and end the monthly saver with half the S&P's money. Put-writing
+# won a third of lump windows, all opening before 2001-09, and none after. Both buy shallower falls (40% and
+# 37% against 55%) with less return. (#244) NARROW keeps refusing option-overlay funds from CORE. No table
+# ships. No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
