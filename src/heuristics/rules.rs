@@ -153,7 +153,7 @@ pub fn positions(rule: Rule, dates: &[NaiveDate], closes: &[f64]) -> Vec<bool> {
 pub fn returns(dates: &[NaiveDate], opens: &[f64], closes: &[f64], pos: &[bool], lev: u32, cost: f64, cash: &[f64]) -> Vec<f64> {
     let l = f64::from(lev);
     let ratio = |a: f64, b: f64| if a.is_finite() && b.is_finite() && a > 0.0 && b > 0.0 { a / b - 1.0 } else { 0.0 };
-    let mut out = vec![0.0; closes.len()];
+    let mut out: Vec<f64> = vec![0.0; closes.len()];
     for i in 1..closes.len() {
         if out[i - 1] <= -1.0 || out[i - 1].is_nan() {
             out[i] = f64::NAN;
