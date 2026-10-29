@@ -514,7 +514,7 @@ pub fn save(mo: &[[f64; 4]], price: &[f64], s: usize, pay: &[f64], target: &dyn 
         w
     }).collect();
     future.reverse();
-    let (mut h, mut debt, mut tax, mut rets) = ([(0.0f64, 0.0f64); 3], 0.0, (0.0, 0.0), vec![]);
+    let (mut h, mut debt, mut tax, mut rets) = ([(0.0f64, 0.0f64); 3], 0.0, (0.0f64, 0.0f64), vec![]);
     let value = |h: &[(f64, f64); 3]| h.iter().map(|x| x.0).sum::<f64>();
     for (j, (c, w)) in pay.iter().zip(&future).enumerate() {
         let (m, up) = (mo[s + j], price[s + j] / price[s]);
