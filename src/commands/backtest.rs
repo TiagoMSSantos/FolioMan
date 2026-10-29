@@ -776,6 +776,7 @@ struct Args {
     traderules: bool,
     leverage: bool,
     lifecycle: bool,
+    bestpick: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -811,6 +812,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("traderules") => a_.traderules = true, // (#1218) trend, breakout and swing rules at 1x-3x
             _ if a.eq_ignore_ascii_case("leverage") => a_.leverage = true, // (#1219) daily-reset 1.25x-3x S&P total return vs 1x
             _ if a.eq_ignore_ascii_case("lifecycle") => a_.lifecycle = true, // (#1220) Ayres-Nalebuff savers at 200/100 and 200/50
+            _ if a.eq_ignore_ascii_case("bestpick") => a_.bestpick = true, // (#1222) the page's BEST picked on 2y, traded the next step
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ => a_.tickers.push(a.clone()),
         }
@@ -1241,7 +1243,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, time, mut tickers,
+        leverage, lifecycle, bestpick, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1263,6 +1265,10 @@ pub async fn run(args: Vec<String>) {
     }
     if lifecycle {
         lifecycle_census(&client, &settings).await;
+        return;
+    }
+    if bestpick {
+        best_census(&client, &settings).await;
         return;
     }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
@@ -2674,6 +2680,49 @@ async fn lifecycle_census(client: &reqwest::Client, settings: &config::Settings)
     let cash: Vec<f64> = dates.iter().map(|&x| rules::on_month(&bills, x) / 100.0).collect();
     let k = dates.partition_point(|x| *x < d(1928, 1));
     println!("{}", rules::lifecycle_report(&dates[k..], &rs[k..], &cash[k..], &cpi, &long, d(1956, 5)));
+}
+
+/// (#1222) `backtest N bestpick`: the Trading table's BEST, picked on each name's last 2y and traded over the
+/// next 6 months or month, against holding the same name, in euros at each day's EUR/USD rate. The (#809)
+/// ponds on 10y of daily bars, at the page's round trip per market.
+#[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::intraday
+async fn best_census(client: &reqwest::Client, settings: &config::Settings) {
+    use crate::heuristics::intraday;
+    let today = chrono::Utc::now().date_naive();
+    let usd = fetch::fx_factor_series(client, &settings.urls, "USD", "EUR", false).await;
+    if usd.is_empty() {
+        println!("(#1222) best census: EUR/USD history unavailable");
+        return;
+    }
+    let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
+    let us = intraday::us_pond(&spans, today - chrono::Duration::days(3653));
+    let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
+    println!("\n── (#1222) BEST, PICKED ON 2y AND TRADED THE NEXT STEP, AGAINST HOLDING THE SAME NAME ──");
+    println!("  Each name picks the most euros of P/L(EUR), HOLD 21, TREND and BUY&HOLD on its last 2y, €1,000 a trade");
+    println!("  after the page's round trip, then trades the pick over the step. CAVEATS: a fresh €1,000 a trade, so");
+    println!("  P/L(EUR) puts €1,000 on every session where BUY&HOLD puts it on once, as the page does; the EU pond is");
+    println!("  today's members and Yahoo keeps few dead US names, so both lean to survivors; halves split by step count.");
+    let start = today - chrono::Months::new(84);
+    for (market, names, cost) in [("US", &us, intraday::COST_BPS_US), ("EU", &eu, intraday::COST_BPS_EU)] {
+        let mut charts: Vec<(&str, fetch::Chart)> = stream::iter(names)
+            .map(|tk| async move { Some((tk.as_str(), fetch::fetch_history(client, &settings.urls, tk).await?)) })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        // the means add up in pond order, so fetch completion order cannot move a digit
+        charts.sort_by(|a, b| a.0.cmp(b.0));
+        let fx: Vec<Option<Vec<f64>>> = charts.iter().map(|(_, c)| intraday::rates_on(&c.currency, &c.dates, &usd)).collect();
+        let pond: Vec<intraday::Priced> = charts
+            .iter()
+            .zip(&fx)
+            .filter_map(|((tk, c), fx)| Some((*tk, c, fx.as_deref()?, (market == "US").then(|| spans[*tk].as_slice()))))
+            .collect();
+        println!("  {market} pond: {} of {} names fetched in EUR or USD; cost {cost} bp round trip", pond.len(), names.len());
+        for months in [6, 1] {
+            println!("{}", intraday::best_report(market, months, &intraday::best_steps(&pond, cost, months, start, today)));
+        }
+    }
 }
 
 /// (#809) `backtest N intraday`: every intraday key graded on 10y of daily bars, per market, against the
@@ -9958,6 +10007,7 @@ mod tests {
         assert!(p("traderules").traderules && !p("traderules").holdwindows && !p("12").traderules);
         assert!(p("leverage").leverage && !p("traderules").leverage && !p("leverage").traderules);
         assert!(p("lifecycle").lifecycle && !p("leverage").lifecycle && !p("lifecycle").leverage);
+        assert!(p("bestpick").bestpick && !p("lifecycle").bestpick && !p("bestpick").lifecycle);
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -9994,7 +10044,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick time");
         assert_eq!(
             all,
             Args {
@@ -10019,6 +10069,7 @@ mod tests {
                 traderules: true,
                 leverage: true,
                 lifecycle: true,
+                bestpick: true,
                 time: true,
                 tickers: vec![]
             }

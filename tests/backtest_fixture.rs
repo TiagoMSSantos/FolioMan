@@ -383,6 +383,14 @@ fn lifecycle_census_offline_names_the_sources_it_lacks() {
     assert!(!got.contains("LIFECYCLE CENSUS"), "{got}");
 }
 
+/// (#1222) The best census offline: no EUR/USD history, so it stops before fetching a pond.
+#[test]
+fn best_census_offline_says_it_lacks_eur_usd() {
+    let got = report_at(&fixture_copy("census-bestpick", false), &["10", "bestpick"], None);
+    assert!(got.contains("(#1222) best census: EUR/USD history unavailable"), "{got}");
+    assert!(!got.contains("PICKED ON 2y"), "{got}");
+}
+
 /// (#342) A copy of the fixture in a dir of its own, its `tickers:` list run Z-A when `reverse`.
 /// Offline, the fetch completes in input order, so a Z-A copy is what a live run's latency does to the
 /// pool: same names, another order. Text splice, not a serde round-trip, so nothing but the order can

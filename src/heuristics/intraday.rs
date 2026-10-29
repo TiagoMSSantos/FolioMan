@@ -173,18 +173,26 @@ fn held_return(c: &Chart, i: usize, h: usize) -> Option<f64> {
     Some(pos(*c.closes.get(i + h)?)? / pos(c.opens[i])? - 1.0)
 }
 
+/// (#1222) [`held_return`] in euros: bought at bar `i`'s open at `fx[i]` euros a unit of the listing's
+/// currency and sold at the close `h` bars on at `fx[i + h]`. A same-session trade's ratio is exactly 1.
+fn held_eur(c: &Chart, fx: &[f64], i: usize, h: usize) -> Option<f64> {
+    Some(pos(*c.closes.get(i + h)?)? / pos(c.opens[i])? * (fx[i + h] / fx[i]) - 1.0)
+}
+
 /// (#1221) The page's TREND trades on bars `s..e`: in on each bar whose previous close sits above the mean of
 /// the 200 closes up to it, bought at the first such bar's open and sold at the open of the first bar out,
 /// or at bar `e - 1`'s close when still in. One return a spell; a bar with fewer than 200 closes behind it is out.
 /// shortcut: on a chart that starts under 200 sessions before `s` the first bars read out; `chart_range`
 /// reaches far enough for K7's 2y chart, a wider reach would fix any other key.
-fn trend(c: &Chart, s: usize, e: usize) -> Vec<f64> {
+/// (#1222) In euros at `fx`, as [`held_eur`].
+fn trend(c: &Chart, fx: &[f64], s: usize, e: usize) -> Vec<f64> {
     let up = |j: usize| j.checked_sub(200).is_some_and(|a| c.closes[j - 1] > mean(&c.closes[a..j]));
     let ins: Vec<usize> = (s..e).filter(|&j| up(j)).collect();
     ins.chunk_by(|a, b| b - a == 1)
         .filter_map(|run| {
             let out = run[run.len() - 1] + 1;
-            Some(pos(if out < e { c.opens[out] } else { c.closes[e - 1] })? / pos(c.opens[run[0]])? - 1.0)
+            let (j, px) = if out < e { (out, c.opens[out]) } else { (e - 1, c.closes[e - 1]) };
+            Some(pos(px)? / pos(c.opens[run[0]])? * (fx[j] / fx[run[0]]) - 1.0)
         })
         .collect()
 }
@@ -364,7 +372,7 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
     let hours = if market == "US" { "09:30-16:00 New York" } else { "09:00-17:30 Frankfurt" };
     let cost = if market == "US" { COST_BPS_US } else { COST_BPS_EU };
     let share = |(r, f): (usize, usize)| (r + 1) as f64 / (r + f + 2) as f64;
-    let net = |rs: &[f64]| rs.iter().map(|r| (r - cost / 1e4) * 1000.0).sum::<f64>();
+    let net = |rs: &[f64]| euros(rs, cost);
     let mut v: Vec<_> = book
         .iter()
         .map(|b| {
@@ -374,7 +382,7 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
             let holds: Vec<f64> = (s..e).step_by(21).filter_map(|j| held_return(b.2, j, (e - 1 - j).min(20))).collect();
             let bh = e.checked_sub(s + 1).and_then(|h| held_return(b.2, s, h));
             let (nu, nd) = gains(&xs, cost / 1e4);
-            let spells = trend(b.2, s, e);
+            let spells = trend(b.2, &vec![1.0; b.2.closes.len()], s, e);
             let mut best = vec![("P/L(EUR)", (nu - nd) * 1000.0), ("HOLD 21", net(&holds)), ("TREND", net(&spells))];
             best.extend(bh.map(|r| ("BUY&HOLD", net(&[r]))));
             best.sort_by(|a, b| b.1.total_cmp(&a.1)); // ties keep this order
@@ -454,6 +462,123 @@ pub fn web_rows(market: &str, k: u8, book: &[(&str, f64, &Chart)], since: NaiveD
             ]
         })
         .collect()
+}
+
+/// (#1222) One pond member priced in euros: ticker, daily chart, the euros a unit of its currency buys on
+/// each bar, and its index spans (`None` = a member every day).
+pub type Priced<'a> = (&'a str, &'a Chart, &'a [f64], Option<&'a [(NaiveDate, Option<NaiveDate>)]>);
+
+/// (#1222) The page's four ways to trade a name, in its order, so a tie keeps the first.
+pub const WAYS: [&str; 4] = ["P/L(EUR)", "HOLD 21", "TREND", "BUY&HOLD"];
+
+/// (#1222) [`rate_for`]'s twin for trades bought and sold on different days: EUR a unit of `currency` on each
+/// of `dates`. 1 for EUR; for USD the latest of `usd` (EUR per USD by date) on or before the bar, or the
+/// first rate for a bar before any; None for any other currency, or for USD with no rate at all.
+pub fn rates_on(currency: &str, dates: &[NaiveDate], usd: &BTreeMap<NaiveDate, f64>) -> Option<Vec<f64>> {
+    match currency {
+        "EUR" => Some(vec![1.0; dates.len()]),
+        "USD" => dates.iter().map(|d| usd.range(..=*d).next_back().or_else(|| usd.iter().next()).map(|x| *x.1)).collect(),
+        _ => None,
+    }
+}
+
+/// (#1222) The trades each of [`WAYS`] makes on bars `s..e`, each a return in euros at `fx`: every session
+/// open to close, HOLD 21 back to back from the first open (the last one cut at bar `e - 1`), TREND's spells,
+/// and BUY&HOLD's one trade from the first open to the last close (none on no bar).
+fn trades(c: &Chart, fx: &[f64], s: usize, e: usize) -> [Vec<f64>; 4] {
+    [
+        (s..e).filter_map(|i| session_return(c, i)).collect(),
+        (s..e).step_by(21).filter_map(|j| held_eur(c, fx, j, (e - 1 - j).min(20))).collect(),
+        trend(c, fx, s, e),
+        e.checked_sub(s + 1).and_then(|h| held_eur(c, fx, s, h)).into_iter().collect(),
+    ]
+}
+
+/// (#1222) Euros after the round trip `cost` (bp) on each trade, €1,000 a trade, added up.
+fn euros(rs: &[f64], cost: f64) -> f64 {
+    rs.iter().map(|r| (r - cost / 1e4) * 1000.0).sum()
+}
+
+/// (#1222) The page's BEST on `ts`: the index into [`WAYS`] with the most euros after `cost`, the first on a tie.
+fn pick(ts: &[Vec<f64>; 4], cost: f64) -> usize {
+    let e = ts.each_ref().map(|rs| euros(rs, cost));
+    (1..4).fold(0, |b, w| if e[w] > e[b] { w } else { b })
+}
+
+/// (#1222) One step of [`best_steps`]: its first day, how many names it graded, the mean over them of the
+/// pick's euros minus holding's, holding's own mean, and how many names picked each of [`WAYS`].
+pub struct Step {
+    pub date: NaiveDate,
+    pub n: usize,
+    pub excess: f64,
+    pub hold: f64,
+    pub picks: [usize; 4],
+}
+
+/// (#1222) THE BEST WALK: whether the page's BEST, picked on a name's last 2y, beats holding the name over
+/// the next step. A step starts every `months` from `start` and runs while it ends by `today`. Each member in
+/// the index on its first day that clears the floor there, with 200 bars before its 2y so TREND reads every
+/// one of them, picks on the 2y and trades the pick over the step's bars; it is graded against BUY&HOLD on
+/// the same bars, both in euros after `cost`. A step with no graded name drops out. The means add up in
+/// pond order, so the caller sorts it.
+pub fn best_steps(pond: &[Priced], cost: f64, months: u32, start: NaiveDate, today: NaiveDate) -> Vec<Step> {
+    let at = |k: u32| start.checked_add_months(chrono::Months::new(k * months));
+    let mut out = Vec::new();
+    for k in 0.. {
+        let (Some(from), Some(to)) = (at(k), at(k + 1)) else { break };
+        if to > today {
+            break;
+        }
+        let back = from - chrono::Months::new(24);
+        let mut step = Step { date: from, n: 0, excess: 0.0, hold: 0.0, picks: [0; 4] };
+        for &(_, c, fx, spans) in pond {
+            let (l, s, e) = (completed(c, back), completed(c, from), completed(c, to));
+            if l < 200 || e <= s || spans.is_some_and(|sp| !core::sp500_member_at(sp, from)) || !liquid(c, s, fx[s - 1]) {
+                continue;
+            }
+            let w = pick(&trades(c, fx, l, s), cost);
+            let next = trades(c, fx, s, e);
+            let hold = euros(&next[3], cost);
+            step.n += 1;
+            step.excess += euros(&next[w], cost) - hold;
+            step.hold += hold;
+            step.picks[w] += 1;
+        }
+        if step.n > 0 {
+            step.excess /= step.n as f64;
+            step.hold /= step.n as f64;
+            out.push(step);
+        }
+    }
+    out
+}
+
+/// (#1222) One [`best_steps`] line: the steps' mean of the pick minus holding, in euros a name a step, its t
+/// and halves by step count, holding's own mean, and the share of picks each way won. The bar is
+/// [`passes`]: above zero at t ≥ 3, in both halves.
+pub fn best_report(market: &str, months: u32, steps: &[Step]) -> String {
+    let xs: Vec<f64> = steps.iter().map(|s| s.excess).collect();
+    let Some(s) = stats(&xs) else {
+        return format!("  {market} {months}m steps: {} graded; the t needs 2", steps.len());
+    };
+    let mut ns: Vec<usize> = steps.iter().map(|s| s.n).collect();
+    ns.sort_unstable();
+    let all = ns.iter().sum::<usize>() as f64;
+    let won: Vec<String> = (0..4).map(|w| format!("{} {:.0}%", WAYS[w], steps.iter().map(|s| s.picks[w]).sum::<usize>() as f64 * 100.0 / all)).collect();
+    format!(
+        "  {market} {months}m steps: {} from {} to {} median {} names  pick minus hold €{:+.2} a name a step  t {:+.2}  halves €{:+.2}|€{:+.2}  hold alone €{:+.2}  picked {}  -> {}",
+        s.n,
+        steps[0].date,
+        steps[steps.len() - 1].date,
+        ns[ns.len() / 2],
+        s.mean,
+        s.t,
+        s.h1,
+        s.h2,
+        mean(&steps.iter().map(|s| s.hold).collect::<Vec<_>>()),
+        won.join(", "),
+        if passes(&s, 0.0) { "PASS" } else { "FAIL" }
+    )
 }
 
 /// (#823) Whether `market`'s session dated today is over at `now`, UTC: half an hour past the close, 17:30
@@ -1383,9 +1508,132 @@ mod tests {
         let o: Vec<f64> = (0..206).map(|j| 100.0 + j as f64).collect();
         let c = [[100.0; 199].as_slice(), &[120.0, 120.0, 50.0, 120.0, 120.0, 120.0, 120.0]].concat();
         let ch = chart(&o, &c, 1e5);
-        assert_eq!(trend(&ch, 199, 206), [o[202] / o[200] - 1.0, c[205] / o[203] - 1.0]);
-        assert_eq!(trend(&ch, 199, 202), [c[201] / o[200] - 1.0], "a window that ends in a spell sells at its last close");
-        assert!(trend(&chart(&o, &[100.0; 206], 1e5), 199, 206).is_empty(), "a close level with its mean is out");
+        let one = [1.0; 206];
+        assert_eq!(trend(&ch, &one, 199, 206), [o[202] / o[200] - 1.0, c[205] / o[203] - 1.0]);
+        assert_eq!(trend(&ch, &one, 199, 202), [c[201] / o[200] - 1.0], "a window that ends in a spell sells at its last close");
+        assert!(trend(&chart(&o, &[100.0; 206], 1e5), &one, 199, 206).is_empty(), "a close level with its mean is out");
+        // (#1222) in euros: each spell at the rate on its buy and on its sell
+        let fx: Vec<f64> = (0..206).map(|j| 1.0 + j as f64 / 1000.0).collect();
+        assert_eq!(trend(&ch, &fx, 199, 206), [o[202] / o[200] * (fx[202] / fx[200]) - 1.0, c[205] / o[203] * (fx[205] / fx[203]) - 1.0]);
+    }
+
+    /// (#1222) EUR per unit on each date: ones for EUR, the last USD rate on or before the date (the first
+    /// one before the series starts) for USD, and nothing for another currency or an empty USD series.
+    #[test]
+    fn rates_carry_the_last_eur_usd_forward() {
+        let usd: BTreeMap<NaiveDate, f64> = [(d(1), 0.9), (d(3), 0.8)].into();
+        let days = [d(0), d(1), d(2), d(3), d(4)];
+        assert_eq!(rates_on("EUR", &days[..2], &usd), Some(vec![1.0, 1.0]));
+        assert_eq!(rates_on("USD", &days, &usd), Some(vec![0.9, 0.9, 0.9, 0.8, 0.8]));
+        assert_eq!(rates_on("GBP", &days, &usd), None);
+        assert_eq!(rates_on("USD", &days, &BTreeMap::new()), None);
+    }
+
+    /// (#1222) Each way's trades in euros: every session, HOLD 21 back to back with the last one cut at the
+    /// window's end, no TREND spell on a chart short of 200 bars, and one BUY&HOLD trade; none on no bar.
+    #[test]
+    fn the_four_ways_trade_their_window_in_euros() {
+        let c = wavy(25);
+        let fx: Vec<f64> = (0..25).map(|j| 1.0 + j as f64 / 100.0).collect();
+        let [day, h21, tr, bh] = trades(&c, &fx, 2, 25);
+        assert_eq!(day, (2..25).map(|i| c.closes[i] / c.opens[i] - 1.0).collect::<Vec<_>>());
+        assert_eq!(
+            h21,
+            [c.closes[22] / c.opens[2] * (fx[22] / fx[2]) - 1.0, c.closes[24] / c.opens[23] * (fx[24] / fx[23]) - 1.0]
+        );
+        assert!(tr.is_empty());
+        assert_eq!(bh, [c.closes[24] / c.opens[2] * (fx[24] / fx[2]) - 1.0]);
+        assert!(trades(&c, &fx, 5, 5).iter().all(Vec::is_empty));
+    }
+
+    /// (#1222) €1,000 a trade after the round trip; BEST is the most euros, the first way on a tie.
+    #[test]
+    fn best_is_the_most_euros_after_cost_first_on_a_tie() {
+        assert_eq!(euros(&[0.5, -0.25], 2500.0), -250.0);
+        assert_eq!(pick(&[vec![0.1], vec![0.3], vec![0.2], vec![0.3]], 0.0), 1);
+        assert_eq!(pick(&[vec![], vec![0.1], vec![0.3], vec![0.2]], 0.0), 2);
+        assert_eq!(pick(&[vec![], vec![], vec![0.1], vec![0.2]], 0.0), 3);
+        let busy = [vec![0.01; 10], vec![0.05], vec![], vec![0.04]];
+        assert_eq!((pick(&busy, 0.0), pick(&busy, 100.0)), (0, 1), "ten trades pay the round trip ten times");
+    }
+
+    /// (#1222) Three 3-month steps from 2028-07-20, the last ending on `today`. A: on all three, with exactly
+    /// 200 bars before its first 2y. B: a bar short of that on the first step, so on the last two. C: ended
+    /// before the first step. D: in the index for the first step only. I: under the floor. F: flat in its
+    /// own currency, at 0.6 EUR up to the first step and 0.4 from it, so over the floor on the bar before
+    /// that step and under it after; TREND, with no trade, is the most euros on its 2y.
+    #[test]
+    fn the_best_walk_picks_on_two_years_and_trades_the_next_step() {
+        let ymd = |y, m, dd| NaiveDate::from_ymd_opt(y, m, dd).unwrap();
+        let (start, from2, from3, today) = (ymd(2028, 7, 20), ymd(2028, 10, 20), ymd(2029, 1, 20), ymd(2029, 4, 20));
+        let ix = |x: NaiveDate| (x - d(0)).num_days() as usize;
+        let a = wavy(1206);
+        let mut b = wavy(1205);
+        b.dates = (1..1206).map(d).collect();
+        let c = wavy(800);
+        let mut i = wavy(1206);
+        i.volumes = vec![1.0; 1206];
+        let f = chart(&[100.0; 1206], &[100.0; 1206], 1e5);
+        let one = [1.0; 1206];
+        let ffx: Vec<f64> = (0..1206).map(|j| if j < ix(start) { 0.6 } else { 0.4 }).collect();
+        let dspan = [(d(0), Some(from2))];
+        let pond: [Priced; 6] = [
+            ("A", &a, &one, None),
+            ("B", &b, &one, None),
+            ("C", &c, &one, None),
+            ("D", &a, &one, Some(dspan.as_slice())),
+            ("I", &i, &one, None),
+            ("F", &f, &ffx, None),
+        ];
+        let g = |c: &Chart, fx: &[f64], l: usize, s: usize, e: usize| {
+            let w = pick(&trades(c, fx, l, s), 20.0);
+            let next = trades(c, fx, s, e);
+            let hold = euros(&next[3], 20.0);
+            (w, euros(&next[w], 20.0) - hold, hold)
+        };
+        let want = |date, rows: &[(usize, f64, f64)]| {
+            let mut picks = [0usize; 4];
+            rows.iter().for_each(|r| picks[r.0] += 1);
+            let n = rows.len() as f64;
+            (date, rows.len(), rows.iter().fold(0.0, |t, r| t + r.1) / n, rows.iter().fold(0.0, |t, r| t + r.2) / n, picks)
+        };
+        let (s1, s2, s3) = (ix(start), ix(from2), ix(from3));
+        let first = g(&a, &one, 200, s1, s2);
+        let flat = g(&f, &ffx, 200, s1, s2);
+        assert_eq!(flat.0, 2, "F picks TREND");
+        let got: Vec<_> = best_steps(&pond, 20.0, 3, start, today).iter().map(|s| (s.date, s.n, s.excess, s.hold, s.picks)).collect();
+        assert_eq!(
+            got,
+            [
+                want(start, &[first, first, flat]),
+                want(from2, &[g(&a, &one, ix(ymd(2026, 10, 20)), s2, s3), g(&b, &one, ix(ymd(2026, 10, 20)) - 1, s2 - 1, s3 - 1)]),
+                want(from3, &[g(&a, &one, ix(ymd(2027, 1, 20)), s3, ix(today)), g(&b, &one, ix(ymd(2027, 1, 20)) - 1, s3 - 1, ix(today) - 1)]),
+            ]
+        );
+        let gap = [(d(0), Some(from2)), (from3, None)];
+        let dates: Vec<NaiveDate> = best_steps(&[("D", &a, one.as_slice(), Some(gap.as_slice()))], 20.0, 3, start, today).iter().map(|s| s.date).collect();
+        assert_eq!(dates, [start, from3], "a step with no graded name drops out and the walk goes on");
+    }
+
+    /// (#1222) The walk's line: mean pick minus hold over the steps, t, halves, holding alone, the median
+    /// names graded and each way's share of the picks; PASS on [`passes`] above zero.
+    #[test]
+    fn the_best_walk_reads_one_line_a_market_and_step() {
+        let step = |date, n, excess, hold, picks| Step { date, n, excess, hold, picks };
+        let mut steps = [
+            step(d(0), 3, 1.0, 10.0, [1, 1, 1, 0]),
+            step(d(31), 5, 3.0, 20.0, [0, 5, 0, 0]),
+            step(d(59), 4, 2.0, -6.0, [0, 0, 1, 3]),
+            step(d(90), 8, 4.0, 0.0, [4, 0, 0, 4]),
+        ];
+        assert_eq!(
+            best_report("US", 6, &steps),
+            "  US 6m steps: 4 from 2026-01-01 to 2026-04-01 median 5 names  pick minus hold €+2.50 a name a step  \
+             t +3.87  halves €+2.00|€+3.00  hold alone €+6.00  picked P/L(EUR) 25%, HOLD 21 30%, TREND 10%, BUY&HOLD 35%  -> PASS"
+        );
+        steps[1].excess = -3.0;
+        assert!(best_report("US", 6, &steps).ends_with("halves €-1.00|€+3.00  hold alone €+6.00  picked P/L(EUR) 25%, HOLD 21 30%, TREND 10%, BUY&HOLD 35%  -> FAIL"));
+        assert_eq!(best_report("EU", 1, &steps[..1]), "  EU 1m steps: 1 graded; the t needs 2");
     }
 
     /// A weekend line and the Monday line after it reach one session; the first one grades it.
