@@ -16233,8 +16233,8 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 58] = [
-            "openfigi_mapping", "fred", "ecb_fx", "shiller",
+        const FIELDS: [&str; 59] = [
+            "openfigi_mapping", "fred", "ecb_fx", "shiller", "cboe",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "yahoo_query2", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals_quality",
