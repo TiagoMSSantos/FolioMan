@@ -23729,6 +23729,49 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # name. The page's BEST column stays a hindsight label; no knob, and nothing here reaches rank, BUY NOW,
 # trade, size or the broker.
 
+# (#1224) ROLL LADDER, 2026-10-29, record only, no knob.
+# WHY: the owner asked why buying a book, holding it a short time and switching to another loses to
+# holding for 20 years or more. (#311) sells each lot at 10y and re-buys the screen, and its 10y was fixed
+# before any run and never swept. The census re-runs (#311)'s plan at every roll period from 3 months to
+# 10 years, two ways.
+# CENSUS (`backtest 20 rolls` prints it; CI probe 40931120819 on 4cb5eed, `backtest 20 universe fund pit
+# rolls`, 5075 growth-score windows): (#311)'s 96 equal monthly buys, every lot sold at 20y. Each lot is
+# re-bought into that month's book every 3m, 6m, 1y, 2y, 3y, 5y, 7y or 10y. Sell-all sells the whole lot
+# at each roll, as (#311) does. Leavers sells only the share the new book drops (1 minus the weight both
+# books hold) and carries the cost basis of what stays. A roll pays 28% on the sold share's gain, no loss
+# credited, and 50 bp (`holds::cost_bps` for a US stock) on its value. Books are (#311)'s top-10 and SIZED.
+# BAR, written before the run: the control is the shipped roll (sell-all at 10y, with the fee). Pick the
+# leavers rung with the best early-half mean SIZED delta against it, above zero; ship it only if its late
+# half, mean and median are all above zero over at least 12 programs. Otherwise 10y sell-all stays.
+# CONTROL (sell-all 10y, no fee) reprints the run's own (#311) rows to the digit:
+#   top-10  roll +9.1%/yr  vs never-sell +10.0%/yr  ->  -0.9 (med -0.4)  win 32% of 22  OOS +0.1/-1.9
+#   SIZED   roll +8.9%/yr  vs never-sell +9.9%/yr   ->  -1.0 (med -0.5)  win 27% of 22  OOS +0.1/-2.1
+# Delta vs never-sell, pts/yr, mean and median, 22 programs each (all = sell-all, lv = leavers):
+#              3m         6m         1y         2y         3y         5y         7y         10y
+#   top-10 all -4.1 -3.5  -3.4 -3.0  -2.6 -2.2  -2.9 -2.3  -2.1 -1.8  -1.9 -1.5  -1.3 -1.2  -0.9 -0.4
+#   top-10 lv  -1.0 -0.4  -2.3 -1.9  -2.1 -1.7  -2.6 -2.0  -1.9 -1.5  -1.8 -1.4  -1.2 -1.1  -0.8 -0.4
+#   SIZED all  -4.0 -3.8  -3.0 -2.9  -1.9 -1.7  -3.0 -2.6  -2.7 -2.4  -2.2 -2.0  -1.3 -1.2  -1.0 -0.6
+#   SIZED lv   -1.0 -0.7  -1.9 -1.8  -1.5 -1.3  -2.7 -2.4  -2.4 -2.2  -2.1 -1.8  -1.2 -1.1  -1.0 -0.5
+# Share a leavers roll sells: 31-32% at 3m, 58-61% at 6m, 68-72% at 1y, 75-79% at 2y, 79-81% at 3y,
+# 87-88% at 5y, 89-91% at 7y, 91-94% at 10y.
+# SIZED leavers vs the shipped roll, mean (median) and early|late halves:
+#   3m +0.0 (+0.0) +0.1|-0.1   6m -0.9 (-0.9) -0.7|-1.1   1y -0.4 (-0.6) +0.1|-1.0   2y -1.7 (-1.7) -1.3|-2.1
+#   3y -1.4 (-1.4) -1.0|-1.8   5y -1.0 (-1.1) -1.1|-1.0   7y -0.2 (-0.4) -0.4|+0.1   10y +0.1 (+0.1) +0.0|+0.1
+# PICK 1y leavers: early +0.1, late -1.0, mean -0.4, median -0.6 over 22 programs -> 10y STAYS.
+# READING: every rung loses to never selling, for both books and both rulers, and the shorter the roll the
+# more it loses: sell-all every 3 months gives up about 4 pts/yr. Each roll pays tax on a gain that
+# never-sell defers, and the newer book does not earn it back. Leavers every 3 months sells about a third
+# of the book a roll and lands level with the 10y roll, not above it. Leavers at 10y beats sell-all at 10y
+# in 22 of 22 programs by +0.1/yr because it sells 91% of the same book instead of 100%; it was not the
+# pick, and it still trails never-sell by 1.0/yr.
+# DRIFT: when (#311) passed (2026-09-14, the same args) the 10y roll read SIZED +0.8 (med +1.2) and top-10
+# +1.5 against never-sell over 21 programs. On today's config and pond it reads SIZED -1.0 (med -0.5) and
+# top-10 -0.9 over 22, so on this ruler the shipped roll no longer passes (#311)'s own bar.
+# MUTANTS: the catch-up census 40931965085 on 4cb5eed graded all 110: 107 caught, 0 missed, 3 unviable.
+# VERDICT: 10y sell-all stays. No shorter roll and no leavers rule ships; no knob, and nothing here reaches
+# rank, BUY NOW, trade, size or the broker. Refreshing the journalled SIZED roll reading needs a
+# `backtest 20 universe fund pit dead` run; this census journals nothing.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
