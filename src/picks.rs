@@ -5160,25 +5160,22 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("BUY%", "Share of the BUY% book. A name's share is a lower bound: a fund counts only its top-10 holdings"),
         ("DETAIL", "For a name: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
     ]);
-    // (#811) `heuristics::intraday::web_rows`
+    // (#811) `heuristics::intraday::web_rows`; (#1223) the BUY NOW Trading table shares it.
+    // shortcut: the key column's help is keyed on K7, the shipped intraday_key; another key's column shows none
     let intraday = fixed(&[
-        ("RANK", "Position in its market by BEST, the most euros first, ties by KEY; the 10 names are the top 10 by KEY; BEST counts sessions that are over, so this order is hindsight, not a forecast"),
-        ("MARKET", "US = an S&P 500 member today; EU = a DAX 40, CAC 40 or Euro Stoxx 50 member; each market ranks its own top 10"),
+        ("RANK", "Position in its table by BEST, the most euros first, ties in the order the names came in: the top 10 by K7 in a K7 table, the BUY NOW order in the BUY NOW one; BEST counts sessions that are over, so this order is hindsight, not a forecast"),
+        ("MKT", "US = traded in New York: an S&P 500 member today in the K7 table; EU = traded in Frankfurt or Paris: a DAX 40, CAC 40 or Euro Stoxx 50 member in the K7 table; in the BUY NOW table a Xetra listing of a US company is priced on its US listing and reads US; hover a cell for the session's hours on the exchange's own clock"),
         ("TICKER", ticker),
         ("NAME", "The company's name, as Yahoo lists it; click to open the company's own website (or its Wikipedia article) when one is found, else its Yahoo quote"),
-        ("SECTOR", "GICS sector, from the company's Nasdaq profile when the universe list has none; n/a = no source names it"),
-        ("PRICE(EUR)", "Last close, converted to euros; while the session trades, Yahoo's latest price"),
-        ("KEY", "The intraday key the run ranks on, higher first; hover a cell for how its number was worked out (K1 and K7 work it out; the other keys show their name). K1 tug of war = the last 21 sessions' open-to-close gains minus their overnight gains; K2 calm range = minus the mean high-to-low range of the last 20 sessions; K3 5d intraday = the mean open-to-close gain of the last 5 sessions; K4 hit share = the share of the last 63 sessions that closed above their open; K7 hit 1y = the share of the last 252 sessions that closed above their open, the key this table ranks on"),
-        ("SESSION", "The session the row is for, buy at its open and sell before its close, on the exchanges' own clock; the line under it, and the hover, give the hours on your own clock"),
-        ("DATA TO", "The window RIGHT/FAIL counts, on this name's own bars: from the start date to the last session counted; before the exchange closes that is the last completed session the key read, after it the session this row is for"),
-        ("RIGHT/FAIL", "How this name's sessions went since the start date, open to close before costs, right/fail; every session on its own bars, whether or not it made this table that day; right = it closed above its open; fail = it closed at or below its open; today's session counts once its exchange has closed (half an hour after the close: 17:00 UTC for EU and 21:30 UTC for US in winter time, an hour earlier in summer time); the start date is the Pages workflow's since input"),
-        ("GAIN/LOSS", "The same sessions as RIGHT/FAIL, each one's open-to-close % change added up: the up days' gains/the down and flat days' losses, before costs, not compounded; gains/(gains+losses) is its sort key, so +60%/-40% sorts above +30%/-30%; gains above losses means the up days outweighed the down days; hover a cell for the averages, the gain factor and both sums after the backtest's round-trip cost"),
-        ("P/L(EUR)", "The same sessions as GAIN/LOSS in euros: €1,000 bought at each session's open and sold at its close, every gain and loss added up, after the backtest's round-trip cost (50 bp a session in the US, 20 bp in the EU); negative = a loss; a fresh €1,000 each session, not compounded (a gain is not reinvested, a loss is topped back up); it counts every session of the name, not only the days the table listed it, so it is hindsight, not what following the table would have earned; hover a cell for the figure before costs and the average a session"),
-        ("SCORE", "The hit share, (right+1)/(right+fail+2) as a percent: every name starts at 50% and nears its plain right share as its sessions add up; 9/1 = 83%; 1/0 = 67%; 0/0 = 50%; it counts days only, so a name can score above 50% and still lose when its down days are bigger; GAIN/LOSS weighs the moves"),
-        ("HOLD 21", "The same sessions as P/L(EUR), traded 21 sessions at a time: €1,000 bought at the first session's open and sold at the close of the 21st session, then bought again at the next open, back to back; the last hold ends on the last session counted; after the same round-trip cost a hold, not compounded; in the hold-window census 21 sessions paid the most of 0 to 21, and it is market drift, not timing"),
-        ("TREND", "The same sessions as P/L(EUR), traded on the 200-day average: in while the last close sits above the average of the last 200 closes, bought at the next open and sold at the next open after a close under it, or at the last close if still in; €1,000 a round trip after the same cost, not compounded; +€0.00 = it stayed out; in the trading-rules census no such rule beat buying and holding after costs"),
-        ("BUY&HOLD", "The same sessions as P/L(EUR), bought once: €1,000 bought at the first session's open and sold at the last session's close, one round trip after the same cost; the yardstick the other columns are set against; — = no session counted"),
-        ("BEST", "Which of P/L(EUR), HOLD 21, TREND and BUY&HOLD made this name the most euros over the same sessions, and how much; hover a cell for all four, highest first; the rows sort on it; hindsight: it is picked after the sessions are over, so it says which way would have paid, not which will"),
+        ("PRICE", "Last close, in euros at the day's rate; while the session trades, Yahoo's latest price"),
+        ("BEST", "Which of SAME DAY, HOLD 21, TREND and BUY&HOLD made this name the most euros over its last 2 years, and how much; hover a cell for all four, highest first; the rows sort on it; hindsight: it is picked after the sessions are over. Picked this way on each name's last 2 years and then traded over the next 6 months or the next month, it lost to buying and holding the same name, in the US and the EU, 2019-2026 (receipt #1222), so it says which way would have paid, not which will"),
+        ("BUY&HOLD", "The last 2 years bought once: €1,000 bought at the first session's open and sold at the last session's close, in euros at each day's rate, one round trip after the backtest's cost (50 bp in the US, 20 bp in the EU); the yardstick the other columns are set against; — = no session counted"),
+        ("HOLD 21", "The same sessions traded 21 at a time: €1,000 bought at the first session's open and sold at the close of the 21st session, then bought again at the next open, back to back; the last hold ends on the last session counted; in euros at each day's rate, after the same round-trip cost a hold, not compounded; in the hold-window census 21 sessions paid the most of 0 to 21, and it is market drift, not timing"),
+        ("TREND", "The same sessions traded on the 200-day average: in while the last close sits above the average of the last 200 closes, bought at the next open and sold at the next open after a close under it, or at the last close if still in; €1,000 a round trip in euros at each day's rate, after the same cost, not compounded; +€0.00 = it stayed out; in the trading-rules census no such rule beat buying and holding after costs"),
+        ("SAME DAY", "The same sessions bought at each open and sold at that session's close: €1,000 each session, every gain and loss added up, after the round-trip cost each session; negative = a loss; a fresh €1,000 each session, not compounded (a gain is not reinvested, a loss is topped back up); it counts every session of the name, not only the days the table listed it; hover a cell for the figure before costs and the average a session; in the 10-year backtest every intraday key lost money after this cost"),
+        ("EARLY EXIT", "The SAME DAY sessions sold at a set hour instead of at the close, on this name's 60m bars from Yahoo, so a half day drops out: the intraday_exit_us hour New York time on a US row, the intraday_exit_eu hour Frankfurt time on an EU row; hover a cell for the hour on the exchange's clock and on Portugal's (PT) and for the same sessions sold at the close; buying at the open and selling then was the best pair in a 2-year census of every buy hour and later sell hour (receipt #1214), yet every pair lost money after costs, and none beat open to close by a significant margin; — = no 60m session"),
+        ("K7", "The intraday key a K7 table ranks on, higher first: K7 hit 1y = the share of the last 252 sessions that closed above their open; — = fewer sessions than that; hover a cell for its count and for the 2-year window's record: the sessions that closed above their open against the rest, a score of (up+1)/(all+2) that starts every name at 50%, and the up and the down days' moves added up, before costs"),
+        ("DATA TO", "The window every column counts, on this name's own bars: from its first session in the last 2 years to the last completed one; today's session counts once its exchange has closed (half an hour after the close: 17:00 UTC for EU and 21:30 UTC for US in winter time, an hour earlier in summer time); — = no session"),
     ]);
     // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
     let mut bonds: BTreeMap<String, String> = fixed(&[
@@ -5216,6 +5213,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("reits", reits),
         ("upcoming", upcoming),
         ("exposure", exposure),
+        ("trading_buynow", intraday.clone()),
         ("intraday", intraday),
         ("track", track),
     ])
@@ -5942,7 +5940,7 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
 pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn(&str) -> String) {
     let mut by: HashMap<String, &Quote> = quotes.iter().map(|q| (us(&q.ticker), q)).collect();
     by.extend(quotes.iter().map(|q| (q.ticker.clone(), q)));
-    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young", "braked", "reits", "intraday"] {
+    for table in ["stocks", "etfs", "core", "crypto", "attention", "berkshire", "social", "young", "braked", "reits", "intraday", "trading_buynow"] {
         let Some(rows) = payload.get_mut(table).and_then(serde_json::Value::as_array_mut) else { continue };
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default();
@@ -5962,12 +5960,6 @@ pub fn stamp_site(payload: &mut serde_json::Value, quotes: &[Quote], us: &dyn Fn
                 if let Some(tip) = q.and_then(|q| capex_tip(q)) {
                     cell.truncate(2);
                     cell.extend([serde_json::Value::Null, tip.into()]);
-                }
-            }
-            // (#1204) the Intraday rows carry SECTOR as n/a; a found quote names it, as the lanes' cell does
-            if table == "intraday" {
-                if let Some((cell, sector)) = cells.iter_mut().find(|c| c[0] == "SECTOR").zip(q.and_then(|q| shown_sector(q))) {
-                    cell[1] = sector.into();
                 }
             }
             let Some(site) = q.and_then(|q| q.profile.site.clone()).filter(|u| u.starts_with("https://")) else { continue };
@@ -11850,9 +11842,10 @@ mod tests {
         let quotes = [q("APC.DE", Some("https://www.apple.com")), q("VWCE.DE", Some("https://jetf/IE00")), q("BAD", Some("http://x")), q("NONE", None), q("BTC-EUR", Some("https://cg/bitcoin"))];
         let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
         let row = |t: &str| serde_json::json!([["TICKER", t], ["NAME", "n", "https://old"]]);
-        let mut p = serde_json::json!({"stocks": [row("APC.DE"), row("BAD"), row("NONE")], "core": [row("VWCE.DE")], "berkshire": [row("AAPL"), row("SIRI")], "crypto": [row("BTC-EUR")], "intraday": [row("AAPL")]});
+        let mut p = serde_json::json!({"stocks": [row("APC.DE"), row("BAD"), row("NONE")], "core": [row("VWCE.DE")], "berkshire": [row("AAPL"), row("SIRI")], "crypto": [row("BTC-EUR")], "intraday": [row("AAPL")], "trading_buynow": [row("APC.DE")]});
         stamp_site(&mut p, &quotes, &us);
         assert_eq!(p["intraday"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "(#824) the Intraday table links too");
+        assert_eq!(p["trading_buynow"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "(#1223) so does the BUY NOW one");
         assert_eq!(p["stocks"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "a stale third element is replaced");
         assert_eq!(p["core"][0][1], serde_json::json!(["NAME", "n", "https://jetf/IE00"]));
         assert_eq!(p["berkshire"][0][1], serde_json::json!(["NAME", "n", "https://www.apple.com"]), "a US filing finds its Xetra twin");
@@ -11860,21 +11853,6 @@ mod tests {
         for (t, i) in [("stocks", 1), ("stocks", 2), ("berkshire", 1)] {
             assert_eq!(p[t][i][1], serde_json::json!(["NAME", "n", "https://old"]), "{t}[{i}] untouched");
         }
-    }
-
-    /// (#1204) An Intraday row's SECTOR is named off its quote, by exact ticker or Xetra twin; an unfound or
-    /// sectorless row keeps n/a, and no other table's SECTOR is touched.
-    #[test]
-    fn stamp_site_names_the_intraday_sector() {
-        let q = |t: &str, sector: Option<&str>| Quote { sector: sector.map(String::from), ..Quote::stub(t, "€1", "", t) };
-        let quotes = [q("APC.DE", Some("Information Technology")), q("SAP.DE", None)];
-        let us = |t: &str| if t == "APC.DE" { "AAPL".to_string() } else { t.to_string() };
-        let row = |t: &str| serde_json::json!([["TICKER", t], ["SECTOR", "n/a"]]);
-        let mut p = serde_json::json!({"intraday": [row("AAPL"), row("SAP.DE"), row("ZZ")], "stocks": [row("APC.DE")]});
-        stamp_site(&mut p, &quotes, &us);
-        let sector = |t: &str, i: usize| p[t][i][1][1].clone();
-        assert_eq!(sector("intraday", 0), shown_sector(&quotes[0]).unwrap().as_str());
-        assert_eq!([sector("intraday", 1), sector("intraday", 2), sector("stocks", 0)], ["n/a", "n/a", "n/a"]);
     }
 
     /// (#540) REPORTS links the EDGAR page on a CIK (a Xetra twin's too), else a Google search on the

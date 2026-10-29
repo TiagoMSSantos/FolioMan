@@ -95,6 +95,9 @@ function hours(cell) {
   const at = (h, m) => new Date(wall(+h, +m, ZONES[city])).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   return at(a, b) + "-" + at(c, d);
 }
+// (#1223) A Trading MKT cell's hover, `session 09:30-16:00 New York` and maybe `; priced on …`: the
+// hours, then the rest.
+const session = (tip) => /^session (\d\d:\d\d-\d\d:\d\d [A-Za-z ]+?)((?:;.*)?)$/.exec(String(tip));
 function local(cell) {
   const mine = hours(cell);
   return mine && cell + " = " + mine + " your time (" + Intl.DateTimeFormat().resolvedOptions().timeZone + ")";
@@ -103,7 +106,9 @@ console.assert(
   wall(9, 30, "America/New_York", new Date(Date.UTC(2026, 0, 15, 12))) === Date.UTC(2026, 0, 15, 14, 30) &&
     wall(17, 30, "Europe/Berlin", new Date(Date.UTC(2026, 6, 15, 12))) === Date.UTC(2026, 6, 15, 15, 30) &&
     /^\d\d:\d\d-\d\d:\d\d$/.test(hours("09:30-16:00 New York")) && hours("09:00-17:30 Tokyo") === "" &&
-    local("09:30-16:00 New York").startsWith("09:30-16:00 New York = ") && local("09:00-17:30 Tokyo") === "",
+    local("09:30-16:00 New York").startsWith("09:30-16:00 New York = ") && local("09:00-17:30 Tokyo") === "" &&
+    session("session 09:30-16:00 New York; priced on NVDA, its US listing (#608)")?.[1] === "09:30-16:00 New York" &&
+    session("session 09:00-17:30 Frankfurt")?.[2] === "" && session("US") === null,
   "a SESSION hover misreads its exchange's clock",
 );
 
@@ -150,8 +155,12 @@ function table(rows, empty = "(none pass the gates)", help = {}, fresh = new Set
         const [, n, marks] = cell.match(/^(\d*)(.*)$/);
         td.title = ["rank " + n + " in this table", ...[...marks].filter((f) => flags[f]).map((f) => f + " " + flags[f])].join("\n");
       }
-      if (h === "SESSION") td.title = local(cell) || td.title; // (#824) the Intraday hours on the reader's own clock
-      if (h === "SESSION" && hours(cell)) td.dataset.local = hours(cell) + " your time"; // (#1213) and in the cell
+      // (#824) the Trading hours on the reader's own clock, (#1213) in the cell too; (#1223) from MKT's hover
+      const at = h === "MKT" && session(tip);
+      if (at && hours(at[1])) {
+        td.title = "session " + local(at[1]) + at[2];
+        td.dataset.local = hours(at[1]) + " your time";
+      }
       // (#401) Every ticker is already a Yahoo symbol: the pool is fetched from Yahoo. (#455) A shadow
       // table's cell may carry its source page as a third element; only https ever becomes a link.
       // (#482) A NAME with no page of its own links the row's Yahoo quote, and so does an Exposure
@@ -215,7 +224,7 @@ function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
   const all = document.getElementById("allrows").checked;
   for (const t of document.querySelectorAll(".scroll table")) {
-    if (t.closest("#inflation, #bonds, #intraday, #approaches, #track")) continue; // (#811) every intraday row shows, unfiltered; (#1140) every track row; (#1221) every approach
+    if (t.closest("#inflation, #bonds, #intraday, #trading_buynow, #approaches, #track")) continue; // (#811) every intraday row shows, unfiltered; (#1140) every track row; (#1221) every approach; (#1223) every BUY NOW stock
     const id = t.closest("div[id]").id;
     const cap = id === "exposure" ? Infinity : n;
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
@@ -355,7 +364,7 @@ console.assert(
   "sort key misreads a dollar, ᶠ, ⁿ or N: list cell",
 );
 console.assert(
-  key("BUY&HOLD +€280.18") === 280.18 && key("P/L(EUR) -€1,046.85") === -1046.85 && key("HOLD 21 +€9.00") === 9 && key("TREND +€0.00") === 0,
+  key("BUY&HOLD +€280.18") === 280.18 && key("SAME DAY -€1,046.85") === -1046.85 && key("HOLD 21 +€9.00") === 9 && key("TREND +€0.00") === 0,
   "sort key misreads a Trading BEST cell",
 );
 // (#735) A book this tilted is one bet, whatever its name count: the lines the Stocks banner prints,
@@ -500,6 +509,14 @@ const APPROACHES = [
     ["#1215", "(#1215) HOLD-LENGTH CENSUS in tests/ci-settings.yaml"],
   ],
   [
+    ["Trade each name its BEST way", "The Trading table's BEST column, picked ahead: 605 S&P 500 names and 105 EU names on 10 years of daily bars, in euros at each day's EUR/USD rate. Every 6 months (or every month), each name takes the way of the four that made it the most over its last 2 years"],
+    ["Trade the way that worked best lately", "Each name trades the way its last 2 years favoured (same day, 21 sessions at a time, on its 200-day average, or bought once) for the next 6 months or month, against buying and holding the same name. €1,000 a trade after costs"],
+    ["US -€19.00 a name every 6 months; 0 of 4 lines pass", "Against holding the same name: US -€19.00 a name every 6 months (t -2.19) and -€2.36 a month (t -1.40), EU -€13.74 (t -1.20) and -€1.19 (t -0.58); every half below zero. BEST picked buying and holding 45-62% of the time, the trend 25-30%, 21-session holds 13-26%, the same-day trade never"],
+    ["—", "— = not measured by this census"],
+    ["FAILS", "Switching to the way that did best on the last 2 years lost against holding the same name, on every line. The BEST column below is hindsight, a label only"],
+    ["#1222", "(#1222) BEST CENSUS in tests/ci-settings.yaml"],
+  ],
+  [
     ["Trend, average, breakout, swing", "5,907 names on 10 years of daily bars and full monthly history, plus 2 years of hourly bars: 47 rules at 1x, 2x and 3x, in or out of cash, net of costs"],
     ["Hold only while a rule says up", "Trend: in while the last N months rose. Average: in while the close is above its N-bar mean (the TREND column below, at 200 bars). Breakout: buy a new high, sell a set fall from the peak. Swing: buy after a fall, sell on the bounce"],
     ["Every rule trails buy and hold at 1x; 1 of 1,976 lines passes", "At 1x every rule earns less than holding the same names, in every set; on monthly bars, stocks' 12-month trend trails by 13.4 pts/yr (t -6.4). The one passing line is one crypto name over 6 months at 2x: luck sized"],
@@ -517,7 +534,7 @@ const APPROACHES = [
   ],
   [
     ["Intraday, same session", "The Trading table's own trade: the K7 top 10, bought at the open and sold that session. 10 years of daily bars on every key and 2 years of hourly bars on every buy and sell hour"],
-    ["Buy at the open, sell before the close", "One round trip a session: €5 a €1,000 trade in the US, €2 in the EU. The P/L(EUR) column below prices it per name, in hindsight"],
+    ["Buy at the open, sell before the close", "One round trip a session: €5 a €1,000 trade in the US, €2 in the EU. The SAME DAY column below prices it per name, in hindsight"],
     ["K7 -€4.80 a US session, -€1.60 an EU one", "At €1,000 a session the K7 book loses about €4.80 a US session and €1.60 an EU one. The 10-year backtest loses on every key: -49 to -52 bp a day in the US, -16 to -20 in the EU. Every buy and sell hour pair loses after costs"],
     ["—", "— = not measured by this census"],
     ["FAILS", "No key and no hour pair has made money after costs"],
@@ -626,6 +643,10 @@ function render(data, prev) {
   if (data.intraday) {
     document.getElementById("intraday").replaceChildren(table(data.intraday, "(off, or no name ranked)", help.intraday));
   }
+  // (#1223) and the stocks BUY NOW lists, priced the same ways
+  if (data.trading_buynow) {
+    document.getElementById("trading_buynow").replaceChildren(table(data.trading_buynow, "(off, or no BUY NOW stock priced in EUR or USD)", help.trading_buynow));
+  }
   document.getElementById("approaches").replaceChildren(table(APPROACHES, undefined, APPROACH_HELP)); // (#1221) fixed text, any payload
   // (#1140) CI's journal, so an upload keeps CI's table
   if (data.track) {
@@ -658,7 +679,7 @@ function render(data, prev) {
   chooser(Math.max(1, ...sizes), secondShortest(sizes));
   view(viewSel.value);
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday", "track"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday", "trading_buynow", "track"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, { ...help, approaches: APPROACH_HELP });
@@ -693,7 +714,7 @@ function glossary(data, help) {
     ["REITs and SIGIs", "reits", [data.reits]],
     ["Upcoming IPOs", "upcoming", [data.upcoming]],
     ["Trading approaches", "approaches", [APPROACHES]],
-    ["Trading", "intraday", [data.intraday]],
+    ["Trading", "intraday", [data.intraday, data.trading_buynow]],
     ["Track record", "track", [data.track]],
   ]) {
     const heads = [...new Set(tables.flatMap((rows) => (rows?.[0] || []).map(([h]) => h)))];

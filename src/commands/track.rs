@@ -170,6 +170,12 @@ pub struct Snapshot {
     /// None with the key off, and on lines from before (#832), when K1 was the only key the page ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intra_key: Option<u8>,
+    /// (#1223) `(table, ticker priced, BEST)` for each row of the page's Trading tables (`K7 US`, `K7 EU`,
+    /// `BUY NOW`): the index into `heuristics::intraday::WAYS` the row's BEST named on this line's date.
+    /// No prices: [`best_section`] trades each way to the next month's first line. Empty with
+    /// `intraday_key` 0, and on lines from before (#1223). Same serde contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub best: Vec<(String, String, u8)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -1461,6 +1467,34 @@ fn intra_section(snaps: &[Snapshot], charts: &std::collections::HashMap<String, 
     out
 }
 
+/// (#1223) THE BEST SHADOW: each Trading table's journalled BEST per name, traded from each month's first
+/// line to the next month's, minus buying and holding the same name ([`intraday::best_links`]). `priced`
+/// holds the daily bars of every journalled name and the euros a unit of its currency buys on each bar.
+/// One line per table, in name order; a line that journalled no row of a table is not one of its lines.
+///
+/// [`intraday::best_links`]: crate::heuristics::intraday::best_links
+fn best_section(snaps: &[Snapshot], priced: &std::collections::HashMap<String, (fetch::Chart, Vec<f64>)>) -> String {
+    use crate::heuristics::intraday;
+    let mut out = String::from(
+        "\n  (#1223) BEST shadow: each Trading table's BEST per name, traded to the next month's first line, minus buying and holding it.\n  \
+         NOT a buy signal: picked this way, BEST lost to holding on the (#1222) census.",
+    );
+    let tables: std::collections::BTreeSet<&str> = snaps.iter().flat_map(|s| s.best.iter().map(|(t, ..)| t.as_str())).collect();
+    for table in tables {
+        let lines: Vec<(chrono::NaiveDate, Vec<(&str, u8)>)> = snaps
+            .iter()
+            .filter_map(|s| {
+                let names: Vec<(&str, u8)> = s.best.iter().filter(|(t, ..)| t == table).map(|(_, tk, w)| (tk.as_str(), *w)).collect();
+                let d = chrono::NaiveDate::parse_from_str(&s.date, "%Y-%m-%d").ok()?;
+                (!names.is_empty()).then_some((d, names))
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&intraday::best_track_line(table, &intraday::best_links(&lines, priced)));
+    }
+    out
+}
+
 /// (#584) THE BLEND SHADOW: each line's blended book against the shipped-only book of the same line, the
 /// first [`BOOK`] non-coin names of `rows` and of `shipped`, equal-weight. The backtest graded the blend
 /// in-sample (see ci-settings `growth_momentum_interleave`); this grades it on prices that did not exist
@@ -1909,6 +1943,25 @@ pub async fn run(args: Vec<String>) {
             .await;
         println!("{}", intra_section(&snaps, &charts, today));
     }
+    // (#1223) and the Trading tables' BEST, on the daily bars of every name a line journalled, in euros at
+    // each day's rate
+    let best: std::collections::BTreeSet<&str> = snaps.iter().flat_map(|s| s.best.iter().map(|(_, t, _)| t.as_str())).collect();
+    if !best.is_empty() {
+        use futures::stream::StreamExt;
+        let (client, urls) = (&client, &settings.urls);
+        let usd = &fetch::fx_factor_series(client, urls, "USD", "EUR", false).await;
+        let priced: std::collections::HashMap<String, (fetch::Chart, Vec<f64>)> = futures::stream::iter(best)
+            .map(|t| async move {
+                let c = fetch::fetch_history(client, urls, t).await?;
+                let fx = crate::heuristics::intraday::rates_on(&c.currency, &c.dates, usd)?;
+                Some((t.to_string(), (c, fx)))
+            })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        println!("{}", best_section(&snaps, &priced));
+    }
     println!("{}", chain_section(&snaps)); // (#336)
     if push {
         let delivered = fetch::push(
@@ -1938,7 +1991,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None,
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, best: Vec::new(),
         }
     }
 
@@ -2649,6 +2702,38 @@ mod tests {
         assert!(out.contains("US K7: 1 session(s) graded"), "{out}");
         assert!(out.contains("EU K7: 0 session(s) graded"), "{out}");
         assert!(intra_section(&[bare], &charts, d(3)).contains("US K1: 0 session(s) graded"));
+    }
+
+    /// (#1223) Each table grades its own journalled BEST, from each month's first line to the next; a line
+    /// that journalled none of a table's rows is not its line; an old line parses and writes no `best`.
+    #[test]
+    fn best_section_grades_each_table_month_to_month() {
+        let d = |i: u64| chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap() + chrono::Days::new(i);
+        let a = fetch::Chart {
+            dates: (0..90).map(d).collect(),
+            closes: vec![101.0; 90],
+            volumes: vec![1.0; 90],
+            opens: vec![100.0; 90],
+            highs: vec![101.0; 90],
+            lows: vec![100.0; 90],
+            currency: "EUR".into(),
+            name: String::new(),
+            instrument_type: String::new(),
+            divs: vec![],
+            splits: vec![],
+        };
+        let priced = std::collections::HashMap::from([("A".to_string(), (a, vec![1.0; 90]))]);
+        let bare = snap("2026-01-01", None, &[]);
+        assert!(!serde_json::to_string(&bare).unwrap().contains("best"));
+        assert_eq!(serde_json::from_str::<Snapshot>(&serde_json::to_string(&bare).unwrap()).unwrap().best, Vec::new(), "an old line parses");
+        let both = |date: &str| Snapshot { best: vec![("K7 US".into(), "A".into(), 0), ("BUY NOW".into(), "A".into(), 3)], ..snap(date, None, &[]) };
+        let us = Snapshot { best: vec![("K7 US".into(), "A".into(), 0)], ..snap("2026-03-01", None, &[]) };
+        let out = best_section(&[both("2026-01-01"), both("2026-01-15"), both("2026-02-01"), us, snap("2026-03-02", None, &[])], &priced);
+        // SAME DAY: €8 a session after 20 bp, 31 sessions in January and 28 in February, minus one €8 hold
+        assert!(out.contains("BEST K7 US: 2 monthly links 2026-01-01..2026-02-01  BEST minus BUY&HOLD €+228.00 a name a link  t +19.00  halves €+240.00|€+216.00  (reads after 12 links)"), "{out}");
+        assert!(out.contains("BEST BUY NOW: 1 monthly link(s) graded; the t needs 2  (reads after 12 links)"), "{out}");
+        assert_eq!(out.matches("  BEST ").count(), 2, "{out}");
+        assert!(!best_section(&[bare], &priced).contains("  BEST "));
     }
 
     /// (#557) Each `scapK` row rebuilds the top-[`BOOK`] under sector cap K off the line's own tags: at
@@ -3828,6 +3913,8 @@ mod tests {
             for v in s.fac.iter().map(|(_, _, v)| *v).chain(s.peg.iter().flat_map(|(_, a, b)| [*a, *b])) {
                 assert!(v.abs() < 1e4, "{d}: journalled factor value {v} — a unit error in the join");
             }
+            // (#1223) every BEST names one of the page's ways
+            assert!(s.best.iter().all(|(_, _, w)| usize::from(*w) < crate::heuristics::intraday::WAYS.len()), "{d}: a BEST past WAYS");
         }
     }
 }

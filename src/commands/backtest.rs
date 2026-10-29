@@ -2698,9 +2698,9 @@ async fn best_census(client: &reqwest::Client, settings: &config::Settings) {
     let us = intraday::us_pond(&spans, today - chrono::Duration::days(3653));
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
     println!("\n── (#1222) BEST, PICKED ON 2y AND TRADED THE NEXT STEP, AGAINST HOLDING THE SAME NAME ──");
-    println!("  Each name picks the most euros of P/L(EUR), HOLD 21, TREND and BUY&HOLD on its last 2y, €1,000 a trade");
+    println!("  Each name picks the most euros of SAME DAY, HOLD 21, TREND and BUY&HOLD on its last 2y, €1,000 a trade");
     println!("  after the page's round trip, then trades the pick over the step. CAVEATS: a fresh €1,000 a trade, so");
-    println!("  P/L(EUR) puts €1,000 on every session where BUY&HOLD puts it on once, as the page does; the EU pond is");
+    println!("  SAME DAY puts €1,000 on every session where BUY&HOLD puts it on once, as the page does; the EU pond is");
     println!("  today's members and Yahoo keeps few dead US names, so both lean to survivors; halves split by step count.");
     let start = today - chrono::Months::new(84);
     for (market, names, cost) in [("US", &us, intraday::COST_BPS_US), ("EU", &eu, intraday::COST_BPS_EU)] {

@@ -52,13 +52,7 @@ on:
   # second run republishes the same site a few minutes later.
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      since:
-        description: "(#825) Intraday RIGHT/FAIL start date, YYYY-MM-DD; empty keeps .intraday_since"
-        required: false
-        default: ""
-        type: string
+  workflow_dispatch: {}
 
 env:
   CARGO_NET_RETRY: "10"
@@ -334,19 +328,6 @@ jobs:
           ) > engine-build.log 2>&1 &
           echo "$!" > engine-build.pid
 
-      # (#825) A dispatched start date for the Intraday table's RIGHT/FAIL replay, refused unless it is
-      # a real YYYY-MM-DD date. The input is never echoed: it reaches the shell through `env:` only.
-      # `record` commits the same date to main, so every later cron run replays from it.
-      - name: Intraday start date
-        if: inputs.since
-        env:
-          SINCE: ${{ inputs.since }}
-        run: |
-          if ! [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || ! date -d "$SINCE" >/dev/null 2>&1; then
-            echo "since must be YYYY-MM-DD"; exit 1
-          fi
-          echo "$SINCE" > .intraday_since
-
       # The run itself. FMP_API_KEY reaches it through `env:` and nothing else — never an argument,
       # never echoed — and it is OPTIONAL: without it the value/quality tilts go neutral, which
       # empties the `#` flag and some columns rather than failing.
@@ -572,25 +553,6 @@ jobs:
         with:
           name: screen-journal
           path: run-journal
-      # (#825) The dispatched start date, committed so the cron replays from it. `publish` already
-      # refused a malformed one. shortcut: a cron run queued behind the dispatch checked out the older
-      # date and shows it for that one refresh.
-      - name: Commit the Intraday start date
-        if: inputs.since
-        env:
-          SINCE: ${{ inputs.since }}
-        run: |
-          echo "$SINCE" > .intraday_since
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .intraday_since
-          git diff --cached --quiet && exit 0
-          git commit -m "chore(screen): replay the Intraday table from $SINCE"
-          for attempt in 1 2; do
-            git pull --rebase && git push && exit 0
-            echo "push attempt $attempt lost a race with a concurrent push; retrying"
-          done
-          exit 1
       - name: Commit today's line
         env:
           CLEAN: ${{ needs.publish.outputs.clean }}

@@ -1742,27 +1742,27 @@ fn meta_alerts(
     out
 }
 
-/// (#811) The Intraday shadow table: each market's top `intraday::BOOK` on key `k`, ranked on the bars
-/// completed before `today`, as page rows plus the `(market, ticker)` pairs the journal keeps. Same ponds,
-/// floor and USD rate as the (#809) ruler. A name in neither EUR nor USD is skipped. (#823) Today's
-/// session counts once the exchange closes, read off the UTC clock. (#824) Each book name as a bare
-/// quote, its profile looked up as the pool's are, for the NAME link; a market's prices convert at its
-/// one currency's rate. (#827) The bars reach back to `since` for the RIGHT/FAIL column, which counts
-/// every session on each book name's own bars, so the US pond is today's members only. (#1212) Each book
-/// name's 2y of 60m bars fill the exit-hour columns.
+/// (#811) The Trading tables, as page rows: each market's top `intraday::BOOK` on key `k`, ranked on the
+/// bars completed before `today`, with the same ponds, floor and USD rate as the (#809) ruler, and (#1223)
+/// the BUY NOW stocks. Also the `(market, ticker)` pairs the journal keeps for the market tables, the
+/// `(table, ticker priced, BEST)` triples it keeps for every table, and each market book name as a bare
+/// quote, its profile looked up as the pool's are, for the NAME link (#824). (#823) Today's session counts
+/// once the exchange closes, read off the UTC clock. (#1223) Every row is priced on 5y of daily bars at each
+/// day's EUR/USD rate, over its last 2 years, and its 60m bars fill EARLY EXIT (#1212).
 #[mutants::skip] // network shell; `rank`, `web_rows` and their tests live in heuristics::intraday
-async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate, since: chrono::NaiveDate) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String)>, Vec<Quote>) {
+async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k: u8, today: chrono::NaiveDate, buy: &[String]) -> Trading {
     use crate::heuristics::intraday;
     let spans = fetch::fetch_sp500_history(client, &settings.urls).await;
     let usd = fetch::eur_rate(client, &settings.urls, "USD", &fetch::fx_cache()).await;
+    let usd_days = fetch::fx_factor_series(client, &settings.urls, "USD", "EUR", false).await;
     let eu: Vec<String> = intraday::EU_POND.iter().map(|t| t.to_string()).collect();
-    let range = intraday::chart_range(since, today, k);
-    let (mut rows, mut pairs, mut stubs) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut asked, mut got, mut hours) = (0, 0, 0); // names asked for, names whose bars came back, book names with 60m bars
-    let exits = [("US", settings.intraday_exit_us), ("EU", settings.intraday_exit_eu)];
+    let now = chrono::Utc::now().naive_utc();
+    let until = |ms: &[&str]| if ms.iter().all(|m| intraday::closed(m, now)) { today.succ_opt().unwrap_or(today) } else { today };
+    let mut out = Trading::default();
+    let (mut asked, mut got, mut hours) = (0, 0, 0); // names asked for, names whose bars came back, rows with 60m bars
     for (market, names) in [("US", intraday::us_pond(&spans, today)), ("EU", eu)] {
         let charts: Vec<(&str, fetch::Chart)> = futures::stream::iter(&names)
-            .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk, range).await?)) })
+            .map(|tk| async move { Some((tk.as_str(), fetch::fetch_recent(client, &settings.urls, tk, "5y").await?)) })
             .buffer_unordered(fetch::fetch_concurrency())
             .filter_map(std::future::ready)
             .collect()
@@ -1777,25 +1777,88 @@ async fn intraday_book(client: &reqwest::Client, settings: &config::Settings, k:
             })
             .collect();
         let book = intraday::rank(k, &pond, today);
-        let until = if intraday::closed(market, chrono::Utc::now().naive_utc()) { today.succ_opt().unwrap_or(today) } else { today };
-        let fx = if market == "US" { usd.unwrap_or(f64::NAN) } else { 1.0 };
-        let mut book_rows = intraday::web_rows(market, k, &book, since, until, fx, today);
-        let hourly: std::collections::HashMap<String, Vec<(i64, f64, f64)>> = futures::stream::iter(&book)
-            .map(|&(tk, ..)| async move { Some((tk.to_string(), fetch::fetch_hourly(client, &settings.urls, tk, "2y").await?)) })
-            .buffer_unordered(fetch::fetch_concurrency())
-            .filter_map(std::future::ready)
-            .collect()
-            .await;
-        hours += hourly.len();
-        intraday::stamp_exits(&mut book_rows, &hourly, &exits, since, until, today);
-        rows.extend(book_rows);
-        pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
-        stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
+        let named: Vec<(&str, &str, &str, &fetch::Chart)> = book.iter().map(|&(tk, _, c)| (market, tk, tk, c)).collect();
+        let (rows, best, h) = trading_table(client, settings, k, &format!("K{k} {market}"), &named, &usd_days, until(&[market]), today).await;
+        hours += h;
+        out.rows.extend(rows);
+        out.best.extend(best);
+        out.pairs.extend(book.iter().map(|(tk, ..)| (market.to_string(), tk.to_string())));
+        out.stubs.extend(book.iter().map(|(tk, _, c)| Quote { instrument_type: c.instrument_type.clone(), ..Quote::stub(tk, "", "", &c.name) }));
     }
-    eprintln!("screen: intraday: fetched {got} of {asked} names, {} from the quote path's charts; 60m bars for {hours} of {} book names", fetch::recent_served(), pairs.len());
-    let targets = stubs.iter().map(|q| q.ticker.clone()).collect();
-    fetch::enrich_profile(client, &settings.urls, &mut stubs, &targets).await;
-    (rows, pairs, stubs)
+    // (#1223) the BUY NOW stocks in book order, a Xetra twin (#608) on its US listing's bars; the market is
+    // the chart's currency, so a name in neither EUR nor USD is left out
+    let wanted: Vec<(&str, String)> = buy.iter().map(|tk| (tk.as_str(), Some(fetch::us_symbol(tk)).filter(|us| *us != tk.to_uppercase()).unwrap_or_else(|| tk.clone()))).collect();
+    let charts: Vec<(&str, &str, fetch::Chart)> = futures::stream::iter(&wanted)
+        .map(|(tk, s)| async move { Some((*tk, s.as_str(), fetch::fetch_recent(client, &settings.urls, s, "5y").await?)) })
+        .buffered(fetch::fetch_concurrency())
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
+    let named: Vec<(&str, &str, &str, &fetch::Chart)> = charts
+        .iter()
+        .filter_map(|(tk, s, c)| {
+            let m = match c.currency.as_str() {
+                "USD" => "US",
+                "EUR" => "EU",
+                _ => return None,
+            };
+            Some((m, *tk, *s, c))
+        })
+        .collect();
+    let (rows, best, h) = trading_table(client, settings, k, "BUY NOW", &named, &usd_days, until(&["US", "EU"]), today).await;
+    eprintln!(
+        "screen: intraday: fetched {got} of {asked} names, {} from the quote path's charts; 60m bars for {} of {} rows; BUY NOW {} of {} stocks priced in EUR or USD",
+        fetch::recent_served(),
+        hours + h,
+        out.rows.len() + rows.len(),
+        rows.len(),
+        buy.len()
+    );
+    out.buynow = rows;
+    out.best.extend(best);
+    let targets = out.stubs.iter().map(|q| q.ticker.clone()).collect();
+    fetch::enrich_profile(client, &settings.urls, &mut out.stubs, &targets).await;
+    out
+}
+
+/// (#1223) What [`intraday_book`] hands the page and the journal.
+#[derive(Default)]
+struct Trading {
+    rows: Vec<Vec<serde_json::Value>>,
+    buynow: Vec<Vec<serde_json::Value>>,
+    pairs: Vec<(String, String)>,
+    best: Vec<(String, String, u8)>,
+    stubs: Vec<Quote>,
+}
+
+/// (#1223) One Trading table from its names, `(market, ticker shown, ticker priced, daily chart)`: the page
+/// rows with EARLY EXIT stamped off each name's 2y of 60m bars on the ticker priced, the `(table, ticker
+/// priced, BEST)` triples the journal keeps, and how many names had 60m bars. A chart with no rate on
+/// `usd` is left out.
+#[mutants::skip] // network shell; `web_rows`, `stamp_exits`, `best_way` and their tests live in heuristics::intraday
+async fn trading_table(
+    client: &reqwest::Client,
+    settings: &config::Settings,
+    k: u8,
+    table: &str,
+    names: &[(&str, &str, &str, &fetch::Chart)],
+    usd: &std::collections::BTreeMap<chrono::NaiveDate, f64>,
+    until: chrono::NaiveDate,
+    today: chrono::NaiveDate,
+) -> (Vec<Vec<serde_json::Value>>, Vec<(String, String, u8)>, usize) {
+    use crate::heuristics::intraday;
+    let fx: Vec<Option<Vec<f64>>> = names.iter().map(|(.., c)| intraday::rates_on(&c.currency, &c.dates, usd)).collect();
+    let book: Vec<intraday::Row> = names.iter().zip(&fx).filter_map(|(&(m, tk, s, c), fx)| Some((m, tk, s, c, fx.as_deref()?))).collect();
+    let mut rows = intraday::web_rows(k, &book, until, today);
+    let hourly: std::collections::HashMap<String, Vec<(i64, f64, f64)>> = futures::stream::iter(&book)
+        .map(|&(_, tk, s, ..)| async move { Some((tk.to_string(), fetch::fetch_hourly(client, &settings.urls, s, "2y").await?)) })
+        .buffer_unordered(fetch::fetch_concurrency())
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
+    intraday::stamp_exits(&mut rows, &hourly, &[("US", settings.intraday_exit_us), ("EU", settings.intraday_exit_eu)], until, today);
+    let best = book.iter().map(|&(m, _, s, c, fx)| (table.to_string(), s.to_string(), intraday::best_way(m, c, fx, until) as u8)).collect();
+    (rows, best, hourly.len())
 }
 
 /// (#68) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
@@ -2540,12 +2603,12 @@ pub async fn run(args: Vec<String>) {
     let mut soc_book = crate::heuristics::social::SocBook::default();
     // (#811) the Intraday shadow table, ranked for the session dated `run_date` (the journal's date, so
     // `track` grades the session it ranked for); key 0 (the default) fetches nothing
-    // (#825) the RIGHT/FAIL column counts from the date the Pages workflow's `since` input left on disk
+    // (#1223) and the BUY NOW stocks priced the same ways: read off the book, never fed back to it
     let intra_today = chrono::Local::now().date_naive();
-    let intra_since = crate::heuristics::intraday::since(intra_today);
-    let (intra_rows, intra_pairs, intra_quotes) = match settings.intraday_key {
-        0 => Default::default(),
-        k => intraday_book(&client, &settings, k, intra_today, intra_since).await,
+    let buy_stocks: Vec<String> = sized_now.iter().filter(|(t, _)| quotes.iter().any(|q| &q.ticker == t && q.instrument_type == "EQUITY")).map(|(t, _)| t.clone()).collect();
+    let trading = match settings.intraday_key {
+        0 => Trading::default(),
+        k => intraday_book(&client, &settings, k, intra_today, &buy_stocks).await,
     };
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
@@ -2570,18 +2633,11 @@ pub async fn run(args: Vec<String>) {
         top["bonds"] = serde_json::json!(bonds);
         // (#811) (#824) its own NAME links first, on a payload of its own: a bare quote stamped on the
         // other tables would relink their REPORTS cells
-        let mut intra = serde_json::json!({ "intraday": intra_rows });
-        crate::picks::stamp_site(&mut intra, &intra_quotes, &fetch::us_symbol);
+        let mut intra = serde_json::json!({ "intraday": trading.rows });
+        crate::picks::stamp_site(&mut intra, &trading.stubs, &fetch::us_symbol);
         top["intraday"] = intra["intraday"].take();
-        // (#825) the column's header hover names the day it counts from, as each cell's does
-        if let Some(h) = top["help"]["intraday"]["RIGHT/FAIL"].as_str().map(str::to_owned) {
-            top["help"]["intraday"]["RIGHT/FAIL"] = serde_json::json!(format!("Counted since {intra_since}. {h}"));
-        }
-        // (#1212) the exit columns' headers name the hour, so their help is keyed at run time
-        for (m, exit) in [("US", settings.intraday_exit_us), ("EU", settings.intraday_exit_eu)] {
-            let (head, help) = (crate::heuristics::intraday::exit_head(m, exit, intra_today), crate::heuristics::intraday::exit_help(m, exit));
-            top["help"]["intraday"][head] = serde_json::json!(help);
-        }
+        // (#1223) the BUY NOW names are the pool's, so the stamp_site pass on `quotes` below links them
+        top["trading_buynow"] = serde_json::json!(trading.buynow);
         // (#480) the pool's shadow-table names plus the side-fetched ones; `shadow_pool` keeps the clone small
         let shadow = shadow_pool(&[&top["attention"], &top["berkshire"], &top["social"], &top["young"], &top["braked"], &top["reits"]], &quotes, &fetch::us_symbol);
         let shadow_quotes: Vec<Quote> = quotes.iter().filter(|q| shadow.contains(&q.ticker)).chain(&shadow_extra).cloned().collect();
@@ -2707,9 +2763,11 @@ pub async fn run(args: Vec<String>) {
         // (#584) the shipped-only order, `track`'s `mblend` lane; empty with the blend off
         shipped: if blend { ranked_now.iter().map(px).collect() } else { Vec::new() },
         // (#811) the Intraday table's books, `track`'s intraday rows; empty with the key off
-        intra: intra_pairs,
+        intra: trading.pairs,
         // (#832) the key that ranked them, so `track` grades each key apart
         intra_key: Some(settings.intraday_key).filter(|&k| k > 0),
+        // (#1223) each Trading table's BEST per name, `track`'s BEST lines
+        best: trading.best,
     };
     // (#337) and today's close for every name last month's line grades that this line does not price,
     // so each cohort can be graded month to month the way (#336) chains the book
@@ -5463,7 +5521,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, best: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -5512,7 +5570,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, best: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -5580,7 +5638,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None,
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, best: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -5650,7 +5708,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, best: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -5696,7 +5754,7 @@ mod tests {
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None,
+            near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, best: Vec::new(),
         };
         let journal = vec![
             snap(
@@ -5798,7 +5856,7 @@ mod tests {
     fn dropped_graded_fetches_what_no_list_holds() {
         use crate::commands::track::Snapshot;
         let rows = ["HELD", "STALE", "QUEUED", "GONE"].map(|t| (t.to_string(), Some(1.0))).to_vec();
-        let prior = Snapshot { date: "2026-09-21".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, rows };
+        let prior = Snapshot { date: "2026-09-21".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), fac: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), young: Vec::new(), soc_new: Vec::new(), soc_old: Vec::new(), sector: Vec::new(), shipped: Vec::new(), intra: Vec::new(), intra_key: None, best: Vec::new(), rows };
         let fetched: [&[Quote]; 2] = [&[Quote::stub("HELD", "€1", "", "Held")], &[Quote::stub("STALE", "€1", "", "Stale")]];
         let queued = ["QUEUED".to_string()];
         assert_eq!(dropped_graded(Some(&prior), false, &fetched, &queued), ["GONE"]);

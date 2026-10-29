@@ -12,7 +12,6 @@ on:
     # journals into scratch directories, not these files. The journal stays on main.
     paths-ignore:
       - .screen_snapshots.jsonl
-      - .intraday_since
   pull_request:
     branches: [main]
   workflow_dispatch: {}    # let it be run on demand from the Actions tab

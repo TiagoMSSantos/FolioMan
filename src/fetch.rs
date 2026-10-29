@@ -276,7 +276,7 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
 }
 
 /// (#924) The Intraday table's names, each with the 10y daily chart the quote path fetched for it. Every
-/// intraday read is windowed by date and `chart_range` never asks past 10y, so the longer chart only adds
+/// intraday read is windowed by date and (#1223) the table asks for 5y, so the longer chart only adds
 /// older bars, and `fetch_recent` serves it instead of asking Yahoo again: one request less per name the
 /// screen also quoted. Only names `want_recent` listed are kept, so a run without the table holds nothing.
 static RECENT: std::sync::Mutex<BTreeMap<String, Option<Chart>>> = std::sync::Mutex::new(BTreeMap::new());
@@ -19990,7 +19990,7 @@ pub async fn fetch_history_since(client: &Client, urls: &Urls, ticker: &str, fro
 }
 
 /// (#811) `fetch_history` on a shorter range: the last daily bars the intraday table ranks on, without
-/// the 10y download per name. (#825) `range` is a Yahoo chart range, `intraday::chart_range`'s pick.
+/// the 10y download per name. (#825) `range` is a Yahoo chart range: (#1223) the Trading table's 5y.
 /// (#826) The last bar's null close is filled from the quote first ([`fill_last_close`]).
 /// (#924) A chart the quote path kept for `ticker` ([`want_recent`]) is served first, once.
 /// None on fetch/parse fail or empty history.
