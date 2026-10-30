@@ -717,18 +717,44 @@ fn demean_with(samples: &mut [Sample], by_market: bool) {
             e.1 += 1;
         }
     }
+    // A market slice too thin to BE a peer group de-means a name against one or two neighbours, or
+    // against itself (relative 0, which reads as "exactly average" and is not a measurement). (#1231)
+    // So the thin slices of a (bucket, class) pool into one leftover group, and a leftover still under
+    // MIN_PEER_GROUP joins the bucket's largest slice. Every row lands in exactly ONE group, so every
+    // group nets to 0 and the sum-to-0 invariant in `run` holds with the knob on. The first cut sent
+    // thin rows to the POOLED mean, which nets with nobody: its first probe died on that invariant.
+    let mut rest: HashMap<(i32, u8), (f64, usize)> = HashMap::new();
+    for s in samples.iter() {
+        if fine.get(&(key(s), s.quote.market.clone())).is_some_and(|(_, n)| *n < MIN_PEER_GROUP) {
+            let e = rest.entry(key(s)).or_insert((0.0, 0));
+            e.0 += s.realized;
+            e.1 += 1;
+        }
+    }
+    // largest slice per (bucket, class), ties to the higher market name so the pick never rides the hash order
+    let mut top: HashMap<(i32, u8), (usize, &String)> = HashMap::new();
+    for ((k, m), (_, n)) in &fine {
+        if *n >= MIN_PEER_GROUP {
+            let e = top.entry(*k).or_insert((*n, m));
+            *e = (*e).max((*n, m));
+        }
+    }
+    let group = |k: (i32, u8), m: &String| -> (f64, usize) {
+        let Some(&(_, t)) = top.get(&k) else { return sums[&k] };
+        let own = fine[&(k, m.clone())];
+        let (rs, rn) = rest.get(&k).copied().unwrap_or((0.0, 0));
+        match (own.1 < MIN_PEER_GROUP, rn < MIN_PEER_GROUP) {
+            (true, true) => {
+                let t = fine[&(k, t.clone())];
+                (t.0 + rs, t.1 + rn)
+            }
+            (true, false) => (rs, rn),
+            (false, true) if t == m => (own.0 + rs, own.1 + rn),
+            (false, _) => own,
+        }
+    };
     for s in samples.iter_mut() {
-        let k = key(s);
-        // A market slice too thin to BE a peer group de-means a name against one or two neighbours, or
-        // against itself (relative 0, which reads as "exactly average" and is not a measurement).
-        // Falling back to the pooled group keeps the FX contamination but keeps the signal; the receipt
-        // records that trade rather than hiding it.
-        let g = if by_market {
-            fine.get(&(k, s.quote.market.clone())).filter(|(_, n)| *n >= MIN_PEER_GROUP).copied()
-        } else {
-            None
-        };
-        let (sum, n) = g.unwrap_or(sums[&k]);
+        let (sum, n) = group(key(s), &s.quote.market);
         s.relative = s.realized - sum / n as f64;
     }
 }
@@ -9685,52 +9711,58 @@ mod tests {
     /// a London cohort whose whole return difference is the FX move over the window, not skill.
     ///
     /// Pooled, every US name reads as a winner and every LSE name as a loser by half the currency move.
-    /// Split, each cohort de-means against its own currency and the FX drops out exactly. The third
-    /// cohort is one lonely German line: too thin to be a peer group, so it falls back to the pooled
-    /// mean rather than de-meaning against itself and reporting a `relative` of 0 as if measured.
+    /// Split, each cohort de-means against its own currency and the FX drops out exactly. (#1231) A
+    /// lonely German line is too thin to be a peer group: it joins the bucket's LARGEST slice rather
+    /// than de-meaning against itself and reporting a `relative` of 0 as if measured. Eight thin lines
+    /// together are a group of their own. Either way every group nets to 0, as `run` asserts.
     #[test]
     fn the_market_split_peer_group_cancels_the_currency_move() {
         let d = ymd(2015, 1, 1);
-        let mut rows: Vec<Sample> = Vec::new();
-        let mut push = |tk: &str, r: f64| {
+        let row = |tk: &str, r: f64| {
             let mut s = sample(d, r);
             s.quote = Arc::new(Quote::stub(tk, "1", "", tk));
-            rows.push(s);
+            s
         };
         // two cohorts, same dispersion (-5/+5 around their own centre), 20 pts apart purely by currency.
-        for (i, r) in [30.0, 40.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0].iter().enumerate() {
-            push(&format!("US{i}"), *r);
-        }
-        for (i, r) in [10.0, 20.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0].iter().enumerate() {
-            push(&format!("LN{i}.L"), *r);
-        }
-        push("DE0.DE", 45.0); // the thin slice: one name, its own market
-
-        let pooled = {
-            let mut v = rows.clone();
-            demean_with(&mut v, false);
+        // Nine US names to eight LSE ones, so the largest slice is not a tie.
+        let us = [30.0, 40.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0].into_iter().enumerate();
+        let ln = [10.0, 20.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0].into_iter().enumerate();
+        let ln: Vec<Sample> = ln.map(|(i, r)| row(&format!("LN{i}.L"), r)).collect();
+        let rows: Vec<Sample> = us.map(|(i, r)| row(&format!("US{i}"), r)).chain(ln.clone()).collect();
+        let run = |v: &[Sample], by_market: bool| {
+            let mut v = v.to_vec();
+            demean_with(&mut v, by_market);
             v
         };
-        let split = {
-            let mut v = rows.clone();
-            demean_with(&mut v, true);
-            v
-        };
-        // pooled: one mean over all three markets, so the whole 20-pt FX gap lands in `relative` as if
-        // it were selection — the US cohort is lifted and the LSE cohort docked by half of it.
+        let nets = |v: &[Sample]| v.iter().map(|s| s.relative).sum::<f64>().abs() < 1e-9;
+        let (pooled, split) = (run(&rows, false), run(&rows, true));
+        // pooled: one mean over both markets, so the whole 20-pt FX gap lands in `relative` as if it
+        // were selection — the US cohort is lifted and the LSE cohort docked.
         let pm: f64 = rows.iter().map(|s| s.realized).sum::<f64>() / rows.len() as f64;
         assert!((pooled[0].relative - (30.0 - pm)).abs() < 1e-9, "{}", pooled[0].relative);
-        assert!((pooled[8].relative - (10.0 - pm)).abs() < 1e-9, "{}", pooled[8].relative);
+        assert!((pooled[9].relative - (10.0 - pm)).abs() < 1e-9, "{}", pooled[9].relative);
         // the two cohorts sit ~20 apart in `relative` on nothing but the currency.
-        assert!((pooled[0].relative - pooled[8].relative - 20.0).abs() < 1e-9);
+        assert!((pooled[0].relative - pooled[9].relative - 20.0).abs() < 1e-9);
         // split: each cohort centres on its own 35 / 15, so the SAME name reads -5 in both cohorts and
         // the currency move is gone. This is the whole claim.
         assert!((split[0].relative + 5.0).abs() < 1e-9, "{}", split[0].relative);
-        assert!((split[8].relative + 5.0).abs() < 1e-9, "{}", split[8].relative);
-        assert!((split[1].relative - 5.0).abs() < 1e-9 && (split[9].relative - 5.0).abs() < 1e-9);
-        // the lone German line: 1 < MIN_PEER_GROUP, so it keeps the pooled mean rather than becoming 0.
-        assert!((split[16].relative - 0.0).abs() > 1e-9, "a singleton must not de-mean against itself");
-        assert!((split[16].relative - pooled[16].relative).abs() < 1e-9, "it falls back to the pool");
+        assert!((split[9].relative + 5.0).abs() < 1e-9, "{}", split[9].relative);
+        assert!((split[1].relative - 5.0).abs() < 1e-9 && (split[10].relative - 5.0).abs() < 1e-9);
+        assert!(nets(&split));
+        // the lonely German line joins the US slice: (315 + 45) / 10 = 36, so it reads +9 and each US
+        // name moves by one point. LSE is not the largest slice and keeps its own 15.
+        let lone = run(&[rows.clone(), vec![row("DE0.DE", 45.0)]].concat(), true);
+        assert!((lone[17].relative - 9.0).abs() < 1e-9, "{}", lone[17].relative);
+        assert!((lone[0].relative + 6.0).abs() < 1e-9, "{}", lone[0].relative);
+        assert!((lone[9].relative + 5.0).abs() < 1e-9, "{}", lone[9].relative);
+        assert!(nets(&lone), "the first cut sent this row to the pooled mean and broke the invariant");
+        // eight one-line markets ARE a peer group together: they de-mean against their own 50, and
+        // the LSE slice beside them (exactly MIN_PEER_GROUP names, the largest) keeps its own 15.
+        let thin = [46.0, 54.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0].into_iter().enumerate();
+        let thin = run(&[ln, thin.map(|(i, r)| row(&format!("S{i}.X{i}"), r)).collect()].concat(), true);
+        assert!((thin[8].relative + 4.0).abs() < 1e-9, "{}", thin[8].relative);
+        assert!((thin[0].relative + 5.0).abs() < 1e-9, "{}", thin[0].relative);
+        assert!(nets(&thin));
         // and OFF must be the identity — every edge, rho and OOS number in this repo rests on it.
         assert!(pooled.iter().zip(&rows).all(|(p, r)| p.realized == r.realized));
     }

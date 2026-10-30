@@ -15663,8 +15663,9 @@ buy_heuristic:
                                  #   already fills `market` from the ticker suffix. It over-splits:
                                  #   `market_of` returns a COUNTRY, so Germany, France and the Netherlands
                                  #   are three groups trading one currency. That costs group size, never
-                                 #   correctness — it can never MERGE two currencies — and a slice under
-                                 #   MIN_PEER_GROUP (8) falls back to the pooled mean rather than
+                                 #   correctness. (#1231) A slice under MIN_PEER_GROUP (8) pools with the
+                                 #   bucket's other thin slices, or joins its largest slice when those are
+                                 #   under 8 too: those rows keep some FX contamination rather than
                                  #   de-meaning a name against one or two neighbours, or against itself.
                                  #
                                  #   WHAT IT DOES NOT FIX, stated plainly rather than left to be
@@ -23913,6 +23914,19 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NOT ARMED: growth_fund_scope_by_class. (#1130) reopens it only on a ruler that grades the ETF and crypto
 #   tables, and `pit dead` does not. Its neutrals still need a covered-filer median, which P0's dump can
 #   give: that census comes first, then its own receipt.
+
+# (#1231) W1 DIED ON THE DE-MEAN INVARIANT, 2026-10-30. (#1228)'s W1 (probe run 41021956411,
+# `demean_by_market=true`) panicked in `run`: "de-mean broken: relatives sum to -55628". Cause: a market
+# slice thinner than MIN_PEER_GROUP fell back to the POOLED mean, and those rows net to 0 with nobody,
+# because the pooled group's rows no longer all subtract one mean. So the (#93) knob had never run once.
+# A non-netting group also skews the ruler, not just the assert: the edge is top half minus bottom half
+# and rho is a rank, so an offset carried by the fallback rows alone moves both.
+# FIX, in `demean_with`: the thin slices of a (bucket, class) form one leftover group, and a leftover
+# still under MIN_PEER_GROUP joins the bucket's largest slice (a tie goes to the higher market name, so
+# the pick never rides the hash order). Every row sits in exactly one group, so every group nets to 0 and
+# the invariant stands unchanged. A row still never de-means against itself. OFF is byte-identical (the
+# pooled path is untouched), so no golden moves. W1 re-runs on the fix SHA beside a fresh W0, and
+# (#1228)'s DEMEAN rule reads it unchanged.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
