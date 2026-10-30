@@ -373,6 +373,21 @@ fn rescore_reprints_the_golden_books_from_a_dump() {
     assert!(!refused.status.success() && err.contains("`backtest_tr_ruler` is fixed"), "{err}");
 }
 
+/// (#1239) `backtest search` on a dump grades every config against the loaded one, so it must first print
+/// the 12y golden's own top-10 excess, then end in a verdict and a grid row. Its draws are seeded and its
+/// parallel grades collect in order, so one worker prints the same bytes.
+#[test]
+fn search_grades_against_the_golden_book_from_a_dump() {
+    let cfg = fixture_copy("search-12", false);
+    let dump = cfg.with_file_name("samples.jsonl");
+    report_at_env(&cfg, &["12"], None, &[("FOLIOMAN_BACKTEST_SAMPLES", dump.as_path())]);
+    let args = ["search", dump.to_str().expect("utf-8 path"), "configs=20", "nulls=5"];
+    let got = report_at(&cfg, &args, None);
+    assert!(got.contains("  shipped: 12y top-10 excess +2.0 (med +3.1)\n"), "{got}");
+    assert!(got.contains("  VERDICT: ") && got.contains("  GRID ROW: {"), "{got}");
+    assert_eq!(report_at(&cfg, &args, Some("1")), got, "one worker must print the same search");
+}
+
 /// (#341) THE THREAD-COUNT INVARIANT, stated. Backtest output must be BIT-IDENTICAL at any thread
 /// count: the date sort is stable, so within-date order is inherited from collection order, and
 /// `bootstrap_edge_ci`'s pools and rank ties read it. Parallel stages therefore collect in input order

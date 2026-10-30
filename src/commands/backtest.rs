@@ -830,6 +830,9 @@ struct Args {
     rescore: bool,
     level: bool,
     draws: usize,
+    search: bool,
+    configs: usize,
+    nulls: usize,
     time: bool,
     tickers: Vec<String>,
 }
@@ -839,7 +842,7 @@ struct Args {
 /// cutoff against the index as it stood that day; everything else = explicit tickers to test. (#1118) `time`
 /// = wall seconds per phase on stderr.
 fn parse_args(args: &[String]) -> Args {
-    let mut a_ = Args { years: 5, draws: PLACEBO_DRAWS, ..Default::default() };
+    let mut a_ = Args { years: 5, draws: PLACEBO_DRAWS, configs: SEARCH_CONFIGS, nulls: SEARCH_NULLS, ..Default::default() };
     for a in args {
         match a.parse::<i64>() {
             // (#948) past 100 is a typo (a date, say), not a horizon: it overflowed `forward_return`'s
@@ -873,6 +876,9 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("level") => a_.level = true, // (#1238) the level x path 2x2 on the entry-state book
             // (#1227) rival (e)'s random books: 200 keeps the gate's cost, 5000 lets a p below 1/201 print
             _ if a.starts_with("draws=") => a_.draws = a[6..].parse().ok().filter(|n| *n > 0).expect("draws=N takes a whole number above 0"),
+            _ if a.eq_ignore_ascii_case("search") => a_.search = true, // (#1239) seeded knob search on samples dumps
+            _ if a.starts_with("configs=") => a_.configs = a[8..].parse().ok().filter(|n| *n > 0).expect("configs=N takes a whole number above 0"),
+            _ if a.starts_with("nulls=") => a_.nulls = a[6..].parse().expect("nulls=K takes a whole number"),
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -977,19 +983,7 @@ struct Dumped {
 ///
 /// Known ceiling: JSON has no NaN, so a NaN field is written as null and a `Some(NaN)` reads back as None.
 fn rescore(dump: &str, grid: &str, settings: &config::Settings) {
-    let (years, bench): (i64, (Vec<chrono::NaiveDate>, Vec<f64>)) =
-        serde_json::from_str(&std::fs::read_to_string(bench_path(dump.as_ref())).expect("read the dump's bench file")).expect("bench json");
-    let samples: Vec<Sample> = std::fs::read_to_string(dump)
-        .expect("read the samples dump")
-        .lines()
-        .map(|l| {
-            let d: Dumped = serde_json::from_str(l).expect("a dumped sample");
-            let mut q = d.quote;
-            q.vol_change = d.vol_change;
-            q.name_class = Some(picks::name_class(&q)); // not serialized; stamped as the walk does, for speed
-            Sample { date: d.date, realized: d.realized, relative: 0.0, quote: Arc::new(q), fund: d.fund, trail: d.trail }
-        })
-        .collect();
+    let (years, bench, samples) = load_dump(dump);
     let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
     for line in std::fs::read_to_string(grid).expect("read the grid").lines() {
         let row: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line).expect("a grid row is one JSON object");
@@ -1005,6 +999,248 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings) {
         report_vs_benchmark(&s, &bench, years, &tuning);
         report_sized_book(&s, &bench, years, &tuning, &settings.sizing, settings.top_picks, &[]);
     }
+}
+
+/// (#1227) A [`write_samples`] dump read back: its horizon, its benchmark series and its samples.
+fn load_dump(dump: &str) -> (i64, (Vec<chrono::NaiveDate>, Vec<f64>), Vec<Sample>) {
+    let (years, bench): (i64, (Vec<chrono::NaiveDate>, Vec<f64>)) =
+        serde_json::from_str(&std::fs::read_to_string(bench_path(dump.as_ref())).expect("read the dump's bench file")).expect("bench json");
+    let samples: Vec<Sample> = std::fs::read_to_string(dump)
+        .expect("read the samples dump")
+        .lines()
+        .map(|l| {
+            let d: Dumped = serde_json::from_str(l).expect("a dumped sample");
+            let mut q = d.quote;
+            q.vol_change = d.vol_change;
+            q.name_class = Some(picks::name_class(&q)); // not serialized; stamped as the walk does, for speed
+            Sample { date: d.date, realized: d.realized, relative: 0.0, quote: Arc::new(q), fund: d.fund, trail: d.trail }
+        })
+        .collect();
+    (years, bench, samples)
+}
+
+/// (#1239) The knobs `search` scales beside the 13 [`picks::WEIGHT_DIMS`] weights: each cap, exponent and
+/// floor that shapes a score or trims the cohort without gating a name out on its own. Same (label, get,
+/// set) shape as the weights. A knob that ships at 0 stays 0, as a weight does.
+const CAP_DIMS: [picks::WeightDim; 7] = [
+    ("sharpe_cap", |t| t.sharpe_cap, |t, v| t.sharpe_cap = v),
+    ("long_trend_cap", |t| t.long_trend_cap, |t, v| t.long_trend_cap = v),
+    ("growth_accel_cap", |t| t.growth_accel_cap, |t, v| t.growth_accel_cap = v),
+    ("growth_trust_exp", |t| t.growth_trust_exp, |t, v| t.growth_trust_exp = v),
+    ("growth_overext_exp", |t| t.growth_overext_exp, |t, v| t.growth_overext_exp = v),
+    ("growth_overext_floor", |t| t.growth_overext_floor, |t, v| t.growth_overext_floor = v),
+    ("growth_value_floor_pct", |t| t.growth_value_floor_pct, |t, v| t.growth_value_floor_pct = v),
+];
+
+/// (#1239) The two [`picks::gate_notches`] rows `search` never draws: both gate on a field every backtest
+/// sample leaves None, so loosening them admits no one.
+const SEARCH_SKIP_NOTCHES: [&str; 2] = ["range8y", "aum"];
+
+/// (#1239) `backtest search` defaults: configs drawn, and shuffles of `realized` priced as the null.
+const SEARCH_CONFIGS: usize = 5000;
+const SEARCH_NULLS: usize = 200;
+
+/// (#1239) One random config, as multipliers on the loaded one: each weight x U(0, 2.5), each [`CAP_DIMS`]
+/// knob x 2^U(-1, 1), then for each of `notches` gate notches how many times to loosen it, 0 to 2 and 0
+/// most often (3u³ rounded down: 0 at 69%, 1 at 18%, 2 at 13%).
+fn search_draw(next: &mut impl FnMut() -> f64, notches: usize) -> Vec<f64> {
+    let mut d: Vec<f64> = (0..picks::WEIGHT_DIMS.len()).map(|_| 2.5 * next()).collect();
+    d.extend((0..CAP_DIMS.len()).map(|_| (2.0 * next() - 1.0).exp2()));
+    d.extend((0..notches).map(|_| (3.0 * next().powi(3)).floor()));
+    d
+}
+
+/// (#1239) `base` moved by one [`search_draw`]. All ones then all zeros is `base` itself.
+fn search_apply(base: &BuyHeuristic, d: &[f64], notches: &[fn(&mut BuyHeuristic)]) -> BuyHeuristic {
+    let mut t = base.clone();
+    for (i, (_, get, set)) in picks::WEIGHT_DIMS.iter().chain(&CAP_DIMS).enumerate() {
+        set(&mut t, get(base) * d[i]);
+    }
+    let off = picks::WEIGHT_DIMS.len() + CAP_DIMS.len();
+    for (k, loosen) in notches.iter().enumerate() {
+        for _ in 0..d[off + k] as usize {
+            loosen(&mut t);
+        }
+    }
+    t
+}
+
+/// (#1239) A config's grade against the shipped one on the same returns: the worst, over the horizons, of
+/// its top-10 excess gain in mean and in median. Above 0 is up on both at every horizon, SHIP RULE v2's
+/// PRIMARY; at or below 0 the config is no better.
+fn search_objective(got: &[(f64, f64)], shipped: &[(f64, f64)]) -> f64 {
+    got.iter().zip(shipped).map(|(g, s)| (g.0 - s.0).min(g.1 - s.1)).fold(f64::INFINITY, f64::min)
+}
+
+/// (#1239) `realized` permuted within each (bucket, asset class) cell: a world where a name's score says
+/// nothing about its own forward return, while each window and each class keep the returns they had.
+/// Seeded Fisher-Yates on [`next_rand`]; a seed of 0 would never move.
+fn shuffled(samples: &[Sample], seed: u64) -> Vec<f64> {
+    let mut cells: BTreeMap<(i32, u8), Vec<usize>> = BTreeMap::new();
+    for (i, s) in samples.iter().enumerate() {
+        cells.entry((bucket(s.date), picks::asset_class(&s.quote))).or_default().push(i);
+    }
+    let mut out: Vec<f64> = samples.iter().map(|s| s.realized).collect();
+    let mut state = seed;
+    for idx in cells.values() {
+        for k in (1..idx.len()).rev() {
+            let j = (next_rand(&mut state) % (k as u64 + 1)) as usize;
+            out.swap(idx[k], idx[j]);
+        }
+    }
+    out
+}
+
+/// (#1239) Per bucket, oldest first, the sample indices the top-10 book holds under `tuning`, by the
+/// row's own path in [`report_vs_benchmark`]: crypto out, a scored name with an index leg, the (#75) value
+/// brake, a stable sort on score. The sector and corr caps are left out; `search` refuses a config that
+/// arms either. `bench_r` is each sample's index leg, NaN where it has none. Picking never reads
+/// `realized`, so one book prices every shuffle of it.
+fn top_books(samples: &[Sample], bench_r: &[f64], tuning: &BuyHeuristic, scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>) -> Vec<Vec<usize>> {
+    let mut by_cutoff: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
+    for (i, s) in samples.iter().enumerate().filter(|(_, s)| picks::asset_class(&s.quote) != 0) {
+        by_cutoff.entry(bucket(s.date)).or_default().push(i);
+    }
+    let mut rows = Vec::new();
+    for (b, group) in &by_cutoff {
+        let quotes: Vec<&Quote> = group.iter().map(|&i| samples[i].quote.as_ref()).collect();
+        for (&i, scored) in group.iter().zip(scorer(&quotes, tuning)) {
+            if let (false, Some(score)) = (bench_r[i].is_nan(), scored) {
+                rows.push((*b, score, 0.0, 0.0, i.to_string(), samples[i].fund.as_ref().and_then(|f| f.peg_yield)));
+            }
+        }
+    }
+    value_floor_trim(&rows, tuning.growth_value_floor_pct)
+        .into_values()
+        .map(|mut v| {
+            v.sort_by(|a, b| b.0.total_cmp(&a.0));
+            v.iter().take(VERDICT_TOP).map(|x| x.3.parse().expect("a sample index")).collect()
+        })
+        .collect()
+}
+
+/// (#1239) The top-10 row's excess, mean and median over buckets, priced on `realized`: each bucket's
+/// [`book_excess`], as [`report_vs_benchmark`] sums it, so the shipped config reprints that row's numbers.
+fn search_excess(books: &[Vec<usize>], realized: &[f64], bench_r: &[f64], years: i64) -> (f64, f64) {
+    let excess: Vec<f64> =
+        books.iter().filter_map(|p| book_excess(&p.iter().map(|&i| (realized[i], bench_r[i])).collect::<Vec<_>>(), years)).collect();
+    (excess.iter().sum::<f64>() / excess.len().max(1) as f64, median(excess))
+}
+
+/// (#1239) `backtest search <dump>... [configs=N] [nulls=K]`: a seeded random search of the knob space on
+/// samples dumps, one per horizon, made under the config it runs with. Each config is graded by
+/// [`search_objective`] against the loaded one. The null is the same configs re-graded on K shuffles of
+/// `realized` ([`shuffled`]): the winner counts only if its gain beats what the search finds where no
+/// score can see a return. Prints only; nothing reaches rank, BUY NOW, size or the broker.
+#[mutants::skip] // prints only: its parts are graded by unit tests and its shipped row by the fixture pin
+fn search(dumps: &[String], configs: usize, nulls: usize, settings: &config::Settings) {
+    let base = &settings.buy_heuristic;
+    assert!(
+        base.growth_sector_leaders == 0 && base.growth_sector_cap == 0 && base.growth_corr_cap <= 0.0,
+        "search: the sector door, sector cap and corr cap must be off; grade those with a probe arm"
+    );
+    let (labels, loosen): (Vec<&str>, Vec<_>) =
+        picks::gate_notches().into_iter().filter(|n| !SEARCH_SKIP_NOTCHES.contains(&n.0)).map(|n| (n.0, n.2)).unzip();
+    // per dump: horizon, samples, index legs, and `realized` as run 0 then each shuffle
+    let dumps: Vec<_> = dumps
+        .iter()
+        .map(|d| {
+            let (years, bench, samples) = load_dump(d);
+            let bench_r: Vec<f64> = samples.iter().map(|s| benchmark_fwd(&bench.0, &bench.1, s.date, years).unwrap_or(f64::NAN)).collect();
+            let runs: Vec<Vec<f64>> = std::iter::once(samples.iter().map(|s| s.realized).collect())
+                .chain((1..=nulls as u64).map(|k| shuffled(&samples, 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(k))))
+                .collect();
+            (years, samples, bench_r, runs)
+        })
+        .collect();
+    let grade = |t: &BuyHeuristic| -> Vec<Vec<(f64, f64)>> {
+        dumps
+            .iter()
+            .map(|(years, samples, bench_r, runs)| {
+                let books = top_books(samples, bench_r, t, picks::growth_scores_ranked);
+                runs.iter().map(|r| search_excess(&books, r, bench_r, *years)).collect()
+            })
+            .collect()
+    };
+    let shipped = grade(base);
+    let g = |got: &[Vec<(f64, f64)>], run: usize| {
+        search_objective(&got.iter().map(|d| d[run]).collect::<Vec<_>>(), &shipped.iter().map(|d| d[run]).collect::<Vec<_>>())
+    };
+    let horizons: Vec<String> = dumps.iter().map(|d| format!("{}y", d.0)).collect();
+    println!(
+        "\n── SEARCH (#1239): {configs} seeded configs over {} weights, {} caps and {} gate notches, graded by the worst top-10 excess gain (mean or median) over {}; the null is the same configs on {nulls} within-(bucket, class) shuffles of realized ──",
+        picks::WEIGHT_DIMS.len(),
+        CAP_DIMS.len(),
+        labels.len(),
+        horizons.join(" and ")
+    );
+    for (h, s) in horizons.iter().zip(&shipped) {
+        println!("  shipped: {h} top-10 excess {:+.1} (med {:+.1})", s[0].0, s[0].1);
+    }
+    let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut next = || (next_rand(&mut state) >> 11) as f64 / (1u64 << 53) as f64;
+    let draws: Vec<Vec<f64>> = (0..configs).map(|_| search_draw(&mut next, loosen.len())).collect();
+    let graded: Vec<Vec<f64>> = draws
+        .par_iter()
+        .map(|d| {
+            let got = grade(&search_apply(base, d, &loosen));
+            (0..=nulls).map(|r| g(&got, r)).collect()
+        })
+        .collect();
+    let best = (0..configs).fold(0, |b, c| if graded[c][0] > graded[b][0] { c } else { b });
+    let real = graded[best][0];
+    let mut null: Vec<f64> = (1..=nulls).map(|r| graded.iter().map(|v| v[r]).fold(f64::NEG_INFINITY, f64::max)).collect();
+    null.sort_by(f64::total_cmp);
+    let p = (1 + null.iter().filter(|x| **x >= real).count()) as f64 / (nulls + 1) as f64;
+    let winner = search_apply(base, &draws[best], &loosen);
+    let got = grade(&winner);
+    println!("  {} of {configs} configs beat the shipped one on both moments at every horizon", graded.iter().filter(|v| v[0] > 0.0).count());
+    println!(
+        "  BEST: gain {real:+.2} pts/yr | {}",
+        horizons.iter().zip(&got).map(|(h, s)| format!("{h} {:+.1} (med {:+.1})", s[0].0, s[0].1)).collect::<Vec<_>>().join("  ")
+    );
+    let (bv, wv) = (serde_json::to_value(base).expect("tuning as json"), serde_json::to_value(&winner).expect("tuning as json"));
+    let moved: serde_json::Map<String, serde_json::Value> =
+        wv.as_object().expect("tuning is an object").iter().filter(|(k, v)| bv.get(k.as_str()) != Some(*v)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let notched: Vec<String> = labels.iter().zip(&draws[best][picks::WEIGHT_DIMS.len() + CAP_DIMS.len()..]).filter(|(_, n)| **n > 0.0).map(|(l, n)| format!("{l} x{n}")).collect();
+    println!("  notches loosened: {}", if notched.is_empty() { "none".to_string() } else { notched.join(", ") });
+    if !null.is_empty() {
+        println!(
+            "  NULL: the best gain on each shuffle, p50 {:+.2}  p95 {:+.2}; p = {p:.3} that a search this wide finds {real:+.2} by luck",
+            percentile(&null, 50.0),
+            percentile(&null, 95.0)
+        );
+    }
+    // PARSIMONY: each moved knob put back alone, so a knob that buys nothing shows as no loss
+    for k in moved.keys() {
+        let mut v = wv.clone();
+        v[k.as_str()] = bv[k.as_str()].clone();
+        let t: BuyHeuristic = serde_json::from_value(v).expect("tuning from json");
+        println!("  PARSIMONY: {k} put back -> gain {:+.2}", g(&grade(&t), 0));
+    }
+    // JITTER: the winner's weight and cap multipliers each x U(0.8, 1.2), notches kept
+    let nudged: Vec<Vec<f64>> = (0..200)
+        .map(|_| {
+            let mut d = draws[best].clone();
+            for x in &mut d[..picks::WEIGHT_DIMS.len() + CAP_DIMS.len()] {
+                *x *= 0.8 + 0.4 * next();
+            }
+            d
+        })
+        .collect();
+    let mut jit: Vec<f64> = nudged.par_iter().map(|d| g(&grade(&search_apply(base, d, &loosen)), 0)).collect();
+    jit.sort_by(f64::total_cmp);
+    println!("  JITTER: 200 nudges of the winner, gain p5 {:+.2}  p50 {:+.2}", percentile(&jit, 5.0), percentile(&jit, 50.0));
+    let floor = null.last().map_or(0.0, |_| percentile(&null, 95.0)).max(0.0);
+    println!(
+        "  VERDICT: {}",
+        if real > floor {
+            "the winner beats the shuffled null; run the GRID ROW as a probe arm under SHIP RULE v2 before anything ships"
+        } else {
+            "the shipped config sits at the knob space's noise floor: no config beats it by more than the same search finds on shuffled returns"
+        }
+    );
+    println!("  GRID ROW: {}", serde_json::Value::Object(moved));
 }
 
 /// The rayon pool size to force, or `None` to leave rayon alone.
@@ -1386,7 +1622,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, draws, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, draws, search: search_dumps, configs, nulls, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1420,6 +1656,10 @@ pub async fn run(args: Vec<String>) {
     }
     if rescore_dump {
         rescore(&tickers[0], &tickers[1], &settings);
+        return;
+    }
+    if search_dumps {
+        search(&tickers, configs, nulls, &settings);
         return;
     }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
@@ -9590,6 +9830,105 @@ mod tests {
         assert_eq!(weight_swap_gaps(&samples, swap_scorer, &base, &notched, 10), (4, vec![]), "a basket holding the whole pool swaps nobody");
     }
 
+    /// (#1239) Per bucket, oldest first: the ten best scores, the earlier name kept on a tie at the cut,
+    /// with the coin, the name lacking an index leg and the unscored name all left out.
+    #[test]
+    fn top_books_hold_the_top_ten_per_bucket() {
+        let (a, b) = (ymd(2010, 1, 5), ymd(2010, 7, 5));
+        let mut samples = vec![swap_sample(b, "B1", 2.0, 0.0, 0.0), swap_sample(b, "B2", 5.0, 0.0, 0.0)];
+        for (k, score) in [12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 3.0, 1.0].into_iter().enumerate() {
+            samples.push(swap_sample(a, &format!("A{k}"), score, 0.0, 0.0)); // indices 2..=13
+        }
+        samples.push(swap_sample(a, "BTC-EUR", 100.0, 0.0, 0.0));
+        samples.push(swap_sample(a, "NOLEG", 50.0, 0.0, 0.0));
+        samples.push(swap_sample(a, "NEG", -1.0, 0.0, 0.0));
+        let mut bench_r = vec![0.0; samples.len()];
+        bench_r[15] = f64::NAN;
+        assert_eq!(top_books(&samples, &bench_r, &BuyHeuristic::default(), swap_scorer), vec![(2..12).collect::<Vec<usize>>(), vec![1, 0]]);
+    }
+
+    /// (#1239) Bucket excesses 50 (the `book_excess` pin's book), 0 and 20 at 1y: mean 70/3, median 20. An
+    /// empty book prices nothing, as the top row skips it.
+    #[test]
+    fn search_excess_is_the_top_rows_mean_and_median() {
+        let books = vec![vec![0, 1], vec![2], vec![], vec![3]];
+        let (mean, med) = search_excess(&books, &[300.0, -100.0, 10.0, 20.0], &[100.0, 0.0, 10.0, 0.0], 1);
+        assert!((mean - 70.0 / 3.0).abs() < 1e-9 && (med - 20.0).abs() < 1e-9, "{mean} {med}");
+    }
+
+    /// (#1239) Each (bucket, class) cell keeps its own returns: three stocks and two ETFs in one bucket, two
+    /// stocks in the next, a lone coin. Over 64 seeds the two-ETF cell must both swap and stay put, which a
+    /// shuffle that always moves every name (j drawn below k) cannot do.
+    #[test]
+    fn shuffled_permutes_realized_within_each_bucket_and_class() {
+        let (a, b) = (ymd(2010, 1, 5), ymd(2010, 7, 5));
+        let etf = |realized| {
+            let mut q = Quote::stub("E", "1", "", "E");
+            q.instrument_type = "ETF".to_string();
+            Sample { date: a, realized, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
+        };
+        let samples = vec![
+            swap_sample(a, "S1", 1.0, 0.0, 1.0),
+            swap_sample(a, "S2", 1.0, 0.0, 2.0),
+            swap_sample(a, "S3", 1.0, 0.0, 3.0),
+            etf(10.0),
+            etf(20.0),
+            swap_sample(b, "S4", 1.0, 0.0, 100.0),
+            swap_sample(b, "S5", 1.0, 0.0, 200.0),
+            swap_sample(a, "BTC-EUR", 1.0, 0.0, 1000.0),
+        ];
+        let mut swapped = 0;
+        for seed in 1..=64 {
+            let out = shuffled(&samples, seed);
+            let cells: [&[usize]; 4] = [&[0, 1, 2], &[3, 4], &[5, 6], &[7]];
+            for cell in cells {
+                let mut got: Vec<f64> = cell.iter().map(|&i| out[i]).collect();
+                got.sort_by(f64::total_cmp);
+                assert_eq!(got, cell.iter().map(|&i| samples[i].realized).collect::<Vec<_>>(), "seed {seed}");
+            }
+            swapped += usize::from(out[3] == 20.0);
+        }
+        assert!(swapped > 0 && swapped < 64, "the ETF pair swapped on {swapped} of 64 seeds");
+    }
+
+    /// (#1239) A draw at u = 0, 0.5 and 0.9: weights 2.5u, caps 2^(2u - 1), notches floor(3u³) = 0, 0, 2.
+    #[test]
+    fn search_draw_maps_each_uniform_onto_its_range() {
+        let (w, c) = (picks::WEIGHT_DIMS.len(), CAP_DIMS.len());
+        for (u, weight, cap, notch) in [(0.0, 0.0, 0.5, 0.0), (0.5, 1.25, 1.0, 0.0), (0.9, 2.25, 0.8f64.exp2(), 2.0)] {
+            assert_eq!(search_draw(&mut || u, 3), [vec![weight; w], vec![cap; c], vec![notch; 3]].concat(), "u = {u}");
+        }
+    }
+
+    /// (#1239) Every scaled knob set to its own index + 1, then doubled; a notch drawn twice runs twice, one
+    /// drawn 0 times never runs; all ones and zeros hand back the base unchanged.
+    #[test]
+    fn search_apply_scales_each_knob_and_runs_each_notch_its_count() {
+        let n = picks::WEIGHT_DIMS.len() + CAP_DIMS.len();
+        let mut base = BuyHeuristic::default();
+        for (i, (_, _, set)) in picks::WEIGHT_DIMS.iter().chain(&CAP_DIMS).enumerate() {
+            set(&mut base, i as f64 + 1.0);
+        }
+        let notches: [fn(&mut BuyHeuristic); 2] = [|t| t.growth_min_cagr -= 1.0, |t| t.growth_min_range_pct -= 1.0];
+        let t = search_apply(&base, &[vec![2.0; n], vec![2.0, 0.0]].concat(), &notches);
+        for (i, (label, get, _)) in picks::WEIGHT_DIMS.iter().chain(&CAP_DIMS).enumerate() {
+            assert_eq!(get(&t), 2.0 * (i as f64 + 1.0), "{label}");
+        }
+        assert_eq!((t.growth_min_cagr, t.growth_min_range_pct), (base.growth_min_cagr - 2.0, base.growth_min_range_pct));
+        let same = search_apply(&base, &[vec![1.0; n], vec![0.0, 0.0]].concat(), &notches);
+        assert_eq!(serde_json::to_value(&same).unwrap(), serde_json::to_value(&base).unwrap());
+    }
+
+    /// (#1239) Gains (2, 0.5) at one horizon and (0.2, 4) at the other: the grade is the worst, 0.2, a mean
+    /// gain. Gains (4, 0.2) and (2.2, 2): the worst, 0.2 again, is a median gain.
+    #[test]
+    fn search_objective_takes_the_worst_moment_at_the_worst_horizon() {
+        let shipped = [(1.0, 0.5), (1.8, 1.0)];
+        assert!((search_objective(&[(3.0, 1.0), (2.0, 5.0)], &shipped) - 0.2).abs() < 1e-9);
+        assert!((search_objective(&[(5.0, 0.7), (4.0, 3.0)], &shipped) - 0.2).abs() < 1e-9, "the median gain binds");
+        assert_eq!(search_objective(&shipped, &shipped), 0.0, "the shipped config gains nothing on itself");
+    }
+
     /// (#408) X ranks top of 3 on earnings (2/2 -> 100) and bottom of 2 on EBITDA (0/1 -> 0); FCF and
     /// sales hold one name each, so they rank nothing -> X is 50. Y: 50 and 100 -> 75. Z has one leg and
     /// W is alone at its date: both None. A reordered date stamps the same numbers. (#409) Caps X 300,
@@ -10536,7 +10875,7 @@ mod tests {
         let p = |s: &str| parse_args(&s.split_whitespace().map(String::from).collect::<Vec<_>>());
 
         // default: no args at all
-        assert_eq!(p(""), Args { years: 5, draws: PLACEBO_DRAWS, ..Default::default() });
+        assert_eq!(p(""), Args { years: 5, draws: PLACEBO_DRAWS, configs: SEARCH_CONFIGS, nulls: SEARCH_NULLS, ..Default::default() });
 
         // each keyword on its own, so one arm going dead cannot hide behind another
         assert!(p("universe").wide, "`universe` must set wide — the CI gate IS the wide run");
@@ -10569,6 +10908,9 @@ mod tests {
         assert!(p("draws=5000").draws == 5000 && p("draws=5000").tickers.is_empty(), "(#1227) draws=N is a count, not a ticker");
         assert!(std::panic::catch_unwind(|| p("draws=0")).is_err() && std::panic::catch_unwind(|| p("draws=x")).is_err(), "a draw count must be a whole number above 0");
         assert!(p("level").level && p("LEVEL").level && !p("options").level && p("level").tickers.is_empty(), "(#1238) `level` is a keyword, not a ticker");
+        let s = p("search a b configs=7 nulls=0");
+        assert!(s.search && !p("level").search && s.tickers == ["a", "b"] && (s.configs, s.nulls) == (7, 0), "(#1239) search takes dumps, a config count and a null count");
+        assert!(std::panic::catch_unwind(|| p("configs=0")).is_err() && std::panic::catch_unwind(|| p("nulls=x")).is_err(), "configs must be above 0, nulls a whole number");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -10605,7 +10947,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level draws=9 time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level draws=9 search configs=3 nulls=4 time");
         assert_eq!(
             all,
             Args {
@@ -10636,6 +10978,9 @@ mod tests {
                 rescore: true,
                 level: true,
                 draws: 9,
+                search: true,
+                configs: 3,
+                nulls: 4,
                 time: true,
                 tickers: vec![]
             }

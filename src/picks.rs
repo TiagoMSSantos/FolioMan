@@ -2044,7 +2044,7 @@ pub fn implied_growth_pct(quote: &Quote, tuning: &BuyHeuristic, years: u32, requ
     Some(((pe / tuning.ref_pe).powf(1.0 / f64::from(years)) * (1.0 + required_pct / 100.0) - 1.0) * 100.0)
 }
 
-type WeightDim = (&'static str, fn(&BuyHeuristic) -> f64, fn(&mut BuyHeuristic, f64));
+pub(crate) type WeightDim = (&'static str, fn(&BuyHeuristic) -> f64, fn(&mut BuyHeuristic, f64));
 
 /// (#107) The ADDITIVE and MULTIPLICATIVE tilt weights of `score_parts`, as (label, get, set) — the
 /// perturbation set for `rank_robustness`. This is every knob whose units are "how much does this term
