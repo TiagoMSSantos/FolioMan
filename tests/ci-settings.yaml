@@ -16072,6 +16072,27 @@ buy_heuristic:
                                  #   claim or shrink a train set. If a value here ever appears to IMPROVE a
                                  #   held-out number, that is a smaller sample landing luckier, not a
                                  #   result — re-read it at a second horizon before believing it.
+  bootstrap_cluster: true        # (#1227) SHIPPED 2026-10-30 as a ruler fix, whatever the number. The
+                                 #   bootstrap band now resamples whole TICKERS instead of runs of
+                                 #   cutoff buckets.
+                                 #   WHY: (#119) derived the honest block from the hold and then found
+                                 #   that no horizon holds the ten whole blocks a block draw needs, so
+                                 #   the band refused at 8y, 12y and 20y and every "clears 0" line went
+                                 #   silent. The overlap that makes two cutoffs dependent sits inside
+                                 #   ONE NAME: its forward paths share most of their years. The market
+                                 #   move common to a bucket is already out of `relative`, which is
+                                 #   de-meaned per (bucket, class). Drawing every cutoff of a name together
+                                 #   keeps that overlap inside one unit at any hold, and there is no
+                                 #   block to collapse, so the band prints again at every horizon.
+                                 #   WHAT IT COSTS: nothing the ship rule reads. The band is print-only
+                                 #   (tests/network.rs never parses it). The goldens move because a band
+                                 #   that refused now prints.
+                                 #   CAVEAT: names are not fully independent either; two names in one
+                                 #   sector share a shock the class de-mean leaves in. Read the band as
+                                 #   the honest width for name-level noise, not for sector-level noise.
+                                 #   REVERT RULE: false restores the bucket draw, so
+                                 #   `bootstrap_block_buckets` decides again and the band refuses as it
+                                 #   did under (#119).
   bootstrap_block_buckets: 0     # (#119) MEASURED 2026-08-22 AND SHIPPED — 0 now means DERIVE FROM THE
                                  #   HOLD, and on this data that means NO BAND AT ANY HORIZON. This is a
                                  #   deliberate output change: five goldens moved, and what they lost was
@@ -23820,6 +23841,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # won a third of lump windows, all opening before 2001-09, and none after. Both buy shallower falls (40% and
 # 37% against 55%) with less return. (#244) NARROW keeps refusing option-overlay funds from CORE. No table
 # ships. No knob and no page column; nothing here reaches rank, BUY NOW, trade, size or the broker.
+
+# (#1227) LUCK AND OVERLAP TOOLS, 2026-10-30. Tools for grading settings, plus one ruler fix; no rank, BUY
+# NOW, trade, size or broker path moves.
+# RESCORE: `backtest rescore <dump> <grid>` reads a samples dump (FOLIOMAN_BACKTEST_SAMPLES writes one,
+# now with `vol_change` and a `<dump>.bench.json` holding the horizon and the benchmark) and re-runs the
+# top-N books and the all-entries SIZED row once per grid line. A grid line is one JSON object of
+# `buy_heuristic` keys laid over the loaded config; `{}` is the config itself. No fetch and no walk, so a
+# grid costs CPU instead of network. Knobs that act while the walk builds the samples are refused in a
+# grid line (RESCORE_FIXED in the code); each needs a probe run per arm. The SIZED row runs with no spill
+# legs, so its remainder earns the benchmark itself. Pinned on the frozen 12y fixture: `{}` reprints the
+# golden top-10 row, the head-to-head ladder and the SIZED row digit for digit.
+# BONFERRONI: the best-of-N tail was named for Šidák but computed 5/N a side, which is the Bonferroni
+# split. Renamed; no number moves.
+# DRAWS: `draws=N` sets how many random books rival (e) draws. 200 stays the default and the gate's cost;
+# 5000 lets a p below 1/201 print.
+# PURGED SPLIT: every backtest now prints, after relative strength, how many rows each side of the
+# early/late split keeps once one hold is purged off the earlier side and embargoed off the later one.
+# Fewer than 4 on a side reads UNRESOLVED: at that horizon every held-out half shares forward years with
+# its training half.
+# BAND: `bootstrap_cluster: true` (receipt at the key) resamples whole tickers, so the edge band prints
+# again at every horizon.
+# NOT DONE: no best-of-N band on the weight sweep, the gate sweep or the soft-gate ladder. Those print one
+# point edge per row. A setting picked off a rescore grid is charged for the search instead by a
+# shuffled-label null run through the same search, plus SHIP RULE v2.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

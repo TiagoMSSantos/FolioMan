@@ -498,7 +498,7 @@ fn n_eff_tag(on: bool, windows: usize, years: i64) -> String {
 ///
 /// A maximum over 13 candidates is biased upward by selection whether or not anyone says so; the only
 /// question is whether the reader is told. `sweep_fund_factor` already answers its own version of this
-/// with a Šidák-tightened band over every `FUND_FACTORS` entry.
+/// with a Bonferroni-tightened band over every `FUND_FACTORS` entry.
 ///
 /// (#120) WHAT THIS TAG NOW CAVEATS, AND WHAT IT NO LONGER DOES. It was written when [`VERDICT_TOP`]
 /// was the argmax over [`TOP_LADDER`], and it flagged the shipped basket as an unhaircut 13-way
@@ -583,6 +583,28 @@ fn purged_cut<T>(rows: &[T], cut: usize, months: i64, date_of: fn(&T) -> chrono:
     // call measured in years; calendar-exact month subtraction would be false precision.
     let keep_before = date_of(&rows[cut]) - chrono::Duration::days(months * 30);
     rows[..cut].partition_point(|r| date_of(r) < keep_before)
+}
+
+/// (#1227) Both sides of a split at once: the earlier side ends where [`purged_cut`] ends it, and the
+/// later side starts `months` after the boundary (the embargo), so no kept row on either side sits
+/// within one span of the other. Returns (end of the earlier side, start of the later side). Same
+/// guards as `purged_cut`: off or a degenerate cut is `(cut, cut)`.
+fn purged_halves<T>(rows: &[T], cut: usize, months: i64, date_of: fn(&T) -> chrono::NaiveDate) -> (usize, usize) {
+    if months <= 0 || cut == 0 || cut >= rows.len() {
+        return (cut, cut);
+    }
+    let keep_from = date_of(&rows[cut]) + chrono::Duration::days(months * 30);
+    (purged_cut(rows, cut, months, date_of), cut + rows[cut..].partition_point(|r| date_of(r) < keep_from))
+}
+
+/// (#1227) The early/late split at the honest span, printed rather than applied: one hold purged off
+/// the earlier side and one hold embargoed off the later one. A side left under [`MIN_SAMPLES`] rows
+/// means no held-out number in this report is free of shared forward years at this horizon.
+fn purged_split_line(samples: &[Sample], years: i64) -> String {
+    let (n, mid, span) = (samples.len(), samples.len() / 2, 12 * years);
+    let (early, late) = purged_halves(samples, mid, span, |s| s.date);
+    let verdict = if early.min(n - late) < MIN_SAMPLES { "UNRESOLVED: a side is under the floor, so every OOS half above shares forward years" } else { "both sides kept" };
+    format!("\n  purged split, {span} months a side: early {early} of {mid} rows kept, late {} of {} — {verdict}", n - late, n - mid)
 }
 
 /// (#46) Fill the three fields `Quote::stub` leaves blank that decide a name's ASSET CLASS. The backtest
@@ -780,6 +802,7 @@ struct Args {
     rolls: bool,
     options: bool,
     rescore: bool,
+    draws: usize,
     time: bool,
     tickers: Vec<String>,
 }
@@ -789,7 +812,7 @@ struct Args {
 /// cutoff against the index as it stood that day; everything else = explicit tickers to test. (#1118) `time`
 /// = wall seconds per phase on stderr.
 fn parse_args(args: &[String]) -> Args {
-    let mut a_ = Args { years: 5, ..Default::default() };
+    let mut a_ = Args { years: 5, draws: PLACEBO_DRAWS, ..Default::default() };
     for a in args {
         match a.parse::<i64>() {
             // (#948) past 100 is a typo (a date, say), not a horizon: it overflowed `forward_return`'s
@@ -820,6 +843,8 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("options") => a_.options = true, // (#1226) Cboe BuyWrite and PutWrite vs ^SP500TR over 20y
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ if a.eq_ignore_ascii_case("rescore") => a_.rescore = true, // (#1227) re-run the book reports on a samples dump
+            // (#1227) rival (e)'s random books: 200 keeps the gate's cost, 5000 lets a p below 1/201 print
+            _ if a.starts_with("draws=") => a_.draws = a[6..].parse().ok().filter(|n| *n > 0).expect("draws=N takes a whole number above 0"),
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -1333,7 +1358,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, draws, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -2282,7 +2307,7 @@ pub async fn run(args: Vec<String>) {
     report_vs_benchmark(&samples, &bench, years, tuning);
     lap("vs benchmark");
     if rivals {
-        report_rivals(&samples, &bench, years, tuning);
+        report_rivals(&samples, &bench, years, tuning, draws);
         lap("rivals");
     }
     if winners {
@@ -2292,6 +2317,7 @@ pub async fn run(args: Vec<String>) {
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
     lap("relative strength");
+    println!("{}", purged_split_line(&samples, years));
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
     lap("entry state");
@@ -4078,13 +4104,16 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
 /// backtest_8y_fund_samples`; (#675) this used to say the lane needs a live `FMP_API_KEY` and every
 /// golden runs offline). Inline, the six operator mutants on this arithmetic were unkillable by
 /// construction; as a pure fn they are just tested.
-fn sidak_tail(n: usize) -> (f64, f64) {
+///
+/// (#1227) Renamed from `sidak_tail`: 5/N a side is the Bonferroni split. Šidák would be
+/// 1-(0.95)^(1/N), a hair looser; the arithmetic never changed, only the name was wrong.
+fn bonferroni_tail(n: usize) -> (f64, f64) {
     let side = 5.0 / n.max(1) as f64;
     (side, 100.0 - side)
 }
 
 /// (#1045) The verdict on the haircut band, out of `sweep_fund_factor` for the same reason as
-/// `sidak_tail`: inline, a `>` turned `>=` read a zero-floor band as a WINNER and no test could run it.
+/// `bonferroni_tail`: inline, a `>` turned `>=` read a zero-floor band as a WINNER and no test could run it.
 /// Strict: a band whose floor touches 0 is still best-of-N luck.
 fn band_verdict(lo: f64) -> &'static str {
     if lo > 0.0 {
@@ -4097,7 +4126,7 @@ fn band_verdict(lo: f64) -> &'static str {
 const FUND_FACTORS: [&str; 53] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
-    // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
+    // array TIGHTENS every reported band: the Bonferroni haircut below divides by FUND_FACTORS.len(), so
     // going 11 -> 14 -> 24 makes the best-of-N test stricter, not the factors weaker. A later
     // reader comparing bands across runs must check this length before calling it a regression.
     "rev_yoy", "eps_yoy", "net_margin",
@@ -4105,7 +4134,7 @@ const FUND_FACTORS: [&str; 53] = [
     "earnings_yield",       // (Item 19) as-of valuation; native-currency probe (n/a unless `fund`)
     // (PEG) growth-at-price = earnings_yield · as-of CAGR (1/PEG; 100 ⇔ PEG 1, >100 ⇔ PEG <1).
     // Swept HERE, not just in the held-book list, because this is the sweep that carries the
-    // Šidák best-of-N haircut — the axis was annotated "expected dead" for rounds without ever
+    // Bonferroni best-of-N haircut — the axis was annotated "expected dead" for rounds without ever
     // being measured. NOTE the scale: peg_yield runs ~0-500 where earnings_yield runs ~0-15, so
     // the default `growth_fund_cap: 30` clamps every PEG < 3.3 name to the same value and would
     // fake a dead result. Raise the cap (~300) for any run that reads this row.
@@ -4114,7 +4143,7 @@ const FUND_FACTORS: [&str; 53] = [
     // (#157) the ten factors `core::select_fund_factor` has always registered and computed but
     // this array never asked about. They were reachable from every other read site — the
     // held-book-by-FACTOR table, the SURVIVAL-GATE probe, `growth_fund_weight` — and absent ONLY
-    // here, which is the one place that applies the Šidák best-of-N haircut. So the four survival
+    // here, which is the one place that applies the Bonferroni best-of-N haircut. So the four survival
     // factors had a percentile-cut reading from (#124) and no honest multiple-testing band, and
     // the other six had neither. Read the n/a rows as a result: they record which factors the
     // point-in-time pool cannot populate, which is a fact about coverage, not about the factor.
@@ -4152,7 +4181,7 @@ const FUND_FACTORS: [&str; 53] = [
 /// runs executes one line of this. `replace sweep_fund_factor with ()` is unkillable there, and
 /// skipping says so instead of arming the gate against the next edit.
 ///
-/// The arithmetic that WAS gradeable moved out rather than being skipped with it: `sidak_tail` and
+/// The arithmetic that WAS gradeable moved out rather than being skipped with it: `bonferroni_tail` and
 /// `bootstrap_block` are pure and tested. What stays here is the printing.
 #[mutants::skip]
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
@@ -4251,7 +4280,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
             // growth_fund_weight as inert, so the confirm run would never search the weight it names.
             println!("  -> WINNER: {w}. Set `growth_fund_factor: {w}` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.");
             // (Item 10) best-of-N haircut: the winner is the MAX of N tried factors, so its edge is inflated
-            // by selection. Re-bootstrap the winner's tilt but read a Šidák-tightened tail (5/N instead of
+            // by selection. Re-bootstrap the winner's tilt but read a Bonferroni-tightened tail (5/N instead of
             // 5) — if THAT band straddles 0 the "win" is within best-of-N luck, ship nothing anyway.
             let weight = weights[results.iter().position(|&(n, ..)| n == w).expect("the winner is a swept row")];
             // The winner's edge was measured AT THIS WEIGHT, searched in [0,0.5] — which need not be the
@@ -4267,7 +4296,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
             demean(&mut s); // peer-relative is the bootstrap's metric; `relative` depends only on date+realized
             let mut tun = default.clone();
             tun.growth_fund_weight = weight;
-            let (lo_p, hi_p) = sidak_tail(FUND_FACTORS.len());
+            let (lo_p, hi_p) = bonferroni_tail(FUND_FACTORS.len());
             let block = bootstrap_block(years, &tun);
             if let Some((lo, hi)) = bootstrap_edge_ci(&s, growth_score, &tun, 1000, lo_p, hi_p, block) {
                 let verdict = band_verdict(lo);
@@ -5232,11 +5261,11 @@ fn rank_sum(a: &[Option<f64>], b: &[Option<f64>]) -> Vec<Option<f64>> {
     rank_pct(a).into_iter().zip(rank_pct(b)).map(|(a, b)| a.zip(b).map(|(a, b)| a + b)).collect()
 }
 
-/// (#560) Rival (e): [`PLACEBO_DRAWS`] seeded draws of `n` names per bucket from the pond, with
+/// (#560) Rival (e): `draws` seeded draws of `n` names per bucket from the pond, with
 /// replacement like the (#329) placebo. Per draw: (mean, median) excess across buckets.
-fn random_books(pond: &BTreeMap<i32, Vec<(f64, f64)>>, n: usize, years: i64) -> Vec<(f64, f64)> {
+fn random_books(pond: &BTreeMap<i32, Vec<(f64, f64)>>, n: usize, years: i64, draws: usize) -> Vec<(f64, f64)> {
     let mut state = PLACEBO_SEED;
-    (0..PLACEBO_DRAWS)
+    (0..draws)
         .map(|_| {
             let xs: Vec<f64> = pond
                 .values()
@@ -5327,7 +5356,7 @@ fn rival_books(
 /// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
 /// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
 #[mutants::skip] // printing; `rival_books` and its helpers carry the tests
-fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic, n_draws: usize) {
     if bench.0.len() < 2 {
         return;
     }
@@ -5341,7 +5370,7 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
     let stats = |xs: &[f64]| (xs.iter().sum::<f64>() / xs.len().max(1) as f64, median(xs.to_vec()));
     let (ship_mean, ship_med) = stats(&books[0]);
     // (#1149) the random draws come first so every row can print where it ranks among them
-    let draws = random_books(&pond, VERDICT_TOP, years);
+    let draws = random_books(&pond, VERDICT_TOP, years, n_draws);
     let mut means: Vec<f64> = draws.iter().map(|d| d.0).collect();
     let mut meds: Vec<f64> = draws.iter().map(|d| d.1).collect();
     let (p95_mean, p95_med) = (percentile95(&mut means).unwrap_or(f64::NAN), percentile95(&mut meds).unwrap_or(f64::NAN));
@@ -5359,7 +5388,7 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
         );
     }
     println!(
-        "  (e) random pond x{PLACEBO_DRAWS}         excess {:+.1} (med {:+.1}) pts/yr  p5..p95 {:+.1}..{p95_mean:+.1} (med {:+.1}..{p95_med:+.1})  plain shipped {} the p95",
+        "  (e) random pond x{n_draws}         excess {:+.1} (med {:+.1}) pts/yr  p5..p95 {:+.1}..{p95_mean:+.1} (med {:+.1}..{p95_med:+.1})  plain shipped {} the p95",
         median(means.clone()),
         median(meds.clone()),
         percentile(&means, 5.0),
@@ -5367,10 +5396,10 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
         if ship_mean > p95_mean && ship_med > p95_med { "ABOVE" } else { "NOT above" }
     );
     println!(
-        "  p = the share of the {PLACEBO_DRAWS} random books whose mean excess is at or above the row's, counting the row as one more draw. {} rows are tested against one pond, so the 5% bar split across them is p < {:.4}; {PLACEBO_DRAWS} draws cannot print a p below {:.4}.",
+        "  p = the share of the {n_draws} random books whose mean excess is at or above the row's, counting the row as one more draw. {} rows are tested against one pond, so the 5% bar split across them is p < {:.4}; {n_draws} draws cannot print a p below {:.4}.",
         RIVALS.len(),
         0.05 / RIVALS.len() as f64,
-        1.0 / (PLACEBO_DRAWS + 1) as f64
+        1.0 / (n_draws + 1) as f64
     );
 }
 
@@ -7905,7 +7934,7 @@ fn bootstrap_block(years: i64, tuning: &BuyHeuristic) -> usize {
 /// aren't independent, so the bucket is the resample unit), rescoring the edge each draw. A band that
 /// straddles 0 = the point edge is within noise — ship nothing regardless of its sign. Seeded xorshift64
 /// (no `rand` dep) -> reproducible. None when there are too few buckets (<4) to resample meaningfully.
-/// (Item 10) the percentiles are caller-set so the fund sweep can pass a Šidák-tightened tail (5/N) to
+/// (Item 10) the percentiles are caller-set so the fund sweep can pass a Bonferroni-tightened tail (5/N) to
 /// charge the winner for being the best of N tried factors.
 fn bootstrap_edge_ci(
     samples: &[Sample],
@@ -7924,15 +7953,25 @@ fn bootstrap_edge_ci(
     // contradiction of the "reproducible" claim above. Caught by the frozen-data pin
     // (tests/backtest_fixture.rs), which is the only thing that runs the same data twice.
     // Same idiom `turnover_frac` below already uses for its own date buckets.
+    // (#1227) `bootstrap_cluster` resamples whole TICKERS instead: every cutoff of one name rides
+    // together, so the overlap between its forward paths stays inside the unit at any hold, with no
+    // block to collapse. The bucket-wide market move is what `demean` already took out of `relative`.
+    let ids: BTreeMap<&str, i32> = if tuning.bootstrap_cluster {
+        let names: std::collections::BTreeSet<&str> = samples.iter().map(|s| s.quote.ticker.as_str()).collect();
+        names.into_iter().zip(0..).collect()
+    } else {
+        BTreeMap::new()
+    };
     let mut buckets: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
     for (i, s) in samples.iter().enumerate() {
-        buckets.entry(bucket(s.date)).or_default().push(i);
+        let k = if tuning.bootstrap_cluster { ids[s.quote.ticker.as_str()] } else { bucket(s.date) };
+        buckets.entry(k).or_default().push(i);
     }
     let keys: Vec<i32> = buckets.keys().copied().collect();
     if keys.len() < 4 {
         return None;
     }
-    let block = block.clamp(1, keys.len());
+    let block = if tuning.bootstrap_cluster { 1 } else { block.clamp(1, keys.len()) };
     // (#119) THE BAND COLLAPSES AT LONG BLOCKS, and that is the second way it lies. Measured on the
     // frozen 8y fixture (64-71 buckets), sweeping the block and reading the WIDTH the receipt asks for:
     //
@@ -9723,6 +9762,22 @@ mod tests {
         // (#340) a row exactly `months*30` days back sits ON the edge and is purged with the overlap.
         let edge: Vec<Sample> = (0..4).map(|i| sample(ymd(2010, 1, 1) + chrono::Duration::days(30 * i), 0.0)).collect();
         assert_eq!(purged_cut(&edge, 3, 1, |s: &Sample| s.date), 2);
+        // (#1227) the embargo is the mirror: 12 30-day months on from 2017-07-01 is 2018-06-26, so
+        // 2018-07-01 (index 34) is the first later row kept; a row ON that date would be kept too.
+        let halves = |months| purged_halves(&rows, 30, months, |s: &Sample| s.date);
+        assert_eq!(halves(0), (30, 30), "off is the identity on both sides");
+        assert_eq!(halves(12), (27, 34));
+        assert_eq!(rows[34].date, ymd(2018, 7, 1));
+        assert_eq!(halves(288), (0, 40), "the honest 12y span empties both sides");
+        assert_eq!(purged_halves(&rows, 40, 12, |s: &Sample| s.date), (40, 40));
+        assert_eq!(purged_halves(&rows, 0, 12, |s: &Sample| s.date), (0, 0));
+        assert_eq!(purged_halves(&edge, 1, 1, |s: &Sample| s.date), (0, 2), "a row exactly one span on is kept");
+        // the footer at a 1y hold: one span drops the three rows either side of mid, keeping mid-3 early
+        // and n-mid-4 late. 16 rows keep 5 and 4, ON the floor; 14 keep 4 and 3, under it.
+        let line = |n: usize| purged_split_line(&rows[..n], 1);
+        assert_eq!(line(16), "\n  purged split, 12 months a side: early 5 of 8 rows kept, late 4 of 8 — both sides kept");
+        assert!(line(14).contains("early 4 of 7 rows kept, late 3 of 7 — UNRESOLVED"), "{}", line(14));
+        assert!(purged_split_line(&rows[..16], 2).starts_with("\n  purged split, 24 months a side"), "the span is a year per year held");
     }
 
     /// (#89) The block length is real, and 0 is exactly the one-bucket resample every band in this repo
@@ -9786,6 +9841,36 @@ mod tests {
         assert!((lvl.0 - one.0).abs() < 1e-9 && (lvl.1 - one.1).abs() < 1e-9, "{lvl:?} vs {one:?}");
     }
 
+    /// (#1227) `bootstrap_cluster` draws whole tickers. Eight names in twelve buckets, each bucket holding
+    /// every name once: a bucket draw sees the same mix in every draw, so its band is one point, while a
+    /// ticker draw changes the mix and the band opens. The block is ignored, so a block the bucket draw
+    /// refuses (twelve buckets hold two of six, not ten) still prints, and the seed makes it repeat.
+    #[test]
+    fn a_ticker_cluster_bootstrap_resamples_names_not_dates() {
+        fn score_is_the_price(q: &Quote, _: &BuyHeuristic) -> Option<f64> {
+            q.price.parse().ok()
+        }
+        let rows: Vec<Sample> = (0..12)
+            .flat_map(|k| {
+                let date = ymd(2010 + k / 2, 1 + 6 * (k % 2) as u32, 1);
+                (0..8).map(move |t| Sample {
+                    relative: 10.0 * t as f64,
+                    quote: Arc::new(Quote::stub(&format!("T{t}"), &t.to_string(), "", "X")),
+                    ..sample(date, 0.0)
+                })
+            })
+            .collect();
+        let off = BuyHeuristic::default();
+        let on = BuyHeuristic { bootstrap_cluster: true, ..BuyHeuristic::default() };
+        let band = |t: &BuyHeuristic, block: usize| bootstrap_edge_ci(&rows, score_is_the_price, t, 400, 5.0, 95.0, block);
+        assert_eq!(band(&off, 1), Some((40.0, 40.0)), "every bucket is the same eight names, so every draw is the same edge");
+        assert!(band(&off, 6).is_none(), "twelve buckets are two blocks of six, under ten");
+        let c = band(&on, 1).unwrap();
+        assert!(c.1 - c.0 > 1.0, "a ticker draw changes the names, so the band opens: {c:?}");
+        assert_eq!(band(&on, 6), Some(c), "the cluster draw has no block, so a refused block still prints");
+        assert_eq!(band(&on, 1), Some(c), "seeded");
+    }
+
     /// (#120) The gate's search string and the basket it grades are ONE number. `markers::VERDICT_ROW`
     /// has to be a `const &str` (both test crates read it, and `tests/network.rs` matches on it), so it
     /// cannot be built from `VERDICT_TOP` at compile time without a formatting dep. This is that
@@ -9803,16 +9888,16 @@ mod tests {
     /// (Item 10) The best-of-N haircut. Tested here and not through its caller because the caller is
     /// `sweep_fund_factor`, which the offline suite cannot run at all.
     #[test]
-    fn sidak_tail_tightens_both_ends_by_five_over_n() {
-        assert_eq!(sidak_tail(1), (5.0, 95.0), "one candidate is no selection — the plain 90% band");
-        assert_eq!(sidak_tail(10), (0.5, 99.5));
-        let (lo, hi) = sidak_tail(14); // a fixed arity, NOT FUND_FACTORS.len() — this tests the
+    fn bonferroni_tail_tightens_both_ends_by_five_over_n() {
+        assert_eq!(bonferroni_tail(1), (5.0, 95.0), "one candidate is no selection — the plain 90% band");
+        assert_eq!(bonferroni_tail(10), (0.5, 99.5));
+        let (lo, hi) = bonferroni_tail(14); // a fixed arity, NOT FUND_FACTORS.len() — this tests the
         // function, so it must not move when (#157) widens the array (14 was the length then)
         assert!((lo - 0.357_142_857).abs() < 1e-9 && (hi - 99.642_857_142).abs() < 1e-9, "{lo} {hi}");
         // both ends move OUTWARD as the search widens: more factors tried -> a stricter bar, which is
         // the whole point. A `-` flipped to `+` here would tighten the band and pass a losing winner.
-        assert!(sidak_tail(14).0 < sidak_tail(10).0 && sidak_tail(14).1 > sidak_tail(10).1);
-        assert_eq!(sidak_tail(0), (5.0, 95.0), "no candidates -> no division by zero");
+        assert!(bonferroni_tail(14).0 < bonferroni_tail(10).0 && bonferroni_tail(14).1 > bonferroni_tail(10).1);
+        assert_eq!(bonferroni_tail(0), (5.0, 95.0), "no candidates -> no division by zero");
     }
 
     /// (#1045) Only a band floor strictly above 0 trusts the winner; a floor AT 0 straddles it.
@@ -10350,7 +10435,7 @@ mod tests {
         let p = |s: &str| parse_args(&s.split_whitespace().map(String::from).collect::<Vec<_>>());
 
         // default: no args at all
-        assert_eq!(p(""), Args { years: 5, ..Default::default() });
+        assert_eq!(p(""), Args { years: 5, draws: PLACEBO_DRAWS, ..Default::default() });
 
         // each keyword on its own, so one arm going dead cannot hide behind another
         assert!(p("universe").wide, "`universe` must set wide — the CI gate IS the wide run");
@@ -10380,6 +10465,8 @@ mod tests {
         assert!(p("rolls").rolls && !p("bestpick").rolls && !p("rolls").bestpick);
         assert!(p("options").options && !p("rolls").options && !p("options").rolls);
         assert!(p("rescore a b").rescore && p("rescore a b").tickers == ["a", "b"] && !p("options").rescore && !p("rescore").options);
+        assert!(p("draws=5000").draws == 5000 && p("draws=5000").tickers.is_empty(), "(#1227) draws=N is a count, not a ticker");
+        assert!(std::panic::catch_unwind(|| p("draws=0")).is_err() && std::panic::catch_unwind(|| p("draws=x")).is_err(), "a draw count must be a whole number above 0");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -10416,7 +10503,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore draws=9 time");
         assert_eq!(
             all,
             Args {
@@ -10445,6 +10532,7 @@ mod tests {
                 rolls: true,
                 options: true,
                 rescore: true,
+                draws: 9,
                 time: true,
                 tickers: vec![]
             }
@@ -10693,12 +10781,13 @@ mod tests {
         assert_eq!(rank_sum(&[Some(3.0), Some(1.0), None], &[Some(1.0), Some(2.0), Some(5.0)]), [Some(0.5), Some(1.0 / 3.0), None]);
 
         let flat: BTreeMap<i32, Vec<(f64, f64)>> = [(1, vec![(100.0, 0.0); 3]), (2, vec![(100.0, 0.0)]), (3, vec![])].into();
-        let draws = random_books(&flat, 10, 1);
+        let draws = random_books(&flat, 10, 1, PLACEBO_DRAWS);
         assert_eq!(draws.len(), PLACEBO_DRAWS);
+        assert_eq!(random_books(&flat, 10, 1, 7).len(), 7, "(#1227) the count is the caller's");
         assert!(draws.iter().all(|d| (d.0 - 100.0).abs() < 1e-9 && (d.1 - 100.0).abs() < 1e-9), "every draw of a flat pond is that pond");
         let two: BTreeMap<i32, Vec<(f64, f64)>> = [(1, vec![(100.0, 0.0), (0.0, 0.0)])].into();
-        let draws = random_books(&two, 1, 1);
-        assert_eq!(draws, random_books(&two, 1, 1), "seeded: the same pond draws the same books");
+        let draws = random_books(&two, 1, 1, PLACEBO_DRAWS);
+        assert_eq!(draws, random_books(&two, 1, 1, PLACEBO_DRAWS), "seeded: the same pond draws the same books");
         assert!(draws.iter().any(|d| d.0 > 50.0) && draws.iter().any(|d| d.0 < 50.0), "both names get drawn");
         // (#1149) two of three draws reach 2.0 (a tie counts), so (2 + 1) / 4; above every draw is the 1/(n+1) floor
         assert_eq!(p_at_least(&[1.0, 2.0, 3.0], 2.0), 0.75);
@@ -14411,7 +14500,7 @@ mod tests {
         assert!(report_entry_state(&[], &bench, 12, &tuning).is_none(), "no scorable sample, nothing to class");
         assert!(report_sized_book(&[], &bench, 12, &tuning, &config::Sizing::default(), 10, &[]).is_none(), "no bucket, no sized verdict");
 
-        report_rivals(&samples, &none, 12, &tuning);
+        report_rivals(&samples, &none, 12, &tuning, PLACEBO_DRAWS);
         report_winners(&samples, &none, 12, &tuning);
         report_two_style_book(&samples, &none, 12, &tuning);
         report_vs_benchmark(&samples, &none, 12, &tuning);
