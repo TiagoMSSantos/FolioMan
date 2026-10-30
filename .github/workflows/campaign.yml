@@ -1,0 +1,23 @@
+# (#1239) The monthly knob search: dispatches probe.yml on main with `search`, so each month's run walks
+# the `pit dead` dumps on that month's data and prints one SEARCH block (see the (#1239) receipt in
+# tests/ci-settings.yaml for its verdict rule). It ships nothing; each read is one more look and its
+# receipt says which. The probe run is titled `Probe dump`, so pages.yml keeps it 90 days.
+name: campaign
+
+on:
+  schedule:
+    - cron: "23 7 3 * *"   # the 3rd of each month, off the hour
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the search probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run probe.yml --repo "$GITHUB_REPOSITORY" --ref main -f years="12 8" -f args="universe fund pit dead" -f search="configs=5000 nulls=200"

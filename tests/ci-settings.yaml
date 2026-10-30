@@ -24214,6 +24214,9 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   number. The null prices the N configs looked at in one run, not the earlier one-knob lanes above.
 # N AND K: configs=5000, nulls=200. If the first timed run shows 5000 will not fit in one job, N is cut to
 #   what fits and a line here says so before the result is read.
+#   Timed run, probe 41037380676 on 8d868dd at configs=500 nulls=200: the search took 19 s and grows with N,
+#   so 5000 needs about 3 minutes beside two walks of about 3.5 minutes. N stays 5000. That run's result
+#   lines were not read, so it is not a look.
 # DEVIATIONS from round 6's wording: 5000 configs, not 20k then the top 50 then coordinate descent; the null
 #   re-grades the same configs on each shuffle instead of running a fresh smaller search per shuffle; the
 #   20y guards are read on the probe arm, not as constraints inside the search; notches only loosen;
