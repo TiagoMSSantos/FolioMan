@@ -24241,6 +24241,20 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   null prices, so it is a post-hoc pick and grades nothing.
 #   VERDICT: the shipped config sits at the knob space's noise floor. No probe arm runs and no knob moves.
 #   The monthly campaign (.github/workflows/campaign.yml, the 3rd of each month) reads looks 2 onward.
+# (#1240) STRICTER VERDICT RULE, PRE-REGISTERED 2026-10-30, before look 2. It replaces (#1239)'s rule for
+#   look 2 onward; look 1 stays as recorded above.
+# WHY: a p95 bar passes the luckiest 1 in 20 searches by chance, and the campaign looks every month, so a
+#   pass would arrive by luck within about two years of looks. Look 1's winner also broke under a small
+#   push (JITTER p5 -0.16), and the old rule did not read that line at all.
+# RULE (`search_verdict`): the real best gain must beat the null's MAX, the best gain on every one of the
+#   200 shuffles, and 0. Then the JITTER p5 must be above 0. Three outcomes:
+#   - not above the max: "the shipped config sits at the knob space's noise floor"; nothing runs;
+#   - above the max but JITTER p5 at or below 0: a knife-edge; nothing runs, the record says so;
+#   - both: the GRID ROW runs as a probe arm under SHIP RULE v2 (12y AND 8y on `pit`, the 20y guards live),
+#     and a live-page change still gets one owner question.
+#   The NULL line now prints the max beside p50 and p95. Under this rule look 1 reads the floor on both
+#   counts (+0.65 is below p95 +1.15, so below the max too, and p5 is -0.16).
+#   Nothing here reaches rank, BUY NOW, size, trade or the broker.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

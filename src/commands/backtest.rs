@@ -1206,9 +1206,10 @@ fn search(dumps: &[String], configs: usize, nulls: usize, settings: &config::Set
     println!("  notches loosened: {}", if notched.is_empty() { "none".to_string() } else { notched.join(", ") });
     if !null.is_empty() {
         println!(
-            "  NULL: the best gain on each shuffle, p50 {:+.2}  p95 {:+.2}; p = {p:.3} that a search this wide finds {real:+.2} by luck",
+            "  NULL: the best gain on each shuffle, p50 {:+.2}  p95 {:+.2}  max {:+.2}; p = {p:.3} that a search this wide finds {real:+.2} by luck",
             percentile(&null, 50.0),
-            percentile(&null, 95.0)
+            percentile(&null, 95.0),
+            percentile(&null, 100.0)
         );
     }
     // PARSIMONY: each moved knob put back alone, so a knob that buys nothing shows as no loss
@@ -1231,16 +1232,26 @@ fn search(dumps: &[String], configs: usize, nulls: usize, settings: &config::Set
     let mut jit: Vec<f64> = nudged.par_iter().map(|d| g(&grade(&search_apply(base, d, &loosen)), 0)).collect();
     jit.sort_by(f64::total_cmp);
     println!("  JITTER: 200 nudges of the winner, gain p5 {:+.2}  p50 {:+.2}", percentile(&jit, 5.0), percentile(&jit, 50.0));
-    let floor = null.last().map_or(0.0, |_| percentile(&null, 95.0)).max(0.0);
-    println!(
-        "  VERDICT: {}",
-        if real > floor {
-            "the winner beats the shuffled null; run the GRID ROW as a probe arm under SHIP RULE v2 before anything ships"
-        } else {
-            "the shipped config sits at the knob space's noise floor: no config beats it by more than the same search finds on shuffled returns"
-        }
-    );
+    println!("  VERDICT: {}", search_verdict(real, &null, &jit));
     println!("  GRID ROW: {}", serde_json::Value::Object(moved));
+}
+
+/// (#1240) The search's verdict on its winner's gain `real`, given the sorted best gain of each shuffle
+/// (`null`) and of each nudge of the winner (`jit`). Look 1 passed a winner above the null's p95, which
+/// hands the luckiest 1 in 20 searches a pass by chance, and the campaign looks every month. Now the winner
+/// must beat EVERY shuffle, and its JITTER p5 must stay above zero, so a gain that holds only at its exact
+/// knob values runs nothing. No shuffles, no verdict.
+fn search_verdict(real: f64, null: &[f64], jit: &[f64]) -> &'static str {
+    let Some(max) = null.last() else {
+        return "no shuffles were run (nulls=0), so the search grades nothing";
+    };
+    if real <= max.max(0.0) {
+        "the shipped config sits at the knob space's noise floor: no config beats it by more than the same search finds on shuffled returns"
+    } else if percentile(jit, 5.0) > 0.0 {
+        "the winner beats every shuffle and holds under its nudges; run the GRID ROW as a probe arm under SHIP RULE v2 before anything ships"
+    } else {
+        "the winner beats every shuffle but not its own nudges (JITTER p5 <= 0): a knife-edge, so nothing runs"
+    }
 }
 
 /// The rayon pool size to force, or `None` to leave rayon alone.
@@ -9927,6 +9938,24 @@ mod tests {
         assert!((search_objective(&[(3.0, 1.0), (2.0, 5.0)], &shipped) - 0.2).abs() < 1e-9);
         assert!((search_objective(&[(5.0, 0.7), (4.0, 3.0)], &shipped) - 0.2).abs() < 1e-9, "the median gain binds");
         assert_eq!(search_objective(&shipped, &shipped), 0.0, "the shipped config gains nothing on itself");
+    }
+
+    /// (#1240) Shuffles' best gains 0.2..1.5 and nudges' p5 0.3: a gain of 1.6 beats every shuffle and its
+    /// nudges, so the GRID ROW runs. 1.5 ties the null's max and 1.2 beats its p95 only: both read the
+    /// floor. Nudges whose p5 is 0 or below make 1.6 a knife-edge. A null all below zero still floors a
+    /// gain of 0. No shuffles grade nothing.
+    #[test]
+    fn search_verdict_needs_every_shuffle_beaten_and_the_nudges_held() {
+        let null: Vec<f64> = (0..20).map(|k| if k == 19 { 1.5 } else { 0.2 + 0.05 * k as f64 }).collect();
+        let jit: Vec<f64> = (0..20).map(|k| 0.3 + 0.1 * k as f64).collect();
+        assert!(search_verdict(1.6, &null, &jit).contains("GRID ROW"));
+        assert!(search_verdict(1.5, &null, &jit).contains("noise floor"), "a tie with the null's max is luck");
+        assert!(search_verdict(1.2, &null, &jit).contains("noise floor"), "look 1's p95 bar no longer passes");
+        let flat: Vec<f64> = (0..20).map(|k| 0.1 * (k as f64 - 1.0)).collect(); // p5 is the 2nd of 20: 0
+        assert!(search_verdict(1.6, &null, &flat).contains("knife-edge"), "a JITTER p5 of exactly 0 runs nothing");
+        assert!(search_verdict(1.6, &null, &[-0.4, 2.0]).contains("knife-edge"));
+        assert!(search_verdict(0.0, &[-1.0, -0.5], &jit).contains("noise floor"), "no gain is never a winner");
+        assert!(search_verdict(1.6, &[], &jit).contains("nulls=0"));
     }
 
     /// (#408) X ranks top of 3 on earnings (2/2 -> 100) and bottom of 2 on EBITDA (0/1 -> 0); FCF and
