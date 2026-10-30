@@ -15641,7 +15641,16 @@ buy_heuristic:
                                  #   TO REOPEN: build the YRS check the block above asks for — does the column stop misstating a
                                  #   listing's age for the 138/3346 trimmed series? — and judge it there, not on edge.
                                  #   REVERT RULE: it is at the revert value and stays there.
-  demean_by_market: false        # (#93) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+  demean_by_market: true         # (#1232) SHIPPED ON 2026-10-30 as a RULER fix, decided before any run:
+                                 #   the knob feeds only `relative` (lane edge, rho, OOS halves), never a
+                                 #   book row, so it changes what the ruler reads, not what BUY NOW buys.
+                                 #   Graded W0b 41023420342 vs W1b 41023428107 (`universe fund winners`,
+                                 #   20 12 8): windows scored identical, all 63 book-row lines
+                                 #   byte-identical, every GROWTH gate value still > 0, and GROWTH edge
+                                 #   fell 4-6 pts at each horizon, as the block below predicted. Numbers
+                                 #   in the (#1232) RESULTS block. The REVERT RULE below still stands.
+                                 #
+                                 #   (#93) WAS UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  #   the single pooled (bucket, class) peer group every edge, rho, OOS
                                  #   half and `tune` winner in this repo was measured against. Turning it
                                  #   on re-cuts the SELECTION METRIC itself, so it does not move one
@@ -23927,6 +23936,49 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # the invariant stands unchanged. A row still never de-means against itself. OFF is byte-identical (the
 # pooled path is untouched), so no golden moves. W1 re-runs on the fix SHA beside a fresh W0, and
 # (#1228)'s DEMEAN rule reads it unchanged.
+
+# (#1232) RESULTS OF (#1228) AND (#1229), 2026-10-30. Six probe runs, years "20 12 8"; the logs are the
+# record and every number below is copied from them. `windows scored` matched each arm's control at every
+# horizon, so no arm is void. Looks: one each for DEMEAN, COST and SECTOR, ten for the screen.
+# DEMEAN, W0b 41023420342 vs W1b 41023428107, both on d027242 (the (#1231) fix): SHIPS ON, see the knob.
+#   windows scored 5147/9137/8649/16363/13317/20395 in both. All 63 book-row lines (top-10, rode zeros,
+#   WINNERS HELD, SIZED) are byte-identical, so the knob moves `relative` alone, as pre-registered.
+#   Passer edge, control -> de-meaned, ON-SALE | GROWTH:
+#     20y +270.2 -> +274.3 | +426.1 -> +421.5;  12y +68.7 -> +65.7 | +126.2 -> +120.2;
+#     8y +43.9 -> +40.6 | +43.6 -> +39.6.
+#   Passer lift, same order:
+#     20y +1112.1 -> +1108.3 | +377.6 -> +373.5;  12y +276.6 -> +272.0 | +96.9 -> +93.4;
+#     8y +125.9 -> +121.1 | +32.7 -> +29.2.
+#   GROWTH OOS early/late, de-meaned: 20y -0.02/+0.31, 12y +0.17/+0.18, 8y +0.26/+0.12. ON-SALE 8y late
+#   -0.10 -> -0.13. Tuning-off rho -0.36 -> -0.35. The stop never fired: every edge and lift stays above 0.
+#   GROWTH edge fell 4-6 pts at every horizon, the direction (#93) predicted: part of the old spread was
+#   the window's currency move, not selection.
+# COST, W0 41021953430 vs W2 41021959202, both on c848b8c: record only, stays OFF. Lane NET line,
+#   ON-SALE | GROWTH: 20y +270.1 -> +266.8 | -468.8 -> -471.4; 12y +68.7 -> +66.7 | -29.1 -> -30.5;
+#   8y +43.8 -> +42.6 | +20.2 -> +19.3. "too churny" fires on GROWTH at 20y and 12y in both arms and at
+#   8y in neither: the cost never flips the flag.
+# SECTOR, P0 41021962171 vs P1 41021964700, both on c848b8c: record only, stays OFF. windows scored
+#   2992/5690/5995/12469/10281/16339 in both. The ON-SALE top-10 line is identical. GROWTH top-10 excess
+#   mean (median), worst window, P0 -> P1:
+#     20y +3.3 (+1.9), -2.3 -> +3.1 (+1.9), -2.3;
+#     12y +2.4 (+2.5), -7.0, win 82% -> +2.1 (+2.3), -7.0, win 79%;
+#     8y +2.3 (+2.3), -8.9, win 78% -> +1.8 (+1.9), -9.9, win 74%.
+#   Today's GICS sector label flatters the growth book's backtest by 0.2-0.5 pts/yr mean on `pit dead`.
+# (#1229) SCREEN, rescored on P0's dump: NO PASSER, so nothing goes to a probe arm. Row {} reprints P0's
+#   own top-10 line at every horizon: the live proof of (#1227)'s rescore. GROWTH top-10 mean/median,
+#   20y | 12y | 8y, against row {} at +3.3/+1.9 (worst -2.3) | +2.4/+2.5 | +2.3/+2.3, 8y #1-vs-11-20 22/46:
+#     sharpe_cap 1.73: +3.2/+1.7 | +2.4/+2.5 | +2.2/+2.1, 8y h2h 20/46. FAIL, 8y down.
+#     sharpe_cap 3.46: +3.2/+1.7 | +2.4/+2.5 | +2.2/+2.3. FAIL, 8y mean down.
+#     sharpe_cap 5.2 and 6.93: 12y and 8y equal row {}. VACUOUS.
+#     growth_allow_negative_scores: 12y and 8y equal row {}. VACUOUS, as (#86) expected.
+#     (trust, overext) (0.5, 0.75): +2.6/+1.5 (worst -3.6) | +2.4/+2.0 | +2.3/+2.2, 8y h2h 17/46. FAIL
+#       at 12y and 8y.
+#     (0.5, 1.0): +2.5/+1.5 | +2.4/+2.1 | +2.7/+2.4, 8y h2h 19/46. FAIL, 12y median down.
+#     (1.0, 0.5): +1.9/+1.8 | +2.3/+2.6 | +2.5/+2.5. FAIL, 12y mean down.
+#     (1.0, 0.75): +2.0/+1.3 | +2.2/+2.0 | +2.5/+2.6. FAIL at 12y.
+#     (1.0, 1.0): +2.9/+1.7 | +2.2/+1.7 | +2.6/+2.5. FAIL at 12y.
+#   The sharpe-cap and damp-exponent blocks stay refused on `pit dead`, as they were on `pit`
+#   ((#1132), (#1134)), and negative scores stay ungradeable (#86).
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
