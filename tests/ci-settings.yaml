@@ -23871,6 +23871,22 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # encrypted with the Tiingo key; the run is titled `Probe dump` and pages.yml keeps it 90 days, with its
 # log as the result. No verdict JSON is written for these: `pit` runs never write one.
 
+# (#1228) THREE RULER KNOBS, PRE-REGISTERED 2026-10-30 before any run. Five probe runs on one commit, years
+# "20 12 8". `windows scored` must match the arm's control at every horizon, or that arm is void.
+#   W0 control and W1 `demean_by_market=true` and W2 `cost_per_rebalance=true`, on the gate's own args
+#   `universe fund winners`, whose pool holds the EU and UK lines the market split acts on (a `pit` pool is
+#   almost all US, so the split would be near-inert there).
+#   P0 control and P1 `backtest_drop_lookahead_sector=true`, on `universe fund pit dead`. P0 also passes
+#   grid `[{}]`, so its rescore row {} must reprint its own top-10 line at every horizon: the live check of
+#   (#1227)'s rescore.
+# DEMEAN: ships ON whatever it reads, as a ruler fix. It only moves `relative`, which feeds the lane edge,
+#   rho, OOS halves and lift, never a book row. Recorded: passer edge and passer lift per horizon, W1 vs W0.
+#   One stop: if passer edge or passer lift reads <= 0 at any horizon, the gate would go red, so the ship
+#   waits and comes back as a question.
+# COST: record only, stays OFF. Recorded: the lane NET line per horizon, W2 vs W0, and whether the "too
+#   churny" flag fires.
+# SECTOR: record only, stays OFF. Recorded: top-10 excess mean and median at 12y and 8y, P1 vs P0.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
