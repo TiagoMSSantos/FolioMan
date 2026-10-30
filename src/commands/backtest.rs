@@ -828,6 +828,7 @@ struct Args {
     rolls: bool,
     options: bool,
     rescore: bool,
+    level: bool,
     draws: usize,
     time: bool,
     tickers: Vec<String>,
@@ -869,6 +870,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("options") => a_.options = true, // (#1226) Cboe BuyWrite and PutWrite vs ^SP500TR over 20y
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ if a.eq_ignore_ascii_case("rescore") => a_.rescore = true, // (#1227) re-run the book reports on a samples dump
+            _ if a.eq_ignore_ascii_case("level") => a_.level = true, // (#1238) the level x path 2x2 on the entry-state book
             // (#1227) rival (e)'s random books: 200 keeps the gate's cost, 5000 lets a p below 1/201 print
             _ if a.starts_with("draws=") => a_.draws = a[6..].parse().ok().filter(|n| *n > 0).expect("draws=N takes a whole number above 0"),
             _ => a_.tickers.push(a.clone()),
@@ -1384,7 +1386,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, draws, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, draws, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -2347,6 +2349,16 @@ pub async fn run(args: Vec<String>) {
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
     lap("entry state");
+    // (#1238) the level x path 2x2: record only, and fetched only when asked
+    if level {
+        let u = &settings.urls;
+        let ep = fetch::fetch_shiller(&client, &u.shiller, crate::core::parse_shiller_ep).await;
+        // TB3MS is a month's average, so a reader first has it the month after
+        let bills: BTreeMap<i32, f64> = fetch::fetch_fred(&client, &u.fred, &u.sec_user_agent, "TB3MS").await.into_iter().map(|(k, v)| (k + 1, v)).collect();
+        let out = level_path_report(&samples, &bench, years, tuning, &ep, &bills, -5.0);
+        println!("\n{}", if out.is_empty() { "(#1238) level x path: no Shiller earnings or TB3MS, or no entry in a CHEAP or RICH class".into() } else { out });
+        lap("level x path");
+    }
     // (#324) the in-sample guard for the notch shadow `track` grades forward
     report_notch_books(&samples, &bench, years, tuning);
     report_proxy_books(&samples, &bench, years, tuning);
@@ -6494,6 +6506,60 @@ fn report_entry_state(
     verdict
 }
 
+/// (#1238) The level x path 2x2 that (#110) asked for and (#306) priced unmeasurable: each entry bucket of
+/// [`report_entry_state`]'s pool is classed CHEAP or RICH by the S&P's trailing earnings yield minus the 3M
+/// bill at its first cutoff (inside the `entry_excess_yield_band` dead zone it sits out), and HIGH or FALL by
+/// the benchmark's drawdown there (FALL at or below `cut`), then the same top-10 growth book is graded per
+/// corner. Record only. Empty when either series is missing or no bucket lands in a corner.
+fn level_path_report(
+    samples: &[Sample],
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    years: i64,
+    tuning: &BuyHeuristic,
+    ep: &BTreeMap<i32, f64>,
+    bills: &BTreeMap<i32, f64>,
+    cut: f64,
+) -> String {
+    use crate::heuristics::rules::on_month;
+    if ep.is_empty() || bills.is_empty() {
+        return String::new();
+    }
+    let ((bd, bc), band, n) = (bench, tuning.entry_excess_yield_band, 10);
+    let mut pool: BTreeMap<i32, (chrono::NaiveDate, Vec<(f64, f64, f64)>)> = BTreeMap::new();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 {
+            continue;
+        }
+        let Some(score) = growth_score(&s.quote, tuning) else { continue };
+        let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        let e = pool.entry(bucket(s.date)).or_insert((s.date, Vec::new()));
+        e.0 = e.0.min(s.date);
+        e.1.push((score, s.realized, br));
+    }
+    let mut cells: [BTreeMap<i32, Vec<(f64, f64, f64)>>; 4] = Default::default();
+    for (bk, (d, rows)) in pool {
+        let Some(dd) = bench_drawdown_at(bd, bc, d) else { continue };
+        let level = match on_month(ep, d) - on_month(bills, d) {
+            x if x >= band => 0,
+            x if x <= -band => 2,
+            _ => continue,
+        };
+        cells[level + usize::from(dd <= cut)].insert(bk, rows);
+    }
+    if cells.iter().all(BTreeMap::is_empty) {
+        return String::new();
+    }
+    let mut out = format!(
+        "── LEVEL x PATH (#1238): each ~6mo entry classed by the S&P's trailing earnings yield minus the 3M T-bill (CHEAP at or above +{band}, RICH at or below -{band} pts) and its drawdown at entry (FALL at or below {cut}%), same top-{n} growth book held {years}y; one independent trial = {} windows ──",
+        2 * years
+    );
+    for (label, m) in ["cheap @ high", "cheap & falling", "rich @ high", "rich & falling"].iter().zip(&cells) {
+        let stats = book_stats(m, n, years).map_or(String::new(), |(b, _, e, w, wo, _, _)| format!("  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}"));
+        out += &format!("\n  {label:<16} windows {:>3}{stats}", m.len());
+    }
+    out + "\n  (record only. The read is the two corners where level and path disagree, cheap @ high and rich & falling; a corner under one trial is a regime story, not a statistic)"
+}
+
 /// (#290) One ~6-month bucket of the book `size` would actually have bought: `book` and `spy` are
 /// terminal multiples (1.0 = flat), `deployed` is the percent of gross the weights placed in names.
 struct SizedBucket {
@@ -10502,6 +10568,7 @@ mod tests {
         assert!(p("rescore a b").rescore && p("rescore a b").tickers == ["a", "b"] && !p("options").rescore && !p("rescore").options);
         assert!(p("draws=5000").draws == 5000 && p("draws=5000").tickers.is_empty(), "(#1227) draws=N is a count, not a ticker");
         assert!(std::panic::catch_unwind(|| p("draws=0")).is_err() && std::panic::catch_unwind(|| p("draws=x")).is_err(), "a draw count must be a whole number above 0");
+        assert!(p("level").level && p("LEVEL").level && !p("options").level && p("level").tickers.is_empty(), "(#1238) `level` is a keyword, not a ticker");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -10538,7 +10605,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore draws=9 time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level draws=9 time");
         assert_eq!(
             all,
             Args {
@@ -10567,6 +10634,7 @@ mod tests {
                 rolls: true,
                 options: true,
                 rescore: true,
+                level: true,
                 draws: 9,
                 time: true,
                 tickers: vec![]
@@ -14460,6 +14528,31 @@ mod tests {
         let (dates, _) = synthetic_universe();
         let closes: Vec<f64> = (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect();
         (dates, closes)
+    }
+
+    /// (#1238) Every entry bucket lands in the one corner its level and path name, the band and the cut are
+    /// inclusive, a level inside the band sits out, and with no earnings series there is no table.
+    #[test]
+    fn level_path_report_puts_every_bucket_in_its_corner() {
+        let (samples, t) = (synthetic_samples(), BuyHeuristic { entry_excess_yield_band: 1.0, ..shipped_hard() });
+        let p = report_entry_state(&samples, &synthetic_bench(), 12, &t).expect("the fixture forms a book").6;
+        let (dates, _) = synthetic_universe();
+        let at = |v: f64| BTreeMap::from([(0, v)]);
+        // the index tops at `hi` on the first bar and sits at 3 after: drawdown 0 at hi 3, -25 at 4, -62.5 at 8
+        let grade = |hi: f64, ep: &BTreeMap<i32, f64>| {
+            let closes: Vec<f64> = (0..dates.len()).map(|i| if i == 0 { hi } else { 3.0 }).collect();
+            level_path_report(&samples, &(dates.clone(), closes), 12, &t, ep, &at(4.0), -25.0)
+        };
+        let counts = |out: &str| -> Vec<usize> { out.lines().filter_map(|l| l.split(" windows ").nth(1)?.split_whitespace().next()?.parse().ok()).collect() };
+        let cheap_high = grade(3.0, &at(5.0));
+        assert_eq!(counts(&cheap_high), [p, 0, 0, 0], "{cheap_high}");
+        assert!(cheap_high.contains("one independent trial = 24 windows") && cheap_high.contains("  book "), "{cheap_high}");
+        assert_eq!(counts(&grade(4.0, &at(3.0))), [0, 0, 0, p], "rich at -1 and a fall at -25 are both inclusive");
+        assert_eq!(counts(&grade(8.0, &at(5.0))), [0, p, 0, 0]);
+        assert_eq!(counts(&grade(3.0, &at(3.0))), [0, 0, p, 0]);
+        assert_eq!(grade(3.0, &at(4.5)), "", "a level inside the band sits out");
+        assert_eq!(grade(3.0, &BTreeMap::new()), "", "no earnings series, no table");
+        assert!(p > 0);
     }
 
     /// The journal shell merges a second horizon into the first (so a short run never replaces a long one) and

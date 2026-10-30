@@ -24152,6 +24152,26 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT: the timing lane stays closed. Trend timing at 2x wins gross over long windows, but the tax on each
 #   exit takes the edge back, and its falls run 82-89%. Nothing ships; no knob.
 
+# (#1238) LEVEL x PATH 2x2, PRE-REGISTERED 2026-10-30, record only, no knob.
+# WHY: (#110) asked which says better when new money does well: the market's valuation LEVEL at entry, or
+#   its PATH, the distance from its high. (#306) priced the 2x2 unmeasurable. The two corners where the axes
+#   disagree held 3/8/14 windows (cheap at a high) and 3/3/3 (rich and falling) at 20/12/8y, against one
+#   independent trial of 40/24/16 windows. Round 6 builds it anyway, so the corners are on file and a thin
+#   corner is named rather than guessed.
+# METHOD (`backtest N ... level` prints it after the ENTRY-STATE table): each ~6-month entry bucket of the
+#   ENTRY-STATE pool is classed twice at its first cutoff. LEVEL: the S&P 500's trailing earnings yield from
+#   the Shiller table (price one month back, earnings three months back, so a reader had both) minus the 3M
+#   T-bill (TB3MS, one month back). CHEAP at or above +band, RICH at or below -band, where band is
+#   entry_excess_yield_band; at today's 0 the split sits at the sign and no bucket sits out. PATH: the
+#   benchmark's drawdown from its running high, FALL at -5% or deeper, HIGH above it, ENTRY-STATE's near-high
+#   cut. The same top-10 growth book is then graded per corner.
+# DEVIATIONS from (#110)'s wording: the US 3M bill stands in for Euribor 3M, which has no century of history;
+#   trailing earnings, not CAPE; the graded book is ENTRY-STATE's top-10, not the DCA program.
+# EXPECTED, written before the run (`years="20 12 8"`, `universe pit dead level`): both disagreeing corners
+#   stay under one independent trial at every horizon, so there is no verdict either way. The agreeing corners
+#   repeat ENTRY-STATE's path read.
+# Nothing here reaches rank, BUY NOW, size or the broker, and deploy_multiplier does not read it.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

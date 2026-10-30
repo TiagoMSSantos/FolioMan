@@ -3506,6 +3506,27 @@ pub fn parse_shiller_long(v: &Value) -> BTreeMap<i32, f64> {
         .collect()
 }
 
+/// (#1238) The S&P 500's trailing earnings yield in %, keyed as [`parse_fred_monthly`] by the first month a
+/// reader could act on it: last month's SP500 under the Earnings printed three months back (the table's E is a
+/// quarterly figure spread over months, so it lands late), from the same Shiller table's fourth column.
+/// A month missing either price or earnings above 0 drops out.
+pub fn parse_shiller_ep(v: &Value) -> BTreeMap<i32, f64> {
+    let (mut px, mut e) = (BTreeMap::new(), BTreeMap::new());
+    for line in v.as_str().unwrap_or_default().lines() {
+        let f: Vec<&str> = line.split(',').map(str::trim).collect();
+        let Some(date) = f.first().and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()) else { continue };
+        let k = date.year() * 12 + date.month0() as i32;
+        let num = |i: usize| f.get(i).and_then(|x| x.parse::<f64>().ok()).filter(|x| *x > 0.0);
+        if let Some(p) = num(1) {
+            px.insert(k + 1, p);
+        }
+        if let Some(x) = num(3) {
+            e.insert(k + 3, x);
+        }
+    }
+    px.into_iter().filter_map(|(k, p)| Some((k, 100.0 * e.get(&k)? / p))).collect()
+}
+
 /// (#1226) A Cboe daily index history (`DATE,BXM`, then `MM/DD/YYYY,close` a day) as {day number
 /// (`num_days_from_ce`) -> close}, for closes above 0; the header and anything unparseable drop out.
 pub fn parse_cboe_daily(v: &Value) -> BTreeMap<i32, f64> {
@@ -11354,6 +11375,9 @@ fn bond_index_rebuilds_a_10y_return_from_yields() {
     assert_eq!(parse_shiller_yield(&Value::String(shiller.into())), BTreeMap::from([(1871 * 12, 0.26 / 4.44), (1871 * 12 + 4, 0.26 / 5.2)]));
     let long = "Date,SP500,Dividend,Earnings,Consumer Price Index,Long Interest Rate\n1871-01-01,4.44,0.26,0.4,12.46,5.32\n1871-02-01,4.5,0.26,0.4,12.84,\n1871-03-01,4.61,0.26,0.4,13.03,0\n1871-04-01,4.74,0.26,0.4,12.56, 5.33 \n2023-10-01,4269.4,,,,\n";
     assert_eq!(parse_shiller_long(&Value::String(long.into())), BTreeMap::from([(1871 * 12, 5.32), (1871 * 12 + 3, 5.33)]));
+    // (#1238) April reads March's price under January's E, July June's under April's; a 0 or blank side drops
+    let ep = "Date,SP500,Dividend,Earnings\n1871-01-01,4.0,0.26,0.4\n1871-02-01,5.0,0.26,0.5\n1871-03-01,8.0,0.26,0\n1871-04-01,0,0.26,0.6\n1871-05-01,10.0,0.26,0.7\n1871-06-01, 15.0 ,0.26,\nbad\n";
+    assert_eq!(parse_shiller_ep(&Value::String(ep.into())), BTreeMap::from([(1871 * 12 + 3, 100.0 * 0.4 / 8.0), (1871 * 12 + 6, 100.0 * 0.6 / 15.0)]));
 
     assert!(close(bond_month_return(6.0, 6.0), 0.005));
     assert!(close(bond_month_return(5.0, 6.0), -0.06898120137880402), "{}", bond_month_return(5.0, 6.0));
