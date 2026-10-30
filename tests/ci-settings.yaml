@@ -24049,6 +24049,21 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # EXPECTED, written before the run: the scope row alone is VACUOUS, because P0's gates scored 0 and 8 fund
 #   samples at 12y and 8y. The neutral rows move stock rows. No sign is predicted for them: a constant inside
 #   `base` is not rank-neutral ((#59)), so the effect cannot be worked out ahead.
+# (#1233) RESULT, probe run 41025847290 on b2fa377: NO PASSER, so nothing goes to a probe arm. quality_neutral and
+#   growth_fund_neutral stay 0.0 and growth_fund_scope_by_class stays false. windows scored
+#   2992/5690/5995/12469/10281/16339, the same as P0. Top-10 excess mean/median (worst window), SIZED and #1 vs
+#   11-20, 20y | 12y | 8y:
+#     row {}: +3.3/+1.9 (-2.3), +3.6, 12/22 | +2.4/+2.5 (-7.0), +2.8, 13/38 | +2.3/+2.3 (-8.9), +2.3, 22/46.
+#     scope_by_class alone: every line equals row {}. VACUOUS, as expected.
+#     + quality_neutral 14.0: +1.6/+1.4 (-2.7), +3.0, 8/22 | +1.8/+2.1 (-6.8), +2.9, 10/38 | +2.0/+2.1 (-10.4),
+#       +2.4, 21/46. FAIL, 12y and 8y down.
+#     + growth_fund_neutral 40.0: +1.7/+1.4 (-2.8), +3.0, 8/22 | +1.9/+2.5 (-6.8), +3.0, 10/38 | +2.1/+2.3
+#       (-10.4), +2.4, 21/46. FAIL, 12y and 8y mean down.
+#     + both: +1.8/+1.3 (-1.8), +2.9, 9/22 | +2.2/+2.5 (-8.4), +2.8, 11/38 | +2.3/+2.4 (-9.2), +2.3, 21/46. FAIL,
+#       12y mean down.
+#   20y moves too, although no 20y sample carries an ROE. There the neutral lifts every stock by the same
+#   constant, and by (#59) a constant inside `base` is not rank-neutral: it costs the 20y book 1.5-1.7 pts/yr of
+#   mean. Scoring a non-filer like a median filer does not help the book on `pit dead` at any horizon.
 
 # (#1234) MOMENTUM INTERLEAVE RE-READ ON `pit dead`, PRE-REGISTERED 2026-10-30 before any run. (#584) shipped
 #   the interleave and (#597) refused 3, 7 and 10 momentum slots, both on `pit` and stress without dead members.
@@ -24068,6 +24083,21 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   median, (#587)'s veto; and WINNERS HELD not under C by 2.0 or more at any horizon. A row equal to C at 12y
 #   and 8y is VACUOUS. A pass earns the owner question.
 # EXPECTED, written before the run: 3 and 7 FAIL again as in (#597), and the interleave stays on.
+# (#1234) RESULT, probe runs 41025850592 (C), 41025853669 (A3) and 41025856807 (A7), all on b2fa377: as EXPECTED,
+#   the interleave stays on and growth_momentum_slots stays 5. windows scored 2992/5690/5995/12469/10281/16339 in
+#   all three.
+# ON/OFF, read off C: STAYS ON. Rival (j) beats the shipped top-10 at 12y (+3.9/+3.9 against +2.4/+2.5) and at 8y
+#   (+4.5/+4.2 against +2.3/+2.3), and the 20y DCA S+inter lane (+4.5/+4.3) sits above SIZED (+3.1/+2.7).
+# SLOTS: (j) excess mean/median (worst window) 20y | 12y | 8y, then WINNERS HELD 20y | 12y | 8y.
+#     C, 5 slots: +4.4/+4.6 (-1.3) | +3.9/+3.9 (-3.1) | +4.5/+4.2 (-8.6); 9.5% | 11.1% | 10.2%.
+#     A3, 3 slots: +5.0/+4.6 (-0.6) | +3.8/+2.9 (-6.3) | +4.1/+3.1 (-9.3); 9.5% | 10.3% | 10.4%. FAIL, 12y and 8y
+#       down.
+#     A7, 7 slots: +5.1/+5.2 (-2.2) | +4.1/+4.1 (-5.1) | +4.7/+4.3 (-8.0); 11.4% | 12.1% | 10.7%. FAIL on the 20y
+#       worst-window guard alone. 12y and 8y rise by 0.1-0.2 on mean and median, and the 20y DCA S+inter rises to
+#       +5.0/+4.6, but the 20y worst window falls to -2.2 from -1.3.
+#   A7 is a near miss: a lift of 0.1-0.2 pts/yr, on one of two looks, where (#597) refused 7 on `pit`. The guard
+#   binds as written, and nothing is re-run to rescue it. SIZED is the same in all three arms (+3.6 | +2.8 |
+#   +2.3), because `size` funds the score book and never reads the slot count.
 
 # (#1235) NEVER-SELL IS THE SHIPPED PLAN, PRE-REGISTERED 2026-10-30. The app sells nothing except a fund switch
 #   to a cheaper twin on the same index ((#388)); exit sells stay closed. The 10y roll is a graded record row,
