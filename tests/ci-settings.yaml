@@ -24225,6 +24225,22 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # EXPECTED, written before the run: the noise-floor verdict. Some configs beat the shipped one on the real
 #   returns, as any search this wide finds, but the best gain stays inside the null's p95.
 # Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1239) RESULT, look 1, probe run 41040090845 on 0ae9942 (`universe fund pit dead`, years 12 8,
+#   configs=5000 nulls=200; GROWTH windows scored 12469 / 16339, the same as the timed run): as EXPECTED,
+#   the noise-floor verdict. The shipped top-10 excess reads +2.4 (median +2.5) at 12y and +2.3 (+2.3) at 8y.
+#   145 of the 5000 configs (2.9%) beat it on both moments at both horizons. The best config gains +0.65 pts/yr:
+#   12y +4.1 (median +3.3), 8y +3.4 (+2.9), with the range and 1M-knife notches each loosened once. On
+#   shuffled returns the same search finds a best gain of +0.72 at the median shuffle and +1.15 at p95, so
+#   p = 0.602 that a search this wide finds +0.65 by luck. The winner also breaks under a small push:
+#   200 nudges of its multipliers (each x 0.8 to 1.2) read p5 -0.16, p50 +0.31.
+#   PARSIMONY: putting back the 1M-knife notch, the value floor, the overext floor, sharpe_cap and the
+#   sharpe, trend and underwater weights leaves the gain at +0.65, so those moves carry nothing. Putting
+#   back the range notch, growth_accel_cap, growth_trust_exp or the proximity weight drops it below 0.
+#   Putting back the dividend, quality, accel or fund weight, or long_trend_cap, moves it by 0.3 or less.
+#   Putting back growth_overext_exp lifts it to +1.16. That neighbour was not among the 5000 configs the
+#   null prices, so it is a post-hoc pick and grades nothing.
+#   VERDICT: the shipped config sits at the knob space's noise floor. No probe arm runs and no knob moves.
+#   The monthly campaign (.github/workflows/campaign.yml, the 3rd of each month) reads looks 2 onward.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
