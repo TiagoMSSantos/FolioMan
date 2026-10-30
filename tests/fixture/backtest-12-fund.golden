@@ -7,7 +7,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 728
   Spearman(score, peer-relative): -0.13   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative -34.4 pts  vs  bottom-half -9.5 pts  ->  edge -24.9 pts   [= -2.63 pts/yr over the 12y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [-90.7 … +50.3] pts  (STRADDLES 0 -> noise)
   net of cost: edge -24.9 − turnover 47% × 20bps = net -25.0 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -25.8 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -37,7 +37,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 1541
   Spearman(score, peer-relative): +0.10   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative +21.5 pts  vs  bottom-half -17.6 pts  ->  edge +39.2 pts   [= +3.24 pts/yr over the 12y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [-47.5 … +102.3] pts  (STRADDLES 0 -> noise)
   net of cost: edge +39.2 − turnover 35% × 20bps = net +39.1 pts
   winsorized edge (1/99 clamp): +70.0 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -352,6 +352,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   composite      TEST edge +156.0 (w 0.031)  OOS +0.22 | +0.19
   -> WINNER: op_leverage. Set `growth_fund_factor: op_leverage` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.
   -> validated growth_fund_weight for op_leverage: 0.071 (at growth_fund_cap 300)
+  multiple-testing band (best of 53 factors): [-146.4 … +170.8] pts  (within best-of-N luck -> SHIP NOTHING despite the raw winner)
 
 ── growth_fund_weight CURVE for `peg_yield` (held-out TEST, growth_fund_cap 300) ──
   weight 0.000  TEST edge +156.2  OOS +0.22 | +0.19  [tilt off]
@@ -601,6 +602,8 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──
   abs_mom_5y     n=1472  rho +0.15  edge +56.7  OOS -0.06 | +0.24
   rel_str_5y     n=1396  rho +0.13  edge +96.9  OOS +0.01 | +0.14
+
+  purged split, 144 months a side: early 136 of 828 rows kept, late 0 of 829 — UNRESOLVED: a side is under the floor, so every OOS half above shares forward years
 
 ── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-10 growth book held 12y) ──
   near-high (dd > -5%)         book +12.0%/yr  excess +4.3  win 93%  worst -1.7  OOS +3.7/+5.0   (windows 30  n_eff 1.2, mean entry dd -0.3%)

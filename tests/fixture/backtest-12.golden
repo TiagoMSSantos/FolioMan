@@ -7,7 +7,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 728
   Spearman(score, peer-relative): -0.06   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative -43.6 pts  vs  bottom-half -0.3 pts  ->  edge -43.3 pts   [= -4.63 pts/yr over the 12y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [-108.2 … +11.8] pts  (STRADDLES 0 -> noise)
   net of cost: edge -43.3 − turnover 49% × 20bps = net -43.4 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -42.3 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -37,7 +37,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 1541
   Spearman(score, peer-relative): +0.12   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative +23.3 pts  vs  bottom-half -19.2 pts  ->  edge +42.5 pts   [= +3.52 pts/yr over the 12y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [-41.7 … +108.1] pts  (STRADDLES 0 -> noise)
   net of cost: edge +42.5 − turnover 36% × 20bps = net +42.4 pts
   winsorized edge (1/99 clamp): +73.3 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -466,6 +466,8 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──
   abs_mom_5y     n=1472  rho +0.15  edge +56.7  OOS -0.06 | +0.24
   rel_str_5y     n=1396  rho +0.13  edge +96.9  OOS +0.01 | +0.14
+
+  purged split, 144 months a side: early 136 of 828 rows kept, late 0 of 829 — UNRESOLVED: a side is under the floor, so every OOS half above shares forward years
 
 ── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-10 growth book held 12y) ──
   near-high (dd > -5%)         book +12.6%/yr  excess +4.8  win 97%  worst -1.7  OOS +3.7/+6.0   (windows 30  n_eff 1.2, mean entry dd -0.3%)

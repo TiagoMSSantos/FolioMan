@@ -7,7 +7,7 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   windows scored: 1022
   Spearman(score, peer-relative): -0.01   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative -0.1 pts  vs  bottom-half +10.4 pts  ->  edge -10.5 pts   [= -1.26 pts/yr over the 8y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 8y hold is 16 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [-42.7 … +20.7] pts  (STRADDLES 0 -> noise)
   net of cost: edge -10.5 − turnover 48% × 20bps = net -10.6 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -9.5 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -37,7 +37,7 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   windows scored: 1939
   Spearman(score, peer-relative): +0.16   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative +24.1 pts  vs  bottom-half -22.4 pts  ->  edge +46.5 pts   [= +5.86 pts/yr over the 8y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 8y hold is 16 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [+11.4 … +75.5] pts  (clears 0 -> real)
   net of cost: edge +46.5 − turnover 35% × 20bps = net +46.4 pts
   winsorized edge (1/99 clamp): +53.9 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -482,6 +482,8 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
 ── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──
   abs_mom_5y     n=1974  rho +0.13  edge +29.5  OOS -0.03 | +0.26
   rel_str_5y     n=1898  rho +0.15  edge +57.0  OOS +0.08 | +0.19
+
+  purged split, 96 months a side: early 430 of 1086 rows kept, late 192 of 1086 — both sides kept
 
 ── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-10 growth book held 8y) ──
   near-high (dd > -5%)         book +15.5%/yr  excess +6.4  win 92%  worst -5.8  OOS +4.9/+7.9   (windows 36  n_eff 2.2, mean entry dd -0.3%)

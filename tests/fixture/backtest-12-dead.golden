@@ -7,7 +7,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 501
   Spearman(score, peer-relative): -0.01   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative -0.5 pts  vs  bottom-half -31.2 pts  ->  edge +30.7 pts   [= +3.03 pts/yr over the 12y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [-6.9 … +62.2] pts  (STRADDLES 0 -> noise)
   net of cost: edge +30.7 − turnover 53% × 20bps = net +30.6 pts
   winsorized edge (1/99 clamp): +25.8 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -37,7 +37,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 1328
   Spearman(score, peer-relative): +0.03   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative +3.7 pts  vs  bottom-half -6.6 pts  ->  edge +10.3 pts   [= +0.87 pts/yr over the 12y hold]
-  90% bootstrap band on edge: NONE — the honest block at this 12y hold is 24 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
+  90% bootstrap band on edge: [-26.2 … +46.5] pts  (STRADDLES 0 -> noise)
   net of cost: edge +10.3 − turnover 32% × 20bps = net +10.3 pts
   winsorized edge (1/99 clamp): +5.7 pts
   recall of the pool's extreme winners (what the ranking MISSED):
@@ -368,6 +368,8 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──
   abs_mom_5y     n=1343  rho +0.01  edge -11.5  OOS -0.09 | -0.01
   rel_str_5y     n=1343  rho -0.04  edge -7.8  OOS -0.19 | +0.01
+
+  purged split, 144 months a side: early 24 of 722 rows kept, late 0 of 722 — UNRESOLVED: a side is under the floor, so every OOS half above shares forward years
 
 ── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-10 growth book held 12y) ──
   near-high (dd > -5%)         book +5.1%/yr  excess -0.0  win 35%  worst -2.2  OOS -0.2/+0.2   (windows 17  n_eff 0.7, mean entry dd -0.9%)
