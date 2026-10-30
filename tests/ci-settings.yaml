@@ -3351,6 +3351,11 @@ buy_heuristic:
                                  #   (backtest.rs:1224/1456/1519/1560/1610/1728/1781/1872), so no run can vote on this number. `GATE_PROBES`
                                  #   pins it crypto-LIVE / etf+stock-INERT, which is the reachability claim, not an edge claim. If the crypto
                                  #   lane thins unexpectedly, THIS is the knob to take negative — and it no longer loosens equities when you do.
+  growth_min_5y_pct_etf: 0.0     # (#1230) FUND twin of the 5Y floor, added 2026-10-30. 0.0 = INHERIT growth_min_5y_pct
+                                 #   (+75 today), so adding it moved no fund. It exists so the (#1230) grid can price the
+                                 #   equity-tuned +75 against funds alone: a broad index fund compounding 8%/yr makes about
+                                 #   +47% over five years and never clears +75. `GATE_PROBES` pins it etf-LIVE and
+                                 #   crypto+stock-INERT. It stays 0.0 until a receipt moves it.
   growth_min_8y_pct: 42.22       # (#315) ROUND 98 — ARMED AT SÉRIE E'S BEST CASE. Not an edge knob any more: a PROMISE.
                                  #   The operator's bar: every growth row must have grown more than Certificados de Aforro Série E at its
                                  #   best case, 4.5%/yr (3.5 cap + 1.00 top bonus, `core::serie_e_best_pct`), compounded over the WHOLE
@@ -22100,6 +22105,9 @@ buy_heuristic:
   #  misses below 2.0. Amazon (PEG 3.01, plus cagr and 5Y+) and Microsoft (four gates) stay out.
   #  REVERT RULE: if the (#421) backtest leg on the push reds, or the forward peg-notch track grades the 1.6-2.0 cohort
   #  negative over 12 monthly lines, put 1.6 back.
+  growth_gate_soft_etf: 0.0      # (#1230) FUND twin of growth_gate_soft, added 2026-10-30: a fund that fails knob gates
+  #  scores with them waived and docked f^n at THIS f. It is read only while growth_gate_soft is above 0, so 0 there still
+  #  means every gate hard for every class. 0.0 = funds hard, (#566)'s per-class refusal, so adding it moved no fund.
   growth_max_peg_etf: 2.0      # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
@@ -23923,6 +23931,28 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NOT ARMED: growth_fund_scope_by_class. (#1130) reopens it only on a ruler that grades the ETF and crypto
 #   tables, and `pit dead` does not. Its neutrals still need a covered-filer median, which P0's dump can
 #   give: that census comes first, then its own receipt.
+
+# (#1230) ETF ADMISSION RE-READ ON `pit dead`, PRE-REGISTERED 2026-10-30 before any run. Two new keys, both
+# shipping at the value that changes nothing: growth_min_5y_pct_etf 0.0 (inherits the equity +75) and
+# growth_gate_soft_etf 0.0 (funds stay hard). `pit` swaps only the S&P constituents, so the ETF lane stays whole:
+# P0 (#1228) walked 11 / 2833 / 8930 ETF cutoffs at 20 / 12 / 8 years, and the shipped gates scored 0 / 0 / 8 of
+# them. So the rows can move the 12y and 8y books, and 20y is blind to them by construction, as (#192) found.
+# ONE probe on the commit that ships the keys: `universe fund pit dead`, years "20 12 8", grid = row {} plus 29
+#   rows rescored on the probe's own dump: growth_min_cagr_etf in {0, 4, 6, 8, 10} x growth_min_5y_pct_etf in
+#   {0, 50, 25} x growth_gate_soft_etf in {0, 0.8}, less the all-0 row, which is row {}. 0 inherits the equity
+#   value on both floors. 29 looks against one control, and no shuffled null for a screen this small, so a
+#   passer is reported as best of 29.
+# SCREEN: (#1229)'s rule, read off each row against row {}: top-10 excess mean AND median >= row {} at 12y AND
+#   8y, at least one of the four higher; at 20y the worst window not worse and the #1-vs-11-20 head-to-head
+#   >= 50% or not below row {}. A row whose 12y and 8y top-10 lines equal row {} is VACUOUS, not a pass. The
+#   SIZED row must also not fall at 12y or 8y, because that is the book `size` funds. Of the passers, the
+#   highest 12y + 8y median sum goes on.
+# A SCREEN PASS SHIPS NOTHING: the passer runs as a probe arm beside a control with (#1229)'s guards, and a pass
+#   there earns the owner question, because a fund gate moves the live ETF table.
+# EXPECTED, written down so it cannot be fitted after the run: every row that admits funds FAILS. (#192) refused
+#   growth_min_cagr_etf 15 on `universe fund pit` because admitted funds land in ranks 6-10 and dilute an equal-weight
+#   book, and the harm grew with the number admitted. Every row with a CAGR floor of 10 or less sets a looser
+#   floor than 15 did. (#192)'s re-arming rule stands: a row is not a finding because its harm rounds to zero.
 
 # (#1231) W1 DIED ON THE DE-MEAN INVARIANT, 2026-10-30. (#1228)'s W1 (probe run 41021956411,
 # `demean_by_market=true`) panicked in `run`: "de-mean broken: relatives sum to -55628". Cause: a market

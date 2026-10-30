@@ -975,9 +975,17 @@ pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
 /// deliberately: nothing is blocked by it today, and a knob per rung is another number owing another
 /// receipt. But it is now a live edge, not an impossibility — if the crypto table ever empties after
 /// this floor moves, THIS is the reason, and the fix is the twin the 5Y rung already has.
-fn long_leg_floors(tuning: &BuyHeuristic, crypto: bool) -> [(&'static str, &'static str, f64); 3] {
+///
+/// (#1230) Funds take a 5Y twin too, `growth_min_5y_pct_etf`, at 0 INHERITING the equity bar.
+/// `class` is [`asset_class`].
+fn long_leg_floors(tuning: &BuyHeuristic, class: u8) -> [(&'static str, &'static str, f64); 3] {
+    let five = match class {
+        0 => tuning.growth_min_5y_pct_crypto,
+        1 if tuning.growth_min_5y_pct_etf != 0.0 => tuning.growth_min_5y_pct_etf,
+        _ => tuning.growth_min_5y_pct,
+    };
     [
-        ("5Y", "5Y+", if crypto { tuning.growth_min_5y_pct_crypto } else { tuning.growth_min_5y_pct }),
+        ("5Y", "5Y+", five),
         ("8Y", "8Y+", tuning.growth_min_8y_pct),
         ("20Y", "20Y+", tuning.growth_min_20y_pct),
     ]
@@ -1504,7 +1512,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // on it would cut every ETF and coin, none of which has a 20Y leg at all.
     // Must stay the SAME table as the `gate_failures` copy — `long_leg_floors` IS that table, so the
     // two cannot drift (the `long_leg_floors` doc explains what drift costs).
-    for (label, _, floor) in long_leg_floors(tuning, crypto) {
+    for (label, _, floor) in long_leg_floors(tuning, asset_class(quote)) {
         if perf_pct(quote, label).is_some_and(|p| p <= floor) {
             return None;
         }
@@ -1878,6 +1886,17 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     Some(parts)
 }
 
+/// (#566) The f a gate failer is docked by: stocks at `growth_gate_soft`. ETFs and coins failed the
+/// per-class ruler, so they stay hard, except that (#1230) funds read `growth_gate_soft_etf` while
+/// `growth_gate_soft` is above 0, so that 0 there is still every gate hard for every class.
+fn gate_soft(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    match asset_class(quote) {
+        2 => tuning.growth_gate_soft,
+        1 if tuning.growth_gate_soft > 0.0 => tuning.growth_gate_soft_etf,
+        _ => 0.0,
+    }
+}
+
 /// (#563) [`score_parts_hard`], with `growth_gate_soft` armed: a name the knob gates refuse is scored
 /// with exactly the gates it fails waived ([`waived`], the same what-if the MISSES column shows) and
 /// docked f^n, n = gates waived. At 0.0 nothing reaches `waived`, so the lane is bit for bit the hard one;
@@ -1885,8 +1904,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
 /// What `waived` cannot lift (a structural refusal, no turnover, the repriced-bar artifact) stays `None`.
 fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let hard = score_parts_hard(quote, tuning);
-    // (#566) stocks only: ETFs and coins failed the per-class ruler, so they stay hard at any f
-    let f = if asset_class(quote) == 2 { tuning.growth_gate_soft } else { 0.0 };
+    let f = gate_soft(quote, tuning);
     if hard.is_some() || f == 0.0 {
         return hard;
     }
@@ -2608,7 +2626,7 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     }
     // mirror of the `long_leg_floors` loop in `score_parts` — same table, so the two cannot disagree.
     // (#1078) The floor prints exact: at `.0` the shipped 42.22 read "need >42%" beside a failing +42.2%.
-    for (label, tag, floor) in long_leg_floors(tuning, crypto) {
+    for (label, tag, floor) in long_leg_floors(tuning, asset_class(quote)) {
         if let Some(p) = perf_pct(quote, label).filter(|p| *p <= floor) {
             fails.push((tag, format!("{label} {p:+.d$}% (need >{floor}%)", d = bar_dp(p, floor, 1)), p > floor - 15.0));
         }
@@ -2713,7 +2731,7 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
         "cagr" | "cagr-life" => (t.growth_min_cagr, t.growth_min_cagr_etf, t.growth_min_cagr_crypto) = (OFF, 0.0, OFF),
         "1Y+" => (t.growth_min_1y_pct, t.min_1y_pct_crypto) = (OFF, OFF),
         "1M-knife" => (t.max_1m_drop_pct, t.max_1m_drop_pct_crypto) = (OFF, OFF),
-        "5Y+" => (t.growth_min_5y_pct, t.growth_min_5y_pct_crypto) = (OFF, OFF),
+        "5Y+" => (t.growth_min_5y_pct, t.growth_min_5y_pct_etf, t.growth_min_5y_pct_crypto) = (OFF, 0.0, OFF),
         "8Y+" => t.growth_min_8y_pct = OFF,
         "20Y+" => t.growth_min_20y_pct = OFF,
         "liquidity" => (t.min_avg_turnover_eur, t.min_avg_turnover_eur_stock) = (0.0, 0.0),
@@ -3244,7 +3262,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     let (open, dock_frag) = if dock != 1.0 {
         let tags = waived(quote, tuning, false).map(|w| w.1.iter().map(|g| g.0).collect::<Vec<_>>().join(", ")).unwrap_or_default();
         s.push_str(&format!("  soft dock    = gate_soft                                = {dock:.3}\n"));
-        say(&mut s, &format!("Missed gates ({tags}): each one cuts the whole score by ×{:.2} instead of keeping the name out.", tuning.growth_gate_soft));
+        say(&mut s, &format!("Missed gates ({tags}): each one cuts the whole score by ×{:.2} instead of keeping the name out.", gate_soft(quote, tuning)));
         ("(", format!("){} {dock:.3}", if base_is_negative(p.score) { " ÷" } else { " ×" }))
     } else {
         ("", String::new())
@@ -10407,6 +10425,19 @@ mod tests {
         growth_leg_floor_miss(&coin5, &coin_strict, "5Y+").is_some_and(|(_, w, _)| w.contains("need >75%")),
         "…and when the crypto knob IS set, the row quotes that number, not the equity one"
     );
+    // (#1230) a fund answers to growth_min_5y_pct_etf, which at 0 inherits the equity bar
+    let mut etf5 = amzn.clone();
+    etf5.instrument_type = "ETF".into();
+    assert_eq!(asset_class(&etf5), 1);
+    assert!(growth_leg_floor_miss(&etf5, &floor5, "5Y+").is_some_and(|(_, w, _)| w.contains("need >75%")), "the 0 twin inherits +75");
+    let fund_loose = BuyHeuristic { growth_min_5y_pct_etf: 20.0, ..floor5.clone() };
+    assert!(growth_leg_floor_miss(&etf5, &fund_loose, "5Y+").is_none(), "a +20 fund bar clears +25");
+    assert!(growth_leg_floor_miss(&amzn, &fund_loose, "5Y+").is_some(), "…and leaves the equity bar at +75");
+    let fund_strict = BuyHeuristic { growth_min_5y_pct_etf: 50.0, ..floor5.clone() };
+    assert!(
+        growth_leg_floor_miss(&etf5, &fund_strict, "5Y+").is_some_and(|(_, w, _)| w.contains("need >50%")),
+        "the row quotes the fund bar"
+    );
 
     // crypto leg: min_1y_pct_crypto is a CRASH bar, not a swing bar (round 22, live −50): a −62%
     // year fires, a BTC-like −33% year does not.
@@ -13651,6 +13682,16 @@ mod tests {
         let (coin_open, _, _) = waived(&coin, &t, true).expect("an assessable coin failer");
         assert!(growth_score(&coin, &coin_open).is_some(), "the coin scores with its own gates waived");
         assert_eq!(soft(&coin, 1.0), None, "growth_gate_soft leaves a coin hard");
+        // (#1230) a fund docks at growth_gate_soft_etf, and only while growth_gate_soft is above 0
+        let mut fund = q.clone();
+        fund.instrument_type = "ETF".into();
+        assert_eq!(asset_class(&fund), 1);
+        let (fund_open, fund_tags, _) = waived(&fund, &t, true).expect("an assessable fund failer");
+        let fund_full = growth_score(&fund, &fund_open).expect("the fund scores with its gates waived");
+        let both = |s: f64, e: f64| growth_score(&fund, &BuyHeuristic { growth_gate_soft: s, growth_gate_soft_etf: e, ..t.clone() });
+        assert_eq!(both(1.0, 0.0), None, "the twin at 0 keeps funds hard");
+        assert_eq!(both(0.8, 0.5), Some(fund_full * 0.5f64.powi(fund_tags.len() as i32)), "one 0.5 per gate waived, the fund's own f");
+        assert_eq!(both(0.0, 1.0), None, "growth_gate_soft 0 keeps every class hard");
 
         let pass = gate_fixture();
         let shipped = growth_score(&pass, &t).expect("the fixture clears the gates");
