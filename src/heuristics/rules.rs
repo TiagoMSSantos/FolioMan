@@ -1109,8 +1109,9 @@ mod tests {
 
     #[test]
     fn the_excess_level_compounds_each_bar_less_the_bill_rate_over_its_days() {
-        // 0.36525 a year over 1 day is 0.001; the first bar's return never counts
-        close(&excess_level(&days(3), &[0.5, 0.01, 0.02], &[9.0, 0.36525, 0.0]), &[1.0, 1.009, 1.009 * 1.02]);
+        // 0.36525 a year over the 2 days to bar 1 is 0.002; the first bar's return never counts
+        let dates = [d(2024, 1, 1), d(2024, 1, 3), d(2024, 1, 4)];
+        close(&excess_level(&dates, &[0.5, 0.01, 0.02], &[9.0, 0.36525, 0.0]), &[1.0, 1.008, 1.008 * 1.02]);
     }
 
     #[test]
