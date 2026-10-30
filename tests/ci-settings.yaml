@@ -24010,6 +24010,28 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   The sharpe-cap and damp-exponent blocks stay refused on `pit dead`, as they were on `pit`
 #   ((#1132), (#1134)), and negative scores stay ungradeable (#86).
 
+# (#1233) THE MISSING-FUNDAMENTALS NEUTRALS, PRE-REGISTERED 2026-10-30 before any run. First the census that
+#   (#1129) and (#1229) asked for, read off P0's `pit dead` dump (probe run 41021962171). Among stock samples
+#   that carry the number, the median ROE clamped to [0, quality_cap 40] is 14.1 at 12y and 13.7 at 8y (5.5%
+#   and 7.3% sit at the cap). The median growth_fund_factor clamped to [0, growth_fund_cap 300] is 42.0 at 12y
+#   and 38.3 at 8y. Taking only each ticker's latest sample, the medians read 14.1 / 12.7 and 37.3 / 29.4.
+#   Coverage is thin: 2684 of 12593 stock samples carry an ROE at 12y, 5587 of 16535 at 8y, and none at 20y,
+#   so 20y is blind to these knobs.
+# WHAT IS ASKED: today a stock whose filings we could not read scores as if its ROE and fund factor were 0,
+#   a demotion of up to 0.15 x 40 = 6 pts and 0.07 x 300 = 21 pts. For example, a stock with no filing in the
+#   cache ranks below a filer earning 1% on equity. A neutral at the median scores it like a median filer instead.
+# ONE probe on the commit that carries this receipt: `universe fund pit dead`, years "20 12 8", grid = row {}
+#   plus four rows: growth_fund_scope_by_class true alone; true + quality_neutral 14.0; true +
+#   growth_fund_neutral 40.0; true + both. 14.0 and 40.0 are the census medians rounded once across the two
+#   horizons, not tuned. A neutral without the scope is not armed, because the scope's own receipt says that
+#   would pay every ETF and coin for having no income statement. 4 looks against one control.
+# SCREEN and what follows: (#1230)'s rule, the SIZED guard and VACUOUS included. A screen pass ships nothing;
+#   the passer runs as a probe arm with (#1229)'s guards, and a pass there earns the owner question, with the
+#   live check (#87) asks for: watch the crypto and ETF tables as well as the stock one.
+# EXPECTED, written before the run: the scope row alone is VACUOUS, because P0's gates scored 0 and 8 fund
+#   samples at 12y and 8y. The neutral rows move stock rows. No sign is predicted for them: a constant inside
+#   `base` is not rank-neutral ((#59)), so the effect cannot be worked out ahead.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
