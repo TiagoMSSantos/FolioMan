@@ -930,6 +930,7 @@ fn backtest_edge_holds() {
         if years == 20 {
             const SIZED_DCA_FLOOR: f64 = 4.4;
             const SERIE_E_DCA_FLOOR: f64 = 90.0;
+            const S_INTER_DCA_FLOOR: f64 = 5.3; // (#1236)
             const S_INTER_DCA: &str = "S+inter never-sell"; // (#636) the lane name is 7 wide: one space, not SIZED's three
             let row = |m: &str| growth.lines().find(|l| l.trim_start().starts_with(m));
             let x = row(markers::SIZED_DCA).and_then(|l| num_after(l, "->"));
@@ -956,19 +957,30 @@ fn backtest_edge_holds() {
                 ),
                 _ => eprintln!("backtest-gate 20y — no SIZED DCA rows parsed"),
             }
-            // (#636) print-only until the first CI readings set a floor: what interleaving the momentum half into the
-            // SIZED book adds to its never-sell excess. SIZED never splices a momentum name, so it cannot see
-            // `growth_momentum_key`; `S+inter` can (probe, `growth_momentum_key: 3`: S+inter minus SIZED +1.5 -> +0.2 on
-            // the pit pond, +1.5 -> +0.6 on the stress pond). The median is the two rows' medians subtracted, not the
-            // median of the paired differences. A missing row means `rivals` left the args above or the lane was renamed.
+            // (#636) what interleaving the momentum half into the SIZED book adds to its never-sell excess. SIZED never
+            // splices a momentum name, so it cannot see `growth_momentum_key`; `S+inter` can (probe,
+            // `growth_momentum_key: 3`: S+inter minus SIZED +1.5 -> +0.2 on the pit pond, +1.5 -> +0.6 on the stress pond).
+            // The median is the two rows' medians subtracted, not the median of the paired differences. A missing row
+            // means `rivals` left the args above or the lane was renamed.
+            // (#1236) S+inter is the book the page shows, so it gets (#316)'s ratchet: the reading on b2fa377, CI's
+            // own args, 2026-10-30, was S+inter +6.3 (med +6.5) against SIZED +4.8 (med +5.0); the floor is +6.3
+            // minus 1.0. The difference stays print-only.
             let cols = |l: Option<&str>| Some((num_after(l?, "->")?, num_after(l?, "(med ")?));
             match (cols(row(S_INTER_DCA)), cols(row(markers::SIZED_DCA))) {
-                (Some((sx, sm)), Some((zx, zm))) => eprintln!(
-                    "backtest-gate 20y S+inter minus SIZED DCA {:+.1} pts/yr (med {:+.1}); S+inter {sx:+.1} (med {sm:+.1}), \
-                     SIZED {zx:+.1} (med {zm:+.1}) (print-only)",
-                    sx - zx,
-                    sm - zm
-                ),
+                (Some((sx, sm)), Some((zx, zm))) => {
+                    assert!(
+                        sx >= S_INTER_DCA_FLOOR,
+                        "20y: the page's book (SIZED with the momentum half interleaved) bought monthly beats index DCA by \
+                         only {sx:+.1} pts/yr, under the ratchet floor {S_INTER_DCA_FLOOR:+.1}. Fix the change, or measure \
+                         and justify a new floor in the (#1236) receipt"
+                    );
+                    eprintln!(
+                        "backtest-gate 20y S+inter DCA {sx:+.1} pts/yr (med {sm:+.1}, floor {S_INTER_DCA_FLOOR:+.1}); minus \
+                         SIZED {zx:+.1} (med {zm:+.1}) = {:+.1} (med {:+.1}) (print-only)",
+                        sx - zx,
+                        sm - zm
+                    );
+                }
                 _ if forced => panic!(
                     "20y: GROWTH completed but no `{S_INTER_DCA}` / `{}` row parsed — the S+inter read was skipped",
                     markers::SIZED_DCA

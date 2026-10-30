@@ -24105,6 +24105,14 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   A sell rule re-opens only if one roll rung beats never-sell on `pit dead` on mean AND median over at least
 #   12 programs, with both its early and late halves above zero. No probe is run for this line.
 
+# (#1236) S+INTER DCA RATCHET, 2026-10-30. (#636) printed the S+inter never-sell lane at 20y without a floor. It is
+#   the book the page shows, the score half with the momentum half interleaved, bought monthly and held. (#1234)
+#   kept the interleave and the slot count, so the reading below is the post-round one.
+# THE READING, CI's own gate args (`backtest 20 universe winners rivals`, the wide lane, not `pit dead`), on
+#   b2fa377: S+inter never-sell beats index DCA by +6.3 pts/yr (med +6.5); SIZED by +4.8 (med +5.0).
+# THE FLOOR: +6.3 minus 1.0 = +5.3, tests/network.rs `S_INTER_DCA_FLOOR`, the same rule (#316) set for SIZED:
+#   raise it when a round lifts the reading, never lower it to get green. The gap over SIZED stays print-only.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
