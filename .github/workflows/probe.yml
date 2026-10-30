@@ -1,11 +1,14 @@
 name: Probe
+# (#1227) A `grid` run is titled `Probe dump`, so pages.yml's sweep can keep its dumps 90 days.
+run-name: Probe${{ inputs.grid != '' && ' dump' || '' }}
 
 # (#548) A `backtest` run graded on CI, not on the local PC (USER DECISION 2026-10-11: CI runs what CI
 # already runs). ci.yml's backtest-gate runs the same binary on the same caches, but through
 # tests/network.rs, which prints only the lines the gate votes on, and never with `pit`. This prints the
 # whole report — every fund factor's AUC, the held-book and survival rows — for a factor or knob probe.
 # Read it with `gh run view <id> --log`, and check `windows scored` on every horizon before grading.
-# Read it within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes.
+# Read it within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes, except
+# (#1227) a `grid` run, kept 90 days.
 #
 # MANUAL ONLY, and it never writes a cache Pages or the gate read. The caches it saves are (#559)'s
 # `folioman-fec-`, (#728)'s `folioman-fail-` and (#752)'s `folioman-tiingo-`, which only a `pac` /
@@ -33,6 +36,9 @@ on:
         description: "(#756) a `dead` probe also fetches the next Tiingo names and saves the cache; one fill run at a time, never an A/B arm"
         type: boolean
         default: false
+      grid:
+        description: "(#1227) a JSON array of buy_heuristic rows, e.g. [{}, {\"growth_accel_weight\": 0}]: each horizon also dumps its samples (encrypted, kept 90 days) and `backtest rescore` re-runs the books once per row"
+        default: ""
 
 # No concurrency group (#550): a probe saves no shared cache (each FEC save is keyed on its own run id), so arms dispatched together run in parallel.
 # (#752) Tiingo fills are the exception: dispatch them one at a time, an hour apart (see the fill step).
@@ -49,7 +55,7 @@ env:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.grid != '' && 180 || 60 }} # (#1227) a grid run walks each horizon twice, then rescores
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # backtest-gate's release deps, or (#554) integration-tests' debug deps for a bless; each keeps its
@@ -145,6 +151,10 @@ jobs:
           ARGS: ${{ inputs.args }}
           KNOBS: ${{ inputs.knobs }}
           EXTRA: ${{ inputs.extra }}
+          GRID: ${{ inputs.grid }}
+          # (#1227) every horizon grades one universe, as backtest-gate's do. A grid run's dump walk must
+          # also see the names its report walk saw, or `rescore` row {} would not reprint that report.
+          FOLIOMAN_UNIVERSE_SNAPSHOT: ${{ runner.temp }}/universe.json
         # Inputs reach the shell only through env and `read -ra`, never as interpolated script text.
         run: |
           read -ra years <<< "$YEARS"
@@ -173,11 +183,23 @@ jobs:
             sed -i -E "s/^(  growth_fund_extra:)$/\1\n    - {factor: $f, weight: $w, cap: $c, neutral: $n}/" tests/ci-settings.yaml
             grep -A1 '^  growth_fund_extra:$' tests/ci-settings.yaml
           done
+          # (#1227) one grid row per line, the shape `backtest rescore` reads.
+          if [[ -n $GRID ]]; then
+            jq -c 'if type == "array" then .[] else error("the grid must be a JSON array") end' <<< "$GRID" > grid.jsonl
+          fi
           cargo build --locked --release
           for y in "${years[@]}"; do
             echo "::group::backtest $y ${args[*]}"
             ./target/release/folioman backtest "$y" "${args[@]}"
             echo "::endgroup::"
+            # (#1227) the dump run stops before any report, so it walks the horizon a second time. Row {} of
+            # the rescore must reprint the report's own top-10 line; a row that differs is the arm's cost.
+            if [[ -n $GRID ]]; then
+              FOLIOMAN_BACKTEST_SAMPLES=samples-$y.jsonl ./target/release/folioman backtest "$y" "${args[@]}"
+              echo "::group::rescore $y"
+              ./target/release/folioman backtest rescore "samples-$y.jsonl" grid.jsonl
+              echo "::endgroup::"
+            fi
           done
       # (#752) After the backtests, because the `pit` run writes the membership spans it reads. It fetches
       # up to 45 names a run (a free key allows 50 requests an hour), so dispatch fills one at a time, an
@@ -216,6 +238,27 @@ jobs:
         with:
           path: .fail_cache
           key: folioman-fail-${{ github.run_id }}
+      # (#1227) A grid run's dumps, for a later rescore on the same samples. Their rows are priced from
+      # Tiingo and Yahoo bars and the repo is public, so each horizon's dump and bench file are packed and
+      # encrypted with the Tiingo key, as the cache above is. Unpack with
+      # `openssl enc -d -aes-256-cbc -pbkdf2 -pass env:TIINGO_API_KEY -in <file> | tar xzf -`.
+      - name: Encrypt the samples dumps
+        if: ${{ !cancelled() && !inputs.bless && inputs.grid != '' }}
+        env:
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
+        run: |
+          [[ -n $TIINGO_API_KEY ]] || { echo "::warning::no TIINGO_API_KEY secret, so the dumps are not kept"; exit 0; }
+          for f in samples-*.jsonl; do
+            [[ -f $f ]] || continue
+            tar czf - "$f" "$f.bench.json" | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:TIINGO_API_KEY -out "$f.tgz.enc"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ !cancelled() && !inputs.bless && inputs.grid != '' }}
+        with:
+          name: samples
+          path: samples-*.jsonl.tgz.enc
+          if-no-files-found: ignore
+          retention-days: 90
       # (#1225) A `pit dead` run journals the SIZED record `screen` cites under BUY NOW, but only on this
       # runner. Upload it so the row can be copied into a local journal without a local run. It is graded
       # on tests/ci-settings.yaml, so a local `screen` on other settings prints it with its drift warning.

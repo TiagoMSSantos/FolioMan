@@ -635,11 +635,15 @@ jobs:
           # Runs of a still-OPEN PR are its review verdict (#402) and are never touched; once the PR closes,
           # merged or not, its runs go too, failed ones included. REST `status: completed` covers cancelled,
           # failed and skipped; an in-flight run is never listed. The 2 days count from the finish.
+          # (#1227) A `Probe dump` run (probe.yml with a `grid`) holds samples dumps a later rescore reads, and
+          # deleting a run deletes its artifacts, so it is kept until they expire at 90 days.
           cutoff=$(date -u -d '2 days ago' +%FT%TZ)
+          dumps=$(date -u -d '90 days ago' +%FT%TZ)
           open=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --limit 200 --json headRefName -q '[.[].headRefName]')
           for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&created=%3C$cutoff" \
-              | jq -r --arg cutoff "$cutoff" --argjson open "$open" '.workflow_runs[]
+              | jq -r --arg cutoff "$cutoff" --arg dumps "$dumps" --argjson open "$open" '.workflow_runs[]
                   | select(.status == "completed" and .updated_at < $cutoff)
+                  | select(.display_title != "Probe dump" or .updated_at < $dumps)
                   | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))
                   | .id'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
@@ -649,9 +653,10 @@ jobs:
           # 10-arm probe batch made 67 runs on 2026-10-11. ci/codeql/pages and (#611) automerge already
           # keep ~1 each through their own sweeps, which stay as they are. One probe batch (<= 10 runs)
           # still fits under 20, so its logs survive until they are tallied. Open-PR runs are exempt and
-          # are not counted.
+          # are not counted, and so (#1227) are `Probe dump` runs, which the 90-day rule above ends.
           for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" --jq '.workflow_runs[]' \
-              | jq -rs --argjson open "$open" '[.[] | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))]
+              | jq -rs --argjson open "$open" '[.[] | select(.display_title != "Probe dump")
+                  | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))]
                   | group_by(.workflow_id)[] | sort_by(.created_at) | reverse | .[20:][] | .id'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done

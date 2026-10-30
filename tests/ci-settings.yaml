@@ -23865,6 +23865,11 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NOT DONE: no best-of-N band on the weight sweep, the gate sweep or the soft-gate ladder. Those print one
 # point edge per row. A setting picked off a rescore grid is charged for the search instead by a
 # shuffled-label null run through the same search, plus SHIP RULE v2.
+# PROBE GRID: probe.yml's `grid` input (a JSON array of rows) walks each horizon twice, once for the report
+# and once for the dump, then rescores the dump once per row in the same job, so row `{}` must reprint the
+# report's own top-10 line. Every horizon of a probe now reads one universe snapshot. The dumps upload
+# encrypted with the Tiingo key; the run is titled `Probe dump` and pages.yml keeps it 90 days, with its
+# log as the result. No verdict JSON is written for these: `pit` runs never write one.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
