@@ -24184,6 +24184,45 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   +2.4 / +1.1 / +0.9 pts/yr of excess. The book beats the S&P in every corner, so no corner argues for
 #   holding new money back. VERDICT: none; the level axis adds no gradeable read beyond the path. No knob.
 
+# (#1239) KNOB SEARCH, PRE-REGISTERED 2026-10-30, prints only, nothing ships from the search itself.
+# WHY: every knob lane so far moved one or two knobs at a time against the shipped config. (#334) found the
+#   weight sweep blind, the caps failed (#1131/#1134), and B1/B2 found no passer (#1229/#1233). None of them
+#   asked whether some mix of moves together beats the shipped config by more than luck would. This asks it
+#   once, offline, on the `pit dead` dumps, and prices the luck of looking at thousands of configs.
+# METHOD (`backtest search <12y dump> <8y dump> configs=N nulls=K`, on `backtest 12|8 universe fund pit dead`
+#   dumps made under this file): N seeded random configs, each a set of multipliers on the shipped one:
+#   - the 13 score weights, each x a uniform draw from 0 to 2.5;
+#   - 7 caps and exponents (sharpe_cap, long_trend_cap, growth_accel_cap, growth_trust_exp,
+#     growth_overext_exp, growth_overext_floor, growth_value_floor_pct), each x 2 to a uniform power from
+#     -1 to 1, so from half to double;
+#   - 12 of the 14 gate notches (range8y and aum gate on fields a backtest sample never has), each loosened
+#     0, 1 or 2 times, 0 most often (69% / 18% / 13%).
+#   A knob that ships at 0 stays 0, as a weight does. The grade of a config is its worst top-10 excess gain
+#   over the shipped config, in mean or in median, at 12y or at 8y: above 0 means up on both moments at both
+#   horizons, SHIP RULE v2's PRIMARY. The book is the top-10 row's own path (crypto out, the value brake, a
+#   stable sort on score), and the shipped config reprints that row's numbers.
+# NULL: the same N configs graded again on K shuffles of each sample's forward return, shuffled within
+#   each (6-month bucket, asset class) cell, so no score can see its own name's return while each window and
+#   class keep the returns they had. The null value of a shuffle is the best gain any config finds on it.
+# VERDICT RULE: the real best gain must beat both 0 and the null's p95. If it does, its GRID ROW runs as a
+#   probe arm under SHIP RULE v2 (12y AND 8y on `pit`, the 20y guards live), and a live-page change still
+#   gets one owner question. If it does not, the record reads "the shipped config sits at the knob space's
+#   noise floor". PARSIMONY (each moved knob put back alone) and JITTER (200 nudges of the winner's
+#   multipliers, each x 0.8 to 1.2) print beside it, to show which moves carry the gain and whether it
+#   survives a small push.
+# LOOKS: this is look 1 of the joint search. A monthly campaign re-runs it; each later read states its look
+#   number. The null prices the N configs looked at in one run, not the earlier one-knob lanes above.
+# N AND K: configs=5000, nulls=200. If the first timed run shows 5000 will not fit in one job, N is cut to
+#   what fits and a line here says so before the result is read.
+# DEVIATIONS from round 6's wording: 5000 configs, not 20k then the top 50 then coordinate descent; the null
+#   re-grades the same configs on each shuffle instead of running a fresh smaller search per shuffle; the
+#   20y guards are read on the probe arm, not as constraints inside the search; notches only loosen;
+#   growth_min_cagr_etf is not a dimension; the sector door, sector cap and corr cap must be off (the search
+#   refuses to run otherwise), as they are shipped; the regime notch may admit no one offline.
+# EXPECTED, written before the run: the noise-floor verdict. Some configs beat the shipped one on the real
+#   returns, as any search this wide finds, but the best gain stays inside the null's p95.
+# Nothing here reaches rank, BUY NOW, size, trade or the broker.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
