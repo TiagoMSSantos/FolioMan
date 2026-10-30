@@ -24010,6 +24010,24 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   The sharpe-cap and damp-exponent blocks stay refused on `pit dead`, as they were on `pit`
 #   ((#1132), (#1134)), and negative scores stay ungradeable (#86).
 
+# (#1230) RESULT, probe run 41025079113 on fd86511: NO PASSER, as EXPECTED, so nothing goes to a probe arm and
+#   both keys stay at 0.0. windows scored 2992/5690/5995/12469/10281/16339, the same as P0. Row {} reprints the
+#   probe's own fund-leg top-10 line at every horizon. Row {}, 20y | 12y | 8y: top-10 +3.3/+1.9 (worst -2.3) |
+#   +2.4/+2.5 (-7.0) | +2.3/+2.3 (-8.9), SIZED +3.6 | +2.8 | +2.3, median gated pool 260 | 306 | 296. The 29 rows
+#   land in four outcomes:
+#     growth_min_5y_pct_etf 50 or 25 alone: every line equals row {}, pool unchanged. VACUOUS: the inherited
+#       CAGR floor of 19 refuses those funds first.
+#     growth_gate_soft_etf 0.8 with any 5Y floor or a CAGR floor of 10, and a CAGR floor of 4 or 6 without the
+#       soft gate: 12y equal; 8y top-10 +2.2/+2.3 and SIZED +2.2. FAIL, 8y mean and SIZED down. The pool grows
+#       to 337 | 386 with the soft gate, and to 315 | 328-356 with the looser floor alone.
+#     a CAGR floor of 4, 6 or 8 with the soft gate: 12y median +2.7, 8y the same as the line above. FAIL, 8y
+#       mean and SIZED down.
+#     a CAGR floor of 8 or 10 without the soft gate: the top-10 lines equal row {}; only the 8y SIZED drops to
+#       +2.2. FAIL on the SIZED guard: the funds land in the deeper book that `size` funds, not in the top 10.
+#   At CAGR floors 4 and 6, with or without the soft gate, the 8y #1-vs-11-20 also drops to 21/46 from 22/46.
+#   (#192)'s finding holds on `pit dead`: an admitted fund dilutes the equal-weight book, here by 0.1/yr, and by
+#   its re-arming rule a harm that rounds small is still not a finding.
+
 # (#1233) THE MISSING-FUNDAMENTALS NEUTRALS, PRE-REGISTERED 2026-10-30 before any run. First the census that
 #   (#1129) and (#1229) asked for, read off P0's `pit dead` dump (probe run 41021962171). Among stock samples
 #   that carry the number, the median ROE clamped to [0, quality_cap 40] is 14.1 at 12y and 13.7 at 8y (5.5%
