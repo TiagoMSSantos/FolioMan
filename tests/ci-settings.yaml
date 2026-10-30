@@ -418,6 +418,8 @@
 #   VACUOUSLY and reads "held at 20y" for free. That is not evidence. (#126) is the worked precedent
 #   for what to do about it: substitute 12y for the blind horizon and require the rise at 8y AND 12y,
 #   which is STRICTER than the letter, and state the substitution in the receipt as a deviation.
+#   (#1241) 2026-10-30: the one free route to pre-2009 rows, SEC's EX-27 schedules, was censused and
+#   refused (dead names 24 pts behind survivors), so this rule stands.
 #
 #
 # (#139) 2026-08-25 — PIT-LANE AMENDMENT TO PRIMARY. Same shape as the blackout rule above, different
@@ -24255,6 +24257,36 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   The NULL line now prints the max beside p50 and p95. Under this rule look 1 reads the floor on both
 #   counts (+0.65 is below p95 +1.15, so below the max too, and p5 is -0.16).
 #   Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1241) EX-27 GO/NO-GO CENSUS, 2026-10-30, record only: NO-GO. Could SEC's free Financial Data Schedules
+#   (EX-27, filed with every 10-K from the mid-1990s to mid-2001, public domain, tagged NET-INCOME, EPS,
+#   TOTAL-ASSETS) fill the FUNDAMENTAL BLACKOUT near the top of this file for the 1996-2001 cutoffs, dead
+#   names included? No free structured point-in-time source covers 2001-2008, so EX-27 was the only door.
+# PRE-REGISTERED BAR: a cell is (name, a Jan-31 or Jul-31 cutoff 1996-2001 while an S&P member). It is
+#   usable when the name's SEC CIK is found and an annual EX-27 with net income and EPS was filed at most
+#   15 months before the cutoff. GO needs usable >= 60% of cells overall AND the dead names within 15 pts
+#   of the survivors. Below that: record the counts and stop.
+# METHOD: a one-off local script, not committed. Seeded sample (1241): 100 of the 210 names that were
+#   members in 1996-2001 and are members today (survivors), 100 of the 170 tests/dead-members.csv names
+#   that were members then (dead). 10-K filings come from the EDGAR quarterly master index 1994Q4-2001Q3.
+#   CIK candidates come from SEC's company_tickers.json, Wikidata (CIK P5531 with ticker P249), and the
+#   names in Wikipedia's "Historical components of the S&P 500" matched to EDGAR 10-K filer names. A
+#   candidate counts only if it filed a 10-K inside the name's S&P span; the one with most such filings
+#   wins. 942 SEC requests, paced at 0.13 s.
+# RESULT (cells, share of the group's cells):
+#   group     names  cells  CIK found  10-K filed  EX-27 NI+EPS  within 15 months  names with a usable cell
+#   survivor  98     999    963 (96%)  905 (91%)   885 (89%)     747 (75%)         88 (90%)
+#   dead      95     822    529 (64%)  497 (60%)   481 (59%)     416 (51%)         56 (59%)
+#   Usable 63.9% overall, survivors 74.8%, dead 50.6%: a 24.2 pt gap. VERDICT: NO-GO, the lane stops.
+#   Without the Wikipedia-name step it read 56.0% overall and a 31.4 pt gap.
+# WHY IT FAILS: the ticker-to-company map, not the filings. Once a CIK is found the groups match: 416 of 529
+#   dead cells (79%) against 747 of 963 survivor cells (78%). The gap is dead names with no CIK: 15 with no
+#   candidate at all, 18 whose only candidates (reused tickers) filed no 10-K inside the span. 11 dead and
+#   4 survivors matched more than one filer and were kept, so the dead share may read high.
+# NOT REACHED: the split basis. Dead EPS needs the split events in the Quandl WIKI archive that built
+#   tests/dead-members.csv, and that download is no longer on disk, so a GO would have waited on it too.
+# REOPEN ONLY IF a free historical ticker-to-CIK or ticker-to-name map covering the dead names turns up:
+#   re-run the same census on the same seed and bar. The 2001-2008 10-K table follow-up does not trigger;
+#   it needed EX-27 to move a number first. Nothing here reaches rank, BUY NOW, size, trade or the broker.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
