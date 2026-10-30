@@ -24171,6 +24171,18 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   stay under one independent trial at every horizon, so there is no verdict either way. The agreeing corners
 #   repeat ENTRY-STATE's path read.
 # Nothing here reaches rank, BUY NOW, size or the broker, and deploy_multiplier does not read it.
+# (#1238) RESULT, probe run 41032398059 on 648f914 (`universe pit dead level`, years 20 12 8; windows
+#   scored 5690 / 12469 / 16339): as EXPECTED, no verdict. Each corner below reads windows, book, excess
+#   over the S&P, win share and worst window, at 20y | 12y | 8y.
+#   cheap @ high:    3 | 8 | 14 windows; book +7.5 | +9.4 | +11.4%/yr; excess +1.9 | +1.7 | +1.5; win 67 | 50 | 71%.
+#   cheap & falling: 10 | 21 | 23; book +12.6 | +11.0 | +10.2; excess +4.5 | +2.5 | +2.9; win 90 | 86 | 78%.
+#   rich @ high:     6 | 6 | 6; book +6.6 | +1.4 | +2.6; excess +2.1 | +1.4 | +2.0; win 83 | 67 | 67%.
+#   rich & falling:  3 | 3 | 3; book +8.9 | +4.2 | +1.6; excess +2.9 | +2.1 | +2.3; win 100 | 100 | 100%.
+# The corners sum to ENTRY-STATE's 22 / 38 / 46 windows. Both disagreeing corners stay under one independent
+#   trial (40 / 24 / 16 windows) at every horizon, the same 3/8/14 and 3/3/3 that (#306) counted. The
+#   agreeing corners repeat ENTRY-STATE's path read: entries after a fall beat entries at a high, here by
+#   +2.4 / +1.1 / +0.9 pts/yr of excess. The book beats the S&P in every corner, so no corner argues for
+#   holding new money back. VERDICT: none; the level axis adds no gradeable read beyond the path. No knob.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
