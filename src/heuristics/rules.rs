@@ -509,6 +509,82 @@ pub fn option_report(name: &str, dates: &[NaiveDate], tr: &[f64], rs: &[f64], ho
     out.join("\n")
 }
 
+/// (#1237) The level `rs` compounds to from 1 on the first bar, each bar less the bill rate `cash` over
+/// its calendar days: with `cash` all 0, the plain total-return level.
+pub fn excess_level(dates: &[NaiveDate], rs: &[f64], cash: &[f64]) -> Vec<f64> {
+    let mut level = 1.0;
+    std::iter::once(1.0).chain((1..rs.len()).map(|i| {
+        level *= 1.0 + rs[i] - cash[i] * (dates[i] - dates[i - 1]).num_days() as f64 / 365.25;
+        level
+    })).collect()
+}
+
+/// (#1237) In while `level` at a month's last bar is above the mean of its last `months` month-end
+/// values, that one among them; read and flipped only there, as [`Rule::Trend`] is.
+pub fn above_mean(dates: &[NaiveDate], level: &[f64], months: usize) -> Vec<bool> {
+    let (mut on, mut ends) = (false, Vec::new());
+    level.iter().enumerate().map(|(i, &x)| {
+        if dates.get(i + 1).is_some_and(|d| (d.year(), d.month()) != (dates[i].year(), dates[i].month())) {
+            ends.push(x);
+            on = ends.len() >= months && x > mean(&ends[ends.len() - months..]);
+        }
+        on
+    }).collect()
+}
+
+/// (#1237) `rs`, a rule's returns traded as [`returns`] trades `pos`, after [`GAIN_TAX`] on each sale's
+/// gain since its buy, losses carried forward, the tax leaving the account at the sale. shortcut: one
+/// investor from the first bar, so a window inherits the basis and the losses carried before it, and a
+/// monthly saver's sums share one basis; bill interest goes untaxed, and nothing is sold at a window's
+/// end, as nothing is for buy-and-hold.
+pub fn taxed(rs: &[f64], pos: &[bool]) -> Vec<f64> {
+    let (mut e, mut basis, mut carry) = (1.0, 1.0, 0.0);
+    rs.iter().enumerate().map(|(i, r)| {
+        let was = e;
+        e *= 1.0 + r;
+        let (held, now) = (i >= 2 && pos[i - 2], i >= 1 && pos[i - 1]);
+        if held && !now {
+            let (owed, left) = book(e - basis, GAIN_TAX, (0.0, carry));
+            (e, carry) = (e - owed, left);
+        } else if now && !held {
+            basis = was;
+        }
+        e / was - 1.0
+    }).collect()
+}
+
+/// (#1237) THE TREND CENSUS: does sitting out the S&P 500's falls beat holding it? Three month-end
+/// signals on 1x total returns `rs` with bill rate `cash`: the level above its 10- or 12-month mean
+/// (SMA10, SMA12), and the last 12 months' return above bills' (TSMOM12). Each trades the close after
+/// its signal at `cost`, the round trip as a fraction, earns bills while out, and runs at 1x and at 2x
+/// while in, borrowing at bills plus [`SPREAD`] and reset every bar; each also after [`GAIN_TAX`] on its
+/// sales. The (#1219) lines and bar against buy-and-hold for each of `horizons`, halves split at `split`.
+pub fn trend_report(dates: &[NaiveDate], rs: &[f64], cash: &[f64], cost: f64, horizons: &[u32], split: NaiveDate) -> String {
+    let level = excess_level(dates, rs, &vec![0.0; rs.len()]);
+    let signals = [
+        ("SMA10", above_mean(dates, &level, 10)),
+        ("SMA12", above_mean(dates, &level, 12)),
+        ("TSMOM12", positions(Rule::Trend { months: 12 }, dates, &excess_level(dates, rs, cash))),
+    ];
+    let mut series = Vec::new();
+    for (name, pos) in &signals {
+        for lev in [1, 2] {
+            let gross = returns(dates, &level, &level, pos, lev, cost, cash);
+            let after = taxed(&gross, pos);
+            series.push((format!("{name} at {lev}x"), gross));
+            series.push((format!("{name} at {lev}x taxed"), after));
+        }
+    }
+    let mut out = vec![format!(
+        "\n── (#1237) TREND CENSUS: S&P 500 total return from {}, {} bars; each signal trades the next close at {:.2}% a round trip ──",
+        dates[0],
+        dates.len(),
+        cost * 100.0
+    )];
+    out.extend(versus(dates, rs, "buy-and-hold", &series, horizons, split));
+    out.join("\n")
+}
+
 /// (#1220) THE LIFECYCLE CENSUS (Ayres and Nalebuff, "Diversification Across Time", 2010): does a saver
 /// from 23 to 64 who holds stock worth λ times savings plus the rest of a working life's saving, never
 /// above 2x savings, end better off than one who holds a fixed share? The rest sits in 10y Treasuries.
@@ -1029,6 +1105,48 @@ mod tests {
         assert!(thin.contains("\n  1y BXM monthly: beats S&P TR in 100% (before 2001-01-01 100% | after 100%), median 1.06x paid in vs 1.05x paid in, worst 1.06x paid in vs 1.05x paid in, worst drawdown 0%, 0 wipe-outs: passes the bar\n"), "{thin}");
         assert!(thin.contains("\n  2 of 4 lines clear the bar"), "{thin}");
         assert_eq!(option_report("PUT", &dates[..10], &tr[..10], &tr[..10], &[1]), "(#1226) PUT: no 1y window");
+    }
+
+    #[test]
+    fn the_excess_level_compounds_each_bar_less_the_bill_rate_over_its_days() {
+        // 0.36525 a year over 1 day is 0.001; the first bar's return never counts
+        close(&excess_level(&days(3), &[0.5, 0.01, 0.02], &[9.0, 0.36525, 0.0]), &[1.0, 1.009, 1.009 * 1.02]);
+    }
+
+    #[test]
+    fn above_the_mean_reads_and_flips_only_at_a_month_s_last_bar() {
+        // month-ends at bars 1, 3, 5, 7 and 9 read 1, 2, 2, 1, 3 against the mean of the last 2: under 2
+        // ends out, then in, out on a tie, out, in; the bars between and the last, no month-end, only hold
+        let dates: Vec<NaiveDate> = (0..6).flat_map(|m| [1, 16].map(|day| d(2000, m + 1, day))).collect();
+        let level = [100.0, 1.0, 100.0, 2.0, 100.0, 2.0, 100.0, 1.0, 100.0, 3.0, 100.0, 0.0];
+        assert_eq!(marks(&above_mean(&dates, &level, 2)), "FFFTTFFFFTTT");
+    }
+
+    #[test]
+    fn a_sale_pays_the_tax_on_its_gain_since_the_buy_and_carries_a_loss_to_the_next() {
+        // bought on 1 at bar 1, sold on 2.5 at bar 3: 0.28 of the 1.5 gain leaves, 2.08 stays; bought on
+        // 2.08 at bar 5, sold on 1.04 at bar 7, the loss carried; bought on 1.04 at bar 8, sold on 2.08 at
+        // bar 9, its gain all offset
+        let pos = [true, true, false, false, true, true, false, true, false, false];
+        let rs = [0.0, 0.25, 1.0, 0.0, 0.0, 0.0, -0.5, 0.0, 0.0, 1.0];
+        close(&taxed(&rs, &pos), &[0.0, 0.25, 1.0, -0.168, 0.0, 0.0, -0.5, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn the_trend_census_sells_into_a_fall_and_grades_each_signal_gross_and_taxed() {
+        // 1% a bar for 18 months, four -4% bars, then 1% again: every signal sits in bills through its
+        // warm-up, so no line beats holding in 80% of the first half; SMA10 sells into the fall at a gain
+        // its taxed line pays on
+        let dates: Vec<NaiveDate> = (0..36).flat_map(|m| [1, 16].map(|day| d(2000 + m / 12, (m % 12 + 1) as u32, day))).collect();
+        let rs: Vec<f64> = (0..dates.len()).map(|i| match i {
+            0 => 0.0,
+            36..=39 => -0.04,
+            _ => 0.01,
+        }).collect();
+        let out = trend_report(&dates, &rs, &[0.03; 72], 0.002, &[1], d(2001, 1, 1));
+        assert!(out.starts_with("\n── (#1237) TREND CENSUS: S&P 500 total return from 2000-01-01, 72 bars; each signal trades the next close at 0.20% a round trip ──\n  1y buy-and-hold lump: 24 windows, median +14.9%/yr, worst +3.6%/yr, worst drawdown 15%\n  1y SMA10 at 1x lump: beats buy-and-hold in 0% (before 2001-01-01 0% | after 0%), median +4.9%/yr vs +14.9%/yr, worst -2.1%/yr vs +3.6%/yr, worst drawdown 12%, 0 wipe-outs: fails, beats buy-and-hold in under 80% of a half\n  1y SMA10 at 1x taxed lump: beats buy-and-hold in 0% (before 2001-01-01 0% | after 0%), median +4.6%/yr vs +14.9%/yr, worst -2.8%/yr vs +3.6%/yr, worst drawdown 12%, 0 wipe-outs: fails, beats buy-and-hold in under 80% of a half\n"), "{out}");
+        assert!(out.contains("\n  1y TSMOM12 at 2x taxed monthly: beats buy-and-hold in 42% (before 2001-01-01 0% | after 83%), median 1.07x paid in vs 1.11x paid in, worst 0.83x paid in vs 0.95x paid in, worst drawdown 29%, 0 wipe-outs: fails, beats buy-and-hold in under 80% of a half\n"), "{out}");
+        assert!(out.ends_with("\n  0 of 24 lines clear the bar (beat buy-and-hold in 80% of 1y windows in both halves, worst window no poorer, no 90% fall)"), "{out}");
     }
 
     #[test]

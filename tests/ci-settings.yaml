@@ -24113,6 +24113,26 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # THE FLOOR: +6.3 minus 1.0 = +5.3, tests/network.rs `S_INTER_DCA_FLOOR`, the same rule (#316) set for SIZED:
 #   raise it when a round lifts the reading, never lower it to get green. The gap over SIZED stays print-only.
 
+# (#1237) TREND CENSUS, PRE-REGISTERED 2026-10-30, record only, no knob.
+# WHY: does sitting out the S&P 500's falls beat holding it? (#1218) graded trend rules on ten years of bars
+#   only. (#1219) built a century of daily bars, so the month-end timing rules get the long test here.
+# CENSUS (`backtest N leverage` prints it after the (#1219) lines): three month-end signals on the (#1219) S&P
+#   500 total return splice. SMA10 and SMA12 are in while the month-end level is above the mean of its last 10
+#   or 12 month-ends. TSMOM12 is in while the level less bills is above its value 12 month-ends before. Each
+#   signal trades the next bar's close and pays 0.20% a round trip, a euro line's cost. Out of the market it
+#   earns bills; the bar it buys on earns only its fee. Each runs at 1x and at 2x while in, on the (#1219)
+#   margin model: bills plus 2.5 pts on the borrowed half, reset every bar. Each line also prints taxed: 28%
+#   of each sale's gain since its buy, losses carried to the next sale. Shortcuts in the taxed lines: one
+#   investor from 1928, so a window inherits the basis and the losses carried before it; a monthly saver's
+#   sums share one basis; bill interest is untaxed; nothing is sold at a window's end, as nothing is for
+#   buy-and-hold.
+# THE BAR, the (#1219) one against buy-and-hold of the same total return: beat it in 80% or more of the 20y
+#   windows in each half (start before 1967-01-01, and from then on), worst window no poorer, no 90% fall.
+#   30y prints as context, ungraded.
+# EXPECTED: 0 of 24 lines clear. Sitting out cuts the deep falls, but in (#1218) and (#1219) every line that
+#   left the market missed enough of the rises to trail holding.
+# Nothing here reaches rank, BUY NOW, trade, size or the broker.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

@@ -2758,11 +2758,12 @@ fn holder_cohorts(samples: &[Sample], txs: &HashMap<String, Vec<core::HolderTx>>
 
 /// (#1219) The leverage census: the S&P 500's daily closes since 1928, ^SP500TR's from 1988 and the
 /// Shiller dividend yield before it, at 1.25x to 3x against 1x over every 20y and 30y window, borrowing
-/// at the NBER short-term yield until 1934 and the 3-month bill rate (TB3MS) after. Every source is
-/// fetched before any is read, so an offline run names each one it lacks.
+/// at the NBER short-term yield until 1934 and the 3-month bill rate (TB3MS) after; then (#1237) the trend
+/// census on the same series. Every source is fetched before any is read, so an offline run names each
+/// one it lacks.
 #[mutants::skip] // network shell; the arithmetic and its tests live in heuristics::rules
 async fn leverage_census(client: &reqwest::Client, settings: &config::Settings) {
-    use crate::heuristics::rules;
+    use crate::heuristics::{holds, rules};
     use chrono::NaiveDate;
     let d = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
     let u = &settings.urls;
@@ -2790,6 +2791,8 @@ async fn leverage_census(client: &reqwest::Client, settings: &config::Settings) 
     let (got, want) = (pa(&rules::splice(&px, &yld, &[])), pa(&rs));
     println!("(#1219) splice check from {}: price plus Shiller dividends {got:+.2}%/yr, ^SP500TR {want:+.2}%/yr, gap {:+.2} pts", dates[from - 1], got - want);
     println!("{}", rules::lever_report(&dates, &rs, &cash, &[20, 30], d(1967, 1)));
+    // (#1237) an S&P line on a euro broker: one round trip's cost
+    println!("{}", rules::trend_report(&dates, &rs, &cash, holds::cost_bps("etf", "EUR") / 1e4, &[20, 30], d(1967, 1)));
 }
 
 /// (#1226) The option-selling census: the Cboe S&P 500 BuyWrite (^BXM, covered calls) and PutWrite (^PUT)
