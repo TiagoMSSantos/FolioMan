@@ -24032,6 +24032,31 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   samples at 12y and 8y. The neutral rows move stock rows. No sign is predicted for them: a constant inside
 #   `base` is not rank-neutral ((#59)), so the effect cannot be worked out ahead.
 
+# (#1234) MOMENTUM INTERLEAVE RE-READ ON `pit dead`, PRE-REGISTERED 2026-10-30 before any run. (#584) shipped
+#   the interleave and (#597) refused 3, 7 and 10 momentum slots, both on `pit` and stress without dead members.
+# NOT AN ARM: growth_momentum_interleave false. The backtest never reads that key; it only switches the live
+#   BUY NOW list. Every `rivals` run already prints both books side by side: the shipped top-10 row and the
+#   SIZED DCA lane are the book with the interleave off, and rival (j) and the S+inter DCA lane are the book
+#   with it on.
+# THREE probes on one commit, `universe fund pit dead winners rivals`, years "20 12 8": C (shipped, 5 of every
+#   10 slots momentum's), A3 (knobs growth_momentum_slots=3) and A7 (=7). `windows scored` must match across
+#   the three. Three looks: on/off once, and two slot counts.
+# ON/OFF, read off C alone: the interleave turns off only if the shipped top-10 beats (j) on excess mean AND
+#   median at 12y AND 8y, and the 20y DCA SIZED lane is not below S+inter by more than 0.2 on mean or median.
+#   Otherwise it stays on. A switch-off earns the owner question, because it changes BUY NOW.
+# SLOTS, A3 and A7 each against C: (#1229)'s screen read on the (j) row, the page's book, instead of the
+#   top-10. That means (j) excess mean AND median >= C at 12y AND 8y, at least one higher, and (j)'s 20y worst
+#   window not worse. Also SIZED not lower at 12y or 8y; the 20y DCA S+inter not down more than 0.2 on mean or
+#   median, (#587)'s veto; and WINNERS HELD not under C by 2.0 or more at any horizon. A row equal to C at 12y
+#   and 8y is VACUOUS. A pass earns the owner question.
+# EXPECTED, written before the run: 3 and 7 FAIL again as in (#597), and the interleave stays on.
+
+# (#1235) NEVER-SELL IS THE SHIPPED PLAN, PRE-REGISTERED 2026-10-30. The app sells nothing except a fund switch
+#   to a cheaper twin on the same index ((#388)); exit sells stay closed. The 10y roll is a graded record row,
+#   not an action, and it trails never-sell on both books in (#1224) and (#1225) (SIZED -1.0/yr on `pit dead`).
+#   A sell rule re-opens only if one roll rung beats never-sell on `pit dead` on mean AND median over at least
+#   12 programs, with both its early and late halves above zero. No probe is run for this line.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
