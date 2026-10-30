@@ -24132,6 +24132,25 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # EXPECTED: 0 of 24 lines clear. Sitting out cuts the deep falls, but in (#1218) and (#1219) every line that
 #   left the market missed enough of the rises to trail holding.
 # Nothing here reaches rank, BUY NOW, trade, size or the broker.
+# (#1237) RESULT, probe run 41030617927 on ab059c1 (`backtest 20 leverage`): as EXPECTED, 0 of 24 lines clear.
+#   The same run's (#1219) lines still read 0 of 16, and the splice trails ^SP500TR by 0.03 pts/yr since 1988.
+#   Buy-and-hold over 947 20y windows: lump median +11.0%/yr, worst +1.9%/yr; monthly median 3.56x paid in,
+#   worst 1.32x; worst drawdown 84%. Each line below is the share of windows that beat buy-and-hold, split
+#   (before 1967 | after) where it matters, in the order SMA10 / SMA12 / TSMOM12.
+#   1x lump, gross: 37% (32|41) / 46% (33|60) / 30% (13|47); medians +10.4 / +10.4 / +9.6 against +11.0.
+#   1x lump, taxed: 3% / 4% / 9%; medians +8.1 / +8.2 / +7.7.
+#   2x lump, gross: 79% (77|80) / 87% (78|95) / 62% (52|71); medians +12.5 / +13.0 / +12.2, worst windows
+#     -4.7 / -2.5 / +1.1 against +1.9, worst drawdowns 89% / 82% / 82%.
+#   2x lump, taxed: 38% / 47% / 30%; medians +10.1 / +10.4 / +10.0.
+#   1x monthly: gross 37% / 39% / 27%, taxed 13% / 16% / 10%.
+#   2x monthly: gross 78% (86|70) / 85% (91|80) / 54% (48|61), taxed 48% / 53% / 37%.
+# NEAREST MISS: SMA12 at 2x, monthly, gross. Its worst window (1.47x against 1.32x) and worst drawdown (82%)
+#   pass, but the after-1967 half beats holding in just under 80% of windows (it prints as 80%). Taxed, the
+#   way a saver here pays, the same line beats holding in 53% of windows, median 3.34x against 3.56x.
+# 30y CONTEXT, ungraded, 827 windows: gross SMA12 at 2x beats holding in 95% (lump) and 99% (monthly); taxed,
+#   41% and 54%, medians +11.0 against +10.8 and 7.07x against 7.29x. Every taxed 1x line beats holding in 0-1%.
+# VERDICT: the timing lane stays closed. Trend timing at 2x wins gross over long windows, but the tax on each
+#   exit takes the edge back, and its falls run 82-89%. Nothing ships; no knob.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
