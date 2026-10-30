@@ -23878,7 +23878,7 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   almost all US, so the split would be near-inert there).
 #   P0 control and P1 `backtest_drop_lookahead_sector=true`, on `universe fund pit dead`. P0 also passes
 #   grid `[{}]`, so its rescore row {} must reprint its own top-10 line at every horizon: the live check of
-#   (#1227)'s rescore.
+#   (#1227)'s rescore. (#1229) adds ten rows to that grid before any run.
 # DEMEAN: ships ON whatever it reads, as a ruler fix. It only moves `relative`, which feeds the lane edge,
 #   rho, OOS halves and lift, never a book row. Recorded: passer edge and passer lift per horizon, W1 vs W0.
 #   One stop: if passer edge or passer lift reads <= 0 at any horizon, the gate would go red, so the ship
@@ -23886,6 +23886,33 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # COST: record only, stays OFF. Recorded: the lane NET line per horizon, W2 vs W0, and whether the "too
 #   churny" flag fires.
 # SECTOR: record only, stays OFF. Recorded: top-10 excess mean and median at 12y and 8y, P1 vs P0.
+
+# (#1229) THREE GRADED BLOCKS RE-READ ON `pit dead`, PRE-REGISTERED 2026-10-30 before any run. P0's grid
+# (#1228) grows from `[{}]` to row {} plus the ten rows below, each rescored on P0's own dump at 20, 12 and
+# 8 years. Every earlier grade of these knobs ran on `pit`, which holds no delisted names. Ten looks
+# against one control, and no shuffled null is run for a screen this small, so a passer is reported as
+# best of ten.
+#   SHARPE CAP, four rows: sharpe_cap 1.73, 3.46, 5.2 and 6.93. The backtest's `volatility_pct` is the
+#   stdev of monthly bars (vol_daily_equivalent false, (#97)), so CAGR over it is the yearly ratio times
+#   sqrt(12), and these rows are caps of 0.5, 1.0, 1.5 and 2.0 per year. The shipped 15 is about 4.3 per
+#   year in these units and never binds, while live it is about 0.95 per year (daily bars). (#1132)
+#   graded caps with vol_daily_equivalent on, which also moves every other vol-reading term; these rows
+#   move the cap alone. sharpe_weight stays 0.05 in every row (the term is kept, (#1132)).
+#   NEGATIVE SCORES, one row: growth_allow_negative_scores true. Expected VACUOUS: (#86) found no
+#   negative-base rows in the backtest pool.
+#   DAMP EXPONENTS, five rows, (#1134)'s arms as (growth_trust_exp, growth_overext_exp): (0.5, 0.75),
+#   (0.5, 1.0), (1.0, 0.5), (1.0, 0.75), (1.0, 1.0).
+# SCREEN, SHIP RULE v2 on `pit` (#139), read off each row against row {}: top-10 book excess mean AND
+#   median >= row {} at 12y AND 8y, at least one of the four higher; at 20y the top-10 worst window not
+#   worse and the #1-vs-11-20 head-to-head >= 50% or not below row {}. A row whose 12y and 8y top-10 lines
+#   equal row {} is VACUOUS, not a pass. Of the passers, the highest 12y + 8y median sum goes on.
+# A SCREEN PASS SHIPS NOTHING. The rescore prints no WINNERS HELD, rival (j) or Serie E row, so the
+#   passer then runs as a probe arm beside a control, `universe fund pit dead winners rivals`, with
+#   (#1134)'s guards: worst window >= control -1.0, WINNERS HELD >= control -2.0, the (j) row's mean and
+#   median >= control -0.5, Serie E 90/90/80. Only a pass there earns the owner question.
+# NOT ARMED: growth_fund_scope_by_class. (#1130) reopens it only on a ruler that grades the ETF and crypto
+#   tables, and `pit dead` does not. Its neutrals still need a covered-filer median, which P0's dump can
+#   give: that census comes first, then its own receipt.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
