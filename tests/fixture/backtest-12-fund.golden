@@ -299,39 +299,39 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   price-only baseline TEST edge +156.2 — a factor must beat this with both OOS halves +
   rev_cagr       TEST edge +178.1 (w 0.249)  OOS +0.22 | +0.20
   rev_accel      TEST edge +169.5 (w 0.249)  OOS +0.22 | +0.19
-  gross_margin   TEST edge +166.6 (w 0.071)  OOS +0.23 | +0.20
-  op_margin      TEST edge +152.1 (w 0.249)  OOS +0.17 | +0.14
+  gross_margin   TEST edge +155.5 (w 0.001)  OOS +0.22 | +0.19
+  op_margin      TEST edge +155.9 (w 0.018)  OOS +0.22 | +0.19
   margin_trend   TEST edge +157.5 (w 0.249)  OOS +0.22 | +0.19
   eps_growth     TEST edge +156.9 (w 0.249)  OOS +0.22 | +0.20
   rev_yoy        TEST edge +177.3 (w 0.249)  OOS +0.24 | +0.22
-  eps_yoy        TEST edge +153.4 (w 0.071)  OOS +0.21 | +0.16
-  net_margin     TEST edge +117.9 (w 0.325)  OOS +0.19 | +0.17
+  eps_yoy        TEST edge +158.5 (w 0.062)  OOS +0.21 | +0.16
+  net_margin     TEST edge +155.5 (w 0.025)  OOS +0.22 | +0.19
   insider_net_buys_90d TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
-  earnings_yield TEST edge +154.2 (w 0.446)  OOS +0.20 | +0.19
-  peg_yield      TEST edge +87.7 (w 0.469)  OOS +0.14 | +0.13
-  buyback_yield  TEST edge +158.8 (w 0.375)  OOS +0.23 | +0.19
-  roe            TEST edge +158.6 (w 0.062)  OOS +0.22 | +0.18
-  quality        TEST edge +156.1 (w 0.062)  OOS +0.21 | +0.18
-  roic           TEST edge +156.7 (w 0.104)  OOS +0.21 | +0.18
+  earnings_yield TEST edge +155.5 (w 0.025)  OOS +0.22 | +0.19
+  peg_yield      TEST edge +155.5 (w 0.001)  OOS +0.22 | +0.19
+  buyback_yield  TEST edge +156.1 (w 0.104)  OOS +0.23 | +0.19
+  roe            TEST edge +155.5 (w 0.025)  OOS +0.22 | +0.19
+  quality        TEST edge +155.5 (w 0.025)  OOS +0.22 | +0.19
+  roic           TEST edge +156.4 (w 0.025)  OOS +0.22 | +0.19
   ebitda_yield   TEST edge +153.6 (w 0.249)  OOS +0.18 | +0.18
-  fcf_margin     TEST edge +118.3 (w 0.446)  OOS +0.21 | +0.18
-  interest_cover TEST edge +194.3 (w 0.249)  OOS +0.23 | +0.19
-  net_cash_rev   TEST edge +146.9 (w 0.309)  OOS +0.24 | +0.23
+  fcf_margin     TEST edge +117.1 (w 0.379)  OOS +0.21 | +0.19
+  interest_cover TEST edge +156.2 (w 0.001)  OOS +0.22 | +0.19
+  net_cash_rev   TEST edge +153.1 (w 0.249)  OOS +0.24 | +0.22
   margin_stability TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   accrual_gap    TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   asset_growth   TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
-  gp_assets      TEST edge +167.6 (w 0.107)  OOS +0.23 | +0.20
-  cf_assets      TEST edge +161.6 (w 0.325)  OOS +0.22 | +0.18
+  gp_assets      TEST edge +155.5 (w 0.001)  OOS +0.22 | +0.19
+  cf_assets      TEST edge +155.5 (w 0.025)  OOS +0.22 | +0.19
   rev_stability  TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
-  fcf_ev_yield   TEST edge +157.9 (w 0.107)  OOS +0.22 | +0.20
-  sales_ev_yield TEST edge +176.8 (w 0.028)  OOS +0.23 | +0.21
-  value_composite TEST edge +113.5 (w 0.104)  OOS +0.22 | +0.21
-  book_yield     TEST edge +162.1 (w 0.046)  OOS +0.22 | +0.21
-  small_pct      TEST edge +153.2 (w 0.104)  OOS +0.25 | +0.23
+  fcf_ev_yield   TEST edge +155.9 (w 0.062)  OOS +0.22 | +0.19
+  sales_ev_yield TEST edge +170.0 (w 0.025)  OOS +0.23 | +0.21
+  value_composite TEST edge +174.7 (w 0.062)  OOS +0.22 | +0.21
+  book_yield     TEST edge +155.5 (w 0.001)  OOS +0.22 | +0.19
+  small_pct      TEST edge +168.4 (w 0.062)  OOS +0.24 | +0.22
   rnd_yield      TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   payout_yield   TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
-  noa            TEST edge +156.6 (w 0.498)  OOS +0.22 | +0.19
-  op_leverage    TEST edge +202.4 (w 0.071)  OOS +0.22 | +0.22
+  noa            TEST edge +156.6 (w 0.249)  OOS +0.22 | +0.19
+  op_leverage    TEST edge +156.1 (w 0.001)  OOS +0.22 | +0.19
   mscore         TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   sbc            TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   goodwill       TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
@@ -342,17 +342,17 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   exp_neg        TEST edge +161.5 (w 0.249)  OOS +0.22 | +0.20
   op_rd          TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   discipline     TEST edge +150.4 (w 0.249)  OOS +0.22 | +0.15
-  fair_yield     TEST edge +163.0 (w 0.022)  OOS +0.22 | +0.20
-  oe_fair_yield  TEST edge +163.0 (w 0.022)  OOS +0.22 | +0.20
-  fcf_cap_yield  TEST edge +155.7 (w 0.276)  OOS +0.23 | +0.20
+  fair_yield     TEST edge +165.5 (w 0.025)  OOS +0.21 | +0.20
+  oe_fair_yield  TEST edge +165.5 (w 0.025)  OOS +0.21 | +0.20
+  fcf_cap_yield  TEST edge +160.2 (w 0.249)  OOS +0.22 | +0.20
   low_turnover   TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   rnd_growth     TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   low_dro        TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   capex_light    TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
-  composite      TEST edge +156.0 (w 0.031)  OOS +0.22 | +0.19
-  -> WINNER: op_leverage. Set `growth_fund_factor: op_leverage` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.
-  -> validated growth_fund_weight for op_leverage: 0.071 (at growth_fund_cap 300)
-  multiple-testing band (best of 53 factors): [-146.4 … +170.8] pts  (within best-of-N luck -> SHIP NOTHING despite the raw winner)
+  composite      TEST edge +155.5 (w 0.013)  OOS +0.22 | +0.19
+  -> WINNER: rev_cagr. Set `growth_fund_factor: rev_cagr` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.
+  -> validated growth_fund_weight for rev_cagr: 0.249 (at growth_fund_cap 300)
+  multiple-testing band (best of 53 factors): [-138.0 … +178.8] pts  (within best-of-N luck -> SHIP NOTHING despite the raw winner)
 
 ── growth_fund_weight CURVE for `peg_yield` (held-out TEST, growth_fund_cap 300) ──
   weight 0.000  TEST edge +156.2  OOS +0.22 | +0.19  [tilt off]

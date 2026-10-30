@@ -244,11 +244,11 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   it cannot name (mostly a dead issuer) is dropped, so its moves flag no stock: the `fetch: holders:`
   line prints asked against named. Read mean AND hit: a hit rate up with the mean down dilutes.
   cohort                                    n     mean   median   hit% | rest n     mean   median   hit%
-  Berkshire added (13F or Form 4)           0      NaN      NaN    NaN |   1572    +0.00  -144.15   28.0
-  3+ superinvestors added                   0      NaN      NaN    NaN |   1572    +0.00  -144.15   28.0
-  8+ added (the shipped listing rule)       0      NaN      NaN    NaN |   1572    +0.00  -144.15   28.0
-  net 3+ (adders minus trimmers)            0      NaN      NaN    NaN |   1572    +0.00  -144.15   28.0
-  Berkshire holds (newest 13F, the W)       0      NaN      NaN    NaN |   1572    +0.00  -144.15   28.0
+  Berkshire added (13F or Form 4)           0      NaN      NaN    NaN |   1572    -0.00  -144.15   28.0
+  3+ superinvestors added                   0      NaN      NaN    NaN |   1572    -0.00  -144.15   28.0
+  8+ added (the shipped listing rule)       0      NaN      NaN    NaN |   1572    -0.00  -144.15   28.0
+  net 3+ (adders minus trimmers)            0      NaN      NaN    NaN |   1572    -0.00  -144.15   28.0
+  Berkshire holds (newest 13F, the W)       0      NaN      NaN    NaN |   1572    -0.00  -144.15   28.0
   (#544) among the stocks that score, soft admits too (rest = the other scored): what each boost multiplies.
   cohort                                    n     mean   median   hit% | rest n     mean   median   hit%
   Berkshire added (13F or Form 4)           0      NaN      NaN    NaN |   1541    +1.93  -143.77   28.1

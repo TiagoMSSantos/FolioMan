@@ -5,41 +5,41 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
 
 ── ON-SALE (buy_score) ──
   windows scored: 1022
-  Spearman(score, peer-relative): -0.01   [+1 winners-first, 0 none, − backwards]
-  top-half peer-relative -0.1 pts  vs  bottom-half +10.4 pts  ->  edge -10.5 pts   [= -1.26 pts/yr over the 8y hold]
-  90% bootstrap band on edge: [-42.7 … +20.7] pts  (STRADDLES 0 -> noise)
-  net of cost: edge -10.5 − turnover 48% × 20bps = net -10.6 pts  <- NET ≤ 0: too churny to trade
-  winsorized edge (1/99 clamp): -9.5 pts
+  Spearman(score, peer-relative): -0.00   [+1 winners-first, 0 none, − backwards]
+  top-half peer-relative +0.1 pts  vs  bottom-half +9.6 pts  ->  edge -9.5 pts   [= -1.14 pts/yr over the 8y hold]
+  90% bootstrap band on edge: [-41.6 … +21.4] pts  (STRADDLES 0 -> noise)
+  net of cost: edge -9.5 − turnover 48% × 20bps = net -9.6 pts  <- NET ≤ 0: too churny to trade
+  winsorized edge (1/99 clamp): -8.5 pts
   recall of the pool's extreme winners (what the ranking MISSED):
     held book     vs top 1%  winners (n=96   ): recall 33%   capture 20%
     held book     vs ≥10×    winners (n=45   ): recall 20%   capture 16%
   base rate at the 19%/yr bar: 66/306 (22%) of names that had cleared it cleared it again over 8y, vs 13% of the whole pool -> the record CARRIES information
-  vs null model (tuning off): rho -0.27  edge -118.8 pts  ->  tuning adds +108.3 pts
-  out-of-sample (split 2008-01-01): early rho +0.00  |  late rho -0.03
-  gate passers only  ->  passer edge -10.5 pts  ->  passer lift +108.3 pts  |  passer OOS early +0.00  |  passer OOS late -0.03
+  vs null model (tuning off): rho -0.27  edge -118.2 pts  ->  tuning adds +108.7 pts
+  out-of-sample (split 2008-01-01): early rho +0.00  |  late rho -0.02
+  gate passers only  ->  passer edge -9.5 pts  ->  passer lift +108.7 pts  |  passer OOS early +0.00  |  passer OOS late -0.02
   edge by era (chronological quarters):
     1971-01-01 .. 2001-01-01  n=255    edge -51.9 pts
     2001-01-01 .. 2008-01-01  n=256    edge -21.6 pts
     2008-01-01 .. 2015-01-01  n=255    edge -59.6 pts
-    2015-03-01 .. 2018-07-01  n=256    edge +77.7 pts
-  ablation (Δ vs full: rho -0.01, edge -10.5):
-    long_trend_weight    rho -0.01 Δ-0.01   edge -21.6 Δ-11.1
-    discount_weight      rho +0.02 Δ+0.03   edge -3.4 Δ+7.1
-    cheap_weight         rho -0.00 Δ+0.00   edge -10.5 Δ-0.0
-    onsale_dividend_weight rho -0.01 Δ+0.00   edge -10.5 Δ+0.0
-    onsale_sharpe_weight rho -0.01 Δ+0.00   edge -10.5 Δ+0.0
-    calmar_weight        rho -0.01 Δ+0.00   edge -10.5 Δ+0.0
-    quality_weight       rho -0.01 Δ+0.00   edge -10.5 Δ+0.0
-    tax_split ->off      rho -0.01 Δ+0.00   edge -10.5 Δ+0.0
+    2015-03-01 .. 2018-07-01  n=256    edge +81.2 pts
+  ablation (Δ vs full: rho -0.00, edge -9.5):
+    long_trend_weight    rho -0.01 Δ-0.01   edge -20.8 Δ-11.2
+    discount_weight      rho +0.03 Δ+0.03   edge -2.7 Δ+6.8
+    cheap_weight         rho -0.00 Δ+0.00   edge -9.5 Δ-0.0
+    onsale_dividend_weight rho -0.00 Δ+0.00   edge -9.5 Δ+0.0
+    onsale_sharpe_weight rho -0.00 Δ+0.00   edge -9.5 Δ+0.0
+    calmar_weight        rho -0.00 Δ+0.00   edge -9.5 Δ+0.0
+    quality_weight       rho -0.00 Δ+0.00   edge -9.5 Δ+0.0
+    tax_split ->off      rho -0.00 Δ+0.00   edge -9.5 Δ+0.0
   ON-SALE top-10 book +10.6%/yr  vs S&P500 +8.9%/yr  ->  excess +1.7 (med +2.8) pts/yr   win 79% of 78   worst -16.0   OOS +0.2/+3.1
 
 ── GROWTH (growth_score) ──
   windows scored: 1939
   Spearman(score, peer-relative): +0.16   [+1 winners-first, 0 none, − backwards]
-  top-half peer-relative +24.1 pts  vs  bottom-half -22.4 pts  ->  edge +46.5 pts   [= +5.86 pts/yr over the 8y hold]
-  90% bootstrap band on edge: [+11.4 … +75.5] pts  (clears 0 -> real)
-  net of cost: edge +46.5 − turnover 35% × 20bps = net +46.4 pts
-  winsorized edge (1/99 clamp): +53.9 pts
+  top-half peer-relative +23.8 pts  vs  bottom-half -22.3 pts  ->  edge +46.1 pts   [= +5.81 pts/yr over the 8y hold]
+  90% bootstrap band on edge: [+11.1 … +74.5] pts  (clears 0 -> real)
+  net of cost: edge +46.1 − turnover 35% × 20bps = net +46.0 pts
+  winsorized edge (1/99 clamp): +53.4 pts
   recall of the pool's extreme winners (what the ranking MISSED):
     held book     vs top 1%  winners (n=96   ): recall 59%   capture 38%
     held book     vs ≥10×    winners (n=45   ): recall 27%   capture 25%
@@ -74,42 +74,42 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
   base rate at the 19%/yr bar: 66/306 (22%) of names that had cleared it cleared it again over 8y, vs 13% of the whole pool -> the record CARRIES information
-  vs null model (tuning off): rho +0.12  edge +23.2 pts  ->  tuning adds +23.3 pts
+  vs null model (tuning off): rho +0.12  edge +22.2 pts  ->  tuning adds +23.9 pts
   out-of-sample (split 2008-07-01): early rho +0.04  |  late rho +0.25
-  gate passers only  ->  passer edge -81.4 pts  ->  passer lift -104.6 pts  |  passer OOS early +0.17  |  passer OOS late -0.13
+  gate passers only  ->  passer edge -81.4 pts  ->  passer lift -103.5 pts  |  passer OOS early +0.17  |  passer OOS late -0.14
   edge by era (chronological quarters):
     1971-01-01 .. 2002-07-01  n=484    edge -32.5 pts
     2002-07-01 .. 2008-07-01  n=485    edge +16.0 pts
     2008-07-01 .. 2014-01-01  n=485    edge +64.4 pts
-    2014-01-01 .. 2018-07-02  n=485    edge +106.7 pts
-  ablation (Δ vs full: rho +0.16, edge +46.5):
-    growth_trend_weight  rho +0.14 Δ-0.03   edge +25.8 Δ-20.7
-    growth_accel_weight  rho +0.15 Δ-0.01   edge +25.4 Δ-21.1
-    sharpe_weight        rho +0.16 Δ-0.00   edge +46.4 Δ-0.2
-    calmar_weight        rho +0.16 Δ+0.00   edge +46.5 Δ+0.0
-    overext_brake        rho +0.10 Δ-0.06   edge +15.1 Δ-31.4
-    growth_fund_weight   rho +0.16 Δ+0.00   edge +46.5 Δ+0.0
-    growth_mom121_weight rho +0.16 Δ+0.00   edge +46.5 Δ+0.0
-    growth_smoothness_weight rho +0.16 Δ+0.00   edge +46.5 Δ+0.0
-    growth_underwater_weight rho +0.16 Δ+0.00   edge +46.5 Δ+0.0
-    quality_weight       rho +0.16 Δ+0.00   edge +46.5 Δ+0.0
-    growth_trust_ladder→on rho +0.18 Δ+0.01   edge +45.7 Δ-0.8
-    proximity            rho +0.14 Δ-0.02   edge +31.0 Δ-15.5
-    growth_dividend      rho +0.18 Δ+0.02   edge +54.7 Δ+8.2
-    growth_trust_young→0.7 (no extra dock) rho +0.16 Δ+0.00   edge +46.5 Δ+0.0
-    fund_extra:roic      rho +0.13 Δ-0.04   edge +43.6 Δ-2.9
-    null: base −4.3 (calibration) rho +0.13 Δ-0.04   edge +43.6 Δ-2.9
+    2014-01-01 .. 2018-07-02  n=485    edge +105.0 pts
+  ablation (Δ vs full: rho +0.16, edge +46.1):
+    growth_trend_weight  rho +0.13 Δ-0.03   edge +25.4 Δ-20.7
+    growth_accel_weight  rho +0.15 Δ-0.01   edge +24.6 Δ-21.5
+    sharpe_weight        rho +0.16 Δ-0.00   edge +45.9 Δ-0.2
+    calmar_weight        rho +0.16 Δ+0.00   edge +46.1 Δ+0.0
+    overext_brake        rho +0.10 Δ-0.06   edge +14.3 Δ-31.8
+    growth_fund_weight   rho +0.16 Δ+0.00   edge +46.1 Δ+0.0
+    growth_mom121_weight rho +0.16 Δ+0.00   edge +46.1 Δ+0.0
+    growth_smoothness_weight rho +0.16 Δ+0.00   edge +46.1 Δ+0.0
+    growth_underwater_weight rho +0.16 Δ+0.00   edge +46.1 Δ+0.0
+    quality_weight       rho +0.16 Δ+0.00   edge +46.1 Δ+0.0
+    growth_trust_ladder→on rho +0.17 Δ+0.01   edge +45.0 Δ-1.1
+    proximity            rho +0.14 Δ-0.02   edge +30.5 Δ-15.6
+    growth_dividend      rho +0.18 Δ+0.02   edge +54.5 Δ+8.4
+    growth_trust_young→0.7 (no extra dock) rho +0.16 Δ+0.00   edge +46.1 Δ+0.0
+    fund_extra:roic      rho +0.12 Δ-0.04   edge +43.1 Δ-2.9
+    null: base −4.3 (calibration) rho +0.12 Δ-0.04   edge +43.1 Δ-2.9
 
 ── growth_trend_weight CURVE (growth lane, n=1939) ──
   SLOPE: points of growth score per %/yr of capped long-leg CAGR.
-  0.00   rho +0.14  edge +25.8  winsor +33.6  OOS +0.05 | +0.22  [off]
-  0.15   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25  [SHIPPED]
-  0.25   rho +0.17  edge +38.5  winsor +49.1  OOS +0.03 | +0.26
-  0.35   rho +0.17  edge +42.1  winsor +52.7  OOS +0.02 | +0.27
-  0.45   rho +0.18  edge +38.9  winsor +49.5  OOS +0.01 | +0.28
-  0.55   rho +0.18  edge +39.7  winsor +50.3  OOS +0.00 | +0.28
-  0.70   rho +0.18  edge +36.8  winsor +47.4  OOS -0.01 | +0.28
-  1.00   rho +0.18  edge +42.5  winsor +53.1  OOS -0.02 | +0.29
+  0.00   rho +0.13  edge +25.4  winsor +33.2  OOS +0.05 | +0.21  [off]
+  0.15   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25  [SHIPPED]
+  0.25   rho +0.17  edge +38.1  winsor +48.7  OOS +0.03 | +0.26
+  0.35   rho +0.17  edge +41.6  winsor +52.2  OOS +0.02 | +0.26
+  0.45   rho +0.17  edge +38.2  winsor +48.8  OOS +0.01 | +0.27
+  0.55   rho +0.17  edge +38.9  winsor +49.5  OOS +0.00 | +0.27
+  0.70   rho +0.17  edge +36.1  winsor +46.7  OOS -0.01 | +0.28
+  1.00   rho +0.17  edge +41.7  winsor +52.3  OOS -0.02 | +0.28
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -120,14 +120,14 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   so these rows price only its GROWTH-lane effect. That lane is the one `screen` ranks on; the on-sale
   side feeds `buy_score`, a backtest foil that is never printed — so a growth-lane read is the one
   that decides, and the foil only needs to not break.
-  0.00   rho +0.17  edge +49.2  winsor +56.6  OOS +0.04 | +0.26  [off]
-  15.00  rho +0.16  edge +39.3  winsor +46.7  OOS +0.04 | +0.25
-  20.00  rho +0.16  edge +42.3  winsor +49.7  OOS +0.04 | +0.25
-  25.00  rho +0.16  edge +47.0  winsor +54.3  OOS +0.04 | +0.25
-  30.00  rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25  [SHIPPED]
-  40.00  rho +0.17  edge +48.2  winsor +55.6  OOS +0.04 | +0.25
-  50.00  rho +0.17  edge +48.1  winsor +55.5  OOS +0.04 | +0.25
-  60.00  rho +0.17  edge +48.1  winsor +55.5  OOS +0.04 | +0.25
+  0.00   rho +0.17  edge +48.8  winsor +56.1  OOS +0.04 | +0.25  [off]
+  15.00  rho +0.15  edge +38.9  winsor +46.2  OOS +0.04 | +0.24
+  20.00  rho +0.16  edge +41.9  winsor +49.2  OOS +0.04 | +0.24
+  25.00  rho +0.16  edge +46.6  winsor +53.9  OOS +0.04 | +0.24
+  30.00  rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25  [SHIPPED]
+  40.00  rho +0.16  edge +47.8  winsor +55.2  OOS +0.04 | +0.25
+  50.00  rho +0.16  edge +47.7  winsor +55.0  OOS +0.04 | +0.25
+  60.00  rho +0.16  edge +47.7  winsor +55.0  OOS +0.04 | +0.25
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -137,14 +137,14 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   1.0 = SHIPPED (raw multiply: a name at 80% of range keeps 0.80 of its score, one at the high keeps 1.00).
   0.0 = term OFF (everyone ×1.00). NEGATIVE = INVERTED — the name furthest below its high scores HIGHEST
   (at −1.0 the 80%-of-range name is multiplied by 1.20). Clamped at 0, so no rung can produce a negative factor.
-  -1.00  rho +0.12  edge +30.1  winsor +36.9  OOS +0.12 | +0.15
-  -0.50  rho +0.13  edge +31.1  winsor +38.0  OOS +0.11 | +0.17
-  0.00   rho +0.14  edge +31.0  winsor +38.4  OOS +0.09 | +0.20  [off]
-  0.50   rho +0.15  edge +41.9  winsor +49.2  OOS +0.07 | +0.22
-  1.00   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25  [SHIPPED]
-  1.50   rho +0.17  edge +42.6  winsor +53.5  OOS +0.02 | +0.27
-  2.00   rho +0.17  edge +41.6  winsor +52.6  OOS +0.01 | +0.27
-  3.00   rho +0.17  edge +38.6  winsor +49.6  OOS -0.01 | +0.27
+  -1.00  rho +0.12  edge +29.5  winsor +36.4  OOS +0.12 | +0.15
+  -0.50  rho +0.13  edge +30.6  winsor +37.5  OOS +0.11 | +0.17
+  0.00   rho +0.14  edge +30.5  winsor +37.8  OOS +0.09 | +0.19  [off]
+  0.50   rho +0.15  edge +41.4  winsor +48.7  OOS +0.07 | +0.22
+  1.00   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25  [SHIPPED]
+  1.50   rho +0.17  edge +41.8  winsor +52.8  OOS +0.02 | +0.26
+  2.00   rho +0.17  edge +40.8  winsor +51.8  OOS +0.01 | +0.26
+  3.00   rho +0.16  edge +37.8  winsor +48.8  OOS -0.01 | +0.26
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -155,12 +155,12 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   0.5 = DEFAULT, and the flat half-score the floor-2 arm already ran with AND LOST (rank-1 +6.0 → +4.0,
   h2h 67% → 39%) — it sits in this ladder as the reproduction of the known-bad point.
   READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.
-  0.70   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25
-  0.50   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25  [SHIPPED]
-  0.40   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25
-  0.30   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25
-  0.20   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25
-  0.10   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25
+  0.70   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25
+  0.50   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25  [SHIPPED]
+  0.40   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25
+  0.30   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25
+  0.20   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25
+  0.10   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -170,27 +170,27 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   0.5 = SHIPPED (revived 2026-07-25 on argument, never measured until now). 0.0 = term OFF, the
   2026-07-15 state. 1.5 = the ORIGINAL weight, cut for being oversized on a blind term.
   READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.
-  0.00   rho +0.18  edge +54.7  winsor +62.0  OOS +0.06 | +0.27  [off]
-  0.25   rho +0.17  edge +52.2  winsor +59.6  OOS +0.05 | +0.26
-  0.50   rho +0.16  edge +46.5  winsor +53.9  OOS +0.04 | +0.25  [SHIPPED]
-  1.00   rho +0.15  edge +30.9  winsor +41.9  OOS +0.02 | +0.24
-  1.50   rho +0.13  edge +22.1  winsor +33.1  OOS +0.01 | +0.23
-  3.00   rho +0.08  edge -4.5  winsor +7.2  OOS -0.04 | +0.18
+  0.00   rho +0.18  edge +54.5  winsor +61.8  OOS +0.06 | +0.26  [off]
+  0.25   rho +0.17  edge +52.0  winsor +59.3  OOS +0.05 | +0.25
+  0.50   rho +0.16  edge +46.1  winsor +53.4  OOS +0.04 | +0.25  [SHIPPED]
+  1.00   rho +0.14  edge +30.2  winsor +41.2  OOS +0.02 | +0.23
+  1.50   rho +0.13  edge +21.4  winsor +32.4  OOS +0.01 | +0.22
+  3.00   rho +0.08  edge -5.5  winsor +6.2  OOS -0.04 | +0.18
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
 
 ── GATE AUDIT (growth gates: do the names they EXCLUDE actually underperform?) ──
-  accepted (passed gates): n=1939  fwd peer-relative  mean +0.9 | med -64.5 pts
-  rejected (failed gates): n=233   fwd peer-relative  mean -7.2 | med -14.1 pts
-  gap  mean +8.1 | med -50.5 pts  ->  SPLIT — mean (+8.1) and median (-50.5) disagree: the gap is driven by the tail, not the typical name. Read the median.
+  accepted (passed gates): n=1939  fwd peer-relative  mean +0.8 | med -64.2 pts
+  rejected (failed gates): n=233   fwd peer-relative  mean -6.8 | med -14.1 pts
+  gap  mean +7.6 | med -50.1 pts  ->  SPLIT — mean (+7.6) and median (-50.1) disagree: the gap is driven by the tail, not the typical name. Read the median.
 
 ── GATE SWEEP (loosen each gate one notch -> fwd return of the names it NEWLY admits) ──
   positive = the gate was too tight (newly-admitted beat the field); ≤0 = it's keeping junk out.
   the TOO TIGHT flag needs mean AND median positive — one survivor can carry a mean on its own.
-  vs shipped = newly-admitted median MINUS the accepted cohort's median (-64.5); >0 = no worse than what the gates already keep.
+  vs shipped = newly-admitted median MINUS the accepted cohort's median (-64.2); >0 = no worse than what the gates already keep.
   growth_min_range_pct -10   admits 0 new names (gate not binding on this sample)
-  growth_min_cagr -4         n=1    fwd peer-relative  mean +45.2 | med +45.2 pts  vs shipped +109.7  <- ADMITS NO WORSE THAN THE BOOK  <- TOO TIGHT (loosen this gate)
+  growth_min_cagr -4         n=1    fwd peer-relative  mean +45.2 | med +45.2 pts  vs shipped +109.4  <- ADMITS NO WORSE THAN THE BOOK  <- TOO TIGHT (loosen this gate)
   growth_min_1y_pct -10      admits 0 new names (gate not binding on this sample)
   max_1m_drop_pct -10 (deeper) admits 0 new names (gate not binding on this sample)
   min_avg_turnover_eur ->0   admits 0 new names (gate not binding on this sample)
@@ -231,18 +231,18 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   too few entries to read (confirmed 1886 / newly-passing 0).
 
 ── BOOK ENTRY PROBE (#821) (blend book: held now -> was it in the book ~6mo ago too?) ──
-  held both times  n=293    fwd peer-relative  mean +9.0 | med -20.6 pts
-  new to the book  n=302    fwd peer-relative  mean +15.9 | med -61.7 pts
-  gap  mean +7.0 | med -41.2 pts  ->  SPLIT — mean (+7.0) and median (-41.2) disagree: the gap is driven by the tail, not the typical name. Read the median.
+  held both times  n=293    fwd peer-relative  mean +9.1 | med -19.3 pts
+  new to the book  n=302    fwd peer-relative  mean +15.5 | med -61.7 pts
+  gap  mean +6.4 | med -42.4 pts  ->  SPLIT — mean (+6.4) and median (-42.4) disagree: the gap is driven by the tail, not the typical name. Read the median.
 
 ── PRICE-RISK (closes-derived, standalone probes) ──
-  consistency_5y n=1814  rho +0.01  edge -42.2  OOS -0.19 | +0.10
-  consistency_10y n=966   rho -0.02  edge -63.7  OOS -0.06 | -0.01
-  worst_5y       n=1814  rho +0.08  edge -37.4  OOS -0.16 | +0.18
+  consistency_5y n=1814  rho +0.00  edge -42.9  OOS -0.19 | +0.09
+  consistency_10y n=966   rho -0.03  edge -63.7  OOS -0.06 | -0.03
+  worst_5y       n=1814  rho +0.08  edge -37.9  OOS -0.16 | +0.17
   underwater_neg n/a (only 0 cutoffs carry this stat)
-  downside_dev_neg n=2172  rho +0.09  edge -11.9  OOS -0.05 | +0.27
-  sortino        n=2162  rho -0.05  edge -45.6  OOS -0.32 | +0.14
-  sharpe_ref     n=2171  rho -0.06  edge -48.9  OOS -0.33 | +0.13
+  downside_dev_neg n=2172  rho +0.09  edge -12.0  OOS -0.05 | +0.27
+  sortino        n=2162  rho -0.05  edge -46.1  OOS -0.32 | +0.13
+  sharpe_ref     n=2171  rho -0.07  edge -49.6  OOS -0.33 | +0.12
 
 ── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 8y no-sell, vs ^GSPC) [best of 13, unhaircut] ──
   POOL CENSUS (#149): 95 bucket(s), median gated pool 12, graded basket 10 -> 46 saturated (pool <= basket), 1307 substitutable name(s); the rank-1 h2h GUARD below reads off the other 49
@@ -481,7 +481,7 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
 
 ── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──
   abs_mom_5y     n=1974  rho +0.13  edge +29.5  OOS -0.03 | +0.26
-  rel_str_5y     n=1898  rho +0.15  edge +57.0  OOS +0.08 | +0.19
+  rel_str_5y     n=1898  rho +0.15  edge +57.5  OOS +0.08 | +0.20
 
   purged split, 96 months a side: early 430 of 1086 rows kept, late 192 of 1086 — both sides kept
 
