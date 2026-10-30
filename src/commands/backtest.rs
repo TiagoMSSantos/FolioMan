@@ -779,6 +779,7 @@ struct Args {
     bestpick: bool,
     rolls: bool,
     options: bool,
+    rescore: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -818,6 +819,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("rolls") => a_.rolls = true, // (#1224) the 20y DCA roll at 3m-10y, sell-all and leavers-only
             _ if a.eq_ignore_ascii_case("options") => a_.options = true, // (#1226) Cboe BuyWrite and PutWrite vs ^SP500TR over 20y
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
+            _ if a.eq_ignore_ascii_case("rescore") => a_.rescore = true, // (#1227) re-run the book reports on a samples dump
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -856,16 +858,100 @@ fn trailing_returns(closes: &[f64], i: usize) -> Vec<f64> {
 /// stamp is on and before any report reads them. The seam of the whole-walk look-ahead test in
 /// `tests/backtest_fixture.rs`: a run that cannot see past a date must write these exact lines for every
 /// cutoff whose forward window closes before it. (#857) The run then stops: no report is printed.
-fn write_samples(samples: &[Sample], path: &std::path::Path) {
+///
+/// (#1227) Also the input of `backtest rescore`. `vol_change` rides beside the quote because `Quote` does
+/// not serialize it, and the horizon and benchmark series go to [`bench_path`], so a dump can be re-scored
+/// with no fetch at all.
+fn write_samples(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, path: &std::path::Path) {
     let lines: String = samples
         .iter()
         .map(|s| {
             let q = &*s.quote;
-            let line = serde_json::json!({"ticker": q.ticker, "date": s.date, "realized": s.realized, "trail": s.trail, "quote": q, "fund": s.fund});
+            let line = serde_json::json!({"ticker": q.ticker, "date": s.date, "realized": s.realized, "trail": s.trail, "quote": q, "fund": s.fund, "vol_change": q.vol_change});
             line.to_string() + "\n"
         })
         .collect();
     std::fs::write(path, lines).expect("write FOLIOMAN_BACKTEST_SAMPLES");
+    std::fs::write(bench_path(path), serde_json::to_string(&(years, bench)).expect("bench as json")).expect("write the dump's bench file");
+}
+
+/// (#1227) `<dump>.bench.json`: the run's horizon and the benchmark series its books were priced against.
+fn bench_path(dump: &std::path::Path) -> std::path::PathBuf {
+    let mut p = dump.as_os_str().to_owned();
+    p.push(".bench.json");
+    p.into()
+}
+
+/// (#1227) Knobs `backtest rescore` refuses in a grid row. Each one acts while the walk builds the samples,
+/// or sets a process-wide value at config load, so a dump already carries the value it was made with and a
+/// row that changed it would print the old run under a new name. Grade these with a probe run per arm.
+const RESCORE_FIXED: [&str; 14] = [
+    "backtest_anchor_windows",
+    "backtest_tr_ruler",
+    "drop_dead_ticker_series",
+    "use_adjusted_close",
+    "splice_max_weekly_rate",
+    "flat_run_max_years",
+    "vol_daily_equivalent",
+    "growth_brake_min_sessions",
+    "backtest_drop_lookahead_sector",
+    "splice_trim_point_in_time",
+    "sec_line_filed_gate",
+    "life_cagr_max_years",
+    "endpoint_smooth_days",
+    "fund_source",
+];
+
+/// (#1227) One line of a [`write_samples`] dump, read back.
+#[derive(serde::Deserialize)]
+struct Dumped {
+    date: chrono::NaiveDate,
+    realized: f64,
+    trail: Vec<f64>,
+    quote: Quote,
+    fund: Option<core::FundFactors>,
+    vol_change: Option<f64>,
+}
+
+/// (#1227) `backtest rescore <dump> <grid>`: the top-N books and the SIZED row, re-run on a samples dump
+/// once per grid row, with no fetch and no walk. A grid row is one JSON object of `buy_heuristic` keys laid
+/// over the loaded config's; `{}` is the config itself. Run it under the config the dump was made with.
+///
+/// Only the cross-sectional stamp that reads the tuning is redone (the sector door's floors). The cohort
+/// ranks are NOT: that stamp subtracts a median from the dumped value, so a second pass would shift it
+/// again. `relative` is left 0, as the de-mean only feeds the lane tables, which this does not print. The
+/// SIZED row runs with no spill legs, so its remainder earns the benchmark itself.
+///
+/// Known ceiling: JSON has no NaN, so a NaN field is written as null and a `Some(NaN)` reads back as None.
+fn rescore(dump: &str, grid: &str, settings: &config::Settings) {
+    let (years, bench): (i64, (Vec<chrono::NaiveDate>, Vec<f64>)) =
+        serde_json::from_str(&std::fs::read_to_string(bench_path(dump.as_ref())).expect("read the dump's bench file")).expect("bench json");
+    let samples: Vec<Sample> = std::fs::read_to_string(dump)
+        .expect("read the samples dump")
+        .lines()
+        .map(|l| {
+            let d: Dumped = serde_json::from_str(l).expect("a dumped sample");
+            let mut q = d.quote;
+            q.vol_change = d.vol_change;
+            q.name_class = Some(picks::name_class(&q)); // not serialized; stamped as the walk does, for speed
+            Sample { date: d.date, realized: d.realized, relative: 0.0, quote: Arc::new(q), fund: d.fund, trail: d.trail }
+        })
+        .collect();
+    let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
+    for line in std::fs::read_to_string(grid).expect("read the grid").lines() {
+        let row: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line).expect("a grid row is one JSON object");
+        if let Some(k) = RESCORE_FIXED.iter().find(|k| row.contains_key(**k)) {
+            panic!("rescore: `{k}` is fixed when the walk runs; grade it with a probe arm, not a grid row");
+        }
+        let mut v = base.clone();
+        v.as_object_mut().expect("tuning is an object").extend(row);
+        let tuning: BuyHeuristic = serde_json::from_value(v).unwrap_or_else(|e| panic!("rescore: grid row {line}: {e}"));
+        println!("\n══ rescore row {line} ══");
+        let mut s = samples.clone();
+        stamp_sector_cohorts(&mut s, &bench, &tuning);
+        report_vs_benchmark(&s, &bench, years, &tuning);
+        report_sized_book(&s, &bench, years, &tuning, &settings.sizing, settings.top_picks, &[]);
+    }
 }
 
 /// The rayon pool size to force, or `None` to leave rayon alone.
@@ -1247,7 +1333,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1277,6 +1363,10 @@ pub async fn run(args: Vec<String>) {
     }
     if options {
         option_census(&client, &settings).await;
+        return;
+    }
+    if rescore_dump {
+        rescore(&tickers[0], &tickers[1], &settings);
         return;
     }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
@@ -1821,7 +1911,7 @@ pub async fn run(args: Vec<String>) {
     stamp_sector_cohorts(&mut samples, &bench, tuning);
     lap("stamps");
     if let Some(p) = std::env::var_os("FOLIOMAN_BACKTEST_SAMPLES") {
-        write_samples(&samples, p.as_ref()); // (#529) the look-ahead test's seam; unset = no-op
+        write_samples(&samples, &bench, years, p.as_ref()); // (#529) the look-ahead test's seam; unset = no-op
         return; // (#857) the test reads only the samples file, so the reports below are wasted wall time
     }
 
@@ -10289,6 +10379,7 @@ mod tests {
         assert!(p("bestpick").bestpick && !p("lifecycle").bestpick && !p("bestpick").lifecycle);
         assert!(p("rolls").rolls && !p("bestpick").rolls && !p("rolls").bestpick);
         assert!(p("options").options && !p("rolls").options && !p("options").rolls);
+        assert!(p("rescore a b").rescore && p("rescore a b").tickers == ["a", "b"] && !p("options").rescore && !p("rescore").options);
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);

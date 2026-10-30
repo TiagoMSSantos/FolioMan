@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }  # `raw_value` = the long-history cache holds byte spans, not parsed trees (see `long_cache_load`)
+serde_json = { version = "1", features = ["raw_value", "float_roundtrip"] }  # `raw_value` = the long-history cache holds byte spans, not parsed trees (see `long_cache_load`); `float_roundtrip` = a `backtest rescore` dump reads back to the bit (#1227)
 serde_yaml = "0.9"   # archived upstream but stable; swap for serde_norway if it ever breaks
 regex = "1"
 # `serde` is here for ONE cache: `.sp500_history.json` stores NaiveDate spans directly rather than

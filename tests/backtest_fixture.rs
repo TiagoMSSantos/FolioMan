@@ -335,6 +335,44 @@ fn backtest_report_is_pinned_on_frozen_data() {
     pin(&["12"], "backtest-12.golden");
 }
 
+/// (#1227) `backtest rescore` re-runs the books on a samples dump, with no walk. Grid row `{}` must print the
+/// 12y golden's own top-10, head-to-head and SIZED lines; a zeroed weight must print another top-10 line;
+/// and a knob the walk fixes must be refused, not re-printed under a new name.
+#[test]
+fn rescore_reprints_the_golden_books_from_a_dump() {
+    let cfg = fixture_copy("rescore-12", false);
+    let dump = cfg.with_file_name("samples.jsonl");
+    let grid = cfg.with_file_name("grid.jsonl");
+    report_at_env(&cfg, &["12"], None, &[("FOLIOMAN_BACKTEST_SAMPLES", dump.as_path())]);
+    std::fs::write(&grid, "{}\n{\"growth_accel_weight\":0.0}\n").expect("write grid");
+    let got = report_at(&cfg, &["rescore", dump.to_str().expect("utf-8 path"), grid.to_str().expect("utf-8 path")], None);
+    let rows: Vec<&str> = got.split("══ rescore row ").skip(1).collect();
+    assert_eq!(rows.len(), 2, "{got}");
+    let golden = std::fs::read_to_string(fixture_dir().join("backtest-12.golden")).expect("read golden");
+    let pinned: Vec<&str> = golden
+        .lines()
+        .filter(|l| ["  top-10 book", "    head-to-head", "  all entries (SIZED)"].iter().any(|p| l.starts_with(p)))
+        .collect();
+    assert_eq!(pinned.len(), 4, "the golden's top-10, two head-to-head and SIZED lines");
+    for want in &pinned {
+        assert!(rows[0].lines().any(|l| l == *want), "row {{}} lost a golden line:\n{want}\n{}", rows[0]);
+    }
+    let top10 = |r: &str| r.lines().find(|l| l.starts_with("  top-10 book")).map(String::from);
+    assert!(top10(rows[1]).is_some() && top10(rows[1]) != top10(rows[0]), "{}", rows[1]);
+
+    std::fs::write(&grid, "{\"backtest_tr_ruler\":true}\n").expect("write grid");
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
+        .args(["backtest", "rescore"])
+        .args([&dump, &grid])
+        .env("FOLIOMAN_CONFIG", &cfg)
+        .env("FOLIOMAN_OFFLINE", "1")
+        .env_remove("FMP_API_KEY")
+        .output()
+        .expect("spawn folioman");
+    let err = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success() && err.contains("`backtest_tr_ruler` is fixed"), "{err}");
+}
+
 /// (#341) THE THREAD-COUNT INVARIANT, stated. Backtest output must be BIT-IDENTICAL at any thread
 /// count: the date sort is stable, so within-date order is inherited from collection order, and
 /// `bootstrap_edge_ci`'s pools and rank ties read it. Parallel stages therefore collect in input order
