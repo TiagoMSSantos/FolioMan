@@ -8,7 +8,7 @@
 //! grades the screen's own advice on data that did not exist when it ranked — the live
 //! counterpart of the backtest's held-book metric, accruing evidence with every month that
 //! passes. Price-only (dividends not counted), EUR seat, same conventions as the backtest
-//! receipts. NOT advice.
+//! receipts.
 
 use crate::{config, fetch};
 use serde::{Deserialize, Serialize};
@@ -572,7 +572,7 @@ fn core_section(
         "\n  CORE hold shortlist — the buy-and-hold half of the report, graded the same way. Each row is\n  \
          the {cut} name(s) of that run's CORE list that `size` funds{how}: what it spills the remainder\n  \
          its caps could not deploy into, which is routinely two thirds of gross. Weighted as `size`\n  \
-         pays them (a US row 2x, the rest equal), EUR seat, price-only, same windows as above. NOT advice.\n  \
+         pays them (a US row 2x, the rest equal), EUR seat, price-only, same windows as above.\n  \
          Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
     )
 }
@@ -606,7 +606,7 @@ fn sized_section(
          weight, every other name splits the rest equally. Set it against the verdict table's dated rows:\n  \
          the gap is what the book's weighting earned or cost on prices that did not exist when it ranked.\n  \
          Scored on the SCREEN's numbers, which use live fundamentals. EUR seat, price-only returns, same\n  \
-         windows. NOT advice. Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
+         windows. Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
     )
 }
 
@@ -685,7 +685,7 @@ fn near_section(
     format!(
         "\n  Notch shadow — the names each run would have added had ONE gate loosened one sweep notch (the\n  \
          screen's notch lines), equal-weight, same windows. A cohort that keeps beating the bought book is\n  \
-         a gate refusing winners. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
+         a gate refusing winners. EUR seat, price-only. Journalled on {journalled} of {total} run(s).\n\n\
          {TABLE_HEADER}\n{body}\n\n  \
          Per notch, one line a month, cohort minus the book that line bought, graded to today AND (#338)\n  \
          chained to the next month's line. Receipt (#324), bar amended by (#329), basket by (#330) and\n  \
@@ -827,7 +827,7 @@ fn peg_section(
          (`peg_cagr_years`, graded and refused by (#331), shipping inert at 0). Each denominator splits the\n  \
          cohort at its median into a cheap half and a rich half, held equal-weight over the same window. A\n  \
          name both windows agree on cancels; only re-ranked names move this. Ranked book + notch names, EUR\n  \
-         seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
+         seat, price-only. Journalled on {journalled} of {total} run(s).\n\n\
          {PEG_HEADER}\n{body}\n\n  \
          Verdict, one line a month, graded to today and (#338) chained to the next month's line:{verdict}\n\n  \
          The cheap half is the ONLY half this tool is ever long, so the spread against the rich half is\n  \
@@ -1034,7 +1034,7 @@ fn fac_section(
          holds every one whose TTM capex tops growth_capex_ocf_max% of operating cash flow (the names the (#545)\n  \
          penalty docks). (#842) `pay` ranks the names with a DEF 14A CEO total pay by EXCESS pay (the residual\n  \
          of ln pay on ln market cap across the line): its best-paid half against peg's cheap half on those names.\n  \
-         EUR seat, price-only. NOT advice.\n  \
+         EUR seat, price-only.\n  \
          Journalled on {journalled} of {total} run(s).\n\
          {verdict}\n\n  \
          Pre-registered by (#415) before the first line accrued: a factor re-opens as a `growth_fund_extra`\n  \
@@ -1108,7 +1108,7 @@ fn swap_section(
          month, entrants minus displaced. Pre-registered: a notch flags REOPEN SIGNAL at {REOPEN_LINES}+ lines\n  \
          AND (#338) {REOPEN_LINES}+ chained links, each with mean AND median above 0. INFORM ONLY: a flag\n  \
          earns a full A/B round, never a weight move, and 16 notches read at once will throw a false flag\n  \
-         by chance. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).{body}"
+         by chance. EUR seat, price-only. Journalled on {journalled} of {total} run(s).{body}"
     )
 }
 
@@ -1241,7 +1241,7 @@ fn ladder_section(
          median above 0. `6-10 minus 1-5` re-opens (#322) `head_weight`, the tilt paying the wrong five\n  \
          (in-sample twin: backtest's rank-1 vs 6-10 head-to-head); `11-25 minus 1-10` re-opens\n  \
          (#321)'s width, the rank carrying nothing past ten (twin: the top-N ladder). A flag earns an A/B\n  \
-         round, never a move. EUR seat, price-only. NOT advice.{body}",
+         round, never a move. EUR seat, price-only.{body}",
         head + 1
     )
 }
@@ -1354,7 +1354,7 @@ fn exit_section(
          REOPEN SIGNAL at {REOPEN_LINES}+ lines AND (#338) {REOPEN_LINES}+ chained links, each with mean AND median\n  \
          above 0 — the refused names went on to lag the held ones, so a sell-on-fail rule re-opens\n  \
          (Item 31; in-sample twin: backtest's EXIT PROBE). A flag earns an A/B round, never a move. EUR seat,\n  \
-         price-only. NOT advice. Journalled on {journalled} of {} run(s).{body}",
+         price-only. Journalled on {journalled} of {} run(s).{body}",
         snaps.len()
     )
 }
@@ -1397,7 +1397,7 @@ fn young_section(
          month. Pre-registered: `yng` flags REOPEN SIGNAL at {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained links,\n  \
          each with mean AND median above 0, AND {YOUNG_MIN_NAMES}+ distinct young names journalled ({names} so far).\n  \
          A flag re-opens a young-name admission lane as an A/B round (the (#49) 2Y rung lost in-sample), never\n  \
-         a move. EUR seat, price-only. NOT advice. Journalled on {journalled} of {} run(s).{body}",
+         a move. EUR seat, price-only. Journalled on {journalled} of {} run(s).{body}",
         snaps.len()
     )
 }
@@ -1426,7 +1426,7 @@ fn soc_section(
          equal-weight against its top {} under the 20y score, both off the same line. One line a month.\n  \
          Pre-registered: `soct` flags REOPEN SIGNAL at {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained links, each\n  \
          with mean AND median above 0. A flag only keeps SOC as the Social table's order; it never reaches BUY\n  \
-         NOW or a lane without a new decision. EUR seat, price-only. NOT advice. Journalled on {journalled} of {}\n  \
+         NOW or a lane without a new decision. EUR seat, price-only. Journalled on {journalled} of {}\n  \
          run(s).{body}",
         crate::heuristics::social::BOOK,
         crate::heuristics::social::BOOK,
@@ -1529,7 +1529,7 @@ fn mblend_section(
          the shipped-only order of the same line: the first {BOOK} non-coin names of each, equal-weight. One line a\n  \
          month. Pre-registered: `mblend` flags REVERT SIGNAL at {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained\n  \
          links, each with mean AND median above 0 (the blend trailing). A flag only prints; turning\n  \
-         growth_momentum_interleave off is a decision. EUR seat, price-only. NOT advice. Journalled on\n  \
+         growth_momentum_interleave off is a decision. EUR seat, price-only. Journalled on\n  \
          {journalled} of {} run(s).{body}",
         snaps.len()
     )
@@ -1594,7 +1594,7 @@ fn scap_section(
          stocks per GICS sector; funds, coins and untagged names pass) held equal-weight against the uncapped\n  \
          top {BOOK} of the same line. One line a month. Pre-registered: a row flags REOPEN SIGNAL at\n  \
          {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ chained links, each with mean AND median above 0. A flag reopens\n  \
-         the knob as a decision; it never moves it. EUR seat, price-only. NOT advice.\n  \
+         the knob as a decision; it never moves it. EUR seat, price-only.\n  \
          Journalled on {journalled} of {} run(s).{body}",
         snaps.len()
     )
@@ -1663,7 +1663,7 @@ fn chain_section(snaps: &[Snapshot]) -> String {
          two days. The windows follow one another, so N links are N draws, not the ~1 the verdict table is\n  \
          worth. Pre-registered: BEATS S&P at {REOPEN_LINES}+ links with mean AND median monthly excess above 0,\n  \
          else TRAILS. Inform only: no gate, trust line or push reads it. Unpriced names drop, N shows how\n  \
-         many. EUR seat, price-only. NOT advice.\n\n    \
+         many. EUR seat, price-only.\n\n    \
          held from   to          days  book %   S&P %  excess   N{body}{footer}"
     )
 }
@@ -1750,7 +1750,7 @@ fn web_note(wins: usize, n: usize, sum: f64, oldest: Option<i64>, chain: Option<
             }
         ),
     };
-    format!("{record} {month} Past results.") // (#1272) the page says NOT advice once at its top, once at its bottom
+    format!("{record} {month} Past results.") // (#1274) no NOT advice line anywhere: the owner dropped it
 }
 
 /// (#1140) The page's Track record table as `[header, cell]` rows: each journalled book graded to
@@ -1940,7 +1940,7 @@ pub async fn run(args: Vec<String>) {
          when it ranked: the executed book at the weights `size` funded (a run journalled before that\n\
          book was grades its top-10 equal-weight). EUR seat, price-only like the backtest. Excess =\n\
          book − S&P 500 over the same window. Delisted/unpriced names drop out and FLATTER the book —\n\
-         the N column keeps that honest. NOT advice.\n"
+         the N column keeps that honest.\n"
     );
     if restated > 0 {
         println!(
@@ -2030,7 +2030,7 @@ pub async fn run(args: Vec<String>) {
             &settings.urls,
             &settings.ntfy_topic,
             &format!("Track record: {summary}"),
-            "Each past screen's bought book graded at today's prices vs the S&P 500 — live out-of-sample. NOT advice.",
+            "Each past screen's bought book graded at today's prices vs the S&P 500 — live out-of-sample.",
         )
         .await;
         if !delivered {

@@ -400,8 +400,8 @@ function shown(t) {
   const cols = head.flatMap((c, i) => (!c.hidden && copied(c.textContent, id) ? [i] : []));
   return { cols, heads: cols.map((i) => head[i].textContent) };
 }
-// The data's date line and the warning; no table name, since a heading like "Ran too far" is a verdict.
-const title = () => document.getElementById("generated").textContent.replace("fetched & ranked", "Data as of") + ". NOT advice";
+// The data's date line; no table name, since a heading like "Ran too far" is a verdict.
+const title = () => document.getElementById("generated").textContent.replace("fetched & ranked", "Data as of");
 // ✓ or ✗ on the button for 1.5 s. A browser without the clipboard throws inside the promise, so it reads ✗.
 function clip(b, text) {
   Promise.resolve()

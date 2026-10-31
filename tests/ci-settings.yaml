@@ -17179,7 +17179,7 @@ buy_heuristic:
   #   IF you opt for englobamento on the IRS return; a US/other payer is taxed in full. No tax law is
   #   encoded in the code — THESE TWO NUMBERS ARE THE WHOLE MODEL, and they are yours to compute from
   #   your own bracket, your englobamento choice, and the source withholding you actually eat after any
-  #   reclaim. The values below are a worked example at a ~43.5% marginal rate, NOT advice: recompute
+  #   reclaim. The values below are a worked example at a ~43.5% marginal rate: recompute
   #   them. 1.0/1.0 = tax off (the code default), lane byte-identical to the pre-tax version.
   #   ORDER MATTERS: the cap is applied to the GROSS yield, then the keep-rate scales it. Capping the
   #   scaled yield instead would saturate EU and non-EU onto the same value for every above-cap yielder,

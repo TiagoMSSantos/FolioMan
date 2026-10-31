@@ -7,7 +7,7 @@
 //! recomputes the whole ledger, so the rule lives in code+config (versioned) and there is no
 //! second file to drift. This is the cumulative €-weighted cousin of `track`: track grades each
 //! past top-10 per window, sim compounds them into one fee-aware portfolio vs an S&P 500 DCA of
-//! the same cashflows. Price-only, EUR seat, dividends not counted. NOT advice.
+//! the same cashflows. Price-only, EUR seat, dividends not counted.
 
 use crate::commands::screen::{deploy_scaled_eur, spill_picks};
 use crate::commands::size::{buy_weights, equal_weights};
@@ -397,7 +397,7 @@ pub async fn run(_args: Vec<String>) {
          first snapshot's equal-weight top-{BOOK}, at the journaled prices, base €{base:.0} × the\n\
          deploy-line entry-state multiplier, less broker fees (Trading 212: 0.15% FX on a non-EUR\n\
          line; Binance: 0.1%). Pure replay of {SNAPSHOT_FILE} (rerun = recompute, no sim state).\n\
-         Price-only, EUR, dividends not counted. NOT advice.\n"
+         Price-only, EUR, dividends not counted.\n"
     );
     if restated > 0 {
         println!(

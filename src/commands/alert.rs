@@ -130,7 +130,7 @@ pub async fn run(args: Vec<String>) {
                     "Market {state}: S&P 500 {:.1}% off high",
                     off_hi_shown(off_hi)
                 ),
-                &format!("{read}. NOT advice."),
+                &format!("{read}."),
             )
             .await;
             if delivered {

@@ -9,7 +9,6 @@
 //! Names that fail the growth gate are dropped (nothing to size). The rows can sum to under 100 when a
 //! cap binds; that remainder is deliberately unallocated, not a rounding error — `(#246)` names the
 //! broad-market default for it (CORE #1, off the last `screen` run) instead of leaving it in cash.
-//! NOT advice.
 
 use crate::{config, fetch};
 
@@ -129,7 +128,7 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
     let book = buy_weights(sized, core);
     let trackers = book.len() - sized.len();
     let mut out = format!(
-        "BUY NOW — the 20-year book: {} pick(s) + {trackers} tracker(s), % of gross. NOT advice",
+        "BUY NOW — the 20-year book: {} pick(s) + {trackers} tracker(s), % of gross",
         sized.len(),
     );
     for (i, (t, w)) in book.iter().enumerate() {
@@ -200,7 +199,7 @@ pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Opt
         .join(" · ");
     Some(format!(
         "  ({} more row(s) cleared the 20-year hold screen this run and get nothing — {funded} funded above: {body}. \
-         Different markets, not more wrappers; `spill_names` sets how many are funded. NOT advice)",
+         Different markets, not more wrappers; `spill_names` sets how many are funded)",
         rest.len()
     ))
 }
@@ -367,13 +366,13 @@ pub async fn run(args: Vec<String>) {
 
     if sz.equal_weight_book {
         println!(
-            "Suggested sizes — (#313) equal-weight top-{}: coins at their crypto budget, the other names split the rest, the first {} at {}x a later name's share (READ-ONLY, NOT advice):\n",
+            "Suggested sizes — (#313) equal-weight top-{}: coins at their crypto budget, the other names split the rest, the first {} at {}x a later name's share:\n",
             sz.book_cut(),
             HEAD,
             sz.head_share(),
         );
     } else {
-        println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
+        println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped:");
         println!(
             "  budget {:.0}/{:.0}/{:.0} stock/ETF/crypto (renormalised over the classes present) · max {:.1}%/issuer · max {:.1}%/sector\n",
             sz.budget_stock, sz.budget_etf, sz.budget_crypto, sz.max_name_pct, sz.max_sector_pct,
@@ -491,7 +490,7 @@ pub async fn run(args: Vec<String>) {
                     (Some(m), _) => format!("split equally over {n} trackers, across {m}"),
                 };
                 println!(
-                    "  (the {rest:.1}% the caps could not deploy, {home} — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap. NOT advice)"
+                    "  (the {rest:.1}% the caps could not deploy, {home} — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap)"
                 );
                 // (#287) ...and WHICH vetted holds that remainder never reaches. Read-only: no fetch,
                 // no price, no weight moved, and every line above is byte-identical to (#286)'s.
@@ -529,7 +528,7 @@ pub async fn run(args: Vec<String>) {
     // Keyless brokers are silently skipped, same posture as the screen's owned overlay; with no
     // broker key at all the section is absent. (#769) A broker that failed with its key set drops the
     // whole table: its holdings missing would read every other weight as overweight. Class-prefixed
-    // keys so a SOL coin never matches a SOL-lettered stock (round 111 rule). Display-only, NOT advice.
+    // keys so a SOL coin never matches a SOL-lettered stock (round 111 rule). Display-only.
     let gap = "allocation gap skipped";
     let t212 = crate::broker::held("Trading212", gap, crate::broker::trading212::owned_positions(&client).await);
     let bnc = crate::broker::held("Binance", gap, crate::broker::binance::owned_amounts(&client).await);
@@ -552,7 +551,7 @@ pub async fn run(args: Vec<String>) {
                 (q.ticker.clone(), key, q.price_eur, w)
             })
             .collect();
-        println!("\nAllocation gap — actual broker weights vs the SIZE% split rescaled to 100% of the sized names (matched names only; NOT advice):");
+        println!("\nAllocation gap — actual broker weights vs the SIZE% split rescaled to 100% of the sized names (matched names only):");
         for line in allocation_gap_lines(&sized, &held) {
             println!("{line}");
         }
@@ -1021,7 +1020,7 @@ pub(crate) mod tests {
             buy_list(&picks, &core).as_deref(),
             Some(
                 format!(
-                    "BUY NOW — the 20-year book: 2 pick(s) + 2 tracker(s), % of gross. NOT advice\n{head}\n  \
+                    "BUY NOW — the 20-year book: 2 pick(s) + 2 tracker(s), % of gross\n{head}\n  \
                      WEBN.DE     30.00%  all-world tracker\n  SPXS.L      60.00%  US tracker · swap"
                 )
                 .as_str()
@@ -1031,7 +1030,7 @@ pub(crate) mod tests {
             buy_list(&picks, &[]).as_deref(),
             Some(
                 format!(
-                    "BUY NOW — the 20-year book: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n{head}\n  \
+                    "BUY NOW — the 20-year book: 2 pick(s) + 0 tracker(s), % of gross\n{head}\n  \
                      (90.0% unallocated — no CORE tracker journalled to take it)"
                 )
                 .as_str()
@@ -1044,7 +1043,7 @@ pub(crate) mod tests {
         assert_eq!(
             buy_list(&full, &core).as_deref(),
             Some(
-                "BUY NOW — the 20-year book: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n  \
+                "BUY NOW — the 20-year book: 2 pick(s) + 0 tracker(s), % of gross\n  \
                  A.DE        60.00%  growth pick\n  B.DE        40.00%  growth pick"
             )
         );

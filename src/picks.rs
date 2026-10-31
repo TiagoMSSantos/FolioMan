@@ -5,7 +5,7 @@
 //!   grades the growth lane against; (#798) it trails growth at 12y/8y); never printed. Knobs feeding
 //!   it are tagged `[FOIL]` in config.
 //! Acronyms (CAGR, ROE, P/E, NUPL, SMA, Sharpe, Calmar, …): see the Glossary in README.md.
-//! **NOT advice** — a transparent ranking of the table, never an auto-buy.
+//! A transparent ranking of the table, never an auto-buy.
 
 use crate::config::{BuyHeuristic, Widths};
 use crate::core::{self, Quote, HORIZONS};
@@ -1206,7 +1206,7 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 /// - **trust** — halves anything without a long record (10Y for equities, 5Y for young-EUR-pair crypto).
 ///
 /// Every knob lives in `BuyHeuristic` (settings.yaml `buy_heuristic:`). Higher = more interesting.
-/// GATES below exclude a candidate before scoring. **NOT advice** — a ranking, never a forecast.
+/// GATES below exclude a candidate before scoring. A ranking, never a forecast.
 pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     let crypto = is_currency_quoted(&quote.ticker); // crypto/FX (-EUR/-USD): looser, peak-anchor-aware rules
 
@@ -1372,7 +1372,7 @@ pub(crate) fn accel_raw(return_1y: f64, long_cagr: f64, tuning: &BuyHeuristic) -
 /// Gated HARD so it can't degrade into top-chasing: must sit in the top `growth_min_range_pct` of its
 /// own ~10y range, compound at least `growth_min_cagr` %/yr, have a POSITIVE 1Y (actually climbing),
 /// and not be crashing this month. The P/E value tilt (E) still damps a nosebleed valuation, so a
-/// blow-off top is penalised, not rewarded. `None` if it fails a gate. **NOT advice** — a ranking.
+/// blow-off top is penalised, not rewarded. `None` if it fails a gate.
 /// Returns the full per-term [`ScoreParts`]; [`growth_score`] is the scalar wrapper most callers use.
 fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let crypto = is_currency_quoted(&quote.ticker);
@@ -3325,7 +3325,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         say(&mut s, "Coins only: scaled by Bitcoin market mood (NUPL) and by strength against Bitcoin.");
     }
     s.push_str(&in_short(&p, tuning));
-    s.push_str("  Not advice. The backtest (a replay on past prices) never saw value, the ETF fee, or fund\n  terms read from FMP only; it did test quality, dividends and the Portuguese tax split.\n");
+    s.push_str("  The backtest (a replay on past prices) never saw value, the ETF fee, or fund\n  terms read from FMP only; it did test quality, dividends and the Portuguese tax split.\n");
     Some(s)
 }
 
@@ -7036,8 +7036,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
                   200wk trend — quality pricey *because* it keeps winning. Crypto ranked vs Bitcoin (the \
                   market base). For a literal 20-year buy-and-hold the anchor is a broad, cheap, accumulating \
                   index core (the `H`-marked hold-suitable names) — these ranked tilts are higher-variance, \
-                  regime-dependent sector/thematic bets whose recent leadership won't necessarily repeat. \
-                  NOT advice.";
+                  regime-dependent sector/thematic bets whose recent leadership won't necessarily repeat.";
     let picks = book_picks(quotes, tuning, ctx.nupl, &pinned_set);
     // (Item 8) churn warning: compare this run's top-N against the last. Separate cache for the wide
     // `screen` universe vs the small `check`/watch set (keyed by size) so their overlaps don't mix.
@@ -11106,7 +11105,7 @@ mod tests {
         assert!(s.contains("Bonus for heavy daily trading (easy to buy and sell). Off in today's settings"), "{s}");
         assert!(s.contains("today's price beats 90% of its own prices"), "{s}");
         assert!(s.contains("so one harsh brake counts only half as hard"), "{s}");
-        assert!(s.contains("Not advice."), "{s}");
+        assert!(s.contains("  The backtest (a replay on past prices)"), "{s}");
         let thin = Quote { avg_turnover_eur: Some(3e8), ..q.clone() };
         assert!(ex(&thin, &BuyHeuristic { growth_turnover_weight: 0.5, ..d.clone() })
             .contains("€0.30B/day is not above the €1B/day where it starts, so it adds nothing."));

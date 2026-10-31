@@ -36,7 +36,7 @@ knobs, and all data-source URLs. `screen` builds its universe **live** (top-N cr
 CoinGecko + the S&P 500 constituents CSV + the Euronext Lisbon equities + top-N EU UCITS ETFs from
 Börse Frankfurt — tune `universe_size`; `screen TICKER...` overrides),
 so there's no hand-kept list to maintain. `n/a` in a column = history doesn't reach that far.
-Outputs are a transparent ranking of public data — **not investment advice**.
+Outputs are a transparent ranking of public data.
 
 Set `FOLIOMAN_CONFIG=/path/to/settings.yaml` to override where the config is loaded from (CI
 points it at a secret-free `tests/ci-settings.yaml` fixture this way). Fundamentals columns (P/E,
@@ -84,7 +84,7 @@ The `screen` command shows the same signal live — as a loud banner above the t
 market is ≥5% off its high, as a quiet footer near the high. Set `monthly_deploy_eur` (private
 overlay; 0 = off) and `screen` also turns the state into a number: `DEPLOY THIS MONTH: €X` =
 your monthly base × 1 near the high, × 1.5 in a pullback, × 2 in a drawdown — the "how much this
-month?" arithmetic done for you. Not advice.
+month?" arithmetic done for you.
 
 Below the tables, `screen` prints the top book as **paste-ready `trade` commands** (stocks/ETFs →
 Trading212, crypto → Binance): the BUY NOW book, each row buying that deploy € × its weight. A
@@ -120,7 +120,7 @@ schedule is the dedup; a failed push just retries next month):
 `folioman sim` replays `.screen_snapshots.jsonl` as a pretend monthly saver: each month
 `monthly_deploy_eur` times the entry-state multiplier buys that month's first BUY NOW book (else the
 first snapshot's equal-weight top-10) at the journalled prices, less broker fees, and compounds it
-against an S&P 500 DCA of the same cashflows. No state of its own; price-only; NOT advice.
+against an S&P 500 DCA of the same cashflows. No state of its own; price-only.
 
 ### Run-to-run alerts (`screen`)
 

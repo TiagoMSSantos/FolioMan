@@ -3445,7 +3445,7 @@ pub async fn run(args: Vec<String>) {
 
     if let Some(n) = nupl {
         println!(
-            "\nBitcoin NUPL: {n:.3} ({}) — net unrealized profit/loss, whole-market sentiment (damps the crypto tables above). NOT advice.",
+            "\nBitcoin NUPL: {n:.3} ({}) — net unrealized profit/loss, whole-market sentiment (damps the crypto tables above).",
             crate::core::nupl_zone(n)
         );
     }
@@ -4015,7 +4015,7 @@ fn valuation_state_line(anchor: &str, index_pe: f64, euribor: f64, off_hi: Optio
         ),
     };
     Some(format!(
-        "Valuation state: {anchor} look-through P/E {index_pe:.1} -> earnings yield {:.2}% - Euribor 3M {euribor:.2}% = {excess:+.2} pts excess -> {level} (band ±{band:.1}). {read}. Deploy still reads the drawdown axis alone. NOT advice.",
+        "Valuation state: {anchor} look-through P/E {index_pe:.1} -> earnings yield {:.2}% - Euribor 3M {euribor:.2}% = {excess:+.2} pts excess -> {level} (band ±{band:.1}). {read}. Deploy still reads the drawdown axis alone.",
         100.0 / index_pe
     ))
 }
@@ -4032,7 +4032,7 @@ pub(crate) fn off_hi_shown(off_hi: f64) -> f64 {
 fn entry_state_line(off_hi: f64) -> String {
     let (state, read) = entry_state_class(off_hi);
     format!(
-        "Entry state: S&P 500 {:.1}% off its high — {state}. {read}. NOT advice.",
+        "Entry state: S&P 500 {:.1}% off its high — {state}. {read}.",
         off_hi_shown(off_hi)
     )
 }
@@ -4103,7 +4103,7 @@ fn entry_state_banner(off_hi: f64) -> Option<String> {
     let (state, read) = entry_state_class(off_hi);
     let rule = "=".repeat(72);
     Some(format!(
-        "\n{rule}\n  ENTRY STATE: {state} — S&P 500 {:.1}% off its high\n  {read}. NOT advice.\n{rule}",
+        "\n{rule}\n  ENTRY STATE: {state} — S&P 500 {:.1}% off its high\n  {read}.\n{rule}",
         off_hi_shown(off_hi)
     ))
 }
@@ -4120,11 +4120,11 @@ pub(crate) fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> 
         Some(off) => {
             let (state, _) = entry_state_class(off);
             format!(
-                "\n  DEPLOY THIS MONTH: €{total:.0} — base €{base_eur:.0} × {mult} ({state} entry state). NOT advice."
+                "\n  DEPLOY THIS MONTH: €{total:.0} — base €{base_eur:.0} × {mult} ({state} entry state)."
             )
         }
         None => format!(
-            "\n  DEPLOY THIS MONTH: €{total:.0} — base × {mult} (S&P 500 entry state unavailable this run). NOT advice."
+            "\n  DEPLOY THIS MONTH: €{total:.0} — base × {mult} (S&P 500 entry state unavailable this run)."
         ),
     })
 }
@@ -4179,7 +4179,7 @@ fn digest_lines(
     degraded: &[String],
 ) -> Vec<String> {
     let mut out =
-        vec!["\nDIGEST — the actionable lines of this run, repeated. NOT advice.".to_string()];
+        vec!["\nDIGEST — the actionable lines of this run, repeated.".to_string()];
     out.push(match off_hi {
         Some(off) => format!(
             "  Entry state: {} — S&P 500 {:.1}% off its high",
@@ -4286,10 +4286,10 @@ fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>, f64)],
     let mut out = String::from("\nPaste-ready orders — the BUY NOW book above, ");
     match deploy_eur {
         Some(d) => out.push_str(&format!(
-            "€{d:.0} this month × each row's weight. Review each; every command asks its own real-money 'yes'. NOT advice.\n"
+            "€{d:.0} this month × each row's weight.\n"
         )),
         None => out.push_str(
-            "set monthly_deploy_eur for sized QTY. Review each; every command asks its own real-money 'yes'. NOT advice.\n",
+            "set monthly_deploy_eur for sized QTY.\n",
         ),
     }
     let mut unheld = false;
@@ -4370,8 +4370,7 @@ fn switch_lines(
     (!out.is_empty()).then(|| {
         format!(
             "\nFund switches — a held fund's same-index twin is cheaper, and selling now ({tax_pct:.0}% CGT on the gain) then\n\
-             rebuying beats holding after tax at {SWITCH_YEARS}y, {:.0}%/yr gross. Review each; every command asks its own\n\
-             real-money 'yes'. NOT advice.{out}",
+             rebuying beats holding after tax at {SWITCH_YEARS}y, {:.0}%/yr gross.{out}",
             SWITCH_R * 100.0
         )
     })
@@ -6777,7 +6776,7 @@ mod tests {
         assert_eq!(
             full,
             vec![
-                "\nDIGEST — the actionable lines of this run, repeated. NOT advice.",
+                "\nDIGEST — the actionable lines of this run, repeated.",
                 "  Entry state: DRAWDOWN — S&P 500 16.0% off its high",
                 "  Deploy this month: €600",
                 "  Buy now: T0 10.0% · T1 9.0% · T2 8.0%",
@@ -6791,7 +6790,7 @@ mod tests {
         assert_eq!(
             quiet,
             vec![
-                "\nDIGEST — the actionable lines of this run, repeated. NOT advice.",
+                "\nDIGEST — the actionable lines of this run, repeated.",
                 "  Entry state: unavailable this run",
                 "  Buy now: nothing this run",
                 "  Data quality: 9 names | 0 no data",
