@@ -245,10 +245,10 @@ function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = ne
     const buy = row.findIndex(([h]) => h === "BUY%");
     if (buy >= 0) Object.assign(tr.insertCell(buy + 1), { className: "eur" }).dataset.pct = parseFloat(row[buy][1]);
     // (#1256) the copy-this-row button holds no text (its ⧉ is CSS), so sort, filter and widths read the cell as before
-    const copy = Object.assign(document.createElement("button"), { className: "copy", type: "button", ariaLabel: "copy row", title: "Copy this row and its column names. To copy less, pick fewer columns in the columns box, for example overview" });
+    const copy = Object.assign(document.createElement("button"), { className: "copy", type: "button", ariaLabel: "copy row", title: "Copy this row's facts and their column names, leaving out every rank, score, estimate and opinion. To copy less, pick fewer columns in the columns box, for example overview" });
     copy.onclick = () => {
       const { cols, heads } = shown(t);
-      clip(copy, rowText(title(t), cols.map((i, k) => [heads[k], tr.cells[i].textContent, tr.cells[i].dataset.note])));
+      clip(copy, rowText(title(), cols.map((i, k) => [heads[k], tr.cells[i].textContent, tr.cells[i].dataset.note])));
     };
     tr.cells[0].prepend(copy);
   });
@@ -364,9 +364,10 @@ console.assert(
     csv([[["M", "+9.9pp"], ["G", "-9%ᵈ"], ["P", "@SUM(A1)"]]]) === "M,G,P\n+9.9pp,-9%ᵈ,'@SUM(A1)\n",
   "csv lets a formula cell run or escapes a number",
 );
-// (#1256) Copy a row or a table, as shown, with its column names. A row reads as "COLUMN: value" lines,
-// a cell's own note (its payload hover) in brackets; a table as Markdown, which AI tools read better
-// than CSV. Pure text here; shown(), title() and clip() read the page and write the clipboard.
+// (#1256) Copy a row or a table, as shown, with its column names, less the BIAS columns below (#1273).
+// A row reads as "COLUMN: value" lines, a cell's own note (its payload hover) in brackets; a table as
+// Markdown, which AI tools read better than CSV. Pure text here; shown(), title() and clip() read the
+// page and write the clipboard.
 const rowText = (title, cells) =>
   [title, ...cells.map(([h, v, note]) => h + ": " + v + (note ? " [" + note.replace(/\s*\n\s*/g, "; ") + "]" : ""))].join("\n");
 const md = (s) => s.replaceAll("|", "\\|").replace(/\s*\n\s*/g, " ");
@@ -381,16 +382,26 @@ console.assert(
 // caveat and its age, shown again under the Stocks heading.
 const trackSum = (note) => note.split(" Month by month")[0];
 console.assert(trackSum("Beat 1 of 2. Old 3 days. Month by month, 1 month. Past results.") === "Beat 1 of 2. Old 3 days.", "the track summary misreads the note");
-// The columns shown: the picker's hidden ones left out, and BUY € only while an amount is typed (euros()).
+// (#1273) Left out of every copy, so a pasted copy carries facts only: the page's ranks, scores,
+// misses and buy shares (BUY € and CORE's unnamed owned mark included), its value estimates and
+// warning flags, analysts' targets, the social sources and Berkshire's holding columns. The CSV
+// link keeps every column.
+const BIAS = new Set(["RANK", "RANK-20Y", "SCORE", "S-8Y", "MISSES", "BUY%", "BUY €", "SOC", "UNCUT", "BAR", "CUT", "BEST", "DETAIL", "",
+  "FAIR", "MOS%", "FAIR-OE", "MOS-OE%", "FAIR-CAP", "IMPL-G", "RED-FLAGS", "M-SCORE", "TARGET%", "SOURCES", "WHY", "WEIGHT", "SHARES Δ", "BOUGHT"]);
+const copied = (h, id) => !BIAS.has(h) && !(h === "STATUS" && id === "berkshire"); // the IPO table's STATUS is a fact
+console.assert(
+  copied("P/E", "stocks") && copied("STATUS", "upcoming") && !copied("RANK", "core") && !copied("", "core") && !copied("STATUS", "berkshire"),
+  "a copy keeps a ranking column",
+);
+// The columns copied: the picker's hidden ones and the BIAS ones left out.
 function shown(t) {
-  const eur = document.body.classList.contains("euros");
+  const id = t.closest("div[id]").id;
   const head = [...t.rows[0].cells];
-  const cols = head.flatMap((c, i) => (!c.hidden && (eur || !c.classList.contains("eur")) ? [i] : []));
-  return { cols, heads: cols.map((i) => head[i].textContent || "owned") }; // CORE's flag column prints no header
+  const cols = head.flatMap((c, i) => (!c.hidden && copied(c.textContent, id) ? [i] : []));
+  return { cols, heads: cols.map((i) => head[i].textContent) };
 }
-// The table's heading (its text before the CSV link), the data's date line, and the warning.
-const title = (t) =>
-  document.getElementById("h-" + t.closest("div[id]").id).firstChild.textContent.trim() + " — " + document.getElementById("generated").textContent + ". NOT advice";
+// The data's date line and the warning; no table name, since a heading like "Ran too far" is a verdict.
+const title = () => document.getElementById("generated").textContent.replace("fetched & ranked", "Data as of") + ". NOT advice";
 // ✓ or ✗ on the button for 1.5 s. A browser without the clipboard throws inside the promise, so it reads ✗.
 function clip(b, text) {
   Promise.resolve()
@@ -799,13 +810,13 @@ function render(data, prev) {
     const h = document.getElementById(by);
     let b = h.querySelector("button.whole");
     if (!b) {
-      b = Object.assign(document.createElement("button"), { className: "copy whole", type: "button", ariaLabel: "copy table", title: "Copy the table as shown, with its column names, as a Markdown table. For a spreadsheet, use the CSV link" });
+      b = Object.assign(document.createElement("button"), { className: "copy whole", type: "button", ariaLabel: "copy table", title: "Copy the table's facts as shown, with their column names, as a Markdown table, leaving out every rank, score, estimate and opinion. For a spreadsheet with every column, use the CSV link" });
       h.append(" ", b);
     }
     b.hidden = false;
     b.onclick = () => {
       const { cols, heads } = shown(t);
-      clip(b, tableText(title(t), heads, [...t.tBodies[0].rows].filter((tr) => !tr.hidden).map((tr) => cols.map((i) => tr.cells[i].textContent))));
+      clip(b, tableText(title(), heads, [...t.tBodies[0].rows].filter((tr) => !tr.hidden).map((tr) => cols.map((i) => tr.cells[i].textContent))));
     };
   }
 }
