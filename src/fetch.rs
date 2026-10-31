@@ -600,7 +600,10 @@ async fn last_close(client: &Client, urls: &Urls, symbol: &str) -> Option<f64> {
         .get(0)?
         .get("close")?
         .as_array()?;
-    arr.iter().rev().find_map(|v| v.as_f64())
+    // (#1276) A 0 close is no rate. Read as one, `eur_rate` priced every row of the currency at EUR 0, or
+    // at +inf on the inverted pair. Same guard as `eur_rate_series` and `parse_chart` (#1146); the bar
+    // before it stands in.
+    arr.iter().rev().find_map(|v| v.as_f64().filter(|c| *c > 0.0))
 }
 
 /// Pence-quote scale: Yahoo reports LSE listings in pence ("GBp", sometimes "GBX"), so the pound
@@ -17590,6 +17593,18 @@ pub(crate) mod tests {
         let (up, client, _) = routed_stub(vec![("USDEUR", chart_body(&[(d, 0.9)], &[], "USD"))]);
         urls.yahoo_chart = format!("{up}{{ticker}}/{{range}}");
         assert_eq!(eur_rate(&client, &urls, "USD", &fx).await, Some(0.9), "asked again, and answered");
+    }
+
+    /// (#1276) A 0 close on the pair is skipped, so the bar before it is the rate. Taken as the rate, it
+    /// priced every USD row at EUR 0, and on the inverted pair 1 / 0 is +inf.
+    #[tokio::test]
+    async fn eur_rate_skips_a_zero_close() {
+        let d0 = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+        let (base, client, _) = routed_stub(vec![("USDEUR", chart_body(&[(d0, 0.9), (d1, 0.0)], &[], "USD"))]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        assert_eq!(eur_rate(&client, &urls, "USD", &fx_cache()).await, Some(0.9), "the 0.0 close is not the rate");
     }
 
     /// (#1150) The ECB stands in only when both Yahoo pairs miss, and only with a positive rate. USD and
