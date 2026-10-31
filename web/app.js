@@ -122,6 +122,55 @@ console.assert(
   "a BUY € cell misprices",
 );
 
+// (#1258) The start box's whole-world fund: of CORE's rows whose INDEX reads all country world, all
+// world or ACWI, the one missing the fewest buy rules (a fund under a year old misses several), then a
+// euro listing, then the lowest yearly fee, then the bigger fund; a full tie keeps CORE's order. Each
+// world fund has missed cagr and cagr-life, so the sentence says why the buy list skips it, in the
+// CORE MISSES help's own words. shortcut: the euro listing is read from the exchange suffix, so a euro
+// line on London reads non-euro; the payload carries no quote currency.
+const cellOf = (r, h) => r.find(([k]) => k === h)?.[1] ?? "";
+const WORLD = /all[- ]country[- ]world|all[- ]world|acwi/i;
+function startFund(core, missHelp) {
+  const inf = (x) => (Number.isNaN(x) ? Infinity : x);
+  const key = (r) => {
+    const aum = /([\d.]+)\s*([KMB]?)/.exec(cellOf(r, "AUM").replaceAll(",", ""));
+    return [
+      inf(parseInt(cellOf(r, "MISSES"))),
+      /\.(DE|F|PA|AS|MI|BR|MC|VI|HE|LS|IR)$/.test(cellOf(r, "TICKER")) ? 0 : 1,
+      inf(parseFloat(cellOf(r, "TER"))),
+      aum ? -aum[1] * ({ K: 1e3, M: 1e6, B: 1e9 }[aum[2]] || 1) : 0,
+    ];
+  };
+  const cmp = ([a], [b]) => {
+    const i = a.findIndex((x, j) => x !== b[j]);
+    return i < 0 ? 0 : a[i] - b[i];
+  };
+  const worlds = core.filter((r) => WORLD.test(cellOf(r, "INDEX"))).map((r) => [key(r), r]);
+  const [k, w] = worlds.sort(cmp)[0] || [];
+  if (!w) return "Look in CORE for an INDEX that says all country world or all world.";
+  const miss = cellOf(w, "MISSES");
+  const n = parseInt(miss) || 0;
+  const means = (miss.split(":")[1] || "").split(",").map((m) => m.trim()).filter(Boolean).map((m) => missHelp.split("; ").find((p) => p.startsWith(m + " = "))?.slice(m.length + 3) || m);
+  const every = worlds.every(([x]) => x[0] > 0) ? "Like every world fund here, it" : "It";
+  return (
+    "Today: " + cellOf(w, "NAME") + " (" + cellOf(w, "TICKER") + "), rank " + parseInt(cellOf(w, "RANK")) + " in the CORE table. " +
+    "Of the world funds that miss the fewest buy rules, it " + (k[1] ? "has" : "is the euro listing with") + " the lowest yearly fee, " + cellOf(w, "TER") + "." +
+    (n > 0 ? " " + every + " misses " + n + " buy rule" + (n > 1 ? "s" : "") + ", so the buy list itself does not buy it: " + means.join("; ") + "." : "")
+  );
+}
+console.assert(
+  ((f) => {
+    const row = (t, i, m, ter, aum, rank) => [["RANK", rank], ["NAME", t + " fund"], ["TICKER", t], ["INDEX", i], ["MISSES", m], ["TER", ter], ["AUM", aum]];
+    const help = "Buy rules missed: x; cagr = grew too slowly per year; cagr-life = grew too slowly over its whole life; y = z";
+    const two = "2: cagr, cagr-life";
+    const core = [row("S.DE", "S&P 500", "0", "0.03%", "€90.0B", "1"), row("L.L", "FTSE All-World", two, "0.10%", "€50.0B", "3"), row("Y.DE", "msci acwi", "5: history, 1Y+, cagr, range, liquidity", "0.05%", "€900M", "9"), row("B.DE", "MSCI ACWI", two, "0.12%", "€9.9B", "4"), row("A.DE", "MSCI All Country World", two, "0.12%", "€17.3B", "5")];
+    return f(core, help) === "Today: A.DE fund (A.DE), rank 5 in the CORE table. Of the world funds that miss the fewest buy rules, it is the euro listing with the lowest yearly fee, 0.12%. Like every world fund here, it misses 2 buy rules, so the buy list itself does not buy it: grew too slowly per year; grew too slowly over its whole life." &&
+      f([row("P.L", "FTSE All-World", "0", "0.20%", "n/a", "2")], help) === "Today: P.L fund (P.L), rank 2 in the CORE table. Of the world funds that miss the fewest buy rules, it has the lowest yearly fee, 0.20%." &&
+      f(core.slice(0, 1), help).startsWith("Look in CORE");
+  })(startFund),
+  "the start box names the wrong whole-world fund",
+);
+
 function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = new Set(), flags = {}) {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
@@ -723,13 +772,8 @@ function render(data, prev) {
   chooser(Math.max(1, ...sizes));
   view(viewSel.value);
   euros(); // (#1254) an upload renders new rows: their BUY € cells take the amount already typed
-  // (#1254) The start box names the best-ranked whole-world fund in CORE: the first row whose INDEX
-  // reads all country world, all world or ACWI. CORE's order is the page's own; nothing is re-ranked.
-  const cell = (r, h) => r.find(([k]) => k === h)?.[1] ?? "";
-  const world = (data.core || []).find((r) => /all[- ]country[- ]world|all[- ]world|acwi/i.test(cell(r, "INDEX")));
-  document.getElementById("start-fund").textContent = world
-    ? "Today the best-ranked one in CORE is " + cell(world, "NAME") + " (" + cell(world, "TICKER") + "), rank " + parseInt(cell(world, "RANK")) + " in the CORE table."
-    : "Look in CORE for an INDEX that says all country world or all world.";
+  // (#1254) The start box names one whole-world fund in CORE; (#1258) which one is `startFund`'s.
+  document.getElementById("start-fund").textContent = startFund(data.core || [], data.help?.core?.MISSES || "");
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
   for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday", "trading_buynow", "track"]) {
     if (data[id]) sheet(id, data[id]);
