@@ -157,7 +157,7 @@ function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = ne
     if (row.some(([h, c]) => h === "RANK" && /\*/.test(c))) tr.dataset.pin = "";
     for (const [h, cell, url, tip] of row) {
       const td = tr.insertCell();
-      if (tip) td.title = tip; // (#542) a REPORTS cell's hover: the description and last annual report; (#543) a MISSES cell's: each missed gate's value vs its bar. Text only
+      if (tip) td.title = td.dataset.note = tip; // (#1256) the note a row copy carries; (#542) a REPORTS cell's hover: the description and last annual report; (#543) a MISSES cell's: each missed gate's value vs its bar. Text only
       else if (/^(n\/a|—|burn)/.test(cell)) td.title = why(help[h], cell); // (#718)
       else if (h !== "NAME" && h !== "TICKER") td.title = hover(help, h, String(cell)); // (#732) NAME and TICKER link; their link is the hover
       // (#474) a RANK cell's hover reads its position, then what each of its flags means. (#933) Only
@@ -195,6 +195,13 @@ function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = ne
     }
     const buy = row.findIndex(([h]) => h === "BUY%");
     if (buy >= 0) Object.assign(tr.insertCell(buy + 1), { className: "eur" }).dataset.pct = parseFloat(row[buy][1]);
+    // (#1256) the copy-this-row button holds no text (its ⧉ is CSS), so sort, filter and widths read the cell as before
+    const copy = Object.assign(document.createElement("button"), { className: "copy", type: "button", ariaLabel: "copy row", title: "Copy this row and its column names" });
+    copy.onclick = () => {
+      const { cols, heads } = shown(t);
+      clip(copy, rowText(title(t), cols.map((i, k) => [heads[k], tr.cells[i].textContent, tr.cells[i].dataset.note])));
+    };
+    tr.cells[0].prepend(copy);
   });
   box.appendChild(t);
   return box;
@@ -308,6 +315,39 @@ console.assert(
     csv([[["M", "+9.9pp"], ["G", "-9%ᵈ"], ["P", "@SUM(A1)"]]]) === "M,G,P\n+9.9pp,-9%ᵈ,'@SUM(A1)\n",
   "csv lets a formula cell run or escapes a number",
 );
+// (#1256) Copy a row or a table, as shown, with its column names. A row reads as "COLUMN: value" lines,
+// a cell's own note (its payload hover) in brackets; a table as Markdown, which AI tools read better
+// than CSV. Pure text here; shown(), title() and clip() read the page and write the clipboard.
+const rowText = (title, cells) =>
+  [title, ...cells.map(([h, v, note]) => h + ": " + v + (note ? " [" + note.replace(/\s*\n\s*/g, "; ") + "]" : ""))].join("\n");
+const md = (s) => s.replaceAll("|", "\\|").replace(/\s*\n\s*/g, " ");
+const tableText = (title, heads, rows) =>
+  [title, "", ...[heads, heads.map(() => "---"), ...rows].map((r) => "| " + r.map(md).join(" | ") + " |")].join("\n");
+console.assert(
+  rowText("T", [["A", "1", "x\n y"], ["B", "2"]]) === "T\nA: 1 [x; y]\nB: 2" &&
+    tableText("T", ["A", "B"], [["1", "x|y"]]) === "T\n\n| A | B |\n| --- | --- |\n| 1 | x\\|y |",
+  "a copied row or table misprints",
+);
+// The columns shown: the picker's hidden ones left out, and BUY € only while an amount is typed (euros()).
+function shown(t) {
+  const eur = document.body.classList.contains("euros");
+  const head = [...t.rows[0].cells];
+  const cols = head.flatMap((c, i) => (!c.hidden && (eur || !c.classList.contains("eur")) ? [i] : []));
+  return { cols, heads: cols.map((i) => head[i].textContent || "owned") }; // CORE's flag column prints no header
+}
+// The table's heading (its text before the CSV link), the data's date line, and the warning.
+const title = (t) =>
+  document.getElementById("h-" + t.closest("div[id]").id).firstChild.textContent.trim() + " — " + document.getElementById("generated").textContent + ". NOT advice";
+// ✓ or ✗ on the button for 1.5 s. A browser without the clipboard throws inside the promise, so it reads ✗.
+function clip(b, text) {
+  Promise.resolve()
+    .then(() => navigator.clipboard.writeText(text))
+    .then(() => "ok", () => "no")
+    .then((s) => {
+      b.dataset.state = s;
+      setTimeout(() => delete b.dataset.state, 1500);
+    });
+}
 // (#445) One CSV link per section, in its h2, made once; a re-render (an upload) only swaps the rows.
 const sheets = {};
 function sheet(id, rows) {
@@ -696,10 +736,24 @@ function render(data, prev) {
   }
   glossary(data, { ...help, approaches: APPROACH_HELP });
   // (#433) Each table and its scroll box are named by the h2 above them, `h-` + the holder's id.
+  // (#1256) Each heading also gets one copy-the-table button beside its CSV link, made once; a table
+  // gone on an upload re-render leaves its button hidden.
+  for (const b of document.querySelectorAll("button.whole")) b.hidden = true;
   for (const t of document.querySelectorAll(".scroll table")) {
     const by = "h-" + t.closest("div[id]").id;
     t.setAttribute("aria-labelledby", by);
     t.parentElement.setAttribute("aria-labelledby", by);
+    const h = document.getElementById(by);
+    let b = h.querySelector("button.whole");
+    if (!b) {
+      b = Object.assign(document.createElement("button"), { className: "copy whole", type: "button", ariaLabel: "copy table", title: "Copy the table as shown, with its column names, as a Markdown table" });
+      h.append(" ", b);
+    }
+    b.hidden = false;
+    b.onclick = () => {
+      const { cols, heads } = shown(t);
+      clip(b, tableText(title(t), heads, [...t.tBodies[0].rows].filter((tr) => !tr.hidden).map((tr) => cols.map((i) => tr.cells[i].textContent))));
+    };
   }
 }
 

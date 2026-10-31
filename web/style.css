@@ -125,6 +125,16 @@
   /* (#731) a NAME's TradingView icon, `::before` for the same reason */
   td a.tv { margin-left: .3rem; text-decoration: none; }
   td a.tv::before { content: "📈"; }
+  /* (#1256) The copy buttons: their labels are CSS, so a cell's text (the sort key, the filter) and a
+     heading's text (a copy's title line) stay as they were. */
+  button.copy { border: 0; background: none; padding: 0 .3rem 0 0; color: var(--muted); font: inherit; cursor: pointer; }
+  button.copy::before { content: "⧉"; }
+  button.copy[data-state="ok"]::before { content: "✓"; }
+  button.copy[data-state="no"]::before { content: "✗"; }
+  button.copy.whole { font-size: .7rem; font-weight: 400; margin-left: .4rem; padding: 0; text-decoration: underline; text-decoration-color: var(--rule); }
+  button.copy.whole::before { content: "copy"; }
+  button.copy.whole[data-state="ok"]::before { content: "copied"; }
+  button.copy.whole[data-state="no"]::before { content: "copy failed"; }
   /* (#525) a shadow row whose CAGR is under its table's floor: shown in rank order, greyed */
   tr.below td { color: var(--muted); }
   /* (#1213) an Intraday SESSION's hours on the reader's clock, a second line, `::after` for the same reason */
