@@ -443,7 +443,7 @@ pub fn web_rows(k: u8, book: &[Row], until: NaiveDate, today: NaiveDate) -> Vec<
                     (Some(p), Some(r)) => json!(["PRICE", format!("€{}", core::fmt_money2(p * r))]),
                     _ => json!(["PRICE", "—"]),
                 },
-                json!(["BEST", format!("{} {}", WAYS[best[0].0], eur(best[0].1)), null, format!("The best of these ways to trade the name over the same sessions, in euros after costs, highest first:\n{}\n(hindsight: every column counts sessions that are over; the rows sort on this column. Picked this way on each name's last 2 years, BEST then lost to buying and holding the same name over the next 6 months and over the next month, in the US and the EU, 2019-2026: receipt #1222)", best.iter().map(|&(w, x)| format!("{} {}", WAYS[w], eur(x))).collect::<Vec<_>>().join("\n"))]),
+                json!(["BEST", format!("{} {}", WAYS[best[0].0], eur(best[0].1)), null, format!("The best of these ways to trade the name over the same sessions, in euros after costs, highest first:\n{}\n(hindsight: every column counts sessions that are over; the rows sort on this column. Picked this way on each name's last 2 years, BEST then lost to buying and holding the same name over the next 6 months and over the next month, in the US and the EU, 2019-2026)", best.iter().map(|&(w, x)| format!("{} {}", WAYS[w], eur(x))).collect::<Vec<_>>().join("\n"))]),
                 match bh.first() {
                     Some(_) => json!(["BUY&HOLD", eur(euros(&bh, cost)), null, format!("€1,000 bought at the open on {} and sold at the close on {}, one round trip: {}", c.dates[s], c.dates[e - 1], trips(&bh))]),
                     None => json!(["BUY&HOLD", "—"]),
@@ -1453,7 +1453,7 @@ mod tests {
         let until = NaiveDate::from_ymd_opt(2028, 1, 2).unwrap();
         let mut rows = web_rows(3, &[("US", "ACME", "ACME", &c, &two), ("US", "B", "B", &up, &two)], until, d(31));
         stamp_exits(&mut rows, &HashMap::new(), &[("US", 870)], until, d(31));
-        let best = "(hindsight: every column counts sessions that are over; the rows sort on this column. Picked this way on each name's last 2 years, BEST then lost to buying and holding the same name over the next 6 months and over the next month, in the US and the EU, 2019-2026: receipt #1222)";
+        let best = "(hindsight: every column counts sessions that are over; the rows sort on this column. Picked this way on each name's last 2 years, BEST then lost to buying and holding the same name over the next 6 months and over the next month, in the US and the EU, 2019-2026)";
         let fresh = "(a fresh €1,000 each session, not compounded: a gain is not reinvested, a loss is topped back up; every session of this name, not only the days the table listed it; a US row leaves out the euro's move inside the session)";
         let trend = "In while the last close sits above the average of the last 200 closes: bought at the next open, sold at the next open after a close under it, or at the last close if still in, over the same 30 sessions: 0 round trips, +€0.00 before costs; the backtest's 50 bp a round trip costs 0 × €5.00 = €0.00; +€0.00 after\n(a fresh €1,000 each round trip, not compounded; 0 round trips = it stayed out and made nothing)";
         assert_eq!(
