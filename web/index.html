@@ -15,12 +15,24 @@
 <body>
 <main>
   <h1>FolioMan — top picks per class</h1>
-  <!-- (#445) Plain anchors to each section's h2: the page is fifteen tables long. -->
+  <!-- (#445) Plain anchors to each section's h2: the page is fifteen tables long. (#1254) Grouped by
+       what each table is for, in the page's own table order. -->
   <nav class="sub" aria-label="sections">
-    <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
-    <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
-    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Ran too far</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-intraday">Trading</a> · <a href="#h-track">Track record</a>
+    To buy: <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
+    <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a><br>
+    Watch only, NOT buy signals: <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
+    <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Ran too far</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a><br>
+    Background: <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-intraday">Trading</a> · <a href="#h-track">Track record</a>
   </nav>
+  <!-- (#1254) Two ways to use the page, and the amount box. app.js names the whole-world fund in
+       #start-fund and fills the BUY € column from the amount, which is never stored. -->
+  <div class="start">
+    <p><strong>Start here.</strong> There are two ways to use this page.</p>
+    <p><strong>Simplest:</strong> buy one fund that holds the whole world's stocks. <span id="start-fund"></span></p>
+    <p><strong>Want single stocks too?</strong> Type your amount. The buy list (rows with a BUY%) then shows your euros for each name in a BUY € column.
+      <label>I want to put in € <input id="amount" type="number" min="0" step="any" inputmode="decimal" autocomplete="off"></label></p>
+    <p>Watch-only tables are NOT buy signals. Many brokers charge per order: a €1 fee on a €16 order costs 6% of it. NOT advice.</p>
+  </div>
   <p class="sub" id="generated" role="status">loading…</p>
   <p class="sub" id="since" hidden></p>
   <p class="stale" id="stale" role="alert" hidden></p>

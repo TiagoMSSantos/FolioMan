@@ -112,6 +112,16 @@ console.assert(
   "a SESSION hover misreads its exchange's clock",
 );
 
+// (#1254) The euros for one buy-list name: the amount the reader typed × its BUY%, in whole euros.
+// Display only and never stored (no URL key, no localStorage): a shared link carries no amount, and
+// the next visit opens with the box empty.
+const euro = (amt, pct) => (amt > 0 && pct > 0 ? "€" + Math.round((amt * pct) / 100).toLocaleString("en-US") : "");
+const EURO_HELP = "Your euros for this name: the amount you typed × BUY%. Example: €1,000 × 4.1% = €41. A name in two tables is the same money; count it once.";
+console.assert(
+  euro(1000, 4.12) === "€41" && euro(50000, 4.12) === "€2,060" && euro(0, 4) === "" && euro(1000, NaN) === "",
+  "a BUY € cell misprices",
+);
+
 function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = new Set(), flags = {}) {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
@@ -125,12 +135,14 @@ function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = ne
   box.role = "group";
   const t = document.createElement("table");
   const head = t.createTHead().insertRow();
-  for (const [header] of rows[0]) {
+  // (#1254) A BUY € column follows every BUY%, hidden by CSS until the reader types an amount (euros()).
+  for (const header of rows[0].flatMap(([h]) => (h === "BUY%" ? [h, "BUY €"] : [h]))) {
     const th = document.createElement("th");
     th.scope = "col";
+    if (header === "BUY €") th.className = "eur";
     const b = document.createElement("button");
     b.textContent = header;
-    b.title = help[header] || ""; // (#400) hover text; the glossary below the tables lists the same
+    b.title = header === "BUY €" ? EURO_HELP : help[header] || ""; // (#400) hover text; the glossary below the tables lists the same
     if (!header) b.ariaLabel = "owned"; // CORE's flag column prints no header, but a button needs a name
     b.onclick = () => sortBy(th);
     th.appendChild(b);
@@ -181,6 +193,8 @@ function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = ne
       if (tv) td.append(Object.assign(document.createElement("a"), { href: tv, className: "tv", target: "_blank", rel: "noopener", title: "TradingView chart", ariaLabel: "TradingView chart" }));
       if (h === "TICKER" && fresh.has(cell)) td.className = "new";
     }
+    const buy = row.findIndex(([h]) => h === "BUY%");
+    if (buy >= 0) Object.assign(tr.insertCell(buy + 1), { className: "eur" }).dataset.pct = parseFloat(row[buy][1]);
   });
   box.appendChild(t);
   return box;
@@ -411,33 +425,23 @@ function sortBy(th) {
   body.append(...rows.map(([, tr]) => tr));
 }
 
-// (#512) The default is the SECOND-shortest non-empty lane (stocks 7, ETFs 8, crypto 1 -> 7): the
-// shortest-lane default (#396) opened every table at one row once crypto narrowed to BTC. The shortest
-// lane caps itself at its own length; one non-empty lane gives its own size, and none gives 1.
-const secondShortest = (sizes) => {
-  const s = sizes.filter(Boolean).sort((a, b) => a - b);
-  return s[1] ?? s[0] ?? 1;
-};
-console.assert(
-  secondShortest([7, 8, 1]) === 7 && secondShortest([0, 3, 0]) === 3 &&
-    secondShortest([0, 0, 0]) === 1 && secondShortest([5, 5, 2]) === 5,
-  "secondShortest",
-);
-
 // (#143) `?top=N` rather than localStorage: a bare URL always opens at the default, and a reader who
 // wants ten rows every morning bookmarks the URL that gives them. Clamped and truncated because the
 // query string is user input — `?top=abc`, `?top=0`, `?top=3.7` and `?top=999` must all land on an
 // option that exists, or `sel.value` silently becomes "" and apply(0) blanks every table.
 // (#539) The options run to the longest LANE only, then `all` (`?top=all`), which lifts every cut.
+// (#1254) A bare URL opens on `all`: a reader sees the whole buy list without finding the chooser
+// first (the second-shortest-lane default of (#512) hid most of it). `?top=0` and a non-number open
+// on `all` too.
 const topN = (v) => (v === "all" ? Infinity : +v);
-function chooser(max, dflt) {
+function chooser(max) {
   const sel = document.getElementById("topn");
   sel.replaceChildren(); // (#392) an upload renders again, with its own row counts
   for (let i = 1; i <= max; i++) sel.add(new Option(i));
   sel.add(new Option("all"));
   const top = new URLSearchParams(location.search).get("top");
-  const want = Math.trunc(+top) || dflt;
-  sel.value = top === "all" ? "all" : Math.min(Math.max(want, 1), max);
+  const want = Math.trunc(+top);
+  sel.value = top === "all" || !want ? "all" : Math.min(Math.max(want, 1), max);
   sel.onchange = () => {
     apply(topN(sel.value));
     remember("top", sel.value);
@@ -449,14 +453,14 @@ function chooser(max, dflt) {
 // (#1221) What the censuses measured, above the Trading table: each way of trading or holding against
 // buying and holding, net of costs. Fixed text, not a payload: the figures are the census records in
 // tests/ci-settings.yaml under each receipt, and change only when a census is re-run. Ordered by verdict,
-// then by how near each came to beating buy and hold. Every cell hovers its detail.
+// then by how near each came to beating buy and hold. Every cell hovers its detail. (#1254) No receipt column:
+// a reader cannot use a record number, so each row's receipt is the comment closing it.
 const APPROACH_HELP = {
   APPROACH: "Approach: a way of trading or holding, tested on past prices after costs. Rows run in this order: what passed, then buy and hold itself, then what failed, each group nearest to beating buy and hold first",
   "WHAT YOU DO": "What you do: what the approach does with the money, in plain words. Hover a cell for the exact rule",
   "RESULT VS BUY&HOLD": "Result against buy and hold: what it earned against buying and holding the same thing over the same years, after costs. Hover a cell for every figure the test gave",
   "WORST FALL": "Worst fall: the deepest fall from a peak along the way, for example 84% = €1,000 shrank to €160 at the bottom. — = the test did not measure it",
   VERDICT: "Verdict: whether it beat buying and holding; PASSES = it cleared the test's bar; BASELINE = buying and holding itself, the line to beat; FAILS = it did not beat buying and holding often enough, or it fell too far",
-  RECEIPT: "Record number: where the full record of this test lives. Search tests/ci-settings.yaml, the project's settings file, for this number. Its method, every figure and its caveats are there",
 };
 const approach = (cells) => Object.keys(APPROACH_HELP).map((h, i) => [h, cells[i][0], null, cells[i][1]]);
 const APPROACHES = [
@@ -466,7 +470,7 @@ const APPROACHES = [
     ["Same average as 67-80% in stock, 21-33% less spread", "Tested 8 ways: flat or rising pay, a 2x fund or a margin loan, before or after a 28% tax on gains. A margin loan is money borrowed from the broker. Each way, it ends with the same average result as keeping a fixed 67-80% in stock, with 21-33% less spread between lucky and unlucky savers. It also beats the usual target-date plan (90% in stock, gliding to 50%) by +5.5% to +22.6% on a luck-adjusted score. That score (the certainty equivalent) is the sure sum a cautious saver would take instead of the gamble. It does not earn more than saving all in stock. Flat pay, before tax: the average saver ends with 4.59 times what was paid in; the middle saver all in stock ends with 5.41 times"],
     ["—", "— = not measured: this test graded 200/50 on spread and on the luck-adjusted score, not on its deepest fall"],
     ["PASSES", "It holds both of the study's claims in all 8 ways tested. About 2.4 separate 42-year spans fit in 98 years of history. So the 682 savers are mostly overlapping repeats of two histories. NOT advice: the page never buys on this"],
-    ["#1220", "Full record of this lifecycle test: search tests/ci-settings.yaml, the project's settings file, for #1220"],
+    // its full record: tests/ci-settings.yaml (#1220)
   ],
   [
     ["Hold stocks 6 months or more", "Buy and hold, selling no sooner than 6 months. Tested on 5,907 names, on 10 years of daily prices and their full monthly history. Every hold from 1 day to 20 years, one buy and one sell each"],
@@ -474,7 +478,7 @@ const APPROACHES = [
     ["S&P 500 members of the day 11-13%/yr; 1 week or less loses", "From 6 months on, the honest stock return is about 11 to 13% a year at any hold. Honest means the S&P 500 as its members stood each day, failed companies included. Every hold of 1 week or less loses after costs, in every kind of asset except crypto. In and out every day, close to close, loses 59 to 69% a year. Testing only today's members reads 5 to 7 points a year too high, because the companies that failed are left out (survivor bias)"],
     ["—", "— = not measured by this test"],
     ["BASELINE", "Holding is the line every approach below is measured against"],
-    ["#1217", "Full record of this holding test: search tests/ci-settings.yaml, the project's settings file, for #1217"],
+    // its full record: tests/ci-settings.yaml (#1217)
   ],
   [
     ["Buy & hold S&P 500, 20 years", "The S&P 500 with dividends reinvested since 1928. Every 20-year span starting on the first day of a month: 947 spans"],
@@ -482,7 +486,7 @@ const APPROACHES = [
     ["Middle +11.0%/yr, worst +1.9%/yr", "Lump sum: the middle span grew +11.0% a year, the worst span +1.9% a year. Monthly: the middle span ended with 3.56 times what was paid in, the worst with 1.32 times"],
     ["84% (1929-32)", "The worst fall from a peak: 1929 to 1932, when €1,000 became €160"],
     ["BASELINE", "The line the borrowed-money approaches below are measured against"],
-    ["#1219", "Full record of this borrowing test: search tests/ci-settings.yaml, the project's settings file, for #1219"],
+    // its full record: tests/ci-settings.yaml (#1219)
   ],
   [
     ["Lifecycle 200/100", "The same 682 savers as 200/50, holding stock worth all of their savings plus what they will still save"],
@@ -490,7 +494,7 @@ const APPROACHES = [
     ["Beats 100% stock for every saver before tax: 8.86x vs 5.41x", "Before tax, with a 2x fund, every saver ends richer than saving all in stock, the unluckiest included. The middle saver ends with 8.86 times what was paid in, against 5.41 times. After tax, or with a margin loan, it beats 100% stock for under 80% of savers starting after 1956. 0 of the 8 ways tested clear the bar"],
     ["98-99%; 45 savers fall 90% or more", "In every way tested, 45 savers' accounts fall 90% or more from a peak, down to 98-99%. A real broker would force a sale (a margin call) well before that"],
     ["FAILS", "The bar: beat 100% stock for 80% of savers in each half of history; no saver ending poorer; no fall of 90%. It fails that bar"],
-    ["#1220", "Full record of this lifecycle test: search tests/ci-settings.yaml, the project's settings file, for #1220"],
+    // its full record: tests/ci-settings.yaml (#1220)
   ],
   [
     ["Hold a 2x S&P 500 fund, 20 years", "1.25, 1.5, 2 or 3 times the S&P 500's daily move, reset every day. Borrowing costs the short-term US government rate plus 0.60% a year, like a 2x fund, or plus 2.5% a year, like a margin loan. Same 947 spans as buy and hold"],
@@ -498,7 +502,7 @@ const APPROACHES = [
     ["Beats 1x in 79% of spans (72% before 1967); worst -5.1%/yr", "2x fund, lump sum: richer than the plain index (1x) in 79% of spans: 72% before 1967, 85% after. The middle span grew +14.0% a year against +11.0%; the worst span -5.1% a year against +1.9%. The best way, 2x monthly, wins 80% (71% before 1967). Its worst span ended with 0.74 times what was paid in, against 1.32 times. 0 of the 16 ways tested clear the bar"],
     ["90% or more, in 46 spans", "Lump-sum 2x falls 90% or more in 46 of the 947 spans. Even 1.25x falls 91% in 1929-32, where the plain index falls 84%"],
     ["FAILS", "The bar: beat the plain index in 80% of spans in each half of history; a worst span no poorer than the index's; no fall of 90%. It fails that bar"],
-    ["#1219", "Full record of this borrowing test: search tests/ci-settings.yaml, the project's settings file, for #1219"],
+    // its full record: tests/ci-settings.yaml (#1219)
   ],
   [
     ["Hold 21 trading days", "Tested on 2 years of hourly prices for 503 US and 105 EU names, and on 10 years of daily prices. Every hold from 0 to 21 trading days, €1,000 a hold, one buy and one sell each. Costs: €5 a round trip in the US, €2 in the EU"],
@@ -506,7 +510,7 @@ const APPROACHES = [
     ["US +€0.44 a trading day vs +€0.67 holding 2 years", "On all US names, the best 21-day hold makes +€0.44 per day held. Buying each name once and holding the 2 years makes +€0.67: the market's general rise, not timing. The EU K7 top 10 makes +€1.07 against +€0.39 for EU buy and hold. But its hourly names are today's members only, so it leaves out the failures (survivor bias). On 10 years of daily prices the gain halves (+€0.53). Holds of 0 to 2 days lose everywhere"],
     ["—", "— = not measured by this test"],
     ["FAILS", "No US hold beats buying and holding. The one EU line that does depends on leaving out the failures"],
-    ["#1215", "Full record of this hold-length test: search tests/ci-settings.yaml, the project's settings file, for #1215"],
+    // its full record: tests/ci-settings.yaml (#1215)
   ],
   [
     ["Trade each name its BEST way", "The Trading table's BEST column, but picked in advance. Tested on 605 S&P 500 names and 105 EU names, on 10 years of daily prices, in euros at each day's EUR/USD rate. Every 6 months (or every month), each name takes the one of the four ways that made the most over its last 2 years"],
@@ -514,7 +518,7 @@ const APPROACHES = [
     ["US -€19.00 a name every 6 months; 0 of 4 lines pass", "Against holding the same name, US: -€19.00 a name every 6 months, and -€2.36 a month. EU: -€13.74 every 6 months, and -€1.19 a month. Every half of the years is below zero. Their t-scores are -2.19, -1.40, -1.20 and -0.58 (a t-score beyond about 2 either way means the result is unlikely to be luck). BEST picked buying and holding 45-62% of the time, the trend 25-30%, 21-day holds 13-26%, the same-day trade never"],
     ["—", "— = not measured by this test"],
     ["FAILS", "Switching to the way that did best in the last 2 years lost against holding the same name, in all 4 tests. The BEST column below is hindsight, a label only"],
-    ["#1222", "Full record of this BEST test: search tests/ci-settings.yaml, the project's settings file, for #1222"],
+    // its full record: tests/ci-settings.yaml (#1222)
   ],
   [
     ["Trend, average, breakout, swing", "Tested on 5,907 names: 10 years of daily prices, full monthly history, and 2 years of hourly prices. 47 rules, each with no borrowing (1x) or 2 or 3 times the money (2x, 3x), moving between stock and cash, after costs"],
@@ -522,7 +526,7 @@ const APPROACHES = [
     ["Every rule trails buy and hold at 1x; 1 of 1,976 lines passes", "Without borrowing (1x), every rule earns less than holding the same names, in every group tested. On monthly prices, the 12-month trend rule on stocks trails by 13.4 points a year (t-score -6.4, far from luck). The one passing line is one crypto name over 6 months at 2x, which luck alone would explain"],
     ["24% vs 37% holding (stock 12-month trend)", "A trend rule cuts the fall along with the return. The 12-month trend rule on stocks, without borrowing, falls 24% at worst against 37% for holding. But it earns 7.5 points a year less. Borrowing lifts a strong group's average but ruins most of its names"],
     ["FAILS", "No rule beats holding the same names after costs, with or without borrowing, in any group"],
-    ["#1218", "Full record of this trading-rules test: search tests/ci-settings.yaml, the project's settings file, for #1218"],
+    // its full record: tests/ci-settings.yaml (#1218)
   ],
   [
     ["Calendar slices", "The same-day trade, cut 9 ways: each weekday, the turn of the month against the rest, the day before a holiday, the third-Friday options expiry. Tested on the K7 top 10 and on every name, at every buy and sell hour. That is 1,314 pairs on 2 years of hourly prices, checked against 10 years of daily prices"],
@@ -530,7 +534,7 @@ const APPROACHES = [
     ["2 of 1,314 pass, by luck; lose on 10 years", "Only the EU K7 top 10 on Mondays passes, from 10:00 to 17:00 or the close. It makes about €0.35-0.42 a Monday on €1,000, about €20 a year. With a t-score bar of 3, luck alone passes about 2 of 1,314 pairs. On 10 years of daily prices it earns only half its cost: +0.10% a trade before costs, -€0.96 after"],
     ["—", "— = not measured by this test"],
     ["FAILS", "Every US slice loses after costs. So does every EU slice of all the names with more than 11 days in it"],
-    ["#1216", "Full record of this calendar test: search tests/ci-settings.yaml, the project's settings file, for #1216"],
+    // its full record: tests/ci-settings.yaml (#1216)
   ],
   [
     ["Intraday, same day", "The Trading table's own trade: the K7 top 10, bought at the open and sold the same day. Tested on 10 years of daily prices for every way of picking the 10. Also on 2 years of hourly prices, for every buy and sell hour"],
@@ -538,7 +542,7 @@ const APPROACHES = [
     ["K7 -€4.80 a US day, -€1.60 an EU one", "At €1,000 a day, the K7 top 10 loses about €4.80 a US day and €1.60 an EU one. The 10-year test loses with every way of picking the 10: -0.49% to -0.52% a day in the US, -0.16% to -0.20% in the EU. Every buy and sell hour pair loses after costs"],
     ["—", "— = not measured by this test"],
     ["FAILS", "No way of picking and no pair of hours has made money after costs"],
-    ["#810 #828 #1214", "Full records are in tests/ci-settings.yaml, the project's settings file. Search it for #810, the 10-year test of every way of picking; #828, K7 in euros; #1214, every buy and sell hour"],
+    // its full record: tests/ci-settings.yaml (#810) (#828) (#1214)
   ],
 ].map(approach);
 
@@ -676,8 +680,16 @@ function render(data, prev) {
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   const sizes = LANES.map((lane) => (data[lane] || []).length);
-  chooser(Math.max(1, ...sizes), secondShortest(sizes));
+  chooser(Math.max(1, ...sizes));
   view(viewSel.value);
+  euros(); // (#1254) an upload renders new rows: their BUY € cells take the amount already typed
+  // (#1254) The start box names the best-ranked whole-world fund in CORE: the first row whose INDEX
+  // reads all country world, all world or ACWI. CORE's order is the page's own; nothing is re-ranked.
+  const cell = (r, h) => r.find(([k]) => k === h)?.[1] ?? "";
+  const world = (data.core || []).find((r) => /all[- ]country[- ]world|all[- ]world|acwi/i.test(cell(r, "INDEX")));
+  document.getElementById("start-fund").textContent = world
+    ? "Today the best-ranked one in CORE is " + cell(world, "NAME") + " (" + cell(world, "TICKER") + "), rank " + parseInt(cell(world, "RANK")) + " in the CORE table."
+    : "Look in CORE for an INDEX that says all country world or all world.";
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
   for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday", "trading_buynow", "track"]) {
     if (data[id]) sheet(id, data[id]);
@@ -738,6 +750,13 @@ viewSel.onchange = () => {
 };
 document.getElementById("filter").oninput = document.getElementById("allrows").onchange = () =>
   apply(topN(document.getElementById("topn").value));
+// (#1254) The amount box fills every BUY € cell, and shows the column only while it holds an amount.
+function euros() {
+  const amt = +document.getElementById("amount").value;
+  document.body.classList.toggle("euros", amt > 0);
+  for (const td of document.querySelectorAll("td.eur")) td.textContent = euro(amt, +td.dataset.pct);
+}
+document.getElementById("amount").oninput = euros;
 
 // (#401) prev.json is best effort: missing, unreadable or undated is no marks, never an error.
 function load() {
