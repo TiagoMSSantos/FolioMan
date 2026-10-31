@@ -2445,6 +2445,42 @@ pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) ->
     Some((long_cagr_from(quote, tuning, long_cum, long_years), fails[hit].1.clone(), others))
 }
 
+/// (#1249) The page's plain words for a rule tag that `gate_fails` or `refusal_reason` returns. The MISSES
+/// hover and the why box print it beside the tag; the terminal keeps the bare tag.
+pub(crate) fn plain_gate(g: &str) -> &'static str {
+    match g {
+        "young" => "listed too few years",
+        "history" => "too little price history",
+        "aum" => "fund too small, could close",
+        "range" => "price too low in its 10-year range",
+        "range8y" => "price too low in its 8-year range",
+        "cagr" => "grew too slowly per year",
+        "cagr-life" => "grew too slowly over its whole life",
+        "1Y+" => "too weak over the last year",
+        "1M-knife" => "fell too hard last month",
+        "artifact" => "broken price data",
+        "5Y+" => "too weak over 5 years",
+        "8Y+" => "too weak over 8 years",
+        "20Y+" => "too weak over 20 years",
+        "liquidity" => "trades too little each day",
+        "stretch" => "ran too far above its 4-year trend",
+        "lifetime" => "lost money over its whole life",
+        "volatile" => "swings too much day to day",
+        "spike" => "jumped too much in one day",
+        "mvrv" => "coin far above holders' average cost",
+        "exchange" => "an exchange's own coin",
+        "peg" => "price too high for its growth",
+        "maxdd" => "once fell too far from a peak",
+        "leveraged" => "a leveraged fund, 2x or 3x the daily move",
+        "commodity" => "a commodity fund, whose price follows raw materials",
+        "hedged" => "a currency-hedged fund, whose hedge costs eat the return",
+        "stablecoin" => "a stablecoin, pegged to a currency, so it cannot grow",
+        "wipeout" => "it once fell 98.5% or more",
+        "no-turnover" => "no trading volume is reported for it",
+        _ => "a buy rule",
+    }
+}
+
 /// WHY a quote is not assessable as a growth candidate at all — the structural half of
 /// `gate_failures`' `None`, named so a caller can report WHICH refusal it was instead of a silent drop.
 ///
@@ -3483,118 +3519,118 @@ struct ColSpec {
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
     // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
-    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, then flags" },
-    ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin; click to open the company's own website (stocks; its Wikipedia article when none is found), the fund's justETF page (funds) or the coin's CoinGecko page (coins)" },
-    ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Yahoo Finance symbol; the suffix names the exchange (.L London, .DE Xetra, .AS Amsterdam, none = US)" },
-    ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, from the ticker suffix, or Crypto" },
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false, help: "Position in this table, best first, then flags" },
+    ColSpec { key: "name", hdr: "NAME", width: 0, right: false, help: "Short name of the stock, fund or coin. Click it to open the company's website (or its Wikipedia article), the fund's justETF page or the coin's CoinGecko page" },
+    ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false, help: "Ticker: the Yahoo Finance code of this listing. Its ending names the exchange: .L London, .DE Xetra in Germany, .AS Amsterdam, no ending for the US" },
+    ColSpec { key: "market", hdr: "MARKET", width: 0, right: false, help: "Country of the listing, read from the ticker's ending, or Crypto" },
     // (#447) GICS, stocks only: the book's sector concentration at a glance, which the rank never shows
-    ColSpec { key: "sector", hdr: "SECTOR", width: 0, right: false, help: "Stocks: GICS sector, so a book leaning on one industry shows; Nasdaq's sector for a name outside the universe list, else Eulerpool's; n/a = no source this page reads names the sector; — = a fund or coin, which has no single sector" },
-    ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true, help: "Last close, converted to euros" },
+    ColSpec { key: "sector", hdr: "SECTOR", width: 0, right: false, help: "Industry group of a stock, so you can see when the buy list leans on one industry; n/a = no source names the sector; — = a fund or coin, which has no single sector" },
+    ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true, help: "Last closing price, in euros" },
     // (#395) market value € = `shares_out` × price_eur: a stock's newest complete-FY diluted weighted-average
     // shares (so up to ~1y old and a few % off after buybacks; a split after the last 10-K reads 1/N until
     // the next filing), a coin's circulating supply. n/a where no report was fetched (e.g. an upload re-rank
     // surfacing a stock CI never displayed). Funds show AUM instead.
-    ColSpec { key: "mcap", hdr: "MCAP", width: 7, right: true, help: "Whole market value in euros: shares × price. Stocks use the newest full-year diluted share count (up to a year old), coins their circulating supply. Funds show AUM instead; n/a = no share count this page trusts (no annual report fetched, or a US listing read from Eulerpool, whose statements can carry the pre-listing count), or a fund or coin whose size no source publishes" },
+    ColSpec { key: "mcap", hdr: "MCAP", width: 7, right: true, help: "Market value: what the whole company is worth at today's price, in euros, for example €2.1T = 2.1 trillion euros. Stocks: shares × price; coins: coins in circulation × price. Funds show their size (AUM) instead; n/a = no share count this page trusts, or a fund or coin whose size no source publishes" },
     // display only; ranking uses the fixed-horizon ladder — see `leg`
-    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Average yearly price growth since listing, before inflation and without dividends. Display only: the rank scores LEG. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); n/a = no usable price history" },
-    ColSpec { key: "leg", hdr: "LEG", width: 8, right: true, help: "The long-run %/yr the growth rank actually scores: the 20Y window, else 8Y, else 5Y, whichever the record allows, after the score's cap" },
-    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "Average yearly price growth since listing with the dividends paid added back: a lower bound on total return. Equals the price CAGR for accumulating funds and non-payers. ⁱ = listed under 6 months: the plain change since the first close, not per year (the page's floor filter compounds the floor over YRS for it); ʸ = under 3 years listed: a short run compounded into a yearly rate, so one burst reads like a lasting pace; n/a = no usable price history" },
-    ColSpec { key: "1h", hdr: "1H", width: 7, right: true, help: "Price change over the last hourly bar" },
-    ColSpec { key: "6h", hdr: "6H", width: 7, right: true, help: "Price change over the last 6 hourly bars" },
-    ColSpec { key: "12h", hdr: "12H", width: 7, right: true, help: "Price change over the last 12 hourly bars" },
+    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true, help: "Growth per year since listing, price only: before inflation, dividends left out. For example 12% = the price grew 12% a year on average. Shown only, the buy score uses LEG; ⁱ = listed under 6 months, so the plain change since the first close, not per year; n/a = no usable price history" },
+    ColSpec { key: "leg", hdr: "LEG", width: 8, right: true, help: "Growth per year the buy score uses: over 20 years, else 8, else 5, as the record allows, capped at the score's ceiling" },
+    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true, help: "Growth per year since listing, dividends included, before inflation. For example 15% = €1,000 became about €4,050 in 10 years. It equals CAGR for funds that reinvest and for companies that pay no dividend; ⁱ = listed under 6 months, so the plain change since the first close, not per year; ʸ = under 3 years listed, so one short burst can read like a lasting pace; n/a = no usable price history" },
+    ColSpec { key: "1h", hdr: "1H", width: 7, right: true, help: "Price change over the last hour of trading" },
+    ColSpec { key: "6h", hdr: "6H", width: 7, right: true, help: "Price change over the last 6 hours of trading" },
+    ColSpec { key: "12h", hdr: "12H", width: 7, right: true, help: "Price change over the last 12 hours of trading" },
     ColSpec { key: "1d", hdr: "1D", width: 8, right: true, help: "price change over the last trading day" },
     ColSpec { key: "1w", hdr: "1W", width: 8, right: true, help: "price change over the last week" },
     ColSpec { key: "1m", hdr: "1M", width: 8, right: true, help: "price change over the last month" },
-    ColSpec { key: "1y", hdr: "1Y", width: 8, right: true, help: "total price change over the last year" },
+    ColSpec { key: "1y", hdr: "1Y", width: 8, right: true, help: "total price change over the last year, for example +25% = €1,000 became €1,250" },
     ColSpec { key: "2y", hdr: "2Y", width: 8, right: true, help: "total price change over the last 2 years, not per year" },
-    ColSpec { key: "5y", hdr: "5Y", width: 8, right: true, help: "total price change over the last 5 years, not per year" },
+    ColSpec { key: "5y", hdr: "5Y", width: 8, right: true, help: "total price change over the last 5 years, not per year, for example +100% = the price doubled" },
     ColSpec { key: "8y", hdr: "8Y", width: 8, right: true, help: "total price change over the last 8 years, not per year" },
     ColSpec { key: "10y", hdr: "10Y", width: 8, right: true, help: "total price change over the last 10 years, not per year" },
     ColSpec { key: "20y", hdr: "20Y", width: 8, right: true, help: "total price change over the last 20 years, not per year" },
-    ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true, help: "Years of price history since listing: how much record backs CAGR and LEG" },
-    ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: standard deviation of daily returns over the last 252 sessions (a daily figure, not annualized); n/a = too few closes on the chart" },
+    ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true, help: "Years of price history since listing: how much record backs CAGR and LEG. More years = more trust in them" },
+    ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: the typical size of one day's price move over the last year (a daily figure, not yearly); higher = a bumpier ride, for example 2% = a usual day moves about 2%; n/a = too few closes on the chart" },
     // (#1199) `Profile::beta`, stamped by `screen`. Display only
-    ColSpec { key: "beta", hdr: "BETA", width: 5, right: true, help: "Market risk: how far the monthly price change moved per 1% move of the S&P 500 over the last 36 months (covariance ÷ the index's variance); 1 = moves with the index, above 1 = swings harder, below 1 = calmer, negative = moves against it. Each line is read in its own currency against the index in dollars, so a euro line's figure carries the dollar's moves too; — = under 24 months of record shared with the index" },
-    ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Pain: the worst peak-to-trough fall on the ~10-year daily chart; n/a = no daily chart, or one that never fell below a previous high" },
+    ColSpec { key: "beta", hdr: "BETA", width: 5, right: true, help: "Market swing: how far the price moved for each 1% move of the S&P 500 (the big US index) over 36 months; 1 = moves with the index, above 1 = swings harder, below 1 = calmer, negative = moves against it. A euro listing also carries the dollar's moves; — = under 24 months of record shared with the index" },
+    ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true, help: "Worst fall from a peak: the biggest drop from a high to a later low over ~10 years, for example -50% = it once halved; n/a = no daily chart, or it never fell below a previous high" },
     // (#447) the footer's hold-pain stats on the page. None = under 5 years of closes, never a fake 100%
     // (#1089) both run on the ~10-year daily chart (`fetch::quote_one`), never the older monthly back-fill
-    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: share of the rolling 5-year windows on the ~10-year daily chart that ended above where they started; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
-    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "The worst rolling 5-year price change on the ~10-year daily chart: what a buyer at the wrong moment sat on after 5 years; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
-    ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest time in years spent below a previous high (an ongoing stretch counts): how LONG the MAXDD pain lasted; n/a = no price history" },
-    ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how well a straight line fits the log price over ~10 years, 0 (erratic) to 1 (smooth climb)" },
-    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Overextension: % above (negative = below) the 200-week moving average; ᵈ = listed under ~4 years, so the 200-day average stands in; — = under 200 trading days listed" },
-    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Trailing price ÷ reported (GAAP) earnings per share, from SEC filings first, FMP as fallback; loss = earnings at or below 0; lossᵒ = operating profit covers interest 2x or more (or there is no debt) and free cash flow is positive, so the loss sits below the operating line: usually a one-off charge, write-down or tax; n/a = no source this page reads (SEC, FMP, Eulerpool) gives the earnings; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "win5y", hdr: "5Y-WIN%", width: 8, right: true, help: "Patience paid: the share of 5-year holds in the last ~10 years that ended higher, for example 90% = 9 in 10 made money; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
+    ColSpec { key: "worst5y", hdr: "WORST-5Y", width: 9, right: true, help: "Worst 5 years: the worst 5-year price change in the last ~10 years, what an unlucky buyer had, for example -20% = €1,000 became €800; — = under 5 years of record; n/a = 5 years of record but too few daily closes" },
+    ColSpec { key: "uw", hdr: "UW-YRS", width: 7, right: true, help: "Longest wait below a peak, in years: the longest time under a previous high, a wait still going included; n/a = no price history" },
+    ColSpec { key: "r2", hdr: "R2", width: 6, right: true, help: "Steadiness: how close the price climb sits to a smooth line over ~10 years, from 0 (erratic) to 1 (smooth climb); higher is steadier" },
+    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true, help: "Ran ahead of its trend: how far the price sits above its 200-week (4-year) average, negative = below, for example +40%; ᵈ = listed under ~4 years, so the 200-day average stands in; — = under 200 trading days listed" },
+    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true, help: "Price to earnings (P/E): the price ÷ one year's profit per share, so how many years of today's profit the price pays for; lower = cheaper, for example 20 = 20 years; loss = earnings at or below 0; lossᵒ = likely a one-off: operating profit covers interest 2x (or no debt) and free cash flow is positive; n/a = no source gives the earnings; — = a fund or coin, which files no company accounts" },
     // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't
     // exactly equal the TTM-based P/E cell ÷ CAGR. (#426) Nor its EPS: the PEG's is core, gains stripped
-    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth: price ÷ annual core earnings per share (investment gains and tax releases taken off) ÷ the long-run growth %/yr. Below 1 = growth priced cheap; loss = earnings at or below 0; — = no growth to divide by (the long-run price trend fell, or under 5 years of record), or a coin; n/a = no annual core earnings on file to price (most non-US companies), or a fund whose holdings' P/E is unknown. Funds look through to their holdings; ~ = borrowed from a twin fund; ° = served from cache" },
+    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true, help: "Price for growth (PEG): P/E ÷ the long-run growth per year, on core earnings (investment gains and tax releases taken off); below 1 = growth priced cheap, for example 0.8; loss = earnings at or below 0; — = no growth to divide by (the long-run price trend fell, or under 5 years of record), or a coin; n/a = no yearly core earnings on file (most non-US companies), or a fund whose holdings' P/E is unknown. Funds look through to their holdings; ~ = borrowed from another fund that tracks the same index; ° = a saved figure from an earlier run" },
     // (#45) CRYPTO's valuation cell, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that
     // column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is
     // a P/B analogue
-    ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true, help: "Crypto only: market cap ÷ realized cap (CoinMetrics), each coin valued at the price it last moved. Below 1 = the market sits under its holders' average cost; n/a = no free feed covers this coin; — = not a coin" },
+    ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true, help: "Price vs holders' cost (MVRV), crypto only: market value ÷ what holders paid on average, each coin valued at the price it last moved; below 1 = the price sits under holders' average cost; n/a = no free feed covers this coin; — = not a coin" },
     // one column, two denominators (`core::quality_return`), no per-row flag
-    ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity, or on assets where equity is negative or under 1/20th of assets (heavy buyback filers); n/a = no SEC filing carries the lines (every REPORTS ᵉ row: Eulerpool's balance sheets do not add up, so they are not read); — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true, help: "Return on equity: yearly profit as % of the owners' money in the company, for example 20%; higher = more profit per euro. It uses assets instead when that money is negative or tiny (big buyback companies); n/a = no US filing carries the lines, as on every REPORTS ᵉ row; — = a fund or coin, which files no company accounts" },
     // (#447) the balance sheet, stocks only, off `quote.fund` (filed statements). Display only: never scored
-    ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Stocks: return on invested capital, operating profit (before tax) ÷ (equity + net debt), from the newest filings; n/a = no SEC filing carries the lines (every REPORTS ᵉ row: Eulerpool's balance sheets do not add up, so they are not read); — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Stocks: free cash flow (operating cash flow − capex) as % of revenue, from the last annual report (a REPORTS ᵉ row reads its newest year with a cash flow, which can trail its income statement by a year); negative = burning cash; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
+    ColSpec { key: "roic", hdr: "ROIC", width: 7, right: true, help: "Return on invested capital: operating profit before tax as % of the money in the business (owners' money plus net debt); higher = better use of the money, for example 15%; n/a = no US filing carries the lines, as on every REPORTS ᵉ row; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "fcf", hdr: "FCF%", width: 7, right: true, help: "Free cash margin: free cash flow (the cash left after running and investing in the business) as % of revenue, from the last yearly report; higher is better, negative = burning cash; n/a = no filing carries the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
     // (#545) the trailing twelve months from the 10-Qs, not the annual report: AI build-outs move capex inside a year
-    ColSpec { key: "capex", hdr: "CAPEX/OCF", width: 9, right: true, help: "Stocks: capital expenditure ÷ operating cash flow over the trailing twelve months (the last annual report plus the 10-Q quarters since); above 100% the business spends more than it brings in. Above growth_capex_ocf_max the score is multiplied by growth_capex_ocf_penalty; hover for the TTM and the latest quarter alone; burn = operating cash flow at or below 0; n/a = neither SEC 10-Q cash lines nor Eulerpool's annual cash flow carry it; — = a fund or coin, which files no company accounts, or a filer that reports as a bank or insurer" },
-    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Stocks: net debt ÷ EBITDA, years of profit to pay off the debt; below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA or no cash filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Stocks: operating profit ÷ interest expense; under 2 = one bad year from distress; n/a = no interest filed; no debt = no debt filed and no interest line; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "capex", hdr: "CAPEX/OCF", width: 9, right: true, help: "Investment share: spending on equipment and buildings ÷ the cash the business brings in, over the last 12 months; above 100% = it spends more than it brings in. A share above the set limit cuts the buy score; hover for the 12 months and the latest quarter alone; burn = operating cash flow at or below 0; n/a = no filing carries the cash lines; — = a fund or coin, which files no company accounts, or a bank or insurer" },
+    ColSpec { key: "nde", hdr: "ND/EBITDA", width: 9, right: true, help: "Debt load: net debt ÷ yearly profit before interest, tax and write-offs (EBITDA), so years of profit to pay off the debt; lower is safer, below 0 = more cash than debt, above 3 = stretched; n/a = no EBITDA or no cash filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "icov", hdr: "INT-COV", width: 7, right: true, help: "Interest cover: operating profit ÷ interest paid, so how many times profit pays the interest; higher is safer, under 2 = one bad year from trouble; n/a = no interest filed; no debt = no debt filed and no interest line; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
-    ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Stocks: free cash flow (last annual report) ÷ market value, the cash a buyer's euro earns each year; negative = burning cash; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
+    ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Cash yield: free cash flow from the last yearly report ÷ market value, the cash each euro of the price earns a year; higher = cheaper, for example 5% = 5 cents a year per euro; negative = burning cash; n/a = no filing carries the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Stocks: rough fair price in euros, a 2-stage discounted cash flow. Free cash flow (the median margin of the last 3 filed years × this year's revenue, so one odd year can't swing it) grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever, all discounted at 9% a year. A sanity check, not a target; ³ etc. = FCF-5Y read over that many filed years; ⁰ = no growth rate on record yet, so valued at 0% growth; ᶠ = a REIT, valued on FFO (net income + depreciation − gains on property sales, at FFO's own growth), as its free cash flow is the year's build-out; ⁿ = a utility, valued on net income at its own growth, as its capex swamps free cash flow; burn = the base (free cash flow, FFO or net income) at or below 0, and burn 3.6y the years cash plus short-term investments last at that yearly burn (plain burn = no cash figure filed); past burn = the median of the last 3 filed years is at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = a line it needs is not filed, a bank or insurer at ROE ≤ 2.5% or a loss, or a fund whose top-10 holdings carry under half their weight in FAIR. ᵇ = a bank or insurer, whose cash flow is deposits and loans: valued on book value × (ROE − 2.5%) ÷ (9% − 2.5%), read off P/E and ROE. Non-US stocks: the same, on Eulerpool's annual FCF and market cap (newest fiscal year, not TTM). ETFs: the top-10 holdings' own FAIR, weight-averaged (non-US holdings read Eulerpool's annual cash flow). Bitcoin: the realized price, what holders paid on average (price ÷ MVRV): a cost-basis anchor, not a cash-flow value" },
-    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Stocks: margin of safety, how far FAIR sits above the price; + = the cash flow alone pays for more than the price, − = the price assumes faster growth than FCF-5Y; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = FAIR is n/a (a line it needs is not filed, a bank or insurer at ROE ≤ 2.5% or a loss, or a fund whose top-10 holdings carry under half their weight in FAIR); ᵇ, ᶠ, ⁿ and ⁰ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Fair price: a rough value per share in euros, from the cash the business makes (a discounted cash flow model). Above the price = looks cheap, below = looks dear. It is a sanity check, not a target. It starts from free cash flow: the median margin of the last 3 years × this year's revenue. That grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever. Cash further away counts less, 9% less for each year of waiting; ³ etc. = FCF-5Y read over that many filed years; ⁰ = no growth rate on record yet, so valued at 0% growth; ᶠ = a REIT (a property company), valued on its property cash earnings (FFO) instead; ⁿ = a utility, valued on net profit, as its building spend swamps free cash flow; ᵇ = a bank or insurer, valued on its net worth on the balance sheet and its return on it; burn = the base is 0 or below, and burn 3.6y = cash lasts 3.6 years at that loss (plain burn = no cash filed); past burn = the median of the last 3 filed years is at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = a needed line is missing, a bank or insurer earning 2.5% or less, or a fund whose top-10 holdings mostly lack FAIR. ETFs: the top-10 holdings' own FAIR, weight-averaged. Bitcoin: the average price holders paid (price ÷ MVRV), a cost anchor, not a cash value" },
+    ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Margin of safety: how far FAIR sits above today's price; higher = cheaper, for example +30% = FAIR is 30% above the price, −20% = the price assumes faster growth than FCF-5Y; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = FAIR is n/a; ᵇ, ᶠ, ⁿ and ⁰ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#522) the FAIR pair on owner earnings, the whole-company value, and the reverse DCF. Display only
-    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Stocks: FAIR on owner earnings, free cash flow minus stock-based pay (shares handed to staff are a real cost the cash flow statement adds back). Below FAIR by that pay: META, GOOGL, CRM lose a quarter to a half; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer (whose cash flow is deposits and loans), or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row: Eulerpool has none) or a line FAIR needs is missing" },
-    ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Stocks: margin of safety on FAIR-OE, FAIR-OE ÷ price − 1; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer (whose cash flow is deposits and loans), or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row: Eulerpool has none) or a line FAIR needs is missing" },
-    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Intrinsic value of the whole company in euros: FAIR × shares, the number to set beside MCAP (free cash flow is after interest, so this is the shareholders' part, debt already paid). Bitcoin: its realized cap, what every coin last moved at; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = a fund (its holdings, not the fund, are the companies), or under 2 years filed; n/a = FAIR or MCAP's share count is n/a; ᵇ, ᶠ, ⁿ and ⁰ as FAIR" },
-    ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Stocks: the growth the price already assumes, a reverse DCF: how fast FAIR's base (free cash flow, FFO for a REIT, net income for a utility) must grow each year for 10 years, then 2.5% forever at 9%, for the price to be fair. Set it beside FCF-5Y: below = the price asks less than the record; burn = that base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; n/a = no base or market value filed, or the answer falls outside −50% to +100% a year; — = a fund or coin, or a bank or insurer" },
+    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Fair price on owner earnings: FAIR again, with staff stock pay taken off free cash flow, because shares handed to staff are a real cost. It sits below FAIR by that pay, for example a quarter to a half lower for META or GOOGL; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer, or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row) or a line FAIR needs is missing" },
+    ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Margin of safety on FAIR-OE: how far FAIR-OE sits above today's price; higher = cheaper; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer, or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row) or a line FAIR needs is missing" },
+    ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Fair value of the whole company in euros: FAIR × shares, to set beside MCAP; above MCAP = looks cheap. Debt is already paid in it, so this is the owners' part. Bitcoin: what every coin last moved at, added up; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = a fund (its holdings are the companies), or under 2 years filed; n/a = FAIR or MCAP's share count is n/a; ᵇ, ᶠ, ⁿ and ⁰ as FAIR" },
+    ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Growth the price assumes: how fast FAIR's base must grow each year for 10 years for today's price to be fair, for example 8%. Set it beside FCF-5Y: below it = the price asks less than the record, which looks cheap; burn = that base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; n/a = no base or market value filed, or the answer falls outside −50% to +100% a year; — = a fund or coin, or a bank or insurer" },
     // (#489) display only, the Nasdaq profile the NAME link already fetches
-    ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Stocks: Wall Street's consensus 1-year price target vs the price, from Nasdaq (US listing; a Xetra twin reads its US parent). Analysts lean optimistic, so most names show upside: read it as sentiment, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage; — = a fund or coin" },
+    ColSpec { key: "target", hdr: "TARGET%", width: 8, right: true, help: "Analysts' price target: Wall Street's average 1-year target vs today's price, for example +15% = they expect 15% more. Analysts lean optimistic, so read it as mood, not a forecast; n/a = fewer than 3 analysts cover the name, or no US coverage; — = a fund or coin" },
     // (#540) display only: the link is stamped by `stamp_site`, off `profile.cik`
-    ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Annual and quarterly reports: SEC = the company's EDGAR page (every 10-K annual, 10-Q quarterly and 20-F a foreign filer sends); search = a Google search for its investor-relations reports (funds: factsheet, KID and annual report). Hover (desktop) for the company's description and its last annual report's revenue, net income, free cash flow and net debt; ᵉ = fundamentals from Eulerpool's annual statements, not a filing this page read" },
-    ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Stocks: market value ÷ revenue; the one value ratio a loss-maker still has; n/a = neither an SEC filing nor Eulerpool's statements carry the lines; — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Stocks: (market value + net debt) ÷ EBITDA, the price of the whole business, debt included, in years of operating profit; n/a = no EBITDA or no cash filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price; — = under a year listed; n/a = a year or more listed, but no dividend history or euro price was fetched" },
+    ColSpec { key: "reports", hdr: "REPORTS", width: 7, right: false, help: "Company reports: links to its yearly and quarterly reports; SEC = the company's page at the US regulator, with every yearly and quarterly report; search = a Google search for its investor reports (funds: factsheet, key information document and annual report). Hover (desktop) for what the company does and its last yearly revenue, profit, free cash flow and net debt; ᵉ = figures from a data vendor's yearly statements, not a filing this page read" },
+    ColSpec { key: "ps", hdr: "P/S", width: 6, right: true, help: "Price to sales (P/S): market value ÷ yearly revenue, the one price ratio a loss-maker still has; lower = cheaper, for example 3 = the price is 3 years of sales; n/a = no filing carries the lines; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "evebitda", hdr: "EV/EBITDA", width: 9, right: true, help: "Price of the whole business: market value plus net debt, ÷ yearly profit before interest, tax and write-offs (EBITDA), so years of that profit; lower = cheaper; n/a = no EBITDA or no cash filed; loss = EBITDA at or below 0; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "div", hdr: "DIV", width: 7, right: true, help: "Dividend yield: dividends paid over the last year ÷ price, for example 3% = €30 a year on €1,000; — = under a year listed; n/a = a year or more listed, but no dividend history or euro price was fetched" },
     // (#1200) the dividend against what pays for it, off the DIV, P/E and FCF-YLD cells. Display only
-    ColSpec { key: "payout", hdr: "PAYOUT%", width: 8, right: true, help: "Stocks: share of the year's earnings paid out as dividends, DIV × P/E; over 100% = paying out more than it earns; 0% = pays no dividend; loss = earnings at or below 0; — = under a year listed, or a fund or coin, which files no company accounts; n/a = no P/E or no dividend history" },
-    ColSpec { key: "fcfpay", hdr: "FCF-PAY%", width: 9, right: true, help: "Stocks: share of the year's free cash flow paid out as dividends, DIV ÷ FCF-YLD; over 100% = the dividend outruns the cash the business makes; 0% = pays no dividend; burn = free cash flow at or below 0; — = under a year listed, or a fund or coin, which files no company accounts; n/a = no free cash flow filed or no dividend history" },
-    ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Fund's yearly running cost %: the one cost that compounds against a decades-long hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it; — = a stock or coin, not a fund" },
-    ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size in euros: small funds risk being closed or merged mid-hold; n/a = no source (Börse Frankfurt, Yahoo, justETF) publishes it; — = a stock or coin, not a fund" },
-    ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "Share class; Acc = reinvests income (tax deferred); Dist = pays it out (taxed yearly); n/a = neither Börse Frankfurt nor justETF lists this fund; — = a stock or coin, not a fund" },
-    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund tracks its index; Full = holds every name; Opt = optimised; Samp = a sampled subset; Swap = a counterparty pays the index; Hybr = hybrid; n/a = neither Börse Frankfurt nor justETF lists this fund; — = a stock or coin, not a fund" },
-    ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's legal home, from its ISIN; IE = Ireland, which loses 15% of US dividends to tax by treaty; LU = Luxembourg, which loses 30% (≈ +0.2%/yr to IE on a US or world fund); FR = France; CH = Switzerland; n/a = no ISIN on record; — = a stock or coin, not a fund" },
-    ColSpec { key: "top10", hdr: "TOP10%", width: 7, right: true, help: "Funds: share of the fund in its 10 biggest holdings; high = a few companies drive the result, whatever the fund's name says; n/a = neither Yahoo nor justETF lists its holdings; — = a stock or coin, not a fund" },
-    ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Funds: tracking difference over the last full year, index return minus fund return; negative = the fund beat its index. The real yearly cost, TER plus everything TER leaves out; n/a = trackingdifferences.com doesn't cover this fund; — = a stock or coin, not a fund" },
-    ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Funds: average yearly tracking difference over the last 5 full years; — = under 3 full years of record, or a stock or coin, not a fund; n/a = trackingdifferences.com doesn't cover this fund" },
-    ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Stocks: newest full-year revenue growth vs the year before. ‡ = no annual report yet, so year to date vs the same months a year earlier; n/a = no two full years of revenue filed (SEC or Eulerpool); — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Stocks: revenue growth per year over the last 5 filed years, the proven top-line compounding behind a 20-year hold; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years (display only, never scored); — = no rate can exist: under 2 years filed, no revenue at the old end, or a fund or coin; n/a = a filing without the revenue line" },
-    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Stocks: free cash flow growth per year over the last 5 filed years; when the filing 5 years back carries no FCF figure at all, the oldest filing 3+ years back stands in, over its own span; ³ etc. = under 5 years filed, so the oldest filing 2+ years back stands in, over that many years; burn = free cash flow at or below 0 now; — = no rate can exist: under 2 years filed, a burn at the old end, a fund or coin, or a bank or insurer; n/a = a filing without the FCF lines" },
-    ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Stocks: newest full-year earnings-per-share growth vs the year before; n/a = no two comparable full years of earnings per share filed; — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Stocks: newest full-year net profit as % of revenue; n/a = no revenue or net income filed; — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Stocks: operating profit as % of revenue, before interest and tax; the pricing power the business keeps; n/a = no operating profit line filed (some REITs file none, VICI among them); — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Stocks: OP% now minus OP% a year earlier, in percentage points; positive = margins widening; n/a = OP% missing now or a year earlier; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
-    ColSpec { key: "mscore", hdr: "M-SCORE", width: 8, right: true, help: "Stocks: Beneish M-score, an accounting red-flag test on the newest two filed years; above -1.78 = the books look like those of known earnings manipulators, read the filings before buying. A missing input counts as no change; n/a = the newest two filed years lack revenue, margins or assets (every REPORTS ᵉ row: Eulerpool's balance sheets do not add up, so they are not read); — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "payout", hdr: "PAYOUT%", width: 8, right: true, help: "Payout share: the part of the year's profit paid out as dividends (DIV × P/E); over 100% = paying out more than it earns; 0% = pays no dividend; loss = earnings at or below 0; — = under a year listed, or a fund or coin, which files no company accounts; n/a = no P/E or no dividend history" },
+    ColSpec { key: "fcfpay", hdr: "FCF-PAY%", width: 9, right: true, help: "Cash payout share: the part of the year's free cash flow paid out as dividends (DIV ÷ FCF-YLD); over 100% = the dividend outruns the cash the business makes; 0% = pays no dividend; burn = free cash flow at or below 0; — = under a year listed, or a fund or coin, which files no company accounts; n/a = no free cash flow filed or no dividend history" },
+    ColSpec { key: "ter", hdr: "TER", width: 6, right: true, help: "Yearly fund fee (TER): the % of your money the fund charges each year, the one cost that compounds over a decades-long hold; lower is better, for example 0.20% = €2 a year on €1,000; n/a = no source publishes it; — = a stock or coin, not a fund" },
+    ColSpec { key: "aum", hdr: "AUM", width: 6, right: true, help: "Fund size: the money the fund holds, in euros, for example €5B = 5 billion euros; small funds risk being closed or merged while you hold them; n/a = no source publishes it; — = a stock or coin, not a fund" },
+    ColSpec { key: "use", hdr: "USE", width: 4, right: false, help: "What the fund does with dividends; Acc = reinvests them for you (tax put off until you sell); Dist = pays them out to you (taxed each year); n/a = no source lists this fund; — = a stock or coin, not a fund" },
+    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false, help: "How the fund copies its index; Full = holds every company in it; Opt = holds most of them, picked to match the index; Samp = holds a sample of them; Swap = a bank pays the fund the index's return under a contract; Hybr = a mix of these; n/a = no source lists this fund; — = a stock or coin, not a fund" },
+    ColSpec { key: "dom", hdr: "DOM", width: 4, right: false, help: "Fund's home country, from its ISIN (the fund's international ID code); IE = Ireland: a tax treaty keeps the tax on US dividends at 15%, the usual pick; LU = Luxembourg: it pays 30% on US dividends, so about 0.2% a year behind Ireland on a US or world fund; FR = France; CH = Switzerland; DE = Germany; n/a = no ISIN on record; — = a stock or coin, not a fund" },
+    ColSpec { key: "top10", hdr: "TOP10%", width: 7, right: true, help: "Top-10 weight: the share of the fund in its 10 biggest holdings, for example 25%; high = a few companies drive the result, whatever the fund's name says; n/a = no source lists its holdings; — = a stock or coin, not a fund" },
+    ColSpec { key: "td1y", hdr: "TD-1Y", width: 6, right: true, help: "Tracking gap, last year: the index's return minus the fund's, over the last full year; lower is better, negative = the fund beat its index. It is the fund's real yearly cost, the fee (TER) plus costs it leaves out, for example 0.10% = €1 a year on €1,000; n/a = no tracking record found for this fund; — = a stock or coin, not a fund" },
+    ColSpec { key: "td5y", hdr: "TD-5Y", width: 6, right: true, help: "Tracking gap, 5 years: the average yearly TD-1Y over the last 5 full years; lower is better; — = under 3 full years of record, or a stock or coin, not a fund; n/a = no tracking record found for this fund" },
+    ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true, help: "Sales growth, last year: the newest full year's revenue vs the year before, for example +10%; ‡ = no yearly report yet, so this year so far vs the same months a year earlier; n/a = no two full years of revenue filed; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Sales growth per year over the last 5 filed years, for example 12% = sales double in about 6 years; ³ etc. = under 5 years filed, so measured over that many years (shown only, never scored); — = no rate is possible: under 2 years filed, no revenue at the start, or a fund or coin; n/a = a filing without the revenue line" },
+    ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Cash growth per year: how fast free cash flow grew each year over the last 5 filed years. When the filing 5 years back has no free cash figure, the oldest one 3 or more years back stands in; ³ etc. = under 5 years filed, so measured over that many years; burn = free cash flow at or below 0 now; — = no rate is possible: under 2 years filed, a burn at the start, a fund or coin, or a bank or insurer; n/a = a filing without the free cash lines" },
+    ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Profit per share growth, last year: the newest full year's earnings per share vs the year before, for example +15%; n/a = no two comparable full years filed; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Profit margin: the newest full year's net profit as % of revenue, for example 20% = €20 of profit on €100 of sales; higher is better; n/a = no revenue or net profit filed; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Operating margin: profit from the business before interest and tax, as % of revenue; higher = more pricing power, for example 30%; n/a = no operating profit line filed (some property companies file none); — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Margin trend: OP% now minus OP% a year earlier, in points (pp); positive = margins widening, for example +2pp = 20% became 22%; n/a = OP% missing now or a year earlier; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
+    ColSpec { key: "mscore", hdr: "M-SCORE", width: 8, right: true, help: "Accounting red-flag test (Beneish M-score) on the newest two filed years; lower = cleaner, for example -2.5. Above -1.78, the accounts look like those of companies later caught faking profits, so read the filings before buying. A missing input counts as no change; n/a = the newest two years lack revenue, margins or assets (every REPORTS ᵉ row: that vendor's balance sheets do not add up); — = a fund or coin, which files no company accounts" },
     // (#729) display only: the (#728) census's flags, never scored
-    ColSpec { key: "redf", hdr: "RED-FLAGS", width: 9, right: false, help: "Stocks: how many of six warning signs the newest filing shows, and which; L = a loss; 2 = a second loss year running; B = operating cash burn; I = interest cover under 1.5x; R = revenue down over 10% on the year; D = share count up over 10%. 2 or more is what 78% of US filers that later went bankrupt or lost 80%+ showed a year before, and what 7% of survivors show in any month: a reason to read the filings, never a sell signal, and never scored. n/a = no filing in the last 550 days; — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "sbc", hdr: "SBC%", width: 6, right: true, help: "Stocks: stock-based pay as % of revenue, a real cost that reported earnings leave out and that dilutes owners every year; n/a = no stock-pay line filed (every REPORTS ᵉ row, and filers that tag none); — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Stocks: newest full-year change in share count, sign flipped: + = buying back, − = issuing shares; n/a = no share count for both newest years, or a jump over 40% with no restated comparative (a merger or a split); — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (mean of the last 105 sessions) sits below the highest close of the ~10-year window" },
-    ColSpec { key: "range", hdr: "RANGE%", width: 7, right: true, help: "(#1210) Where today's close ranks among this name's own closes of the ~10-year window: 100 = at its high, 0 = at its low. The buy heuristic needs at least growth_min_range_pct (coins: growth_min_range_pct_crypto), and the score shrinks with it (× RANGE%/100 at growth_proximity_weight 1); — = under a year of closes, n/a = no close a year back, as 1Y spells them" },
+    ColSpec { key: "redf", hdr: "RED-FLAGS", width: 9, right: false, help: "Warning signs: how many of six warning signs the newest filing shows, and which; L = a loss; 2 = a second loss year running; B = the business burns cash; I = profit covers interest less than 1.5 times; R = revenue down over 10% on the year; D = share count up over 10%. Of US companies that later went bankrupt or lost 80%+, 78% showed 2 or more a year before; so do 7% of survivors in any month. Read it as a reason to check the filings, never a sell signal; it is never scored; n/a = no filing in the last 550 days; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "sbc", hdr: "SBC%", width: 6, right: true, help: "Staff stock pay: shares and options paid to staff, as % of revenue; a real cost that reported profit leaves out, and it shrinks each owner's share every year; lower is better, for example 2%; n/a = no stock-pay line filed (every REPORTS ᵉ row, and filers that tag none); — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true, help: "Buybacks: how much the share count shrank over the newest full year, for example +3% = 3% fewer shares, so each share owns more; − = the company issued new shares; n/a = no share count for both years, or a jump over 40% with no restated comparison (a merger or a split); — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true, help: "On sale: how far the recent price (its average over the last 105 trading days) sits below its ~10-year high, for example -30%" },
+    ColSpec { key: "range", hdr: "RANGE%", width: 7, right: true, help: "Price within its range: today's close ranked against its closes over ~10 years, 100 = at its high, 0 = at its low. The buy rules need a minimum, and a lower RANGE% cuts the buy score; — = under a year of closes; n/a = no close a year back, as 1Y shows" },
     // (#489) display only
-    ColSpec { key: "short", hdr: "SHORT%", width: 7, right: true, help: "Stocks: shares sold short as % of shares outstanding, from FINRA's newest twice-monthly settlement (US listings; a Xetra twin reads its US parent). High short interest has historically come before weaker returns; n/a = no FINRA position (a non-US listing), or no share count; — = a fund or coin" },
+    ColSpec { key: "short", hdr: "SHORT%", width: 7, right: true, help: "Bets against it: shares sold short as % of all shares, from the twice-monthly US report (German listings of US companies use it too). High short interest has come before weaker returns in the past, for example 10% is high; n/a = no US report (a non-US listing), or no share count; — = a fund or coin" },
     // (#448)/(#449) display only, the printed stock rows and (#1209) the shadow tables
-    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Stocks: company insiders' open-market buys/sales in the last 90 days, from SEC Form 4 filings (US filers; a Xetra twin reads its US parent). Buys are the rarer, stronger signal; n/a = no SEC coverage, or a walk SEC's per-run request cap cut short (asked again next run)" },
-    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Stocks: date (month-day) of the next scheduled earnings report, from Nasdaq. The price often jumps on the day; n/a = no date published yet, or Nasdaq refused the request (asked again next run)" },
-    ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise needed to get back to that high: OFF-HI turned into a gain" },
-    ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Liquidity: average daily traded value in euros over the last 30 sessions; n/a = no traded volume on the chart" },
-    ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "The ranking score; higher ranks first. A pinned row that fails the gates shows 0.0" },
+    ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Insider trades: buys/sales by the company's own bosses and directors in the last 90 days, for example 2/5 = 2 buys, 5 sales. From the filing US insiders send when they trade (Form 4). Read it as information only: in a test on past prices, the names insiders bought did worse than the market over 8 and 12 years; n/a = no US filing coverage, or the page's request limit cut the count short (asked again next run)" },
+    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Next earnings report: the date (month-day) the company next reports its results, and the price often jumps that day; n/a = no date published yet, or the source refused the request (asked again next run)" },
+    ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise back to the high: the gain needed to undo OFF-HI, for example -50% below the high = +100% to get back" },
+    ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Trading per day: the average value traded each day over the last 30 trading days, in euros; higher = easier to buy and sell at a fair price, for example €5M = 5 million euros a day; n/a = no traded volume on the chart" },
+    ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "Buy score: the number this table ranks on, higher first; the why box at the top shows how a name's score was worked out. A watchlist name (*) that fails a buy rule shows 0.0" },
     // (#576) under growth_gate_soft a stock that fails gates still ranks, docked per gate; (#1203) ETFs print 0
-    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Stocks: how many buy gates the row fails, and which (0 = it passes all). A stock that misses gates still ranks, its SCORE cut by growth_gate_soft once per gate missed, unless one is artifact or exchange, which no waiver lifts; the why box prints each gate's value against its bar; refused = no waiver can score the row (a kind the screen never buys, no trading volume served, or no 1Y figure). ETFs score hard, so a ranked ETF row reads 0" },
+    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Buy rules missed: how many buy rules the row fails, and which (0 = it passes all); hover for each rule's value against its bar. A stock that misses rules still ranks, its buy score cut once per rule missed, unless one is artifact or exchange, which nothing waives; refused = no score is possible (a kind this page never buys, no trading volume, or no 1Y figure). Funds must pass every rule, so a ranked fund reads 0" },
     // DIAGNOSTIC: the long-CAGR window (and the trust leg) pinned to 8Y. Never ranked on, and scored WITHOUT
     // the 8Y CAGR admission floor so every row carries a comparable number
-    ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true, help: "The same score on an 8-year window, for comparison; never ranked on. † = under 8 years of record, so it is the full-history score" },
+    ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true, help: "Buy score on 8 years: the same score worked out on an 8-year window, for comparison; the table never ranks on it; † = under 8 years of record, so it is the score on the full history" },
 ];
 
 /// Canonical default layout when `widths.columns` is empty: the historical table PLUS `cagr` and
@@ -5020,20 +5056,20 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
 /// (#474) What each RANK flag means — one list for the terminal legend, the page's RANK header, its
 /// "rank flags" note and each RANK cell's hover (data.json `help.flags`). `b` is page-only (`web_top`).
 pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
-        ("*", "pinned watchlist name"),
-        ("#", "score used live fundamentals, not price-only"),
-        ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
-        ("c", "commodity-linked (GICS Energy/Materials, or a commodity-named fund) — earnings are a spread on a traded input price, so the CAGR is a spot-price snapshot, not compounding; scaled by growth_commodity_damp when set"),
-        ("e", "an exchange's own token (BNB, GT, OKB, CRO…) — its value rides one company's solvency, as FTT's went with FTX in 2022; scaled by growth_exchange_token_damp when set"),
-        ("x", "non-EUR-quoted ETF line — a EUR buyer pays FX conversion + off-home spread vs the EUR twin; scaled by growth_fx_damp when set"),
-        ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
-        ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
-        ("o", "already held (broker portfolio)"),
-        ("w", "Berkshire Hathaway 13F bought it (new or +5% shares) in the last 4 quarters — display only, never scored"),
-        ("W", "Berkshire Hathaway's newest 13F holds it — score × growth_brk_held_boost (1.0 = off)"),
-        ("s", "the Social Arbitrage trading table names it — superinvestor buyers (13F buys plus new 13D/13G stakes) score × growth_superinvestor_boost once per growth_superinvestor_step of them, an ARK, insider, video or hand-list row × growth_social_boost (1.0 = off)"),
-        ("b", "bought by the book though this table would not show it: a display trim cut it (a second copy of a bet, the value brake) or it sits past the row cut; it prints at its place by score; page only, and (#535) the page's N cuts it like any other row"),
-        ("m", "bought by the book for its momentum (growth_momentum_key, 12-7 by default: the trailing year net of its last six months), not its score: growth_momentum_interleave alternates the score book with the momentum order of the gates-off stock pond, so it prints after the book name before it; SCORE is its score with every gate waived when it fails one; page only"),
+        ("*", "on the watchlist, always shown even when it fails a buy rule"),
+        ("#", "the buy score also used the company's accounts, not only its price"),
+        ("!", "ran far above its 4-year trend, so the ran-too-far cut is at its full size; read the buy score, not the position"),
+        ("c", "an energy or materials company, or a commodity fund; profits ride a traded price like oil; its buy score is cut"),
+        ("e", "an exchange's own coin (BNB, GT, OKB, CRO…), riding one company's survival, as FTT fell with FTX in 2022; its buy score is cut"),
+        ("x", "a fund listed in a non-euro currency; conversion plus a wider spread; its buy score is cut slightly"),
+        ("~", "price history borrowed from an older listing of the same fund or index, so CAGR/YRS describe that record"),
+        ("H", "fit for a long hold (broad, cheap, holds the real shares, reinvests dividends, large)"),
+        ("o", "you already hold it"),
+        ("w", "Berkshire Hathaway (Warren Buffett's company) bought it (new or 5%+ more shares) in the last 4 quarters; shown only"),
+        ("W", "Berkshire's newest quarterly holdings report holds it; its buy score is raised"),
+        ("s", "the Social table names it; an ARK fund, insider, video or hand-list mention raises its buy score a little"),
+        ("b", "on the buy list though this table would not show it (a display rule hid it, e.g. a second fund on the same bet, or past the row cut); the page's row limit cuts it like any row"),
+        ("m", "on the buy list for momentum (the biggest price rise from a year ago to 6 months ago), alternating with top buy scores; if it fails a rule, its score is worked out as if it passed"),
 ];
 
 /// (#400) The page's column glossary, keyed per table because one header can mean two things: 2Y is a
@@ -5041,19 +5077,19 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
 /// deflated (`Quote::legs_real`); the <1Y legs never are (`core::horizon_changes`). The inflation
 /// headers come from its own rows, so the dynamic span (27Y) needs no case of its own.
 pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTreeMap<&'static str, BTreeMap<String, String>> {
-    let unit = if real { "Real (EU HICP-deflated)" } else { "Nominal" };
+    let unit = if real { "After inflation (EU prices)" } else { "Before inflation" };
     let lanes: BTreeMap<String, String> = COLUMNS
         .iter()
         .map(|c| {
             let text = match c.key {
-                "1d" => format!("Nominal — {}; a dash = listed for less than that", c.help),
+                "1d" => format!("Before inflation — {}; a dash = listed for less than that", c.help),
                 // (#1090) `core::horizon_changes` averages the closes around the start date (`anchor_windows`)
                 "1w" | "1m" => format!(
-                    "Nominal — {}; the start is an average of the closes around that date; a dash = listed for less than that",
+                    "Before inflation — {}; the start is an average of the closes around that date; a dash = listed for less than that",
                     c.help
                 ),
                 "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => format!(
-                    "{unit} — {}. Both ends are smoothed averages. ≈ = the record covers most of the span but not all, so the cell is its whole-life return; a dash = the record is shorter than the span; n/a = the record spans it but has no usable price at its start",
+                    "{unit} — {}. Both ends are averages of a few days' closes, so one odd day does not move it. ≈ = the record covers most of the span but not all, so the cell shows its whole-life change; a dash = listed for less than the span; n/a = listed long enough, but no usable price at the start",
                     c.help
                 ),
                 "rank" => format!(
@@ -5085,10 +5121,10 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         .flatten()
         .map(|(h, _)| {
             let text = match h.as_str() {
-                "REGION" => "Whose consumer prices: USA, the EU (HICP, what a Real column is deflated by) or Portugal".to_string(),
-                "LATEST" => "Newest yearly inflation rate; for a year still running, the latest month's rate vs a year earlier".to_string(),
-                "AS OF" => "Year of that newest rate; ⚠ marks a stale or missing feed".to_string(),
-                span => format!("Total price rise over the last {} yearly rates, compounded; — = the series is shorter (EU HICP starts in 2000); n/a = no data", span.trim_end_matches('Y')),
+                "REGION" => "Whose consumer prices: USA, the EU or Portugal. The EU figure (HICP) is what the after-inflation columns take off".to_string(),
+                "LATEST" => "Newest yearly inflation rate, for example 2.5% = what cost €100 a year ago costs €102.50; for a year still running, the latest month against a year earlier".to_string(),
+                "AS OF" => "Year of that newest rate; ⚠ = an old or missing figure".to_string(),
+                span => format!("Total price rise over the last {} years, for example 30% = what cost €100 then costs €130 now; — = the record is shorter (EU figures start in 2000); n/a = no data", span.trim_end_matches('Y')),
             };
             (h.clone(), text)
         })
@@ -5100,25 +5136,25 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     let attention = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "Title of the Wikipedia article the views were counted on; click to open the company's own website (or its Wikipedia article) when the screen prices it"),
-        ("VIEWS YoY", "Median over the last 12 complete months of each month's English Wikipedia page views ÷ the same month a year before, as a % change; click to open the article"),
+        ("NAME", "Title of the Wikipedia article whose views were counted; click to open the company's own website (or its Wikipedia article) when this page prices it"),
+        ("VIEWS YoY", "Interest growth: how much more the company's English Wikipedia page is read than a year before, for example +50% = 150 views per 100 then. It is the median of the last 12 full months, each against the same month a year earlier; click to open the article"),
     ]);
     let berkshire = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "The company's name; upper case = OpenFIGI's issuer name for a stock the screen does not price, — = neither has one; click to open the company's own website (or its Wikipedia article) when the screen prices it"),
-        ("WEIGHT", "The holding's share of the 13F's total reported value; — = no 13F value in hand: a stake reported outside the 13F (Japan's EDINET, a Form 4), or a 13F with no total; click to open the 13F filing on sec.gov"),
-        ("STATUS", "Vs the quarter before; new = not held then; added = more than 5% more shares (a split is no add); trimmed = below 95% of the shares; held = neither added nor trimmed"),
-        ("SHARES Δ", "Change in shares held vs the quarter before; new = not held then"),
-        ("BOUGHT", "Newest quarter of the last 4 in which Berkshire bought it; before … = held, and not bought since that quarter; — = no 13F in hand"),
+        ("NAME", "The company's name; upper case = a company register's name, for a stock this page does not price; — = no name found; click to open the company's own website (or its Wikipedia article) when this page prices it"),
+        ("WEIGHT", "Share of Berkshire's portfolio: this holding's part of the total value in the quarterly holdings report big US funds file (13F), for example 20%; — = no value in that report: the stake was filed in Japan or as a US insider filing, or the report has no total; click to open the report on sec.gov"),
+        ("STATUS", "Change since the quarter before; new = not held then; added = more than 5% more shares (a split does not count); trimmed = under 95% of the shares; held = neither added nor trimmed"),
+        ("SHARES Δ", "Change in shares held since the quarter before; new = not held then"),
+        ("BOUGHT", "Newest of the last 4 quarters in which Berkshire bought it; before … = held, and not bought since that quarter; — = no holdings report on hand"),
     ]);
     let social = fixed(&[
         num,
         ("TICKER", ticker),
-        ("NAME", "The company's name; — = the screen does not price it; click to open the company's own website (or its Wikipedia article)"),
-        ("SOURCES", "Which sources list it: superinvestors N (N Dataroma managers bought last quarter; marked (SEC 13F) when counted from their SEC filings because Dataroma did not answer), 13D/G N (N of those managers filed a new 13D or 13G stake in the last 90 days), ARK (an ARK fund bought it in the last 30 days and none sold), insiders (2+ insiders bought on the open market in one recent filing), App Store (its app climbed 25+ places on Apple's US top-free chart in a week, or entered it), YouTube ×N (mentions in recent videos of thirteen stock channels), Reddit (a surge of Reddit and 4chan mentions: 10+ in a day at 3x the day before, or 50+), Google Trends (a US daily trending search that is its ticker or name), Benzinga buzz (named in a Benzinga buzz article of the last 8 days), HN ×N (N Hacker News stories of the last 7 days, over 100 points, that name it), hand list"),
-        ("NEWEST", "Date of the latest mention, or the 13F quarter"),
-        ("WHY", "The hand list's claim, else the newest video title, else the 13D/G, ARK or insider filing, else the superinvestor count; click to open that source"),
+        ("NAME", "The company's name; — = this page does not price it; click to open the company's own website (or its Wikipedia article)"),
+        ("SOURCES", "Which sources name it; superinvestors N = N well-known fund managers bought it last quarter, from their quarterly holdings reports (13F); 13D/G N = N of them reported passing 5% of the company in the last 90 days; ARK = an ARK fund bought it in the last 30 days and none sold; insiders = 2 or more of its bosses bought shares in one recent filing; App Store = its app climbed 25+ places on Apple's US free chart in a week, or entered it; YouTube ×N = N mentions in recent videos of thirteen stock channels; Reddit = a sudden burst of Reddit and 4chan mentions; Google Trends = a US daily trending search for its ticker or name; Benzinga buzz = named in a Benzinga buzz article of the last 8 days; HN ×N = N popular Hacker News stories of the last 7 days name it; hand list = added by hand"),
+        ("NEWEST", "Date of the latest mention, or the quarter of the holdings report"),
+        ("WHY", "Why it is listed: the hand list's claim, else the newest video title, else the 5% filing, ARK or insider filing, else the fund-manager count; click to open that source"),
     ]);
     // (#500) the rest of the Young table's headers are the stock columns, stamped by `stamp_shadow_cols`
     let young = fixed(&[
@@ -5131,98 +5167,98 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("TICKER", ticker),
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
-        ("NO-BRAKE", "The buy score with the ran-too-far brake switched off (growth_overext_cap 0), every other rule unchanged. It is at or above TABLE-CUT, so the brake alone keeps the stock out of the Stocks table"),
-        ("TABLE-CUT", "The lowest SCORE in the Stocks table, pinned rows aside: what a stock needs to be listed there"),
-        ("BRAKE", "The ran-too-far brake's multiplier, and how far the price sits above its own 200-WEEK average, the same figure as the ABV-MA column (ᵈ there = a listing under ~4 years, read off its 200-day average). The multiplier falls from ×1 at the average to ×growth_overext_floor at growth_overext_cap above it, and enters the score through a geometric mean with the trust factor, so the score drops by less than the multiplier"),
+        ("NO-BRAKE", "Buy score without the ran-too-far cut, every other rule the same. It is at or above TABLE-CUT, so that cut alone keeps the stock out of the Stocks table"),
+        ("TABLE-CUT", "Lowest buy score in the Stocks table, watchlist rows aside: what a stock needs to be listed there"),
+        ("BRAKE", "The ran-too-far cut: the factor that multiplies the buy score, then how far the price sits above its 200-week average, as in ABV-MA. ᵈ = listed under ~4 years, so the 200-day average stands in. The factor falls from ×1 at the average to ×0.05 at 100% above it. It is averaged with another part of the score, so the score falls by less"),
     ]);
     // (#525) the REITs table: `reit_rows`, then the stock columns like Young
     let reits = fixed(&[
         num,
         ("TICKER", ticker),
         ("NAME", "The company's or fund's name; click to open its own website or justETF page"),
-        ("KIND", "stock = a stock whose GICS sector is Real Estate (US REITs and property firms); ETF = a fund named for real estate, REITs, property or EPRA/NAREIT; SIGI = a Portuguese listed real-estate investment company (SIGI), from a hand-kept list"),
+        ("KIND", "What kind of property holding; stock = a company in the Real Estate industry group, such as a US REIT (a property company that pays out most profit); ETF = a fund named for real estate, REITs or property; SIGI = a Portuguese listed property investment company, from a hand-kept list"),
     ]);
     // (#515) (#524) (#527) `fetch::ipo_web_rows`; ` r` = a press figure from `tests/ipo-watch.csv`
     let upcoming = fixed(&[
         num,
-        ("STATUS", "upcoming = Nasdaq has a price range and a day; filed = a public S-1/F-1 is on EDGAR, no pricing day set yet; confidential = a watched company that only filed in private (no S-1 yet, so its S-1 columns read —)"),
-        ("TICKER", "The symbol the company asked for; it may list under another; — = none asked for yet"),
+        ("STATUS", "Stage of the stock market listing (IPO); upcoming = Nasdaq has a price range and a day; filed = a public listing document (S-1 or F-1) is filed, with no pricing day yet; confidential = a watched company that filed only in private, so its document columns read —"),
+        ("TICKER", "The ticker the company asked for; it may list under another; — = none asked for yet"),
         ("NAME", "The company's name, as filed; click to open its website, or for a watched company the article its figures come from"),
-        ("EXPECTED", "The day Nasdaq expects the shares to be priced (the date often slips); r = the month the press reports, not confirmed; — = no pricing day set yet"),
-        ("INDUSTRY", "SEC's industry code (SIC) description for the filer, as EDGAR lists it; — = no public S-1 yet (a confidential filer)"),
-        ("RAISE", "Dollars the offer raises at the top of the range; before a range is filed, the S-1 cover's amount, shown only when it is $1B or more (a smaller one is often a placeholder); r = the amount the press reports, not confirmed; — = no price range filed yet and no cover amount of $1B or more, or no S-1 at all; n/a = a range but no amount read"),
-        ("RANGE", "The price range per share the company filed, $; — = none filed yet, and then MCAP@MID, P/S@MID, P/E@MID and SHARES read — too, as no terms exist yet (RAISE too, unless the S-1 cover names $1B or more)"),
-        ("MCAP@MID", "Market value at the middle of the range: mid price × the shares outstanding after the offer; r = the valuation the press reports, not confirmed; — = no price range filed yet, so no terms exist"),
-        ("P/S@MID", "Price to sales: MCAP@MID ÷ trailing-twelve-month revenue (the last fiscal year rolled forward by the newest interim period when the S-1 has one); — = no price range filed yet, so no terms exist; n/a = a range, but no trailing revenue read"),
-        ("P/E@MID", "Price to earnings: MCAP@MID ÷ trailing-twelve-month net income; loss = no profit to divide by; — = no price range filed yet, so no terms exist; n/a = a range, but no trailing net income read"),
-        ("SHARES", "Shares outstanding after the offer, as Nasdaq reads it from the filing, millions; — = no price range filed yet, so no terms exist"),
-        ("LOCKUP", "Days insiders may not sell after the listing; — = no public S-1 yet (a confidential filer)"),
-        ("EMPLOYEES", "Staff count, as Nasdaq reads it from the filing; — = no public S-1 yet (a confidential filer)"),
-        ("EXCHANGE", "Where the shares are to list; — = no public S-1 yet (a confidential filer)"),
-        ("LEADS", "Lead underwriters, as Nasdaq lists them; two of Goldman Sachs, Morgan Stanley, J.P. Morgan, BofA and Citigroup keep a deal of any filed size in this table; — = no public S-1 yet (a confidential filer)"),
-        ("AUDITOR", "The firm auditing the financial statements in the S-1; — = no public S-1 yet (a confidential filer)"),
-        ("FILING", "The newest public S-1/F-1 (or amendment) and its date; — = no public S-1 yet (a confidential filer); click to open it on sec.gov"),
-        ("FY", "Latest full fiscal year in the S-1's summary financial table; REV and NET are read from it (the % columns are trailing twelve months, CASH to EQUITY at the newest balance-sheet date); — = no public S-1 yet; n/a = the table could not be read"),
-        ("INTERIM", "The newest interim period in that table (9M 2026 = nine months to a date in 2026); the ratios add it and drop the same period a year before, to read the trailing twelve months. — = fiscal year only, or no public S-1 yet; n/a = the table could not be read"),
-        ("REV", "Revenue in that fiscal year; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("REV-YoY", "Revenue growth: the interim period vs the same period a year before, or the fiscal year vs the one before when there is no interim; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("NET", "Net income (negative = loss) in that fiscal year; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("NET%", "Net income ÷ revenue, trailing twelve months; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("GROSS%", "Gross profit ÷ revenue, trailing twelve months; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("OP%", "Operating income (negative = loss) ÷ revenue, trailing twelve months; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("OCF%", "Operating cash flow ÷ revenue, trailing twelve months; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("CASH", "Cash and equivalents (with marketable securities when the filing sums them) at the newest balance-sheet date, before the offer; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("ASSETS", "Total assets at the newest balance-sheet date, before the offer; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("LIAB", "Total liabilities at the newest balance-sheet date; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
-        ("EQUITY", "Total shareholders' equity (negative = deficit) at the newest balance-sheet date, before the offer; — = no public S-1 yet (a confidential filer); n/a = the S-1's table does not give it, or could not be read"),
+        ("EXPECTED", "Day the shares are expected to be priced, per Nasdaq (the date often slips); r = the month the press reports, not confirmed; — = no pricing day set yet"),
+        ("INDUSTRY", "The company's industry, as the US regulator (SEC) lists it; — = no public listing document yet (a confidential filer)"),
+        ("RAISE", "Money raised: dollars the offer raises at the top of the price range, for example $1.5B; before a range is filed, the document cover's amount, shown only at $1B or more (a smaller one is often a placeholder); r = the amount the press reports, not confirmed; — = no price range yet and no cover amount of $1B or more, or no document at all; n/a = a range but no amount read"),
+        ("RANGE", "Price range per share the company filed, in dollars; — = none filed yet, so MCAP@MID, P/S@MID, P/E@MID and SHARES read — too (and RAISE, unless the cover names $1B or more)"),
+        ("MCAP@MID", "Market value at the middle of the range: mid price × the shares after the offer; r = the value the press reports, not confirmed; — = no price range filed yet, so no terms exist"),
+        ("P/S@MID", "Price to sales at the mid price: MCAP@MID ÷ the last 12 months' revenue, for example 10 = the price is 10 years of sales; lower = cheaper; — = no price range filed yet, so no terms exist; n/a = a range, but no revenue for the last 12 months read"),
+        ("P/E@MID", "Price to earnings at the mid price: MCAP@MID ÷ the last 12 months' net profit; lower = cheaper; loss = no profit to divide by; — = no price range filed yet, so no terms exist; n/a = a range, but no net profit for the last 12 months read"),
+        ("SHARES", "Shares after the offer, in millions, as Nasdaq reads them from the filing; — = no price range filed yet, so no terms exist"),
+        ("LOCKUP", "Days insiders may not sell after the listing, for example 180; — = no public listing document yet (a confidential filer)"),
+        ("EMPLOYEES", "Staff count, as Nasdaq reads it from the filing; — = no public listing document yet (a confidential filer)"),
+        ("EXCHANGE", "Where the shares are to list; — = no public listing document yet (a confidential filer)"),
+        ("LEADS", "Lead banks selling the shares, as Nasdaq lists them; a deal led by two of Goldman Sachs, Morgan Stanley, J.P. Morgan, BofA and Citigroup stays in this table at any size; — = no public listing document yet (a confidential filer)"),
+        ("AUDITOR", "The firm that checks the accounts in the listing document; — = no public listing document yet (a confidential filer)"),
+        ("FILING", "The newest public listing document (S-1 or F-1, or a change to it) and its date; — = no public listing document yet (a confidential filer); click to open it on sec.gov"),
+        ("FY", "Latest full business year in the document's summary table; REV and NET come from it (the % columns cover the last 12 months, CASH to EQUITY the newest balance date); — = no public listing document yet; n/a = the table could not be read"),
+        ("INTERIM", "The newest part-year in that table, for example 9M 2026 = nine months to a date in 2026; the ratios add it and drop the same months a year before, to cover the last 12 months. — = full year only, or no public listing document yet; n/a = the table could not be read"),
+        ("REV", "Sales in that business year, for example $2.0B; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("REV-YoY", "Sales growth: the part-year against the same months a year before, or the full year against the one before when there is no part-year; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("NET", "Net profit in that business year (negative = a loss); — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("NET%", "Profit margin: net profit as % of sales over the last 12 months; higher is better; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("GROSS%", "Gross margin: sales minus the direct cost of what was sold, as % of sales, over the last 12 months; higher is better; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("OP%", "Operating margin: profit from the business (negative = a loss) as % of sales, over the last 12 months; higher is better; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("OCF%", "Cash margin: cash brought in by the business as % of sales, over the last 12 months; higher is better; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("CASH", "Cash on hand (with short-term investments when the filing adds them) at the newest balance date, before the offer; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("ASSETS", "Everything the company owns, at the newest balance date, before the offer; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("LIAB", "Everything the company owes, at the newest balance date; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
+        ("EQUITY", "Owners' share: what the company owns minus what it owes (negative = it owes more), at the newest balance date, before the offer; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
     ]);
     let exposure = fixed(&[
-        ("RANK", "A name row's position by the buy heuristic, the ruler CORE ranks on; blank on sector, currency and one-bet rows, which are not assets"),
-        ("KIND", "sector = GICS sector; currency = the currency the underlying shares trade in; one bet = funds sharing most of their top-10 holdings; name = one company summed across the whole book"),
-        ("NAME", "The sector, currency, group size or company ticker; ? = no data served, or a listing on a venue with no known currency, for the names in DETAIL"),
+        ("RANK", "A company's position by buy score, the order the CORE table uses; blank on sector, currency and one-bet rows, which are not things you can buy"),
+        ("KIND", "What the row adds up; sector = an industry group; currency = the currency the underlying shares trade in; one bet = funds that share most of their top-10 holdings; name = one company, added up across the whole buy list"),
+        ("NAME", "The industry group, currency, group size or company ticker; ? = no data, or a listing on an exchange with no known currency, for the names in DETAIL"),
         ("SCORE", RANK_SCORE_HELP),
         ("MISSES", RANK_MISSES_HELP),
-        ("BUY%", "Share of the BUY% book. A name's share is a lower bound: a fund counts only its top-10 holdings"),
-        ("DETAIL", "For a name: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
+        ("BUY%", "Share of the buy list, for example 12% = €120 of €1,000. A company's share is a lower bound: a fund counts only its top-10 holdings"),
+        ("DETAIL", "For a company: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
     ]);
     // (#811) `heuristics::intraday::web_rows`; (#1223) the BUY NOW Trading table shares it.
     // shortcut: the key column's help is keyed on K7, the shipped intraday_key; another key's column shows none
     let intraday = fixed(&[
-        ("RANK", "Position in its table by BEST, the most euros first, ties in the order the names came in: the top 10 by K7 in a K7 table, the BUY NOW order in the BUY NOW one; BEST counts sessions that are over, so this order is hindsight, not a forecast"),
-        ("MKT", "US = traded in New York: an S&P 500 member today in the K7 table; EU = traded in Frankfurt or Paris: a DAX 40, CAC 40 or Euro Stoxx 50 member in the K7 table; in the BUY NOW table a Xetra listing of a US company is priced on its US listing and reads US; hover a cell for the session's hours on the exchange's own clock"),
+        ("RANK", "Position in its table by BEST, the most euros first; the top 10 by K7 in the K7 table, the buy list's order in the buy list table. BEST counts finished sessions, so this order is hindsight, not a forecast"),
+        ("MKT", "Market; US = traded in New York (an S&P 500 member, in the K7 table); EU = traded in Frankfurt or Paris (a DAX 40, CAC 40 or Euro Stoxx 50 member, in the K7 table). In the buy list table, a German listing of a US company is priced on its US listing and reads US; hover a cell for the session's hours on the exchange's own clock"),
         ("TICKER", ticker),
-        ("NAME", "The company's name, as Yahoo lists it; click to open the company's own website (or its Wikipedia article) when one is found, else its Yahoo quote"),
-        ("PRICE", "Last close, in euros at the day's rate; while the session trades, Yahoo's latest price"),
-        ("BEST", "Which of SAME DAY, HOLD 21, TREND and BUY&HOLD made this name the most euros over its last 2 years, and how much; hover a cell for all four, highest first; the rows sort on it; hindsight: it is picked after the sessions are over. Picked this way on each name's last 2 years and then traded over the next 6 months or the next month, it lost to buying and holding the same name, in the US and the EU, 2019-2026 (receipt #1222), so it says which way would have paid, not which will"),
-        ("BUY&HOLD", "The last 2 years bought once: €1,000 bought at the first session's open and sold at the last session's close, in euros at each day's rate, one round trip after the backtest's cost (50 bp in the US, 20 bp in the EU); the yardstick the other columns are set against; — = no session counted"),
-        ("HOLD 21", "The same sessions traded 21 at a time: €1,000 bought at the first session's open and sold at the close of the 21st session, then bought again at the next open, back to back; the last hold ends on the last session counted; in euros at each day's rate, after the same round-trip cost a hold, not compounded; in the hold-window census 21 sessions paid the most of 0 to 21, and it is market drift, not timing"),
-        ("TREND", "The same sessions traded on the 200-day average: in while the last close sits above the average of the last 200 closes, bought at the next open and sold at the next open after a close under it, or at the last close if still in; €1,000 a round trip in euros at each day's rate, after the same cost, not compounded; +€0.00 = it stayed out; in the trading-rules census no such rule beat buying and holding after costs"),
-        ("SAME DAY", "The same sessions bought at each open and sold at that session's close: €1,000 each session, every gain and loss added up, after the round-trip cost each session; negative = a loss; a fresh €1,000 each session, not compounded (a gain is not reinvested, a loss is topped back up); it counts every session of the name, not only the days the table listed it; hover a cell for the figure before costs and the average a session; in the 10-year backtest every intraday key lost money after this cost"),
-        ("EARLY EXIT", "The SAME DAY sessions sold at a set hour instead of at the close, on this name's 60m bars from Yahoo, so a half day drops out: the intraday_exit_us hour New York time on a US row, the intraday_exit_eu hour Frankfurt time on an EU row; hover a cell for the hour on the exchange's clock and on Portugal's (PT) and for the same sessions sold at the close; buying at the open and selling then was the best pair in a 2-year census of every buy hour and later sell hour (receipt #1214), yet every pair lost money after costs, and none beat open to close by a significant margin; — = no 60m session"),
-        ("K7", "The intraday key a K7 table ranks on, higher first: K7 hit 1y = the share of the last 252 sessions that closed above their open; — = fewer sessions than that; hover a cell for its count and for the 2-year window's record: the sessions that closed above their open against the rest, a score of (up+1)/(all+2) that starts every name at 50%, and the up and the down days' moves added up, before costs"),
-        ("DATA TO", "The window every column counts, on this name's own bars: from its first session in the last 2 years to the last completed one; today's session counts once its exchange has closed (half an hour after the close: 17:00 UTC for EU and 21:30 UTC for US in winter time, an hour earlier in summer time); — = no session"),
+        ("NAME", "The company's name, as Yahoo lists it; click to open the company's own website (or its Wikipedia article) when one is found, else its Yahoo page"),
+        ("PRICE", "Last close, in euros at the day's rate; while the market is open, Yahoo's latest price"),
+        ("BEST", "Best way in hindsight: which of SAME DAY, HOLD 21, TREND and BUY&HOLD made the most euros over the last 2 years, and how much; hover a cell for all four, highest first; the rows sort on it. It is picked after the sessions are over. Picked this way and then used for the next 6 months, it lost to buying and holding, in the US and the EU, 2019-2026; so it shows what would have paid, not what will"),
+        ("BUY&HOLD", "Buy once and hold: €1,000 bought at the first open of the last 2 years and sold at the last close, in euros. One round trip's cost is taken off: 0.5% in the US, 0.2% in the EU; the yardstick for the other columns; — = no session counted"),
+        ("HOLD 21", "Hold for 21 sessions at a time: €1,000 bought at an open, sold at the 21st session's close, then bought again at the next open. In euros, after the same cost each round trip; gains are not reinvested. In a test on past prices, 21 sessions paid the most of any hold from 0 to 21: the market's drift, not timing"),
+        ("TREND", "Follow the trend: in while the last close is above the average of the last 200 closes, out after a close below it. €1,000 a round trip, bought and sold at the next open, in euros, after the same cost; gains are not reinvested; +€0.00 = it stayed out. In a test on past prices, no such rule beat buying and holding after costs"),
+        ("SAME DAY", "Day trading: €1,000 bought at each open and sold at that day's close, gains and losses added up, after each session's cost; negative = a loss. A fresh €1,000 each day: a gain is not reinvested, a loss is topped back up. It counts every session of the name, not only the days this table listed it; hover a cell for the figure before costs and the average a session. In a test on past prices over 10 years, every way of ranking day trades lost money after this cost"),
+        ("EARLY EXIT", "Day trading with an early sale: as SAME DAY, but sold at a set hour (hourly prices, so half-day sessions drop out). The hour is New York time on a US row and Frankfurt time on an EU row; hover a cell for that hour on the exchange's clock and on Portugal's (PT), and for the same sessions sold at the close. A 2-year test of every buy and sell hour found these the best pairs, yet every pair lost money after costs; — = no hourly session"),
+        ("K7", "Up-day share: the part of the last 252 sessions that closed above their open, for example 55%; higher first, the K7 table ranks on it; — = fewer sessions than that; hover a cell for the count and the 2-year record. That record gives up sessions against the rest, and a score of (up+1)/(all+2) that starts every name at 50%. It also adds up the moves of the up days and of the down days, before costs"),
+        ("DATA TO", "Last day counted: every column counts this name's sessions from its first one in the last 2 years to its last finished one. Today's session counts half an hour after its exchange closes. That is 17:00 UTC for the EU and 21:30 UTC for the US in winter, an hour earlier in summer; — = no session"),
     ]);
     // (#486) the Bonds table's headers are fixed (`commands::bond_web_rows`), its horizons `BOND_YEARS`
     let mut bonds: BTreeMap<String, String> = fixed(&[
-        ("MARKET", "Whose 10-year government bond: the US Treasury, the same bond for a euro holder (USA in EUR), or a euro-area government"),
-        ("YIELD", "Newest monthly average 10-year yield, % a year"),
-        ("AS OF", "Month of that newest yield; ⚠ marks a series more than 6 months old or missing"),
+        ("MARKET", "Whose 10-year government bond: the US one, the same bond for a euro holder (USA in EUR), or a euro-area government's"),
+        ("YIELD", "Interest rate: the newest monthly average yield of the 10-year bond, % a year, for example 3.0% = €30 a year on €1,000"),
+        ("AS OF", "Month of that newest yield; ⚠ = a figure more than 6 months old, or missing"),
     ]);
     // (#735) "1 year", not "1 years"; the hover clause names what the cell's own title shows
     bonds.extend(crate::core::BOND_YEARS.iter().map(|y| {
         let span = if *y == 1 { "year" } else { "years" };
-        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, rolled monthly to stay 10-year, coupons reinvested, in its own currency; a model rebuilt from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield, then that yearly rate after inflation (US CPI for USA, Portugal's CPI for Portugal, EU HICP for the rest and for USA in EUR); — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
+        (format!("{y}Y"), format!("Total return of holding a 10-year bond for the last {y} {span}, interest reinvested, in its own currency, for example +20% = €1,000 became €1,200. Each month the bond is swapped for a new 10-year one; worked out from the yields, with no fees; hover = that return as % a year, the yield the bond was bought at and the newest yield, then that yearly rate after inflation. Inflation is US prices for USA, Portugal's for Portugal, and EU prices for the rest, USA in EUR included; — = the series is shorter (USA in EUR starts in 1999, Italy 1991, Portugal 1993); n/a = no data"))
     }));
     // (#1140) `commands::track::web_track`
     let track = fixed(&[
-        ("KIND", "to today = one journalled day's bought book, held from that day to this run at today's prices; chained = one month's bought book, held to the next month's first journalled line and priced off that line's own closes, so chained windows follow one another"),
-        ("FROM", "The day the book was journalled and bought"),
-        ("TO", "The day it was priced: this run's date for a to today row, the next month's first journalled line for a chained row"),
+        ("KIND", "How the row is measured; to today = one saved day's buy list, held from that day to today at today's prices; chained = one month's buy list, held to the next month's first saved day, so each row starts where the last one ended"),
+        ("FROM", "The day the buy list was saved and bought"),
+        ("TO", "The day it was priced: today for a to today row, the next month's first saved day for a chained row"),
         ("DAYS", "Days held, FROM to TO"),
-        ("N", "Book names priced at both ends / names in the book; a name with no price drops out, which flatters the book"),
-        ("BOOK", "The book's price return over the window, each name at its weight in the bought book, in euros; dividends not counted"),
-        ("S&P 500", "The S&P 500's price return over the same two days, in euros; n/a = no S&P close journalled at one end"),
-        ("EXCESS", "BOOK minus S&P 500, in points; above 0 = the book beat the index; n/a = no S&P leg"),
+        ("N", "Names priced at both ends / names on the buy list, for example 24/25; a name with no price drops out, which flatters the result"),
+        ("BOOK", "The buy list's price change over the window, each name at its weight, in euros, for example +5% = €1,000 became €1,050; dividends not counted"),
+        ("S&P 500", "The S&P 500's price change over the same two days, in euros; n/a = no S&P 500 close saved at one end"),
+        ("EXCESS", "BOOK minus S&P 500, in points, for example +2.0pp = the buy list rose 2 points more than the index; above 0 = the buy list beat the index; n/a = no S&P 500 figure"),
     ]);
     BTreeMap::from([
         ("lanes", lanes),
@@ -5294,7 +5330,7 @@ pub(crate) fn shipped_book(
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
 /// the column is there.
-const BUY_HELP: &str = "Share of new money the 20-year book puts here, the terminal's BUY NOW: one list of `sizing.book_names` names (25 on CI) across stocks and ETFs. `growth_momentum_slots` of every 10 slots (5 on CI: score, momentum, score, …) go to the best stocks by 12-7 momentum (`m` rows), skipping a name the score side already holds or its twin; the rest go to the score order. The first five names are weighted `sizing.head_weight` (8 on CI) against 1 for each later one (a `c` commodity-price name never takes one of the five when `sizing.head_skip_commodity` is on, as on CI); coins come first at their crypto budget. Blank = the book does not fund this row. NOT advice";
+const BUY_HELP: &str = "Buy list share: the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 names across stocks and funds. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row. NOT advice";
 
 /// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
@@ -5409,7 +5445,7 @@ pub fn stamp_momentum(
 }
 
 /// (#446) What the page's INDEX header means, set by [`stamp_index`].
-const INDEX_HELP: &str = "The fund's benchmark index as its listing data names it (justETF's name when Börse Frankfurt has none); ×N = N rows of this table track that same index, so the book holds the same bet N times, and · TICKER names the cheapest of them by TER, an accumulating line first so no payout is taxed, then a euro-quoted line so no currency conversion is paid. Spellings that differ only in word order, the word index or a capping rule (20%, 20/35, capped) count as one index. When the settings' growth_etf_one_per_index is on, only that line ranks, so ×N then marks a pinned twin. — = no index on record, so a count can undercount. Display only, never scored";
+const INDEX_HELP: &str = "Index: the list of companies the fund copies, as its listing names it; ×N = N rows in this table copy that same index, so buying them all is the same bet N times; · TICKER names the cheapest of them by yearly fee, a reinvesting fund first (no dividend tax), then a euro-priced one (no currency fee). Names that differ only in word order or a weight limit (20%, capped) count as one index. Only one fund per index ranks, so ×N then counts watchlist rows; — = no index on record, so ×N can count too few. Shown only, never part of the buy score";
 
 /// (#490) The INDEX count key: Börse Frankfurt's "nasdaq 100 index" and justETF's "Nasdaq 100®" are one index.
 /// (#509) Word order and capping rules are spelling too: BF's "s&p technology select sector index" and
@@ -5722,10 +5758,10 @@ pub(crate) fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
 }
 
 /// (#535) Help for the page CORE table's RANK cell, which carries the terminal's flag column.
-const CORE_RANK_HELP: &str = "Position in this table, by the buy heuristic (SCORE, then MISSES); o = you already hold it, never on the page, which reads no broker account";
+const CORE_RANK_HELP: &str = "Position in this table, best first: by buy score, then by fewest buy rules missed; o = you already hold it (never shown here: this page reads no broker account)";
 /// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
-const RANK_SCORE_HELP: &str = "The buy score the Stocks table ranks on, under the same settings; ˢ = a stock that misses gates but still scores: its real score, cut by growth_gate_soft once per gate missed, so it can rank in the Stocks table; ʷ = the score it would get with the gates it misses switched off, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund tracking the same index (MISSES names it); ʷⁱ = under a year listed, scored on its change since listing, not annualised (weeks of data are noise); — = no score even then. Rows sort passing first by SCORE, then by fewest gates missed and the score with those gates switched off, then the — ones, then refused, then n/a";
-const RANK_MISSES_HELP: &str = "How many buy gates the row fails, and which (0 = it passes all; the why box explains each; hover the cell, on desktop, for each missed gate's value against what the buy heuristic needs); no-turnover = no trading volume served, scored at the turnover floor; refused = a kind the screen never buys (leveraged, commodity, hedged, stablecoin, or a wipeout: a worst drawdown of 98.5% or more); n/a = not priced, or no record at all";
+const RANK_SCORE_HELP: &str = "Buy score: the number the Stocks table ranks on, higher first; ˢ = a stock that misses buy rules but still ranks: each rule missed cuts its score by a fifth; ʷ = the score it would get if the rules it misses were dropped, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund on the same index (MISSES names it); ʷⁱ = listed under a year, scored on its change since listing, not per year; — = no score even then. Rows sort passing first by buy score, then by fewest rules missed, then the — ones, then refused, then n/a";
+const RANK_MISSES_HELP: &str = "Buy rules missed: how many buy rules the row fails, and which (0 = it passes all); hover the cell (desktop) for each rule's value against its bar, or type the name in the why box; no-turnover = no trading volume reported, so scored at the lowest volume allowed; refused = never bought here: leveraged (2x, 3x) or currency-hedged funds, commodities, stablecoins, or a name that once fell 98.5% or more; n/a = no price, or no record at all";
 
 /// (#525) A row's [`RankKey`] and its SCORE and MISSES cells. (#537) Every rankable row gets a score:
 /// a fund too young for the 5Y rung borrows the score of its [`index_twin`] in `pool` (`ʷ~`), a record
@@ -5764,7 +5800,7 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
             for (g, why) in tags {
                 let borrowed = matches!(*g, "history" | "young");
                 tags_s.push(if borrowed { format!("{g} ~{}", tw.ticker) } else { g.to_string() });
-                lines.push(if borrowed { format!("{g}: {why} (score borrowed from {})", tw.ticker) } else { format!("{g}: {why}") });
+                lines.push(if borrowed { format!("{g} ({}): {why} (score borrowed from {})", plain_gate(g), tw.ticker) } else { format!("{g} ({}): {why}", plain_gate(g)) });
             }
             return ((1, tags_s.len(), s), format!("{s:.1}ʷ~"), format!("{}: {}", tags_s.len(), tags_s.join(", ")), lines.join("\n"));
         }
@@ -5788,7 +5824,7 @@ fn rank_row(q: Option<&Quote>, tuning: &BuyHeuristic, pool: &[Quote]) -> (RankKe
     for (g, why) in tags.iter().map(|g| (g.0, &g.1)).chain(left.iter().map(|f| (f.0, &f.1))) {
         if !tags_s.iter().any(|s| s == g) {
             tags_s.push(g.to_string()); // (#526) `history` waived and still failing is one gate, not two
-            lines.push(format!("{g}: {why}"));
+            lines.push(format!("{g} ({}): {why}", plain_gate(g)));
         }
     }
     let score = if left.is_empty() { growth_score(&own, &t) } else { None };
@@ -10881,7 +10917,7 @@ mod tests {
         // (#378) …and the DEGRADED line, verbatim, so the page names the feed this run went without
         assert_eq!(payload["degraded"], serde_json::json!(["EU HICP feed down (inflation adjustment off)"]));
         // (#400) …and the glossary, whose >=1Y unit is the quotes' own stamp
-        assert!(payload["help"]["lanes"]["2Y"].as_str().is_some_and(|t| t.starts_with("Real")), "{}", payload["help"]);
+        assert!(payload["help"]["lanes"]["2Y"].as_str().is_some_and(|t| t.starts_with("After inflation")), "{}", payload["help"]);
         assert_eq!(payload["help"]["core"]["NAME"], "Fund's full name; click to open its justETF page");
         assert!(payload["help"]["inflation"]["AS OF"].is_string());
         let _ = std::fs::remove_file(&web);
@@ -10900,7 +10936,7 @@ mod tests {
         assert!(payload["core"].as_array().expect("the key stays, so the page prints its own empty line").is_empty());
         assert!(payload["degraded"].as_array().expect("the key stays on a healthy run").is_empty());
         assert!(!payload["stocks"].as_array().expect("stocks lane").is_empty(), "only the CORE table is gated off");
-        assert!(payload["help"]["lanes"]["2Y"].as_str().is_some_and(|t| t.starts_with("Nominal")), "no quote was deflated");
+        assert!(payload["help"]["lanes"]["2Y"].as_str().is_some_and(|t| t.starts_with("Before inflation")), "no quote was deflated");
         let _ = std::fs::remove_file(&web);
 
         // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch, and
@@ -12200,11 +12236,11 @@ mod tests {
         assert_eq!(order, ["STRONG", "WEAK", "ONEG", "ONELO", "FRESH", "TWOG", "BARE", "LEVX", "NOPE", "NOPE2"], "no score sorts after every ʷ score");
         let s = growth_score(&quotes[0], &d).unwrap();
         assert_eq!(rows[0], serde_json::json!([["RANK", "1"], ["TICKER", "STRONG"], ["NAME", "STRONG"], ["SCORE", format!("{s:.1}")], ["MISSES", "0"], ["X", "x"]]));
-        assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range", null, "range: 75% in range (need ≥80%)"]), "(#543) the hover reads value vs need");
+        assert_eq!(rows[2][4], serde_json::json!(["MISSES", "1: range", null, "range (price too low in its 10-year range): 75% in range (need ≥80%)"]), "(#543) the hover reads value vs need");
         assert!(rows[2][3][1].as_str().unwrap().ends_with('ʷ'), "a failing row prints its waived score");
         assert!(rows[4][3][1].as_str().unwrap().ends_with('ʷ'), "(#537) a 1-2y record scores on the 1Y rung");
         assert_eq!(rows[5][4][1], "2: range, cagr");
-        assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history", null, "history: no 5y+ record to rank"])], "a gate waived and still failing counts once, in the hover too");
+        assert_eq!(rows[6].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "1: history", null, "history (too little price history): no 5y+ record to rank"])], "a gate waived and still failing counts once, in the hover too");
         assert_eq!(rows[7].as_array().unwrap()[3..5], [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "refused: leveraged"])]);
         assert_eq!(rows[9].as_array().unwrap()[..1], [serde_json::json!(["RANK", "10"])]);
         assert_eq!(p["help"]["reits"]["MISSES"], RANK_MISSES_HELP);
@@ -12279,7 +12315,7 @@ mod tests {
     }
 
     /// (#543) The hover of [`stamp_shadow_cols_append_the_stock_columns_by_ticker_or_twin`]'s stubs.
-    const NO_RECORD_HOVER: &str = "no-turnover: no trading volume served, scored at the turnover floor\nhistory: no 5y+ record to rank";
+    const NO_RECORD_HOVER: &str = "no-turnover: no trading volume served, scored at the turnover floor\nhistory (too little price history): no 5y+ record to rank";
 
     /// (#543) The MISSES hover has one `gate: value (need X)` line per gate the cell counts, in its order,
     /// each the gate's own text; a borrowed score names its twin; refused, n/a and 0 misses carry none.
@@ -12292,11 +12328,11 @@ mod tests {
         q.perf = legs(&[("1Y", -20.0), ("5Y", 5.0), ("8Y", 10.0)]);
         let (_, _, misses, hover) = rank_row(Some(&q), &d, &[]);
         let fails = gate_failures(&q, &d).unwrap();
-        let first = format!("{}: {}", fails[0].0, fails[0].1);
+        let first = format!("{} ({}): {}", fails[0].0, plain_gate(fails[0].0), fails[0].1);
         assert!(fails[0].1.contains("need") || fails[0].1.contains("floor") || fails[0].1.contains("cap"), "{first}");
         assert_eq!(hover.lines().next(), Some(first.as_str()), "the gate's own value-vs-need text: {hover}");
         let tags: Vec<&str> = misses.split_once(": ").unwrap().1.split(", ").collect();
-        let heads: Vec<&str> = hover.lines().map(|l| l.split_once(": ").unwrap().0).collect();
+        let heads: Vec<&str> = hover.lines().map(|l| l.split_once(" (").unwrap().0).collect();
         assert_eq!(heads, tags, "one line per counted gate, same order");
         let mut thin = q.clone();
         thin.avg_turnover_eur = None;
@@ -12319,6 +12355,18 @@ mod tests {
             let counted = misses.split_once(": ").filter(|_| !misses.starts_with("refused")).map_or(0, |(n, _)| n.parse::<usize>().unwrap());
             assert_eq!(hover.lines().count(), counted, "{misses} | {hover}");
         }
+    }
+
+    /// (#1249) Every rule tag has its own plain label, so a page reader never meets a bare tag alone; the label
+    /// never holds ": " or " (", which split a MISSES hover line into its tag.
+    #[test]
+    fn plain_gate_names_every_rule_in_its_own_words() {
+        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
+        let labels: std::collections::BTreeSet<&str> = tags.iter().map(|g| plain_gate(g)).collect();
+        assert_eq!(labels.len(), tags.len(), "one label per rule");
+        assert!(!labels.contains("a buy rule"), "no rule falls through");
+        assert!(labels.iter().all(|l| !l.contains(": ") && !l.contains(" (")), "{labels:?}");
+        assert_eq!(plain_gate("nope"), "a buy rule");
     }
 
     /// (#525) The REITs table: a Real Estate sector stock, a fund named for property, then a SIGI the
@@ -12548,11 +12596,11 @@ mod tests {
             assert!(span.is_none_or(|n| t.contains(&format!(" {n} "))), "{h}: {t}");
         }
         for leg in ["1Y", "2Y", "5Y", "8Y", "10Y", "20Y"] {
-            assert!(nominal["lanes"][leg].starts_with("Nominal — "), "{leg}");
-            assert!(real["lanes"][leg].starts_with("Real (EU HICP-deflated) — "), "{leg}");
+            assert!(nominal["lanes"][leg].starts_with("Before inflation — "), "{leg}");
+            assert!(real["lanes"][leg].starts_with("After inflation (EU prices) — "), "{leg}");
         }
         for leg in ["1D", "1W", "1M"] {
-            assert!(real["lanes"][leg].starts_with("Nominal — "), "{leg} is never deflated");
+            assert!(real["lanes"][leg].starts_with("Before inflation — "), "{leg} is never deflated");
         }
         assert!(web_help(false, &[])["inflation"].is_empty(), "no feed, no rows, no entries");
         // (#486) every Bonds header has its line, each horizon naming its own span

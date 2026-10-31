@@ -37,15 +37,9 @@ pub const BOOK: usize = 10;
 /// The sources that are the crowd already talking, spelled as `fetch::soc_table` writes them.
 const LOUD: [&str; 2] = ["Reddit", "Benzinga buzz"];
 
-pub const SOC_HELP: &str = "(#538) The social-arbitrage score, which orders this table: sources × freshness × materiality × \
-     unpriced. Sources counts the SOURCES entries; freshness halves every `half_life_days` since NEWEST; materiality \
-     falls with each 10× of market cap over `mcap_pivot_eur`; unpriced falls to 0 as the 1M run-up nears \
-     `runup_cap_pct` (an unknown 1M reads half priced) and is cut by `loud_penalty` when Reddit or Benzinga buzz \
-     is a source. A short-horizon \
-     (about one quarter) attention signal, not a 20y one: it never reaches the lanes or BUY NOW. Graded forward \
-     by track `soct`. NOT advice.";
+pub const SOC_HELP: &str = "Social score: what orders this table, higher first: sources × freshness × size × not yet priced in. More sources = higher; it halves for every 30 days since NEWEST; it falls with each 10× of market value above €2B; it falls to 0 as the 1-month rise nears 50% (an unknown rise counts as half). It halves when Reddit or Benzinga buzz is a source. A short bet, about 3 months, not a 20-year hold: it never reaches the buy list. NOT advice";
 
-pub const RANK_20Y_HELP: &str = "(#538) This row's position under the original 20y buy heuristic (the SCORE order). RANK follows SOC.";
+pub const RANK_20Y_HELP: &str = "Position this row would have by buy score, the order of the Stocks table. RANK follows the social score (SOC)";
 
 /// (#538) The resolved `social_heuristic:` section. `buy` is `buy_heuristic` with this section's
 /// overrides applied, and only the Social table reads it.
