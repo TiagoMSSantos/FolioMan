@@ -531,23 +531,36 @@ function sortBy(th) {
   body.append(...rows.map(([, tr]) => tr));
 }
 
+// (#512) The default is the SECOND-shortest non-empty lane (stocks 7, ETFs 8, crypto 1 -> 7): the
+// shortest-lane default (#396) opened every table at one row once crypto narrowed to BTC. The shortest
+// lane caps itself at its own length; one non-empty lane gives its own size, and none gives 1.
+const secondShortest = (sizes) => {
+  const s = sizes.filter(Boolean).sort((a, b) => a - b);
+  return s[1] ?? s[0] ?? 1;
+};
+console.assert(
+  secondShortest([7, 8, 1]) === 7 && secondShortest([0, 3, 0]) === 3 &&
+    secondShortest([0, 0, 0]) === 1 && secondShortest([5, 5, 2]) === 5,
+  "secondShortest",
+);
+
 // (#143) `?top=N` rather than localStorage: a bare URL always opens at the default, and a reader who
 // wants ten rows every morning bookmarks the URL that gives them. Clamped and truncated because the
 // query string is user input — `?top=abc`, `?top=0`, `?top=3.7` and `?top=999` must all land on an
 // option that exists, or `sel.value` silently becomes "" and apply(0) blanks every table.
 // (#539) The options run to the longest LANE only, then `all` (`?top=all`), which lifts every cut.
-// (#1254) A bare URL opens on `all`: a reader sees the whole buy list without finding the chooser
-// first (the second-shortest-lane default of (#512) hid most of it). `?top=0` and a non-number open
-// on `all` too.
+// (#1275) A bare URL opens on (#512)'s second-shortest lane again, the owner's call on 2026-10-31:
+// (#1254)'s `all` made the page too long. `?top=all` lifts every cut; `?top=0` and a non-number open
+// on the default.
 const topN = (v) => (v === "all" ? Infinity : +v);
-function chooser(max) {
+function chooser(max, dflt) {
   const sel = document.getElementById("topn");
   sel.replaceChildren(); // (#392) an upload renders again, with its own row counts
   for (let i = 1; i <= max; i++) sel.add(new Option(i));
   sel.add(new Option("all"));
   const top = new URLSearchParams(location.search).get("top");
-  const want = Math.trunc(+top);
-  sel.value = top === "all" || !want ? "all" : Math.min(Math.max(want, 1), max);
+  const want = Math.trunc(+top) || dflt;
+  sel.value = top === "all" ? "all" : Math.min(Math.max(want, 1), max);
   sel.onchange = () => {
     apply(topN(sel.value));
     remember("top", sel.value);
@@ -789,7 +802,7 @@ function render(data, prev) {
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   const sizes = LANES.map((lane) => (data[lane] || []).length);
-  chooser(Math.max(1, ...sizes));
+  chooser(Math.max(1, ...sizes), secondShortest(sizes));
   view(viewSel.value);
   euros(); // (#1254) an upload renders new rows: their BUY € cells take the amount already typed
   // (#1254) The start box names one whole-world fund in CORE; (#1258) which one is `startFund`'s.
