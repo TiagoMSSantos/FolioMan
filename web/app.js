@@ -454,6 +454,8 @@ function key(cell) {
   if (gl) return +gl[1] + +gl[2] ? gl[1] / (+gl[1] + +gl[2]) : null;
   const mc = /^(\d+): /.exec(cell);
   if (mc) return +mc[1];
+  const day = /^(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})$/.exec(cell);
+  if (day) return day[3] * 1e4 + "JanFebMarAprMayJunJulAugSepOctNovDec".indexOf(day[2]) * 100 + +day[1];
   const best = /^[A-Z][A-Z&/()\d ]* ([+-]€[\d,.]+)$/.exec(cell);
   if (best) return key(best[1]);
   const m = NUM.exec(cell);
@@ -461,7 +463,7 @@ function key(cell) {
 }
 console.assert(
   key("€1,234.56") === 1234.56 && key("≈+9.9%") === 9.9 && key("-0.2%") === -0.2 &&
-    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("3#wWs") === 3 && key("+17.7%$") === 17.7 && key("+6.1%‡") === 6.1 && key("+12.3%³") === 12.3 && key("-4%ᵈ") === -4 && key("+42%ⁱ") === 42 && key("+756%ʸ") === 756 && key("14.2ʷ") === 14.2 && key("4.1ˢ") === 4.1 && key("€51.20²") === 51.2 && key("+3.8pp") === 3.8 && key("€64.10ᵇ") === 64.1 && key("+28%ᵇ") === 28 && key("€51.3Bᵇ") === 51.3e9 && key("12e") === 12 && key("18.52~°") === 18.52 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null && key("loss") === null && key("lossᵒ") === null && key("burn") === null && key("past burn") === null && key("burn 14.4y") === null && key("Burnham") === "Burnham" && key("7/3") === 0.7 && key("0/4") === 0 && key("0/0") === null && key("+60.0%/-40.0%") === 0.6 && key("+0.0%/-0.0%") === null && key("+0.0%/-2.5%") === 0,
+    key("€1.2B") === 1.2e9 && key("€3.7T") === 3.7e12 && key("9#!xH") === 9 && key("6#!b") === 6 && key("7#!cb") === 7 && key("3*") === 3 && key("4o") === 4 && key("5#ow") === 5 && key("3#wW") === 3 && key("3#wWs") === 3 && key("+17.7%$") === 17.7 && key("+6.1%‡") === 6.1 && key("+12.3%³") === 12.3 && key("-4%ᵈ") === -4 && key("+42%ⁱ") === 42 && key("+756%ʸ") === 756 && key("14.2ʷ") === 14.2 && key("4.1ˢ") === 4.1 && key("€51.20²") === 51.2 && key("+3.8pp") === 3.8 && key("€64.10ᵇ") === 64.1 && key("+28%ᵇ") === 28 && key("€51.3Bᵇ") === 51.3e9 && key("12e") === 12 && key("18.52~°") === 18.52 && key("2B7A.DE") === "2B7A.DE" && key("n/a") === null && key("loss") === null && key("lossᵒ") === null && key("burn") === null && key("past burn") === null && key("burn 14.4y") === null && key("Burnham") === "Burnham" && key("5 Nov 2026") < key("28 Nov 2026") && key("28 Nov 2026") < key("15 Jan 2027") && key("9 Dec 2026") < key("1 Jan 2027") && key("7/3") === 0.7 && key("0/4") === 0 && key("0/0") === null && key("+60.0%/-40.0%") === 0.6 && key("+0.0%/-0.0%") === null && key("+0.0%/-2.5%") === 0,
   "sort key misreads a cell shape",
 );
 // (#882) a dollar cell, a REIT's ᶠ and a utility's ⁿ read their number; a MISSES or RED-FLAGS `N: list` sorts by N.

@@ -3630,7 +3630,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "short", hdr: "SHORT%", width: 7, right: true, help: "Bets against it: shares sold short as % of all shares, from the twice-monthly US report (German listings of US companies use it too). High short interest has come before weaker returns in the past, for example 10% is high; n/a = no US report (a non-US listing), or no share count; — = a fund or coin" },
     // (#448)/(#449) display only, the printed stock rows and (#1209) the shadow tables
     ColSpec { key: "ins", hdr: "INS-B/S", width: 8, right: true, help: "Insider trades: buys/sales by the company's own bosses and directors in the last 90 days, for example 2/5 = 2 buys, 5 sales. From the filing US insiders send when they trade (Form 4). Read it as information only: in a test on past prices, the names insiders bought did worse than the market over 8 and 12 years; n/a = no US filing coverage, or the page's request limit cut the count short (asked again next run)" },
-    ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Next earnings report: the date (month-day) the company next reports its results, and the price often jumps that day; n/a = no date published yet, or the source refused the request (asked again next run)" },
+    ColSpec { key: "earn", hdr: "EARN", width: 11, right: true, help: "Next earnings report: the date the company next reports its results, for example 5 Nov 2026, and the price often jumps that day; n/a = no date published yet, or the source refused the request (asked again next run)" },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise back to the high: the gain needed to undo OFF-HI, for example -50% below the high = +100% to get back" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Trading per day: the average value traded each day over the last 30 trading days, in euros; higher = easier to buy and sell at a fair price, for example €5M = 5 million euros a day; n/a = no traded volume on the chart" },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "Buy score: the number this table ranks on, higher first, except rows flagged m in RANK, which alternate in by momentum; the why box at the top shows how a name's score was worked out. A watchlist name (*) that fails a buy rule shows 0.0" },
@@ -4005,7 +4005,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "evebitda" => fund
             .and_then(|f| Some((f.cap_fund? + f.net_debt?, f.ebitda_ttm?)))
             .map_or("n/a".to_string(), |(ev, e)| format!("{:.1}x", ev / e)),
-        "earn" => quote.next_earnings.map_or("n/a".to_string(), |d| d.format("%m-%d").to_string()),
+        "earn" => quote.next_earnings.map_or("n/a".to_string(), |d| d.format("%-d %b %Y").to_string()), // (#1271) "11-05" read as 11 May in Europe
         "ins" => quote.insider_90d.map_or("n/a".to_string(), |(b, s)| format!("{b}/{s}")),
         "roic" => fund.and_then(|f| f.roic).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "fcf" => fund.and_then(|f| f.fcf_margin).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
@@ -8632,7 +8632,9 @@ mod tests {
         assert_eq!(cc("ins", &st, 0.0, None, ""), "2/7");
         assert_eq!(cc("earn", &st, 0.0, None, ""), "n/a", "(#449) no date published");
         st.next_earnings = chrono::NaiveDate::from_ymd_opt(2026, 10, 22);
-        assert_eq!(cc("earn", &st, 0.0, None, ""), "10-22");
+        assert_eq!(cc("earn", &st, 0.0, None, ""), "22 Oct 2026");
+        st.next_earnings = chrono::NaiveDate::from_ymd_opt(2027, 1, 5);
+        assert_eq!(cc("earn", &st, 0.0, None, ""), "5 Jan 2027", "(#1271) day unpadded, month by name, the year shown");
         // (#484) n/a with no 5y FCF rate, (#506) burn on a burn; then price × FCF-YLD × the multiple
         assert_eq!(cc("fcf5y", &st, 0.0, None, ""), "burn", "(#506) FCF -10 now");
         st.fund.as_mut().unwrap().fcf_ttm = Some(20.0);
@@ -12147,7 +12149,7 @@ mod tests {
         // (#525) no NAME cell here, so SCORE and MISSES go last; (#537) a stub has no turnover and no record
         let refused = || [serde_json::json!(["SCORE", "—"]), serde_json::json!(["MISSES", "2: no-turnover, history", null, NO_RECORD_HOVER])];
         let [rs, rm] = refused();
-        assert_eq!(p["berkshire"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], ["INS-B/S", "1/3"], ["EARN", "10-29"], rs, rm]), "a US filing finds its Xetra twin");
+        assert_eq!(p["berkshire"][0], serde_json::json!([["RANK", "1"], ["TICKER", "AAPL"], ["WEIGHT", "22.0%"], ["SECTOR", "Information Technology"], ["INS-B/S", "1/3"], ["EARN", "29 Oct 2026"], rs, rm]), "a US filing finds its Xetra twin");
         assert_eq!(p["berkshire"][1], serde_json::json!([["RANK", "2"], ["TICKER", "SIRI"], ["WEIGHT", "0.1%"], ["SECTOR", "n/a"], ["INS-B/S", "n/a"], ["EARN", "n/a"], ["SCORE", "—"], ["MISSES", "n/a"]]), "unpriced = n/a, still rectangular");
         let [rs, rm] = refused();
         assert_eq!(p["social"][0], serde_json::json!([["RANK", "1"], ["TICKER", "HOOD"], ["WHY", "x"], ["SECTOR", "Financials"], ["INS-B/S", "n/a"], ["EARN", "n/a"], rs, rm]));
