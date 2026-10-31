@@ -3587,10 +3587,10 @@ const COLUMNS: &[ColSpec] = &[
     // (#462) cash value, stocks only, off `fund.cap_fund` (the market cap in the filer's own currency). Display only
     ColSpec { key: "fcfy", hdr: "FCF-YLD", width: 7, right: true, help: "Cash yield: free cash flow from the last yearly report ÷ market value, the cash each euro of the price earns a year; higher = cheaper, for example 5% = 5 cents a year per euro; negative = burning cash; n/a = no filing carries the lines; — = a fund or coin, which files no company accounts, or a bank or insurer, whose cash flow is deposits and loans" },
     // (#484) a 2-stage DCF on FCF-YLD and FCF-5Y (`dcf_multiple`). Display only: never scored
-    ColSpec { key: "fair", hdr: "FAIR", width: 9, right: true, help: "Fair price: a rough value per share in euros, from the cash the business makes (a discounted cash flow model). Above the price = looks cheap, below = looks dear. It is a sanity check, not a target. It starts from free cash flow: the median margin of the last 3 years × this year's revenue. That grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever. Cash further away counts less, 9% less for each year of waiting; ³ etc. = FCF-5Y read over that many filed years; ⁰ = no growth rate on record yet, so valued at 0% growth; ᶠ = a REIT (a property company), valued on its property cash earnings (FFO) instead; ⁿ = a utility, valued on net profit, as its building spend swamps free cash flow; ᵇ = a bank or insurer, valued on its net worth on the balance sheet and its return on it; burn = the base is 0 or below, and burn 3.6y = cash lasts 3.6 years at that loss (plain burn = no cash filed); past burn = the median of the last 3 filed years is at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = a needed line is missing, a bank or insurer earning 2.5% or less, or a fund whose top-10 holdings mostly lack FAIR. ETFs: the top-10 holdings' own FAIR, weight-averaged. Bitcoin: the average price holders paid (price ÷ MVRV), a cost anchor, not a cash value" },
+    ColSpec { key: "fair", hdr: "FAIR", width: 10, right: true, help: "Fair price: a rough value per share in euros, from the cash the business makes (a discounted cash flow model). Above the price = looks cheap, below = looks dear. It is a sanity check, not a target. It starts from free cash flow: the median margin of the last 3 years × this year's revenue. That grows at FCF-5Y (held to 0-15%) for 10 years, then 2.5% a year forever. Cash further away counts less, 9% less for each year of waiting; ³ etc. = FCF-5Y read over that many filed years; ⁰ = no growth rate on record yet, so valued at 0% growth; ᶠ = a REIT (a property company), valued on its property cash earnings (FFO) instead; ⁿ = a utility, valued on net profit, as its building spend swamps free cash flow; ᵇ = a bank or insurer, valued on its net worth on the balance sheet and its return on it; burn = the base is 0 or below, and burn 3.6y = cash lasts 3.6 years at that loss (plain burn = no cash filed); past burn = the median of the last 3 filed years is at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = a needed line is missing, a bank or insurer earning 2.5% or less, or a fund whose top-10 holdings mostly lack FAIR. ETFs: the top-10 holdings' own FAIR, weight-averaged. Bitcoin: the average price holders paid (price ÷ MVRV), a cost anchor, not a cash value" },
     ColSpec { key: "mos", hdr: "MOS%", width: 6, right: true, help: "Margin of safety: how far FAIR sits above today's price; higher = cheaper, for example +30% = FAIR is 30% above the price, −20% = the price assumes faster growth than FCF-5Y; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = under 2 years filed, so there is no base to value yet; n/a = FAIR is n/a; ᵇ, ᶠ, ⁿ and ⁰ as FAIR. ETFs and Bitcoin: the same against their FAIR" },
     // (#522) the FAIR pair on owner earnings, the whole-company value, and the reverse DCF. Display only
-    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 9, right: true, help: "Fair price on owner earnings: FAIR again, with staff stock pay taken off free cash flow, because shares handed to staff are a real cost. It sits below FAIR by that pay, for example a quarter to a half lower for META or GOOGL; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer, or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row) or a line FAIR needs is missing" },
+    ColSpec { key: "fair_oe", hdr: "FAIR-OE", width: 10, right: true, help: "Fair price on owner earnings: FAIR again, with staff stock pay taken off free cash flow, because shares handed to staff are a real cost. It sits below FAIR by that pay, for example a quarter to a half lower for META or GOOGL; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer, or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row) or a line FAIR needs is missing" },
     ColSpec { key: "mos_oe", hdr: "MOS-OE%", width: 8, right: true, help: "Margin of safety on FAIR-OE: how far FAIR-OE sits above today's price; higher = cheaper; burn = owner earnings at or below 0; past burn = owner earnings' 3-year median at or below 0, but the newest year's free cash flow minus stock pay is positive; — = a fund or coin, a bank or insurer, or under 2 years filed; n/a = no stock-pay line filed (every REPORTS ᵉ row) or a line FAIR needs is missing" },
     ColSpec { key: "fair_cap", hdr: "FAIR-CAP", width: 8, right: true, help: "Fair value of the whole company in euros: FAIR × shares, to set beside MCAP; above MCAP = looks cheap. Debt is already paid in it, so this is the owners' part. Bitcoin: what every coin last moved at, added up; burn = FAIR's base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; — = a fund (its holdings are the companies), or under 2 years filed; n/a = FAIR or MCAP's share count is n/a; ᵇ, ᶠ, ⁿ and ⁰ as FAIR" },
     ColSpec { key: "impl_g", hdr: "IMPL-G", width: 7, right: true, help: "Growth the price assumes: how fast FAIR's base must grow each year for 10 years for today's price to be fair, for example 8%. Set it beside FCF-5Y: below it = the price asks less than the record, which looks cheap; burn = that base at or below 0; past burn = FAIR's 3-year median base at or below 0, but the newest year's free cash flow is positive; n/a = no base or market value filed, or the answer falls outside −50% to +100% a year; — = a fund or coin, or a bank or insurer" },
@@ -3616,7 +3616,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "rev5y", hdr: "REV-5Y", width: 8, right: true, help: "Sales growth per year over the last 5 filed years, for example 12% = sales double in about 6 years; ³ etc. = under 5 years filed, so measured over that many years (shown only, never scored); — = no rate is possible: under 2 years filed, no revenue at the start, or a fund or coin; n/a = a filing without the revenue line" },
     ColSpec { key: "fcf5y", hdr: "FCF-5Y", width: 8, right: true, help: "Cash growth per year: how fast free cash flow grew each year over the last 5 filed years. When the filing 5 years back has no free cash figure, the oldest one 3 or more years back stands in; ³ etc. = under 5 years filed, so measured over that many years; burn = free cash flow at or below 0 now; — = no rate is possible: under 2 years filed, a burn at the start, a fund or coin, or a bank or insurer; n/a = a filing without the free cash lines" },
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true, help: "Profit per share growth, last year: the newest full year's earnings per share vs the year before, for example +15%; n/a = no two comparable full years filed; — = a fund or coin, which files no company accounts" },
-    ColSpec { key: "net", hdr: "NET%", width: 6, right: true, help: "Profit margin: the newest full year's net profit as % of revenue, for example 20% = €20 of profit on €100 of sales; higher is better; n/a = no revenue or net profit filed; — = a fund or coin, which files no company accounts" },
+    ColSpec { key: "net", hdr: "NET%", width: 7, right: true, help: "Profit margin: the newest full year's net profit as % of revenue, for example 20% = €20 of profit on €100 of sales; higher is better; n/a = no revenue or net profit filed; — = a fund or coin, which files no company accounts" },
     ColSpec { key: "opm", hdr: "OP%", width: 6, right: true, help: "Operating margin: profit from the business before interest and tax, as % of revenue; higher = more pricing power, for example 30%; n/a = no operating profit line filed (some property companies file none); — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "mtrend", hdr: "MARGIN-TREND", width: 12, right: true, help: "Margin trend: OP% now minus OP% a year earlier, in points (pp); positive = margins widening, for example +2pp = 20% became 22%; n/a = OP% missing now or a year earlier; — = a fund or coin, which files no company accounts, or a bank or insurer, where interest is the cost of doing business" },
     ColSpec { key: "mscore", hdr: "M-SCORE", width: 8, right: true, help: "Accounting red-flag test (Beneish M-score) on the newest two filed years; lower = cleaner, for example -2.5. Above -1.78, the accounts look like those of companies later caught faking profits, so read the filings before buying. A missing input counts as no change; n/a = the newest two years lack revenue, margins or assets (every REPORTS ᵉ row: that vendor's balance sheets do not add up); — = a fund or coin, which files no company accounts" },
@@ -4080,7 +4080,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "eps-yoy" if stock_only_na => "—".to_string(),
         "eps-yoy" => quote.eps_yoy.or_else(|| ep.and_then(|f| f.eps_yoy)).map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "net" if stock_only_na => "—".to_string(),
-        "net" => quote.net_margin_fy.or_else(|| ep.and_then(|f| f.net_margin)).map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        "net" => quote.net_margin_fy.or_else(|| ep.and_then(|f| f.net_margin)).map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         // (#463) the 5y fund_factors levels the live enrich already fills
         "rev5y" | "opm" | "mtrend" | "fcf5y" if stock_only_na => "—".to_string(),
         // (#622) company cash-flow cells: a fund has none, so the dash replaces an n/a that means "exists but
@@ -4138,7 +4138,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         .and_then(|(x, m)| match key {
             "mos" | "mos_oe" => Some(format!("{:+.0}%{m}", (x - 1.0) * 100.0)),
             "fair_cap" => shares.zip(quote.price_eur).map(|(n, p)| format!("{}{m}", turnover_cell(Some(n * p * x)))),
-            _ => quote.price_eur.map(|p| format!("€{:.2}{m}", p * x)),
+            _ => quote.price_eur.map(|p| format!("€{}{m}", crate::core::fmt_money2(p * x))),
         })
         // (#702) a stock whose FCF-5Y cannot exist has no rate to grow FAIR by either
         .unwrap_or_else(|| (if !stock_only_na && !bank(quote, fund) && fund.is_some_and(|f| f.fcf_dash) { "—" } else { "n/a" }).to_string()),
@@ -5990,6 +5990,14 @@ pub fn stamp_us_twin(payload: &mut serde_json::Value, twins: &HashMap<String, Qu
         for cells in rows.iter_mut().filter_map(serde_json::Value::as_array_mut) {
             let t = cells.iter().find(|c| c[0] == "TICKER").and_then(|c| c[1].as_str()).unwrap_or_default().to_string();
             let Some(twin) = twins.get(&t).or_else(|| twins.values().find(|q| q.ticker == t)) else { continue };
+            // (#1253) a European line's TICKER hover names its US line; a row that already names the US
+            // ticker found its twin by value, so it has no other line to name. The 4th element is the hover.
+            if twin.ticker != t {
+                if let Some(cell) = cells.iter_mut().find(|c| c[0] == "TICKER").and_then(serde_json::Value::as_array_mut) {
+                    cell.resize(3, serde_json::Value::Null);
+                    cell.push(format!("Another listing of the same company: this line trades in Europe; on a US exchange it is {}. Both buy the same company's shares.", twin.ticker).into());
+                }
+            }
             for cell in cells.iter_mut().filter(|c| c[1] == "n/a" || c[1] == "—") {
                 let Some(c) = cols.iter().find(|c| cell[0] == c.hdr) else { continue };
                 let v = col_cell(c.key, twin, 0.0, None, "", tuning, fund_pe);
@@ -6594,6 +6602,10 @@ pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned, tuning: &BuyHe
             let mut row: Vec<(String, String)> = HOLD_CORE_COLS.iter().map(|h| (*h).to_string()).zip(hold_core_cells(q, owned)).collect();
             row[0] = ("RANK".to_string(), format!("{}{}", i + 1, row[0].1)); // (#535) position, then the `o` flag
             row.splice(3..3, [("SCORE".to_string(), score), ("MISSES".to_string(), misses)]);
+            // (#1253) the page has room for the whole name: the 44-character cut is the terminal's column
+            if let Some(name) = row.iter_mut().find(|c| c.0 == "NAME") {
+                name.1 = clean_name(q);
+            }
             row.push(("REPORTS".to_string(), "search".to_string())); // (#540) a fund has no CIK; `stamp_site` links it
             row
         })
@@ -8469,7 +8481,7 @@ mod tests {
         st.net_margin_fy = Some(55.6);
         assert_eq!(cc("rev-yoy", &st, 0.0, None, ""), "+65.5%");
         assert_eq!(cc("eps-yoy", &st, 0.0, None, ""), "-12.3%");
-        assert_eq!(cc("net", &st, 0.0, None, ""), "55.6");
+        assert_eq!(cc("net", &st, 0.0, None, ""), "55.6%");
         assert_eq!(cc("rev-yoy", &eq, 0.0, None, ""), "—"); // ETF
         assert_eq!(cc("net", &cq, 0.0, None, ""), "—"); // crypto
         // (#447) hold pain on every class; balance sheet + SECTOR stocks only, n/a until filled
@@ -8775,7 +8787,7 @@ mod tests {
         }
         (e.look_fair, c.mvrv) = (Some(1.25), Some(2.0));
         assert_eq!((cc("fair", &e, 0.0, None, ""), cc("mos", &e, 0.0, None, "")), ("€125.00".to_string(), "+25%".to_string()));
-        assert_eq!((cc("fair", &c, 0.0, None, ""), cc("mos", &c, 0.0, None, "")), ("€30000.00".to_string(), "-50%".to_string()));
+        assert_eq!((cc("fair", &c, 0.0, None, ""), cc("mos", &c, 0.0, None, "")), ("€30,000.00".to_string(), "-50%".to_string()));
         c.mvrv = Some(0.0);
         assert_eq!(cc("mos", &c, 0.0, None, ""), "n/a", "no realized price to divide by");
     }
@@ -12423,11 +12435,13 @@ mod tests {
             "etfs": [row("APC.DE", "n/a")],
         });
         stamp_us_twin(&mut p, &twins, &w, &BuyHeuristic::default(), &FundPeMap::new());
-        let filled = serde_json::json!([["TICKER", "APC.DE"], ["SECTOR", "Information Technology$"], ["UW-YRS", "3.0"], ["WEIGHT", "n/a"]]);
+        // (#1253) the European line's TICKER hover names the US line
+        let tip = |us: &str| format!("Another listing of the same company: this line trades in Europe; on a US exchange it is {us}. Both buy the same company's shares.");
+        let filled = serde_json::json!([["TICKER", "APC.DE", null, tip("AAPL")], ["SECTOR", "Information Technology$"], ["UW-YRS", "3.0"], ["WEIGHT", "n/a"]]);
         assert_eq!(p["stocks"][0], filled, "only the n/a column cell moves");
         assert_eq!(p["stocks"][1], row("HOOD", "n/a"), "no twin, no change");
-        assert_eq!(p["stocks"][2], serde_json::json!([["TICKER", "FND.DE"], ["SECTOR", "n/a"], ["UW-YRS", "2.0$"], ["WEIGHT", "n/a"]]), "a — never lands");
-        assert_eq!(p["berkshire"][0], serde_json::json!([["TICKER", "AAPL"], ["SECTOR", "Information Technology$"], ["UW-YRS", "n/a"], ["WEIGHT", "n/a"]]), "a US-ticker row finds its twin; a twin with no value leaves n/a");
+        assert_eq!(p["stocks"][2], serde_json::json!([["TICKER", "FND.DE", null, tip("FUND")], ["SECTOR", "n/a"], ["UW-YRS", "2.0$"], ["WEIGHT", "n/a"]]), "a — never lands");
+        assert_eq!(p["berkshire"][0], serde_json::json!([["TICKER", "AAPL"], ["SECTOR", "Information Technology$"], ["UW-YRS", "n/a"], ["WEIGHT", "n/a"]]), "a US-ticker row finds its twin and names no other line; a twin with no value leaves n/a");
         assert_eq!(p["etfs"][0], row("APC.DE", "n/a"), "the fund lane is not a stock lane");
     }
 
@@ -12440,7 +12454,7 @@ mod tests {
         let w = Widths { columns: vec!["5y".into(), "20y".into()], ..Widths::default() };
         let mut p = serde_json::json!({"stocks": [[["TICKER", "APC.DE"], ["5Y", "—"], ["20Y", "—"]]]});
         stamp_us_twin(&mut p, &twins, &w, &BuyHeuristic::default(), &FundPeMap::new());
-        assert_eq!(p["stocks"][0], serde_json::json!([["TICKER", "APC.DE"], ["5Y", "+120.0%$"], ["20Y", "—"]]));
+        assert_eq!([&p["stocks"][0][1], &p["stocks"][0][2]], [&serde_json::json!(["5Y", "+120.0%$"]), &serde_json::json!(["20Y", "—"])]);
     }
 
     /// (#639) Every Young row is under 5 years old, so that table drops the legs and 5-year window
@@ -12695,6 +12709,11 @@ mod tests {
         cells.push("search".to_string());
         assert_eq!(rows[0][5..].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(), cells);
         assert!(hold_core_web_rows(&[], &Owned::default(), &BuyHeuristic::default(), &[]).is_empty(), "no cores -> no rows");
+        // (#1253) the page prints the whole clean name; only the terminal cuts it at 44 characters
+        let long = core_etf("SPYI.DE", "iShares V PLC - iShares MSCI All Country World Investable Market Index UCITS ETF (Acc)", 1e9, 0.17);
+        assert_eq!(hold_core_cells(&long, &Owned::default())[1].chars().count(), 44, "the terminal column");
+        let web = hold_core_web_rows(&[&long], &Owned::default(), &BuyHeuristic::default(), &[]);
+        assert_eq!(web[0][1], ("NAME".to_string(), "iShares MSCI All Country World Investable Market Index (Acc)".to_string()));
     }
 
     /// (#620) A CORE fund BF's venue list does not cover reads USE/REPL from justETF's profile page, the

@@ -429,7 +429,7 @@ mod tests {
         let q = pool();
         let sector = |u: &str| {
             let v: serde_json::Value = serde_json::from_str(&screen("", u).expect("ranks")).expect("JSON");
-            let row = v["stocks"].as_array().expect("stocks lane").iter().find(|r| r.as_array().is_some_and(|c| c.contains(&serde_json::json!(["TICKER", "NVD.DE"])))).cloned();
+            let row = v["stocks"].as_array().expect("stocks lane").iter().find(|r| r.as_array().is_some_and(|c| c.iter().any(|x| x[0] == "TICKER" && x[1] == "NVD.DE"))).cloned();
             row.and_then(|r| r.as_array()?.iter().find(|c| c[0] == "SECTOR").map(|c| c[1].clone()))
         };
         let nvda = Quote { sector: Some("Information Technology".into()), ..Quote::stub("NVDA", "$1", "", "NVIDIA") };
