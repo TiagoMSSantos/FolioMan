@@ -70,17 +70,15 @@
        rankings all along and this page never carried. It is NOT a fourth ranking: the tables above
        rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
        appear there however good a 20-year hold they are. (#539) The top-N chooser cuts it — see `apply()`. -->
-  <h2 title="Broad, cheap index funds to hold forever. They own the real shares and reinvest the dividends. Ranked by buy score here; the tables above score these 0 on purpose. NOT advice" id="h-core">CORE — one fund forever</h2>
+  <h2 title="Broad, cheap index funds to hold forever. They reinvest the dividends; REPL says how each copies its index. Ranked here on buy rules missed, then buy score; the tables above score these 0 on purpose. NOT advice" id="h-core">CORE — one fund forever</h2>
   <div id="core"></div>
   <details class="note" id="hold">
     <summary>about CORE</summary>
-    Broad, cheap index funds sold under EU fund rules (UCITS) that own the real shares (physical) and
-    reinvest the dividends (accumulating). They are chosen broadest first: all-world, then developed,
+    Broad, cheap index funds sold under EU fund rules (UCITS) that reinvest the dividends (accumulating). Most own the real shares; a Swap fund (see REPL) gets the index's return from a bank under a contract instead. They are chosen broadest first: all-world, then developed,
     emerging, US, ex-US, Europe, Japan and Asia-Pacific. Then by home country (Ireland first: it pays less
     tax on US dividends), then the lowest yearly fee (<code>TER</code>), then the largest size
     (<code>AUM</code>). One row per fund, and each group of funds (a sleeve) has a cap, so no single
-    index crowds out the rest. This page ranks the chosen funds by buy score and buy rules missed, like
-    every table below it (hover the headers). <strong>One all-world fund is already a whole
+    index crowds out the rest. This table then ranks the chosen funds on buy rules missed and buy score, like every table below it (hover the headers). So a narrower fund can sit above an all-world one. <strong>One all-world fund is already a whole
     portfolio</strong>; the groups under it are for building one yourself. The tables above rank recent
     momentum, so they score these funds 0. That is how that ranking works, not a verdict on the fund.
     <strong>NOT advice.</strong>
@@ -116,7 +114,7 @@
     for a row no 13F lists. STATUS compares it with the quarter before (a Japan stake with its report
     before). It reads new, added (over 5% more shares), trimmed (under 95% of the shares) or held; a
     stock split counts as held. SHARES Δ is that change. BOUGHT is the trade date of a Form 4 buy, or
-    the day of a grown Japan stake's newest report. Otherwise it is the newest of the last 4 quarters it was bought in. It reads "before" the oldest of those quarters when it was bought in none of them, or —.
+    the day of a grown Japan stake's newest report. Otherwise it is the newest of the last 4 quarters it was bought in. If it was bought in none of them, it reads "before" and the oldest of those quarters: held, and not bought since. — = no holdings report on hand.
     A 13F is filed up to 45 days after its quarter ends, so the table is already weeks old. Funds (ETFs)
     are left out. A name this page does not price shows its issuer name in capitals, as OpenFIGI (a free
     ticker lookup) lists it. A stock Berkshire holds ranks a little higher in the tables above. Your own
@@ -156,7 +154,7 @@
   </details>
   <div id="social"></div>
   <!-- (#500) stocks too young for the 5-year history gate, shown and never ranked: the track yng row reads it. -->
-  <h2 title="Stocks listed less than 5 years ago, best buy score first. The rankings above need a 5-year record, so none of these can rank yet" id="h-young">Young (listed under 5 years) — watch only, NOT a buy signal</h2>
+  <h2 title="Stocks listed less than 5 years ago, best buy score first. The rankings above want a 5-year record, so a name here ranks there only when marked ˢ, its score cut for each rule it misses" id="h-young">Young (listed under 5 years) — watch only, NOT a buy signal</h2>
   <details class="note" id="young-note">
     <summary>about this table</summary>
     Every stock this page prices that has been listed for less than 5 years (YRS). That includes the big US first share sales (IPOs) of the last 5 years: $1 billion or more on Nasdaq's IPO calendar. SPACs (shell companies listed to buy another company) are left out. The rankings above need at least a

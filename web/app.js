@@ -806,7 +806,7 @@ upload.onchange = async () => {
     whyOut.hidden = true;
     render(out);
     say(
-      "Ranked with your " + file.name + ", in this browser: the file was never uploaded. What " +
+      "Ranked with your " + file.name + ", in this browser: the file was never uploaded. " +
         "Your file cannot change what the page fetched: the list of assets, the dip and high windows, inflation, and when a price is too old." +
         pinNote(out.pins),
       true,

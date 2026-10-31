@@ -2445,6 +2445,14 @@ pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) ->
     Some((long_cagr_from(quote, tuning, long_cum, long_years), fails[hit].1.clone(), others))
 }
 
+/// (#1252) The page's key to the rule names a MISSES cell lists, in [`plain_gate`]'s words, spliced into both
+/// MISSES helps: their cells in the lanes, CORE and exposure carry no per-cell hover.
+macro_rules! rule_key {
+    () => {
+        "cagr = grew too slowly per year; cagr-life = grew too slowly over its whole life; lifetime = lost money over its whole life; 1Y+ = too weak over the last year; 5Y+ = too weak over 5 years; 8Y+ = too weak over 8 years; 20Y+ = too weak over 20 years; peg = price too high for its growth; range = price too low in its 10-year range; range8y = price too low in its 8-year range; stretch = ran too far above its 4-year trend; history = too little price history; young = listed too few years; liquidity = trades too little each day; aum = fund too small, could close; volatile = swings too much day to day; spike = jumped too much in one day; maxdd = once fell too far from a peak"
+    };
+}
+
 /// (#1249) The page's plain words for a rule tag that `gate_fails` or `refusal_reason` returns. The MISSES
 /// hover and the why box print it beside the tag; the terminal keeps the bare tag.
 pub(crate) fn plain_gate(g: &str) -> &'static str {
@@ -3625,9 +3633,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "earn", hdr: "EARN", width: 6, right: true, help: "Next earnings report: the date (month-day) the company next reports its results, and the price often jumps that day; n/a = no date published yet, or the source refused the request (asked again next run)" },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true, help: "Rise back to the high: the gain needed to undo OFF-HI, for example -50% below the high = +100% to get back" },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true, help: "Trading per day: the average value traded each day over the last 30 trading days, in euros; higher = easier to buy and sell at a fair price, for example €5M = 5 million euros a day; n/a = no traded volume on the chart" },
-    ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "Buy score: the number this table ranks on, higher first; the why box at the top shows how a name's score was worked out. A watchlist name (*) that fails a buy rule shows 0.0" },
+    ColSpec { key: "score", hdr: "SCORE", width: 0, right: true, help: "Buy score: the number this table ranks on, higher first, except rows flagged m in RANK, which alternate in by momentum; the why box at the top shows how a name's score was worked out. A watchlist name (*) that fails a buy rule shows 0.0" },
     // (#576) under growth_gate_soft a stock that fails gates still ranks, docked per gate; (#1203) ETFs print 0
-    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: "Buy rules missed: how many buy rules the row fails, and which (0 = it passes all); hover for each rule's value against its bar. A stock that misses rules still ranks, its buy score cut once per rule missed, unless one is artifact or exchange, which nothing waives; refused = no score is possible (a kind this page never buys, no trading volume, or no 1Y figure). Funds must pass every rule, so a ranked fund reads 0" },
+    ColSpec { key: "misses", hdr: "MISSES", width: 24, right: false, help: concat!("Buy rules missed: how many buy rules the row fails, and which (0 = it passes all); type the name in the why box for each rule's value against its bar; ", rule_key!(), ". A stock that misses rules still ranks, its buy score cut once per rule missed, unless one is artifact or exchange, which nothing waives; refused = no score is possible (a kind this page never buys, no trading volume, or no 1Y figure). Funds must pass every rule, so a ranked fund reads 0") },
     // DIAGNOSTIC: the long-CAGR window (and the trust leg) pinned to 8Y. Never ranked on, and scored WITHOUT
     // the 8Y CAGR admission floor so every row carries a comparable number
     ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true, help: "Buy score on 8 years: the same score worked out on an 8-year window, for comparison; the table never ranks on it; † = under 8 years of record, so it is the score on the full history" },
@@ -5063,7 +5071,7 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
         ("e", "an exchange's own coin (BNB, GT, OKB, CRO…), riding one company's survival, as FTT fell with FTX in 2022; its buy score is cut"),
         ("x", "a fund listed in a non-euro currency; conversion plus a wider spread; its buy score is cut slightly"),
         ("~", "price history borrowed from an older listing of the same fund or index, so CAGR/YRS describe that record"),
-        ("H", "fit for a long hold (broad, cheap, holds the real shares, reinvests dividends, large)"),
+        ("H", "fit for a long hold (a broad index, cheap, reinvests dividends, large)"),
         ("o", "you already hold it"),
         ("w", "Berkshire Hathaway (Warren Buffett's company) bought it (new or 5%+ more shares) in the last 4 quarters; shown only"),
         ("W", "Berkshire's newest quarterly holdings report holds it; its buy score is raised"),
@@ -5213,7 +5221,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("EQUITY", "Owners' share: what the company owns minus what it owes (negative = it owes more), at the newest balance date, before the offer; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
     ]);
     let exposure = fixed(&[
-        ("RANK", "A company's position by buy score, the order the CORE table uses; blank on sector, currency and one-bet rows, which are not things you can buy"),
+        ("RANK", "A company's position: those passing every buy rule first, by buy score, then the rest by fewest rules missed (the CORE table's order); blank on sector, currency and one-bet rows, which are not things you can buy"),
         ("KIND", "What the row adds up; sector = an industry group; currency = the currency the underlying shares trade in; one bet = funds that share most of their top-10 holdings; name = one company, added up across the whole buy list"),
         ("NAME", "The industry group, currency, group size or company ticker; ? = no data, or a listing on an exchange with no known currency, for the names in DETAIL"),
         ("SCORE", RANK_SCORE_HELP),
@@ -5758,10 +5766,10 @@ pub(crate) fn rank_cmp(a: &RankKey, b: &RankKey) -> std::cmp::Ordering {
 }
 
 /// (#535) Help for the page CORE table's RANK cell, which carries the terminal's flag column.
-const CORE_RANK_HELP: &str = "Position in this table, best first: by buy score, then by fewest buy rules missed; o = you already hold it (never shown here: this page reads no broker account)";
+const CORE_RANK_HELP: &str = "Position in this table, best first: funds passing every buy rule first, by buy score, then the rest by fewest rules missed; o = you already hold it (never shown here: this page reads no broker account)";
 /// (#525) Help for the SCORE and MISSES cells the ranked tables carry.
-const RANK_SCORE_HELP: &str = "Buy score: the number the Stocks table ranks on, higher first; ˢ = a stock that misses buy rules but still ranks: each rule missed cuts its score by a fifth; ʷ = the score it would get if the rules it misses were dropped, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund on the same index (MISSES names it); ʷⁱ = listed under a year, scored on its change since listing, not per year; — = no score even then. Rows sort passing first by buy score, then by fewest rules missed, then the — ones, then refused, then n/a";
-const RANK_MISSES_HELP: &str = "Buy rules missed: how many buy rules the row fails, and which (0 = it passes all); hover the cell (desktop) for each rule's value against its bar, or type the name in the why box; no-turnover = no trading volume reported, so scored at the lowest volume allowed; refused = never bought here: leveraged (2x, 3x) or currency-hedged funds, commodities, stablecoins, or a name that once fell 98.5% or more; n/a = no price, or no record at all";
+const RANK_SCORE_HELP: &str = "Buy score: the number the Stocks table ranks on, higher first, except rows flagged m in RANK, which alternate in by momentum; ˢ = a stock that misses buy rules but still ranks: each rule missed cuts its score by a fifth; ʷ = the score it would get if the rules it misses were dropped, so it cannot be bought today; ʷ~ = a fund too young to score borrows the score of the oldest fund on the same index (MISSES names it); ʷⁱ = listed under a year, scored on its change since listing, not per year; — = no score even then. Rows sort passing first by buy score, then by fewest rules missed, then the — ones, then refused, then n/a";
+const RANK_MISSES_HELP: &str = concat!("Buy rules missed: how many buy rules the row fails, and which (0 = it passes all); in the watch-only tables, hover the cell (desktop) for each rule's value against its bar; anywhere, type the name in the why box; ", rule_key!(), "; no-turnover = no trading volume reported, so scored at the lowest volume allowed; refused = never bought here: leveraged (2x, 3x) or currency-hedged funds, commodities, stablecoins, or a name that once fell 98.5% or more; n/a = no price, or no record at all");
 
 /// (#525) A row's [`RankKey`] and its SCORE and MISSES cells. (#537) Every rankable row gets a score:
 /// a fund too young for the 5Y rung borrows the score of its [`index_twin`] in `pool` (`ʷ~`), a record
