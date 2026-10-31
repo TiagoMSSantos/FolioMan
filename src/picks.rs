@@ -5259,7 +5259,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
     }));
     // (#1140) `commands::track::web_track`
     let track = fixed(&[
-        ("KIND", "How the row is measured; to today = one saved day's buy list, held from that day to today at today's prices; chained = one month's buy list, held to the next month's first saved day, so each row starts where the last one ended"),
+        ("KIND", "How the row is measured; to today = one saved day's buy list, held from that day to today at today's prices; chained = one month's buy list, held to the next month's first saved day, so each row starts where the last one ended. The first chained row can be shorter, as the record began part way through a month. For example, a list first saved on the 21st is held 10 days, to the 1st"),
         ("FROM", "The day the buy list was saved and bought"),
         ("TO", "The day it was priced: today for a to today row, the next month's first saved day for a chained row"),
         ("DAYS", "Days held, FROM to TO"),
