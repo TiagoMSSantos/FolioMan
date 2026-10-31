@@ -37,7 +37,7 @@ pub const BOOK: usize = 10;
 /// The sources that are the crowd already talking, spelled as `fetch::soc_table` writes them.
 const LOUD: [&str; 2] = ["Reddit", "Benzinga buzz"];
 
-pub const SOC_HELP: &str = "Social score: what orders this table, higher first: sources × freshness × size × not yet priced in. More sources = higher; it halves for every 30 days since NEWEST; it falls with each 10× of market value above €2B; it falls to 0 as the 1-month rise nears 50% (an unknown rise counts as half). It halves when Reddit or Benzinga buzz is a source. A short bet, about 3 months, not a 20-year hold: it never reaches the buy list. NOT advice";
+pub const SOC_HELP: &str = "Social score: what orders this table, higher first: sources × freshness × size × not yet priced in. More sources = higher; it halves for every 30 days since NEWEST; it falls with each 10× of market value above €2B; it falls to 0 as the 1-month rise nears 50% (an unknown rise counts as half). It halves when Reddit or Benzinga buzz is a source. A short bet, about 3 months, not a 20-year hold: it never reaches the buy list";
 
 pub const RANK_20Y_HELP: &str = "Position this row would have by buy score, the order of the Stocks table. RANK follows the social score (SOC)";
 

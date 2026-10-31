@@ -380,7 +380,7 @@ console.assert(
 // (#1268) The Track record note up to its month-by-month part: the saved lists' score, its overlap
 // caveat and its age, shown again under the Stocks heading.
 const trackSum = (note) => note.split(" Month by month")[0];
-console.assert(trackSum("Beat 1 of 2. Old 3 days. Month by month, 1 month. NOT advice.") === "Beat 1 of 2. Old 3 days.", "the track summary misreads the note");
+console.assert(trackSum("Beat 1 of 2. Old 3 days. Month by month, 1 month. Past results.") === "Beat 1 of 2. Old 3 days.", "the track summary misreads the note");
 // The columns shown: the picker's hidden ones left out, and BUY € only while an amount is typed (euros()).
 function shown(t) {
   const eur = document.body.classList.contains("euros");
@@ -564,7 +564,7 @@ const APPROACHES = [
     ["Save monthly; borrow young, down to 50% in stock by 64", "Each month, save. Then hold stock worth half of what you have saved plus what you will still save, but never more than 2 times your savings. When young, that means borrowing to buy stock. The loan shrinks as savings grow. At 64, half is in stock and the rest in government bonds"],
     ["Same average as 67-80% in stock, 21-33% less spread", "Tested 8 ways: flat or rising pay, a 2x fund or a margin loan, before or after a 28% tax on gains. A margin loan is money borrowed from the broker. Each way, it ends with the same average result as keeping a fixed 67-80% in stock, with 21-33% less spread between lucky and unlucky savers. It also beats the usual target-date plan (90% in stock, gliding to 50%) by +5.5% to +22.6% on a luck-adjusted score. That score (the certainty equivalent) is the sure sum a cautious saver would take instead of the gamble. It does not earn more than saving all in stock. Flat pay, before tax: the average saver ends with 4.59 times what was paid in; the middle saver all in stock ends with 5.41 times"],
     ["—", "— = not measured: this test graded 200/50 on spread and on the luck-adjusted score, not on its deepest fall"],
-    ["PASSES", "It holds both of the study's claims in all 8 ways tested. About 2.4 separate 42-year spans fit in 98 years of history. So the 682 savers are mostly overlapping repeats of two histories. NOT advice: the page never buys on this"],
+    ["PASSES", "It holds both of the study's claims in all 8 ways tested. About 2.4 separate 42-year spans fit in 98 years of history. So the 682 savers are mostly overlapping repeats of two histories. The page never buys on this"],
     // its full record: tests/ci-settings.yaml (#1220)
   ],
   [

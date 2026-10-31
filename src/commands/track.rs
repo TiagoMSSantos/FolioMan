@@ -1750,7 +1750,7 @@ fn web_note(wins: usize, n: usize, sum: f64, oldest: Option<i64>, chain: Option<
             }
         ),
     };
-    format!("{record} {month} Past results, NOT advice.")
+    format!("{record} {month} Past results.") // (#1272) the page says NOT advice once at its top, once at its bottom
 }
 
 /// (#1140) The page's Track record table as `[header, cell]` rows: each journalled book graded to
@@ -3637,7 +3637,7 @@ mod tests {
              Each list is measured up to today, so they overlap and count as one test at most, not 2. \
              The oldest is 30 days old, 0.4% of the 20-year hold this page is built for. \
              Month by month, 1 month so far: the buy list +5.0%, the S&P 500 +10.0%; on average -5.0 points a month (the middle month: -5.0). \
-             It needs 12 months before it counts. Past results, NOT advice."
+             It needs 12 months before it counts. Past results."
         );
         // No S&P close anywhere: the legs print n/a and the note says nothing is compared.
         let blind: Vec<Snapshot> = snaps
@@ -3677,7 +3677,7 @@ mod tests {
         assert_eq!(
             note,
             "Nothing to measure yet: a saved buy list needs a day of age and today's prices. \
-             Month by month: no month has an S&P 500 price at both ends yet. Past results, NOT advice."
+             Month by month: no month has an S&P 500 price at both ends yet. Past results."
         );
     }
 

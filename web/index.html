@@ -20,7 +20,7 @@
   <nav class="sub" aria-label="sections">
     To buy: <a href="#h-stocks">Stocks</a> · <a href="#h-etfs">ETFs</a> · <a href="#h-crypto">Crypto</a> ·
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-track">Track record</a><br>
-    Watch only, NOT buy signals: <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
+    Watch only: <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
     <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Ran too far</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a><br>
     Background: <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-trading">Trading</a>
   </nav>
@@ -67,14 +67,14 @@
   </form>
   <pre class="why" id="why-out" role="status" hidden></pre>
 
-  <h2 title="Single stocks ranked for a 20-year hold: strong long-run growth, priced near their own highs. A stock far above its long-run trend gets the ran-too-far cut. BUY% is the share of new money the buy list puts in each. NOT advice" id="h-stocks">Stocks</h2>
+  <h2 title="Single stocks ranked for a 20-year hold: strong long-run growth, priced near their own highs. A stock far above its long-run trend gets the ran-too-far cut. BUY% is the share of new money the buy list puts in each" id="h-stocks">Stocks</h2>
   <p class="stale" id="conc" role="note" hidden></p>
   <!-- (#1268) The Track record note's first part, filled by app.js, so the buy list's record sits by it. -->
-  <p class="sub" id="track-sum" hidden><span></span> <a href="#h-track">More in Track record, below</a>. Past results, NOT advice.</p>
+  <p class="sub" id="track-sum" hidden><span></span> <a href="#h-track">More in Track record, below</a>. These are past results.</p>
   <div id="stocks"></div>
-  <h2 title="Funds ranked on the same 20-year growth rules as the stocks. Most are industry and theme bets, not the one fund to hold forever (Simplest, at the top, names one). NOT advice" id="h-etfs">ETFs</h2>
+  <h2 title="Funds ranked on the same 20-year growth rules as the stocks. Most are industry and theme bets, not the one fund to hold forever (Simplest, at the top, names one)" id="h-etfs">ETFs</h2>
   <div id="etfs"></div>
-  <h2 title="Coins ranked against Bitcoin on the same growth rules. A coin priced far above what its holders paid on average (MVRV) is left out. NOT advice" id="h-crypto">Crypto</h2>
+  <h2 title="Coins ranked against Bitcoin on the same growth rules. A coin priced far above what its holders paid on average (MVRV) is left out" id="h-crypto">Crypto</h2>
   <div id="crypto"></div>
   <!-- (#456) The BUY% book looked through: what the tables above add up to once funds are opened. -->
   <h2 title="What the buy list above adds up to once each fund is opened up. It shows industries, the currencies the shares inside trade in, funds that are really one bet, and the biggest companies. Shown only; it never changes BUY% or any score" id="h-exposure">Exposure — what the buy list really holds</h2>
@@ -84,7 +84,7 @@
        rankings all along and this page never carried. It is NOT a fourth ranking: the tables above
        rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
        appear there however good a 20-year hold they are. (#539) The top-N chooser cuts it — see `apply()`. -->
-  <h2 title="Index funds to hold for years. Most are broad, the whole world or a region; some hold one sector or one country, such as tech or Korea. They reinvest the dividends; REPL says how each copies its index. Ranked here on buy rules missed, then buy score, so a narrow fund can sit at #1; the tables above score these 0 on purpose. NOT advice" id="h-core">CORE — index funds to hold for years</h2>
+  <h2 title="Index funds to hold for years. Most are broad, the whole world or a region; some hold one sector or one country, such as tech or Korea. They reinvest the dividends; REPL says how each copies its index. Ranked here on buy rules missed, then buy score, so a narrow fund can sit at #1; the tables above score these 0 on purpose" id="h-core">CORE — index funds to hold for years</h2>
   <div id="core"></div>
   <details class="note" id="hold">
     <summary>about CORE</summary>
@@ -96,16 +96,15 @@
     index crowds out the rest. This table then ranks the chosen funds on buy rules missed, then buy score (hover the headers). So a narrow fund, one sector or one country, can sit at #1. For one broad fund to hold forever, see Simplest at the top. <strong>One all-world fund is already a whole
     portfolio</strong>; the groups under it are for building one yourself. Most of these funds fail a buy rule, most often
     slow yearly growth (cagr), so the buy tables above leave them out. That is how those rules work, not a verdict on the fund.
-    <strong>NOT advice.</strong>
   </details>
 
   <!-- (#1140) `track`'s journal graded by screen: each bought book to today, then month to month. -->
-  <h2 title="Each saved buy list measured against the S&amp;P 500 at today's prices, then each month's list against the next month's. Prices only, dividends left out, in euros. NOT advice" id="h-track">Track record — the picks measured live</h2>
+  <h2 title="Each saved buy list measured against the S&amp;P 500 at today's prices, then each month's list against the next month's. Prices only, dividends left out, in euros" id="h-track">Track record — the picks measured live</h2>
   <div id="track"></div>
   <p class="sub" id="track-note"></p>
 
   <!-- (#438) The social-arbitrage probe's top third, shown and never ranked: no BUY%, no journal. -->
-  <h2 title="S&amp;P 500 companies whose Wikipedia page gained the most readers year on year. Shown only, never ranked: on past prices it helped over 3 years and hurt over 5" id="h-attention">Attention — watch only, NOT a buy signal</h2>
+  <h2 title="S&amp;P 500 companies whose Wikipedia page gained the most readers year on year. Shown only, never ranked: on past prices it helped over 3 years and hurt over 5" id="h-attention">Attention — watch only</h2>
   <details class="note" id="attention-note">
     <summary>about this table</summary>
     S&amp;P 500 companies whose English Wikipedia page gained the most readers. VIEWS YoY compares each
@@ -119,7 +118,7 @@
   <div id="attention"></div>
   <!-- (#440) Berkshire's 13F buys, shown and never ranked: the `w` flag and the track brk row read them.
        (#442) Every holding now, with the `W` flag and the track brkh row. -->
-  <h2 title="Every stock in Berkshire Hathaway's newest quarterly holdings report (13F), plus its recent buys filed on Form 4 and its Japan stakes. Best buy score first, with what changed since the quarter before. A stock Berkshire holds ranks a little higher in the tables above. The report comes out weeks after the quarter ends" id="h-berkshire">Berkshire holdings — watch only, NOT a buy signal</h2>
+  <h2 title="Every stock in Berkshire Hathaway's newest quarterly holdings report (13F), plus its recent buys filed on Form 4 and its Japan stakes. Best buy score first, with what changed since the quarter before. A stock Berkshire holds ranks a little higher in the tables above. The report comes out weeks after the quarter ends" id="h-berkshire">Berkshire holdings — watch only</h2>
   <details class="note" id="berkshire-note">
     <summary>about this table</summary>
     Every stock in Berkshire Hathaway's newest 13F, the quarterly holdings report big US investors file.
@@ -137,7 +136,7 @@
   </details>
   <div id="berkshire"></div>
   <!-- (#444) social arbitrage, shown and never ranked: the `s` flag and the track soc row read it. -->
-  <h2 title="Stocks people say they are buying, from free sources: famous investors' quarterly buys (13F); new big stakes (13D/13G); ARK fund buys; groups of company insiders buying; App Store chart climbs; Reddit, Google Trends, Benzinga and Hacker News mentions; stock-channel videos; and a checked hand list. A row from any source but the famous investors ranks a little higher in the tables above; the famous investors' rows get no lift" id="h-social">Social Arbitrage trading — watch only, NOT a buy signal</h2>
+  <h2 title="Stocks people say they are buying, from free sources: famous investors' quarterly buys (13F); new big stakes (13D/13G); ARK fund buys; groups of company insiders buying; App Store chart climbs; Reddit, Google Trends, Benzinga and Hacker News mentions; stock-channel videos; and a checked hand list. A row from any source but the famous investors ranks a little higher in the tables above; the famous investors' rows get no lift" id="h-social">Social Arbitrage trading — watch only</h2>
   <details class="note" id="social-note">
     <summary>about this table</summary>
     Stocks people say they are buying, one row per stock, from free sources. Superinvestors: last
@@ -169,7 +168,7 @@
   </details>
   <div id="social"></div>
   <!-- (#500) stocks too young for the 5-year history gate, shown and never ranked: the track yng row reads it. -->
-  <h2 title="Stocks listed less than 5 years ago, best buy score first. The rankings above want a 5-year record, so a name here ranks there only when marked ˢ, its score cut for each rule it misses" id="h-young">Young (listed under 5 years) — watch only, NOT a buy signal</h2>
+  <h2 title="Stocks listed less than 5 years ago, best buy score first. The rankings above want a 5-year record, so a name here ranks there only when marked ˢ, its score cut for each rule it misses" id="h-young">Young (listed under 5 years) — watch only</h2>
   <details class="note" id="young-note">
     <summary>about this table</summary>
     Every stock this page prices that has been listed for less than 5 years (YRS). That includes the big US first share sales (IPOs) of the last 5 years: $1 billion or more on Nasdaq's IPO calendar. SPACs (shell companies listed to buy another company) are left out. The rankings above need at least a
@@ -183,7 +182,7 @@
   <div id="young"></div>
 
   <!-- (#580) stocks that pass every gate and miss the Stocks table only because of the ran-too-far brake. -->
-  <h2 title="Stocks that pass every buy rule but are kept out of the Stocks table only by the ran-too-far cut. Without that cut they would score high enough to be listed" id="h-braked">Ran too far (pass every buy rule, held out by the ran-too-far cut) — watch only, NOT a buy signal</h2>
+  <h2 title="Stocks that pass every buy rule but are kept out of the Stocks table only by the ran-too-far cut. Without that cut they would score high enough to be listed" id="h-braked">Ran too far (pass every buy rule, held out by the ran-too-far cut) — watch only</h2>
   <details class="note" id="braked-note">
     <summary>about this table</summary>
     The Stocks table cuts the score of a stock that has risen far above its own 200-week (about 4-year)
@@ -197,7 +196,7 @@
   <div id="braked"></div>
 
   <!-- (#525) REIT stocks, REIT funds and Portuguese SIGIs, ranked like the other shadow tables. -->
-  <h2 title="Property companies (REITs), property funds and Portuguese SIGIs (the Portuguese form of a REIT), best buy score first. Shown for comparison; nothing here changes BUY% or the rankings above" id="h-reits">REITs and SIGIs — watch only, NOT a buy signal</h2>
+  <h2 title="Property companies (REITs), property funds and Portuguese SIGIs (the Portuguese form of a REIT), best buy score first. Shown for comparison; nothing here changes BUY% or the rankings above" id="h-reits">REITs and SIGIs — watch only</h2>
   <details class="note" id="reits-note">
     <summary>about this table</summary>
     Every stock this page prices in the Real Estate sector, and the Portuguese SIGIs on a hand-kept list. Also every fund whose name says real estate, REIT, property, EPRA, NAREIT or Immobilien. They rank
@@ -273,7 +272,7 @@
        (#1221) Called Trading since each row prices four ways to trade the name; the approaches table above
        it is fixed text in app.js, from the census records. (#1223) Each row is priced on its last 2 years in
        euros at each day's rate, and a second table prices the stocks BUY NOW lists; it only reads them. -->
-  <h2 title="Each market's 10 stocks that most often closed above their opening price (the K7 key), then the stocks on the buy list. Each is priced four ways over its last 2 years, in euros. The four: in and out the same day; 21 trading days at a time; by its 200-day average; and bought once. Watch only, NOT a buy signal" id="h-trading">Trading (watch only, NOT a buy signal)</h2>
+  <h2 title="Each market's 10 stocks that most often closed above their opening price (the K7 key), then the stocks on the buy list. Each is priced four ways over its last 2 years, in euros. The four: in and out the same day; 21 trading days at a time; by its 200-day average; and bought once. Watch only" id="h-trading">Trading (watch only)</h2>
   <h3 title="What each way of trading or holding earned against buying and holding, in tests on past prices, after costs. Hover any cell for its detail" id="h-approaches">What each approach earned, in tests on past prices</h3>
   <div id="approaches"></div>
   <details class="note">
@@ -283,7 +282,7 @@
     to trade. The two tables below price each name four ways over its last 2 years. Each trade is €1,000, in euros at each day's EUR/USD rate, after costs. BEST names the way that made the most, which is
     hindsight. Picked on a name's last 2 years, BEST then lost to holding the same name, over the next 6 months and the next month. Trading in and out the same day was never the best way for any
     name. The tables are here so BEST can be checked later, on months that had not happened yet. Hover
-    any header or cell for its detail. NOT advice: nothing here places an order or changes the buy list.
+    any header or cell for its detail. Nothing here places an order or changes the buy list.
   </details>
   <h3 title="The ten stocks in each market that most often closed above their opening price in the last 252 trading days (about a year). Sorted on BEST" id="h-intraday">K7 top 10 per market</h3>
   <div id="intraday"></div>

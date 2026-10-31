@@ -5340,7 +5340,7 @@ pub(crate) fn shipped_book(
 /// the column is there. A macro, so [`WATCH_BUY_HELP`] reuses it word for word.
 macro_rules! buy_part {
     () => {
-        "the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 stocks and funds, plus any coins. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row. NOT advice"
+        "the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 stocks and funds, plus any coins. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row"
     };
 }
 const BUY_HELP: &str = concat!("Buy list share: ", buy_part!());
