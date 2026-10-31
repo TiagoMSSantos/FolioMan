@@ -5071,7 +5071,7 @@ pub(crate) const RANK_FLAGS: &[(&str, &str)] = &[
         ("e", "an exchange's own coin (BNB, GT, OKB, CRO…), riding one company's survival, as FTT fell with FTX in 2022; its buy score is cut"),
         ("x", "a fund listed in a non-euro currency; conversion plus a wider spread; its buy score is cut slightly"),
         ("~", "price history borrowed from an older listing of the same fund or index, so CAGR/YRS describe that record"),
-        ("H", "fit for a long hold (a broad index, cheap, reinvests dividends, large)"),
+        ("H", "fit for a long hold: an index fund that is cheap, large and reinvests dividends; most are broad, some hold one sector or country, such as the Nasdaq-100"),
         ("o", "you already hold it"),
         ("w", "Berkshire Hathaway (Warren Buffett's company) bought it (new or 5%+ more shares) in the last 4 quarters; shown only"),
         ("W", "Berkshire's newest quarterly holdings report holds it; its buy score is raised"),
