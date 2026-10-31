@@ -5959,7 +5959,7 @@ buy_heuristic:
                                  #   (Mohanram 2005 G-score signal G5 — the growth-stock screen, and this book is growth stocks). Both in
                                  #   `FUND_FACTORS` (25 -> 27) and the held-book list. Weighted nowhere, gate nothing.
                                  #   WHY THESE TWO: a second web sweep mapped MAX/lottery and frog-in-the-pan (blocked: no daily lane, #127),
-                                 #   insider buying (Item 4; its grade never ran, see (#1247)), 12-1 and residual momentum (mom121 refused; residual is a 1-month effect
+                                 #   insider buying (Item 4; graded by (#1247), fails at 12y and 8y, see (#1248)), 12-1 and residual momentum (mom121 refused; residual is a 1-month effect
                                  #   against a 20y hold), industry momentum (#95: only today's GICS label exists), PEAD (decayed, 60-day
                                  #   horizon), Piotroski/NOA (value-stock screens needing current-ratio/equity tags). These two were the only
                                  #   untested literature factors the as-of rows can already build.
@@ -19732,7 +19732,7 @@ buy_heuristic:
   #   +139.2 vs +126.8, held top-10 book +15.0 vs +14.7 (excess +7.0, OOS +5.6/+8.4), worst drawdown
   #   -7.8 unchanged. Weight sweep knee = 1.0 (monotone up to 1, falls at 2). Every OTHER factor
   #   (margins, rev/eps growth, buyback, ROE, composite) still fails the both-OOS+ keep-rule (insider was
-  #   never measured: no 8y or 12y cutoff carried it, see (#1247)) —
+  #   graded later by (#1247) and fails too, see (#1248)) —
   #   the sweep's nominal per-run "WINNER" line bounces between factors (searched-weight overfit);
   #   earnings_yield is the only one positive on every view. Revert rule: revert (weight -> 0) only
   #   on TILT-SPECIFIC degradation in a future wide run: the growth-lane ablation shows removing this
@@ -24449,6 +24449,33 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   one question about a guard. Under that, the gap stays recorded and nothing changes. A real 4x month
 #   (a takeover, a biotech readout) is flagged too, so the arms bound the gap from above: they do not
 #   say which jumps were fake.
+
+# (#1248) RESULTS OF THE (#1247) CENSUSES, 2026-10-31, record only. Both probes ran on fb0a8d8. Windows
+#   scored match the (#1246) references, so the walks are comparable.
+# (a) INSIDER FAILS at both horizons. Probe 41196833533, `universe fund pit insider`, years "12 8",
+#   windows scored 5150/10437 (12y) and 9174/13654 (8y). The insider_net_buys_90d row of the held-book by
+#   FACTOR table, in pts/yr over the index:
+#       horizon  book     excess  win  worst  OOS halves   n     same-set score excess, OOS halves
+#       12y      +8.7%/y  -1.6    22%  -6.4   -2.4 / -0.8  4113  +4.2, +4.7 / +3.7
+#       8y       +8.7%/y  -1.7    31%  -14.2  -0.6 / -2.7  6532  +3.4, +4.0 / +2.7
+#   The book trails the index, and each OOS half trails its same-set half by 3 to 7 points. Information
+#   only, all on the same side: the fund lane reads rho -0.16 (12y) and -0.14 (8y), edge -56.2 and -45.7,
+#   OOS -0.16|-0.14 and -0.11|-0.17; held winners show more net insider selling than held losers (median
+#   net buys -11 vs -7 at 12y, -10 vs -6 at 8y, AUC 0.40 at both); the best sweep weight lifts the TEST
+#   edge by 0.3 (12y, w 0.030) and 0.7 (8y, w 0.046), with OOS equal to baseline. Net buys rank against the forward
+#   return here. That sign is not a license to re-test net sells: that test was not pre-registered.
+# (b) PRICE JUMPS: RECORD ONLY. Probe 41196846140, `universe fund pit dead jumps`, years "20 12 8",
+#   windows scored 2992/5690, 5995/12469 and 10281/16339. The top-10 book, mean (median) in pts/yr over
+#   the index:
+#       horizon  flagged samples  flagged book slots  as walked    flagged paid index  flagged dropped
+#       20y      295 of 5725      9 of 220            +3.3 (+1.9)  +3.4 (+2.2)         +3.4 (+2.5)
+#       12y      347 of 15422     4 of 380            +2.4 (+2.5)  +2.5 (+2.5)         +2.6 (+2.5)
+#       8y       262 of 25453     3 of 460            +2.3 (+2.3)  +2.3 (+2.5)         +2.4 (+2.6)
+#   The 0.1 rule fired at every horizon, but in one direction only: both arms RAISE the book. The flagged
+#   picks lost on balance, so the jumps do not inflate the shipped numbers; if anything those read 0.1 to
+#   0.6 low. The owner was asked once and chose record only (2026-10-31). Why no guard: the flag reads
+#   prices after the cutoff, so it cannot run on a live screen; in the walk it would change the grade, not
+#   the buys; and it cannot tell a fake print from a real takeover or crash. Nothing changes.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
