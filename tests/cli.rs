@@ -273,7 +273,7 @@ fn explain_reads_the_saved_pool_and_needs_a_screen_first() {
     .to_string();
     let (code, stdout, stderr) = run_isolated("explain-pool", "{}", &[(".screen_universe.json", &pool)], &["explain", "AAPL", "Apple"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.starts_with("No pool row matches \"AAPL\". ") && stdout.contains(".\n\nNo pool row matches \"Apple\". "), "{stdout}");
+    assert!(stdout.starts_with("Nothing on this page matches \"AAPL\". ") && stdout.contains(".\n\nNothing on this page matches \"Apple\". "), "{stdout}");
     let (code, _, _) = run_isolated("explain-bare", "{}", &[], &["explain"]);
     assert_eq!(code, 2, "no name is a usage error");
 }

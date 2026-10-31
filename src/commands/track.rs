@@ -1668,35 +1668,94 @@ fn chain_section(snaps: &[Snapshot]) -> String {
     )
 }
 
-/// (#336) The chained record's closing line: the links with an S&P leg compounded, their monthly
-/// excess, and the pre-registered verdict. (#1140) Its own fn so the page's note quotes the same line.
-fn chain_footer(links: &[(String, usize, Graded)]) -> String {
+/// (#1250) The chained links that carry an S&P leg at both ends, totalled: compounded book and S&P
+/// legs, mean and median monthly excess, and the pre-registered verdict. The terminal's footer and
+/// the page's note both print these, so the two cannot quote other numbers.
+struct Chain {
+    links: usize,
+    book: f64,
+    spx: f64,
+    mean: f64,
+    median: f64,
+    verdict: Option<bool>,
+}
+
+fn chain_sum(links: &[(String, usize, Graded)]) -> Option<Chain> {
     let both: Vec<(f64, f64)> = links.iter().filter_map(|(.., g)| g.spy_pct.map(|s| (g.book_pct, s))).collect();
     let compound = |leg: fn(&(f64, f64)) -> f64| 100.0 * (both.iter().map(|r| 1.0 + leg(r) / 100.0).product::<f64>() - 1.0);
     let mut ex: Vec<f64> = both.iter().map(|(b, s)| b - s).collect();
     ex.sort_by(f64::total_cmp);
     match ex.len() {
-        0 => "\n  no link carries an S&P leg at both ends yet — nothing to compare.".to_string(),
+        0 => None,
         k => {
-            let (mean, med) = (ex.iter().sum::<f64>() / k as f64, crate::core::median(ex).unwrap_or(f64::NAN));
-            let verdict = match clears(k, mean, med) {
-                None => "needs 12 links",
-                Some(true) => "BEATS S&P",
-                Some(false) => "TRAILS",
-            };
-            format!(
-                "\n  links {k} | compounded book {:+.1}% vs S&P {:+.1}% | monthly excess mean {mean:+.1}pp  median {med:+.1}pp  {verdict}",
-                compound(|r| r.0),
-                compound(|r| r.1)
-            )
+            let (mean, median) = (ex.iter().sum::<f64>() / k as f64, crate::core::median(ex).unwrap_or(f64::NAN));
+            Some(Chain { links: k, book: compound(|r| r.0), spx: compound(|r| r.1), mean, median, verdict: clears(k, mean, median) })
         }
     }
 }
 
+/// (#336) The chained record's closing line: the links with an S&P leg compounded, their monthly
+/// excess, and the pre-registered verdict.
+fn chain_footer(links: &[(String, usize, Graded)]) -> String {
+    let Some(c) = chain_sum(links) else {
+        return "\n  no link carries an S&P leg at both ends yet — nothing to compare.".to_string();
+    };
+    let verdict = match c.verdict {
+        None => "needs 12 links",
+        Some(true) => "BEATS S&P",
+        Some(false) => "TRAILS",
+    };
+    format!(
+        "\n  links {} | compounded book {:+.1}% vs S&P {:+.1}% | monthly excess mean {:+.1}pp  median {:+.1}pp  {verdict}",
+        c.links, c.book, c.spx, c.mean, c.median
+    )
+}
+
+/// (#1250) The page's Track record note in plain words: the numbers the terminal's verdict line, its
+/// trials caveat and the chained footer print. `oldest` is the oldest graded line's age in days, `None`
+/// when nothing is graded. Every to-today window ends on one shared day, so together they are one test
+/// at most, which is what `effective_trials` measures.
+fn web_note(wins: usize, n: usize, sum: f64, oldest: Option<i64>, chain: Option<Chain>) -> String {
+    let record = match oldest {
+        None => "Nothing to measure yet: a saved buy list needs a day of age and today's prices.".to_string(),
+        Some(d) => {
+            let mean = sum / n as f64;
+            format!(
+                "The buy list beat the S&P 500 in {wins} of {n} saved lists ({:.0}%); on average it did {:.1} points {} per list. \
+                 Each list is measured up to today, so they overlap and count as one test at most, not {n}. \
+                 The oldest is {d} days old, {:.1}% of the {}-year hold this page is built for.",
+                100.0 * wins as f64 / n as f64,
+                mean.abs(),
+                if mean < 0.0 { "worse" } else { "better" },
+                100.0 * d as f64 / (365.25 * f64::from(crate::picks::HOLD_YEARS)),
+                crate::picks::HOLD_YEARS,
+            )
+        }
+    };
+    let month = match chain {
+        None => "Month by month: no month has an S&P 500 price at both ends yet.".to_string(),
+        Some(c) => format!(
+            "Month by month, {} month{} so far: the buy list {:+.1}%, the S&P 500 {:+.1}%; on average {:+.1} points a month (the middle month: {:+.1}). {}",
+            c.links,
+            if c.links == 1 { "" } else { "s" },
+            c.book,
+            c.spx,
+            c.mean,
+            c.median,
+            match c.verdict {
+                None => format!("It needs {REOPEN_LINES} months before it counts."),
+                Some(true) => "It beats the S&P 500.".to_string(),
+                Some(false) => "It trails the S&P 500.".to_string(),
+            }
+        ),
+    };
+    format!("{record} {month} Past results, NOT advice.")
+}
+
 /// (#1140) The page's Track record table as `[header, cell]` rows: each journalled book graded to
-/// today, the verdict table's windows, then the chained links. Its note is the trust line's verdict,
-/// its trials caveat and the chained footer on one line. The same `grade` calls as `track` and the
-/// trust line, so the page cannot quote other numbers.
+/// today, the verdict table's windows, then the chained links. Its note is [`web_note`]: the trust
+/// line's verdict, its trials caveat and the chained footer in plain words. The same `grade` calls as
+/// `track` and the trust line, so the page cannot quote other numbers.
 pub(crate) fn web_track(
     snaps: &[Snapshot],
     today: chrono::NaiveDate,
@@ -1733,13 +1792,14 @@ pub(crate) fn web_track(
         )
         .collect();
     let (wins, n, sum) = verdict_stats(snaps, today, px_now, spx_now);
-    let note = format!(
-        "{}{} Chained record: {}",
-        summary_line(wins, n, sum),
-        trials_note(snaps, today, px_now, spx_now),
-        chain_footer(&links)
-    );
-    (rows, note.split_whitespace().collect::<Vec<_>>().join(" "))
+    // the set `verdict_stats` and `trials_note` fold, so `oldest` is None exactly when n is 0
+    let oldest = snaps
+        .iter()
+        .filter_map(|s| grade(s, &book_rows(s), usize::MAX, today, px_now, spx_now))
+        .filter(|g| g.spy_pct.is_some())
+        .map(|g| g.days)
+        .max();
+    (rows, web_note(wins, n, sum, oldest, chain_sum(&links)))
 }
 
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
@@ -3569,19 +3629,15 @@ mod tests {
             ]
         );
         assert_eq!(rows.len(), 3);
-        assert!(
-            note.starts_with("book beat the index in 1/2 windows (50%), mean excess "),
-            "{note}"
+        // (#1250) in plain words; +5 and -5 average to 0, which reads "better"
+        assert_eq!(
+            note,
+            "The buy list beat the S&P 500 in 1 of 2 saved lists (50%); on average it did 0.0 points better per list. \
+             Each list is measured up to today, so they overlap and count as one test at most, not 2. \
+             The oldest is 30 days old, 0.4% of the 20-year hold this page is built for. \
+             Month by month, 1 month so far: the buy list +5.0%, the S&P 500 +10.0%; on average -5.0 points a month (the middle month: -5.0). \
+             It needs 12 months before it counts. Past results, NOT advice."
         );
-        assert!(
-            note.contains(". ~0.3 effective trials — every window above ends TODAY"),
-            "{note}"
-        );
-        assert!(
-            note.ends_with(" Chained record: links 1 | compounded book +5.0% vs S&P +10.0% | monthly excess mean -5.0pp median -5.0pp needs 12 links"),
-            "{note}"
-        );
-        assert!(!note.contains('\n') && !note.contains("  "), "{note}");
         // No S&P close anywhere: the legs print n/a and the note says nothing is compared.
         let blind: Vec<Snapshot> = snaps
             .into_iter()
@@ -3619,8 +3675,21 @@ mod tests {
         );
         assert_eq!(
             note,
-            "nothing gradeable yet — snapshots need at least one day of age (and priced rows). Chained record: no link carries an S&P leg at both ends yet — nothing to compare."
+            "Nothing to measure yet: a saved buy list needs a day of age and today's prices. \
+             Month by month: no month has an S&P 500 price at both ends yet. Past results, NOT advice."
         );
+    }
+
+    /// (#1250) The page's note at other numbers: a loss on average, plural months, a met verdict.
+    #[test]
+    fn web_note_reads_a_loss_and_a_verdict() {
+        let chain = Chain { links: 13, book: 30.0, spx: 20.0, mean: 0.8, median: 0.5, verdict: Some(true) };
+        let note = web_note(2, 3, -5.0, Some(73), Some(chain));
+        assert!(note.starts_with("The buy list beat the S&P 500 in 2 of 3 saved lists (67%); on average it did 1.7 points worse per list."), "{note}");
+        assert!(note.contains(" not 3. The oldest is 73 days old, 1.0% of the 20-year hold"), "{note}");
+        assert!(note.contains("Month by month, 13 months so far: the buy list +30.0%, the S&P 500 +20.0%; on average +0.8 points a month (the middle month: +0.5). It beats the S&P 500."), "{note}");
+        let trails = Chain { links: 13, book: 1.0, spx: 2.0, mean: -0.1, median: -0.2, verdict: Some(false) };
+        assert!(web_note(0, 1, 1.0, Some(1), Some(trails)).contains("It trails the S&P 500."));
     }
 
     /// (#285) `graded_row` is the ONE row formatter. The BEAT? decision is its only judgement and

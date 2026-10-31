@@ -166,7 +166,7 @@ pub fn explain(overlay: &str, universe: &str, query: &str) -> Result<String, Str
     let by_name = hit.is_none();
     let Some(t) = hit.or_else(|| named.first().map(|x| x.ticker.clone())) else {
         return Ok(format!(
-            "No pool row matches \"{q}\". The pool keeps one listing per company, often a European one (NVIDIA is NVD.DE): try the company name."
+            "Nothing on this page matches \"{q}\". The page keeps one listing per company, often a European one (NVIDIA is NVD.DE): try the company name."
         ));
     };
     // (#894) the upload's pins as `screen` maps them, a pool row or else the pool's line of the same
@@ -187,6 +187,10 @@ pub fn explain(overlay: &str, universe: &str, query: &str) -> Result<String, Str
         web_degraded: &[],
     });
     let mut out = text.unwrap_or_default().trim().trim_start_matches("--explain: ").to_string();
+    // (#1250) a name with no score walkthrough gets the page's own words; the terminal keeps its text
+    if let Some(row) = u.quotes.iter().find(|x| x.ticker == t).filter(|_| !out.starts_with("───")) {
+        out = plain_why(row, &s.buy_heuristic, &out);
+    }
     if by_name {
         out = format!("Matched by name: {} ({t})\n\n{out}", named[0].name);
     }
@@ -195,6 +199,47 @@ pub fn explain(overlay: &str, universe: &str, query: &str) -> Result<String, Str
         out.push_str(&format!("\n\nAlso matching \"{q}\": {}", also.join(", ")));
     }
     Ok(out)
+}
+
+/// (#1250) The why box for a name with no score walkthrough, in the page's words: each rule it fails by its
+/// plain label beside the tag the MISSES column prints, then the terminal's what-if line reworded. The same
+/// `gate_failures` call the terminal's `--explain` makes, so the two never disagree on which rules fail.
+fn plain_why(q: &Quote, bh: &config::BuyHeuristic, terminal: &str) -> String {
+    let t = &q.ticker;
+    let Some(fails) = picks::gate_failures(q, bh) else {
+        return format!("{t} is left out: {}.", picks::refusal_reason(q).map_or("no price from a year ago yet", picks::plain_gate));
+    };
+    if fails.is_empty() {
+        return format!("{t} passes every buy rule but is not in the tables. One of three things keeps it out: its buy score is 0 or below; another listing of the same company scored higher; or its industry group already has its share of the buy list.");
+    }
+    let lines: String = fails.iter().map(|(g, why, _)| format!("\n  • {} ({g}): {}", picks::plain_gate(g), plain_words(why))).collect();
+    let core = if core::hold_suitable(q) { "\n  It is a broad index fund, the kind the CORE table holds for the long run, and these growth rules do not apply there." } else { "" };
+    let what_if = terminal.find("\n  what if: ").map_or("", |i| &terminal[i..]);
+    let n = fails.len();
+    format!("{t} fails {n} buy rule{}:{lines}{core}{}", if n == 1 { "" } else { "s" }, plain_words(what_if))
+}
+
+/// (#1250) The terminal's rule and what-if wording in the page's words. Only the why box reads it.
+fn plain_words(s: &str) -> String {
+    [
+        ("\n  what if: even with ", "\n  What if: even without the "),
+        ("\n  what if: with ", "\n  What if: without the "),
+        (" waived it cannot rank — ", " rules, it still fails "),
+        (" waived it scores at or below the lane floor (0.0), so it still would not rank", " rules, its buy score would be 0 or below, so it would still be left out"),
+        (" waived it would score ", " rules, its buy score would be "),
+        (" (display only, nothing ranks it)", ". For information only: it stays out of the tables"),
+        ("200wk SMA", "200-week average"),
+        ("worst drawdown", "worst fall from a peak"),
+        ("y listed", " years listed"),
+        ("no 5y+ record to rank", "no 5-year price record to score"),
+        (" fund — liquidation/merge risk over a decades hold", " fund, which could be closed or merged while you hold it"),
+        ("single-bar repricing, not a price history", "one jump, not a real price history"),
+        ("(ceiling ", "(at most "),
+        ("(cap ", "(at most "),
+        ("(floor ", "(at least "),
+    ]
+    .iter()
+    .fold(s.to_string(), |s, (a, b)| s.replace(a, b))
 }
 
 /// The upload merged onto CI's config, and the pool with the two settings-driven stamps `screen` applies
@@ -609,18 +654,34 @@ mod tests {
     fn explain_finds_the_row_by_ticker_alias_or_name() {
         let u = universe(&pool());
         let why = |x: &str| explain("", &u, x).expect("explains");
-        assert!(why("aapl").starts_with("AAPL is scanned but fails 1 growth gate:\n  AAPL       history:"), "{}", why("aapl"));
+        // (#1250) the page's words: the plain rule beside the tag MISSES prints, then its numbers
+        let aapl = why("aapl");
+        assert!(aapl.starts_with("AAPL fails 1 buy rule:\n  • too little price history (history): 11 years listed, no 5-year price record to score"), "{aapl}");
+        assert!(!aapl.contains("waived") && !aapl.contains("what if:") && !aapl.contains("the CORE table"), "{aapl}");
         assert_eq!(why("Apple"), format!("Matched by name: Apple Inc. (AAPL)\n\n{}", why("aapl")), "by name, and says so");
         assert!(why("n").starts_with("Matched by name: NVIDIA Corp (NVD.DE)"), "a name STARTING with it first");
         assert!(why("n").ends_with("Also matching \"n\": AAPL, VWCE.DE"), "the rest in pool order: {}", why("n"));
-        assert!(why("vwce.l").starts_with("VWCE.DE isn't assessable"), "by alias: {}", why("vwce.l"));
-        assert!(why("msft").starts_with("MSFT isn't assessable"));
+        assert!(why("vwce.l").starts_with("VWCE.DE is left out: no trading volume is reported for it."), "by alias: {}", why("vwce.l"));
+        assert!(why("msft").starts_with("MSFT is left out: no trading volume is reported for it."), "{}", why("msft"));
         assert!(why(" nvidia ").contains("\n\n─── how the SCORE was computed — NVIDIA Corp (NVD.DE), score 6.70"));
         assert!(!why("nvidia").contains("Also matching"), "the hit itself is not an also");
         assert!(why("i").ends_with("\n\nAlso matching \"i\": VWCE.DE, MSFT, NVD.DE"), "{}", why("i"));
-        assert!(why("NOPE").starts_with("No pool row matches \"NOPE\". The pool keeps one listing per company"));
-        assert!(why("").starts_with("No pool row matches \"\""), "an empty box matches no name");
+        assert!(why("NOPE").starts_with("Nothing on this page matches \"NOPE\". The page keeps one listing per company"));
+        assert!(why("").starts_with("Nothing on this page matches \"\""), "an empty box matches no name");
         assert!(explain("tickers: [", &u, "aapl").is_err_and(|e| e.starts_with("settings.yaml:")));
+        // a broad index fund that fails a growth rule is told where it belongs
+        let mut held = pool();
+        held[1].avg_turnover_eur = Some(1e9);
+        let fund = explain("", &universe(&held), "VWCE.DE").expect("explains");
+        assert!(fund.starts_with("VWCE.DE fails 1 buy rule:\n  • ") && fund.contains("the kind the CORE table holds"), "{fund}");
+    }
+
+    /// (#1250) The terminal's what-if wording, reworded for the page.
+    #[test]
+    fn plain_words_rewords_the_what_if_line() {
+        let s = "\n  what if: with range waived it would score 4.20, #4 of 4 ranked stocks (display only, nothing ranks it)";
+        assert_eq!(plain_words(s), "\n  What if: without the range rules, its buy score would be 4.20, #4 of 4 ranked stocks. For information only: it stays out of the tables");
+        assert_eq!(plain_words("\n  what if: even with range waived it cannot rank — artifact: x"), "\n  What if: even without the range rules, it still fails artifact: x");
     }
 
     /// (#1072) A class share typed with a dot finds the pool's dashed row by its ticker. Before, `brk.b` fell
@@ -631,7 +692,7 @@ mod tests {
         brk.ticker = "BRK-B".into();
         let u = universe(&[brk]);
         let hit = explain("", &u, "BRK-B").expect("explains");
-        assert!(!hit.starts_with("No pool row"), "not vacuous: {hit}");
+        assert!(!hit.starts_with("Nothing on this page"), "not vacuous: {hit}");
         assert_eq!(explain("", &u, "brk.b").expect("explains"), hit);
     }
 
@@ -648,6 +709,7 @@ mod tests {
         let walk = "how the SCORE was computed — NVIDIA Corp (NVD.F)";
         let why = |overlay: &str| explain(overlay, &u, "NVD.F").expect("explains");
         assert!(!why("").contains(walk), "not vacuous: unpinned, the same-name twin is dropped: {}", why(""));
+        assert!(why("").starts_with("NVD.F passes every buy rule but is not in the tables"), "{}", why(""));
         assert!(why("tickers: [NVD.F]\n").contains(walk), "{}", why("tickers: [NVD.F]\n"));
         assert!(why("tickers: [NVD.X]\n").contains(walk), "a pin on another venue's line pins the pool's row");
     }
