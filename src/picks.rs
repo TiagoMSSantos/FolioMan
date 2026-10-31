@@ -5175,9 +5175,9 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         num,
         ("TICKER", ticker),
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
-        ("NO-BRAKE", "Buy score without the ran-too-far cut, every other rule the same. It is at or above TABLE-CUT, so that cut alone keeps the stock out of the Stocks table"),
-        ("TABLE-CUT", "Lowest buy score in the Stocks table, watchlist rows aside: what a stock needs to be listed there"),
-        ("BRAKE", "The ran-too-far cut: the factor that multiplies the buy score, then how far the price sits above its 200-week average, as in ABV-MA. ᵈ = listed under ~4 years, so the 200-day average stands in. The factor falls from ×1 at the average to ×0.05 at 100% above it. It is averaged with another part of the score, so the score falls by less"),
+        ("UNCUT", "Buy score without the ran-too-far cut, every other rule the same. It is at or above BAR, so the cut alone keeps the stock out of the Stocks table"),
+        ("BAR", "Entry bar: the lowest buy score in the Stocks table, watchlist rows aside; what a stock needs to be listed there"),
+        ("CUT", "The ran-too-far cut: the factor that multiplies the buy score, then how far the price sits above its 200-week average, as in ABV-MA. ᵈ = listed under ~4 years, so the 200-day average stands in. The factor falls from ×1 at the average to ×0.05 at 100% above it. It is averaged with another part of the score, so the score falls by less"),
     ]);
     // (#525) the REITs table: `reit_rows`, then the stock columns like Young
     let reits = fixed(&[
@@ -5728,9 +5728,9 @@ pub fn braked_rows(stocks: &serde_json::Value, quotes: &[Quote], pinned: &[Strin
                 ["RANK", (i + 1).to_string()],
                 ["TICKER", q.ticker],
                 ["NAME", q.name],
-                ["NO-BRAKE", format!("{nb:.1}")],
-                ["TABLE-CUT", format!("{cut:.1}")],
-                ["BRAKE", format!("×{:.2} at {:+.0}%", p.overext_damp, q.above_ma_pct)],
+                ["UNCUT", format!("{nb:.1}")],
+                ["BAR", format!("{cut:.1}")],
+                ["CUT", format!("×{:.2} at {:+.0}%", p.overext_damp, q.above_ma_pct)],
             ])
         })
         .collect()
@@ -12109,9 +12109,9 @@ mod tests {
                 ["RANK", "1"],
                 ["TICKER", "NVD.DE"],
                 ["NAME", "Nvidia"],
-                ["NO-BRAKE", cut],
-                ["TABLE-CUT", cut],
-                ["BRAKE", "×0.09 at +96%"]
+                ["UNCUT", cut],
+                ["BAR", cut],
+                ["CUT", "×0.09 at +96%"]
             ]])
         );
         assert_eq!(braked_rows(&serde_json::json!([]), &quotes, &[], &t), serde_json::json!([]), "no table, no cut");
