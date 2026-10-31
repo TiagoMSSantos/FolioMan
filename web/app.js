@@ -107,7 +107,7 @@ console.assert(
     wall(17, 30, "Europe/Berlin", new Date(Date.UTC(2026, 6, 15, 12))) === Date.UTC(2026, 6, 15, 15, 30) &&
     /^\d\d:\d\d-\d\d:\d\d$/.test(hours("09:30-16:00 New York")) && hours("09:00-17:30 Tokyo") === "" &&
     local("09:30-16:00 New York").startsWith("09:30-16:00 New York = ") && local("09:00-17:30 Tokyo") === "" &&
-    session("session 09:30-16:00 New York; priced on NVDA, its US listing (#608)")?.[1] === "09:30-16:00 New York" &&
+    session("session 09:30-16:00 New York; priced on NVDA, its US listing")?.[1] === "09:30-16:00 New York" &&
     session("session 09:00-17:30 Frankfurt")?.[2] === "" && session("US") === null,
   "a SESSION hover misreads its exchange's clock",
 );

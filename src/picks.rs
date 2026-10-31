@@ -5338,7 +5338,7 @@ pub(crate) fn shipped_book(
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
 /// the column is there.
-const BUY_HELP: &str = "Buy list share: the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 names across stocks and funds. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row. NOT advice";
+const BUY_HELP: &str = "Buy list share: the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 stocks and funds, plus any coins. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row. NOT advice";
 
 /// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`

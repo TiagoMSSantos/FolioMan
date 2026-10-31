@@ -22,7 +22,7 @@
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a><br>
     Watch only, NOT buy signals: <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
     <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Ran too far</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a><br>
-    Background: <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-intraday">Trading</a> · <a href="#h-track">Track record</a>
+    Background: <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-trading">Trading</a> · <a href="#h-track">Track record</a>
   </nav>
   <!-- (#1254) Two ways to use the page, and the amount box. app.js names the whole-world fund in
        #start-fund and fills the BUY € column from the amount, which is never stored. -->
@@ -170,8 +170,8 @@
   <details class="note" id="young-note">
     <summary>about this table</summary>
     Every stock this page prices that has been listed for less than 5 years (YRS). That includes the big US first share sales (IPOs) of the last 5 years: $1 billion or more on Nasdaq's IPO calendar. SPACs (shell companies listed to buy another company) are left out. The rankings above need at least a
-    5-year price record, so a young stock cannot rank there however well it does. This table is where to
-    watch it. Rows rank by buy score and buy rules missed, like the tables around it, so most read
+    5-year price record. A young stock can still rank there, its buy score cut for each rule it misses; its
+    score here then reads ˢ. This table is where to watch all of them. Rows rank by buy score and buy rules missed, like the tables around it, so most read
     <code>young</code> or <code>history</code> in MISSES. REV-YoY is the newest full year's sales
     growth. A short record is a real risk. A young stock has not yet been through a full boom and bust, and a fast-growing year can be a peak. Each run saves these names, so they can later be measured
     against the buy list. That shows whether keeping young stocks out costs money. Your own settings
@@ -270,7 +270,7 @@
        (#1221) Called Trading since each row prices four ways to trade the name; the approaches table above
        it is fixed text in app.js, from the census records. (#1223) Each row is priced on its last 2 years in
        euros at each day's rate, and a second table prices the stocks BUY NOW lists; it only reads them. -->
-  <h2 title="Each market's 10 stocks that most often closed above their opening price (the K7 key), then the stocks on the buy list. Each is priced four ways over its last 2 years, in euros. The four: in and out the same day; 21 trading days at a time; by its 200-day average; and bought once. Watch only, NOT a buy signal" id="h-intraday">Trading (watch only, NOT a buy signal)</h2>
+  <h2 title="Each market's 10 stocks that most often closed above their opening price (the K7 key), then the stocks on the buy list. Each is priced four ways over its last 2 years, in euros. The four: in and out the same day; 21 trading days at a time; by its 200-day average; and bought once. Watch only, NOT a buy signal" id="h-trading">Trading (watch only, NOT a buy signal)</h2>
   <h3 title="What each way of trading or holding earned against buying and holding, in tests on past prices, after costs. Hover any cell for its detail" id="h-approaches">What each approach earned, in tests on past prices</h3>
   <div id="approaches"></div>
   <details class="note">
@@ -282,7 +282,7 @@
     name. The tables are here so BEST can be checked later, on months that had not happened yet. Hover
     any header or cell for its detail. NOT advice: nothing here places an order or changes the buy list.
   </details>
-  <h3 title="The ten stocks in each market that most often closed above their opening price in the last 252 trading days (about a year). Sorted on BEST">K7 top 10 per market</h3>
+  <h3 title="The ten stocks in each market that most often closed above their opening price in the last 252 trading days (about a year). Sorted on BEST" id="h-intraday">K7 top 10 per market</h3>
   <div id="intraday"></div>
   <h3 title="The stocks on the buy list, priced the same four ways; a Frankfurt listing is priced on its US one. It only reads the buy list and changes nothing in it" id="h-trading_buynow">Buy-list stocks, the same four ways</h3>
   <div id="trading_buynow"></div>

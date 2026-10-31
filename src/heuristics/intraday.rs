@@ -433,7 +433,7 @@ pub fn web_rows(k: u8, book: &[Row], until: NaiveDate, today: NaiveDate) -> Vec<
                 u * 100.0,
                 d * 100.0
             );
-            let twin = if series == tk { String::new() } else { format!("; priced on {series}, its US listing (#608)") };
+            let twin = if series == tk { String::new() } else { format!("; priced on {series}, its US listing") };
             vec![
                 json!(["RANK", (n + 1).to_string()]),
                 json!(["MKT", m, null, format!("session {hours}{twin}")]),
@@ -1483,7 +1483,7 @@ mod tests {
         assert!(k7[0][10][3].as_str().unwrap().starts_with("K7 hit 1y, last 252 sessions:\n126 closed above their open = 50.00%\n(a session that closed at its open counts as not up)\nthe same 252 sessions since 2024-09-10: 126 closed above "));
         // (#1223) a Xetra twin keeps its own ticker and names the US listing it is priced on
         let twin = web_rows(3, &[("US", "APC.DE", "AAPL", &c, &one)], d(31), d(31));
-        assert_eq!((twin[0][1][3].as_str(), twin[0][2][1].as_str()), (Some("session 09:30-16:00 New York; priced on AAPL, its US listing (#608)"), Some("APC.DE")));
+        assert_eq!((twin[0][1][3].as_str(), twin[0][2][1].as_str()), (Some("session 09:30-16:00 New York; priced on AAPL, its US listing"), Some("APC.DE")));
         // (#452) the page's hover text keys on exactly these headers, the live table's key K7
         stamp_exits(&mut k7, &HashMap::new(), &[], d(252), d(252));
         let heads: std::collections::BTreeSet<&str> = k7[0].iter().map(|c| c[0].as_str().unwrap()).collect();
