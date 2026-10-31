@@ -5337,8 +5337,19 @@ pub(crate) fn shipped_book(
 }
 
 /// (#403) What the page's BUY% header means, set by [`stamp_buy`] so the glossary carries it exactly when
-/// the column is there.
-const BUY_HELP: &str = "Buy list share: the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 stocks and funds, plus any coins. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row. NOT advice";
+/// the column is there. A macro, so [`WATCH_BUY_HELP`] reuses it word for word.
+macro_rules! buy_part {
+    () => {
+        "the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 stocks and funds, plus any coins. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row. NOT advice"
+    };
+}
+const BUY_HELP: &str = concat!("Buy list share: ", buy_part!());
+/// (#1260) The watch-only tables' BUY% header: a filled cell there is a name the buy list holds anyway,
+/// for its own lane's rank, never for the watch-only table's.
+const WATCH_BUY_HELP: &str = concat!(
+    "Buy list share, filled only when the buy list holds this name anyway, for its rank in Stocks, ETFs or Crypto; this table itself buys nothing. It is ",
+    buy_part!(),
+);
 
 /// (#403) The page's BUY% column: each lane row's weight in `sized` ([`buy_book`]) as a cell right after
 /// TICKER, "" for a row the book leaves unfunded (a gated pin). Stamped onto the payload AFTER `render`
@@ -5375,7 +5386,7 @@ pub fn stamp_buy(payload: &mut serde_json::Value, sized: &[(String, f64)]) {
             let w = sized.iter().find(|(t, _)| cells[at][1] == t.as_str()).map(|(_, w)| format!("{w:.2}%")).unwrap_or_default();
             cells.insert(at + 1, serde_json::json!(["BUY%", w]));
         }
-        payload["help"][table]["BUY%"] = BUY_HELP.into();
+        payload["help"][table]["BUY%"] = if table == "core" { BUY_HELP } else { WATCH_BUY_HELP }.into();
     }
 }
 
@@ -11931,7 +11942,8 @@ mod tests {
         assert_eq!(p["attention"], attention, "a shadow table drops no row");
         assert!(p.get("etfs").is_none() && p.get("berkshire").is_none(), "an absent table stays absent");
         assert_eq!(p["help"]["lanes"]["BUY%"], BUY_HELP);
-        assert_eq!([&p["help"]["core"]["BUY%"], &p["help"]["attention"]["BUY%"]], [BUY_HELP, BUY_HELP]);
+        assert_eq!([&p["help"]["core"]["BUY%"], &p["help"]["attention"]["BUY%"]], [BUY_HELP, WATCH_BUY_HELP]);
+        assert!(WATCH_BUY_HELP.ends_with(BUY_HELP.trim_start_matches("Buy list share: ")), "the watch-only text keeps the whole meaning");
         assert!(p["help"].get("berkshire").is_none(), "no help for an absent table");
         assert_eq!([&p["help"]["lanes"]["SCORE"], &p["help"]["core"]["TER"]], ["x", "t"], "the other entries stay");
     }
