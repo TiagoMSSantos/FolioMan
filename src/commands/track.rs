@@ -1719,7 +1719,8 @@ fn web_note(wins: usize, n: usize, sum: f64, oldest: Option<i64>, chain: Option<
     let record = match oldest {
         None => "Nothing to measure yet: a saved buy list needs a day of age and today's prices.".to_string(),
         Some(d) => {
-            let mean = sum / n as f64;
+            // the word follows the printed figure: float sums leave a tiny negative where the excesses cancel
+            let mean = (sum / n as f64 * 10.0).round() / 10.0;
             format!(
                 "The buy list beat the S&P 500 in {wins} of {n} saved lists ({:.0}%); on average it did {:.1} points {} per list. \
                  Each list is measured up to today, so they overlap and count as one test at most, not {n}. \
