@@ -70,7 +70,7 @@
   <h2 title="Single stocks ranked for a 20-year hold: strong long-run growth, priced near their own highs. A stock far above its long-run trend gets the ran-too-far cut. BUY% is the share of new money the buy list puts in each. NOT advice" id="h-stocks">Stocks</h2>
   <p class="stale" id="conc" role="note" hidden></p>
   <div id="stocks"></div>
-  <h2 title="Funds ranked on the same 20-year growth rules as the stocks. Most are industry and theme bets, not the one fund to hold forever (that is CORE). NOT advice" id="h-etfs">ETFs</h2>
+  <h2 title="Funds ranked on the same 20-year growth rules as the stocks. Most are industry and theme bets, not the one fund to hold forever (Simplest, at the top, names one). NOT advice" id="h-etfs">ETFs</h2>
   <div id="etfs"></div>
   <h2 title="Coins ranked against Bitcoin on the same growth rules. A coin priced far above what its holders paid on average (MVRV) is left out. NOT advice" id="h-crypto">Crypto</h2>
   <div id="crypto"></div>
@@ -82,15 +82,16 @@
        rankings all along and this page never carried. It is NOT a fourth ranking: the tables above
        rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
        appear there however good a 20-year hold they are. (#539) The top-N chooser cuts it — see `apply()`. -->
-  <h2 title="Broad, cheap index funds to hold forever. They reinvest the dividends; REPL says how each copies its index. Ranked here on buy rules missed, then buy score; the tables above score these 0 on purpose. NOT advice" id="h-core">CORE — one fund forever</h2>
+  <h2 title="Index funds to hold for years. Most are broad, the whole world or a region; some hold one sector or one country, such as tech or Korea. They reinvest the dividends; REPL says how each copies its index. Ranked here on buy rules missed, then buy score, so a narrow fund can sit at #1; the tables above score these 0 on purpose. NOT advice" id="h-core">CORE — index funds to hold for years</h2>
   <div id="core"></div>
   <details class="note" id="hold">
     <summary>about CORE</summary>
-    Broad, cheap index funds sold under EU fund rules (UCITS) that reinvest the dividends (accumulating). Most own the real shares; a Swap fund (see REPL) gets the index's return from a bank under a contract instead. They are chosen broadest first: all-world, then developed,
+    Index funds sold under EU fund rules (UCITS) that reinvest the dividends (accumulating). Most are broad, the whole world or a
+    region; some hold one sector or one country, such as tech or Korea. Most own the real shares; a Swap fund (see REPL) gets the index's return from a bank under a contract instead. They are chosen broadest first: all-world, then developed,
     emerging, US, ex-US, Europe, Japan and Asia-Pacific. Then by home country (Ireland first: it pays less
     tax on US dividends), then the lowest yearly fee (<code>TER</code>), then the largest size
     (<code>AUM</code>). One row per fund, and each group of funds (a sleeve) has a cap, so no single
-    index crowds out the rest. This table then ranks the chosen funds on buy rules missed and buy score, like every table below it (hover the headers). So a narrower fund can sit above an all-world one. <strong>One all-world fund is already a whole
+    index crowds out the rest. This table then ranks the chosen funds on buy rules missed and buy score, like every table below it (hover the headers). So a narrow fund, one sector or one country, can sit at #1. For one broad fund to hold forever, see Simplest at the top. <strong>One all-world fund is already a whole
     portfolio</strong>; the groups under it are for building one yourself. The tables above rank recent
     momentum, so they score these funds 0. That is how that ranking works, not a verdict on the fund.
     <strong>NOT advice.</strong>
