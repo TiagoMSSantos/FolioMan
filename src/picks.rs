@@ -1902,18 +1902,25 @@ fn gate_soft(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
 /// docked f^n, n = gates waived. At 0.0 nothing reaches `waived`, so the lane is bit for bit the hard one;
 /// CI ships 0.8 (#566).
 /// What `waived` cannot lift (a structural refusal, no turnover, the repriced-bar artifact) stays `None`.
+/// (#1245) A stock's walk-stamped event flags count as k more failed gates, f^(n+k): a refusal when f is
+/// 0. With `growth_event_months` at 0, k is 0 and every path above is unchanged.
 fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let hard = score_parts_hard(quote, tuning);
     let f = gate_soft(quote, tuning);
-    if hard.is_some() || f == 0.0 {
-        return hard;
+    let k = if tuning.growth_event_months > 0 && asset_class(quote) == 2 { quote.event_flags.count_ones() as usize } else { 0 };
+    if (hard.is_some() && k == 0) || f == 0.0 {
+        return hard.filter(|_| k == 0);
     }
     // shortcut: clones the tuning and re-runs the gates (tags only) per FAILING quote while the knob is armed;
     // precompute per pool if a probe arm slows. (#576) the walkthrough prints the f^n as its soft dock line.
-    let (open, tags, _) = waived(quote, tuning, false)?;
-    let mut p = score_parts_hard(quote, &open)?;
-    let n = tags.len();
-    p.gate_soft = f.powi(n as i32);
+    let (mut p, n) = match hard {
+        Some(p) => (p, 0),
+        None => {
+            let (open, tags, _) = waived(quote, tuning, false)?;
+            (score_parts_hard(quote, &open)?, tags.len())
+        }
+    };
+    p.gate_soft = f.powi((n + k) as i32);
     p.score = compose_score(&p, tuning);
     Some(p)
 }
@@ -7389,8 +7396,32 @@ fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {
 /// of its last six months; 2 = the 12-1 percentile plus the value percentile, value being the 13-60-month
 /// return (the five years net of the last one) negated, each among the keyed names (`core::ranks` over n + 1),
 /// and a name with no 5Y leg at the middle. (#609) 3 and 4 read `trails`, each name's trailing monthly returns
-/// (newest last, in `qs` order): see [`residual_momentum`].
+/// (newest last, in `qs` order): see [`residual_momentum`]. (#1244) Then [`vol_cut`] drops the jumpiest keyed names.
 pub(crate) fn momentum_keys(qs: &[&Quote], trails: &[&[f64]], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
+    vol_cut(keys_by_knob(qs, trails, tuning), trails, tuning.growth_momentum_vol_cut)
+}
+
+/// (#1244) `growth_momentum_vol_cut`: among the keyed names with at least 12 months of trail, the `cut` share
+/// with the highest sd of their last 36 monthly returns loses its key, so the momentum half never buys them.
+/// The count rounds down; a name with under 12 months is not judged and keeps its key. 0 (or below) cuts no
+/// one, 1 (or above) every judged name. A tie in sd keeps the later name.
+fn vol_cut(mut keys: Vec<Option<f64>>, trails: &[&[f64]], cut: f64) -> Vec<Option<f64>> {
+    let sd = |t: &[f64]| {
+        let t = &t[t.len().saturating_sub(36)..];
+        let m = t.iter().sum::<f64>() / t.len() as f64;
+        (t.iter().map(|x| (x - m).powi(2)).sum::<f64>() / t.len() as f64).sqrt()
+    };
+    let mut judged: Vec<(f64, usize)> = keys.iter().zip(trails).enumerate().filter(|(_, (k, t))| k.is_some() && t.len() >= 12).map(|(i, (_, t))| (sd(t), i)).collect();
+    judged.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    let n = ((cut * judged.len() as f64) as usize).min(judged.len());
+    for (_, i) in &judged[..n] {
+        keys[*i] = None;
+    }
+    keys
+}
+
+/// [`momentum_keys`] before the (#1244) cut.
+fn keys_by_knob(qs: &[&Quote], trails: &[&[f64]], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
     let short = if tuning.growth_momentum_key == 1 { "6M" } else { "1M" };
     let mom: Vec<Option<f64>> = qs.iter().map(|q| net_return(q, "1Y", short).filter(|_| asset_class(q) == 2)).collect();
     if tuning.growth_momentum_key >= 3 {
@@ -8809,6 +8840,7 @@ mod tests {
             bench_1y_pct: None,    // (#326) no market context -> regime valve inert; the valve's own tests set these
             bench_range_pct: None,
             splits: Vec::new(), // (#82) journal-replay only (`track`/`sim`); nothing in the score reads it
+            event_flags: 0,
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,
@@ -13579,6 +13611,28 @@ mod tests {
         assert!(near(flat(3), [None; 4]) && near(flat(4), [None; 4]), "{:?} {:?}", flat(3), flat(4));
     }
 
+    /// (#1244) `vol_cut` drops the jumpiest share of the keyed names with 12+ months, rounding down. B (sd 1),
+    /// A (sd 10) and C (sd 5 over its last 36 months, 32 over all 40) are judged; E (11 months) and F (no key)
+    /// are not, however jumpy.
+    #[test]
+    fn vol_cut_drops_the_jumpiest_judged_share() {
+        let b: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 21.0 } else { 19.0 }).collect();
+        let a: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 10.0 } else { -10.0 }).collect();
+        let c: Vec<f64> = (0..40).map(|i| (if i < 4 { 100.0 } else { 5.0 }) * (if i % 2 == 0 { 1.0 } else { -1.0 })).collect();
+        let e: Vec<f64> = (0..11).map(|i| if i % 2 == 0 { 50.0 } else { -50.0 }).collect();
+        let f: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 60.0 } else { -60.0 }).collect();
+        let trails: [&[f64]; 5] = [&b, &a, &c, &e, &f];
+        let keys = || vec![Some(1.0), Some(2.0), Some(3.0), Some(4.0), None];
+        let cut = |x: f64| vol_cut(keys(), &trails, x);
+        assert_eq!(cut(0.5), [Some(1.0), None, Some(3.0), Some(4.0), None]);
+        for all in [1.0, 5.0] {
+            assert_eq!(cut(all), [None, None, None, Some(4.0), None]);
+        }
+        for off in [0.0, -1.0, f64::NAN] {
+            assert_eq!(cut(off), keys());
+        }
+    }
+
     /// (#584) `growth_momentum_interleave` with the equal-weight book funds shipped 1, momentum 1, shipped 2 ...;
     /// knob off, or the vol-target book, is the shipped book alone.
     #[test]
@@ -13702,6 +13756,31 @@ mod tests {
         lev.name = "ProShares Ultra S&P500".into();
         lev.range_pct = 20.0;
         assert_eq!(soft(&lev, 1.0), None, "a structural refusal has no knob to waive");
+    }
+
+    /// (#1245) Each walk-stamped event flag docks a stock one more soft step, f^(n+k), and refuses it under
+    /// hard gates. The knob at 0 reads no flag, and a fund never docks for one.
+    #[test]
+    fn event_flags_dock_a_stock_one_soft_step_each() {
+        let on = BuyHeuristic { growth_event_months: 12, growth_gate_soft: 0.5, ..BuyHeuristic::default() };
+        let mut pass = gate_fixture();
+        let shipped = growth_score(&pass, &on).expect("the fixture clears the gates");
+        assert!(shipped > 0.0, "a positive score, so the dock is a multiply here");
+        pass.event_flags = 0b101;
+        assert_eq!(growth_score(&pass, &on), Some(shipped * 0.25), "two flags on a passer: 0.5^2");
+        assert_eq!(growth_score(&pass, &BuyHeuristic { growth_event_months: 0, ..on.clone() }), Some(shipped), "the knob off reads no flag");
+        assert_eq!(growth_score(&pass, &BuyHeuristic { growth_gate_soft: 0.0, ..on.clone() }), None, "hard gates refuse a flagged stock");
+        let mut fund = pass.clone();
+        fund.instrument_type = "ETF".into();
+        assert_eq!(asset_class(&fund), 1);
+        let fund_on = BuyHeuristic { growth_gate_soft_etf: 0.5, ..on.clone() };
+        assert_eq!(growth_score(&fund, &fund_on), growth_score(&Quote { event_flags: 0, ..fund.clone() }, &fund_on), "a fund never docks for a flag");
+        let mut fail = gate_fixture();
+        fail.range_pct = 20.0;
+        let (open, tags, _) = waived(&fail, &on, true).expect("an assessable failer");
+        let full = growth_score(&fail, &open).expect("it scores with its gates waived");
+        fail.event_flags = 0b010;
+        assert_eq!(growth_score(&fail, &on), Some(full * 0.5f64.powi(tags.len() as i32 + 1)), "a failer adds its flag to its n");
     }
 
     /// (#569) The soft scorer's tags-only read: the same gates, tags and near-miss flags, every reason empty.

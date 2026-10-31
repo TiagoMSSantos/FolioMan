@@ -1048,6 +1048,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // the series above, which Yahoo has retro-adjusted for it. They ride on the quote every command
         // already fetches rather than a second chart call of their own.
         splits: chart.splits.clone(),
+        event_flags: 0,
         last_close_date: last_date, // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),

@@ -1973,6 +1973,8 @@ pub async fn run(args: Vec<String>) {
     let etf_set = &etf_set;
     let sector_of = &sector_of;
     let pit_spans = &pit_spans;
+    // (#1245) the membership source opens every incumbent's span on its first date: that is no addition
+    let span_origin = pit_spans.values().flatten().map(|s| s.0).min().unwrap_or(chrono::NaiveDate::MIN);
     let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
     // (#751) fetched before the walk, which rolls a dead series' last close into it
     // (#804) `backtest_tr_ruler` grades on the total-return index too, with price-only selection
@@ -2036,6 +2038,7 @@ pub async fn run(args: Vec<String>) {
             // unreconstructable and `dividend_weight` shipped ungraded. `backtest_quote` slices it
             // to the cutoff, so no look-ahead arrives with it.
             let divs = chart.divs;
+            let splits = chart.splits; // (#1245) read by `event_flags`, after the restate above
             // (PIT) this name's index spans, resolved ONCE per ticker rather than per cutoff. `None`
             // means "not an index name at all" — every coin, every ETF, and any stock that was never
             // an S&P 500 member — and is never filtered: PIT is a claim about the index pond alone.
@@ -2086,6 +2089,10 @@ pub async fn run(args: Vec<String>) {
                         let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence, &anchor_windows);
                         quote.history_proxied = history_proxied; // (#327) provenance, for the PROXY BOOK split
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
+                        if tuning.growth_event_months > 0 {
+                            let m = tuning.growth_event_months as u32;
+                            quote.event_flags = event_flags(&divs, &splits, member_spans, span_origin, dates[i], m);
+                        }
                         // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                         // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
                         // back(yrs)`, the row `yrs` fiscal years back). Passing the horizon meant `fund 12`
@@ -2434,6 +2441,12 @@ pub async fn run(args: Vec<String>) {
     report_onsale_book(&samples, &bench, years, tuning);
     lap("on-sale book");
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs, years);
+    if tuning.print_held_loser_bands {
+        report_held_loser_bands(&samples, tuning); // (#1242)
+    }
+    if tuning.growth_event_months > 0 {
+        report_event_flags(&samples, tuning.growth_event_months); // (#1245)
+    }
     lap("lane GROWTH");
     // (#3g) the two levers that decide how hard a HIGH-CAGR name is rewarded: the slope and the ceiling.
     // Swept as curves because the ablation only prices removal and `tune` only reports a confounded
@@ -5572,6 +5585,41 @@ fn random_books(pond: &BTreeMap<i32, Vec<(f64, f64)>>, n: usize, years: i64, dra
         .collect()
 }
 
+/// (#1243) The CRASH buckets `growth_momentum_crash_slots` caps. The pond's equal-weight month is the mean of
+/// every non-crypto trail of 24 months or more, month by month. A bucket is a crash when that month compounds
+/// below 1 over the 24, AND the spread of its last 6 months sits in the top third of every bucket's reading so
+/// far, this one included: at least 2/3 of them strictly below it, so the first bucket never reads one. The
+/// spread is the sum of squared deviations, ordered like the sd. ^GSPC bars on file are quarterly, so the pond
+/// stands in for the index.
+fn crash_buckets<'a>(samples: impl IntoIterator<Item = &'a Sample>) -> std::collections::BTreeSet<i32> {
+    let mut by: BTreeMap<i32, Vec<&[f64]>> = BTreeMap::new();
+    for s in samples {
+        if picks::asset_class(&s.quote) != 0 && s.trail.len() >= 24 {
+            by.entry(bucket(s.date)).or_default().push(&s.trail[s.trail.len() - 24..]);
+        }
+    }
+    let (mut seen, mut out) = (Vec::new(), std::collections::BTreeSet::new());
+    for (b, trails) in by {
+        let month: Vec<f64> = (0..24).map(|k| trails.iter().map(|t| t[k]).sum::<f64>() / trails.len() as f64).collect();
+        let last = &month[18..];
+        let m = last.iter().sum::<f64>() / 6.0;
+        let ss: f64 = last.iter().map(|x| (x - m).powi(2)).sum();
+        seen.push(ss);
+        let below = seen.iter().filter(|x| **x < ss).count();
+        if month.iter().map(|r| 1.0 + r / 100.0).product::<f64>() < 1.0 && below * 3 >= seen.len() * 2 {
+            out.insert(b);
+        }
+    }
+    out
+}
+
+/// (#1243) The momentum slots of every 10 in bucket `b`: `growth_momentum_slots`, capped at
+/// `growth_momentum_crash_slots` in a [`crash_buckets`] bucket.
+fn slots_at(tuning: &BuyHeuristic, crash: &std::collections::BTreeSet<i32>, b: i32) -> usize {
+    let n = tuning.growth_momentum_slots;
+    if crash.contains(&b) { n.min(tuning.growth_momentum_crash_slots) } else { n }
+}
+
 /// (#560) Every [`RIVALS`] book's per-bucket excess, and the pond (realized %, bench %) per bucket that
 /// rival (e) draws from. `scorer` is `picks::growth_scores_ranked` in the report, a stand-in in tests;
 /// `shipped` keys row 0, `open` (the gates-off tuning) keys row 1 and decides who is in the pond.
@@ -5590,6 +5638,7 @@ fn rival_books(
     }
     let mut books: Vec<Vec<f64>> = vec![Vec::new(); RIVALS.len()];
     let mut pond: BTreeMap<i32, Vec<(f64, f64)>> = BTreeMap::new();
+    let crash = crash_buckets(samples); // (#1243)
     for (b, group) in &by_cutoff {
         let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
         let (sh, op) = (scorer(&quotes, shipped), scorer(&quotes, open));
@@ -5627,7 +5676,7 @@ fn rival_books(
             book.extend(rival_excess(&keyed(i), VERDICT_TOP, years)); // the nine keyed rows; (j) blends two of them
         }
         let capped: Vec<_> = rows.iter().zip(picks::momentum_keys(&picked, &trails, shipped)).map(|(r, k)| (k, r.1, r.2, r.3)).collect();
-        let half = VERDICT_TOP.saturating_sub(shipped.growth_momentum_slots);
+        let half = VERDICT_TOP.saturating_sub(slots_at(shipped, &crash, *b));
         books[9].extend(blend_excess(&keyed(0), &capped, half, VERDICT_TOP, years));
         books[10].extend(blend_excess(&keyed(7), &capped, half, VERDICT_TOP, years)); // (#598) (k): (h) in place of row 0
         // (#600) (l): the pond on one blended key; (m)/(n): (j) with its row-0 or its momentum half double-sorted
@@ -5659,6 +5708,15 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
         pond.len(),
         median(pond_sizes)
     );
+    if tuning.growth_momentum_crash_slots < tuning.growth_momentum_slots {
+        let crash = crash_buckets(samples);
+        println!(
+            "  crash buckets (#1243): {} of {} pond bucket(s), {} momentum slot(s) of every 10 there",
+            pond.keys().filter(|b| crash.contains(*b)).count(),
+            pond.len(),
+            tuning.growth_momentum_crash_slots
+        );
+    }
     let stats = |xs: &[f64]| (xs.iter().sum::<f64>() / xs.len().max(1) as f64, median(xs.to_vec()));
     let (ship_mean, ship_med) = stats(&books[0]);
     // (#1149) the random draws come first so every row can print where it ranks among them
@@ -5819,11 +5877,14 @@ fn blend_winners<'a>(
     open: &BuyHeuristic,
 ) -> (usize, BTreeMap<&'a str, [usize; 2]>, Vec<&'a Sample>) {
     let (mut slots, mut held, mut mom) = (0, BTreeMap::<&'a str, [usize; 2]>::new(), Vec::new());
-    for group in groups.values() {
+    let crash = crash_buckets(groups.values().flatten().copied()); // (#1243)
+    for (b, group) in groups {
         let by_tk: BTreeMap<&'a str, &'a Sample> = group.iter().map(|&s| (s.quote.ticker.as_str(), s)).collect();
         let pool: Vec<&'a Sample> = by_tk.values().copied().collect();
         let Some(bar) = winner_bar(pool.iter().filter(|s| picks::asset_class(&s.quote) == 2).map(|s| s.realized).collect(), top_pct) else { continue };
-        let book = blend_book(&by_tk, scorer, tuning, open);
+        let mut at = tuning.clone();
+        at.growth_momentum_slots = slots_at(tuning, &crash, *b);
+        let book = blend_book(&by_tk, scorer, &at, open);
         slots += book.len();
         for (t, by_m) in book {
             let s = by_tk[t];
@@ -8889,18 +8950,7 @@ fn held_loser_factors(
     n: usize,
     factors: &[&'static str],
 ) -> Vec<HeldLoserRow> {
-    let mut picked: BTreeMap<i32, Vec<(&Sample, f64)>> = BTreeMap::new();
-    for (s, v) in scored {
-        picked.entry(bucket(s.date)).or_default().push((s, *v));
-    }
-    let mut held: Vec<&Sample> = Vec::new();
-    for (_, mut rows) in picked {
-        if rows.len() < 2 {
-            continue; // the same skip `recall_capture` applies, so both instruments count one pool
-        }
-        rows.sort_by(|a, z| z.1.total_cmp(&a.1));
-        held.extend(rows.iter().take(n).map(|(s, _)| *s));
-    }
+    let held = held_names(scored, n);
     factors
         .iter()
         .filter_map(|name| {
@@ -8926,6 +8976,185 @@ fn held_loser_factors(
             })
         })
         .collect()
+}
+
+/// (#159) The held book: the top `n` of each entry bucket by score. A bucket of one is skipped, the
+/// same skip `recall_capture` applies, so every held-book instrument counts one pool. (#1242) split
+/// out of [`held_loser_factors`] so [`held_loser_bands`] reads the very same names.
+fn held_names<'a>(scored: &[(&'a Sample, f64)], n: usize) -> Vec<&'a Sample> {
+    let mut picked: BTreeMap<i32, Vec<(&Sample, f64)>> = BTreeMap::new();
+    for (s, v) in scored {
+        picked.entry(bucket(s.date)).or_default().push((s, *v));
+    }
+    let mut held: Vec<&Sample> = Vec::new();
+    for (_, mut rows) in picked {
+        if rows.len() < 2 {
+            continue;
+        }
+        rows.sort_by(|a, z| z.1.total_cmp(&a.1));
+        held.extend(rows.iter().take(n).map(|(s, _)| *s));
+    }
+    held
+}
+
+/// (#1242) The [`auc`] of one factor between the names in `pool` that made money and those that lost
+/// it. None when either side is empty, or no name carries the factor.
+fn loser_auc(pool: &[&Sample], name: &str) -> Option<f64> {
+    let (mut win, mut lose) = (Vec::new(), Vec::new());
+    for s in pool {
+        if let Some(v) = s.fund.as_ref().and_then(|f| core::select_fund_factor(f, name)) {
+            if s.realized < 0.0 {
+                lose.push(v);
+            } else {
+                win.push(v);
+            }
+        }
+    }
+    (!win.is_empty() && !lose.is_empty()).then(|| auc(&win, &lose))
+}
+
+/// (#1242) One factor's held-book AUC with its cluster-bootstrap band, and the same AUC read inside
+/// each earnings-yield tercile of the held book (lowest yield, the richest third, first). A named row for the reason
+/// [`HeldLoserRow`] is one: the mutation gate.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct AucBand {
+    factor: &'static str,
+    auc: f64,
+    lo: f64,
+    hi: f64,
+    terciles: [Option<f64>; 3],
+}
+
+/// (#1242) The profitability ratios the held-loser table has read backwards, as one family.
+const PROFIT_FAMILY: [&str; 7] = ["gross_margin", "gp_assets", "roe", "quality", "op_margin", "net_margin", "cf_assets"];
+
+/// (#1242) Prints [`held_loser_bands`] for the GROWTH lane's held book. Display only.
+#[mutants::skip]
+fn report_held_loser_bands(samples: &[Sample], tuning: &BuyHeuristic) {
+    let scored: Vec<(&Sample, f64)> =
+        samples.iter().filter_map(|s| growth_score(&s.quote, tuning).map(|v| (s, v))).collect();
+    println!("  (#1242) held book's loser AUC, 95% band from 2000 draws of whole (entry date, sector) clusters:");
+    for AucBand { factor, auc, lo, hi, terciles } in held_loser_bands(&scored, VERDICT_TOP, &PROFIT_FAMILY, 2000) {
+        let t = terciles.map(|x| x.map_or("  n/a".to_string(), |v| format!("{v:>5.2}")));
+        println!(
+            "    {factor:<13} AUC {auc:>5.2}  band {lo:>5.2} to {hi:>5.2}   inside E/P thirds (rich, mid, cheap) {} {} {}",
+            t[0], t[1], t[2]
+        );
+    }
+    println!("    read the family row as the one test; a band holding 0.5 = no reading. Survivors only: dead names carry no fund rows.");
+}
+
+/// (#1245) The walk's event flags at one cutoff, one bit each: 1 a dividend cut (the last 12 months paid
+/// under 3/4 of the 12 before, which held at least two payments), 2 a reverse split (a ratio under 1) and
+/// 4 a fresh S&P 500 add (a span opened after `origin`, the source's first date, which every incumbent's
+/// span shares). The last two look `months` back. Each window is (from, as_of]: an event on the cutoff
+/// counts, one exactly a window back does not.
+/// shortcut: the cut always reads one year against the year before, whatever `months` is, and a special
+/// dividend in the prior year reads as a cut. Both payout sources (Yahoo, the dead CSV) are split-adjusted.
+fn event_flags(
+    divs: &[(chrono::NaiveDate, f64)],
+    splits: &[(chrono::NaiveDate, f64)],
+    spans: Option<&[(chrono::NaiveDate, Option<chrono::NaiveDate>)]>,
+    origin: chrono::NaiveDate,
+    as_of: chrono::NaiveDate,
+    months: u32,
+) -> u32 {
+    let back = |m: u32| as_of.checked_sub_months(chrono::Months::new(m)).unwrap_or(chrono::NaiveDate::MIN);
+    let (year, two) = (back(12), back(24));
+    let paid = |from: chrono::NaiveDate, to: chrono::NaiveDate| {
+        divs.iter().filter(|(d, _)| from < *d && *d <= to).fold((0usize, 0.0f64), |(n, t), (_, v)| (n + 1, t + v))
+    };
+    let ((prior_n, prior), (_, last)) = (paid(two, year), paid(year, as_of));
+    let cut = prior_n >= 2 && last < 0.75 * prior;
+    let from = back(months);
+    let reverse = splits.iter().any(|(d, r)| from < *d && *d <= as_of && *r < 1.0);
+    let added = spans.is_some_and(|sp| sp.iter().any(|(s, _)| from < *s && *s <= as_of && origin < *s));
+    u32::from(cut) + (u32::from(reverse) << 1) + (u32::from(added) << 2)
+}
+
+/// (#1245) How often each [`event_flags`] bit fired on a stock cutoff of this walk. Display only.
+#[mutants::skip]
+fn report_event_flags(samples: &[Sample], months: usize) {
+    let stocks: Vec<u32> =
+        samples.iter().filter(|s| picks::asset_class(&s.quote) == 2).map(|s| s.quote.event_flags).collect();
+    let fired = |bit: u32| stocks.iter().filter(|f| *f & bit != 0).count();
+    println!(
+        "  (#1245) event flags over {months} months, of {} stock cutoffs: dividend cut {}, reverse split {}, fresh S&P add {}, any {}",
+        stocks.len(),
+        fired(1),
+        fired(2),
+        fired(4),
+        fired(7)
+    );
+}
+
+/// (#1242) How sure is "quality reads backwards on this book"? The held-loser AUC (#159, #165) is the
+/// measured reason behind several refusals, and it stands on 7 to 35 losers. Two things can fake it.
+///
+/// CLUSTERS. Losers bunch by entry date and sector: one bad quarter in one sector puts five held names
+/// on the losing side at once, and a per-name error bar counts them as five independent votes. So the
+/// band resamples whole (entry bucket, sector) clusters with replacement, `draws` times, seeded, and
+/// reports the 2.5th and 97.5th percentile of the factor's AUC across draws. A draw with one side
+/// empty casts no vote for that factor.
+///
+/// ONE FAMILY. The profitability ratios are one signal read seven ways, so the last row, `family`,
+/// is the mean AUC across the factor rows, with its band taken from the per-draw mean. Read that row
+/// as THE test; the per-factor rows only show which ratio drives it.
+///
+/// THE VALUE CONFOUND. Profitable names tend to be the expensive ones, and the value signal reads
+/// strongly on this book. `terciles` re-reads each AUC inside each third of the held book by
+/// earnings yield, so a factor that only separates because it tracks price shows up near 0.5 there.
+///
+/// Survivors only in practice: dead names carry no fund rows, so they vote on nothing here. Measure
+/// only. It feeds no score, gate, journal or book.
+fn held_loser_bands(scored: &[(&Sample, f64)], n: usize, factors: &[&'static str], draws: usize) -> Vec<AucBand> {
+    let held = held_names(scored, n);
+    let mut by_ep: Vec<(f64, &Sample)> = held
+        .iter()
+        .filter_map(|s| s.fund.as_ref().and_then(|f| core::select_fund_factor(f, "earnings_yield")).map(|v| (v, *s)))
+        .collect();
+    by_ep.sort_by(|a, z| a.0.total_cmp(&z.0));
+    let mut thirds: [Vec<&Sample>; 3] = Default::default();
+    for (i, (_, s)) in by_ep.iter().enumerate() {
+        thirds[i * 3 / by_ep.len()].push(s);
+    }
+    let mut by: BTreeMap<(i32, Option<&str>), Vec<&Sample>> = BTreeMap::new();
+    for s in &held {
+        by.entry((bucket(s.date), s.quote.sector.as_deref())).or_default().push(s);
+    }
+    let clusters: Vec<Vec<&Sample>> = by.into_values().collect();
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    // one vote list per factor, plus the family's at the end
+    let mut boot: Vec<Vec<f64>> = vec![Vec::new(); factors.len() + 1];
+    for _ in 0..draws {
+        let mut pool: Vec<&Sample> = Vec::new();
+        for _ in 0..clusters.len() {
+            pool.extend(&clusters[(core::next_rand(&mut state) % clusters.len() as u64) as usize]);
+        }
+        let got: Vec<f64> =
+            factors.iter().zip(&mut boot).filter_map(|(f, b)| loser_auc(&pool, f).inspect(|a| b.push(*a))).collect();
+        if !got.is_empty() {
+            boot[factors.len()].push(got.iter().sum::<f64>() / got.len() as f64);
+        }
+    }
+    let band = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        (core::percentile(v, 2.5), core::percentile(v, 97.5))
+    };
+    let mean = |v: Vec<f64>| (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64);
+    let mut rows: Vec<AucBand> = Vec::new();
+    for (name, b) in factors.iter().zip(boot.iter_mut()) {
+        if let Some(auc) = loser_auc(&held, name) {
+            let (lo, hi) = band(b);
+            rows.push(AucBand { factor: name, auc, lo, hi, terciles: [0, 1, 2].map(|t| loser_auc(&thirds[t], name)) });
+        }
+    }
+    if let Some(auc) = mean(rows.iter().map(|r| r.auc).collect()) {
+        let (lo, hi) = band(&mut boot[factors.len()]);
+        let terciles = [0, 1, 2].map(|t| mean(rows.iter().filter_map(|r| r.terciles[t]).collect()));
+        rows.push(AucBand { factor: "family", auc, lo, hi, terciles });
+    }
+    rows
 }
 
 /// (#9) Do the hard growth GATES actually select winners? Every rho/edge the lanes print is computed
@@ -12320,6 +12549,110 @@ mod tests {
         assert_eq!(held_loser_factors(&[es[0], es[2]], 2, &["roe"]).len(), 1, "two names are enough to split");
     }
 
+    /// (#1245) `event_flags` at a 2020-06-30 cutoff, 12 months back: each window is (from, as_of], so an
+    /// event on the cutoff counts and one exactly a window back does not. The cut needs two prior payments
+    /// and a fall to under 3/4 of them; a split needs a ratio under 1; an add needs a span opened after the
+    /// source's first date.
+    #[test]
+    fn event_flags_read_each_event_inside_its_window() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let (as_of, origin) = (d("2020-06-30"), d("1996-01-02"));
+        // an empty `spans` is a name that was never a member: `None`, as the walk passes it
+        let flags = |divs: &[(&str, f64)], splits: &[(&str, f64)], spans: &[(&str, Option<&str>)], m: u32| {
+            let divs: Vec<_> = divs.iter().map(|&(t, v)| (d(t), v)).collect();
+            let splits: Vec<_> = splits.iter().map(|&(t, r)| (d(t), r)).collect();
+            let spans: Vec<_> = spans.iter().map(|&(a, b)| (d(a), b.map(d))).collect();
+            event_flags(&divs, &splits, (!spans.is_empty()).then_some(spans.as_slice()), origin, as_of, m)
+        };
+        // the dividend cut: 2018-06-30 is two years back (out), 2019-06-30 closes the prior year (in it)
+        let paid = |last: f64| vec![("2018-06-30", 9.0), ("2018-12-31", 1.0), ("2019-06-30", 1.0), ("2020-06-30", last)];
+        assert_eq!(flags(&paid(1.5), &[], &[], 12), 0, "exactly 3/4 of the prior year is no cut");
+        assert_eq!(flags(&paid(1.49), &[], &[], 12), 1, "under 3/4 is a cut, the cutoff's own payment counted");
+        assert_eq!(flags(&[("2018-12-31", 1.0), ("2019-06-30", 1.0)], &[], &[], 12), 1, "a stop is a cut");
+        assert_eq!(flags(&[("2019-06-30", 1.0)], &[], &[], 12), 0, "one prior payment is no record to cut");
+        let later = [("2018-12-31", 1.0), ("2019-06-30", 1.0), ("2020-07-01", 1.0)];
+        assert_eq!(flags(&later, &[], &[], 12), 1, "a later payment is unseen");
+        // the reverse split
+        assert_eq!(flags(&[], &[("2020-06-30", 0.1)], &[], 12), 2, "a reverse split on the cutoff");
+        assert_eq!(flags(&[], &[("2019-06-30", 0.1)], &[], 12), 0, "exactly a window back is out");
+        assert_eq!(flags(&[], &[("2020-07-01", 0.1)], &[], 12), 0, "a later split is unseen");
+        assert_eq!(flags(&[], &[("2020-01-01", 4.0), ("2020-02-01", 1.0)], &[], 12), 0, "a forward split or a ratio of 1 is no flag");
+        assert_eq!(flags(&[], &[("2019-12-01", 0.1)], &[], 6), 0, "the window follows `months`");
+        assert_eq!(flags(&[], &[("2019-12-01", 0.1)], &[], 12), 2);
+        // the fresh add
+        assert_eq!(flags(&[], &[], &[("2020-06-30", None)], 12), 4, "added on the cutoff");
+        assert_eq!(flags(&[], &[], &[("2019-06-30", None)], 12), 0, "added exactly a window back is out");
+        assert_eq!(flags(&[], &[], &[("2020-07-01", None)], 12), 0, "a later add is unseen");
+        assert_eq!(flags(&[], &[], &[("2001-01-01", Some("2005-01-01")), ("2020-01-01", None)], 12), 4, "a re-add counts");
+        let early = |start: &str| {
+            let spans = [(d(start), None)];
+            event_flags(&[], &[], Some(spans.as_slice()), origin, d("1996-06-30"), 12)
+        };
+        assert_eq!(early("1996-01-02"), 0, "the source's first date is no addition");
+        assert_eq!(early("1996-03-01"), 4, "a span opened after it is one");
+        assert_eq!(flags(&paid(0.0), &[("2020-03-01", 0.5)], &[("2020-01-01", None)], 12), 7, "the three bits stack");
+    }
+
+    /// (#1242) `held_loser_bands` makes four claims. (a) The point AUC is the held book's, and a flat
+    /// name is a winner. (b) A one-sided factor is dropped and the family row is the mean of the rest.
+    /// (c) The terciles split the held book by earnings yield, a third each. (d) The band resamples
+    /// whole (bucket, sector) clusters: one cluster gives a band of width zero at the point, two
+    /// clusters that disagree give the full spread.
+    #[test]
+    fn held_loser_bands_resample_clusters_and_split_by_earnings_yield() {
+        use crate::core::FundFactors;
+        let row = |t: &str, sector: &str, realized: f64, ep: f64, gm: f64, roe: f64, roic: Option<f64>| Sample {
+            date: ymd(2010, 1, 1),
+            realized,
+            relative: 0.0,
+            quote: Arc::new(Quote { sector: Some(sector.into()), ..Quote::stub(t, "1", "", t) }),
+            fund: Some(FundFactors {
+                earnings_yield: Some(ep),
+                gross_margin: Some(gm),
+                roe: Some(roe),
+                roic,
+                ..Default::default()
+            }),
+            trail: Vec::new(),
+        };
+        // One cluster. E/P order A C B E D F puts one winner and one loser in each third.
+        let one = [
+            row("A", "Tech", 10.0, 1.0, 9.0, 1.0, Some(1.0)),
+            row("B", "Tech", 0.0, 3.0, 1.0, 2.0, Some(1.0)),
+            row("C", "Tech", -10.0, 2.0, 5.0, 3.0, None),
+            row("D", "Tech", 10.0, 5.0, 8.0, 4.0, Some(1.0)),
+            row("E", "Tech", -10.0, 4.0, 2.0, 5.0, None),
+            row("F", "Tech", -10.0, 6.0, 7.0, 6.0, None),
+        ];
+        let scored: Vec<(&Sample, f64)> = one.iter().enumerate().map(|(i, x)| (x, 10.0 - i as f64)).collect();
+        let rows = held_loser_bands(&scored, 6, &["gross_margin", "roe", "roic"], 50);
+        let names: Vec<&str> = rows.iter().map(|r| r.factor).collect();
+        assert_eq!(names, ["gross_margin", "roe", "family"], "roic is winners-only and must drop: {rows:?}");
+        // winners A9 B1 D8 vs losers C5 E2 F7: 6 of 9 pairs; roe winners 1 2 4 vs losers 3 5 6: 1 of 9
+        assert_eq!(rows[0].auc, 6.0 / 9.0, "B ends flat and votes with the winners: {rows:?}");
+        assert_eq!(rows[1].auc, 1.0 / 9.0);
+        assert_eq!(rows[2].auc, (6.0 / 9.0 + 1.0 / 9.0) / 2.0, "family = mean of the factor rows");
+        for r in &rows {
+            assert_eq!((r.lo, r.hi), (r.auc, r.auc), "one cluster: every draw is the whole book: {r:?}");
+        }
+        assert_eq!(rows[0].terciles, [Some(1.0), Some(0.0), Some(1.0)], "A9>C5, B1<E2, D8>F7");
+        assert_eq!(rows[1].terciles, [Some(0.0); 3], "A1<C3, B2<E5, D4<F6");
+        assert_eq!(rows[2].terciles, [Some(0.5), Some(0.0), Some(0.5)]);
+
+        // Two sectors that disagree: Tech separates fully, Energy fully backwards. The book reads 0.5,
+        // and the draws must reach both ends.
+        let two = [
+            row("A", "Tech", 10.0, 1.0, 9.0, 0.0, None),
+            row("C", "Tech", -10.0, 2.0, 5.0, 0.0, None),
+            row("B", "Energy", 10.0, 3.0, 1.0, 0.0, None),
+            row("E", "Energy", -10.0, 4.0, 2.0, 0.0, None),
+        ];
+        let scored: Vec<(&Sample, f64)> = two.iter().enumerate().map(|(i, x)| (x, 10.0 - i as f64)).collect();
+        let gm = held_loser_bands(&scored, 4, &["gross_margin"], 200)[0];
+        assert_eq!((gm.auc, gm.lo, gm.hi), (0.5, 0.0, 1.0), "{gm:?}");
+        assert!(held_loser_bands(&[], 10, &["gross_margin"], 10).is_empty());
+    }
+
     /// (#165) `auc` is the ruler the held-loser table ranks factors on, so the values that DEFINE it
     /// are pinned directly rather than inferred from a report: perfect separation, perfect inversion,
     /// no separation (twice, for two different reasons), an asymmetric denominator, and the monotone
@@ -12756,6 +13089,36 @@ mod tests {
         // empty trail = unjudgeable -> kept even at a tight cap
         let blind = with(Vec::new());
         assert_eq!(scores(greedy_decorrelate(&[(9.0, &a), (8.0, &blind)], 2, 0.4)), vec![9.0, 8.0]);
+    }
+
+    /// (#1243) A crash bucket needs both legs: the pond's month down over 24 AND its last-6 spread in the top
+    /// third so far. b4 is jumpy but up, and the fall in the first 12 of its 36 months is never read. b5
+    /// compounds to exactly 1, not below. b6 clears the bar only because b4's reading sits under it. b7 is down
+    /// with 3 of 7 below it, short of 2/3. b2's two names average, they do not add.
+    #[test]
+    fn crash_buckets_need_a_fall_and_a_top_third_spread() {
+        let months = |lead: f64, a: f64, b: f64| -> Vec<f64> { (0..24).map(|i| if i < 18 { lead } else if i % 2 == 0 { a } else { b }).collect() };
+        let at = |y: i32, m: u32, trail: Vec<f64>| {
+            let mut s = sample(ymd(y, m, 1), 0.0);
+            s.trail = trail;
+            s
+        };
+        let pond = [
+            at(2001, 1, months(1.0, 1.0, 1.0)),
+            at(2001, 7, months(-1.0, -10.0, -6.0)),
+            at(2001, 7, months(-1.0, -10.0, -6.0)),
+            at(2002, 1, months(-1.0, 6.0, -4.0)),
+            at(2002, 7, [vec![-50.0; 12], months(3.0, 11.0, -9.0)].concat()),
+            at(2003, 1, months(0.0, 100.0, -50.0)),
+            at(2003, 7, months(-1.0, 21.0, -19.0)),
+            at(2004, 1, months(-1.0, 8.0, -6.0)),
+        ];
+        let want = std::collections::BTreeSet::from([bucket(ymd(2002, 1, 1)), bucket(ymd(2003, 7, 1))]);
+        assert_eq!(crash_buckets(&pond), want);
+        let t = BuyHeuristic { growth_momentum_slots: 5, growth_momentum_crash_slots: 1, ..BuyHeuristic::default() };
+        let crash = std::collections::BTreeSet::from([7]);
+        assert_eq!((slots_at(&t, &crash, 7), slots_at(&t, &crash, 8)), (1, 5));
+        assert_eq!(slots_at(&BuyHeuristic { growth_momentum_crash_slots: 10, ..t.clone() }, &crash, 7), 5, "the default 10 caps nothing");
     }
 
     /// (Item 31) `exit_cohorts`: pairs where the earlier cutoff passes split on the later one —

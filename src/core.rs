@@ -412,6 +412,11 @@ pub struct Quote {
     pub profile: Profile, // (#469) DISPLAY-ONLY: the NAME link + SHORT%/TARGET% facts, printed and shadow-table rows only
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy
     pub splits: Vec<(NaiveDate, f64)>, // (#82) (effective date, ratio) from the chart's events.splits; a 4:1 split is 4.0, ascending. NOT SCORED and never will be — it exists so `track` and `sim`, which replay prices journaled BEFORE a split against a series retro-adjusted AFTER one, can restate the old price into today's share definition. Empty for stubs and for `backtest_quote`, which walks one internally consistent series and has nothing to restate
+    // (#1245) the backtest walk's event flags, one bit each: 1 a dividend cut, 2 a reverse split, 4 a fresh S&P
+    // add, all inside `growth_event_months` before the cutoff (`backtest::event_flags`). Each set bit docks a
+    // stock one more `growth_gate_soft` step in `picks::score_parts`. Only the walk stamps it, with the knob on.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub event_flags: u32,
 }
 
 /// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
@@ -517,6 +522,7 @@ impl Quote {
             ep_fair: None,
             ep_fund: None,
             splits: Vec::new(),
+            event_flags: 0,
         }
     }
 

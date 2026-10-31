@@ -23149,6 +23149,13 @@ buy_heuristic:
 
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
   growth_require_peg: true       # require a PEG to score a name. The growth_score reads PEG (1/PEG x 100) and the gate rejects PEG > growth_max_peg, so a missing PEG is a free pass. This knob forces a missing PEG to fail the gate. Reads `fund.eps_never_reported` (filer-level, never as-of), NOT `peg_yield.is_none()` — the cohort is filers whose 10-K states no per-share element at all, 8 of 509 cached US names, seven of them now FIXED by the XBRL-instance fallback. Residue today: ARES alone. false = off
+  growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
+  #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
+  growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
+  #  book. Pre-registered 2026-10-31, one arm (0.1), one look; see the receipt.
+  growth_event_months: 0         # (#1245) dividend cut, reverse split or fresh S&P add inside this many months before a
+  #  backtest cutoff docks a stock one soft step each; 0 = off. Pre-registered 2026-10-31, one arm (12), one look.
+  print_held_loser_bands: false  # (#1242) the held-loser AUC bands; display only, off in CI so no golden moves.
 
 # (#538) USER DECISION 2026-10-10: a second buy heuristic, SOC, ranks the Social table alone. SOC =
 # breadth (sources naming the ticker) x fresh (newest mention, halved every half_life_days) x material
@@ -24287,6 +24294,90 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # REOPEN ONLY IF a free historical ticker-to-CIK or ticker-to-name map covering the dead names turns up:
 #   re-run the same census on the same seed and bar. The 2001-2008 10-K table follow-up does not trigger;
 #   it needed EX-27 to move a number first. Nothing here reaches rank, BUY NOW, size, trade or the broker.
+
+# (#1242) HELD-LOSER AUC BANDS, PRE-REGISTERED 2026-10-31 before any run, record only. Several refusals in this
+#   file lean on the held-loser table ((#159), (#165)): among the names the GROWTH book bought, the ones that
+#   lost money carried the higher profitability ratios, so quality "reads backwards". That table stands on 7 to
+#   35 losers per horizon and prints no error bar. Two things can fake it, and this receipt measures both.
+# CLUSTERS: losers bunch by entry date and sector, so one bad half-year in one sector casts five votes at once.
+#   The new print (`print_held_loser_bands`, false in CI so no golden moves) resamples whole (half-year bucket,
+#   sector) clusters with replacement, 2000 draws, seeded, and prints each factor's 95% band.
+# ONE FAMILY: the seven profitability ratios (gross_margin, gp_assets, roe, quality, op_margin, net_margin,
+#   cf_assets) are one signal read seven ways. The `family` row, their mean AUC with its band from the per-draw
+#   mean, is THE test. The 12y and 8y readings together are one test. The per-factor rows only show which
+#   ratio drives it.
+# THE VALUE CONFOUND: profitable names tend to be the expensive ones. Each AUC is re-read inside each third of
+#   the held book by earnings yield. A factor that only separates because it tracks price reads near 0.5 there.
+# AUC here is the chance a winner's factor beats a loser's, so below 0.5 means "backwards".
+# RULE: "backwards" is REAL only if the family band sits entirely below 0.5 at 12y AND at 8y. Otherwise the
+#   table is UNINFORMATIVE: the refusals that cite it keep their other legs, and none re-opens on this alone.
+# ONE probe on the code commit: `universe fund pit`, years "12 8", knobs print_held_loser_bands=true. Survivors
+#   only: dead names carry no fund rows, so `dead` would add nothing here. 20y carries no fund rows either.
+# EXPECTED, written before the run: UNINFORMATIVE. With this few losers the family band holds 0.5 at one
+#   horizon at least. Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1243) MOMENTUM CRASH CAP, PRE-REGISTERED 2026-10-31 before any run. Momentum books lose most right after a
+#   market crash turns (Daniel and Moskowitz 2016), and the interleaved book gives momentum 5 of every 10 slots
+#   in every half-year. Does handing those slots to the score book in a crash pay?
+# THE KNOB: growth_momentum_crash_slots, 10 (no cap) shipped. ONE arm, 1, ONE look. A bucket is a CRASH when the
+#   pond's equal-weight month (the mean of every non-crypto trail of 24 months or more, month by month)
+#   compounds below 1 over 24 months, AND the spread of its last 6 months is in the top third of every bucket's
+#   reading so far, this one included. In a crash bucket the momentum slots are the lower of this knob and
+#   growth_momentum_slots (5).
+# DEVIATIONS, stated before the run: the pond stands in for ^GSPC, because the ^GSPC bars on file are quarterly.
+#   The trail spread stands in for 126-day daily vol, because the walk carries monthly trails. The S+inter DCA
+#   lane is built inside `report_roll`, which this round does not touch, so it never reads the cap: its 20y bar
+#   reads equal by construction. SIZED never reads the slot count, so it reads equal too. The live book has no
+#   crash state wired; a pass would need that built, and it earns the owner question first.
+# PROBES, one commit, `universe fund pit dead winners rivals`, years "20 12 8": C (shipped) and M1 (knobs
+#   growth_momentum_crash_slots=1). `windows scored` must match C. The arm prints its crash-bucket count.
+# BARS, the (#1234) SLOTS screen against C: (j) excess mean AND median >= C at 12y AND 8y, at least one higher;
+#   (j)'s 20y worst window not worse; SIZED not lower at 12y or 8y; the 20y DCA S+inter not down more than 0.2
+#   on mean or median; WINNERS HELD not under C by 2.0 or more at any horizon. A row equal to C at 12y and 8y is
+#   VACUOUS. A pass earns the owner question, because it changes BUY NOW.
+# EXPECTED, written before the run: VACUOUS or FAIL. Crash buckets are few, and in them the momentum half is
+#   already short of names. Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1244) MOMENTUM VOL CUT, PRE-REGISTERED 2026-10-31 before any run. In the cross-section, momentum pays in the
+#   lower nine volatility deciles and loses in the top one (Fan et al. 2022). Does dropping the jumpiest
+#   names from the momentum half help this book?
+# THE KNOB: growth_momentum_vol_cut, 0.0 (off) shipped. ONE arm, 0.1, ONE look. Among the names the momentum
+#   order keys, the share with the highest sd of their last 36 monthly returns loses its key. The count rounds
+#   down. A name with under 12 months of trail is not judged and keeps its key. The cut sits in
+#   `picks::momentum_keys`, so it reaches the live book, the walk's momentum order, rival (j), WINNERS HELD and
+#   the S+inter DCA lane alike. SIZED never reads it.
+# PROBES, one commit, `universe fund pit dead winners rivals`, years "20 12 8": C (shared with (#1243)) and M2
+#   (knobs growth_momentum_vol_cut=0.1). `windows scored` must match C.
+# BARS: the same (#1234) SLOTS screen as (#1243), read the same way. A pass earns the owner question.
+# EXPECTED, written before the run: FAIL. The momentum half buys the top few names of a gates-off pond, and the
+#   jumpiest of those include the runners the book is held for. Nothing here reaches rank, BUY NOW, size, trade
+#   or the broker.
+# (#1245) CORPORATE EVENT DOCKS, PRE-REGISTERED 2026-10-31 before any run. Three events each fire on under 1% of
+#   large caps a year and each has a published drift after it: a dividend cut (Michaely, Thaler and Womack
+#   1995), a reverse split (Kim, Klein and Rosenfeld 2008) and a fresh S&P 500 addition. One at a time they have
+#   no power on this book, so they are graded together, as one arm.
+# THE KNOB: growth_event_months, 0 (off) shipped. ONE arm, 12, ONE look. At each backtest cutoff the walk stamps
+#   a stock's flags, one bit each:
+#   - dividend cut: the last 12 months paid under 3/4 of the 12 before, and the 12 before held at least two
+#     payments;
+#   - reverse split: a split ratio under 1 inside the window;
+#   - fresh add: an S&P 500 span that opened inside the window, after the membership source's first date
+#     (1996-01-02), which every incumbent's span shares.
+#   Each window is (from, cutoff]: an event on the cutoff counts, one exactly a window back does not. Each flag
+#   counts as one more failed knob gate, so a flagged stock is docked one soft step (x growth_gate_soft, 0.8 in
+#   CI) per flag, and refused under hard gates. Funds and coins are never docked. With the knob at 0 every
+#   score is bit for bit the shipped one.
+# shortcut: the cut always reads one year against the year before, whatever the window is, and a special
+#   dividend in the prior year reads as a cut. Dead series carry no split events, so a dead name never reads a
+#   reverse split. No live quote carries the flags: a pass would need them stamped live, and it earns the owner
+#   question first.
+# NOT BUILT this round: NT 10-K, going concern, glamour acquirer, and every text-parsed flag. They wait on this
+#   reading.
+# PROBES, one commit, `universe fund pit dead winners rivals`, years "20 12 8": C (shared) and E (knobs
+#   growth_event_months=12). `windows scored` must match C. The arm prints how often each flag fired.
+# BARS, SHIP RULE v2 on `pit` with the (#139) amendment: top-10 excess mean AND median up or held at 12y AND 8y,
+#   with the 20y guards live: rank-1 h2h >= 50% at 20y, and the 20y worst window not worse. A row equal to C at
+#   12y and 8y is VACUOUS. A pass earns the owner question.
+# EXPECTED, written before the run: VACUOUS or FAIL. A docked name is rarely in the top 10 in the first place.
+#   Nothing here reaches rank, BUY NOW, size, trade or the broker.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
