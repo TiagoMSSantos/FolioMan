@@ -237,9 +237,11 @@ Measured dead — don't re-run these:
 - **Shorter horizons** — the edge is a LONG-horizon signal: negative under 3y, rising through
   10y. Selling early converts a validated signal into noise.
 - **Every fundamentals factor through the fund lane except `peg_yield`** — margins, profitability,
-  rev/eps growth, buyback yield, SEC-computed ROE, and Form-4 insider net-buys all fail
-  out-of-sample against the price-only baseline. `peg_yield` (1/PEG) at weight 0.07 is the only
-  live fund tilt; it replaced the earlier `earnings_yield` tilt at 1.0.
+  rev/eps growth, buyback yield and SEC-computed ROE all fail out-of-sample against the price-only
+  baseline. `peg_yield` (1/PEG) at weight 0.07 is the only live fund tilt; it replaced the earlier
+  `earnings_yield` tilt at 1.0. Form-4 insider net-buys were never graded: the walk read only each
+  name's newest Form 4s, one to three years deep, so no 8y or 12y cutoff carried a value. (#1247)
+  grades them on SEC's bulk insider data sets (2006 on).
 
 The `[FOIL]` on-sale lane stays deliberately unimproved: it is the dip-buying control the growth
 lane has to beat over a multi-decade hold (#798).

@@ -8841,6 +8841,7 @@ mod tests {
             bench_range_pct: None,
             splits: Vec::new(), // (#82) journal-replay only (`track`/`sim`); nothing in the score reads it
             event_flags: 0,
+            jump_ahead: false,
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,

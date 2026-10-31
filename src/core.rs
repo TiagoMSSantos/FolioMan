@@ -417,6 +417,11 @@ pub struct Quote {
     // stock one more `growth_gate_soft` step in `picks::score_parts`. Only the walk stamps it, with the knob on.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub event_flags: u32,
+    // (#1247) a close-to-close move above 4x or under 1/4 between the cutoff and the end of its forward
+    // window (`backtest::jump_ahead`). Only the walk stamps it, under `jumps`, and only
+    // `report_jump_census` reads it: no score term or gate does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub jump_ahead: bool,
 }
 
 /// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
@@ -523,6 +528,7 @@ impl Quote {
             ep_fund: None,
             splits: Vec::new(),
             event_flags: 0,
+            jump_ahead: false,
         }
     }
 

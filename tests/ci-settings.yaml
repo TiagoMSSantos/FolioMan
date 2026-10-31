@@ -5959,7 +5959,7 @@ buy_heuristic:
                                  #   (Mohanram 2005 G-score signal G5 — the growth-stock screen, and this book is growth stocks). Both in
                                  #   `FUND_FACTORS` (25 -> 27) and the held-book list. Weighted nowhere, gate nothing.
                                  #   WHY THESE TWO: a second web sweep mapped MAX/lottery and frog-in-the-pan (blocked: no daily lane, #127),
-                                 #   insider buying (Item 4, graded), 12-1 and residual momentum (mom121 refused; residual is a 1-month effect
+                                 #   insider buying (Item 4; its grade never ran, see (#1247)), 12-1 and residual momentum (mom121 refused; residual is a 1-month effect
                                  #   against a 20y hold), industry momentum (#95: only today's GICS label exists), PEAD (decayed, 60-day
                                  #   horizon), Piotroski/NOA (value-stock screens needing current-ratio/equity tags). These two were the only
                                  #   untested literature factors the as-of rows can already build.
@@ -19731,7 +19731,8 @@ buy_heuristic:
   #   GROWTH edge +170.3 vs +156.9, rho +0.19 vs +0.15, OOS +0.14|+0.20 vs +0.14|+0.12, winsorized
   #   +139.2 vs +126.8, held top-10 book +15.0 vs +14.7 (excess +7.0, OOS +5.6/+8.4), worst drawdown
   #   -7.8 unchanged. Weight sweep knee = 1.0 (monotone up to 1, falls at 2). Every OTHER factor
-  #   (margins, rev/eps growth, buyback, ROE, insider, composite) still fails the both-OOS+ keep-rule —
+  #   (margins, rev/eps growth, buyback, ROE, composite) still fails the both-OOS+ keep-rule (insider was
+  #   never measured: no 8y or 12y cutoff carried it, see (#1247)) —
   #   the sweep's nominal per-run "WINNER" line bounces between factors (searched-weight overfit);
   #   earnings_yield is the only one positive on every view. Revert rule: revert (weight -> 0) only
   #   on TILT-SPECIFIC degradation in a future wide run: the growth-lane ablation shows removing this
@@ -24415,6 +24416,39 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   missed. Both misses read `x / m` for `x - m` in a spread, one in crash_buckets and one in vol_cut: the
 #   tests' readings sat where the two orders agree. Each test now carries a case that tells them apart.
 #   Nothing here reaches rank, BUY NOW, size, trade or the broker.
+
+# (#1247) TWO RECORD-ONLY CENSUSES, PRE-REGISTERED 2026-10-31 before any run. Nothing here reaches rank,
+#   BUY NOW, size, trade or the broker.
+# (a) INSIDER RE-TEST. The insider factor was never graded. The walk read each name's newest 40 Form 4s
+#   from the submissions `recent` block under a 600-request budget. That reaches back one to three years,
+#   so no 8y or 12y cutoff carried a value, and the fund lane printed "only 0 cutoffs carry this factor".
+#   README and the earnings_yield receipt said it "fails out-of-sample"; both now say it was never measured.
+#   `backtest ... insider` now reads tests/insider.csv. tools/insider_from_sec.py writes it from SEC's
+#   quarterly insider transaction data sets (public domain, 2006 Q1 to 2026 Q3): Form 4 only, codes P and
+#   S, both tables, one count per transaction row, as the live parser counts. It holds 68780 ticker-months
+#   on 752 tickers (pond: 801 tickers on 795 CIKs). Each count is dated on the last day of the month its
+#   Form 4 was FILED in, so a cutoff never reads a filing it could not have read. The live parser still
+#   dates on the trade (#789).
+#   CAVEAT, measured before the run: 2006 to 2008 count about 3x the sells of later years (66795 to 89533 a
+#   year against about 20000). The cause is the filing format, not the trading. Form 4s with a sale run
+#   about as many per quarter (12402 to 16838 in 2007q2 and 2008q2, 10660 to 13026 in 2010q2 and 2021q2),
+#   but rows per such filing fell from a mean of 6.5 to 8.5 (p90 24 to 29) to 2.5 to 2.9 (p90 5) from
+#   2008 Q3 on. The factor ranks names within one cutoff, so the shift moves every name at once. A filer
+#   that split its sales into lots still reads more sales than one that did not.
+#   BAR: run `universe fund pit insider`, years "12 8". 20y cannot be graded: the data start in 2006. In the
+#   held-book by FACTOR table, PASS needs, at BOTH 12y and 8y: the insider_net_buys_90d row builds a book,
+#   its excess beats its same-set score excess, and each OOS half beats its same-set half. The fund lane
+#   and the sweep rows are information only. A PASS gets one owner question; nothing is wired.
+# (b) PRICE-JUMP CENSUS. The (#497) splice guard is off for symbols with no dot. A cache census found 1204
+#   monthly moves above 4x or under 0.25x with no split event, on 302 tickers (59 bare, 243 suffixed).
+#   `forward_return` has no clamp, and the top-10 book reads a mean, so one fake jump can move a bucket.
+#   `backtest ... jumps` flags each sample whose forward window holds a bar-to-bar move above 4x or under
+#   0.25x. It then prints the top-10 book three ways: as walked, with each flagged pick paid the index, and
+#   with the flagged samples dropped before ranking. RULE: run `universe fund pit dead jumps`, years
+#   "20 12 8". If either arm moves the top-10 mean or median by 0.1 or more at any horizon, the owner gets
+#   one question about a guard. Under that, the gap stays recorded and nothing changes. A real 4x month
+#   (a takeover, a biotech readout) is flagged too, so the arms bound the gap from above: they do not
+#   say which jumps were fake.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

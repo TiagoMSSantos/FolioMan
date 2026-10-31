@@ -829,6 +829,7 @@ struct Args {
     options: bool,
     rescore: bool,
     level: bool,
+    jumps: bool,
     draws: usize,
     search: bool,
     configs: usize,
@@ -852,7 +853,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("long") => a_.long = true,
             _ if a.eq_ignore_ascii_case("fund") => a_.fund = true,
             _ if a.eq_ignore_ascii_case("tune") => a_.tune = true,
-            _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) also pull SEC Form-4 net buys
+            _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) Form-4 net buys; (#1247) from the bulk SEC table
             _ if a.eq_ignore_ascii_case("holders") => a_.holders = true, // (#518) grade the 13F-holder boosts
             _ if a.eq_ignore_ascii_case("pac") => a_.pac = true, // (#559) grade FEC corporate-PAC breadth
             _ if a.eq_ignore_ascii_case("failures") => a_.failures = true, // (#728) failed filers vs survivors
@@ -874,6 +875,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("time") => a_.time = true, // (#1118) wall seconds per phase on stderr
             _ if a.eq_ignore_ascii_case("rescore") => a_.rescore = true, // (#1227) re-run the book reports on a samples dump
             _ if a.eq_ignore_ascii_case("level") => a_.level = true, // (#1238) the level x path 2x2 on the entry-state book
+            _ if a.eq_ignore_ascii_case("jumps") => a_.jumps = true, // (#1247) the book with price-jump windows neutralised
             // (#1227) rival (e)'s random books: 200 keeps the gate's cost, 5000 lets a p below 1/201 print
             _ if a.starts_with("draws=") => a_.draws = a[6..].parse().ok().filter(|n| *n > 0).expect("draws=N takes a whole number above 0"),
             _ if a.eq_ignore_ascii_case("search") => a_.search = true, // (#1239) seeded knob search on samples dumps
@@ -1486,6 +1488,17 @@ fn forward_return(
     Some(((dead_multiple(dates, closes, closes[i], target, dead_bench?)? - 1.0) * 100.0, true))
 }
 
+/// (#1247) Does the forward window from cutoff `i` hold a close-to-close move above 4x or under 1/4? The
+/// window is the one [`forward_return`] reads: from the cutoff bar to the first bar `years` past it, or to
+/// the series end when no bar gets that far (a dead name's terminal). A bad print and a real crash or run
+/// look the same here, so a census that neutralises every flagged window bounds what all extreme bars
+/// together can move.
+fn jump_ahead(dates: &[chrono::NaiveDate], closes: &[f64], i: usize, years: i64) -> bool {
+    let target = dates[i] + chrono::Duration::days(years * 365);
+    let end = dates[i..].iter().position(|d| *d >= target).map_or(closes.len() - 1, |off| i + off);
+    closes[i..=end].windows(2).any(|w| w[1] / w[0] > 4.0 || w[1] / w[0] < 0.25)
+}
+
 /// (#804) The payouts a holder banked from cutoff `i` to `to`, as a multiple: every dividend with an ex-date
 /// in `(dates[i], to]`, reinvested at the last close before that ex-date. 1.0 with none. Yahoo's dividend
 /// amounts sit on the same split basis as its closes, so the ratio needs no restating.
@@ -1633,7 +1646,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, draws, search: search_dumps, configs, nulls, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1854,9 +1867,11 @@ pub async fn run(args: Vec<String>) {
                     Some((q, f)) => Some(fetch::fx_factor_series(client, urls, q, f, monthly).await),
                     None => None, // same books, or a side unknown -> leave the close alone (legacy path)
                 };
-                // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
+                // (Item 4) the ticker's Form 4 transactions (only when `insider`); net buys are then
                 // derived per cutoff from these transactions with no further network. None -> factor skips.
-                let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk, None).await } else { None };
+                // (#1247) from SEC's bulk data sets ([`insider_bulk`]), not the submissions `recent` block,
+                // which reached back one to three years and so gave no 8y or 12y cutoff a value.
+                let insider_txns = if insider { insider_bulk().get(&fetch::us_symbol(tk)).cloned() } else { None };
                 Some((tk, hist, fund_rows, fx, insider_txns))
             }
         })
@@ -2093,6 +2108,7 @@ pub async fn run(args: Vec<String>) {
                             let m = tuning.growth_event_months as u32;
                             quote.event_flags = event_flags(&divs, &splits, member_spans, span_origin, dates[i], m);
                         }
+                        quote.jump_ahead = jumps && jump_ahead(&dates, &closes, i, years); // (#1247)
                         // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                         // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
                         // back(yrs)`, the row `yrs` fiscal years back). Passing the horizon meant `fund 12`
@@ -2103,9 +2119,10 @@ pub async fn run(args: Vec<String>) {
                         // like "measured, no edge" and was actually "never measured at all".
                         let mut fund =
                             fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], FUND_LOOKBACK_YRS));
-                        // (Item 4) attach the as-of net insider buys (90d before the cutoff, transaction-
-                        // date guarded) onto the SAME FundFactors; build one if the FMP lane is off so
-                        // `insider` works standalone (no FMP key needed).
+                        // (Item 4) attach the as-of net insider buys (90d before the cutoff) onto the SAME
+                        // FundFactors; build one if the FMP lane is off so `insider` works standalone (no
+                        // FMP key needed). (#1247) Dated on the filing month's end, so no filing after the
+                        // cutoff leaks in.
                         if let Some(txns) = insider_txns.as_ref() {
                             fund.get_or_insert_with(Default::default).insider_net_buys_90d =
                                 core::insider_net_buys(txns, dates[i], 90);
@@ -2598,6 +2615,9 @@ pub async fn run(args: Vec<String>) {
     // before anything scores a sample. `bench` is still the same series, used by every report below.
     report_vs_benchmark(&samples, &bench, years, tuning);
     lap("vs benchmark");
+    if jumps {
+        report_jump_census(&samples, &bench, years, tuning); // (#1247)
+    }
     if rivals {
         report_rivals(&samples, &bench, years, tuning, draws);
         lap("rivals");
@@ -3996,6 +4016,33 @@ fn parse_failures(csv: &str) -> Vec<Failure> {
             })
         })
         .collect()
+}
+
+/// (#1247) `tests/insider.csv`, which `tools/insider_from_sec.py` writes from SEC's quarterly insider
+/// data sets (2006 on): per US ticker, each month's Form 4 open-market buys and sells. Each count becomes
+/// one [`core::InsiderTx`] dated on the LAST day of the month the Form 4 was filed in, so a cutoff only
+/// reads filings it could have read, up to a month late. The live parser dates on the trade instead
+/// (see `InsiderTx`, (#789)). The header and any malformed line drop out.
+fn parse_insider(csv: &str) -> HashMap<String, Vec<core::InsiderTx>> {
+    let mut out: HashMap<String, Vec<core::InsiderTx>> = HashMap::new();
+    for l in csv.lines() {
+        let [ticker, month, buys, sells] = l.split(',').collect::<Vec<_>>()[..] else { continue };
+        let date = chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.checked_add_months(chrono::Months::new(1)))
+            .and_then(|d| d.pred_opt());
+        let (Some(date), Ok(buys), Ok(sells)) = (date, buys.parse::<usize>(), sells.parse::<usize>()) else { continue };
+        let v = out.entry(ticker.to_string()).or_default();
+        v.extend(std::iter::repeat_n(core::InsiderTx { date, buy: true }, buys));
+        v.extend(std::iter::repeat_n(core::InsiderTx { date, buy: false }, sells));
+    }
+    out
+}
+
+/// (#1247) The shipped [`parse_insider`] table, parsed once per run on first use.
+fn insider_bulk() -> &'static HashMap<String, Vec<core::InsiderTx>> {
+    static BULK: std::sync::OnceLock<HashMap<String, Vec<core::InsiderTx>>> = std::sync::OnceLock::new();
+    BULK.get_or_init(|| parse_insider(include_str!("../../tests/insider.csv")))
 }
 
 /// (#728) Census horizons, in years before the event.
@@ -9088,6 +9135,67 @@ fn report_event_flags(samples: &[Sample], months: usize) {
     );
 }
 
+/// (#1247) The top-10 row three ways on one walk, each its (mean, median) over buckets: as walked, with every
+/// flagged pick ([`jump_ahead`]) paid its index leg instead, and with flagged samples out of the pond
+/// before ranking. Plus the counts behind them: the scored pool (no coins, an index leg) and the book slots.
+#[derive(Debug)]
+struct JumpArms {
+    as_is: (f64, f64),
+    neutral: (f64, f64),
+    dropped: (f64, f64),
+    pool: usize,
+    pool_flagged: usize,
+    slots: usize,
+    slots_flagged: usize,
+}
+
+/// (#1247) [`JumpArms`] by the PRIMARY's own path ([`top_books`], [`search_excess`]), so `as_is` reprints it
+/// whenever the sector and corr caps are off. `bench_r` is each sample's index leg, NaN where it has none.
+fn jump_arms(
+    samples: &[Sample],
+    bench_r: &[f64],
+    years: i64,
+    tuning: &BuyHeuristic,
+    scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>,
+) -> JumpArms {
+    let flag = |i: &usize| samples[*i].quote.jump_ahead;
+    let books = top_books(samples, bench_r, tuning, scorer);
+    let realized: Vec<f64> = samples.iter().map(|s| s.realized).collect();
+    let neutral: Vec<f64> = (0..samples.len()).map(|i| if flag(&i) { bench_r[i] } else { realized[i] }).collect();
+    let keep: Vec<usize> = (0..samples.len()).filter(|i| !flag(i)).collect();
+    let kept: Vec<Sample> = keep.iter().map(|&i| samples[i].clone()).collect();
+    let kept_r: Vec<f64> = kept.iter().map(|s| s.realized).collect();
+    let kept_bench: Vec<f64> = keep.iter().map(|&i| bench_r[i]).collect();
+    let pool: Vec<usize> =
+        (0..samples.len()).filter(|&i| picks::asset_class(&samples[i].quote) != 0 && !bench_r[i].is_nan()).collect();
+    JumpArms {
+        as_is: search_excess(&books, &realized, bench_r, years),
+        neutral: search_excess(&books, &neutral, bench_r, years),
+        dropped: search_excess(&top_books(&kept, &kept_bench, tuning, scorer), &kept_r, &kept_bench, years),
+        pool: pool.len(),
+        pool_flagged: pool.iter().filter(|i| flag(i)).count(),
+        slots: books.iter().map(Vec::len).sum(),
+        slots_flagged: books.iter().flatten().filter(|i| flag(i)).count(),
+    }
+}
+
+/// (#1247) `backtest ... jumps`: how much of the top-10 row rides on forward windows holding a move above
+/// 4x or under 1/4. Prints only; nothing reaches rank, BUY NOW, size or the broker.
+#[mutants::skip] // prints only: `jump_arms` and `jump_ahead` are graded by unit tests
+fn report_jump_census(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    println!("\n── JUMP CENSUS (#1247): the top-10 row with forward windows holding a close-to-close move above 4x or under 1/4 neutralised ──");
+    if tuning.growth_sector_leaders != 0 || tuning.growth_sector_cap != 0 || tuning.growth_corr_cap > 0.0 {
+        println!("  skipped: the sector door, sector cap or corr cap is on, and the census books leave them out");
+        return;
+    }
+    let bench_r: Vec<f64> = samples.iter().map(|s| benchmark_fwd(&bench.0, &bench.1, s.date, years).unwrap_or(f64::NAN)).collect();
+    let a = jump_arms(samples, &bench_r, years, tuning, picks::growth_scores_ranked);
+    println!("  flagged: {} of {} scored samples, {} of {} book slots", a.pool_flagged, a.pool, a.slots_flagged, a.slots);
+    for (label, (mean, med)) in [("as walked (reprints the top-10 row)", a.as_is), ("flagged picks paid the index", a.neutral), ("flagged samples dropped", a.dropped)] {
+        println!("  {label}: {mean:+.1} (med {med:+.1}) pts/yr over the index");
+    }
+}
+
 /// (#1242) How sure is "quality reads backwards on this book"? The held-loser AUC (#159, #165) is the
 /// measured reason behind several refusals, and it stands on 7 to 35 losers. Two things can fake it.
 ///
@@ -11205,7 +11313,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level draws=9 search configs=3 nulls=4 time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 time");
         assert_eq!(
             all,
             Args {
@@ -11235,6 +11343,7 @@ mod tests {
                 options: true,
                 rescore: true,
                 level: true,
+                jumps: true,
                 draws: 9,
                 search: true,
                 configs: 3,
@@ -11778,6 +11887,23 @@ mod tests {
         );
         let shipped = include_str!("../../tests/failures.csv");
         assert_eq!(parse_failures(shipped).len(), shipped.lines().count() - 1);
+    }
+
+    /// (#1247) Each count is one transaction dated on the last day of its filing month (February and
+    /// December included); a line short a field, with a bad month or a bad count drops; every shipped
+    /// line parses, so the whole file reaches the walk.
+    #[test]
+    fn parse_insider_dates_each_count_on_its_filing_month_end() {
+        let csv = "ticker,month,buys,sells\nAAA,2016-02,2,1\nAAA,2015-12,0,1\nBBB,2020-13,1,0\nBBB,2020-01,x,0\nBBB,2020-01,1\nCCC,2021-06,0,0\n";
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let got = parse_insider(csv);
+        let txns = |t: &str| got[t].iter().map(|x| (x.date, x.buy)).collect::<Vec<_>>();
+        assert_eq!(txns("AAA"), [(d("2016-02-29"), true), (d("2016-02-29"), true), (d("2016-02-29"), false), (d("2015-12-31"), false)]);
+        assert!(!got.contains_key("BBB"), "every BBB line is malformed");
+        assert!(got["CCC"].is_empty(), "a zero row parses to no transaction");
+        let shipped = include_str!("../../tests/insider.csv");
+        let counted: usize = shipped.lines().skip(1).map(|l| l.split(',').skip(2).map(|n| n.parse::<usize>().unwrap()).sum::<usize>()).sum();
+        assert_eq!(insider_bulk().values().map(Vec::len).sum::<usize>(), counted);
     }
 
     /// (#728) The bar at each of its edges: every cell at n 30 sits exactly on its AUC bound, and k is
@@ -12547,6 +12673,50 @@ mod tests {
         let es: Vec<(&Sample, f64)> = edge.iter().enumerate().map(|(i, x)| (x, 10.0 - i as f64)).collect();
         assert_eq!(held_loser_factors(&es, 3, &["roe"])[0].n_win, 2, "FLAT (0.0) votes with the winners");
         assert_eq!(held_loser_factors(&[es[0], es[2]], 2, &["roe"]).len(), 1, "two names are enough to split");
+    }
+
+    /// (#1247) `jump_ahead` reads the bars `forward_return` reads. Bars are 73 days apart, so a 2y window
+    /// from bar 2 closes on bar 12 exactly; a short series closes on its last bar. Exactly 4x and exactly
+    /// 1/4 do not flag, and a level series flags nothing at any price.
+    #[test]
+    fn jump_ahead_flags_extreme_moves_inside_the_forward_window_only() {
+        let dates: Vec<NaiveDate> = (0..16).map(|k| ymd(2000, 1, 1) + chrono::Duration::days(73 * k)).collect();
+        let with = |at: usize, from: f64, to: f64| -> Vec<f64> { (0..16).map(|k| if k < at { from } else { to }).collect() };
+        let flags = |closes: &[f64]| jump_ahead(&dates[..closes.len()], closes, 2, 2);
+        assert!(!flags(&[3.0; 16]) && !flags(&[0.4; 16]), "a level series moves nothing");
+        assert!(flags(&with(3, 1.0, 5.0)), "the first bar after the cutoff");
+        assert!(flags(&with(12, 1.0, 5.0)), "the bar that closes the window");
+        assert!(!flags(&with(13, 1.0, 5.0)), "the bar after the window");
+        assert!(!flags(&with(2, 1.0, 5.0)), "the move INTO the cutoff bar is history");
+        assert!(flags(&with(12, 4.0, 0.5)), "a fall under 1/4");
+        assert!(!flags(&with(12, 1.0, 4.0)) && !flags(&with(12, 1.0, 0.25)), "exactly 4x and exactly 1/4 do not flag");
+        assert!(flags(&with(7, 1.0, 5.0)[..8]), "a series that ends early reads to its last bar");
+    }
+
+    /// (#1247) One bucket of eleven legged names (scores 11..1), a coin and a name without an index leg.
+    /// A0 is flagged with +1000% and sits in the book; A10, eleventh, holds +110%. As walked the book reads
+    /// +100; paid the index, A0 adds nothing; dropped, A0 leaves and A10 takes its slot. The flagged coin
+    /// and the legless name are outside the pool.
+    #[test]
+    fn jump_arms_neutralise_and_drop_the_flagged_picks() {
+        let a = ymd(2010, 1, 5);
+        let realized = |k: usize| match k {
+            0 => 1000.0,
+            10 => 110.0,
+            _ => 0.0,
+        };
+        let mut samples: Vec<Sample> = (0..11).map(|k| swap_sample(a, &format!("A{k}"), 11.0 - k as f64, 0.0, realized(k))).collect();
+        samples.push(swap_sample(a, "BTC-EUR", 100.0, 0.0, 0.0));
+        samples.push(swap_sample(a, "NOLEG", 50.0, 0.0, 0.0));
+        for i in [0, 11, 12] {
+            Arc::make_mut(&mut samples[i].quote).jump_ahead = true;
+        }
+        let mut bench_r = vec![0.0; samples.len()];
+        bench_r[12] = f64::NAN;
+        let got = jump_arms(&samples, &bench_r, 1, &BuyHeuristic::default(), swap_scorer);
+        let near = |x: (f64, f64), want: f64| (x.0 - want).abs() < 1e-9 && (x.1 - want).abs() < 1e-9;
+        assert!(near(got.as_is, 100.0) && near(got.neutral, 0.0) && near(got.dropped, 11.0), "{got:?}");
+        assert_eq!((got.pool, got.pool_flagged, got.slots, got.slots_flagged), (11, 1, 10, 1));
     }
 
     /// (#1245) `event_flags` at a 2020-06-30 cutoff, 12 months back: each window is (from, as_of], so an
