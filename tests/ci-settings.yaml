@@ -23148,7 +23148,6 @@ buy_heuristic:
   calmar_cap: 2.0                # (C) cap that CAGR/max-drawdown ratio
 
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
-  growth_require_peg: true       # require a PEG to score a name. The growth_score reads PEG (1/PEG x 100) and the gate rejects PEG > growth_max_peg, so a missing PEG is a free pass. This knob forces a missing PEG to fail the gate. Reads `fund.eps_never_reported` (filer-level, never as-of), NOT `peg_yield.is_none()` — the cohort is filers whose 10-K states no per-share element at all, 8 of 509 cached US names, seven of them now FIXED by the XBRL-instance fallback. Residue today: ARES alone. false = off
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
@@ -23156,6 +23155,7 @@ buy_heuristic:
   growth_event_months: 0         # (#1245) dividend cut, reverse split or fresh S&P add inside this many months before a
   #  backtest cutoff docks a stock one soft step each; 0 = off. Pre-registered 2026-10-31, one arm (12), one look.
   print_held_loser_bands: false  # (#1242) the held-loser AUC bands; display only, off in CI so no golden moves.
+  growth_require_peg: true       # require a PEG to score a name. The growth_score reads PEG (1/PEG x 100) and the gate rejects PEG > growth_max_peg, so a missing PEG is a free pass. This knob forces a missing PEG to fail the gate. Reads `fund.eps_never_reported` (filer-level, never as-of), NOT `peg_yield.is_none()` — the cohort is filers whose 10-K states no per-share element at all, 8 of 509 cached US names, seven of them now FIXED by the XBRL-instance fallback. Residue today: ARES alone. false = off
 
 # (#538) USER DECISION 2026-10-10: a second buy heuristic, SOC, ranks the Social table alone. SOC =
 # breadth (sources naming the ticker) x fresh (newest mention, halved every half_life_days) x material
