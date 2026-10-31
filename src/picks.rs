@@ -13613,7 +13613,8 @@ mod tests {
 
     /// (#1244) `vol_cut` drops the jumpiest share of the keyed names with 12+ months, rounding down. B (sd 1),
     /// A (sd 10) and C (sd 5 over its last 36 months, 32 over all 40) are judged; E (11 months) and F (no key)
-    /// are not, however jumpy.
+    /// are not, however jumpy. The spread is read about each name's mean: P (sd 10 about 20) goes before Q
+    /// (sd 1 about 0.25).
     #[test]
     fn vol_cut_drops_the_jumpiest_judged_share() {
         let b: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 21.0 } else { 19.0 }).collect();
@@ -13631,6 +13632,9 @@ mod tests {
         for off in [0.0, -1.0, f64::NAN] {
             assert_eq!(cut(off), keys());
         }
+        let p: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 30.0 } else { 10.0 }).collect();
+        let q: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 1.25 } else { -0.75 }).collect();
+        assert_eq!(vol_cut(vec![Some(1.0); 2], &[&p[..], &q[..]], 0.5), [None, Some(1.0)]);
     }
 
     /// (#584) `growth_momentum_interleave` with the equal-weight book funds shipped 1, momentum 1, shipped 2 ...;

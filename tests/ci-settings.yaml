@@ -24378,6 +24378,43 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   12y and 8y is VACUOUS. A pass earns the owner question.
 # EXPECTED, written before the run: VACUOUS or FAIL. A docked name is rarely in the top 10 in the first place.
 #   Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1246) RESULTS OF (#1242)-(#1245), 2026-10-31, record only: every knob stays off. Five probes on f6b4dec,
+#   one look each, read from the run logs: C 41188871860, M1 41188875751, M2 41188879421 and E 41188883051
+#   (`universe fund pit dead winners rivals`, years "20 12 8"); D 41188886584 (`universe fund pit`, years
+#   "12 8"). `windows scored` matched across C, M1, M2 and E (2992/5690, 5995/12469, 10281/16339, as in
+#   (#1234)). D read 5150/10437 at 12y and 9174/13654 at 8y. Rows read 20y | 12y | 8y.
+# C (shipped): top-10 +3.3/+1.9 worst -2.3 | +2.4/+2.5 worst -7.0 | +2.3/+2.3 worst -8.9; rank-1 h2h 12/22
+#   (55%) | 13/38 | 22/46; (j) +4.4/+4.6 worst -1.3 | +3.9/+3.9 worst -2.9 | +4.5/+4.2 worst -8.6; WINNERS
+#   HELD 9.5% | 11.1% | 10.2%; SIZED +3.6 | +2.8 | +2.3; 20y DCA S+inter +4.5/+4.3, SIZED +3.1/+2.7. (j)'s
+#   12y worst read -3.1 in (#1234): the pond drifted, so each arm is read against this C only.
+# (#1242) UNINFORMATIVE, as expected. The family AUC reads 0.43 (band 0.31 to 0.57) at 12y and 0.44 (band
+#   0.36 to 0.53) at 8y. Both bands hold 0.5, so "quality reads backwards" is not shown, and no refusal that
+#   cites the held-loser table re-opens on it. Inside the E/P thirds the family reads 0.31/0.56/0.36 (12y) and
+#   0.48/0.51/0.37 (8y); the thirds carry no band, so they decide nothing. One per-factor row, gross_margin at
+#   8y (band 0.19 to 0.47), sits below 0.5 at one horizon only, and per-factor rows are not the test.
+# (#1243) FAIL, as expected. Crash buckets: 0 of 22 at 20y, 1 of 38 at 12y, 1 of 46 at 8y. (j) reads
+#   +3.9/+3.6 at 12y and +4.4/+3.8 at 8y: the median falls 0.3 at 12y, and both fall at 8y. 20y has no crash
+#   bucket and reads as C. Top-10, WINNERS HELD, SIZED and S+inter read as C. One bucket in 38 is too few to
+#   carry a reading either way. growth_momentum_crash_slots stays 10.
+# (#1244) FAIL on every leg, as expected. (j) reads +2.8/+1.6 | +3.0/+2.6 | +3.4/+2.4. WINNERS HELD reads
+#   7.3% | 10.0% | 8.7%, 2.2 under C at 20y: the momentum half's held winners fall from 14 | 21 | 31 to
+#   9 | 17 | 24. 20y S+inter reads +3.2/+2.3, down 1.3 and 2.0. SIZED reads as C. The jumpiest momentum names
+#   are the runners the book is held for. growth_momentum_vol_cut stays 0.0.
+# (#1245) PASS on the written bar, inside the noise; the owner chose record only. Top-10 reads +3.7/+2.6
+#   worst -2.3 | +2.6/+2.5 worst -7.0 | +2.4/+2.4 worst -8.9: 12y mean up 0.2 with the median held, 8y up 0.1
+#   on both, rank-1 h2h 14/22 (64%) at 20y, and the 20y worst held. The lift is 0.1 to 0.2 pts/yr, far under
+#   the (#1239) knob-search noise floor (null p95 +1.15). The rest of the board is mixed: (j)'s 8y median
+#   falls 0.8 (4.2 to 3.4) while its 12y worst lifts (-2.9 to -1.8); SIZED 20y falls 0.2 (3.6 to 3.4);
+#   WINNERS HELD rises at 12y and 8y (11.3%, 10.9%). No live quote carries the flags, so a ship needs a new
+#   live fetch path for a gain smaller than luck. growth_event_months stays 0.
+# CORRECTION to (#1245)'s opening line: the flags are not rare. Over the 12-month window, of 5714 | 12589 |
+#   16523 stock cutoffs, a dividend cut fired 253 | 613 | 786, a reverse split 1 | 24 | 34, a fresh S&P add
+#   227 | 483 | 666, and any flag 477 | 1111 | 1472, about 8% to 9% of cutoffs. Dividend cuts run 4% to 5%
+#   and fresh adds about 4%; only reverse splits stay under 1%.
+# MUTATION CENSUS on f6b4dec since 79dc3f3, the five touched files: 298 caught, 18 unviable, 0 timeouts and 2
+#   missed. Both misses read `x / m` for `x - m` in a spread, one in crash_buckets and one in vol_cut: the
+#   tests' readings sat where the two orders agree. Each test now carries a case that tells them apart.
+#   Nothing here reaches rank, BUY NOW, size, trade or the broker.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

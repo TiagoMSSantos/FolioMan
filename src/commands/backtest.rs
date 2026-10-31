@@ -13094,7 +13094,8 @@ mod tests {
     /// (#1243) A crash bucket needs both legs: the pond's month down over 24 AND its last-6 spread in the top
     /// third so far. b4 is jumpy but up, and the fall in the first 12 of its 36 months is never read. b5
     /// compounds to exactly 1, not below. b6 clears the bar only because b4's reading sits under it. b7 is down
-    /// with 3 of 7 below it, short of 2/3. b2's two names average, they do not add.
+    /// with 4 of 7 below it, short of 2/3: b5's swing tops it only when the spread is read about the mean. b2's
+    /// two names average, they do not add.
     #[test]
     fn crash_buckets_need_a_fall_and_a_top_third_spread() {
         let months = |lead: f64, a: f64, b: f64| -> Vec<f64> { (0..24).map(|i| if i < 18 { lead } else if i % 2 == 0 { a } else { b }).collect() };
@@ -13111,7 +13112,7 @@ mod tests {
             at(2002, 7, [vec![-50.0; 12], months(3.0, 11.0, -9.0)].concat()),
             at(2003, 1, months(0.0, 100.0, -50.0)),
             at(2003, 7, months(-1.0, 21.0, -19.0)),
-            at(2004, 1, months(-1.0, 8.0, -6.0)),
+            at(2004, 1, months(-1.0, 16.0, -14.0)),
         ];
         let want = std::collections::BTreeSet::from([bucket(ymd(2002, 1, 1)), bucket(ymd(2003, 7, 1))]);
         assert_eq!(crash_buckets(&pond), want);
