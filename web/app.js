@@ -797,7 +797,7 @@ function render(data, prev) {
     const h = document.getElementById(by);
     let b = h.querySelector("button.whole");
     if (!b) {
-      b = Object.assign(document.createElement("button"), { className: "copy whole", type: "button", ariaLabel: "copy table", title: "Copy the table as shown, with its column names, as a Markdown table" });
+      b = Object.assign(document.createElement("button"), { className: "copy whole", type: "button", ariaLabel: "copy table", title: "Copy the table as shown, with its column names, as a Markdown table. For a spreadsheet, use the CSV link" });
       h.append(" ", b);
     }
     b.hidden = false;
