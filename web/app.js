@@ -245,7 +245,7 @@ function table(rows, empty = "(none pass every buy rule)", help = {}, fresh = ne
     const buy = row.findIndex(([h]) => h === "BUY%");
     if (buy >= 0) Object.assign(tr.insertCell(buy + 1), { className: "eur" }).dataset.pct = parseFloat(row[buy][1]);
     // (#1256) the copy-this-row button holds no text (its ⧉ is CSS), so sort, filter and widths read the cell as before
-    const copy = Object.assign(document.createElement("button"), { className: "copy", type: "button", ariaLabel: "copy row", title: "Copy this row and its column names" });
+    const copy = Object.assign(document.createElement("button"), { className: "copy", type: "button", ariaLabel: "copy row", title: "Copy this row and its column names. To copy less, pick fewer columns in the columns box, for example overview" });
     copy.onclick = () => {
       const { cols, heads } = shown(t);
       clip(copy, rowText(title(t), cols.map((i, k) => [heads[k], tr.cells[i].textContent, tr.cells[i].dataset.note])));
