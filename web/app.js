@@ -377,6 +377,10 @@ console.assert(
     tableText("T", ["A", "B"], [["1", "x|y"]]) === "T\n\n| A | B |\n| --- | --- |\n| 1 | x\\|y |",
   "a copied row or table misprints",
 );
+// (#1268) The Track record note up to its month-by-month part: the saved lists' score, its overlap
+// caveat and its age, shown again under the Stocks heading.
+const trackSum = (note) => note.split(" Month by month")[0];
+console.assert(trackSum("Beat 1 of 2. Old 3 days. Month by month, 1 month. NOT advice.") === "Beat 1 of 2. Old 3 days.", "the track summary misreads the note");
 // The columns shown: the picker's hidden ones left out, and BUY € only while an amount is typed (euros()).
 function shown(t) {
   const eur = document.body.classList.contains("euros");
@@ -745,6 +749,9 @@ function render(data, prev) {
   if (data.track) {
     document.getElementById("track").replaceChildren(table(data.track, "(nothing to measure yet)", help.track));
     document.getElementById("track-note").textContent = data.track_note || "";
+    const sum = document.getElementById("track-sum");
+    sum.querySelector("span").textContent = trackSum(data.track_note || "");
+    sum.hidden = !data.track_note;
   }
   // (#456) Only CI's payload carries it, and unlike the shadow tables it describes the BUY% book, which
   // an upload changes: the page has no fund holdings to look a new book through, so it says so.
