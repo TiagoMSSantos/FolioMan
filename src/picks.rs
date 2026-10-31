@@ -10932,7 +10932,7 @@ mod tests {
         let cores = payload["core"].as_array().expect("CORE table");
         assert_eq!(cores.len(), 1, "the one qualifying fund, published");
         assert_eq!(cores[0][1][0], "NAME", "the page's header row is the printer's");
-        assert_eq!(cores[0][1][1], "Vanguard FTSE All-World UCITS ETF");
+        assert_eq!(cores[0][1][1], "Vanguard FTSE All-World", "(#1255) the page prints clean_name, the ETF lane's name");
         assert_eq!(cores[0][0], serde_json::json!(["RANK", "1"]), "(#535) the flag column ranks; the broker overlay holds no fund here");
         // (#378) …and the DEGRADED line, verbatim, so the page names the feed this run went without
         assert_eq!(payload["degraded"], serde_json::json!(["EU HICP feed down (inflation adjustment off)"]));
@@ -11430,7 +11430,7 @@ mod tests {
         };
         let home = Quote { price_eur: Some(10.0), ep_fund: Some(ff.clone()), ..Quote::stub("ABC.DE", "€10.00", "", "Abc AG") };
         let us = Quote { ticker: "ABC".into(), ..home.clone() };
-        for (key, want) in [("pe", "20.0"), ("ps", "2.0x"), ("rev-yoy", "+12.0%"), ("eps-yoy", "-3.0%"), ("net", "15.0"), ("buyback", "+1.5%"), ("roic", "9.0%"), ("mcap", "€100M")] {
+        for (key, want) in [("pe", "20.0"), ("ps", "2.0x"), ("rev-yoy", "+12.0%"), ("eps-yoy", "-3.0%"), ("net", "15.0%"), ("buyback", "+1.5%"), ("roic", "9.0%"), ("mcap", "€100M")] {
             assert_eq!(col_cell(key, &home, 0.0, None, "", &t, &no_pe), want, "{key}");
         }
         assert_eq!(col_cell("mcap", &us, 0.0, None, "", &t, &no_pe), "n/a", "a bare US ticker keeps its own share count");
