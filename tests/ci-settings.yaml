@@ -24804,6 +24804,21 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # SHORTCUT: one fiscal year, not quarterly; capex comes from the two margins, so a filer without an FCF figure
 #   reads None. Titman-Wei-Xie's 3y mean is the paper's own form.
 # REVERT RULE: drop both names from `FUND_FACTORS` to restore 58; the fields can stay, read by nothing.
+# RESULT, 2026-11-01, on a4ba303 (runs 41347816859 12y, 41347825033 8y, 41347833041 20y, 41347841215 stress):
+#   both REFUSED at every weight, both stay measured and unweighted. Control: 12y +3.1|+2.8 worst -4.0 h2h
+#   15/38 pool 177; 8y +3.0|+2.7 worst -6.6 h2h 18/46 pool 179; 20y +3.3|+1.9 worst -3.0 h2h 12/22 pool 177.
+#   The worst, pool, 20y and stress cells equal control in every row.
+#   ocf_at_chg FAILS all three. At 0.2 the mean falls 0.3 at 12y and 0.4 at 8y; at 0.5 the 8y mean falls 0.4
+#     and the 8y head-to-head drops to 17/46; at 1.0 the 8y mean falls 0.3. Held-loser AUC 0.45 at 12y and
+#     0.42 at 8y: held winners carry a little LESS of it, against the paper. Not the INERT that was expected.
+#   capex_abn FAILS all three on one cell. The rows are identical at -0.02, -0.05 and -0.1: 12y +3.3|+3.2
+#     (mean +0.2, median +0.4), 8y +3.1|+2.7 (mean +0.1), but the 8y rank-1 head-to-head falls from 18/46 to
+#     17/46. The 12y miss that was expected did not come; the sweep reads the paper's way (held-loser AUC 0.24
+#     at 12y, 57 winners and 8 losers; 0.40 at 8y, 116 and 27). One window on one cell is the bar, so it is
+#     refused. Re-ask only with a new reason, such as the paper's own split where the effect is strongest,
+#     names with plentiful cash, or an 8y head-to-head that holds on a later pond.
+# (#1290) goldens re-blessed from probe 41347808655 on a4ba303: only the factor count (58 -> 60) and the two
+#   new AUC rows moved; the multiple-testing band is unchanged.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
