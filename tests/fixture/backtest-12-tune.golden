@@ -1,26 +1,17 @@
 
 ══ TUNE — growth lane, honest out-of-sample (1159 train / 498 test cutoffs, 500 draws) ══
-  shipped default      TEST: rho +0.20  edge +148.2  terciles +128.0/+42.8/-156.1 monotone
+  shipped default      TEST: rho +0.06  edge -78.6  terciles +339.8/+139.2/+262.0 SCRAMBLED
   inert on this sample (skipped, kept at default): growth_fund_weight
-  search winner       TRAIN: rho +0.10  edge +46.1
-  search winner        TEST: rho +0.19  edge +184.2  terciles +175.0/-101.9/-57.3 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
+  search winner       TRAIN: rho +0.07  edge +34.9
+  search winner        TEST: rho +0.02  edge -84.3  terciles +258.2/+223.4/+256.8 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
   weights (searched dims only):
-    growth_trend_weight    0.122
-    long_trend_cap         52.011
-    growth_accel_weight    0.910
-    growth_accel_cap       49.508
-    sharpe_weight          1.572
-    calmar_weight          1.538
-    growth_overext_floor   0.042
-    growth_mom121_weight   0.265
-  -> winner BEATS the default on TEST (+184.2 vs +148.2). Paste the weights into settings.yaml, then re-run plain `backtest universe` to confirm.
-  parsimony (winner, each weight -> 0, TEST edge Δ vs +184.2):
-    growth_trend_weight    edge +178.2 Δ-5.9
-    long_trend_cap         edge +184.2 Δ+0.0
-    growth_accel_weight    edge +141.6 Δ-42.5
-    growth_accel_cap       edge +141.6 Δ-42.5
-    sharpe_weight          edge +161.7 Δ-22.4
-    calmar_weight          edge +180.6 Δ-3.5
-    growth_overext_floor   edge +177.8 Δ-6.4
-    growth_mom121_weight   edge +171.5 Δ-12.6
+    growth_trend_weight    0.034
+    long_trend_cap         16.008
+    growth_accel_weight    0.898
+    growth_accel_cap       67.742
+    sharpe_weight          3.762
+    calmar_weight          1.284
+    growth_overext_floor   0.115
+    growth_mom121_weight   0.150
+  -> winner does NOT beat the default on the held-out TEST edge (-84.3 vs -78.6); the shipped knobs already generalise. SHIP NOTHING.
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…

@@ -2,11 +2,11 @@
 ── HOLD-PERIOD SWEEP (growth lane, net of cost) ──
   pick the hold with the highest NET edge; if they're flat, the longest (cheapest) wins.
   `null` is the information-free floor for THAT hold — an edge no bigger is not a signal.
-  1y hold  edge +3.1  turnover 33%  net +3.0 pts   null +2.8  n=2729
-  2y hold  edge +7.0  turnover 33%  net +6.9 pts   null +6.0  n=2613
-  3y hold  edge +11.5  turnover 34%  net +11.5 pts   null +11.1  n=2497
-  5y hold  edge +20.3  turnover 34%  net +20.2 pts   null +23.8  n=2268
-  8y hold  edge +46.1  turnover 35%  net +46.0 pts   null +43.1  n=1939
-  10y hold  edge +53.4  turnover 35%  net +53.4 pts   null +51.3  n=1738
+  1y hold  edge +6.6  turnover 36%  net +6.5 pts   null +7.2  n=1705
+  2y hold  edge +7.6  turnover 36%  net +7.5 pts   null +11.0  n=1652
+  3y hold  edge +12.4  turnover 37%  net +12.3 pts   null +17.2  n=1599
+  5y hold  edge +10.2  turnover 37%  net +10.2 pts   null +29.3  n=1480
+  8y hold  edge +20.7  turnover 37%  net +20.6 pts   null +42.9  n=1297
+  10y hold  edge +1.5  turnover 37%  net +1.4 pts   null +47.9  n=1167
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
 backtest: hold-period sweep over [1, 2, 3, 5, 8, 10]y windows (200 tickers)…
