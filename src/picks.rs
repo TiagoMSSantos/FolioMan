@@ -2211,6 +2211,23 @@ pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))
     ]
 }
 
+/// (#1279) [`gate_notches`]' twin for the CEILINGS: each row ARMS one ceiling at a fixed notch, as (sweep label,
+/// arm). `gate_notches` only loosens, so a ceiling that ships OFF was never priced by the GATE SWEEP. The
+/// backtest's CEILING SWEEP prices what each row would newly REFUSE. A census line, not a ship rule.
+#[cfg(not(target_family = "wasm"))] // its one reader (backtest) is native-only
+pub(crate) fn ceiling_notches() -> Vec<(&'static str, fn(&mut BuyHeuristic))> {
+    vec![
+        ("growth_max_trend_r2 0.90", |t| t.growth_max_trend_r2 = 0.90),
+        ("growth_min_underwater_yrs 2.0", |t| t.growth_min_underwater_yrs = 2.0),
+        ("growth_refuse_financials on", |t| t.growth_refuse_financials = true),
+        ("growth_financial_max_asset_growth 10", |t| t.growth_financial_max_asset_growth = 10.0),
+        ("growth_refuse_sector_top_dog on", |t| t.growth_refuse_sector_top_dog = true),
+        ("growth_max_above_ma 100", |t| t.growth_max_above_ma = 100.0),
+        ("growth_max_vol 3.0", |t| t.growth_max_vol = 3.0),
+        ("growth_maxdd_cap 60", |t| t.growth_maxdd_cap = 60.0),
+    ]
+}
+
 /// (#334) The multipliers every shipped ranking weight is notched by. PRE-REGISTERED ((#277)/(#278)): fixed
 /// before the first run and never tuned after. ×0 prices the term's keep, ×2 prices "more of it".
 #[cfg(not(target_family = "wasm"))] // its readers (backtest, screen) are native-only
@@ -7811,6 +7828,35 @@ pub(crate) fn sized_book<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#1279) Each ceiling row arms exactly ONE knob, to exactly its label's value, from a tuning with every one
+    /// of them off. Diffed as JSON, as the gate-notch test below does.
+    #[test]
+    fn ceiling_notches_arm_exactly_one_knob() {
+        let off = BuyHeuristic { growth_max_above_ma: 0.0, growth_max_vol: 0.0, growth_maxdd_cap: 0.0, ..BuyHeuristic::default() };
+        let before = serde_json::to_value(&off).unwrap();
+        let got: Vec<(&str, String, serde_json::Value)> = ceiling_notches()
+            .into_iter()
+            .flat_map(|(label, arm)| {
+                let mut t = off.clone();
+                arm(&mut t);
+                let after = serde_json::to_value(&t).unwrap();
+                let moved: Vec<_> = after.as_object().unwrap().iter().filter(|(k, v)| before.get(k.as_str()) != Some(*v)).map(|(k, v)| (label, k.clone(), v.clone())).collect();
+                moved
+            })
+            .collect();
+        let want = [
+            ("growth_max_trend_r2 0.90", "growth_max_trend_r2", serde_json::json!(0.9)),
+            ("growth_min_underwater_yrs 2.0", "growth_min_underwater_yrs", serde_json::json!(2.0)),
+            ("growth_refuse_financials on", "growth_refuse_financials", serde_json::json!(true)),
+            ("growth_financial_max_asset_growth 10", "growth_financial_max_asset_growth", serde_json::json!(10.0)),
+            ("growth_refuse_sector_top_dog on", "growth_refuse_sector_top_dog", serde_json::json!(true)),
+            ("growth_max_above_ma 100", "growth_max_above_ma", serde_json::json!(100.0)),
+            ("growth_max_vol 3.0", "growth_max_vol", serde_json::json!(3.0)),
+            ("growth_maxdd_cap 60", "growth_maxdd_cap", serde_json::json!(60.0)),
+        ];
+        assert_eq!(got, want.map(|(l, k, v)| (l, k.to_string(), v)));
+    }
 
     /// (#324) Each notch moves exactly ONE knob, by exactly its label's amount. Every gate is armed first (the code
     /// defaults leave several off, where a notch would move nothing), and the tuning is diffed as JSON so a notch

@@ -2463,6 +2463,9 @@ pub async fn run(args: Vec<String>) {
     if tuning.print_held_loser_bands {
         report_held_loser_bands(&samples, tuning); // (#1242)
     }
+    if tuning.print_sector_neutral_auc {
+        report_sector_neutral_auc(&samples, tuning); // (#1278)
+    }
     if tuning.growth_event_months > 0 {
         report_event_flags(&samples, tuning.growth_event_months); // (#1245)
     }
@@ -2581,6 +2584,7 @@ pub async fn run(args: Vec<String>) {
     lap("weight curves");
     let accepted_med = gate_audit(&samples, growth_score, tuning).map(|(_, _, amed)| amed); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen, accepted_med); // (#10) which specific gate is too tight?
+    ceiling_sweep(&samples, tuning); // (#1279) what would each ceiling refuse?
     lap("gate audit + sweep");
     weight_sweep(&samples, tuning); // (#334) which shipped ranking weight is mis-set?
     lap("weight sweep");
@@ -4477,7 +4481,7 @@ fn band_verdict(lo: f64) -> &'static str {
     }
 }
 
-const FUND_FACTORS: [&str; 53] = [
+const FUND_FACTORS: [&str; 56] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Bonferroni haircut below divides by FUND_FACTORS.len(), so
@@ -4519,6 +4523,9 @@ const FUND_FACTORS: [&str; 53] = [
     "rnd_growth",           // (#532) Arnott et al. 2026 fundamental growth, the R&D leg: 3y ΔR&D ÷ old revenue; 50 -> 51
     "low_dro",              // (#533) Wang 2019 CCC spread, the receivables leg: −receivables days, sector-demeaned; 51 -> 52
     "capex_light",          // (#549) −capex ÷ OCF, annual, raw: the (#545) column's question asked point-in-time; 52 -> 53
+    "share_iss_5y",         // (#1278) −5y diluted share count CAGR: does a shrinking count pick the winners?; 53 -> 54
+    "netdebt_assets",       // (#1278) −net debt ÷ total assets: balance-sheet strength on the asset base; 54 -> 55
+    "eps_streak",           // (#1278) fiscal years of rising EPS in a row, cap 8; 55 -> 56
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -9018,13 +9025,24 @@ fn held_loser_factors(
     n: usize,
     factors: &[&'static str],
 ) -> Vec<HeldLoserRow> {
+    held_loser_factors_by(scored, n, factors, |s, name| s.fund.as_ref().and_then(|f| core::select_fund_factor(f, name)))
+}
+
+/// (#1278) [`held_loser_factors`] with each name's factor read by `value`, so the sector-neutral print
+/// grades the very same held book on a demeaned reading.
+fn held_loser_factors_by(
+    scored: &[(&Sample, f64)],
+    n: usize,
+    factors: &[&'static str],
+    value: impl Fn(&Sample, &str) -> Option<f64>,
+) -> Vec<HeldLoserRow> {
     let held = held_names(scored, n);
     factors
         .iter()
         .filter_map(|name| {
             let (mut win, mut lose) = (Vec::new(), Vec::new());
             for s in &held {
-                let Some(v) = s.fund.as_ref().and_then(|f| core::select_fund_factor(f, name)) else {
+                let Some(v) = value(s, name) else {
                     continue; // no as-of fundamentals for this name -> it votes on no factor at all
                 };
                 if s.realized < 0.0 {
@@ -9110,6 +9128,44 @@ fn report_held_loser_bands(samples: &[Sample], tuning: &BuyHeuristic) {
         );
     }
     println!("    read the family row as the one test; a band holding 0.5 = no reading. Survivors only: dead names carry no fund rows.");
+}
+
+/// (#1278) The mean of factor `name` per (cutoff, sector) over every name in `samples`. A sector with
+/// under 3 names carrying the factor at a cutoff is left out, as is a name with no sector: the
+/// sector-neutral table then reads such a name as None, not as a raw value in another unit.
+/// shortcut: today's sector label, as in [`stamp_cohort_ranks`].
+fn sector_means(samples: &[Sample], name: &str) -> BTreeMap<(chrono::NaiveDate, String), f64> {
+    let mut by: BTreeMap<(chrono::NaiveDate, String), Vec<f64>> = BTreeMap::new();
+    for s in samples {
+        if let (Some(sec), Some(v)) = (&s.quote.sector, s.fund.as_ref().and_then(|f| core::select_fund_factor(f, name))) {
+            by.entry((s.date, sec.clone())).or_default().push(v);
+        }
+    }
+    by.into_iter().filter(|(_, v)| v.len() >= 3).map(|(k, v)| (k, v.iter().sum::<f64>() / v.len() as f64)).collect()
+}
+
+/// (#1278) Prints the GROWTH held book's loser AUC for every registered fund factor, raw and minus the
+/// cutoff's sector mean ([`sector_means`], over the whole pool, not only the held names). Display only.
+#[mutants::skip]
+fn report_sector_neutral_auc(samples: &[Sample], tuning: &BuyHeuristic) {
+    let scored: Vec<(&Sample, f64)> =
+        samples.iter().filter_map(|s| growth_score(&s.quote, tuning).map(|v| (s, v))).collect();
+    let raw = held_loser_factors(&scored, VERDICT_TOP, &FUND_FACTORS);
+    let cell = |r: Option<&HeldLoserRow>| r.map_or("n/a".to_string(), |r| format!("{:.2} ({}/{})", r.auc, r.n_win, r.n_lose));
+    println!("  (#1278) held book's loser AUC (winners/losers), raw and minus the same cutoff's sector mean:");
+    for name in FUND_FACTORS {
+        let means = sector_means(samples, name);
+        let neutral = held_loser_factors_by(&scored, VERDICT_TOP, &[name], |s, f| {
+            let m = means.get(&(s.date, s.quote.sector.clone()?))?;
+            Some(s.fund.as_ref().and_then(|x| core::select_fund_factor(x, f))? - m)
+        });
+        println!(
+            "    {name:<20} raw {:<16} sector-neutral {}",
+            cell(raw.iter().find(|r| r.factor == name)),
+            cell(neutral.first())
+        );
+    }
+    println!("    a sector under 3 names at a cutoff, or no sector, reads n/a on the right. Survivors only.");
 }
 
 /// (#1245) The walk's event flags at one cutoff, one bit each: 1 a dividend cut (the last 12 months paid
@@ -9477,6 +9533,36 @@ fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob], accepte
                     format!("  {name:<26} n={n:<4} fwd peer-relative  mean {mean:+.1} | med {med:+.1} pts{vs}{tag}")
                 }
                 None => format!("  {name:<26} admits 0 new names (gate not binding on this sample)"),
+            }
+        })
+        .collect();
+    for row in rows {
+        println!("{row}");
+    }
+}
+
+/// (#1279) The GATE SWEEP's twin for the CEILINGS ([`picks::ceiling_notches`]): arm each one notch and price the
+/// names it would newly REFUSE against the names it keeps. Both tunings are HARD (`growth_gate_soft` 0): a soft
+/// dock keeps a failing stock scored, so on the shipped soft tuning a ceiling refuses almost nobody and its row
+/// would read empty. A census line, not a ship rule.
+#[mutants::skip] // printing only; `newly_admitted_stats` carries the test
+fn ceiling_sweep(samples: &[Sample], tuning: &BuyHeuristic) {
+    println!("\n── CEILING SWEEP (#1279) (arm each ceiling one notch -> fwd return of the names it would newly REFUSE; hard gates) ──");
+    println!("  refused below kept on mean AND median = the ceiling keeps worse names out. A census, never a ship rule.");
+    let hard = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
+    let rows: Vec<String> = picks::ceiling_notches()
+        .par_iter()
+        .map(|(label, arm)| {
+            let mut t = hard.clone();
+            arm(&mut t);
+            let kept: Vec<f64> = samples.iter().filter(|s| growth_score(&s.quote, &t).is_some()).map(|s| s.relative).collect();
+            let (kmean, kmed) = cohort_stats(&kept);
+            match newly_admitted_stats(samples, growth_score, &t, &hard) {
+                Some((n, mean, med)) => {
+                    let tag = if mean < kmean && med < kmed { "  <- REFUSES WORSE THAN IT KEEPS" } else { "" };
+                    format!("  {label:<38} refuses n={n:<4} mean {mean:+.1} | med {med:+.1} pts   kept n={} mean {kmean:+.1} | med {kmed:+.1}{tag}", kept.len())
+                }
+                None => format!("  {label:<38} refuses 0 names (ceiling not binding on this sample)"),
             }
         })
         .collect();
@@ -12729,6 +12815,33 @@ mod tests {
         assert_eq!(held_loser_factors(&[es[0], es[2]], 2, &["roe"]).len(), 1, "two names are enough to split");
     }
 
+    /// (#1278) `sector_means` averages one factor per (cutoff, sector) and keeps a cohort only at 3 or
+    /// more names. Tech (1, 2, 6) reads 3 and Util (1, 1, 1, 5) reads 2; Energy (2 names) and the name
+    /// with no sector are left out, and Tech at the next cutoff is its own cohort.
+    #[test]
+    fn sector_means_average_each_cutoff_sector_cohort_of_three_or_more() {
+        use crate::core::FundFactors;
+        let row = |day: u32, sec: Option<&str>, roe: f64| {
+            let mut q = Quote::stub("X", "1", "", "X");
+            q.sector = sec.map(str::to_string);
+            let fund = Some(FundFactors { roe: Some(roe), ..Default::default() });
+            Sample { date: ymd(2010, 1, day), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund, trail: Vec::new() }
+        };
+        let (t, u, e) = (Some("Tech"), Some("Util"), Some("Energy"));
+        let pool = [
+            row(1, t, 1.0), row(1, t, 2.0), row(1, t, 6.0),
+            row(1, u, 1.0), row(1, u, 1.0), row(1, u, 1.0), row(1, u, 5.0),
+            row(1, e, 4.0), row(1, e, 8.0),
+            row(1, None, 9.0), row(1, None, 9.0), row(1, None, 9.0),
+            row(2, t, 3.0), row(2, t, 3.0), row(2, t, 9.0),
+        ];
+        let m = sector_means(&pool, "roe");
+        let k = |day: u32, sec: &str| (ymd(2010, 1, day), sec.to_string());
+        assert_eq!(m.len(), 3, "Energy (2 names) and the names with no sector are left out: {m:?}");
+        assert_eq!((m[&k(1, "Tech")], m[&k(1, "Util")], m[&k(2, "Tech")]), (3.0, 2.0, 5.0));
+        assert!(sector_means(&pool, "roic").is_empty(), "no name carries roic");
+    }
+
     /// (#1247) `jump_ahead` reads the bars `forward_return` reads. Bars are 73 days apart, so a 2y window
     /// from bar 2 closes on bar 12 exactly; a short series closes on its last bar. Exactly 4x and exactly
     /// 1/4 do not flag, and a level series flags nothing at any price.
@@ -15695,5 +15808,7 @@ mod tests {
         let gates: Vec<Knob> = picks::gate_notches().into_iter().map(|(_, label, f)| knob(label, f)).collect();
         gate_sweep(&samples, &tuning, &gates, None);
         gate_sweep(&samples, &tuning, &gates, Some(0.0));
+        ceiling_sweep(&samples, &tuning);
+        ceiling_sweep(&[], &tuning);
     }
 }

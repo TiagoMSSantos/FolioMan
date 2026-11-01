@@ -23206,6 +23206,7 @@ buy_heuristic:
   growth_event_months: 0         # (#1245) dividend cut, reverse split or fresh S&P add inside this many months before a
   #  backtest cutoff docks a stock one soft step each; 0 = off. Pre-registered 2026-10-31, one arm (12), one look.
   print_held_loser_bands: false  # (#1242) the held-loser AUC bands; display only, off in CI so no golden moves.
+  print_sector_neutral_auc: false # (#1278) the held-loser AUC raw and sector-demeaned; display only, off in CI so no golden moves.
   growth_require_peg: true       # require a PEG to score a name. The growth_score reads PEG (1/PEG x 100) and the gate rejects PEG > growth_max_peg, so a missing PEG is a free pass. This knob forces a missing PEG to fail the gate. Reads `fund.eps_never_reported` (filer-level, never as-of), NOT `peg_yield.is_none()` — the cohort is filers whose 10-K states no per-share element at all, 8 of 509 cached US names, seven of them now FIXED by the XBRL-instance fallback. Residue today: ARES alone. false = off
 
 # (#538) USER DECISION 2026-10-10: a second buy heuristic, SOC, ranks the Social table alone. SOC =
@@ -24526,6 +24527,47 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   0.6 low. The owner was asked once and chose record only (2026-10-31). Why no guard: the flag reads
 #   prices after the cutoff, so it cannot run on a live screen; in the walk it would change the grade, not
 #   the buys; and it cannot tell a fake print from a real takeover or crash. Nothing changes.
+# (#1278) THREE FUND FACTORS AND A SECTOR-NEUTRAL READ, PRE-REGISTERED 2026-11-01 before any run, record only.
+#   Nothing here reaches a score, a gate, rank, BUY NOW, size, trade or the broker.
+# WHAT: `FUND_FACTORS` 53 -> 56, so the fund lane, the held-loser table and the winners report each gain three
+#   rows (the goldens move and are re-blessed in the same push). Each reads higher = better:
+#     share_iss_5y    minus the yearly growth of the share count over 5 years, %/yr, so buybacks read high.
+#                     None without a row 5 years back, or past 40 %/yr either way (an unrestated split or a merger).
+#     netdebt_assets  minus net debt over total assets, %, so net cash reads high. None unless assets are above 0.
+#     eps_streak      fiscal years in a row, newest first, with EPS above the year before, up to 8. None under
+#                     3 yearly rows.
+#   One print, `print_sector_neutral_auc` (false in CI, so no golden moves): every factor's held-book loser AUC,
+#   raw and with each value minus the mean of the same cutoff's same-sector names over the whole pool. A sector
+#   under 3 names at a cutoff, or a name with no sector, reads n/a on the right instead of its raw value, so the
+#   right column never mixes the two readings.
+# WHY: net share issuance (Pontiff and Woodgate 2008) and leverage were the two buildable legs of the published
+#   fundamental lists this table never graded; the EPS streak is the "consistent grower" story told to buyers.
+#   The sector read asks whether this pool's backwards profitability rows are a sector bet: Novy-Marx 2013 finds
+#   industry-average profitability unrelated to returns, and most of the book-to-price signal sits inside an
+#   industry (Cohen, Polk and Vuolteenaho 2003).
+# BAR, (#165) as amended: same side of 0.5 at 12y AND 8y with |AUC-0.5| >= 0.10 at BOTH -> CANDIDATE, recorded
+#   only; anything else -> DEAD, recorded. 20y is vacuous: no cutoff that far back carries fund rows.
+#   netdebt_assets is an add only if it reads further from 0.5 than net_cash_rev at both horizons; else it is
+#   the same signal. SECTOR: a profitability row crossing 0.5 at BOTH horizons when demeaned re-opens that
+#   family with its own receipt; no cross = the backwards reading holds inside a sector and the family stays
+#   closed.
+# EXPECTED, written before the run: share_iss_5y and netdebt_assets above 0.5, eps_streak below 0.5 (record
+#   only, never a shadow). The value rows barely move when demeaned; the profitability rows move toward 0.5.
+# RUNS: one probe on the code commit, `universe fund pit`, years "12 8", knobs print_sector_neutral_auc=true.
+# SHORTCUT: FMP rows carry share counts as filed, so a split inside the 5 years the source did not restate
+#   reads as issuance; the 40 %/yr bound drops the large ones. The sector label is today's, as elsewhere.
+
+# (#1279) CEILING SWEEP, 2026-11-01, record only, no knob. The GATE SWEEP only loosens, so a ceiling that ships
+#   off was never priced by it. Every backtest now prints a CEILING SWEEP after it: `picks::ceiling_notches` arms
+#   one ceiling per row (trend R^2 0.90, underwater 2 years, refuse financials, financial asset growth 10 %/yr,
+#   refuse the sector's largest name, 100 % above the 200-week average, 3 %/day swing, 60 % worst drawdown) and
+#   prints the forward peer-relative return of the names it would newly refuse next to the names it keeps.
+#   Refused below kept on mean AND median tags the row: the ceiling keeps worse names out.
+# HOW: both tunings run with growth_gate_soft 0. Under the shipped 0.8 a stock that fails a gate is docked,
+#   not refused, so a ceiling would refuse almost nobody and every stock row would read empty. The sweep
+#   therefore prices the hard version of each ceiling, never the shipped soft dock.
+# READING: a census, never a ship rule. A ceiling ships only through its own pre-registered grid. A row whose
+#   knob a verdict deletes leaves this list with the knob.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

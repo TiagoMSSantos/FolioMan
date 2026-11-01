@@ -4307,6 +4307,12 @@ pub struct FundFactors {
     // (#549) capex ÷ operating cash flow NEGATED, % (high = capital-light: NVDA's ~5% reads −5). The ANNUAL
     // twin of (#545)'s TTM CAPEX/OCF column, raw, so its AUC grades a boost or that column's penalty. PROBE-ONLY
     pub capex_light: Option<f64>,
+    // (#1278) three AUC-table rows, weighted nowhere. `share_iss_5y`: minus the 5y diluted share count
+    // CAGR, % (high = the count shrank). `netdebt_assets`: minus net debt over assets, % (high = net
+    // cash). `eps_streak`: the run of fiscal years whose EPS beat the year before, newest first, capped at 8
+    pub share_iss_5y: Option<f64>,
+    pub netdebt_assets: Option<f64>,
+    pub eps_streak: Option<f64>,
     pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
@@ -4963,6 +4969,19 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             .filter(|r| !r.financial)
             .and_then(|r| Some((r.ocf_margin.filter(|o| *o > 0.0)?, r.fcf_margin?)))
             .map(|(o, f)| -(o - f) / o * 100.0),
+        // (#1278) the share counts sit on one split basis (`restate_for_splits`), so the ratio is issuance.
+        // A ratio outside 0.6^5..1.4^5 (a zero count, a unit slip, a merger) reads None, not a CAGR
+        share_iss_5y: now
+            .zip(back(5))
+            .and_then(|(n, o)| Some(n.shares? / o.shares?))
+            .filter(|x| (0.6f64.powi(5)..=1.4f64.powi(5)).contains(x))
+            .map(|x| -cagr((x - 1.0) * 100.0, 5.0)),
+        netdebt_assets: now.and_then(|r| Some(-r.net_debt? / r.assets.filter(|a| *a > 0.0)? * 100.0)),
+        // (#1278) each row's EPS against the prior year AS THE SAME FILING STATED IT; a missing year ends
+        // the run. None below 3 fiscal years of rows, so a young filer can't read a short streak as 0
+        eps_streak: back(2).map(|_| {
+            (0..8).map_while(back).take_while(|r| r.eps.zip(r.prior_eps).is_some_and(|(e, p)| e > p)).count() as f64
+        }),
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5759,6 +5778,9 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "low_turnover" => f.low_turnover,                 // (#531) −a year's share turnover: measured, unweighted
         "low_dro" => f.low_dro,                           // (#533) −receivables days, sector-demeaned: measured, unweighted
         "capex_light" => f.capex_light,                   // (#549) −capex ÷ OCF, annual, raw: measured, unweighted
+        "share_iss_5y" => f.share_iss_5y,                 // (#1278) −5y share count CAGR: measured, unweighted
+        "netdebt_assets" => f.netdebt_assets,             // (#1278) −net debt ÷ assets: measured, unweighted
+        "eps_streak" => f.eps_streak,                     // (#1278) years of rising EPS, cap 8: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6766,6 +6788,9 @@ mod tests {
             low_turnover: Some(50.0),
             low_dro: Some(52.0),
             capex_light: Some(53.0),
+            share_iss_5y: Some(54.0),
+            netdebt_assets: Some(55.0),
+            eps_streak: Some(56.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6827,6 +6852,9 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "rnd_growth"), Some(51.0)); // (#532)
         assert_eq!(select_fund_factor(&f, "low_dro"), Some(52.0)); // (#533)
         assert_eq!(select_fund_factor(&f, "capex_light"), Some(53.0)); // (#549)
+        assert_eq!(select_fund_factor(&f, "share_iss_5y"), Some(54.0)); // (#1278)
+        assert_eq!(select_fund_factor(&f, "netdebt_assets"), Some(55.0)); // (#1278)
+        assert_eq!(select_fund_factor(&f, "eps_streak"), Some(56.0)); // (#1278)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -7644,6 +7672,74 @@ mod tests {
         assert_eq!(c(r(None, Some(19.0), false)), None);
         assert_eq!(c(r(Some(20.0), None, false)), None);
         assert_eq!(c(r(Some(20.0), Some(19.0), true)), None);
+    }
+
+    /// (#1278) `share_iss_5y` is the 5y share count CAGR negated: 100 down to 90 reads +2.09 (a buyback
+    /// ranks high), 100 up to 110 reads below 0. No row 5 years back, a zero count, or a ratio past
+    /// 1.4^5 (a unit slip) is None.
+    #[test]
+    fn share_iss_5y_is_negated_share_count_cagr() {
+        let r = |y: i32, shares: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            shares,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let s = |old: Option<f64>, new: Option<f64>| fund_factors(&[r(2018, old), r(2023, new)], cutoff, 5).share_iss_5y;
+        let bought = s(Some(100.0), Some(90.0)).unwrap();
+        assert!((bought + cagr(-10.0, 5.0)).abs() < 1e-9, "must be the NEGATED 5y CAGR, got {bought}");
+        assert!(bought > 0.0);
+        assert!(s(Some(100.0), Some(110.0)).unwrap() < 0.0, "issuance ranks low");
+        assert_eq!(s(Some(100.0), Some(3200.0)), None);
+        assert_eq!(s(Some(100.0), Some(0.0)), None);
+        assert_eq!(s(None, Some(90.0)), None);
+        assert_eq!(fund_factors(&[r(2020, Some(100.0)), r(2023, Some(90.0))], cutoff, 5).share_iss_5y, None);
+    }
+
+    /// (#1278) `netdebt_assets` is net debt over total assets negated: net debt 50 on assets 200 reads
+    /// −25, net cash 50 reads +25. A missing leg or a non-positive asset base is None.
+    #[test]
+    fn netdebt_assets_is_negated_net_debt_over_assets() {
+        let r = |nd: Option<f64>, assets: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            net_debt: nd,
+            assets,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let n = |row: FundRow| fund_factors(&[row], cutoff, 5).netdebt_assets;
+        assert!((n(r(Some(50.0), Some(200.0))).unwrap() + 25.0).abs() < 1e-9);
+        assert!((n(r(Some(-50.0), Some(200.0))).unwrap() - 25.0).abs() < 1e-9);
+        assert_eq!(n(r(Some(50.0), Some(0.0))), None);
+        assert_eq!(n(r(Some(50.0), Some(-200.0))), None);
+        assert_eq!(n(r(None, Some(200.0))), None);
+        assert_eq!(n(r(Some(50.0), None)), None);
+    }
+
+    /// (#1278) `eps_streak` counts the fiscal years, newest first, whose EPS beat the prior year as the
+    /// same filing stated it. A flat year or a missing year ends the run, 8 is the cap, and fewer than 3
+    /// fiscal years of rows is None.
+    #[test]
+    fn eps_streak_counts_rising_years_newest_first() {
+        let r = |y: i32, eps: f64, prior: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            eps: Some(eps),
+            prior_eps: Some(prior),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let k = |rows: &[FundRow]| fund_factors(rows, cutoff, 5).eps_streak;
+        assert_eq!(k(&[r(2021, 2.0, 1.0), r(2022, 3.0, 2.0), r(2023, 4.0, 3.0)]), Some(3.0));
+        assert_eq!(k(&[r(2021, 2.0, 1.0), r(2022, 3.0, 2.0), r(2023, 3.0, 3.0)]), Some(0.0), "a flat year is no rise");
+        assert_eq!(k(&[r(2021, 2.0, 1.0), r(2022, 1.0, 2.0), r(2023, 4.0, 3.0)]), Some(1.0));
+        assert_eq!(k(&[r(2022, 3.0, 2.0), r(2023, 4.0, 3.0)]), None);
+        let ten: Vec<FundRow> = (2014..2024).map(|y| r(y, f64::from(y - 2000), f64::from(y - 2001))).collect();
+        assert_eq!(k(&ten), Some(8.0));
+        // 2022 missing: 2023 rises, then the run ends at the gap, even though 2021 rose too
+        assert_eq!(k(&[r(2020, 2.0, 1.0), r(2021, 3.0, 2.0), r(2023, 4.0, 3.0)]), Some(1.0));
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of
