@@ -14482,15 +14482,6 @@ mod tests {
         // known-unreachable by construction — pinned so the claim stops being folklore
         ("growth_min_age_years", |t, v| t.growth_min_age_years = v, 1e9),
         ("growth_min_range_pct_8y", |t, v| t.growth_min_range_pct_8y = v, 1e9),
-        // (#1277) the five stock gates. The ceiling probes LOW and the floor HIGH; `backtest_quote` fills
-        // both price fields (`last_decade` of the slice), so they pin stock LIVE. The other three read
-        // `quote.fund` or the walk's `stamp_top_dogs`, neither filled on this price-only path: cause (a).
-        // All five are INERT on crypto and etf by scope, cause (b).
-        ("growth_max_trend_r2", |t, v| t.growth_max_trend_r2 = v, 1e-6),
-        ("growth_min_underwater_yrs", |t, v| t.growth_min_underwater_yrs = v, 1e9),
-        ("growth_refuse_financials", |t, v| t.growth_refuse_financials = v != 0.0, 1.0),
-        ("growth_financial_max_asset_growth", |t, v| t.growth_financial_max_asset_growth = v, 1e-6),
-        ("growth_refuse_sector_top_dog", |t, v| t.growth_refuse_sector_top_dog = v != 0.0, 1.0),
     ];
 
     /// WHICH GROWTH KNOBS CAN MOVE A BACKTEST NUMBER AT ALL, per asset class.
@@ -14528,13 +14519,11 @@ mod tests {
     ///       (aum_eur), `growth_ter_drag` (expense_ratio), `growth_fx_damp` (quote_currency),
     ///       `growth_min_range_pct_8y` (stats_8y). None of those four is assigned by
     ///       `core::backtest_quote` (`growth_min_age_years` left this list when (#182) filled age_years); `growth_max_peg` (quote.fund) joins them on the
-    ///       price-only path only, per SCOPE above, as do (#1277) `growth_refuse_financials` and
-    ///       `growth_financial_max_asset_growth` (quote.fund) and `growth_refuse_sector_top_dog` (the
-    ///       walk's `stamp_top_dogs` reads `fund.mcap`).
+    ///       price-only path only, per SCOPE above.
     ///   (b) SCOPED TO ANOTHER CLASS — correct by construction, and the thing round 1's bug broke: the
     ///       `if crypto {…} else {…}` selectors (maxdd cap, 1M knife, 1Y/range/CAGR floors, vol cap),
     ///       the `!crypto` guards (above-MA ceiling, lifetime uptrend, the (P4) vol and spike ceilings),
-    ///       `sharpe_cap_etf` off a fund, the five (#1277) stock-only gates off a coin or a fund,
+    ///       `sharpe_cap_etf` off a fund,
     ///       and the commodity damp on a coin (no GICS sector, not a fund name).
     ///   (c) REACHABLE BUT DOMINATED — `growth_require_lifetime_uptrend`. Its fields ARE filled, so it
     ///       is not dead; it cannot bite because `growth_min_cagr` rejects the same names first. A
@@ -14635,15 +14624,13 @@ mod tests {
                 // The gate still SHIPS 0.0, so nothing moves until an arm turns it on — what changed
                 // is that an arm can now be graded at all. This lane has no `!crypto` guard, which is
                 // why crypto goes LIVE with the other two rather than staying INERT by scope.
-                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y growth_max_trend_r2 growth_min_underwater_yrs growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog\n",
+                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y\n",
                 // (#1230) `growth_min_5y_pct_etf` enters etf LIVE and crypto/stock INERT on its first
                 // commit, the same standing `growth_min_cagr_etf` has, which is its whole claim.
                 "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
-                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y growth_max_trend_r2 growth_min_underwater_yrs growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog\n",
-                // (#1277) the two price gates enter stock LIVE on their first commit, and the three fundamental
-                // ones stock INERT for want of `quote.fund` on this path; all five are INERT elsewhere by scope.
-                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years growth_max_trend_r2 growth_min_underwater_yrs\n",
-                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog\n",
+                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y\n",
+                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
+                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y\n",
             )
         );
     }

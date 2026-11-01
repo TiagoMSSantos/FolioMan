@@ -22615,11 +22615,51 @@ buy_heuristic:
   # CAVEATS: the top-dog stamp reads TODAY's sector label ((#1232) `drop_lookahead_sector` is off) and market
   #   cap in trading currency, per cutoff over the whole pool; the live screen leaves it unknown (the gate
   #   passes) until it ships. Both R^2 and underwater years read the last ten years of closes and need five.
-  growth_max_trend_r2: 0.0       # (#1277) `smooth`: refuse a stock whose 10y log-trend R^2 is AT OR ABOVE this. 0 = off
-  growth_min_underwater_yrs: 0.0 # (#1277) `untested`: refuse a stock whose longest spell under a past high in 10y is under this. 0 = off
-  growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off
-  growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this %/yr over 5y. 0 = off
-  growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off
+  # (#1280) VERDICT, 2026-11-01: EVERY ARM FAILS. Nothing ships, the five knobs are deleted, the Quote fields
+  #   stay filled. Grid runs on d152ab4: 12y pit 41287228003 (GROWTH windows 5150/10437, fund cutoffs
+  #   9989/13390), 8y pit 41287874280 (9174/13654, 13026/22758), 20y pit 41288197594 (2708/5075), stress
+  #   41288588238 (years "20 12 8", 17 losers). Cells: top-10 excess mean|median pts/yr, rank-1 h2h vs ranks
+  #   6-10, worst window, top-10 stock slots with a sector (SECTOR CENSUS, of 380 / 460 / 220).
+  #     row   12y pit                     8y pit                      20y pit
+  #     0     +3.4|+3.2 37% -4.0 300      +3.1|+2.9 28% -6.6 372      +3.4|+1.8 45% -3.0 169
+  #     F     +3.4|+3.2 37% -4.0 299      +3.2|+2.9 30% -6.6 371      = row 0
+  #     F2    = row 0                     +3.2|+2.9 28% -6.6 372      = row 0
+  #     A     +3.3|+2.9 39% -6.5 294      +3.3|+4.0 28% -7.6 367      +3.4|+1.7 45% -2.1 167
+  #     A+F   +3.3|+2.9 39% -6.5 294      +3.3|+4.0 28% -7.3 367      = row A
+  #     T     +3.4|+3.2 37% -4.0 300      +3.1|+2.9 28% -6.6 372      = row 0
+  #     F+T   +3.4|+3.2 37% -4.0 299      +3.2|+2.9 30% -6.6 371      = row 0
+  #     B     +3.3|+3.9 37% -6.6 291      +3.3|+3.9 30% -7.7 365      +3.4|+2.6 50% -2.1 165
+  #     C     +3.5|+3.4 42% -6.5 291      +3.3|+3.2 37% -5.3 363      +3.4|+2.1 64% -2.1 163
+  #     D     +3.6|+3.3 37% -6.6 289      +3.3|+3.0 30% -7.6 362      +3.4|+2.1 55% -2.1 164
+  #   Stress: 20y every row +3.6|+4.3, worst -4.5, h2h 41 % (21/51) for 0, F, F2, A, A+F, T, F+T and 39 %
+  #   (20/51) for B, C, D. 12y every row +2.8 mean, median +3.9 (B +4.1, C and D +4.0), worst -9.9, h2h 54 %
+  #   for 0, F, F2, T, F+T, 49 % A and A+F, 48 % B, 55 % C, 54 % D. 8y every row +3.4 mean, median +4.0 (A and
+  #   A+F +4.6, B +4.2, D +3.9), worst -14.1, h2h 49 % for 0, F, F2, T, F+T, 52 % A and A+F, 47 % B, 55 % C,
+  #   53 % D. SIZE never binds: the median gated pool reads 255 (12y) and 260 (8y) on every row, because
+  #   under growth_gate_soft 0.8 a stock that fails one of these gates is docked, not refused.
+  # WHY EACH FAILS:
+  #   GUARD: row 0 itself reads 37 % (12y) and 28 % (8y) rank-1 h2h, so an arm that keeps most of the
+  #     control's book cannot reach 50 %, and every arm fails it at both pit horizons. The lesson: this guard
+  #     was written as an absolute bar; it should have been the (#160) relative form, not worse than row 0.
+  #   F: PRIMARY held (12y top-10 moments as row 0, 8y mean +0.1). It moves one slot of 380 and one of 460:
+  #     on this pool the bank and insurer rows barely reach the held top 10, so the expected exit is absent.
+  #   F2: as row 0 at 12y, line for line; at 8y only the top-10 mean moves, +0.1. INERT.
+  #   T: the top-10 rows read as row 0 at both horizons; only lines for ranks 6-10 and 21-50 move. The
+  #     largest name in a sector rarely sits in the held top 10. INERT on the graded book.
+  #   F, F2, T at 20y: VACUOUS by (#185), "only 0 cutoffs carry this factor"; their rows read as row 0.
+  #   A: graded as A+F against F, and the 12y median reads +2.9 against +3.2, down 0.3: PRIMARY FAILS. B then
+  #     cannot ship, because B ships over A only if A ties.
+  #   C, D: up on PRIMARY at 12y and 8y with a shallower 20y worst window, but confirmation only by the
+  #     DECISION above, and both read 20y stress h2h 39 % against row 0's 41 %, so they fail even the
+  #     relative not-worse form. C (2 years underwater) is the one arm up on every PRIMARY moment with a better
+  #     pit h2h at 12y and 8y; a later round may pre-register it alone, with the relative guard.
+  # The table stays here so the grid reads; the knob names sit in `config::RETIRED`, so an old overlay or a
+  #   saved page upload that still names one loads.
+  # (#1280) retired: growth_max_trend_r2: 0.0       # (#1277) `smooth`: refuse a stock whose 10y log-trend R^2 is AT OR ABOVE this. 0 = off
+  # (#1280) retired: growth_min_underwater_yrs: 0.0 # (#1277) `untested`: refuse a stock whose longest spell under a past high in 10y is under this. 0 = off
+  # (#1280) retired: growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off
+  # (#1280) retired: growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this %/yr over 5y. 0 = off
+  # (#1280) retired: growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which
@@ -24530,7 +24570,7 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # (#1278) THREE FUND FACTORS AND A SECTOR-NEUTRAL READ, PRE-REGISTERED 2026-11-01 before any run, record only.
 #   Nothing here reaches a score, a gate, rank, BUY NOW, size, trade or the broker.
 # WHAT: `FUND_FACTORS` 53 -> 56, so the fund lane, the held-loser table and the winners report each gain three
-#   rows (the goldens move and are re-blessed in the same push). Each reads higher = better:
+#   rows (the goldens moved; one bless commit after the (#1280) retire re-blesses them). Each reads higher = better:
 #     share_iss_5y    minus the yearly growth of the share count over 5 years, %/yr, so buybacks read high.
 #                     None without a row 5 years back, or past 40 %/yr either way (an unrestated split or a merger).
 #     netdebt_assets  minus net debt over total assets, %, so net cash reads high. None unless assets are above 0.
@@ -24556,6 +24596,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # RUNS: one probe on the code commit, `universe fund pit`, years "12 8", knobs print_sector_neutral_auc=true.
 # SHORTCUT: FMP rows carry share counts as filed, so a split inside the 5 years the source did not restate
 #   reads as issuance; the 40 %/yr bound drops the large ones. The sector label is today's, as elsewhere.
+# RESULT: probe run 41289734291 on dca1609, `universe fund pit`, windows scored 12y 5150 of 10437, 8y 9174 of
+#   13654. Held-book loser AUC, winners/losers:
+#     factor          12y           8y             verdict
+#     share_iss_5y    0.29 (17/2)   0.54 (77/22)   DEAD: opposite sides of 0.5
+#     netdebt_assets  0.43 (73/14)  0.52 (133/31)  DEAD: opposite sides, and no further from 0.5 than
+#                                                  net_cash_rev (0.48 / 0.57)
+#     eps_streak      0.71 (76/14)  0.57 (136/34)  DEAD: above 0.5 at both, but 8y sits 0.07 from 0.5, under 0.10
+#   All three are DEAD. The expectation missed on every row: share_iss_5y and netdebt_assets read below 0.5 at
+#   12y, and eps_streak read above 0.5 at both horizons, not below.
+#   SECTOR: no profitability row crosses above 0.5 at both horizons when demeaned, so the family stays closed.
+#   Most move away from 0.5, not toward it (12y then 8y, raw -> demeaned): gross_margin 0.35 -> 0.15 and
+#   0.33 -> 0.18, op_margin 0.37 -> 0.22 and 0.41 -> 0.26, net_margin 0.39 -> 0.23 and 0.39 -> 0.24,
+#   fcf_margin 0.44 -> 0.26 and 0.46 -> 0.29. roe (0.50 -> 0.46, 0.47 -> 0.46) and quality (0.51 -> 0.43,
+#   0.47 -> 0.42) stay below; roic drops 0.53 -> 0.46 and 0.62 -> 0.52. Inside a sector the backwards reading
+#   is stronger, so it is not a sector bet. The second expectation missed too: at 12y the value rows moved
+#   more than the profitability rows (fair_yield 0.43 -> 0.87, int_yield 0.28 -> 0.81), and 8y did not
+#   confirm (0.37 -> 0.39, 0.40 -> 0.42).
+#   Outside the bar, read only: of the 52 rows readable at both horizons, three sit 0.10 or more above 0.5 at
+#   both when demeaned: sales_ev_yield 0.75 / 0.61, op_leverage 0.69 / 0.73, rev_stability 0.62 / 0.61. None
+#   was pre-registered, the horizons share samples, and at 12y each rests on 7 losers or fewer. A later round
+#   may pre-register sector-neutral sales_ev_yield; nothing here is a candidate and nothing changes.
 
 # (#1279) CEILING SWEEP, 2026-11-01, record only, no knob. The GATE SWEEP only loosens, so a ceiling that ships
 #   off was never priced by it. Every backtest now prints a CEILING SWEEP after it: `picks::ceiling_notches` arms
@@ -24568,6 +24629,23 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   therefore prices the hard version of each ceiling, never the shipped soft dock.
 # READING: a census, never a ship rule. A ceiling ships only through its own pre-registered grid. A row whose
 #   knob a verdict deletes leaves this list with the knob.
+# RESULT: the same probe run 41289734291 on dca1609, before the (#1280) retire, so all eight rows printed.
+#   Forward peer-relative pts, mean | median, refused vs kept:
+#     ceiling                          12y refused / kept                    8y refused / kept
+#     trend R^2 0.90                   135: -6.3 | -71.2 / +40.6 | -91.7     178: +28.7 | -21.3 / +25.8 | -32.6
+#     underwater 2 years               147: -7.2 | -91.6 / +44.6 | -62.2 T   179: +26.7 | -28.5 / +27.3 | -16.7 T
+#     refuse financials                0 names                               4: -113.3 | -141.8 / +28.4 | -23.4 T
+#     financial asset growth 10        0 names                               the same 4 names T
+#     refuse the sector's largest      1: -140.0 | -140.0 T                  3: +162.6 | +54.4 / +26.1 | -23.9
+#     100 % above the 200-week average 103: -45.0 | -87.1 / +52.0 | -76.9 T  106: -18.7 | -41.3 / +42.4 | -9.6 T
+#     3 %/day swing                    315 of 321 refused T                  408 of 421 refused T
+#     60 % worst drawdown              104: +52.0 | -111.0 / +6.0 | -71.9    130: +11.0 | -46.7 / +34.2 | -21.4 T
+#   T = tagged, refused below kept on mean AND median. Reading: two ceilings tag at both horizons on more than
+#   100 names. Underwater 2 years is arm C of the (#1280) grid, which failed there as a soft dock; its 8y mean
+#   gap here is 0.6 pts. 100 % above the 200-week average tightens the shipped 150 and has the widest gap at both
+#   horizons. Both are leads for a later pre-registered grid, priced hard, never a ship. The 3 %/day notch
+#   refuses almost every name, so its tag compares the 6 and 13 names left and reads nothing. The financial
+#   and largest-name rows rest on 4 names or fewer. After (#1280) only the last three rows remain.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

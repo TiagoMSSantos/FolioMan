@@ -422,17 +422,18 @@ pub struct Quote {
     // `report_jump_census` reads it: no score term or gate does.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub jump_ahead: bool,
-    // (#1277) the last ten years of the price series as two gate inputs: the log-trend R² and the longest
-    // stretch below a past high, in years. One window on both paths and at any bar size ([`last_decade`]),
-    // unlike `trend_r2` (the whole backtest slice, ~10y live) and `underwater_yrs` (daily runs only).
-    // None = under five years of bars. Read only by `growth_max_trend_r2` / `growth_min_underwater_yrs`.
+    // (#1277) the last ten years of the price series: the log-trend R² and the longest stretch below a
+    // past high, in years. One window on both paths and at any bar size ([`last_decade`]), unlike
+    // `trend_r2` (the whole backtest slice, ~10y live) and `underwater_yrs` (daily runs only). None =
+    // under five years of bars. No score reads them: (#1280) deleted the two gates the grid refused, and
+    // the fields stay filled so a later census can read them without a refetch.
     #[serde(default)]
     pub trend_r2_10y: Option<f64>,
     #[serde(default)]
     pub underwater_yrs_10y: Option<f64>,
     // (#1277) the largest `fund.mcap` in its sector at the same cutoff (`backtest::stamp_top_dogs`). Only the
-    // walk stamps it, so it is None live, and None with no sector or no mcap. Read only by
-    // `growth_refuse_sector_top_dog`.
+    // walk stamps it, so it is None live, and None with no sector or no mcap. No score reads it since
+    // (#1280) deleted the gate the grid refused.
     #[serde(default)]
     pub sector_top_dog: Option<bool>,
 }
@@ -5940,7 +5941,7 @@ pub fn backtest_quote(
     if cadence == 252 {
         quote.underwater_yrs = longest_underwater_yrs(c, cadence);
     }
-    // (#1277) at every cadence, unlike the field above: the gates that read these must see the graded runs
+    // (#1277) at every cadence, unlike the field above, so a census of these reads the graded runs
     quote.trend_r2_10y = last_decade(c, cadence).map(trend_r2);
     quote.underwater_yrs_10y = last_decade(c, cadence).and_then(|w| longest_underwater_yrs(w, cadence));
     // (#20) the LIVE growth lane excludes a name whose turnover is UNKNOWN (an untradeable/dead listing
