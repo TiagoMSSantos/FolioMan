@@ -2856,10 +2856,16 @@ mod tests {
         // where the rejected interest_cover paid nothing (Δ+0.0/+0.0/+5.4), plus held-book OOS +3.3/+4.3.
         // Pin factor, weight AND cap: weight × cap is ONE dial (receipt (#3)), so any of the three drifting
         // alone re-ranks the live book under a config that still matches its receipt.
-        assert_eq!(h.growth_fund_extra.len(), 1, "{receipts}");
+        assert_eq!(h.growth_fund_extra.len(), 2, "{receipts}");
         assert_eq!(h.growth_fund_extra[0].factor, "roic", "{receipts}");
         assert_eq!(h.growth_fund_extra[0].weight, 0.25, "the measured ablation peak — {receipts}");
         assert_eq!(h.growth_fund_extra[0].cap, 40.0, "matches quality_cap — {receipts}");
+        // (#1289) the margin-trend dock: -0.2, -0.3, -0.5 and -1.0 all passed the (#1287) bar, -0.1 was
+        // inert. Same pin rule: weight × cap is one dial, and neutral 0 is what keeps a missing trend free.
+        assert_eq!(h.growth_fund_extra[1].factor, "margin_trend", "{receipts}");
+        assert_eq!(h.growth_fund_extra[1].weight, -0.3, "the middle of the passing plateau — {receipts}");
+        assert_eq!(h.growth_fund_extra[1].cap, 10.0, "the dock costs at most 3 points — {receipts}");
+        assert_eq!(h.growth_fund_extra[1].neutral, 0.0, "a missing trend costs nothing — {receipts}");
         // (#72) 2026-08-12: graded under Ship Rule v2 and HELD at 0.15 — ten `backtest {8,12} universe
         // fund` runs at 0 / 0.075 / 0.15 / 0.30 plus a 20y pair. Pinned here, with the fund tilt it
         // interacts with ((#3d)), because NOTHING ELSE GUARDS IT: `backtest_fixture` runs offline and

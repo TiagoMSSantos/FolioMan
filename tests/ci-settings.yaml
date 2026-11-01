@@ -20828,6 +20828,10 @@ buy_heuristic:
       # +0.35 -> +0.06. "Indistinguishable from a constant of its own size HERE" is not "worthless" — it
       # is the fixture declining to answer. A term's real grade needs `backtest universe`.
       neutral: 17.3
+    - factor: margin_trend   # (#1289) the margin-trend dock; receipt in the (#1289) block
+      weight: -0.3
+      cap: 10.0
+      neutral: 0.0
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
@@ -24765,7 +24769,12 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   80b9230). -0.3 PASSES small: 12y +3.1|+2.8, 8y +3.0|+2.7, 8y head-to-head 18/46 against 17/46, worst and
 #   pool equal at every horizon, 20y equal. The same row on 7ac88cf (run 41328810610 8y and its 12y, 20y and
 #   stress twins) reads the same, and as the combined row of the round's passers it is the only one left.
-#   Weighted nowhere yet: it moves the live buy list, which waits for the owner's word.
+# NEIGHBOURS, on d8f730c (runs 41329522193 12y, 41329527360 8y, 41329532270 20y, 41329537243 stress): -0.2,
+#   -0.3, -0.5 and -1.0 all pass. -0.2 reads 8y +2.9|+2.7, -0.5 reads 8y +3.0|+2.9, -1.0 reads 12y +3.2|+2.7
+#   and 8y +3.0|+2.9 with the 8y head-to-head back at control. 20y and stress equal control in every row. A
+#   plateau, not a lone peak, so the pre-registered robustness rule holds.
+# SHIPPED 2026-11-01 at -0.3 on the owner's word, the middle of the plateau. Small on purpose: the live Stocks
+#   table carries no margin-trend column, most adjacent SCORE gaps are under 1.5, and the dock costs at most 3.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
