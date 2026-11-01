@@ -6428,6 +6428,13 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
                 }
             }
         }
+        // (#1288) `growth_score` reads `quote.fund`, which the walk cloned BEFORE this stamp, so a
+        // `growth_fund_extra` term on any field stamped above scored the unstamped copy: value_composite
+        // and small_pct read None (the neutral fill, a constant), low_dro and underdep the raw value. The
+        // factor sweep reads `s.fund` and was right. Copy the stamped struct back so both read the same.
+        for s in day.iter_mut() {
+            Arc::make_mut(&mut s.quote).fund = s.fund.clone();
+        }
     }
 }
 
@@ -10523,6 +10530,9 @@ mod tests {
         let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().unwrap().low_dro).collect();
         assert_eq!(got, want);
         let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().unwrap().underdep).collect();
+        assert_eq!(got, want);
+        // (#1288) the copy the scorer reads carries the stamp too
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.underdep)).collect();
         assert_eq!(got, want);
     }
 
