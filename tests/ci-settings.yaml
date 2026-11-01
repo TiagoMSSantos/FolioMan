@@ -22666,7 +22666,14 @@ buy_heuristic:
   # The table stays here so the grid reads; the knob names sit in `config::RETIRED`, so an old overlay or a
   #   saved page upload that still names one loads.
   # (#1280) retired: growth_max_trend_r2: 0.0       # (#1277) `smooth`: refuse a stock whose 10y log-trend R^2 is AT OR ABOVE this. 0 = off
-  # (#1280) retired: growth_min_underwater_yrs: 0.0 # (#1277) `untested`: refuse a stock whose longest spell under a past high in 10y is under this. 0 = off
+  growth_min_underwater_yrs: 0.0 # (#1285) `untested`, back from (#1280) for the round-10 grid alone: refuse a stock whose longest
+                                 #   spell under a past high in its last ten years is under this many years. 0 = off. The grid prices it
+                                 #   at 2 years, docked (growth_gate_soft) and refused (growth_untested_hard), on the bar written before
+                                 #   the run; a fail retires it again.
+  growth_untested_hard: false    # (#1285) true = a stock failing `untested` is refused even under growth_gate_soft, the way a Série E
+                                 #   rung is (#1282); false = docked f^n like every other knob gate. Round 9 learned a new gate under
+                                 #   the soft dock never refuses, so it barely moves the book: this switch prices it hard.
+  growth_stretch_hard: false     # (#1285) the same switch for `stretch` (growth_max_above_ma). Off until the round-10 grid grades it.
   # (#1280) retired: growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off
   # (#1280) retired: growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this %/yr over 5y. 0 = off
   # (#1280) retired: growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off
