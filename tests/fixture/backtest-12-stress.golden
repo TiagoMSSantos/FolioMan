@@ -67,7 +67,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       -> exactly-2-gate winners hold 13.4% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:45% 2:13% 3:4% 4:9% 5:5% 6:19% 7:4%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     no factor fills both sides — no as-of fundamentals, or the book never lost money
-    (0 of 53 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (0 of 56 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -201,6 +201,12 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   growth_min_range_pct_8y -10 (live-only) admits 0 new names (gate not binding on this sample)
   growth_min_aum_etf x0.5 (live-only) admits 0 new names (gate not binding on this sample)
   growth_regime_slack_pct 0 (bear-only) admits 0 new names (gate not binding on this sample)
+
+── CEILING SWEEP (#1279) (arm each ceiling one notch -> fwd return of the names it would newly REFUSE; hard gates) ──
+  refused below kept on mean AND median = the ceiling keeps worse names out. A census, never a ship rule.
+  growth_max_above_ma 100                refuses n=9    mean -158.6 | med -162.6 pts   kept n=72 mean -96.1 | med -99.9  <- REFUSES WORSE THAN IT KEEPS
+  growth_max_vol 3.0                     refuses n=78   mean -106.7 | med -150.7 pts   kept n=3 mean -8.0 | med -61.7  <- REFUSES WORSE THAN IT KEEPS
+  growth_maxdd_cap 60                    refuses n=16   mean -153.2 | med -196.2 pts   kept n=65 mean -90.7 | med -105.9  <- REFUSES WORSE THAN IT KEEPS
 
 ── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-10 ENTRANTS minus the names they DISPLACED, realized fwd %) ──
   a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).

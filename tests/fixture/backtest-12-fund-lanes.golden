@@ -105,8 +105,11 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     oe_fair_yield         winners n=41   med    112.12   losers n=15   med    136.65   gap    -24.53   AUC  0.44
     fcf_cap_yield         winners n=45   med      4.54   losers n=20   med      3.98   gap      0.56   AUC  0.57
     low_turnover          winners n=53   med     -1.63   losers n=20   med     -2.12   gap      0.49   AUC  0.62
+    share_iss_5y          winners n=6    med      1.99   losers n=5    med      1.47   gap      0.52   AUC  0.63
+    netdebt_assets        winners n=50   med      7.72   losers n=20   med    -26.54   gap     34.26   AUC  0.87
+    eps_streak            winners n=51   med      2.00   losers n=20   med      2.00   gap      0.00   AUC  0.50
     composite             winners n=43   med     20.54   losers n=20   med     15.03   gap      5.52   AUC  0.52
-    (40 of 53 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (43 of 56 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -241,6 +244,12 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   growth_min_aum_etf x0.5 (live-only) admits 0 new names (gate not binding on this sample)
   growth_regime_slack_pct 0 (bear-only) admits 0 new names (gate not binding on this sample)
 
+── CEILING SWEEP (#1279) (arm each ceiling one notch -> fwd return of the names it would newly REFUSE; hard gates) ──
+  refused below kept on mean AND median = the ceiling keeps worse names out. A census, never a ship rule.
+  growth_max_above_ma 100                refuses n=9    mean -158.6 | med -162.6 pts   kept n=68 mean -88.3 | med -99.9  <- REFUSES WORSE THAN IT KEEPS
+  growth_max_vol 3.0                     refuses n=74   mean -100.1 | med -150.7 pts   kept n=3 mean -8.0 | med -61.7  <- REFUSES WORSE THAN IT KEEPS
+  growth_maxdd_cap 60                    refuses n=15   mean -138.1 | med -150.8 pts   kept n=62 mean -86.5 | med -112.9  <- REFUSES WORSE THAN IT KEEPS
+
 ── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-10 ENTRANTS minus the names they DISPLACED, realized fwd %) ──
   a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).
   RE-PROBE needs mean AND median positive and means a full A/B round, never a weight move. k/N = buckets that swapped.
@@ -349,10 +358,13 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   rnd_growth     TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   low_dro        TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
   capex_light    TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
+  share_iss_5y   TEST edge +156.2 (w 0.249)  OOS +0.22 | +0.19
+  netdebt_assets TEST edge +178.0 (w 0.446)  OOS +0.24 | +0.24
+  eps_streak     TEST edge +155.5 (w 0.249)  OOS +0.22 | +0.19
   composite      TEST edge +155.5 (w 0.013)  OOS +0.22 | +0.19
   -> WINNER: rev_cagr. Set `growth_fund_factor: rev_cagr` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.
   -> validated growth_fund_weight for rev_cagr: 0.249 (at growth_fund_cap 300)
-  multiple-testing band (best of 53 factors): [-138.0 … +178.8] pts  (within best-of-N luck -> SHIP NOTHING despite the raw winner)
+  multiple-testing band (best of 56 factors): [-138.0 … +178.8] pts  (within best-of-N luck -> SHIP NOTHING despite the raw winner)
 
 ── growth_fund_weight CURVE for `peg_yield` (held-out TEST, growth_fund_cap 300) ──
   weight 0.000  TEST edge +156.2  OOS +0.22 | +0.19  [tilt off]
@@ -709,6 +721,8 @@ WINNERS HELD (#606): 15.8% of 507 blend book slots are winners (base 5%); score 
     oe_fair_yield         winners n=9    med     83.03   losers n=5    med    154.95   AUC  0.33
     fcf_cap_yield         winners n=13   med      7.87   losers n=8    med      1.79   AUC  0.71
     low_turnover          winners n=15   med     -1.62   losers n=9    med     -2.84   AUC  0.66
+    netdebt_assets        winners n=15   med      8.64   losers n=9    med    -15.68   AUC  0.78
+    eps_streak            winners n=18   med      1.00   losers n=9    med      1.00   AUC  0.47
     composite             winners n=13   med      9.33   losers n=8    med      9.46   AUC  0.51
 
 ── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──
