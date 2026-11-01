@@ -855,7 +855,12 @@ fn backtest_edge_holds() {
         // round lifts its reading; never lower one to get green.
         // Ship day 2026-09-15 on CI's own args: 20y 100% of 37 windows, 12y 100% of 52, 8y 90% of 60.
         // (#421) the 8y fund leg reads 90% of 60 too (2026-09-30, local), so it shares the 8y floor.
-        const SERIE_E_FLOOR: [(i64, f64); 3] = [(20, 90.0), (12, 90.0), (8, 80.0)];
+        // (#1282) LOWERED by the owner's call 2026-11-01. Refusing a stock under the Série E hurdle (8Y+/20Y+)
+        // instead of docking it moved the forward share: 20y 100% -> 88%, 12y 93% -> 86% of 84, 8y 91% -> 84% of 92
+        // (8y fund the same). CI 41297180895 read 20y; probes 41297814902 and 41297817059 read 12y/8y on 7327527.
+        // Top-10 excess 20y +3.6 -> +3.2, 12y +2.8 -> +2.9, 8y +3.4 -> +3.5 pts/yr. The rule is a mandate,
+        // so it stays; each floor is the new reading minus 2 (about one 20y start date). 8y keeps 80.
+        const SERIE_E_FLOOR: [(i64, f64); 3] = [(20, 86.0), (12, 84.0), (8, 80.0)];
         let floor = SERIE_E_FLOOR.iter().find(|f| f.0 == years).map_or(0.0, |f| f.1);
         match num_after(growth, markers::SERIE_E) {
             Some(share) => {

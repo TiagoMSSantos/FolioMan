@@ -15521,9 +15521,14 @@ mod tests {
         let samples = synthetic_samples();
         let tuning = shipped_hard();
         let gated = |t: &BuyHeuristic| samples.iter().filter(|s| growth_score(&s.quote, t).is_some()).count();
-        // (#565) SOFT PIN: armed, every fixture sample scores (docked by f^n). Every fixture name is a stock,
-        // the one class (#566) arms. The pins below grade the passers.
-        assert_eq!(gated(&shipped_tuning()), 500, "the shipped growth_gate_soft no longer scores every fixture sample");
+        // (#565) SOFT PIN: armed, every other fixture sample scores (docked by f^n). Every fixture name is a
+        // stock, the one class (#566) arms. (#1282) A stock under the Série E hurdle (`8Y+`/`20Y+`) is
+        // refused even when armed, so 135 of the 500 samples drop out. The pins below grade the passers.
+        assert_eq!(
+            gated(&shipped_tuning()),
+            365,
+            "the shipped growth_gate_soft no longer scores every sample above the Série E hurdle"
+        );
 
         // GATE PIN. Moves when a knob changes what passes: re-validate with a live `backtest universe`
         // (both OOS halves positive) BEFORE moving it, exactly as the ci-settings receipts require.

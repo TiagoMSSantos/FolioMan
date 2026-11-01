@@ -21503,6 +21503,9 @@ buy_heuristic:
   #  knob gates with exactly those gates waived (the MISSES what-if) and docks it f^n, n = gates waived; f = 1 is the (#560)
   #  gates-off book. Structural refusals, no turnover and the repriced-bar artifact stay hard at any f. All three tables.
   #  (#1282) So do the Série E rungs (8Y+, 20Y+): a stock under the hurdle is refused, not docked; the what-if still prints.
+  #  Cost, measured on 7327527: the share of start dates whose top-10 book beats Série E fell 20y 100% -> 88%, 12y 93% ->
+  #  86%, 8y 91% -> 84%; top-10 excess 20y +3.6 -> +3.2, 12y +2.8 -> +2.9, 8y +3.4 -> +3.5 pts/yr. The live buy list did
+  #  not move. The owner kept the mandate and lowered the (#315) ratchet floors to 20y 86, 12y 84 (tests/network.rs).
   #── (#563) PRE-REGISTERED 2026-10-12 — EVERY GATE SOFT AT ONCE, COUNT-BASED ──
   #  WHY: every arm holds fewer than 10 names per bucket, so admits fill empty slots and a taper on ONE gate buys the
   #  same names as a lower floor ((#550), (#561) stage 2). Only softening every gate at once lets candidates outnumber
