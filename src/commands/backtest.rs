@@ -946,7 +946,9 @@ fn bench_path(dump: &std::path::Path) -> std::path::PathBuf {
 /// (#1227) Knobs `backtest rescore` refuses in a grid row. Each one acts while the walk builds the samples,
 /// or sets a process-wide value at config load, so a dump already carries the value it was made with and a
 /// row that changed it would print the old run under a new name. Grade these with a probe run per arm.
-const RESCORE_FIXED: [&str; 14] = [
+/// (#1284) The walk also builds `event_flags` from `growth_event_months` and picks `quote.fund_factor` by
+/// `growth_fund_factor`; `rescore` rebuilds neither.
+const RESCORE_FIXED: [&str; 16] = [
     "backtest_anchor_windows",
     "backtest_tr_ruler",
     "drop_dead_ticker_series",
@@ -961,6 +963,8 @@ const RESCORE_FIXED: [&str; 14] = [
     "life_cagr_max_years",
     "endpoint_smooth_days",
     "fund_source",
+    "growth_event_months",
+    "growth_fund_factor",
 ];
 
 /// (#1227) One line of a [`write_samples`] dump, read back.
@@ -2267,6 +2271,7 @@ pub async fn run(args: Vec<String>) {
     // (#311)/(#312)/(#313) actually ship against) quietly unarmed.
     stamp_sector_cohorts(&mut books, &bench, tuning);
     stamp_top_dogs(&mut books); // (#1277) for the same reason
+    stamp_regime(&mut books, &bench); // (#1284) and the regime valve's, or an arm setting `growth_regime_slack_pct` prints the control's DCA lines
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
