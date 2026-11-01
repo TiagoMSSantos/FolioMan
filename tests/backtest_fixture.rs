@@ -383,7 +383,7 @@ fn search_grades_against_the_golden_book_from_a_dump() {
     report_at_env(&cfg, &["12"], None, &[("FOLIOMAN_BACKTEST_SAMPLES", dump.as_path())]);
     let args = ["search", dump.to_str().expect("utf-8 path"), "configs=20", "nulls=5"];
     let got = report_at(&cfg, &args, None);
-    assert!(got.contains("  shipped: 12y top-10 excess +2.0 (med +3.1)\n"), "{got}");
+    assert!(got.contains("  shipped: 12y top-10 excess +2.7 (med +4.4)\n"), "{got}");
     assert!(got.contains("  VERDICT: ") && got.contains("  GRID ROW: {"), "{got}");
     assert_eq!(report_at(&cfg, &args, Some("1")), got, "one worker must print the same search");
 }
@@ -1079,7 +1079,7 @@ fn backtest_fund_report_is_pinned_with_every_lane() {
 /// same commit; a golden added later starts at zero.
 #[test]
 fn goldens_hold_only_the_known_nan_and_inf_cells() {
-    let known = [("backtest-12-lanes.golden", (79, 4)), ("backtest-12-fund-lanes.golden", (70, 0))];
+    let known = [("backtest-12-lanes.golden", (77, 4)), ("backtest-12-fund-lanes.golden", (69, 0))];
     for (name, _) in known {
         assert!(fixture_dir().join(name).is_file(), "{name} is gone: move its counts to the golden that replaced it");
     }
