@@ -24776,6 +24776,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # SHIPPED 2026-11-01 at -0.3 on the owner's word, the middle of the plateau. Small on purpose: the live Stocks
 #   table carries no margin-trend column, most adjacent SCORE gaps are under 1.5, and the dock costs at most 3.
 
+# (#1290) TWO MORE FUND FACTORS, PRE-REGISTERED 2026-11-01 before any run. Measured, weighted nowhere until a
+#   grid row says so; nothing here reaches a score, a gate, rank, BUY NOW, size, trade or the broker.
+# WHAT: `FUND_FACTORS` 58 -> 60 (the goldens move; the next commit re-blesses them). Both read the name's own
+#   filings, so nothing is stamped across a cohort and live and backtest compute them the same way:
+#     ocf_at_chg  operating cash flow over total assets now, in %, minus the same a fiscal year back, in
+#                 points. OCF is the cash margin times revenue off the same filing. A rise from 8 % to 10 %
+#                 reads +2. None for a bank or insurer, a missing leg or a non-positive asset base.
+#     capex_abn   capex over revenue against its mean over the 3 fiscal years before, in %. Capex is the cash
+#                 margin minus the free-cash-flow margin. 10 % of sales after three years at 5 % reads +100.
+#                 None for a bank or insurer, unless all 4 years carry both legs and the mean is positive.
+# WHY: two forms the 52 earlier sweeps never priced, found walking the Jensen-Kelly-Pedersen and
+#   Chen-Zimmermann signal lists end to end. Cash return change: Bouchaud, Krueger, Landier and Thesmar,
+#   "Sticky Expectations and the Profitability Anomaly", Journal of Finance 74(2), 2019: a firm whose cash
+#   profitability just rose keeps beating, because forecasters update slowly. Abnormal capex: Titman, Wei and
+#   Xie, "Capital Investments and Stock Returns", Journal of Financial and Quantitative Analysis 39(4), 2004:
+#   firms that lift capex above their own habit trail afterwards, most where cash is plentiful. Offline, on
+#   1036 cached filers, ocf_at_chg ranks 0.32 with margin_trend (Spearman, pooled) and capex_abn -0.13, so
+#   neither is the shipped dock again.
+# BAR: the (#1287) bar and grid shape, plus the (#1289) robustness rule. Each row keeps the shipped roic and
+#   margin_trend terms and adds one: ocf_at_chg as a bonus (positive weight, the rising side only, cap 10,
+#   neutral 0) at 0.2, 0.5 and 1.0; capex_abn as a dock (negative weight, the above-habit side only, cap 100,
+#   neutral 0) at -0.02, -0.05 and -0.1. The paper's sign only. A factor passes when at least two
+#   neighbouring weights pass; one lone weight is not an edge.
+# EXPECTED, written before the run: ocf_at_chg partly undoes the margin_trend dock it ranks with and reads
+#   INERT or a split mean; capex_abn docks the big spenders the growth half buys and fails the 12y mean.
+# SHORTCUT: one fiscal year, not quarterly; capex comes from the two margins, so a filer without an FCF figure
+#   reads None. Titman-Wei-Xie's 3y mean is the paper's own form.
+# REVERT RULE: drop both names from `FUND_FACTORS` to restore 58; the fields can stay, read by nothing.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

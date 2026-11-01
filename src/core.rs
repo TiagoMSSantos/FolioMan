@@ -4322,6 +4322,12 @@ pub struct FundFactors {
     // series, so only the backtest fills it. Both PROBE-ONLY: live reads raw `underdep` and no `cgo`
     pub underdep: Option<f64>,
     pub cgo: Option<f64>,
+    // (#1290) two more AUC-table rows, weighted nowhere. `ocf_at_chg`: operating cash flow over assets
+    // now minus a fiscal year ago, points (high = the cash return on assets rose). `capex_abn`: this
+    // year's capex over revenue against its mean over the 3 fiscal years before, minus 1, % (high = the
+    // name invests above its own habit). Both off the as-of rows, no price; a bank or insurer reads None
+    pub ocf_at_chg: Option<f64>,
+    pub capex_abn: Option<f64>,
     pub exp_neg: Option<f64>,       // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
@@ -4746,6 +4752,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         (Some(a), Some(b)) => Some(a - b),
         _ => None,
     };
+    // (#1290) the two legs `ocf_at_chg` and `capex_abn` read: cash return on assets, %, and capex over revenue, %
+    let ocf_at = |r: Option<&FundRow>| {
+        r.filter(|r| !r.financial).and_then(|r| Some(r.ocf_margin? * r.revenue? / r.assets.filter(|a| *a > 0.0)?))
+    };
+    let capex_rev = |k: i64| back(k).and_then(|r| Some(r.ocf_margin? - r.fcf_margin?));
     // `yrs`-year EPS CAGR, CHAINED rather than taken end-to-end. The two endpoints come from two
     // filings written on two different share bases, so dividing them straddles every split in between:
     // TPL reads -21.0%/yr that way against +22.6%/yr real. Compounding each year's own same-filing
@@ -5006,6 +5017,15 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             (rev > 0.0).then(|| -da / rev * 100.0)
         }),
         cgo: None, // (#1287) needs the volume series
+        // (#1290) Bouchaud-Krueger-Landier-Thesmar 2019, the JKP `ocf_at_chg1` row: OCF = the cash margin
+        // times revenue, over the same filing's total assets, now against a fiscal year back
+        ocf_at_chg: ocf_at(now).zip(ocf_at(yr_ago)).map(|(a, b)| a - b),
+        // (#1290) Titman-Wei-Xie 2004: capex = OCF minus FCF, both % of the same filing's revenue. None
+        // unless all 4 fiscal years carry both legs and the 3y mean is positive
+        capex_abn: now.filter(|r| !r.financial).and_then(|_| {
+            let mean = (1..4).map(capex_rev).sum::<Option<f64>>()? / 3.0;
+            (mean > 0.0).then_some((capex_rev(0)? / mean - 1.0) * 100.0)
+        }),
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5807,6 +5827,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "eps_streak" => f.eps_streak,                     // (#1278) years of rising EPS, cap 8: measured, unweighted
         "underdep" => f.underdep,                         // (#1287) sector median minus own 3y D&A rate: measured, unweighted
         "cgo" => f.cgo,                                   // (#1287) capital-gains overhang, %: measured, unweighted
+        "ocf_at_chg" => f.ocf_at_chg,                     // (#1290) 1y change in OCF over assets, points: measured, unweighted
+        "capex_abn" => f.capex_abn,                       // (#1290) capex over revenue against its 3y mean, %: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6819,6 +6841,8 @@ mod tests {
             eps_streak: Some(56.0),
             underdep: Some(57.0),
             cgo: Some(58.0),
+            ocf_at_chg: Some(59.0),
+            capex_abn: Some(60.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6885,6 +6909,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "eps_streak"), Some(56.0)); // (#1278)
         assert_eq!(select_fund_factor(&f, "underdep"), Some(57.0)); // (#1287)
         assert_eq!(select_fund_factor(&f, "cgo"), Some(58.0)); // (#1287)
+        assert_eq!(select_fund_factor(&f, "ocf_at_chg"), Some(59.0)); // (#1290)
+        assert_eq!(select_fund_factor(&f, "capex_abn"), Some(60.0)); // (#1290)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -7794,6 +7820,41 @@ mod tests {
         assert_eq!(u(&[three[0].clone(), r(2022, 200.0, None), three[2].clone()]), None);
         assert_eq!(u(&three[1..]), None);
         assert_eq!(u(&[r(2021, 0.0, Some(1.0)), r(2022, 0.0, Some(1.0)), r(2023, 0.0, Some(1.0))]), None);
+    }
+
+    /// (#1290) `ocf_at_chg` is OCF over assets now minus a fiscal year back: a 20% cash margin on 100 of
+    /// revenue over 200 of assets is 10, and 15% the year before is 7.5, so 2.5 points. `capex_abn` is
+    /// capex over revenue (OCF minus FCF margin) against its 3y mean: 10 over a 5 mean reads +100%. A
+    /// financial row, a missing leg, fewer than 4 years or a non-positive mean is None.
+    #[test]
+    fn ocf_change_and_abnormal_capex_read_own_history() {
+        let r = |y: i32, ocf: f64, fcf: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(100.0),
+            assets: Some(200.0),
+            ocf_margin: Some(ocf),
+            fcf_margin: fcf,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let f = |rows: &[FundRow]| {
+            let x = fund_factors(rows, cutoff, 5);
+            (x.ocf_at_chg, x.capex_abn)
+        };
+        let four = [r(2020, 15.0, Some(10.0)), r(2021, 15.0, Some(10.0)), r(2022, 15.0, Some(10.0)), r(2023, 20.0, Some(10.0))];
+        let (o, c) = f(&four);
+        assert!((o.unwrap() - 2.5).abs() < 1e-9);
+        assert!((c.unwrap() - 100.0).abs() < 1e-9);
+        let bank: Vec<FundRow> = four.iter().map(|x| FundRow { financial: true, ..x.clone() }).collect();
+        assert_eq!(f(&bank), (None, None));
+        assert_eq!(f(&[four[0].clone(), four[1].clone(), r(2022, 15.0, None), four[3].clone()]).1, None, "a year missing FCF");
+        let (o, c) = f(&four[1..]);
+        assert!((o.unwrap() - 2.5).abs() < 1e-9, "the change needs only two years");
+        assert_eq!(c, None, "the mean needs three earlier years");
+        let flat = [r(2020, 10.0, Some(10.0)), r(2021, 10.0, Some(10.0)), r(2022, 10.0, Some(10.0)), r(2023, 20.0, Some(10.0))];
+        assert_eq!(f(&flat).1, None, "a zero capex mean is no ratio");
+        assert_eq!(f(&[FundRow { assets: Some(0.0), ..four[2].clone() }, four[3].clone()]).0, None, "a zero asset base");
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of

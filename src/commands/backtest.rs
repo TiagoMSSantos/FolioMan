@@ -4488,7 +4488,7 @@ fn band_verdict(lo: f64) -> &'static str {
     }
 }
 
-const FUND_FACTORS: [&str; 58] = [
+const FUND_FACTORS: [&str; 60] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Bonferroni haircut below divides by FUND_FACTORS.len(), so
@@ -4535,6 +4535,8 @@ const FUND_FACTORS: [&str; 58] = [
     "eps_streak",           // (#1278) fiscal years of rising EPS in a row, cap 8; 55 -> 56
     "underdep",             // (#1287) Peddireddy 2021 under-depreciation: sector median minus own 3y D&A rate; 56 -> 57
     "cgo",                  // (#1287) Grinblatt-Han 2005 capital-gains overhang over the turnover-weighted 5y price; 57 -> 58
+    "ocf_at_chg",           // (#1290) Bouchaud-Krueger-Landier-Thesmar 2019 change in cash return on assets; 58 -> 59
+    "capex_abn",            // (#1290) Titman-Wei-Xie 2004 capex over revenue against its 3y mean; 59 -> 60
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
