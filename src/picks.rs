@@ -2156,7 +2156,9 @@ pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))
         ("cagr", "growth_min_cagr -4", |t| t.growth_min_cagr -= 4.0),
         ("1Y+", "growth_min_1y_pct -10", |t| t.growth_min_1y_pct -= 10.0), // restored with the knob: round 5 measured this exact row at n=284 / -108.1 pts fwd and reverted the loosened floor. Re-measured here on the current sample instead of quoted — a POSITIVE flip is the only thing that reopens the question
         ("1M-knife", "max_1m_drop_pct -10 (deeper)", |t| t.max_1m_drop_pct -= 10.0),
-        ("liquidity", "min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
+        // (#1281) a stock reads its OWN floor (`turnover_floor`), so zeroing only the shared knob loosened nothing on
+        // the equity lane. Both go to 0, as `waive_gate` does; the label stays so the backtest rows keep their name.
+        ("liquidity", "min_avg_turnover_eur ->0", |t| (t.min_avg_turnover_eur, t.min_avg_turnover_eur_stock) = (0.0, 0.0)),
         ("stretch", "growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
         ("lifetime", "growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
         ("maxdd", "growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
@@ -3185,13 +3187,16 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         "no company filings (funds and coins have none)"));
     for t in &tuning.growth_fund_extra {
         let v = quote.fund.as_ref().and_then(|f| crate::core::select_fund_factor(f, &t.factor));
-        let shown = v.map_or_else(|| "n/a".to_string(), |v| format!("{v:.1}"));
+        // (#1281) a missing factor scores the same fill the ranked sum adds (`missing_fundamental`), so the
+        // row prints that number instead of a 0 the fund total above never used
+        let fill = v.unwrap_or_else(|| missing_fundamental(quote, tuning, t.neutral));
+        let shown = v.map_or_else(|| format!("n/a={fill:.1}"), |v| format!("{v:.1}"));
         s.push_str(&format!(
             "      + {:<16} {:.2} × {:<21} = {:.2}\n",
             t.factor,
             t.weight,
             format!("clamp({shown}, 0, {:.0})", t.cap),
-            t.weight * v.unwrap_or(0.0).clamp(0.0, t.cap)
+            t.weight * fill.clamp(0.0, t.cap)
         ));
         say(&mut s, &format!("  {}: {}, counted up to {:.0}.", t.factor, factor_words(&t.factor), t.cap));
     }
@@ -7787,7 +7792,7 @@ mod tests {
         assert_eq!(got, want.map(|(l, k, v)| (l, k.to_string(), v)));
     }
 
-    /// (#324) Each notch moves exactly ONE knob, by exactly its label's amount. Every gate is armed first (the code
+    /// (#324) Each notch moves exactly ONE knob (liquidity two, (#1281): the stock floor too), by exactly its label's amount. Every gate is armed first (the code
     /// defaults leave several off, where a notch would move nothing), and the tuning is diffed as JSON so a notch
     /// that touched a second field shows up too.
     #[test]
@@ -7798,6 +7803,7 @@ mod tests {
             growth_min_1y_pct: 0.0,
             max_1m_drop_pct: -25.0,
             min_avg_turnover_eur: 500_000.0,
+            min_avg_turnover_eur_stock: 100_000.0,
             growth_max_above_ma: 150.0,
             growth_require_lifetime_uptrend: true,
             growth_maxdd_cap: -84.0,
@@ -7825,6 +7831,8 @@ mod tests {
             ("1Y+", "growth_min_1y_pct", serde_json::json!(-10.0)),
             ("1M-knife", "max_1m_drop_pct", serde_json::json!(-35.0)),
             ("liquidity", "min_avg_turnover_eur", serde_json::json!(0.0)),
+            // (#1281) the one row that moves TWO knobs: the stock floor is the liquidity gate too.
+            ("liquidity", "min_avg_turnover_eur_stock", serde_json::json!(0.0)),
             ("stretch", "growth_max_above_ma", serde_json::json!(0.0)),
             ("lifetime", "growth_require_lifetime_uptrend", serde_json::json!(false)),
             ("maxdd", "growth_maxdd_cap", serde_json::json!(0.0)),
@@ -11127,6 +11135,18 @@ mod tests {
         let b = ex(&young, &BuyHeuristic { growth_bubble_weight: 1.0, ..d.clone() }, 0.0);
         assert!(b.contains("bubble       =") && b.contains("Run-up warning signs: young."), "(#1136) {b}");
         assert!(ex(&q, &d, 1.0).contains("crypto NUPL"), "a displayed value off the score says why");
+    }
+
+    #[test]
+    fn explain_fund_extra_row_prints_the_missing_fill() {
+        // (#1281) a filer with no roic scores the 20.0 fill, so its explain row must print 0.25 × 20 = 5.00, not 0.00
+        let q = Quote { fund: None, ..gate_fixture() };
+        let t = BuyHeuristic {
+            growth_fund_extra: vec![crate::config::FundTerm { factor: "roic".into(), weight: 0.25, cap: 40.0, neutral: 20.0 }],
+            ..BuyHeuristic::default()
+        };
+        let s = explain_growth_score(&q, &t, growth_score(&q, &t).unwrap()).unwrap();
+        assert!(s.contains("clamp(n/a=20.0, 0, 40) = 5.00"), "{s}");
     }
 
     #[test]
