@@ -20829,9 +20829,9 @@ buy_heuristic:
       # is the fixture declining to answer. A term's real grade needs `backtest universe`.
       neutral: 17.3
     - factor: margin_trend   # (#1289) the margin-trend dock; receipt in the (#1289) block
-      weight: -0.3
-      cap: 10.0
-      neutral: 0.0
+      weight: -0.3           # (#1289) -0.2, -0.5 and -1.0 also pass; -0.1 is inert
+      cap: 10.0              # (#1289) a rise past 10 points costs no more, so the dock tops out at 3
+      neutral: 0.0           # (#1289) a missing trend costs nothing
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
