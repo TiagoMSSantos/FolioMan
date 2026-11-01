@@ -1935,6 +1935,7 @@ sizing:
   #  value floor (PEG trim) / brake alone / gate dock alone / brake + dock / score blind (under the cut with
   #  both off). `gap` = own CAGR minus the window's book CAGR, pts/yr. `all` = every stock of that kind, the
   #  cost side: what releasing the whole kind would buy.
+  #  (#1283) The value floor kind is gone: the backtest no longer trims by PEG, so it always read empty.
   #  RUNS 2026-10-14 at cf85aed: pit 38619488958, stress 38619503398, shipped settings, 8/12/20y. Windows
   #  scored match the (#582) control (pit 6163/2779/1119, stress 9015/5078/2541). Winners are 5.3-5.7% of
   #  stocks (5% plus ties).
@@ -19430,6 +19431,11 @@ buy_heuristic:
   #   to beat off on BOTH moments at 8y AND 12y, or where the worst window at 40 comes in deeper than
   #   off at either. A single horizon regressing is a re-open, not a revert.
   growth_value_floor_pct: 40.0
+  # (#1283) 2026-11-01 — DISPLAY ONLY, VALUE UNCHANGED AT 40.0. The owner's call: the brake hides rows from
+  #   the Stocks table and never changes a buy. Every grid above graded a braked book, while the buy list,
+  #   BUY%, `size`, `trade` and `track` buy the unbraked ranked book (the (#265) gap below). The backtest now
+  #   grades that bought book: `value_floor_trim` only buckets, and `search` no longer scales this knob. The
+  #   REVERT RULE above has nothing left to read; the PEG-VALUE-GATE probe still prices the cut as a what-if.
   # (#265) 2026-09-08 — THE BRAKE IS NOT THE BUG; ITS SILENCE WAS. VALUE UNCHANGED AT 40.0.
   #   WHAT WAS FOUND. `render` journals the top-`top_picks` of the UNTRIMMED `ranked` list, while every
   #   printed table comes from `lane_split`, which applies THIS brake plus the (#41) redundancy skip and

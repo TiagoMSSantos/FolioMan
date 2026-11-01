@@ -1023,15 +1023,15 @@ fn load_dump(dump: &str) -> (i64, (Vec<chrono::NaiveDate>, Vec<f64>), Vec<Sample
 
 /// (#1239) The knobs `search` scales beside the 13 [`picks::WEIGHT_DIMS`] weights: each cap, exponent and
 /// floor that shapes a score or trims the cohort without gating a name out on its own. Same (label, get,
-/// set) shape as the weights. A knob that ships at 0 stays 0, as a weight does.
-const CAP_DIMS: [picks::WeightDim; 7] = [
+/// set) shape as the weights. A knob that ships at 0 stays 0, as a weight does. (#1283) The value brake
+/// left the list: it no longer trims the graded book, so scaling it moves nothing.
+const CAP_DIMS: [picks::WeightDim; 6] = [
     ("sharpe_cap", |t| t.sharpe_cap, |t, v| t.sharpe_cap = v),
     ("long_trend_cap", |t| t.long_trend_cap, |t, v| t.long_trend_cap = v),
     ("growth_accel_cap", |t| t.growth_accel_cap, |t, v| t.growth_accel_cap = v),
     ("growth_trust_exp", |t| t.growth_trust_exp, |t, v| t.growth_trust_exp = v),
     ("growth_overext_exp", |t| t.growth_overext_exp, |t, v| t.growth_overext_exp = v),
     ("growth_overext_floor", |t| t.growth_overext_floor, |t, v| t.growth_overext_floor = v),
-    ("growth_value_floor_pct", |t| t.growth_value_floor_pct, |t, v| t.growth_value_floor_pct = v),
 ];
 
 /// (#1239) The two [`picks::gate_notches`] rows `search` never draws: both gate on a field every backtest
@@ -1094,8 +1094,8 @@ fn shuffled(samples: &[Sample], seed: u64) -> Vec<f64> {
 }
 
 /// (#1239) Per bucket, oldest first, the sample indices the top-10 book holds under `tuning`, by the
-/// row's own path in [`report_vs_benchmark`]: crypto out, a scored name with an index leg, the (#75) value
-/// brake, a stable sort on score. The sector and corr caps are left out; `search` refuses a config that
+/// row's own path in [`report_vs_benchmark`]: crypto out, a scored name with an index leg, a stable sort
+/// on score ((#1283) no value brake: the bought book is unbraked). The sector and corr caps are left out; `search` refuses a config that
 /// arms either. `bench_r` is each sample's index leg, NaN where it has none. Picking never reads
 /// `realized`, so one book prices every shuffle of it.
 fn top_books(samples: &[Sample], bench_r: &[f64], tuning: &BuyHeuristic, scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>) -> Vec<Vec<usize>> {
@@ -5011,12 +5011,10 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         println!("{line}");
         return;
     }
-    // (#75) VALUE BRAKE — the GRADED twin of the `picks::lane_split` trim, sharing `core::pct_floor` so
-    // the served rule and the measured one cannot drift ((#3j)). It has to run HERE, on the cohort and
-    // before any ranking, for the same reason it runs where it does live: it changes WHO IS IN the pool,
-    // so the top-N table AND the rank-slice ladder below must both see the trimmed cohort — grading one
-    // on a pool the other never saw is how a knob ships on a number nothing served. BTreeMap -> buckets
-    // iterate in chronological order, so the OOS split below is early-vs-late in time.
+    // (#75) The value brake used to trim the cohort here, as the graded twin of the `picks::lane_split`
+    // trim. (#1283) It trims nothing now: live, the brake only hides rows, and the buy list takes the
+    // unbraked book, so this grades that book. BTreeMap -> buckets iterate in chronological order, so the
+    // OOS split below is early-vs-late in time.
     let by_bucket = value_floor_trim(&rows, tuning.growth_value_floor_pct);
     println!(
         "\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs {bench_sym}){} ──",
@@ -5272,38 +5270,15 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     println!("   NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)");
 }
 
-/// (#75) The value brake's cohort trim, pure for testability for a reason worth recording: its first
-/// mutation audit reported SIX survivors on the two comparisons below, and every one of them was
-/// unkillable rather than merely unkilled. [`report_vs_benchmark`] returns `()` and only prints, and
-/// only the fund goldens run the `fund` lane this brake needs to see a single `peg_yield` (frozen SEC
-/// rows since (#364)), which the gate skips ((#590)), so no test it runs could reach the comparisons
-/// in place. Split out, they take arguments and answer with a value, which is the whole difference.
-/// ((#997) this used to say the knob ships at `0.0`, true until (#126) shipped 40.0, and that `fund`
-/// cannot run offline.)
-///
-/// ONE FLOOR PER BUCKET, never pooled: the floor is a cross-sectional statement about a single
-/// rebalance window, and a pooled percentile would let a cheap 2009 cohort exile an expensive 2021 one
-/// wholesale. Computed once per bucket rather than per row — `pct_floor` sorts, and the 20y run carries
-/// ~20k rows. There is deliberately NO `pct > 0.0` guard: `pct_floor` already answers `None` at or
-/// below zero, so the guard was a second copy of that decision, and at the shipped default it was
-/// invisible to any test — three of those six survivors were nothing but its redundancy.
-///
-/// Names with no `peg_yield` are KEPT — unjudgeable is not a verdict, matching the live site and the
-/// `drop_bottom_book` probe this knob came from. `< floor` rejects, so the boundary matches that
-/// probe's `if v < t { skip }` and at reject-P this book reproduces the PEG-VALUE-GATE probe's own row.
-fn value_floor_trim(rows: &[(i32, f64, f64, f64, String, Option<f64>)], pct: f64) -> BTreeMap<i32, Vec<(f64, f64, f64, String)>> {
-    let mut by_peg: BTreeMap<i32, Vec<f64>> = BTreeMap::new();
-    for (b, _, _, _, _, peg) in rows {
-        by_peg.entry(*b).or_default().extend(peg);
-    }
-    let floors: BTreeMap<i32, Option<f64>> = by_peg.into_iter().map(|(b, vals)| (b, core::pct_floor(vals, pct))).collect();
+/// (#75) The scored rows by bucket, in row order. Until (#1283) this also cut each bucket's
+/// dearest-for-their-growth `pct`% by `peg_yield` (the value brake), but the tool never buys that cut:
+/// `picks::lane_split` only hides the braked rows from the Stocks table, while the buy list, BUY%,
+/// `size`, `trade` and `track` take the unbraked ranked book (the `b` rows). A trimmed cohort graded a
+/// book nobody buys, so nothing is cut here now. `pct` and the PEG column stay so every caller keeps one
+/// shape; the PEG-VALUE-GATE probe still prices the cut as a what-if.
+fn value_floor_trim(rows: &[(i32, f64, f64, f64, String, Option<f64>)], _pct: f64) -> BTreeMap<i32, Vec<(f64, f64, f64, String)>> {
     let mut by_bucket: BTreeMap<i32, Vec<(f64, f64, f64, String)>> = BTreeMap::new();
-    for (b, sc, pc, spc, tk, peg) in rows {
-        if let (Some(Some(f)), Some(v)) = (floors.get(b), peg) {
-            if v < f {
-                continue; // dearest for its growth in THIS window -> the brake rejects it
-            }
-        }
+    for (b, sc, pc, spc, tk, _) in rows {
         by_bucket.entry(*b).or_default().push((*sc, *pc, *spc, tk.clone()));
     }
     by_bucket
@@ -5484,7 +5459,7 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 }
 
 /// (#560) The `rivals` books, in print order. Row 0 is the shipped score picked by the same plain
-/// top-10 as every rival, so the comparison is like for like; the real shipped row (value trim, caps)
+/// top-10 as every rival, so the comparison is like for like; the real shipped row (caps)
 /// prints above it in `report_vs_benchmark` and is what the 6-cell tally reads. (e), the random pond,
 /// prints last from [`random_books`]. (#571) (h)/(i) rank on `tr_cagr`, the TR-CAGR column's as-of number;
 /// (i) keeps only names with a 10Y leg, since `age_years` is None on a backtest quote. (#584) (j) is
@@ -5816,10 +5791,9 @@ fn p_at_least(draws: &[f64], x: f64) -> f64 {
 }
 
 /// (#583) The `winners` report's rows, in print order. [`winner_leaks`] files every stock under exactly one.
-const LEAK_KINDS: [&str; 7] = [
+const LEAK_KINDS: [&str; 6] = [
     "held (in the top-10 book)",
     "refused (no score)",
-    "value floor (PEG trim)",
     "brake alone",
     "gate dock alone",
     "brake + dock",
@@ -5839,26 +5813,23 @@ struct Leak {
 }
 
 /// (#583) Files each window's stocks by what keeps them out of the shipped top-10 book. The book is the
-/// shipped lane's: the scored rows, the (#75) value trim, the top [`VERDICT_TOP`] by score, and the cut
-/// is its 10th score. A stock outside it is refused (no score), trimmed, or a what-if on its OWN score
+/// shipped lane's: the scored rows, the top [`VERDICT_TOP`] by score, and the cut is its 10th score
+/// ((#1283) the value brake trims nothing the tool buys). A stock outside it is refused (no score), or a what-if on its OWN score
 /// against that cut with every other name held still: the brake off (`growth_overext_cap` 0), the soft
 /// dock off (`growth_gate_soft` 1), or both. Still under the cut with both off, or already at it and
 /// out on the stable sort's order, it is score blind. Winners are the top `top_pct`% of the window's
-/// stocks by realized %, ties at the bar included. Groups are (quote, realized %, PEG yield) per bucket.
+/// stocks by realized %, ties at the bar included. Groups are (quote, realized %) per bucket.
 /// Report only.
 // shortcut: skips the sector and corr caps the main book runs; both are the identity at their shipped 0.
-fn winner_leaks(groups: &BTreeMap<i32, Vec<(&Quote, f64, Option<f64>)>>, years: i64, top_pct: f64, tuning: &BuyHeuristic) -> [Leak; 7] {
-    let mut out: [Leak; 7] = Default::default();
+fn winner_leaks(groups: &BTreeMap<i32, Vec<(&Quote, f64)>>, years: i64, top_pct: f64, tuning: &BuyHeuristic) -> [Leak; 6] {
+    let mut out: [Leak; 6] = Default::default();
     let brake = BuyHeuristic { growth_overext_cap: 0.0, ..tuning.clone() };
     let dock = BuyHeuristic { growth_gate_soft: 1.0, ..tuning.clone() };
     let both = BuyHeuristic { growth_gate_soft: 1.0, ..brake.clone() };
-    for (b, group) in groups {
+    for group in groups.values() {
         let quotes: Vec<&Quote> = group.iter().map(|g| g.0).collect();
         let [sh, br, dk, bo] = [tuning, &brake, &dock, &both].map(|t| picks::growth_scores_ranked(&quotes, t));
-        let rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> =
-            group.iter().zip(&sh).filter_map(|(g, s)| Some((*b, (*s)?, g.1, 0.0, g.0.ticker.clone(), g.2))).collect();
-        let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(b).unwrap_or_default();
-        let survived: HashSet<String> = kept.iter().map(|r| r.3.clone()).collect();
+        let mut kept: Vec<(f64, f64, String)> = group.iter().zip(&sh).filter_map(|(g, s)| Some(((*s)?, g.1, g.0.ticker.clone()))).collect();
         kept.sort_by(|x, y| y.0.total_cmp(&x.0)); // score desc, stable like the shipped book
         kept.truncate(VERDICT_TOP);
         if kept.is_empty() {
@@ -5866,28 +5837,26 @@ fn winner_leaks(groups: &BTreeMap<i32, Vec<(&Quote, f64, Option<f64>)>>, years: 
         }
         let cut = kept.get(VERDICT_TOP - 1).map_or(f64::NEG_INFINITY, |r| r.0);
         let book = ann((kept.iter().map(|r| 1.0 + r.1 / 100.0).sum::<f64>() / kept.len() as f64 - 1.0) * 100.0, years);
-        let held: HashSet<&str> = kept.iter().map(|r| r.3.as_str()).collect();
+        let held: HashSet<&str> = kept.iter().map(|r| r.2.as_str()).collect();
         let stocks: Vec<usize> = (0..group.len()).filter(|&i| picks::asset_class(group[i].0) == 2).collect();
         let Some(bar) = winner_bar(stocks.iter().map(|&i| group[i].1).collect(), top_pct) else { continue };
         let reach = |s: Option<f64>| s.is_some_and(|s| s >= cut);
         for i in stocks {
-            let (q, realized, _) = group[i];
+            let (q, realized) = group[i];
             let kind = if held.contains(q.ticker.as_str()) {
                 0
             } else if sh[i].is_none() {
                 1
-            } else if !survived.contains(&q.ticker) {
-                2
             } else if reach(sh[i]) {
-                6 // at the cut, out on the sort's order
+                5 // at the cut, out on the sort's order
             } else if reach(br[i]) {
-                3
+                2
             } else if reach(dk[i]) {
-                4
+                3
             } else if reach(bo[i]) {
-                5
+                4
             } else {
-                6
+                5
             };
             let leak = &mut out[kind];
             let excess = ann(realized, years) - book;
@@ -5917,7 +5886,7 @@ fn winner_bar(mut fwd: Vec<f64>, top_pct: f64) -> Option<f64> {
 }
 
 /// (#606) The winners the shipped BLEND holds. Per bucket, each ticker's latest cutoff. The score half is the
-/// score order after the (#75) value trim; the momentum half fills from [`momentum_ranked`] over the `open`
+/// score order; the momentum half fills from [`momentum_ranked`] over the `open`
 /// pond. (#630) [`blend_sides`] splices them as the page and the 20y DCA `blend` lane do, `growth_momentum_slots`
 /// of every 10 places the momentum half's, where it was the top `VERDICT_TOP - growth_momentum_slots` score names
 /// then momentum's. Winners are the top `top_pct`% stocks by realized %, as in [`winner_leaks`]. Returns the
@@ -5956,7 +5925,7 @@ fn blend_winners<'a>(
 }
 
 /// (#821) One bucket's published blend book, as [`blend_winners`] reads it. `by_tk` holds each ticker's latest
-/// sample. The score half is the score order after the (#75) value trim; the momentum half fills from
+/// sample. The score half is the score order; the momentum half fills from
 /// [`momentum_ranked`] over the `open` pond; [`blend_sides`] splices them, true = momentum's.
 // shortcut: skips the sector and corr caps the DCA lane runs; both are the identity at their shipped 0.
 fn blend_book<'a>(
@@ -5983,10 +5952,10 @@ fn report_winners(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)
     if bd.len() < 2 {
         return;
     }
-    let mut groups: BTreeMap<i32, Vec<(&Quote, f64, Option<f64>)>> = BTreeMap::new();
+    let mut groups: BTreeMap<i32, Vec<(&Quote, f64)>> = BTreeMap::new();
     let mut pools: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
     for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0 && benchmark_fwd(bd, bc, s.date, years).is_some()) {
-        groups.entry(bucket(s.date)).or_default().push((s.quote.as_ref(), s.realized, s.fund.as_ref().and_then(|f| f.peg_yield)));
+        groups.entry(bucket(s.date)).or_default().push((s.quote.as_ref(), s.realized));
         pools.entry(bucket(s.date)).or_default().push(s);
     }
     let leaks = winner_leaks(&groups, years, WINNER_TOP_PCT, tuning);
@@ -7821,6 +7790,10 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     // Note the same factor is ALSO alive as a RANK TILT in the same run (peg_yield is the shipped
     // `growth_fund_factor`) — cutting the dear names and ranking by cheapness are different questions,
     // and as of (#126) both of them pay.
+    //
+    // (#1283) THOSE GRIDS GRADED A BOOK NOBODY BOUGHT. Live, the brake only hides rows from the Stocks
+    // table; the buy list, BUY%, `size`, `trade` and `track` buy the unbraked ranked book. So the main
+    // book above no longer trims, and this probe is the one place the cut is still priced, as a what-if.
     let has_peg = samples.iter().any(|s| s.fund.as_ref().and_then(|f| f.peg_yield).is_some());
     if has_peg {
         println!("\n── PEG-VALUE-GATE probe: drop the most-expensive-for-growth P% (low peg_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
@@ -10938,45 +10911,17 @@ mod tests {
         assert!(merge_coin_cohort(&mut none, &coins, |_| None, &tuning).is_empty() && none.is_empty());
     }
 
-    /// (#75) The value brake's graded trim, on two buckets whose peg cohorts do not overlap at all —
-    /// bucket 1 spans 10..50, bucket 2 spans 100..500. That gap is the whole point: a POOLED percentile
-    /// would floor both at 50 and so cut nothing from bucket 2 while gutting bucket 1, which is the one
-    /// way this brake could quietly stop being cross-sectional. The boundary name (peg exactly ON the
-    /// floor) is kept, matching `drop_bottom_book`'s `if v < t { skip }`, and the unjudgeable name is
-    /// kept because unjudgeable is not a verdict.
+    /// (#1283) The value brake no longer trims the graded book: at the shipped 40 every bucket keeps
+    /// every scored row in row order, the dearest-for-their-growth and the unjudgeable names included,
+    /// because the tool buys that unbraked book.
     #[test]
-    fn value_floor_trims_each_bucket_against_its_own_cohort() {
+    fn value_floor_trim_keeps_every_row_per_bucket() {
         let row = |b: i32, tk: &str, peg: Option<f64>| (b, 1.0, 2.0, 3.0, tk.to_string(), peg);
-        let rows = vec![
-            row(1, "P10", Some(10.0)),
-            row(1, "P20", Some(20.0)),
-            row(1, "P30", Some(30.0)),
-            row(1, "P40", Some(40.0)),
-            row(1, "P50", Some(50.0)),
-            row(1, "NOPEG", None),
-            row(2, "Q100", Some(100.0)),
-            row(2, "Q200", Some(200.0)),
-            row(2, "Q300", Some(300.0)),
-            row(2, "Q400", Some(400.0)),
-            row(2, "Q500", Some(500.0)),
-        ];
-        let names = |m: &BTreeMap<i32, Vec<(f64, f64, f64, String)>>, b: i32| -> Vec<String> {
-            m.get(&b).map(|v| v.iter().map(|(_, _, _, t)| t.clone()).collect()).unwrap_or_default()
-        };
-        let off = value_floor_trim(&rows, 0.0);
-        assert_eq!(names(&off, 1), ["P10", "P20", "P30", "P40", "P50", "NOPEG"], "0 = off, the cohort is untouched");
-        assert_eq!(names(&off, 2), ["Q100", "Q200", "Q300", "Q400", "Q500"], "0 = off in every bucket, not just the first");
-        let cut = value_floor_trim(&rows, 40.0);
-        assert_eq!(
-            names(&cut, 1),
-            ["P30", "P40", "P50", "NOPEG"],
-            "floor = the 40th pct of THIS bucket (30): dearest-for-their-growth go, the name sitting exactly ON the floor stays, unjudgeable stays"
-        );
-        assert_eq!(
-            names(&cut, 2),
-            ["Q300", "Q400", "Q500"],
-            "bucket 2 is floored at 300 by its OWN cohort — pooled, it would floor at 50 and cut nobody"
-        );
+        let rows = vec![row(1, "P50", Some(50.0)), row(2, "Q100", Some(100.0)), row(1, "NOPEG", None), row(1, "P10", Some(10.0))];
+        let got = value_floor_trim(&rows, 40.0);
+        let names = |b: i32| -> Vec<&str> { got[&b].iter().map(|r| r.3.as_str()).collect() };
+        assert_eq!((names(1), names(2), got.len()), (vec!["P50", "NOPEG", "P10"], vec!["Q100"], 2));
+        assert_eq!(got[&1][0], (1.0, 2.0, 3.0, "P50".to_string()), "score, realized and index legs ride along");
     }
 
     #[test]
@@ -11495,8 +11440,8 @@ mod tests {
     }
 
     /// (#583) Every stock lands in exactly one leak row, and only winners carry tags. Bucket 1 holds a
-    /// clean top-10 (C0..C9, C1/C2 dear-ish but over the PEG floor), a clean C10 at the cut that loses on
-    /// sort order, and one leaker per row; bucket 2 books nobody, so it files nothing.
+    /// clean top-10 (C0..C9), clean C10 and VAL at the cut that lose on sort order, and one leaker per
+    /// row; bucket 2 books nobody, so it files nothing.
     #[test]
     fn winner_leaks_file_each_stock_by_what_keeps_it_out() {
         let legs = |pairs: &[(&str, f64)]| -> Vec<Option<(String, f64)>> {
@@ -11506,6 +11451,7 @@ mod tests {
                 .collect()
         };
         let t = BuyHeuristic { growth_gate_soft: 0.8, growth_min_age_years: 10.0, growth_value_floor_pct: 40.0, ..Default::default() };
+        // (#1283) the value brake is armed and trims nothing: VAL, the dearest PEG once, is filed by its score
         let q = |tk: &str| {
             let mut q = Quote::stub(tk, "€100.00", "", "Test Corp");
             q.instrument_type = "EQUITY".into();
@@ -11549,18 +11495,17 @@ mod tests {
         }
         assert!(growth_score(&blind, &t).is_some() && !at(&blind, &free), "still under the cut with both off");
 
-        let mut b1: Vec<(&Quote, f64, Option<f64>)> = clean.iter().zip([1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -50.0]).map(|(c, r)| (c, r, None)).collect();
-        (b1[1].2, b1[2].2) = (Some(5.0), Some(5.0));
+        let mut b1: Vec<(&Quote, f64)> = clean.iter().zip([1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -50.0]).collect();
         b1.extend([
-            (&refused, 900.0, None),
-            (&brk, 800.0, None),
-            (&dock, 700.0, None),
-            (&both, 600.0, None),
-            (&blind, 500.0, None),
-            (&val, 400.0, Some(1.0)), // under the 40th-pct PEG floor of [1, 5, 5]
-            (&fund, 5000.0, None),    // not a stock, so never filed and never a winner
+            (&refused, 900.0),
+            (&brk, 800.0),
+            (&dock, 700.0),
+            (&both, 600.0),
+            (&blind, 500.0),
+            (&val, 400.0),   // at the cut past the 10th slot: score blind, like C10
+            (&fund, 5000.0), // not a stock, so never filed and never a winner
         ]);
-        let groups = BTreeMap::from([(1, b1), (2, vec![(&ref2, 999.0, None)])]);
+        let groups = BTreeMap::from([(1, b1), (2, vec![(&ref2, 999.0)])]);
         // 17 stocks, top 40% -> 7 winners down to VAL's 400; the book's multiple is (11 + 9) / 10 = 2, +100%
         let got = winner_leaks(&groups, 1, 40.0, &t);
         let tags = |xs: &[&'static str]| xs.iter().map(|x| (*x, 1)).collect::<BTreeMap<_, _>>();
@@ -11574,11 +11519,10 @@ mod tests {
             [
                 leak(held, vec![900.0], tags(&[])),
                 leak(vec![800.0], vec![800.0], tags(&["no-turnover"])),
-                leak(vec![300.0], vec![300.0], tags(&[])),
                 leak(vec![700.0], vec![700.0], tags(&[])),
                 leak(vec![600.0], vec![600.0], tags(&["young"])),
                 leak(vec![500.0], vec![500.0], tags(&["young"])),
-                leak(vec![-150.0, 400.0], vec![400.0], tags(&blind_tags)),
+                leak(vec![-150.0, 400.0, 300.0], vec![400.0, 300.0], tags(&blind_tags)),
             ]
         );
     }

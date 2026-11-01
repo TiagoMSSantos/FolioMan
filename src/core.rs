@@ -654,9 +654,9 @@ pub fn decorrelate_keep(trails: &[&[f64]], n: usize, cap: f64) -> Vec<usize> {
     kept
 }
 
-/// (#75) Cross-sectional P-th percentile FLOOR over one cohort's values — the shared definition behind
-/// the live `growth_value_floor_pct` trim (`picks::lane_split`) and the backtest's graded twin
-/// (`report_vs_benchmark`), so the brake that ships and the brake that was measured cannot drift. Same
+/// (#75) Cross-sectional P-th percentile FLOOR over one cohort's values — behind the live
+/// `growth_value_floor_pct` display trim (`picks::lane_split`). (#1283) The backtest's twin trim is gone:
+/// the bought book is unbraked, so that is the book graded. Same
 /// bargain as `decorrelate_keep` above: the shared fn owns the arithmetic and returns a plain number,
 /// the callers keep their own row types. `None` = nothing to cut (knob off, or a cohort where nobody
 /// carries the factor), and the caller then filters nothing rather than filtering everything.

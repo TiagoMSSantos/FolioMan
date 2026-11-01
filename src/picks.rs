@@ -4527,20 +4527,15 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     // bypass BOTH the score trim and the sector filter (`|| pinned`) — they're always shown.
     let keep = |quote: &Quote, s: f64, floor: f64, sector_ok: bool| (s > floor && sector_ok) || pinned.contains(quote.ticker.as_str());
     let stock: Vec<_> = stock.into_iter().filter(|(quote, s)| keep(quote, *s, min_score, true)).collect();
-    // (#75) VALUE BRAKE, stocks only, and (#816) deliberately BEFORE the redundancy skip, the order the
-    // graded twin runs (`value_floor_trim` on the cohort, then `corr_cap_rung`): the skip stops at `n`, so
-    // running it first left the brake nothing to refill from. Both are cohort-aware post-rank trims, both
+    // (#75) VALUE BRAKE, stocks only, and (#816) deliberately BEFORE the redundancy skip: the skip stops
+    // at `n`, so running it first left the brake nothing to refill from. (#1283) DISPLAY ONLY: the buy
+    // list takes the unbraked ranked book, and the backtest grades that book, not this trim. Both are cohort-aware post-rank trims, both
     // sit after the score/sector cut and before the table is cut to `n`. Cut the dearest-for-their-growth
     // `growth_value_floor_pct`% by `fund.peg_yield` — a CROSS-SECTIONAL floor over this table's own rows, not an absolute PEG,
     // because `growth_max_peg` already owns the absolute ceiling and the question here is "dearest OF THE
     // SURVIVORS". Names with no peg_yield are KEPT: unjudgeable is not a verdict, the same house rule the
     // gate above follows, and what makes this equity-only for free. Pinned tickers bypass it like every
-    // other display trim. `core::pct_floor` is shared with the graded twin in `report_vs_benchmark` so
-    // the served brake and the measured brake cannot drift — the (#3j) lesson, applied at the seam.
-    // NOTE the two cohorts are not identical and cannot be: this one is THIS TABLE's post-trim stock
-    // rows, the backtest's is every gated non-crypto sample in a ~6mo bucket. Same rule, same floor
-    // arithmetic, different populations — which is why the grid grades the backtest and this site only
-    // inherits the verdict.
+    // other display trim.
     let peg_of = |quote: &Quote| quote.fund.as_ref().and_then(|f| f.peg_yield);
     let stock: Vec<_> = match core::pct_floor(
         stock.iter().filter_map(|(quote, _)| peg_of(quote)).collect(),
@@ -16086,7 +16081,7 @@ mod tests {
         );
         assert_eq!(
             tuning.growth_value_floor_pct, 40.0,
-            "(#126) shipped 40.0 and (#265) kept it; A2 in the (#180) grid re-refused 40 -> 0, so lifting the brake is a refused question; re-measure, then update this pin"
+            "(#126) shipped 40.0 and (#265) kept it; (#1283) it hides rows only and the backtest grades the unbraked book that is bought; re-measure, then update this pin"
         );
 
         // (#666) The CORE half of the book. Every pin above stops at the growth score and the book it feeds. The CORE
