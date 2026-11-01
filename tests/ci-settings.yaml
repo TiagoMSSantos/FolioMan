@@ -22666,17 +22666,43 @@ buy_heuristic:
   # The table stays here so the grid reads; the knob names sit in `config::RETIRED`, so an old overlay or a
   #   saved page upload that still names one loads.
   # (#1280) retired: growth_max_trend_r2: 0.0       # (#1277) `smooth`: refuse a stock whose 10y log-trend R^2 is AT OR ABOVE this. 0 = off
-  growth_min_underwater_yrs: 0.0 # (#1285) `untested`, back from (#1280) for the round-10 grid alone: refuse a stock whose longest
-                                 #   spell under a past high in its last ten years is under this many years. 0 = off. The grid prices it
-                                 #   at 2 years, docked (growth_gate_soft) and refused (growth_untested_hard), on the bar written before
-                                 #   the run; a fail retires it again.
-  growth_untested_hard: false    # (#1285) true = a stock failing `untested` is refused even under growth_gate_soft, the way a Série E
-                                 #   rung is (#1282); false = docked f^n like every other knob gate. Round 9 learned a new gate under
-                                 #   the soft dock never refuses, so it barely moves the book: this switch prices it hard.
-  growth_stretch_hard: false     # (#1285) the same switch for `stretch` (growth_max_above_ma). Off until the round-10 grid grades it.
+  # (#1280) (#1286) retired: growth_min_underwater_yrs: 0.0 # (#1277) `untested`: refuse a stock whose longest spell under a past high in 10y is under this. 0 = off
   # (#1280) retired: growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off
   # (#1280) retired: growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this %/yr over 5y. 0 = off
   # (#1280) retired: growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off
+  # (#1286) ROUND 10 GRID, 2026-11-01: C (`untested`, growth_min_underwater_yrs 2) and S (`stretch`, growth_max_above_ma
+  #   150 -> 100), each docked (growth_gate_soft 0.8) and refused (growth_untested_hard, growth_stretch_hard), on the
+  #   (#1285) code 8ceacb6. BAR, written before the run, against each leg's own row 0: top-10 excess mean and median
+  #   not down by more than 0.1 at 12y and 8y pit (up at one horizon, down at the other = no ship); worst window not
+  #   worse by more than 0.5 at 20y, 12y and 8y pit; median gated pool at least 80 % of row 0 on every leg; rank-1
+  #   h2h vs ranks 6-10 NOT BELOW row 0 at 12y pit, 8y pit and 20y stress, zero slack (the relative form (#1280)
+  #   asked for).
+  # VERDICT: EVERY ROW FAILS. The three knobs are deleted again and sit in `config::RETIRED`; the Quote field
+  #   `underwater_yrs_10y` stays filled. Runs: 12y pit 41301007229, 8y pit 41301012726, 20y pit 41301018215,
+  #   stress 41301023872 (years "20 12 8"). Cells: top-10 excess mean|median pts/yr, worst window, rank-1 h2h
+  #   wins/windows, median gated pool.
+  #     row      12y pit                   8y pit                    20y pit                   20y stress
+  #     0        +3.1|+2.7 -4.0 15/38 177  +2.8|+2.7 -6.6 17/46 179  +3.3|+1.9 -3.0 12/22 177  +3.2|+4.4 -8.0 18/45 18
+  #     C soft   +3.4|+3.7 -7.0 16/38 177  +3.2|+3.2 -5.3 18/46 179  +4.0|+2.3 -2.1 13/22 177  +3.3|+4.4 -8.0 17/45 18
+  #     C hard   +3.1|+2.7 -7.0 16/38  95  +3.1|+2.6 -5.3 18/46 118  +3.9|+2.3 -2.2 13/22  85  +3.1|+4.3 -8.0 16/45 16
+  #     S soft   +3.2|+3.2 -4.0 14/38 177  +2.9|+2.7 -6.6 16/46 179  +3.3|+2.0 -3.0 11/22 177  +3.2|+4.4 -8.0 19/45 18
+  #     S hard   +3.7|+3.7 -3.0 14/38 140  +3.4|+3.3 -5.4 16/46 146  +3.9|+2.5 -3.0 11/22 128  +3.0|+4.0 -8.0 16/38 12
+  #   Stress 12y and 8y, graded on the pool only: row 0 pools 170 and 205; C hard 116 and 127, S hard 135 and 153
+  #   (all under 80 %); both soft rows keep 170 and 205.
+  # WHY EACH FAILS:
+  #   C soft: up on every top-10 moment at 12y and 8y, with shallower worst windows at 8y and 20y, but the 12y
+  #     worst window deepens from -4.0 to -7.0 and 20y stress h2h drops from 18/45 to 17/45. Round 9's C row
+  #     failed on the same two cells (12y worst -6.5 against -4.0, stress h2h 39 % against 41 %): two rounds,
+  #     one answer. A better average is bought with one deeper 12y window, so C is not re-proposed without a new
+  #     reason.
+  #   C hard: refuses about half the pool (12y 95 of 177, 20y 85 of 177) and keeps C's deeper 12y window.
+  #   S soft: the dock barely moves the book; rank-1 h2h drops at 12y (14 against 15 of 38) and 8y (16 against 17
+  #     of 46).
+  #   S hard: top-10 up at 12y and 8y, but the pool falls under 80 % at 12y (140), 20y (128) and 20y stress (12 of
+  #     18), and rank-1 h2h drops at 12y and 8y as in S soft. The (#24)/(#64) refusal of a lower stretch ceiling
+  #     stands; growth_max_above_ma stays 150.
+  # (#1286) retired: growth_untested_hard: false # (#1285) refuse a stock failing `untested` even under growth_gate_soft. false = docked
+  # (#1286) retired: growth_stretch_hard: false  # (#1285) the same switch for `stretch` (growth_max_above_ma). false = docked
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which

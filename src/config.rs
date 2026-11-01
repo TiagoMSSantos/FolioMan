@@ -487,9 +487,6 @@ pub struct BuyHeuristic {
     pub growth_max_above_ma: f64,    // hard gate: reject equities more than this % above the 200wk SMA — the extreme blow-off cohort the overext brake can only floor, not remove. VALIDATED at 150 (see ci-settings.yaml); 0 = off. Crypto exempt (rides far above its SMA normally; its brake cap handles it)
     pub growth_brake_min_sessions: usize, // (#833) a stock with fewer than LONG_MA_SESSIONS closes has no 200wk average, so its stretch reading is 0 and neither the stretch gate above nor the overext brake can see a young blow-off. A name with at least this many closes (and fewer than LONG_MA_SESSIONS) reads its stretch against the average of ALL its closes instead. Scaled by cadence in the backtest like the long MA. 0 = off, the shipped behaviour, byte-identical
     pub growth_require_lifetime_uptrend: bool, // (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — moon-crash-partial-recovery names whose 5Y/10Y legs look great but never reclaimed their long-run trend. false = off (default). Crypto exempt (young coins; the range gate handles bled ones). REACHABLE BUT DOMINATED: its fields (trend_cagr, life_cagr) ARE filled in the backtest, yet `growth_gate_reachability_pin` reads it INERT for every class, because `growth_min_cagr` (8.0) rejects the same names first — a fixture built to trip exactly this gate (crash −95%, recover to just under the start price: life_cagr −0.2%/yr with a +1349% 20Y leg) dies at `cagr-life -0.2%/yr (need ≥8.0%)` and never reaches it. So it is not backtest-blind, it is redundant at any `growth_min_cagr >= 0` — which is every config shipped. Lower that floor below 0 and this knob starts biting
-    pub growth_min_underwater_yrs: f64, // (#1285) refuse a stock whose longest spell under a past high in its last ten years is UNDER this many years (`untested`). 0 = off. Back from (#1280) for the round-10 grid only
-    pub growth_untested_hard: bool, // (#1285) a stock failing `untested` is refused even under growth_gate_soft, the way the Série E rungs are, instead of docked f^n. false = docked
-    pub growth_stretch_hard: bool, // (#1285) the same switch for the `stretch` gate (growth_max_above_ma). false = docked
     pub growth_maxdd_cap: f64,       // (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name that ever fell >83% peak-to-trough). 0 = off (default)
     pub growth_maxdd_cap_crypto: f64, // (#26) crypto's OWN maxdd cap. Coins crash >90% every cycle, so the equity cap would gate Bitcoin itself (-83%); set this just ABOVE BTC's mark (84) to mean "reject coins that wiped out worse than Bitcoin". 0 = off (default)
     pub growth_max_vol_crypto: f64,  // (#36) crypto-only hard gate: reject coins whose daily-return stdev (quote.volatility_pct, the VOL column) exceeds this % — "not meaningfully wilder than Bitcoin" (BTC ~2.4%/day; 3.0 gives the base headroom). Edge-blind, but NOT for the reason this comment used to give: "crypto is absent from the backtest pool" was FALSE (fetch_universe pushes CoinGecko SYMBOL-EUR tickers and nothing filters them; coins are in fact the one class the bare `Quote::stub` always classed correctly, since `is_currency_quoted` reads the ticker suffix). The gate IS reachable on a reconstructed coin — `backtest_quote` fills volatility_pct, and `each_class_reads_its_own_gate_leg` pins that the crypto leg is the one taken. What is missing is SAMPLES: ~11y of coin history leaves 0 growth-scored crypto cutoffs at every horizon measured (20y-s 0/4633, 12y-s 0/11758, 8y-s 18/20575 with 0 scored), so no sweep can vote. Equities never reach multi-% daily stdev, so no equity twin. 0 = off (default)
@@ -733,9 +730,6 @@ impl Default for BuyHeuristic {
             growth_max_above_ma: 0.0,      // code default off; ci-settings.yaml ships the validated 150
             growth_brake_min_sessions: 0,  // (#833) off: a name under LONG_MA_SESSIONS closes reads 0 stretch, as before
             growth_require_lifetime_uptrend: false, // (#25) code default off; ci-settings.yaml ships true
-            growth_min_underwater_yrs: 0.0, // (#1285) off
-            growth_untested_hard: false,    // (#1285) docked, as every knob gate
-            growth_stretch_hard: false,     // (#1285) docked, as every knob gate
             growth_maxdd_cap: 0.0,         // (#26) off until a probe validates a value
             growth_maxdd_cap_crypto: 0.0,  // (#26) off by default; ci-settings ships 84 (just above BTC's -83)
             growth_max_vol_crypto: 0.0,    // (#36) off by default; ci-settings ships 3.0 (just above BTC's ~2.4%/day)
@@ -1547,10 +1541,10 @@ fn anchored_path(name: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// (#817) (#818) (#819) (#1280) Knobs deleted after their measurements refused them; each had shipped at its code default.
+/// (#817) (#818) (#819) (#1280) (#1286) Knobs deleted after their measurements refused them; each had shipped at its code default.
 /// An old overlay or a saved page upload that still names one is dropped here instead of failing
 /// `deny_unknown_fields`.
-const RETIRED: [&str; 37] = [
+const RETIRED: [&str; 40] = [
     "growth_min_net_margin",
     "growth_max_margin_swing",
     "growth_max_dilution_pct",
@@ -1585,6 +1579,9 @@ const RETIRED: [&str; 37] = [
     "growth_record_full_years",
     "growth_geomean_fold",
     "growth_max_trend_r2",
+    "growth_min_underwater_yrs",
+    "growth_untested_hard",
+    "growth_stretch_hard",
     "growth_refuse_financials",
     "growth_financial_max_asset_growth",
     "growth_refuse_sector_top_dog",

@@ -1528,12 +1528,6 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
         return None;
     }
-    // (#1285) `untested`: a stock never two-plus years under a past high in its last decade has not been
-    // through a bear market yet. Back from (#1280) for the round-10 grid. Needs no `> 0` guard: no spell
-    // is shorter than 0 years, so 0 refuses nothing.
-    if quote.underwater_yrs_10y.is_some_and(|u| u < tuning.growth_min_underwater_yrs) && asset_class(quote) == 2 {
-        return None;
-    }
     // (#25) LIFETIME-UPTREND gate: the ranked CAGR uses the longest 20Y/10Y/5Y leg, so a name that
     // mooned at IPO, crashed, and partially recovered can show a healthy 10Y CAGR while its WHOLE-LIFE
     // trend is still negative. quote.trend_cagr is the full-history log-slope fit (endpoint-robust,
@@ -1910,7 +1904,6 @@ fn gate_soft(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
 /// CI ships 0.8 (#566).
 /// What `waived` cannot lift (a structural refusal, no turnover, the repriced-bar artifact) stays `None`.
 /// (#1282) So does a Série E rung (8Y+, 20Y+): `waived` lifts it for the what-if, the mandate does not.
-/// (#1285) So do `untested` and `stretch` when `growth_untested_hard` / `growth_stretch_hard` is on.
 /// (#1245) A stock's walk-stamped event flags count as k more failed gates, f^(n+k): a refusal when f is
 /// 0. With `growth_event_months` at 0, k is 0 and every path above is unchanged.
 fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
@@ -1927,11 +1920,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         None => {
             let (open, tags, _) = waived(quote, tuning, false)?;
             // (#1282) The Série E rungs are a mandate ((#315)), not a dockable gate: under the hurdle = refused.
-            if tags.iter().any(|g| {
-                matches!(g.0, "8Y+" | "20Y+")
-                    || (g.0 == "untested" && tuning.growth_untested_hard)
-                    || (g.0 == "stretch" && tuning.growth_stretch_hard)
-            }) {
+            if tags.iter().any(|g| matches!(g.0, "8Y+" | "20Y+")) {
                 return None;
             }
             (score_parts_hard(quote, &open)?, tags.len())
@@ -2510,7 +2499,6 @@ pub(crate) fn plain_gate(g: &str) -> &'static str {
         "exchange" => "an exchange's own coin",
         "peg" => "price too high for its growth",
         "maxdd" => "once fell too far from a peak",
-        "untested" => "never spent long below a past high",
         "leveraged" => "a leveraged fund, 2x or 3x the daily move",
         "commodity" => "a commodity fund, whose price follows raw materials",
         "hedged" => "a currency-hedged fund, whose hedge costs eat the return",
@@ -2721,10 +2709,6 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
         fails.push(("stretch", format!("+{:.0}% above 200wk SMA (ceiling +{:.0}%)", quote.above_ma_pct, tuning.growth_max_above_ma), quote.above_ma_pct <= tuning.growth_max_above_ma + 25.0));
     }
-    let bar = tuning.growth_min_underwater_yrs; // (#1285) `untested`, leg for leg with `score_parts_hard`
-    if let Some(u) = quote.underwater_yrs_10y.filter(|&u| u < bar && asset_class(quote) == 2) {
-        fails.push(("untested", format!("{u:.d$}y longest spell under a past high in 10y (need ≥{bar:.d$}y)", d = bar_dp(u, bar, 1)), u >= bar - 0.5));
-    }
     if !crypto && tuning.growth_require_lifetime_uptrend {
         if let Some(t) = quote.trend_cagr.filter(|&t| t <= 0.0) {
             fails.push(("lifetime", format!("{t:+.1}%/yr whole-life trend (need >0)"), t > -3.0));
@@ -2829,7 +2813,6 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
         "mvrv" => t.crypto_max_mvrv = 0.0,
         "peg" => (t.growth_max_peg, t.growth_require_peg) = (0.0, false),
         "maxdd" => (t.growth_maxdd_cap, t.growth_maxdd_cap_crypto) = (0.0, 0.0),
-        "untested" => t.growth_min_underwater_yrs = 0.0,
         _ => {}
     }
 }
@@ -2842,7 +2825,7 @@ pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
     let mut t = tuning.clone();
     for tag in [
         "young", "aum", "range", "range8y", "cagr", "1Y+", "1M-knife", "5Y+", "8Y+", "20Y+", "liquidity", "stretch",
-        "lifetime", "volatile", "spike", "mvrv", "peg", "maxdd", "untested",
+        "lifetime", "volatile", "spike", "mvrv", "peg", "maxdd",
     ] {
         waive_gate(&mut t, tag);
     }
@@ -10485,20 +10468,6 @@ mod tests {
     }
     let soft5 = BuyHeuristic { growth_min_5y_pct: 250.0, growth_gate_soft: 0.8, ..BuyHeuristic::default() };
     assert!(growth_score(&rungs, &soft5).is_some(), "(#1282) control: the same stock under a missed 5Y+ floor is docked, not refused");
-    // (#1285) the two hard switches: each turns its own gate from a dock into a refusal, and only its own.
-    let uw = BuyHeuristic { growth_min_underwater_yrs: 2.0, growth_gate_soft: 0.8, ..BuyHeuristic::default() };
-    let hot = BuyHeuristic { growth_max_above_ma: 100.0, growth_gate_soft: 0.8, ..BuyHeuristic::default() };
-    let (mut untested, mut stretched) = (rungs.clone(), rungs.clone());
-    untested.underwater_yrs_10y = Some(0.5);
-    stretched.above_ma_pct = 300.0;
-    for (q, soft, tag) in [(&untested, &uw, "untested"), (&stretched, &hot, "stretch")] {
-        assert!(growth_score(q, &BuyHeuristic { growth_gate_soft: 0.0, ..soft.clone() }).is_none(), "{tag}: refused with the dock off");
-        assert!(growth_score(q, soft).is_some(), "{tag}: docked while its switch is off");
-        let both = BuyHeuristic { growth_untested_hard: true, growth_stretch_hard: true, ..soft.clone() };
-        assert!(growth_score(q, &both).is_none(), "{tag}: its hard switch refuses it");
-    }
-    assert!(growth_score(&untested, &BuyHeuristic { growth_stretch_hard: true, ..uw.clone() }).is_some(), "the stretch switch leaves `untested` docked");
-    assert!(growth_score(&stretched, &BuyHeuristic { growth_untested_hard: true, ..hot.clone() }).is_some(), "the untested switch leaves `stretch` docked");
     // THE "if not N/A" RULE: the SAME name minus its 20Y leg clears the SAME armed bar. A leg the
     // quote doesn't have is skipped, never read as a failed one — otherwise the 20Y floor would cut
     // every ETF and every coin, none of which has 20 years of history to show.
@@ -12487,7 +12456,7 @@ mod tests {
     /// never holds ": " or " (", which split a MISSES hover line into its tag.
     #[test]
     fn plain_gate_names_every_rule_in_its_own_words() {
-        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "untested", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
+        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
         let labels: std::collections::BTreeSet<&str> = tags.iter().map(|g| plain_gate(g)).collect();
         assert_eq!(labels.len(), tags.len(), "one label per rule");
         assert!(!labels.contains("a buy rule"), "no rule falls through");
@@ -15401,15 +15370,12 @@ mod tests {
         let mut wbt = peg_vol.clone();
         wbt.ticker = "WBT-USD".into();
         wbt.volatility_pct = Some(3.0);
-        let mut untested = gate_fixture(); // (#1285) never two years under a past high
-        untested.underwater_yrs_10y = Some(0.5);
 
         let cases: &[(&str, &Quote)] = &[
             ("clean", &clean), ("leveraged", &leveraged), ("commodity", &commodity),
             ("hedged", &hedged), ("stablecoin", &stable), ("no-turnover", &no_turnover), ("no-1y", &no_1y),
             ("no-history", &no_history), ("artifact", &artifact), ("deep drawdown", &deep),
             ("stretched", &stretched), ("bull", &bull), ("peg by vol", &peg_vol), ("wipeout", &wipeout), ("wbt", &wbt),
-            ("untested", &untested),
         ];
         // knob sets chosen to move the fence ACROSS the fixture, so both verdicts flip inside the grid
         let tunings: &[(&str, BuyHeuristic)] = &[
@@ -15423,7 +15389,6 @@ mod tests {
                 growth_max_above_ma: 0.0, growth_min_1y_pct: -1e9, growth_min_5y_pct: -1e9,
                 growth_require_lifetime_uptrend: false, ..d.clone()
             }),
-            ("untested on", BuyHeuristic { growth_min_underwater_yrs: 2.0, ..d.clone() }),
         ];
 
         for (tname, t) in tunings {
@@ -15495,10 +15460,10 @@ mod tests {
     #[test]
     fn gate_failures_agrees_with_the_scorer_on_random_draws() {
         const DRAWS: usize = 4000;
-        const LABELS: [&str; 23] = [
+        const LABELS: [&str; 22] = [
             "young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact",
             "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "peg",
-            "maxdd", "exchange", "untested",
+            "maxdd", "exchange",
         ];
         struct Rng(u64);
         impl Rng {
@@ -15573,7 +15538,6 @@ mod tests {
                     ..crate::core::FundFactors::default()
                 });
             }
-            q.underwater_yrs_10y = r.opt(&[0.5, 1.5, 2.0, 5.0], 0.3); // (#1285) 2.0 passes on its 2.0 bar
 
             let mut t = d.clone();
             t.growth_min_age_years = r.arm(t.growth_min_age_years, &[5.0, 10.0]);
@@ -15616,7 +15580,6 @@ mod tests {
             }
             t.growth_maxdd_cap = r.arm(t.growth_maxdd_cap, &[0.0, 60.0, 84.0]);
             t.growth_maxdd_cap_crypto = r.arm(t.growth_maxdd_cap_crypto, &[84.0]);
-            t.growth_min_underwater_yrs = r.arm(t.growth_min_underwater_yrs, &[2.0]);
 
             let fails = gate_failures(&q, &t);
             let ranks = growth_score(&q, &t).is_some();
@@ -15904,8 +15867,6 @@ mod tests {
         let range_k: Set = |t, v| t.growth_min_range_pct = v;
         let y5_k: Set = |t, v| t.growth_min_5y_pct = v;
         let liq_k: Set = |t, v| t.min_avg_turnover_eur_stock = v;
-        let uw_k: Set = |t, v| t.growth_min_underwater_yrs = v;
-        let etf_with = |f: fn(&mut Quote)| { let mut q = etf("FUND.DE", 1e8); f(&mut q); q };
 
         // (label, gate tag, knob, knob value, quote, expected verdict) -- None clears, Some((reason, close)) rejects
         let cases: &[(&str, &str, Set, f64, Quote, Option<(&str, bool)>)] = &[
@@ -15973,15 +15934,6 @@ mod tests {
                 Some(("-52% worst drawdown (cap -50%)", true))),
             ("maxdd stops at its 5pp margin", "maxdd", dd_k, 50.0, with(|q| q.max_drawdown_pct = 60.0),
                 Some(("-60% worst drawdown (cap -50%)", false))),
-            // (#1285) UNTESTED -- a floor that spares ON its line
-            ("untested off ignores a name never under water", "untested", uw_k, 0.0, with(|q| q.underwater_yrs_10y = Some(0.0)), None),
-            ("untested spares a name exactly on it", "untested", uw_k, 2.0, with(|q| q.underwater_yrs_10y = Some(2.0)), None),
-            ("untested calls half a year short close", "untested", uw_k, 2.0, with(|q| q.underwater_yrs_10y = Some(1.5)),
-                Some(("1.5y longest spell under a past high in 10y (need ≥2.0y)", true))),
-            ("untested stops past its half-year margin", "untested", uw_k, 2.0, with(|q| q.underwater_yrs_10y = Some(1.0)),
-                Some(("1.0y longest spell under a past high in 10y (need ≥2.0y)", false))),
-            ("untested ignores a fund", "untested", uw_k, 2.0, etf_with(|q| q.underwater_yrs_10y = Some(0.0)), None),
-            ("untested passes an unknown spell", "untested", uw_k, 2.0, gate_fixture(), None),
         ];
 
         for (label, tag, set, v, q, want) in cases {
@@ -16046,10 +15998,6 @@ mod tests {
         // on sight; the (#64) receipts beside both knobs carry the runs.
         assert_eq!(tuning.growth_max_above_ma, 150.0, "the stretch gate is measured, not a taste call — its excluded cohort is negative on both moments at all three horizons, and the live table clears it by 3 points");
         assert_eq!(tuning.max_1m_drop_pct, -1000000.0, "the knife ships OFF and its own block argues for -20 — that is unresolved, not settled; read the (#64) receipt before moving it either way");
-        assert!(
-            tuning.growth_min_underwater_yrs == 0.0 && !tuning.growth_untested_hard && !tuning.growth_stretch_hard,
-            "(#1285) untested and the two hard switches moved before the round-10 grid graded them"
-        );
 
         // (#69) The SOFT brake, pinned beside the hard gate it was suspected of duplicating. The gate
         // above truncates everything past 150; this decides the ORDER of what survives, and the two are
