@@ -422,6 +422,19 @@ pub struct Quote {
     // `report_jump_census` reads it: no score term or gate does.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub jump_ahead: bool,
+    // (#1277) the last ten years of the price series as two gate inputs: the log-trend R² and the longest
+    // stretch below a past high, in years. One window on both paths and at any bar size ([`last_decade`]),
+    // unlike `trend_r2` (the whole backtest slice, ~10y live) and `underwater_yrs` (daily runs only).
+    // None = under five years of bars. Read only by `growth_max_trend_r2` / `growth_min_underwater_yrs`.
+    #[serde(default)]
+    pub trend_r2_10y: Option<f64>,
+    #[serde(default)]
+    pub underwater_yrs_10y: Option<f64>,
+    // (#1277) the largest `fund.mcap` in its sector at the same cutoff (`backtest::stamp_top_dogs`). Only the
+    // walk stamps it, so it is None live, and None with no sector or no mcap. Read only by
+    // `growth_refuse_sector_top_dog`.
+    #[serde(default)]
+    pub sector_top_dog: Option<bool>,
 }
 
 /// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
@@ -529,6 +542,9 @@ impl Quote {
             splits: Vec::new(),
             event_flags: 0,
             jump_ahead: false,
+            trend_r2_10y: None,
+            underwater_yrs_10y: None,
+            sector_top_dog: None,
         }
     }
 
@@ -1037,6 +1053,13 @@ pub fn rolling_positive_pct(closes: &[f64], win_years: usize, bars_per_year: usi
         }
     }
     (n > 0).then(|| 100.0 * pos as f64 / n as f64)
+}
+
+/// (#1277) The last ten years of `closes`, the window `trend_r2_10y` and `underwater_yrs_10y` are read on:
+/// None under five years of bars, so a short record makes no claim. One definition for the live chart and
+/// the backtest slice, at either bar size.
+pub fn last_decade(closes: &[f64], bars_per_year: usize) -> Option<&[f64]> {
+    (closes.len() >= 5 * bars_per_year).then(|| &closes[closes.len().saturating_sub(10 * bars_per_year)..])
 }
 
 /// (underwater) Longest stretch of BARS spent below the running peak, in years — MAXDD's missing
@@ -5895,6 +5918,9 @@ pub fn backtest_quote(
     if cadence == 252 {
         quote.underwater_yrs = longest_underwater_yrs(c, cadence);
     }
+    // (#1277) at every cadence, unlike the field above: the gates that read these must see the graded runs
+    quote.trend_r2_10y = last_decade(c, cadence).map(trend_r2);
+    quote.underwater_yrs_10y = last_decade(c, cadence).and_then(|w| longest_underwater_yrs(w, cadence));
     // (#20) the LIVE growth lane excludes a name whose turnover is UNKNOWN (an untradeable/dead listing
     // like 0Y72.L). backtest_quote can't reconstruct turnover, but that absence is NOT a liquidity signal
     // here — mark it "liquid enough" so the exclusion stays a LIVE-ONLY gate (never fires in the backtest).
@@ -6457,6 +6483,40 @@ mod tests {
             21.0,
             "252/12 = 21: a DURATION converts by division, with no sqrt rescale"
         );
+    }
+
+    /// (#1277) last_decade: under five years of bars -> None; five to ten -> the whole record; over ten ->
+    /// the last ten years only. `bars_per_year` 12 is a monthly run, 252 a daily one.
+    #[test]
+    fn last_decade_window() {
+        let c: Vec<f64> = (1..=2520).map(|i| i as f64).collect();
+        assert_eq!(last_decade(&c[..59], 12), None, "59 months is under five years");
+        assert_eq!(last_decade(&c[..60], 12).map(<[f64]>::len), Some(60), "five years exactly: all of it");
+        let w = last_decade(&c[..240], 12).unwrap();
+        assert_eq!((w.len(), w[0]), (120, 121.0), "twenty years of months: the LAST 120 bars");
+        assert_eq!(last_decade(&c[..1259], 252), None);
+        assert_eq!(last_decade(&c, 252).map(<[f64]>::len), Some(2520));
+    }
+
+    /// (#1277) train = serve: a daily `backtest_quote` at the last bar reads `trend_r2_10y` and
+    /// `underwater_yrs_10y` on the window the live fetch reads (`last_decade` of the whole chart at the
+    /// ticker's bars per year): a 12y record cut to its last ten years, a 6y record whole, a 4y record None.
+    #[test]
+    fn window_stats_train_eq_serve() {
+        for years in [12usize, 6, 4] {
+            let n = years * 252;
+            let start = NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
+            let dates: Vec<NaiveDate> = (0..n).map(|d| start + chrono::Duration::days(d as i64)).collect();
+            let closes: Vec<f64> =
+                (0..n).map(|i| 100.0 * (1.0 + i as f64 / 500.0) * (1.0 + 0.2 * (i as f64 / 300.0).sin())).collect();
+            let q = backtest_quote("X", &dates, &closes, &[], n - 1, 252, &BTreeMap::new());
+            let bars = daily_bars_per_year("X");
+            let live_r2 = last_decade(&closes, bars).map(trend_r2);
+            let live_uw = last_decade(&closes, bars).and_then(|w| longest_underwater_yrs(w, bars));
+            assert_eq!((q.trend_r2_10y, q.underwater_yrs_10y), (live_r2, live_uw), "{years}y");
+            assert_eq!(live_r2.is_some(), years >= 5, "{years}y");
+            assert!(live_uw.is_none_or(|u| u > 0.0), "the wiggle puts every record under water: {years}y");
+        }
     }
 
     /// (worst-Ny) worst_rolling_pct: the MINIMUM window return wins (window A +10% vs window
@@ -10428,6 +10488,11 @@ mod tests {
     // (#223) …and `underwater_yrs` stays None on a MONTHLY run (non-negotiable #1). A monotone riser
     // would fill Some(0.0) the instant the guard were dropped, so this kills the guard-removal mutant outright.
     assert_eq!(mq.underwater_yrs, None, "a monthly run leaves it unfilled (non-negotiable #1)");
+    // (#1277) ...while its ten-year twins fill at every cadence: 60 monthly bars is five years exactly
+    assert_eq!(mq.underwater_yrs_10y, Some(0.0), "a monthly run fills the ten-year twin");
+    assert!(mq.trend_r2_10y.is_some_and(|r| r > 0.999), "a 1%/bar riser is a straight log line");
+    let short = backtest_quote("X", &mdates, &mcloses, &[], mdates.len() - 2, 12, &BTreeMap::new());
+    assert_eq!((short.trend_r2_10y, short.underwater_yrs_10y), (None, None), "59 bars is under five years");
     // (#3j) whole-life CAGR over the SAME `[..=as_of]` slice. THE anti-inert assert: while this stayed
     // None, `use_life_cagr` fell back to the leg in every backtest and any measurement of it would have
     // reported "no change" — a broken knob that looks like a safe flip. 1%/bar over 59 30-day bars

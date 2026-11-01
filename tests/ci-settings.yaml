@@ -22570,6 +22570,56 @@ buy_heuristic:
                                  #   zero names, so there was no separate arm left to run. NO ARMS WERE SPENT.
                                  #   REVERT RULE unchanged and now precise: a strongly POSITIVE sweep row (mean AND median, read `vs
                                  #   shipped`, not the bare sign) on a future maintenance run re-opens it. It has still never fired.
+  # (#1277) FINANCIAL HAZARD, R^2 CEILING AND SECTOR TOP DOG. Pre-registered 2026-11-01, before any pool run.
+  # WHY: the fixture's admitted bank/insurer rows trail peers -17.5 (8y) / -11.5 (12y) %/yr vs +1.3 / -0.2 for
+  #   every other admitted name (6 names, one crisis; FPS 2018's -7.4 %/yr for fast-growing banks is the
+  #   published analogue). The 10y log-trend R^2 >= 0.9 cohort's -5.6 (8y) is those same banks (ex-financials
+  #   -0.5); at 12y it keeps +4.5 on 11 non-financial names. The largest-cap name per bucket trails -7..-8
+  #   (Arnott & Wu: -3.3 %/yr for a decade). A price-only CAGR cannot see leverage, extrapolation or size.
+  # RUNS: probe.yml `grid` (#1227) with `backtest rescore`, `universe fund pit` at 12, 8 and 20, then
+  #   `universe stress` at "20 12 8". Ten rows, declared here before the run; none is added after reading:
+  #     0    {}                                                             control
+  #     F    {"growth_refuse_financials":true}                              THE arm
+  #     F2   {"growth_financial_max_asset_growth":10}                       10 %/yr, about FPS's top quartile
+  #     A    {"growth_max_trend_r2":0.90}
+  #     A+F  {"growth_refuse_financials":true,"growth_max_trend_r2":0.90}   does A add to F?
+  #     T    {"growth_refuse_sector_top_dog":true}
+  #     F+T  {"growth_refuse_financials":true,"growth_refuse_sector_top_dog":true}
+  #     B    {"growth_max_trend_r2":0.85}                                   A's one ladder rung
+  #     C    {"growth_min_underwater_yrs":2.0}                              confirmation only
+  #     D    {"growth_max_trend_r2":0.90,"growth_min_underwater_yrs":2.0}   confirmation only
+  #   A is graded by its INCREMENT over F (row A+F against row F), not against control. T is graded on its
+  #   own and with F.
+  # BAR (ship rule v2, pit lane (#139); at 20y the fund-dependent arms F, F2, T are VACUOUS by (#185): the
+  #   `only 0 cutoffs carry this factor` line must be quoted; A, B, C, D are price-only and read 20y in full):
+  #   PRIMARY  top-10 excess MEAN and MEDIAN up or held at 12y AND 8y vs row 0 (F, T, F2) or vs row F (A).
+  #            up = +0.1 or more on both moments at both horizons; held = within +-0.1; one moment down by
+  #            more than 0.1 at either horizon = FAIL; up at one horizon, down at the other = TIE = no ship.
+  #   GUARD    rank-1 h2h vs ranks 6-10 >= 50 % at 12y and 8y (pit) and 20y (stress, A-D only); 20y worst
+  #            window not worse than row 0 by more than 0.5 (A-D); 12y worst window not worse (F, F2, T).
+  #   SIZE     admitted per window >= 80 % of row 0 at 12y and 8y.
+  #   PRE-STATED EXPECTATIONS: F PRIMARY up at both, worst shallower (the banks leave), admitted -10..-15 %.
+  #   A over F: held or small up at 12y, held at 8y. T: up 0.3-1.0 at both, admitted -5..-8 %.
+  #   DECISION: F passes -> ship growth_refuse_financials true (soft, stocks). F2 passes AND F fails -> ship
+  #   F2 at 10 (the growth-rate form); F2 is not a ladder, 10 is its only rung. A ships ONLY IF (A+F) passes
+  #   PRIMARY against row F: A alone passing is not enough, it would be F again. B ships over A only if
+  #   A ties and B passes with a monotone 0.95/0.90/0.85/0.80 curve (if B is needed, 0.95 and 0.80 go out
+  #   as a second pre-registered pair, never as a ladder fitted to this run).
+  #   T passes -> ship; F+T must then also pass against F (no double counting of the same banks).
+  #   C, D pass -> recorded as mechanism confirmation, nothing ships (no live track record on the field).
+  #   Any arm FAILS -> RETIRED entry, knob deleted, fields stay, this block stays with the table.
+  # COST, stated before the run: on today's fixture table F refuses nothing admitted (no bank clears 19 %/yr
+  #   today), A refuses PWR GOOG AVGO (R^2 .94/.92/.91), T refuses the largest name per sector (GOOG, AVGO...).
+  # ON A PASS: knob ships on, soft; its tag appears in MISSES; `gate_notches` prices the excluded cohort every
+  #   run; no weight moves; `backtest_edge_holds` re-pins on the new control; `track` grades the tag forward.
+  # CAVEATS: the top-dog stamp reads TODAY's sector label ((#1232) `drop_lookahead_sector` is off) and market
+  #   cap in trading currency, per cutoff over the whole pool; the live screen leaves it unknown (the gate
+  #   passes) until it ships. Both R^2 and underwater years read the last ten years of closes and need five.
+  growth_max_trend_r2: 0.0       # (#1277) `smooth`: refuse a stock whose 10y log-trend R^2 is AT OR ABOVE this. 0 = off
+  growth_min_underwater_yrs: 0.0 # (#1277) `untested`: refuse a stock whose longest spell under a past high in 10y is under this. 0 = off
+  growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off
+  growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this %/yr over 5y. 0 = off
+  growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which

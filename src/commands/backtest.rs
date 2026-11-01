@@ -2227,6 +2227,7 @@ pub async fn run(args: Vec<String>) {
     }
     samples.sort_by_key(|s| s.date); // chronological -> the OOS split is early-vs-late in time
     stamp_cohort_ranks(&mut samples); // (#408)/(#409) need the whole date's cohort, so after the sort
+    stamp_top_dogs(&mut samples); // (#1277) same cohort; before the dump, so `rescore` reads it as written
 
     // (#326) the market's state at each cutoff, stamped onto the quotes BEFORE any report scores them
     // (`report_lane`, `gate_audit`, the GATE SWEEP and the NOTCH books all gate through `growth_score`).
@@ -2265,6 +2266,7 @@ pub async fn run(args: Vec<String>) {
     // their own — otherwise the knob would move the lump-sum lane and leave the DCA lane (the ruler
     // (#311)/(#312)/(#313) actually ship against) quietly unarmed.
     stamp_sector_cohorts(&mut books, &bench, tuning);
+    stamp_top_dogs(&mut books); // (#1277) for the same reason
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
@@ -6439,6 +6441,25 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
     }
 }
 
+/// (#1277) Stamp `sector_top_dog`: is this name's `fund.mcap` the largest in its sector at its own cutoff?
+/// The cohort is the same date's whole pool, as in [`stamp_cohort_ranks`]; a tie stamps both names. No
+/// sector or no mcap reads None. shortcut: today's sector label, and each cap in its own trading currency,
+/// so a sector that mixes currencies compares unconverted caps. `samples` must be date-sorted.
+fn stamp_top_dogs(samples: &mut [Sample]) {
+    let key = |s: &Sample| s.quote.sector.clone().zip(s.fund.as_ref().and_then(|f| f.mcap));
+    for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
+        let mut top: HashMap<String, f64> = HashMap::new();
+        for (sector, m) in day.iter().filter_map(key) {
+            let t = top.entry(sector).or_insert(m);
+            *t = t.max(m);
+        }
+        for s in day.iter_mut() {
+            let dog = key(s).map(|(sector, m)| m >= top[&sector]);
+            Arc::make_mut(&mut s.quote).sector_top_dog = dog;
+        }
+    }
+}
+
 /// (#328) Stamp every sample's point-in-time sector floor. THE ONLY PLACE the PIT rule is decided, and
 /// the reason the door needs no threading: once each `Quote` carries its own floor, all ~20
 /// `growth_score` call sites in this file honour the door without being touched — the wide edit that
@@ -10372,6 +10393,39 @@ mod tests {
         stamp_cohort_ranks(&mut v);
         let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().unwrap().low_dro).collect();
         assert_eq!(got, vec![Some(20.0), Some(0.0), Some(-30.0), Some(0.0), None, Some(-49.0), Some(49.0)]);
+    }
+
+    /// (#1277) The top dog is the largest cap per (date, sector): Tech 10/5/10 at the first date stamps both
+    /// tied names, Energy 1 alone is its sector's largest, and no sector or no cap reads None. At the second
+    /// date Tech 20 leads, so the first date's 10s are judged only against their own cutoff.
+    #[test]
+    fn stamp_top_dogs_marks_the_largest_cap_per_date_and_sector() {
+        use crate::core::FundFactors;
+        let row = |d: u32, t: &str, sector: Option<&str>, mcap: Option<f64>| {
+            let mut q = Quote::stub(t, "1", "", t);
+            q.sector = sector.map(str::to_string);
+            Sample {
+                date: ymd(2010, 1, d),
+                realized: 0.0,
+                relative: 0.0,
+                quote: Arc::new(q),
+                fund: Some(FundFactors { mcap, ..Default::default() }),
+                trail: Vec::new(),
+            }
+        };
+        let mut v = vec![
+            row(1, "A", Some("Tech"), Some(10.0)),
+            row(1, "B", Some("Tech"), Some(5.0)),
+            row(1, "C", Some("Tech"), Some(10.0)),
+            row(1, "D", Some("Energy"), Some(1.0)),
+            row(1, "E", None, Some(50.0)),
+            row(1, "F", Some("Tech"), None),
+            row(2, "G", Some("Tech"), Some(20.0)),
+            row(2, "H", Some("Tech"), Some(1.0)),
+        ];
+        stamp_top_dogs(&mut v);
+        let got: Vec<Option<bool>> = v.iter().map(|s| s.quote.sector_top_dog).collect();
+        assert_eq!(got, vec![Some(true), Some(false), Some(true), Some(true), None, None, Some(true), Some(false)]);
     }
 
     /// (#328) A stock at one cutoff with a chosen 5Y leg and GICS label — the only inputs the sector
@@ -14315,6 +14369,15 @@ mod tests {
         // known-unreachable by construction — pinned so the claim stops being folklore
         ("growth_min_age_years", |t, v| t.growth_min_age_years = v, 1e9),
         ("growth_min_range_pct_8y", |t, v| t.growth_min_range_pct_8y = v, 1e9),
+        // (#1277) the five stock gates. The ceiling probes LOW and the floor HIGH; `backtest_quote` fills
+        // both price fields (`last_decade` of the slice), so they pin stock LIVE. The other three read
+        // `quote.fund` or the walk's `stamp_top_dogs`, neither filled on this price-only path: cause (a).
+        // All five are INERT on crypto and etf by scope, cause (b).
+        ("growth_max_trend_r2", |t, v| t.growth_max_trend_r2 = v, 1e-6),
+        ("growth_min_underwater_yrs", |t, v| t.growth_min_underwater_yrs = v, 1e9),
+        ("growth_refuse_financials", |t, v| t.growth_refuse_financials = v != 0.0, 1.0),
+        ("growth_financial_max_asset_growth", |t, v| t.growth_financial_max_asset_growth = v, 1e-6),
+        ("growth_refuse_sector_top_dog", |t, v| t.growth_refuse_sector_top_dog = v != 0.0, 1.0),
     ];
 
     /// WHICH GROWTH KNOBS CAN MOVE A BACKTEST NUMBER AT ALL, per asset class.
@@ -14326,11 +14389,11 @@ mod tests {
     /// and no real fund names" — true until the class stamping landed, false the moment it did. Both
     /// were load-bearing: knobs get set by judgement precisely BECAUSE they are believed unsweepable.
     ///
-    /// The whole question reduces to one fact nobody wrote down: `core::backtest_quote` fills 23 fields
+    /// The whole question reduces to one fact nobody wrote down: `core::backtest_quote` fills 25 fields
     /// (perf, drawdown_pct, range_pct, volatility_pct, downside_dev_pct, below/above_ma_pct, trend_r2,
     /// trend_cagr, life_cagr, capped_cagr, tr_cagr, max_drawdown_pct, max_daily_1m, roll5y/10y_pos_pct,
-    /// worst_5y/10y_pct, underwater_yrs on the daily path, age_years, price_eur, div_eur, and a sentinel
-    /// avg_turnover_eur) and leaves the rest at
+    /// worst_5y/10y_pct, underwater_yrs on the daily path, trend_r2_10y and underwater_yrs_10y (#1277),
+    /// age_years, price_eur, div_eur, and a sentinel avg_turnover_eur) and leaves the rest at
     /// `Quote::stub` defaults, so any gate reading an unfilled field can never fire. This pin turns
     /// that into an assertion, in BOTH directions — a live gate going silently dead is the ETF bug's
     /// exact shape, and a false "inert" claim is how the receipts rotted.
@@ -14352,11 +14415,13 @@ mod tests {
     ///       (aum_eur), `growth_ter_drag` (expense_ratio), `growth_fx_damp` (quote_currency),
     ///       `growth_min_range_pct_8y` (stats_8y). None of those four is assigned by
     ///       `core::backtest_quote` (`growth_min_age_years` left this list when (#182) filled age_years); `growth_max_peg` (quote.fund) joins them on the
-    ///       price-only path only, per SCOPE above.
+    ///       price-only path only, per SCOPE above, as do (#1277) `growth_refuse_financials` and
+    ///       `growth_financial_max_asset_growth` (quote.fund) and `growth_refuse_sector_top_dog` (the
+    ///       walk's `stamp_top_dogs` reads `fund.mcap`).
     ///   (b) SCOPED TO ANOTHER CLASS — correct by construction, and the thing round 1's bug broke: the
     ///       `if crypto {…} else {…}` selectors (maxdd cap, 1M knife, 1Y/range/CAGR floors, vol cap),
     ///       the `!crypto` guards (above-MA ceiling, lifetime uptrend, the (P4) vol and spike ceilings),
-    ///       `sharpe_cap_etf` off a fund,
+    ///       `sharpe_cap_etf` off a fund, the five (#1277) stock-only gates off a coin or a fund,
     ///       and the commodity damp on a coin (no GICS sector, not a fund name).
     ///   (c) REACHABLE BUT DOMINATED — `growth_require_lifetime_uptrend`. Its fields ARE filled, so it
     ///       is not dead; it cannot bite because `growth_min_cagr` rejects the same names first. A
@@ -14457,13 +14522,15 @@ mod tests {
                 // The gate still SHIPS 0.0, so nothing moves until an arm turns it on — what changed
                 // is that an arm can now be graded at all. This lane has no `!crypto` guard, which is
                 // why crypto goes LIVE with the other two rather than staying INERT by scope.
-                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y\n",
+                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y growth_max_trend_r2 growth_min_underwater_yrs growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog\n",
                 // (#1230) `growth_min_5y_pct_etf` enters etf LIVE and crypto/stock INERT on its first
                 // commit, the same standing `growth_min_cagr_etf` has, which is its whole claim.
                 "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
-                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y\n",
-                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
-                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y\n",
+                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y growth_max_trend_r2 growth_min_underwater_yrs growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog\n",
+                // (#1277) the two price gates enter stock LIVE on their first commit, and the three fundamental
+                // ones stock INERT for want of `quote.fund` on this path; all five are INERT elsewhere by scope.
+                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years growth_max_trend_r2 growth_min_underwater_yrs\n",
+                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog\n",
             )
         );
     }
