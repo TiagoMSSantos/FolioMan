@@ -107,8 +107,9 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     share_iss_5y          winners n=7    med      1.43   losers n=6    med     -0.42   gap      1.85   AUC  0.67
     netdebt_assets        winners n=51   med      8.64   losers n=19   med    -26.54   gap     35.18   AUC  0.94
     eps_streak            winners n=51   med      2.00   losers n=19   med      2.00   gap      0.00   AUC  0.51
+    cgo                   winners n=53   med     10.19   losers n=18   med     11.24   gap     -1.05   AUC  0.42
     composite             winners n=43   med     20.54   losers n=19   med     13.03   gap      7.52   AUC  0.54
-    (43 of 56 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+    (44 of 58 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
      READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
@@ -364,10 +365,12 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   share_iss_5y   TEST edge -67.2 (w 0.249)  OOS +0.08 | +0.00
   netdebt_assets TEST edge -71.7 (w 0.249)  OOS +0.09 | +0.06
   eps_streak     TEST edge -94.8 (w 0.249)  OOS +0.07 | -0.01
+  underdep       TEST edge -66.1 (w 0.249)  OOS +0.08 | +0.01
+  cgo            TEST edge -107.3 (w 0.249)  OOS +0.07 | -0.02
   composite      TEST edge -111.9 (w 0.249)  OOS +0.05 | -0.06
   -> WINNER: interest_cover. Set `growth_fund_factor: interest_cover` + a non-zero `growth_fund_weight`, then `backtest universe fund tune` to confirm.
   -> validated growth_fund_weight for interest_cover: 0.249 (at growth_fund_cap 300)
-  multiple-testing band (best of 56 factors): [-277.2 … +163.1] pts  (within best-of-N luck -> SHIP NOTHING despite the raw winner)
+  multiple-testing band (best of 58 factors): [-277.2 … +163.1] pts  (within best-of-N luck -> SHIP NOTHING despite the raw winner)
 
 ── growth_fund_weight CURVE for `peg_yield` (held-out TEST, growth_fund_cap 300) ──
   weight 0.000  TEST edge -66.1  OOS +0.08 | +0.01  [tilt off]
