@@ -24729,6 +24729,43 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   cgo reads whatever bar spacing the series has, not the paper's weekly bars (#117). Live, underdep reads
 #   raw (not demeaned) and cgo is None, so a passer needs live wiring, with its own commit, before it ships.
 # REVERT RULE: drop both names from `FUND_FACTORS` to restore 56; the fields can stay, read by nothing.
+# RESULT, 2026-11-01: both REFUSED, both stay measured and unweighted. Controls on every grid below: 12y
+#   +3.1|+2.7 worst -4.0 h2h 15/38 pool 177; 8y +2.8|+2.7 worst -6.6 h2h 17/46 pool 179; 20y +3.3|+1.9 worst
+#   -3.0 h2h 12/22 pool 177. The 20y and stress cells equal control in every row of every grid.
+#   cgo (runs 41327302955 12y, 41327309478 8y, 41327315371 20y, 41327321623 stress, on adb2a05) FAILS at both
+#     weights. At 0.05 the 8y mean falls 0.2; at 0.2 the mean falls 0.1 at 12y and rises 0.1 at 8y, a split.
+#     Held-loser AUC 0.53 at 12y, 0.60 at 8y. The expected miss was the worst window; the miss was the mean.
+#   underdep: the dock rows on that grid were void. A bug, (#1288), made every `growth_fund_extra` term on a
+#     cohort-stamped field score the unstamped copy, so underdep read its raw value, 0 or below, and the clamp
+#     zeroed it. Re-graded on 7ac88cf (runs 41328419915 12y, 41328422469 8y, 41328425384 20y, 41328428059
+#     stress): -0.3 FAILS, the mean falls 0.2 at 12y and 0.3 at 8y; -1.0 FAILS, the 8y rank-1 head-to-head
+#     falls from 37 % to 35 %. So the paper's sign fails. The factor sweep reads the other way: held winners
+#     carry MORE underdep than held losers (AUC 0.70 at 12y, 72 winners and 7 losers; 0.66 at 8y, 131 and 19).
+#     Two bonus rows were then added after looking, NOT pre-registered: +0.3 passes small (8y mean +0.1, 8y
+#     head-to-head 39 % against 37 %, every other cell equal), +1.0 fails the 8y head-to-head (35 %). The +0.3
+#     row then rode the combined row with the (#1289) margin_trend dock (runs 41328805432 12y, 41328810610 8y,
+#     41328815789 20y, 41328821288 stress) and FAILED it, 8y head-to-head 35 %; at +0.2 the same stack passes,
+#     at +0.5 it fails the same cell. A pass that flips on a 0.1 step of a sign picked after the fact is not an
+#     edge, so neither sign ships. Re-ask only with a new reason, such as the paper's industry-year residual
+#     form, or an 8y head-to-head that holds at +0.5.
+# (#1288) the fix copies the finished fund struct back onto each quote at the end of `stamp_cohort_ranks`.
+#   The shipped terms (roic, peg_yield) are not stamped, so no shipped number or golden moved (CI 41328407809
+#   green, goldens untouched). (#408), (#409) and (#533) graded their stamped fields through the factor sweep,
+#   which always read the stamped copy, so those verdicts stand.
+
+# (#1289) MARGIN-TREND DOCK, graded 2026-11-01 on the (#1287) bar. One `growth_fund_extra` term beside the
+#   shipped roic term: {factor: margin_trend, weight: -0.3, cap: 10, neutral: 0}. A name whose operating margin
+#   rose over the last year loses 0.3 points per point of rise, at most 3: a rise from 20 % to 25 % costs 1.5.
+#   A falling or flat margin costs nothing. Live and backtest compute margin_trend the same way.
+# WHY: the momentum half's held losers carried the highest recent margins and the fastest sales growth (12y
+#   margin_trend AUC 0.19, 8y op_margin 0.34): bought at a profit peak. Earlier receipts read margin_trend as
+#   a reward that does not replicate (score lane AUC 0.68 then 0.47; rising-margin OOS +0.02|+0.08); this is
+#   the opposite sign, as a capped dock.
+# RESULT: -0.1 is INERT, every cell equals control (runs 41324997533 12y, 41325009421 8y, 41325020751 20y, on
+#   80b9230). -0.3 PASSES small: 12y +3.1|+2.8, 8y +3.0|+2.7, 8y head-to-head 18/46 against 17/46, worst and
+#   pool equal at every horizon, 20y equal. The same row on 7ac88cf (run 41328810610 8y and its 12y, 20y and
+#   stress twins) reads the same, and as the combined row of the round's passers it is the only one left.
+#   Weighted nowhere yet: it moves the live buy list, which waits for the owner's word.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
