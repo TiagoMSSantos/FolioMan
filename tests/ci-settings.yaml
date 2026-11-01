@@ -21502,6 +21502,7 @@ buy_heuristic:
   growth_gate_soft: 0.8          # (#566) SHIPPED 0.8, STOCKS ONLY (`picks::asset_class` 2); ETFs and coins hard at any f (receipt below); (#567) 0.9 / 1.0 refused; (#564) shipped 0.6; (#565) CI grades the passer edge. (#563) ALL-GATES-SOFT: 0 = every knob gate is a hard wall. f > 0 scores a name that fails
   #  knob gates with exactly those gates waived (the MISSES what-if) and docks it f^n, n = gates waived; f = 1 is the (#560)
   #  gates-off book. Structural refusals, no turnover and the repriced-bar artifact stay hard at any f. All three tables.
+  #  (#1282) So do the Série E rungs (8Y+, 20Y+): a stock under the hurdle is refused, not docked; the what-if still prints.
   #── (#563) PRE-REGISTERED 2026-10-12 — EVERY GATE SOFT AT ONCE, COUNT-BASED ──
   #  WHY: every arm holds fewer than 10 names per bucket, so admits fill empty slots and a taper on ONE gate buys the
   #  same names as a lower floor ((#550), (#561) stage 2). Only softening every gate at once lets candidates outnumber

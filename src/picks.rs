@@ -1902,6 +1902,7 @@ fn gate_soft(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
 /// docked f^n, n = gates waived. At 0.0 nothing reaches `waived`, so the lane is bit for bit the hard one;
 /// CI ships 0.8 (#566).
 /// What `waived` cannot lift (a structural refusal, no turnover, the repriced-bar artifact) stays `None`.
+/// (#1282) So does a Série E rung (8Y+, 20Y+): `waived` lifts it for the what-if, the mandate does not.
 /// (#1245) A stock's walk-stamped event flags count as k more failed gates, f^(n+k): a refusal when f is
 /// 0. With `growth_event_months` at 0, k is 0 and every path above is unchanged.
 fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
@@ -1917,6 +1918,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         Some(p) => (p, 0),
         None => {
             let (open, tags, _) = waived(quote, tuning, false)?;
+            // (#1282) The Série E rungs are a mandate ((#315)), not a dockable gate: under the hurdle = refused.
+            if tags.iter().any(|g| matches!(g.0, "8Y+" | "20Y+")) {
+                return None;
+            }
             (score_parts_hard(quote, &open)?, tags.len())
         }
     };
@@ -10460,9 +10465,13 @@ mod tests {
         (BuyHeuristic { growth_min_20y_pct: 600.0, ..BuyHeuristic::default() }, "20Y+"),
     ] {
         assert!(growth_score(&rungs, &knob).is_none(), "{tag}: a leg under its armed floor must be gated");
+        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..knob.clone() };
+        assert!(growth_score(&rungs, &soft).is_none(), "{tag}: (#1282) the soft dock never lifts the Série E hurdle");
         let why = gate_failures(&rungs, &knob).unwrap();
         assert!(why.iter().any(|(g, _, _)| *g == tag), "{tag}: score_parts gated it but the tail doesn't say so");
     }
+    let soft5 = BuyHeuristic { growth_min_5y_pct: 250.0, growth_gate_soft: 0.8, ..BuyHeuristic::default() };
+    assert!(growth_score(&rungs, &soft5).is_some(), "(#1282) control: the same stock under a missed 5Y+ floor is docked, not refused");
     // THE "if not N/A" RULE: the SAME name minus its 20Y leg clears the SAME armed bar. A leg the
     // quote doesn't have is skipped, never read as a failed one — otherwise the 20Y floor would cut
     // every ETF and every coin, none of which has 20 years of history to show.
