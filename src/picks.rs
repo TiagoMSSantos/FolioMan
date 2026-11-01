@@ -1013,9 +1013,10 @@ fn long_leg_floors(tuning: &BuyHeuristic, class: u8) -> [(&'static str, &'static
 /// takes the full 0.5. Record length is a continuum and the cliff spends all of its resolution on a
 /// single point of it.
 ///
-/// Keyed on WHICH PERF LEG EXISTS, never on `quote.age_years`: the YRS column is None in the backtest
-/// pool (live-only, same standing as the commodity/FX damps), so an age-keyed ladder could never be
-/// graded. The legs are present on both paths, carry the same information, and make this measurable.
+/// Keyed on WHICH PERF LEG EXISTS, never on `quote.age_years`. When this shipped the YRS column was
+/// None in the backtest pool, so an age-keyed ladder could not be graded; (#182) fills it on the walk
+/// now (`core.rs`, off the same cutoff slice). The legs still carry the same information on both
+/// paths, so the ladder stays keyed on them.
 ///
 /// ONE SHARED LADDER, crypto included — a deliberate call, not an oversight. It is NOT a uniform
 /// crypto dock: BTC (listed 2010, so an 8Y leg but no 20Y) lands at 0.85 while a 5-year alt lands at
@@ -1399,8 +1400,8 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
         return None;
     }
     // (#33) minimum listing age. Checked EARLY so a too-young name rejects with an explicit reason
-    // (mirrored in gate_failures) instead of silently `?`-bailing at long_leg_fixed below. age_years
-    // is None in the backtest pool -> gate inert there (edge untouched); it only bites the live screen.
+    // (mirrored in gate_failures) instead of silently `?`-bailing at long_leg_fixed below. (#182)
+    // fills age_years on the backtest walk too, so the gate is gradeable there; it ships 0.0 (off).
     if tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years) {
         return None; // too young -> no multi-year record to trust as a proven compounder
     }
@@ -9537,7 +9538,7 @@ mod tests {
     assert_eq!(gate_failures(&gross3, &age3).unwrap().len(), 3, "same three gates, one missed grossly");
     assert!(growth_n_gate_miss(&gross3, &age3, 3).is_none());
 
-    // --- (#33) minimum-age gate (backtest-blind: age_years None -> pass; live -> gate) ---
+    // --- (#33) minimum-age gate (age_years None -> pass; Some -> gate; (#182) fills it on the walk) ---
     let age_t = BuyHeuristic { growth_min_age_years: 5.0, ..BuyHeuristic::default() };
     // clears every other gate; only age varies
     let aged = |age: Option<f64>| { let mut q = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]); q.age_years = age; q };
