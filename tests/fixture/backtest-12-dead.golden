@@ -92,6 +92,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     growth_dividend      rho +0.06 Δ+0.02   edge +40.4 Δ+6.8
     growth_trust_young→0.7 (no extra dock) rho +0.05 Δ+0.00   edge +33.6 Δ+0.0
     fund_extra:roic      rho +0.01 Δ-0.04   edge +22.5 Δ-11.1
+    fund_extra:margin_trend rho +0.05 Δ+0.00   edge +33.6 Δ+0.0
     null: base −4.3 (calibration) rho +0.01 Δ-0.04   edge +22.5 Δ-11.1
 
 ── growth_trend_weight CURVE (growth lane, n=768) ──
