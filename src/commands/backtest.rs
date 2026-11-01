@@ -2032,6 +2032,7 @@ pub async fn run(args: Vec<String>) {
             let (dates, closes) = (chart.dates, chart.closes);
             // (#531) the listing's own volume, paired before `apply_proxy` can glue donor years under it
             let own_volume: Vec<_> = dates.iter().copied().zip(chart.volumes).collect();
+            let own_close = closes.clone(); // (#1287) `cgo`'s prices, from the same own record
             // (#327) the listing's OWN first bar, read before anything older can be glued under it. Everything
             // before it on the spliced series is the donor's, and `own_first` is what keeps the walk from
             // standing in 1999 and buying a fund that listed in 2019.
@@ -2189,6 +2190,7 @@ pub async fn run(args: Vec<String>) {
                             f.exp_neg = core::ey_cagr(f.eps_growth, picks::perf_pct(&quote, "5Y").map(|c| core::cagr(c, 5.0)));
                             if let Some(p) = px { picks::stamp_fair_yields(f, p) } // (#523) the FAIR family, as fetch.rs stamps it
                             f.low_turnover = low_turnover(&own_volume, dates[i], f.shares_ttm); // (#531)
+                            f.cgo = cgo(&own_volume, &own_close, dates[i], f.shares_ttm); // (#1287)
                         }
                         // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                         // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -4486,7 +4488,7 @@ fn band_verdict(lo: f64) -> &'static str {
     }
 }
 
-const FUND_FACTORS: [&str; 56] = [
+const FUND_FACTORS: [&str; 58] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Bonferroni haircut below divides by FUND_FACTORS.len(), so
@@ -4531,6 +4533,8 @@ const FUND_FACTORS: [&str; 56] = [
     "share_iss_5y",         // (#1278) −5y diluted share count CAGR: does a shrinking count pick the winners?; 53 -> 54
     "netdebt_assets",       // (#1278) −net debt ÷ total assets: balance-sheet strength on the asset base; 54 -> 55
     "eps_streak",           // (#1278) fiscal years of rising EPS in a row, cap 8; 55 -> 56
+    "underdep",             // (#1287) Peddireddy 2021 under-depreciation: sector median minus own 3y D&A rate; 56 -> 57
+    "cgo",                  // (#1287) Grinblatt-Han 2005 capital-gains overhang over the turnover-weighted 5y price; 57 -> 58
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -6376,7 +6380,8 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// percentile, so the smallest name at a cutoff reads 100. It never enters the composite.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
-/// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read.
+/// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
+/// `underdep` is demeaned the same way, for Peddireddy's industry benchmark.
 /// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
 fn stamp_cohort_ranks(samples: &mut [Sample]) {
     let legs: [fn(&core::FundFactors) -> Option<f64>; 5] =
@@ -6402,21 +6407,25 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             f.value_composite = (pcts.len() >= 2).then(|| pcts.iter().sum::<f64>() / pcts.len() as f64);
             f.small_pct = ranked[4].map(|p| 100.0 - p);
         }
-        let mut by_sector: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
-        for s in day.iter() {
-            if let (Some(sec), Some(v)) = (&s.quote.sector, s.fund.as_ref().and_then(|f| f.low_dro)) {
-                by_sector.entry(sec.clone()).or_default().push(v);
-            }
-        }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
             (v[(v.len() - 1) / 2] + v[v.len() / 2]) / 2.0
         };
-        let medians: std::collections::BTreeMap<String, f64> = by_sector.into_iter().map(|(k, v)| (k, median(v))).collect();
-        for s in day.iter_mut() {
-            let m = s.quote.sector.as_ref().and_then(|k| medians.get(k)).copied();
-            if let Some(f) = s.fund.as_mut() {
-                f.low_dro = f.low_dro.zip(m).map(|(v, m)| v - m);
+        let demeaned: [fn(&mut core::FundFactors) -> &mut Option<f64>; 2] = [|f| &mut f.low_dro, |f| &mut f.underdep];
+        for field in demeaned {
+            let mut by_sector: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+            for s in day.iter_mut() {
+                if let (Some(sec), Some(v)) = (&s.quote.sector, s.fund.as_mut().and_then(|f| *field(f))) {
+                    by_sector.entry(sec.clone()).or_default().push(v);
+                }
+            }
+            let medians: std::collections::BTreeMap<String, f64> = by_sector.into_iter().map(|(k, v)| (k, median(v))).collect();
+            for s in day.iter_mut() {
+                let m = s.quote.sector.as_ref().and_then(|k| medians.get(k)).copied();
+                if let Some(f) = s.fund.as_mut() {
+                    let slot = field(f);
+                    *slot = slot.zip(m).map(|(v, m)| v - m);
+                }
             }
         }
     }
@@ -6636,6 +6645,36 @@ fn low_turnover(own: &[(chrono::NaiveDate, f64)], at: chrono::NaiveDate, shares:
         return None;
     }
     Some(-year.iter().map(|(_, v)| v).sum::<f64>() / sh)
+}
+
+/// (#1287) Grinblatt-Han 2005 capital-gains overhang: how far the latest close sits above the price the
+/// float bought at, in % of that close. The reference price weights each bar's close by its turnover v
+/// (volume over the as-of share count, at most 1) times the share of the float not traded since, newest
+/// bar first, over the 5 years ending at `at` (the paper's 260 weeks), normalized by the weight used.
+/// `own` and `close` are the listing's own record, index-aligned, so a (#327) donor never lends volume.
+/// None unless that record covers the whole window with volume on every bar, as `low_turnover`.
+/// shortcut: the paper's weekly bars; this reads whatever spacing the series has (#117), so a monthly
+/// bar's turnover is a month's. The ADR ratio caveat of `low_turnover` applies too.
+fn cgo(own: &[(chrono::NaiveDate, f64)], close: &[f64], at: chrono::NaiveDate, shares: Option<f64>) -> Option<f64> {
+    let sh = shares.filter(|s| *s > 0.0)?;
+    let from = at - chrono::Duration::days(5 * 365);
+    if own.first()?.0 > from {
+        return None;
+    }
+    let (lo, hi) = (own.partition_point(|(d, _)| *d <= from), own.partition_point(|(d, _)| *d <= at));
+    let (bars, px) = (own.get(lo..hi)?, close.get(lo..hi)?);
+    let last = *px.last()?;
+    let (mut num, mut den, mut keep) = (0.0, 0.0, 1.0);
+    for ((_, vol), p) in bars.iter().zip(px).rev() {
+        if *vol <= 0.0 {
+            return None;
+        }
+        let w = keep * (vol / sh).min(1.0);
+        num += w * p;
+        den += w;
+        keep -= w;
+    }
+    Some((last - num / den) / last * 100.0).filter(|c| c.is_finite())
 }
 
 /// (#327) Apply a configured proxy pair to ONE backtest series, and re-prove it first.
@@ -10155,6 +10194,30 @@ mod tests {
         assert_eq!(low_turnover(&gap, at, Some(120.0)), Some(-1.0));
     }
 
+    /// (#1287) Two bars inside five years, each turning half of 100 shares: the newest (close 40) weighs
+    /// 0.5 and the older (close 20) 0.5 of the 0.5 left, so the reference price is 25/0.75 and the close
+    /// sits 16.67% above it. The bar dated exactly five years back (close 100) sits outside the window. A
+    /// record that starts inside the window, a bar with no volume, no share count or a zero close reads
+    /// None, and a bar that turns the whole float alone sets the reference price.
+    #[test]
+    fn cgo_weights_closes_by_the_float_not_traded_since() {
+        let at = ymd(2024, 1, 1);
+        let own = [(at - chrono::Duration::days(5 * 365), 50.0), (ymd(2021, 4, 6), 50.0), (at, 50.0)];
+        let close = [100.0, 20.0, 40.0];
+        let c = cgo(&own, &close, at, Some(100.0)).unwrap();
+        assert!((c - 50.0 / 3.0).abs() < 1e-9, "{c}");
+        assert_eq!(cgo(&own[1..], &close[1..], at, Some(100.0)), None); // starts inside the window
+        assert_eq!(cgo(&own, &close, at, None), None);
+        assert_eq!(cgo(&own, &close, at, Some(0.0)), None);
+        assert_eq!(cgo(&own, &[100.0, 20.0, 0.0], at, Some(100.0)), None);
+        let mut gap = own;
+        gap[1].1 = 0.0;
+        assert_eq!(cgo(&gap, &close, at, Some(100.0)), None);
+        gap[1].1 = 50.0;
+        gap[2].1 = 200.0; // turns the float more than once: weight 1, nothing left for older bars
+        assert_eq!(cgo(&gap, &close, at, Some(100.0)), Some(0.0));
+    }
+
     /// (#790) Each cutoff lands on the first bar of its half-year bucket. The monthly record runs
     /// 2000-03 to 2002-02, so bar 0 opens the first bucket and bars 4 (2000-07), 10 (2001-01), 16 and
     /// 22 open the rest. A start inside a bucket waits for the next opening, and a start in the last
@@ -10430,6 +10493,7 @@ mod tests {
 
     /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads
     /// +20/0/−30; Energy −40 alone reads 0; a Tech name at another date is its own cohort; no sector is None.
+    /// (#1287) `underdep` is demeaned the same way.
     #[test]
     fn stamp_cohort_ranks_demeans_low_dro_within_date_and_sector() {
         use crate::core::FundFactors;
@@ -10441,7 +10505,7 @@ mod tests {
                 realized: 0.0,
                 relative: 0.0,
                 quote: Arc::new(q),
-                fund: Some(FundFactors { low_dro: Some(dro), ..Default::default() }),
+                fund: Some(FundFactors { low_dro: Some(dro), underdep: Some(dro), ..Default::default() }),
                 trail: Vec::new(),
             }
         };
@@ -10455,8 +10519,11 @@ mod tests {
             row(2, "G", Some("Tech"), -1.0),
         ];
         stamp_cohort_ranks(&mut v);
+        let want = [Some(20.0), Some(0.0), Some(-30.0), Some(0.0), None, Some(-49.0), Some(49.0)];
         let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().unwrap().low_dro).collect();
-        assert_eq!(got, vec![Some(20.0), Some(0.0), Some(-30.0), Some(0.0), None, Some(-49.0), Some(49.0)]);
+        assert_eq!(got, want);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().unwrap().underdep).collect();
+        assert_eq!(got, want);
     }
 
     /// (#1277) The top dog is the largest cap per (date, sector): Tech 10/5/10 at the first date stamps both

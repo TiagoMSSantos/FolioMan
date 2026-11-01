@@ -4314,7 +4314,15 @@ pub struct FundFactors {
     pub share_iss_5y: Option<f64>,
     pub netdebt_assets: Option<f64>,
     pub eps_streak: Option<f64>,
-    pub exp_neg: Option<f64>,        // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
+    // (#1287) two AUC-table rows, weighted nowhere. `underdep`: Peddireddy 2021 under-depreciation, minus
+    // the 3y cumulative D&A over 3y revenue, %; `fund_factors` fills it raw and the backtest's same-date
+    // pass demeans it within the sector, so it reads sector median rate minus own rate (high = the name
+    // depreciates slower than its sector, the paper's overstated earnings). `cgo`: Grinblatt-Han 2005
+    // capital-gains overhang, % of price over the turnover-weighted 5y reference price; needs the volume
+    // series, so only the backtest fills it. Both PROBE-ONLY: live reads raw `underdep` and no `cgo`
+    pub underdep: Option<f64>,
+    pub cgo: Option<f64>,
+    pub exp_neg: Option<f64>,       // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
     pub op_rd: Option<f64>,          // (#417) (gross profit − SG&A) ÷ assets, %; XBRL SG&A already excludes R&D
@@ -4983,6 +4991,21 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         eps_streak: back(2).map(|_| {
             (0..8).map_while(back).take_while(|r| r.eps.zip(r.prior_eps).is_some_and(|(e, p)| e > p)).count() as f64
         }),
+        // (#1287) D&A = EBITDA − operating income, both off the same filing. 3 fiscal years, not the paper's
+        // 5, for (#532)'s reason: a 5y reach predates XBRL at 12y. A bank's or insurer's row reads None, as
+        // `low_dro`'s, and so does any year missing a leg. shortcut: a level against today's GICS sector, not
+        // the paper's industry-year regression residual, and no write-down adjustment
+        underdep: now.filter(|r| !r.financial).and_then(|_| {
+            let (mut da, mut rev) = (0.0, 0.0);
+            for k in 0..3 {
+                let r = back(k)?;
+                let s = r.revenue?;
+                da += r.ebitda? - r.op_margin? * s / 100.0;
+                rev += s;
+            }
+            (rev > 0.0).then(|| -da / rev * 100.0)
+        }),
+        cgo: None, // (#1287) needs the volume series
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5782,6 +5805,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "share_iss_5y" => f.share_iss_5y,                 // (#1278) −5y share count CAGR: measured, unweighted
         "netdebt_assets" => f.netdebt_assets,             // (#1278) −net debt ÷ assets: measured, unweighted
         "eps_streak" => f.eps_streak,                     // (#1278) years of rising EPS, cap 8: measured, unweighted
+        "underdep" => f.underdep,                         // (#1287) sector median minus own 3y D&A rate: measured, unweighted
+        "cgo" => f.cgo,                                   // (#1287) capital-gains overhang, %: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6792,6 +6817,8 @@ mod tests {
             share_iss_5y: Some(54.0),
             netdebt_assets: Some(55.0),
             eps_streak: Some(56.0),
+            underdep: Some(57.0),
+            cgo: Some(58.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6856,6 +6883,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "share_iss_5y"), Some(54.0)); // (#1278)
         assert_eq!(select_fund_factor(&f, "netdebt_assets"), Some(55.0)); // (#1278)
         assert_eq!(select_fund_factor(&f, "eps_streak"), Some(56.0)); // (#1278)
+        assert_eq!(select_fund_factor(&f, "underdep"), Some(57.0)); // (#1287)
+        assert_eq!(select_fund_factor(&f, "cgo"), Some(58.0)); // (#1287)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -7741,6 +7770,30 @@ mod tests {
         assert_eq!(k(&ten), Some(8.0));
         // 2022 missing: 2023 rises, then the run ends at the gap, even though 2021 rose too
         assert_eq!(k(&[r(2020, 2.0, 1.0), r(2021, 3.0, 2.0), r(2023, 4.0, 3.0)]), Some(1.0));
+    }
+
+    /// (#1287) `underdep` is minus the 3y D&A over 3y revenue: revenue 100/200/300 at a 10% operating
+    /// margin with EBITDA 15/30/45 is D&A 5/10/15, 30 over 600, so it reads −5. A financial row, a year
+    /// missing a leg, fewer than 3 years or a zero revenue sum is None.
+    #[test]
+    fn underdep_is_negated_three_year_da_over_revenue() {
+        let r = |y: i32, rev: f64, ebitda: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(rev),
+            op_margin: Some(10.0),
+            ebitda,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let u = |rows: &[FundRow]| fund_factors(rows, cutoff, 5).underdep;
+        let three = [r(2021, 100.0, Some(15.0)), r(2022, 200.0, Some(30.0)), r(2023, 300.0, Some(45.0))];
+        assert!((u(&three).unwrap() + 5.0).abs() < 1e-9);
+        let bank: Vec<FundRow> = three.iter().map(|x| FundRow { financial: true, ..x.clone() }).collect();
+        assert_eq!(u(&bank), None);
+        assert_eq!(u(&[three[0].clone(), r(2022, 200.0, None), three[2].clone()]), None);
+        assert_eq!(u(&three[1..]), None);
+        assert_eq!(u(&[r(2021, 0.0, Some(1.0)), r(2022, 0.0, Some(1.0)), r(2023, 0.0, Some(1.0))]), None);
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of

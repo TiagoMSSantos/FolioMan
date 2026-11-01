@@ -24690,6 +24690,46 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   refuses almost every name, so its tag compares the 6 and 13 names left and reads nothing. The financial
 #   and largest-name rows rest on 4 names or fewer. After (#1280) only the last three rows remain.
 
+# (#1287) TWO FUND FACTORS, PRE-REGISTERED 2026-11-01 before any run. Measured, weighted nowhere until a grid
+#   row says so; nothing here reaches a score, a gate, rank, BUY NOW, size, trade or the broker.
+# WHAT: `FUND_FACTORS` 56 -> 58, so the fund lane, the held-loser table and the winners report each gain two
+#   rows (the goldens move; the next commit re-blesses them). Each reads higher = better as the papers sign it:
+#     underdep  the sector median of the 3y D&A rate minus the name's own, in % of revenue. D&A is EBITDA minus
+#               operating income off the same filings, summed over the as-of row and the 2 fiscal years
+#               before it, over the same years' revenue. Demeaned within the same cutoff's same-sector names,
+#               as `low_dro`. High = books less depreciation per unit of sales than its peers. None for a
+#               bank or insurer, a year missing a leg, fewer than 3 yearly rows or no sector.
+#     cgo       the capital-gains overhang: how far the cutoff close sits above the price the float bought
+#               at, in % of that close. The reference price weights each bar's close by its turnover (volume
+#               over the as-of share count, at most 1) times the share of the float not traded since, newest
+#               bar first, over the 5 years to the cutoff. The listing's own volume only, so a borrowed
+#               (#327) history never lends it. None without a share count, or unless that record covers
+#               the 5 years with volume on every bar.
+# WHY: two forms the earlier sweeps never priced. Under-depreciation: Peddireddy, "Estimating Maintenance
+#   CapEx" (Columbia doctoral dissertation, 2021, not peer reviewed) finds the median firm books 25 % less D&A
+#   than its estimated maintenance capex, and the most under-depreciated decile trails the least by about
+#   3.6-4.4 %/yr. Overhang: Grinblatt and Han, "Prospect theory, mental accounting, and momentum", Journal of
+#   Financial Economics 78(2), 2005: names trading far above their buyers' price keep rising, and once the
+#   overhang is known past returns add nothing.
+# BAR: a grid on the re-bless commit, `universe fund pit` at 12y, 8y and 20y plus `universe stress` at
+#   "20 12 8", row 0 the control. underdep is a dock (negative weight, the under-depreciated side only, cap
+#   10, neutral 0) at two weights; cgo a bonus (positive weight, cap 50, neutral 0) at two weights. Each row
+#   replaces the whole `growth_fund_extra` list, the shipped roic term included. A row passes when, against
+#   its own leg's control: the top-10 excess mean and median each fall by no more than 0.1 at 12y and at 8y,
+#   and a rise at one with a fall at the other fails; the worst window gets no worse than 0.5 at 20y, 12y
+#   and 8y; the admitted pool stays at 80 % of control or more; the rank-1 head-to-head never falls below
+#   control at 12y, 8y and 20y stress. A row whose every cell sits within 0.05 of control is INERT and
+#   fails. Every passer then rides one combined row with the other passers, which must pass too, before
+#   the owner is asked once.
+# EXPECTED, written before the run: underdep docks a handful of names and reads INERT or close to it, since
+#   the paper's effect is a 1-3 year earnings surprise and this ruler holds for years; cgo moves the momentum
+#   half more than the score half and fails the worst-window cell at one horizon.
+# SHORTCUT: underdep is a level against today's GICS sector, not the paper's industry-year regression
+#   residual, and adds back no write-downs; 3 years, not 5, because a 5y reach predates XBRL at 12y (#532).
+#   cgo reads whatever bar spacing the series has, not the paper's weekly bars (#117). Live, underdep reads
+#   raw (not demeaned) and cgo is None, so a passer needs live wiring, with its own commit, before it ships.
+# REVERT RULE: drop both names from `FUND_FACTORS` to restore 56; the fields can stay, read by nothing.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
