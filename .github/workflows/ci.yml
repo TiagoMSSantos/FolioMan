@@ -311,7 +311,7 @@ jobs:
       # ~10s confirming it on a warm one.
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
-          tool: wasm-bindgen@0.2.129   # = web/engine's pin
+          tool: wasm-bindgen@0.2.130   # = web/engine's pin
       - run: |
           cargo build --locked --release --target wasm32-unknown-unknown --manifest-path web/engine/Cargo.toml --target-dir target
           wasm-bindgen --target web --out-dir "${RUNNER_TEMP}/site/engine" target/wasm32-unknown-unknown/release/folioman_engine.wasm
