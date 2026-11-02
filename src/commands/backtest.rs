@@ -2265,6 +2265,9 @@ pub async fn run(args: Vec<String>) {
             // to the cutoff, so no look-ahead arrives with it.
             let divs = chart.divs;
             let splits = chart.splits; // (#1245) read by `event_flags`, after the restate above
+            // (#1301) the name's insider holdings by month ([`insider_own_bulk`]); empty unless `insider`
+            let own: &[(chrono::NaiveDate, f64)] =
+                if insider { insider_own_bulk().get(&fetch::us_symbol(tk)).map_or(&[][..], Vec::as_slice) } else { &[] };
             // (PIT) this name's index spans, resolved ONCE per ticker rather than per cutoff. `None`
             // means "not an index name at all" — every coin, every ETF, and any stock that was never
             // an S&P 500 member — and is never filtered: PIT is a claim about the index pond alone.
@@ -2342,6 +2345,10 @@ pub async fn run(args: Vec<String>) {
                         if let Some(txns) = insider_txns.as_ref() {
                             fund.get_or_insert_with(Default::default).insider_net_buys_90d =
                                 core::insider_net_buys(txns, dates[i], 90);
+                        }
+                        // (#1301) the insiders' combined holding over the same as-of share count
+                        if let Some(f) = fund.as_mut() {
+                            f.insider_own_pct = core::insider_own_pct(own, &splits, dates[i], f.shares_ttm);
                         }
                         // (Item 19) as-of earnings yield from the as-of close, in the SAME currency the
                         // EPS beside it is reported in. (FX) `fx` is None for every same-currency name,
@@ -4281,6 +4288,31 @@ fn insider_bulk() -> &'static HashMap<String, Vec<core::InsiderTx>> {
     BULK.get_or_init(|| parse_insider(include_str!("../../tests/insider.csv")))
 }
 
+/// (#1301) `tests/insider_own.csv`, which `tools/insider_from_sec.py --holdings` writes from the same
+/// SEC data sets: per US ticker and filing month, the shares its directors and officers held after
+/// their newest Form 3/4/5 line. Each row is dated on the LAST day of its filing month, like
+/// [`parse_insider`], and kept in file order, which the tool writes sorted by month. The header and
+/// any malformed line drop out.
+fn parse_insider_own(csv: &str) -> HashMap<String, Vec<(chrono::NaiveDate, f64)>> {
+    let mut out: HashMap<String, Vec<(chrono::NaiveDate, f64)>> = HashMap::new();
+    for l in csv.lines() {
+        let [ticker, month, shares] = l.split(',').collect::<Vec<_>>()[..] else { continue };
+        let date = chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.checked_add_months(chrono::Months::new(1)))
+            .and_then(|d| d.pred_opt());
+        let (Some(date), Ok(shares)) = (date, shares.parse::<f64>()) else { continue };
+        out.entry(ticker.to_string()).or_default().push((date, shares));
+    }
+    out
+}
+
+/// (#1301) The shipped [`parse_insider_own`] table, parsed once per run on first use.
+fn insider_own_bulk() -> &'static HashMap<String, Vec<(chrono::NaiveDate, f64)>> {
+    static BULK: std::sync::OnceLock<HashMap<String, Vec<(chrono::NaiveDate, f64)>>> = std::sync::OnceLock::new();
+    BULK.get_or_init(|| parse_insider_own(include_str!("../../tests/insider_own.csv")))
+}
+
 /// (#728) Census horizons, in years before the event.
 const FAIL_HORIZONS: [i64; 4] = [1, 2, 3, 5];
 /// (#728) Row labels, in [`fail_groups`]' order.
@@ -4711,7 +4743,7 @@ fn band_verdict(lo: f64) -> &'static str {
     }
 }
 
-const FUND_FACTORS: [&str; 60] = [
+const FUND_FACTORS: [&str; 61] = [
     "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
     // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
     // array TIGHTENS every reported band: the Bonferroni haircut below divides by FUND_FACTORS.len(), so
@@ -4760,6 +4792,7 @@ const FUND_FACTORS: [&str; 60] = [
     "cgo",                  // (#1287) Grinblatt-Han 2005 capital-gains overhang over the turnover-weighted 5y price; 57 -> 58
     "ocf_at_chg",           // (#1290) Bouchaud-Krueger-Landier-Thesmar 2019 change in cash return on assets; 58 -> 59
     "capex_abn",            // (#1290) Titman-Wei-Xie 2004 capex over revenue against its 3y mean; 59 -> 60
+    "insider_own_pct",      // (#1301) von Lilienfeld-Toal-Ruenzi 2014 insider ownership level, directors and officers; 60 -> 61
     "composite",            // (Item 3) shows n/a until ≥2 factors are present
 ];
 
@@ -12550,6 +12583,21 @@ mod tests {
         let shipped = include_str!("../../tests/insider.csv");
         let counted: usize = shipped.lines().skip(1).map(|l| l.split(',').skip(2).map(|n| n.parse::<usize>().unwrap()).sum::<usize>()).sum();
         assert_eq!(insider_bulk().values().map(Vec::len).sum::<usize>(), counted);
+    }
+
+    /// (#1301) Each row lands on its filing month's end; a short line, a bad month or a bad count drops;
+    /// every shipped line parses, and every shipped ticker's rows run in date order, which
+    /// `core::insider_own_pct` reads newest-before-cutoff from.
+    #[test]
+    fn parse_insider_own_dates_rows_on_the_month_end_in_order() {
+        let csv = "ticker,month,shares\nAAA,2016-02,200\nAAA,2016-12,0\nBBB,2020-13,1\nBBB,2020-01,x\nBBB,2020-01\n";
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let got = parse_insider_own(csv);
+        assert_eq!(got["AAA"], [(d("2016-02-29"), 200.0), (d("2016-12-31"), 0.0)]);
+        assert!(!got.contains_key("BBB"), "every BBB line is malformed");
+        let shipped = include_str!("../../tests/insider_own.csv");
+        assert_eq!(insider_own_bulk().values().map(Vec::len).sum::<usize>(), shipped.lines().count() - 1);
+        assert!(insider_own_bulk().values().all(|v| v.windows(2).all(|w| w[0].0 < w[1].0)));
     }
 
     /// (#728) The bar at each of its edges: every cell at n 30 sits exactly on its AUC bound, and k is

@@ -4347,6 +4347,10 @@ pub struct FundFactors {
     // name invests above its own habit). Both off the as-of rows, no price; a bank or insurer reads None
     pub ocf_at_chg: Option<f64>,
     pub capex_abn: Option<f64>,
+    // (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal
+    // and Ruenzi 2014 measure the CEO's stake; this is the wider directors-and-officers cut SEC's insider
+    // data sets carry. Only the backtest fills it, under `insider`, from tests/insider_own.csv. PROBE-ONLY
+    pub insider_own_pct: Option<f64>,
     pub exp_neg: Option<f64>,       // (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live
     // (#417) Ball et al. 2015 R&D-adjusted operating profitability, and Yartseva 2025 / Bessembinder's
     // "profit outgrew the balance sheet". Levels off the as-of rows, no price, weighted nowhere.
@@ -4433,6 +4437,19 @@ pub fn insider_net_buys(txns: &[InsiderTx], cutoff: NaiveDate, window_days: i64)
         .sum();
     let any = txns.iter().any(|t| t.date >= start && t.date < cutoff);
     any.then_some(net as f64)
+}
+
+/// (#1301) Insiders' combined holding as a % of `shares`, from the newest month dated BEFORE `cutoff`.
+/// `rows` are (month end, shares held) sorted by date, as the backtest's table carries them; each row's
+/// count is on the basis of the day it was filed, so it is multiplied by every split after that day to
+/// meet `shares` on the chart's basis (the [`restate_for_splits`] discipline). None with no row, no
+/// positive share count, no stake, or a share above 100% (a units mix-up, never a real stake).
+/// shortcut: rows are dated on the month end, so a split between the filing day and the month end is
+/// missed and that one month reads off by the split ratio.
+pub fn insider_own_pct(rows: &[(NaiveDate, f64)], splits: &[(NaiveDate, f64)], cutoff: NaiveDate, shares: Option<f64>) -> Option<f64> {
+    let &(d, held) = rows.iter().take_while(|(d, _)| *d < cutoff).last()?;
+    let pct = 100.0 * held * split_factor_since(splits, d) / shares?;
+    (pct > 0.0 && pct <= 100.0).then_some(pct) // a zero or negative count reads 0, inf or NaN: all out
 }
 
 /// (#448) (buys, sales) over the same [cutoff−window, cutoff) as `insider_net_buys`, for the page's
@@ -5045,6 +5062,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             let mean = (1..4).map(capex_rev).sum::<Option<f64>>()? / 3.0;
             (mean > 0.0).then_some((capex_rev(0)? / mean - 1.0) * 100.0)
         }),
+        insider_own_pct: None, // (#1301) set in the backtest loop, from the insider holdings table
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
         // (#417) 1y, not `yrs`: the end-to-end reach (asset_growth's) predates XBRL at 12y and reads n=0
@@ -5848,6 +5866,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "cgo" => f.cgo,                                   // (#1287) capital-gains overhang, %: measured, unweighted
         "ocf_at_chg" => f.ocf_at_chg,                     // (#1290) 1y change in OCF over assets, points: measured, unweighted
         "capex_abn" => f.capex_abn,                       // (#1290) capex over revenue against its 3y mean, %: measured, unweighted
+        "insider_own_pct" => f.insider_own_pct,           // (#1301) insiders' holding, % of shares: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -6863,6 +6882,7 @@ mod tests {
             cgo: Some(58.0),
             ocf_at_chg: Some(59.0),
             capex_abn: Some(60.0),
+            insider_own_pct: Some(61.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
             discipline: Some(46.0),
@@ -6931,6 +6951,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "cgo"), Some(58.0)); // (#1287)
         assert_eq!(select_fund_factor(&f, "ocf_at_chg"), Some(59.0)); // (#1290)
         assert_eq!(select_fund_factor(&f, "capex_abn"), Some(60.0)); // (#1290)
+        assert_eq!(select_fund_factor(&f, "insider_own_pct"), Some(61.0)); // (#1301)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -8613,6 +8634,28 @@ mod tests {
         assert_eq!(insider_counts(&txns, cutoff, 90), (2, 1));
         assert_eq!(insider_counts(&txns, cutoff, 10), (0, 1)); // 2020 is leap: Mar 1 − 10 = Feb 20, the sale
         assert_eq!(insider_counts(&[], cutoff, 90), (0, 0));
+    }
+
+    /// (#1301) The newest row strictly before the cutoff is the holding; a row on the cutoff is unread, a
+    /// split after the row multiplies it onto the chart basis, and every guard reads None.
+    #[test]
+    fn insider_own_pct_reads_the_last_row_before_the_cutoff() {
+        let d = |m, day| NaiveDate::from_ymd_opt(2020, m, day).unwrap();
+        let rows = [(d(1, 31), 10.0), (d(2, 29), 20.0), (d(3, 31), 40.0)];
+        let sh = Some(1000.0);
+        assert_eq!(insider_own_pct(&rows, &[], d(3, 31), sh), Some(2.0)); // the Mar 31 row sits ON the cutoff
+        assert_eq!(insider_own_pct(&rows, &[], d(4, 1), sh), Some(4.0));
+        assert_eq!(insider_own_pct(&rows, &[], d(1, 31), sh), None); // nothing before the first row
+        assert_eq!(insider_own_pct(&[], &[], d(4, 1), sh), None);
+        assert_eq!(insider_own_pct(&rows, &[], d(4, 1), None), None);
+        assert_eq!(insider_own_pct(&rows, &[], d(4, 1), Some(0.0)), None);
+        assert_eq!(insider_own_pct(&rows, &[], d(4, 1), Some(-1000.0)), None);
+        assert_eq!(insider_own_pct(&[(d(1, 31), 0.0)], &[], d(4, 1), sh), None); // no stake is no reading
+        assert_eq!(insider_own_pct(&[(d(1, 31), 1000.0)], &[], d(4, 1), sh), Some(100.0)); // exactly all kept
+        assert_eq!(insider_own_pct(&[(d(1, 31), 1001.0)], &[], d(4, 1), sh), None);
+        // a 2:1 split after the Feb row doubles it; one on the row's own day is already in its count
+        assert_eq!(insider_own_pct(&rows, &[(d(3, 10), 2.0)], d(3, 31), sh), Some(4.0));
+        assert_eq!(insider_own_pct(&rows, &[(d(2, 29), 2.0)], d(3, 31), sh), Some(2.0));
     }
 
     /// (#518) Newest change per manager inside [cutoff-135d, cutoff): the cutoff day and older changes are
