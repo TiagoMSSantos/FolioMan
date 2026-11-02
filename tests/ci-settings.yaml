@@ -24965,6 +24965,55 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the USPTO Open Data Portal on 2026-03-20, and its bulk files now need an API key tied to a USPTO.gov account
 #   with identity checks. The old public bucket and the one mirror found refuse downloads, and the patent tables
 #   on a cloud warehouse need an account too. No field was built. Re-ask when a keyless bulk file returns.
+# (#1304) ROUND 14 RANKER RULE, PRE-REGISTERED 2026-11-02 before any run. The stock half of the growth table
+#   is read in the order of the shipped score. This round adds one knob, `growth_ranker` (default "shipped"),
+#   that swaps that order for another one and changes nothing else: the same names are admitted, funds and
+#   coins keep their places, and each stock takes the shipped score of the place it lands in, so the book's
+#   weights follow place. A stock the ranker cannot key drops out. A ranker other than "shipped" takes the
+#   whole stock list, so the (#584) momentum interleave is off under it. At "shipped" every number and every
+#   golden stays byte-identical.
+# RANKERS: one table in the code lists every id, and the (#560) rivals table prints one row per id. The nine
+#   rows it already prints keep their arithmetic: shipped, gates_off, mom121, quality, value_ep, rev_cagr,
+#   mom_quality, tr_life, tr_life10. Five are new:
+#     fresh_mom_k0         the shipped momentum key (12-7 today, the one `growth_momentum_key` picks) over the
+#                          names that carry none of the five crowd marks below;
+#     fresh_mom_k1         the same over names with at most one mark;
+#     fresh_6m_k1          the 6-month return over names with at most one mark;
+#     rank_avg_mom_lowk    the mean of two percentile ranks: momentum, and fewest marks;
+#     rank_avg_mom_tested  the mean of three percentile ranks: momentum, fewest years under water, and the
+#                          lowest 10y trend R^2.
+#   Two more rows sit in the rivals table only: ew_k0, every name with no mark at equal weight, and
+#   top20_shipped, the shipped order with a book of 20. The (j) to (n) blends stay as they are. Percentile
+#   ranks are taken over the pond at each cutoff, ties by ticker.
+# CROWD MARKS, the five of (#1291) with the same fixed thresholds; a missing field leaves its mark off:
+#   S the 10y trend R^2 is at least 0.90; D the longest stretch under a previous high is under 2 years;
+#   H the long CAGR over volatility sits at the Sharpe cap; W the name beat the index in at least 95 % of
+#   rolling 3-year windows over the decade; I the name passed the buy rules 6 months or more in a row.
+#   W and I are measured inside the backtest only, so the four rankers that count marks are walk-only:
+#   `screen`, `size` and the page refuse them. rank_avg_mom_tested reads live-filled fields and can run live.
+# BAR, in order; each step runs only when the one before passes:
+#   1. Rivals table on `universe fund pit` and `universe stress` at 20, 12 and 8 years, holdout samples
+#      dropped: the rival's top-10 excess mean AND median beat BOTH the plain shipped row AND the (j) blend by
+#      at least 0.2 points a year in at least 5 of the 6 cells, and sit above the random-book p95 in at least
+#      5 of the 6.
+#   2. The (#311) 20y DCA re-grade, as (#560) wrote it: the rival's never-sell vs index DCA mean AND median
+#      clear the top-10 lane's by at least 0.2 points a year in both pit and stress. That lane is built only
+#      for a rival that passes step 1.
+#   3. A `growth_ranker` grid row against "shipped" under the (#1291) bar, with three changes for a ranker
+#      row. A ranker admits the same names as control, so the 80 % pool rule cannot fail; instead the median
+#      gated pool must stay above 10 names, or the order cannot move the top 10. The top-10 gain must sit
+#      OUTSIDE its null band. The holdout, read once, must agree in sign. The two-neighbour rule reads
+#      fresh_mom_k0 and fresh_mom_k1 as one pair, and the looser k1 ships; any other ranker has no
+#      neighbour, and its 6-cell rivals pass stands in for one.
+#   4. Then one question to the owner. Nothing ships on the rivals table alone.
+# EXPECTED, written before any run: fresh_mom_k0 and fresh_mom_k1 beat shipped at 20y and 12y in both lanes
+#   and tie or lose at 8y, so 4 or 5 cells of 6; ew_k0 beats the pond's equal weight but not momentum;
+#   top20_shipped lowers both spread and mean; the rank averages land between.
+# WHY: an offline read of the 55-name fixture put momentum among names with no mark above the random p95 at
+#   8, 12 and 20 years (+0.9 and +2.0 points a year at 12y and 20y), while the shipped score sat inside the
+#   random band. The fixture is survivorship-selected and the thresholds were picked on it, so only the pond
+#   decides.
+# REVERT RULE: a failing ranker stays in the table as a rivals row, and the knob stays "shipped".
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
