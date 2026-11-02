@@ -450,6 +450,119 @@ Caveats:
     member's last close rolled into the S&P to the window's end, x0.7 if it lost over half its
     price in its last year (one constant: the archive records no delist reason). Archive names carry no
     fund rows (no SEC CIK map), so their growth fund term reads neutral; ^GSPC bars are quarterly.
+    MORTALITY (#1296): 0 of 111 cutoffs covered. Base over 12y: 21.5% dead, 20.6% acquired; a cutoff
+    under half of either is UNDER-COVERED, and a row graded only on those reads UNGRADEABLE, not FAIL.
+      1996-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1996-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1996-07-01  members    8  alive    8  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1996-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1996-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1997-01-01  members    8  alive    8  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1997-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1997-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1997-07-01  members    8  alive    8  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1997-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1997-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1998-01-01  members    8  alive    8  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1998-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1998-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1998-07-01  members    9  alive    9  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1998-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1998-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1999-01-01  members   12  alive   12  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1999-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1999-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1999-07-01  members   13  alive   13  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1999-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      1999-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2000-01-01  members   13  alive   13  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2000-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2000-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2000-07-01  members   14  alive   14  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2000-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2000-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2001-01-01  members   16  alive   16  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2001-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2001-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2001-07-01  members   19  alive   19  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2001-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2001-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2002-01-01  members   21  alive   21  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2002-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2002-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2002-07-01  members   21  alive   19  acquired   2 ( 9.5%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2002-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2002-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2003-01-01  members   22  alive   20  acquired   2 ( 9.1%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2003-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2003-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2003-07-01  members   22  alive   19  acquired   3 (13.6%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2003-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2003-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2004-01-01  members   23  alive   19  acquired   4 (17.4%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2004-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2004-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2004-07-01  members   23  alive   16  acquired   6 (26.1%)  dead   1 ( 4.3%)  UNDER-COVERED
+      2004-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2004-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2005-01-01  members   24  alive   16  acquired   7 (29.2%)  dead   1 ( 4.2%)  UNDER-COVERED
+      2005-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2005-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2005-07-01  members   24  alive   15  acquired   8 (33.3%)  dead   1 ( 4.2%)  UNDER-COVERED
+      2005-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2005-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2006-01-01  members   24  alive   14  acquired   9 (37.5%)  dead   1 ( 4.2%)  UNDER-COVERED
+      2006-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2006-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2006-07-01  members   27  alive   15  acquired  11 (40.7%)  dead   1 ( 3.7%)  UNDER-COVERED
+      2006-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2006-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2007-01-01  members   27  alive   15  acquired  11 (40.7%)  dead   1 ( 3.7%)  UNDER-COVERED
+      2007-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2007-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2007-07-01  members   30  alive   17  acquired  12 (40.0%)  dead   1 ( 3.3%)  UNDER-COVERED
+      2007-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2007-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2008-01-01  members   31  alive   17  acquired  13 (41.9%)  dead   1 ( 3.2%)  UNDER-COVERED
+      2008-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2008-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2008-07-01  members   31  alive   17  acquired  13 (41.9%)  dead   1 ( 3.2%)  UNDER-COVERED
+      2008-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2008-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2009-01-01  members   34  alive   20  acquired  13 (38.2%)  dead   1 ( 2.9%)  UNDER-COVERED
+      2009-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2009-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2009-07-01  members   35  alive   21  acquired  13 (37.1%)  dead   1 ( 2.9%)  UNDER-COVERED
+      2009-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2009-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2010-01-01  members   36  alive   21  acquired  14 (38.9%)  dead   1 ( 2.8%)  UNDER-COVERED
+      2010-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2010-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2010-07-01  members   36  alive   21  acquired  14 (38.9%)  dead   1 ( 2.8%)  UNDER-COVERED
+      2010-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2010-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2011-01-01  members   35  alive   21  acquired  14 (40.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2011-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2011-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2011-07-01  members   36  alive   22  acquired  14 (38.9%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2011-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2011-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2012-01-01  members   36  alive   22  acquired  14 (38.9%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2012-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2012-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2012-07-01  members   36  alive   22  acquired  14 (38.9%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2012-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2012-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2013-01-01  members   37  alive   23  acquired  14 (37.8%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2013-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2013-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2013-07-01  members   37  alive   23  acquired  14 (37.8%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2013-08-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2013-09-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2014-01-01  members   37  alive   23  acquired  14 (37.8%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2014-02-01  members    1  alive    1  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2014-03-01  members    4  alive    4  acquired   0 ( 0.0%)  dead   0 ( 0.0%)  UNDER-COVERED
+      2014-07-01  members   37  alive   25  acquired  12 (32.4%)  dead   0 ( 0.0%)  UNDER-COVERED
   • Price-only (#6): no as-of P/E reconstructed, so the `value` multiplier is ×1.0 here; as-of DIVIDENDS are live since #53 and every dividend row below is real.
   • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.
   • Long-horizon (MAX monthly): only names alive for the FULL 12y window enter, so
