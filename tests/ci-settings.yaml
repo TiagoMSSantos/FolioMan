@@ -22671,9 +22671,20 @@ buy_heuristic:
   #   saved page upload that still names one loads.
   # (#1280) retired: growth_max_trend_r2: 0.0       # (#1277) `smooth`: refuse a stock whose 10y log-trend R^2 is AT OR ABOVE this. 0 = off
   # (#1280) (#1286) retired: growth_min_underwater_yrs: 0.0 # (#1277) `untested`: refuse a stock whose longest spell under a past high in 10y is under this. 0 = off
-  # (#1280) retired: growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off
-  # (#1280) retired: growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this %/yr over 5y. 0 = off
-  # (#1280) retired: growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off
+  growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off.
+                                 #   (#1280) retired, (#1299) restored OFF for a re-grade on the dead-name ruler (#1296)
+  growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this
+                                 #   %/yr over 5y. 0 = off. (#1280) retired, (#1299) restored OFF beside the one above
+  growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off.
+                                 #   (#1280) retired, (#1299) restored OFF beside the two above
+  growth_consensus_min: 0        # (#1297) `consensus`: refuse a stock showing at least this many of the five crowd-favourite
+                                 #   marks (S smooth 10y trend, D under 2 years underwater, H at the sharpe cap, W beat the
+                                 #   index in 95 % of 3-year windows, I passed the rules 6 months in a row). 0 = off
+  growth_consensus_dock: false   # (#1297) dock each crowd mark as one more failed gate under growth_gate_soft. false = off
+  growth_hard_tags: []           # (#1297) gate tags that refuse even under growth_gate_soft, for the hard rows of a grid. [] = none
+  growth_min_cagr_rel: 0.0       # (#1298) a stock's long leg must also clear the previous cutoff's pool median CAGR plus this
+                                 #   many points (the walk stamps the pool; live rows carry none yet). 0 = off
+  growth_min_cagr_pct: 0.0       # (#1298) ... or that pool's CAGR at this percentile; the higher bar applies. 0 = off
   # (#1286) ROUND 10 GRID, 2026-11-01: C (`untested`, growth_min_underwater_yrs 2) and S (`stretch`, growth_max_above_ma
   #   150 -> 100), each docked (growth_gate_soft 0.8) and refused (growth_untested_hard, growth_stretch_hard), on the
   #   (#1285) code 8ceacb6. BAR, written before the run, against each leg's own row 0: top-10 excess mean and median

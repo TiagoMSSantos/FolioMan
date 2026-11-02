@@ -1056,8 +1056,13 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (#1277) the last ten years of this chart, the window `backtest_quote` reads (`core::last_decade`)
         trend_r2_10y: core::last_decade(&chart.closes, bars_yr).map(core::trend_r2),
         underwater_yrs_10y: core::last_decade(&chart.closes, bars_yr).and_then(|w| core::longest_underwater_yrs(w, bars_yr)),
-        // (#1277) only the walk stamps it: live `fund.mcap` is None and no score reads it
+        // (#1277) only the walk stamps it: live `fund.mcap` is None, so a live fill waits until its gate
+        // ships. Same for the (#1297)/(#1298) walk-only fields after it.
         sector_top_dog: None,
+        rel_win_share_10y: None,
+        admit_tenure_months: None,
+        pool_cagr_median: None,
+        pool_cagr_pct: None,
         last_close_date: last_date, // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),

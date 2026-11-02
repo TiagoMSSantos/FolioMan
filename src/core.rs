@@ -425,17 +425,32 @@ pub struct Quote {
     // (#1277) the last ten years of the price series: the log-trend R² and the longest stretch below a
     // past high, in years. One window on both paths and at any bar size ([`last_decade`]), unlike
     // `trend_r2` (the whole backtest slice, ~10y live) and `underwater_yrs` (daily runs only). None =
-    // under five years of bars. No score reads them: (#1280) deleted the two gates the grid refused, and
-    // the fields stay filled so a later census can read them without a refetch.
+    // under five years of bars. (#1280) deleted the two gates the grid refused; since (#1297) only the
+    // crowd marks of `picks::consensus_marks` read them (S at R² >= 0.90, D under 2 years under water).
     #[serde(default)]
     pub trend_r2_10y: Option<f64>,
     #[serde(default)]
     pub underwater_yrs_10y: Option<f64>,
     // (#1277) the largest `fund.mcap` in its sector at the same cutoff (`backtest::stamp_top_dogs`). Only the
-    // walk stamps it, so it is None live, and None with no sector or no mcap. No score reads it since
-    // (#1280) deleted the gate the grid refused.
+    // walk stamps it, so it is None live, and None with no sector or no mcap. Read only by
+    // `growth_refuse_sector_top_dog` (#1299), off by default.
     #[serde(default)]
     pub sector_top_dog: Option<bool>,
+    // (#1297) the share of rolling 3-year windows over the last ten years in which the price beat the
+    // benchmark (`backtest::rel_win_share`), None under six windows. Only the walk stamps it; live is None
+    // until a gate that reads it ships, so the W crowd mark is off live.
+    #[serde(default)]
+    pub rel_win_share_10y: Option<f64>,
+    // (#1297) months in a row, ending at this cutoff, that the name passed the hard buy rules
+    // (`backtest::stamp_admit_tenure`). Walk only, None live, like `rel_win_share_10y`.
+    #[serde(default)]
+    pub admit_tenure_months: Option<u32>,
+    // (#1298) the median long CAGR (`picks::long_cagr_pct`) of the previous cutoff's stocks, and their
+    // `growth_min_cagr_pct` percentile (`backtest::stamp_pool_cagr`); None under 20 such stocks. Walk only.
+    #[serde(default)]
+    pub pool_cagr_median: Option<f64>,
+    #[serde(default)]
+    pub pool_cagr_pct: Option<f64>,
 }
 
 /// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
@@ -546,6 +561,10 @@ impl Quote {
             trend_r2_10y: None,
             underwater_yrs_10y: None,
             sector_top_dog: None,
+            rel_win_share_10y: None,
+            admit_tenure_months: None,
+            pool_cagr_median: None,
+            pool_cagr_pct: None,
         }
     }
 
@@ -5988,7 +6007,8 @@ pub fn backtest_quote(
     if cadence == 252 {
         quote.underwater_yrs = longest_underwater_yrs(c, cadence);
     }
-    // (#1277) at every cadence, unlike the field above, so a census of these reads the graded runs
+    // (#1277) at every cadence, unlike the field above, so the (#1297) crowd marks that read these see the
+    // graded runs
     quote.trend_r2_10y = last_decade(c, cadence).map(trend_r2);
     quote.underwater_yrs_10y = last_decade(c, cadence).and_then(|w| longest_underwater_yrs(w, cadence));
     // (#20) the LIVE growth lane excludes a name whose turnover is UNKNOWN (an untradeable/dead listing

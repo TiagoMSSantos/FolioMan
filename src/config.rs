@@ -487,7 +487,19 @@ pub struct BuyHeuristic {
     pub growth_max_above_ma: f64,    // hard gate: reject equities more than this % above the 200wk SMA — the extreme blow-off cohort the overext brake can only floor, not remove. VALIDATED at 150 (see ci-settings.yaml); 0 = off. Crypto exempt (rides far above its SMA normally; its brake cap handles it)
     pub growth_brake_min_sessions: usize, // (#833) a stock with fewer than LONG_MA_SESSIONS closes has no 200wk average, so its stretch reading is 0 and neither the stretch gate above nor the overext brake can see a young blow-off. A name with at least this many closes (and fewer than LONG_MA_SESSIONS) reads its stretch against the average of ALL its closes instead. Scaled by cadence in the backtest like the long MA. 0 = off, the shipped behaviour, byte-identical
     pub growth_require_lifetime_uptrend: bool, // (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — moon-crash-partial-recovery names whose 5Y/10Y legs look great but never reclaimed their long-run trend. false = off (default). Crypto exempt (young coins; the range gate handles bled ones). REACHABLE BUT DOMINATED: its fields (trend_cagr, life_cagr) ARE filled in the backtest, yet `growth_gate_reachability_pin` reads it INERT for every class, because `growth_min_cagr` (8.0) rejects the same names first — a fixture built to trip exactly this gate (crash −95%, recover to just under the start price: life_cagr −0.2%/yr with a +1349% 20Y leg) dies at `cagr-life -0.2%/yr (need ≥8.0%)` and never reaches it. So it is not backtest-blind, it is redundant at any `growth_min_cagr >= 0` — which is every config shipped. Lower that floor below 0 and this knob starts biting
-    pub growth_maxdd_cap: f64,       // (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name that ever fell >83% peak-to-trough). 0 = off (default)
+    // (#1299) three round-9 (#1277) gates brought back from the deleted list for a re-grade on the dead-name
+    // ruler (#1296): their first grade read only the survivors, who are exactly the names they would not cut.
+    pub growth_refuse_financials: bool, // refuse a stock whose SEC filings read as a bank or insurer (`fund.financial`, `financial`): its growth is balance-sheet growth. false = off
+    pub growth_financial_max_asset_growth: f64, // refuse a financial whose TOTAL ASSETS grew faster than this %/yr over the 5-year fundamentals window (`fin-growth`). 0 = off
+    pub growth_refuse_sector_top_dog: bool, // refuse the stock with the largest market cap in its sector at the cutoff (`topdog`). Backtest-only today: the walk stamps it, live `fund.mcap` is None, so a live fill waits until it ships. false = off
+    // (#1297) a crowd-favourite cut: five marks of a stock everyone already owns, fixed before any run by
+    // (#1291) and counted by `picks::consensus_marks`.
+    pub growth_consensus_min: usize, // refuse a stock carrying at least this many of the five marks S (smooth 10y trend), D (under water < 2 of 10 years), H (return per unit of risk at `sharpe_cap`), W (beat the benchmark in >= 95% of rolling 3y windows), I (passed the buy rules >= 6 months running) (`consensus`). 0 = off
+    pub growth_consensus_dock: bool, // count each crowd mark as one failed buy rule in the soft dock instead of refusing. Read-only arm of (#1297). false = off
+    pub growth_hard_tags: Vec<String>, // (#1297) gate tags that refuse even under `growth_gate_soft`, the way 8Y+ and 20Y+ always do, e.g. [consensus, financial]. Empty = off
+    pub growth_min_cagr_rel: f64, // (#1298) stocks only: a second CAGR floor, this many points above the median long CAGR of the previous cutoff's stocks (`pool_cagr_median`). The higher of the two floors applies; the whole-life leg keeps the absolute bar. 0 = off
+    pub growth_min_cagr_pct: f64, // (#1298) stocks only: a second CAGR floor at this percentile of the previous cutoff's stock long CAGRs (`pool_cagr_pct`, stamped at this percentile). The higher floor applies. 0 = off
+    pub growth_maxdd_cap: f64,      // (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name that ever fell >83% peak-to-trough). 0 = off (default)
     pub growth_maxdd_cap_crypto: f64, // (#26) crypto's OWN maxdd cap. Coins crash >90% every cycle, so the equity cap would gate Bitcoin itself (-83%); set this just ABOVE BTC's mark (84) to mean "reject coins that wiped out worse than Bitcoin". 0 = off (default)
     pub growth_max_vol_crypto: f64,  // (#36) crypto-only hard gate: reject coins whose daily-return stdev (quote.volatility_pct, the VOL column) exceeds this % — "not meaningfully wilder than Bitcoin" (BTC ~2.4%/day; 3.0 gives the base headroom). Edge-blind, but NOT for the reason this comment used to give: "crypto is absent from the backtest pool" was FALSE (fetch_universe pushes CoinGecko SYMBOL-EUR tickers and nothing filters them; coins are in fact the one class the bare `Quote::stub` always classed correctly, since `is_currency_quoted` reads the ticker suffix). The gate IS reachable on a reconstructed coin — `backtest_quote` fills volatility_pct, and `each_class_reads_its_own_gate_leg` pins that the crypto leg is the one taken. What is missing is SAMPLES: ~11y of coin history leaves 0 growth-scored crypto cutoffs at every horizon measured (20y-s 0/4633, 12y-s 0/11758, 8y-s 18/20575 with 0 scored), so no sweep can vote. Equities never reach multi-% daily stdev, so no equity twin. 0 = off (default)
     pub growth_min_age_years: f64,   // (#33) hard gate: reject a name younger than this many years (quote.age_years, the YRS column = whole-life listing age). A "20yr+ proven CAGR" candidate must actually HAVE a multi-year record. (#182) age_years is filled on the backtest walk too, so the gate is gradeable there (it was backtest-blind before). Pins bypass it (shown with a "young" gate-review reason). All classes. 0 = off (default)
@@ -730,6 +742,14 @@ impl Default for BuyHeuristic {
             growth_max_above_ma: 0.0,      // code default off; ci-settings.yaml ships the validated 150
             growth_brake_min_sessions: 0,  // (#833) off: a name under LONG_MA_SESSIONS closes reads 0 stretch, as before
             growth_require_lifetime_uptrend: false, // (#25) code default off; ci-settings.yaml ships true
+            growth_refuse_financials: false, // (#1299) off
+            growth_financial_max_asset_growth: 0.0, // (#1299) off
+            growth_refuse_sector_top_dog: false, // (#1299) off
+            growth_consensus_min: 0, // (#1297) off
+            growth_consensus_dock: false, // (#1297) off
+            growth_hard_tags: Vec::new(), // (#1297) off
+            growth_min_cagr_rel: 0.0, // (#1298) off
+            growth_min_cagr_pct: 0.0, // (#1298) off
             growth_maxdd_cap: 0.0,         // (#26) off until a probe validates a value
             growth_maxdd_cap_crypto: 0.0,  // (#26) off by default; ci-settings ships 84 (just above BTC's -83)
             growth_max_vol_crypto: 0.0,    // (#36) off by default; ci-settings ships 3.0 (just above BTC's ~2.4%/day)
@@ -1542,9 +1562,10 @@ fn anchored_path(name: &str) -> PathBuf {
 }
 
 /// (#817) (#818) (#819) (#1280) (#1286) Knobs deleted after their measurements refused them; each had shipped at its code default.
+/// (#1299) brought three of the (#1280) names back for a re-grade on the dead-name ruler.
 /// An old overlay or a saved page upload that still names one is dropped here instead of failing
 /// `deny_unknown_fields`.
-pub(crate) const RETIRED: [&str; 40] = [
+pub(crate) const RETIRED: [&str; 37] = [
     "growth_min_net_margin",
     "growth_max_margin_swing",
     "growth_max_dilution_pct",
@@ -1582,9 +1603,6 @@ pub(crate) const RETIRED: [&str; 40] = [
     "growth_min_underwater_yrs",
     "growth_untested_hard",
     "growth_stretch_hard",
-    "growth_refuse_financials",
-    "growth_financial_max_asset_growth",
-    "growth_refuse_sector_top_dog",
 ];
 
 /// Drop every [`RETIRED`] key, at any depth: the knobs sit under `buy_heuristic:`.
