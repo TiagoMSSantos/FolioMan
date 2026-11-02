@@ -2432,7 +2432,7 @@ pub async fn run(args: Vec<String>) {
         .collect() };
     let per_ticker = walk(years);
     // (#1296) this horizon's marks only: a later 0y walk for the roll books must not add to them
-    let census = mortality(&std::mem::take(&mut *exit_marks.lock().unwrap_or_else(std::sync::PoisonError::into_inner)), years);
+    let deaths = mortality(&std::mem::take(&mut *exit_marks.lock().unwrap_or_else(std::sync::PoisonError::into_inner)), years);
     lap("walk");
 
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
@@ -3028,7 +3028,7 @@ pub async fn run(args: Vec<String>) {
             println!("    member's last close rolled into the S&P to the window's end, x{dead_penalty} if it lost over half its");
             println!("    price in its last year (one constant: the archive records no delist reason). Archive names carry no");
             println!("    fund rows (no SEC CIK map), so their growth fund term reads neutral; ^GSPC bars are quarterly.");
-            print_mortality(&census, years);
+            print_mortality(&deaths, years);
         }
     }
     // (#61) WAS "no as-of dividends or P/E reconstructed; the * term above is inert here", and the
