@@ -1886,6 +1886,10 @@ pub async fn run(args: Vec<String>) {
     let args = positional;
 
     let settings = config::load();
+    if let Err(e) = crate::picks::live_ranker(&settings.buy_heuristic) {
+        eprintln!("folioman: {e}"); // (#1304) a walk-only ranker reads crowd marks no live quote carries
+        std::process::exit(1);
+    }
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
     // (#687) The IPO lane reads no quote, so it runs under the universe and quote fetches instead of after
@@ -2199,7 +2203,7 @@ pub async fn run(args: Vec<String>) {
     // it too (`booked`), then (#1209) the shadow tables' rows, below.
     // shortcut: the order's first `book_cut` names hold every name a momentum slot can reach unless an issuer
     // twin is skipped ahead of one; widen if an `m` row reads n/a again
-    let mom: std::collections::HashSet<String> = if settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book {
+    let mom: std::collections::HashSet<String> = if crate::picks::interleaves(&settings.buy_heuristic, &settings.sizing) {
         let order = crate::picks::momentum_order(&quotes, &settings.buy_heuristic);
         order.into_iter().take(settings.sizing.book_cut()).map(|q| q.ticker.clone()).collect()
     } else {
@@ -2655,7 +2659,7 @@ pub async fn run(args: Vec<String>) {
     let notches = notch_cohorts(&quotes, &settings.tickers, &settings.buy_heuristic);
     // (#584) the blended book's momentum names join the journalled rows in the book's interleaved order, so
     // `track` prices and grades the book that was bought; `shipped` keeps the shipped-only order beside it
-    let blend = settings.buy_heuristic.growth_momentum_interleave && settings.sizing.equal_weight_book;
+    let blend = crate::picks::interleaves(&settings.buy_heuristic, &settings.sizing);
     let journal_rows = journal_order(&ranked_now, &sized_now, &shipped_now, blend, settings.buy_heuristic.growth_momentum_slots);
     let px = |t: &String| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur));
     // (#663) `exit` and `carry` read one close, off every list this run priced

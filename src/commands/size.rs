@@ -275,6 +275,10 @@ pub(crate) fn fund_sectors(
 #[mutants::skip]
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
+    if let Err(e) = crate::picks::live_ranker(&settings.buy_heuristic) {
+        eprintln!("folioman: {e}"); // (#1304) a walk-only ranker reads crowd marks no live quote carries
+        std::process::exit(1);
+    }
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
     // (#260) the DEFAULT source is the ranked book now, not the watchlist. The whole decision — and

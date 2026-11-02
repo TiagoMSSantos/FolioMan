@@ -257,6 +257,7 @@ fn load(overlay: &str, universe: &str) -> Result<(Settings, Universe), String> {
         return Err("settings.yaml: no buy_heuristic knobs left after the merge".to_string());
     }
     let s: Settings = config::settings_of(&merged).map_err(|e| format!("settings.yaml: {e}"))?;
+    crate::picks::live_ranker(&s.buy_heuristic).map_err(|e| format!("settings.yaml: {e}"))?; // (#1304)
     #[cfg(target_family = "wasm")]
     config::install(merged)?;
     let bh = &s.buy_heuristic;

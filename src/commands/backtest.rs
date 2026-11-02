@@ -986,7 +986,8 @@ struct Dumped {
 /// once per grid row, with no fetch and no walk. A grid row is one JSON object of `buy_heuristic` keys laid
 /// over the loaded config's; `{}` is the config itself. Run it under the config the dump was made with.
 ///
-/// Only the cross-sectional stamp that reads the tuning is redone (the sector door's floors). The cohort
+/// Only the cross-sectional stamps that read the tuning are redone: the sector door's floors and (#1304) the
+/// admit tenure. The cohort
 /// ranks are NOT: that stamp subtracts a median from the dumped value, so a second pass would shift it
 /// again. `relative` is left 0, as the de-mean only feeds the lane tables, which this does not print. The
 /// SIZED row runs with no spill legs, so its remainder earns the benchmark itself.
@@ -1012,6 +1013,7 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         println!("\n══ rescore row {line} ══");
         let mut s = samples.clone();
         stamp_sector_cohorts(&mut s, &bench, &tuning); // on every sample: a cutoff's floors read the one before it
+        stamp_admit_tenure(&mut s, &tuning); // (#1304) judged under the row's rules, so redone per row
         let (s, sealed) = if holdout { split_holdout(s) } else { (s, Vec::new()) };
         if holdout {
             println!("  HOLDOUT (#1293): {} sample(s) cut on or after {HOLDOUT_FROM} are sealed and left out of every table below", sealed.len());
@@ -2318,6 +2320,7 @@ pub async fn run(args: Vec<String>) {
                         }
                         let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence, &anchor_windows);
                         quote.history_proxied = history_proxied; // (#327) provenance, for the PROXY BOOK split
+                        quote.rel_win_share_10y = rel_win_share(&dates, &closes, &bench, dates[i]); // (#1304) the W crowd mark
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                         if tuning.growth_event_months > 0 {
                             let m = tuning.growth_event_months as u32;
@@ -2463,6 +2466,7 @@ pub async fn run(args: Vec<String>) {
     // stamp is written and never read, so each number below is unchanged — and the SECTOR BOOK row can
     // still price the door for free by re-scoring with the knob flipped.
     stamp_sector_cohorts(&mut samples, &bench, tuning);
+    stamp_admit_tenure(&mut samples, tuning); // (#1304) judges through `growth_score`, so after every stamp it reads
     lap("stamps");
     if let Some(p) = std::env::var_os("FOLIOMAN_BACKTEST_SAMPLES") {
         write_samples(&samples, &bench, years, p.as_ref()); // (#529) the look-ahead test's seam; unset = no-op
@@ -2493,6 +2497,7 @@ pub async fn run(args: Vec<String>) {
     stamp_sector_cohorts(&mut books, &bench, tuning);
     stamp_top_dogs(&mut books); // (#1277) for the same reason
     stamp_regime(&mut books, &bench); // (#1284) and the regime valve's, or an arm setting `growth_regime_slack_pct` prints the control's DCA lines
+    stamp_admit_tenure(&mut books, tuning); // (#1304) last, for the reason above
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
@@ -2851,7 +2856,15 @@ pub async fn run(args: Vec<String>) {
         report_jump_census(&samples, &bench, years, tuning); // (#1247)
     }
     if rivals {
-        report_rivals(&samples, &bench, years, tuning, draws);
+        let kept; // (#1304) the round-14 bar reads the rivals with the holdout sealed
+        let pool = if holdout {
+            kept = split_holdout(samples.clone()).0;
+            println!("\n  HOLDOUT (#1293): the rivals below leave out the {} sample(s) cut on or after {HOLDOUT_FROM}", samples.len() - kept.len());
+            &kept
+        } else {
+            &samples
+        };
+        report_rivals(pool, &bench, years, tuning, draws);
         lap("rivals");
     }
     if winners {
@@ -5724,7 +5737,10 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 /// `growth_momentum_slots`; (#598) (k) is the same blend with (h) in place of row 0. (#600) (l) ranks the pond
 /// on one key, [`rank_sum`] of row 1 and the momentum key; (m) and (n) are (j) with one half [`double_sort`]ed:
 /// (m) keeps the momentum-best half of row 0's top names, (n) the row-1-best half of the momentum side's.
-const RIVALS: [&str; 14] = [
+/// (#1304) Rows 2 to 8 and (o) to (s) are keyed by the `growth_ranker` registry (`picks::RANKERS`), whose
+/// labels these are; (t) holds every pond name with no crowd mark at equal weight, (u) row 0's order with a
+/// book of 20.
+const RIVALS: [&str; 21] = [
     "shipped (plain top-10)",
     "(d) gates-off shipped",
     "(a) momentum 12-1",
@@ -5739,6 +5755,13 @@ const RIVALS: [&str; 14] = [
     "(l) integrated score + mom",
     "(m) (j), score half by mom",
     "(n) (j), mom half by score",
+    "(o) fresh mom, 0 marks",
+    "(p) fresh mom, <=1 mark",
+    "(q) fresh 6M, <=1 mark",
+    "(r) rank avg mom + low marks",
+    "(s) rank avg mom + tested",
+    "(t) equal weight, 0 marks",
+    "(u) shipped top-20",
 ];
 
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
@@ -5784,14 +5807,6 @@ fn blend_sides<'a>(shipped: &[&'a Sample], fill: impl Iterator<Item = &'a Sample
 fn blend_top<'a>(shipped: Vec<&'a Sample>, fill: impl Iterator<Item = &'a Sample>, slots: usize, n: usize) -> Vec<(&'a str, f64)> {
     let book = blend_sides(&shipped, fill, slots, n);
     book.iter().map(|b| (b.0, 1.0 / book.len() as f64)).collect()
-}
-
-/// (#560) Each value's percentile in its column: the share of present values strictly below it, so
-/// ties share a rank. `None` stays `None`.
-fn rank_pct(xs: &[Option<f64>]) -> Vec<Option<f64>> {
-    let present: Vec<f64> = xs.iter().flatten().copied().collect();
-    let n = present.len() as f64;
-    xs.iter().map(|x| x.map(|v| present.iter().filter(|p| **p < v).count() as f64 / n)).collect()
 }
 
 /// (#560) An equal-weight book of (realized %, bench %) picks as its excess over the index, pts/yr,
@@ -5848,10 +5863,10 @@ fn double_sort(by: &[(Option<f64>, f64, f64, &str)], then: &[Option<f64>], k: us
     by.iter().zip(then).map(|(r, t)| t.filter(|_| top.contains(r.3))).collect()
 }
 
-/// (#600) Rival (l)'s key: a row's [`rank_pct`] in `a` plus its rank in `b`, so the order is the mean
+/// (#600) Rival (l)'s key: a row's [`picks::rank_pct`] in `a` plus its rank in `b`, so the order is the mean
 /// percentile's. A row missing either has none.
 fn rank_sum(a: &[Option<f64>], b: &[Option<f64>]) -> Vec<Option<f64>> {
-    rank_pct(a).into_iter().zip(rank_pct(b)).map(|(a, b)| a.zip(b).map(|(a, b)| a + b)).collect()
+    picks::rank_pct(a).into_iter().zip(picks::rank_pct(b)).map(|(a, b)| a.zip(b).map(|(a, b)| a + b)).collect()
 }
 
 /// (#560) Rival (e): `draws` seeded draws of `n` names per bucket from the pond, with
@@ -5935,29 +5950,18 @@ fn rival_books(
         let mut trails: Vec<&[f64]> = Vec::new(); // (#609) and its trailing months, for keys 3 and 4
         for ((s, sh), op) in group.iter().zip(sh).zip(op) {
             let (Some(op), Some(bench_r)) = (op, benchmark_fwd(bd, bc, s.date, years)) else { continue };
-            let f = s.fund.as_ref();
-            let keys = [
-                sh,
-                Some(op),
-                picks::momentum_12_1(&s.quote),
-                f.and_then(|f| f.quality.or(f.roe)),
-                f.and_then(|f| f.earnings_yield),
-                f.and_then(|f| f.rev_cagr),
-                None,
-                s.quote.tr_cagr,
-                s.quote.tr_cagr.filter(|_| picks::perf_pct(&s.quote, "10Y").is_some()),
-            ];
-            rows.push((keys, s.realized, bench_r, s.quote.ticker.as_str()));
+            rows.push(([sh, Some(op), None, None, None, None, None, None, None], s.realized, bench_r, s.quote.ticker.as_str()));
             picked.push(s.quote.as_ref());
             trails.push(s.trail.as_slice());
         }
         if !rows.iter().any(|r| r.0[0].is_some()) {
             continue; // the shipped lane holds nobody here, so its row has no window to compare
         }
-        let col = |i: usize| rank_pct(&rows.iter().map(|r| r.0[i]).collect::<Vec<_>>());
-        let (mom, qual) = (col(2), col(3));
-        for (r, (m, q)) in rows.iter_mut().zip(mom.into_iter().zip(qual)) {
-            r.0[6] = m.zip(q).map(|(m, q)| (m + q) / 2.0);
+        let ranked = |i: usize| (picks::RANKERS[i].keys)(&picked, &trails, shipped); // (#1304) the registry keys rows 2 to 8
+        for i in 2..9 {
+            for (r, k) in rows.iter_mut().zip(ranked(i)) {
+                r.0[i] = k;
+            }
         }
         let keyed = |i: usize| rows.iter().map(|r| (r.0[i], r.1, r.2, r.3)).collect::<Vec<_>>();
         for (i, book) in books.iter_mut().take(9).enumerate() {
@@ -5976,12 +5980,18 @@ fn rival_books(
         let held = top_names(&keyed(0), half, &HashSet::new());
         let fill = rekey(double_sort(&capped, &open_keys, VERDICT_TOP.saturating_sub(held.len()), &held));
         books[13].extend(blend_excess(&keyed(0), &fill, half, VERDICT_TOP, years));
+        for (j, book) in books.iter_mut().skip(14).take(5).enumerate() {
+            book.extend(rival_excess(&rekey(ranked(9 + j)), VERDICT_TOP, years)); // (#1304) (o) to (s)
+        }
+        let bare: Vec<Option<f64>> = picked.iter().map(|q| picks::consensus_marks(q, shipped).is_empty().then_some(1.0)).collect();
+        books[19].extend(rival_excess(&rekey(bare), usize::MAX, years)); // (#1304) (t): one key, so the whole set
+        books[20].extend(rival_excess(&keyed(0), 20, years)); // (#1304) (u)
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
 }
 
-/// (#560) The `rivals` report: fourteen top-10 books and a random one on the SAME pond, the non-crypto
+/// (#560) The `rivals` report: the [`RIVALS`] books and a random one on the SAME pond, the non-crypto
 /// samples the gates-off scorer can score, in the buckets where the shipped lane holds a name. Report
 /// only; the pre-registered bar and the 6-cell tally live in the (#560) receipt.
 #[mutants::skip] // printing; `rival_books` and its helpers carry the tests
@@ -6007,6 +6017,7 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
     }
     let stats = |xs: &[f64]| (xs.iter().sum::<f64>() / xs.len().max(1) as f64, median(xs.to_vec()));
     let (ship_mean, ship_med) = stats(&books[0]);
+    let (j_mean, j_med) = stats(&books[9]); // (#1304) the bar reads (j) too
     // (#1149) the random draws come first so every row can print where it ranks among them
     let draws = random_books(&pond, VERDICT_TOP, years, n_draws);
     let mut means: Vec<f64> = draws.iter().map(|d| d.0).collect();
@@ -6017,12 +6028,16 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
         let win = xs.iter().filter(|x| **x > 0.0).count() as f64 / xs.len().max(1) as f64 * 100.0;
         let worst = xs.iter().copied().fold(f64::INFINITY, f64::min);
         let tag = if rival_wins(mean - ship_mean, med - ship_med) { "AHEAD" } else { "-" };
+        let j_tag = if rival_wins(mean - j_mean, med - j_med) { "AHEAD" } else { "-" };
+        let p95 = if mean > p95_mean && med > p95_med { "ABOVE" } else { "-" };
         let p = if xs.is_empty() { "n/a  ".to_string() } else { format!("{:.3}", p_at_least(&means, mean)) };
         println!(
-            "  {name:<27} n {:>3}  excess {mean:+.1} (med {med:+.1}) pts/yr  win {win:.0}%  worst {worst:+.1}  p {p}  vs plain shipped {:+.1}/{:+.1} {tag}",
+            "  {name:<28} n {:>3}  excess {mean:+.1} (med {med:+.1}) pts/yr  win {win:.0}%  worst {worst:+.1}  p {p}  vs plain shipped {:+.1}/{:+.1} {tag}  vs (j) {:+.1}/{:+.1} {j_tag}  p95 {p95}",
             xs.len(),
             mean - ship_mean,
-            med - ship_med
+            med - ship_med,
+            mean - j_mean,
+            med - j_med
         );
     }
     println!(
@@ -6702,6 +6717,54 @@ fn stamp_top_dogs(samples: &mut [Sample]) {
             let dog = key(s).map(|(sector, m)| m >= top[&sector]);
             Arc::make_mut(&mut s.quote).sector_top_dog = dog;
         }
+    }
+}
+
+/// (#1304) The share of rolling 3-year windows over the ten years to `date` in which the name's price
+/// grew more than the benchmark's: windows start 36, 42, ... 120 months back, each 36 months long, priced
+/// at the last close on or before each end. A window either series does not reach is skipped, and under
+/// six seen windows reads None. The W crowd mark. shortcut: a tie counts as a loss, and each series is read
+/// as it was fetched, so a price series against a total-return index races dividends it does not carry.
+fn rel_win_share(dates: &[chrono::NaiveDate], closes: &[f64], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::NaiveDate) -> Option<f64> {
+    let at = |d: &[chrono::NaiveDate], c: &[f64], on: chrono::NaiveDate| d.partition_point(|x| *x <= on).checked_sub(1).map(|i| c[i]);
+    let grew = |d: &[chrono::NaiveDate], c: &[f64], from, to| at(d, c, from).zip(at(d, c, to)).map(|(a, b)| b / a).filter(|g| g.is_finite());
+    let (mut won, mut seen) = (0u32, 0u32);
+    for back in (36..=120).step_by(6) {
+        let from = date.checked_sub_months(chrono::Months::new(back));
+        let to = date.checked_sub_months(chrono::Months::new(back - 36));
+        let Some((name, index)) = from.zip(to).and_then(|(f, t)| grew(dates, closes, f, t).zip(grew(&bench.0, &bench.1, f, t))) else { continue };
+        seen += 1;
+        won += u32::from(name > index);
+    }
+    (seen >= 6).then(|| f64::from(won) / f64::from(seen))
+}
+
+/// (#1304) Stamp `admit_tenure_months`: how long, in months, the name has passed the hard buy rules at
+/// every cutoff in a row up to this one, judged under `tuning` with the soft dock off, so a name a dock
+/// only ranks lower has no tenure. A cutoff it fails, or is absent from, ends the run: a failing sample
+/// reads None and the next pass starts again at 0. The I crowd mark; run it after every other stamp the
+/// rules read.
+fn stamp_admit_tenure(samples: &mut [Sample], tuning: &BuyHeuristic) {
+    let judge = BuyHeuristic { growth_gate_soft: 0.0, ..tuning.clone() };
+    let pass: Vec<bool> = samples.par_iter().map(|s| growth_score(&s.quote, &judge).is_some()).collect();
+    let month = |d: chrono::NaiveDate| d.year() * 12 + d.month() as i32;
+    let mut order: Vec<usize> = (0..samples.len()).collect();
+    order.sort_by_key(|&i| samples[i].date);
+    let (mut prev, mut cur): (HashMap<String, chrono::NaiveDate>, HashMap<String, chrono::NaiveDate>) = Default::default();
+    let mut open: Option<chrono::NaiveDate> = None;
+    for i in order {
+        let date = samples[i].date;
+        if open != Some(date) {
+            prev = std::mem::take(&mut cur);
+            open = Some(date);
+        }
+        let tk = &samples[i].quote.ticker;
+        let tenure = pass[i].then(|| {
+            let start = prev.get(tk).copied().unwrap_or(date);
+            cur.insert(tk.clone(), start);
+            (month(date) - month(start)) as u32
+        });
+        Arc::make_mut(&mut samples[i].quote).admit_tenure_months = tenure;
     }
 }
 
@@ -10879,6 +10942,80 @@ mod tests {
         assert_eq!(got, vec![Some(true), Some(false), Some(true), Some(true), None, None, Some(true), Some(false)]);
     }
 
+    /// (#1304) Ten years of monthly bars against a flat index: a flat name never wins (a tie is a loss),
+    /// a rising one wins every window, a jump on the cutoff bar wins only the window ending there (1 of
+    /// 15), and six windows of history is the least that reads.
+    #[test]
+    fn rel_win_share_counts_three_year_windows_beaten() {
+        let bars = |from: u32, px: &dyn Fn(u32) -> f64| -> (Vec<NaiveDate>, Vec<f64>) { (from..=120).map(|m| (ymd(2000 + (m / 12) as i32, m % 12 + 1, 1), px(m))).unzip() };
+        let bench = bars(0, &|_| 10.0);
+        let read = |(d, c): (Vec<NaiveDate>, Vec<f64>)| rel_win_share(&d, &c, &bench, ymd(2010, 1, 1));
+        assert_eq!(read(bars(0, &|_| 50.0)), Some(0.0), "a tie is a loss");
+        assert_eq!(read(bars(0, &|m| 3f64.powi((m / 6) as i32))), Some(1.0), "a riser wins all 15 windows");
+        assert_eq!(read(bars(0, &|m| if m == 120 { 60.0 } else { 50.0 })), Some(1.0 / 15.0), "only the window ending on the cutoff");
+        assert_eq!(read(bars(54, &|_| 50.0)), Some(0.0), "66 months: six windows");
+        assert_eq!(read(bars(60, &|_| 50.0)), None, "60 months: five windows");
+    }
+
+    /// (#1304) Tenure counts months of passing in a row, whatever order the samples come in: A passes at
+    /// four half-year cutoffs (0, 6, 12, 18), B fails the third (None) and starts again at 0, and C,
+    /// absent from the second, starts again at 0 too.
+    #[test]
+    fn stamp_admit_tenure_counts_months_passed_in_a_row() {
+        let d = [ymd(2010, 1, 1), ymd(2010, 7, 1), ymd(2011, 1, 1), ymd(2011, 7, 1)];
+        let t = BuyHeuristic::default();
+        let at = |i: usize, tk: &str, pass: bool| sector_sample(d[i], tk, "Tech", if pass { 200.0 } else { -10.0 });
+        assert!(growth_score(&at(0, "A", true).quote, &t).is_some(), "the fixture passes");
+        assert_eq!(growth_score(&at(0, "A", false).quote, &t), None, "the fixture fails");
+        let mut v = [
+            at(3, "A", true),
+            at(1, "B", true),
+            at(0, "C", true),
+            at(2, "A", true),
+            at(2, "B", false),
+            at(0, "A", true),
+            at(3, "B", true),
+            at(2, "C", true),
+            at(1, "A", true),
+            at(0, "B", true),
+        ];
+        stamp_admit_tenure(&mut v, &t);
+        let mut got: Vec<(String, NaiveDate, Option<u32>)> = v.iter().map(|s| (s.quote.ticker.clone(), s.date, s.quote.admit_tenure_months)).collect();
+        got.sort();
+        let want: [(&str, usize, Option<u32>); 10] = [
+            ("A", 0, Some(0)),
+            ("A", 1, Some(6)),
+            ("A", 2, Some(12)),
+            ("A", 3, Some(18)),
+            ("B", 0, Some(0)),
+            ("B", 1, Some(6)),
+            ("B", 2, None),
+            ("B", 3, Some(0)),
+            ("C", 0, Some(0)),
+            ("C", 2, Some(0)),
+        ];
+        assert_eq!(got, want.map(|(tk, i, m)| (tk.to_string(), d[i], m)));
+    }
+
+    /// (#1304) Tenure is judged on the hard rules whatever the tuning: a failer the soft dock still ranks
+    /// has no tenure, while a passer under the same tuning does.
+    #[test]
+    fn admit_tenure_judges_the_hard_rules() {
+        let tenure = |q: &Quote, t: &BuyHeuristic| {
+            let mut v = [ymd(2010, 1, 1), ymd(2010, 7, 1)].map(|d| Sample { quote: Arc::new(q.clone()), ..sample(d, 0.0) });
+            stamp_admit_tenure(&mut v, t);
+            v.map(|s| s.quote.admit_tenure_months)
+        };
+        let pass = (*sector_sample(ymd(2010, 1, 1), "A", "Tech", 200.0).quote).clone();
+        let mut fail = pass.clone();
+        fail.range_pct = 20.0; // under the range floor
+        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..BuyHeuristic::default() };
+        assert_eq!(growth_score(&fail, &BuyHeuristic::default()), None, "the hard rules refuse it");
+        assert!(growth_score(&fail, &soft).is_some(), "the soft dock ranks it");
+        assert_eq!(tenure(&fail, &soft), [None, None]);
+        assert_eq!(tenure(&pass, &soft), [Some(0), Some(6)]);
+    }
+
     /// (#328) A stock at one cutoff with a chosen 5Y leg and GICS label — the only inputs the sector
     /// door reads. `realized` is irrelevant here; the door is decided entirely before the forward
     /// window opens.
@@ -12019,7 +12156,7 @@ mod tests {
         assert_eq!(mom(&[("1M", 5.0)]), None, "no 1Y, no momentum");
         assert!((mom(&[("1Y", 20.0), ("1M", -100.0)]).unwrap() - 11_900.0).abs() < 1e-6, "a wiped month is floored at 1%");
 
-        assert_eq!(rank_pct(&[Some(3.0), None, Some(1.0), Some(3.0)]), vec![Some(1.0 / 3.0), None, Some(0.0), Some(1.0 / 3.0)]);
+        assert_eq!(picks::rank_pct(&[Some(3.0), None, Some(1.0), Some(3.0)]), vec![Some(1.0 / 3.0), None, Some(0.0), Some(1.0 / 3.0)]);
 
         assert_eq!(book_excess(&[], 1), None);
         // years 1: the book doubles (+100%), the index gains 50% -> +50 pts
@@ -12089,6 +12226,15 @@ mod tests {
         assert_eq!(p_at_least(&[1.0, 2.0, 3.0], 9.0), 0.25);
     }
 
+    /// (#1304) The rivals table's first nine rows and its (o)-(s) rows are the ranker registry's labels, in
+    /// order, so a ranker the table grades is the one `growth_ranker` names.
+    #[test]
+    fn rivals_match_registry() {
+        let labels: Vec<&str> = crate::picks::RANKERS.iter().map(|r| r.label).collect();
+        assert_eq!(RIVALS[..9], labels[..9]);
+        assert_eq!(RIVALS[14..19], labels[9..]);
+    }
+
     /// (#560) `rival_books` on a stand-in scorer (shipped = `range_pct`, open adds `avg_turnover_eur`).
     /// 2010: S1 is in both lanes, S2 only gates-off, N1 in neither, the coin never. 2011: only the open
     /// lane scores, so the bucket sits out. 2012: no index window, so nobody is in it. Index +10%.
@@ -12101,6 +12247,7 @@ mod tests {
             let mut q = (*s.quote).clone();
             q.tr_cagr = (s.quote.ticker == "S2").then_some(50.0); // (#571) S2 alone keys (h); no 10Y leg, so (i) is empty
             q.perf = crate::core::HORIZONS.iter().map(|(l, _)| one_year.filter(|_| *l == "1Y").map(|v| ("x".to_string(), v))).collect();
+            q.fund = Some(f.clone()); // (#1304) the registry keys read the quote's copy, as the walk stamps it
             s.quote = Arc::new(q);
             s.fund = Some(f);
             s
@@ -12118,7 +12265,31 @@ mod tests {
         let (books, pond) = rival_books(&samples, &bench, 1, swap_scorer, &shipped, &open);
         // S1 alone: +30 vs +10 -> 20. S1 + S2: +20 -> 10. S2 alone: 0. (#598) (k): S2 by TR life, then S1 by momentum.
         // (#600) (l)/(m)/(n): S2 has no 1Y, so no momentum key, and S1 is alone in all three.
-        let want: [&[f64]; 14] = [&[20.0], &[10.0], &[20.0], &[10.0], &[20.0], &[0.0], &[20.0], &[0.0], &[], &[20.0], &[10.0], &[20.0], &[20.0], &[20.0]];
+        // (#1304) Neither name carries a crowd mark: (o)/(p)/(r) are S1 on its momentum key, (q) finds no 6M and
+        // (s) no years under water, (t) holds both, (u) is row 0's S1.
+        let want: [&[f64]; 21] = [
+            &[20.0],
+            &[10.0],
+            &[20.0],
+            &[10.0],
+            &[20.0],
+            &[0.0],
+            &[20.0],
+            &[0.0],
+            &[],
+            &[20.0],
+            &[10.0],
+            &[20.0],
+            &[20.0],
+            &[20.0],
+            &[20.0],
+            &[20.0],
+            &[],
+            &[20.0],
+            &[],
+            &[10.0],
+            &[20.0],
+        ];
         assert_eq!(books.len(), RIVALS.len());
         for (i, (got, want)) in books.iter().zip(want).enumerate() {
             assert_eq!(got.len(), want.len(), "book {i}: {got:?}");

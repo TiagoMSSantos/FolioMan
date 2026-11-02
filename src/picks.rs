@@ -321,6 +321,26 @@ fn min_age_years(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     tuning.growth_min_age_years.max(coin)
 }
 
+/// (#1297) The crowd-favourite marks a stock shows, one letter each, thresholds fixed by (#1291):
+/// `S` ten-year trend R² at least 0.90, `D` under 2 years below a past high in ten years, `H` long
+/// CAGR over volatility at the `sharpe_cap` ceiling, `W` beat the benchmark in at least 95% of rolling
+/// 3-year windows over the decade, `I` admitted for at least 6 months in a row. A missing field is a
+/// mark off. (#1304) restored for the rankers that count them; no score reads it.
+pub(crate) fn consensus_marks(quote: &Quote, tuning: &BuyHeuristic) -> String {
+    let long_cagr = long_cagr_pct(quote, tuning);
+    let sharpe = long_cagr.zip(quote.volatility_pct).filter(|&(_, v)| v > 0.0).map(|(c, v)| c / v);
+    [
+        ('S', quote.trend_r2_10y.is_some_and(|r| r >= 0.90)),
+        ('D', quote.underwater_yrs_10y.is_some_and(|u| u < 2.0)),
+        ('H', tuning.sharpe_cap > 0.0 && sharpe.is_some_and(|s| s >= tuning.sharpe_cap)),
+        ('W', quote.rel_win_share_10y.is_some_and(|w| w >= 0.95)),
+        ('I', quote.admit_tenure_months.is_some_and(|m| m >= 6)),
+    ]
+    .into_iter()
+    .filter_map(|(c, on)| on.then_some(c))
+    .collect()
+}
+
 /// (#1154) %/yr the equity floor drops for size: `growth_min_cagr_size_slope` per tenfold of market cap
 /// above `growth_min_cagr_size_pivot`, never below 0, so it can only lower the floor. No cap reads 0.
 /// shortcut: the backtest's cap is in the trading currency (USD for the US pool) and the live one is
@@ -2020,8 +2040,178 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 
 /// (#144) The batch form the backtest's scorer slots take: [`growth_score`] per name, in pool order.
 /// (#818) The rank normalisation it was named for is retired.
+///
+/// (#1304) Under a `growth_ranker` other than "shipped" the stocks this scores are re-ordered on that
+/// ranker's key and dealt the shipped scores by place: the best key takes the best score. Funds and coins
+/// keep their own, a stock the ranker cannot key reads None, and so does every name the gates refuse, as
+/// before. The deal is over THIS pool, so a caller passes one cross-section (one cutoff, one live run).
+/// An unknown id panics with the list: the config load refuses one, so only a grid row can reach here.
+/// shortcut: the trails are `trail_monthly`, which the walk leaves empty, so a ranker reading trails
+/// (momentum keys 3 and 4, the vol cut) reads none in the walk's book; the rivals table passes the
+/// sample trails. The shipped key 1 with no cut reads no trail.
 pub fn growth_scores_ranked(pool: &[&Quote], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
-    pool.iter().map(|q| growth_score(q, tuning)).collect()
+    let mut scores: Vec<Option<f64>> = pool.iter().map(|q| growth_score(q, tuning)).collect();
+    if tuning.growth_ranker == "shipped" {
+        return scores;
+    }
+    let r = ranker(&tuning.growth_ranker).unwrap_or_else(|e| panic!("{e}"));
+    let pond: Vec<usize> = (0..pool.len()).filter(|&i| asset_class(pool[i]) == 2 && scores[i].is_some()).collect();
+    let qs: Vec<&Quote> = pond.iter().map(|&i| pool[i]).collect();
+    let trails: Vec<&[f64]> = qs.iter().map(|q| q.trail_monthly.as_slice()).collect();
+    let mut dealt: Vec<f64> = pond.iter().filter_map(|&i| scores[i]).collect();
+    dealt.sort_by(|a, b| b.total_cmp(a));
+    let mut order: Vec<(f64, usize)> = (r.keys)(&qs, &trails, tuning).into_iter().zip(&pond).filter_map(|(k, &i)| Some((k?, i))).collect();
+    order.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| pool[a.1].ticker.cmp(&pool[b.1].ticker)));
+    for &i in &pond {
+        scores[i] = None;
+    }
+    for ((_, i), s) in order.into_iter().zip(dealt) {
+        scores[i] = Some(s);
+    }
+    scores
+}
+
+/// (#1304) One order the stock half of the growth table can be read in (`growth_ranker`), and the row the
+/// (#560) rivals table prints for it under `label`. `keys` gives one sort key per quote of a pond, higher
+/// first, None = unranked; `trails` are the quotes' trailing monthly returns, in pond order. A `walk_only`
+/// ranker counts crowd marks the backtest alone measures ([`consensus_marks`]), so `screen`, `size` and
+/// the page refuse it ([`live_ranker`]).
+pub(crate) struct Ranker {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub walk_only: bool,
+    pub keys: fn(&[&Quote], &[&[f64]], &BuyHeuristic) -> Vec<Option<f64>>,
+}
+
+/// (#1304) Every [`Ranker`], in the rivals table's order: its first nine rows, then the five new ones.
+pub(crate) const RANKERS: [Ranker; 14] = [
+    Ranker { id: "shipped", label: "shipped (plain top-10)", walk_only: false, keys: key_shipped },
+    Ranker { id: "gates_off", label: "(d) gates-off shipped", walk_only: false, keys: key_gates_off },
+    Ranker { id: "mom121", label: "(a) momentum 12-1", walk_only: false, keys: key_mom121 },
+    Ranker { id: "quality", label: "(b) quality (ROE fallback)", walk_only: false, keys: key_quality },
+    Ranker { id: "value_ep", label: "(c) value E/P", walk_only: false, keys: key_value_ep },
+    Ranker { id: "rev_cagr", label: "(f) revenue CAGR", walk_only: false, keys: key_rev_cagr },
+    Ranker { id: "mom_quality", label: "(g) momentum x quality", walk_only: false, keys: key_mom_quality },
+    Ranker { id: "tr_life", label: "(h) TR life CAGR", walk_only: false, keys: key_tr_life },
+    Ranker { id: "tr_life10", label: "(i) TR life CAGR, 10Y+", walk_only: false, keys: key_tr_life10 },
+    Ranker { id: "fresh_mom_k0", label: "(o) fresh mom, 0 marks", walk_only: true, keys: key_fresh_mom_k0 },
+    Ranker { id: "fresh_mom_k1", label: "(p) fresh mom, <=1 mark", walk_only: true, keys: key_fresh_mom_k1 },
+    Ranker { id: "fresh_6m_k1", label: "(q) fresh 6M, <=1 mark", walk_only: true, keys: key_fresh_6m_k1 },
+    Ranker { id: "rank_avg_mom_lowk", label: "(r) rank avg mom + low marks", walk_only: true, keys: key_rank_avg_mom_lowk },
+    Ranker { id: "rank_avg_mom_tested", label: "(s) rank avg mom + tested", walk_only: false, keys: key_rank_avg_mom_tested },
+];
+
+/// (#1304) The [`Ranker`] `id` names; an unknown id is an error that lists every id.
+pub(crate) fn ranker(id: &str) -> Result<&'static Ranker, String> {
+    RANKERS.iter().find(|r| r.id == id).ok_or_else(|| {
+        let ids: Vec<&str> = RANKERS.iter().map(|r| r.id).collect();
+        format!("growth_ranker {id:?} is not one of: {}", ids.join(", "))
+    })
+}
+
+/// (#1304) Err when `growth_ranker` is unknown or walk-only, in the words `screen`, `size` and the page
+/// print before refusing to rank.
+pub(crate) fn live_ranker(tuning: &BuyHeuristic) -> Result<(), String> {
+    let r = ranker(&tuning.growth_ranker)?;
+    if r.walk_only {
+        return Err(format!("growth_ranker {:?} counts crowd marks only the backtest measures; it ranks in `backtest` alone", r.id));
+    }
+    Ok(())
+}
+
+/// (#560) Each value's percentile in its column: the share of present values strictly below it, so
+/// ties share a rank. `None` stays `None`. (#1304) moved here from the backtest for the rankers.
+pub(crate) fn rank_pct(xs: &[Option<f64>]) -> Vec<Option<f64>> {
+    let present: Vec<f64> = xs.iter().flatten().copied().collect();
+    let n = present.len() as f64;
+    xs.iter().map(|x| x.map(|v| present.iter().filter(|p| **p < v).count() as f64 / n)).collect()
+}
+
+/// (#1304) The mean of the columns' [`rank_pct`]s, row by row; a row missing any column reads None.
+fn rank_mean(cols: &[Vec<Option<f64>>]) -> Vec<Option<f64>> {
+    let ranks: Vec<Vec<Option<f64>>> = cols.iter().map(|c| rank_pct(c)).collect();
+    (0..cols[0].len()).map(|i| ranks.iter().map(|r| r[i]).sum::<Option<f64>>().map(|s| s / ranks.len() as f64)).collect()
+}
+
+/// (#1304) The shipped score, per name.
+fn key_shipped(qs: &[&Quote], _: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| growth_score(q, t)).collect()
+}
+
+/// (#1304) The shipped score with every gate off ([`gates_off`]).
+fn key_gates_off(qs: &[&Quote], _: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    let open = gates_off(t);
+    qs.iter().map(|q| growth_score(q, &open)).collect()
+}
+
+/// (#1304) [`momentum_12_1`], any class.
+fn key_mom121(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| momentum_12_1(q)).collect()
+}
+
+/// (#1304) Quality, ROE where the quality field is missing.
+fn key_quality(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| q.fund.as_ref().and_then(|f| f.quality.or(f.roe))).collect()
+}
+
+/// (#1304) Earnings yield, E/P.
+fn key_value_ep(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| q.fund.as_ref().and_then(|f| f.earnings_yield)).collect()
+}
+
+/// (#1304) Revenue CAGR.
+fn key_rev_cagr(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| q.fund.as_ref().and_then(|f| f.rev_cagr)).collect()
+}
+
+/// (#1304) The mean percentile of 12-1 momentum and quality.
+fn key_mom_quality(qs: &[&Quote], trails: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    rank_mean(&[key_mom121(qs, trails, t), key_quality(qs, trails, t)])
+}
+
+/// (#1304) The TR-CAGR column's as-of number.
+fn key_tr_life(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| q.tr_cagr).collect()
+}
+
+/// (#1304) [`key_tr_life`] for names with a 10Y leg only.
+fn key_tr_life10(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| q.tr_cagr.filter(|_| perf_pct(q, "10Y").is_some())).collect()
+}
+
+/// (#1304) [`momentum_keys`] (the shipped momentum key) over the names with at most `k` crowd marks.
+fn fresh_mom(qs: &[&Quote], trails: &[&[f64]], t: &BuyHeuristic, k: usize) -> Vec<Option<f64>> {
+    momentum_keys(qs, trails, t).into_iter().zip(qs).map(|(m, q)| m.filter(|_| consensus_marks(q, t).len() <= k)).collect()
+}
+
+/// (#1304) [`fresh_mom`] with no mark.
+fn key_fresh_mom_k0(qs: &[&Quote], trails: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    fresh_mom(qs, trails, t, 0)
+}
+
+/// (#1304) [`fresh_mom`] with at most one mark.
+fn key_fresh_mom_k1(qs: &[&Quote], trails: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    fresh_mom(qs, trails, t, 1)
+}
+
+/// (#1304) The 6-month return of a stock with at most one mark.
+fn key_fresh_6m_k1(qs: &[&Quote], _: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| perf_pct(q, "6M").filter(|_| asset_class(q) == 2 && consensus_marks(q, t).len() <= 1)).collect()
+}
+
+/// (#1304) The mean percentile of the momentum key and fewest marks, over the names momentum keys.
+fn key_rank_avg_mom_lowk(qs: &[&Quote], trails: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    let mom = momentum_keys(qs, trails, t);
+    let low: Vec<Option<f64>> = mom.iter().zip(qs).map(|(m, q)| m.map(|_| -(consensus_marks(q, t).len() as f64))).collect();
+    rank_mean(&[mom, low])
+}
+
+/// (#1304) The mean percentile of the momentum key, fewest years under water and the lowest 10y trend R².
+fn key_rank_avg_mom_tested(qs: &[&Quote], trails: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    let mom = momentum_keys(qs, trails, t);
+    let neg = |f: fn(&Quote) -> Option<f64>| mom.iter().zip(qs).map(|(m, q)| m.and(f(q)).map(|v| -v)).collect::<Vec<_>>();
+    let (under, r2) = (neg(|q| q.underwater_yrs_10y), neg(|q| q.trend_r2_10y));
+    rank_mean(&[mom, under, r2])
 }
 
 /// (#144) ticker -> [`growth_score`] over every eu-buyable non-crypto quote in the run. Coins are left
@@ -4894,7 +5084,9 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // the ranking explainer prints ONCE here — repeating the same ~340-char paragraph in all three
     // table titles (incl. the crypto sentence over the stocks table) tripled the noise.
     println!("\n{kind} — {desc}");
-    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, owned, HIDE_STOCK, tuning, fund_pe);
+    // (#1304) a `growth_ranker` other than "shipped" names itself in the title, so the table says whose order it is
+    let order = if tuning.growth_ranker == "shipped" { String::new() } else { format!(" [order: {}]", tuning.growth_ranker) };
+    print_picks(&format!("{} stocks [sectors: {secs}]{order}:", head(stock.len())), &stock, n, w, pinned, owned, HIDE_STOCK, tuning, fund_pe);
     // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
     // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
     // vibe. Display-only; empty map (`check`, explicit-args screen) skips the sector line. Names
@@ -5334,6 +5526,13 @@ pub(crate) fn buy_book(
     book_sides(ranked, quotes, tuning, sz, nupl, funds).into_iter().map(|r| (r.0, r.1)).collect()
 }
 
+/// (#584) True when the BUY NOW book alternates with the momentum order: `growth_momentum_interleave`
+/// under `sizing.equal_weight_book`. (#1304) A `growth_ranker` other than "shipped" turns it off, so the
+/// book is that ranker's order alone.
+pub(crate) fn interleaves(tuning: &BuyHeuristic, sz: &crate::config::Sizing) -> bool {
+    tuning.growth_momentum_interleave && sz.equal_weight_book && tuning.growth_ranker == "shipped"
+}
+
 /// (#585) [`buy_book`] with each row's side: true when the blend's momentum half placed it.
 fn book_sides(
     ranked: &[String],
@@ -5345,7 +5544,7 @@ fn book_sides(
 ) -> Vec<(String, f64, bool)> {
     let rows: Vec<&Quote> = ranked.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect();
     let book: Vec<(&Quote, f64)> = sized_book(&rows, tuning, sz, nupl, btc_1y(quotes), funds).into_iter().map(|r| (r.0, r.2)).collect();
-    if tuning.growth_momentum_interleave && sz.equal_weight_book {
+    if interleaves(tuning, sz) {
         return sized_splice_sides(&book, &momentum_order(quotes, tuning), false, tuning.growth_momentum_slots, sz).into_iter().map(|(t, w, m)| (t.to_string(), w, m)).collect();
     }
     book.into_iter().map(|(q, w)| (q.ticker.clone(), w, false)).collect()
@@ -7019,11 +7218,21 @@ fn book_picks<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic, nupl: Option<f64>,
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
     // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
     let btc_1y = btc_1y(quotes);
+    // (#1304) a `growth_ranker` other than "shipped" deals the shipped scores over the buyable pool's stocks
+    // in its own order (`growth_scores_ranked`), once, ahead of the per-name scorer
+    let dealt: Option<HashMap<&str, Option<f64>>> = (tuning.growth_ranker != "shipped").then(|| {
+        let pool: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q)).collect();
+        pool.iter().map(|q| q.ticker.as_str()).zip(growth_scores_ranked(&pool, tuning)).collect()
+    });
+    let score = |quote: &Quote, tuning: &BuyHeuristic| match &dealt {
+        Some(m) => m.get(quote.ticker.as_str()).copied().flatten(),
+        None => growth_score(quote, tuning),
+    };
     // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
     // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
     // err/no-data quotes (a bad symbol like a suffix-less ETF) — nothing to compare, don't show a blank row.
     let growth_scorer = |quote: &Quote, tuning: &BuyHeuristic| {
-        growth_score(quote, tuning).map(|s| crypto_adjust(quote, s, tuning, cfactor, btc_1y)).or_else(|| {
+        score(quote, tuning).map(|s| crypto_adjust(quote, s, tuning, cfactor, btc_1y)).or_else(|| {
             let usable = !quote.is_failed();
             (usable && pinned_set.contains(quote.ticker.as_str())).then_some(f64::MIN_POSITIVE)
         })
@@ -7725,9 +7934,14 @@ pub(crate) fn sized_book<'a>(
     // score. Equities pass through `crypto_adjust` unchanged.
     let cfactor = nupl_factor(nupl, tuning);
     // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
+    // (#1304) `growth_scores_ranked`, so a `growth_ranker` other than "shipped" orders the stocks here too.
+    // shortcut: the deal is over the rows passed in, so `buy_book`'s top-n slice re-deals its own scores in
+    // the order `render` already showed; the weights read the slice's scores, not the pool's. Widen to the
+    // pool if a non-shipped ranker ever ships with a score-weighted book.
     let mut scored: Vec<_> = quotes
         .iter()
-        .filter_map(|q| growth_score(q, tuning).map(|s| (*q, crypto_adjust(q, s, tuning, cfactor, btc_1y))))
+        .zip(growth_scores_ranked(quotes, tuning))
+        .filter_map(|(q, s)| s.map(|s| (*q, crypto_adjust(q, s, tuning, cfactor, btc_1y))))
         .collect();
     scored.sort_by(|a, b| b.1.total_cmp(&a.1)); // best score first; total_cmp: a NaN score must not panic the sort
     // (#262) ... then one row per ISSUER, best-scoring listing wins. See `first_per_issuer` for why.
@@ -8967,6 +9181,7 @@ mod tests {
             event_flags: 0,
             jump_ahead: false,
             trend_r2_10y: None, underwater_yrs_10y: None, sector_top_dog: None, // (#1277) no score reads them since (#1280)
+            rel_win_share_10y: None, admit_tenure_months: None, // (#1304) walk-only crowd marks
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,
@@ -13773,6 +13988,164 @@ mod tests {
         assert!(near(flat(3), [None; 4]) && near(flat(4), [None; 4]), "{:?} {:?}", flat(3), flat(4));
     }
 
+    /// (#1304) Every ranker's key over one small pond: three stocks and a fund. A carries the S and D marks, B the
+    /// W mark, C none; the fund keys on the 12-1 and TR-life orders alone. Momentum is the 12-7 key here.
+    #[test]
+    fn rankers_key_a_small_pond() {
+        let t = BuyHeuristic { growth_momentum_key: 1, ..BuyHeuristic::default() };
+        let name = |tk: &str, perf: &[(&str, f64)], tr: f64, fund: Option<core::FundFactors>| {
+            let mut q = gate_fixture();
+            (q.ticker, q.perf, q.tr_cagr, q.fund) = (tk.to_string(), legs(perf), Some(tr), fund);
+            q
+        };
+        let ff = |quality: Option<f64>, roe: Option<f64>, ey: f64, rev: f64| {
+            Some(core::FundFactors { quality, roe, earnings_yield: Some(ey), rev_cagr: Some(rev), ..Default::default() })
+        };
+        let mut a = name("A", &[("1M", 0.0), ("6M", 0.0), ("1Y", 30.0), ("5Y", 100.0), ("10Y", 300.0)], 15.0, ff(Some(30.0), None, 4.0, 12.0));
+        (a.trend_r2_10y, a.underwater_yrs_10y) = (Some(0.95), Some(1.0));
+        let mut b = name("B", &[("1M", 10.0), ("6M", 10.0), ("1Y", 32.0)], 25.0, ff(None, Some(20.0), 6.0, 8.0));
+        (b.rel_win_share_10y, b.underwater_yrs_10y, b.trend_r2_10y) = (Some(0.96), Some(3.0), Some(0.5));
+        let mut c = name("C", &[("1M", 0.0), ("6M", 0.0), ("1Y", 10.0)], 10.0, None);
+        (c.underwater_yrs_10y, c.trend_r2_10y) = (Some(2.5), Some(0.3));
+        let mut f = name("F", &[("6M", 40.0), ("1Y", 40.0)], 30.0, None);
+        f.instrument_type = "ETF".into();
+        let qs = [&a, &b, &c, &f];
+        assert_eq!(qs.map(|q| consensus_marks(q, &t)), ["SD", "W", "", ""]);
+        let trails: [&[f64]; 4] = [&[]; 4];
+        let key = |id: &str| (ranker(id).expect("a registry id").keys)(&qs, &trails, &t);
+        assert_eq!(key("shipped"), qs.map(|q| growth_score(q, &t)));
+        assert_eq!(key("gates_off"), qs.map(|q| growth_score(q, &gates_off(&t))));
+        let near = |got: &[Option<f64>], want: [Option<f64>; 4]| {
+            got.len() == 4 && got.iter().zip(want).all(|(g, w)| match (g, w) {
+                (Some(g), Some(w)) => (g - w).abs() < 1e-9,
+                (g, w) => g.is_none() && w.is_none(),
+            })
+        };
+        let (n, third): (Option<f64>, Option<f64>) = (None, Some(1.0 / 3.0));
+        for (id, want) in [
+            ("mom121", [Some(30.0), Some(20.0), Some(10.0), Some(40.0)]),
+            ("quality", [Some(30.0), Some(20.0), n, n]),
+            ("value_ep", [Some(4.0), Some(6.0), n, n]),
+            ("rev_cagr", [Some(12.0), Some(8.0), n, n]),
+            // 12-1 percentiles 2/4, 1/4, 0, 3/4; quality 1/2, 0
+            ("mom_quality", [Some(0.5), Some(0.125), n, n]),
+            ("tr_life", [Some(15.0), Some(25.0), Some(10.0), Some(30.0)]),
+            ("tr_life10", [Some(15.0), n, n, n]),
+            ("fresh_mom_k0", [n, n, Some(10.0), n]),
+            ("fresh_mom_k1", [n, Some(20.0), Some(10.0), n]),
+            ("fresh_6m_k1", [n, Some(10.0), Some(0.0), n]),
+            // momentum 2/3, 1/3, 0 against fewest marks 0, 1/3, 2/3
+            ("rank_avg_mom_lowk", [third, third, third, n]),
+            // momentum 2/3, 1/3, 0; under water 2/3, 0, 1/3; trend R2 0, 1/3, 2/3
+            ("rank_avg_mom_tested", [Some(4.0 / 9.0), Some(2.0 / 9.0), third, n]),
+        ] {
+            let got = key(id);
+            assert!(near(&got, want), "{id}: {got:?}");
+        }
+    }
+
+    /// (#1304) A ranker reorders the stocks alone and deals them the shipped scores by place: the best key takes
+    /// the best score whatever the pool order, a tie in key goes to the lower ticker, and a stock the ranker cannot
+    /// key drops out. `book_picks` and `sized_book` read that order; under "shipped" each name keeps its own.
+    #[test]
+    fn a_ranker_deals_the_shipped_scores_by_place() {
+        let mut pool = rank_pool(&[150.0, 300.0, 600.0, 5000.0]);
+        for (q, quality) in pool.iter_mut().zip([Some(30.0), Some(20.0), Some(20.0), None]) {
+            q.name = format!("{} Corp", q.ticker);
+            q.fund = quality.map(|v| core::FundFactors { quality: Some(v), ..Default::default() });
+        }
+        pool.reverse();
+        // a falling stock the shipped gates refuse: its top quality key must not buy it a place
+        let mut gated = gate_fixture();
+        (gated.ticker, gated.name, gated.range_pct) = ("X".into(), "X Corp".into(), 20.0);
+        gated.perf = legs(&[("1M", -30.0), ("1Y", -40.0), ("5Y", -10.0)]);
+        gated.fund = Some(core::FundFactors { quality: Some(50.0), ..Default::default() });
+        pool.push(gated);
+        let shipped = BuyHeuristic::default();
+        let t = BuyHeuristic { growth_ranker: "quality".into(), ..shipped.clone() };
+        let refs: Vec<&Quote> = pool.iter().collect();
+        let own: Vec<Option<f64>> = refs.iter().map(|q| growth_score(q, &shipped)).collect();
+        let mut s: Vec<f64> = own.iter().flatten().copied().collect();
+        s.sort_by(|a, b| b.total_cmp(a));
+        assert!(s.len() == 4 && s.windows(2).all(|w| w[0] > w[1]), "four distinct shipped scores, X gated: {own:?}");
+        assert_eq!(growth_scores_ranked(&refs, &shipped), own);
+        assert_eq!(growth_scores_ranked(&refs, &t), [None, Some(s[2]), Some(s[1]), Some(s[0]), None]);
+        let book = |t: &BuyHeuristic| book_picks(&pool, t, None, &HashSet::new()).iter().map(|(q, _)| q.ticker.clone()).collect::<Vec<_>>();
+        assert_eq!(book(&t), ["N0", "N1", "N2"]);
+        assert_eq!(book(&shipped).len(), 4);
+        let sz = crate::config::Sizing::default();
+        let sized = |t: &BuyHeuristic| sized_book(&refs, t, &sz, None, None, &HashMap::new()).iter().map(|r| r.0.ticker.clone()).collect::<Vec<_>>();
+        assert_eq!(sized(&t), ["N0", "N1", "N2"]);
+        assert_eq!(sized(&shipped).len(), 4);
+    }
+
+    /// (#1304) An unknown id errs in `ranker` with every id; `live_ranker` passes a live id and refuses a walk-only
+    /// or unknown one. The walk-only ids are the four that count crowd marks.
+    #[test]
+    fn rankers_refuse_unknown_and_walk_only_ids() {
+        let with = |id: &str| BuyHeuristic { growth_ranker: id.into(), ..BuyHeuristic::default() };
+        assert!(ranker("nope").is_err_and(|e| e.contains("growth_ranker \"nope\" is not one of: shipped, gates_off, mom121")));
+        assert_eq!(live_ranker(&with("shipped")), Ok(()));
+        assert_eq!(live_ranker(&with("rank_avg_mom_tested")), Ok(()));
+        assert!(live_ranker(&with("fresh_mom_k0")).is_err_and(|e| e.contains("ranks in `backtest` alone")));
+        assert!(live_ranker(&with("nope")).is_err_and(|e| e.contains("is not one of")));
+        let walk: Vec<&str> = RANKERS.iter().filter(|r| r.walk_only).map(|r| r.id).collect();
+        assert_eq!(walk, ["fresh_mom_k0", "fresh_mom_k1", "fresh_6m_k1", "rank_avg_mom_lowk"]);
+    }
+
+    /// (#1304) The scorer panics on an id the config load would have refused.
+    #[test]
+    #[should_panic(expected = "is not one of")]
+    fn an_unknown_ranker_panics_the_scorer() {
+        let pool = rank_pool(&[150.0]);
+        growth_scores_ranked(&[&pool[0]], &BuyHeuristic { growth_ranker: "nope".into(), ..BuyHeuristic::default() });
+    }
+
+    /// (#1304) The (#584) interleave runs under the shipped ranker alone, with the knob on and the equal-weight book.
+    #[test]
+    fn interleaves_under_the_shipped_ranker_only() {
+        let t = BuyHeuristic { growth_momentum_interleave: true, ..BuyHeuristic::default() };
+        let on = crate::config::Sizing { equal_weight_book: true, ..crate::config::Sizing::default() };
+        assert!(interleaves(&t, &on));
+        assert!(!interleaves(&BuyHeuristic { growth_ranker: "quality".into(), ..t.clone() }, &on));
+        assert!(!interleaves(&BuyHeuristic { growth_momentum_interleave: false, ..t.clone() }, &on));
+        assert!(!interleaves(&t, &crate::config::Sizing::default()));
+    }
+
+    /// (#1297) Each crowd mark fires alone, on its line, and a missing field is a mark off. `H` is the
+    /// long CAGR over volatility AT the `sharpe_cap` ceiling: on the cap counts, a hair under does not,
+    /// and a zero cap or zero volatility reads no ratio at all.
+    #[test]
+    fn consensus_marks_fire_alone_on_their_lines() {
+        let t = BuyHeuristic::default();
+        let marks = |f: fn(&mut Quote)| {
+            let mut q = gate_fixture();
+            f(&mut q);
+            consensus_marks(&q, &t)
+        };
+        assert_eq!(marks(|_| {}), "", "every field missing = every mark off");
+        assert_eq!(marks(|q| q.trend_r2_10y = Some(0.90)), "S");
+        assert_eq!(marks(|q| q.trend_r2_10y = Some(0.89)), "");
+        assert_eq!(marks(|q| q.underwater_yrs_10y = Some(1.9)), "D");
+        assert_eq!(marks(|q| q.underwater_yrs_10y = Some(2.0)), "");
+        assert_eq!(marks(|q| q.rel_win_share_10y = Some(0.95)), "W");
+        assert_eq!(marks(|q| q.rel_win_share_10y = Some(0.94)), "");
+        assert_eq!(marks(|q| q.admit_tenure_months = Some(6)), "I");
+        assert_eq!(marks(|q| q.admit_tenure_months = Some(5)), "");
+        let at = |q: &Quote, cap: f64| consensus_marks(q, &BuyHeuristic { sharpe_cap: cap, ..t.clone() });
+        let mut q = gate_fixture();
+        q.volatility_pct = Some(2.0);
+        let c = long_cagr_pct(&q, &t).expect("the fixture has a long leg");
+        assert!(c > 0.0);
+        assert_eq!(at(&q, c / 2.0), "H", "on the cap");
+        assert_eq!(at(&q, c / 2.0 + 0.01), "", "a hair under the cap");
+        assert_eq!(at(&q, 0.0), "", "a zero cap marks nothing");
+        q.volatility_pct = Some(0.0);
+        assert_eq!(at(&q, c / 2.0), "", "zero volatility is no ratio");
+        q.volatility_pct = None;
+        assert_eq!(at(&q, c / 2.0), "", "unknown volatility is no ratio");
+    }
+
     /// (#1244) `vol_cut` drops the jumpiest share of the keyed names with 12+ months, rounding down. B (sd 1),
     /// A (sd 10) and C (sd 5 over its last 36 months, 32 over all 40) are judged; E (11 months) and F (no key)
     /// are not, however jumpy. The spread is read about each name's mean: P (sd 10 about 20) goes before Q
@@ -16099,6 +16472,10 @@ mod tests {
         assert!(
             tuning.growth_momentum_interleave,
             "(#584) shipped (944885f): BUY NOW alternates the shipped book with the momentum order, and false reverts it to the shipped-only book; re-measure, then update this pin"
+        );
+        assert_eq!(
+            tuning.growth_ranker, "shipped",
+            "(#1304) the stock half is read in the shipped score's order; another id ships only past its pre-registered bar; re-measure, then update this pin"
         );
         assert_eq!(
             tuning.growth_value_floor_pct, 40.0,

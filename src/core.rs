@@ -436,6 +436,14 @@ pub struct Quote {
     // (#1280) deleted the gate the grid refused.
     #[serde(default)]
     pub sector_top_dog: Option<bool>,
+    // (#1304) two crowd marks only the walk measures, so both are None live: the share of rolling 3-year
+    // windows over the last decade in which the name beat the index (`backtest::rel_win_share`, None under
+    // six windows), and the months in a row the name passed the hard buy rules (`backtest::stamp_admit_tenure`).
+    // `picks::consensus_marks` reads them; no score does.
+    #[serde(default)]
+    pub rel_win_share_10y: Option<f64>,
+    #[serde(default)]
+    pub admit_tenure_months: Option<u32>,
 }
 
 /// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
@@ -546,6 +554,8 @@ impl Quote {
             trend_r2_10y: None,
             underwater_yrs_10y: None,
             sector_top_dog: None,
+            rel_win_share_10y: None,
+            admit_tenure_months: None,
         }
     }
 

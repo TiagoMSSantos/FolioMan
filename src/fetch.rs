@@ -1058,6 +1058,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         underwater_yrs_10y: core::last_decade(&chart.closes, bars_yr).and_then(|w| core::longest_underwater_yrs(w, bars_yr)),
         // (#1277) only the walk stamps it: live `fund.mcap` is None and no score reads it
         sector_top_dog: None,
+        rel_win_share_10y: None,   // (#1304) walk-only crowd marks
+        admit_tenure_months: None,
         last_close_date: last_date, // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),

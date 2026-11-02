@@ -601,6 +601,7 @@ pub struct BuyHeuristic {
     pub growth_momentum_slots: usize, // (#597) of every 10 slots in the interleaved book (`growth_momentum_interleave`), how many the momentum order fills, spread evenly (`picks::momentum_slot`): the live book, the journalled order and the backtest's S+inter lane. (#630) Rival (j), the DCA `blend` lane and the WINNERS HELD blend take the page's book at equal weight (`picks::splice_sides`, `after` off, this many of every 10 places momentum's), where they took 10 minus this from the shipped top-10 and filled the rest with momentum; the `after` splice runs this many momentum names after the head. 5 = the DEFAULT, the (#584) alternation bit for bit; 0 = no momentum slot, 10 = all (a side that runs dry still hands its slot to the other). Graded as a probe at 3/7/10 against 5, see ci-settings
     pub growth_momentum_crash_slots: usize, // (#1243) the momentum slots of every 10 in a CRASH bucket: the pond's equal-weight month (the mean of every trail of 24 months or more, month by month) down over 24 months AND the sd of its last 6 months in the top third of every bucket's reading up to that one (`crash_buckets`; ^GSPC bars on file are quarterly, so the pond stands in for the index). The slot count there is the lower of this and `growth_momentum_slots`. Momentum books lose most right after a crash turns, so the arm asks whether ceding those slots to the score book pays. 10 = no cap and the DEFAULT. Backtest only: rival (j) and WINNERS HELD read it. The S+inter DCA lane does not, and the live book has no crash state wired.
     pub growth_momentum_vol_cut: f64, // (#1244) the share of the momentum half's keyed names, the jumpiest by the sd of their last 36 monthly returns, that lose their key (`picks::vol_cut`). Names with under 12 months are not judged. 0.0 = off and the DEFAULT; 1.0 or more cuts every judged name. Read by `picks::momentum_keys`, so it moves the live book, the backtest's `momentum_ranked` and rival (j) alike.
+    pub growth_ranker: String, // (#1304) the order the stock half of the growth table is read in, one id of `picks::RANKERS`. "shipped" (the DEFAULT) is the shipped score, byte-identical; any other id re-orders the admitted stocks on its own key and deals them the shipped scores by place (`picks::growth_scores_ranked`), so admission, funds and coins stay put and the (#584) interleave is off. An unknown id is refused at load; a walk-only id (one that counts crowd marks) is refused by `screen`, `size` and the page. See ci-settings for the grade
     pub growth_sector_cap: usize, // (#101) at most this many stocks per GICS sector in the growth book; 0 = off and the DEFAULT. Nothing else in the tool limits concentration BY SECTOR: growth_corr_cap ships 0.0, and while (#126) turned growth_value_floor_pct on at 40.0 that brake cuts by price-for-growth rather than by sector, so the stock table can still legitimately be twenty semiconductor names -- the printed "sector mix" line is an observation, not a constraint. (#557) A BOOK trim in `picks::render`, ahead of every reader (the tables, BUY% and the journal), so a dropped row refills from below; it used to be a display trim in `lane_split`, and BUY% still bought what it hid. The backtest applies the same `picks::sector_cap` to its top-N ladder and DCA book, and `track` grades caps 1..5 forward. Keeps the highest-scoring rows of each sector (the list arrives rank-ordered), pinned tickers bypass, and a name with no sector is kept (unjudgeable is not a verdict)
     pub vol_daily_equivalent: bool, // (#97) restate `volatility_pct` (and its `downside_dev_pct` twin) in DAILY-equivalent units on any cadence, so the absolute thresholds reading them mean the same thing live and in a backtest. A per-bar stdev scales with sqrt(bar length), so the same asset prints ~sqrt(21) = 4.6x more vol on the monthly bars a long run walks than on the daily bars the screen walks -- and EVERY consumer is an absolute threshold: sharpe_cap/sharpe_cap_etf clamp long_cagr/vol (4.6x bigger denominator = the cap stops binding in the run that fitted it, while live it binds for nearly every name past the CAGR gate), plus the growth_max_vol* ceilings and the normal_volatility_pct divisor. All three ship-rule horizons are monthly (`long || years >= 8`). `span_to_bars` already holds every WINDOW to the same calendar length across cadences; this is the amplitude half of that same train==serve rule. LIVE IS BIT-IDENTICAL EITHER WAY: at cadence 252 the factor is exactly 1.0. false = today's raw per-bar figure, and the DEFAULT
     pub print_edge_annualized: bool, // (#96) restate a lane's `edge` in points PER YEAR beside the cumulative figure. `edge` is a spread of returns over the run's whole `years` hold and `top-N excess` is per year, yet both print as "pts" — a ~20x gap between two numbers the report invites the reader to compare. Print-only: no score, no gate, no journal field reads it. OFF = today's single unqualified figure, which is what every golden holds.
@@ -827,6 +828,7 @@ impl Default for BuyHeuristic {
             growth_momentum_slots: 5, // (#597) 5 = the (#584) alternation; see ci-settings for the grade
             growth_momentum_crash_slots: 10, // (#1243) no cap, the shipped book
             growth_momentum_vol_cut: 0.0, // (#1244) off, the shipped book
+            growth_ranker: "shipped".to_string(), // (#1304) the shipped score order
             growth_sector_cap: 0, // (#101) 0 = off, today's unconstrained table, byte-identical. This is a RISK constraint, not a ranking improvement. (#557) graded by the backtest's top-N ladder and `track`'s scap rows; see the receipt
             vol_daily_equivalent: false, // (#97) OFF = raw per-bar stdev, the scale every vol-reading receipt in ci-settings was fitted at. Turning it on does not move the live screen by a single bit; it moves the BACKTEST onto live's units, which is what invalidates those receipts and is exactly why it cannot ship without the re-sweep its receipt names.
             print_edge_annualized: false, // (#96) OFF = the cumulative-only line every golden holds. Print-only knob; turning it on adds a bracketed pts/yr restatement and changes nothing that is scored.
@@ -1710,15 +1712,18 @@ fn config_fatal(path: &Path, detail: &str) -> ! {
 
 /// (#909) The merged config as [`Settings`]. serde_yaml names the key a wrong-typed value sits under only
 /// when it reads text (a `Value` keeps no path), so a failure is read again as text for that name; the
-/// line number that adds counts the merged config, not the user's file, so it is cut.
+/// line number that adds counts the merged config, not the user's file, so it is cut. (#1304) An unknown
+/// `growth_ranker` id is refused here too, with the list of ids.
 pub fn settings_of(merged: &serde_yaml::Value) -> Result<Settings, String> {
-    serde_yaml::from_value(merged.clone()).map_err(|e| {
+    let s: Settings = serde_yaml::from_value(merged.clone()).map_err(|e| {
         let Some(named) = serde_yaml::to_string(merged).ok().and_then(|t| serde_yaml::from_str::<Settings>(&t).err()) else {
             return e.to_string();
         };
         let named = named.to_string();
         named.split(" at line ").next().unwrap_or(&named).to_string()
-    })
+    })?;
+    crate::picks::ranker(&s.buy_heuristic.growth_ranker)?;
+    Ok(s)
 }
 
 /// Read + parse the settings (base + overlay). Exits 1 with a clear message if missing/invalid —
@@ -2748,6 +2753,20 @@ mod tests {
         assert_eq!(s.stale_days, default_stale_days());
         assert!(s.sectors.is_empty());
         assert!(s.urls.fundamentals_quality.contains("financialmodelingprep")); // defaulted Urls subfield
+    }
+
+    /// (#1304) `settings_of` refuses a `growth_ranker` the registry does not know, naming every id, and
+    /// loads a known one.
+    #[test]
+    fn settings_of_refuses_an_unknown_ranker() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml")).expect("read tests/ci-settings.yaml");
+        let ranked = |id: &str| {
+            let mut v: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse tests/ci-settings.yaml");
+            merge_yaml(&mut v, serde_yaml::from_str(&format!("buy_heuristic:\n  growth_ranker: {id}\n")).expect("overlay"));
+            settings_of(&v).map(|s| s.buy_heuristic.growth_ranker)
+        };
+        assert_eq!(ranked("quality"), Ok("quality".to_string()));
+        assert!(ranked("nope").is_err_and(|e| e.contains("growth_ranker \"nope\" is not one of: shipped, gates_off")));
     }
 
     /// (PIT) The default membership source, pinned by SHAPE rather than by host. Nothing else in the

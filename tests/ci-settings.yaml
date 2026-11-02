@@ -23304,6 +23304,8 @@ buy_heuristic:
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
   #  book. Pre-registered 2026-10-31, one arm (0.1), one look; see the receipt.
+  growth_ranker: shipped         # (#1304) the order the stock half of the growth table is read in; "shipped" = the shipped
+  #  score, byte-identical. Pre-registered 2026-11-02; the other ids rank in grid rows only until one passes.
   growth_event_months: 0         # (#1245) dividend cut, reverse split or fresh S&P add inside this many months before a
   #  backtest cutoff docks a stock one soft step each; 0 = off. Pre-registered 2026-10-31, one arm (12), one look.
   print_held_loser_bands: false  # (#1242) the held-loser AUC bands; display only, off in CI so no golden moves.
