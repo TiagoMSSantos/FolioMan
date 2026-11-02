@@ -15027,6 +15027,8 @@ mod tests {
         ("growth_turnover_weight", |t, v| t.growth_turnover_weight = v, 1.0),
         // known-unreachable by construction — pinned so the claim stops being folklore
         ("growth_min_age_years", |t, v| t.growth_min_age_years = v, 1e9),
+        // (#1300) the coin twin: LIVE on crypto, INERT on etf and stock by scope, cause (b)
+        ("growth_min_age_years_crypto", |t, v| t.growth_min_age_years_crypto = v, 1e9),
         ("growth_min_range_pct_8y", |t, v| t.growth_min_range_pct_8y = v, 1e9),
         // (#1299) the three restored stock gates read `quote.fund` or the walk's `stamp_top_dogs`, neither
         // filled on this price-only path: cause (a). INERT on crypto and etf by scope, cause (b).
@@ -15170,7 +15172,7 @@ mod tests {
                 // exactly its job: the equity 5Y floor no longer reaches a coin, so it can sit at its
                 // measured optimum (+75) without emptying the crypto table. Its ETF/stock standing is
                 // unchanged, which is the other half of the claim.
-                "crypto LIVE  growth_min_8y_pct growth_min_20y_pct growth_min_leg_years growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_turnover_weight growth_min_age_years\n",
+                "crypto LIVE  growth_min_8y_pct growth_min_20y_pct growth_min_leg_years growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_turnover_weight growth_min_age_years growth_min_age_years_crypto\n",
                 // (2026-08-19) the (P4) pair enters LIVE for etf and stock on the FIRST commit that adds
                 // them — the opposite of the (P1) four, which pin INERT here because `quote.fund` is
                 // unfilled on this path. These read `volatility_pct` and `max_daily_1m`, both built from
@@ -15190,9 +15192,9 @@ mod tests {
                 // (#1230) `growth_min_5y_pct_etf` enters etf LIVE and crypto/stock INERT on its first
                 // commit, the same standing `growth_min_cagr_etf` has, which is its whole claim.
                 "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
-                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog growth_consensus_min growth_consensus_dock growth_min_cagr_rel growth_min_cagr_pct\n",
+                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog growth_consensus_min growth_consensus_dock growth_min_cagr_rel growth_min_cagr_pct\n",
                 "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years growth_consensus_min growth_consensus_dock\n",
-                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog growth_min_cagr_rel growth_min_cagr_pct\n",
+                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog growth_min_cagr_rel growth_min_cagr_pct\n",
             )
         );
     }

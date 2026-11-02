@@ -22786,6 +22786,13 @@ buy_heuristic:
                                  #     REVERT RULE: re-question only if the pit pool's median gated pool rises ABOVE the graded
                                  #     basket (census stops printing VACUOUS), since every refusal above is entangled with a starved
                                  #     book. Re-running the same ladder on today's pool is spent -- do not re-grade it.
+  growth_min_age_years_crypto: 8.0 # (#1300) a coin must have at least 8 years listed (the YRS column) to rank. Stocks and
+                                    #   funds keep growth_min_age_years above (0, off); for a coin the higher of the two bars applies.
+                                    #   On the owner's word (2026-11-02), as the (#1291) block set out before any run: the backtest
+                                    #   cannot grade a coin (too few coin cutoffs, see growth_max_vol_crypto), so the evidence is a live
+                                    #   census, as at (#511). The live page before this commit holds one coin row in any table, BTC-EUR
+                                    #   at 12.1 years, so no live row moves today. A younger coin that clears every other gate now lists
+                                    #   "young" among its misses. Revert: 0.0.
   growth_min_aum_etf: 100000000  # (AUM) ETF-only hard fund-size floor in EUR (quote.aum_eur, BF etp_search AUM, EUR-approximate —
                                  #   fund currency is EUR/USD mixed; ±10% FX is immaterial vs an order-of-magnitude line): reject a
                                  #   fund smaller than €100M, the industry viability line under which issuers liquidate/merge — the

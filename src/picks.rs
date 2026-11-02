@@ -314,6 +314,13 @@ pub(crate) fn min_cagr_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     }
 }
 
+/// (#1300) The listing-age floor a quote must clear: `growth_min_age_years` for every class and, for a
+/// coin, the higher of that and `growth_min_age_years_crypto`. 0 = off.
+fn min_age_years(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    let coin = if asset_class(quote) == 0 { tuning.growth_min_age_years_crypto } else { 0.0 };
+    tuning.growth_min_age_years.max(coin)
+}
+
 /// (#1298) The relative floor for a stock's long leg: the pool median plus `growth_min_cagr_rel`, or
 /// the pool percentile `growth_min_cagr_pct`, the higher of the two when both are on. Funds, coins, an
 /// unstamped quote and knobs at 0 read negative infinity, so the absolute floor alone applies. Kept
@@ -1436,7 +1443,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // (#33) minimum listing age. Checked EARLY so a too-young name rejects with an explicit reason
     // (mirrored in gate_failures) instead of silently `?`-bailing at long_leg_fixed below. (#182)
     // fills age_years on the backtest walk too, so the gate is gradeable there; it ships 0.0 (off).
-    if tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years) {
+    if quote.age_years.is_some_and(|a| a < min_age_years(quote, tuning)) { // a 0 bar never fires: ages are not negative
         return None; // too young -> no multi-year record to trust as a proven compounder
     }
     // (AUM) ETF minimum fund size (EUR-approximate, from the BF etp_search payload). A sub-scale
@@ -2650,8 +2657,9 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     // (#33) minimum-age gate. Reported as an explicit "young" reason. A name too young for the fixed
     // CAGR leg would `?`-bail the next line to a SILENT None (0.0 in the table, no reason) — so when
     // the leg is missing AND the age gate fires, return the young reason alone instead of dropping it.
-    let young_fail = |a: f64| ("young", format!("{a:.0}y listed (need ≥{:.0}y)", tuning.growth_min_age_years), a >= tuning.growth_min_age_years - 1.0);
-    let too_young = tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years);
+    let age_bar = min_age_years(quote, tuning); // (#1300) a coin's own floor too
+    let young_fail = |a: f64| ("young", format!("{a:.0}y listed (need ≥{age_bar:.0}y)"), a >= age_bar - 1.0);
+    let too_young = quote.age_years.is_some_and(|a| a < age_bar);
     let Some((long_cum, long_years)) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years) else {
         // No leg at or above `growth_min_leg_years` (5y+ at the shipped value) -> the name can't be ranked
         // at all (score_parts `?`-bails here too -> a silent 0.0). ALWAYS explain it, so a pinned young ETF
@@ -2878,7 +2886,10 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
 fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
     const OFF: f64 = f64::NEG_INFINITY;
     match tag {
-        "young" | "history" => (t.growth_min_age_years, t.growth_min_leg_years) = (0.0, t.growth_min_leg_years.min(1.0)),
+        "young" | "history" => {
+            (t.growth_min_age_years, t.growth_min_leg_years) = (0.0, t.growth_min_leg_years.min(1.0));
+            t.growth_min_age_years_crypto = 0.0; // (#1300)
+        }
         "aum" => t.growth_min_aum_etf = 0.0,
         "range" => (t.growth_min_range_pct, t.growth_min_range_pct_crypto) = (OFF, OFF),
         "range8y" => (t.growth_min_range_pct_8y, t.growth_min_range_pct_8y_crypto) = (0.0, 0.0),
@@ -15807,6 +15818,7 @@ mod tests {
             t.growth_consensus_min = r.arm(t.growth_consensus_min as f64, &[2.0, 3.0]) as usize;
             t.growth_min_cagr_rel = r.arm(t.growth_min_cagr_rel, &[5.0]);
             t.growth_min_cagr_pct = r.arm(t.growth_min_cagr_pct, &[75.0]);
+            t.growth_min_age_years_crypto = r.arm(t.growth_min_age_years_crypto, &[8.0]); // (#1300) last too
 
             let fails = gate_failures(&q, &t);
             let ranks = growth_score(&q, &t).is_some();
@@ -16098,6 +16110,8 @@ mod tests {
         let fg_k: Set = |t, v| t.growth_financial_max_asset_growth = v;
         let td_k: Set = |t, v| t.growth_refuse_sector_top_dog = v > 0.0;
         let cs_k: Set = |t, v| t.growth_consensus_min = v as usize;
+        let cage_k: Set = |t, v| t.growth_min_age_years_crypto = v;
+        let aged_coin = |a: f64| { let mut q = coin(1.0); q.age_years = Some(a); q };
         // (#1299) a fund carrying each stock-only field at its worst, which those gates must not read
         let etf_with = |f: fn(&mut Quote)| { let mut q = etf("FUND.DE", 1e8); f(&mut q); q };
         let bank = |g: Option<f64>| fund(FundFactors { financial: true, asset_growth: g, ..Default::default() });
@@ -16106,6 +16120,11 @@ mod tests {
         let cases: &[(&str, &str, Set, f64, Quote, Option<(&str, bool)>)] = &[
             // AGE, AUM, 8Y RANGE -- fields that never go negative, so the exact-line row is the only fence test
             ("young spares a name exactly its age", "young", age_k, 5.0, with(|q| q.age_years = Some(5.0)), None),
+            // (#1300) the coin floor: its own bar, a year short is close, a stock never reads it
+            ("coin age spares a coin exactly its age", "young", cage_k, 8.0, aged_coin(8.0), None),
+            ("coin age calls a year short close", "young", cage_k, 8.0, aged_coin(7.0), Some(("7y listed (need ≥8y)", true))),
+            ("coin age stops at two years short", "young", cage_k, 8.0, aged_coin(6.0), Some(("6y listed (need ≥8y)", false))),
+            ("coin age ignores a stock", "young", cage_k, 8.0, with(|q| q.age_years = Some(3.0)), None),
             ("aum spares a fund exactly on it", "aum", aum_k, 1e8, etf("FUND.DE", 1e8), None),
             ("aum ignores a coin filed as an ETF", "aum", aum_k, 1e8, etf("XYZ-EUR", 5e6), None),
             // (#1078) a miss that rounds onto its bar prints the digits that tell them apart
@@ -16279,6 +16298,7 @@ mod tests {
         assert_eq!((tuning.growth_consensus_min, tuning.growth_consensus_dock), (0, false), "(#1297) the crowd-mark cut and dock ship off");
         assert!(tuning.growth_hard_tags.is_empty(), "(#1297) no gate is hard under the soft dock beyond 8Y+ and 20Y+");
         assert_eq!((tuning.growth_min_cagr_rel, tuning.growth_min_cagr_pct), (0.0, 0.0), "(#1298) the pool CAGR bars ship off");
+        assert_eq!(tuning.growth_min_age_years_crypto, 8.0, "(#1300) a coin needs 8 years listed, on the owner's word; the backtest cannot grade it, so re-read the live census before moving it");
 
         // (#69) The SOFT brake, pinned beside the hard gate it was suspected of duplicating. The gate
         // above truncates everything past 150; this decides the ORDER of what survives, and the two are
