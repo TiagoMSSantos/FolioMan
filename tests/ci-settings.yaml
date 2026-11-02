@@ -25016,6 +25016,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   random band. The fixture is survivorship-selected and the thresholds were picked on it, so only the pond
 #   decides.
 # REVERT RULE: a failing ranker stays in the table as a rivals row, and the knob stays "shipped".
+# (#1304) VERDICT, 2026-11-02: every ranker FAILS step 1, so steps 2 to 4 never ran and the knob stays "shipped".
+#   Probes 41525264540 (`universe fund pit rivals holdout`) and 41525270742 (`universe stress rivals holdout`)
+#   on 414dd93 at 20, 12 and 8 years, holdout samples dropped (8y only: 7327 in pit, 7997 in stress). No row of
+#   the 21 beats both the plain shipped row and the (j) blend by 0.2 points a year in 5 of the 6 cells. Closest:
+#     rank_avg_mom_lowk (r)  4 of 6, above the random p95 in all 6. Against (j), mean/median: pit 20y +2.9/+2.3,
+#                            12y +0.8/+0.6, 8y +0.3/+0.4, stress 12y +0.6/+1.0. Stress 20y (+0.6/-0.0) and
+#                            stress 8y (+0.5/-0.2) miss on the median.
+#     fresh_mom_k0 (o)       3 of 6, above the p95 in all 6. Its pit cells equal (r)'s; all three stress medians
+#                            miss against (j): +0.4/-0.1 at 20y, +0.3/-0.0 at 12y, +0.2/-0.3 at 8y.
+#   fresh_mom_k1 (p) passes 2 cells (pit 20y, stress 12y). fresh_6m_k1, rank_avg_mom_tested, ew_k0 and
+#   top20_shipped pass none. The binding miss is the stress median: there the low-mark orders do not move the
+#   median book off (j), and off shipped the k0 medians read +0.1, +0.3 and -0.1. The plain shipped row sits
+#   above the random p95 in 4 of 6 cells (not pit 20y, not stress 20y); (j) does in all 6.
+#   EXPECTED against the result: k0 and k1 were to beat shipped at 20y and 12y in both lanes and tie at 8y.
+#   Instead k0 leads both bars in all three pit cells, 8y included, and ties (j) in all three stress cells.
+#   ew_k0 trails fresh_mom_k0 in every cell (one median level, stress 20y), as written. top20_shipped did not
+#   lower the mean (+1.0 at pit 20y, within 0.3 elsewhere); its spread was not graded. The rank averages did
+#   not all land between: (r) ties or beats (o) in every cell, and (s) trails shipped's median in all three
+#   stress cells (by 1.5, 0.4 and 2.7). REVERT RULE applied: the 21 rows stay in the rivals table and
+#   `growth_ranker` stays "shipped". Re-ask only when a stress run moves the median book; a pit lead alone
+#   does not meet this bar.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
