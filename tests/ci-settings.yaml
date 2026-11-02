@@ -22685,6 +22685,10 @@ buy_heuristic:
   growth_min_cagr_rel: 0.0       # (#1298) a stock's long leg must also clear the previous cutoff's pool median CAGR plus this
                                  #   many points (the walk stamps the pool; live rows carry none yet). 0 = off
   growth_min_cagr_pct: 0.0       # (#1298) ... or that pool's CAGR at this percentile; the higher bar applies. 0 = off
+  growth_max_sharpe: 0.0         # (#1303) `consensus`: refuse a stock whose long CAGR over daily volatility, the H mark's
+                                 #   ratio, is at or above this, on its own. 0 = off
+  growth_max_rel_win: 0.0        # (#1303) `consensus`: refuse a stock that beat the index in at least this share of its
+                                 #   3-year windows over the decade, the W mark's line, on its own. 0 = off
   # (#1286) ROUND 10 GRID, 2026-11-01: C (`untested`, growth_min_underwater_yrs 2) and S (`stretch`, growth_max_above_ma
   #   150 -> 100), each docked (growth_gate_soft 0.8) and refused (growth_untested_hard, growth_stretch_hard), on the
   #   (#1285) code 8ceacb6. BAR, written before the run, against each leg's own row 0: top-10 excess mean and median
@@ -24900,6 +24904,19 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   T rises 0.3-1.0 with a pool 5-8 % smaller.
 # REVERT RULE: a failing knob goes back into `config::RETIRED`, with a VERDICT line under its own receipt;
 #   its Quote field stays when it is filled.
+# (#1303) ROUND 13 GRID G5, PRE-REGISTERED 2026-11-02 before its run. Every Grid A row failed, so the (#1291)
+#   rule above applies: "the solo Sharpe and relative-win ceilings get one grid, two rungs each, same bar".
+#   Two knobs, both under the `consensus` tag and graded hard through `growth_hard_tags: [consensus]`:
+#   `growth_max_sharpe` refuses a stock whose long CAGR over daily volatility is at or above it, the H mark
+#   alone; `growth_max_rel_win` refuses a stock that beat the index in at least that share of its 3-year
+#   windows over the decade, the W mark alone.
+#   Rows: control; Sharpe 15 (the shipped `sharpe_cap`, the H line); Sharpe 12 (0.8 of it); relative win 0.95
+#   (the W line); relative win 0.90. Pairs: Sharpe 15 and 12 (15 ships), relative win 0.95 and 0.90 (0.95
+#   ships). Legs: 12y, 8y and 20y `universe fund pit` and `universe stress` at 20 12 8, as Grid B; the dead
+#   legs are dropped because the (#1296) census reads them under-covered. Holdout samples dropped, 200 nulls.
+#   Bar and pair rule as above, PRIMARY on the pit legs.
+#   EXPECTED, written before the run: both pairs fail. Few names sit at the Sharpe cap, so those rows move the
+#   book little; the relative-win rows shrink the pool more and lose the head-to-head, as Grid A's hard rows did.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

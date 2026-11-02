@@ -497,6 +497,8 @@ pub struct BuyHeuristic {
     pub growth_consensus_min: usize, // refuse a stock carrying at least this many of the five marks S (smooth 10y trend), D (under water < 2 of 10 years), H (return per unit of risk at `sharpe_cap`), W (beat the benchmark in >= 95% of rolling 3y windows), I (passed the buy rules >= 6 months running) (`consensus`). 0 = off
     pub growth_consensus_dock: bool, // count each crowd mark as one failed buy rule in the soft dock instead of refusing. Read-only arm of (#1297). false = off
     pub growth_hard_tags: Vec<String>, // (#1297) gate tags that refuse even under `growth_gate_soft`, the way 8Y+ and 20Y+ always do, e.g. [consensus, financial]. Empty = off
+    pub growth_max_sharpe: f64, // (#1303) stocks only: refuse a stock whose long CAGR over daily volatility, the `H` mark's ratio, is at or above this (`consensus`). 0 = off
+    pub growth_max_rel_win: f64, // (#1303) stocks only: refuse a stock that beat the benchmark in at least this share of rolling 3-year windows over the decade, the `W` mark's field `rel_win_share_10y` (`consensus`). 0 = off
     pub growth_min_cagr_rel: f64, // (#1298) stocks only: a second CAGR floor, this many points above the median long CAGR of the previous cutoff's stocks (`pool_cagr_median`). The higher of the two floors applies; the whole-life leg keeps the absolute bar. 0 = off
     pub growth_min_cagr_pct: f64, // (#1298) stocks only: a second CAGR floor at this percentile of the previous cutoff's stock long CAGRs (`pool_cagr_pct`, stamped at this percentile). The higher floor applies. 0 = off
     pub growth_maxdd_cap: f64,      // (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name that ever fell >83% peak-to-trough). 0 = off (default)
@@ -749,6 +751,8 @@ impl Default for BuyHeuristic {
             growth_consensus_min: 0, // (#1297) off
             growth_consensus_dock: false, // (#1297) off
             growth_hard_tags: Vec::new(), // (#1297) off
+            growth_max_sharpe: 0.0, // (#1303) off
+            growth_max_rel_win: 0.0, // (#1303) off
             growth_min_cagr_rel: 0.0, // (#1298) off
             growth_min_cagr_pct: 0.0, // (#1298) off
             growth_maxdd_cap: 0.0,         // (#26) off until a probe validates a value
