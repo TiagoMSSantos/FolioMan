@@ -22671,24 +22671,16 @@ buy_heuristic:
   #   saved page upload that still names one loads.
   # (#1280) retired: growth_max_trend_r2: 0.0       # (#1277) `smooth`: refuse a stock whose 10y log-trend R^2 is AT OR ABOVE this. 0 = off
   # (#1280) (#1286) retired: growth_min_underwater_yrs: 0.0 # (#1277) `untested`: refuse a stock whose longest spell under a past high in 10y is under this. 0 = off
-  growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off.
-                                 #   (#1280) retired, (#1299) restored OFF for a re-grade on the dead-name ruler (#1296)
-  growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this
-                                 #   %/yr over 5y. 0 = off. (#1280) retired, (#1299) restored OFF beside the one above
-  growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off.
-                                 #   (#1280) retired, (#1299) restored OFF beside the two above
-  growth_consensus_min: 0        # (#1297) `consensus`: refuse a stock showing at least this many of the five crowd-favourite
-                                 #   marks (S smooth 10y trend, D under 2 years underwater, H at the sharpe cap, W beat the
-                                 #   index in 95 % of 3-year windows, I passed the rules 6 months in a row). 0 = off
-  growth_consensus_dock: false   # (#1297) dock each crowd mark as one more failed gate under growth_gate_soft. false = off
-  growth_hard_tags: []           # (#1297) gate tags that refuse even under growth_gate_soft, for the hard rows of a grid. [] = none
-  growth_min_cagr_rel: 0.0       # (#1298) a stock's long leg must also clear the previous cutoff's pool median CAGR plus this
-                                 #   many points (the walk stamps the pool; live rows carry none yet). 0 = off
-  growth_min_cagr_pct: 0.0       # (#1298) ... or that pool's CAGR at this percentile; the higher bar applies. 0 = off
-  growth_max_sharpe: 0.0         # (#1303) `consensus`: refuse a stock whose long CAGR over daily volatility, the H mark's
-                                 #   ratio, is at or above this, on its own. 0 = off
-  growth_max_rel_win: 0.0        # (#1303) `consensus`: refuse a stock that beat the index in at least this share of its
-                                 #   3-year windows over the decade, the W mark's line, on its own. 0 = off
+  # (#1280) (#1299) retired: growth_refuse_financials: false # (#1277) `financial`: refuse a stock whose SEC filings read as a bank or insurer. false = off
+  # (#1280) (#1299) retired: growth_financial_max_asset_growth: 0.0 # (#1277) `fin-growth`: refuse a financial whose total assets grew faster than this %/yr over 5y. 0 = off
+  # (#1280) (#1299) retired: growth_refuse_sector_top_dog: false # (#1277) `topdog`: refuse the largest market cap in its sector at the cutoff. false = off
+  # (#1297) retired: growth_consensus_min: 0 # `consensus`: refuse a stock showing at least this many of five crowd marks. 0 = off
+  # (#1297) retired: growth_consensus_dock: false # dock each crowd mark as one more failed gate. false = off
+  # (#1297) retired: growth_hard_tags: [] # gate tags that refuse even under growth_gate_soft. [] = none
+  # (#1298) retired: growth_min_cagr_rel: 0.0 # a second long-leg floor, the previous cutoff's pool median plus this. 0 = off
+  # (#1298) retired: growth_min_cagr_pct: 0.0 # ... or that pool's CAGR at this percentile. 0 = off
+  # (#1303) retired: growth_max_sharpe: 0.0 # refuse a stock whose long CAGR over volatility is at or above this. 0 = off
+  # (#1303) retired: growth_max_rel_win: 0.0 # refuse a stock that beat the index in this share of 3-year windows. 0 = off
   # (#1286) ROUND 10 GRID, 2026-11-01: C (`untested`, growth_min_underwater_yrs 2) and S (`stretch`, growth_max_above_ma
   #   150 -> 100), each docked (growth_gate_soft 0.8) and refused (growth_untested_hard, growth_stretch_hard), on the
   #   (#1285) code 8ceacb6. BAR, written before the run, against each leg's own row 0: top-10 excess mean and median
@@ -24917,6 +24909,62 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Bar and pair rule as above, PRIMARY on the pit legs.
 #   EXPECTED, written before the run: both pairs fail. Few names sit at the Sharpe cap, so those rows move the
 #   book little; the relative-win rows shrink the pool more and lose the head-to-head, as Grid A's hard rows did.
+# (#1297) VERDICT, 2026-11-02: the consensus count is REFUSED in every row, so `growth_consensus_min`,
+#   `growth_consensus_dock` and `growth_hard_tags` go into `config::RETIRED`. Runs on d17ee17: 41427779399
+#   12y, 41427794613 8y, 41427808562 20y, 41427823064 stress, 41427836762 12y dead, 41427850270 8y dead.
+#   Control: 12y +3.1|+2.8 worst -4.0 h2h 15/38 pool 177; 8y +3.4|+3.3 worst -6.6 h2h 18/40 pool 178; 20y
+#   +3.3|+1.9 worst -3.0 h2h 12/22 pool 177; 20y stress h2h 18/45.
+#   K2 soft: 12y +3.2|+3.3 but the worst window falls 3.2 (to -7.2) and the 8y head-to-head drops to 42 %
+#     from 45 %; the gain sits INSIDE its null band at 12y and 8y.
+#   K2 hard: the pool shrinks to 119, 123 and 115 at 12y, 8y and 20y, under 80 % of control, and the 12y
+#     worst window falls 4.0; INSIDE at both.
+#   K3 soft: 12y head-to-head 37 % against 39 %; INSIDE at both.
+#   K3 hard: every bar cell holds (12y +3.3|+3.4, 8y +3.6|+3.9, pool 169 and 170) but the gain sits INSIDE
+#     its null band at 12y and 8y, so it is noise and its pair partner failed anyway.
+#   Dock (read-only): 12y +3.6|+4.1 and 8y +4.0|+3.3, the largest gain of the round and OUTSIDE at 20y, but
+#     the 12y worst falls 1.2, the 8y head-to-head drops to 40 % and the stress one to 36 % from 40 %.
+#   The dead legs could not grade: the (#1296) census covers 0 cutoffs (the archive's 64 dead names all exit
+#     in 2014 or later). EXPECTED said K2 rises 0.2-0.6 with a shallower worst; the rise came, the worst
+#     window got deeper instead, and no rise cleared the noise band.
+#   Re-ask only with a new reason, such as a dead-name archive that reaches before 2014.
+# (#1298) VERDICT, 2026-11-02: the relative CAGR bar is REFUSED in every row, so `growth_min_cagr_rel` and
+#   `growth_min_cagr_pct` go into `config::RETIRED` and the pool CAGR stamp goes with them. Runs on d17ee17:
+#   41427863785 12y, 41427876958 8y, 41427890589 20y, 41427905134 stress; control as (#1297) above.
+#   Pool plus 5: 8y head-to-head 42 % against 45 %; INSIDE at both. Plus 8: the only row OUTSIDE its band
+#     at 12y and 8y (12y +3.4|+3.3, 8y +3.6|+4.0), but the rank-1 head-to-head falls to 37 % at 12y and 38 %
+#     at 8y. 75th and 80th percentile: the worst window falls 1.5 at 12y, 2.4 at 8y and 0.6 at 20y, and both
+#     head-to-heads fall. The absolute `growth_min_cagr` 15 reference row loses 0.2 on the 12y mean and median.
+#   EXPECTED said the bar lifts the mean and fails the head-to-head, the floor family's old verdict; it did.
+# (#1299) VERDICT, 2026-11-02: the financials, financial asset-growth and sector top-dog gates are
+#   UNGRADEABLE on the ruler they were restored for, so `growth_refuse_financials`,
+#   `growth_financial_max_asset_growth` and `growth_refuse_sector_top_dog` go back into `config::RETIRED`.
+#   Runs on d17ee17: 41427919193 12y dead, 41427933636 8y dead, 41427947770 12y, 41427963252 8y. The (#1296)
+#   census covers 0 of 113 and 0 of 138 cutoffs, so no dead-leg row can be read. On the pit guard legs every
+#   row keeps control's top-10 line to the decimal (12y +3.1|+2.8, 8y +3.4|+3.3) with the pool 0-4 % smaller:
+#   the gates refuse names the top 10 never held. EXPECTED said F and T rise on dead names; that cannot be
+#   read yet. Re-ask only when a dead-name archive covers exits before 2014.
+# (#1303) VERDICT, 2026-11-02: both ceilings are REFUSED, so `growth_max_sharpe` and `growth_max_rel_win` go into
+#   `config::RETIRED`, and with them the last use of `growth_hard_tags`. Runs on 46db026: 41433031416 12y,
+#   41433045128 8y, 41433059292 20y, 41433073455 stress; control as (#1297) above.
+#   Sharpe 15: changes nothing, every leg keeps control's line to the decimal. Sharpe 12: 12y +3.2|+2.8, but
+#     the 12y rank-1 head-to-head falls to 37 % from 39 %; INSIDE its null band at 12y and 8y.
+#   Relative win 0.95: 12y +3.5|+3.7 and 8y +3.9|+4.3, with the head-to-head up at both, but the gain sits
+#     INSIDE its null band at 12y and 8y, and in stress the 20y pool falls to 14 from 18, its head-to-head to
+#     31 % from 40 %, and the 12y pool to 132 from 170. Relative win 0.90: the 12y worst window falls 3.5, the
+#     8y head-to-head drops to 40 % from 45 %, and two stress pools fall under 80 %.
+#   EXPECTED said both pairs fail; they did. The relative-win and tenure stamps leave with the rules: no live row
+#   ever carried them, and nothing else reads them.
+# (#1301) VERDICT, 2026-11-02: insider ownership level is NOT a candidate, so `insider_own_pct` stays measured and
+#   weighted nowhere, as (#1290) left its two factors. Probe 41433105112 on 46db026, `universe fund pit insider`
+#   at 12y and 8y, the (#1278) held book's loser AUC: 12y raw 0.33 on 75 winners and 13 losers, the wrong way
+#   round (the winners' median ownership 0.90 % against the losers' 1.38 %); 8y raw 0.46 on 136 and 32, within
+#   0.10 of a coin flip. The sector-neutral read is 0.62 and 0.61, but on 6 and 18 losers, and at 12y it
+#   disagrees in sign with the raw one. The bar wanted 0.60 or more in the paper's direction at both horizons.
+#   EXPECTED said nothing about it; re-ask only with a held book that has enough losers to read sector-neutral.
+# (#1302) VERDICT, 2026-11-02: patents read NEEDS-DATA and stop, as the (#1291) rule says. PatentsView moved into
+#   the USPTO Open Data Portal on 2026-03-20, and its bulk files now need an API key tied to a USPTO.gov account
+#   with identity checks. The old public bucket and the one mirror found refuse downloads, and the patent tables
+#   on a cloud warehouse need an account too. No field was built. Re-ask when a keyless bulk file returns.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

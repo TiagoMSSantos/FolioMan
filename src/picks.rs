@@ -321,61 +321,6 @@ fn min_age_years(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     tuning.growth_min_age_years.max(coin)
 }
 
-/// (#1298) The relative floor for a stock's long leg: the pool median plus `growth_min_cagr_rel`, or
-/// the pool percentile `growth_min_cagr_pct`, the higher of the two when both are on. Funds, coins, an
-/// unstamped quote and knobs at 0 read negative infinity, so the absolute floor alone applies. Kept
-/// apart from [`min_cagr_floor`] on purpose: that one also feeds the whole-life leg, which stays on
-/// the absolute bar.
-fn pool_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
-    if asset_class(quote) != 2 {
-        return f64::NEG_INFINITY;
-    }
-    let rel = quote.pool_cagr_median.filter(|_| tuning.growth_min_cagr_rel > 0.0).map(|m| m + tuning.growth_min_cagr_rel);
-    let pct = quote.pool_cagr_pct.filter(|_| tuning.growth_min_cagr_pct > 0.0);
-    rel.into_iter().chain(pct).fold(f64::NEG_INFINITY, f64::max)
-}
-
-/// (#1297) The crowd-favourite marks a stock shows, one letter each, thresholds fixed by (#1291):
-/// `S` ten-year trend R² at least 0.90, `D` under 2 years below a past high in ten years, `H` long
-/// CAGR over volatility at the `sharpe_cap` ceiling, `W` beat the benchmark in at least 95% of rolling
-/// 3-year windows over the decade, `I` admitted for at least 6 months in a row. A missing field is a
-/// mark off.
-fn consensus_marks(quote: &Quote, tuning: &BuyHeuristic) -> String {
-    let sharpe = crowd_sharpe(quote, tuning);
-    [
-        ('S', quote.trend_r2_10y.is_some_and(|r| r >= 0.90)),
-        ('D', quote.underwater_yrs_10y.is_some_and(|u| u < 2.0)),
-        ('H', tuning.sharpe_cap > 0.0 && sharpe.is_some_and(|s| s >= tuning.sharpe_cap)),
-        ('W', quote.rel_win_share_10y.is_some_and(|w| w >= 0.95)),
-        ('I', quote.admit_tenure_months.is_some_and(|m| m >= 6)),
-    ]
-    .into_iter()
-    .filter_map(|(c, on)| on.then_some(c))
-    .collect()
-}
-
-/// (#1303) Long CAGR over daily volatility, the ratio the `H` mark and `growth_max_sharpe` read: None
-/// without a long leg or a positive volatility.
-fn crowd_sharpe(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
-    long_cagr_pct(quote, tuning).zip(quote.volatility_pct).filter(|&(_, v)| v > 0.0).map(|(c, v)| c / v)
-}
-
-/// (#1303) The solo crowd ceilings, G5 of (#1291): a stock whose `H` ratio is at or above
-/// `growth_max_sharpe`, or whose `W` share is at or above `growth_max_rel_win`. Returns the reason,
-/// None when neither knob is on or neither fires. The scorer and `gate_fails` both read it, under the
-/// `consensus` tag.
-fn crowd_ceiling(quote: &Quote, tuning: &BuyHeuristic) -> Option<String> {
-    if asset_class(quote) != 2 {
-        return None;
-    }
-    let (s, w) = (tuning.growth_max_sharpe, tuning.growth_max_rel_win);
-    let sharpe = crowd_sharpe(quote, tuning).filter(|&r| s > 0.0 && r >= s);
-    let win = quote.rel_win_share_10y.filter(|&x| w > 0.0 && x >= w);
-    sharpe.map(|r| format!("return per unit of risk {r:.1} (ceiling {s:.1})")).or_else(|| {
-        win.map(|x| format!("beat the benchmark in {:.0}% of 3-year windows (ceiling {:.0}%)", x * 100.0, w * 100.0))
-    })
-}
-
 /// (#1154) %/yr the equity floor drops for size: `growth_min_cagr_size_slope` per tenfold of market cap
 /// above `growth_min_cagr_size_pivot`, never below 0, so it can only lower the floor. No cap reads 0.
 /// shortcut: the backtest's cap is in the trading currency (USD for the US pool) and the live one is
@@ -1507,7 +1452,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years)?; // (#15) pin the CAGR window
     let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years); // (#14) the `LEG` column shows this
     let min_cagr = min_cagr_floor(quote, tuning);
-    if long_cagr < min_cagr.max(pool_floor(quote, tuning)) {
+    if long_cagr < min_cagr {
         return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
     }
     // (#3i) the SAME bar against the WHOLE-LIFE CAGR. The leg above is the most recent 20/8/5Y rung, so a
@@ -1588,30 +1533,6 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // stretch is not. 100 measured edge-flat (+106.9), so the ceiling sits at 150, ABOVE the brake cap:
     // moderately-stretched names stay (flagged `!`), only the blow-off tail is cut. 0 = off.
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
-        return None;
-    }
-    // (#1299) three STOCK gates restored from (#1277) for a re-grade on the dead-name ruler, plus the
-    // (#1297) crowd-favourite count. Each is off at false / 0 and passes a field the quote lacks: a
-    // financial filer (`financial`), a financial whose total assets grew too fast over 5 years
-    // (`fin-growth`), the biggest company in its sector (`topdog`), and a name showing at least
-    // `growth_consensus_min` of the five crowd marks (`consensus`). `gate_fails` mirrors them leg for leg.
-    // `asset_growth` is stored negated (a high value reads safer), so the ceiling compares `-g`.
-    if tuning.growth_refuse_financials && asset_class(quote) == 2 && quote.fund.as_ref().is_some_and(|f| f.financial) {
-        return None;
-    }
-    if tuning.growth_financial_max_asset_growth > 0.0
-        && asset_class(quote) == 2
-        && quote.fund.as_ref().is_some_and(|f| f.financial && f.asset_growth.is_some_and(|g| -g > tuning.growth_financial_max_asset_growth))
-    {
-        return None;
-    }
-    if tuning.growth_refuse_sector_top_dog && asset_class(quote) == 2 && quote.sector_top_dog == Some(true) {
-        return None;
-    }
-    if tuning.growth_consensus_min > 0 && asset_class(quote) == 2 && consensus_marks(quote, tuning).len() >= tuning.growth_consensus_min {
-        return None;
-    }
-    if crowd_ceiling(quote, tuning).is_some() {
         return None;
     }
     // (#25) LIFETIME-UPTREND gate: the ranked CAGR uses the longest 20Y/10Y/5Y leg, so a name that
@@ -1996,8 +1917,6 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let hard = score_parts_hard(quote, tuning);
     let f = gate_soft(quote, tuning);
     let k = if tuning.growth_event_months > 0 && asset_class(quote) == 2 { quote.event_flags.count_ones() as usize } else { 0 };
-    // (#1297) the crowd-mark dock: each mark is one more failed gate in the soft power
-    let k = k + if tuning.growth_consensus_dock && asset_class(quote) == 2 { consensus_marks(quote, tuning).len() } else { 0 };
     if (hard.is_some() && k == 0) || f == 0.0 {
         return hard.filter(|_| k == 0);
     }
@@ -2008,8 +1927,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         None => {
             let (open, tags, _) = waived(quote, tuning, false)?;
             // (#1282) The Série E rungs are a mandate ((#315)), not a dockable gate: under the hurdle = refused.
-            // (#1297) `growth_hard_tags` names more gates that refuse even under the soft dock.
-            if tags.iter().any(|g| matches!(g.0, "8Y+" | "20Y+") || tuning.growth_hard_tags.iter().any(|h| h == g.0)) {
+            if tags.iter().any(|g| matches!(g.0, "8Y+" | "20Y+")) {
                 return None;
             }
             (score_parts_hard(quote, &open)?, tags.len())
@@ -2588,10 +2506,6 @@ pub(crate) fn plain_gate(g: &str) -> &'static str {
         "exchange" => "an exchange's own coin",
         "peg" => "price too high for its growth",
         "maxdd" => "once fell too far from a peak",
-        "financial" => "a bank or insurer, whose growth is balance-sheet growth",
-        "fin-growth" => "a bank whose assets grew too fast",
-        "topdog" => "the biggest company in its sector",
-        "consensus" => "looks like a compounder everyone already owns",
         "leveraged" => "a leveraged fund, 2x or 3x the daily move",
         "commodity" => "a commodity fund, whose price follows raw materials",
         "hedged" => "a currency-hedged fund, whose hedge costs eat the return",
@@ -2751,12 +2665,11 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
             fails.push(("range8y", format!("{:.d$}% in 8y range (need ≥{:.d$}%)", s.range_pct, min_range_8y, d = bar_dp(s.range_pct, min_range_8y, 0)), s.range_pct >= min_range_8y - 10.0));
         }
     }
-    let leg_floor = min_cagr.max(pool_floor(quote, tuning)); // (#1298) the long leg alone reads the pool bar
-    if long_cagr < leg_floor {
+    if long_cagr < min_cagr {
         // close = within 1.5 pp of the floor. 4.0 flooded the screen tail with ~55 "10%/yr vs a 14%
         // bar" rows — that's a different asset class, not a near miss; 1.5 keeps the genuine
         // one-notch-out compounders (13.9 vs 14.0) and nothing else.
-        fails.push(("cagr", format!("{long_cagr:.d$}%/yr (need ≥{leg_floor:.d$}%)", d = bar_dp(long_cagr, leg_floor, 1)), long_cagr >= leg_floor - 1.5));
+        fails.push(("cagr", format!("{long_cagr:.d$}%/yr (need ≥{min_cagr:.d$}%)", d = bar_dp(long_cagr, min_cagr, 1)), long_cagr >= min_cagr - 1.5));
     }
     // (#3i) the whole-life half of the same floor. REQUIRED, not decorative: without it a name rejected
     // by the life bar drops out of the table with no reason printed anywhere. Same 1.5pp near-miss margin
@@ -2803,30 +2716,6 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     }
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
         fails.push(("stretch", format!("+{:.0}% above 200wk SMA (ceiling +{:.0}%)", quote.above_ma_pct, tuning.growth_max_above_ma), quote.above_ma_pct <= tuning.growth_max_above_ma + 25.0));
-    }
-    // (#1299)/(#1297) the restored stock gates' reasons and the crowd count, leg for leg with `score_parts_hard`
-    let financial = quote.fund.as_ref().filter(|f| f.financial);
-    if tuning.growth_refuse_financials && asset_class(quote) == 2 && financial.is_some() {
-        fails.push(("financial", format!("a financial filer, sector {}", quote.sector.as_deref().unwrap_or("unknown")), false));
-    }
-    if tuning.growth_financial_max_asset_growth > 0.0 && asset_class(quote) == 2 {
-        let bar = tuning.growth_financial_max_asset_growth;
-        if let Some(g) = financial.and_then(|f| f.asset_growth).map(|g| -g).filter(|&g| g > bar) {
-            fails.push(("fin-growth", format!("financial, total assets {g:+.d$}%/yr over 5y (ceiling +{bar:.d$}%)", d = bar_dp(g, bar, 1)), g <= bar + 5.0));
-        }
-    }
-    if tuning.growth_refuse_sector_top_dog && asset_class(quote) == 2 && quote.sector_top_dog == Some(true) {
-        fails.push(("topdog", format!("the largest company in {}", quote.sector.as_deref().unwrap_or("its sector")), false));
-    }
-    if tuning.growth_consensus_min > 0 && asset_class(quote) == 2 {
-        let (marks, k) = (consensus_marks(quote, tuning), tuning.growth_consensus_min);
-        if marks.len() >= k {
-            fails.push(("consensus", format!("{} of 5 crowd marks ({marks}), refused at {k}", marks.len()), marks.len() == k));
-        }
-    }
-    // (#1303) the solo ceilings share the tag, pushed once: the count's reason wins when both fire
-    if let Some(why) = crowd_ceiling(quote, tuning).filter(|_| !fails.iter().any(|f| f.0 == "consensus")) {
-        fails.push(("consensus", why, false));
     }
     if !crypto && tuning.growth_require_lifetime_uptrend {
         if let Some(t) = quote.trend_cagr.filter(|&t| t <= 0.0) {
@@ -2921,10 +2810,7 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
         "aum" => t.growth_min_aum_etf = 0.0,
         "range" => (t.growth_min_range_pct, t.growth_min_range_pct_crypto) = (OFF, OFF),
         "range8y" => (t.growth_min_range_pct_8y, t.growth_min_range_pct_8y_crypto) = (0.0, 0.0),
-        "cagr" | "cagr-life" => {
-            (t.growth_min_cagr, t.growth_min_cagr_etf, t.growth_min_cagr_crypto) = (OFF, 0.0, OFF);
-            (t.growth_min_cagr_rel, t.growth_min_cagr_pct) = (0.0, 0.0); // (#1298) the pool bar too
-        }
+        "cagr" | "cagr-life" => (t.growth_min_cagr, t.growth_min_cagr_etf, t.growth_min_cagr_crypto) = (OFF, 0.0, OFF),
         "1Y+" => (t.growth_min_1y_pct, t.min_1y_pct_crypto) = (OFF, OFF),
         "1M-knife" => (t.max_1m_drop_pct, t.max_1m_drop_pct_crypto) = (OFF, OFF),
         "5Y+" => (t.growth_min_5y_pct, t.growth_min_5y_pct_etf, t.growth_min_5y_pct_crypto) = (OFF, 0.0, OFF),
@@ -2938,10 +2824,6 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
         "mvrv" => t.crypto_max_mvrv = 0.0,
         "peg" => (t.growth_max_peg, t.growth_require_peg) = (0.0, false),
         "maxdd" => (t.growth_maxdd_cap, t.growth_maxdd_cap_crypto) = (0.0, 0.0),
-        "financial" => t.growth_refuse_financials = false,
-        "fin-growth" => t.growth_financial_max_asset_growth = 0.0,
-        "topdog" => t.growth_refuse_sector_top_dog = false,
-        "consensus" => (t.growth_consensus_min, t.growth_max_sharpe, t.growth_max_rel_win) = (0, 0.0, 0.0),
         _ => {}
     }
 }
@@ -2954,7 +2836,7 @@ pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
     let mut t = tuning.clone();
     for tag in [
         "young", "aum", "range", "range8y", "cagr", "1Y+", "1M-knife", "5Y+", "8Y+", "20Y+", "liquidity", "stretch",
-        "lifetime", "volatile", "spike", "mvrv", "peg", "maxdd", "financial", "fin-growth", "topdog", "consensus",
+        "lifetime", "volatile", "spike", "mvrv", "peg", "maxdd",
     ] {
         waive_gate(&mut t, tag);
     }
@@ -9084,8 +8966,7 @@ mod tests {
             splits: Vec::new(), // (#82) journal-replay only (`track`/`sim`); nothing in the score reads it
             event_flags: 0,
             jump_ahead: false,
-            trend_r2_10y: None, underwater_yrs_10y: None, sector_top_dog: None, // (#1277) off-by-default gates read them
-            rel_win_share_10y: None, admit_tenure_months: None, pool_cagr_median: None, pool_cagr_pct: None, // (#1297)/(#1298) walk-only
+            trend_r2_10y: None, underwater_yrs_10y: None, sector_top_dog: None, // (#1277) no score reads them since (#1280)
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,
@@ -12586,7 +12467,7 @@ mod tests {
     /// never holds ": " or " (", which split a MISSES hover line into its tag.
     #[test]
     fn plain_gate_names_every_rule_in_its_own_words() {
-        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "financial", "fin-growth", "topdog", "consensus", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
+        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
         let labels: std::collections::BTreeSet<&str> = tags.iter().map(|g| plain_gate(g)).collect();
         assert_eq!(labels.len(), tags.len(), "one label per rule");
         assert!(!labels.contains("a buy rule"), "no rule falls through");
@@ -14068,133 +13949,6 @@ mod tests {
         assert_eq!(growth_score(&fail, &on), Some(full * 0.5f64.powi(tags.len() as i32 + 1)), "a failer adds its flag to its n");
     }
 
-    /// (#1297) Each crowd mark fires alone, on its line, and a missing field is a mark off. `H` is the
-    /// long CAGR over volatility AT the `sharpe_cap` ceiling: on the cap counts, a hair under does not,
-    /// and a zero cap or zero volatility reads no ratio at all.
-    #[test]
-    fn consensus_marks_fire_alone_on_their_lines() {
-        let t = BuyHeuristic::default();
-        let marks = |f: fn(&mut Quote)| { let mut q = gate_fixture(); f(&mut q); consensus_marks(&q, &t) };
-        assert_eq!(marks(|_| {}), "", "every field missing = every mark off");
-        assert_eq!(marks(|q| q.trend_r2_10y = Some(0.90)), "S");
-        assert_eq!(marks(|q| q.trend_r2_10y = Some(0.89)), "");
-        assert_eq!(marks(|q| q.underwater_yrs_10y = Some(1.9)), "D");
-        assert_eq!(marks(|q| q.underwater_yrs_10y = Some(2.0)), "");
-        assert_eq!(marks(|q| q.rel_win_share_10y = Some(0.95)), "W");
-        assert_eq!(marks(|q| q.rel_win_share_10y = Some(0.94)), "");
-        assert_eq!(marks(|q| q.admit_tenure_months = Some(6)), "I");
-        assert_eq!(marks(|q| q.admit_tenure_months = Some(5)), "");
-        let at = |q: &Quote, cap: f64| consensus_marks(q, &BuyHeuristic { sharpe_cap: cap, ..t.clone() });
-        let mut q = gate_fixture();
-        q.volatility_pct = Some(2.0);
-        let c = long_cagr_pct(&q, &t).expect("the fixture has a long leg");
-        assert!(c > 0.0);
-        assert_eq!(at(&q, c / 2.0), "H", "on the cap");
-        assert_eq!(at(&q, c / 2.0 + 0.01), "", "a hair under the cap");
-        assert_eq!(at(&q, 0.0), "", "a zero cap marks nothing");
-        q.volatility_pct = Some(0.0);
-        assert_eq!(at(&q, c / 2.0), "", "zero volatility is no ratio");
-        q.volatility_pct = None;
-        assert_eq!(at(&q, c / 2.0), "", "unknown volatility is no ratio");
-    }
-
-    /// (#1303) Each solo crowd ceiling refuses a stock AT its bar and spares it a hair under, reads
-    /// nothing at 0, and with the count gate firing as well `gate_failures` lists `consensus` once.
-    #[test]
-    fn crowd_ceilings_refuse_on_their_bar() {
-        let t = BuyHeuristic::default();
-        let mut q = gate_fixture();
-        q.volatility_pct = Some(2.0);
-        let r = crowd_sharpe(&q, &t).expect("the fixture has a long leg and a volatility");
-        let sh = |s: f64| BuyHeuristic { growth_max_sharpe: s, ..t.clone() };
-        assert!(crowd_ceiling(&q, &sh(r)).is_some(), "on the bar");
-        assert!(growth_score(&q, &sh(r)).is_none());
-        assert_eq!(crowd_ceiling(&q, &sh(r + 0.01)), None, "a hair over the ratio");
-        assert!(growth_score(&q, &sh(r + 0.01)).is_some());
-        assert_eq!(crowd_ceiling(&q, &t), None, "both off");
-        let rw = |w: f64| BuyHeuristic { growth_max_rel_win: w, ..t.clone() };
-        q.rel_win_share_10y = Some(0.95);
-        assert!(crowd_ceiling(&q, &rw(0.95)).is_some(), "on the bar");
-        assert_eq!(crowd_ceiling(&q, &rw(0.96)), None, "a hair over the share");
-        let both = BuyHeuristic { growth_consensus_min: 1, ..rw(0.95) };
-        let tags: Vec<&str> = gate_failures(&q, &both).expect("assessable").iter().map(|f| f.0).collect();
-        assert_eq!(tags.iter().filter(|&&g| g == "consensus").count(), 1, "one tag for both: {tags:?}");
-    }
-
-    /// (#1298) The pool bar raises a STOCK's long-leg floor only: median plus the margin, or the stamped
-    /// percentile, the higher when both are on. Knobs at 0, a fund and an unstamped stock read nothing.
-    /// Through the gate the line spares, half a point over is a near miss, two points is not, and the
-    /// whole-life leg keeps the absolute bar.
-    #[test]
-    fn pool_floor_raises_only_a_stock_long_leg() {
-        let t = BuyHeuristic::default();
-        let rel = BuyHeuristic { growth_min_cagr_rel: 5.0, ..t.clone() };
-        let pct = BuyHeuristic { growth_min_cagr_pct: 75.0, ..t.clone() };
-        let both = BuyHeuristic { growth_min_cagr_pct: 75.0, ..rel.clone() };
-        let mut q = gate_fixture();
-        (q.pool_cagr_median, q.pool_cagr_pct) = (Some(10.0), Some(20.0));
-        assert_eq!(pool_floor(&q, &t), f64::NEG_INFINITY, "knobs at 0 read the stamps as nothing");
-        assert_eq!(pool_floor(&q, &rel), 15.0, "median plus the margin");
-        assert_eq!(pool_floor(&q, &pct), 20.0, "the stamped percentile");
-        assert_eq!(pool_floor(&q, &both), 20.0, "the higher bar");
-        q.pool_cagr_pct = Some(12.0);
-        assert_eq!(pool_floor(&q, &both), 15.0, "the higher bar, the other way round");
-        let mut fund = q.clone();
-        fund.instrument_type = "ETF".into();
-        assert_eq!(pool_floor(&fund, &both), f64::NEG_INFINITY, "a fund keeps its own bar");
-        let mut bare = gate_fixture();
-        assert_eq!(pool_floor(&bare, &both), f64::NEG_INFINITY, "an unstamped stock");
-        let c = long_cagr_pct(&bare, &t).expect("the fixture has a long leg");
-        let gate = |q: &Quote| gate_failures(q, &pct).expect("assessable").into_iter().find(|f| f.0 == "cagr").map(|f| f.2);
-        bare.pool_cagr_pct = Some(c);
-        assert_eq!(gate(&bare), None, "on the line spares");
-        assert!(growth_score(&bare, &pct).is_some());
-        bare.pool_cagr_pct = Some(c + 0.5);
-        assert_eq!(gate(&bare), Some(true), "half a point over is a near miss");
-        assert!(growth_score(&bare, &pct).is_none());
-        bare.pool_cagr_pct = Some(c + 2.0);
-        assert_eq!(gate(&bare), Some(false), "two points over is not");
-        bare.life_cagr = Some(c);
-        let tags: Vec<&str> = gate_failures(&bare, &pct).expect("assessable").iter().map(|f| f.0).collect();
-        assert!(!tags.contains(&"cagr-life"), "the whole-life leg keeps the absolute bar: {tags:?}");
-        let off = gates_off(&both);
-        assert_eq!((off.growth_min_cagr_rel, off.growth_min_cagr_pct), (0.0, 0.0), "waiving cagr waives the pool bar");
-    }
-
-    /// (#1297) `growth_hard_tags` turns a dockable gate back into a refusal under the soft dock, and a
-    /// tag that is not failing changes nothing.
-    #[test]
-    fn hard_tags_refuse_a_gate_even_under_the_soft_dock() {
-        let soft = BuyHeuristic { growth_gate_soft: 0.8, growth_refuse_sector_top_dog: true, ..BuyHeuristic::default() };
-        let mut q = gate_fixture();
-        q.sector_top_dog = Some(true);
-        assert_eq!(growth_score(&q, &BuyHeuristic { growth_gate_soft: 0.0, ..soft.clone() }), None, "hard gates refuse the top dog");
-        assert!(growth_score(&q, &soft).is_some(), "the soft dock ranks it one step down");
-        let hard = BuyHeuristic { growth_hard_tags: vec!["topdog".into()], ..soft.clone() };
-        assert_eq!(growth_score(&q, &hard), None, "a listed tag refuses");
-        let other = BuyHeuristic { growth_hard_tags: vec!["peg".into()], ..soft.clone() };
-        assert_eq!(growth_score(&q, &other), growth_score(&q, &soft), "a tag the name does not fail changes nothing");
-    }
-
-    /// (#1297) The crowd-mark dock: each mark is one more failed gate in the soft power, stocks only, and
-    /// with the dock off the marks are not read.
-    #[test]
-    fn consensus_dock_counts_each_mark_as_a_failed_gate() {
-        let on = BuyHeuristic { growth_consensus_dock: true, growth_gate_soft: 0.5, ..BuyHeuristic::default() };
-        let mut pass = gate_fixture();
-        let clean = growth_score(&pass, &on).expect("the fixture clears the gates");
-        assert!(clean > 0.0, "a positive score, so the dock is a multiply here");
-        (pass.trend_r2_10y, pass.underwater_yrs_10y) = (Some(0.95), Some(0.5));
-        assert_eq!(growth_score(&pass, &on), Some(clean * 0.25), "two marks on a passer: 0.5^2");
-        assert_eq!(growth_score(&pass, &BuyHeuristic { growth_consensus_dock: false, ..on.clone() }), Some(clean), "the dock off reads no mark");
-        assert_eq!(growth_score(&pass, &BuyHeuristic { growth_gate_soft: 0.0, ..on.clone() }), None, "hard gates refuse a marked stock");
-        let mut fund = pass.clone();
-        fund.instrument_type = "ETF".into();
-        let fund_on = BuyHeuristic { growth_gate_soft_etf: 0.5, ..on.clone() };
-        let unmarked = Quote { trend_r2_10y: None, underwater_yrs_10y: None, ..fund.clone() };
-        assert_eq!(growth_score(&fund, &fund_on), growth_score(&unmarked, &fund_on), "a fund never docks for a mark");
-    }
-
     /// (#569) The soft scorer's tags-only read: the same gates, tags and near-miss flags, every reason empty.
     #[test]
     fn gate_fails_without_why_keeps_the_tags() {
@@ -15627,20 +15381,12 @@ mod tests {
         let mut wbt = peg_vol.clone();
         wbt.ticker = "WBT-USD".into();
         wbt.volatility_pct = Some(3.0);
-        // (#1297)/(#1299) one stock per round-13 gate, each failing only its own
-        let mut bank = gate_fixture();
-        bank.fund = Some(crate::core::FundFactors { financial: true, asset_growth: Some(-20.0), ..Default::default() });
-        let mut top = gate_fixture();
-        top.sector_top_dog = Some(true);
-        let mut crowd = gate_fixture();
-        (crowd.trend_r2_10y, crowd.underwater_yrs_10y) = (Some(0.95), Some(0.5));
 
         let cases: &[(&str, &Quote)] = &[
             ("clean", &clean), ("leveraged", &leveraged), ("commodity", &commodity),
             ("hedged", &hedged), ("stablecoin", &stable), ("no-turnover", &no_turnover), ("no-1y", &no_1y),
             ("no-history", &no_history), ("artifact", &artifact), ("deep drawdown", &deep),
             ("stretched", &stretched), ("bull", &bull), ("peg by vol", &peg_vol), ("wipeout", &wipeout), ("wbt", &wbt),
-            ("bank", &bank), ("top dog", &top), ("crowd", &crowd),
         ];
         // knob sets chosen to move the fence ACROSS the fixture, so both verdicts flip inside the grid
         let tunings: &[(&str, BuyHeuristic)] = &[
@@ -15654,11 +15400,6 @@ mod tests {
                 growth_max_above_ma: 0.0, growth_min_1y_pct: -1e9, growth_min_5y_pct: -1e9,
                 growth_require_lifetime_uptrend: false, ..d.clone()
             }),
-            ("round-13 gates on", BuyHeuristic {
-                growth_refuse_financials: true, growth_financial_max_asset_growth: 10.0,
-                growth_refuse_sector_top_dog: true, growth_consensus_min: 2, ..d.clone()
-            }),
-            ("bank growth alone", BuyHeuristic { growth_financial_max_asset_growth: 10.0, ..d.clone() }),
         ];
 
         for (tname, t) in tunings {
@@ -15730,10 +15471,10 @@ mod tests {
     #[test]
     fn gate_failures_agrees_with_the_scorer_on_random_draws() {
         const DRAWS: usize = 4000;
-        const LABELS: [&str; 26] = [
+        const LABELS: [&str; 22] = [
             "young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact",
             "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "peg",
-            "maxdd", "exchange", "financial", "fin-growth", "topdog", "consensus",
+            "maxdd", "exchange",
         ];
         struct Rng(u64);
         impl Rng {
@@ -15850,28 +15591,7 @@ mod tests {
             }
             t.growth_maxdd_cap = r.arm(t.growth_maxdd_cap, &[0.0, 60.0, 84.0]);
             t.growth_maxdd_cap_crypto = r.arm(t.growth_maxdd_cap_crypto, &[84.0]);
-            // (#1297)-(#1299) drawn last so every draw above keeps its place in the stream. asset_growth is
-            // NEGATED: -10 is +10%/yr, exactly on the 10 bar. The crowd marks sit on and around their lines.
-            if let Some(f) = q.fund.as_mut() {
-                f.financial = r.hit(0.5);
-                f.asset_growth = r.opt(&[-20.0, -15.0, -10.0, 5.0], 0.2);
-            }
-            q.sector_top_dog = if r.hit(0.3) { Some(r.hit(0.5)) } else { None };
-            q.trend_r2_10y = r.opt(&[0.8, 0.9, 0.95], 0.3);
-            q.underwater_yrs_10y = r.opt(&[0.5, 2.0, 5.0], 0.3);
-            q.rel_win_share_10y = r.opt(&[0.9, 0.95, 1.0], 0.3);
-            q.admit_tenure_months = r.opt(&[5.0, 6.0, 24.0], 0.3).map(|m| m as u32);
-            q.pool_cagr_median = r.opt(&[5.0, 10.0, 15.0], 0.3);
-            q.pool_cagr_pct = r.opt(&[15.0, 20.0, 30.0], 0.3);
-            t.growth_refuse_financials = r.hit(0.2);
-            t.growth_financial_max_asset_growth = r.arm(t.growth_financial_max_asset_growth, &[10.0]);
-            t.growth_refuse_sector_top_dog = r.hit(0.2);
-            t.growth_consensus_min = r.arm(t.growth_consensus_min as f64, &[2.0, 3.0]) as usize;
-            t.growth_min_cagr_rel = r.arm(t.growth_min_cagr_rel, &[5.0]);
-            t.growth_min_cagr_pct = r.arm(t.growth_min_cagr_pct, &[75.0]);
             t.growth_min_age_years_crypto = r.arm(t.growth_min_age_years_crypto, &[8.0]); // (#1300) last too
-            t.growth_max_sharpe = r.arm(t.growth_max_sharpe, &[8.0]); // (#1303) after it, same reason
-            t.growth_max_rel_win = r.arm(t.growth_max_rel_win, &[0.95]);
 
             let fails = gate_failures(&q, &t);
             let ranks = growth_score(&q, &t).is_some();
@@ -16159,17 +15879,8 @@ mod tests {
         let range_k: Set = |t, v| t.growth_min_range_pct = v;
         let y5_k: Set = |t, v| t.growth_min_5y_pct = v;
         let liq_k: Set = |t, v| t.min_avg_turnover_eur_stock = v;
-        let fin_k: Set = |t, v| t.growth_refuse_financials = v > 0.0;
-        let fg_k: Set = |t, v| t.growth_financial_max_asset_growth = v;
-        let td_k: Set = |t, v| t.growth_refuse_sector_top_dog = v > 0.0;
-        let cs_k: Set = |t, v| t.growth_consensus_min = v as usize;
-        let sh_k: Set = |t, v| t.growth_max_sharpe = v;
-        let rw_k: Set = |t, v| t.growth_max_rel_win = v;
         let cage_k: Set = |t, v| t.growth_min_age_years_crypto = v;
         let aged_coin = |a: f64| { let mut q = coin(1.0); q.age_years = Some(a); q };
-        // (#1299) a fund carrying each stock-only field at its worst, which those gates must not read
-        let etf_with = |f: fn(&mut Quote)| { let mut q = etf("FUND.DE", 1e8); f(&mut q); q };
-        let bank = |g: Option<f64>| fund(FundFactors { financial: true, asset_growth: g, ..Default::default() });
 
         // (label, gate tag, knob, knob value, quote, expected verdict) -- None clears, Some((reason, close)) rejects
         let cases: &[(&str, &str, Set, f64, Quote, Option<(&str, bool)>)] = &[
@@ -16242,58 +15953,6 @@ mod tests {
                 Some(("-52% worst drawdown (cap -50%)", true))),
             ("maxdd stops at its 5pp margin", "maxdd", dd_k, 50.0, with(|q| q.max_drawdown_pct = 60.0),
                 Some(("-60% worst drawdown (cap -50%)", false))),
-            // (#1299) FINANCIAL -- a flag, never a near miss
-            ("financial off ignores a bank", "financial", fin_k, 0.0, bank(None), None),
-            ("financial refuses a bank", "financial", fin_k, 1.0, bank(None), Some(("a financial filer, sector unknown", false))),
-            ("financial spares a non-financial filer", "financial", fin_k, 1.0, fund(FundFactors::default()), None),
-            ("financial ignores a fund", "financial", fin_k, 1.0,
-                etf_with(|q| q.fund = Some(FundFactors { financial: true, ..Default::default() })), None),
-            // FIN-GROWTH -- asset_growth is NEGATED, so -12 is +12%/yr
-            ("fin-growth off ignores a fast bank", "fin-growth", fg_k, 0.0, bank(Some(-20.0)), None),
-            ("fin-growth spares a bank exactly on it", "fin-growth", fg_k, 10.0, bank(Some(-10.0)), None),
-            ("fin-growth spares a shrinking bank", "fin-growth", fg_k, 10.0, bank(Some(20.0)), None),
-            ("fin-growth calls 2pp over close", "fin-growth", fg_k, 10.0, bank(Some(-12.0)),
-                Some(("financial, total assets +12.0%/yr over 5y (ceiling +10.0%)", true))),
-            ("fin-growth calls its 5pp margin close", "fin-growth", fg_k, 10.0, bank(Some(-15.0)),
-                Some(("financial, total assets +15.0%/yr over 5y (ceiling +10.0%)", true))),
-            ("fin-growth stops past its 5pp margin", "fin-growth", fg_k, 10.0, bank(Some(-20.0)),
-                Some(("financial, total assets +20.0%/yr over 5y (ceiling +10.0%)", false))),
-            ("fin-growth spares a fast non-financial", "fin-growth", fg_k, 10.0,
-                fund(FundFactors { asset_growth: Some(-20.0), ..Default::default() }), None),
-            ("fin-growth ignores a fund", "fin-growth", fg_k, 10.0,
-                etf_with(|q| q.fund = Some(FundFactors { financial: true, asset_growth: Some(-20.0), ..Default::default() })), None),
-            // TOPDOG -- a flag the walk stamps; unknown passes
-            ("topdog off ignores the biggest", "topdog", td_k, 0.0, with(|q| q.sector_top_dog = Some(true)), None),
-            ("topdog refuses the biggest", "topdog", td_k, 1.0, with(|q| q.sector_top_dog = Some(true)),
-                Some(("the largest company in its sector", false))),
-            ("topdog names the sector", "topdog", td_k, 1.0,
-                with(|q| (q.sector_top_dog, q.sector) = (Some(true), Some("Technology".into()))),
-                Some(("the largest company in Technology", false))),
-            ("topdog spares the rest", "topdog", td_k, 1.0, with(|q| q.sector_top_dog = Some(false)), None),
-            ("topdog passes an unknown rank", "topdog", td_k, 1.0, gate_fixture(), None),
-            ("topdog ignores a fund", "topdog", td_k, 1.0, etf_with(|q| q.sector_top_dog = Some(true)), None),
-            // (#1297) CONSENSUS -- refuses AT its count; exactly on the count is the near miss
-            ("consensus off ignores a crowd favourite", "consensus", cs_k, 0.0,
-                with(|q| (q.trend_r2_10y, q.underwater_yrs_10y) = (Some(0.95), Some(0.5))), None),
-            ("consensus spares one mark under its count", "consensus", cs_k, 2.0, with(|q| q.trend_r2_10y = Some(0.95)), None),
-            ("consensus refuses on its count, close", "consensus", cs_k, 2.0,
-                with(|q| (q.trend_r2_10y, q.underwater_yrs_10y) = (Some(0.95), Some(0.5))),
-                Some(("2 of 5 crowd marks (SD), refused at 2", true))),
-            ("consensus past its count is not close", "consensus", cs_k, 2.0,
-                with(|q| (q.trend_r2_10y, q.underwater_yrs_10y, q.rel_win_share_10y, q.admit_tenure_months) = (Some(0.95), Some(0.5), Some(1.0), Some(6))),
-                Some(("4 of 5 crowd marks (SDWI), refused at 2", false))),
-            ("consensus ignores a fund", "consensus", cs_k, 1.0, etf_with(|q| q.trend_r2_10y = Some(0.99)), None),
-            // (#1303) the solo ceilings: 5Y 200% is 24.57%/yr, over 2.0 daily volatility a ratio of 12.3
-            ("sharpe ceiling off", "consensus", sh_k, 0.0, with(|q| q.volatility_pct = Some(2.0)), None),
-            ("sharpe ceiling refuses past its bar", "consensus", sh_k, 12.0, with(|q| q.volatility_pct = Some(2.0)),
-                Some(("return per unit of risk 12.3 (ceiling 12.0)", false))),
-            ("sharpe ceiling spares a lower ratio", "consensus", sh_k, 13.0, with(|q| q.volatility_pct = Some(2.0)), None),
-            ("sharpe ceiling ignores a fund", "consensus", sh_k, 1.0, etf_with(|q| q.volatility_pct = Some(0.1)), None),
-            ("rel-win ceiling off", "consensus", rw_k, 0.0, with(|q| q.rel_win_share_10y = Some(1.0)), None),
-            ("rel-win ceiling refuses at its bar", "consensus", rw_k, 0.95, with(|q| q.rel_win_share_10y = Some(0.95)),
-                Some(("beat the benchmark in 95% of 3-year windows (ceiling 95%)", false))),
-            ("rel-win ceiling spares a lower share", "consensus", rw_k, 0.95, with(|q| q.rel_win_share_10y = Some(0.94)), None),
-            ("rel-win ceiling ignores a fund", "consensus", rw_k, 0.5, etf_with(|q| q.rel_win_share_10y = Some(1.0)), None),
         ];
 
         for (label, tag, set, v, q, want) in cases {
@@ -16358,13 +16017,6 @@ mod tests {
         // on sight; the (#64) receipts beside both knobs carry the runs.
         assert_eq!(tuning.growth_max_above_ma, 150.0, "the stretch gate is measured, not a taste call — its excluded cohort is negative on both moments at all three horizons, and the live table clears it by 3 points");
         assert_eq!(tuning.max_1m_drop_pct, -1000000.0, "the knife ships OFF and its own block argues for -20 — that is unresolved, not settled; read the (#64) receipt before moving it either way");
-        // (#1297)-(#1299) round 13 buy rules ship off until their pre-registered (#1291) bar is read
-        assert!(!tuning.growth_refuse_financials && !tuning.growth_refuse_sector_top_dog, "(#1299) the financial and top-dog cuts ship off");
-        assert_eq!(tuning.growth_financial_max_asset_growth, 0.0, "(#1299) the bank asset-growth ceiling ships off");
-        assert_eq!((tuning.growth_consensus_min, tuning.growth_consensus_dock), (0, false), "(#1297) the crowd-mark cut and dock ship off");
-        assert!(tuning.growth_hard_tags.is_empty(), "(#1297) no gate is hard under the soft dock beyond 8Y+ and 20Y+");
-        assert_eq!((tuning.growth_min_cagr_rel, tuning.growth_min_cagr_pct), (0.0, 0.0), "(#1298) the pool CAGR bars ship off");
-        assert_eq!((tuning.growth_max_sharpe, tuning.growth_max_rel_win), (0.0, 0.0), "(#1303) the solo crowd ceilings ship off");
         assert_eq!(tuning.growth_min_age_years_crypto, 8.0, "(#1300) a coin needs 8 years listed, on the owner's word; the backtest cannot grade it, so re-read the live census before moving it");
 
         // (#69) The SOFT brake, pinned beside the hard gate it was suspected of duplicating. The gate

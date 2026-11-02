@@ -986,8 +986,7 @@ struct Dumped {
 /// once per grid row, with no fetch and no walk. A grid row is one JSON object of `buy_heuristic` keys laid
 /// over the loaded config's; `{}` is the config itself. Run it under the config the dump was made with.
 ///
-/// Only the cross-sectional stamps that read the tuning are redone: the sector door's floors, and (#1297)/
-/// (#1298) the pool's CAGR bar and the admit tenure. The cohort
+/// Only the cross-sectional stamp that reads the tuning is redone (the sector door's floors). The cohort
 /// ranks are NOT: that stamp subtracts a median from the dumped value, so a second pass would shift it
 /// again. `relative` is left 0, as the de-mean only feeds the lane tables, which this does not print. The
 /// SIZED row runs with no spill legs, so its remainder earns the benchmark itself.
@@ -1013,8 +1012,6 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         println!("\n══ rescore row {line} ══");
         let mut s = samples.clone();
         stamp_sector_cohorts(&mut s, &bench, &tuning); // on every sample: a cutoff's floors read the one before it
-        stamp_pool_cagr(&mut s, &tuning); // (#1298) the pool bar's percentile is a knob, so redone per row
-        stamp_admit_tenure(&mut s, &tuning); // (#1297) judged under the row's rules, so redone per row too
         let (s, sealed) = if holdout { split_holdout(s) } else { (s, Vec::new()) };
         if holdout {
             println!("  HOLDOUT (#1293): {} sample(s) cut on or after {HOLDOUT_FROM} are sealed and left out of every table below", sealed.len());
@@ -2321,7 +2318,6 @@ pub async fn run(args: Vec<String>) {
                         }
                         let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence, &anchor_windows);
                         quote.history_proxied = history_proxied; // (#327) provenance, for the PROXY BOOK split
-                        quote.rel_win_share_10y = rel_win_share(&dates, &closes, &bench, dates[i]); // (#1297) the W crowd mark
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                         if tuning.growth_event_months > 0 {
                             let m = tuning.growth_event_months as u32;
@@ -2467,10 +2463,6 @@ pub async fn run(args: Vec<String>) {
     // stamp is written and never read, so each number below is unchanged — and the SECTOR BOOK row can
     // still price the door for free by re-scoring with the knob flipped.
     stamp_sector_cohorts(&mut samples, &bench, tuning);
-    // (#1298) the pool's CAGR bar, then (#1297) the admit tenure, which judges through `growth_score` and so
-    // reads every stamp above, the pool bar included
-    stamp_pool_cagr(&mut samples, tuning);
-    stamp_admit_tenure(&mut samples, tuning);
     lap("stamps");
     if let Some(p) = std::env::var_os("FOLIOMAN_BACKTEST_SAMPLES") {
         write_samples(&samples, &bench, years, p.as_ref()); // (#529) the look-ahead test's seam; unset = no-op
@@ -2501,8 +2493,6 @@ pub async fn run(args: Vec<String>) {
     stamp_sector_cohorts(&mut books, &bench, tuning);
     stamp_top_dogs(&mut books); // (#1277) for the same reason
     stamp_regime(&mut books, &bench); // (#1284) and the regime valve's, or an arm setting `growth_regime_slack_pct` prints the control's DCA lines
-    stamp_pool_cagr(&mut books, tuning); // (#1298)/(#1297) and these two, in this order, for the same reason
-    stamp_admit_tenure(&mut books, tuning);
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
@@ -6715,85 +6705,6 @@ fn stamp_top_dogs(samples: &mut [Sample]) {
     }
 }
 
-/// (#1297) The share of rolling 3-year windows over the ten years to `date` in which the name's price
-/// grew more than the benchmark's: windows start 36, 42, ... 120 months back, each 36 months long, priced
-/// at the last close on or before each end. A window either series does not reach is skipped, and under
-/// six seen windows reads None. shortcut: a tie counts as a loss, and each series is read as it was
-/// fetched, so a price series against a total-return index (`backtest_tr_ruler` off, adjusted closes on)
-/// races dividends it does not carry.
-fn rel_win_share(dates: &[chrono::NaiveDate], closes: &[f64], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::NaiveDate) -> Option<f64> {
-    let at = |d: &[chrono::NaiveDate], c: &[f64], on: chrono::NaiveDate| d.partition_point(|x| *x <= on).checked_sub(1).map(|i| c[i]);
-    let grew = |d: &[chrono::NaiveDate], c: &[f64], from, to| at(d, c, from).zip(at(d, c, to)).map(|(a, b)| b / a).filter(|g| g.is_finite());
-    let (mut won, mut seen) = (0u32, 0u32);
-    for back in (36..=120).step_by(6) {
-        let from = date.checked_sub_months(chrono::Months::new(back));
-        let to = date.checked_sub_months(chrono::Months::new(back - 36));
-        let Some((name, index)) = from.zip(to).and_then(|(f, t)| grew(dates, closes, f, t).zip(grew(&bench.0, &bench.1, f, t))) else { continue };
-        seen += 1;
-        won += u32::from(name > index);
-    }
-    (seen >= 6).then(|| f64::from(won) / f64::from(seen))
-}
-
-/// (#1298) Stamp `pool_cagr_median` and `pool_cagr_pct` on every sample: the median long CAGR
-/// (`picks::long_cagr_pct`) of the stocks at the cutoff BEFORE its own, and their `growth_min_cagr_pct`
-/// percentile (nearest rank; None while that knob is 0). The previous cutoff for the reason
-/// [`stamp_sector_cohorts`] gives: a name never helps set its own bar. Under 20 such stocks reads None, so
-/// the first cutoff, with no predecessor, reads None too.
-fn stamp_pool_cagr(samples: &mut [Sample], tuning: &BuyHeuristic) {
-    let pct = tuning.growth_min_cagr_pct;
-    let stats = |mut v: Vec<f64>| -> (Option<f64>, Option<f64>) {
-        if v.len() < 20 {
-            return (None, None);
-        }
-        v.sort_by(f64::total_cmp);
-        let at = |p: f64| v[(p.min(100.0) / 100.0 * (v.len() - 1) as f64).round() as usize];
-        (Some(at(50.0)), (pct > 0.0).then(|| at(pct)))
-    };
-    let mut order: Vec<usize> = (0..samples.len()).collect();
-    order.sort_by_key(|&i| samples[i].date);
-    let (mut stamp, mut cohort, mut open) = ((None, None), Vec::new(), None);
-    for i in order {
-        let date = samples[i].date;
-        if open != Some(date) {
-            stamp = stats(std::mem::take(&mut cohort));
-            open = Some(date);
-        }
-        let q = &samples[i].quote;
-        cohort.extend(picks::long_cagr_pct(q, tuning).filter(|_| picks::asset_class(q) == 2));
-        let m = Arc::make_mut(&mut samples[i].quote);
-        (m.pool_cagr_median, m.pool_cagr_pct) = stamp;
-    }
-}
-
-/// (#1297) Stamp `admit_tenure_months`: how long, in months, the name has passed the hard buy rules at
-/// every cutoff in a row up to this one, judged under `tuning` with the soft dock and both crowd knobs off
-/// (so the I mark never reads itself). A cutoff it fails, or is absent from, ends the run: a failing
-/// sample reads None and the next pass starts again at 0. Run it after every other stamp the rules read.
-fn stamp_admit_tenure(samples: &mut [Sample], tuning: &BuyHeuristic) {
-    let judge = BuyHeuristic { growth_gate_soft: 0.0, growth_consensus_min: 0, growth_consensus_dock: false, ..tuning.clone() };
-    let pass: Vec<bool> = samples.par_iter().map(|s| growth_score(&s.quote, &judge).is_some()).collect();
-    let month = |d: chrono::NaiveDate| d.year() * 12 + d.month() as i32;
-    let mut order: Vec<usize> = (0..samples.len()).collect();
-    order.sort_by_key(|&i| samples[i].date);
-    let (mut prev, mut cur): (HashMap<String, chrono::NaiveDate>, HashMap<String, chrono::NaiveDate>) = Default::default();
-    let mut open: Option<chrono::NaiveDate> = None;
-    for i in order {
-        let date = samples[i].date;
-        if open != Some(date) {
-            prev = std::mem::take(&mut cur);
-            open = Some(date);
-        }
-        let tk = &samples[i].quote.ticker;
-        let tenure = pass[i].then(|| {
-            let start = prev.get(tk).copied().unwrap_or(date);
-            cur.insert(tk.clone(), start);
-            (month(date) - month(start)) as u32
-        });
-        Arc::make_mut(&mut samples[i].quote).admit_tenure_months = tenure;
-    }
-}
-
 /// (#328) Stamp every sample's point-in-time sector floor. THE ONLY PLACE the PIT rule is decided, and
 /// the reason the door needs no threading: once each `Quote` carries its own floor, all ~20
 /// `growth_score` call sites in this file honour the door without being touched — the wide edit that
@@ -10989,116 +10900,6 @@ mod tests {
         Sample { date, realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
     }
 
-    /// (#1297) Ten years of monthly bars against a flat index: a flat name never wins (a tie is a loss),
-    /// a rising one wins every window, a jump on the cutoff bar wins only the window ending there (1 of
-    /// 15), and six windows of history is the least that reads.
-    #[test]
-    fn rel_win_share_counts_three_year_windows_beaten() {
-        let bars = |from: u32, px: &dyn Fn(u32) -> f64| -> (Vec<NaiveDate>, Vec<f64>) { (from..=120).map(|m| (ymd(2000 + (m / 12) as i32, m % 12 + 1, 1), px(m))).unzip() };
-        let bench = bars(0, &|_| 10.0);
-        let read = |(d, c): (Vec<NaiveDate>, Vec<f64>)| rel_win_share(&d, &c, &bench, ymd(2010, 1, 1));
-        assert_eq!(read(bars(0, &|_| 50.0)), Some(0.0), "a tie is a loss");
-        assert_eq!(read(bars(0, &|m| 3f64.powi((m / 6) as i32))), Some(1.0), "a riser wins all 15 windows");
-        assert_eq!(read(bars(0, &|m| if m == 120 { 60.0 } else { 50.0 })), Some(1.0 / 15.0), "only the window ending on the cutoff");
-        assert_eq!(read(bars(54, &|_| 50.0)), Some(0.0), "66 months: six windows");
-        assert_eq!(read(bars(60, &|_| 50.0)), None, "60 months: five windows");
-    }
-
-    /// (#1298) The pool bar at a cutoff is drawn from the cutoff before it: 21 stocks at the first date
-    /// give the second its median (v[10]) and nearest-rank percentile (p75 v[15], p80 v[16]), while the
-    /// first date reads None. Under 20 stocks reads None, a fund never counts, and the knob at 0 stamps
-    /// the median alone.
-    #[test]
-    fn stamp_pool_cagr_reads_the_previous_cutoffs_stocks() {
-        let (d1, d2) = (ymd(2010, 1, 1), ymd(2010, 7, 1));
-        let pool = |n: u32| -> Vec<Sample> {
-            let mut v = vec![sector_sample(d2, "LATE", "Tech", 999.0)];
-            v.extend((1..=n).map(|k| sector_sample(d1, &format!("S{k}"), "Tech", 10.0 * f64::from(k))));
-            v
-        };
-        let t = |pct: f64| BuyHeuristic { growth_min_cagr_pct: pct, ..BuyHeuristic::default() };
-        let mut cagr: Vec<f64> = pool(21).iter().skip(1).filter_map(|s| picks::long_cagr_pct(&s.quote, &t(0.0))).collect();
-        assert_eq!(cagr.len(), 21, "every fixture stock has a long leg");
-        cagr.sort_by(f64::total_cmp);
-        let stamped = |mut v: Vec<Sample>, pct: f64| {
-            stamp_pool_cagr(&mut v, &t(pct));
-            v.iter().map(|s| (s.quote.pool_cagr_median, s.quote.pool_cagr_pct)).collect::<Vec<_>>()
-        };
-        let p75 = stamped(pool(21), 75.0);
-        assert_eq!(p75[0], (Some(cagr[10]), Some(cagr[15])));
-        assert!(p75[1..].iter().all(|s| *s == (None, None)), "the first cutoff has no predecessor");
-        assert_eq!(stamped(pool(21), 80.0)[0], (Some(cagr[10]), Some(cagr[16])));
-        assert_eq!(stamped(pool(21), 0.0)[0], (Some(cagr[10]), None), "the knob at 0 stamps no percentile");
-        assert!(stamped(pool(20), 75.0)[0].0.is_some(), "20 stocks is enough");
-        assert_eq!(stamped(pool(19), 75.0)[0], (None, None), "19 is not");
-        let mut fund = pool(20);
-        Arc::make_mut(&mut fund[20].quote).instrument_type = "ETF".into();
-        assert_eq!(stamped(fund, 75.0)[0], (None, None), "a fund is not in the stock pool");
-    }
-
-    /// (#1297) Tenure counts months of passing in a row, whatever order the samples come in: A passes at
-    /// four half-year cutoffs (0, 6, 12, 18), B fails the third (None) and starts again at 0, and C,
-    /// absent from the second, starts again at 0 too.
-    #[test]
-    fn stamp_admit_tenure_counts_months_passed_in_a_row() {
-        let d = [ymd(2010, 1, 1), ymd(2010, 7, 1), ymd(2011, 1, 1), ymd(2011, 7, 1)];
-        let t = BuyHeuristic::default();
-        let at = |i: usize, tk: &str, pass: bool| sector_sample(d[i], tk, "Tech", if pass { 200.0 } else { -10.0 });
-        assert!(growth_score(&at(0, "A", true).quote, &t).is_some(), "the fixture passes");
-        assert_eq!(growth_score(&at(0, "A", false).quote, &t), None, "the fixture fails");
-        let mut v = [
-            at(3, "A", true),
-            at(1, "B", true),
-            at(0, "C", true),
-            at(2, "A", true),
-            at(2, "B", false),
-            at(0, "A", true),
-            at(3, "B", true),
-            at(2, "C", true),
-            at(1, "A", true),
-            at(0, "B", true),
-        ];
-        stamp_admit_tenure(&mut v, &t);
-        let mut got: Vec<(String, NaiveDate, Option<u32>)> = v.iter().map(|s| (s.quote.ticker.clone(), s.date, s.quote.admit_tenure_months)).collect();
-        got.sort();
-        let want: [(&str, usize, Option<u32>); 10] = [
-            ("A", 0, Some(0)),
-            ("A", 1, Some(6)),
-            ("A", 2, Some(12)),
-            ("A", 3, Some(18)),
-            ("B", 0, Some(0)),
-            ("B", 1, Some(6)),
-            ("B", 2, None),
-            ("B", 3, Some(0)),
-            ("C", 0, Some(0)),
-            ("C", 2, Some(0)),
-        ];
-        assert_eq!(got, want.map(|(tk, i, m)| (tk.to_string(), d[i], m)));
-    }
-
-    /// (#1297) Tenure is judged on the hard rules with both crowd knobs off, whatever the tuning: a top
-    /// dog the soft dock ranks still has no tenure, while a crowd mark the dock or the count refuses does.
-    #[test]
-    fn admit_tenure_judges_the_hard_rules_without_the_crowd_knobs() {
-        let tenure = |q: &Quote, t: &BuyHeuristic| {
-            let mut v = [ymd(2010, 1, 1), ymd(2010, 7, 1)].map(|d| Sample { quote: Arc::new(q.clone()), ..sample(d, 0.0) });
-            stamp_admit_tenure(&mut v, t);
-            v.map(|s| s.quote.admit_tenure_months)
-        };
-        let base = sector_sample(ymd(2010, 1, 1), "A", "Tech", 200.0).quote;
-        let mut dog = (*base).clone();
-        dog.sector_top_dog = Some(true);
-        let soft = BuyHeuristic { growth_gate_soft: 0.8, growth_refuse_sector_top_dog: true, ..BuyHeuristic::default() };
-        assert!(growth_score(&dog, &soft).is_some(), "the soft dock ranks the top dog");
-        assert_eq!(tenure(&dog, &soft), [None, None], "the judge refuses it hard");
-        let mut crowd = (*base).clone();
-        crowd.trend_r2_10y = Some(0.95);
-        for t in [BuyHeuristic { growth_consensus_dock: true, ..BuyHeuristic::default() }, BuyHeuristic { growth_consensus_min: 1, ..BuyHeuristic::default() }] {
-            assert_eq!(growth_score(&crowd, &t), None, "the crowd knob refuses the marked name");
-            assert_eq!(tenure(&crowd, &t), [Some(0), Some(6)], "the judge reads no mark");
-        }
-    }
-
     /// (#328) THE POINT-IN-TIME FREEZE, and the only place it can be checked. The door's whole claim to
     /// not being look-ahead is that a cutoff is gated on the cohort of the cutoff BEFORE it — so:
     ///
@@ -15078,24 +14879,6 @@ mod tests {
         // (#1300) the coin twin: LIVE on crypto, INERT on etf and stock by scope, cause (b)
         ("growth_min_age_years_crypto", |t, v| t.growth_min_age_years_crypto = v, 1e9),
         ("growth_min_range_pct_8y", |t, v| t.growth_min_range_pct_8y = v, 1e9),
-        // (#1299) the three restored stock gates read `quote.fund` or the walk's `stamp_top_dogs`, neither
-        // filled on this price-only path: cause (a). INERT on crypto and etf by scope, cause (b).
-        ("growth_refuse_financials", |t, v| t.growth_refuse_financials = v != 0.0, 1.0),
-        ("growth_financial_max_asset_growth", |t, v| t.growth_financial_max_asset_growth = v, 1e-6),
-        ("growth_refuse_sector_top_dog", |t, v| t.growth_refuse_sector_top_dog = v != 0.0, 1.0),
-        // (#1297) the crowd-mark cut and dock read fields `backtest_quote` fills (the 10y trend R², the
-        // under-water years, CAGR over volatility), so a stock is LIVE here: the fixture carries `H`.
-        // Coins and funds are INERT by scope, cause (b).
-        ("growth_consensus_min", |t, v| t.growth_consensus_min = v as usize, 1.0),
-        ("growth_consensus_dock", |t, v| t.growth_consensus_dock = v != 0.0, 1.0),
-        // (#1298) the pool bars read the walk's `stamp_pool_cagr`, never run on this path: cause (a).
-        ("growth_min_cagr_rel", |t, v| t.growth_min_cagr_rel = v, 1e9),
-        ("growth_min_cagr_pct", |t, v| t.growth_min_cagr_pct = v, 99.0),
-        // (#1303) the solo crowd ceilings: the Sharpe one reads CAGR over volatility, both filled by
-        // `backtest_quote`, so a stock is LIVE (the fixture carries `H`); the relative-win one reads the
-        // walk's `rel_win_share_10y`, never stamped on this path: cause (a). Coins and funds by scope, (b).
-        ("growth_max_sharpe", |t, v| t.growth_max_sharpe = v, 1e-6),
-        ("growth_max_rel_win", |t, v| t.growth_max_rel_win = v, 1e-6),
     ];
 
     /// WHICH GROWTH KNOBS CAN MOVE A BACKTEST NUMBER AT ALL, per asset class.
@@ -15133,14 +14916,11 @@ mod tests {
     ///       (aum_eur), `growth_ter_drag` (expense_ratio), `growth_fx_damp` (quote_currency),
     ///       `growth_min_range_pct_8y` (stats_8y). None of those four is assigned by
     ///       `core::backtest_quote` (`growth_min_age_years` left this list when (#182) filled age_years); `growth_max_peg` (quote.fund) joins them on the
-    ///       price-only path only, per SCOPE above, as do (#1299) `growth_refuse_financials` and
-    ///       `growth_financial_max_asset_growth` (quote.fund) and `growth_refuse_sector_top_dog` (the
-    ///       walk's `stamp_top_dogs` reads `fund.mcap`), and (#1298) `growth_min_cagr_rel` and
-    ///       `growth_min_cagr_pct` (the walk's `stamp_pool_cagr`).
+    ///       price-only path only, per SCOPE above.
     ///   (b) SCOPED TO ANOTHER CLASS — correct by construction, and the thing round 1's bug broke: the
     ///       `if crypto {…} else {…}` selectors (maxdd cap, 1M knife, 1Y/range/CAGR floors, vol cap),
     ///       the `!crypto` guards (above-MA ceiling, lifetime uptrend, the (P4) vol and spike ceilings),
-    ///       `sharpe_cap_etf` off a fund, the three (#1299) stock-only gates and the (#1297) crowd marks off a coin or a fund,
+    ///       `sharpe_cap_etf` off a fund,
     ///       and the commodity damp on a coin (no GICS sector, not a fund name).
     ///   (c) REACHABLE BUT DOMINATED — `growth_require_lifetime_uptrend`. Its fields ARE filled, so it
     ///       is not dead; it cannot bite because `growth_min_cagr` rejects the same names first. A
@@ -15241,13 +15021,13 @@ mod tests {
                 // The gate still SHIPS 0.0, so nothing moves until an arm turns it on — what changed
                 // is that an arm can now be graded at all. This lane has no `!crypto` guard, which is
                 // why crypto goes LIVE with the other two rather than staying INERT by scope.
-                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog growth_consensus_min growth_consensus_dock growth_min_cagr_rel growth_min_cagr_pct growth_max_sharpe growth_max_rel_win\n",
+                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y\n",
                 // (#1230) `growth_min_5y_pct_etf` enters etf LIVE and crypto/stock INERT on its first
                 // commit, the same standing `growth_min_cagr_etf` has, which is its whole claim.
                 "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
-                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog growth_consensus_min growth_consensus_dock growth_min_cagr_rel growth_min_cagr_pct growth_max_sharpe growth_max_rel_win\n",
-                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years growth_consensus_min growth_consensus_dock growth_max_sharpe\n",
-                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y growth_refuse_financials growth_financial_max_asset_growth growth_refuse_sector_top_dog growth_min_cagr_rel growth_min_cagr_pct growth_max_rel_win\n",
+                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y\n",
+                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
+                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y\n",
             )
         );
     }
