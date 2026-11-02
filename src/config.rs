@@ -1544,7 +1544,7 @@ fn anchored_path(name: &str) -> PathBuf {
 /// (#817) (#818) (#819) (#1280) (#1286) Knobs deleted after their measurements refused them; each had shipped at its code default.
 /// An old overlay or a saved page upload that still names one is dropped here instead of failing
 /// `deny_unknown_fields`.
-const RETIRED: [&str; 40] = [
+pub(crate) const RETIRED: [&str; 40] = [
     "growth_min_net_margin",
     "growth_max_margin_swing",
     "growth_max_dilution_pct",
@@ -3393,5 +3393,56 @@ mod tests {
         assert!(new.is_empty(), "knobs with no receipt in tests/ci-settings.yaml; name one beside the value: {new:?}");
         assert!(gained.is_empty(), "these knobs name a receipt now; drop them from NO_RECEIPT: {gained:?}");
         assert!(contradicts.is_empty(), "a print_* receipt contradicts its value: {contradicts:?}");
+    }
+
+    /// (#1294) The receipts in `text` from `floor` on that carry a `VERDICT, <date>` or `graded <date>` with
+    /// no `PRE-REGISTERED <date>` block at or above them that names the same receipt, dated on or before
+    /// the verdict. A block is a `# (#N)` line and the comment lines under it, up to the first other line.
+    fn unregistered_verdicts(text: &str, floor: u32) -> Vec<u32> {
+        let re = |s| regex::Regex::new(s).expect("literal regex");
+        let (head, verdict, pre, cites) =
+            (re(r"^\s*# \(#(\d+)\)"), re(r"(?:VERDICT,?|graded) (\d{4}-\d{2}-\d{2})"), re(r"PRE-REGISTERED (\d{4}-\d{2}-\d{2})"), re(r"\(#(\d+)\)"));
+        let mut blocks: Vec<(u32, String)> = Vec::new();
+        let mut open = false;
+        for l in text.lines() {
+            if let Some(c) = head.captures(l) {
+                blocks.push((c[1].parse().expect("digits"), l.to_string()));
+                open = true;
+            } else if let (true, true, Some(b)) = (open, l.trim_start().starts_with('#'), blocks.last_mut()) {
+                b.1.push('\n');
+                b.1.push_str(l);
+            } else {
+                open = false;
+            }
+        }
+        let (mut registered, mut out) = (Vec::new(), Vec::new());
+        for (n, b) in &blocks {
+            if let Some(p) = pre.captures(b) {
+                registered.push((p[1].to_string(), cites.captures_iter(b).map(|c| c[1].parse::<u32>().expect("digits")).collect::<Vec<_>>()));
+            }
+            let Some(v) = verdict.captures(b).filter(|_| *n >= floor) else { continue };
+            if !registered.iter().any(|(d, names)| d.as_str() <= &v[1] && names.contains(n)) {
+                out.push(*n);
+            }
+        }
+        out
+    }
+
+    /// (#1294) From (#1291) on, a verdict needs its pre-registration above it, dated no later. Forward only:
+    /// older receipts quote each other's dates, so the rule would misread them ((#790) citing (#235)).
+    #[test]
+    fn receipts_preregistered() {
+        let ok = "# (#1400) RULE, PRE-REGISTERED 2026-11-02 before any run: rows (#1401).\n#   more\n# (#1401) VERDICT, 2026-11-03: fails.\n";
+        assert_eq!(unregistered_verdicts(ok, 1291), Vec::<u32>::new());
+        assert_eq!(unregistered_verdicts("# (#1401) VERDICT, 2026-11-03: fails.\n", 1291), [1401], "no pre-registration");
+        assert_eq!(unregistered_verdicts("# (#1290) VERDICT, 2026-11-01: fails.\n", 1291), Vec::<u32>::new(), "older receipts are left alone");
+        let late = "# (#1400) PRE-REGISTERED 2026-11-04: rows (#1401).\n# (#1401) graded 2026-11-03 on the bar.\n";
+        assert_eq!(unregistered_verdicts(late, 1291), [1401], "registered after the verdict");
+        let below = "# (#1401) VERDICT, 2026-11-03: fails.\n# (#1400) PRE-REGISTERED 2026-11-02: rows (#1401).\n";
+        assert_eq!(unregistered_verdicts(below, 1291), [1401], "registered below the verdict");
+        let closed = "# (#1400) PRE-REGISTERED 2026-11-02: rows.\nkey: 1\n# names (#1401)\n# (#1401) VERDICT, 2026-11-03\n";
+        assert_eq!(unregistered_verdicts(closed, 1291), [1401], "a mention after the block closed does not register");
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml")).expect("read tests/ci-settings.yaml");
+        assert_eq!(unregistered_verdicts(&text, 1291), Vec::<u32>::new(), "a verdict from (#1291) on has no pre-registration above it");
     }
 }

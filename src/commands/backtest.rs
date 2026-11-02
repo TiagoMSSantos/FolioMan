@@ -834,6 +834,8 @@ struct Args {
     search: bool,
     configs: usize,
     nulls: usize,
+    holdout: bool,
+    reveal: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -881,6 +883,8 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("search") => a_.search = true, // (#1239) seeded knob search on samples dumps
             _ if a.starts_with("configs=") => a_.configs = a[8..].parse().ok().filter(|n| *n > 0).expect("configs=N takes a whole number above 0"),
             _ if a.starts_with("nulls=") => a_.nulls = a[6..].parse().expect("nulls=K takes a whole number"),
+            _ if a.eq_ignore_ascii_case("holdout") => a_.holdout = true, // (#1293) drop the samples cut on or after HOLDOUT_FROM
+            _ if a.eq_ignore_ascii_case("reveal") => (a_.holdout, a_.reveal) = (true, true), // (#1293) ... and print them once, apart
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -988,9 +992,15 @@ struct Dumped {
 /// SIZED row runs with no spill legs, so its remainder earns the benchmark itself.
 ///
 /// Known ceiling: JSON has no NaN, so a NaN field is written as null and a `Some(NaN)` reads back as None.
-fn rescore(dump: &str, grid: &str, settings: &config::Settings) {
+///
+/// (#1292) After the last row, `nulls` shuffles price each row's top-10 gain over row 0 against noise
+/// ([`print_rescore_bands`]); `nulls=0` skips that. (#1293) `holdout` drops the samples cut on or after
+/// [`HOLDOUT_FROM`] from every table, and `reveal` prints their books once, apart.
+fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool) {
     let (years, bench, samples) = load_dump(dump);
     let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
+    let mut rows = Vec::new();
+    let mut last = (Vec::new(), Vec::new()); // dates, classes and returns are the same in every row
     for line in std::fs::read_to_string(grid).expect("read the grid").lines() {
         let row: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line).expect("a grid row is one JSON object");
         if let Some(k) = RESCORE_FIXED.iter().find(|k| row.contains_key(**k)) {
@@ -1001,9 +1011,120 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings) {
         let tuning: BuyHeuristic = serde_json::from_value(v).unwrap_or_else(|e| panic!("rescore: grid row {line}: {e}"));
         println!("\n══ rescore row {line} ══");
         let mut s = samples.clone();
-        stamp_sector_cohorts(&mut s, &bench, &tuning);
+        stamp_sector_cohorts(&mut s, &bench, &tuning); // on every sample: a cutoff's floors read the one before it
+        let (s, sealed) = if holdout { split_holdout(s) } else { (s, Vec::new()) };
+        if holdout {
+            println!("  HOLDOUT (#1293): {} sample(s) cut on or after {HOLDOUT_FROM} are sealed and left out of every table below", sealed.len());
+        }
         report_vs_benchmark(&s, &bench, years, &tuning);
         report_sized_book(&s, &bench, years, &tuning, &settings.sizing, settings.top_picks, &[]);
+        let books = |s: &[Sample]| top_books(s, &bench_legs(s, &bench, years), &tuning, picks::growth_scores_ranked);
+        let (graded, sealed_books) = (books(&s), books(&sealed));
+        rows.push(Rescored { line: line.to_string(), tuning, graded, sealed: sealed_books });
+        last = (s, sealed);
+    }
+    print_rescore_bands(&rows, &last.0, &last.1, &bench, years, nulls, reveal);
+}
+
+/// (#1292) One `rescore` grid row, kept for the blocks printed after the last one.
+struct Rescored {
+    line: String,
+    tuning: BuyHeuristic,
+    /// its top-10 book per bucket on the graded samples, then on the (#1293) sealed ones
+    graded: Vec<Vec<usize>>,
+    sealed: Vec<Vec<usize>>,
+}
+
+/// Each sample's index return over `years` from its cutoff, NaN where the index has no full window.
+fn bench_legs(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64) -> Vec<f64> {
+    samples.iter().map(|s| benchmark_fwd(&bench.0, &bench.1, s.date, years).unwrap_or(f64::NAN)).collect()
+}
+
+/// (#1293) The sealed holdout, fixed in (#1291) before any round-13 run: a sample cut on or after this date
+/// leaves every graded table under `holdout`, and `reveal` reads it once, at ship time. Only the 8y leg
+/// reaches it (half-year starts 2016-01 to 2018-06); the monthly search and CI never set it.
+const HOLDOUT_FROM: chrono::NaiveDate = match chrono::NaiveDate::from_ymd_opt(2016, 1, 1) {
+    Some(d) => d,
+    None => panic!("2016-01-01 is a date"),
+};
+
+/// (#1293) `samples` split at [`HOLDOUT_FROM`]: those cut before it, then the sealed rest, each in order.
+fn split_holdout(samples: Vec<Sample>) -> (Vec<Sample>, Vec<Sample>) {
+    samples.into_iter().partition(|s| s.date < HOLDOUT_FROM)
+}
+
+/// (#1292) Each row's top-10 excess gain over row 0, (mean, median), on `nulls` within-(bucket, class)
+/// shuffles of `realized` ([`shuffled`], on `search`'s seeds): one Vec per row, one gain per shuffle.
+/// Picking never reads `realized`, so each row's books price every shuffle. Row 0 against itself is zeros.
+fn null_gains(samples: &[Sample], bench_r: &[f64], years: i64, books: &[&[Vec<usize>]], nulls: usize) -> Vec<Vec<(f64, f64)>> {
+    let mut out = vec![Vec::new(); books.len()];
+    let Some(first) = books.first() else { return out };
+    for k in 1..=nulls as u64 {
+        let r = shuffled(samples, 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(k));
+        let base = search_excess(first, &r, bench_r, years);
+        for (o, b) in out.iter_mut().zip(books) {
+            let g = search_excess(b, &r, bench_r, years);
+            o.push((g.0 - base.0, g.1 - base.1));
+        }
+    }
+    out
+}
+
+/// (#1292) The 2.5 and 97.5 percentiles (nearest rank) of one moment's null gains, and whether `real` sits
+/// strictly outside them. An empty null is never outside.
+fn null_band(gains: impl Iterator<Item = f64>, real: f64) -> (f64, f64, bool) {
+    let mut g: Vec<f64> = gains.collect();
+    g.sort_by(f64::total_cmp);
+    let (lo, hi) = (percentile(&g, 2.5), percentile(&g, 97.5));
+    (lo, hi, real < lo || real > hi)
+}
+
+/// (#1292) `rescore`'s NULL BAND block: each row's top-10 gain over row 0 on the real returns, against the
+/// band the same two books gain on shuffled ones; OUTSIDE needs both moments outside. (#1293) Under
+/// `reveal`, the HOLDOUT block: each row's top-10 row on the sealed samples alone, and its gain over row 0.
+#[mutants::skip] // prints only: `null_gains`, `null_band` and `split_holdout` are graded by unit tests
+fn print_rescore_bands(rows: &[Rescored], graded: &[Sample], sealed: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, nulls: usize, reveal: bool) {
+    let Some(first) = rows.first() else { return };
+    let gain = |books: &[Vec<usize>], base: &[Vec<usize>], realized: &[f64], legs: &[f64]| {
+        let (g, b) = (search_excess(books, realized, legs, years), search_excess(base, realized, legs, years));
+        (g, (g.0 - b.0, g.1 - b.1))
+    };
+    let capped = |t: &BuyHeuristic| t.growth_sector_leaders != 0 || t.growth_sector_cap != 0 || t.growth_corr_cap > 0.0;
+    if nulls > 0 {
+        let legs = bench_legs(graded, bench, years);
+        let realized: Vec<f64> = graded.iter().map(|s| s.realized).collect();
+        let books: Vec<&[Vec<usize>]> = rows.iter().map(|r| r.graded.as_slice()).collect();
+        let null = null_gains(graded, &legs, years, &books, nulls);
+        println!(
+            "\n── NULL BAND (#1292): each row's top-10 excess gain over row 0, against the 2.5-97.5 % band the same two books gain on {nulls} within-(bucket, class) shuffles of realized; OUTSIDE needs both moments outside, and a gain inside is noise ──"
+        );
+        for (r, n) in rows.iter().zip(&null) {
+            if capped(&r.tuning) || capped(&first.tuning) {
+                println!("  row {}: n/a, the sector door, sector cap or corr cap is on, and the band's books leave them out", r.line);
+                continue;
+            }
+            let (_, (gm, gd)) = gain(&r.graded, &first.graded, &realized, &legs);
+            let (ml, mh, mo) = null_band(n.iter().map(|x| x.0), gm);
+            let (dl, dh, d_out) = null_band(n.iter().map(|x| x.1), gd);
+            println!(
+                "  row {}: gain mean {gm:+.2} | med {gd:+.2} ; null band mean [{ml:+.2},{mh:+.2}] med [{dl:+.2},{dh:+.2}] ({nulls}) -> {}",
+                r.line,
+                if mo && d_out { "OUTSIDE" } else { "INSIDE" }
+            );
+        }
+    }
+    if reveal {
+        let legs = bench_legs(sealed, bench, years);
+        let realized: Vec<f64> = sealed.iter().map(|s| s.realized).collect();
+        println!("\n── HOLDOUT (#1293): read once, at ship time: the top-10 row on the {} sample(s) cut on or after {HOLDOUT_FROM} alone ──", sealed.len());
+        for r in rows {
+            let ((m, d), (gm, gd)) = gain(&r.sealed, &first.sealed, &realized, &legs);
+            println!(
+                "  row {}: top-10 excess {m:+.1} (med {d:+.1}) over {} bucket(s); gain over row 0 mean {gm:+.2} | med {gd:+.2}",
+                r.line,
+                r.sealed.iter().filter(|b| !b.is_empty()).count()
+            );
+        }
     }
 }
 
@@ -1133,13 +1254,13 @@ fn search_excess(books: &[Vec<usize>], realized: &[f64], bench_r: &[f64], years:
     (excess.iter().sum::<f64>() / excess.len().max(1) as f64, median(excess))
 }
 
-/// (#1239) `backtest search <dump>... [configs=N] [nulls=K]`: a seeded random search of the knob space on
+/// (#1239) `backtest search <dump>... [configs=N] [nulls=K] [holdout]`: a seeded random search of the knob space on
 /// samples dumps, one per horizon, made under the config it runs with. Each config is graded by
 /// [`search_objective`] against the loaded one. The null is the same configs re-graded on K shuffles of
 /// `realized` ([`shuffled`]): the winner counts only if its gain beats what the search finds where no
 /// score can see a return. Prints only; nothing reaches rank, BUY NOW, size or the broker.
 #[mutants::skip] // prints only: its parts are graded by unit tests and its shipped row by the fixture pin
-fn search(dumps: &[String], configs: usize, nulls: usize, settings: &config::Settings) {
+fn search(dumps: &[String], configs: usize, nulls: usize, holdout: bool, settings: &config::Settings) {
     let base = &settings.buy_heuristic;
     assert!(
         base.growth_sector_leaders == 0 && base.growth_sector_cap == 0 && base.growth_corr_cap <= 0.0,
@@ -1152,7 +1273,8 @@ fn search(dumps: &[String], configs: usize, nulls: usize, settings: &config::Set
         .iter()
         .map(|d| {
             let (years, bench, samples) = load_dump(d);
-            let bench_r: Vec<f64> = samples.iter().map(|s| benchmark_fwd(&bench.0, &bench.1, s.date, years).unwrap_or(f64::NAN)).collect();
+            let samples = if holdout { split_holdout(samples).0 } else { samples }; // (#1293)
+            let bench_r = bench_legs(&samples, &bench, years);
             let runs: Vec<Vec<f64>> = std::iter::once(samples.iter().map(|s| s.realized).collect())
                 .chain((1..=nulls as u64).map(|k| shuffled(&samples, 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(k))))
                 .collect();
@@ -1534,9 +1656,88 @@ fn dead_multiple(
     let at = |d: chrono::NaiveDate| bench_dates.iter().position(|x| *x >= d).map(|k| bench_closes[k]);
     let last = dates.len() - 1;
     let roll = at(to)? / at(dates[last])?;
-    let year_ago = dates.iter().rposition(|d| *d <= dates[last] - chrono::Duration::days(365)).unwrap_or(0);
-    let penalty = if closes[last] / closes[year_ago] < DEAD_CRASH_RATIO { crash_penalty } else { 1.0 };
+    let penalty = if crashed(dates, closes) { crash_penalty } else { 1.0 };
     Some(closes[last] / entry * penalty * roll)
+}
+
+/// (#751) Did the series lose over half its price in its last year, its last close under
+/// [`DEAD_CRASH_RATIO`] of the one 12 months before it? (#1296) One test for [`dead_multiple`]'s cut and
+/// [`mortality`]'s split of a dead name from an acquired one.
+fn crashed(dates: &[chrono::NaiveDate], closes: &[f64]) -> bool {
+    let last = dates.len() - 1;
+    let year_ago = dates.iter().rposition(|d| *d <= dates[last] - chrono::Duration::days(365)).unwrap_or(0);
+    closes[last] / closes[year_ago] < DEAD_CRASH_RATIO
+}
+
+/// (#1296) Base rate the dead-name census reads coverage against: the share of index members that fail
+/// (distress) per year.
+const DISTRESS_PER_YEAR: f64 = 0.02;
+/// (#1296) Base rate of the share of index members taken over per year, read like [`DISTRESS_PER_YEAR`].
+const ACQUIRED_PER_YEAR: f64 = 0.019;
+
+/// (#1296) One cutoff of the dead-name census: the index members the walk scored there, split by how
+/// their forward window ended.
+#[derive(Debug, Default, PartialEq)]
+struct Mortality {
+    /// the window closed on a bar of the series: the name was still trading at the horizon
+    alive: usize,
+    /// a terminal return without the crash cut: the series ended without a crash, read as a takeover
+    acquired: usize,
+    /// a terminal return with the crash cut: the series ended in a crash, read as a failure
+    dead: usize,
+    /// either share is under half its base rate over the horizon, so the archive misses most exits here
+    under_covered: bool,
+}
+
+/// (#1296) The dead-name census per cutoff, from the walk's marks for index members: None when the window
+/// closed on a bar, else whether the terminal series [`crashed`]. Without an exit reason in the archive, a
+/// terminal series that crashed is dead and one that did not is acquired. A cutoff is UNDER-COVERED when
+/// its dead or acquired share is under half of `1 - (1 - rate)^years` for its base rate; a grid row graded
+/// only on such cutoffs is UNGRADEABLE.
+fn mortality(marks: &[(chrono::NaiveDate, Option<bool>)], years: i64) -> BTreeMap<chrono::NaiveDate, Mortality> {
+    let mut out: BTreeMap<chrono::NaiveDate, Mortality> = BTreeMap::new();
+    for (date, exit) in marks {
+        let m = out.entry(*date).or_default();
+        match exit {
+            None => m.alive += 1,
+            Some(false) => m.acquired += 1,
+            Some(true) => m.dead += 1,
+        }
+    }
+    let base = |rate: f64| 0.5 * (1.0 - (1.0 - rate).powi(years as i32));
+    for m in out.values_mut() {
+        let n = (m.alive + m.acquired + m.dead) as f64;
+        m.under_covered = (m.dead as f64) < base(DISTRESS_PER_YEAR) * n || (m.acquired as f64) < base(ACQUIRED_PER_YEAR) * n;
+    }
+    out
+}
+
+/// (#1296) Prints the dead-name census: how many cutoffs are covered, the base rates over `years`, then
+/// one line per cutoff with its members, exits and shares.
+#[mutants::skip] // prints only: `mortality` is graded by a unit test and the dead golden
+fn print_mortality(census: &BTreeMap<chrono::NaiveDate, Mortality>, years: i64) {
+    let covered = census.values().filter(|m| !m.under_covered).count();
+    let pct = |rate: f64| 100.0 * (1.0 - (1.0 - rate).powi(years as i32));
+    println!(
+        "    MORTALITY (#1296): {covered} of {} cutoffs covered. Base over {years}y: {:.1}% dead, {:.1}% acquired; a cutoff",
+        census.len(),
+        pct(DISTRESS_PER_YEAR),
+        pct(ACQUIRED_PER_YEAR)
+    );
+    println!("    under half of either is UNDER-COVERED, and a row graded only on those reads UNGRADEABLE, not FAIL.");
+    for (date, m) in census {
+        let n = (m.alive + m.acquired + m.dead).max(1) as f64;
+        println!(
+            "      {date}  members {:>4}  alive {:>4}  acquired {:>3} ({:>4.1}%)  dead {:>3} ({:>4.1}%){}",
+            m.alive + m.acquired + m.dead,
+            m.alive,
+            m.acquired,
+            100.0 * m.acquired as f64 / n,
+            m.dead,
+            100.0 * m.dead as f64 / n,
+            if m.under_covered { "  UNDER-COVERED" } else { "" }
+        );
+    }
 }
 
 /// Does this run get to overwrite `.backtest_verdict.json`, which the screen's method footer quotes?
@@ -1650,7 +1851,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1683,11 +1884,11 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     if rescore_dump {
-        rescore(&tickers[0], &tickers[1], &settings);
+        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal);
         return;
     }
     if search_dumps {
-        search(&tickers, configs, nulls, &settings);
+        search(&tickers, configs, nulls, holdout, &settings);
         return;
     }
     // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
@@ -2008,6 +2209,8 @@ pub async fn run(args: Vec<String>) {
     .map(|c| (c.dates, c.closes))
     .unwrap_or_default();
     let dead_terminals = std::sync::atomic::AtomicUsize::new(0);
+    // (#1296) `(cutoff, None = alive or Some(crashed) = terminal)` per index member sample: the mortality census
+    let exit_marks = std::sync::Mutex::new(Vec::new());
     lap("fetch");
     // (#310) the walk takes its horizon and BORROWS the fetch: (#311) a `2 × ROLL_YEARS` run walks the same history
     // again at 0y, every cutoff, for `report_roll`'s DCA books. Every other run walks once, exactly as before.
@@ -2065,6 +2268,7 @@ pub async fn run(args: Vec<String>) {
             let member_spans = pit_spans.get(tk.as_str()).map(Vec::as_slice);
             // (#751) only a dead archive series may pay a terminal return; None keeps the old walk exactly
             let dead_bench = dead_end.contains(tk.as_str()).then_some((bench.0.as_slice(), bench.1.as_slice(), dead_penalty));
+            let mut marks = Vec::new(); // (#1296) this ticker's mortality marks, one lock per ticker
             let mut out = Vec::new();
             // (#790) The cutoffs sit on the half-year grid: see `cutoffs`.
             for i in cutoffs(&dates, min_history) {
@@ -2106,6 +2310,9 @@ pub async fn run(args: Vec<String>) {
                             continue;
                         }
                         dead_terminals.fetch_add(usize::from(terminal), std::sync::atomic::Ordering::Relaxed);
+                        if member_spans.is_some() {
+                            marks.push((dates[i], terminal.then(|| crashed(&dates, &closes))));
+                        }
                         let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence, &anchor_windows);
                         quote.history_proxied = history_proxied; // (#327) provenance, for the PROXY BOOK split
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
@@ -2217,10 +2424,15 @@ pub async fn run(args: Vec<String>) {
                     None => break, // no full forward window left -> stop walking this ticker
                 }
             }
+            if !marks.is_empty() {
+                exit_marks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).extend(marks);
+            }
             out
         })
         .collect() };
     let per_ticker = walk(years);
+    // (#1296) this horizon's marks only: a later 0y walk for the roll books must not add to them
+    let census = mortality(&std::mem::take(&mut *exit_marks.lock().unwrap_or_else(std::sync::PoisonError::into_inner)), years);
     lap("walk");
 
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
@@ -2816,6 +3028,7 @@ pub async fn run(args: Vec<String>) {
             println!("    member's last close rolled into the S&P to the window's end, x{dead_penalty} if it lost over half its");
             println!("    price in its last year (one constant: the archive records no delist reason). Archive names carry no");
             println!("    fund rows (no SEC CIK map), so their growth fund term reads neutral; ^GSPC bars are quarterly.");
+            print_mortality(&census, years);
         }
     }
     // (#61) WAS "no as-of dividends or P/E reconstructed; the * term above is inert here", and the
@@ -10396,6 +10609,68 @@ mod tests {
         assert!(swapped > 0 && swapped < 64, "the ETF pair swapped on {swapped} of 64 seeds");
     }
 
+    /// (#1292) 41 gains -1.0 to 1.0 by 0.05: the nearest-rank 2.5 and 97.5 percentiles are -0.95 and 0.95.
+    /// A gain on either edge is inside, a gain past it outside, and an empty null is never outside.
+    #[test]
+    fn null_band_is_the_middle_95_percent_and_its_edges_are_inside() {
+        let g: Vec<f64> = (0..=40).map(|k| k as f64 * 0.05 - 1.0).collect();
+        let band = |real| null_band(g.iter().copied(), real);
+        let (lo, hi, _) = band(0.0);
+        assert!((lo + 0.95).abs() < 1e-9 && (hi - 0.95).abs() < 1e-9, "{lo} {hi}");
+        assert!(!band(0.0).2 && !band(lo).2 && !band(hi).2, "a gain on the band's edge is inside it");
+        assert!(band(hi + 0.01).2 && band(lo - 0.01).2, "a gain past either edge is outside");
+        assert!(!null_band(std::iter::empty(), 5.0).2, "an empty null is never outside");
+    }
+
+    /// (#1292) Nine buckets of eleven stocks, one winner (+100%) at slot 10 of each. Row 0 and row 1 hold
+    /// slots 0-9, row 2 swaps slot 9 for the winner. A row equal to row 0 gains exactly zero on every
+    /// shuffle, so its real gain of zero is inside. Row 2's real gain is +10 on both moments; a shuffle
+    /// reaches that only when the winner lands on slot 10 in all nine buckets (mean) or in five of them
+    /// (median, about 1 in 1300), so it sits outside the band on both.
+    #[test]
+    fn null_gains_put_a_twin_row_inside_and_a_known_winner_outside() {
+        let mut samples = Vec::new();
+        for b in 0..9 {
+            for k in 0..11 {
+                samples.push(swap_sample(ymd(2000 + b, 1, 5), &format!("S{b}-{k}"), 1.0, 0.0, if k == 10 { 100.0 } else { 0.0 }));
+            }
+        }
+        let bench_r = vec![0.0; samples.len()];
+        let realized: Vec<f64> = samples.iter().map(|s| s.realized).collect();
+        let book = |slots: &[usize]| (0..9).map(|b| slots.iter().map(|k| b * 11 + k).collect()).collect::<Vec<Vec<usize>>>();
+        let (books0, books1) = (book(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), book(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 10]));
+        let out = null_gains(&samples, &bench_r, 1, &[&books0, &books0, &books1], 200);
+        assert_eq!(out.iter().map(Vec::len).collect::<Vec<_>>(), [200, 200, 200]);
+        for row in &out[..2] {
+            assert!(row.iter().all(|g| *g == (0.0, 0.0)), "a row equal to row 0 gains nothing on any shuffle");
+            assert!(!null_band(row.iter().map(|g| g.0), 0.0).2 && !null_band(row.iter().map(|g| g.1), 0.0).2);
+        }
+        let (r1, r0) = (search_excess(&books1, &realized, &bench_r, 1), search_excess(&books0, &realized, &bench_r, 1));
+        let (gm, gd) = (r1.0 - r0.0, r1.1 - r0.1);
+        assert!((gm - 10.0).abs() < 1e-6 && (gd - 10.0).abs() < 1e-6, "{gm} {gd}");
+        assert!(null_band(out[2].iter().map(|g| g.0), gm).2 && null_band(out[2].iter().map(|g| g.1), gd).2, "the winner row's gain is outside");
+        assert!(null_gains(&samples, &bench_r, 1, &[], 5).is_empty() && null_gains(&samples, &bench_r, 1, &[&books0], 0) == [Vec::new()]);
+    }
+
+    /// (#1293) The cut is 2016-01-01: a sample cut that day is sealed, the day before is graded, and each
+    /// side keeps its order.
+    #[test]
+    fn split_holdout_seals_every_cutoff_from_2016() {
+        assert_eq!(HOLDOUT_FROM, ymd(2016, 1, 1));
+        let dates = [ymd(2015, 12, 31), ymd(2016, 1, 1), ymd(2010, 1, 5), ymd(2017, 7, 1)];
+        let (pre, sealed) = split_holdout(dates.iter().map(|d| sample(*d, 0.0)).collect());
+        assert_eq!(pre.iter().map(|s| s.date).collect::<Vec<_>>(), [dates[0], dates[2]]);
+        assert_eq!(sealed.iter().map(|s| s.date).collect::<Vec<_>>(), [dates[1], dates[3]]);
+    }
+
+    /// (#1292) One index leg per sample: +10% over the year from 2010, NaN where no full year follows.
+    #[test]
+    fn bench_legs_price_each_sample_and_mark_a_short_series_nan() {
+        let bench = (vec![ymd(2010, 1, 1), ymd(2011, 1, 5)], vec![100.0, 110.0]);
+        let legs = bench_legs(&[sample(ymd(2010, 1, 1), 0.0), sample(ymd(2012, 1, 1), 0.0)], &bench, 1);
+        assert!(legs.len() == 2 && (legs[0] - 10.0).abs() < 1e-9 && legs[1].is_nan(), "{legs:?}");
+    }
+
     /// (#1239) A draw at u = 0, 0.5 and 0.9: weights 2.5u, caps 2^(2u - 1), notches floor(3u³) = 0, 0, 2.
     #[test]
     fn search_draw_maps_each_uniform_onto_its_range() {
@@ -11446,6 +11721,8 @@ mod tests {
         let s = p("search a b configs=7 nulls=0");
         assert!(s.search && !p("level").search && s.tickers == ["a", "b"] && (s.configs, s.nulls) == (7, 0), "(#1239) search takes dumps, a config count and a null count");
         assert!(std::panic::catch_unwind(|| p("configs=0")).is_err() && std::panic::catch_unwind(|| p("nulls=x")).is_err(), "configs must be above 0, nulls a whole number");
+        assert!(p("holdout").holdout && !p("holdout").reveal && p("HOLDOUT").holdout && !p("search").holdout, "(#1293) `holdout` seals the 2016-on samples");
+        assert!(p("reveal").holdout && p("reveal").reveal && p("reveal").tickers.is_empty(), "(#1293) `reveal` seals them too and prints them apart");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -11482,7 +11759,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 time");
+        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal time");
         assert_eq!(
             all,
             Args {
@@ -11517,6 +11794,8 @@ mod tests {
                 search: true,
                 configs: 3,
                 nulls: 4,
+                holdout: true,
+                reveal: true,
                 time: true,
                 tickers: vec![]
             }
@@ -14102,6 +14381,46 @@ mod tests {
         assert_eq!(forward_return(&dates, &crashed, 1, 5, short), None, "the index has not reached the window's end");
     }
 
+    /// (#1296) The crash test reads the last bar at least a year before the last one, not the nearest bar
+    /// to a year, and a fall to exactly half is not a crash.
+    #[test]
+    fn crashed_reads_the_last_close_against_the_bar_a_year_before() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
+        let dates = [d("1999-06-01"), d("1999-12-01"), d("2000-12-31")];
+        assert!(crashed(&dates, &[100.0, 100.0, 10.0]), "a 90% fall in the last year");
+        assert!(!crashed(&dates, &[100.0, 10.0, 6.0]), "read against 1999-12, not the older 1999-06 bar");
+        assert!(!crashed(&dates, &[100.0, 10.0, 5.0]), "exactly half is not under half");
+        let exact = [d("1999-12-01"), d("2000-01-01"), d("2000-12-31")]; // 2000-01-01 is 365 days back
+        assert!(!crashed(&exact, &[100.0, 10.0, 6.0]), "the bar exactly a year back counts");
+    }
+
+    /// (#1296) The census splits each cutoff's members three ways and flags a cutoff whose dead or
+    /// acquired share is under half its base rate over the horizon (12y: about 10.8% dead, 10.3% acquired).
+    #[test]
+    fn mortality_counts_each_exit_and_flags_thin_cutoffs() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
+        let marks = |date, alive, acquired, dead| {
+            let none = std::iter::repeat_n((d(date), None), alive);
+            none.chain(std::iter::repeat_n((d(date), Some(false)), acquired)).chain(std::iter::repeat_n((d(date), Some(true)), dead))
+        };
+        let all: Vec<_> = marks("2000-01-01", 6, 2, 2)
+            .chain(marks("2000-07-01", 8, 2, 0))
+            .chain(marks("2001-01-01", 8, 0, 2))
+            .chain(marks("2001-07-01", 7, 2, 1))
+            .chain(marks("2002-01-01", 7, 1, 2))
+            .collect();
+        let got = mortality(&all, 12);
+        let row = |alive, acquired, dead, under_covered| Mortality { alive, acquired, dead, under_covered };
+        assert_eq!(got[&d("2000-01-01")], row(6, 2, 2, false), "20% each clears half of either base");
+        assert_eq!(got[&d("2000-07-01")], row(8, 2, 0, true), "no deaths");
+        assert_eq!(got[&d("2001-01-01")], row(8, 0, 2, true), "no takeovers");
+        assert_eq!(got[&d("2001-07-01")], row(7, 2, 1, true), "10% dead is under 10.8%");
+        assert_eq!(got[&d("2002-01-01")], row(7, 1, 2, true), "10% acquired is under 10.3%");
+        assert_eq!(got.len(), 5);
+        // at 0 years both bases are 0, so nothing is under them
+        assert_eq!(mortality(&[(d("2000-01-01"), None)], 0)[&d("2000-01-01")], row(1, 0, 0, false));
+    }
+
     /// (#9) gate_audit reports a POSITIVE accepted−rejected gap when the gate KEEPS the high-return names
     /// and drops the low ones (gates select winners), and a NEGATIVE gap when it admits the losers (the
     /// "loosen me" signal). Synthetic gate admits dd>0; `s_rel` sets relative == the value passed.
@@ -15830,5 +16149,21 @@ mod tests {
         gate_sweep(&samples, &tuning, &gates, Some(0.0));
         ceiling_sweep(&samples, &tuning);
         ceiling_sweep(&[], &tuning);
+    }
+
+    /// (#1295) `docs/IDEAS.md` has a row for every buy-rule knob, every deleted knob and every fund factor,
+    /// so a new idea cannot land without one. When this reds, re-run `python3 -I tools/ideas_ledger.py`.
+    #[test]
+    fn ledger_covers_knobs() {
+        let read = |p: &str| std::fs::read_to_string(format!("{}/{p}", env!("CARGO_MANIFEST_DIR"))).expect(p);
+        let (ledger, config) = (read("docs/IDEAS.md"), read("src/config.rs"));
+        let start = config.find("pub struct BuyHeuristic {").expect("the struct");
+        let body = &config[start..start + config[start..].find("\n}\n").expect("its end")];
+        let field = regex::Regex::new(r"(?m)^\s*pub (\w+):").expect("literal regex");
+        let fields: Vec<String> = field.captures_iter(body).map(|c| c[1].to_string()).collect();
+        assert!(fields.len() > 100, "the struct parse found {} fields", fields.len());
+        let names = fields.iter().map(String::as_str).chain(crate::config::RETIRED).chain(FUND_FACTORS);
+        let missing: Vec<&str> = names.filter(|n| !ledger.contains(&format!("| `{n}` |"))).collect();
+        assert!(missing.is_empty(), "no docs/IDEAS.md row; re-run python3 -I tools/ideas_ledger.py: {missing:?}");
     }
 }

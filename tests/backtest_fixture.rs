@@ -359,6 +359,9 @@ fn rescore_reprints_the_golden_books_from_a_dump() {
     }
     let top10 = |r: &str| r.lines().find(|l| l.starts_with("  top-10 book")).map(String::from);
     assert!(top10(rows[1]).is_some() && top10(rows[1]) != top10(rows[0]), "{}", rows[1]);
+    // (#1292) the null band runs by default, one verdict line per row; row {} against itself is inside
+    let band: Vec<&str> = got.lines().filter(|l| l.starts_with("  row ") && (l.ends_with("-> INSIDE") || l.ends_with("-> OUTSIDE"))).collect();
+    assert!(got.contains("── NULL BAND (#1292)") && band.len() == 2 && band[0].ends_with("-> INSIDE"), "{got}");
 
     std::fs::write(&grid, "{\"backtest_tr_ruler\":true}\n").expect("write grid");
     let refused = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))

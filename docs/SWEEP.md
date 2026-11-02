@@ -6,6 +6,9 @@ ids; every shipped or refused knob keeps its receipt in a comment beside it in `
 
 ## 1. Pre-register
 
+First look the idea up in `docs/IDEAS.md`, the ledger of every knob, deleted knob and fund factor with
+its state and receipts. A RETIRED or MEASURED row needs a new reason before it is asked again.
+
 Before any run, write down in the knob's comment block in `tests/ci-settings.yaml`:
 
 - the question, in one sentence, and the knob or arm that asks it;

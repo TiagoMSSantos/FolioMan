@@ -42,6 +42,9 @@ on:
       search:
         description: "(#1239) `backtest search` options, e.g. configs=5000 nulls=200: each horizon also dumps its samples (encrypted, kept 90 days), then one knob search runs over every dump"
         default: ""
+      rescore:
+        description: "(#1292) `backtest rescore` options for a grid run, e.g. nulls=0 or holdout: the null band runs at 200 shuffles unless nulls= says otherwise; (#1293) holdout seals the 2016-on samples, reveal reads them once at ship time"
+        default: ""
 
 # No concurrency group (#550): a probe saves no shared cache (each FEC save is keyed on its own run id), so arms dispatched together run in parallel.
 # (#752) Tiingo fills are the exception: dispatch them one at a time, an hour apart (see the fill step).
@@ -157,6 +160,7 @@ jobs:
           EXTRA: ${{ inputs.extra }}
           GRID: ${{ inputs.grid }}
           SEARCH: ${{ inputs.search }}
+          RESCORE: ${{ inputs.rescore }}
           # (#1227) every horizon grades one universe, as backtest-gate's do. A grid run's dump walk must
           # also see the names its report walk saw, or `rescore` row {} would not reprint that report.
           FOLIOMAN_UNIVERSE_SNAPSHOT: ${{ runner.temp }}/universe.json
@@ -168,7 +172,11 @@ jobs:
           read -ra extra <<< "$EXTRA"
           read -ra search <<< "$SEARCH"
           for o in "${search[@]}"; do
-            [[ $o =~ ^(configs|nulls)=[0-9]+$ ]] || { echo "::error::bad search option '$o'"; exit 1; }
+            [[ $o =~ ^((configs|nulls)=[0-9]+|holdout)$ ]] || { echo "::error::bad search option '$o'"; exit 1; }
+          done
+          read -ra rescore <<< "$RESCORE"
+          for o in "${rescore[@]}"; do
+            [[ $o =~ ^(nulls=[0-9]+|holdout|reveal)$ ]] || { echo "::error::bad rescore option '$o'"; exit 1; }
           done
           # (#550) an arm edits the checked-out yaml in place: each key must already sit on exactly one
           # `  key:` line and the value must be a plain number, so a typo fails the run instead of grading
@@ -208,7 +216,7 @@ jobs:
             fi
             if [[ -n $GRID ]]; then
               echo "::group::rescore $y"
-              ./target/release/folioman backtest rescore "samples-$y.jsonl" grid.jsonl
+              ./target/release/folioman backtest rescore "samples-$y.jsonl" grid.jsonl "${rescore[@]}"
               echo "::endgroup::"
             fi
           done
