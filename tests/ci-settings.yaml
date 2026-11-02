@@ -24820,6 +24820,69 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # (#1290) goldens re-blessed from probe 41347808655 on a4ba303: only the factor count (58 -> 60) and the two
 #   new AUC rows moved; the multiple-testing band is unchanged.
 
+# (#1291) ROUND 13 SHIP RULE, PRE-REGISTERED 2026-11-02 before any run. Every row graded this round answers
+#   to this block: (#1297) the consensus count, (#1298) the relative CAGR bar, (#1299) the financials and
+#   top-dog gates restored from (#1277), (#1300) the coin age, (#1301) insider ownership, (#1302) patents.
+#   Nothing below is built yet; every new knob ships off, and each row's VERDICT line is dated after this one.
+# BAR, each leg against its own control row (the round-10 bar):
+#   - top-10 excess mean and median not down more than 0.1 at 12y or 8y;
+#   - worst window not worse by more than 0.5 at 20y, 12y or 8y;
+#   - admitted pool at least 80 % of control;
+#   - rank-1 head-to-head not below control at 12y, 8y and 20y stress, with zero slack.
+#   On top of that:
+#   - the top-10 gain sits OUTSIDE its (#1292) null band at 12y and 8y (the band is what 200 shuffles of the
+#     same samples inside each bucket and class produce); a gain inside the band is noise and never ships;
+#   - the (#1293) holdout, read once at ship time and only for passers, agrees in sign; a disagreement is a
+#     TIE and the row does not ship;
+#   - two neighbouring rows both pass, and the looser of the two ships. One lone row is not an edge.
+# HOLDOUT: every sample with a cutoff on or after 2016-01-01 is sealed from today. Only the 8y leg reaches
+#   it, about 6 half-year starts from 2016-01 to 2018-06. Rows are graded with those samples dropped.
+# GRID A (#1297), the consensus count. Five marks, thresholds fixed here and never swept; a missing field
+#   leaves its mark off:
+#     S  the 10y price trend is a near-straight line, R^2 at least 0.90;
+#     D  the longest stretch under a previous high over the last decade is under 2 years;
+#     H  the long CAGR over volatility sits at the risk-bonus Sharpe cap;
+#     W  the name beat the benchmark in at least 95 % of rolling 3-year windows over the last decade;
+#     I  the name has passed the buy rules for 6 months or more in a row.
+#   Rows: control; K2 soft; K2 hard; K3 soft; K3 hard; dock. K2 means 2 or more marks fail the gate. A soft
+#   row docks like every other gate under `growth_gate_soft`; a hard row lists the tag in `growth_hard_tags`,
+#   so it refuses outright (round 9 showed a soft new gate is inert). The dock row counts each mark as one
+#   more failed gate; it has no neighbour, so it is a read-only confirmation and never ships.
+#   Pairs: K2 and K3 soft, K2 and K3 hard. Legs: 12y, 8y and 20y `universe fund pit`, `universe stress` at
+#   20 12 8, and 12y and 8y `universe fund pit dead`.
+#   If every row fails, the solo Sharpe and relative-win ceilings get one grid, two rungs each, same bar.
+# WHY: an earlier offline read of the 55-name fixture (survivors plus one failed bank): inside the shipped
+#   admission the forward excess falls as a name carries more marks. k=0 reads +3.9 / +5.0 points a year at
+#   8y / 12y, k=2 -1.5 / -3.4, k>=4 -4.6 / -11.7. Refusing k>=2 keeps +2.7 / +3.0 (the pre-2005 half +1.6 /
+#   +2.6); without financials +3.5 / +3.9 against -0.2 / -4.1; a name bootstrap gives P 0.031 / 0.000. The
+#   fixture is survivorship-selected and the thresholds were picked on it, so only the pond decides.
+# GRID B (#1298), the relative CAGR bar. Rows: control; the pool median plus 5; plus 8; the pool's 75th
+#   percentile; its 80th; and the absolute `growth_min_cagr` 15. Soft only; legs: the three pit legs and
+#   stress. Pairs: plus 5 and plus 8, 75th and 80th. A passing pair must also beat the absolute-15 row's
+#   top-10 gain at 12y and 8y, or it is (#561)'s lower floor again. The whole-life leg keeps the absolute bar.
+# GRID C (#1299), financials and the sector's largest name. Rows: control; F soft; F hard; F2 at 10 %/yr
+#   asset growth, hard; F2 at 15, hard; T soft; T hard; F and T together, hard. PRIMARY: 12y and 8y `universe
+#   fund pit dead`. GUARD: 12y and 8y `universe fund pit`, worst window not worse and rank-1 head-to-head not
+#   below control. A pass on dead names with a failed guard is a TIE. Pairs: F soft and hard (the soft row
+#   ships), F2 10 and 15 (15 ships), T soft and hard (the soft row ships).
+# DEAD-NAME RULER (#1296): the (#751) terminal cut stays as it is, DEAD_CRASH_RATIO 0.5 and DEAD_PENALTY 0.7.
+#   Per cutoff the census counts names alive, acquired and dead by the horizon against base rates of 2 % a
+#   year for distress and 1.9 % a year for acquisitions. A cutoff under half the base rate is UNDER-COVERED;
+#   a row graded only on under-covered cutoffs reads UNGRADEABLE, not FAIL. Dead legs run with `fill` off,
+#   so every row reads the same fixed set of dead names.
+# FACTOR ROWS (#1301 insider ownership level, #1302 patents): each is measured first as an AUC row. It is a
+#   candidate only when |AUC - 0.5| >= 0.10 in the paper's direction at both 12y and 8y. Only a candidate
+#   earns a `growth_fund_extra` grid at 3 weights, the paper's sign, plateau rule. Patents need a free source
+#   with no key; without one the row reads NEEDS-DATA and stops.
+# COIN AGE (#1300): a coin-only minimum age of 8 years, on the owner's word. The backtest cannot grade coins,
+#   so the evidence is the census, as at (#511). The stock `growth_min_age_years` stays 0.
+# EXPECTED, written before any run: K2 rises 0.2-0.6 at both horizons with a shallower worst window and a
+#   flat head-to-head; the dock rises less; the relative bar lifts the mean and fails the head-to-head (the
+#   floor family's old verdict); F rises on dead names with a shallower worst and a pool 10-15 % smaller;
+#   T rises 0.3-1.0 with a pool 5-8 % smaller.
+# REVERT RULE: a failing knob goes back into `config::RETIRED`, with a VERDICT line under its own receipt;
+#   its Quote field stays when it is filled.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
