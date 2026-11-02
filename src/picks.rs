@@ -2078,6 +2078,7 @@ pub fn growth_scores_ranked(pool: &[&Quote], tuning: &BuyHeuristic) -> Vec<Optio
 /// the page refuse it ([`live_ranker`]).
 pub(crate) struct Ranker {
     pub id: &'static str,
+    #[cfg_attr(not(test), allow(dead_code))] // the rivals table prints `backtest::RIVALS`; `rivals_match_registry` pins the two
     pub label: &'static str,
     pub walk_only: bool,
     pub keys: fn(&[&Quote], &[&[f64]], &BuyHeuristic) -> Vec<Option<f64>>,
@@ -14049,7 +14050,8 @@ mod tests {
     /// key drops out. `book_picks` and `sized_book` read that order; under "shipped" each name keeps its own.
     #[test]
     fn a_ranker_deals_the_shipped_scores_by_place() {
-        let mut pool = rank_pool(&[150.0, 300.0, 600.0, 5000.0]);
+        // 5Y legs of 20-29 %/yr, all under the code-default 30 % trend cap, so the four shipped scores differ
+        let mut pool = rank_pool(&[150.0, 190.0, 230.0, 260.0]);
         for (q, quality) in pool.iter_mut().zip([Some(30.0), Some(20.0), Some(20.0), None]) {
             q.name = format!("{} Corp", q.ticker);
             q.fund = quality.map(|v| core::FundFactors { quality: Some(v), ..Default::default() });
