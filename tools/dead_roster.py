@@ -22,13 +22,13 @@ Precedence (stated before any row was classified; the first rule that fires wins
      acquisition filing before it                                                         -> distress
   d. an 8-K item 2.01 or a DEFM14A/DEFM14C within 6 months before the span end, or the Wikipedia reason
      reading acquired/merged                                                               -> acquired
-  e. the Wikipedia "Selected changes" reason text otherwise: bankrupt/distress/spinoff/alive words
+  e. the Wikipedia changes-table reason text otherwise: bankrupt/distress/spinoff/alive words
   f. a span still open later, or a current EDGAR ticker                                   -> alive
   g. none                                                                                 -> unknown
 
 Sources, all free and keyless: the spans file (MIT); the BRD cases table (Excel or CSV, downloaded by hand);
 EDGAR `submissions/CIK##########.json` (10 req/s, User-Agent); EDGAR `cik-lookup-data.txt` for name -> CIK;
-the Wikipedia list page's wikitext for ticker -> name and reason; Tiingo's `supported_tickers.csv` and
+the Wikipedia "Historical components of the S&P 500" wikitext for ticker -> name and reason; Tiingo's `supported_tickers.csv` and
 tests/dead-members.csv for the `series` column. Everything fetched is cached under `--cache`; `--offline`
 reads the cache and the tree only, and classifies with what it has (source `qsuffix`/`failures`/`spans`).
 
@@ -48,7 +48,7 @@ SUBMISSIONS = "https://data.sec.gov/submissions/{}"
 CIK_LOOKUP = "https://www.sec.gov/Archives/edgar/cik-lookup-data.txt"
 COMPANY_TICKERS = "https://www.sec.gov/files/company_tickers.json"
 WIKI_API = "https://en.wikipedia.org/w/api.php"
-WIKI_PAGE = "List of S&P 500 companies"
+WIKI_PAGE = "Historical components of the S&P 500"  # the changes table left the list page in 2026
 UA = "FolioMan research folioman@researchmail.org"  # SEC fair access wants a name and a contact
 PACE = 0.13  # seconds between SEC calls; SEC refuses an IP over 10 req/s for about 10 minutes
 MIN_EXITS = 300  # the fixture spans hold 756 closed spans; a tenth of that is a broken parse
@@ -248,38 +248,40 @@ def load_cik_lookup(text):
     return out
 
 
+def wiki_cell(s):
+    """A wikitext cell as plain text: refs and templates dropped, a link read as its shown text."""
+    s = re.sub(r"<ref[^>]*/>|<ref.*?</ref>|\{\{.*?\}\}", "", s, flags=re.S)
+    return " ".join(re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", s).split())
+
+
+def wiki_tickers(cell):
+    """The symbols in a ticker cell: an exchange template's, or plain uppercase words (the 2026 table)."""
+    found = TICKER_TMPL.findall(cell) or [w for w in re.split(r"[\s,;/]+", wiki_cell(cell)) if re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,6}", w)]
+    return [t.upper().replace(".", "-") for t in found]
+
+
 def wiki_changes(wikitext):
-    """The "Selected changes" table -> [(date, added tickers, removed tickers, removed name, reason)]."""
-    cut = re.search(r"^=+\s*[^=\n]*changes[^=\n]*=+\s*$", wikitext, re.I | re.M)
+    """The changes table -> [(date, added tickers, removed tickers, removed name, reason)]. The table is the
+    one with `id="changes"` (2026: moved to its own page, plain-text tickers) or the first under a heading
+    naming changes (the list page before that, exchange templates); its cells are read by position: date,
+    added ticker, added name, removed ticker, removed name, reason."""
+    cut = re.search(r'^\{\|[^\n]*id="changes"', wikitext, re.M) or re.search(r"^=+\s*[^=\n]*changes[^=\n]*=+\s*$", wikitext, re.I | re.M)
     if not cut:
         return []
-    body = wikitext[cut.end():]
-    end = re.search(r"^=+\s*[^=\n]+=+\s*$", body, re.M)
-    body = body[: end.start()] if end else body
-    body = body.split("\n|}")[0]  # the first table under the heading, its closing fence dropped
+    body = wikitext[cut.end():].split("\n|}")[0]  # the first table, its closing fence dropped
     out = []
     for raw in re.split(r"^\|-.*$", body, flags=re.M):
-        cells = [c.strip() for c in re.split(r"\|\||\n\|", "\n" + raw.strip()) if c.strip() and not c.strip().startswith(("!", "{|", "|}"))]
-        if not cells:
+        cells = [c.strip() for c in re.split(r"\n\|\|?|\|\|", "\n" + raw.strip())[1:]]
+        if len(cells) < 6:
             continue
-        text = " ".join(cells)
-        m = DTS.search(text)
+        m, t = DTS.search(cells[0]), TEXT_DATE.search(cells[0])
         if m:
             date = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        else:
-            t = TEXT_DATE.search(text)
-            if not t:
-                continue
+        elif t:
             date = datetime.date(int(t.group(3)), MONTHS[t.group(1).lower()], int(t.group(2)))
-        tickers = [TICKER_TMPL.findall(c) for c in cells]
-        has = [i for i, t in enumerate(tickers) if t]
-        if not has:
+        else:
             continue
-        added = [t.upper().replace(".", "-") for t in tickers[has[0]]]
-        removed = [t.upper().replace(".", "-") for t in tickers[has[1]]] if len(has) > 1 else []
-        name = re.sub(r"<ref.*?(?:/>|</ref>)|\[\[|\]\]", "", cells[has[1] + 1]) if len(has) > 1 and has[1] + 1 < len(cells) else ""
-        reason = re.sub(r"<ref.*?(?:/>|</ref>)|\[\[|\]\]|\{\{.*?\}\}", "", cells[-1]) if len(cells) > (has[-1] + 2) else ""
-        out.append((date, added, removed, " ".join(name.split()), " ".join(reason.split())))
+        out.append((date, wiki_tickers(cells[1]), wiki_tickers(cells[3]), wiki_cell(cells[4]), wiki_cell(cells[5])))
     return out
 
 
@@ -332,11 +334,25 @@ def classify_edgar(filings, end):
 # ── classification ────────────────────────────────────────────────────────────────────────────────────
 
 
+def cik_for(tk, end, ctx):
+    """The CIK of the company that left under `tk` at `end`, or "". A CIK whose first filing came more than
+    18 months after the exit is a later holder of the symbol (GLD, AMH and AS for 1990s exits): every member
+    filed with the SEC, so its filings and its trading today say nothing about this exit.
+    shortcut: an old filer that took the symbol later still passes (MD: McDonnell Douglas in 1997, Pediatrix
+    today); only a name source for pre-2014 exits closes that, and the 2026 Wikipedia table has few."""
+    cik = ctx.get("cik_of", {}).get(tk, "")
+    filings = ctx.get("edgar", {}).get(cik) if cik else None
+    if filings and min(d for _, d, _ in filings) > end + datetime.timedelta(days=548):
+        return ""
+    return cik
+
+
 def classify(tk, start, end, ctx):
     """One exit through the precedence in the module docstring. `ctx` holds the loaded sources:
     brd_by_cik, brd_by_name, fail_cik, fail_tk, cik_of (ticker -> cik), edgar (cik -> filings),
     wiki (ticker -> (name, reason)), alive (tickers trading today), spans."""
-    cik = ctx.get("cik_of", {}).get(tk, "")
+    cik = cik_for(tk, end, ctx)
+    later_holder = bool(ctx.get("cik_of", {}).get(tk)) and not cik
     name = ctx.get("wiki", {}).get(tk, ("", ""))[0]
     window = lambda d: abs((d - end).days) <= 548
     # a. BRD within 18 months, or the OTC Q marker
@@ -377,7 +393,7 @@ def classify(tk, start, end, ctx):
     recycled = any(s > end + datetime.timedelta(days=3 * 365) for s, _ in ctx["spans"].get(tk, []))
     if later:
         return "alive", end, "spans"
-    if tk in ctx.get("alive", set()) and not recycled:
+    if tk in ctx.get("alive", set()) and not recycled and not later_holder:
         return "alive", end, "edgar-tickers"
     return "unknown", end, "none"
 
@@ -482,7 +498,7 @@ def build(spans, ctx, wiki_span, tiingo, since):
         if e < since:
             continue
         cls, date, source = classify(tk, s, e, ctx)
-        rows.append({"ticker": tk, "start_date": s.isoformat(), "end_date": e.isoformat(), "cik": ctx.get("cik_of", {}).get(tk, ""),
+        rows.append({"ticker": tk, "start_date": s.isoformat(), "end_date": e.isoformat(), "cik": cik_for(tk, e, ctx),
                      "name": ctx.get("wiki", {}).get(tk, ("", ""))[0].replace(",", " "), "exit": cls, "exit_date": date.isoformat(),
                      "source": source, "series": series_of(tk, e, wiki_span, tiingo)})
     return rows
@@ -634,6 +650,13 @@ class Tests(unittest.TestCase):
         ctx = self.ctx(spans={"AAL": [(datetime.date(1996, 1, 2), datetime.date(1997, 1, 15)), (datetime.date(2015, 3, 23), None)]}, alive={"AAL"})
         self.assertEqual(classify("AAL", datetime.date(1996, 1, 2), datetime.date(1997, 1, 15), ctx)[0], "unknown",
                          "a span 18 years later is the symbol's next holder, and today's AAL is not the 1997 one")
+        ctx = self.ctx(cik_of={"GLD": "1"}, edgar={"1": [("10-K", datetime.date(2005, 3, 1), "")]}, alive={"GLD"})
+        self.assertEqual(classify("GLD", datetime.date(1990, 1, 2), datetime.date(1997, 5, 6), ctx)[0], "unknown",
+                         "today's GLD first filed in 2005: a later holder, not the 1997 member")
+        self.assertEqual(cik_for("GLD", datetime.date(1997, 5, 6), ctx), "")
+        ctx["edgar"]["1"].append(("10-K", datetime.date(1998, 3, 1), ""))
+        self.assertEqual(classify("GLD", datetime.date(1990, 1, 2), datetime.date(1997, 5, 6), ctx)[2], "edgar-tickers",
+                         "a first filing inside 18 months of the exit keeps the CIK")
         self.assertEqual(reason_class("Filed for Chapter 11 bankruptcy protection"), "bankrupt")
         self.assertEqual(reason_class("Spun off from Abbott"), "spinoff")
         self.assertIsNone(reason_class(""))
@@ -656,6 +679,21 @@ class Tests(unittest.TestCase):
         self.assertEqual(rows[1][0], datetime.date(2009, 6, 8))
         self.assertEqual(rows[1][2], ["GM"])
         self.assertEqual(rows[2][4], "Acquired by New Co")
+
+    def test_wiki_changes_reads_the_2026_table_with_plain_tickers(self):
+        text = (
+            '{| class="wikitable sortable" id="changes"\n|-\n! rowspan="2" | Effective Date\n! colspan="2" | Added\n'
+            "! colspan=\"2\" | Removed\n! rowspan=\"2\" | Reason\n! rowspan=\"2\" | Refs\n|-\n! Ticker || Security || Ticker || Security\n"
+            "|-\n|October 6, 2026\n|TWLO\n|[[Twilio]]\n|WBD\n|[[Warner Bros. Discovery]]\n|[[Paramount Skydance]] acquired it\n|<ref name=\":1\" />\n"
+            "|-\n|| December 5, 2000 \n|| INTU\n|| [[Intuit]] \n|| BS\n|| [[Bethlehem Steel|Bethlehem Steel Corp]] \n|| Market capitalization changes.\n|| <ref name=x>{{cite news | url=https://a.b/c}}</ref>\n"
+            "|-\n|October 1, 2026\n|VYLR\n|[[Vylor]]\n|\n|\n|Corteva spun off Vylor\n|<ref name=\":1\" />\n"
+            "|}\n"
+        )
+        rows = wiki_changes(text)
+        self.assertEqual(len(rows), 3, "the two header rows are not changes")
+        self.assertEqual(rows[0], (datetime.date(2026, 10, 6), ["TWLO"], ["WBD"], "Warner Bros. Discovery", "Paramount Skydance acquired it"))
+        self.assertEqual(rows[1], (datetime.date(2000, 12, 5), ["INTU"], ["BS"], "Bethlehem Steel Corp", "Market capitalization changes."))
+        self.assertEqual(rows[2][2], [], "an addition with no removal names no exit")
 
     def test_cik_lookup_refuses_an_ambiguous_name(self):
         text = "ENRON CORP/OR/:0001024401:\nACME INC:0000000001:\nACME CORP:0000000002:\n"

@@ -321,17 +321,6 @@ fn min_age_years(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     tuning.growth_min_age_years.max(coin)
 }
 
-/// (#1298) The relative floor for a stock's long leg: the pool median plus `growth_min_cagr_rel`. Funds,
-/// coins, an unstamped quote and the knob at 0 read negative infinity, so the absolute floor alone
-/// applies. Kept apart from [`min_cagr_floor`] on purpose: that one also feeds the whole-life leg, which
-/// stays on the absolute bar. (#1308) restored for one confirmation run.
-fn pool_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
-    if asset_class(quote) != 2 {
-        return f64::NEG_INFINITY;
-    }
-    quote.pool_cagr_median.filter(|_| tuning.growth_min_cagr_rel > 0.0).map_or(f64::NEG_INFINITY, |m| m + tuning.growth_min_cagr_rel)
-}
-
 /// (#1297) The crowd-favourite marks a stock shows, one letter each, thresholds fixed by (#1291):
 /// `S` ten-year trend R² at least 0.90, `D` under 2 years below a past high in ten years, `H` long
 /// CAGR over volatility at the `sharpe_cap` ceiling, `W` beat the benchmark in at least 95% of rolling
@@ -1483,7 +1472,7 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years)?; // (#15) pin the CAGR window
     let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years); // (#14) the `LEG` column shows this
     let min_cagr = min_cagr_floor(quote, tuning);
-    if long_cagr < min_cagr.max(pool_floor(quote, tuning)) {
+    if long_cagr < min_cagr {
         return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
     }
     // (#3i) the SAME bar against the WHOLE-LIFE CAGR. The leg above is the most recent 20/8/5Y rung, so a
@@ -2122,14 +2111,11 @@ pub(crate) fn ranker(id: &str) -> Result<&'static Ranker, String> {
 }
 
 /// (#1304) Err when `growth_ranker` is unknown or walk-only, in the words `screen`, `size` and the page
-/// print before refusing to rank. (#1311) So is `growth_momentum_max_marks` below 5.
+/// print before refusing to rank.
 pub(crate) fn live_ranker(tuning: &BuyHeuristic) -> Result<(), String> {
     let r = ranker(&tuning.growth_ranker)?;
     if r.walk_only {
         return Err(format!("growth_ranker {:?} counts crowd marks only the backtest measures; it ranks in `backtest` alone", r.id));
-    }
-    if tuning.growth_momentum_max_marks < 5 {
-        return Err(format!("growth_momentum_max_marks {} counts crowd marks only the backtest measures; it ranks in `backtest` alone", tuning.growth_momentum_max_marks));
     }
     Ok(())
 }
@@ -2870,12 +2856,11 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
             fails.push(("range8y", format!("{:.d$}% in 8y range (need ≥{:.d$}%)", s.range_pct, min_range_8y, d = bar_dp(s.range_pct, min_range_8y, 0)), s.range_pct >= min_range_8y - 10.0));
         }
     }
-    let leg_floor = min_cagr.max(pool_floor(quote, tuning)); // (#1298) the long leg alone reads the pool bar
-    if long_cagr < leg_floor {
+    if long_cagr < min_cagr {
         // close = within 1.5 pp of the floor. 4.0 flooded the screen tail with ~55 "10%/yr vs a 14%
         // bar" rows — that's a different asset class, not a near miss; 1.5 keeps the genuine
         // one-notch-out compounders (13.9 vs 14.0) and nothing else.
-        fails.push(("cagr", format!("{long_cagr:.d$}%/yr (need ≥{leg_floor:.d$}%)", d = bar_dp(long_cagr, leg_floor, 1)), long_cagr >= leg_floor - 1.5));
+        fails.push(("cagr", format!("{long_cagr:.d$}%/yr (need ≥{min_cagr:.d$}%)", d = bar_dp(long_cagr, min_cagr, 1)), long_cagr >= min_cagr - 1.5));
     }
     // (#3i) the whole-life half of the same floor. REQUIRED, not decorative: without it a name rejected
     // by the life bar drops out of the table with no reason printed anywhere. Same 1.5pp near-miss margin
@@ -3016,7 +3001,7 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
         "aum" => t.growth_min_aum_etf = 0.0,
         "range" => (t.growth_min_range_pct, t.growth_min_range_pct_crypto) = (OFF, OFF),
         "range8y" => (t.growth_min_range_pct_8y, t.growth_min_range_pct_8y_crypto) = (0.0, 0.0),
-        "cagr" | "cagr-life" => (t.growth_min_cagr, t.growth_min_cagr_etf, t.growth_min_cagr_crypto, t.growth_min_cagr_rel) = (OFF, 0.0, OFF, 0.0), // (#1298) the pool bar too
+        "cagr" | "cagr-life" => (t.growth_min_cagr, t.growth_min_cagr_etf, t.growth_min_cagr_crypto) = (OFF, 0.0, OFF),
         "1Y+" => (t.growth_min_1y_pct, t.min_1y_pct_crypto) = (OFF, OFF),
         "1M-knife" => (t.max_1m_drop_pct, t.max_1m_drop_pct_crypto) = (OFF, OFF),
         "5Y+" => (t.growth_min_5y_pct, t.growth_min_5y_pct_etf, t.growth_min_5y_pct_crypto) = (OFF, 0.0, OFF),
@@ -7716,12 +7701,9 @@ fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {
 /// of its last six months; 2 = the 12-1 percentile plus the value percentile, value being the 13-60-month
 /// return (the five years net of the last one) negated, each among the keyed names (`core::ranks` over n + 1),
 /// and a name with no 5Y leg at the middle. (#609) 3 and 4 read `trails`, each name's trailing monthly returns
-/// (newest last, in `qs` order): see [`residual_momentum`]. (#1311) A name showing more than
-/// `growth_momentum_max_marks` crowd marks ([`consensus_marks`]) loses its key. (#1244) Then [`vol_cut`] drops
-/// the jumpiest keyed names.
+/// (newest last, in `qs` order): see [`residual_momentum`]. (#1244) Then [`vol_cut`] drops the jumpiest keyed names.
 pub(crate) fn momentum_keys(qs: &[&Quote], trails: &[&[f64]], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
-    let keys = keys_by_knob(qs, trails, tuning).into_iter().zip(qs).map(|(m, q)| m.filter(|_| consensus_marks(q, tuning).len() <= tuning.growth_momentum_max_marks));
-    vol_cut(keys.collect(), trails, tuning.growth_momentum_vol_cut)
+    vol_cut(keys_by_knob(qs, trails, tuning), trails, tuning.growth_momentum_vol_cut)
 }
 
 /// (#1244) `growth_momentum_vol_cut`: among the keyed names with at least 12 months of trail, the `cut` share
@@ -9200,7 +9182,7 @@ mod tests {
             event_flags: 0,
             jump_ahead: false,
             trend_r2_10y: None, underwater_yrs_10y: None, sector_top_dog: None, // (#1277) no score reads them since (#1280)
-            rel_win_share_10y: None, admit_tenure_months: None, pool_cagr_median: None, // (#1304)/(#1298) walk-only
+            rel_win_share_10y: None, admit_tenure_months: None, // (#1304) walk-only crowd marks
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,
@@ -13872,38 +13854,6 @@ mod tests {
         q
     }
 
-    /// (#1298) The pool bar raises a STOCK's long-leg floor only: the median plus the margin. The knob at
-    /// 0, a fund and an unstamped stock read nothing. Through the gate the line spares, half a point over
-    /// is a near miss, two points is not, and the whole-life leg keeps the absolute bar.
-    #[test]
-    fn pool_floor_raises_only_a_stock_long_leg() {
-        let t = BuyHeuristic::default();
-        let rel = BuyHeuristic { growth_min_cagr_rel: 5.0, ..t.clone() };
-        let mut q = gate_fixture();
-        q.pool_cagr_median = Some(10.0);
-        assert_eq!(pool_floor(&q, &t), f64::NEG_INFINITY, "the knob at 0 reads the stamp as nothing");
-        assert_eq!(pool_floor(&q, &rel), 15.0, "median plus the margin");
-        let mut fund = q.clone();
-        fund.instrument_type = "ETF".into();
-        assert_eq!(pool_floor(&fund, &rel), f64::NEG_INFINITY, "a fund keeps its own bar");
-        let mut bare = gate_fixture();
-        assert_eq!(pool_floor(&bare, &rel), f64::NEG_INFINITY, "an unstamped stock");
-        let c = long_cagr_pct(&bare, &t).expect("the fixture has a long leg");
-        let gate = |q: &Quote| gate_failures(q, &rel).expect("assessable").into_iter().find(|f| f.0 == "cagr").map(|f| f.2);
-        bare.pool_cagr_median = Some(c - 5.0);
-        assert_eq!(gate(&bare), None, "on the line spares");
-        assert!(growth_score(&bare, &rel).is_some());
-        bare.pool_cagr_median = Some(c - 4.5);
-        assert_eq!(gate(&bare), Some(true), "half a point over is a near miss");
-        assert!(growth_score(&bare, &rel).is_none());
-        bare.pool_cagr_median = Some(c - 3.0);
-        assert_eq!(gate(&bare), Some(false), "two points over is not");
-        bare.life_cagr = Some(c);
-        let tags: Vec<&str> = gate_failures(&bare, &rel).expect("assessable").iter().map(|f| f.0).collect();
-        assert!(!tags.contains(&"cagr-life"), "the whole-life leg keeps the absolute bar: {tags:?}");
-        assert_eq!(gates_off(&rel).growth_min_cagr_rel, 0.0, "waiving cagr waives the pool bar");
-    }
-
     /// (#560) A falling name failing several knob gates at once (range, cagr, 1Y+, 1M-knife and the 5Y+ rung on
     /// the default tuning) scores under `gates_off`, and nothing is left in its `gate_failures`. (#634) It covers
     /// THOSE gates only, so it carries no claim about the rest: `gates_off_lists_every_tag_gate_fails_pushes` is
@@ -14143,31 +14093,6 @@ mod tests {
         assert!(live_ranker(&with("nope")).is_err_and(|e| e.contains("is not one of")));
         let walk: Vec<&str> = RANKERS.iter().filter(|r| r.walk_only).map(|r| r.id).collect();
         assert_eq!(walk, ["fresh_mom_k0", "fresh_mom_k1", "fresh_6m_k1", "rank_avg_mom_lowk"]);
-        let marks = |k: usize| live_ranker(&BuyHeuristic { growth_momentum_max_marks: k, ..BuyHeuristic::default() });
-        assert_eq!(marks(5), Ok(()), "(#1311) five marks is every name");
-        assert_eq!(marks(9), Ok(()));
-        assert!(marks(4).is_err_and(|e| e.contains("growth_momentum_max_marks 4 counts crowd marks")));
-    }
-
-    /// (#1311) `growth_momentum_max_marks`: a name showing more marks than the knob loses its momentum key; the
-    /// default 5 keeps every name, so the keys match the knob-free order.
-    #[test]
-    fn momentum_keys_drop_names_over_the_mark_cap() {
-        let q = |t: &str, r2: Option<f64>, tenure: Option<u32>| {
-            let mut q = gate_fixture();
-            (q.ticker, q.perf, q.trend_r2_10y, q.admit_tenure_months) = (t.into(), legs(&[("6M", 10.0), ("1Y", 32.0)]), r2, tenure);
-            q
-        };
-        let quotes = [q("NONE", None, None), q("ONE", Some(0.95), None), q("TWO", Some(0.95), Some(6))];
-        let refs: Vec<&Quote> = quotes.iter().collect();
-        let keys = |k: usize| momentum_keys(&refs, &[&[][..]; 3], &BuyHeuristic { growth_momentum_max_marks: k, ..BuyHeuristic::default() });
-        assert_eq!(quotes.iter().map(|q| consensus_marks(q, &BuyHeuristic::default())).collect::<Vec<_>>(), ["", "S", "SI"]);
-        let all = keys(5)[0];
-        assert!(all.is_some_and(|k| (k - 20.0).abs() < 1e-9), "12-7 of +32% over a +10% half: {all:?}");
-        assert_eq!(keys(5), [all; 3]);
-        assert_eq!(keys(2), [all; 3]);
-        assert_eq!(keys(1), [all, all, None]);
-        assert_eq!(keys(0), [all, None, None]);
     }
 
     /// (#1304) The scorer panics on an id the config load would have refused.
@@ -16042,8 +15967,6 @@ mod tests {
             t.growth_maxdd_cap = r.arm(t.growth_maxdd_cap, &[0.0, 60.0, 84.0]);
             t.growth_maxdd_cap_crypto = r.arm(t.growth_maxdd_cap_crypto, &[84.0]);
             t.growth_min_age_years_crypto = r.arm(t.growth_min_age_years_crypto, &[8.0]); // (#1300) last too
-            q.pool_cagr_median = r.opt(&[5.0, 10.0, 15.0], 0.3); // (#1298) after it, same reason
-            t.growth_min_cagr_rel = r.arm(t.growth_min_cagr_rel, &[5.0]);
 
             let fails = gate_failures(&q, &t);
             let ranks = growth_score(&q, &t).is_some();
@@ -16469,7 +16392,6 @@ mod tests {
         // on sight; the (#64) receipts beside both knobs carry the runs.
         assert_eq!(tuning.growth_max_above_ma, 150.0, "the stretch gate is measured, not a taste call — its excluded cohort is negative on both moments at all three horizons, and the live table clears it by 3 points");
         assert_eq!(tuning.max_1m_drop_pct, -1000000.0, "the knife ships OFF and its own block argues for -20 — that is unresolved, not settled; read the (#64) receipt before moving it either way");
-        assert_eq!(tuning.growth_min_cagr_rel, 0.0, "(#1298) the pool CAGR bar ships off");
         assert_eq!(tuning.growth_min_age_years_crypto, 8.0, "(#1300) a coin needs 8 years listed, on the owner's word; the backtest cannot grade it, so re-read the live census before moving it");
 
         // (#69) The SOFT brake, pinned beside the hard gate it was suspected of duplicating. The gate

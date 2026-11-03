@@ -22677,7 +22677,7 @@ buy_heuristic:
   # (#1297) retired: growth_consensus_min: 0 # `consensus`: refuse a stock showing at least this many of five crowd marks. 0 = off
   # (#1297) retired: growth_consensus_dock: false # dock each crowd mark as one more failed gate. false = off
   # (#1297) retired: growth_hard_tags: [] # gate tags that refuse even under growth_gate_soft. [] = none
-  growth_min_cagr_rel: 0.0 # (#1298) a second long-leg floor for stocks, the previous cutoff's pool median plus this; (#1308) restored for its one confirmation run. 0 = off
+  # (#1298) retired: growth_min_cagr_rel: 0.0 # a second long-leg floor, the previous cutoff's pool median plus this. 0 = off; (#1308) its one confirmation run failed, closed
   # (#1298) retired: growth_min_cagr_pct: 0.0 # ... or that pool's CAGR at this percentile. 0 = off
   # (#1303) retired: growth_max_sharpe: 0.0 # refuse a stock whose long CAGR over volatility is at or above this. 0 = off
   # (#1303) retired: growth_max_rel_win: 0.0 # refuse a stock that beat the index in this share of 3-year windows. 0 = off
@@ -23304,8 +23304,7 @@ buy_heuristic:
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
   #  book. Pre-registered 2026-10-31, one arm (0.1), one look; see the receipt.
-  growth_momentum_max_marks: 5   # (#1311) most crowd marks a name may show and keep its momentum key; 5 = every
-  #  name, the shipped book. Walk-only below 5. Pre-registered 2026-11-03, two arms (1, 0), one look; see the receipt.
+  # (#1311) retired: growth_momentum_max_marks: 5 # most crowd marks a name may keep its momentum key with; refused
   growth_ranker: shipped         # (#1304) the order the stock half of the growth table is read in; "shipped" = the shipped
   #  score, byte-identical. Pre-registered 2026-11-02; the other ids rank in grid rows only until one passes.
   growth_event_months: 0         # (#1245) dividend cut, reverse split or fresh S&P add inside this many months before a
@@ -25157,6 +25156,66 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   then needs a live stamp in its own receipt and one owner question first.
 #   REVERT RULE: if the pair fails, the knob, the stamp and the Quote field go back into `config::RETIRED`
 #   and are closed under both bars.
+#   CONFIRMATION VERDICT, 2026-11-03: the pair FAILS and the knob is CLOSED under both bars. Probes 41597135694
+#   (`universe fund pit`, 12 8 20) and 41597139130 (`universe stress`, 20 12 8), rescore nulls=200 holdout.
+#   Pit, control | plus 8 | plus 10, mean/median/trimmed mean: 12y +3.1/+2.8/+3.2 | +3.4/+3.3/+3.5 |
+#   +3.3/+3.3/+3.5; 8y +3.4/+3.3/+3.3 | +3.6/+4.0/+3.6 | +3.6/+4.0/+3.6; 20y +3.3/+1.9/+2.6 | +3.7/+2.5/+3.1 |
+#   +3.4/+1.9/+2.9. Plus 8 passes RU1-RU3 and the pool rule on every cell and reads OUTSIDE at 12y and 8y.
+#   Plus 10 FAILS: RU2 at 8y (worst five -4.0 against -3.3, worst window -9.0 against -6.6) and at 20y (worst
+#   five -1.4 against -0.6), and the band reads INSIDE at 12y and 8y. Stress: every row passes RU1-RU3 and
+#   reads INSIDE at every horizon; the bar's median moves at most +0.2 there. The pair rule ships only when
+#   both neighbours pass, so no holdout was revealed.
+#   EXPECTED, quoted against what happened: the grid reproduces (#1298) to the decimal, HELD; plus 8 passes,
+#   HELD; plus 10 lifts the mean further, MISSED (+3.3 and +3.4 against plus 8's +3.4 and +3.7 at 12y and 20y,
+#   equal at 8y); plus 10 drops RU1 under half at 8y, MISSED (it reads 20/40, exactly half, and fails on RU2
+#   and the band instead); the pair FAILS and the knob closes for good, HELD.
+#   DONE (REVERT RULE): `growth_min_cagr_rel`, `backtest::stamp_pool_cagr` and Quote.pool_cagr_median are
+#   deleted again and the knob name is back in `config::RETIRED`. Re-ask only under a ruler that this block
+#   does not already apply.
+# (#1309) VERDICT, 2026-11-03: the (#1304) verdict STANDS; the tie was not composition. Probes 41597142657
+#   (`universe fund pit stockrivals holdout`) and 41597146367 (`universe stress stockrivals holdout`), 20 12 8,
+#   holdout dropped at 8y. The stock-only rivals table reads the same (#1304) step-1 tallies as the all-class
+#   one, row for row: rank_avg_mom_lowk 4/6 cells and above the random p95 in 6/6; fresh_mom_k0 3/6 and 6/6;
+#   (p) 2/6, (k) 1/6, (m) 1/6, every other row 0/6. Both still fail on the stress median against (j):
+#   rank_avg_mom_lowk +0.6/-0.0, +0.6/+1.0 and +0.5/-0.2 at 20y, 12y and 8y; fresh_mom_k0 +0.4/-0.1, +0.3/-0.0
+#   and +0.2/-0.3. Stock samples in the table, pit 5099 of 5110, 10561 of 13390 and 11339 of 15431, stress 9326
+#   of 9337, 16819 of 19648 and 17839 of 21931: the stress pond graded here is mostly stocks, not ETFs.
+#   EXPECTED (the two orders clear (j) on the stock-only stress median), MISSED. `growth_ranker` stays
+#   "shipped"; `stockrivals` stays as a report word, and nothing moves.
+# (#1310) VERDICT, 2026-11-03: DN1's first online build, tests/dead-roster.csv (756 closed spans, 368 mapped to
+#   a CIK, 388 logged and never guessed). All exits: acquired 197, alive 153, bankrupt 37, distress 19, spinoff
+#   16, unknown 334. Before 2014: 468 exits, 107 with a CIK; acquired 64, alive 53, bankrupt 32, distress 10,
+#   spinoff 10, unknown 299; 85 carry WIKI bars to the exit and 383 none. Per 12y cutoff 1996-2014, bankrupt
+#   plus distress is 2.0-5.5 % of members (median 4.2 %, 0.0036/yr), acquired median 12.9 % (0.0114/yr), unknown
+#   median 17.9 %; per 8y cutoff 1996-2018, dead 1.4-4.8 % (median 3.1 %, 0.0039/yr), acquired 9.7 %
+#   (0.0126/yr), unknown 9.5 %. Not one pre-2014 bankrupt has a free series to its exit.
+#   EXPECTED, quoted against what happened: 330-410 of the 433 unknowns resolve, MISSED, 134 did (64 acquired,
+#   45 alive, 15 bankrupt or distressed, 10 spinoffs); the 20-40 alive, MISSED, 45; the 10-25 more dead,
+#   HELD, 15; dead 5-9 % of members per 12y cutoff, MISSED, 7 of 37 cutoffs (1999-2002) reach 5 % and none 6 %;
+#   `series none` above 300, HELD, 383. Why so few resolved: EDGAR's ticker file maps today's symbols, so
+#   361 of the 468 pre-2014 exits have no CIK, and the 2026 Wikipedia changes table names few exits before
+#   2014.
+#   TWO FINDINGS from the build, fixed in tools/dead_roster.py before the roster was written. (1) Wikipedia
+#   moved the changes table to "List of S&P 500 companies" history page "Historical components of the S&P
+#   500", with a positional layout; the parser reads that page now. (2) A recycled symbol read the old member
+#   as alive: GLD, AMH and AS map to today's holders of the symbol, so a 1990s exit inherited a live filer.
+#   A CIK whose first EDGAR filing came more than 18 months after the exit is now a later holder: it is
+#   dropped, and the alive rule does not fire on it (54 rows moved from alive to unknown). Every member filed
+#   with the SEC, so a CIK with no filing before the exit cannot be the member. Known gap: an old filer that
+#   took the symbol later still passes (MD, McDonnell Douglas to 1997 and a later filer today; AIT, Ameritech
+#   to 1999 and Applied Industrial today); only a name source for pre-2014 exits closes it.
+#   Nothing in the binary reads the roster yet, so no number moves.
+# (#1312) BASE RATES (#1296), PRE-REGISTERED 2026-11-03 per (#1307)'s BAR, before any dead-leg row is read
+#   against them: DISTRESS_PER_YEAR 0.02 -> 0.004 and ACQUIRED_PER_YEAR 0.019 -> 0.012, the (#1310) measured
+#   member rates (dead 0.0036 at 12y and 0.0039 at 8y; acquired 0.0114 and 0.0126). Both are floors: the
+#   unknowns are unclassed, and if every unknown were a failure the dead rate would read about 0.021 (the old
+#   0.02 is that ceiling); if every one were a takeover, the acquired rate would read about 0.03. A floor makes
+#   the census easier to pass, so a cutoff it calls covered is not proof the archive holds the exits; one it
+#   calls UNDER-COVERED is.
+#   WHEN: the two constants change in the DN2 commit, so one golden bless covers both moves; until then no
+#   dead-leg row is graded. EXPECTED: under the new rates every 12y cutoff before 2014 still reads
+#   UNDER-COVERED on the dead share (the archive prices none of the 32 pre-2014 bankruptcies), and DN2's
+#   quarterly prices are what move them.
 
 # (#1311) MOMENTUM POND WITHOUT THE CROWD (S3), PRE-REGISTERED 2026-11-03 before any run. (#1304) re-ordered
 #   the WHOLE stock half by a few-marks momentum key and failed step 1, but `fresh_mom_k0` led every pit cell.
@@ -25184,6 +25243,19 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   names a 20-year hold wants, so 1 and 0 cut the momentum half's steadiest runners and (j) falls at 12y or
 #   8y, as (#1304)'s few-marks rankers fell on the stress median. Nothing here reaches rank, BUY NOW, size,
 #   trade or the broker.
+# (#1311) VERDICT, 2026-11-03: both rows FAIL the slots screen and the knob is RETIRED. Probes 41597150230 (C),
+#   41597153521 (P1) and 41597157265 (P0). (j) mean/median, then worst window: C 20y +4.4/+4.6 (-1.3), 12y
+#   +3.9/+4.0, 8y +4.6/+4.4; P1 20y +4.3/+4.6 (-2.1), 12y +4.0/+4.1, 8y +4.4/+4.3; P0 20y +5.1/+4.8 (-1.6), 12y
+#   +3.9/+3.5, 8y +4.4/+3.5. P1 fails on the 8y mean and median and on the 20y worst; P0 on the 12y and 8y
+#   medians and the 20y worst. The cells the bar also reads pass: SIZED equal everywhere, the 20y DCA S+inter
+#   up (C +4.4/+4.2, P1 +4.6/+4.3, P0 +5.0/+4.8), WINNERS HELD within 0.5 of C. WIRING CHECK clean: the plain
+#   shipped top-10, SIZED and `windows scored` read identical in all three logs.
+#   EXPECTED, quoted against what happened: mine, FAIL, (j) falling at 12y or 8y, HELD (P1 8y -0.2/-0.1, P0
+#   12y median -0.5, 8y median -0.9). The plan's, pit up at 12y and 20y, MISSED: P1 rises +0.1 at 12y and
+#   falls at 20y; P0 rises +0.7 at 20y and falls at 12y. Cutting the crowd from the momentum pond buys a
+#   20-year mean and pays for it in the shorter windows' median book.
+#   DONE: `growth_momentum_max_marks` is deleted and its name is in `config::RETIRED`; the momentum pond keeps
+#   every name, as it did before.
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
