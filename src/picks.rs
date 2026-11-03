@@ -2122,11 +2122,14 @@ pub(crate) fn ranker(id: &str) -> Result<&'static Ranker, String> {
 }
 
 /// (#1304) Err when `growth_ranker` is unknown or walk-only, in the words `screen`, `size` and the page
-/// print before refusing to rank.
+/// print before refusing to rank. (#1311) So is `growth_momentum_max_marks` below 5.
 pub(crate) fn live_ranker(tuning: &BuyHeuristic) -> Result<(), String> {
     let r = ranker(&tuning.growth_ranker)?;
     if r.walk_only {
         return Err(format!("growth_ranker {:?} counts crowd marks only the backtest measures; it ranks in `backtest` alone", r.id));
+    }
+    if tuning.growth_momentum_max_marks < 5 {
+        return Err(format!("growth_momentum_max_marks {} counts crowd marks only the backtest measures; it ranks in `backtest` alone", tuning.growth_momentum_max_marks));
     }
     Ok(())
 }
@@ -7713,9 +7716,12 @@ fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {
 /// of its last six months; 2 = the 12-1 percentile plus the value percentile, value being the 13-60-month
 /// return (the five years net of the last one) negated, each among the keyed names (`core::ranks` over n + 1),
 /// and a name with no 5Y leg at the middle. (#609) 3 and 4 read `trails`, each name's trailing monthly returns
-/// (newest last, in `qs` order): see [`residual_momentum`]. (#1244) Then [`vol_cut`] drops the jumpiest keyed names.
+/// (newest last, in `qs` order): see [`residual_momentum`]. (#1311) A name showing more than
+/// `growth_momentum_max_marks` crowd marks ([`consensus_marks`]) loses its key. (#1244) Then [`vol_cut`] drops
+/// the jumpiest keyed names.
 pub(crate) fn momentum_keys(qs: &[&Quote], trails: &[&[f64]], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
-    vol_cut(keys_by_knob(qs, trails, tuning), trails, tuning.growth_momentum_vol_cut)
+    let keys = keys_by_knob(qs, trails, tuning).into_iter().zip(qs).map(|(m, q)| m.filter(|_| consensus_marks(q, tuning).len() <= tuning.growth_momentum_max_marks));
+    vol_cut(keys.collect(), trails, tuning.growth_momentum_vol_cut)
 }
 
 /// (#1244) `growth_momentum_vol_cut`: among the keyed names with at least 12 months of trail, the `cut` share
@@ -14137,6 +14143,31 @@ mod tests {
         assert!(live_ranker(&with("nope")).is_err_and(|e| e.contains("is not one of")));
         let walk: Vec<&str> = RANKERS.iter().filter(|r| r.walk_only).map(|r| r.id).collect();
         assert_eq!(walk, ["fresh_mom_k0", "fresh_mom_k1", "fresh_6m_k1", "rank_avg_mom_lowk"]);
+        let marks = |k: usize| live_ranker(&BuyHeuristic { growth_momentum_max_marks: k, ..BuyHeuristic::default() });
+        assert_eq!(marks(5), Ok(()), "(#1311) five marks is every name");
+        assert_eq!(marks(9), Ok(()));
+        assert!(marks(4).is_err_and(|e| e.contains("growth_momentum_max_marks 4 counts crowd marks")));
+    }
+
+    /// (#1311) `growth_momentum_max_marks`: a name showing more marks than the knob loses its momentum key; the
+    /// default 5 keeps every name, so the keys match the knob-free order.
+    #[test]
+    fn momentum_keys_drop_names_over_the_mark_cap() {
+        let q = |t: &str, r2: Option<f64>, tenure: Option<u32>| {
+            let mut q = gate_fixture();
+            (q.ticker, q.perf, q.trend_r2_10y, q.admit_tenure_months) = (t.into(), legs(&[("6M", 10.0), ("1Y", 32.0)]), r2, tenure);
+            q
+        };
+        let quotes = [q("NONE", None, None), q("ONE", Some(0.95), None), q("TWO", Some(0.95), Some(6))];
+        let refs: Vec<&Quote> = quotes.iter().collect();
+        let keys = |k: usize| momentum_keys(&refs, &[&[][..]; 3], &BuyHeuristic { growth_momentum_max_marks: k, ..BuyHeuristic::default() });
+        assert_eq!(quotes.iter().map(|q| consensus_marks(q, &BuyHeuristic::default())).collect::<Vec<_>>(), ["", "S", "SI"]);
+        let all = keys(5)[0];
+        assert!(all.is_some_and(|k| (k - 20.0).abs() < 1e-9), "12-7 of +32% over a +10% half: {all:?}");
+        assert_eq!(keys(5), [all; 3]);
+        assert_eq!(keys(2), [all; 3]);
+        assert_eq!(keys(1), [all, all, None]);
+        assert_eq!(keys(0), [all, None, None]);
     }
 
     /// (#1304) The scorer panics on an id the config load would have refused.

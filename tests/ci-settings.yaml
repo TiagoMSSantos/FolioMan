@@ -23304,6 +23304,8 @@ buy_heuristic:
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
   #  book. Pre-registered 2026-10-31, one arm (0.1), one look; see the receipt.
+  growth_momentum_max_marks: 5   # (#1311) most crowd marks a name may show and keep its momentum key; 5 = every
+  #  name, the shipped book. Walk-only below 5. Pre-registered 2026-11-03, two arms (1, 0), one look; see the receipt.
   growth_ranker: shipped         # (#1304) the order the stock half of the growth table is read in; "shipped" = the shipped
   #  score, byte-identical. Pre-registered 2026-11-02; the other ids rank in grid rows only until one passes.
   growth_event_months: 0         # (#1245) dividend cut, reverse split or fresh S&P add inside this many months before a
@@ -25156,6 +25158,32 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   REVERT RULE: if the pair fails, the knob, the stamp and the Quote field go back into `config::RETIRED`
 #   and are closed under both bars.
 
+# (#1311) MOMENTUM POND WITHOUT THE CROWD (S3), PRE-REGISTERED 2026-11-03 before any run. (#1304) re-ordered
+#   the WHOLE stock half by a few-marks momentum key and failed step 1, but `fresh_mom_k0` led every pit cell.
+#   The smaller question: keep the shipped blend, and change only the pond the momentum half draws from.
+# THE KNOB: growth_momentum_max_marks, 5 (every name) shipped. A name showing more `picks::consensus_marks`
+#   (S, D, H, W, I, thresholds fixed by (#1291)) than the knob loses its key in `picks::momentum_keys`, so the
+#   cut reaches the walk's momentum order, rival (j), WINNERS HELD and the S+inter DCA lane. The score half,
+#   the plain shipped top-10 and SIZED never read it. W and I are measured by the backtest alone (None live),
+#   so below 5 the knob is WALK-ONLY: `picks::live_ranker` refuses it in `screen`, `size` and the page, and a
+#   pass needs live W and I stamps in their own receipt before any live number moves.
+# DEVIATIONS from the plan, stated before the run: one integer, not the string enum all/k_le_1/k_eq_0 (5, 1
+#   and 0 are the same three ponds). Three probes, not a grid: `backtest rescore` prints no rivals, and (j) is
+#   the book this knob moves.
+# PROBES, one commit, `universe fund pit dead winners rivals`, years "20 12 8": C (shipped), P1 (knobs
+#   growth_momentum_max_marks=1) and P0 (=0). `windows scored` must match across the three. P1 and P0 are the
+#   (#1291) neighbours; P1, the looser, is the row that would ship.
+# BARS, the (#1234) SLOTS screen against C, read on BOTH rows: (j) excess mean AND median >= C at 12y AND 8y,
+#   at least one higher; (j)'s 20y worst window not worse; SIZED not lower at 12y or 8y; the 20y DCA S+inter
+#   not down more than 0.2 on mean or median; WINNERS HELD not under C by 2.0 or more at any horizon. A row
+#   equal to C at 12y and 8y is VACUOUS. (j) prints mean, median, win and worst only, so (#1306)'s RU1 and RU2
+#   have no line to read there and the worst-window cell stays, as (#1243) and (#1244) read it. WIRING CHECK:
+#   the plain shipped top-10 and SIZED must read equal to C in every cell. A pass earns the owner question.
+# EXPECTED, written before the run. The plan's: a smaller move than (#1304)'s rankers (five slots of ten),
+#   pit up at 12y and 20y, stress unchanged. Mine: FAIL. S and D mark the smooth decade-long compounders, the
+#   names a 20-year hold wants, so 1 and 0 cut the momentum half's steadiest runners and (j) falls at 12y or
+#   8y, as (#1304)'s few-marks rankers fell on the stress median. Nothing here reaches rank, BUY NOW, size,
+#   trade or the broker.
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

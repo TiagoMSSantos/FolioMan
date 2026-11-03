@@ -178,146 +178,147 @@ by hand.
 | 161 | (#597) of every 10 slots in the interleaved book (`growth_momentum_interleave`), how many the momentum order… | knob | `growth_momentum_slots` | SHIPPED 5 | #388 #560 #584 #597 #609 #630 | — |
 | 162 | (#1243) the momentum slots of every 10 in a CRASH bucket: the pond's equal-weight month (the mean of every tr… | knob | `growth_momentum_crash_slots` | SHIPPED 10 | #1243 | — |
 | 163 | (#1244) the share of the momentum half's keyed names, the jumpiest by the sd of their last 36 monthly returns… | knob | `growth_momentum_vol_cut` | SHIPPED 0.0 | #1244 | — |
-| 164 | (#1304) the order the stock half of the growth table is read in, one id of `picks::RANKERS`. "shipped" (the D… | knob | `growth_ranker` | SHIPPED shipped | #584 #1304 | — |
-| 165 | (#101) at most this many stocks per GICS sector in the growth book; 0 = off and the DEFAULT. Nothing else in… | knob | `growth_sector_cap` | SHIPPED 0 | #101 #126 #557 #606 #630 #1142 | — |
-| 166 | (#97) restate `volatility_pct` (and its `downside_dev_pct` twin) in DAILY-equivalent units on any cadence, so… | knob | `vol_daily_equivalent` | OFF (false) | #97 #116 #117 #175 #176 #566 | Do not re-open by running the cap sweep — it would reproduce the VACUOUS reading this ent… |
-| 167 | (#96) restate a lane's `edge` in points PER YEAR beside the cumulative figure. `edge` is a spread of returns… | knob | `print_edge_annualized` | SHIPPED true | #37 #96 #176 #564 #1114 #1132 | — |
-| 168 | (#96) charge the turnover round trip once per ~6mo REBALANCE inside the hold instead of once per hold. `turno… | knob | `cost_per_rebalance` | OFF (false) | #96 #176 #177 | new reason, see receipt |
-| 169 | (#95) stop stamping TODAY's GICS sector onto a historical cutoff. `stamp_asset_class` fills `quote.sector` fr… | knob | `backtest_drop_lookahead_sector` | OFF (false) | #44 #94 #95 #96 #176 #177 | new reason, see receipt |
-| 170 | (#94) move the redenomination trim from PARSE time to CUTOFF time, so a splice cannot delete history that had… | knob | `splice_trim_point_in_time` | OFF (false) | #44 #94 #139 #173 #188 #189 | TO REOPEN: build the YRS check the block above asks for — does the column stop misstating… |
-| 171 | (#784) serve a SEC row as its strict twin (`core::FundRow::strict`, every line filed by revenue's filed date,… | knob | `sec_line_filed_gate` | SHIPPED true | #2 #3 #758 #784 | — |
-| 172 | (#93) split the peer group `demean` subtracts by LISTING MARKET as well as by cutoff bucket and asset class.… | knob | `demean_by_market` | SHIPPED true | #93 #94 #139 #173 #1231 #1232 | — |
-| 173 | (#122) DROP a ticker whose Yahoo mapping no longer points at the company it names. A dead company's ticker is… | knob | `drop_dead_ticker_series` | OFF (false) | #47 #93 #121 #122 #1231 #1232 | new reason, see receipt |
-| 174 | (#92) print, beside the top-N ladder table, how many rungs the eye is choosing between. WRITTEN FOR A DEBT TH… | knob | `print_selection_count` | SHIPPED true | #47 #91 #92 #120 #121 #1114 | — |
-| 175 | (#91) print, beside every window count that carries a verdict, how many INDEPENDENT trials that count is wort… | knob | `print_n_eff` | SHIPPED true | #89 #90 #91 #120 #124 #1114 | — |
-| 176 | (#135) print the same-window head-to-head a SECOND time against the 6-10 book, beside today's 11-20 one. WHY:… | knob | `print_h2h_mid_ladder` | SHIPPED true | #89 #90 #124 #130 #135 #1114 | — |
-| 177 | (#159) print, for the GROWTH lane, the held book split into the names that MADE money and those that LOST it,… | knob | `print_held_loser_factors` | SHIPPED true | #9 #100 #128 #129 #151 #159 | — |
-| 178 | (#1242) print, after the GROWTH lane, a seeded bootstrap band on each held-book loser AUC of the seven profit… | knob | `print_held_loser_bands` | OFF (false) | #1242 | new reason, see receipt |
-| 179 | (#1278) print, after the GROWTH lane, the held-book loser AUC of every registered fund factor twice: raw, and… | knob | `print_sector_neutral_auc` | OFF (false) | #1278 | new reason, see receipt |
-| 180 | (#90) how much history to DROP off the end of the earlier side of every train/test and early/late split, so t… | knob | `split_purge_months` | SHIPPED 0 | #89 #90 #91 #124 #151 #160 | — |
-| 181 | (#1227) resample whole TICKERS in `bootstrap_edge_ci` instead of runs of ~6-month cutoff buckets. WHY: (#119)… | knob | `bootstrap_cluster` | SHIPPED true | #89 #119 #1227 | — |
-| 182 | (#119) block length, in ~6-month cutoff buckets, for `bootstrap_edge_ci`, where 0 means DERIVE IT FROM THE HO… | knob | `bootstrap_block_buckets` | SHIPPED 0 | #89 #119 | — |
-| 183 | (#88) the OTHER half of the real-vs-nominal skew, and the same shape: `core::backtest_quote` hardcoded an EMP… | knob | `backtest_anchor_windows` | OFF (false) | #88 #89 #119 #120 #149 #188 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
-| 184 | (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw cl… | knob | `use_adjusted_close` | OFF (false) | #53 #266 #304 #804 #807 #808 | A re-open needs a PRE-REGISTERED total-return refit of `growth_min_cagr`, graded X vs A o… |
-| 185 | (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return comp… | knob | `backtest_tr_ruler` | OFF (false) | #120 #149 #188 #303 #304 #804 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
-| 186 | (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone) | knob | `nupl_euphoria` | SHIPPED 0.5 |  | — |
-| 187 | (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off | knob | `nupl_damp_floor` | SHIPPED 0.5 |  | — |
-| 188 | (4) NUPL below this starts BOOSTING crypto scores (~0.25 = fear/accumulation zone); 0 = boost off | knob | `nupl_capitulation` | SHIPPED 0.25 |  | — |
-| 189 | (4) crypto-score multiplier at NUPL=0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — k… | knob | `nupl_boost_ceiling` | SHIPPED 1.3 |  | — |
-| 190 | (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap) exceeds this. The cla… | knob | `crypto_max_mvrv` | SHIPPED 1.6 | #37 #45 #64 #395 #835 | — |
-| 191 | (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off | knob | `sharpe_weight` | SHIPPED 0.05 | #60 #62 #63 #70 #178 #599 | — |
-| 192 | (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation… | knob | `onsale_sharpe_weight` | SHIPPED 0.0 | #60 #62 #63 #70 #178 #599 | — |
-| 193 | (B) cap on that CAGR/volatility ratio fed into the reward | knob | `sharpe_cap` | SHIPPED 15.0 | #97 #100 | — |
-| 194 | (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily s… | knob | `sharpe_cap_etf` | SHIPPED 9.0 | #37 #97 #100 | — |
-| 195 | (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off | knob | `calmar_weight` | SHIPPED 0.0 |  | — |
-| 196 | (C) cap on that CAGR/max-drawdown ratio fed into the reward | knob | `calmar_cap` | SHIPPED 2.0 |  | — |
-| 197 | dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD | knob | `prefer_eur` | SHIPPED true |  | — |
-| 198 | (#1154) growth GATE (stocks only): lowers `growth_min_cagr` by this many %/yr per tenfold of market cap above… | knob | `growth_min_cagr_size_slope` | SHIPPED 0.0 | #192 #266 #316 #317 #318 #1154 | — |
-| 199 | (#1154) the market cap at which `growth_min_cagr_size_slope` starts to lower the floor; at or below it the fl… | knob | `growth_min_cagr_size_pivot` | SHIPPED 10000000000 | #192 #266 #1154 #1156 | — |
-| 200 | deleted after a measurement refused it | deleted knob | `growth_min_net_margin` | RETIRED | #38 #817 | new reason, see receipt |
-| 201 | deleted after a measurement refused it | deleted knob | `growth_max_margin_swing` | RETIRED | #39 #817 | new reason, see receipt |
-| 202 | deleted after a measurement refused it | deleted knob | `growth_max_dilution_pct` | RETIRED | #817 | new reason, see receipt |
-| 203 | deleted after a measurement refused it | deleted knob | `growth_min_interest_cover` | RETIRED | #817 | new reason, see receipt |
-| 204 | deleted after a measurement refused it | deleted knob | `growth_min_fcf_margin` | RETIRED | #817 | new reason, see receipt |
-| 205 | deleted after a measurement refused it | deleted knob | `growth_min_net_cash_rev` | RETIRED | #817 | new reason, see receipt |
-| 206 | deleted after a measurement refused it | deleted knob | `growth_soft_life_hard` | RETIRED | #568 #817 | new reason, see receipt |
-| 207 | deleted after a measurement refused it | deleted knob | `growth_hard_life_floor` | RETIRED | #576 #817 | new reason, see receipt |
-| 208 | deleted after a measurement refused it | deleted knob | `growth_hard_loss` | RETIRED | #576 #817 | new reason, see receipt |
-| 209 | deleted after a measurement refused it | deleted knob | `growth_soft_drop_misses` | RETIRED | #582 #817 | new reason, see receipt |
-| 210 | deleted after a measurement refused it | deleted knob | `growth_soft_hard_gates` | RETIRED | #566 #797 #802 #803 #817 | new reason, see receipt |
-| 211 | deleted after a measurement refused it | deleted knob | `growth_overext_peg_waive` | RETIRED | #581 #817 | new reason, see receipt |
-| 212 | deleted after a measurement refused it | deleted knob | `growth_overext_backed_floor` | RETIRED | #577 #817 | new reason, see receipt |
-| 213 | deleted after a measurement refused it | deleted knob | `growth_overext_trend_adjust` | RETIRED | #579 #817 | new reason, see receipt |
-| 214 | deleted after a measurement refused it | deleted knob | `growth_peg_taper_k` | RETIRED | #550 #817 | new reason, see receipt |
-| 215 | deleted after a measurement refused it | deleted knob | `growth_red_flag_dock` | RETIRED | #729 #730 #817 | new reason, see receipt |
-| 216 | deleted after a measurement refused it | deleted knob | `growth_momentum_miss_cap` | RETIRED | #585 #817 | new reason, see receipt |
-| 217 | deleted after a measurement refused it | deleted knob | `growth_momentum_keep_age` | RETIRED | #586 #817 | new reason, see receipt |
-| 218 | deleted after a measurement refused it | deleted knob | `growth_gate_on_tr_cagr` | RETIRED | #99 #303 #806 #817 | new reason, see receipt |
-| 219 | deleted after a measurement refused it | deleted knob | `underwater_monthly` | RETIRED | #3 #223 #817 | new reason, see receipt |
-| 220 | deleted after a measurement refused it | deleted knob | `hold_domicile_penalty` | RETIRED | #213 #226 #235 #267 #268 #817 | WHY THIS CLEARS (#235)'s BAR for re-opening a refused floor -- "a tier-set chosen for a r… |
-| 221 | deleted after a measurement refused it | deleted knob | `backtest_calendar_cadence` | RETIRED | #117 #817 | new reason, see receipt |
-| 222 | deleted after a measurement refused it | deleted knob | `growth_tr_life_weight` | RETIRED | #572 #818 | new reason, see receipt |
-| 223 | deleted after a measurement refused it | deleted knob | `growth_tr_life_penalty` | RETIRED | #572 #818 | new reason, see receipt |
-| 224 | deleted after a measurement refused it | deleted knob | `growth_tr_life_pivot` | RETIRED | #572 #818 | new reason, see receipt |
-| 225 | deleted after a measurement refused it | deleted knob | `growth_er_weight` | RETIRED | #145 #818 | (#145) then found the same blindness had hollowed `growth_er_weight`'s composite and four… |
-| 226 | deleted after a measurement refused it | deleted knob | `growth_er_cap` | RETIRED | #818 | new reason, see receipt |
-| 227 | deleted after a measurement refused it | deleted knob | `growth_record_weight` | RETIRED | #133 #818 | new reason, see receipt |
-| 228 | deleted after a measurement refused it | deleted knob | `growth_rank_normalise` | RETIRED | #144 #818 | new reason, see receipt |
-| 229 | deleted after a measurement refused it | deleted knob | `growth_leg_dock` | RETIRED | #566 #818 | new reason, see receipt |
-| 230 | deleted after a measurement refused it | deleted knob | `growth_base_offset` | RETIRED | #144 #150 #818 | new reason, see receipt |
-| 231 | deleted after a measurement refused it | deleted knob | `growth_record_full_years` | RETIRED | #818 | new reason, see receipt |
-| 232 | deleted after a measurement refused it | deleted knob | `growth_geomean_fold` | RETIRED | #8 #48 #819 | new reason, see receipt |
-| 233 | deleted after a measurement refused it | deleted knob | `growth_max_trend_r2` | RETIRED | #1277 #1280 | new reason, see receipt |
-| 234 | deleted after a measurement refused it | deleted knob | `growth_min_underwater_yrs` | RETIRED | #1277 #1280 #1286 | new reason, see receipt |
-| 235 | deleted after a measurement refused it | deleted knob | `growth_untested_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
-| 236 | deleted after a measurement refused it | deleted knob | `growth_stretch_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
-| 237 | deleted after a measurement refused it | deleted knob | `growth_refuse_financials` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
-| 238 | deleted after a measurement refused it | deleted knob | `growth_financial_max_asset_growth` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
-| 239 | deleted after a measurement refused it | deleted knob | `growth_refuse_sector_top_dog` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
-| 240 | deleted after a measurement refused it | deleted knob | `growth_consensus_min` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
-| 241 | deleted after a measurement refused it | deleted knob | `growth_consensus_dock` | RETIRED | #1297 | new reason, see receipt |
-| 242 | deleted after a measurement refused it | deleted knob | `growth_hard_tags` | RETIRED | #1297 | new reason, see receipt |
-| 243 | deleted after a measurement refused it | deleted knob | `growth_max_sharpe` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
-| 244 | deleted after a measurement refused it | deleted knob | `growth_max_rel_win` | RETIRED | #1303 | new reason, see receipt |
-| 245 | deleted after a measurement refused it | deleted knob | `growth_min_cagr_pct` | RETIRED | #1298 | new reason, see receipt |
-| 246 | revenue CAGR over the lookback (proven top-line compounding) | fund factor | `rev_cagr` | MEASURED | #165 #676 #741 #742 | do not re-ask rev_cagr as a fund term at these lookback, so `fund 12` demanded 12y of sta… |
-| 247 | last-1y revenue growth minus that long CAGR (top-line accelerating) | fund factor | `rev_accel` | MEASURED | #676 | new reason, see receipt |
-| 248 | current gross margin level (pricing power / moat) | fund factor | `gross_margin` | MEASURED | #159 #165 #405 #407 | new reason, see receipt |
-| 249 | current operating margin level (operating efficiency) | fund factor | `op_margin` | MEASURED |  | new reason, see receipt |
-| 250 | op-margin now minus ~1y ago (margin expanding = strengthening) | fund factor | `margin_trend` | SHIPPED weight -0.3 | #1289 | — |
-| 251 | EPS CAGR over the lookback (bottom-line compounding; both ends must be +) | fund factor | `eps_growth` | MEASURED |  | new reason, see receipt |
-| 252 | last-1y revenue growth, % (the REV-YoY column) — `rev_accel`'s fast leg the printed columns (REV-YoY / EPS-Yo… | fund factor | `rev_yoy` | MEASURED | #3 | new reason, see receipt |
-| 253 | last-1y EPS growth, % (the EPS-YoY column), off the row's OWN same-filing comparative -> split-proof the prin… | fund factor | `eps_yoy` | MEASURED |  | new reason, see receipt |
-| 254 | current net margin level, % (the NET% column). Distinct from op_margin: below-the-line items (tax, interest,… | fund factor | `net_margin` | MEASURED | #38 #817 | new reason, see receipt |
-| 255 | (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backte… | fund factor | `insider_net_buys_90d` | MEASURED |  | new reason, see receipt |
-| 256 | (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). Set in the backtest loop from the native as-o… | fund factor | `earnings_yield` | MEASURED | #2 #3 #139 #185 #413 #416 | new reason, see receipt |
-| 257 | (PEG) 1/PEG = earnings_yield · as-of CAGR (high = cheap-for-its-growth). THE LIVE RANKING TILT since 2026-07-… | fund factor | `peg_yield` | SHIPPED weight 0.07 | #3 #159 #405 #407 #581 #817 | — |
-| 258 | as-of net share-count change over the last year, sign-flipped (+ = shrinking share count = buying back). Full… | fund factor | `buyback_yield` | MEASURED | #3 #156 | new reason, see receipt |
-| 259 | as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersE… | fund factor | `roe` | MEASURED | #124 #157 | new reason, see receipt |
-| 260 | as-of return-on-capital level, % — `quality_return(roe, roa, net_margin)`: ROE when equity is a credible deno… | fund factor | `quality` | MEASURED | #124 #157 | new reason, see receipt |
-| 261 | (#43) return on INVESTED capital, pre-tax — `roic_return`, derived from levels already cached. The leverage-f… | fund factor | `roic` | SHIPPED weight 0.25 | #43 #124 #157 | — |
-| 262 | (EV/EBITDA) EBITDA ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew, same as earnings_yield) (#157)… | fund factor | `ebitda_yield` | MEASURED | #124 #157 #165 | new reason, see receipt |
-| 263 | % (op cash flow − capex) / revenue | fund factor | `fcf_margin` | MEASURED | #417 | new reason, see receipt |
-| 264 | × operating income / interest expense | fund factor | `interest_cover` | MEASURED | #417 #550 | new reason, see receipt |
-| 265 | % (cash − debt) / revenue | fund factor | `net_cash_rev` | MEASURED | #159 #550 | new reason, see receipt |
-| 266 | (round 109) the cyclical detector: NEGATED sample stddev of net_margin across the as-of lookback rows (higher… | fund factor | `margin_stability` | MEASURED | #165 #407 #415 | new reason, see receipt |
-| 267 | (P2) ACCRUAL GAP: how much of the as-of EPS is NOT backed by cash, NEGATED so high = safer, the same orientat… | fund factor | `accrual_gap` | MEASURED | #165 #410 | new reason, see receipt |
-| 268 | (P3) ASSET GROWTH over the same `yrs` lookback `rev_cagr` uses, NEGATED so high = safer, like every other sur… | fund factor | `asset_growth` | MEASURED | #410 | new reason, see receipt |
-| 269 | (#405) GROSS PROFITABILITY (Novy-Marx 2013): gross profit ÷ total assets, %, off the same as-of row. `gross_m… | fund factor | `gp_assets` | MEASURED | #165 #405 #417 #550 | new reason, see receipt |
-| 270 | (#407) CASH-BASED PROFITABILITY (Ball-Gerakos-Linnainmaa-Nikolaev 2016), proxied: free cash flow ÷ total asse… | fund factor | `cf_assets` | MEASURED | #407 #417 #550 | new reason, see receipt |
-| 271 | (#407) SALES-GROWTH STABILITY (Mohanram 2005, G-score signal G5): −sample std of year-over-year revenue growt… | fund factor | `rev_stability` | MEASURED | #165 #407 #412 #417 | 25 -> 27 ALSO READ, NOT RE-ASKED: held-book rev_stability AUC 12y/8y 0 |
-| 272 | (#408) FCF ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew) (#408) O'Shaughnessy value family; 27 -… | fund factor | `fcf_ev_yield` | MEASURED | #408 #523 | 5 (n=64/125, win 78% at 8y), sales_ev_yield and the composite BANKED FOR THE ~2027-09 REO… |
-| 273 | (#408) revenue ÷ EV, % (high = cheap). PROBE-ONLY, None live (#408) O'Shaughnessy value family; 27 -> 30 | fund factor | `sales_ev_yield` | MEASURED | #408 | new reason, see receipt |
-| 274 | (#408) O'Shaughnessy value composite: mean same-date percentile (0-100) of earnings, EBITDA, FCF and sales yi… | fund factor | `value_composite` | MEASURED | #408 | new reason, see receipt |
-| 275 | (#409) book ÷ market cap, % (high = cheap). PROBE-ONLY, None live (#409) Fama-French HML and size; 30 -> 32 | fund factor | `book_yield` | MEASURED | #409 | new reason, see receipt |
-| 276 | (#409) same-date percentile of mcap, 0-100, high = SMALL. Backtest stamps (#409) Fama-French HML and size; 30… | fund factor | `small_pct` | MEASURED | #409 #415 #416 | new reason, see receipt |
-| 277 | (#410) R&D ÷ market cap, % (high = R&D-rich). PROBE-ONLY, None live (#410) R&D/ME (Chan-Lakonishok-Sougiannis… | fund factor | `rnd_yield` | MEASURED | #49 #223 #410 #411 #413 #550 | new reason, see receipt |
-| 278 | (#410) net payout ÷ market cap, %, sign kept. PROBE-ONLY, None live (#410) R&D/ME (Chan-Lakonishok-Sougiannis… | fund factor | `payout_yield` | MEASURED | #410 | new reason, see receipt |
-| 279 | (#411) NET OPERATING ASSETS (Hirshleifer-Hou-Teoh-Zhang 2004): (net debt + book equity) ÷ total assets, %, NE… | fund factor | `noa` | MEASURED | #411 | new reason, see receipt |
-| 280 | (#411) OPERATING LEVERAGE (Novy-Marx 2011): operating costs ÷ total assets, %, costs = revenue − operating in… | fund factor | `op_leverage` | MEASURED | #410 #411 | new reason, see receipt |
-| 281 | (#412) Beneish-Lee-Nichols (FAJ 2013): a high M-score (`beneish_m`, as-of row vs a year earlier) predicts low… | fund factor | `mscore` | MEASURED | #412 | new reason, see receipt |
-| 282 | (#412) Beneish M, SBC ÷ revenue, goodwill ÷ assets, all negated; 36 -> 39 | fund factor | `sbc` | MEASURED | #412 | new reason, see receipt |
-| 283 | (#412) Beneish M, SBC ÷ revenue, goodwill ÷ assets, all negated; 36 -> 39 | fund factor | `goodwill` | MEASURED | #412 #417 | new reason, see receipt |
-| 284 | (#413) intangible capital, SG&A (and R&D) accumulated by `capital_stock`. `org_cap` = organization capital (δ… | fund factor | `org_cap` | MEASURED | #413 | new reason, see receipt |
-| 285 | (#413) Eisfeldt-Papanikolaou org capital ÷ assets, EKP intangible value; 39 -> 41 | fund factor | `int_yield` | MEASURED | #410 #412 #413 #550 | 71, BANKED FOR THE ~2027-09 REOPEN: if a value swap is weighed, int_yield vs peg_yield on… |
-| 286 | (#416) earnings_yield · chained EPS CAGR (Lynch's PEG). Shadow only (#416) PEG over EPS growth, over ROE·rete… | fund factor | `lynch_yield` | MEASURED | #416 | new reason, see receipt |
-| 287 | (#416) earnings_yield · `sgr_pct` (sustainable growth). Shadow only (#416) PEG over EPS growth, over ROE·rete… | fund factor | `sgr_yield` | MEASURED | #416 | new reason, see receipt |
-| 288 | (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live (#416) PEG over EPS growth, over ROE·… | fund factor | `exp_neg` | MEASURED | #416 | new reason, see receipt |
-| 289 | (#417) (gross profit − SG&A) ÷ assets, %; XBRL SG&A already excludes R&D (#417) Ball et al. R&D-adjusted OP ÷… | fund factor | `op_rd` | MEASURED | #417 | new reason, see receipt |
-| 290 | (#417) 1y EBITDA growth − 1y asset growth, pts; high = profit outgrew assets (#417) Ball et al. R&D-adjusted… | fund factor | `discipline` | MEASURED | #412 #417 | new reason, see receipt |
-| 291 | (#523) the FAIR family as factors, %: FAIR ÷ price (ranks like MOS%), the same on owner earnings (MOS-OE%), a… | fund factor | `fair_yield` | MEASURED | #522 #523 | new reason, see receipt |
-| 292 | (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49 | fund factor | `oe_fair_yield` | MEASURED | #523 | new reason, see receipt |
-| 293 | (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49 | fund factor | `fcf_cap_yield` | MEASURED | #415 #523 | new reason, see receipt |
-| 294 | (#531) Ibbotson et al. 2013 popularity: minus a year's shares traded over the as-of share count (high = UNPOP… | fund factor | `low_turnover` | MEASURED | #407 #415 #531 | 49 -> 50 (#407) forbids a re-ask on this horizon pair |
-| 295 | (#532) Arnott et al. 2026 "Fundamental Growth" / Eberhart-Maxwell-Siddique 2004: the 3y change in R&D over th… | fund factor | `rnd_growth` | MEASURED | #415 #532 | new reason, see receipt |
-| 296 | (#533) Wang 2019 (JFE 133(2)) receivables days NEGATED: −receivables ÷ revenue × 365 (high = collects fast).… | fund factor | `low_dro` | MEASURED | #415 #533 | new reason, see receipt |
-| 297 | (#549) capex ÷ operating cash flow NEGATED, % (high = capital-light: NVDA's ~5% reads −5). The ANNUAL twin of… | fund factor | `capex_light` | MEASURED | #545 #549 | new reason, see receipt |
-| 298 | (#1278) three AUC-table rows, weighted nowhere. `share_iss_5y`: minus the 5y diluted share count CAGR, % (hig… | fund factor | `share_iss_5y` | MEASURED | #1278 | new reason, see receipt |
-| 299 | (#1278) −net debt ÷ total assets: balance-sheet strength on the asset base; 54 -> 55 | fund factor | `netdebt_assets` | MEASURED | #1278 | new reason, see receipt |
-| 300 | (#1278) fiscal years of rising EPS in a row, cap 8; 55 -> 56 | fund factor | `eps_streak` | MEASURED | #1278 | new reason, see receipt |
-| 301 | (#1287) two AUC-table rows, weighted nowhere. `underdep`: Peddireddy 2021 under-depreciation, minus the 3y cu… | fund factor | `underdep` | MEASURED | #1287 | new reason, see receipt |
-| 302 | (#1287) Grinblatt-Han 2005 capital-gains overhang over the turnover-weighted 5y price; 57 -> 58 | fund factor | `cgo` | MEASURED | #1287 | new reason, see receipt |
-| 303 | (#1290) two more AUC-table rows, weighted nowhere. `ocf_at_chg`: operating cash flow over assets now minus a… | fund factor | `ocf_at_chg` | MEASURED | #1290 | new reason, see receipt |
-| 304 | (#1290) Titman-Wei-Xie 2004 capex over revenue against its 3y mean; 59 -> 60 | fund factor | `capex_abn` | MEASURED | #1287 #1289 #1290 #1297 #1298 #1303 | new reason, see receipt |
-| 305 | (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal and Ruenzi… | fund factor | `insider_own_pct` | MEASURED | #1301 | new reason, see receipt |
-| 306 | (Item 3) shows n/a until ≥2 factors are present | fund factor | `composite` | MEASURED |  | new reason, see receipt |
+| 164 | (#1311) the most crowd-favourite marks (`picks::consensus_marks`: S, D, H, W, I) a name may show and keep its… | knob | `growth_momentum_max_marks` | SHIPPED 5 | #1311 | — |
+| 165 | (#1304) the order the stock half of the growth table is read in, one id of `picks::RANKERS`. "shipped" (the D… | knob | `growth_ranker` | SHIPPED shipped | #584 #1304 | — |
+| 166 | (#101) at most this many stocks per GICS sector in the growth book; 0 = off and the DEFAULT. Nothing else in… | knob | `growth_sector_cap` | SHIPPED 0 | #101 #126 #557 #606 #630 #1142 | — |
+| 167 | (#97) restate `volatility_pct` (and its `downside_dev_pct` twin) in DAILY-equivalent units on any cadence, so… | knob | `vol_daily_equivalent` | OFF (false) | #97 #116 #117 #175 #176 #566 | Do not re-open by running the cap sweep — it would reproduce the VACUOUS reading this ent… |
+| 168 | (#96) restate a lane's `edge` in points PER YEAR beside the cumulative figure. `edge` is a spread of returns… | knob | `print_edge_annualized` | SHIPPED true | #37 #96 #176 #564 #1114 #1132 | — |
+| 169 | (#96) charge the turnover round trip once per ~6mo REBALANCE inside the hold instead of once per hold. `turno… | knob | `cost_per_rebalance` | OFF (false) | #96 #176 #177 | new reason, see receipt |
+| 170 | (#95) stop stamping TODAY's GICS sector onto a historical cutoff. `stamp_asset_class` fills `quote.sector` fr… | knob | `backtest_drop_lookahead_sector` | OFF (false) | #44 #94 #95 #96 #176 #177 | new reason, see receipt |
+| 171 | (#94) move the redenomination trim from PARSE time to CUTOFF time, so a splice cannot delete history that had… | knob | `splice_trim_point_in_time` | OFF (false) | #44 #94 #139 #173 #188 #189 | TO REOPEN: build the YRS check the block above asks for — does the column stop misstating… |
+| 172 | (#784) serve a SEC row as its strict twin (`core::FundRow::strict`, every line filed by revenue's filed date,… | knob | `sec_line_filed_gate` | SHIPPED true | #2 #3 #758 #784 | — |
+| 173 | (#93) split the peer group `demean` subtracts by LISTING MARKET as well as by cutoff bucket and asset class.… | knob | `demean_by_market` | SHIPPED true | #93 #94 #139 #173 #1231 #1232 | — |
+| 174 | (#122) DROP a ticker whose Yahoo mapping no longer points at the company it names. A dead company's ticker is… | knob | `drop_dead_ticker_series` | OFF (false) | #47 #93 #121 #122 #1231 #1232 | new reason, see receipt |
+| 175 | (#92) print, beside the top-N ladder table, how many rungs the eye is choosing between. WRITTEN FOR A DEBT TH… | knob | `print_selection_count` | SHIPPED true | #47 #91 #92 #120 #121 #1114 | — |
+| 176 | (#91) print, beside every window count that carries a verdict, how many INDEPENDENT trials that count is wort… | knob | `print_n_eff` | SHIPPED true | #89 #90 #91 #120 #124 #1114 | — |
+| 177 | (#135) print the same-window head-to-head a SECOND time against the 6-10 book, beside today's 11-20 one. WHY:… | knob | `print_h2h_mid_ladder` | SHIPPED true | #89 #90 #124 #130 #135 #1114 | — |
+| 178 | (#159) print, for the GROWTH lane, the held book split into the names that MADE money and those that LOST it,… | knob | `print_held_loser_factors` | SHIPPED true | #9 #100 #128 #129 #151 #159 | — |
+| 179 | (#1242) print, after the GROWTH lane, a seeded bootstrap band on each held-book loser AUC of the seven profit… | knob | `print_held_loser_bands` | OFF (false) | #1242 | new reason, see receipt |
+| 180 | (#1278) print, after the GROWTH lane, the held-book loser AUC of every registered fund factor twice: raw, and… | knob | `print_sector_neutral_auc` | OFF (false) | #1278 | new reason, see receipt |
+| 181 | (#90) how much history to DROP off the end of the earlier side of every train/test and early/late split, so t… | knob | `split_purge_months` | SHIPPED 0 | #89 #90 #91 #124 #151 #160 | — |
+| 182 | (#1227) resample whole TICKERS in `bootstrap_edge_ci` instead of runs of ~6-month cutoff buckets. WHY: (#119)… | knob | `bootstrap_cluster` | SHIPPED true | #89 #119 #1227 | — |
+| 183 | (#119) block length, in ~6-month cutoff buckets, for `bootstrap_edge_ci`, where 0 means DERIVE IT FROM THE HO… | knob | `bootstrap_block_buckets` | SHIPPED 0 | #89 #119 | — |
+| 184 | (#88) the OTHER half of the real-vs-nominal skew, and the same shape: `core::backtest_quote` hardcoded an EMP… | knob | `backtest_anchor_windows` | OFF (false) | #88 #89 #119 #120 #149 #188 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
+| 185 | (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw cl… | knob | `use_adjusted_close` | OFF (false) | #53 #266 #304 #804 #807 #808 | A re-open needs a PRE-REGISTERED total-return refit of `growth_min_cagr`, graded X vs A o… |
+| 186 | (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return comp… | knob | `backtest_tr_ruler` | OFF (false) | #120 #149 #188 #303 #304 #804 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
+| 187 | (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone) | knob | `nupl_euphoria` | SHIPPED 0.5 |  | — |
+| 188 | (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off | knob | `nupl_damp_floor` | SHIPPED 0.5 |  | — |
+| 189 | (4) NUPL below this starts BOOSTING crypto scores (~0.25 = fear/accumulation zone); 0 = boost off | knob | `nupl_capitulation` | SHIPPED 0.25 |  | — |
+| 190 | (4) crypto-score multiplier at NUPL=0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — k… | knob | `nupl_boost_ceiling` | SHIPPED 1.3 |  | — |
+| 191 | (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap) exceeds this. The cla… | knob | `crypto_max_mvrv` | SHIPPED 1.6 | #37 #45 #64 #395 #835 | — |
+| 192 | (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off | knob | `sharpe_weight` | SHIPPED 0.05 | #60 #62 #63 #70 #178 #599 | — |
+| 193 | (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation… | knob | `onsale_sharpe_weight` | SHIPPED 0.0 | #60 #62 #63 #70 #178 #599 | — |
+| 194 | (B) cap on that CAGR/volatility ratio fed into the reward | knob | `sharpe_cap` | SHIPPED 15.0 | #97 #100 | — |
+| 195 | (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily s… | knob | `sharpe_cap_etf` | SHIPPED 9.0 | #37 #97 #100 | — |
+| 196 | (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off | knob | `calmar_weight` | SHIPPED 0.0 |  | — |
+| 197 | (C) cap on that CAGR/max-drawdown ratio fed into the reward | knob | `calmar_cap` | SHIPPED 2.0 |  | — |
+| 198 | dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD | knob | `prefer_eur` | SHIPPED true |  | — |
+| 199 | (#1154) growth GATE (stocks only): lowers `growth_min_cagr` by this many %/yr per tenfold of market cap above… | knob | `growth_min_cagr_size_slope` | SHIPPED 0.0 | #192 #266 #316 #317 #318 #1154 | — |
+| 200 | (#1154) the market cap at which `growth_min_cagr_size_slope` starts to lower the floor; at or below it the fl… | knob | `growth_min_cagr_size_pivot` | SHIPPED 10000000000 | #192 #266 #1154 #1156 | — |
+| 201 | deleted after a measurement refused it | deleted knob | `growth_min_net_margin` | RETIRED | #38 #817 | new reason, see receipt |
+| 202 | deleted after a measurement refused it | deleted knob | `growth_max_margin_swing` | RETIRED | #39 #817 | new reason, see receipt |
+| 203 | deleted after a measurement refused it | deleted knob | `growth_max_dilution_pct` | RETIRED | #817 | new reason, see receipt |
+| 204 | deleted after a measurement refused it | deleted knob | `growth_min_interest_cover` | RETIRED | #817 | new reason, see receipt |
+| 205 | deleted after a measurement refused it | deleted knob | `growth_min_fcf_margin` | RETIRED | #817 | new reason, see receipt |
+| 206 | deleted after a measurement refused it | deleted knob | `growth_min_net_cash_rev` | RETIRED | #817 | new reason, see receipt |
+| 207 | deleted after a measurement refused it | deleted knob | `growth_soft_life_hard` | RETIRED | #568 #817 | new reason, see receipt |
+| 208 | deleted after a measurement refused it | deleted knob | `growth_hard_life_floor` | RETIRED | #576 #817 | new reason, see receipt |
+| 209 | deleted after a measurement refused it | deleted knob | `growth_hard_loss` | RETIRED | #576 #817 | new reason, see receipt |
+| 210 | deleted after a measurement refused it | deleted knob | `growth_soft_drop_misses` | RETIRED | #582 #817 | new reason, see receipt |
+| 211 | deleted after a measurement refused it | deleted knob | `growth_soft_hard_gates` | RETIRED | #566 #797 #802 #803 #817 | new reason, see receipt |
+| 212 | deleted after a measurement refused it | deleted knob | `growth_overext_peg_waive` | RETIRED | #581 #817 | new reason, see receipt |
+| 213 | deleted after a measurement refused it | deleted knob | `growth_overext_backed_floor` | RETIRED | #577 #817 | new reason, see receipt |
+| 214 | deleted after a measurement refused it | deleted knob | `growth_overext_trend_adjust` | RETIRED | #579 #817 | new reason, see receipt |
+| 215 | deleted after a measurement refused it | deleted knob | `growth_peg_taper_k` | RETIRED | #550 #817 | new reason, see receipt |
+| 216 | deleted after a measurement refused it | deleted knob | `growth_red_flag_dock` | RETIRED | #729 #730 #817 | new reason, see receipt |
+| 217 | deleted after a measurement refused it | deleted knob | `growth_momentum_miss_cap` | RETIRED | #585 #817 | new reason, see receipt |
+| 218 | deleted after a measurement refused it | deleted knob | `growth_momentum_keep_age` | RETIRED | #586 #817 | new reason, see receipt |
+| 219 | deleted after a measurement refused it | deleted knob | `growth_gate_on_tr_cagr` | RETIRED | #99 #303 #806 #817 | new reason, see receipt |
+| 220 | deleted after a measurement refused it | deleted knob | `underwater_monthly` | RETIRED | #3 #223 #817 | new reason, see receipt |
+| 221 | deleted after a measurement refused it | deleted knob | `hold_domicile_penalty` | RETIRED | #213 #226 #235 #267 #268 #817 | WHY THIS CLEARS (#235)'s BAR for re-opening a refused floor -- "a tier-set chosen for a r… |
+| 222 | deleted after a measurement refused it | deleted knob | `backtest_calendar_cadence` | RETIRED | #117 #817 | new reason, see receipt |
+| 223 | deleted after a measurement refused it | deleted knob | `growth_tr_life_weight` | RETIRED | #572 #818 | new reason, see receipt |
+| 224 | deleted after a measurement refused it | deleted knob | `growth_tr_life_penalty` | RETIRED | #572 #818 | new reason, see receipt |
+| 225 | deleted after a measurement refused it | deleted knob | `growth_tr_life_pivot` | RETIRED | #572 #818 | new reason, see receipt |
+| 226 | deleted after a measurement refused it | deleted knob | `growth_er_weight` | RETIRED | #145 #818 | (#145) then found the same blindness had hollowed `growth_er_weight`'s composite and four… |
+| 227 | deleted after a measurement refused it | deleted knob | `growth_er_cap` | RETIRED | #818 | new reason, see receipt |
+| 228 | deleted after a measurement refused it | deleted knob | `growth_record_weight` | RETIRED | #133 #818 | new reason, see receipt |
+| 229 | deleted after a measurement refused it | deleted knob | `growth_rank_normalise` | RETIRED | #144 #818 | new reason, see receipt |
+| 230 | deleted after a measurement refused it | deleted knob | `growth_leg_dock` | RETIRED | #566 #818 | new reason, see receipt |
+| 231 | deleted after a measurement refused it | deleted knob | `growth_base_offset` | RETIRED | #144 #150 #818 | new reason, see receipt |
+| 232 | deleted after a measurement refused it | deleted knob | `growth_record_full_years` | RETIRED | #818 | new reason, see receipt |
+| 233 | deleted after a measurement refused it | deleted knob | `growth_geomean_fold` | RETIRED | #8 #48 #819 | new reason, see receipt |
+| 234 | deleted after a measurement refused it | deleted knob | `growth_max_trend_r2` | RETIRED | #1277 #1280 | new reason, see receipt |
+| 235 | deleted after a measurement refused it | deleted knob | `growth_min_underwater_yrs` | RETIRED | #1277 #1280 #1286 | new reason, see receipt |
+| 236 | deleted after a measurement refused it | deleted knob | `growth_untested_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
+| 237 | deleted after a measurement refused it | deleted knob | `growth_stretch_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
+| 238 | deleted after a measurement refused it | deleted knob | `growth_refuse_financials` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
+| 239 | deleted after a measurement refused it | deleted knob | `growth_financial_max_asset_growth` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
+| 240 | deleted after a measurement refused it | deleted knob | `growth_refuse_sector_top_dog` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
+| 241 | deleted after a measurement refused it | deleted knob | `growth_consensus_min` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
+| 242 | deleted after a measurement refused it | deleted knob | `growth_consensus_dock` | RETIRED | #1297 | new reason, see receipt |
+| 243 | deleted after a measurement refused it | deleted knob | `growth_hard_tags` | RETIRED | #1297 | new reason, see receipt |
+| 244 | deleted after a measurement refused it | deleted knob | `growth_max_sharpe` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
+| 245 | deleted after a measurement refused it | deleted knob | `growth_max_rel_win` | RETIRED | #1303 | new reason, see receipt |
+| 246 | deleted after a measurement refused it | deleted knob | `growth_min_cagr_pct` | RETIRED | #1298 | new reason, see receipt |
+| 247 | revenue CAGR over the lookback (proven top-line compounding) | fund factor | `rev_cagr` | MEASURED | #165 #676 #741 #742 | do not re-ask rev_cagr as a fund term at these lookback, so `fund 12` demanded 12y of sta… |
+| 248 | last-1y revenue growth minus that long CAGR (top-line accelerating) | fund factor | `rev_accel` | MEASURED | #676 | new reason, see receipt |
+| 249 | current gross margin level (pricing power / moat) | fund factor | `gross_margin` | MEASURED | #159 #165 #405 #407 | new reason, see receipt |
+| 250 | current operating margin level (operating efficiency) | fund factor | `op_margin` | MEASURED |  | new reason, see receipt |
+| 251 | op-margin now minus ~1y ago (margin expanding = strengthening) | fund factor | `margin_trend` | SHIPPED weight -0.3 | #1289 | — |
+| 252 | EPS CAGR over the lookback (bottom-line compounding; both ends must be +) | fund factor | `eps_growth` | MEASURED |  | new reason, see receipt |
+| 253 | last-1y revenue growth, % (the REV-YoY column) — `rev_accel`'s fast leg the printed columns (REV-YoY / EPS-Yo… | fund factor | `rev_yoy` | MEASURED | #3 | new reason, see receipt |
+| 254 | last-1y EPS growth, % (the EPS-YoY column), off the row's OWN same-filing comparative -> split-proof the prin… | fund factor | `eps_yoy` | MEASURED |  | new reason, see receipt |
+| 255 | current net margin level, % (the NET% column). Distinct from op_margin: below-the-line items (tax, interest,… | fund factor | `net_margin` | MEASURED | #38 #817 | new reason, see receipt |
+| 256 | (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backte… | fund factor | `insider_net_buys_90d` | MEASURED |  | new reason, see receipt |
+| 257 | (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). Set in the backtest loop from the native as-o… | fund factor | `earnings_yield` | MEASURED | #2 #3 #139 #185 #413 #416 | new reason, see receipt |
+| 258 | (PEG) 1/PEG = earnings_yield · as-of CAGR (high = cheap-for-its-growth). THE LIVE RANKING TILT since 2026-07-… | fund factor | `peg_yield` | SHIPPED weight 0.07 | #3 #159 #405 #407 #581 #817 | — |
+| 259 | as-of net share-count change over the last year, sign-flipped (+ = shrinking share count = buying back). Full… | fund factor | `buyback_yield` | MEASURED | #3 #156 | new reason, see receipt |
+| 260 | as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersE… | fund factor | `roe` | MEASURED | #124 #157 | new reason, see receipt |
+| 261 | as-of return-on-capital level, % — `quality_return(roe, roa, net_margin)`: ROE when equity is a credible deno… | fund factor | `quality` | MEASURED | #124 #157 | new reason, see receipt |
+| 262 | (#43) return on INVESTED capital, pre-tax — `roic_return`, derived from levels already cached. The leverage-f… | fund factor | `roic` | SHIPPED weight 0.25 | #43 #124 #157 | — |
+| 263 | (EV/EBITDA) EBITDA ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew, same as earnings_yield) (#157)… | fund factor | `ebitda_yield` | MEASURED | #124 #157 #165 | new reason, see receipt |
+| 264 | % (op cash flow − capex) / revenue | fund factor | `fcf_margin` | MEASURED | #417 | new reason, see receipt |
+| 265 | × operating income / interest expense | fund factor | `interest_cover` | MEASURED | #417 #550 | new reason, see receipt |
+| 266 | % (cash − debt) / revenue | fund factor | `net_cash_rev` | MEASURED | #159 #550 | new reason, see receipt |
+| 267 | (round 109) the cyclical detector: NEGATED sample stddev of net_margin across the as-of lookback rows (higher… | fund factor | `margin_stability` | MEASURED | #165 #407 #415 | new reason, see receipt |
+| 268 | (P2) ACCRUAL GAP: how much of the as-of EPS is NOT backed by cash, NEGATED so high = safer, the same orientat… | fund factor | `accrual_gap` | MEASURED | #165 #410 | new reason, see receipt |
+| 269 | (P3) ASSET GROWTH over the same `yrs` lookback `rev_cagr` uses, NEGATED so high = safer, like every other sur… | fund factor | `asset_growth` | MEASURED | #410 | new reason, see receipt |
+| 270 | (#405) GROSS PROFITABILITY (Novy-Marx 2013): gross profit ÷ total assets, %, off the same as-of row. `gross_m… | fund factor | `gp_assets` | MEASURED | #165 #405 #417 #550 | new reason, see receipt |
+| 271 | (#407) CASH-BASED PROFITABILITY (Ball-Gerakos-Linnainmaa-Nikolaev 2016), proxied: free cash flow ÷ total asse… | fund factor | `cf_assets` | MEASURED | #407 #417 #550 | new reason, see receipt |
+| 272 | (#407) SALES-GROWTH STABILITY (Mohanram 2005, G-score signal G5): −sample std of year-over-year revenue growt… | fund factor | `rev_stability` | MEASURED | #165 #407 #412 #417 | 25 -> 27 ALSO READ, NOT RE-ASKED: held-book rev_stability AUC 12y/8y 0 |
+| 273 | (#408) FCF ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew) (#408) O'Shaughnessy value family; 27 -… | fund factor | `fcf_ev_yield` | MEASURED | #408 #523 | 5 (n=64/125, win 78% at 8y), sales_ev_yield and the composite BANKED FOR THE ~2027-09 REO… |
+| 274 | (#408) revenue ÷ EV, % (high = cheap). PROBE-ONLY, None live (#408) O'Shaughnessy value family; 27 -> 30 | fund factor | `sales_ev_yield` | MEASURED | #408 | new reason, see receipt |
+| 275 | (#408) O'Shaughnessy value composite: mean same-date percentile (0-100) of earnings, EBITDA, FCF and sales yi… | fund factor | `value_composite` | MEASURED | #408 | new reason, see receipt |
+| 276 | (#409) book ÷ market cap, % (high = cheap). PROBE-ONLY, None live (#409) Fama-French HML and size; 30 -> 32 | fund factor | `book_yield` | MEASURED | #409 | new reason, see receipt |
+| 277 | (#409) same-date percentile of mcap, 0-100, high = SMALL. Backtest stamps (#409) Fama-French HML and size; 30… | fund factor | `small_pct` | MEASURED | #409 #415 #416 | new reason, see receipt |
+| 278 | (#410) R&D ÷ market cap, % (high = R&D-rich). PROBE-ONLY, None live (#410) R&D/ME (Chan-Lakonishok-Sougiannis… | fund factor | `rnd_yield` | MEASURED | #49 #223 #410 #411 #413 #550 | new reason, see receipt |
+| 279 | (#410) net payout ÷ market cap, %, sign kept. PROBE-ONLY, None live (#410) R&D/ME (Chan-Lakonishok-Sougiannis… | fund factor | `payout_yield` | MEASURED | #410 | new reason, see receipt |
+| 280 | (#411) NET OPERATING ASSETS (Hirshleifer-Hou-Teoh-Zhang 2004): (net debt + book equity) ÷ total assets, %, NE… | fund factor | `noa` | MEASURED | #411 | new reason, see receipt |
+| 281 | (#411) OPERATING LEVERAGE (Novy-Marx 2011): operating costs ÷ total assets, %, costs = revenue − operating in… | fund factor | `op_leverage` | MEASURED | #410 #411 | new reason, see receipt |
+| 282 | (#412) Beneish-Lee-Nichols (FAJ 2013): a high M-score (`beneish_m`, as-of row vs a year earlier) predicts low… | fund factor | `mscore` | MEASURED | #412 | new reason, see receipt |
+| 283 | (#412) Beneish M, SBC ÷ revenue, goodwill ÷ assets, all negated; 36 -> 39 | fund factor | `sbc` | MEASURED | #412 | new reason, see receipt |
+| 284 | (#412) Beneish M, SBC ÷ revenue, goodwill ÷ assets, all negated; 36 -> 39 | fund factor | `goodwill` | MEASURED | #412 #417 | new reason, see receipt |
+| 285 | (#413) intangible capital, SG&A (and R&D) accumulated by `capital_stock`. `org_cap` = organization capital (δ… | fund factor | `org_cap` | MEASURED | #413 | new reason, see receipt |
+| 286 | (#413) Eisfeldt-Papanikolaou org capital ÷ assets, EKP intangible value; 39 -> 41 | fund factor | `int_yield` | MEASURED | #410 #412 #413 #550 | 71, BANKED FOR THE ~2027-09 REOPEN: if a value swap is weighed, int_yield vs peg_yield on… |
+| 287 | (#416) earnings_yield · chained EPS CAGR (Lynch's PEG). Shadow only (#416) PEG over EPS growth, over ROE·rete… | fund factor | `lynch_yield` | MEASURED | #416 | new reason, see receipt |
+| 288 | (#416) earnings_yield · `sgr_pct` (sustainable growth). Shadow only (#416) PEG over EPS growth, over ROE·rete… | fund factor | `sgr_yield` | MEASURED | #416 | new reason, see receipt |
+| 289 | (#416) `ey_cagr`, high = the multiple CONTRACTED. PROBE-ONLY, None live (#416) PEG over EPS growth, over ROE·… | fund factor | `exp_neg` | MEASURED | #416 | new reason, see receipt |
+| 290 | (#417) (gross profit − SG&A) ÷ assets, %; XBRL SG&A already excludes R&D (#417) Ball et al. R&D-adjusted OP ÷… | fund factor | `op_rd` | MEASURED | #417 | new reason, see receipt |
+| 291 | (#417) 1y EBITDA growth − 1y asset growth, pts; high = profit outgrew assets (#417) Ball et al. R&D-adjusted… | fund factor | `discipline` | MEASURED | #412 #417 | new reason, see receipt |
+| 292 | (#523) the FAIR family as factors, %: FAIR ÷ price (ranks like MOS%), the same on owner earnings (MOS-OE%), a… | fund factor | `fair_yield` | MEASURED | #522 #523 | new reason, see receipt |
+| 293 | (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49 | fund factor | `oe_fair_yield` | MEASURED | #523 | new reason, see receipt |
+| 294 | (#523) the page's FAIR family: FAIR ÷ price, FAIR-OE ÷ price, 3y FCF ÷ cap; 46 -> 49 | fund factor | `fcf_cap_yield` | MEASURED | #415 #523 | new reason, see receipt |
+| 295 | (#531) Ibbotson et al. 2013 popularity: minus a year's shares traded over the as-of share count (high = UNPOP… | fund factor | `low_turnover` | MEASURED | #407 #415 #531 | 49 -> 50 (#407) forbids a re-ask on this horizon pair |
+| 296 | (#532) Arnott et al. 2026 "Fundamental Growth" / Eberhart-Maxwell-Siddique 2004: the 3y change in R&D over th… | fund factor | `rnd_growth` | MEASURED | #415 #532 | new reason, see receipt |
+| 297 | (#533) Wang 2019 (JFE 133(2)) receivables days NEGATED: −receivables ÷ revenue × 365 (high = collects fast).… | fund factor | `low_dro` | MEASURED | #415 #533 | new reason, see receipt |
+| 298 | (#549) capex ÷ operating cash flow NEGATED, % (high = capital-light: NVDA's ~5% reads −5). The ANNUAL twin of… | fund factor | `capex_light` | MEASURED | #545 #549 | new reason, see receipt |
+| 299 | (#1278) three AUC-table rows, weighted nowhere. `share_iss_5y`: minus the 5y diluted share count CAGR, % (hig… | fund factor | `share_iss_5y` | MEASURED | #1278 | new reason, see receipt |
+| 300 | (#1278) −net debt ÷ total assets: balance-sheet strength on the asset base; 54 -> 55 | fund factor | `netdebt_assets` | MEASURED | #1278 | new reason, see receipt |
+| 301 | (#1278) fiscal years of rising EPS in a row, cap 8; 55 -> 56 | fund factor | `eps_streak` | MEASURED | #1278 | new reason, see receipt |
+| 302 | (#1287) two AUC-table rows, weighted nowhere. `underdep`: Peddireddy 2021 under-depreciation, minus the 3y cu… | fund factor | `underdep` | MEASURED | #1287 | new reason, see receipt |
+| 303 | (#1287) Grinblatt-Han 2005 capital-gains overhang over the turnover-weighted 5y price; 57 -> 58 | fund factor | `cgo` | MEASURED | #1287 | new reason, see receipt |
+| 304 | (#1290) two more AUC-table rows, weighted nowhere. `ocf_at_chg`: operating cash flow over assets now minus a… | fund factor | `ocf_at_chg` | MEASURED | #1290 | new reason, see receipt |
+| 305 | (#1290) Titman-Wei-Xie 2004 capex over revenue against its 3y mean; 59 -> 60 | fund factor | `capex_abn` | MEASURED | #1287 #1289 #1290 #1297 #1298 #1303 | new reason, see receipt |
+| 306 | (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal and Ruenzi… | fund factor | `insider_own_pct` | MEASURED | #1301 | new reason, see receipt |
+| 307 | (Item 3) shows n/a until ≥2 factors are present | fund factor | `composite` | MEASURED |  | new reason, see receipt |
