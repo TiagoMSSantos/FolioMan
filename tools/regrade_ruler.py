@@ -274,7 +274,7 @@ def report(logs, primary="pit"):
         bands = got("band", prim)
         band = "OUTSIDE" if bands and all(bands) else ("INSIDE" if bands else "n/a")
         flip = "  <- FLIPS" if ru_pass != old_pass else ""
-        print(f"  {label[:40]:<40} RU {'pass' if ru_pass else 'FAIL'}   old {'pass' if old_pass else 'FAIL'}   band {band}   cells {len(cells)}{flip}")
+        print(f"  RU {'pass' if ru_pass else 'FAIL'}   old {'pass' if old_pass else 'FAIL'}   band {band:<7}   cells {len(cells)}   {label}{flip}")
 
 
 class Tests(unittest.TestCase):

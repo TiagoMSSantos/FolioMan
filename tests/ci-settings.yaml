@@ -22677,7 +22677,7 @@ buy_heuristic:
   # (#1297) retired: growth_consensus_min: 0 # `consensus`: refuse a stock showing at least this many of five crowd marks. 0 = off
   # (#1297) retired: growth_consensus_dock: false # dock each crowd mark as one more failed gate. false = off
   # (#1297) retired: growth_hard_tags: [] # gate tags that refuse even under growth_gate_soft. [] = none
-  # (#1298) retired: growth_min_cagr_rel: 0.0 # a second long-leg floor, the previous cutoff's pool median plus this. 0 = off
+  growth_min_cagr_rel: 0.0 # (#1298) a second long-leg floor for stocks, the previous cutoff's pool median plus this; (#1308) restored for its one confirmation run. 0 = off
   # (#1298) retired: growth_min_cagr_pct: 0.0 # ... or that pool's CAGR at this percentile. 0 = off
   # (#1303) retired: growth_max_sharpe: 0.0 # refuse a stock whose long CAGR over volatility is at or above this. 0 = off
   # (#1303) retired: growth_max_rel_win: 0.0 # refuse a stock that beat the index in this share of 3-year windows. 0 = off
@@ -25126,6 +25126,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # CREDIT: bankruptcy cases come from the Florida-UCLA-LoPucki Bankruptcy Research Database (BRD); the roster
 #   prints that line in its header whenever a BRD table went into the build, and the BRD table itself is never
 #   committed.
+# (#1308) VERDICT, 2026-11-03: re-grade of the kept probe logs under (#1306), no new run. Five rows FLIP (RU
+#   pass where the old bar refused); four of them read INSIDE the noise band, so the band refuses them and
+#   they stay closed: (#1298) pool plus 5, (#1297) `growth_consensus_min` 3 soft, (#1303) `growth_max_sharpe`
+#   12, and (#1290) ocf_at_chg 1.0 (no null band in that log, but its 12y mean gain is 0.0 and its 8y mean
+#   falls 0.3, so no band could read OUTSIDE). The fifth is a FINDING ABOUT THE RULER: (#1298) pool plus 8
+#   passes RU1-RU3 and reads OUTSIDE at 12y and 8y (12y +3.4|+3.3 against +3.1|+2.8, 8y +3.6|+4.0 against
+#   +3.4|+3.3); its old refusal was the rank-1 head-to-head, and RU1 (top-5 against 6-10) reads 23/38 against
+#   24/38 at 12y and 20/40 against 21/40 at 8y, one window behind. Every other row fails both bars or passes
+#   both: K3 hard and S15 pass both and stay INSIDE; underdep +0.3 and stack +0.2 pass both on logs with no
+#   band; the dock, capex_abn, K2, pct 75/80, `growth_min_cagr` 15, relative win 0.95/0.90, underdep
+#   -0.3/-1.0/+1.0 and stack +0.3/+0.5 fail both. (#1299) reads as before. (#1304) is graded by (#1309).
+#   EXPECTED, quoted against what happened: plus 8 passes RU1 and RU3, HELD (RU2 passes too, worst five
+#   -2.7/-3.3 equal to control); the dock decided by RU2, MISSED, it fails RU1 as well (22/38, 18/40) and
+#   RU2 at 12y and 8y; capex_abn passes all three, MISSED, it fails RU1 (-0.02 at 8y 22/46, under half;
+#   -0.05 and -0.1 at 12y 22/38, two behind); relative win 0.95 passes RU1-RU3 and stays INSIDE, HELD, and it
+#   also fails the kept pool rule on stress 20y and 12y; underdep +0.3 passes RU1, HELD.
+#   CONFIRMATION RUN for plus 8 (the one run (#1306) grants): `growth_min_cagr_rel` and its walk stamp
+#   (`backtest::stamp_pool_cagr`, Quote.pool_cagr_median) come back out of `config::RETIRED`, shipped 0.
+#   Grid [{}, {"growth_min_cagr_rel":8}, {"growth_min_cagr_rel":10}] on `universe fund pit` at 12, 8 and 20
+#   and `universe stress` at 20 12 8, rescore `nulls=200 holdout`. Pair rule (#1291): 8 and 10 are the
+#   neighbours, and the looser, 8, is the row that would ship. PASS = both rows pass RU1-RU3 and the pool rule
+#   on every cell and read OUTSIDE at 12y and 8y; then `reveal` reads the holdout sign once.
+#   EXPECTED, written before the run: the grid reproduces the (#1298) numbers to the decimal (the restore is
+#   the same code), plus 8 passes, plus 10 lifts the mean further but drops RU1 under half at 8y, so the pair
+#   FAILS and the knob closes for good. If the pair passes and the holdout sign is positive, the live screen
+#   still has no pool median to read (the stamp is walk-only, so None live and the bar is off live); shipping
+#   then needs a live stamp in its own receipt and one owner question first.
+#   REVERT RULE: if the pair fails, the knob, the stamp and the Quote field go back into `config::RETIRED`
+#   and are closed under both bars.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

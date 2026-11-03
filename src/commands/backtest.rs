@@ -1015,6 +1015,7 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         println!("\n══ rescore row {line} ══");
         let mut s = samples.clone();
         stamp_sector_cohorts(&mut s, &bench, &tuning); // on every sample: a cutoff's floors read the one before it
+        stamp_pool_cagr(&mut s, &tuning); // (#1298) the pool bar reads `long_cagr_pct` under the row's rules, so redone per row
         stamp_admit_tenure(&mut s, &tuning); // (#1304) judged under the row's rules, so redone per row
         let (s, sealed) = if holdout { split_holdout(s) } else { (s, Vec::new()) };
         if holdout {
@@ -2468,6 +2469,7 @@ pub async fn run(args: Vec<String>) {
     // stamp is written and never read, so each number below is unchanged — and the SECTOR BOOK row can
     // still price the door for free by re-scoring with the knob flipped.
     stamp_sector_cohorts(&mut samples, &bench, tuning);
+    stamp_pool_cagr(&mut samples, tuning); // (#1298) the pool's CAGR bar, before the tenure that judges through it
     stamp_admit_tenure(&mut samples, tuning); // (#1304) judges through `growth_score`, so after every stamp it reads
     lap("stamps");
     if let Some(p) = std::env::var_os("FOLIOMAN_BACKTEST_SAMPLES") {
@@ -2499,6 +2501,7 @@ pub async fn run(args: Vec<String>) {
     stamp_sector_cohorts(&mut books, &bench, tuning);
     stamp_top_dogs(&mut books); // (#1277) for the same reason
     stamp_regime(&mut books, &bench); // (#1284) and the regime valve's, or an arm setting `growth_regime_slack_pct` prints the control's DCA lines
+    stamp_pool_cagr(&mut books, tuning); // (#1298) and the pool bar's, for the same reason
     stamp_admit_tenure(&mut books, tuning); // (#1304) last, for the reason above
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
@@ -6727,6 +6730,33 @@ fn stamp_top_dogs(samples: &mut [Sample]) {
             let dog = key(s).map(|(sector, m)| m >= top[&sector]);
             Arc::make_mut(&mut s.quote).sector_top_dog = dog;
         }
+    }
+}
+
+/// (#1298) Stamp `pool_cagr_median` on every sample: the median long CAGR (`picks::long_cagr_pct`) of the
+/// stocks at the cutoff BEFORE its own. The previous cutoff for the reason [`stamp_sector_cohorts`] gives:
+/// a name never helps set its own bar. Under 20 such stocks reads None, so the first cutoff, with no
+/// predecessor, reads None too. (#1308) restored for the `growth_min_cagr_rel` confirmation run.
+fn stamp_pool_cagr(samples: &mut [Sample], tuning: &BuyHeuristic) {
+    let median = |mut v: Vec<f64>| -> Option<f64> {
+        if v.len() < 20 {
+            return None;
+        }
+        v.sort_by(f64::total_cmp);
+        Some(v[((v.len() - 1) as f64 * 0.5).round() as usize])
+    };
+    let mut order: Vec<usize> = (0..samples.len()).collect();
+    order.sort_by_key(|&i| samples[i].date);
+    let (mut stamp, mut cohort, mut open) = (None, Vec::new(), None);
+    for i in order {
+        let date = samples[i].date;
+        if open != Some(date) {
+            stamp = median(std::mem::take(&mut cohort));
+            open = Some(date);
+        }
+        let q = &samples[i].quote;
+        cohort.extend(picks::long_cagr_pct(q, tuning).filter(|_| picks::asset_class(q) == 2));
+        Arc::make_mut(&mut samples[i].quote).pool_cagr_median = stamp;
     }
 }
 
@@ -10967,6 +10997,35 @@ mod tests {
         assert_eq!(read(bars(60, &|_| 50.0)), None, "60 months: five windows");
     }
 
+    /// (#1298) The pool bar at a cutoff is drawn from the cutoff before it: 21 stocks at the first date give
+    /// the second its median (v[10]), while the first date reads None. Under 20 stocks reads None and a
+    /// fund never counts.
+    #[test]
+    fn stamp_pool_cagr_reads_the_previous_cutoffs_stocks() {
+        let (d1, d2) = (ymd(2010, 1, 1), ymd(2010, 7, 1));
+        let pool = |n: u32| -> Vec<Sample> {
+            let mut v = vec![sector_sample(d2, "LATE", "Tech", 999.0)];
+            v.extend((1..=n).map(|k| sector_sample(d1, &format!("S{k}"), "Tech", 10.0 * f64::from(k))));
+            v
+        };
+        let t = BuyHeuristic::default();
+        let mut cagr: Vec<f64> = pool(21).iter().skip(1).filter_map(|s| picks::long_cagr_pct(&s.quote, &t)).collect();
+        assert_eq!(cagr.len(), 21, "every fixture stock has a long leg");
+        cagr.sort_by(f64::total_cmp);
+        let stamped = |mut v: Vec<Sample>| {
+            stamp_pool_cagr(&mut v, &t);
+            v.iter().map(|s| s.quote.pool_cagr_median).collect::<Vec<_>>()
+        };
+        let got = stamped(pool(21));
+        assert_eq!(got[0], Some(cagr[10]));
+        assert!(got[1..].iter().all(Option::is_none), "the first cutoff has no predecessor");
+        assert!(stamped(pool(20))[0].is_some(), "20 stocks is enough");
+        assert_eq!(stamped(pool(19))[0], None, "19 is not");
+        let mut fund = pool(20);
+        Arc::make_mut(&mut fund[20].quote).instrument_type = "ETF".into();
+        assert_eq!(stamped(fund)[0], None, "a fund is not in the stock pool");
+    }
+
     /// (#1304) Tenure counts months of passing in a row, whatever order the samples come in: A passes at
     /// four half-year cutoffs (0, 6, 12, 18), B fails the third (None) and starts again at 0, and C,
     /// absent from the second, starts again at 0 too.
@@ -15065,6 +15124,8 @@ mod tests {
         // (#1300) the coin twin: LIVE on crypto, INERT on etf and stock by scope, cause (b)
         ("growth_min_age_years_crypto", |t, v| t.growth_min_age_years_crypto = v, 1e9),
         ("growth_min_range_pct_8y", |t, v| t.growth_min_range_pct_8y = v, 1e9),
+        // (#1298) the pool bar reads the walk's `stamp_pool_cagr`, never run on this path: cause (a).
+        ("growth_min_cagr_rel", |t, v| t.growth_min_cagr_rel = v, 1e9),
     ];
 
     /// WHICH GROWTH KNOBS CAN MOVE A BACKTEST NUMBER AT ALL, per asset class.
@@ -15102,7 +15163,8 @@ mod tests {
     ///       (aum_eur), `growth_ter_drag` (expense_ratio), `growth_fx_damp` (quote_currency),
     ///       `growth_min_range_pct_8y` (stats_8y). None of those four is assigned by
     ///       `core::backtest_quote` (`growth_min_age_years` left this list when (#182) filled age_years); `growth_max_peg` (quote.fund) joins them on the
-    ///       price-only path only, per SCOPE above.
+    ///       price-only path only, per SCOPE above, as does (#1298) `growth_min_cagr_rel` (the walk's
+    ///       `stamp_pool_cagr`).
     ///   (b) SCOPED TO ANOTHER CLASS — correct by construction, and the thing round 1's bug broke: the
     ///       `if crypto {…} else {…}` selectors (maxdd cap, 1M knife, 1Y/range/CAGR floors, vol cap),
     ///       the `!crypto` guards (above-MA ceiling, lifetime uptrend, the (P4) vol and spike ceilings),
@@ -15207,13 +15269,13 @@ mod tests {
                 // The gate still SHIPS 0.0, so nothing moves until an arm turns it on — what changed
                 // is that an arm can now be graded at all. This lane has no `!crypto` guard, which is
                 // why crypto goes LIVE with the other two rather than staying INERT by scope.
-                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y\n",
+                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_require_lifetime_uptrend crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y growth_min_cagr_rel\n",
                 // (#1230) `growth_min_5y_pct_etf` enters etf LIVE and crypto/stock INERT on its first
                 // commit, the same standing `growth_min_cagr_etf` has, which is its whole claim.
                 "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
-                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y\n",
+                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y growth_min_cagr_rel\n",
                 "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
-                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y\n",
+                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_cagr_etf growth_min_5y_pct_etf sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years_crypto growth_min_range_pct_8y growth_min_cagr_rel\n",
             )
         );
     }

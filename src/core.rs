@@ -444,6 +444,11 @@ pub struct Quote {
     pub rel_win_share_10y: Option<f64>,
     #[serde(default)]
     pub admit_tenure_months: Option<u32>,
+    // (#1298) the median long CAGR (`picks::long_cagr_pct`) of the previous cutoff's stocks
+    // (`backtest::stamp_pool_cagr`); None under 20 such stocks. Walk only, so None live; (#1308) restored
+    // for the `growth_min_cagr_rel` confirmation run.
+    #[serde(default)]
+    pub pool_cagr_median: Option<f64>,
 }
 
 /// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
@@ -556,6 +561,7 @@ impl Quote {
             sector_top_dog: None,
             rel_win_share_10y: None,
             admit_tenure_months: None,
+            pool_cagr_median: None,
         }
     }
 
