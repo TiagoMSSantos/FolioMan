@@ -22792,6 +22792,9 @@ buy_heuristic:
   growth_max_fail_pct: 0.0       # (#1315) S1, refuse the cutoff's most distressed stocks by a CHS-lite percentile (the
                                  #   `distress` gate). Off, the code default; WALK-ONLY, since a live quote carries no percentile.
                                  #   See the (#1315) block for the grade.
+  growth_max_1a_change: 0.0      # (#1316) S2, refuse the cutoff's stocks whose 10-K risk section (Item 1A) changed the
+                                 #   most from the year before (the `rewrote-risks` gate). Off, the code default; WALK-ONLY,
+                                 #   since a live quote carries no reading. See the (#1316) block for the grade.
   growth_min_aum_etf: 100000000  # (AUM) ETF-only hard fund-size floor in EUR (quote.aum_eur, BF etp_search AUM, EUR-approximate —
                                  #   fund currency is EUR/USD mixed; ±10% FX is immaterial vs an order-of-magnitude line): reject a
                                  #   fund smaller than €100M, the industry viability line under which issuers liquidate/merge — the
@@ -25383,6 +25386,57 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   range, 5Y floor) already keep most distressed names out of a 10-name book; a loss at 10, where the
 #   volatility term reaches the fast growers the book buys. The `dead` lane's pre-2002 12y cutoffs, the only
 #   place the exited names sit, are the one place it could help.
+# REVERT RULE: a refusal ships nothing; the knob ships off.
+# RESULT, probes on d5e5b16 (rescore nulls=200 holdout, 20 12 8): `universe fund pit dead` 41644809403 and
+#   `universe fund pit` 41644814641. The GUARD cells come from the second probe, not the first run's pit
+#   cells: tools/regrade_ruler.py reads a `pit dead` log as the dead lane. Graded against the {} row.
+#   row  12y dead trimmed | median    8y dead trimmed | median    12y pit trimmed  8y pit trimmed  PRIMARY band
+#   {}   +2.7 | +2.5                   +2.7 | +2.8                 +3.2             +3.3            INSIDE
+#   5    +2.2 | +2.1  RU3 FAIL         +2.4 | +2.8  RU3 FAIL       +2.6             +2.9            INSIDE
+#   10   +1.8 | +1.9  RU3 FAIL         +2.4 | +2.5  RU3 FAIL       +3.0             +3.5            INSIDE
+#   The 10 row also fails RU2 on the dead lane: p20 -0.5 against +0.6 at 12y, -0.8 against +0.8 at 20y. RU1
+#   rises a little in both rows (12y dead top-5 wins 22/38 -> 23/38), and the pool holds everywhere.
+# VERDICT: REFUSED. Both rows fail RU3 at 12y and 8y on the PRIMARY lane, and every PRIMARY cell sits INSIDE
+#   the null band. EXPECTED, quoted against what happened: a small loss on `pit` at 5, HELD (12y -0.6, 8y
+#   -0.4 trimmed); a loss on `pit` at 10, MISSED at 8y (+0.2 trimmed, +0.3 median); the `dead` lane as the
+#   one place it could help, MISSED: it lost the most (12y -0.5 and -0.9 trimmed). Refusing the most
+#   distressed fifth or twentieth of the stocks cuts more future winners than failures from this book.
+#   The knob ships off and goes into `config::RETIRED` at the round's close.
+
+# (#1316) RISK-SECTION REWRITE GATE (S2), PRE-REGISTERED 2026-11-03 before any run. Cohen, Malloy and Nguyen
+#   ("Lazy Prices", Journal of Finance 2020) find that firms whose 10-K changes a lot from the year before earn
+#   lower returns afterwards, that the market is slow to read the change, and that the Risk Factors section
+#   (Item 1A) carries the strongest part of it. The ask: refuse the stocks whose risk section changed the most.
+# THE SCORE: tools/item1a_sim.py reads each pool filer's Item 1A from EDGAR-CORPUS (Loukas et al. 2021, one
+#   record per 10-K) for the 2006-2018 filings and writes tests/item1a-sim.csv: the cosine of the section's
+#   word counts against the same filer's filing of the year before (1 = the same words, 0 = no word shared).
+#   A cutoff reads the row of the calendar year before it: a 2012-03 cutoff reads the 10-K filed in 2011
+#   against the one filed in 2010. `rewrite_pct` is the share of the date's stocks with a reading whose
+#   cosine is higher, so 100 = most changed. The gate `growth_max_1a_change` X refuses a stock at or above
+#   100 - X. Example: of 400 stocks with a reading on a date, X = 20 refuses the 80 with the lowest cosine.
+# DEVIATIONS:
+#   - plain word counts (words of two letters or more, case folded), not the paper's weighting, and Item 1A
+#     only, not the whole 10-K;
+#   - the paper trades each 10-K the month it is filed; a row here is read from January 1 of the year after
+#     its filing, so a reading can be up to 14 months old, and nothing filed after a cutoff is read;
+#   - a section under 200 words writes no row, a ticker that maps to two filers writes none, and a stock
+#     with no row passes the gate;
+#   - the first readings are the 2007 filings (Item 1A is required from fiscal years ending December 2005,
+#     filed in 2006), read from the 2008 cutoffs.
+# REACH: readings exist at the 2008-2014 cutoffs at 12y and the 2008-2018 cutoffs at 8y, and at none at 20y
+#   (its cutoffs end in 2006), so 20y reads INERT by construction and is not graded. The `dead` lane's covered
+#   cutoffs ((#1314): 2003-2008) overlap only in 2008, so the `pit` cells are effectively the grade.
+# HARD, NOT DOCKED: as at (#1315), `rewrote-risks` is unwaivable.
+# RUNS: one grid [{}, {growth_max_1a_change: 10}, {growth_max_1a_change: 20}] on main, on `universe fund pit`
+#   and on `universe fund pit dead`, at 12, 8 and 20, rescore `nulls=200 holdout`.
+# BAR: (#1306)'s, against the {} row. PRIMARY reads the 12y and 8y `pit` cells, the GUARD the 12y and 8y
+#   `dead` cells: RU1, RU2 and RU3; pool at least 80 % of control; PRIMARY OUTSIDE the null band; the
+#   holdout sign; both rows passing as neighbours ((#1291)). A pass earns the one owner question before any
+#   number moves.
+# EXPECTED, written before the run: INERT at both rows. The paper's gap is about a year of drift, a small
+#   share of an 8-12 year holding, and the growth gates already shape the 10-name book; refusing a fifth of
+#   the readings also refuses some fast growers, since a growing firm adds risk factors, so a small loss at
+#   20 would not surprise.
 # REVERT RULE: a refusal ships nothing; the knob ships off.
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

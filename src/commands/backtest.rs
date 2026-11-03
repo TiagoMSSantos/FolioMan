@@ -1542,6 +1542,9 @@ const TIINGO_DEAD_CSV: &str = ".tiingo_dead_members.csv";
 /// [`DEAD_MEMBERS_CSV`], written by `tools/item5_prices.py`. Its tickers are the roster's `series none`
 /// rows, so no name is in both files; read as one file with the archive, so both share its end.
 const DEAD_PRICES_CSV: &str = "tests/dead-prices.csv";
+/// (#1316) Each pool filer's 10-K Item 1A cosine against its filing of the year before, `ticker,year,sim`
+/// rows keyed on the filing year, written by `tools/item1a_sim.py`. Missing = every stock reads None.
+const ITEM1A_SIM_CSV: &str = "tests/item1a-sim.csv";
 
 /// (#751) The dead members' series from [`DEAD_MEMBERS_CSV`]: `ticker,month,close,div` rows, month as
 /// `YYYY-MM`, split-adjusted like Yahoo's price-only close, each bar dated at its month's first day as
@@ -2471,6 +2474,9 @@ pub async fn run(args: Vec<String>) {
     stamp_cohort_ranks(&mut samples); // (#408)/(#409) need the whole date's cohort, so after the sort
     stamp_top_dogs(&mut samples); // (#1277) same cohort; before the dump, so `rescore` reads it as written
     stamp_fail_pct(&mut samples, cadence); // (#1315) the same date's stocks, for the same reason
+    let sims_csv = std::fs::read_to_string(ITEM1A_SIM_CSV).unwrap_or_default();
+    let sims = item1a_sims(&sims_csv);
+    stamp_rewrite_pct(&mut samples, &sims); // (#1316) and again
 
     // (#326) the market's state at each cutoff, stamped onto the quotes BEFORE any report scores them
     // (`report_lane`, `gate_audit`, the GATE SWEEP and the NOTCH books all gate through `growth_score`).
@@ -2512,6 +2518,7 @@ pub async fn run(args: Vec<String>) {
     stamp_sector_cohorts(&mut books, &bench, tuning);
     stamp_top_dogs(&mut books); // (#1277) for the same reason
     stamp_fail_pct(&mut books, cadence); // (#1315)
+    stamp_rewrite_pct(&mut books, &sims); // (#1316)
     stamp_regime(&mut books, &bench); // (#1284) and the regime valve's, or an arm setting `growth_regime_slack_pct` prints the control's DCA lines
     stamp_admit_tenure(&mut books, tuning); // (#1304) last, for the reason above
 
@@ -6783,9 +6790,38 @@ fn stamp_fail_pct(samples: &mut [Sample], cadence: usize) {
             }
         }
         for (j, &i) in stocks.iter().enumerate() {
-            // ponytail: O(n^2) per date, ~600 stocks; sort once if the pond grows tenfold
+            // shortcut: O(n^2) per date, ~600 stocks; sort once if the pond grows tenfold
             let below = score.iter().filter(|&&x| x < score[j]).count();
             Arc::make_mut(&mut day[i].quote).fail_pct = Some(100.0 * below as f64 / stocks.len() as f64);
+        }
+    }
+}
+
+/// (#1316) The [`ITEM1A_SIM_CSV`] rows as (ticker, filing year) -> sim. A header or `#` line fails the parse and drops.
+fn item1a_sims(csv: &str) -> HashMap<(&str, i32), f64> {
+    csv.lines()
+        .filter_map(|l| {
+            let [tk, year, sim] = l.split(',').collect::<Vec<_>>()[..] else { return None };
+            Some(((tk, year.parse().ok()?), sim.parse().ok()?))
+        })
+        .collect()
+}
+
+/// (#1316) Each stock's Item 1A rewrite percentile among the date's stocks with a reading: the share of them
+/// whose sim is higher, so 100 = most rewritten. A cutoff reads the 10-K filed the calendar year before it
+/// against the one filed the year before that, so nothing filed after the cutoff is read. shortcut: a 10-K
+/// filed between Jan 1 and the cutoff is not read either, so a reading can be 14 months old; the CSV keeps
+/// the filing year, not the day. A stock with no row reads None. `samples` must be date-sorted.
+fn stamp_rewrite_pct(samples: &mut [Sample], sims: &HashMap<(&str, i32), f64>) {
+    for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
+        let seen: Vec<(usize, f64)> = (0..day.len())
+            .filter(|&i| picks::asset_class(&day[i].quote) == 2)
+            .filter_map(|i| sims.get(&(day[i].quote.ticker.as_str(), day[i].date.year() - 1)).map(|&s| (i, s)))
+            .collect();
+        for &(i, s) in &seen {
+            // shortcut: O(n^2) per date, like `stamp_fail_pct`
+            let above = seen.iter().filter(|x| x.1 > s).count();
+            Arc::make_mut(&mut day[i].quote).rewrite_pct = Some(100.0 * above as f64 / seen.len() as f64);
         }
     }
 }
@@ -11069,6 +11105,44 @@ mod tests {
         stamp_fail_pct(&mut v, 52);
         let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fail_pct).collect();
         assert_eq!(got, [60.0, 0.0, 40.0, 20.0, 80.0].map(Some), "B, D, C, A, E");
+    }
+
+    /// (#1316) Of A 0.9, B 0.5 and C 0.7 on 2010-01-01 (the 2009 rows), B reads 2 of 3 higher, C 1, A 0. D's
+    /// only row is the cutoff's own year, so it reads None, as does a fund with a row. On 2011-01-01 A is the
+    /// lone stock with a 2010 row (0), and B has none. The parse drops the note and the header.
+    #[test]
+    fn stamp_rewrite_pct_ranks_the_dates_stocks_by_rewrite() {
+        let sims = item1a_sims("# note\nticker,year,sim\nA,2009,0.9\nB,2009,0.5\nC,2009,0.7\nFUND.DE,2009,0.1\nD,2010,0.1\nA,2010,0.8\n");
+        assert_eq!(sims.len(), 6, "{sims:?}");
+        let row = |y: i32, t: &str, kind: &str| {
+            let mut q = Quote::stub(t, "1", "", t);
+            q.instrument_type = kind.into();
+            Sample { date: ymd(y, 1, 1), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
+        };
+        let mut v = vec![
+            row(2010, "A", "EQUITY"),
+            row(2010, "B", "EQUITY"),
+            row(2010, "C", "EQUITY"),
+            row(2010, "D", "EQUITY"),
+            row(2010, "FUND.DE", "ETF"),
+            row(2011, "A", "EQUITY"),
+            row(2011, "B", "EQUITY"),
+        ];
+        stamp_rewrite_pct(&mut v, &sims);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.rewrite_pct).collect();
+        let of3 = |k: f64| Some(100.0 * k / 3.0);
+        assert_eq!(got, [of3(0.0), of3(2.0), of3(1.0), None, None, Some(0.0), None], "{got:?}");
+    }
+
+    /// (#1316) The committed file parses whole: a missing or reshaped file would leave every stock unstamped
+    /// and the gate would read INERT, which is also the pre-registered expectation, so it must fail here.
+    #[test]
+    fn item1a_sim_csv_parses_whole() {
+        let csv = std::fs::read_to_string(ITEM1A_SIM_CSV).unwrap();
+        let sims = item1a_sims(&csv);
+        assert_eq!(sims.len() + 2, csv.lines().count(), "only the note and the header drop");
+        assert!(sims.len() >= 8000, "{}", sims.len());
+        assert!(sims.iter().all(|(&(_, y), &s)| (2007..=2018).contains(&y) && (0.0..=1.0).contains(&s)));
     }
 
     /// (#1304) Ten years of monthly bars against a flat index: a flat name never wins (a tie is a loss),
