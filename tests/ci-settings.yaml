@@ -25301,7 +25301,8 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   every 10-K of a roster CIK, 1993 up to 480 days past the exit, and writes tests/dead-prices.csv in the
 #   tests/dead-members.csv rows. The walk reads both files as one, so the 10-K series share the archive's end
 #   (2018-03) and every one reads DEAD; no ticker is in both (a test pins that, and that the 10-K file ends
-#   inside the archive). Example: Washington Mutual's 2006 Q1 mid reads 43.70 at 2006-03, carried to 2006-05;
+#   inside the archive), so the tool skips a ticker the archive holds: there it is another company (NSM is
+#   Nationstar's 2012-2018 bars, not National Semiconductor's). Example: Washington Mutual's 2006 Q1 mid reads 43.70 at 2006-03, carried to 2006-05;
 #   its BRD case leaves equity nothing, so 2008-10 is a 1 % bar.
 # THE ROWS: quarter mid = (high + low) / 2, dated at the quarter-end month and carried forward monthly.
 #   Filings chain newest first: each older filing is scaled by the median ratio on the quarters both print,
@@ -25313,11 +25314,11 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   to any crash. Tribune (TRB) is exempt: its 2007 buyout paid holders in cash before the 2008 case.
 # COVERAGE: 360 tickers left the index before 2014 with no free series (`series none`, exit not `alive`); 74
 #   carry a CIK (EDGAR's ticker file, or a Q-suffixed name matched to its BRD case by hand). 16 have a span
-#   past 2013 (the symbol is in the index again) and are skipped; 7 print no table the parser reads (EP, GRN,
-#   MMI, NRTLQ, NYX, PCS, SII); 3 stop too early (GLK, SMS, and WorldCom, whose last readable quarter is 17
-#   months before its exit). 48 are written: 28 bankrupt, 16 acquired, 3 distress, 1 spinoff; 2037 quarters,
-#   6211 monthly rows from 1991-08 to 2013-12, 26 carried flat to the exit, 15 with the 1 % bar. Names with a
-#   bar: 14 in 1992, 30 in 2000, 37 in 2005, 22 in 2009, 3 in 2013. 12 series are cut early (no shared
+#   past 2013 (the symbol is in the index again) and are skipped; 2 are tickers the archive holds (MMI, NSM);
+#   6 print no table the parser reads (EP, GRN, NRTLQ, NYX, PCS, SII); 3 stop too early (GLK, SMS, and WorldCom, whose last readable quarter is 17
+#   months before its exit). 47 are written: 28 bankrupt, 15 acquired, 3 distress, 1 spinoff; 1957 quarters,
+#   5969 monthly rows from 1992-01 to 2013-12, 25 carried flat to the exit, 15 with the 1 % bar. Names with a
+#   bar: 13 in 1992, 29 in 2000, 36 in 2005, 21 in 2009, 3 in 2013. 12 series are cut early (no shared
 #   quarter: ABKFQ, ANRZQ, AYE, CCTYQ, DALRQ, FNMA, RSHCQ, SBL, SLR, SUNEQ, TIE, TLAB) and 5 filings were
 #   skipped as disagreeing. 28 of the 32 pre-2014 bankruptcies in (#1310)'s roster now have prices to the
 #   exit; before, none did.
@@ -25336,7 +25337,7 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the census's 12y floors read about 2.35 % dead and 6.74 % acquired. Only the `dead` lane reads either file
 #   or either rate; a golden that pins a `dead` run moves, and is re-blessed from the probe artifact.
 # EXPECTED, before the first dead-lane run: 12y cutoffs before 2002 gain dead names, and some of them clear
-#   the dead floor for the first time; the acquired share barely moves (16 names). S1 (#1315) and S2 (#1316)
+#   the dead floor for the first time; the acquired share barely moves (15 names). S1 (#1315) and S2 (#1316)
 #   are graded on this lane.
 # CI: the `actionlint` job now runs every tools/*.py `--selftest`, item5_prices.py's among them.
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait

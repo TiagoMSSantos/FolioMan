@@ -390,11 +390,18 @@ def build(args):
     else:
         print("warning: no %s, Yahoo exclusion skipped" % args.yahoo, file=sys.stderr)
     brd = brd_cases(args.brd) if args.brd else {}
+    # the walk reads this file as one with the archive, so a reused ticker there (NSM: Nationstar's
+    # 2012-2018 bars, not National Semiconductor's) would splice two companies into one series
+    with open(os.path.join(root, "tests/dead-members.csv")) as f:
+        archive = {l.split(",", 1)[0] for l in f if not l.startswith("#")}
     out, report = [], []
     for tk, cik in sorted(targets(root).items()):
         sp = [(a, b) for a, b in spans.get(tk, [])]
         if not sp or any(b is None or b >= "2014" for a, b in sp):
             report.append((tk, "a span runs past 2013"))
+            continue
+        if tk in archive:
+            report.append((tk, "the archive holds another company under this ticker"))
             continue
         if tk in yahoo and yahoo_scores(yahoo[tk][1], sp):
             report.append((tk, "Yahoo already scores it"))
