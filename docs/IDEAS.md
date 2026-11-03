@@ -265,7 +265,7 @@ by hand.
 | 248 | last-1y revenue growth minus that long CAGR (top-line accelerating) | fund factor | `rev_accel` | MEASURED | #676 | new reason, see receipt |
 | 249 | current gross margin level (pricing power / moat) | fund factor | `gross_margin` | MEASURED | #159 #165 #405 #407 | new reason, see receipt |
 | 250 | current operating margin level (operating efficiency) | fund factor | `op_margin` | MEASURED |  | new reason, see receipt |
-| 251 | op-margin now minus ~1y ago (margin expanding = strengthening) | fund factor | `margin_trend` | SHIPPED weight -0.3 | #1289 | — |
+| 251 | op-margin now minus ~1y ago (margin expanding = strengthening) | fund factor | `margin_trend` | SHIPPED weight -0.3 | #1289 #1313 | — |
 | 252 | EPS CAGR over the lookback (bottom-line compounding; both ends must be +) | fund factor | `eps_growth` | MEASURED |  | new reason, see receipt |
 | 253 | last-1y revenue growth, % (the REV-YoY column) — `rev_accel`'s fast leg the printed columns (REV-YoY / EPS-Yo… | fund factor | `rev_yoy` | MEASURED | #3 | new reason, see receipt |
 | 254 | last-1y EPS growth, % (the EPS-YoY column), off the row's OWN same-filing comparative -> split-proof the prin… | fund factor | `eps_yoy` | MEASURED |  | new reason, see receipt |
