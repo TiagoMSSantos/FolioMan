@@ -1542,9 +1542,6 @@ const TIINGO_DEAD_CSV: &str = ".tiingo_dead_members.csv";
 /// [`DEAD_MEMBERS_CSV`], written by `tools/item5_prices.py`. Its tickers are the roster's `series none`
 /// rows, so no name is in both files; read as one file with the archive, so both share its end.
 const DEAD_PRICES_CSV: &str = "tests/dead-prices.csv";
-/// (#1316) Each pool filer's 10-K Item 1A cosine against its filing of the year before, `ticker,year,sim`
-/// rows keyed on the filing year, written by `tools/item1a_sim.py`. Missing = every stock reads None.
-const ITEM1A_SIM_CSV: &str = "tests/item1a-sim.csv";
 
 /// (#751) The dead members' series from [`DEAD_MEMBERS_CSV`]: `ticker,month,close,div` rows, month as
 /// `YYYY-MM`, split-adjusted like Yahoo's price-only close, each bar dated at its month's first day as
@@ -2116,8 +2113,7 @@ pub async fn run(args: Vec<String>) {
     // instead, and only a DEAD one (not censored at the archive's end) pays a terminal return in the walk.
     // Off, this is an empty set and nothing below reads the archive.
     let dead_penalty = if dead_flat { 1.0 } else { DEAD_PENALTY }; // (#752) `deadflat`: no crash cut
-    // (#1315) `fills`: every ticker walking on a file's series, whose split-adjusted closes carry no split list
-    let (dead_end, fills): (HashSet<&str>, HashSet<&str>) = if dead {
+    let dead_end: HashSet<&str> = if dead {
         // (#1314) one file with the archive: a 10-K series ends before 2014, so it reads DEAD on the archive's end
         let csv = format!(
             "{}\n{}",
@@ -2136,7 +2132,7 @@ pub async fn run(args: Vec<String>) {
         let t_n = t_charts.len();
         refused += t_refused;
         charts.extend(t_charts);
-        let (mut fills, mut ends) = (HashSet::new(), HashSet::new());
+        let (mut filled, mut ends) = (0, HashSet::new());
         for tk in &tickers {
             let (Some((chart, is_dead)), Some(spans)) = (charts.get(tk), pit_spans.get(tk)) else { continue };
             let slot = fetched.iter().position(|f| f.as_ref().is_some_and(|x| x.0 == tk));
@@ -2149,24 +2145,24 @@ pub async fn run(args: Vec<String>) {
                 Some(k) => fetched[k] = entry,
                 None => fetched.push(entry),
             }
-            fills.insert(tk.as_str());
+            filled += 1;
             if *is_dead {
                 ends.insert(tk.as_str());
             }
         }
         fetched.sort_by_key(|f| f.as_ref().map(|x| x.0)); // (#342)'s A-Z order, with the fills in it
-        let (censored, filled) = (charts.values().filter(|c| !c.1).count(), fills.len());
+        let censored = charts.values().filter(|c| !c.1).count();
         eprintln!(
             "backtest: DEAD (#751) — {DEAD_MEMBERS_CSV} + (#1314) {DEAD_PRICES_CSV} + (#752) {TIINGO_DEAD_CSV} ({t_n} series, {t_dead} dead, {t_over} replacing the archive's): {} series ({censored} censored at their file's end), {refused} refused (last bar >30d before the S&P exit); {filled} pool member(s) Yahoo could not score walk on them, {} of them dead, crash cut x{dead_penalty}{}",
             charts.len(),
             ends.len(),
             if charts.is_empty() { " — FILES MISSING OR EMPTY, so this arm is the control" } else { "" }
         );
-        (ends, fills)
+        ends
     } else {
-        (HashSet::new(), HashSet::new())
+        HashSet::new()
     };
-    let (dead_end, fills) = (&dead_end, &fills);
+    let dead_end = &dead_end;
 
     // (#327) The pairs this WALK will use: the configured/journalled map, plus — when the knob is on —
     // the ones discovered point-in-time from the graded pool itself, which are the only ones whose
@@ -2336,8 +2332,6 @@ pub async fn run(args: Vec<String>) {
                         let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence, &anchor_windows);
                         quote.history_proxied = history_proxied; // (#327) provenance, for the PROXY BOOK split
                         quote.rel_win_share_10y = rel_win_share(&dates, &closes, &bench, dates[i]); // (#1304) the W crowd mark
-                        // (#1315) the day's own share price for S1's PRICE term: undo the later splits only
-                        quote.close_nominal = (!fills.contains(tk.as_str())).then(|| closes[i] * core::split_factor_since(&splits, dates[i]));
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                         if tuning.growth_event_months > 0 {
                             let m = tuning.growth_event_months as u32;
@@ -2473,10 +2467,6 @@ pub async fn run(args: Vec<String>) {
     samples.sort_by_key(|s| s.date); // chronological -> the OOS split is early-vs-late in time
     stamp_cohort_ranks(&mut samples); // (#408)/(#409) need the whole date's cohort, so after the sort
     stamp_top_dogs(&mut samples); // (#1277) same cohort; before the dump, so `rescore` reads it as written
-    stamp_fail_pct(&mut samples, cadence); // (#1315) the same date's stocks, for the same reason
-    let sims_csv = std::fs::read_to_string(ITEM1A_SIM_CSV).unwrap_or_default();
-    let sims = item1a_sims(&sims_csv);
-    stamp_rewrite_pct(&mut samples, &sims); // (#1316) and again
 
     // (#326) the market's state at each cutoff, stamped onto the quotes BEFORE any report scores them
     // (`report_lane`, `gate_audit`, the GATE SWEEP and the NOTCH books all gate through `growth_score`).
@@ -2517,8 +2507,6 @@ pub async fn run(args: Vec<String>) {
     // (#311)/(#312)/(#313) actually ship against) quietly unarmed.
     stamp_sector_cohorts(&mut books, &bench, tuning);
     stamp_top_dogs(&mut books); // (#1277) for the same reason
-    stamp_fail_pct(&mut books, cadence); // (#1315)
-    stamp_rewrite_pct(&mut books, &sims); // (#1316)
     stamp_regime(&mut books, &bench); // (#1284) and the regime valve's, or an arm setting `growth_regime_slack_pct` prints the control's DCA lines
     stamp_admit_tenure(&mut books, tuning); // (#1304) last, for the reason above
 
@@ -6751,81 +6739,6 @@ fn stamp_top_dogs(samples: &mut [Sample]) {
     }
 }
 
-/// (#1315) Stamp `fail_pct`, S1's CHS-lite distress rank: among the same date's stocks, the percentile of
-/// 1.334 SIGMA - 0.18 ln(mcap) + 0.279 ln(min(price, 15)) + 0.125 MB, the four market terms of Campbell,
-/// Hilscher and Szilagyi's 36-month failure logit (NBER w12362, Table 4). 100 = most distressed. SIGMA is
-/// the annualized volatility as a decimal, price is `close_nominal`, MB = market over adjusted book
-/// (book + 0.1 (market - book), floored near zero as CHS floor a negative book). As in CHS, each term is
-/// clipped to the date's 5th/95th percentile and a missing one takes the date's clipped mean, so it moves
-/// no rank. shortcut: the lite score drops the accounting terms (NIMTAAVG, TLMTA, CASHMTA) and EXRETAVG, the
-/// volatility is the walk's one-year bar window, not three months of days, and mcap and price are in the
-/// trading currency, unconverted. `samples` must be date-sorted.
-fn stamp_fail_pct(samples: &mut [Sample], cadence: usize) {
-    const COEF: [f64; 4] = [1.334, -0.18, 0.279, 0.125]; // SIGMA, RSIZE, PRICE, MB
-    let ann = (if config::vol_daily_equivalent() { 252.0 } else { cadence as f64 }).sqrt() / 100.0;
-    let terms = |s: &Sample| -> [Option<f64>; 4] {
-        let f = s.fund.as_ref();
-        [
-            s.quote.volatility_pct.map(|v| v * ann),
-            f.and_then(|f| f.mcap).map(f64::ln), // ln of 0 or less is not finite: dropped below
-            s.quote.close_nominal.map(|p| p.min(15.0).ln()),
-            f.and_then(|f| f.book_yield).map(|by| 1.0 / (0.009 * by + 0.1).max(1e-3)),
-        ]
-        .map(|t| t.filter(|v| v.is_finite()))
-    };
-    for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
-        let stocks: Vec<usize> = (0..day.len()).filter(|&i| picks::asset_class(&day[i].quote) == 2).collect();
-        let raw: Vec<[Option<f64>; 4]> = stocks.iter().map(|&i| terms(&day[i])).collect();
-        let mut score = vec![0.0; stocks.len()];
-        for k in 0..4 {
-            let mut seen: Vec<f64> = raw.iter().filter_map(|t| t[k]).collect();
-            if seen.is_empty() {
-                continue;
-            }
-            seen.sort_by(f64::total_cmp);
-            let (lo, hi) = (core::percentile(&seen, 5.0), core::percentile(&seen, 95.0));
-            let mean = seen.iter().map(|v| v.clamp(lo, hi)).sum::<f64>() / seen.len() as f64;
-            for (s, t) in score.iter_mut().zip(&raw) {
-                *s += COEF[k] * t[k].map_or(mean, |v| v.clamp(lo, hi));
-            }
-        }
-        for (j, &i) in stocks.iter().enumerate() {
-            // shortcut: O(n^2) per date, ~600 stocks; sort once if the pond grows tenfold
-            let below = score.iter().filter(|&&x| x < score[j]).count();
-            Arc::make_mut(&mut day[i].quote).fail_pct = Some(100.0 * below as f64 / stocks.len() as f64);
-        }
-    }
-}
-
-/// (#1316) The [`ITEM1A_SIM_CSV`] rows as (ticker, filing year) -> sim. A header or `#` line fails the parse and drops.
-fn item1a_sims(csv: &str) -> HashMap<(&str, i32), f64> {
-    csv.lines()
-        .filter_map(|l| {
-            let [tk, year, sim] = l.split(',').collect::<Vec<_>>()[..] else { return None };
-            Some(((tk, year.parse().ok()?), sim.parse().ok()?))
-        })
-        .collect()
-}
-
-/// (#1316) Each stock's Item 1A rewrite percentile among the date's stocks with a reading: the share of them
-/// whose sim is higher, so 100 = most rewritten. A cutoff reads the 10-K filed the calendar year before it
-/// against the one filed the year before that, so nothing filed after the cutoff is read. shortcut: a 10-K
-/// filed between Jan 1 and the cutoff is not read either, so a reading can be 14 months old; the CSV keeps
-/// the filing year, not the day. A stock with no row reads None. `samples` must be date-sorted.
-fn stamp_rewrite_pct(samples: &mut [Sample], sims: &HashMap<(&str, i32), f64>) {
-    for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
-        let seen: Vec<(usize, f64)> = (0..day.len())
-            .filter(|&i| picks::asset_class(&day[i].quote) == 2)
-            .filter_map(|i| sims.get(&(day[i].quote.ticker.as_str(), day[i].date.year() - 1)).map(|&s| (i, s)))
-            .collect();
-        for &(i, s) in &seen {
-            // shortcut: O(n^2) per date, like `stamp_fail_pct`
-            let above = seen.iter().filter(|x| x.1 > s).count();
-            Arc::make_mut(&mut day[i].quote).rewrite_pct = Some(100.0 * above as f64 / seen.len() as f64);
-        }
-    }
-}
-
 /// (#1304) The share of rolling 3-year windows over the ten years to `date` in which the name's price
 /// grew more than the benchmark's: windows start 36, 42, ... 120 months back, each 36 months long, priced
 /// at the last close on or before each end. A window either series does not reach is skipped, and under
@@ -11046,103 +10959,6 @@ mod tests {
         stamp_top_dogs(&mut v);
         let got: Vec<Option<bool>> = v.iter().map(|s| s.quote.sector_top_dog).collect();
         assert_eq!(got, vec![Some(true), Some(false), Some(true), Some(true), None, None, Some(true), Some(false)]);
-    }
-
-    /// (#1315) Only volatility is set, so it alone ranks. Of six stocks at 10, 20, 30, 40 and 900 % the 900
-    /// reads most distressed (5 below it), and the one with no volatility takes the date's mean, 200, so 4
-    /// below it. A fund and a coin read None, a date's lone stock ranks against itself only (0), and so
-    /// does a stock with every term missing.
-    #[test]
-    fn stamp_fail_pct_ranks_the_dates_stocks_by_distress() {
-        let row = |d: u32, t: &str, kind: &str, vol: Option<f64>| {
-            let mut q = Quote::stub(t, "1", "", t);
-            q.instrument_type = kind.into();
-            q.volatility_pct = vol;
-            Sample { date: ymd(2010, 1, d), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
-        };
-        let mut v = vec![
-            row(1, "A", "EQUITY", Some(10.0)),
-            row(1, "B", "EQUITY", Some(20.0)),
-            row(1, "C", "EQUITY", Some(30.0)),
-            row(1, "D", "EQUITY", Some(40.0)),
-            row(1, "E", "EQUITY", Some(900.0)),
-            row(1, "F", "EQUITY", None),
-            row(1, "FUND.DE", "ETF", Some(1.0)),
-            row(1, "BTC-EUR", "CRYPTOCURRENCY", Some(1.0)),
-            row(2, "G", "EQUITY", Some(99.0)),
-            row(3, "H", "EQUITY", None),
-        ];
-        stamp_fail_pct(&mut v, 52);
-        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fail_pct).collect();
-        let pct = |below: f64| Some(100.0 * below / 6.0);
-        assert_eq!(got[..4], [pct(0.0), pct(1.0), pct(2.0), pct(3.0)], "{got:?}");
-        assert_eq!((got[4], got[5]), (pct(5.0), pct(4.0)), "the outlier tops, the gap takes the mean: {got:?}");
-        assert_eq!(got[6..], [None, None, Some(0.0), Some(0.0)], "{got:?}");
-    }
-
-    /// (#1315) Every term carries its own weight: five stocks with all four terms set, so none is filled,
-    /// and five values put the 5th and 95th percentiles on the ends, so none is clipped. By hand, at the
-    /// weekly scale (sqrt 52), the scores are A -1.52, B -2.99, C -2.19, D -2.96, E 4.28; at the daily one
-    /// (sqrt 252) -0.95, -2.41, -1.04, -1.80, 13.53. Either way the order is B, D, C, A, E. A wrong sign, a
-    /// wrong scale or a wrong MB denominator reorders them.
-    #[test]
-    fn stamp_fail_pct_weighs_each_term_as_the_logit_does() {
-        use crate::core::FundFactors;
-        let row = |t: &str, vol: f64, mcap: f64, price: f64, book_yield: f64| {
-            let mut q = Quote::stub(t, "1", "", t);
-            q.instrument_type = "EQUITY".into();
-            (q.volatility_pct, q.close_nominal) = (Some(vol), Some(price));
-            let fund = Some(FundFactors { mcap: Some(mcap), book_yield: Some(book_yield), ..Default::default() });
-            Sample { date: ymd(2010, 1, 1), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund, trail: Vec::new() }
-        };
-        let mut v = vec![
-            row("A", 5.0, 1e8, 5.0, 5.0),
-            row("B", 5.0, 1e11, 10.0, 20.0),
-            row("C", 10.0, 1e9, 5.0, 100.0),
-            row("D", 10.0, 1e11, 2.0, 20.0),
-            row("E", 80.0, 1e9, 2.0, 100.0),
-        ];
-        stamp_fail_pct(&mut v, 52);
-        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fail_pct).collect();
-        assert_eq!(got, [60.0, 0.0, 40.0, 20.0, 80.0].map(Some), "B, D, C, A, E");
-    }
-
-    /// (#1316) Of A 0.9, B 0.5 and C 0.7 on 2010-01-01 (the 2009 rows), B reads 2 of 3 higher, C 1, A 0. D's
-    /// only row is the cutoff's own year, so it reads None, as does a fund with a row. On 2011-01-01 A is the
-    /// lone stock with a 2010 row (0), and B has none. The parse drops the note and the header.
-    #[test]
-    fn stamp_rewrite_pct_ranks_the_dates_stocks_by_rewrite() {
-        let sims = item1a_sims("# note\nticker,year,sim\nA,2009,0.9\nB,2009,0.5\nC,2009,0.7\nFUND.DE,2009,0.1\nD,2010,0.1\nA,2010,0.8\n");
-        assert_eq!(sims.len(), 6, "{sims:?}");
-        let row = |y: i32, t: &str, kind: &str| {
-            let mut q = Quote::stub(t, "1", "", t);
-            q.instrument_type = kind.into();
-            Sample { date: ymd(y, 1, 1), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
-        };
-        let mut v = vec![
-            row(2010, "A", "EQUITY"),
-            row(2010, "B", "EQUITY"),
-            row(2010, "C", "EQUITY"),
-            row(2010, "D", "EQUITY"),
-            row(2010, "FUND.DE", "ETF"),
-            row(2011, "A", "EQUITY"),
-            row(2011, "B", "EQUITY"),
-        ];
-        stamp_rewrite_pct(&mut v, &sims);
-        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.rewrite_pct).collect();
-        let of3 = |k: f64| Some(100.0 * k / 3.0);
-        assert_eq!(got, [of3(0.0), of3(2.0), of3(1.0), None, None, Some(0.0), None], "{got:?}");
-    }
-
-    /// (#1316) The committed file parses whole: a missing or reshaped file would leave every stock unstamped
-    /// and the gate would read INERT, which is also the pre-registered expectation, so it must fail here.
-    #[test]
-    fn item1a_sim_csv_parses_whole() {
-        let csv = std::fs::read_to_string(ITEM1A_SIM_CSV).unwrap();
-        let sims = item1a_sims(&csv);
-        assert_eq!(sims.len() + 2, csv.lines().count(), "only the note and the header drop");
-        assert!(sims.len() >= 8000, "{}", sims.len());
-        assert!(sims.iter().all(|(&(_, y), &s)| (2007..=2018).contains(&y) && (0.0..=1.0).contains(&s)));
     }
 
     /// (#1304) Ten years of monthly bars against a flat index: a flat name never wins (a tie is a loss),

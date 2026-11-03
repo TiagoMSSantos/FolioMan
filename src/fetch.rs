@@ -1060,9 +1060,6 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         sector_top_dog: None,
         rel_win_share_10y: None,   // (#1304) walk-only crowd marks
         admit_tenure_months: None,
-        close_nominal: None, // (#1315) walk-only
-        fail_pct: None,
-        rewrite_pct: None, // (#1316) walk-only
         last_close_date: last_date, // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),

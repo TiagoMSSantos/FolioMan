@@ -1680,14 +1680,6 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     if tuning.growth_require_peg && ff.is_some_and(|f| f.eps_never_reported) {
         return None;
     }
-    // (#1315) S1: the cutoff's most distressed stocks by the CHS-lite percentile. Walk-only (None live passes).
-    if tuning.growth_max_fail_pct > 0.0 && asset_class(quote) == 2 && quote.fail_pct.is_some_and(|p| p >= 100.0 - tuning.growth_max_fail_pct) {
-        return None;
-    }
-    // (#1316) S2: the cutoff's most-rewritten Item 1A. Walk-only (None live, or with no reading, passes).
-    if tuning.growth_max_1a_change > 0.0 && asset_class(quote) == 2 && quote.rewrite_pct.is_some_and(|p| p >= 100.0 - tuning.growth_max_1a_change) {
-        return None;
-    }
 
     // ---- SCORE ----
     let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped, ships 30.0 (#270)
@@ -2711,8 +2703,6 @@ pub(crate) fn plain_gate(g: &str) -> &'static str {
         "stablecoin" => "a stablecoin, pegged to a currency, so it cannot grow",
         "wipeout" => "it once fell 98.5% or more",
         "no-turnover" => "no trading volume is reported for it",
-        "distress" => "priced like a company about to fail",
-        "rewrote-risks" => "its yearly report rewrote its risk warnings more than most",
         _ => "a buy rule",
     }
 }
@@ -2995,25 +2985,12 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     if maxdd_cap > 0.0 && quote.max_drawdown_pct > maxdd_cap {
         fails.push(("maxdd", format!("-{:.0}% worst drawdown (cap -{:.0}%)", quote.max_drawdown_pct, maxdd_cap), quote.max_drawdown_pct <= maxdd_cap + 5.0));
     }
-    // (#1315) the twin of the `distress` gate in `score_parts_hard`; never a near miss: it is a mandate
-    if tuning.growth_max_fail_pct > 0.0 && asset_class(quote) == 2 {
-        if let Some(p) = quote.fail_pct.filter(|&p| p >= 100.0 - tuning.growth_max_fail_pct) {
-            fails.push(("distress", format!("distress percentile {p:.0} (refused from {:.0})", 100.0 - tuning.growth_max_fail_pct), false));
-        }
-    }
-    // (#1316) the twin of the `rewrote-risks` gate in `score_parts_hard`; a mandate too
-    if tuning.growth_max_1a_change > 0.0 && asset_class(quote) == 2 {
-        if let Some(p) = quote.rewrite_pct.filter(|&p| p >= 100.0 - tuning.growth_max_1a_change) {
-            fails.push(("rewrote-risks", format!("risk-section rewrite percentile {p:.0} (refused from {:.0})", 100.0 - tuning.growth_max_1a_change), false));
-        }
-    }
     Some(fails)
 }
 
 /// (#476) Switch off the knob behind one of [`gate_failures`]' tags. `young`/`history` move to the
 /// 1Y rung ((#537), the 2Y one before: a 1-2y record read — on the page). `artifact` has no knob: a
-/// repriced bar is not a price history, so it stays failed. Neither has `exchange`, (#1315) `distress` nor (#1316)
-/// `rewrote-risks`: see [`UNWAIVABLE`].
+/// repriced bar is not a price history, so it stays failed. Neither has `exchange`: see [`UNWAIVABLE`].
 fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
     const OFF: f64 = f64::NEG_INFINITY;
     match tag {
@@ -3059,9 +3036,7 @@ pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
 
 /// (#566) Tags no waiver lifts. `exchange` has a knob, but growth_gate_soft 0.6 waived it and seven
 /// exchange tokens (BNB, GT, LEO, BGB, OKB, KCS, WBT) ranked: the (#511) refusal is the user's call, not a gate.
-/// (#1315) `distress` too: docked, a new gate cannot move the book ((#1280)), and the momentum half
-/// ([`gates_off`]) would buy the names it refuses. (#1316) `rewrote-risks` for the same reason.
-const UNWAIVABLE: [&str; 4] = ["artifact", "exchange", "distress", "rewrote-risks"];
+const UNWAIVABLE: [&str; 2] = ["artifact", "exchange"];
 
 /// (#476) `tuning` with every gate `quote` fails waived, re-checked until nothing new fails (the 1Y rung
 /// can fail a floor the missing leg hid), with the waived tags and what still fails. `None` = refused.
@@ -9208,7 +9183,6 @@ mod tests {
             jump_ahead: false,
             trend_r2_10y: None, underwater_yrs_10y: None, sector_top_dog: None, // (#1277) no score reads them since (#1280)
             rel_win_share_10y: None, admit_tenure_months: None, // (#1304) walk-only crowd marks
-            close_nominal: None, fail_pct: None, rewrite_pct: None, // (#1315)/(#1316) walk-only
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, ma200d_pct: None, above_ma_pct: 0.0,
@@ -12709,7 +12683,7 @@ mod tests {
     /// never holds ": " or " (", which split a MISSES hover line into its tag.
     #[test]
     fn plain_gate_names_every_rule_in_its_own_words() {
-        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover", "distress", "rewrote-risks"];
+        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
         let labels: std::collections::BTreeSet<&str> = tags.iter().map(|g| plain_gate(g)).collect();
         assert_eq!(labels.len(), tags.len(), "one label per rule");
         assert!(!labels.contains("a buy rule"), "no rule falls through");
@@ -15872,10 +15846,10 @@ mod tests {
     #[test]
     fn gate_failures_agrees_with_the_scorer_on_random_draws() {
         const DRAWS: usize = 4000;
-        const LABELS: [&str; 24] = [
+        const LABELS: [&str; 22] = [
             "young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact",
             "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "peg",
-            "maxdd", "exchange", "distress", "rewrote-risks",
+            "maxdd", "exchange",
         ];
         struct Rng(u64);
         impl Rng {
@@ -15993,10 +15967,6 @@ mod tests {
             t.growth_maxdd_cap = r.arm(t.growth_maxdd_cap, &[0.0, 60.0, 84.0]);
             t.growth_maxdd_cap_crypto = r.arm(t.growth_maxdd_cap_crypto, &[84.0]);
             t.growth_min_age_years_crypto = r.arm(t.growth_min_age_years_crypto, &[8.0]); // (#1300) last too
-            t.growth_max_fail_pct = r.arm(t.growth_max_fail_pct, &[5.0, 10.0]); // (#1315) after it, same reason
-            q.fail_pct = r.opt(&[50.0, 90.0, 95.0, 97.0], 0.3);
-            t.growth_max_1a_change = r.arm(t.growth_max_1a_change, &[10.0, 20.0]); // (#1316) after it, same reason
-            q.rewrite_pct = r.opt(&[50.0, 80.0, 90.0, 95.0], 0.3);
 
             let fails = gate_failures(&q, &t);
             let ranks = growth_score(&q, &t).is_some();
@@ -16005,7 +15975,7 @@ mod tests {
             // (#476) every gate the why box waives really is switched off: only a repriced bar, or a
             // history too short even for the 2Y rung, may still fail; anything else must then rank
             if let Some((wt, _, left)) = waived(&q, &t, true) {
-                assert!(left.iter().all(|(g, ..)| matches!(*g, "artifact" | "exchange" | "distress" | "rewrote-risks" | "history")), "draw {i}: waiving left {left:?}");
+                assert!(left.iter().all(|(g, ..)| matches!(*g, "artifact" | "exchange" | "history")), "draw {i}: waiving left {left:?}");
                 assert_eq!(left.is_empty(), growth_score(&q, &wt).is_some(), "draw {i}: waived {left:?}");
                 rescued += usize::from(left.is_empty() && !ranks);
             }
@@ -16222,29 +16192,6 @@ mod tests {
         }
     }
 
-    /// (#1315) `distress` and (#1316) `rewrote-risks` are mandates: the soft dock does not lift them, the why
-    /// box leaves them standing, and the momentum half's open tuning ([`gates_off`]) keeps them, so a refused
-    /// name never rides in that way.
-    #[test]
-    fn walk_mandates_stay_hard_under_every_waiver() {
-        let soft = BuyHeuristic { growth_gate_soft: 0.8, ..BuyHeuristic::default() };
-        let arms: [(&str, fn(&mut Quote), BuyHeuristic, BuyHeuristic); 2] = [
-            ("distress", |q| q.fail_pct = Some(99.0),
-                BuyHeuristic { growth_max_fail_pct: 5.0, ..soft.clone() }, BuyHeuristic { growth_max_fail_pct: 0.0, ..soft.clone() }),
-            ("rewrote-risks", |q| q.rewrite_pct = Some(99.0),
-                BuyHeuristic { growth_max_1a_change: 20.0, ..soft.clone() }, BuyHeuristic { growth_max_1a_change: 0.0, ..soft.clone() }),
-        ];
-        for (gate, set, t, off) in arms {
-            let mut q = gate_fixture();
-            set(&mut q);
-            assert!(growth_score(&q, &off).is_some(), "{gate}: off, the same stock ranks");
-            assert_eq!(growth_score(&q, &t), None, "{gate}: the soft dock lifted a refused stock");
-            assert_eq!(growth_score(&q, &gates_off(&t)), None, "{gate}: the momentum half's open tuning lifted it");
-            let (_, tags, left) = waived(&q, &t, true).expect("a verdict");
-            assert!(tags.is_empty() && left.iter().any(|(g, ..)| *g == gate), "{gate}: waived {tags:?}, left {left:?}");
-        }
-    }
-
     /// (#1078) A failing value prints at the first precision that tells it from its bar, three decimals
     /// past the base at most; a value that ties its bar even there keeps the base.
     #[test]
@@ -16308,8 +16255,6 @@ mod tests {
         let y5_k: Set = |t, v| t.growth_min_5y_pct = v;
         let liq_k: Set = |t, v| t.min_avg_turnover_eur_stock = v;
         let cage_k: Set = |t, v| t.growth_min_age_years_crypto = v;
-        let fail_k: Set = |t, v| t.growth_max_fail_pct = v;
-        let rw_k: Set = |t, v| t.growth_max_1a_change = v;
         let aged_coin = |a: f64| { let mut q = coin(1.0); q.age_years = Some(a); q };
 
         // (label, gate tag, knob, knob value, quote, expected verdict) -- None clears, Some((reason, close)) rejects
@@ -16383,20 +16328,6 @@ mod tests {
                 Some(("-52% worst drawdown (cap -50%)", true))),
             ("maxdd stops at its 5pp margin", "maxdd", dd_k, 50.0, with(|q| q.max_drawdown_pct = 60.0),
                 Some(("-60% worst drawdown (cap -50%)", false))),
-            // (#1315) DISTRESS -- a stock-only mandate on the walk's percentile, never close
-            ("distress spares a stock just under its line", "distress", fail_k, 5.0, with(|q| q.fail_pct = Some(94.9)), None),
-            ("distress refuses a stock on its line", "distress", fail_k, 5.0, with(|q| q.fail_pct = Some(95.0)),
-                Some(("distress percentile 95 (refused from 95)", false))),
-            ("distress off lets the most distressed through", "distress", fail_k, 0.0, with(|q| q.fail_pct = Some(100.0)), None),
-            ("distress passes a live quote", "distress", fail_k, 5.0, gate_fixture(), None),
-            ("distress ignores a fund", "distress", fail_k, 5.0, { let mut q = etf("FUND.DE", 1e10); q.fail_pct = Some(99.0); q }, None),
-            // (#1316) REWROTE-RISKS -- the same shape on the Item 1A rewrite percentile
-            ("rewrote-risks spares a stock just under its line", "rewrote-risks", rw_k, 20.0, with(|q| q.rewrite_pct = Some(79.9)), None),
-            ("rewrote-risks refuses a stock on its line", "rewrote-risks", rw_k, 20.0, with(|q| q.rewrite_pct = Some(80.0)),
-                Some(("risk-section rewrite percentile 80 (refused from 80)", false))),
-            ("rewrote-risks off lets the most rewritten through", "rewrote-risks", rw_k, 0.0, with(|q| q.rewrite_pct = Some(100.0)), None),
-            ("rewrote-risks passes a stock with no reading", "rewrote-risks", rw_k, 20.0, gate_fixture(), None),
-            ("rewrote-risks ignores a fund", "rewrote-risks", rw_k, 20.0, { let mut q = etf("FUND.DE", 1e10); q.rewrite_pct = Some(99.0); q }, None),
         ];
 
         for (label, tag, set, v, q, want) in cases {
@@ -17323,12 +17254,12 @@ mod tests {
         assert_eq!(found.into_iter().collect::<Vec<_>>(), [("NEW".to_string(), "D3".to_string())], "no journalled donor, nothing to add");
     }
 
-    /// The UNWAIVABLE tags and an unknown tag have no knob: none of them may touch the tuning, while a tag that
-    /// does have a knob switches it off.
+    /// `artifact` and `exchange` are held by UNWAIVABLE and an unknown tag has no knob: none of them may touch the
+    /// tuning, while a tag that does have a knob switches it off.
     #[test]
     fn waive_gate_leaves_the_tuning_alone_for_a_tag_with_no_knob() {
-        let d = BuyHeuristic { growth_max_fail_pct: 5.0, growth_max_1a_change: 20.0, ..BuyHeuristic::default() };
-        for tag in ["artifact", "exchange", "distress", "rewrote-risks", "no-such-gate", ""] {
+        let d = BuyHeuristic::default();
+        for tag in ["artifact", "exchange", "no-such-gate", ""] {
             let mut t = d.clone();
             waive_gate(&mut t, tag);
             assert_eq!(format!("{t:?}"), format!("{d:?}"), "`{tag}` has no waiver, so it must change nothing");

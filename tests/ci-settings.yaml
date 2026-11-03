@@ -22789,12 +22789,10 @@ buy_heuristic:
                                     #   census, as at (#511). The live page before this commit holds one coin row in any table, BTC-EUR
                                     #   at 12.1 years, so no live row moves today. A younger coin that clears every other gate now lists
                                     #   "young" among its misses. Revert: 0.0.
-  growth_max_fail_pct: 0.0       # (#1315) S1, refuse the cutoff's most distressed stocks by a CHS-lite percentile (the
-                                 #   `distress` gate). Off, the code default; WALK-ONLY, since a live quote carries no percentile.
-                                 #   See the (#1315) block for the grade.
-  growth_max_1a_change: 0.0      # (#1316) S2, refuse the cutoff's stocks whose 10-K risk section (Item 1A) changed the
-                                 #   most from the year before (the `rewrote-risks` gate). Off, the code default; WALK-ONLY,
-                                 #   since a live quote carries no reading. See the (#1316) block for the grade.
+  # (#1315) retired: growth_max_fail_pct: 0.0 # refuse the cutoff's most distressed stocks by a CHS-lite percentile;
+  #   refused on the (#1306) RU bar, see the (#1315) block.
+  # (#1316) retired: growth_max_1a_change: 0.0 # refuse the cutoff's stocks whose 10-K risk section changed the most;
+  #   refused on the (#1306) bar (inside the null band), see the (#1316) block.
   growth_min_aum_etf: 100000000  # (AUM) ETF-only hard fund-size floor in EUR (quote.aum_eur, BF etp_search AUM, EUR-approximate —
                                  #   fund currency is EUR/USD mixed; ±10% FX is immaterial vs an order-of-magnitude line): reject a
                                  #   fund smaller than €100M, the industry viability line under which issuers liquidate/merge — the
@@ -25402,6 +25400,8 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   one place it could help, MISSED: it lost the most (12y -0.5 and -0.9 trimmed). Refusing the most
 #   distressed fifth or twentieth of the stocks cuts more future winners than failures from this book.
 #   The knob ships off and goes into `config::RETIRED` at the round's close.
+#   DONE: `growth_max_fail_pct` is deleted and its name is in `config::RETIRED`; the `fail_pct` and
+#   `close_nominal` fields and their stamp went with it, since nothing else read them.
 
 # (#1316) RISK-SECTION REWRITE GATE (S2), PRE-REGISTERED 2026-11-03 before any run. Cohen, Malloy and Nguyen
 #   ("Lazy Prices", Journal of Finance 2020) find that firms whose 10-K changes a lot from the year before earn
@@ -25438,6 +25438,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the readings also refuses some fast growers, since a growing firm adds risk factors, so a small loss at
 #   20 would not surprise.
 # REVERT RULE: a refusal ships nothing; the knob ships off.
+# RESULT, probes on 0a8b953 (rescore nulls=200 holdout, 20 12 8): `universe fund pit` 41652973392 (PRIMARY)
+#   and `universe fund pit dead` 41652978478 (GUARD). Graded against the {} row.
+#   row  12y pit trimmed | median   8y pit trimmed | median   12y dead trimmed | median   8y dead trimmed | median
+#   {}   +3.2 | +2.8                +3.3 | +3.3               +2.7 | +2.5                 +2.7 | +2.8
+#   10   +3.4 | +3.1                +3.4 | +3.4               +2.9 | +2.8                 +2.9 | +3.0
+#   20   +3.4 | +3.1                +3.7 | +3.4               +2.9 | +2.8                 +3.1 | +3.3
+#   Against the null band, every PRIMARY gain is INSIDE: at 12y the 10 row's mean +0.15 sits in [-0.23, +0.31]
+#   and its median +0.39 in [-0.38, +0.45], the 20 row's +0.18 in [-0.32, +0.39] and +0.39 in [-0.54, +0.49];
+#   at 8y the 10 row's +0.17 in [-0.27, +0.26] and +0.07 in [-0.47, +0.49], the 20 row's +0.36 in
+#   [-0.48, +0.51] and +0.09 in [-0.63, +0.65]. RU1, RU2 and RU3 pass in every 12y and 8y cell on both lanes,
+#   and the pool holds. The `dead` lane's 8y worst window rises from -10.4 to -8.7 (10) and -5.9 (20). The 20y
+#   rows are identical to the control on both lanes, as REACH said. The 8y holdout stays sealed (7327 `pit`
+#   and 7374 `dead` samples), since no row reached the step that reads it. On the old (#1291) cells the 10
+#   row would have failed the 8y rank-1 check (16/40 against 18/40), so it reads as a flip on the ruler, not a
+#   pass.
+# VERDICT: REFUSED. Both rows clear RU1-RU3, but every PRIMARY cell sits INSIDE the null band, so the gain is
+#   no bigger than shuffling the same stocks at random gives. EXPECTED, quoted against what happened: INERT
+#   at 20y, HELD (no reading reaches a 20y cutoff); INERT at 12y and 8y, MISSED: all eight cells gain a
+#   little (+0.1 to +0.4 trimmed), every one inside noise; a small loss at 20, MISSED. In plain words:
+#   refusing the stocks that rewrote their risk section the most nudges the book up, but by no more than
+#   chance.
+#   DONE: `growth_max_1a_change` is deleted and its name is in `config::RETIRED`; the `rewrite_pct` field and
+#   its stamp went with it. tools/item1a_sim.py and tests/item1a-sim.csv are deleted too, since nothing else
+#   read them; both stay readable at 0a8b953.
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
