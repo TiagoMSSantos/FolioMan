@@ -25295,6 +25295,50 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   cost the 8y median), and the big weight did not fail RU3. Neither reading is an edge.
 #   DONE: nothing ships; `rev_accel` stays a factor with no shipped term. With roe_chg refused before the
 #   build, S4 is closed.
+
+# (#1314) DEAD-NAME PRICES (DN2), 2026-11-03: quarterly 10-K sale prices for the exited members no free
+#   archive prices. tools/item5_prices.py reads the Item 5 (or annual-report exhibit) market-price table of
+#   every 10-K of a roster CIK, 1993 up to 480 days past the exit, and writes tests/dead-prices.csv in the
+#   tests/dead-members.csv rows. The walk reads both files as one, so the 10-K series share the archive's end
+#   (2018-03) and every one reads DEAD; no ticker is in both (a test pins that, and that the 10-K file ends
+#   inside the archive). Example: Washington Mutual's 2006 Q1 mid reads 43.70 at 2006-03, carried to 2006-05;
+#   its BRD case leaves equity nothing, so 2008-10 is a 1 % bar.
+# THE ROWS: quarter mid = (high + low) / 2, dated at the quarter-end month and carried forward monthly.
+#   Filings chain newest first: each older filing is scaled by the median ratio on the quarters both print,
+#   accepted when 75 % of them agree within 5 % (a ratio within 2 % of 1 snaps to 1); a filing that disagrees
+#   is skipped and counted, and one with no shared quarter ends the series there. A series that stops at most
+#   15 months before the exit is carried flat to it; one that stops earlier is not written (the walk would
+#   refuse it). A BRD case filed by a year after the exit, whose plan gave equity no positive distribution,
+#   adds one bar at 1 % of the last mid in the filing month; the walk's (#751) crash cut x0.7 then applies as
+#   to any crash. Tribune (TRB) is exempt: its 2007 buyout paid holders in cash before the 2008 case.
+# COVERAGE: 360 tickers left the index before 2014 with no free series (`series none`, exit not `alive`); 74
+#   carry a CIK (EDGAR's ticker file, or a Q-suffixed name matched to its BRD case by hand). 16 have a span
+#   past 2013 (the symbol is in the index again) and are skipped; 7 print no table the parser reads (EP, GRN,
+#   MMI, NRTLQ, NYX, PCS, SII); 3 stop too early (GLK, SMS, and WorldCom, whose last readable quarter is 17
+#   months before its exit). 48 are written: 28 bankrupt, 16 acquired, 3 distress, 1 spinoff; 2037 quarters,
+#   6211 monthly rows from 1991-08 to 2013-12, 26 carried flat to the exit, 15 with the 1 % bar. Names with a
+#   bar: 14 in 1992, 30 in 2000, 37 in 2005, 22 in 2009, 3 in 2013. 12 series are cut early (no shared
+#   quarter: ABKFQ, ANRZQ, AYE, CCTYQ, DALRQ, FNMA, RSHCQ, SBL, SLR, SUNEQ, TIE, TLAB) and 5 filings were
+#   skipped as disagreeing. 28 of the 32 pre-2014 bankruptcies in (#1310)'s roster now have prices to the
+#   exit; before, none did.
+# DEVIATION from the plan: the rows are split-adjusted onto each name's last filing, not nominal as filed (the
+#   chain's ratios are the splits, so the newest basis is the one that needs no guess). S1's PRICE term
+#   therefore reads None on these names, as on the WIKI rows: neutral, so a dead name looks safer to S1 than
+#   it was, which can only cost S1 a pass. The plan's Shumway -30 % / -55 % haircut for names without a BRD
+#   match is not built; those names take the walk's (#751) rule like the WIKI rows.
+# CEILINGS, each a reason a row reads wrong, none fixed here: 286 of the 360 have no CIK (today's ticker file
+#   does not know them) and stay unpriced; a quarter mid smooths the crash quarter; an acquired name ends on
+#   its last 10-K quarter, so the takeover premium is missed; the flat carry to the exit can read the last
+#   quarter's price into a falling stretch; for GM and Molex, with two share classes, the first table read
+#   wins; a restatement inside 5 % passes as agreement; a 10-K whose years do not line up with its report date
+#   is dropped; a two-part quarter keeps its later part.
+# ALSO IN THIS COMMIT, per (#1312): DISTRESS_PER_YEAR 0.02 -> 0.004 and ACQUIRED_PER_YEAR 0.019 -> 0.012, so
+#   the census's 12y floors read about 2.35 % dead and 6.74 % acquired. Only the `dead` lane reads either file
+#   or either rate; a golden that pins a `dead` run moves, and is re-blessed from the probe artifact.
+# EXPECTED, before the first dead-lane run: 12y cutoffs before 2002 gain dead names, and some of them clear
+#   the dead floor for the first time; the acquired share barely moves (16 names). S1 (#1315) and S2 (#1316)
+#   are graded on this lane.
+# CI: the `actionlint` job now runs every tools/*.py `--selftest`, item5_prices.py's among them.
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

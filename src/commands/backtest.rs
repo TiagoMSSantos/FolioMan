@@ -1538,6 +1538,10 @@ const DEAD_PENALTY: f64 = 0.7;
 /// `tools/dead_members_from_tiingo.py` into a probe-only cache. Never committed: the data is licensed
 /// for personal use. Missing (every run but a filled probe) = WIKI alone.
 const TIINGO_DEAD_CSV: &str = ".tiingo_dead_members.csv";
+/// (#1314) Quarterly 10-K sale prices for exited members no archive prices, same rows as
+/// [`DEAD_MEMBERS_CSV`], written by `tools/item5_prices.py`. Its tickers are the roster's `series none`
+/// rows, so no name is in both files; read as one file with the archive, so both share its end.
+const DEAD_PRICES_CSV: &str = "tests/dead-prices.csv";
 
 /// (#751) The dead members' series from [`DEAD_MEMBERS_CSV`]: `ticker,month,close,div` rows, month as
 /// `YYYY-MM`, split-adjusted like Yahoo's price-only close, each bar dated at its month's first day as
@@ -1674,10 +1678,10 @@ fn crashed(dates: &[chrono::NaiveDate], closes: &[f64]) -> bool {
 }
 
 /// (#1296) Base rate the dead-name census reads coverage against: the share of index members that fail
-/// (distress) per year.
-const DISTRESS_PER_YEAR: f64 = 0.02;
+/// (distress) per year. (#1312) The (#1310) roster's measured member rate, a floor (its unknowns unclassed).
+const DISTRESS_PER_YEAR: f64 = 0.004;
 /// (#1296) Base rate of the share of index members taken over per year, read like [`DISTRESS_PER_YEAR`].
-const ACQUIRED_PER_YEAR: f64 = 0.019;
+const ACQUIRED_PER_YEAR: f64 = 0.012;
 
 /// (#1296) One cutoff of the dead-name census: the index members the walk scored there, split by how
 /// their forward window ended.
@@ -2110,7 +2114,12 @@ pub async fn run(args: Vec<String>) {
     // Off, this is an empty set and nothing below reads the archive.
     let dead_penalty = if dead_flat { 1.0 } else { DEAD_PENALTY }; // (#752) `deadflat`: no crash cut
     let dead_end: HashSet<&str> = if dead {
-        let csv = std::fs::read_to_string(DEAD_MEMBERS_CSV).unwrap_or_default();
+        // (#1314) one file with the archive: a 10-K series ends before 2014, so it reads DEAD on the archive's end
+        let csv = format!(
+            "{}\n{}",
+            std::fs::read_to_string(DEAD_MEMBERS_CSV).unwrap_or_default(),
+            std::fs::read_to_string(DEAD_PRICES_CSV).unwrap_or_default()
+        );
         let (mut charts, mut refused) = dead_member_charts(&csv, &pit_spans);
         // (#752) Tiingo's series, graded on THEIR file's end (the fetch month, not the archive's 2018-03),
         // so neither file calls the other's censored names dead. Tiingo wins per ticker: one source per
@@ -2144,7 +2153,7 @@ pub async fn run(args: Vec<String>) {
         fetched.sort_by_key(|f| f.as_ref().map(|x| x.0)); // (#342)'s A-Z order, with the fills in it
         let censored = charts.values().filter(|c| !c.1).count();
         eprintln!(
-            "backtest: DEAD (#751) — {DEAD_MEMBERS_CSV} + (#752) {TIINGO_DEAD_CSV} ({t_n} series, {t_dead} dead, {t_over} replacing the archive's): {} series ({censored} censored at their file's end), {refused} refused (last bar >30d before the S&P exit); {filled} pool member(s) Yahoo could not score walk on them, {} of them dead, crash cut x{dead_penalty}{}",
+            "backtest: DEAD (#751) — {DEAD_MEMBERS_CSV} + (#1314) {DEAD_PRICES_CSV} + (#752) {TIINGO_DEAD_CSV} ({t_n} series, {t_dead} dead, {t_over} replacing the archive's): {} series ({censored} censored at their file's end), {refused} refused (last bar >30d before the S&P exit); {filled} pool member(s) Yahoo could not score walk on them, {} of them dead, crash cut x{dead_penalty}{}",
             charts.len(),
             ends.len(),
             if charts.is_empty() { " — FILES MISSING OR EMPTY, so this arm is the control" } else { "" }
@@ -14577,6 +14586,29 @@ mod tests {
         assert_eq!(dead_member_charts("", &spans).1, 0, "no file, no census");
     }
 
+    /// (#1314) The 10-K file is read as one file with the archive: a ticker in both would splice two
+    /// sources into one series, and a 10-K bar past the archive's end would call its censored names dead.
+    #[test]
+    fn dead_prices_share_no_ticker_with_the_archive_and_end_inside_it() {
+        let read = |p: &str| std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{p}: {e}"));
+        let (archive, tenk) = (read(DEAD_MEMBERS_CSV), read(DEAD_PRICES_CSV));
+        let rows = |csv: &str| -> Vec<(String, String)> {
+            csv.lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("ticker,"))
+                .filter_map(|l| {
+                    let mut f = l.split(',');
+                    Some((f.next()?.to_string(), f.next()?.to_string()))
+                })
+                .collect()
+        };
+        let (a, t) = (rows(&archive), rows(&tenk));
+        let names = |r: &[(String, String)]| r.iter().map(|x| x.0.clone()).collect::<HashSet<_>>();
+        assert!(names(&t).len() >= 45, "the 10-K file holds its names");
+        assert!(names(&a).is_disjoint(&names(&t)), "no ticker in both files");
+        let end = |r: &[(String, String)]| r.iter().map(|x| x.1.clone()).max().unwrap_or_default();
+        assert!(end(&t) < end(&a), "every 10-K series ends before the archive's end");
+    }
+
     /// (#751) Yahoo stays primary: the archive fills a member only when no Yahoo bar past the warm-up is
     /// a point-in-time cutoff, or (#755) when Yahoo's series outlives the archive's dead one by over 92 days.
     #[test]
@@ -14629,7 +14661,7 @@ mod tests {
     }
 
     /// (#1296) The census splits each cutoff's members three ways and flags a cutoff whose dead or
-    /// acquired share is under half its base rate over the horizon (12y: about 10.8% dead, 10.3% acquired).
+    /// acquired share is under half its base rate over the horizon ((#1312) 12y: about 2.35% dead, 6.74% acquired).
     #[test]
     fn mortality_counts_each_exit_and_flags_thin_cutoffs() {
         let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
@@ -14640,17 +14672,21 @@ mod tests {
         let all: Vec<_> = marks("2000-01-01", 6, 2, 2)
             .chain(marks("2000-07-01", 8, 2, 0))
             .chain(marks("2001-01-01", 8, 0, 2))
-            .chain(marks("2001-07-01", 7, 2, 1))
-            .chain(marks("2002-01-01", 7, 1, 2))
+            .chain(marks("2001-07-01", 38, 4, 1))
+            .chain(marks("2002-01-01", 12, 1, 2))
+            .chain(marks("2002-07-01", 37, 4, 1))
+            .chain(marks("2003-01-01", 11, 1, 2))
             .collect();
         let got = mortality(&all, 12);
         let row = |alive, acquired, dead, under_covered| Mortality { alive, acquired, dead, under_covered };
         assert_eq!(got[&d("2000-01-01")], row(6, 2, 2, false), "20% each clears half of either base");
         assert_eq!(got[&d("2000-07-01")], row(8, 2, 0, true), "no deaths");
         assert_eq!(got[&d("2001-01-01")], row(8, 0, 2, true), "no takeovers");
-        assert_eq!(got[&d("2001-07-01")], row(7, 2, 1, true), "10% dead is under 10.8%");
-        assert_eq!(got[&d("2002-01-01")], row(7, 1, 2, true), "10% acquired is under 10.3%");
-        assert_eq!(got.len(), 5);
+        assert_eq!(got[&d("2001-07-01")], row(38, 4, 1, true), "1 dead in 43 (2.33%) is under 2.35%");
+        assert_eq!(got[&d("2002-01-01")], row(12, 1, 2, true), "1 acquired in 15 (6.67%) is under 6.74%");
+        assert_eq!(got[&d("2002-07-01")], row(37, 4, 1, false), "1 dead in 42 (2.38%) clears it");
+        assert_eq!(got[&d("2003-01-01")], row(11, 1, 2, false), "1 acquired in 14 (7.14%) clears it");
+        assert_eq!(got.len(), 7);
         // at 0 years both bases are 0, so nothing is under them
         assert_eq!(mortality(&[(d("2000-01-01"), None)], 0)[&d("2000-01-01")], row(1, 0, 0, false));
     }

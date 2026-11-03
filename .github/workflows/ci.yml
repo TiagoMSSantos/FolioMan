@@ -235,6 +235,20 @@ jobs:
           bad future '{"date":"9999-12-31"}'
           bad nodate '{"spx":1}'
           echo "journal record: newer, same, older, empty and missing main journals all behave, a bad date is refused"
+      # (#1314) The tools/ scripts that write committed data (tests/dead-prices.csv, tests/dead-roster.csv, ...)
+      # carry a `--selftest` on inline samples, which ran only on a developer's machine. Every tool that has
+      # one runs it here, so a parser edit that breaks a known table shape reds the push. The count floor
+      # keeps a broken loop from passing on zero tools.
+      - name: Tool selftests
+        run: |
+          n=0
+          for f in tools/*.py; do
+            grep -q -- '--selftest' "$f" || continue
+            python3 -I "$f" --selftest || { echo "$f --selftest failed"; exit 1; }
+            n=$((n + 1))
+          done
+          [ "$n" -ge 6 ] || { echo "only $n tools ran a selftest"; exit 1; }
+          echo "tool selftests: $n passed"
 
   build:
     runs-on: ubuntu-24.04
