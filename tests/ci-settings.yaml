@@ -22789,6 +22789,9 @@ buy_heuristic:
                                     #   census, as at (#511). The live page before this commit holds one coin row in any table, BTC-EUR
                                     #   at 12.1 years, so no live row moves today. A younger coin that clears every other gate now lists
                                     #   "young" among its misses. Revert: 0.0.
+  growth_max_fail_pct: 0.0       # (#1315) S1, refuse the cutoff's most distressed stocks by a CHS-lite percentile (the
+                                 #   `distress` gate). Off, the code default; WALK-ONLY, since a live quote carries no percentile.
+                                 #   See the (#1315) block for the grade.
   growth_min_aum_etf: 100000000  # (AUM) ETF-only hard fund-size floor in EUR (quote.aum_eur, BF etp_search AUM, EUR-approximate —
                                  #   fund currency is EUR/USD mixed; ±10% FX is immaterial vs an order-of-magnitude line): reject a
                                  #   fund smaller than €100M, the industry viability line under which issuers liquidate/merge — the
@@ -25340,6 +25343,47 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the dead floor for the first time; the acquired share barely moves (15 names). S1 (#1315) and S2 (#1316)
 #   are graded on this lane.
 # CI: the `actionlint` job now runs every tools/*.py `--selftest`, item5_prices.py's among them.
+# (#1314) READING, 2026-11-03, probe 41639902527 on 002cac6 (`universe fund pit dead`, 20 12 8): the walk
+#   reads 370 dead series, refuses none. The MORTALITY census now covers 12 of 113 cutoffs at 12y (2003-01 to
+#   2008-07, dead 3.7-4.9 %, acquired 8.0-28.0 %), 8 of 138 at 8y (2005-01 to 2008-07) and 21 of 65 at 20y
+#   (1996-07 to 2006-07); (#1299) read 0 of 113 and 0 of 138. Of the 35 12y cutoffs before 2002, 11 now carry
+#   dead names (3.4-3.5 %, over the 2.35 % floor) and every one still reads UNDER-COVERED, on the ACQUIRED
+#   share (3.5 % or less against the 6.74 % floor). So EXPECTED held on the dead side, and the acquired share
+#   is now the side that binds before 2002. The gain is DN2's rows and the (#1312) floors together; no run
+#   holds one without the other, so the two are not split. A dead-leg row is no longer graded only on
+#   UNDER-COVERED cutoffs, so (#1296)'s UNGRADEABLE rule stops applying at 12y and 8y; the grade still reads
+#   every cutoff, and the covered ones are the 2003-2008 cutoffs, not the pre-2002 ones S1 hoped to help.
+
+# (#1315) DISTRESS GATE (S1), PRE-REGISTERED 2026-11-03 before any run. Campbell, Hilscher and Szilagyi
+#   ("In Search of Distress Risk", NBER w12362) find the stocks their failure model ranks most likely to fail
+#   earn LOW returns afterwards, not the premium their risk would pay. The ask: refuse those stocks.
+# THE SCORE, a lite form of their 36-month logit (Table 4), on the four market terms the walk has at every
+#   cutoff: 1.334 SIGMA - 0.18 ln(mcap) + 0.279 ln(min(price, 15)) + 0.125 MB. SIGMA is the annualized
+#   volatility as a decimal, price the cutoff close with later splits undone, MB market over adjusted book.
+#   Each term is clipped to the date's 5th/95th percentile, a missing term takes the date's clipped mean,
+#   and `fail_pct` is the share of the date's stocks scoring lower, so 100 = most distressed. The gate
+#   `growth_max_fail_pct` X refuses a stock at or above 100 - X. Example: of 600 stocks on a date, X = 5
+#   refuses the 30 that score highest, small and volatile names first.
+# DEVIATIONS, each one a reason the lite score reads softer than the paper's:
+#   - the accounting terms (NIMTAAVG, TLMTA, CASHMTA) and EXRETAVG are dropped;
+#   - the volatility is the walk's one-year bar window, not three months of daily returns;
+#   - PRICE reads None on the WIKI archive rows and the (#1314) 10-K rows (both split-adjusted with no split
+#     list), so those names take the mean price term: a dead name looks safer than it was;
+#   - mcap and price are in the trading currency, unconverted;
+#   - at 36 months the paper's PRICE sign is positive (a higher price reads more distressed, other terms
+#     held), and the score keeps that sign.
+# HARD, NOT DOCKED: under growth_gate_soft 0.8 a new gate only docks and cannot move the book ((#1280)), so
+#   `distress` is unwaivable like `exchange`: no waiver lifts it, and the momentum half's open tuning keeps it.
+# RUNS: one grid [{}, {growth_max_fail_pct: 5}, {growth_max_fail_pct: 10}] on main, `universe fund pit dead` at
+#   12, 8 and 20, rescore `nulls=200 holdout`.
+# BAR: (#1306)'s, against the {} row. PRIMARY reads the 12y and 8y `dead` cells, the GUARD the `pit` cells:
+#   RU1, RU2 and RU3; pool at least 80 % of control; PRIMARY OUTSIDE the null band; the holdout sign; both
+#   rows passing as neighbours ((#1291)). A pass earns the one owner question before any number moves.
+# EXPECTED, written before the run: INERT or a small loss on `pit` at 5, since the growth gates (CAGR floor,
+#   range, 5Y floor) already keep most distressed names out of a 10-name book; a loss at 10, where the
+#   volatility term reaches the fast growers the book buys. The `dead` lane's pre-2002 12y cutoffs, the only
+#   place the exited names sit, are the one place it could help.
+# REVERT RULE: a refusal ships nothing; the knob ships off.
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

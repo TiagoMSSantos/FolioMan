@@ -444,6 +444,14 @@ pub struct Quote {
     pub rel_win_share_10y: Option<f64>,
     #[serde(default)]
     pub admit_tenure_months: Option<u32>,
+    // (#1315) two walk-only fields, None live: the cutoff's close in the share count of that day (the
+    // split-adjusted close times every later split; None on an archive-filled series, which carries no
+    // split list), and the CHS-lite distress percentile among the cutoff's stocks
+    // (`backtest::stamp_fail_pct`, 100 = most distressed), read by `growth_max_fail_pct`.
+    #[serde(default)]
+    pub close_nominal: Option<f64>,
+    #[serde(default)]
+    pub fail_pct: Option<f64>,
 }
 
 /// (#391) `use_of_profits`/`replication`. An alias because serde's derive reads a literal `&'static str`
@@ -556,6 +564,8 @@ impl Quote {
             sector_top_dog: None,
             rel_win_share_10y: None,
             admit_tenure_months: None,
+            close_nominal: None,
+            fail_pct: None,
         }
     }
 
