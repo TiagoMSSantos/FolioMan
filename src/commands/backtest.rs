@@ -813,6 +813,7 @@ struct Args {
     pac: bool,
     failures: bool,
     rivals: bool,
+    stock_rivals: bool, // (#1306) RU4: the rivals table a second time on stocks alone
     winners: bool,
     halflife: bool,
     stress: bool,
@@ -860,6 +861,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("pac") => a_.pac = true, // (#559) grade FEC corporate-PAC breadth
             _ if a.eq_ignore_ascii_case("failures") => a_.failures = true, // (#728) failed filers vs survivors
             _ if a.eq_ignore_ascii_case("rivals") => a_.rivals = true, // (#560) rival books on the same pond
+            _ if a.eq_ignore_ascii_case("stockrivals") => (a_.rivals, a_.stock_rivals) = (true, true), // (#1306) ... and again on stocks alone
             _ if a.eq_ignore_ascii_case("winners") => a_.winners = true, // (#583) where the top-10 book loses each window's winners
             _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
             _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
@@ -1852,7 +1854,7 @@ pub async fn run(args: Vec<String>) {
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
     let Args {
-        years, wide, long, fund, tune, insider, holders, pac, failures, rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
+        years, wide, long, fund, tune, insider, holders, pac, failures, rivals, stock_rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
         leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
@@ -2865,6 +2867,14 @@ pub async fn run(args: Vec<String>) {
             &samples
         };
         report_rivals(pool, &bench, years, tuning, draws);
+        if stock_rivals {
+            // (#1306) RU4: the rankers of (#1304) key stocks alone while the shipped and (j) rows may hold funds, so
+            // a stress pond that is mostly ETFs grades two different books under one bar. The same table on the
+            // stock samples alone puts every row on a like-for-like book; the all-class table above is unchanged.
+            let stocks: Vec<Sample> = pool.iter().filter(|s| picks::asset_class(&s.quote) == 2).cloned().collect();
+            println!("\n  STOCK-ONLY RIVALS (#1306, RU4): the table below holds the {} stock sample(s) of the {} above; funds and coins are out of every row", stocks.len(), pool.len());
+            report_rivals(&stocks, &bench, years, tuning, draws);
+        }
         lap("rivals");
     }
     if winners {
@@ -11876,6 +11886,10 @@ mod tests {
             p("deadflat").dead && p("deadflat").dead_flat && !p("dead").dead_flat,
             "(#752) deadflat is the dead arm, uncut"
         );
+        assert!(
+            p("stockrivals").rivals && p("stockrivals").stock_rivals && !p("rivals").stock_rivals,
+            "(#1306) stockrivals is the rivals report, printed a second time on stocks alone"
+        );
         assert!(p("intraday").intraday && !p("intraday").wide && !p("12").intraday);
         assert!(p("holdwindows").holdwindows && !p("holdwindows").intraday && !p("12").holdwindows);
         assert!(p("traderules").traderules && !p("traderules").holdwindows && !p("12").traderules);
@@ -11929,7 +11943,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal time");
+        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal time");
         assert_eq!(
             all,
             Args {
@@ -11942,6 +11956,7 @@ mod tests {
                 holders: true,
                 pac: true,
                 rivals: true,
+                stock_rivals: true,
                 winners: true,
                 halflife: true,
                 stress: true,

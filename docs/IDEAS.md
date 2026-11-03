@@ -318,6 +318,6 @@ by hand.
 | 301 | (#1287) two AUC-table rows, weighted nowhere. `underdep`: Peddireddy 2021 under-depreciation, minus the 3y cu… | fund factor | `underdep` | MEASURED | #1287 | new reason, see receipt |
 | 302 | (#1287) Grinblatt-Han 2005 capital-gains overhang over the turnover-weighted 5y price; 57 -> 58 | fund factor | `cgo` | MEASURED | #1287 | new reason, see receipt |
 | 303 | (#1290) two more AUC-table rows, weighted nowhere. `ocf_at_chg`: operating cash flow over assets now minus a… | fund factor | `ocf_at_chg` | MEASURED | #1290 | new reason, see receipt |
-| 304 | (#1290) Titman-Wei-Xie 2004 capex over revenue against its 3y mean; 59 -> 60 | fund factor | `capex_abn` | MEASURED | #1290 | new reason, see receipt |
+| 304 | (#1290) Titman-Wei-Xie 2004 capex over revenue against its 3y mean; 59 -> 60 | fund factor | `capex_abn` | MEASURED | #1287 #1289 #1290 #1297 #1298 #1303 | new reason, see receipt |
 | 305 | (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal and Ruenzi… | fund factor | `insider_own_pct` | MEASURED | #1301 | new reason, see receipt |
 | 306 | (Item 3) shows n/a until ≥2 factors are present | fund factor | `composite` | MEASURED |  | new reason, see receipt |

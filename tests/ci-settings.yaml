@@ -25038,6 +25038,95 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   `growth_ranker` stays "shipped". Re-ask only when a stress run moves the median book; a pit lead alone
 #   does not meet this bar.
 
+# (#1306) RULER POWER (RU1-RU4), PRE-REGISTERED 2026-11-03 before any re-grade or run. Rows: (#1308) the offline
+#   re-grade of round 13's logs, (#1309) the stock-only rivals run.
+# WHY: three of round 13's decisions turned on ONE window of 46 in the same 8y rank-1 head-to-head cell:
+#   (#1289) shipped on 17/46 -> 18/46, (#1290) capex_abn refused on 18/46 -> 17/46, (#1287) underdep passed at
+#   +0.2 and failed at +0.3 on that cell. The worst window reads n = 1-2 overlapping windows that all hold 2008.
+#   Control's own rank-1 head-to-head reads 39 %, 45 % and 55 % at 12y, 8y and 20y: the shipped order fails the
+#   guard it sets for challengers at two horizons. Outside: Patton and Timmermann (JFE 2010) find a decile
+#   monotonicity test has 30-47 % power WITH full decile data, and the rank-1-vs-6-10 line is one observation
+#   per cutoff; van Hemert et al. (JPM 2020) find drawdown rules make more Type I errors than return rules at
+#   equal skill; Korn et al. (2019) find the average drawdown separates skill where the maximum does not.
+# RULES, each read beside the (#1291) cell it replaces, from the `BOOK b<bucket>` lines every report prints
+#   (the top-10 book in score order, each name's cumulative return):
+#   RU1  rank-1 guard -> top-5 vs 6-10, pooled: the top-5 book's equal-weight terminal multiple beats the 6-10
+#        book's in at least 50 % of the windows holding 6+ names, AND not below control by more than one window
+#        in 40 (one of 46). Names 1-5 and 6-10 of the BOOK line are the two books.
+#   RU2  worst-window guard -> the 20th-percentile bucket excess AND the mean of the five worst buckets, each
+#        not below control by more than 0.5 pts/yr.
+#   RU3  PRIMARY -> the median AND the 10 %-trimmed mean of the bucket excess, each not down more than 0.1 at
+#        12y and 8y (the (#1291) thresholds on two robust moments: the mean of a 10-name skewed book is one
+#        monster away from any verdict).
+#   RU4  the (#1304) rankers key stocks alone while the shipped and (j) rows may hold funds, and the stress pond
+#        is mostly ETFs, so `stockrivals` prints the rivals table a second time on the stock samples alone; a
+#        stock-only ranker is graded on that table under the (#1304) bar unchanged.
+#   The pool rule, the null band, the holdout sign and the two-neighbour rule stay as (#1291) wrote them.
+#   ADOPTED 2026-11-03 by the owner, before any re-grade was read: from (#1308) on, RU1-RU3 REPLACE the (#1291)
+#   rank-1, worst-window and top-10 mean/median cells for every grid; the pool >= 80 %, the band, the holdout
+#   sign and the two-neighbour rule stay. A row an old bar refused that passes RU earns ONE confirmation run.
+#   The summary reads each RU rule on the cells its old twin read: RU3 and the band on the primary lane at
+#   12y and 8y, RU1 there and at 20y stress, RU2 on the primary lane at 20y, 12y and 8y.
+# TOOL: tools/regrade_ruler.py reads finished rescore logs (row 0 = control) and prints RU1-RU3 beside the
+#   (#1291) guards re-read from the same lines; the printed rank-1 and 2-5 tallies cross-check RU1's count. On
+#   the fixture goldens RU1's denominator equals the printed head-to-head denominator at every horizon, and the
+#   BOOK minimum equals the printed worst window.
+# RE-GRADE (#1308), no new run: (#1290) capex_abn -0.02/-0.05/-0.1, (#1297) the dock, (#1298) plus 8, (#1303)
+#   relative win 0.95, (#1287) underdep +0.2/+0.3, each at 12y, 8y, 20y and stress from the probe logs their
+#   receipts name. A row that passes RU1-RU3, the band and the holdout where the old bar refused it is a FINDING
+#   ABOUT THE RULER and earns one confirmation run before anything ships; a row that fails both bars is closed.
+# EXPECTED, written before any re-grade: the (#1297) dock and (#1298) plus 8 pass RU1 and RU3 and are decided
+#   by RU2 (the dock's 12y worst-window fall of 1.2 sits in the five worst, so it FAILS RU2); capex_abn passes
+#   all three (its one window was the guard; its mean and median rose); relative win 0.95 passes RU1-RU3 and
+#   stays INSIDE the band, so it stays closed; underdep +0.3 passes RU1. If no row flips, the ruler is not the
+#   problem and the (#1297)-(#1304) verdicts stand as written.
+# RU4 RUN (#1309): `universe fund pit stockrivals holdout` and `universe stress stockrivals holdout` at 20 12 8.
+#   EXPECTED: fresh_mom_k0 and rank_avg_mom_lowk clear (j) on the stress median on the stock-only table where
+#   the all-class table tied them (+0.4/-0.1, +0.3/-0.0, +0.2/-0.3), because the tie was composition; if they
+#   still tie there, the low-mark orders do not move the median book and the (#1304) verdict stands.
+# REVERT RULE: the rules move no number; `stockrivals` is a report word the fixture never passes, so no golden
+#   moves. A finding that flips a verdict re-opens that receipt's knob for ONE confirmation run under this
+#   block and nothing else; a knob refused under both bars is closed for good.
+# (#1307) DEAD-NAME ROSTER (DN1), PRE-REGISTERED 2026-11-03 before any classification was read. Row: (#1310)
+#   the roster's first online build and the census it prints.
+# WHY: (#1297) and (#1299) could grade no avoidance gate: the (#1296) census reads coverage against a 2 %/yr
+#   base rate (CRSP, every listed name) and the archive's dead names all exit in 2014 or later, so every cutoff
+#   read UNDER-COVERED. The spans already name every exit since 1996 (756 closed spans, 468 before 2014) and
+#   the reasons are free: fja05680 keeps a bankrupt under its OTC Q symbol (27 before 2014: ENRNQ WCOEQ LEHMQ
+#   WAMUQ AAMRQ BHMSQ ...), the LoPucki BRD names every public-company bankruptcy over $100M since 1979 with its
+#   CIK, EDGAR submissions carry 8-K items 1.03/2.01/3.01 from 2004-08 and Forms 25/15, and the Wikipedia
+#   changes table gives the reason text and the company name.
+# WHAT: tools/dead_roster.py -> tests/dead-roster.csv, one row per closed span: exit class (bankrupt, distress,
+#   acquired, alive, spinoff, unknown), event date, the rule that fired (precedence a-g in the tool's docstring,
+#   fixed here: BRD case or Q symbol; failures.csv or 8-K 1.03; 8-K 3.01, Form 25 or Form 15; 8-K 2.01 or
+#   DEFM14; Wikipedia reason; a later span or a current ticker; unknown) and `series` (wiki | tiingo | none: the
+#   free archive that carries bars to the exit). `--census YEARS` prints, per half-year cutoff, the members
+#   whose span closes inside the window by class and whether a series carries them.
+# WHAT IT DOES NOT DO: give a dead name prices. A member with `series none` never enters the walk, whatever the
+#   roster says, so the roster alone makes NO pre-2014 cutoff gradeable for an avoidance gate. It makes three
+#   other things true: the (#1296) base rate becomes the measured member rate; a terminal series the archive
+#   does hold is classed by its filing, not by the (#751) crash heuristic (a bankrupt that fell 90 % over two
+#   years but under 50 % in its last year reads `acquired` today); and the `series none` count per cutoff is the
+#   size of the price gap a later source (DN2: 10-K Item 5 quarterly high-low tables, 1993-2018) would fill.
+# OFFLINE READ 2026-11-03 on the tree alone (no network: Wikipedia, BRD and EDGAR unread): 468 exits before
+#   2014, 27 bankrupt by Q symbol, 8 alive by a return within 3 years, 433 unknown; 85 carry WIKI bars to the
+#   exit, 383 none (a later span or a WIKI series under the same symbol counts only when it starts before the
+#   exit or within 3 years of it: AAL was Alexander & Alexander to 1997 and American Airlines from 2015). Per
+#   12y cutoff 1996-2005: 487-496 members, 208-249 leave inside the window, 13-20 of them Q-symbol bankruptcies
+#   (2.6-4.1 % of members, against the 21.5 % over 12y the 2 %/yr base rate asks), 34-57 of the leavers priced.
+#   The base rate is the all-CRSP delisting-for-cause rate; the member rate is a fraction of it, and a census
+#   that asks for it reads UNDER-COVERED on every cutoff by construction.
+# EXPECTED, written before the online build: 330-410 of the 433 unknowns resolve (most acquired, 20-40 demoted
+#   and alive, 10-25 more bankrupt or distressed under a plain symbol); bankrupt plus distress per 12y cutoff
+#   lands at 5-9 % of members, under half the base rate; `series none` stays above 300 before 2014.
+# BAR for (#1310): the roster is written only above MIN_EXITS closed spans; a CIK is never guessed (an ambiguous
+#   name maps to none and is logged); the census is quoted per cutoff; the (#1296) base rates are re-set to the
+#   roster's measured 12y and 8y member rates in their own receipt before any dead-leg row is read against them.
+# REVERT RULE: nothing in the binary reads the roster; the file and the tool can go with no number moving.
+# CREDIT: bankruptcy cases come from the Florida-UCLA-LoPucki Bankruptcy Research Database (BRD); the roster
+#   prints that line in its header whenever a BRD table went into the build, and the BRD table itself is never
+#   committed.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
