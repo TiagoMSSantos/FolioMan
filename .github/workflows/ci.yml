@@ -247,7 +247,7 @@ jobs:
             python3 -I "$f" --selftest || { echo "$f --selftest failed"; exit 1; }
             n=$((n + 1))
           done
-          [ "$n" -ge 6 ] || { echo "only $n tools ran a selftest"; exit 1; }
+          [ "$n" -ge 8 ] || { echo "only $n tools ran a selftest"; exit 1; }
           echo "tool selftests: $n passed"
 
   build:

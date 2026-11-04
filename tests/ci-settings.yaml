@@ -25462,6 +25462,124 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   DONE: `growth_max_1a_change` is deleted and its name is in `config::RETIRED`; the `rewrite_pct` field and
 #   its stamp went with it. tools/item1a_sim.py and tests/item1a-sim.csv are deleted too, since nothing else
 #   read them; both stay readable at 0a8b953.
+# (#1317) ROBUSTNESS CELLS (RU-E, RU-T), PRE-REGISTERED 2026-11-03 before any re-grade. Rows: (#1318) the re-grade of
+#   the kept round-13/14 dumps under the two cells.
+# WHY: (#1316) moved the dead lane's 8y worst window from -10.4 to -5.9 and was refused because PRIMARY sat inside its
+#   band; no cell reads a tail, so a tail-only improvement cannot ship under (#1291)/(#1306). (#752)/(#795) read the
+#   ranking's information in the first half of the sample (12y OOS rho +.16 early, -.02 late) and no cell reads an
+#   era. Outside: van Hemert et al. (JPM 2020) find drawdown rules make more Type I errors than return rules at equal
+#   skill, Korn et al. (2019) that the average drawdown separates skill where the maximum does not.
+# CELLS, read beside (#1306)'s, nothing else in (#1291)/(#1306) moves:
+#   RU-E  per row, the median excess by cutoff era (<=2001, 2002-07, 2008-13, >=2014; bucket = year*2 + half,
+#         `backtest::bucket`) and its gain over row 0, over the eras where both rows hold at least 4 buckets; the
+#         worst-era median gain must not sit under -0.3 pts/yr. A guard, read with RU3. tools/regrade_ruler.py prints it.
+#   RU-T  each row's 20th-percentile bucket excess and its mean of the five worst buckets, as gains over row 0, against
+#         their own 2.5-97.5 % band on the same 200 within-(bucket, class) shuffles the PRIMARY band uses
+#         (`backtest::search_tails`, `null_tail_gains`; printed under every PRIMARY band line as `tail gain ... ->
+#         TAIL OUTSIDE|INSIDE`). OUTSIDE on both at 12y and 8y on the PRIMARY lane, with RU3 held (median and
+#         trimmed mean not under control - 0.1), reads TAIL: a verdict class beside PASS that earns the same one owner
+#         question. PASS still needs PRIMARY OUTSIDE as today.
+# RE-GRADE (#1318), no fetch: the kept dumps of (#1316) Item 1A 10/20, (#1315) CHS 5/10, (#1313) rev_accel
+#   -0.1/-0.3/-1.0, (#1308)'s five flips and (#1298) +8/+10 re-run through `backtest rescore ... nulls=200 holdout`
+#   with this commit's tail line. A retired knob's row re-grades on the commit its probe ran on ((#1316) 0a8b953,
+#   (#1315) d5e5b16, (#1298) 938bd83, (#1308) d17ee17/46db026) with this commit cherry-picked, since `main` drops a
+#   RETIRED key from a grid row and no longer stamps the deleted fields; (#1313)'s `growth_fund_extra` rows re-grade on
+#   main. A row that reads TAIL earns one confirmation run; nothing ships from a re-grade.
+# EXPECTED, written before the re-grade: Item 1A 20 reads TAIL at 8y on `dead` if its worst-window gain is spread over
+#   the five worst buckets and INSIDE if it is one bucket; CHS 10 reads TAIL INSIDE (its p20 fell); +8 passes RU-E (it
+#   refuses the most names in 1999-2000 by construction) and its tail cells read INSIDE; rev_accel reads INSIDE on
+#   both. If no row reads TAIL or flips on RU-E, the refusals stand on a ruler that can see tails.
+# REVERT RULE: the two cells are display until a receipt adopts them; deleting the tail line and the tool's era table
+#   restores (#1306). No golden moves: the fixture never runs `rescore nulls>0`.
+# (#1319) HISTORICAL TICKER -> CIK MAP (DN0), PRE-REGISTERED 2026-11-03 before any live run. Row: (#1320) the first
+#   build of tests/ticker-cik.csv.
+# WHY: (#1241) refused EX-27 fundamentals on this gap and said "reopen only if a free historical ticker-to-CIK or
+#   ticker-to-name map covering the dead names turns up"; (#1310) left 361 of the 468 pre-2014 exits without a CIK;
+#   (#1314) could price 74 of 360 dead names for the same reason. Only 44 of the 361 carry a name in the roster.
+# METHOD (tools/ticker_cik_history.py, EDGAR only, keyless; the first rule that fires wins, a tie writes nothing):
+#   phrase   full-text search, 2001 on, "under the symbol <TK>" then "ticker symbol", "symbol", "NYSE:", "Nasdaq:",
+#            on the filer's OWN periodic forms only (10-K, 10-K405, 10-KT, 10-Q, 20-F, 40-F and their /A): an 8-K is
+#            often a merger partner's ("under the symbol SOTR" returned R&G FINANCIAL and COMMUNITY BANKSHARES 8-Ks
+#            beside SouthTrust's), an S-4 the acquirer's ("symbol TOS" returns PHILLIPS PETROLEUM), an N-PX a fund's.
+#            The CIK must show a 10-K inside [span start - 400 d, span end + 548 d] and its first filing must not
+#            come more than 548 d after the exit ((#1310)'s later-holder rule).
+#   name     the roster's name, then OpenFIGI's (below), on 10-K/10-K405 filers whose normalised name contains the
+#            member name's tokens, same span check.
+#   current  EDGAR's company_tickers.json under the span check (ATGE: DeVry 2009-2012 is Adtalem today).
+#   index    spans opening before 2002: the quarterly master index 1994-2001 (master.idx), 10-K filers by name.
+#   figi     (--figi) OpenFIGI /v3/mapping with includeUnlistedEquities, the documented way to a DELISTED symbol's
+#            name, keyless at 25 requests a minute; its names feed `name` and `index`. Verify one batch by hand first.
+#   Under 20 new rows nothing is written. Unmatched and ambiguous spans are printed, never guessed.
+# VALIDATED BY HAND 2026-11-03 on 15 of the 361: phrase finds FLM, AWE, HPC, IMNX, PMCS, CEN, CNXT, SOTR, HCR, HET,
+#   BJS (11); TOS and AV by name; BDK needs a name (its 10-Ks never print the phrase); UN is a 20-F filer and needs
+#   "Unilever N.V." to split from Unilever PLC.
+# EXPECTED: 150-165 of the 210 exits of 2001-2013 without --figi; with it the 2001-2013 residue falls to about 10 and
+#   the 151 exits of 1996-2000 (5 named) reach the (#1241) rate, about 60 %: 230-280 of 361 in all.
+# UNLOCKS, each its own receipt: tools/item5_prices.py on the new CIKs (--roster, the hand Q map retired); the (#1241)
+#   EX-27 census re-run on its own seed and bar; (#1323) below.
+# REVERT RULE: the file and the tool can go with no number moving; tools/dead_roster.py and item5_prices.py read the
+#   file only when it exists.
+# (#1321) THE MIDCAP 400 POND UNDER THE SOFT GATES, PRE-REGISTERED 2026-11-03 before any run. Row: (#1322).
+# WHY: (#173)/(#174) graded the pond under HARD gates and tied because "the MEDIAN GATED POOL DID NOT MOVE BY ONE NAME"
+#   (5/6/7 names a bucket); (#563)-(#566) made the scored pool 87-181, so the pond can reach the book now, and the
+#   (#1307)/(#1314) dead-name machinery did not exist in August. Offline census of tests/sp400_spans.csv: 767 closed
+#   spans 2013-2026, 7 Q-symbol bankruptcies, 168 symbols also in the S&P roster, 41 with WIKI bars to the exit.
+# ARM: `urls.membership_csv: ["tests/sp400_spans.csv"]` on a probe branch (`fetch_membership_extra` ->
+#   `core::merge_spans`, not cached; `knobs=` cannot set a list). Control = main. Before any grade: the MidCap roster
+#   (tools/dead_roster.py --spans tests/sp400_spans.csv), (#1319)'s CIKs, Item 5 prices for exits to 2018
+#   (item5_prices.py --roster tests/sp400-roster.csv --before 2019; the table left 10-Ks filed from 2018-11-05) and
+#   Tiingo fills for 2019+ (dead_members_from_tiingo.py --spans tests/sp400_spans.csv), census quoted.
+# RUNS: both branches, `years="12 8" args="universe fund pit rivals"` and `args="universe fund pit dead rivals"`, each
+#   with grid=[{}] and rescore="nulls=200 holdout". 20y has no MidCap history (spans start 2012-12): GUARD at control.
+# BAR, arm against control from the logs (tools/regrade_ruler.py <control> <arm>; a pond change is not a grid row, so
+#   there is no paired band): RU1-RU3 and RU-E; the arm's plain shipped row ABOVE its own pond's random p95 at 12y and
+#   8y (the fair beyond-chance read for a pond); median gated pool UP (the 80 % pool rule is waived: widening is the
+#   point); the dead lane's covered share not under control's; SEC fund coverage of the new names within 10 pts of
+#   the incumbents' ((#174): 61 % vs 58 %). A pass is a product change (the live screen adds the pond): one owner
+#   question, then the yaml line ships on main.
+# EXPECTED: 12y mean +0.3 to +0.8 and the median up less; 8y split as (#174) (+0.1/+0.2 at 12y, -0.4/-1.3 at 8y under
+#   hard gates); above the random p95 at 12y, not at 8y; no ship, recorded as the pond's number under soft gates.
+# REVERT RULE: the one yaml line.
+# (#1323) THE SHIPPED FUND TERMS ON A SURVIVORSHIP-COMPLETE DEAD LANE, PRE-REGISTERED 2026-11-03. Row: (#1324).
+# WHY: (#730)/(#752) read half the lane's edge as survivorship and the fund terms were graded where dead names carry
+#   no fundamentals ("fund covered falls 7-33 points" on the dead arm); nothing has asked whether roic, the margin
+#   trend dock, the PEG gate and the fund weight earn their keep where the deaths are in. Runs after (#1319)'s CIKs
+#   have fed item5_prices.py, so the pre-2002 acquired share clears the (#1312) floor.
+# GRID on the `universe fund pit dead` dumps at 12 and 8, rescore nulls=200 holdout: [{}, {"growth_fund_extra": []},
+#   {"growth_max_peg": 0.0}, {"growth_fund_weight": 0.0}, {"growth_fund_extra": [], "growth_max_peg": 0.0,
+#   "growth_fund_weight": 0.0}] (none in RESCORE_FIXED; growth_fund_factor is and stays; growth_max_peg 0 is the gate's
+#   off value, as gate_notches uses it). BAR: (#1306) RU1-RU3, (#1317) RU-E and RU-T, the PRIMARY band.
+# EXPECTED: every ablation row INSIDE at 12y and 8y, so the fund terms' edge is not demonstrable at this n. A removal
+#   reading OUTSIDE POSITIVE ships by subtraction after one owner question; OUTSIDE NEGATIVE records that the term
+#   earned its keep. REVERT RULE: a refusal ships nothing.
+# (#1325) SIGN-FLIP CLOSURE, PRE-REGISTERED 2026-11-03 before any run. Row: (#1326).
+# WHY: (#558) drew the weights at x0, x0.5 and x2 and (#1239) at x0 to x2.5; no weight was ever drawn NEGATIVE except
+#   growth_proximity_weight -1.0 ((#48), "uniformly slightly WORSE than neutralizing it").
+# GRID on the kept 12y and 8y pit dumps, rescore nulls=200 holdout: the shipped non-zero `picks::WEIGHT_DIMS` weights
+#   times -1, one row each: growth_trend_weight -0.15, growth_accel_weight -0.5, sharpe_weight -0.05, quality_weight
+#   -0.15, dividend_weight -0.5, growth_fund_weight -0.07, growth_underwater_weight -0.3; calmar, smoothness, value and
+#   turnover ship at 0 and are skipped as (#1239) skipped them. BAR: (#1306) and the band.
+# EXPECTED: every row INSIDE or a clear loss. This closes the sign question in writing; nothing ships.
+# (#1327) THE BOOK AGAINST THE FACTOR IT RESEMBLES, PRE-REGISTERED 2026-11-03, record only; three information rows.
+# WHY: (#805) reads the top-10 book at +2.3 to +2.8 pts/yr and the (j) blend at +3.2 to +4.2 over ^SP500TR on the pit
+#   lane. The S&P 500 Momentum index paid +3.0 over the S&P 500 from 1995 (14.07 vs 11.08 %/yr, S&P DJI) and the MSCI
+#   USA Momentum index +2.85 net from 1994 (MSCI): cap-weighted, about 125 names, one UCITS ETF (IE00BD1F4N50, TER
+#   0.20 %). Nothing has compared the book with an investable factor index; the rivals (a) and (e) rows read it
+#   against momentum and chance on its own pond, equal-weight.
+# READ: tools/book_vs_factor.py on the (#805) TR-ruler logs and on the dead-lane log, each `BOOK b` line re-priced
+#   against the factor index's own return over the same window (and against the S&P 500 Equal Weight TR, to split the
+#   equal-weight tilt from the factor), overall and per (#1317) era.
+# ROWS: three rankers in `picks::RANKERS` and the rivals table, record only, never `growth_ranker` candidates without a
+#   (#1304) run of their own: (v) long-term reversal (minus the 5Y cumulative return), (w) the trailing-1Y dividend
+#   yield, (x) low volatility (minus the daily volatility) - the three 10-year predictors of Geertsema and Lu the
+#   table never held. The rivals report prints one `BOOK rival <row> b<bucket>` line per row per bucket for the era
+#   read. The two lanes goldens move (three rows and the lines): re-bless from the probe artifact.
+# EXPECTED: top-10 book minus MSCI USA Momentum, median between -0.5 and +0.5 at 12y and 8y, worst era <=2001; (j)
+#   minus the factor +0.5 to +1.0 (its equal-weight tilt). A median at or under +0.5 at both horizons on the TR logs
+#   reads "the book's edge is the momentum factor's" and earns one owner question for the hold lane, nothing in the
+#   buy lane moving; a lead of 1.0 or more at both is the first such statement in this file. The three rows trail (j)
+#   on the full sample, (v) ahead of (j) in <=2001 and behind in 2008-13, (w) ahead in 2002-07.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

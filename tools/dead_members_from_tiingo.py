@@ -141,7 +141,7 @@ def get(url, key=None):
 def main():
     check()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--spans", default=".sp500_history.json", help="the membership cache `backtest ... pit` writes")
+    ap.add_argument("--spans", default=".sp500_history.json", help="the membership cache `backtest ... pit` writes, or a `ticker,start_date,end_date` CSV such as tests/sp400_spans.csv (#1321)")
     ap.add_argument("--wiki", default="tests/dead-members.csv")
     ap.add_argument("--out", default=".tiingo_dead_members.csv")
     ap.add_argument("--max", type=int, default=45, help="names fetched this run (free key: 50 requests an hour)")
@@ -157,7 +157,12 @@ def main():
     except FileNotFoundError:
         text, done = "", set()
     with open(a.spans, encoding="utf-8") as f:
-        spans = json.load(f)
+        if a.spans.endswith(".csv"):  # (#1321) a spans CSV (`ticker,start_date,end_date`; tests/sp400_spans.csv), the JSON cache's shape
+            spans = {}
+            for r in csv.DictReader(f):
+                spans.setdefault(r["ticker"].strip().upper().replace(".", "-"), []).append([r["start_date"], r["end_date"].strip() or None])
+        else:
+            spans = json.load(f)
     with open(a.wiki, encoding="utf-8") as f:
         wiki = f.read()
     raw = get(a.tickers) if a.tickers.startswith("https://") else pathlib.Path(a.tickers).read_bytes()

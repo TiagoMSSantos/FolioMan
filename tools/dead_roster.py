@@ -411,6 +411,22 @@ def series_of(tk, end, wiki_span, tiingo):
     return "none"
 
 
+def load_ticker_cik(path, spans):
+    """(#1319) {ticker: cik} from tools/ticker_cik_history.py's output, for the spans this run holds. The file keys
+    (ticker, start_date, end_date); a symbol with several spans takes the CIK of the LAST closed span the file names,
+    since `classify` keys the roster by ticker alone and the latest exit is the one most rows ask about. {} when the
+    file is absent."""
+    out = {}
+    if not path or not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        rows = [r for r in csv.DictReader(l for l in fh if not l.startswith("#")) if r.get("cik")]
+    for r in sorted(rows, key=lambda r: r["end_date"]):
+        if r["ticker"] in spans:
+            out[r["ticker"]] = r["cik"].zfill(10)
+    return out
+
+
 def load_wiki_span(path):
     """{ticker: (first YYYY-MM, last YYYY-MM)} of tests/dead-members.csv."""
     out = {}
@@ -518,6 +534,7 @@ def write_roster(rows, path, note, brd=False):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--spans", default="tests/fixture/.sp500_history.json", help="the membership cache or fja05680's CSV")
+    ap.add_argument("--ticker-cik", default="tests/ticker-cik.csv", help="(#1319) tools/ticker_cik_history.py's output; read before EDGAR's ticker file, skipped when absent")
     ap.add_argument("--failures", default="tests/failures.csv")
     ap.add_argument("--dead-members", default="tests/dead-members.csv")
     ap.add_argument("--tiingo", default="", help="Tiingo supported_tickers.csv or .zip, for the `series` column")
@@ -540,6 +557,11 @@ def main():
         raise SystemExit("%s: %d closed spans is under the %d floor; nothing written" % (a.spans, len(closed), MIN_EXITS))
     fail_cik, fail_tk = load_failures(a.failures)
     ctx = {"spans": spans, "fail_cik": fail_cik, "fail_tk": fail_tk, "edgar": {}, "wiki": {}, "cik_of": {}, "alive": set(), "brd_by_cik": {}, "brd_by_name": {}}
+    # (#1319) the historical ticker -> CIK map tools/ticker_cik_history.py writes, read FIRST: it is keyed by span, so a
+    # recycled symbol maps to the holder of THIS span, where EDGAR's ticker file below knows today's holder only
+    ctx["cik_of"].update(load_ticker_cik(a.ticker_cik, spans))
+    if ctx["cik_of"]:
+        print("%d spans carry a CIK from %s" % (len(ctx["cik_of"]), a.ticker_cik), file=sys.stderr)
     if a.brd:
         for c in load_brd(a.brd):
             if c["cik"]:
@@ -744,6 +766,17 @@ class Tests(unittest.TestCase):
         self.assertEqual(at99["members"], 3)
         self.assertEqual(at99["leaving"], 1, "C leaves in 2010, past an 8y window from 1999")
         self.assertEqual(rows[-1]["cutoff"], datetime.date(2002, 1, 1), "the last cutoff with a full 8y window before the last exit")
+
+    def test_ticker_cik_file_is_read_per_span(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "tc.csv")
+            with open(p, "w") as fh:
+                fh.write("# comment\nticker,start_date,end_date,cik,edgar_name,source,confidence\n"
+                         "AAL,1996-01-02,1997-01-15,3133,ALEXANDER & ALEXANDER,index,C\nFLM,1996-01-02,2003-04-01,352949,FLEMING,phrase,A\nZZZ,2000-01-01,2001-01-01,1,Z,phrase,A\n")
+            got = load_ticker_cik(p, {"AAL": [], "FLM": []})
+            self.assertEqual(got, {"AAL": "0000003133", "FLM": "0000352949"}, "padded, and only the spans this run holds")
+            self.assertEqual(load_ticker_cik(os.path.join(d, "none.csv"), {}), {})
 
     def test_spans_csv_and_json_agree(self):
         import tempfile

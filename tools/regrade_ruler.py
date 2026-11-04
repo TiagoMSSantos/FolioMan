@@ -39,12 +39,16 @@ H2H_MID = re.compile(r"#1 beat the 11-20 book in (\d+)/(\d+)")
 TOP10 = re.compile(r"^\s*top-10 book .*excess ([+-]\d+\.\d) \(med ([+-]\d+\.\d)\) pts/yr.*worst ([+-]\d+\.\d)")
 POOL = re.compile(r"POOL CENSUS \(#149\): (\d+) bucket\(s\), median gated pool (\d+)")
 BAND = re.compile(r"^\s*row (.*): gain mean ([+-]\d+\.\d\d) \| med ([+-]\d+\.\d\d) ; null band .* -> (OUTSIDE|INSIDE)\s*$")
+TAIL = re.compile(r"^\s*row (.*): tail gain p20 ([+-]\d+\.\d\d) \| worst5 ([+-]\d+\.\d\d) ; tail band .* -> TAIL (OUTSIDE|INSIDE)\s*$")  # (#1317) RU-T
+RIVAL_BOOK = re.compile(r"^\s*BOOK rival (\S+) b(-?\d+) ([+-]\d+\.\d) pts/yr\s*$")  # (round 16 §4.1) one line per rivals row per bucket, excess only
 PREFIX = re.compile(r"^[^\t]*\t[^\t]*\t\S+Z ")  # `gh run view --log`: job, step, timestamp
 NULL_HDR = "── NULL BAND (#1292)"
 STRESS = "backtest: STRESS"
 SLACK_DENOM = 40  # RU1: one window of slack per 40 graded windows
 TAIL_SLACK = 0.5  # RU2: pts/yr a tail cell may sit under row 0
 PRIMARY_SLACK = 0.1  # RU3: pts/yr a robust moment may sit under row 0 (the (#1291) number)
+ERA_MIN = 4  # RU-E: an era is read when both rows hold at least this many buckets in it
+ERA_SLACK = 0.3  # RU-E: pts/yr the median gain over row 0 may sit below zero in the row's worst era
 
 
 def percentile(xs, p):
@@ -82,6 +86,27 @@ def worst_mean(xs, k=5):
     return sum(s) / len(s)
 
 
+ERAS = ((None, 2001, "<=2001"), (2002, 2007, "2002-07"), (2008, 2013, "2008-13"), (2014, None, ">=2014"))
+
+
+def era_of(bucket):
+    """The cutoff era of a `BOOK b<bucket>` id: the bucket is year * 2 + half (`backtest::bucket`)."""
+    year = bucket // 2
+    for lo, hi, name in ERAS:
+        if (lo is None or year >= lo) and (hi is None or year <= hi):
+            return name
+    return "?"
+
+
+def era_stats(books):
+    """Per era: (n, mean, median) of the bucket excess of one row's books; eras with no bucket are left out."""
+    out = {}
+    for b, (e, _) in books.items():
+        if e is not None:
+            out.setdefault(era_of(b), []).append(e)
+    return {k: (len(v), sum(v) / len(v), median(v)) for k, v in out.items()}
+
+
 def split_halves(names):
     """(top-5 multiple, 6-10 multiple) of one BOOK line's names in rank order, None under 6 names.
     Equal-weight terminal multiples, as the book itself is priced (mean of 1 + r/100)."""
@@ -112,7 +137,7 @@ def lane_of(text):
 
 
 def new_row(label, group):
-    return {"label": label, "group": group, "years": None, "books": {}, "h2h": None, "h2h_mid": None, "top10": None, "pool": None, "band": None}
+    return {"label": label, "group": group, "years": None, "books": {}, "h2h": None, "h2h_mid": None, "top10": None, "pool": None, "band": None, "tail": None}
 
 
 def parse_rows(text, label):
@@ -140,6 +165,11 @@ def parse_rows(text, label):
             if m.group(1) in seen:
                 seen[m.group(1)]["band"] = (float(m.group(2)), float(m.group(3)), m.group(4))
             continue
+        m = TAIL.match(line)
+        if m:  # (#1317) the tail band, printed beside the PRIMARY band once the Rust side prints it
+            if m.group(1) in seen:
+                seen[m.group(1)]["tail"] = (float(m.group(2)), float(m.group(3)), m.group(4))
+            continue
         if NULL_HDR in line or STRESS in line:
             cur = None
             continue
@@ -155,6 +185,15 @@ def parse_rows(text, label):
         b = parse_book(line)
         if b and b[0] not in cur["books"]:  # the first block only: `BOOK stock`/`BOOK coin` do not match
             cur["books"][b[0]] = (b[1], b[2])
+            continue
+        m = RIVAL_BOOK.match(line)
+        if m:  # (§4.1) a rivals row's per-bucket excess: filed as its own row `rival:<id>` in this group, no names
+            key = "rival:" + m.group(1)
+            if key not in seen:
+                seen[key] = new_row(key, group)
+                seen[key]["years"] = cur["years"] if cur else None
+                rows.append(seen[key])
+            seen[key]["books"].setdefault(int(m.group(2)), (float(m.group(3)), []))
             continue
         m = H2H_LOW.search(line)
         if m and cur["h2h"] is None:
@@ -192,6 +231,7 @@ def grade_row(row):
         "worst": min(excess) if excess else None,
         "p20": percentile(excess, 20),
         "worst5": worst_mean(excess),
+        "eras": era_stats(row["books"]),
         "ru1_wins": wins,
         "ru1_n": n,
         "ru1_pct": 100.0 * wins / n if n else None,
@@ -199,6 +239,7 @@ def grade_row(row):
         "top10": row["top10"],
         "pool": row["pool"],
         "band": row["band"],
+        "tail": row["tail"],
     }
 
 
@@ -222,6 +263,14 @@ def verdicts(g, c):
         out["old_rank1"] = None
     out["old_pool"] = (g["pool"][1] >= 0.8 * c["pool"][1]) if g["pool"] and c["pool"] else None
     out["band"] = (g["band"][2] == "OUTSIDE") if g["band"] else None
+    # (#1317) RU-T: TAIL when the row's p20 and worst-five gains sit outside their own null band and RU3 holds
+    out["RU_T"] = (g["tail"][2] == "OUTSIDE" and bool(out["RU3"])) if g.get("tail") else None
+    # (#1306 L1) RU-E: no era pays for another. The row's median gain over control in its worst era, over the
+    # eras where both rows hold >= ERA_MIN buckets; None when no era qualifies.
+    ge, ce = g.get("eras", {}), c.get("eras", {})
+    gaps = [ge[k][2] - ce[k][2] for k in ge if k in ce and ge[k][0] >= ERA_MIN and ce[k][0] >= ERA_MIN]
+    out["RU_E"] = (min(gaps) >= -ERA_SLACK) if gaps else None
+    out["era_worst_gap"] = min(gaps) if gaps else None
     return out
 
 
@@ -261,6 +310,20 @@ def report(logs, primary="pit"):
                     f"{'OUTSIDE' if v['band'] else ('INSIDE' if v['band'] is not None else '-')}"
                 )
                 per_row.setdefault(r["label"], {})[(label, lane, years)] = v
+            # (#1306 L1) the era table: each row's median excess per cutoff era, and its gain over row 0
+            eras = [k for _, _, k in ERAS if any(k in g["eras"] for g in grades)]
+            print("  ERA (median excess | gain over row 0; n buckets):  " + "   ".join(f"{k:<22}" for k in eras) + "   RU-E")
+            for r, g in zip(grp, grades):
+                cells = []
+                for k in eras:
+                    if k in g["eras"]:
+                        n_, _, med = g["eras"][k]
+                        gain = med - grades[0]["eras"][k][2] if k in grades[0]["eras"] else None
+                        cells.append(f"{med:+5.1f} | {fmt(gain, '+5.1f') if gain is not None else '  -  '} ({n_:>2})".ljust(22))
+                    else:
+                        cells.append("-".ljust(22))
+                v = verdicts(g, grades[0])
+                print(f"  {r['label'][:40]:<40}   " + "   ".join(cells) + f"   {pf(v['RU_E'])}")
     prim = lambda lane, y: lane == primary and y in (12, 8)
     rank = lambda lane, y: prim(lane, y) or (lane == "stress" and y == 20)
     tail = lambda lane, y: lane == primary and y in (20, 12, 8)
@@ -270,11 +333,14 @@ def report(logs, primary="pit"):
         pool = all(got("old_pool", lambda lane, y: True))
         p, op = got("RU3", prim), got("old_primary", prim)
         ru_pass = bool(p) and all(p) and all(got("RU1", rank)) and all(got("RU2", tail)) and pool
+        era_ok = all(got("RU_E", prim))  # (#1306 L1) RU-E is reported, not yet in the pass: it is pre-registered in round 16, not adopted
         old_pass = bool(op) and all(op) and all(got("old_rank1", rank)) and all(got("old_worst", tail)) and pool
         bands = got("band", prim)
         band = "OUTSIDE" if bands and all(bands) else ("INSIDE" if bands else "n/a")
+        tails = got("RU_T", prim)
+        tail = "TAIL" if tails and all(tails) else ("-" if tails else "n/a")
         flip = "  <- FLIPS" if ru_pass != old_pass else ""
-        print(f"  RU {'pass' if ru_pass else 'FAIL'}   old {'pass' if old_pass else 'FAIL'}   band {band:<7}   cells {len(cells)}   {label}{flip}")
+        print(f"  RU {'pass' if ru_pass else 'FAIL'}   old {'pass' if old_pass else 'FAIL'}   band {band:<7}   tail {tail:<4}   RU-E {'pass' if era_ok else 'FAIL'}   cells {len(cells)}   {label}{flip}")
 
 
 class Tests(unittest.TestCase):
@@ -358,6 +424,53 @@ class Tests(unittest.TestCase):
         self.assertIsNone(rows[3]["band"], "a band files on its own group only")
         self.assertEqual(lane_of("x\n  DEAD (#751): y"), "dead")
         self.assertEqual(lane_of("x"), "pit")
+
+    def test_tail_band_line_files_on_its_row(self):
+        text = (
+            "══ rescore row {} ══\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 8y no-sell, vs ^GSPC) ──\n"
+            "  BOOK b4010 +1.0 pts/yr | A +10% B +20% C +30% D +40% E +50% F +1% G +2% H +3% I +4% J +5%\n"
+            "══ rescore row {\"k\":1} ══\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 8y no-sell, vs ^GSPC) ──\n"
+            "  BOOK b4010 +1.0 pts/yr | A +10% B +20% C +30% D +40% E +50% F +1% G +2% H +3% I +4% J +5%\n"
+            "\n── NULL BAND (#1292): ... ──\n"
+            "  row {\"k\":1}: gain mean +0.10 | med +0.10 ; null band mean [-0.30,+0.30] med [-0.40,+0.40] (200) -> INSIDE\n"
+            "  row {\"k\":1}: tail gain p20 +1.20 | worst5 +2.10 ; tail band p20 [-0.60,+0.70] worst5 [-0.90,+1.00] (200) -> TAIL OUTSIDE\n"
+        )
+        rows = parse_rows(text, "x")
+        self.assertEqual(rows[1]["tail"], (1.2, 2.1, "OUTSIDE"))
+        self.assertIsNone(rows[0]["tail"])
+        v = verdicts(grade_row(rows[1]), grade_row(rows[0]))
+        self.assertEqual(v["band"], False)
+        self.assertEqual(v["RU_T"], True, "TAIL: outside its own band with RU3 held, while PRIMARY sits inside")
+
+    def test_rival_book_lines_become_their_own_rows(self):
+        text = (
+            "══ rescore row {} ══\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 12y no-sell, vs ^GSPC) ──\n"
+            "  BOOK b4000 +1.0 pts/yr | A +10% B +20% C +30% D +40% E +50% F +1% G +2% H +3% I +4% J +5%\n"
+            "  BOOK rival lt_rev5 b4000 -2.0 pts/yr\n  BOOK rival lt_rev5 b4001 +3.0 pts/yr\n  BOOK rival div_yield b4000 +0.5 pts/yr\n"
+        )
+        rows = parse_rows(text, "x")
+        self.assertEqual([r["label"] for r in rows], ["{}", "rival:lt_rev5", "rival:div_yield"])
+        g = grade_row(rows[1])
+        self.assertEqual((g["buckets"], g["median"]), (2, 0.5))
+        self.assertEqual(rows[1]["years"], 12, "a rival row inherits the group's horizon")
+        self.assertEqual(g["eras"]["<=2001"], (2, 0.5, 0.5))
+
+    def test_era_of_bucket_and_era_stats(self):
+        self.assertEqual(era_of(2000 * 2 + 1), "<=2001")
+        self.assertEqual(era_of(2002 * 2), "2002-07")
+        self.assertEqual(era_of(2013 * 2 + 1), "2008-13")
+        self.assertEqual(era_of(2014 * 2), ">=2014")
+        books = {2000 * 2: (1.0, []), 2000 * 2 + 1: (3.0, []), 2005 * 2: (-2.0, []), 2005 * 2 + 1: (None, [])}
+        st = era_stats(books)
+        self.assertEqual(st["<=2001"], (2, 2.0, 2.0))
+        self.assertEqual(st["2002-07"], (1, -2.0, -2.0), "an empty bucket is not a graded window")
+        c = {"eras": {"<=2001": (5, 1.0, 1.0), "2002-07": (5, 2.0, 2.0)}, "ru1_n": 0, "buckets": 0, "rank1": None, "pool": None, "band": None}
+        g = dict(c, eras={"<=2001": (5, 1.0, 0.6), "2002-07": (5, 2.0, 2.5)})
+        v = verdicts(g, c)
+        self.assertEqual(v["RU_E"], False, "the worst era is 0.4 under control, past the 0.3 slack")
+        self.assertAlmostEqual(v["era_worst_gap"], -0.4)
+        g2 = dict(c, eras={"<=2001": (3, 1.0, -5.0), "2002-07": (5, 2.0, 2.1)})
+        self.assertTrue(verdicts(g2, c)["RU_E"], "an era with under ERA_MIN buckets is not read")
 
     def test_ru1_slack_is_one_window_per_forty(self):
         c = {"ru1_n": 46, "ru1_pct": 100.0 * 18 / 46, "buckets": 0, "rank1": None, "pool": None, "band": None}

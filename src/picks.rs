@@ -2085,7 +2085,7 @@ pub(crate) struct Ranker {
 }
 
 /// (#1304) Every [`Ranker`], in the rivals table's order: its first nine rows, then the five new ones.
-pub(crate) const RANKERS: [Ranker; 14] = [
+pub(crate) const RANKERS: [Ranker; 17] = [
     Ranker { id: "shipped", label: "shipped (plain top-10)", walk_only: false, keys: key_shipped },
     Ranker { id: "gates_off", label: "(d) gates-off shipped", walk_only: false, keys: key_gates_off },
     Ranker { id: "mom121", label: "(a) momentum 12-1", walk_only: false, keys: key_mom121 },
@@ -2100,6 +2100,10 @@ pub(crate) const RANKERS: [Ranker; 14] = [
     Ranker { id: "fresh_6m_k1", label: "(q) fresh 6M, <=1 mark", walk_only: true, keys: key_fresh_6m_k1 },
     Ranker { id: "rank_avg_mom_lowk", label: "(r) rank avg mom + low marks", walk_only: true, keys: key_rank_avg_mom_lowk },
     Ranker { id: "rank_avg_mom_tested", label: "(s) rank avg mom + tested", walk_only: false, keys: key_rank_avg_mom_tested },
+    // (#1327) the three 10-year predictors of Geertsema-Lu the table never held, as information rows for the era read
+    Ranker { id: "lt_rev5", label: "(v) long-term reversal, -5Y", walk_only: false, keys: key_lt_rev5 },
+    Ranker { id: "div_yield", label: "(w) dividend yield, 1Y", walk_only: false, keys: key_div_yield },
+    Ranker { id: "low_vol", label: "(x) low volatility", walk_only: false, keys: key_low_vol },
 ];
 
 /// (#1304) The [`Ranker`] `id` names; an unknown id is an error that lists every id.
@@ -2173,6 +2177,24 @@ fn key_mom_quality(qs: &[&Quote], trails: &[&[f64]], t: &BuyHeuristic) -> Vec<Op
 /// (#1304) The TR-CAGR column's as-of number.
 fn key_tr_life(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
     qs.iter().map(|q| q.tr_cagr).collect()
+}
+
+/// (#1327) Long-term reversal: minus the 5Y cumulative return, so the five-year losers rank first (De Bondt and
+/// Thaler); None without a 5Y leg.
+fn key_lt_rev5(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| perf_pct(q, "5Y").map(|p| -p)).collect()
+}
+
+/// (#1327) The trailing-1Y dividend yield, the first [`core::dividend_yields`] leg; None with no payout record or
+/// no EUR price.
+fn key_div_yield(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| core::dividend_yields(&q.div_eur, q.price_eur).first().copied().flatten()).collect()
+}
+
+/// (#1327) Low volatility: minus the daily volatility, so the calmest name ranks first; None where the walk has
+/// no daily bars for it.
+fn key_low_vol(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| q.volatility_pct.map(|v| -v)).collect()
 }
 
 /// (#1304) [`key_tr_life`] for names with a 10Y leg only.

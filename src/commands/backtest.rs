@@ -1074,6 +1074,36 @@ fn null_gains(samples: &[Sample], bench_r: &[f64], years: i64, books: &[&[Vec<us
     out
 }
 
+/// (#1317) The tail of one row's per-bucket excess: the nearest-rank 20th percentile and the mean of the five
+/// worst buckets (all of them under five). NaN on no bucket, so a band on it is never OUTSIDE. The [`search_excess`]
+/// twin for RU-T: a row whose tail gain over row 0 sits outside its own null band reads TAIL.
+fn search_tails(books: &[Vec<usize>], realized: &[f64], bench_r: &[f64], years: i64) -> (f64, f64) {
+    let mut excess: Vec<f64> =
+        books.iter().filter_map(|p| book_excess(&p.iter().map(|&i| (realized[i], bench_r[i])).collect::<Vec<_>>(), years)).collect();
+    if excess.is_empty() {
+        return (f64::NAN, f64::NAN);
+    }
+    excess.sort_by(f64::total_cmp);
+    let k = excess.len().min(5);
+    (percentile(&excess, 20.0), excess[..k].iter().sum::<f64>() / k as f64)
+}
+
+/// (#1317) [`null_gains`]' twin for the tail: each row's (p20, worst-five) gain over row 0 on the same `nulls`
+/// shuffles (the same seeds), one Vec per row. Row 0 against itself is zeros.
+fn null_tail_gains(samples: &[Sample], bench_r: &[f64], years: i64, books: &[&[Vec<usize>]], nulls: usize) -> Vec<Vec<(f64, f64)>> {
+    let mut out = vec![Vec::new(); books.len()];
+    let Some(first) = books.first() else { return out };
+    for k in 1..=nulls as u64 {
+        let r = shuffled(samples, 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(k));
+        let base = search_tails(first, &r, bench_r, years);
+        for (o, b) in out.iter_mut().zip(books) {
+            let g = search_tails(b, &r, bench_r, years);
+            o.push((g.0 - base.0, g.1 - base.1));
+        }
+    }
+    out
+}
+
 /// (#1292) The 2.5 and 97.5 percentiles (nearest rank) of one moment's null gains, and whether `real` sits
 /// strictly outside them. An empty null is never outside.
 fn null_band(gains: impl Iterator<Item = f64>, real: f64) -> (f64, f64, bool) {
@@ -1099,10 +1129,12 @@ fn print_rescore_bands(rows: &[Rescored], graded: &[Sample], sealed: &[Sample], 
         let realized: Vec<f64> = graded.iter().map(|s| s.realized).collect();
         let books: Vec<&[Vec<usize>]> = rows.iter().map(|r| r.graded.as_slice()).collect();
         let null = null_gains(graded, &legs, years, &books, nulls);
+        let tails = null_tail_gains(graded, &legs, years, &books, nulls); // (#1317) the same shuffles, read at the tail
         println!(
             "\n── NULL BAND (#1292): each row's top-10 excess gain over row 0, against the 2.5-97.5 % band the same two books gain on {nulls} within-(bucket, class) shuffles of realized; OUTSIDE needs both moments outside, and a gain inside is noise ──"
         );
-        for (r, n) in rows.iter().zip(&null) {
+        println!("   (#1317) the tail line under each row reads the 20th-percentile bucket and the mean of the five worst against their own band: TAIL OUTSIDE with RU3 held is the TAIL class");
+        for ((r, n), t) in rows.iter().zip(&null).zip(&tails) {
             if capped(&r.tuning) || capped(&first.tuning) {
                 println!("  row {}: n/a, the sector door, sector cap or corr cap is on, and the band's books leave them out", r.line);
                 continue;
@@ -1114,6 +1146,16 @@ fn print_rescore_bands(rows: &[Rescored], graded: &[Sample], sealed: &[Sample], 
                 "  row {}: gain mean {gm:+.2} | med {gd:+.2} ; null band mean [{ml:+.2},{mh:+.2}] med [{dl:+.2},{dh:+.2}] ({nulls}) -> {}",
                 r.line,
                 if mo && d_out { "OUTSIDE" } else { "INSIDE" }
+            );
+            // (#1317) RU-T: the same two books, read at the tail; the band is the one these tails gain by chance
+            let (gt, bt) = (search_tails(&r.graded, &realized, &legs, years), search_tails(&first.graded, &realized, &legs, years));
+            let (tp, tw) = (gt.0 - bt.0, gt.1 - bt.1);
+            let (pl, ph, po) = null_band(t.iter().map(|x| x.0), tp);
+            let (wl, wh, wo) = null_band(t.iter().map(|x| x.1), tw);
+            println!(
+                "  row {}: tail gain p20 {tp:+.2} | worst5 {tw:+.2} ; tail band p20 [{pl:+.2},{ph:+.2}] worst5 [{wl:+.2},{wh:+.2}] ({nulls}) -> {}",
+                r.line,
+                if po && wo { "TAIL OUTSIDE" } else { "TAIL INSIDE" }
             );
         }
     }
@@ -5759,7 +5801,7 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 /// (#1304) Rows 2 to 8 and (o) to (s) are keyed by the `growth_ranker` registry (`picks::RANKERS`), whose
 /// labels these are; (t) holds every pond name with no crowd mark at equal weight, (u) row 0's order with a
 /// book of 20.
-const RIVALS: [&str; 21] = [
+const RIVALS: [&str; 24] = [
     "shipped (plain top-10)",
     "(d) gates-off shipped",
     "(a) momentum 12-1",
@@ -5781,6 +5823,9 @@ const RIVALS: [&str; 21] = [
     "(s) rank avg mom + tested",
     "(t) equal weight, 0 marks",
     "(u) shipped top-20",
+    "(v) long-term reversal, -5Y",
+    "(w) dividend yield, 1Y",
+    "(x) low volatility",
 ];
 
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
@@ -6005,6 +6050,9 @@ fn rival_books(
         let bare: Vec<Option<f64>> = picked.iter().map(|q| picks::consensus_marks(q, shipped).is_empty().then_some(1.0)).collect();
         books[19].extend(rival_excess(&rekey(bare), usize::MAX, years)); // (#1304) (t): one key, so the whole set
         books[20].extend(rival_excess(&keyed(0), 20, years)); // (#1304) (u)
+        for (j, book) in books.iter_mut().skip(21).take(3).enumerate() {
+            book.extend(rival_excess(&rekey(ranked(14 + j)), VERDICT_TOP, years)); // (#1327) (v) to (x), the registry's rows 14 to 16
+        }
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
     (books, pond)
@@ -6073,6 +6121,18 @@ fn report_rivals(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
         0.05 / RIVALS.len() as f64,
         1.0 / (n_draws + 1) as f64
     );
+    // (#1327) one line per rival row per bucket, so an offline era read (tools/regrade_ruler.py, `BOOK rival`) can
+    // grade the rows by cutoff era; only a row with one excess per pond bucket prints, since `rival_excess` books
+    // nobody where a key is missing and the two lists would not align
+    for (name, xs) in RIVALS.iter().zip(&books) {
+        if xs.len() != pond.len() {
+            continue;
+        }
+        let id = name.split(' ').next().unwrap_or(name).trim_matches(|c| c == '(' || c == ')');
+        for (b, x) in pond.keys().zip(xs) {
+            println!("  BOOK rival {id} b{b} {x:+.1} pts/yr");
+        }
+    }
 }
 
 /// (#1149) One-sided permutation p-value of `x` against `draws`: the draws at or above it, plus `x` itself
@@ -10767,6 +10827,48 @@ mod tests {
         assert!(null_gains(&samples, &bench_r, 1, &[], 5).is_empty() && null_gains(&samples, &bench_r, 1, &[&books0], 0) == [Vec::new()]);
     }
 
+    /// (#1317) The tail of a book: nearest-rank p20 and the mean of the five worst buckets; fewer than five
+    /// buckets average what there is; no bucket reads NaN, which no band calls outside.
+    #[test]
+    fn search_tails_reads_p20_and_the_five_worst() {
+        // ten buckets, one name each, realized -7 -4 -1 0 0.5 1 2 3 3.5 9 against a flat index
+        let realized = [-7.0, -4.0, -1.0, 0.0, 0.5, 1.0, 2.0, 3.0, 3.5, 9.0];
+        let bench_r = [0.0; 10];
+        let books: Vec<Vec<usize>> = (0..10).map(|i| vec![i]).collect();
+        let (p20, worst5) = search_tails(&books, &realized, &bench_r, 1);
+        assert!((p20 + 4.0).abs() < 1e-9, "{p20}");
+        assert!((worst5 + 2.3).abs() < 1e-9, "{worst5}");
+        let (p20, worst5) = search_tails(&books[..3], &realized, &bench_r, 1);
+        assert!((p20 + 7.0).abs() < 1e-9 && (worst5 + 4.0).abs() < 1e-9, "under five buckets, all of them: {p20} {worst5}");
+        let (p20, worst5) = search_tails(&[], &realized, &bench_r, 1);
+        assert!(p20.is_nan() && worst5.is_nan());
+        assert!(!null_band([0.0, 0.1].into_iter(), p20).2, "a NaN tail is never outside");
+    }
+
+    /// (#1317) On the (#1292) nine-bucket world a twin row's tail gains are zero on every shuffle, and the
+    /// winner row's real tail gain (+10 on p20 and on the five worst: every bucket gains 10) sits outside.
+    #[test]
+    fn null_tail_gains_put_a_twin_row_inside_and_a_known_winner_outside() {
+        let mut samples = Vec::new();
+        for b in 0..9 {
+            for k in 0..11 {
+                samples.push(swap_sample(ymd(2000 + b, 1, 5), &format!("S{b}-{k}"), 1.0, 0.0, if k == 10 { 100.0 } else { 0.0 }));
+            }
+        }
+        let bench_r = vec![0.0; samples.len()];
+        let realized: Vec<f64> = samples.iter().map(|s| s.realized).collect();
+        let book = |slots: &[usize]| (0..9).map(|b| slots.iter().map(|k| b * 11 + k).collect()).collect::<Vec<Vec<usize>>>();
+        let (books0, books1) = (book(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), book(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 10]));
+        let out = null_tail_gains(&samples, &bench_r, 1, &[&books0, &books0, &books1], 200);
+        assert_eq!(out.iter().map(Vec::len).collect::<Vec<_>>(), [200, 200, 200]);
+        assert!(out[1].iter().all(|g| *g == (0.0, 0.0)), "a row equal to row 0 gains nothing at the tail on any shuffle");
+        let (t1, t0) = (search_tails(&books1, &realized, &bench_r, 1), search_tails(&books0, &realized, &bench_r, 1));
+        let (tp, tw) = (t1.0 - t0.0, t1.1 - t0.1);
+        assert!((tp - 10.0).abs() < 1e-6 && (tw - 10.0).abs() < 1e-6, "{tp} {tw}");
+        assert!(null_band(out[2].iter().map(|g| g.0), tp).2 && null_band(out[2].iter().map(|g| g.1), tw).2, "the winner row's tail gain is outside");
+        assert!(null_tail_gains(&samples, &bench_r, 1, &[], 5).is_empty());
+    }
+
     /// (#1293) The cut is 2016-01-01: a sample cut that day is sealed, the day before is graded, and each
     /// side keeps its order.
     #[test]
@@ -12256,7 +12358,8 @@ mod tests {
     fn rivals_match_registry() {
         let labels: Vec<&str> = crate::picks::RANKERS.iter().map(|r| r.label).collect();
         assert_eq!(RIVALS[..9], labels[..9]);
-        assert_eq!(RIVALS[14..19], labels[9..]);
+        assert_eq!(RIVALS[14..19], labels[9..14]);
+        assert_eq!(RIVALS[21..24], labels[14..17]); // (#1327) (v) to (x)
     }
 
     /// (#560) `rival_books` on a stand-in scorer (shipped = `range_pct`, open adds `avg_turnover_eur`).
@@ -12291,7 +12394,7 @@ mod tests {
         // (#600) (l)/(m)/(n): S2 has no 1Y, so no momentum key, and S1 is alone in all three.
         // (#1304) Neither name carries a crowd mark: (o)/(p)/(r) are S1 on its momentum key, (q) finds no 6M and
         // (s) no years under water, (t) holds both, (u) is row 0's S1.
-        let want: [&[f64]; 21] = [
+        let want: [&[f64]; 24] = [
             &[20.0],
             &[10.0],
             &[20.0],
@@ -12313,6 +12416,9 @@ mod tests {
             &[],
             &[10.0],
             &[20.0],
+            &[], // (#1327) (v): no 5Y leg in this pond
+            &[], // (w): no dividend record
+            &[], // (x): no daily volatility on a stub
         ];
         assert_eq!(books.len(), RIVALS.len());
         for (i, (got, want)) in books.iter().zip(want).enumerate() {

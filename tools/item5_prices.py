@@ -326,13 +326,25 @@ def monthly(series, pad_to=None):
     return out
 
 
-def targets(root):
-    """{ticker: cik} of roster names that need this source."""
-    rows = list(csv.DictReader(x for x in open(os.path.join(root, "tests/dead-roster.csv")) if not x.startswith("#")))
+def cik_map(root, path="tests/ticker-cik.csv"):
+    """(#1319) {ticker: cik} from tools/ticker_cik_history.py's output, {} when the file is absent. Read before the
+    hand `Q` map: the roster's own CIK column still wins where it is filled."""
+    p = os.path.join(root, path)
+    if not os.path.exists(p):
+        return {}
+    rows = csv.DictReader(x for x in open(p) if not x.startswith("#"))
+    return {r["ticker"]: r["cik"] for r in rows if r.get("cik")}
+
+
+def targets(root, roster="tests/dead-roster.csv", before="2014"):
+    """{ticker: cik} of roster names that need this source: an exit before `before` with no free series, keyed by
+    the roster's CIK, else (#1319) `tests/ticker-cik.csv`'s, else the hand `Q` map."""
+    rows = list(csv.DictReader(x for x in open(os.path.join(root, roster)) if not x.startswith("#")))
+    mapped = cik_map(root)
     out = {}
     for r in rows:
-        if r["exit"] != "alive" and r["exit_date"] < "2014" and r["series"] == "none":
-            cik = r["cik"] or Q.get(r["ticker"])
+        if r["exit"] != "alive" and r["exit_date"] < before and r["series"] == "none":
+            cik = r["cik"] or mapped.get(r["ticker"]) or Q.get(r["ticker"])
             if cik:
                 out[r["ticker"]] = cik
     return out
@@ -395,10 +407,11 @@ def build(args):
     with open(os.path.join(root, "tests/dead-members.csv")) as f:
         archive = {l.split(",", 1)[0] for l in f if not l.startswith("#")}
     out, report = [], []
-    for tk, cik in sorted(targets(root).items()):
+    before = args.before if hasattr(args, "before") and args.before else "2014"
+    for tk, cik in sorted(targets(root, getattr(args, "roster", None) or "tests/dead-roster.csv", before).items()):
         sp = [(a, b) for a, b in spans.get(tk, [])]
-        if not sp or any(b is None or b >= "2014" for a, b in sp):
-            report.append((tk, "a span runs past 2013"))
+        if not sp or any(b is None or b >= before for a, b in sp):
+            report.append((tk, "a span runs past %s" % (int(before) - 1)))
             continue
         if tk in archive:
             report.append((tk, "the archive holds another company under this ticker"))
@@ -557,6 +570,8 @@ if __name__ == "__main__":
     ap.add_argument("--brd", help="BRD Cases CSV")
     ap.add_argument("--yahoo", default=".long_history_cache.json")
     ap.add_argument("--out", default="tests/dead-prices.csv")
+    ap.add_argument("--roster", default="tests/dead-roster.csv", help="(#1319) a dead_roster.py output; tests/sp400-roster.csv for the MidCap pond")
+    ap.add_argument("--before", default="2014", help="price exits before this year only (the archive prices the later ones); 2019 for the MidCap pond, where Item 5 tables end with the 2018 filings")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     selftest() if a.selftest else build(a)
