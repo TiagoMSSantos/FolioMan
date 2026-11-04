@@ -25547,6 +25547,46 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   EX-27 census re-run on its own seed and bar; (#1323) below.
 # REVERT RULE: the file and the tool can go with no number moving; tools/dead_roster.py and item5_prices.py read the
 #   file only when it exists.
+# (#1320) VERDICT, 2026-11-04: the first build of tests/ticker-cik.csv MISSES (#1319)'s band and is kept. 140 of the
+#   361 pre-2014 exits gain a CIK against the 230-280 expected: 41 of the 151 exits of 1996-2000 (27 %, not about
+#   60 %) and 99 of the 210 of 2001-2013 (not about 200); 51 exits after 2013 that had none gain one too. The file's
+#   476 rows by source: roster 288 (the CIKs tests/dead-roster.csv already held, so the map is one table), phrase 55,
+#   figi-index 51, name 39, qsymbol 26, figi-name 9, index 8. The roster's CIK column fills 288 -> 479 of 756.
+#   Why the miss: before 2001 there is no full-text search, so a name is the only key, and OpenFIGI returns none for
+#   most 1990s symbols; after 2001 the phrase rule finds the filer's own 10-K only when it prints its symbol, and a
+#   name that lands on two filers writes nothing (RBD: Newell Rubbermaid | Rubbermaid). Unmatched spans are listed by
+#   the tool, never guessed.
+#   PRECISION, found by hand checks of the new rows, both shipped with a test:
+#     tools/ticker_cik_history.py `alive_at_exit`: the member's own name can land on a predecessor CIK that stopped
+#       years before the exit (Express Scripts' 1992 CIK, last 10-K 2011, exit 2018; the Starwood REIT trust, stopped
+#       2006, exit 2016). A CIK now needs an annual report within 548 days before the exit.
+#     tools/dead_roster.py rule c: once the 1996-2013 exits had CIKs, 42 names newly read distress on a Form 25/15
+#       that closed a merger. A deal filing in the 12 months before the delisting form (8-K item 5.01, item 1 before
+#       2004-08, DEFM14A/C, PREM14A/C, 425, SC 14D1, SC 14D9, SC TO-T, SC 13E3) now classes the exit acquired when it
+#       is dated by 45 days after the span end; 30 of the 42 move (Albertsons, Quaker Oats, Mellon, King
+#       Pharmaceuticals). A deal filing with no delisting form after it classes nothing: spinoffs file a 5.01
+#       (Vontier) and bidders file 425s (Transocean 2017). Residue, documented in the docstring: six 1998-2000
+#       mergers whose 8-Ks list only items 5 and 7 still read distress (Digital Equipment, US West).
+#   ROSTER, tests/dead-roster.csv, class counts before -> after: bankrupt 37 -> 37, distress 19 -> 21, acquired
+#     197 -> 265, alive 153 -> 156, spinoff 16 -> 14, unknown 334 -> 263. Known misreads left as they are (no rule
+#     both fixes them and keeps a test): an 8-K 2.01 disposition read as the deal (Dean Foods 2013), a deal announced
+#     after the exit (IGT 2014), a bidder's own 425s (Xerox 2020), a redomicile 5.01 (Noble 2009), and post-2008
+#     Form 25 or 3.01 filings for debt delistings and exchange transfers (Sears, Abercrombie, Zions, Fiserv).
+#   PRICES, tools/item5_prices.py --roster on the new CIKs: tests/dead-prices.csv grows from 47 names and 5969 rows
+#     to 114 names and 11874 rows, months 1990-09 to 2013-12. Of the 114, 79 end 1-15 months short of the exit and
+#     are carried flat to it (padded), 35 reach the exit month; 15 carry the 1 % bar of a BRD bankruptcy case. Not
+#     written: 20 names whose 10-Ks print no table the parser reads (Mellon, El Paso, NYSE Euronext among them), 7
+#     whose last table ends over 15 months before the exit (the walk would refuse them), 5 whose ticker the free
+#     archive holds for another company, 19 whose span runs past the tool's --before. 11 filings whose overlap held
+#     no steady ratio with the newer filing were skipped. The Rust pin
+#     `dead_prices_share_no_ticker_with_the_archive_and_end_inside_it` holds: 114 >= 45, no ticker in both files,
+#     2013-12 before the archive's 2018-03.
+#   EX-27, (#1241)'s census re-run on its own seed (1241, 100 survivors and 100 dead) with the map as a candidate
+#     source: dead CIK coverage 64 % -> 75 %, dead usable cells 50.6 % -> 57.7 %, overall 63.9 % -> 67.1 %, gap
+#     24.2 -> 17.1 points. NO-GO on the same bar (>= 60 % and a gap <= 15): (#1241) stays refused.
+#   WALK CENSUS: the dead-lane share against (#1312)'s floors (12y dead about 2.35 %, acquired about 6.74 %) is the
+#     Rust walk's, read from the first `dead` run on this commit, (#1324)'s control row; recorded there as a READING.
+#   Nothing in the live screen reads these files; the dead lane and the probes do.
 # (#1321) THE MIDCAP 400 POND UNDER THE SOFT GATES, PRE-REGISTERED 2026-11-03 before any run. Row: (#1322).
 # WHY: (#173)/(#174) graded the pond under HARD gates and tied because "the MEDIAN GATED POOL DID NOT MOVE BY ONE NAME"
 #   (5/6/7 names a bucket); (#563)-(#566) made the scored pool 87-181, so the pond can reach the book now, and the

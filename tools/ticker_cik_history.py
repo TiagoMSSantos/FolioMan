@@ -166,11 +166,16 @@ def fills_span(filings, start, end):
     phrase rule checks no name and the OpenFIGI rules borrow today's holder's, so those two also need this: EMC's
     symbol hit SCANDIUM INTERNATIONAL (first filing 2007), Bank One's ONE hit POWER ONE (1997), Harrah's HET hit Park
     Place's CAESARS ENTERTAINMENT INC (1998). A partial CIK (DIRECTV's 2009 holding company for a 2006 span) is lost too."""
-    if not filings:
-        return False
-    first = min(d for _, d in filings)
+    return alive_at_exit(filings, end) and (min(d for _, d in filings) - max(start, EDGAR_FULL)).days <= 365
+
+
+def alive_at_exit(filings, end):
+    """(#1320) Did this CIK file an annual report within 18 months before the exit? Even the member's own name can
+    land on a predecessor that stopped years earlier: Express Scripts' 1992 CIK filed its last 10-K in 2011, while the
+    2018 exit belongs to the 2012 holding company; the Starwood REIT trust stopped in 2006, the 2016 exit is the
+    hotel corporation's. A series priced off the old CIK would end years before the member left the index."""
     annual = [d for f, d in filings if f.split("/")[0] in ANNUAL]
-    return bool(annual) and (first - max(start, EDGAR_FULL)).days <= 365 and (end - max(annual)).days <= LATER_HOLDER_DAYS
+    return bool(annual) and (end - max(annual)).days <= LATER_HOLDER_DAYS
 
 
 def contains_tokens(edgar_name, member_name):
@@ -314,9 +319,13 @@ def resolve(row, fetch, fetch_text, hand=None, current=None, figi=None):
     ambiguous = got[1] if got else None
     names = [row.get("name", "")] if row.get("name") else []
     names += [n for n in (figi or {}).get(tk, []) if n not in names]
-    # a name the roster carries is the member's own; an OpenFIGI one may be a later holder's, so its CIK must fill the span
-    ok = lambda got, nm: got and got[0] != "ambiguous" and (tk, got[0]) not in WRONG and (
-        nm == row.get("name") or fills_span(filings_of(got[0], fetch), start, end))
+    # a name the roster carries is the member's own; an OpenFIGI one may be a later holder's, so its CIK must fill the
+    # span; either way the CIK must still be filing at the exit
+    def ok(got, nm):
+        if not got or got[0] == "ambiguous" or (tk, got[0]) in WRONG:
+            return False
+        f = filings_of(got[0], fetch)
+        return alive_at_exit(f, end) if nm == row.get("name") else fills_span(f, start, end)
     for nm in names:
         got = by_name(nm, start, end, fetch)
         if ok(got, nm):
@@ -501,6 +510,16 @@ class Tests(unittest.TestCase):
         got = resolve({"ticker": "AWE", "start_date": "2001-07-09", "end_date": "2004-10-27", "cik": "", "name": ""}, e, e.text)
         self.assertEqual(got[2], "none", "AT&T CORP fills the span, yet AWE is AT&T Wireless: %r" % (got,))
 
+    def test_a_predecessor_cik_that_stopped_years_before_the_exit_is_refused(self):
+        e = self.edgar()
+        e.fts[('"Express Scripts"', ANNUAL)] = body([hit("EXPRESS SCRIPTS INC", "0000885721", "10-K", "2011-02-22")])
+        e.subs["0000885721"] = subs([("10-K", "2011-02-22"), ("10-K", "2004-03-01"), ("10-K", "1997-03-01")])
+        got = resolve({"ticker": "ESRX", "start_date": "2003-09-26", "end_date": "2018-12-21", "cik": "", "name": "Express Scripts"}, e, e.text)
+        self.assertEqual(got[2], "none", "the member's own name, but its last 10-K is 7 years before the exit: %r" % (got,))
+        e.subs["0000885721"] = subs([("10-K", "2018-02-27"), ("10-K", "2011-02-22")])
+        got = resolve({"ticker": "ESRX", "start_date": "2003-09-26", "end_date": "2018-12-21", "cik": "", "name": "Express Scripts"}, e, e.text)
+        self.assertEqual(got[2], "name", "a 10-K ten months before the exit is still filing")
+
     def test_no_phrase_names_an_exchange(self):
         self.assertFalse([p for p in PHRASES if "NYSE" in p or "Nasdaq" in p], "a partner's 10-K quotes 'Nasdaq: ACAS'")
 
@@ -518,6 +537,7 @@ class Tests(unittest.TestCase):
                "3133|ALEXANDER & ALEXANDER SERVICES INC|10-K|1996-03-28|edgar/data/3133/0000003133-96-000005.txt\n"
                "315293|AON CORP|10-K|1996-03-27|edgar/data/315293/x.txt\n")
         e.idx[MASTER.format(1996, 1)] = idx
+        e.subs["0000003133"] = subs([("10-K", "1996-03-28"), ("10-Q", "1996-11-12")])
         got = resolve({"ticker": "AAL", "start_date": "1996-01-02", "end_date": "1997-01-15", "cik": "", "name": "Alexander & Alexander Services"}, e, e.text)
         self.assertEqual(got, ("0000003133", "ALEXANDER & ALEXANDER SERVICES INC", "index", "C"))
         rows = parse_master(idx)

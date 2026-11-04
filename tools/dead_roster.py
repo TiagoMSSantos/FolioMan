@@ -20,8 +20,18 @@ Precedence (stated before any row was classified; the first rule that fires wins
      months after the span end (items exist from 2004-08)                                   -> bankrupt
   c. an 8-K item 3.01, a Form 25/25-NSE or a Form 15 within 12 months after the span end, with no
      acquisition filing before it                                                         -> distress
+     (#1320) and with no deal filing in the 12 months before it: an 8-K item 5.01 (item 1 before 2004-08), a
+     DEFM14A/C or PREM14A/C, a 425, a tender (SC 14D1, SC 14D9, SC TO-T) or a going-private SC 13E3. The
+     delisting form then closed the deal: one filed from 12 months before the span end to 45 days after it
+     -> acquired; a later one explains the form without classing the exit (rules e-g decide)
   d. an 8-K item 2.01 or a DEFM14A/DEFM14C within 6 months before the span end, or the Wikipedia reason
      reading acquired/merged                                                               -> acquired
+     (#1320) rule c first took the 2.01 and the DEFM14 alone as the deal, so once the ticker-CIK map gave the
+     1996-2013 exits a CIK, 42 names newly read distress; the deal filings move 30 of them to acquired
+     (Albertsons, Quaker Oats, Mellon, King Pharmaceuticals). A deal filing with no delisting form after it
+     stays out of rule d: spinoffs file a 5.01 (Vontier) and buyers file 425s (Transocean in 2017). Residue:
+     six 1998-2000 mergers still read distress (Digital Equipment, US West), as their 8-Ks list items
+     5 and 7 and no deal form of theirs is on EDGAR.
   e. the Wikipedia changes-table reason text otherwise: bankrupt/distress/spinoff/alive words
   f. a span still open later, or a current EDGAR ticker                                   -> alive
   g. none                                                                                 -> unknown
@@ -49,6 +59,7 @@ CIK_LOOKUP = "https://www.sec.gov/Archives/edgar/cik-lookup-data.txt"
 COMPANY_TICKERS = "https://www.sec.gov/files/company_tickers.json"
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 WIKI_PAGE = "Historical components of the S&P 500"  # the changes table left the list page in 2026
+DEAL_FORMS = ("425", "SC 14D1", "SC 14D9", "SC14D9C", "SC TO-T", "SC 13E3", "SC 13E-3")  # rule c, besides DEFM14/PREM14 and the 8-K items
 UA = "FolioMan research folioman@researchmail.org"  # SEC fair access wants a name and a contact
 PACE = 0.13  # seconds between SEC calls; SEC refuses an IP over 10 req/s for about 10 minutes
 MIN_EXITS = 300  # the fixture spans hold 756 closed spans; a tenth of that is a broken parse
@@ -323,8 +334,14 @@ def classify_edgar(filings, end):
     distress = [(d, "8k-3.01" if f.startswith("8-K") else "form" + f.split("-")[0]) for f, d, it in filings
                 if ((f.startswith("8-K") and "3.01" in items(it)) or f.startswith("25") or f.startswith("15-")) and end - datetime.timedelta(days=45) <= d <= after12]
     if distress and not acquired:
-        d, s = min(distress)
-        return "distress", d, s
+        deals = sorted((d, "8k-" + min(items(it) & {"5.01", "1"}) if f.startswith("8-K") else f.lower()) for f, d, it in filings
+                       if (f.split("/")[0] in DEAL_FORMS or f.startswith(("DEFM14", "PREM14")) or f.startswith("8-K") and items(it) & {"5.01", "1"})
+                       and end - datetime.timedelta(days=365) <= d <= min(distress)[0])
+        if not deals:
+            d, s = min(distress)
+            return "distress", d, s
+        if deals[0][0] <= end + datetime.timedelta(days=45):
+            return ("acquired",) + deals[0]
     if acquired:
         d, s = min(acquired)
         return "acquired", d, s
@@ -656,6 +673,15 @@ class Tests(unittest.TestCase):
         dis = [("25-NSE", datetime.date(2012, 2, 1), ""), ("15-12G", datetime.date(2012, 3, 1), "")]
         self.assertEqual(classify_edgar(dis, datetime.date(2012, 1, 20)), ("distress", datetime.date(2012, 2, 1), "form25"))
         self.assertIsNone(classify_edgar([("10-K", datetime.date(2012, 3, 1), "")], datetime.date(2012, 1, 20)))
+        # (#1320) a tender before the Form 15 is the deal closing (Giddings & Lewis, 1997); one after the exit
+        # explains the later Form 25 without making the exit a purchase or a failure
+        gidl = [("SC 14D9", datetime.date(1997, 5, 1), ""), ("15-12B", datetime.date(1997, 10, 1), "")]
+        self.assertEqual(classify_edgar(gidl, datetime.date(1997, 7, 17)), ("acquired", datetime.date(1997, 5, 1), "sc 14d9"))
+        late = [("425", datetime.date(2014, 9, 1), ""), ("25-NSE", datetime.date(2015, 4, 7), "")]
+        self.assertIsNone(classify_edgar(late, datetime.date(2014, 6, 20)))
+        mkg = [("8-K", datetime.date(2000, 10, 25), "1,7"), ("15-12B", datetime.date(2000, 11, 14), "")]
+        self.assertEqual(classify_edgar(mkg, datetime.date(2000, 10, 18)), ("acquired", datetime.date(2000, 10, 25), "8k-1"))
+        self.assertIsNone(classify_edgar(mkg[:1], datetime.date(2000, 10, 18)), "a change in control with no delisting is a spinoff's 5.01")
         ctx = self.ctx(cik_of={"X": "1"}, edgar={"1": acq})
         self.assertEqual(classify("X", datetime.date(2000, 1, 1), datetime.date(2016, 5, 23), ctx)[2], "8k-2.01")
         ctx = self.ctx(cik_of={"WCOEQ": "0000723527"}, edgar={"0000723527": [("8-K", datetime.date(2002, 7, 22), "1.03,9.01")]})

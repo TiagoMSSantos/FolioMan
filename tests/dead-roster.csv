@@ -1,17 +1,17 @@
 # (#1307) every S&P 500 exit in the point-in-time spans, with why the name left and which free archive holds its bars
-# written by tools/dead_roster.py; spans .sp500_history.json; online; BRD yes; wiki yes; EDGAR 349; tiingo no
+# written by tools/dead_roster.py; spans .sp500_history.json; online; BRD yes; wiki yes; EDGAR 517; tiingo no
 # bankruptcy cases from the Florida-UCLA-LoPucki Bankruptcy Research Database (BRD)
 ticker,start_date,end_date,cik,name,exit,exit_date,source,series
 BCO,1996-01-02,1996-01-22,0000078890,,alive,1996-01-22,edgar-tickers,none
 CCB,1996-01-02,1996-02-12,,,unknown,1996-02-12,none,none
-HDLM,1996-01-02,1996-03-08,,,unknown,1996-03-08,none,none
+HDLM,1996-01-02,1996-03-08,0000314727,,unknown,1996-03-08,none,none
 FBO,1996-01-02,1996-03-13,,,unknown,1996-03-13,none,none
 CYR,1996-01-02,1996-03-28,,,unknown,1996-03-28,none,none
 CMB,1996-01-02,1996-04-01,,,unknown,1996-04-01,none,none
 I,1996-01-02,1996-04-01,,,unknown,1996-04-01,none,none
 LOR,1996-01-02,1996-04-23,,,unknown,1996-04-23,none,none
 PMI,1996-01-02,1996-05-31,,,unknown,1996-05-31,none,none
-USHC,1996-01-02,1996-07-19,,,unknown,1996-07-19,none,none
+USHC,1996-01-02,1996-07-19,0000711405,,acquired,1996-06-12,defm14a,none
 CAL,1996-01-02,1996-07-22,0000014707,,alive,1996-07-22,edgar-tickers,none
 COV,1996-01-02,1996-08-16,,Covidien,acquired,1996-08-16,wiki,none
 VAT,1996-01-02,1996-09-06,,,unknown,1996-09-06,none,none
@@ -19,20 +19,20 @@ OM,1996-01-02,1996-10-01,,,unknown,1996-10-01,none,none
 THY,1996-01-02,1996-10-16,,,unknown,1996-10-16,none,none
 YRCW,1996-01-02,1996-11-04,,,unknown,1996-11-04,none,wiki
 CNW,1996-01-02,1996-12-03,,,unknown,1996-12-03,none,wiki
-BLY,1996-01-02,1996-12-19,,,unknown,1996-12-19,none,none
+BLY,1996-01-02,1996-12-19,0000009435,,unknown,1996-12-19,none,none
 LUB,1996-01-02,1997-01-02,,,unknown,1997-01-02,none,wiki
 RYAN,1996-01-02,1997-01-02,,,unknown,1997-01-02,none,none
 SHN,1996-01-02,1997-01-02,,,unknown,1997-01-02,none,none
 BOAT,1996-01-02,1997-01-07,,,unknown,1997-01-07,none,none
-AAL,1996-01-02,1997-01-15,0000006201,American Airlines Group,distress,1997-01-02,form15,none
+AAL,1996-01-02,1997-01-15,0000006201,American Airlines Group,acquired,1996-04-17,8k-1,none
 PAC,1996-01-02,1997-04-01,,,unknown,1997-04-01,none,none
 GLD,1996-01-02,1997-05-06,,,unknown,1997-05-06,none,none
 CRR,1996-01-02,1997-05-27,,,unknown,1997-05-27,none,wiki
-DWD,1996-01-02,1997-06-02,,,unknown,1997-06-02,none,none
+DWD,1996-01-02,1997-06-02,0000895421,,acquired,1997-04-14,defm14a,none
 USH,1996-01-02,1997-06-18,,,unknown,1997-06-18,none,none
 PEL,1996-01-02,1997-06-19,,,unknown,1997-06-19,none,none
 GWF,1996-01-02,1997-07-02,,,unknown,1997-07-02,none,none
-GIDL,1996-01-02,1997-07-17,,,unknown,1997-07-17,none,none
+GIDL,1996-01-02,1997-07-17,0000851588,,acquired,1997-04-28,sc 14d1,none
 INGR,1996-01-02,1997-07-28,0001046257,,alive,1997-07-28,edgar-tickers,none
 SFS,1996-01-02,1997-07-28,,,unknown,1997-07-28,none,none
 MD,1996-01-02,1997-08-01,0000893949,,alive,1997-08-01,edgar-tickers,wiki
@@ -40,32 +40,32 @@ USBC,1996-01-02,1997-08-04,,,unknown,1997-08-04,none,none
 ENS,1996-01-02,1997-08-06,,,unknown,1997-08-06,none,none
 NAE,1996-01-02,1997-08-07,,,unknown,1997-08-07,none,none
 NYN,1996-01-02,1997-08-15,,,unknown,1997-08-15,none,none
-TDM,1996-01-02,1997-09-02,,,unknown,1997-09-02,none,none
+TDM,1996-01-02,1997-09-02,0000315180,,acquired,1997-07-30,defm14a,none
 AMH,1996-01-02,1997-09-15,,,unknown,1997-09-15,none,none
-SRR,1996-01-02,1997-10-07,,,unknown,1997-10-07,none,none
-LLX,1996-01-02,1997-10-23,,,unknown,1997-10-23,none,none
+SRR,1996-01-02,1997-10-07,0000094887,,unknown,1997-10-07,none,none
+LLX,1996-01-02,1997-10-23,0000060512,,acquired,1997-08-01,prem14a,none
 SB,1996-01-02,1997-11-28,,,unknown,1997-11-28,none,none
 BEV,1996-01-02,1997-12-04,,,unknown,1997-12-04,none,none
-HFS,1996-08-16,1997-12-18,,,unknown,1997-12-18,none,none
-FLMIQ,1996-01-02,1997-12-24,,,bankrupt,1997-12-24,qsuffix,none
+HFS,1996-08-16,1997-12-18,0000891104,,acquired,1997-08-28,defm14a,none
+FLMIQ,1996-01-02,1997-12-24,0000352949,,bankrupt,1997-12-24,qsuffix,none
 BBI,1996-01-02,1998-01-12,,,unknown,1998-01-12,none,none
-ECO,1996-01-02,1998-01-20,,,unknown,1998-01-20,none,none
-CBB,1996-01-02,1998-01-28,,,unknown,1998-01-28,none,wiki
+ECO,1996-01-02,1998-01-20,0000722080,,alive,1998-01-20,edgar-tickers,none
+CBB,1996-01-02,1998-01-28,0000716133,,unknown,1998-01-28,none,wiki
 PAS,1996-01-02,1998-01-30,,,unknown,1998-01-30,none,none
-JH,1996-01-02,1998-04-01,,,unknown,1998-04-01,none,none
+JH,1996-01-02,1998-04-01,0000045599,,unknown,1998-04-01,none,none
 SK,1996-01-02,1998-04-01,,,unknown,1998-04-01,none,none
 CHRS,1996-01-02,1998-04-08,,,unknown,1998-04-08,none,none
 FG,1996-01-02,1998-04-27,,,unknown,1998-04-27,none,none
 CFL,1996-01-02,1998-04-28,,,unknown,1998-04-28,none,none
-DEC,1996-01-02,1998-06-12,,,unknown,1998-06-12,none,none
-PET,1996-01-02,1998-06-29,,,unknown,1998-06-29,none,none
+DEC,1996-01-02,1998-06-12,0000028887,,distress,1998-06-11,form15,none
+PET,1996-01-02,1998-06-29,0000075527,,distress,1998-06-29,form15,none
 BNL,1996-01-02,1998-07-01,,,unknown,1998-07-01,none,none
 GNT,1996-03-13,1998-07-01,,,unknown,1998-07-01,none,none
 RYI,1996-01-02,1998-07-01,,,unknown,1998-07-01,none,none
 ECH,1996-01-02,1998-07-10,,,unknown,1998-07-10,none,none
 GFS-A,1996-01-02,1998-07-16,,,unknown,1998-07-16,none,none
 WMX,1996-01-02,1998-07-17,,,unknown,1998-07-17,none,none
-WAI,1996-01-02,1998-08-11,,,unknown,1998-08-11,none,none
+WAI,1996-01-02,1998-08-11,0000913340,,acquired,1998-03-13,sc 14d1,none
 MST,1996-01-02,1998-08-14,,,unknown,1998-08-14,none,none
 DIGI,1996-01-02,1998-08-28,,,unknown,1998-08-28,none,none
 BAY,1996-02-12,1998-08-31,,,unknown,1998-08-31,none,none
@@ -78,14 +78,14 @@ USS,1996-01-02,1998-10-02,,,unknown,1998-10-02,none,none
 GSX,1996-01-02,1998-10-07,,,unknown,1998-10-07,none,none
 CCI,1996-01-02,1998-10-08,0001051470,,unknown,1998-10-08,none,none
 STO,1996-01-02,1998-11-18,,,unknown,1998-11-18,none,none
-AS,1996-01-02,1998-11-24,,,unknown,1998-11-24,none,none
+AS,1996-01-02,1998-11-24,0000007383,,alive,1998-11-24,edgar-tickers,none
 GRN,1996-01-02,1998-12-22,0000312070,General Re,acquired,1998-12-22,wiki,none
 PZE,1996-01-02,1998-12-31,,,unknown,1998-12-31,none,none
 AN,1996-01-02,1999-01-04,0000350698,AutoNation,spinoff,1999-01-04,wiki,none
 FL,1996-01-02,1999-01-04,0000850209,Foot Locker,alive,1999-01-04,wiki,wiki
 SAI,1997-07-17,1999-01-04,,SAIC,alive,1999-01-04,wiki,none
 HBOC,1997-10-23,1999-01-13,,,unknown,1999-01-13,none,none
-ORX,1996-01-02,1999-03-01,,,unknown,1999-03-01,none,none
+ORX,1996-01-02,1999-03-01,0000836442,,acquired,1999-01-28,defm14a,none
 TCOMA,1996-01-02,1999-03-10,,,unknown,1999-03-10,none,none
 RBD,1996-01-02,1999-03-25,,,unknown,1999-03-25,none,none
 AMP,1996-01-02,1999-04-05,0000820027,,unknown,1999-04-05,none,none
@@ -101,9 +101,9 @@ ASND,1998-06-12,1999-06-25,,,unknown,1999-06-25,none,none
 PVT,1998-08-31,1999-07-01,,,unknown,1999-07-01,none,none
 TA,1996-01-02,1999-07-22,,,unknown,1999-07-22,none,none
 BFI,1996-01-02,1999-08-02,,,unknown,1999-08-02,none,none
-NLC,1996-01-02,1999-08-02,,,unknown,1999-08-02,none,none
+NLC,1996-01-02,1999-08-02,0000069598,,acquired,1999-06-28,8k-1,none
 BMGCA,1996-07-22,1999-08-09,,,unknown,1999-08-09,none,none
-RYC,1996-01-02,1999-08-13,,,unknown,1999-08-13,none,none
+RYC,1996-01-02,1999-08-13,0000082206,,distress,1999-09-17,form15,none
 MTL,1998-02-23,1999-09-20,,,unknown,1999-09-20,none,none
 FRO,1997-01-02,1999-09-29,0000913290,,alive,1999-09-29,edgar-tickers,none
 BKB,1996-01-02,1999-10-01,,,unknown,1999-10-01,none,none
@@ -118,15 +118,15 @@ TEN,1996-01-02,1999-11-05,,,unknown,1999-11-05,none,wiki
 HRS,1996-01-02,1999-11-08,,,unknown,1999-11-08,none,wiki
 CSE,1996-01-22,1999-11-15,,,unknown,1999-11-15,none,none
 KWP,1996-01-02,1999-11-16,,,unknown,1999-11-16,none,none
-PPW,1996-01-02,1999-11-30,,,unknown,1999-11-30,none,none
+PPW,1996-01-02,1999-11-30,0000075594,,unknown,1999-11-30,none,none
 MOB,1996-01-02,1999-12-01,,,unknown,1999-12-01,none,none
 LDW-B,1996-01-02,1999-12-08,,,unknown,1999-12-08,none,none
 HP,1996-01-02,1999-12-31,0000046765,Helmerich & Payne,alive,1999-12-31,wiki,wiki
-RNB,1996-01-02,2000-01-03,,,unknown,2000-01-03,none,none
+RNB,1996-01-02,2000-01-03,0000083246,,acquired,1999-08-09,defm14a,none
 NLV,1996-04-01,2000-01-06,,,unknown,2000-01-06,none,none
-CNG,1996-01-02,2000-01-31,,,unknown,2000-01-31,none,none
-FLTWQ,1996-01-02,2000-01-31,,,bankrupt,2000-01-31,qsuffix,none
-FWLT,1996-01-02,2000-01-31,,,unknown,2000-01-31,none,none
+CNG,1996-01-02,2000-01-31,0000023738,,unknown,2000-01-31,none,none
+FLTWQ,1996-01-02,2000-01-31,0000314132,,bankrupt,2000-01-31,qsuffix,none
+FWLT,1996-01-02,2000-01-31,0000038321,,unknown,2000-01-31,none,none
 SCI,1996-01-02,2000-03-16,0000089089,,alive,2000-03-16,edgar-tickers,wiki
 PBY,1996-01-02,2000-04-03,,,unknown,2000-04-03,none,wiki
 PNU,1996-01-02,2000-04-03,,,unknown,2000-04-03,none,none
@@ -135,40 +135,40 @@ RLM,1996-01-02,2000-05-04,,,unknown,2000-05-04,none,none
 JOS,1996-01-02,2000-05-10,,,unknown,2000-05-10,none,none
 MIR,1997-08-07,2000-06-01,,,alive,2000-06-01,spans,none
 NC,1996-01-02,2000-06-05,0000789933,,alive,2000-06-05,edgar-tickers,wiki
-SMS,1996-01-02,2000-06-08,0000089415,Shared Medical Systems,distress,2000-07-06,form15,none
-TMC,1996-01-02,2000-06-13,,Times Mirror,acquired,2000-06-13,wiki,none
+SMS,1996-01-02,2000-06-08,0000089415,Shared Medical Systems,acquired,2000-03-03,425,none
+TMC,1996-01-02,2000-06-13,0000925260,Times Mirror,acquired,2000-05-05,defm14a,none
 TMC-A,1996-01-02,2000-06-13,,,unknown,2000-06-13,none,none
 UMG,1996-01-02,2000-06-15,,,unknown,2000-06-15,none,none
 CSR,1996-01-02,2000-06-16,0000798359,,alive,2000-06-16,edgar-tickers,none
 CHA,1996-01-02,2000-06-19,,,unknown,2000-06-19,none,none
-WLA,1996-01-02,2000-06-20,,,unknown,2000-06-20,none,none
-SGID,1996-01-02,2000-06-21,,,unknown,2000-06-21,none,none
-IKN,1996-01-02,2000-06-29,,,unknown,2000-06-29,none,none
-MZIAQ,1996-01-02,2000-06-29,,,bankrupt,2000-06-29,qsuffix,none
+WLA,1996-01-02,2000-06-20,0000104669,,unknown,2000-06-20,none,none
+SGID,1996-01-02,2000-06-21,0000802301,,unknown,2000-06-21,none,none
+IKN,1996-01-02,2000-06-29,0000003370,,unknown,2000-06-29,none,none
+MZIAQ,1996-01-02,2000-06-29,0000716823,,bankrupt,2000-06-29,qsuffix,none
 GTE,1996-01-02,2000-07-03,,,unknown,2000-07-03,none,none
-USW,1996-01-02,2000-07-03,,,unknown,2000-07-03,none,none
+USW,1996-01-02,2000-07-03,0000732718,,distress,2000-06-16,form15,none
 KSU,1999-04-05,2000-07-13,0000054480,Kansas City Southern,acquired,2000-07-13,wiki,wiki
 UPR,1996-10-16,2000-07-17,,,unknown,2000-07-17,none,none
 RAD,1996-01-02,2000-07-27,0000084129,Rite Aid,alive,2000-07-27,wiki,wiki
 COMS,1996-01-02,2000-07-28,,,unknown,2000-07-28,none,none
-NCE,1998-11-03,2000-08-21,,,unknown,2000-08-21,none,none
-GAPTQ,1996-01-02,2000-08-30,,,bankrupt,2000-08-30,qsuffix,none
-OWENQ,1996-01-02,2000-10-02,,,bankrupt,2000-10-02,qsuffix,none
+NCE,1998-11-03,2000-08-21,0001004858,,distress,2000-08-22,form15,none
+GAPTQ,1996-01-02,2000-08-30,0000043300,,bankrupt,2000-08-30,qsuffix,none
+OWENQ,1996-01-02,2000-10-02,0000075234,,bankrupt,2000-10-05,brd,none
 BFO,1996-01-02,2000-10-03,,,unknown,2000-10-03,none,none
-YNR,2000-01-06,2000-10-03,,,unknown,2000-10-03,none,none
-MKG,1996-01-02,2000-10-18,,,unknown,2000-10-18,none,none
-UCM,1996-01-02,2000-10-23,,,unknown,2000-10-23,none,none
+YNR,2000-01-06,2000-10-03,0001030048,,acquired,2000-08-25,defm14a,none
+MKG,1996-01-02,2000-10-18,0000051396,,acquired,2000-06-28,425,none
+UCM,1996-01-02,2000-10-23,0000918040,,distress,2000-10-24,form15,none
 CG,1996-01-02,2000-11-02,,,unknown,2000-11-02,none,none
 EFU,1996-01-02,2000-11-02,,,unknown,2000-11-02,none,none
 PWJ,1999-06-04,2000-11-06,,,unknown,2000-11-06,none,none
 ACKH,1996-01-02,2000-11-17,,,unknown,2000-11-17,none,none
 SEG,1996-08-16,2000-11-22,,,unknown,2000-11-22,none,none
-FJ,1996-01-02,2000-11-24,,,unknown,2000-11-24,none,none
+FJ,1996-01-02,2000-11-24,0000053117,,acquired,2000-07-19,425,none
 AFS-A,1998-04-08,2000-12-01,,,unknown,2000-12-01,none,none
-FPC,1999-06-22,2000-12-01,,,unknown,2000-12-01,none,none
-BHMSQ,1996-01-02,2000-12-11,,,bankrupt,2000-12-11,qsuffix,none
+FPC,1999-06-22,2000-12-01,0000357261,,acquired,2000-07-11,defm14a,none
+BHMSQ,1996-01-02,2000-12-11,0000011860,,bankrupt,2001-10-15,brd-noequity,none
 CCK,1996-01-02,2000-12-11,,Crown Holdings,alive,2000-12-11,wiki,wiki
-GRA,1996-01-02,2000-12-11,,WR Grace,alive,2000-12-11,wiki,wiki
+GRA,1996-01-02,2000-12-11,0001012100,WR Grace,alive,2000-12-11,wiki,wiki
 OI,1997-08-04,2000-12-11,0000812074,Owens-Illinois,alive,2000-12-11,wiki,none
 VO,1996-01-02,2000-12-11,,,unknown,2000-12-11,none,none
 NGH,1998-09-16,2000-12-12,,,unknown,2000-12-12,none,none
@@ -180,171 +180,171 @@ CGP,1996-01-02,2001-01-30,,,unknown,2001-01-30,none,none
 UK,1996-01-02,2001-02-07,,,unknown,2001-02-07,none,none
 SUB,1998-01-28,2001-03-01,,,unknown,2001-03-01,none,none
 CEN,1996-01-02,2001-04-02,,,unknown,2001-04-02,none,none
-OK,1999-12-02,2001-04-02,,,unknown,2001-04-02,none,none
+OK,1999-12-02,2001-04-02,0000746969,,acquired,2000-06-16,425,none
 BGG,1996-01-02,2001-04-03,,,unknown,2001-04-03,none,wiki
 SXCL,1999-10-01,2001-05-14,,,unknown,2001-05-14,none,none
 CIT-A,2000-07-17,2001-06-04,,,unknown,2001-06-04,none,none
 AZA-A,1996-01-02,2001-06-25,,,unknown,2001-06-25,none,none
 H,1996-01-02,2001-06-29,,,unknown,2001-06-29,none,none
-LDG,1996-01-02,2001-07-02,,,unknown,2001-07-02,none,none
+LDG,1996-01-02,2001-07-02,0000764762,,unknown,2001-07-02,none,none
 PCH,1996-01-02,2001-07-09,,,unknown,2001-07-09,none,wiki
-OAT,1996-01-02,2001-08-03,,,unknown,2001-08-03,none,none
+OAT,1996-01-02,2001-08-03,0000081371,,acquired,2000-10-30,8k-1,none
 ETS,1996-01-02,2001-08-06,,,unknown,2001-08-06,none,none
 TKR,1996-01-02,2001-08-07,0000098362,,alive,2001-08-07,edgar-tickers,wiki
 AGC,1996-01-02,2001-08-29,,,unknown,2001-08-29,none,none
 OKE,1996-01-02,2001-08-30,0001039684,,unknown,2001-08-30,none,none
-BVSN,2000-11-06,2001-09-04,,,unknown,2001-09-04,none,none
+BVSN,2000-11-06,2001-09-04,0000920448,,unknown,2001-09-04,none,none
 TOS,1999-09-20,2001-09-17,,,unknown,2001-09-17,none,none
 GX,1999-09-29,2001-10-10,,,unknown,2001-10-10,none,none
 TX,1996-01-02,2001-10-10,,,unknown,2001-10-10,none,none
 GPU,1996-01-02,2001-11-07,,,unknown,2001-11-07,none,none
-ENRNQ,1996-01-02,2001-11-30,,,bankrupt,2001-11-30,qsuffix,none
+ENRNQ,1996-01-02,2001-11-30,0001024401,,bankrupt,2001-12-02,brd,none
 NSI,1996-01-02,2001-12-03,,,unknown,2001-12-03,none,none
 RAL,1996-01-02,2001-12-13,,,unknown,2001-12-13,none,none
-HM,1996-01-02,2001-12-17,,,unknown,2001-12-17,none,none
+HM,1996-01-02,2001-12-17,0000743872,,acquired,2001-06-25,425,none
 FMC,1996-01-02,2002-01-02,0000037785,FMC Corporation,alive,2002-01-02,wiki,wiki
 KM,1996-01-02,2002-01-17,,,unknown,2002-01-17,none,none
-MEA,1996-01-02,2002-01-30,,,unknown,2002-01-30,none,none
+MEA,1996-01-02,2002-01-30,0000064394,,acquired,2001-08-29,425,none
 NMK,1996-01-02,2002-02-01,,,unknown,2002-02-01,none,none
 WLL,1996-01-02,2002-02-11,,,unknown,2002-02-11,none,none
 CPQ,1996-01-02,2002-05-06,,,unknown,2002-05-06,none,none
-SAPE,2000-05-05,2002-05-13,,,unknown,2002-05-13,none,wiki
-UAWGQ,1996-01-02,2002-05-15,,,bankrupt,2002-05-15,qsuffix,none
-WCOEQ,1996-04-01,2002-05-15,,,bankrupt,2002-05-15,qsuffix,none
+SAPE,2000-05-05,2002-05-13,0001008817,,unknown,2002-05-13,none,wiki
+UAWGQ,1996-01-02,2002-05-15,0000701345,,bankrupt,2002-08-11,brd,none
+WCOEQ,1996-04-01,2002-05-15,0000723527,,bankrupt,2002-07-21,brd,none
 CNXT,2000-01-31,2002-06-26,,,unknown,2002-06-26,none,none
-IMNX,2001-09-21,2002-07-16,,,unknown,2002-07-16,none,none
+IMNX,2001-09-21,2002-07-16,0000719529,,acquired,2001-12-17,425,none
 ABX,1996-01-02,2002-07-22,,,unknown,2002-07-22,none,none
 AL,1996-01-02,2002-07-22,,,unknown,2002-07-22,none,none
 INCLF,1996-01-02,2002-07-22,,,unknown,2002-07-22,none,none
-NRTLQ,1996-01-02,2002-07-22,,,bankrupt,2002-07-22,qsuffix,none
+NRTLQ,1996-01-02,2002-07-22,0000072911,,bankrupt,2002-07-22,qsuffix,none
 PDG,1996-01-02,2002-07-22,,,unknown,2002-07-22,none,none
 RDS-A,1996-01-02,2002-07-22,,,unknown,2002-07-22,none,none
 UN,1996-01-02,2002-07-22,,,unknown,2002-07-22,none,none
 CNC,1997-01-15,2002-07-25,0001071739,,unknown,2002-07-25,none,none
-PALM,2000-07-28,2002-08-14,,,unknown,2002-08-14,none,none
+PALM,2000-07-28,2002-08-14,0001100389,,unknown,2002-08-14,none,none
 VTSS,2000-12-12,2002-08-21,,,unknown,2002-08-21,none,wiki
 COC-B,1999-08-09,2002-09-03,,,unknown,2002-09-03,none,none
 TRW,1996-01-02,2002-12-12,,,unknown,2002-12-12,none,none
 RATL,2002-02-01,2003-02-21,,,unknown,2003-02-21,none,none
-AAMRQ,1996-01-02,2003-03-14,,,bankrupt,2003-03-14,qsuffix,none
+AAMRQ,1996-01-02,2003-03-14,0000006201,,bankrupt,2003-03-14,qsuffix,none
 EHC,1997-01-08,2003-03-21,0000785161,,alive,2003-03-21,edgar-tickers,none
-HI,1996-01-02,2003-03-31,,,unknown,2003-03-31,none,none
+HI,1996-01-02,2003-03-31,0000047518,,unknown,2003-03-31,none,none
 PHA,1996-01-02,2003-04-16,,,unknown,2003-04-16,none,none
 MIR,2001-04-03,2003-07-17,,,unknown,2003-07-17,none,none
 MDR,1996-01-02,2003-08-20,,,unknown,2003-08-20,none,wiki
-QTRN,1999-11-16,2003-09-26,,Quintiles Transnational,acquired,2003-09-26,wiki,none
+QTRN,1999-11-16,2003-09-26,0000919623,Quintiles Transnational,acquired,2003-05-09,prem14a,none
 BGEN,2000-01-31,2003-11-13,,,unknown,2003-11-13,none,none
 CE,2001-04-02,2004-02-27,0001306830,Celanese,bankrupt,2005-01-28,8k-1.03,none
 TUP,1996-05-31,2004-03-25,,,unknown,2004-03-25,none,wiki
-FBF,1996-01-02,2004-04-01,,,unknown,2004-04-01,none,none
+FBF,1996-01-02,2004-04-01,0000050341,,acquired,2003-08-28,425,none
 PCS,1998-11-24,2004-04-23,0001121026,MetroPCS,acquired,2004-04-23,wiki,none
 JHF,2001-06-29,2004-04-29,,,unknown,2004-04-29,none,none
 AM,1996-01-02,2004-05-03,,,unknown,2004-05-03,none,none
 ONE,1996-01-02,2004-07-01,,,unknown,2004-07-01,none,none
-UPC,1998-10-01,2004-07-01,,,unknown,2004-07-01,none,none
+UPC,1998-10-01,2004-07-01,0001070778,,alive,2004-07-01,edgar-tickers,none
 TNB,1996-01-02,2004-08-03,,,unknown,2004-08-03,none,none
 CF,2000-06-19,2004-09-01,0001324404,,unknown,2004-09-01,none,none
 AWE,2001-07-09,2004-10-27,,,unknown,2004-10-27,none,none
 SOTR,1999-03-01,2004-11-01,,,unknown,2004-11-01,none,none
-WLP,1999-06-09,2004-12-01,,,unknown,2004-12-01,none,none
-WNDXQ,1996-01-02,2004-12-03,,,bankrupt,2004-12-03,qsuffix,none
+WLP,1999-06-09,2004-12-01,0001013220,,acquired,2003-12-02,425,none
+WNDXQ,1996-01-02,2004-12-03,0000107681,,bankrupt,2005-02-21,brd,none
 CR,1996-01-02,2004-12-20,,,unknown,2004-12-20,none,wiki
 DLX,1996-01-02,2004-12-20,0000027996,,acquired,2004-09-10,8k-2.01,wiki
 WOR,1996-01-02,2004-12-20,0000108516,,alive,2004-12-20,edgar-tickers,wiki
 PSFT,1998-10-02,2004-12-29,,,unknown,2004-12-29,none,none
 PWER,2000-10-23,2005-03-14,,,unknown,2005-03-14,none,none
-GLK,1996-01-02,2005-07-05,0000043362,Great Lakes Chemical,distress,2005-07-01,form15,none
+GLK,1996-01-02,2005-07-05,0000043362,Great Lakes Chemical,acquired,2005-03-09,425,none
 VRTS,2000-04-03,2005-07-05,0000883237,,alive,2005-07-05,edgar-tickers,none
 TOY,1996-01-02,2005-07-22,,,unknown,2005-07-22,none,none
 UCL,1996-01-02,2005-08-11,,,unknown,2005-08-11,none,none
 SDS,2002-07-22,2005-08-12,,,unknown,2005-08-12,none,none
 NXTL,1998-04-01,2005-08-15,,,unknown,2005-08-15,none,none
-DALRQ,1996-01-02,2005-08-19,,,bankrupt,2005-08-19,qsuffix,none
-MAY,1996-01-02,2005-08-29,,,unknown,2005-08-29,none,none
+DALRQ,1996-01-02,2005-08-19,0000027904,,bankrupt,2005-09-14,brd,none
+MAY,1996-01-02,2005-08-29,0000063416,,acquired,2005-02-28,425,none
 G,1996-01-02,2005-10-03,,,unknown,2005-10-03,none,none
-PVN,1996-01-02,2005-10-03,,,unknown,2005-10-03,none,none
-DPHIQ,1999-05-28,2005-10-11,,,bankrupt,2005-10-11,qsuffix,none
-CPNLQ,2000-12-01,2005-12-02,,,bankrupt,2005-12-02,qsuffix,none
-GP,1996-01-02,2005-12-20,,,unknown,2005-12-20,none,none
+PVN,1996-01-02,2005-10-03,0001035713,,acquired,2005-06-06,425,none
+DPHIQ,1999-05-28,2005-10-11,0001072342,,bankrupt,2005-10-08,brd,none
+CPNLQ,2000-12-01,2005-12-02,0000916457,,bankrupt,2005-12-20,brd,none
+GP,1996-01-02,2005-12-20,0000041077,,acquired,2005-11-14,sc14d9c,none
 KRB,1996-01-02,2006-01-03,,,unknown,2006-01-03,none,none
-VSTNQ,2000-06-29,2006-01-03,,,bankrupt,2006-01-03,qsuffix,none
-MERQ,2000-06-29,2006-01-04,,,unknown,2006-01-04,none,none
-RBK,1996-01-02,2006-02-01,,,unknown,2006-02-01,none,none
-SEBL,2000-05-05,2006-02-01,,,unknown,2006-02-01,none,none
+VSTNQ,2000-06-29,2006-01-03,0001111335,,bankrupt,2006-01-03,qsuffix,none
+MERQ,2000-06-29,2006-01-04,0000867058,,distress,2006-01-03,8k-3.01,none
+RBK,1996-01-02,2006-02-01,0000770949,,acquired,2005-12-20,defm14a,none
+SEBL,2000-05-05,2006-02-01,0001006835,,acquired,2005-09-12,425,none
 SFA,1996-01-02,2006-02-27,,,unknown,2006-02-27,none,none
-DCNAQ,1996-01-02,2006-03-03,,,bankrupt,2006-03-03,qsuffix,none
+DCNAQ,1996-01-02,2006-03-03,0000026780,,bankrupt,2006-03-03,brd,none
 BR,1996-01-02,2006-04-03,0001383312,,unknown,2006-04-03,none,none
-CIN,1996-01-02,2006-04-03,,,unknown,2006-04-03,none,none
+CIN,1996-01-02,2006-04-03,0000899652,,acquired,2005-05-09,425,none
 JP,1996-01-02,2006-04-03,,,unknown,2006-04-03,none,none
 MYG,1996-01-02,2006-04-03,,,unknown,2006-04-03,none,none
 CHIR,2000-11-24,2006-04-20,,,unknown,2006-04-20,none,none
 GDT,1996-12-19,2006-04-24,,,unknown,2006-04-24,none,none
-AMCC,2001-01-02,2006-05-18,,,unknown,2006-05-18,none,wiki
-ABS,1996-01-02,2006-06-02,,Albertsons,acquired,2006-06-02,wiki,none
+AMCC,2001-01-02,2006-05-18,0000711065,,distress,2006-07-03,8k-3.01,wiki
+ABS,1996-01-02,2006-06-02,0000003333,Albertsons,acquired,2006-01-23,425,none
 EC,1996-01-02,2006-06-06,,,unknown,2006-06-06,none,none
-KRI,1996-01-02,2006-06-28,,,unknown,2006-06-28,none,none
-CTB,1996-01-02,2006-07-18,,,unknown,2006-07-18,none,wiki
+KRI,1996-01-02,2006-06-28,0000205520,,acquired,2006-03-13,425,none
+CTB,1996-01-02,2006-07-18,0000024491,,acquired,2006-04-07,8k-2.01,wiki
 CAR,1996-01-02,2006-08-01,0000723612,,acquired,2006-08-04,8k-2.01,wiki
-GTW,1998-04-27,2006-08-01,,,unknown,2006-08-01,none,none
+GTW,1998-04-27,2006-08-01,0000895812,,unknown,2006-08-01,none,none
 KMG,1996-01-02,2006-08-11,,,unknown,2006-08-11,none,wiki
 ANDW,1996-01-02,2006-10-02,,,unknown,2006-10-02,none,none
-GDW,1996-01-02,2006-10-02,,,unknown,2006-10-02,none,none
+GDW,1996-01-02,2006-10-02,0000042293,,acquired,2006-07-25,defm14a,none
 ASO,1999-03-10,2006-11-06,,,unknown,2006-11-06,none,none
 FSH,2004-08-03,2006-11-10,,,unknown,2006-11-10,none,none
 LPX,1996-01-02,2006-11-10,0000060519,,alive,2006-11-10,edgar-tickers,wiki
 ACV,1996-01-02,2006-11-17,,,unknown,2006-11-17,none,none
 HCA,1996-01-02,2006-11-20,0000860730,,acquired,2006-10-17,defm14a,none
-LU,1996-10-01,2006-12-01,,,unknown,2006-12-01,none,none
-NFB,2002-07-17,2006-12-01,,,unknown,2006-12-01,none,none
+LU,1996-10-01,2006-12-01,0001006240,,acquired,2006-04-03,425,none
+NFB,2002-07-17,2006-12-01,0000352510,,acquired,2006-07-12,defm14a,none
 FSL,2004-12-03,2006-12-04,,,unknown,2006-12-04,none,none
 NAV,1996-01-02,2006-12-20,,,unknown,2006-12-20,none,wiki
 BLS,1996-01-02,2007-01-03,,,unknown,2007-01-03,none,none
 PTC,1997-04-03,2007-01-03,0000857005,,unknown,2007-01-03,none,none
 SBL,2000-12-11,2007-01-10,0000278352,Symbol Technologies,acquired,2006-12-06,defm14a,none
-CMVT,1999-10-27,2007-02-01,,,unknown,2007-02-01,none,none
+CMVT,1999-10-27,2007-02-01,0000803014,,distress,2007-01-31,8k-3.01,none
 EOP,2001-10-10,2007-02-12,,,unknown,2007-02-12,none,none
 APCC,2000-06-01,2007-02-15,,,unknown,2007-02-15,none,none
-PGL,1996-01-02,2007-02-22,,,unknown,2007-02-22,none,none
+PGL,1996-01-02,2007-02-22,0000077385,,acquired,2007-02-27,8k-2.01,none
 HMA,2001-11-07,2007-03-02,,,unknown,2007-03-02,none,none
 PD,1996-01-02,2007-03-20,,,unknown,2007-03-20,none,none
 CMX,2004-03-25,2007-03-23,,,unknown,2007-03-23,none,none
-UVN,2001-02-07,2007-03-29,,,unknown,2007-03-29,none,none
-TSG,2000-03-16,2007-04-02,,Sabre Corporation,acquired,2007-04-02,wiki,none
+UVN,2001-02-07,2007-03-29,0001017008,,acquired,2006-07-24,prem14a,none
+TSG,2000-03-16,2007-04-02,0001020265,Sabre Corporation,acquired,2007-02-21,defm14a,none
 H,2006-08-01,2007-04-10,,,unknown,2007-04-10,none,none
 KMI,2000-12-12,2007-05-31,,,unknown,2007-05-31,none,none
 MEDI,2000-06-16,2007-06-01,,,unknown,2007-06-01,none,none
-ADCT,1999-08-02,2007-07-02,,ADC Telecommunications,unknown,2007-07-02,none,none
-MEL,1996-01-02,2007-07-02,,,unknown,2007-07-02,none,none
-PMCS,2001-08-03,2007-07-02,,,unknown,2007-07-02,none,wiki
+ADCT,1999-08-02,2007-07-02,0000061478,ADC Telecommunications,alive,2007-07-02,edgar-tickers,none
+MEL,1996-01-02,2007-07-02,0000064782,,acquired,2006-12-04,425,none
+PMCS,2001-08-03,2007-07-02,0000767920,,unknown,2007-07-02,none,wiki
 SANM,2000-06-21,2007-07-02,0000897723,,alive,2007-07-02,edgar-tickers,wiki
 DG,1998-07-16,2007-07-09,0000029534,,acquired,2007-05-21,defm14a,none
-BMET,1996-01-02,2007-07-12,,,unknown,2007-07-12,none,none
-KSE,2000-08-21,2007-08-27,0001062379,KeySpan,distress,2007-08-24,8k-3.01,none
+BMET,1996-01-02,2007-07-12,0000351346,,acquired,2007-04-24,defm14a,none
+KSE,2000-08-21,2007-08-27,0001062379,KeySpan,acquired,2007-08-24,8k-5.01,none
 CBSS,2004-12-20,2007-09-07,,,unknown,2007-09-07,none,none
-FDC,1996-01-02,2007-09-25,,First Data,acquired,2007-09-25,wiki,none
-MXIM,2000-05-10,2007-09-27,,Maxim Integrated,acquired,2007-09-27,wiki,wiki
+FDC,1996-01-02,2007-09-25,0000883980,First Data,acquired,2007-06-26,defm14a,none
+MXIM,2000-05-10,2007-09-27,0000743316,Maxim Integrated,distress,2007-08-23,8k-3.01,wiki
 NCR,2000-01-04,2007-10-01,0000070866,NCR Corporation,acquired,2007-10-04,8k-2.01,wiki
-SLR,1998-12-31,2007-10-02,0000835541,Solectron,distress,2007-10-03,form25,none
+SLR,1998-12-31,2007-10-02,0000835541,Solectron,acquired,2007-06-04,425,none
 ASN,2004-12-20,2007-10-08,,,unknown,2007-10-08,none,none
 TXU,1996-01-02,2007-10-10,,,unknown,2007-10-10,none,none
 HLT,1996-01-02,2007-10-25,,,unknown,2007-10-25,none,none
-AV,2000-10-02,2007-10-26,,Avaya,acquired,2007-10-26,wiki,none
-BOL,1996-01-02,2007-10-29,,,unknown,2007-10-29,none,none
-HCR,1998-09-28,2007-11-09,,,unknown,2007-11-09,none,none
-TEK,1996-01-02,2007-11-16,,,unknown,2007-11-16,none,none
-AT,1996-01-02,2007-11-19,,,unknown,2007-11-19,none,none
-DJ,1996-01-02,2007-12-14,,Dow Jones,acquired,2007-12-14,wiki,none
+AV,2000-10-02,2007-10-26,0001116521,Avaya,acquired,2007-08-15,defm14a,none
+BOL,1996-01-02,2007-10-29,0000010427,,acquired,2007-08-14,defm14a,none
+HCR,1998-09-28,2007-11-09,0000878736,,acquired,2007-09-14,defm14a,none
+TEK,1996-01-02,2007-11-16,0000096879,,acquired,2007-11-27,8k-2.01,none
+AT,1996-01-02,2007-11-19,0000065873,,acquired,2007-07-24,defm14a,none
+DJ,1996-01-02,2007-12-14,0000029924,Dow Jones,acquired,2007-11-07,defm14a,none
 TRB,1996-01-02,2007-12-21,0000726513,Tribune Media,bankrupt,2008-11-23,brd-noequity,none
-TIN,1996-01-02,2007-12-31,,,unknown,2007-12-31,none,none
-SNV,1997-12-01,2008-01-02,,,unknown,2008-01-02,none,wiki
+TIN,1996-01-02,2007-12-31,0000731939,,acquired,2007-11-06,8k-2.01,none
+SNV,1997-12-01,2008-01-02,0000018349,,acquired,2008-01-03,8k-2.01,wiki
 HET,1996-01-02,2008-01-29,,,unknown,2008-01-29,none,none
 CBH,2006-06-06,2008-03-31,,,unknown,2008-03-31,none,none
-CCTYQ,1996-01-02,2008-03-31,,,bankrupt,2008-03-31,qsuffix,none
-BSC,1998-07-01,2008-06-02,,,unknown,2008-06-02,none,none
+CCTYQ,1996-01-02,2008-03-31,0000104599,,bankrupt,2008-11-10,brd,none
+BSC,1998-07-01,2008-06-02,0000777001,,acquired,2008-04-28,defm14a,none
 TT,2002-05-13,2008-06-06,0001466258,,unknown,2008-06-06,none,none
-ABKFQ,2000-12-11,2008-06-11,,,bankrupt,2008-06-11,qsuffix,none
+ABKFQ,2000-12-11,2008-06-11,0000874501,,bankrupt,2008-06-11,qsuffix,none
 BC,1996-01-02,2008-06-23,0000014930,Brunswick,acquired,2008-03-20,8k-2.01,wiki
-OMX,1996-01-02,2008-06-23,,OfficeMax,alive,2008-06-23,wiki,none
+OMX,1996-01-02,2008-06-23,0000012978,OfficeMax,alive,2008-06-23,wiki,none
 CFC,1997-06-18,2008-07-01,0000025191,Countrywide Financial Corp,acquired,2008-07-08,8k-2.01,none
 SSP,2005-12-20,2008-07-01,0000832428,,acquired,2008-07-02,8k-2.01,wiki
 CCU,1997-09-02,2008-07-31,0000888746,,alive,2008-07-31,edgar-tickers,none
@@ -352,86 +352,86 @@ IAC,2006-12-01,2008-08-21,,,unknown,2008-08-21,none,none
 EDS,1998-08-11,2008-08-26,,,unknown,2008-08-26,none,none
 FMCC,1996-01-02,2008-09-11,0001026214,,bankrupt,2008-09-11,8k-1.03,none
 FNMA,1996-01-02,2008-09-11,0000310522,,bankrupt,2008-09-11,8k-1.03,none
-LEHMQ,1998-01-12,2008-09-17,,,bankrupt,2008-09-17,qsuffix,none
+LEHMQ,1998-01-12,2008-09-17,0000806085,,bankrupt,2008-09-15,brd,none
 SAF,1996-01-02,2008-09-23,,,unknown,2008-09-23,none,none
-WAMUQ,1997-07-02,2008-09-30,,,bankrupt,2008-09-30,qsuffix,none
+WAMUQ,1997-07-02,2008-09-30,0000933136,,bankrupt,2008-09-26,brd,none
 WEN,1996-01-02,2008-09-30,0000030697,,acquired,2008-09-29,8k-2.01,wiki
-WWY,1996-01-02,2008-10-07,,,unknown,2008-10-07,none,none
+WWY,1996-01-02,2008-10-07,0000108601,,acquired,2008-08-04,defm14a,none
 DDS,1996-01-02,2008-10-22,0000028917,,alive,2008-10-22,edgar-tickers,wiki
 MTG,1996-07-19,2008-10-31,0000876437,,alive,2008-10-31,edgar-tickers,wiki
 TEX,2006-12-20,2008-11-06,0000097216,,alive,2008-11-06,edgar-tickers,wiki
 UIS,1996-01-02,2008-11-11,0000746838,,distress,2008-12-08,8k-3.01,wiki
 GGP,2007-07-02,2008-11-13,,GGP Inc.,acquired,2008-11-13,wiki,wiki
 ASH,1996-01-02,2008-11-14,,,unknown,2008-11-14,none,wiki
-HPC,1996-01-02,2008-11-14,,,unknown,2008-11-14,none,none
+HPC,1996-01-02,2008-11-14,0000046989,,acquired,2008-10-03,defm14a,none
 BUD,1996-01-02,2008-11-18,,,unknown,2008-11-18,none,none
 ABI,1996-01-02,2008-11-24,,,unknown,2008-11-24,none,none
 KATE,1996-01-02,2008-12-02,,,unknown,2008-12-02,none,none
-AW,1999-08-02,2008-12-05,,,unknown,2008-12-05,none,none
+AW,1999-08-02,2008-12-05,0000848865,,acquired,2008-10-14,defm14a,none
 RIG,1999-12-31,2008-12-19,0001451505,Transocean,alive,2008-12-19,wiki,none
 BRL,2006-02-27,2008-12-23,,,unknown,2008-12-23,none,none
-MER,1996-01-02,2009-01-02,,,unknown,2009-01-02,none,none
+MER,1996-01-02,2009-01-02,0000065100,,acquired,2008-11-03,defm14a,none
 NCC,1996-01-02,2009-01-02,,,unknown,2009-01-02,none,none
 WB,1996-01-02,2009-01-02,,Wachovia Bank,acquired,2009-01-02,wiki,none
 UST,1996-01-02,2009-01-06,,,unknown,2009-01-06,none,none
 SOV,2004-07-01,2009-01-30,,,unknown,2009-01-30,none,none
 WFT,2005-07-22,2009-02-26,,,unknown,2009-02-26,none,none
-ACAS,2007-07-09,2009-03-04,,American Capital,alive,2009-03-04,wiki,wiki
-JNY,2001-12-17,2009-03-04,,Jones Apparel Group,alive,2009-03-04,wiki,wiki
-NE,2001-01-16,2009-03-27,,Noble Corporation,spinoff,2009-03-27,wiki,none
+ACAS,2007-07-09,2009-03-04,0001423689,American Capital,alive,2009-03-04,wiki,wiki
+JNY,2001-12-17,2009-03-04,0000874016,Jones Apparel Group,alive,2009-03-04,wiki,wiki
+NE,2001-01-16,2009-03-27,0001169055,Noble Corporation,acquired,2009-03-27,8k-5.01,none
 DDR,2007-03-23,2009-03-30,,,unknown,2009-03-30,none,wiki
-ROH,1996-01-02,2009-04-02,,,unknown,2009-04-02,none,none
-MTLQQ,1996-01-02,2009-06-03,,,bankrupt,2009-06-03,qsuffix,none
-COV,2007-07-02,2009-06-05,,Covidien,acquired,2009-06-05,wiki,wiki
+ROH,1996-01-02,2009-04-02,0000084792,,acquired,2008-08-01,prem14a,none
+MTLQQ,1996-01-02,2009-06-03,0000040730,,bankrupt,2009-06-01,brd,none
+COV,2007-07-02,2009-06-05,0001385187,Covidien,acquired,2009-06-05,8k-5.01,wiki
 TEL,2007-07-02,2009-06-26,0001385157,TE Connectivity,alive,2009-06-26,wiki,none
 EQ,2006-05-18,2009-07-01,,,unknown,2009-07-01,none,none
 IR,1996-01-02,2009-07-01,,,alive,2009-07-01,spans,none
-CITGQ,2004-10-27,2009-07-27,,,bankrupt,2009-07-27,qsuffix,none
+CITGQ,2004-10-27,2009-07-27,0001171825,,bankrupt,2009-11-01,brd-noequity,none
 CTX,1996-01-02,2009-08-19,,Centex Corp.,acquired,2009-08-19,wiki,none
 MTW,2007-11-16,2009-09-01,0000061986,,alive,2009-09-01,edgar-tickers,wiki
 CBE,1996-01-02,2009-09-09,,Cooper Industries,acquired,2009-09-09,wiki,none
-WYE,1996-01-02,2009-10-16,,,unknown,2009-10-16,none,none
-SGP,1996-01-02,2009-11-04,,Schering-Plough,acquired,2009-11-04,wiki,none
+WYE,1996-01-02,2009-10-16,0000005187,,acquired,2009-06-17,defm14a,none
+SGP,1996-01-02,2009-11-04,0000310158,Schering-Plough,acquired,2009-11-04,8k-2.01,none
 CIEN,2001-08-30,2009-12-21,0000936395,Ciena,alive,2009-12-21,wiki,none
 CVG,2000-06-13,2009-12-21,0001062047,Convergys,alive,2009-12-21,wiki,wiki
 DYN,2000-10-03,2009-12-21,,Dynegy,alive,2009-12-21,wiki,none
 KBH,1996-01-02,2009-12-21,0000795266,KB Home,alive,2009-12-21,wiki,wiki
 MBI,1996-12-03,2009-12-21,0000814585,MBIA,alive,2009-12-21,wiki,wiki
-ESV,2007-01-04,2009-12-23,,Ensco,acquired,2009-12-23,wiki,none
+ESV,2007-01-04,2009-12-23,0000314808,Ensco,acquired,2009-11-20,defm14a,none
 JAVA,1996-01-02,2010-01-27,,,unknown,2010-01-27,none,none
-ACS,2004-04-02,2010-02-08,,,unknown,2010-02-08,none,none
-BNI,1996-01-02,2010-02-16,,,unknown,2010-02-16,none,none
-RX,1996-11-04,2010-02-26,,IMS Health,acquired,2010-02-26,wiki,none
-PBG,2001-05-14,2010-03-01,,,unknown,2010-03-01,none,none
+ACS,2004-04-02,2010-02-08,0000002135,,acquired,2009-09-28,425,none
+BNI,1996-01-02,2010-02-16,0000934612,,acquired,2009-12-23,defm14a,none
+RX,1996-11-04,2010-02-26,0001058083,IMS Health,acquired,2009-12-29,defm14a,none
+PBG,2001-05-14,2010-03-01,0001076405,,acquired,2010-01-13,defm14a,none
 BDK,1996-01-02,2010-03-15,,,unknown,2010-03-15,none,none
-BJS,2002-05-15,2010-04-29,,BJ Services,acquired,2010-04-29,wiki,none
+BJS,2002-05-15,2010-04-29,0000864328,BJ Services,acquired,2010-05-04,8k-2.01,none
 XTO,2004-12-29,2010-06-28,0000868809,XTO Energy,acquired,2010-05-21,defm14a,none
-STR,2006-12-01,2010-07-01,,Questar,unknown,2010-07-01,none,wiki
+STR,2006-12-01,2010-07-01,0000751652,Questar,acquired,2010-07-01,8k-2.01,wiki
 MIL,1996-01-02,2010-07-15,0000066479,Millipore,acquired,2010-04-30,defm14a,wiki
 SII,2006-10-02,2010-08-27,0001512920,Smith International,acquired,2010-08-27,wiki,none
 PTV,1999-11-05,2010-11-17,0001089976,Pactiv,acquired,2010-10-15,defm14a,none
-EKDKQ,1996-01-02,2010-12-20,,,bankrupt,2010-12-20,qsuffix,none
-KG,2000-10-03,2010-12-20,,King Pharmaceuticals,acquired,2010-12-20,wiki,none
+EKDKQ,1996-01-02,2010-12-20,0000031235,,bankrupt,2012-01-19,brd,none
+KG,2000-10-03,2010-12-20,0001047699,King Pharmaceuticals,acquired,2010-10-12,sc14d9c,none
 NYT,1996-01-02,2010-12-20,0000071691,The New York Times Company,alive,2010-12-20,wiki,wiki
 ODP,1999-06-24,2010-12-20,0000800240,Office Depot,alive,2010-12-20,wiki,wiki
-MDP,1996-01-02,2011-01-04,,Meredith Corp,spinoff,2011-01-04,wiki,wiki
-QLGC,2000-12-12,2011-01-18,,,unknown,2011-01-18,none,wiki
-AYE,2000-12-11,2011-02-28,0000003673,Allegheny Energy,distress,2011-02-25,8k-3.01,none
-MFE,2008-12-23,2011-03-01,,McAfee,acquired,2011-03-01,wiki,none
+MDP,1996-01-02,2011-01-04,0000065011,Meredith Corp,spinoff,2011-01-04,wiki,wiki
+QLGC,2000-12-12,2011-01-18,0000918386,,unknown,2011-01-18,none,wiki
+AYE,2000-12-11,2011-02-28,0000003673,Allegheny Energy,acquired,2010-03-10,425,none
+MFE,2008-12-23,2011-03-01,0000890801,McAfee,acquired,2010-09-21,defm14a,none
 Q,2000-07-06,2011-04-01,,QuintilesIMS,unknown,2011-04-01,none,none
 GENZ,2001-12-14,2011-04-04,0000732485,Genzyme,acquired,2011-04-08,8k-2.01,none
 NOVL,1996-01-02,2011-04-28,0000758004,Novell,acquired,2011-01-14,defm14a,none
 MEE,2008-06-23,2011-06-02,0000037748,Massey Energy,acquired,2011-04-29,defm14a,none
-RSHCQ,1996-01-02,2011-07-01,,,bankrupt,2011-07-01,qsuffix,none
+RSHCQ,1996-01-02,2011-07-01,0000096289,,bankrupt,2011-07-01,qsuffix,none
 MI,2002-02-11,2011-07-06,,Marshall & Ilsley,acquired,2011-07-06,wiki,none
 NSM,1996-01-02,2011-09-26,0000070530,National Semiconductor,acquired,2011-05-16,defm14a,none
 CEPH,2008-11-17,2011-10-14,0000873364,Cephalon,acquired,2011-06-14,defm14a,none
 ITT,1996-01-02,2011-11-01,0000216228,ITT,acquired,2011-11-04,8k-2.01,wiki
-JNS,2000-07-13,2011-11-23,,Janus Capital Group,alive,2011-11-23,wiki,wiki
+JNS,2000-07-13,2011-11-23,0001065865,Janus Capital Group,alive,2011-11-23,wiki,wiki
 GAS,1996-01-02,2011-12-12,0001004155,AGL Resources,acquired,2011-12-15,8k-2.01,wiki
 AKS,2008-07-01,2011-12-19,,AK Steel,alive,2011-12-19,wiki,wiki
 MWW,2001-06-04,2011-12-19,0001020416,Monster Worldwide,alive,2011-12-19,wiki,wiki
-SUNEQ,2007-05-31,2011-12-19,,,bankrupt,2011-12-19,qsuffix,none
+SUNEQ,2007-05-31,2011-12-19,0000945436,,bankrupt,2011-12-19,qsuffix,none
 TLAB,1996-01-02,2011-12-21,0000317771,Tellabs,spinoff,2011-12-21,wiki,none
 CPWR,1999-01-04,2012-01-03,0000827099,Compuware,alive,2012-01-03,wiki,wiki
 CEG,1996-01-02,2012-03-13,,Constellation Energy Group,acquired,2012-03-13,wiki,none
@@ -440,23 +440,23 @@ SVU,1996-01-02,2012-05-01,0000095521,Supervalu,spinoff,2012-05-01,wiki,wiki
 MMI,2011-01-04,2012-05-22,0001578732,Motorola Mobility,acquired,2012-05-22,wiki,none
 EP,1999-10-26,2012-05-25,0000887396,El Paso Corporation,acquired,2012-05-25,wiki,none
 NVLS,2000-06-19,2012-06-05,0000836106,Novellus Systems,acquired,2012-06-04,8k-2.01,none
-HSH,1996-01-02,2012-06-29,,,unknown,2012-06-29,none,wiki
-PGN,1996-01-02,2012-07-02,,Progress Energy,acquired,2012-07-02,wiki,none
+HSH,1996-01-02,2012-06-29,0000023666,,acquired,2012-07-05,8k-2.01,wiki
+PGN,1996-01-02,2012-07-02,0001094093,Progress Energy,acquired,2012-07-03,8k-2.01,none
 GR,1996-01-02,2012-07-27,0000042542,Goodrich Corporation,acquired,2012-02-07,defm14a,none
 SHLD,2005-03-28,2012-09-05,0001310067,Sears Holdings,distress,2013-01-25,form15,wiki
 ATGE,2009-06-09,2012-10-01,,,unknown,2012-10-01,none,none
-LXK,1999-08-13,2012-10-01,,Lexmark,spinoff,2012-10-01,wiki,wiki
-ANRZQ,2011-06-02,2012-10-02,,,bankrupt,2012-10-02,qsuffix,none
+LXK,1999-08-13,2012-10-01,0001001288,Lexmark,spinoff,2012-10-01,wiki,wiki
+ANRZQ,2011-06-02,2012-10-02,0001301063,,bankrupt,2012-10-02,qsuffix,none
 SUN,1996-01-02,2012-10-05,0001552275,Sunoco,acquired,2012-09-25,8k-2.01,wiki
 CBE,2011-11-23,2012-12-03,,Cooper Industries,acquired,2012-12-03,wiki,none
-RRD,1996-01-02,2012-12-12,,RR Donnelley,alive,2012-12-12,wiki,wiki
+RRD,1996-01-02,2012-12-12,0000029669,RR Donnelley,distress,2013-05-14,form25,wiki
 TIE,2007-10-29,2012-12-24,0001011657,Titanium Metals,acquired,2012-12-26,8k-2.01,none
 FII,2003-04-16,2013-01-02,,Federated Investors,spinoff,2013-01-02,wiki,wiki
 BIG,1998-01-20,2013-02-14,0000768835,Big Lots,alive,2013-02-14,wiki,wiki
 TMUS,2009-06-30,2013-05-01,0001283699,,acquired,2013-02-26,defm14a,none
 CVH,2005-08-30,2013-05-07,0001054833,Coventry Health Care,acquired,2013-05-07,8k-2.01,none
-DF,2006-04-03,2013-05-24,,Dean Foods,spinoff,2013-05-24,wiki,wiki
-HNZ,1996-01-02,2013-06-07,,Heinz,acquired,2013-06-07,wiki,none
+DF,2006-04-03,2013-05-24,0000931336,Dean Foods,acquired,2013-01-09,8k-2.01,wiki
+HNZ,1996-01-02,2013-06-07,0000046640,Heinz,acquired,2013-03-27,defm14a,none
 FHN,2002-05-06,2013-06-24,0000036966,First Horizon,spinoff,2013-06-24,wiki,wiki
 APOL,2002-05-15,2013-07-01,0000929887,Apollo Education Group,alive,2013-07-01,wiki,wiki
 S,1996-01-02,2013-07-09,0001583708,Sprint Nextel,acquired,2013-07-09,wiki,wiki
@@ -464,7 +464,7 @@ BMC,1998-10-01,2013-09-11,0000835729,BMC Software,acquired,2013-06-25,defm14a,no
 AMD,1996-01-02,2013-09-23,0000002488,Advanced Micro Devices,alive,2013-09-23,wiki,none
 LDOS,2009-12-21,2013-09-23,0001336920,,acquired,2013-10-01,8k-2.01,none
 DELL,1996-09-06,2013-10-29,0001571996,Dell,acquired,2013-10-29,wiki,none
-NYX,2007-10-25,2013-11-13,0001368007,NYSE Euronext,distress,2013-11-13,8k-3.01,none
+NYX,2007-10-25,2013-11-13,0001368007,NYSE Euronext,acquired,2012-12-20,425,none
 JCP,1996-01-02,2013-12-02,,JCPenney,spinoff,2013-12-02,wiki,wiki
 MOLX,1999-12-01,2013-12-09,0000067472,Molex,acquired,2013-10-16,defm14a,none
 ANF,2007-03-29,2013-12-23,0001018840,Abercrombie & Fitch,distress,2014-03-28,form25,wiki
@@ -475,16 +475,16 @@ WPX,2012-01-03,2014-03-24,0001518832,WPX Energy,alive,2014-03-24,wiki,wiki
 CLF,2009-12-21,2014-04-02,0000764065,Cliffs Natural Resources,alive,2014-04-02,wiki,wiki
 BEAM,1996-01-02,2014-05-01,,Suntory Global Spirits,acquired,2014-05-01,wiki,none
 SLM,1998-07-01,2014-05-01,0001032033,SLM Corporation,acquired,2014-05-06,8k-2.01,none
-LSI,1996-01-02,2014-05-07,,LSI Corporation,acquired,2014-05-07,wiki,none
-IGT,2001-09-04,2014-06-20,,International Game Technology,alive,2014-06-20,wiki,wiki
-FRX,2000-11-22,2014-07-01,,Forest Laboratories,acquired,2014-07-01,wiki,none
-X,1996-01-02,2014-07-02,,United States Steel,alive,2014-07-02,wiki,wiki
-RDC,1996-01-02,2014-08-19,,Rowan Companies,alive,2014-08-19,wiki,none
+LSI,1996-01-02,2014-05-07,0000703360,LSI Corporation,acquired,2014-03-11,defm14a,none
+IGT,2001-09-04,2014-06-20,0000353944,International Game Technology,acquired,2014-07-16,425,wiki
+FRX,2000-11-22,2014-07-01,0000038074,Forest Laboratories,acquired,2014-02-03,8k-2.01,none
+X,1996-01-02,2014-07-02,0001163302,United States Steel,alive,2014-07-02,wiki,wiki
+RDC,1996-01-02,2014-08-19,0000085408,Rowan Companies,alive,2014-08-19,wiki,none
 BTUUQ,2006-11-20,2014-09-22,,,bankrupt,2014-09-22,qsuffix,none
 GHC,2007-12-31,2014-09-22,0000104889,Graham Holdings,acquired,2014-07-07,8k-2.01,wiki
 JBL,2001-01-30,2014-11-05,0000898293,Jabil Circuit,alive,2014-11-05,wiki,none
-BMS,1996-01-02,2014-12-05,,Bemis,acquired,2014-12-05,wiki,wiki
-COV,2011-03-01,2015-01-27,,Covidien,acquired,2015-01-27,wiki,wiki
+BMS,1996-01-02,2014-12-05,0000011199,Bemis,acquired,2014-12-05,wiki,wiki
+COV,2011-03-01,2015-01-27,0001385187,Covidien,acquired,2014-11-21,defm14a,wiki
 SWY,1998-11-13,2015-01-27,0000086144,Safeway,acquired,2015-01-30,8k-2.01,wiki
 PETM,2012-10-05,2015-03-12,0000863157,PetSmart,acquired,2015-02-02,defm14a,wiki
 CFN,2009-09-01,2015-03-17,0001457543,Carefusion,acquired,2014-12-19,defm14a,wiki
@@ -498,42 +498,42 @@ QEP,2010-07-01,2015-07-01,0001108827,QEP Resources,spinoff,2015-07-01,wiki,none
 ATI,1996-01-02,2015-07-02,0001018963,Allegheny Technologies,alive,2015-07-02,edgar-tickers,none
 MWV,1996-01-02,2015-07-02,,,unknown,2015-07-02,none,wiki
 KRFT,2012-10-02,2015-07-06,,Kraft Foods,acquired,2015-07-06,wiki,wiki
-FDO,2001-08-06,2015-07-07,,Family Dollar,acquired,2015-07-07,wiki,wiki
-NE,2011-01-18,2015-07-20,,Noble Corporation,spinoff,2015-07-20,wiki,none
-DTV,2006-12-04,2015-07-27,,DirecTV,acquired,2015-07-27,wiki,none
+FDO,2001-08-06,2015-07-07,0000034408,Family Dollar,acquired,2015-07-06,8k-2.01,wiki
+NE,2011-01-18,2015-07-20,0001169055,Noble Corporation,spinoff,2015-07-20,wiki,none
+DTV,2006-12-04,2015-07-27,0001465112,DirecTV,acquired,2015-07-24,8k-2.01,none
 PLL,1996-01-02,2015-08-31,0000075829,Pall Corporation,acquired,2015-06-26,defm14a,wiki
 HSP,2004-05-03,2015-09-03,0001274057,Hospira,acquired,2015-04-10,defm14a,wiki
 JOY,2011-02-28,2015-10-08,0000801898,Joy Global,alive,2015-10-08,wiki,wiki
 HCBK,2007-02-15,2015-11-02,0000921847,Hudson City Bancorp,acquired,2015-11-02,8k-2.01,none
 FCPT,2015-11-10,2015-11-17,0001650132,,alive,2015-11-17,edgar-tickers,none
 GNW,2005-12-02,2015-11-18,0001276520,Genworth Financial,acquired,2015-12-04,8k-2.01,none
-SIAL,1996-01-02,2015-11-18,,Sigma-Aldrich,acquired,2015-11-18,wiki,wiki
+SIAL,1996-01-02,2015-11-18,0000090185,Sigma-Aldrich,acquired,2015-11-18,8k-2.01,wiki
 DXC,1996-01-02,2015-12-01,0001688568,DXC Technology,alive,2015-12-01,wiki,none
 CMCSK,2015-09-21,2015-12-14,,Comcast Series K,unknown,2015-12-14,none,wiki
 ALTR,2000-04-18,2015-12-28,0000768251,Altera,acquired,2015-08-24,defm14a,none
 FOSL,2012-04-04,2016-01-05,0000883569,Fossil Group,acquired,2015-12-29,8k-2.01,none
-BRCM,2000-07-03,2016-02-01,,Broadcom Corporation,unknown,2016-02-01,none,none
+BRCM,2000-07-03,2016-02-01,0001054374,Broadcom Corporation,acquired,2015-09-28,defm14a,none
 PCP,2007-06-01,2016-02-01,0000079958,Precision Castparts Corporation,acquired,2015-10-13,defm14a,none
 PCL,2002-01-17,2016-02-22,0000849213,Plum Creek Timber,acquired,2015-12-29,defm14a,wiki
 GMCR,2014-03-24,2016-03-03,0000909954,Keurig Green Mountain,acquired,2016-01-12,defm14a,wiki
 CNX,2006-06-28,2016-03-04,0001070412,Consol Energy,acquired,2016-04-06,8k-2.01,none
-POM,2007-11-09,2016-03-24,,Pepco Holdings,acquired,2016-03-24,wiki,wiki
-ESV,2012-07-31,2016-03-30,,Ensco,acquired,2016-03-30,wiki,none
-CAM,2008-01-29,2016-04-04,,Cameron International,acquired,2016-04-04,wiki,wiki
+POM,2007-11-09,2016-03-24,0001135971,Pepco Holdings,acquired,2016-03-24,8k-2.01,wiki
+ESV,2012-07-31,2016-03-30,0000314808,Ensco,acquired,2016-03-30,wiki,none
+CAM,2008-01-29,2016-04-04,0000941548,Cameron International,acquired,2015-11-17,defm14a,wiki
 THC,1996-01-02,2016-04-18,0000070318,Tenet Healthcare,acquired,2016-04-01,8k-2.01,none
 GME,2007-12-14,2016-04-25,0001326380,GameStop,acquired,2016-04-25,wiki,wiki
 ADT,2012-10-02,2016-05-02,0001703056,ADT,acquired,2016-05-02,wiki,none
-SNDK,2006-04-20,2016-05-12,,SanDisk,acquired,2016-05-12,wiki,none
-TWC,2009-03-30,2016-05-18,,Time Warner Cable,acquired,2016-05-18,wiki,wiki
+SNDK,2006-04-20,2016-05-12,0001000180,SanDisk,acquired,2016-02-05,defm14a,none
+TWC,2009-03-30,2016-05-18,0001377013,Time Warner Cable,acquired,2016-05-18,8k-2.01,wiki
 ARG,2009-09-09,2016-05-23,0000804212,Airgas,acquired,2016-01-22,defm14a,wiki
-CCE,1998-10-08,2016-05-31,,Coca-Cola Enterprises,acquired,2016-05-31,wiki,wiki
+CCE,1998-10-08,2016-05-31,0001491675,Coca-Cola Enterprises,acquired,2016-04-11,defm14a,wiki
 CCEP,2016-01-04,2016-05-31,0001650107,,alive,2016-05-31,edgar-tickers,none
 BXLT,2015-07-01,2016-06-03,0001620546,Baxalta,acquired,2016-04-18,defm14a,wiki
 CVC,2010-12-20,2016-06-21,,Cablevision Systems,acquired,2016-06-21,wiki,wiki
 CPGX,2015-07-02,2016-07-01,0001629995,Columbia Pipeline Group,acquired,2016-05-17,defm14a,none
 GAS,2011-12-13,2016-07-01,0001004155,AGL Resources,acquired,2016-07-01,8k-2.01,none
-TE,2001-10-10,2016-07-01,,TECO Energy,acquired,2016-07-01,wiki,none
-EMC,1996-03-28,2016-09-07,,EMC Corporation,acquired,2016-09-07,wiki,wiki
+TE,2001-10-10,2016-07-01,0000350563,TECO Energy,acquired,2016-07-01,8k-2.01,none
+EMC,1996-03-28,2016-09-07,0000790070,EMC Corporation,acquired,2016-06-06,defm14a,wiki
 HOT,2000-11-17,2016-09-23,,Starwood Hotels and Resorts,acquired,2016-09-23,wiki,wiki
 DO,2009-02-26,2016-10-03,,Diamond Offshore Drilling,acquired,2016-10-03,wiki,wiki
 LM,2006-04-24,2016-12-02,0000704051,Legg Mason,alive,2016-12-02,wiki,wiki
@@ -550,47 +550,47 @@ URBN,2010-02-08,2017-03-20,0000912615,Urban Outfitters,alive,2017-03-20,wiki,non
 SWN,2008-06-06,2017-04-04,0000007332,Southwestern Energy,distress,2018-01-16,form25,none
 DNB,2008-12-02,2017-04-05,,Dun & Bradstreet,acquired,2017-04-05,wiki,none
 TGNA,1996-01-02,2017-06-02,0000039899,Tegna,acquired,2017-06-06,8k-2.01,none
-MJN,2009-12-21,2017-06-15,,Mead Johnson,acquired,2017-06-15,wiki,wiki
+MJN,2009-12-21,2017-06-15,0001452575,Mead Johnson,acquired,2017-04-27,defm14a,wiki
 AABA,1999-12-08,2017-06-19,,,unknown,2017-06-19,none,none
 R,1996-01-02,2017-06-19,0000085961,Ryder System,alive,2017-06-19,wiki,none
 TDC,2007-10-01,2017-06-19,0000816761,Teradata,alive,2017-06-19,wiki,none
 RAI,2002-09-04,2017-07-25,0001275283,Reynolds American,acquired,2017-06-14,defm14a,wiki
-BBBY,1999-10-01,2017-07-26,,Bed Bath & Beyond,alive,2017-07-26,wiki,none
+BBBY,1999-10-01,2017-07-26,0000886158,Bed Bath & Beyond,alive,2017-07-26,wiki,none
 MNK,2014-08-19,2017-07-26,,Mallinckrodt,alive,2017-07-26,wiki,wiki
 MUR,2005-08-15,2017-07-26,0000717423,Murphy Oil,alive,2017-07-26,wiki,none
 RIG,2013-10-29,2017-07-26,0001451505,Transocean,alive,2017-07-26,wiki,none
 AN,2003-02-24,2017-08-08,0000350698,AutoNation,spinoff,2017-08-08,wiki,none
-WFM,2006-01-03,2017-08-28,,Whole Foods Market,acquired,2017-08-28,wiki,wiki
+WFM,2006-01-03,2017-08-28,0000865436,Whole Foods Market,acquired,2017-07-21,defm14a,wiki
 DD,1996-01-02,2017-09-01,0001666700,DuPont,acquired,2017-09-01,8k-2.01,none
 DOW,1996-01-02,2017-09-01,0001751788,Dow Chemical Company,alive,2017-09-01,spans,none
 SPLS,1998-10-07,2017-09-13,0000791519,Staples,acquired,2017-08-03,defm14a,wiki
-LVLT,2014-11-05,2017-10-13,,Level 3 Communications,acquired,2017-10-13,wiki,wiki
-BCR,1996-01-02,2017-12-29,,CR Bard,acquired,2017-12-29,wiki,wiki
+LVLT,2014-11-05,2017-10-13,0000794323,Level 3 Communications,acquired,2017-11-01,8k-2.01,wiki
+BCR,1996-01-02,2017-12-29,0000009892,CR Bard,acquired,2017-06-30,defm14a,wiki
 SNI,2008-07-01,2018-03-07,0001430602,Scripps Networks Interactive,acquired,2017-10-19,defm14a,wiki
-CHK,2006-03-03,2018-03-19,0000895126,Chesapeake Energy,distress,2018-12-17,form25,wiki
+CHK,2006-03-03,2018-03-19,0000895126,Chesapeake Energy,alive,2018-03-19,wiki,wiki
 PDCO,2005-10-11,2018-03-19,,Patterson Companies,alive,2018-03-19,wiki,wiki
 SIG,2015-07-29,2018-03-19,0000832988,Signet Jewelers,alive,2018-03-19,wiki,wiki
 CSRA,2015-11-30,2018-04-04,,CSRA,acquired,2018-04-04,wiki,none
 WYND,2006-08-01,2018-05-31,,,unknown,2018-05-31,none,none
 NAVI,2014-05-01,2018-06-05,,Navient,acquired,2018-06-05,wiki,none
-MON,2002-08-14,2018-06-07,,Monsanto,acquired,2018-06-07,wiki,none
+MON,2002-08-14,2018-06-07,0001110783,Monsanto,acquired,2018-06-08,8k-2.01,none
 TWX,1996-01-02,2018-06-15,,Time Warner,acquired,2018-06-15,wiki,none
 AYI,2016-05-03,2018-06-18,0001144215,Acuity Brands,alive,2018-06-18,wiki,none
 RRC,2007-12-21,2018-06-18,0000315852,Range Resources,alive,2018-06-18,wiki,none
 KDP,2008-10-07,2018-07-02,0001418135,,acquired,2018-05-29,defm14a,none
 GGP,2013-12-10,2018-08-28,0001496048,GGP Inc.,acquired,2018-06-27,defm14a,none
-XL,2001-09-04,2018-09-12,,XL Group,acquired,2018-09-12,wiki,none
+XL,2001-09-04,2018-09-12,0000875159,XL Group,acquired,2018-05-03,defm14a,none
 KORS,2013-11-13,2018-09-19,,,unknown,2018-09-19,none,none
 ANDV,2007-09-27,2018-10-01,0000050104,Andeavor,acquired,2018-08-03,defm14a,none
-EVHC,2016-12-02,2018-10-11,,Envision Healthcare,acquired,2018-10-11,wiki,none
-PX,1996-01-02,2018-10-31,,,unknown,2018-10-31,none,none
-CA,1996-01-02,2018-11-06,,CA Technologies,acquired,2018-11-06,wiki,none
+EVHC,2016-12-02,2018-10-11,0001678531,Envision Healthcare,acquired,2018-08-13,defm14a,none
+PX,1996-01-02,2018-10-31,0000884905,,acquired,2018-10-31,8k-2.01,none
+CA,1996-01-02,2018-11-06,0000356028,CA Technologies,acquired,2018-08-10,defm14a,none
 EQT,2008-12-19,2018-11-13,0000033213,EQT Corporation,acquired,2018-11-13,8k-2.01,none
 COL,2001-07-02,2018-11-27,0001137411,Rockwell Collins,acquired,2018-11-27,8k-2.01,none
 AET,1996-01-02,2018-11-29,,Aetna,acquired,2018-11-29,wiki,none
 SRCL,2008-11-19,2018-12-03,0000861878,Stericycle,alive,2018-12-03,wiki,none
 ESRX,2003-09-26,2018-12-21,,Express Scripts,acquired,2018-12-21,wiki,none
-SCG,2009-01-02,2019-01-02,,SCANA,acquired,2019-01-02,wiki,none
+SCG,2009-01-02,2019-01-02,0000754737,SCANA,acquired,2019-01-02,8k-2.01,none
 PCG,1996-01-02,2019-01-18,0001004980,Pacific Gas & Electric Company,bankrupt,2019-01-29,brd,none
 NFX,2010-12-20,2019-02-15,0000912750,Newfield Exploration,acquired,2019-01-08,defm14a,none
 GT,1996-01-02,2019-02-27,0000042582,The Goodyear Tire & Rubber Company,acquired,2019-02-27,wiki,none
@@ -600,11 +600,11 @@ DWDP,2017-09-01,2019-06-03,,DuPont,unknown,2019-06-03,none,none
 FLR,2000-12-22,2019-06-03,0001124198,Fluor Corporation,distress,2020-03-19,8k-3.01,none
 MAT,1996-01-02,2019-06-07,0000063276,Mattel,acquired,2019-06-07,wiki,none
 LLL,2004-12-01,2019-07-01,0001039101,L3 Technologies,acquired,2019-02-25,defm14a,none
-RHT,2009-07-27,2019-07-15,,Red Hat,acquired,2019-07-15,wiki,none
+RHT,2009-07-27,2019-07-15,0001087423,Red Hat,acquired,2019-07-09,8k-2.01,none
 TMK,1996-01-02,2019-08-08,,,unknown,2019-08-08,none,none
-APC,1997-07-28,2019-08-09,,Anadarko Petroleum,acquired,2019-08-09,wiki,none
+APC,1997-07-28,2019-08-09,0000773910,Anadarko Petroleum,acquired,2019-07-11,defm14a,none
 FL,2016-04-04,2019-08-09,0000850209,Foot Locker,alive,2019-08-09,wiki,none
-TSS,2008-01-02,2019-09-23,,TSYS,acquired,2019-09-23,wiki,none
+TSS,2008-01-02,2019-09-23,0000721683,TSYS,acquired,2019-07-25,defm14a,none
 JEF,2007-08-27,2019-09-26,0000096223,Jefferies Financial Group,spinoff,2019-09-26,wiki,none
 NKTR,2018-03-19,2019-10-03,0000906709,Nektar Therapeutics,alive,2019-10-03,wiki,none
 BHGE,1996-01-02,2019-10-18,,,unknown,2019-10-18,none,none
@@ -614,17 +614,17 @@ CELG,2006-11-06,2019-11-21,0000816284,Celgene,acquired,2019-11-20,8k-2.01,none
 CBS,1996-01-02,2019-12-05,,,unknown,2019-12-05,none,none
 VIAB,2006-01-03,2019-12-05,,Viacom,acquired,2019-12-05,wiki,none
 BBT,1997-12-04,2019-12-09,0001108134,,alive,2019-12-09,edgar-tickers,none
-STI,1996-01-02,2019-12-09,,SunTrust Banks,acquired,2019-12-09,wiki,none
+STI,1996-01-02,2019-12-09,0000750556,SunTrust Banks,acquired,2019-06-19,defm14a,none
 JEC,2007-10-26,2019-12-10,,,unknown,2019-12-10,none,none
 AMG,2014-07-01,2019-12-23,0001004434,Affiliated Managers Group,alive,2019-12-23,wiki,none
 MAC,2013-05-09,2019-12-23,0000912242,Macerich,alive,2019-12-23,wiki,none
 TRIP,2011-12-21,2019-12-23,0001526520,TripAdvisor,alive,2019-12-23,wiki,none
 WCG,2018-09-17,2020-01-28,,WellCare,acquired,2020-01-28,wiki,none
 XEC,2014-06-20,2020-03-03,0001168054,Cimarex Energy,acquired,2020-03-03,wiki,none
-UTX,1996-01-02,2020-04-03,,,unknown,2020-04-03,none,none
+UTX,1996-01-02,2020-04-03,0000101829,,acquired,2020-04-08,8k-2.01,none
 ARNC,1996-01-02,2020-04-06,,Arconic,spinoff,2020-04-06,wiki,none
 M,1996-01-02,2020-04-06,0000794367,Macy's,alive,2020-04-06,wiki,none
-RTN,1996-01-02,2020-04-06,,Raytheon Company,acquired,2020-04-06,wiki,none
+RTN,1996-01-02,2020-04-06,0001047122,Raytheon Company,acquired,2020-04-03,8k-2.01,none
 AGN,1996-01-02,2020-05-12,,Allergan,acquired,2020-05-12,wiki,none
 CPRI,2016-01-04,2020-05-12,0001530721,Capri Holdings,alive,2020-05-12,wiki,none
 HP,2010-03-01,2020-05-22,0000046765,Helmerich & Payne,alive,2020-05-22,wiki,none
@@ -635,7 +635,7 @@ CTL,1999-03-25,2020-09-18,,,unknown,2020-09-18,none,none
 COTY,2016-10-03,2020-09-21,0001024305,Coty,alive,2020-09-21,wiki,none
 HRB,1996-01-02,2020-09-21,0000012659,H&R Block,alive,2020-09-21,wiki,none
 KSS,1998-08-14,2020-09-21,0000885639,Kohl's,alive,2020-09-21,wiki,none
-ETFC,2004-04-01,2020-10-07,,E-Trade,acquired,2020-10-07,wiki,none
+ETFC,2004-04-01,2020-10-07,0001015780,E-Trade,acquired,2020-06-12,defm14a,none
 NBL,2007-10-08,2020-10-12,0000072207,Noble Energy,acquired,2020-08-26,defm14a,none
 MYL,2004-04-23,2020-11-17,,,unknown,2020-11-17,none,none
 AIV,2003-03-14,2020-12-21,0000922864,Aimco,acquired,2020-12-15,8k-2.01,none
@@ -645,28 +645,28 @@ FTI,2009-06-05,2021-02-12,0001681459,TechnipFMC,acquired,2021-02-16,8k-2.01,none
 FLS,2008-10-02,2021-03-22,0000030625,Flowserve,distress,2021-03-19,form25,none
 SLG,2015-03-23,2021-03-22,0001040971,SL Green Realty,alive,2021-03-22,wiki,none
 VNT,2020-10-12,2021-03-22,0001786842,Vontier,alive,2021-03-22,wiki,none
-XRX,1996-01-02,2021-03-22,0001770450,Xerox,distress,2021-09-09,8k-3.01,none
+XRX,1996-01-02,2021-03-22,0001770450,Xerox,acquired,2020-03-31,425,none
 VAR,2007-02-12,2021-04-20,0000203527,Varian Medical Systems,acquired,2021-04-15,8k-2.01,none
 FLIR,2009-01-02,2021-05-14,0000354908,FLIR Systems,acquired,2021-04-12,defm14a,none
-HFC,2018-06-18,2021-06-04,,HollyFrontier,alive,2021-06-04,wiki,none
+HFC,2018-06-18,2021-06-04,0000048039,HollyFrontier,alive,2021-06-04,wiki,none
 ALXN,2012-05-25,2021-07-21,0000899866,Alexion Pharmaceuticals,acquired,2021-04-13,defm14a,none
 LB,1996-01-02,2021-08-03,,,unknown,2021-08-03,none,none
-MXIM,2018-12-03,2021-08-30,,Maxim Integrated,acquired,2021-08-30,wiki,none
+MXIM,2018-12-03,2021-08-30,0000743316,Maxim Integrated,acquired,2021-08-26,8k-2.01,none
 NOV,2005-03-14,2021-09-20,0001021860,Nov,alive,2021-09-20,wiki,none
 PRGO,2011-12-19,2021-09-20,0001585364,Perrigo,acquired,2021-07-12,8k-2.01,none
 UNM,1996-01-02,2021-09-20,0000005513,Unum,alive,2021-09-20,wiki,none
-COG,2008-06-23,2021-10-04,,,unknown,2021-10-04,none,none
+COG,2008-06-23,2021-10-04,0000858470,,acquired,2021-10-01,8k-2.01,none
 KSU,2013-05-24,2021-12-14,0000054480,Kansas City Southern,acquired,2021-07-07,defm14a,none
 HBI,2015-03-23,2021-12-20,0001359841,Hanesbrands,alive,2021-12-20,wiki,none
 LEG,1999-10-18,2021-12-20,0000058492,Leggett & Platt,alive,2021-12-20,wiki,none
 WU,2006-10-02,2021-12-20,0001365135,Western Union,alive,2021-12-20,wiki,none
 WLTW,2016-01-05,2022-01-10,0001140536,Willis Towers Watson,acquired,2021-12-01,8k-2.01,none
-GPS,1996-01-02,2022-02-02,,Gap,alive,2022-02-02,wiki,none
+GPS,1996-01-02,2022-02-02,0000039911,Gap,alive,2022-02-02,wiki,none
 XLNX,1999-11-08,2022-02-15,0000743988,Xilinx,acquired,2022-02-14,8k-2.01,none
 VIAC,2019-12-05,2022-02-17,,,unknown,2022-02-17,none,none
 INFO,2017-06-02,2022-03-02,0001598014,IHS Markit,acquired,2022-02-28,8k-2.01,none
 PBCT,2008-11-13,2022-04-04,0001378946,People's United Financial,acquired,2022-04-04,8k-2.01,none
-DISCA,2010-03-01,2022-04-11,,Discovery  Inc.,acquired,2022-04-11,wiki,none
+DISCA,2010-03-01,2022-04-11,0001437107,Discovery  Inc.,acquired,2022-04-12,8k-2.01,none
 DISCK,2014-08-07,2022-04-11,,Discovery  Inc.,acquired,2022-04-11,wiki,none
 BLL,1996-01-02,2022-05-10,,,unknown,2022-05-10,none,none
 CERN,2010-04-30,2022-06-08,0000804753,Cerner,acquired,2022-06-08,8k-2.01,none
@@ -679,7 +679,7 @@ PENN,2021-03-22,2022-09-19,0000921738,Penn Entertainment,alive,2022-09-19,wiki,n
 PVH,2013-02-14,2022-09-19,0000078239,PVH,alive,2022-09-19,wiki,none
 CTXS,1999-12-01,2022-10-03,0000877890,Citrix Systems,acquired,2022-10-03,8k-2.01,none
 DRE,2017-07-26,2022-10-03,,Duke Realty,acquired,2022-10-03,wiki,none
-NLSN,2013-07-09,2022-10-12,,Nielsen Holdings,acquired,2022-10-12,wiki,none
+NLSN,2013-07-09,2022-10-12,0001492633,Nielsen Holdings,acquired,2022-07-08,defm14a,none
 TWTR,2018-06-07,2022-11-01,0001418091,Twitter,acquired,2022-07-26,defm14a,none
 NLOK,2019-11-05,2022-11-08,,,unknown,2022-11-08,none,none
 FBHS,2016-06-24,2022-12-19,0001519751,Fortune Brands Home & Security,acquired,2022-12-16,8k-2.01,none
@@ -694,7 +694,7 @@ FISV,2001-04-02,2023-06-07,0000798354,,distress,2023-05-25,8k-3.01,none
 DISH,2017-03-13,2023-06-20,,Dish Network,alive,2023-06-20,wiki,none
 RE,2017-06-19,2023-07-10,,,unknown,2023-07-10,none,none
 AAP,2015-07-09,2023-08-25,0001158449,Advance Auto Parts,alive,2023-08-25,edgar-tickers,none
-ABC,2001-08-30,2023-08-30,,,unknown,2023-08-30,none,none
+ABC,2001-08-30,2023-08-30,0001140859,,unknown,2023-08-30,none,none
 LNC,1996-01-02,2023-09-18,0000059558,Lincoln National Corporation,alive,2023-09-18,wiki,none
 NWL,1996-01-02,2023-09-18,0000814453,Newell Brands,alive,2023-09-18,wiki,none
 DXC,2017-04-04,2023-10-02,0001688568,DXC Technology,alive,2023-10-02,wiki,none
@@ -702,8 +702,8 @@ ATVI,2015-08-31,2023-10-18,0000718877,Activision Blizzard,acquired,2023-10-13,8k
 OGN,2021-06-04,2023-10-18,0001821825,Organon & Co.,alive,2023-10-18,wiki,none
 ALK,2016-05-13,2023-12-18,0000766421,Alaska Air Group,alive,2023-12-18,wiki,none
 SEDG,2021-12-20,2023-12-18,0001419612,SolarEdge,alive,2023-12-18,wiki,none
-SEE,1998-04-01,2023-12-18,,Sealed Air,alive,2023-12-18,wiki,none
-CDAY,2021-09-20,2024-02-01,,Ceridian,unknown,2024-02-01,none,none
+SEE,1998-04-01,2023-12-18,0001012100,Sealed Air,alive,2023-12-18,wiki,none
+CDAY,2021-09-20,2024-02-01,0001725057,Ceridian,unknown,2024-02-01,none,none
 PEAK,2019-11-05,2024-03-04,,,unknown,2024-03-04,none,none
 WHR,1996-01-02,2024-03-18,0000106640,Whirlpool Corporation,alive,2024-03-18,wiki,none
 ZION,2001-06-25,2024-03-18,0000109380,Zions Bancorporation,distress,2024-12-16,form25,none
@@ -719,7 +719,7 @@ AAL,2015-03-23,2024-09-23,0000006201,American Airlines Group,alive,2024-09-23,wi
 BIO,2020-06-22,2024-09-23,0000012208,Bio-Rad Laboratories,alive,2024-09-23,wiki,none
 ETSY,2020-09-21,2024-09-23,0001370637,Etsy,alive,2024-09-23,wiki,none
 BBWI,2021-08-03,2024-10-01,0000701985,Bath & Body Works  Inc.,alive,2024-10-01,wiki,none
-MRO,1996-01-02,2024-11-26,,Marathon Oil,acquired,2024-11-26,wiki,none
+MRO,1996-01-02,2024-11-26,0000101778,Marathon Oil,acquired,2024-07-29,defm14a,none
 AMTM,2024-09-30,2024-12-23,0002011286,Amentum,acquired,2024-10-03,8k-2.01,none
 CTLT,2020-09-21,2024-12-23,0001596783,Catalent,acquired,2024-12-18,8k-2.01,none
 QRVO,2015-06-12,2024-12-23,0001604778,Qorvo,alive,2024-12-23,wiki,none
@@ -727,19 +727,19 @@ BWA,2011-12-19,2025-03-24,0000908255,BorgWarner,alive,2025-03-24,wiki,none
 CE,2018-12-24,2025-03-24,0001306830,Celanese,distress,2025-02-11,form25,none
 FMC,2009-08-19,2025-03-24,0000037785,FMC Corporation,alive,2025-03-24,wiki,none
 TFX,2019-01-18,2025-03-24,0000096943,Teleflex,alive,2025-03-24,wiki,none
-DFS,2007-07-02,2025-05-19,,Discover Financial,acquired,2025-05-19,wiki,none
+DFS,2007-07-02,2025-05-19,0001393612,Discover Financial,acquired,2025-01-06,defm14a,none
 JNPR,2006-06-02,2025-07-09,0001043604,Juniper Networks,acquired,2025-07-02,8k-2.01,none
 ANSS,2017-06-19,2025-07-18,0001013462,Ansys,acquired,2025-07-17,8k-2.01,none
 HES,1996-01-02,2025-07-23,0000004447,Hess Corporation,acquired,2025-07-18,8k-2.01,none
 PARA,2022-02-17,2025-08-08,0001826011,,alive,2025-08-08,edgar-tickers,none
-WBA,1996-01-02,2025-08-28,,Walgreens Boots Alliance,acquired,2025-08-28,wiki,none
+WBA,1996-01-02,2025-08-28,0001618921,Walgreens Boots Alliance,acquired,2025-06-06,defm14a,none
 CZR,2021-03-22,2025-09-22,0001590895,Caesars Entertainment,alive,2025-09-22,wiki,none
 ENPH,2021-01-07,2025-09-22,0001463101,Enphase Energy,alive,2025-09-22,wiki,none
 MKTX,2019-07-01,2025-09-22,0001278021,MarketAxess,alive,2025-09-22,wiki,none
 KMX,2010-06-28,2025-10-31,0001170010,CarMax,alive,2025-10-31,wiki,none
 EMN,1996-01-02,2025-11-04,0000915389,Eastman Chemical Co.,alive,2025-11-04,wiki,none
 FI,2023-06-07,2025-11-11,,,unknown,2025-11-11,none,none
-IPG,1996-01-02,2025-11-28,,Interpublic Group,acquired,2025-11-28,wiki,none
+IPG,1996-01-02,2025-11-28,0000051644,Interpublic Group,acquired,2025-11-26,8k-2.01,none
 K,1996-01-02,2025-12-11,0000055067,Kellanova,acquired,2025-12-11,8k-2.01,none
 LKQ,2016-05-23,2025-12-22,0001065696,LKQ Corporation,alive,2025-12-22,wiki,none
 MHK,2013-12-23,2025-12-22,0000851968,Mohawk Industries,alive,2025-12-22,wiki,none
