@@ -1,0 +1,771 @@
+# (#1307) every S&P 500 exit in the point-in-time spans, with why the name left and which free archive holds its bars
+# written by tools/dead_roster.py; spans sp400_spans.csv; online; BRD yes; wiki yes; EDGAR 536; tiingo yes
+# bankruptcy cases from the Florida-UCLA-LoPucki Bankruptcy Research Database (BRD)
+ticker,start_date,end_date,cik,name,exit,exit_date,source,series
+AGL,2012-12-01,2013-02-01,,,unknown,2013-02-01,none,none
+SHAW,2012-12-01,2013-04-01,0000914024,The Shaw Group,acquired,2012-11-20,defm14a,none
+AAI,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+ACV,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+AM,2012-12-01,2013-09-01,0001623925,American Greetings,alive,2013-09-01,wiki,none
+BEC,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+BEZ,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+BJ,2012-12-01,2013-09-01,0001531152,,unknown,2013-09-01,none,none
+BRE,2012-12-01,2013-09-01,0001011174,BRE Properties,alive,2013-09-01,spans,none
+BUCY,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+BWA,2012-12-01,2013-09-01,0000908255,,unknown,2013-09-01,none,wiki
+CBB,2012-12-01,2013-09-01,0000716133,,unknown,2013-09-01,none,wiki
+CECO,2012-12-01,2013-09-01,0000003197,,acquired,2013-03-04,8k-2.01,tiingo
+CPO,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+CUZ,2012-12-01,2013-09-01,0000025232,,acquired,2013-03-26,8k-2.01,tiingo
+ESI,2012-12-01,2013-09-01,0001590714,ITT Educational Services,spinoff,2013-09-01,wiki,none
+GAS,2013-02-01,2013-09-01,,,unknown,2013-09-01,none,wiki
+JCG,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+JEF,2012-12-01,2013-09-01,0000096223,Jefferies Group,acquired,2012-11-13,425,tiingo
+JOYG,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+JWA,2012-12-01,2013-09-01,,,alive,2013-09-01,spans,tiingo
+KCI,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+KFY,2012-12-01,2013-09-01,0000056679,Korn/Ferry,alive,2013-09-01,wiki,tiingo
+KND,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,tiingo
+KSU,2012-12-01,2013-09-01,0000054480,Kansas City Southern,alive,2013-09-01,wiki,wiki
+KWK,2012-12-01,2013-09-01,0001060990,Quicksilver Resources,acquired,2013-05-06,8k-2.01,tiingo
+LKQX,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+LNCR,2012-12-01,2013-09-01,0000882235,Lincare Holdings,unknown,2013-09-01,none,none
+LRCX,2012-12-01,2013-09-01,0000707549,,alive,2013-09-01,edgar-tickers,tiingo
+MAC,2012-12-01,2013-09-01,0000912242,Macerich,alive,2013-09-01,wiki,wiki
+NAL,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+NCI,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,tiingo
+NST,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+OSG,2012-12-01,2013-09-01,0000874501,,bankrupt,2012-03-20,8k-1.03,tiingo
+PDE,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+PETM,2012-12-01,2013-09-01,0000863157,PetSmart,alive,2013-09-01,wiki,wiki
+PRSP,2012-12-01,2013-09-01,,Perspecta Inc.,acquired,2013-09-01,wiki,none
+PSS,2012-12-01,2013-09-01,0001060232,Collective Brands,unknown,2013-09-01,none,none
+QLGC,2012-12-01,2013-09-01,,QLogic,alive,2013-09-01,wiki,wiki
+QSFT,2012-12-01,2013-09-01,0001088033,,unknown,2013-09-01,none,none
+RAH,2012-12-01,2013-09-01,0001029506,Ralcorp,alive,2013-09-01,wiki,none
+UTR,2012-12-01,2013-09-01,,,unknown,2013-09-01,none,none
+AMB,2012-12-01,2013-11-01,,,unknown,2013-11-01,none,none
+EXBD,2012-12-01,2013-11-01,,,unknown,2013-11-01,none,none
+AME,2012-12-01,2013-12-01,0001037868,Ametek,alive,2013-12-01,wiki,tiingo
+BKS,2012-12-01,2013-12-01,0000890491,Barnes & Noble,alive,2013-12-01,wiki,tiingo
+BLUD,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+BYD,2012-12-01,2013-12-01,0000906553,,unknown,2013-12-01,none,tiingo
+CMG,2012-12-01,2013-12-01,0001058090,,alive,2013-12-01,edgar-tickers,tiingo
+CRK,2012-12-01,2013-12-01,0000023194,Comstock Resources,alive,2013-12-01,wiki,tiingo
+DLTR,2012-12-01,2013-12-01,0000935703,,alive,2013-12-01,edgar-tickers,tiingo
+DPL,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+DRIV,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+DYN,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,wiki
+EK,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+EW,2012-12-01,2013-12-01,0001099800,,alive,2013-12-01,edgar-tickers,tiingo
+EXH,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,tiingo
+FOSL,2012-12-01,2013-12-01,0000883569,,unknown,2013-12-01,none,tiingo
+FST,2012-12-01,2013-12-01,0000038079,Forest Oil,acquired,2013-12-02,8k-2.01,tiingo
+FTO,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+GDI,2012-12-01,2013-12-01,0000916459,Gardner Denver,acquired,2013-06-13,defm14a,none
+GPRO,2012-12-01,2013-12-01,0001500435,Gen-Probe,alive,2013-12-01,edgar-tickers,none
+HANS,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+HHS,2012-12-01,2013-12-01,0000045919,,alive,2013-12-01,edgar-tickers,tiingo
+LZ,2012-12-01,2013-12-01,0001286139,,alive,2013-12-01,edgar-tickers,none
+MRX,2012-12-01,2013-12-01,,Medicis Pharmaceutical,unknown,2013-12-01,none,none
+NHP,2012-12-01,2013-12-01,0001561032,,acquired,2013-07-03,8k-2.01,none
+NYB,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+PACW,2012-12-01,2013-12-01,0001102112,PacWest Bancorp,acquired,2013-06-04,8k-2.01,tiingo
+PCX,2012-12-01,2013-12-01,0001376812,Patriot Coal,bankrupt,2012-07-09,brd,none
+PNR,2012-12-01,2013-12-01,0000077360,Pentair,acquired,2013-12-10,425,tiingo
+PPDI,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+PRGO,2012-12-01,2013-12-01,0001585364,Perrigo,acquired,2013-12-19,8k-2.01,wiki
+PVH,2012-12-01,2013-12-01,0000078239,,unknown,2013-12-01,none,wiki
+PXP,2012-12-01,2013-12-01,0000891456,Plains Exploration & Production,acquired,2013-06-03,8k-2.01,none
+RDK,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+RYL,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,tiingo
+SFD,2012-12-01,2013-12-01,0000091388,Smithfield Foods,acquired,2013-08-19,defm14a,none
+SRX,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+STRA,2012-12-01,2013-12-01,0001013934,Strategic Education  Inc.,alive,2013-12-01,wiki,tiingo
+SUG,2012-12-01,2013-12-01,0000203248,Southern Union,acquired,2013-09-03,8k-2.01,none
+TBL,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+TIN,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+TNB,2012-12-01,2013-12-01,0000097854,Thomas & Betts,unknown,2013-12-01,none,none
+TRH,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+VRTX,2012-12-01,2013-12-01,0000875320,Vertex Pharmaceuticals,alive,2013-12-01,wiki,tiingo
+WFSL,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+WGOV,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+WRC,2012-12-01,2013-12-01,,,unknown,2013-12-01,none,none
+PMTC,2012-12-01,2014-03-01,,,unknown,2014-03-01,none,none
+ACI,2012-12-01,2015-06-01,0001646972,Arch Coal,bankrupt,2016-01-11,brd,tiingo
+ACM,2012-12-01,2015-06-01,0000868857,,alive,2015-06-01,spans,tiingo
+ADS,2012-12-01,2015-06-01,0001101215,Alliance Data Systems,acquired,2014-12-10,8k-2.01,wiki
+ADTN,2012-12-01,2015-06-01,0000926282,ADTRAN,spinoff,2015-06-01,wiki,tiingo
+AF,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,tiingo
+AINV,2012-12-01,2015-06-01,0001278752,Apollo Investment,spinoff,2015-06-01,wiki,none
+AMG,2012-12-01,2015-06-01,0001004434,Affiliated Managers Group,distress,2015-10-23,form25,wiki
+ANR,2013-09-01,2015-06-01,0001301063,Alpha Natural Resources,bankrupt,2015-08-03,brd,tiingo
+ARO,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,tiingo
+ASBC,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,none
+ATK,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,none
+BCO,2012-12-01,2015-06-01,0000078890,The Brink's Company,alive,2015-06-01,wiki,wiki
+BGC,2013-11-01,2015-06-01,0001094831,General Cable,acquired,2015-03-04,8k-2.01,tiingo
+BOBE,2012-12-01,2015-06-01,0000033769,Bob Evans Farms,spinoff,2015-06-01,wiki,tiingo
+BRE,2013-11-01,2015-06-01,0001011174,BRE Properties,unknown,2015-06-01,none,none
+BYI,2012-12-01,2015-06-01,0000002491,Bally Technologies,unknown,2015-06-01,none,none
+CBST,2013-11-01,2015-06-01,,,unknown,2015-06-01,none,none
+CNQR,2012-12-01,2015-06-01,0001066026,Concur Technologies,acquired,2014-12-04,8k-2.01,none
+CPWR,2013-11-01,2015-06-01,0000827099,Compuware,alive,2015-06-01,edgar-tickers,tiingo
+CRR,2013-09-01,2015-06-01,,,unknown,2015-06-01,none,wiki
+CVD,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,none
+ENDP,2012-12-01,2015-06-01,,,alive,2015-06-01,spans,wiki
+EQIX,2012-12-01,2015-06-01,0001101239,,alive,2015-06-01,edgar-tickers,tiingo
+ESS,2012-12-01,2015-06-01,0000920522,Essex Property,distress,2016-04-18,form25,tiingo
+FNF,2012-12-01,2015-06-01,0001331875,Fidelity National Financial,spinoff,2015-06-01,wiki,tiingo
+GHL,2012-12-01,2015-06-01,,Greenhill & Co.,spinoff,2015-06-01,wiki,tiingo
+GMCR,2012-12-01,2015-06-01,0000909954,Keurig Green Mountain,alive,2015-06-01,wiki,wiki
+GMT,2012-12-01,2015-06-01,0000040211,,alive,2015-06-01,spans,none
+GNTX,2012-12-01,2015-06-01,0000355811,,alive,2015-06-01,spans,tiingo
+GPN,2012-12-01,2015-06-01,0001123360,Global Payments Inc,acquired,2015-06-01,wiki,tiingo
+HBI,2012-12-01,2015-06-01,0001359841,Hanesbrands,distress,2015-11-12,form25,wiki
+HMA,2012-12-01,2015-06-01,,Health Management Associates,unknown,2015-06-01,none,none
+HSH,2013-12-01,2015-06-01,0000023666,The Hillshire Brands,unknown,2015-06-01,none,none
+HSIC,2012-12-01,2015-06-01,0001000228,,alive,2015-06-01,edgar-tickers,tiingo
+HTSI,2013-12-01,2015-06-01,0000085704,Harris Teeter Supermarkets,unknown,2015-06-01,none,none
+HUBB,2012-12-01,2015-06-01,0000048898,Hubbell Incorporated,alive,2015-06-01,wiki,none
+IPI,2012-12-01,2015-06-01,0001421461,Intrepid Potash,alive,2015-06-01,edgar-tickers,tiingo
+IRF,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,none
+JWA,2013-12-01,2015-06-01,,,unknown,2015-06-01,none,tiingo
+LPS,2012-12-01,2015-06-01,,Lender Processing Services,unknown,2015-06-01,none,none
+LRY,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,none
+MANT,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,tiingo
+MASI,2012-12-01,2015-06-01,0000937556,Masimo,acquired,2015-05-06,8k-2.01,tiingo
+MATW,2012-12-01,2015-06-01,0000063296,Matthews International,spinoff,2015-06-01,wiki,tiingo
+MATX,2013-12-01,2015-06-01,0000003453,Matson,acquired,2015-05-29,8k-2.01,tiingo
+MCRS,2012-12-01,2015-06-01,0000320345,MICROS Systems,alive,2015-06-01,wiki,none
+MHK,2012-12-01,2015-06-01,0000851968,Mohawk Industries,alive,2015-06-01,wiki,wiki
+MLM,2012-12-01,2015-06-01,0000916076,Martin Marietta Materials,alive,2015-06-01,wiki,tiingo
+MNK,2013-12-01,2015-06-01,,Mallinckrodt,alive,2015-06-01,wiki,wiki
+MWW,2013-12-01,2015-06-01,,,unknown,2015-06-01,none,wiki
+NVE,2012-12-01,2015-06-01,0001094093,NV Energy,unknown,2015-06-01,none,none
+O,2012-12-01,2015-06-01,0000726728,,alive,2015-06-01,edgar-tickers,tiingo
+PL,2012-12-01,2015-06-01,0000310826,,acquired,2015-02-03,8k-5.01,none
+RFMD,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,none
+RGS,2012-12-01,2015-06-01,0000716643,Regis,alive,2015-06-01,wiki,tiingo
+RVBD,2012-12-01,2015-06-01,,Riverbed Technology Inc,acquired,2015-06-01,wiki,none
+SCHL,2012-12-01,2015-06-01,0000866729,Scholastic,acquired,2015-06-04,8k-2.01,tiingo
+SGMS,2012-12-01,2015-06-01,0000750004,Scientific Games,acquired,2015-02-03,8k-2.01,none
+SKS,2012-12-01,2015-06-01,,Saks,unknown,2015-06-01,none,none
+SLG,2012-12-01,2015-06-01,0001040971,SL Green Realty,alive,2015-06-01,wiki,wiki
+SLXP,2013-12-01,2015-06-01,0001009356,Salix Pharmaceuticals,acquired,2015-06-01,wiki,none
+SWKS,2012-12-01,2015-06-01,0000004127,,alive,2015-06-01,edgar-tickers,tiingo
+TIBX,2012-12-01,2015-06-01,0001085280,TIBCO Software,acquired,2014-12-05,8k-2.01,none
+TSCO,2012-12-01,2015-06-01,0000916365,Tractor Supply,alive,2015-06-01,wiki,tiingo
+TWTC,2012-12-01,2015-06-01,,TW Telecom,unknown,2015-06-01,none,none
+UA,2012-12-01,2015-06-01,0001336917,Under Armour,acquired,2015-03-17,8k-2.01,none
+UHS,2012-12-01,2015-06-01,0000352915,Universal Health Services,alive,2015-06-01,wiki,tiingo
+URI,2012-12-01,2015-06-01,0001067701,United Rentals,alive,2015-06-01,wiki,tiingo
+URS,2012-12-01,2015-06-01,0000102379,URS,alive,2015-06-01,wiki,none
+UTIW,2013-12-01,2015-06-01,0001124827,UTi Worldwide,spinoff,2015-06-01,wiki,none
+UVV,2012-12-01,2015-06-01,0000102037,Universal,spinoff,2015-06-01,wiki,tiingo
+VCI,2013-12-01,2015-06-01,0000883293,Valassis Communications,spinoff,2015-06-01,wiki,none
+VCLK,2012-12-01,2015-06-01,,,unknown,2015-06-01,none,none
+WABC,2012-12-01,2015-06-01,0000311094,Westamerica Bancorporation,alive,2015-06-01,wiki,tiingo
+WMS,2012-12-01,2015-06-01,0001604028,,distress,2015-07-15,8k-3.01,tiingo
+XEC,2012-12-01,2015-06-01,0001168054,Cimarex Energy,acquired,2015-06-01,wiki,wiki
+BBG,2012-12-01,2015-07-01,0001172139,Bill Barrett Corporation,alive,2015-07-01,wiki,tiingo
+LTM,2012-12-01,2015-07-01,0001047716,Life Time Fitness Inc.,alive,2015-07-01,edgar-tickers,tiingo
+QRVO,2015-06-01,2015-07-01,0001604778,Qorvo,acquired,2015-01-02,8k-2.01,wiki
+WIN,2015-06-01,2015-07-01,0001439133,Windstream,spinoff,2015-07-01,wiki,none
+XLS,2013-12-01,2015-07-01,0001524471,Exelis,acquired,2015-04-24,defm14a,none
+ATW,2012-12-01,2016-04-01,,Atwood Oceanics,acquired,2016-04-01,wiki,tiingo
+SPW,2012-12-01,2016-06-01,0000088205,,unknown,2016-06-01,none,none
+FNFG,2012-12-01,2016-09-01,0001061304,First Niagara Bank,acquired,2016-09-01,wiki,tiingo
+AAP,2012-12-01,2016-12-01,0001158449,Advance Auto Parts,acquired,2016-12-01,wiki,wiki
+ADVS,2012-12-01,2016-12-01,,,unknown,2016-12-01,none,none
+AJG,2012-12-01,2016-12-01,0000354190,Arthur J. Gallagher & Co.,acquired,2016-12-01,wiki,tiingo
+ALB,2012-12-01,2016-12-01,0000915913,Albemarle Corporation,acquired,2016-12-14,8k-2.01,tiingo
+ALK,2012-12-01,2016-12-01,0000766421,Alaska Air Group,acquired,2016-12-14,8k-2.01,wiki
+HOLX,2012-12-01,2016-12-01,0000859737,Hologic,acquired,2016-12-01,wiki,wiki
+STR,2012-12-01,2016-12-01,,Questar,acquired,2016-12-01,wiki,none
+ANF,2015-06-01,2017-01-01,0001018840,Abercrombie & Fitch,spinoff,2017-01-01,wiki,wiki
+ANN,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,none
+AOL,2012-12-01,2017-01-01,,AOL Inc,acquired,2017-01-01,wiki,none
+APOL,2013-11-01,2017-01-01,0000929887,Apollo Education,acquired,2017-02-01,8k-2.01,wiki
+ASNA,2012-12-01,2017-01-01,0001498301,Ascena Retail Group,spinoff,2017-01-01,wiki,none
+ATML,2012-12-01,2017-01-01,0000872448,Atmel,acquired,2017-01-01,wiki,none
+AYI,2012-12-01,2017-01-01,0001144215,Acuity Brands,acquired,2017-01-01,wiki,wiki
+BMR,2013-11-01,2017-01-01,,BioMed Realty Trust,acquired,2017-01-01,wiki,none
+BTU,2015-06-01,2017-01-01,0001064728,,bankrupt,2016-04-13,brd,tiingo
+CHD,2012-12-01,2017-01-01,0000313927,Church & Dwight,acquired,2017-01-01,wiki,tiingo
+CNC,2015-06-01,2017-01-01,0001071739,,alive,2017-01-01,edgar-tickers,tiingo
+CNL,2012-12-01,2017-01-01,,CLECO,acquired,2017-01-01,wiki,tiingo
+CNW,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,none
+COO,2013-11-01,2017-01-01,0000711404,The Cooper Companies,acquired,2017-01-01,wiki,tiingo
+CRC,2015-06-01,2017-01-01,0001609253,California Resources,acquired,2017-01-01,wiki,tiingo
+CYH,2012-12-01,2017-01-01,0001108109,Community Health Systems,distress,2017-04-04,form25,tiingo
+CYN,2012-12-01,2017-01-01,,City National Corp,acquired,2017-01-01,wiki,none
+CYT,2012-12-01,2017-01-01,0000912513,Cytec Industries,acquired,2017-01-01,wiki,none
+DRC,2013-11-01,2017-01-01,,Dresser-Rand Group,acquired,2017-01-01,wiki,none
+DWA,2012-12-01,2017-01-01,0001297401,DreamWorks Animation,acquired,2016-07-11,defm14c,none
+EXR,2013-12-01,2017-01-01,0001289490,Extra Space Storage,acquired,2017-01-01,wiki,tiingo
+FBHS,2013-12-01,2017-01-01,0001519751,Fortune Brands Home & Security,acquired,2017-01-01,wiki,wiki
+FCS,2012-12-01,2017-01-01,0001038272,Fairchild Semiconductor,acquired,2017-01-01,wiki,none
+FEIC,2015-06-01,2017-01-01,,,unknown,2017-01-01,none,none
+FL,2012-12-01,2017-01-01,0000850209,Foot Locker,alive,2017-01-01,wiki,wiki
+FMER,2012-12-01,2017-01-01,0000354869,FirstMerit,acquired,2016-08-16,8k-2.01,none
+FRT,2012-12-01,2017-01-01,0000034903,Federal Realty Investment Trust,acquired,2017-01-01,wiki,tiingo
+GES,2012-12-01,2017-01-01,0000912463,Guess? Inc,unknown,2017-01-01,none,tiingo
+GMT,2015-07-01,2017-01-01,0000040211,,unknown,2017-01-01,none,none
+GPN,2015-07-01,2017-01-01,0001123360,Global Payments Inc,acquired,2017-01-01,wiki,tiingo
+HCC,2012-12-01,2017-01-01,0001691303,,alive,2017-01-01,edgar-tickers,tiingo
+HLX,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,tiingo
+HME,2013-12-01,2017-01-01,,,unknown,2017-01-01,none,none
+HMSY,2013-12-01,2017-01-01,0001196501,,distress,2017-03-22,8k-3.01,tiingo
+HNT,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,none
+HSC,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,none
+HUB-B,2015-06-01,2017-01-01,,,unknown,2017-01-01,none,none
+IM,2012-12-01,2017-01-01,,Ingram Micro,acquired,2017-01-01,wiki,tiingo
+INFA,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,tiingo
+ITRI,2012-12-01,2017-01-01,0000780571,,alive,2017-01-01,edgar-tickers,tiingo
+JAH,2013-09-01,2017-01-01,0000895655,Jarden,acquired,2017-01-01,wiki,none
+JBHT,2012-12-01,2017-01-01,0000728535,,alive,2017-01-01,edgar-tickers,tiingo
+JDSU,2015-06-01,2017-01-01,,,unknown,2017-01-01,none,none
+LKQ,2013-12-01,2017-01-01,0001065696,LKQ Corp,acquired,2017-01-01,wiki,wiki
+LNT,2012-12-01,2017-01-01,0000352541,,alive,2017-01-01,edgar-tickers,tiingo
+LXK,2013-12-01,2017-01-01,,Lexmark International,acquired,2017-01-01,wiki,none
+MAA,2015-06-01,2017-01-01,0000912595,Mid-America Apartments,acquired,2016-12-01,8k-2.01,tiingo
+MDC,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,tiingo
+MTD,2012-12-01,2017-01-01,0001037646,Mettler-Toledo,acquired,2017-01-01,wiki,tiingo
+OCR,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,none
+PLCM,2012-12-01,2017-01-01,0001010552,Polycom,acquired,2016-08-02,defm14a,none
+RAX,2012-12-01,2017-01-01,0001107694,Rackspace,acquired,2016-09-30,defm14a,none
+RCII,2012-12-01,2017-01-01,0000933036,Rent-A-Center,acquired,2017-01-01,wiki,none
+RKT,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,tiingo
+ROSE,2013-12-01,2017-01-01,,,unknown,2017-01-01,none,none
+ROVI,2012-12-01,2017-01-01,0001424454,Rovi,acquired,2016-09-08,8k-2.01,none
+RRD,2013-12-01,2017-01-01,,RR Donnelley,spinoff,2017-01-01,wiki,wiki
+SFG,2012-12-01,2017-01-01,0001079577,StanCorp Financial,acquired,2017-01-01,wiki,none
+SIG,2013-12-01,2017-01-01,0000832988,Signet Jewelers Ltd,alive,2017-01-01,wiki,wiki
+SIRO,2015-06-01,2017-01-01,0001014507,Sirona Dental Systems,acquired,2017-01-01,wiki,none
+SLH,2012-12-01,2017-01-01,0001324245,Solera Holdings,acquired,2017-01-01,wiki,none
+SMTC,2012-12-01,2017-01-01,0000088941,Semtech,alive,2017-01-01,wiki,tiingo
+SPXC,2016-06-01,2017-01-01,0000088205,,acquired,2016-12-30,8k-2.01,tiingo
+SUNE,2013-12-01,2017-01-01,0000022701,SunEdison,bankrupt,2016-04-21,brd,tiingo
+SVU,2013-12-01,2017-01-01,0000095521,SuperValu,acquired,2016-12-09,8k-2.01,wiki
+SWI,2013-12-01,2017-01-01,,SolarWinds,acquired,2017-01-01,wiki,tiingo
+TDW,2012-12-01,2017-01-01,0000098222,,bankrupt,2017-05-17,brd,tiingo
+THOR,2012-12-01,2017-01-01,,,unknown,2017-01-01,none,tiingo
+TLN,2015-07-01,2017-01-01,0001622536,,acquired,2016-09-02,defm14a,tiingo
+TMST,2015-06-01,2017-01-01,0001598428,TimkenSteel,acquired,2017-01-01,wiki,none
+TW,2012-12-01,2017-01-01,0001470215,Towers Watson,acquired,2017-01-01,wiki,tiingo
+UDR,2012-12-01,2017-01-01,0000074208,UDR  Inc.,acquired,2017-01-01,wiki,tiingo
+UNT,2012-12-01,2017-01-01,0000798949,Unit Corp,spinoff,2017-01-01,wiki,tiingo
+WCN,2012-12-01,2017-01-01,0001318220,Waste Connections,acquired,2017-01-01,wiki,tiingo
+IDXX,2012-12-01,2017-02-01,0000874716,IDEXX Laboratories,acquired,2017-02-01,wiki,tiingo
+ISIL,2012-12-01,2017-03-01,0001096325,Intersil,acquired,2016-10-31,defm14a,tiingo
+RH,2017-01-01,2017-03-01,0001528849,Restoration Hardware,spinoff,2017-03-01,wiki,tiingo
+SCOR,2017-01-01,2017-03-01,0001158172,comScore,distress,2017-02-07,8k-3.01,tiingo
+TGI,2013-12-01,2017-03-01,0001021162,Triumph Group,acquired,2017-03-01,wiki,tiingo
+AMD,2013-11-01,2017-04-01,0000002488,Advanced Micro Devices,alive,2017-04-01,wiki,tiingo
+ARE,2012-12-01,2017-04-01,0001035443,,distress,2017-04-17,form25,tiingo
+CBOE,2013-09-01,2017-04-01,0001374310,CBOE Holdings,acquired,2017-02-28,8k-2.01,tiingo
+CLC,2013-11-01,2017-04-01,,,unknown,2017-04-01,none,tiingo
+DNR,2015-06-01,2017-04-01,,,unknown,2017-04-01,none,wiki
+EQY,2012-12-01,2017-04-01,,,unknown,2017-04-01,none,tiingo
+FOSL,2017-01-01,2017-04-01,0000883569,,alive,2017-04-01,edgar-tickers,tiingo
+REG,2012-12-01,2017-04-01,0000910606,Regency Centers,acquired,2017-03-01,8k-2.01,tiingo
+RJF,2012-12-01,2017-04-01,0000720005,,distress,2017-03-16,form25,tiingo
+SNPS,2012-12-01,2017-04-01,0000883241,Synopsys,alive,2017-04-01,wiki,tiingo
+VSTO,2015-06-01,2017-04-01,,,unknown,2017-04-01,none,tiingo
+BEAV,2012-12-01,2017-05-01,0000861361,B/E Aerospace,acquired,2017-02-03,defm14a,tiingo
+CEB,2013-11-01,2017-05-01,0001066104,,acquired,2017-03-07,defm14a,tiingo
+CSAL,2015-06-01,2017-05-01,,,unknown,2017-05-01,none,none
+CSC,2017-01-01,2017-05-01,0000023082,Computer Sciences Corp.,acquired,2017-02-27,defm14a,tiingo
+ENH,2017-01-01,2017-05-01,0001179755,Endurance Specialty Holdings,acquired,2016-12-29,defm14a,tiingo
+IT,2012-12-01,2017-05-01,0000749251,Gartner,acquired,2017-04-06,8k-2.01,tiingo
+JOY,2017-01-01,2017-05-01,0000801898,Joy Global,acquired,2017-04-05,8k-2.01,tiingo
+MENT,2012-12-01,2017-05-01,0000701811,Mentor Graphics,acquired,2017-01-04,defm14a,none
+WDR,2012-12-01,2017-05-01,,Waddell & Reed,alive,2017-05-01,wiki,tiingo
+WETF,2015-07-01,2017-05-01,,,unknown,2017-05-01,none,none
+WWAV,2013-12-01,2017-05-01,0001555365,WhiteWave Foods,acquired,2017-04-12,8k-2.01,tiingo
+NE,2017-01-01,2017-06-01,0001458891,Noble Corporation,spinoff,2017-06-01,wiki,none
+JCP,2015-06-01,2017-07-01,0001166126,,unknown,2017-07-01,none,wiki
+JNS,2013-09-01,2017-07-01,,,unknown,2017-07-01,none,none
+PVTB,2017-01-01,2017-07-01,0000889936,PrivateBancorp,acquired,2017-04-12,defm14a,tiingo
+TIME,2015-06-01,2017-07-01,,Time Inc.,spinoff,2017-07-01,wiki,none
+VAL,2012-12-01,2017-07-01,0000314808,,alive,2017-07-01,spans,tiingo
+WNR,2015-06-01,2017-07-01,,,unknown,2017-07-01,none,tiingo
+ALGN,2015-06-01,2017-08-01,0001097149,Align Technology,alive,2017-08-01,wiki,tiingo
+ANSS,2012-12-01,2017-08-01,,,unknown,2017-08-01,none,wiki
+CHS,2012-12-01,2017-08-01,0000897429,Chico's FAS,spinoff,2017-08-01,wiki,tiingo
+CST,2013-11-01,2017-08-01,0001562039,CST Brands,acquired,2017-06-28,8k-2.01,none
+KATE,2015-06-01,2017-08-01,0000352363,Kate Spade & Company,acquired,2017-07-11,8k-2.01,tiingo
+PNRA,2012-12-01,2017-08-01,,,unknown,2017-08-01,none,tiingo
+AOS,2015-06-01,2017-09-01,0000091142,,alive,2017-09-01,edgar-tickers,tiingo
+DRE,2012-12-01,2017-09-01,,,unknown,2017-09-01,none,wiki
+FCN,2012-12-01,2017-09-01,0000887936,FTI Consulting,alive,2017-09-01,wiki,wiki
+PKG,2012-12-01,2017-09-01,0000075677,,alive,2017-09-01,edgar-tickers,tiingo
+RMD,2012-12-01,2017-09-01,0000943819,ResMed,alive,2017-09-01,wiki,tiingo
+CCP,2017-01-01,2017-10-01,0001639947,Care Capital Properties,acquired,2017-05-02,8k-2.01,none
+CDNS,2012-12-01,2017-10-01,0000813672,Cadence Design Systems,alive,2017-10-01,wiki,tiingo
+NSR,2012-12-01,2017-10-01,0001265888,Neustar,acquired,2017-08-08,8k-2.01,none
+WBMD,2017-01-01,2017-10-01,0001326583,,acquired,2017-09-15,8k-2.01,tiingo
+WOOF,2012-12-01,2017-10-01,,,unknown,2017-10-01,none,tiingo
+CAB,2013-09-01,2017-11-01,,Cabela's,acquired,2017-11-01,wiki,tiingo
+DV,2013-11-01,2017-11-01,,,unknown,2017-11-01,none,none
+OIS,2013-12-01,2017-11-01,0001121484,,alive,2017-11-01,edgar-tickers,tiingo
+PRXL,2017-01-01,2017-11-01,,PAREXEL,acquired,2017-11-01,wiki,tiingo
+TCB,2012-12-01,2017-11-01,,,unknown,2017-11-01,none,none
+BRCD,2017-01-01,2018-01-01,,Brocade Communications,acquired,2018-01-01,wiki,none
+FTR,2017-04-01,2018-01-01,0000020520,Frontier Communications,distress,2018-06-29,form25,tiingo
+RE,2012-12-01,2018-01-01,0001095073,Everest Re,alive,2018-01-01,wiki,wiki
+HLS,2017-01-01,2018-02-01,,HealthSouth,unknown,2018-02-01,none,none
+HSNI,2013-09-01,2018-02-01,0001434729,HSN Inc,acquired,2017-11-29,defm14a,tiingo
+BWLD,2015-06-01,2018-03-01,0001062449,Buffalo Wild Wings,acquired,2017-12-28,defm14a,tiingo
+HII,2013-12-01,2018-03-01,0001501585,Huntington Ingalls,alive,2018-03-01,wiki,tiingo
+BIVV,2017-03-01,2018-04-01,0001681689,Bioverativ,acquired,2018-03-08,8k-2.01,tiingo
+CAA,2017-01-01,2018-04-01,,CalAtlantic Homes,acquired,2018-04-01,wiki,none
+IPGP,2015-06-01,2018-04-01,0001111928,IPG Photonics,alive,2018-04-01,wiki,tiingo
+AVP,2015-06-01,2018-05-01,,,unknown,2018-05-01,none,tiingo
+DF,2013-11-01,2018-05-01,,,unknown,2018-05-01,none,none
+INCR,2017-05-01,2018-05-01,,,unknown,2018-05-01,none,none
+LNCE,2017-01-01,2018-05-01,0000057528,Snyder's-Lance,acquired,2018-02-20,defm14a,none
+MSCI,2012-12-01,2018-05-01,0001408198,MSCI Inc,alive,2018-05-01,wiki,tiingo
+OMI,2012-12-01,2018-05-01,,,unknown,2018-05-01,none,none
+SIVB,2012-12-01,2018-05-01,,,unknown,2018-05-01,none,none
+TTWO,2017-04-01,2018-05-01,0000946581,Take-Two Interactive,alive,2018-05-01,wiki,tiingo
+DST,2012-12-01,2018-06-01,,DST Systems,acquired,2018-06-01,wiki,none
+KN,2015-06-01,2018-06-01,0001587523,Knowles Corporation,spinoff,2018-06-01,wiki,tiingo
+DDD,2013-09-01,2018-07-01,0000910638,3D Systems,spinoff,2018-07-01,wiki,tiingo
+WPG,2015-06-01,2018-07-01,0001594686,Washington Prime Group,alive,2018-07-01,wiki,none
+ABMD,2016-12-01,2018-08-01,,,unknown,2018-08-01,none,tiingo
+BR,2012-12-01,2018-08-01,0001383312,,alive,2018-08-01,edgar-tickers,tiingo
+CPRT,2012-12-01,2018-08-01,0000900075,Copart,alive,2018-08-01,wiki,tiingo
+CTB,2017-03-01,2018-08-01,,,unknown,2018-08-01,none,tiingo
+DBD,2012-12-01,2018-08-01,0000028823,,alive,2018-08-01,edgar-tickers,none
+ENDP,2017-04-01,2018-08-01,,,unknown,2018-08-01,none,none
+GXP,2012-12-01,2018-08-01,,,unknown,2018-08-01,none,none
+HFC,2013-12-01,2018-08-01,0000048039,HollyFrontier,alive,2018-08-01,wiki,none
+MSCC,2016-04-01,2018-08-01,0000310568,Microsemi,acquired,2018-04-19,defm14a,none
+OA,2015-06-01,2018-08-01,0000866121,Orbital ATK,acquired,2018-06-07,8k-2.01,none
+OZRK,2015-07-01,2018-08-01,,,unknown,2018-08-01,none,tiingo
+WGL,2012-12-01,2018-08-01,0001103601,WGL Holdings,acquired,2018-07-12,8k-2.01,tiingo
+WR,2012-12-01,2018-08-01,,Westar Energy (renamed Evergy),alive,2018-08-01,wiki,none
+DCT,2017-01-01,2018-09-01,0001170991,DCT Industrial Trust,acquired,2018-07-11,defm14a,tiingo
+PAY,2013-12-01,2018-09-01,0001312073,VeriFone,acquired,2018-05-21,defm14a,tiingo
+QCP,2017-01-01,2018-09-01,0001677203,Quality Care Properties,acquired,2018-06-21,defm14a,none
+ILG,2017-10-01,2018-10-01,0001434620,ILG  Inc.,acquired,2018-07-24,defm14a,none
+KLXI,2015-06-01,2018-10-01,0001617898,KLX Inc.,acquired,2018-07-25,defm14a,tiingo
+CVG,2012-12-01,2018-11-01,0001062047,Convergys,acquired,2018-08-28,defm14a,tiingo
+EDR,2016-12-01,2018-11-01,0001302343,Education Realty Trust,acquired,2018-08-13,defm14a,tiingo
+FTNT,2015-06-01,2018-11-01,0001262039,Fortinet,alive,2018-11-01,wiki,tiingo
+HYH,2015-06-01,2018-11-01,,,unknown,2018-11-01,none,none
+WCG,2012-12-01,2018-11-01,,WellCare,alive,2018-11-01,wiki,tiingo
+ACXM,2012-12-01,2018-12-01,,,unknown,2018-12-01,none,none
+HBHC,2013-12-01,2018-12-01,,,unknown,2018-12-01,none,none
+KEYS,2015-06-01,2018-12-01,0001601046,Keysight Technologies,alive,2018-12-01,wiki,tiingo
+IBKR,2018-02-01,2019-02-01,0001381197,Interactive Brokers,distress,2019-09-24,8k-3.01,tiingo
+RDC,2015-06-01,2019-05-01,,,unknown,2019-05-01,none,tiingo
+CHFC,2017-01-01,2019-09-01,0000019612,Chemical Financial,acquired,2019-08-01,8k-2.01,none
+ESV,2017-01-01,2019-09-01,,,unknown,2019-09-01,none,none
+AHL,2013-09-01,2019-10-01,0001267395,Aspen Insurance Holdings,acquired,2019-10-01,wiki,none
+ARRS,2015-06-01,2019-10-01,0001645494,Arris International,acquired,2019-04-04,8k-2.01,none
+BIG,2013-09-01,2019-10-01,0000768835,Big Lots,alive,2019-10-01,wiki,none
+BMS,2015-06-01,2019-10-01,0000011199,Bemis Company,acquired,2019-06-11,8k-2.01,none
+DNB,2017-05-01,2019-10-01,,Dun & Bradstreet Corp,acquired,2019-10-01,wiki,tiingo
+DO,2017-01-01,2019-10-01,0000949039,,bankrupt,2020-04-26,brd,tiingo
+DRQ,2012-12-01,2019-10-01,0001042893,Dril-Quip,alive,2019-10-01,wiki,none
+EGN,2012-12-01,2019-10-01,,,unknown,2019-10-01,none,none
+ESL,2013-11-01,2019-10-01,,,unknown,2019-10-01,none,none
+GPOR,2015-06-01,2019-10-01,0000874499,Gulfport Energy Corp,bankrupt,2020-11-13,brd,tiingo
+IDTI,2012-12-01,2019-10-01,0000703361,Integrated Device Technology,acquired,2019-04-01,8k-2.01,none
+IEX,2012-12-01,2019-10-01,0000832101,,alive,2019-10-01,edgar-tickers,tiingo
+JKHY,2012-12-01,2019-10-01,0000779152,,alive,2019-10-01,edgar-tickers,tiingo
+LDOS,2013-12-01,2019-10-01,0001336920,Leidos Holdings,alive,2019-10-01,wiki,tiingo
+LHO,2015-06-01,2019-10-01,0001053532,LaSalle Hotel Properties,acquired,2019-10-01,wiki,none
+LPNT,2012-12-01,2019-10-01,0001301611,LifePoint Health Inc.,unknown,2019-10-01,none,none
+LW,2017-01-01,2019-10-01,0001679273,,alive,2019-10-01,edgar-tickers,tiingo
+MBFI,2016-09-01,2019-10-01,0001139812,MB Financial,acquired,2019-10-01,wiki,none
+MKTX,2017-01-01,2019-10-01,0001278021,MarketAxess,acquired,2019-11-04,8k-2.01,tiingo
+NBR,2015-06-01,2019-10-01,0001163739,Nabors Industries,distress,2020-04-09,8k-3.01,tiingo
+PBI,2017-04-01,2019-10-01,0000078814,Pitney Bowes,alive,2019-10-01,wiki,tiingo
+RLGY,2018-11-01,2019-10-01,,Realogy,alive,2019-10-01,wiki,none
+SM,2012-12-01,2019-10-01,0000893538,SM Energy,alive,2019-10-01,wiki,tiingo
+SPN,2012-12-01,2019-10-01,0000886835,Superior Energy Services,bankrupt,2020-12-07,brd,none
+TCF,2017-11-01,2019-10-01,0000019612,TCF Financial Corporation,acquired,2019-08-01,8k-2.01,tiingo
+TFX,2012-12-01,2019-10-01,0000096943,Teleflex,alive,2019-10-01,edgar-tickers,tiingo
+ULTI,2015-06-01,2019-10-01,0001016125,Ultimate Software Group,acquired,2019-05-03,8k-2.01,none
+VVC,2012-12-01,2019-10-01,0001096385,Vectren,acquired,2019-10-01,wiki,none
+WAB,2012-12-01,2019-10-01,0000943452,Wabtec,alive,2019-10-01,wiki,tiingo
+WTW,2018-10-01,2019-10-01,0001140536,,alive,2019-10-01,edgar-tickers,tiingo
+BID,2012-12-01,2019-11-01,,Sotheby's,alive,2019-11-01,wiki,tiingo
+CARS,2017-07-01,2019-11-01,0001683606,,alive,2019-11-01,edgar-tickers,tiingo
+CPE,2017-10-01,2019-11-01,,,unknown,2019-11-01,none,tiingo
+ISCA,2012-12-01,2019-11-01,0000051548,International Speedway,acquired,2019-09-17,defm14a,tiingo
+MDR,2018-08-01,2019-11-01,,,unknown,2019-11-01,none,tiingo
+MIK,2017-05-01,2019-11-01,,,unknown,2019-11-01,none,tiingo
+MNK,2017-09-01,2019-11-01,,Mallinckrodt,bankrupt,2020-10-12,brd,none
+NVR,2012-12-01,2019-11-01,0000906163,NVR,alive,2019-11-01,wiki,tiingo
+QEP,2017-01-01,2019-11-01,,,unknown,2019-11-01,none,tiingo
+RRC,2018-08-01,2019-11-01,0000315852,,alive,2019-11-01,spans,tiingo
+SIG,2018-05-01,2019-11-01,0000832988,Signet Jewelers Ltd,alive,2019-11-01,wiki,tiingo
+TUP,2012-12-01,2019-11-01,,,unknown,2019-11-01,none,none
+VAL,2019-09-01,2019-11-01,0000314808,,bankrupt,2020-08-19,brd,none
+VSM,2017-01-01,2019-11-01,0001660690,Versum Materials,acquired,2019-05-13,defm14a,tiingo
+AKRX,2015-06-01,2020-01-01,,,alive,2020-01-01,spans,none
+HPT,2012-12-01,2020-04-01,,,alive,2020-04-01,spans,none
+WTR,2012-12-01,2020-04-01,,,unknown,2020-04-01,none,none
+FII,2013-12-01,2020-09-01,,,alive,2020-09-01,spans,none
+GWR,2013-12-01,2020-09-01,0001012620,Genesee & Wyoming,alive,2020-09-01,wiki,none
+CVET,2019-10-01,2020-11-01,,,unknown,2020-11-01,none,tiingo
+FHI,2020-09-01,2020-11-01,0001056288,,alive,2020-11-01,spans,tiingo
+GVA,2012-12-01,2020-11-01,0000861459,,distress,2021-01-08,8k-3.01,tiingo
+GWRS,2020-09-01,2020-11-01,0001434728,,alive,2020-11-01,edgar-tickers,tiingo
+LYV,2015-06-01,2020-11-01,0001335258,Live Nation Entertainment,alive,2020-11-01,wiki,tiingo
+MDSO,2017-07-01,2020-11-01,,Medidata Solutions,acquired,2020-11-01,wiki,none
+MRCY,2019-11-01,2020-11-01,0001049521,Mercury Systems,alive,2020-11-01,wiki,tiingo
+NKTR,2019-11-01,2020-11-01,0000906709,Nektar Therapeutics,alive,2020-11-01,wiki,tiingo
+OAS,2018-07-01,2020-11-01,,,unknown,2020-11-01,none,tiingo
+ODFL,2015-06-01,2020-11-01,0000878927,Old Dominion Freight Line,alive,2020-11-01,wiki,tiingo
+OII,2012-12-01,2020-11-01,0000073756,Oceaneering International,alive,2020-11-01,wiki,tiingo
+PLT,2012-12-01,2020-11-01,0000914025,Plantronics,alive,2020-11-01,wiki,none
+SEDG,2019-11-01,2020-11-01,0001419612,SolarEdge,alive,2020-11-01,wiki,tiingo
+STE,2012-12-01,2020-11-01,0001757898,,alive,2020-11-01,edgar-tickers,tiingo
+SVC,2020-04-01,2020-11-01,0000945394,Service Properties Trust,alive,2020-11-01,wiki,tiingo
+SWN,2017-05-01,2020-11-01,0000007332,Southwestern Energy,acquired,2020-11-13,8k-2.01,tiingo
+ZBRA,2012-12-01,2020-11-01,0000877212,,alive,2020-11-01,edgar-tickers,tiingo
+ALEX,2012-12-01,2020-12-01,,Alexander & Baldwin,alive,2020-12-01,wiki,tiingo
+CHK,2018-05-01,2020-12-01,0000895126,Chesapeake Energy,bankrupt,2020-06-28,brd,tiingo
+CY,2013-11-01,2020-12-01,0000791915,Cypress Semiconductor,alive,2020-12-01,wiki,none
+GDOT,2019-10-01,2020-12-01,0001386278,Green Dot Corp,alive,2020-12-01,wiki,tiingo
+GWR,2020-11-01,2020-12-01,0001012620,Genesee & Wyoming,alive,2020-12-01,wiki,none
+LOGM,2017-03-01,2020-12-01,0001420302,LogMeIn,acquired,2020-08-31,8k-2.01,none
+LPT,2015-06-01,2020-12-01,0000921112,Liberty Property Trust,alive,2020-12-01,wiki,none
+SKT,2015-06-01,2020-12-01,0000899715,Tanger Factory Outlet Centers,alive,2020-12-01,wiki,tiingo
+UNIT,2017-05-01,2020-12-01,0001620280,Uniti Group,alive,2020-12-01,wiki,tiingo
+AAN,2012-12-01,2021-01-01,,,unknown,2021-01-01,none,tiingo
+AKRX,2020-11-01,2021-01-01,,,unknown,2021-01-01,none,none
+AMCX,2013-11-01,2021-01-01,0001514991,AMC Networks,alive,2021-01-01,wiki,tiingo
+ATI,2017-01-01,2021-01-01,0001018963,Allegheny Technologies,alive,2021-01-01,wiki,tiingo
+ATO,2012-12-01,2021-01-01,0000731802,,alive,2021-01-01,edgar-tickers,tiingo
+BBBY,2017-09-01,2021-01-01,,,unknown,2021-01-01,none,none
+BID,2020-11-01,2021-01-01,,Sotheby's,alive,2021-01-01,wiki,none
+BIO,2012-12-01,2021-01-01,0000012208,,unknown,2021-01-01,none,tiingo
+CAKE,2012-12-01,2021-01-01,0000887596,,alive,2021-01-01,edgar-tickers,tiingo
+CLB,2017-08-01,2021-01-01,,Core Laboratories,unknown,2021-01-01,none,tiingo
+CLI,2012-12-01,2021-01-01,0000924901,Mack-Cali Realty,alive,2021-01-01,wiki,none
+CRS,2012-12-01,2021-01-01,0000017843,Carpenter Technology,alive,2021-01-01,wiki,tiingo
+CTLT,2017-01-01,2021-01-01,0001596783,Catalent,alive,2021-01-01,wiki,tiingo
+CXW,2012-12-01,2021-01-01,0001070985,CoreCivic,alive,2021-01-01,wiki,tiingo
+DDS,2017-03-01,2021-01-01,0000028917,,alive,2021-01-01,edgar-tickers,tiingo
+DLPH,2018-01-01,2021-01-01,0001707092,Delphi Technologies,acquired,2020-10-02,8k-2.01,none
+DLX,2012-12-01,2021-01-01,0000027996,Deluxe Corporation,alive,2021-01-01,wiki,tiingo
+DNKN,2015-06-01,2021-01-01,0001357204,Dunkin' Brands,acquired,2020-12-15,8k-2.01,tiingo
+DNOW,2015-06-01,2021-01-01,0001599617,,alive,2021-01-01,edgar-tickers,tiingo
+DPZ,2013-11-01,2021-01-01,0001286681,Domino's Pizza,alive,2021-01-01,wiki,tiingo
+EAT,2012-12-01,2021-01-01,0000703351,Brinker International,alive,2021-01-01,wiki,tiingo
+ERI,2018-09-01,2021-01-01,,,unknown,2021-01-01,none,none
+ETSY,2019-11-01,2021-01-01,0001370637,Etsy,alive,2021-01-01,wiki,tiingo
+GEO,2017-04-01,2021-01-01,0000923796,GEO Group,alive,2021-01-01,wiki,tiingo
+GME,2017-01-01,2021-01-01,0001326380,,alive,2021-01-01,spans,tiingo
+ISCA,2020-11-01,2021-01-01,0000051548,International Speedway,acquired,2021-01-01,wiki,none
+LM,2017-01-01,2021-01-01,0000704051,Legg Mason,acquired,2020-07-31,8k-2.01,none
+MD,2012-12-01,2021-01-01,0000893949,Mednax,acquired,2020-12-21,8k-2.01,tiingo
+MDP,2013-12-01,2021-01-01,0000065011,,unknown,2021-01-01,none,tiingo
+MDRX,2012-12-01,2021-01-01,0001124804,,acquired,2020-10-15,8k-2.01,tiingo
+MTDR,2017-07-01,2021-01-01,0001520006,,alive,2021-01-01,spans,tiingo
+ODP,2012-12-01,2021-01-01,,,unknown,2021-01-01,none,tiingo
+PBF,2017-05-01,2021-01-01,0001534504,PBF Energy,alive,2021-01-01,wiki,tiingo
+POOL,2017-01-01,2021-01-01,0000945841,Pool Corporation,alive,2021-01-01,wiki,tiingo
+PTEN,2012-12-01,2021-01-01,0000889900,Patterson-UTI Energy,alive,2021-01-01,wiki,tiingo
+RIG,2017-09-01,2021-01-01,0001451505,Transocean,alive,2021-01-01,wiki,tiingo
+ROL,2012-12-01,2021-01-01,0000084839,,alive,2021-01-01,edgar-tickers,tiingo
+SBH,2017-01-01,2021-01-01,0001368458,Sally Beauty Holdings,alive,2021-01-01,wiki,tiingo
+SNH,2012-12-01,2021-01-01,,,unknown,2021-01-01,none,none
+TDY,2015-06-01,2021-01-01,0001094285,Teledyne Technologies,alive,2021-01-01,wiki,tiingo
+TECD,2012-12-01,2021-01-01,0000790703,Tech Data,acquired,2021-01-01,wiki,none
+TER,2015-06-01,2021-01-01,0000097210,Teradyne,alive,2021-01-01,wiki,tiingo
+TYL,2015-06-01,2021-01-01,0000860731,,alive,2021-01-01,edgar-tickers,tiingo
+UNFI,2013-12-01,2021-01-01,0001020859,United Natural Foods,alive,2021-01-01,wiki,tiingo
+VSM,2020-11-01,2021-01-01,0001660690,Versum Materials,acquired,2021-01-01,wiki,none
+WRB,2012-12-01,2021-01-01,0000011544,W.R. Berkley,distress,2021-03-01,form25,tiingo
+WST,2016-12-01,2021-01-01,0000105770,West Pharmaceutical Services,alive,2021-01-01,wiki,tiingo
+APY,2018-07-01,2021-02-01,,,unknown,2021-02-01,none,none
+FII,2020-11-01,2021-02-01,,,unknown,2021-02-01,none,none
+HPT,2020-11-01,2021-02-01,,,unknown,2021-02-01,none,none
+POL,2015-06-01,2021-02-01,,,unknown,2021-02-01,none,none
+TCO,2012-12-01,2021-02-01,0000890319,Taubman Centers,acquired,2020-12-04,defm14a,none
+TRMB,2012-12-01,2021-02-01,0000864749,Trimble Inc.,alive,2021-02-01,wiki,tiingo
+WPX,2015-06-01,2021-02-01,0001518832,WPX Energy,acquired,2020-11-24,defm14a,tiingo
+AAXN,2019-10-01,2021-04-01,,,unknown,2021-04-01,none,none
+CZR,2019-10-01,2021-04-01,0001590895,Caesars Entertainment,alive,2021-04-01,wiki,tiingo
+EPC,2017-01-01,2021-04-01,0001096752,Edgewell Personal Care,alive,2021-04-01,wiki,tiingo
+EV,2012-12-01,2021-04-01,0000350797,Eaton Vance,acquired,2021-03-01,8k-2.01,none
+GNRC,2020-12-01,2021-04-01,0001474735,Generac Holdings,alive,2021-04-01,wiki,tiingo
+HNI,2012-12-01,2021-04-01,0000048287,HNI Corporation,alive,2021-04-01,wiki,tiingo
+MPWR,2017-01-01,2021-04-01,0001280452,Monolithic Power Systems,alive,2021-04-01,wiki,tiingo
+OI,2017-01-01,2021-04-01,0000812074,O-I Glass,alive,2021-04-01,wiki,tiingo
+PBH,2017-01-01,2021-04-01,0001295947,Prestige Brands,alive,2021-04-01,wiki,tiingo
+PENN,2018-11-01,2021-04-01,0000921738,Penn Entertainment,alive,2021-04-01,wiki,tiingo
+WYND,2018-08-01,2021-04-01,,,unknown,2021-04-01,none,none
+IDCC,2013-12-01,2021-05-01,0001405495,InterDigital,alive,2021-05-01,wiki,tiingo
+PTC,2014-03-01,2021-05-01,0000857005,PTC Inc.,acquired,2021-01-15,8k-2.01,tiingo
+UFS,2013-12-01,2021-05-01,0001381531,Domtar,acquired,2021-03-01,8k-2.01,tiingo
+AVNS,2018-11-01,2021-06-01,0001606498,Avanos Medical,alive,2021-06-01,wiki,tiingo
+CRL,2012-12-01,2021-06-01,0001100682,Charles River Laboratories,acquired,2021-03-29,8k-2.01,tiingo
+GNW,2017-01-01,2021-06-01,0001276520,Genworth Financial,acquired,2021-03-08,8k-2.01,tiingo
+PRSP,2021-03-01,2021-06-01,,Perspecta Inc.,acquired,2021-06-01,wiki,tiingo
+CLGX,2012-12-01,2021-07-01,0000036047,CoreLogic,acquired,2021-03-30,defm14a,tiingo
+CMD,2018-05-01,2021-07-01,0000019446,Cantel Medical Corporation,acquired,2021-04-01,defm14a,tiingo
+GRUB,2019-10-01,2021-07-01,,Grubhub,acquired,2021-07-01,wiki,tiingo
+SVC,2021-02-01,2021-07-01,0000945394,Service Properties Trust,alive,2021-07-01,wiki,tiingo
+TCF,2021-03-01,2021-07-01,0000019612,TCF Financial Corporation,acquired,2021-02-17,defm14a,tiingo
+ATGE,2017-11-01,2021-08-01,0000730464,Adtalem Global Education,acquired,2021-08-12,8k-2.01,none
+PRAH,2018-08-01,2021-08-01,0001613859,PRA Health Sciences,acquired,2021-04-28,defm14a,none
+CNK,2013-09-01,2021-09-01,0001385280,Cinemark Holdings,alive,2021-09-01,wiki,tiingo
+INT,2013-12-01,2021-09-01,0000789460,World Fuel Services,spinoff,2021-09-01,wiki,none
+STRA,2021-01-01,2021-09-01,0001013934,Strategic Education  Inc.,alive,2021-09-01,wiki,tiingo
+TECH,2012-12-01,2021-09-01,0000842023,Bio-Techne,alive,2021-09-01,wiki,tiingo
+TRMK,2012-12-01,2021-09-01,0000036146,Trustmark Corporation,alive,2021-09-01,wiki,tiingo
+WRI,2012-12-01,2021-09-01,,Weingarten Realty,acquired,2021-09-01,wiki,tiingo
+BRO,2012-12-01,2021-10-01,0000079282,Brown & Brown,alive,2021-10-01,wiki,tiingo
+CDAY,2020-11-01,2021-10-01,,Ceridian,alive,2021-10-01,wiki,none
+HCSG,2018-03-01,2021-10-01,0000731012,Healthcare Services Group,alive,2021-10-01,wiki,tiingo
+LGND,2018-12-01,2021-10-01,0000886163,Ligand Pharmaceuticals,alive,2021-10-01,wiki,tiingo
+THS,2015-06-01,2021-10-01,0001320695,TreeHouse Foods,alive,2021-10-01,wiki,tiingo
+WW,2019-10-01,2021-10-01,0000105319,WW International,alive,2021-10-01,wiki,tiingo
+JCOM,2017-01-01,2021-11-01,,,unknown,2021-11-01,none,none
+TREE,2018-04-01,2021-11-01,0001434621,LendingTree,alive,2021-11-01,wiki,tiingo
+XEC,2020-12-01,2021-11-01,0001168054,Cimarex Energy,acquired,2021-08-23,defm14a,tiingo
+BXS,2012-12-01,2021-12-01,,,unknown,2021-12-01,none,none
+CREE,2012-12-01,2021-12-01,,,unknown,2021-12-01,none,none
+MLHR,2012-12-01,2021-12-01,,,unknown,2021-12-01,none,none
+NTCT,2017-01-01,2021-12-01,0001078075,NetScout Systems,spinoff,2021-12-01,wiki,tiingo
+BRKS,2021-03-01,2022-01-01,,,unknown,2022-01-01,none,none
+COR,2017-10-01,2022-01-01,0001140859,CoreSite,acquired,2022-01-01,wiki,tiingo
+EBS,2021-03-01,2022-01-01,0001367644,Emergent BioSolutions,alive,2022-01-01,wiki,tiingo
+FDS,2012-12-01,2022-01-01,0001013237,FactSet,alive,2022-01-01,wiki,tiingo
+HRC,2012-12-01,2022-01-01,0000047518,Hillrom,acquired,2021-08-06,8k-2.01,tiingo
+KAR,2019-11-01,2022-01-01,0001395942,KAR Auction Services,acquired,2021-10-14,8k-2.01,none
+NKTR,2021-01-01,2022-01-01,0000906709,Nektar Therapeutics,alive,2022-01-01,wiki,tiingo
+RBC,2012-12-01,2022-01-01,0001324948,,acquired,2021-11-02,8k-2.01,tiingo
+SBNY,2013-12-01,2022-01-01,0001288784,Signature Bank,alive,2022-01-01,wiki,tiingo
+SEDG,2021-03-01,2022-01-01,0001419612,SolarEdge,alive,2022-01-01,wiki,tiingo
+TDS,2012-12-01,2022-01-01,0001051512,Telephone and Data Systems,alive,2022-01-01,wiki,tiingo
+TR,2012-12-01,2022-01-01,0000098677,Tootsie Roll,alive,2022-01-01,wiki,tiingo
+CIT,2020-12-01,2022-02-01,0001171825,CIT Group,acquired,2022-01-04,8k-2.01,tiingo
+CMP,2012-12-01,2022-03-01,0001227654,Compass Minerals,alive,2022-03-01,wiki,tiingo
+JACK,2016-12-01,2022-03-01,0000807882,Jack in the Box,acquired,2022-03-08,8k-2.01,tiingo
+NDSN,2012-12-01,2022-03-01,0000072331,Nordson,alive,2022-03-01,wiki,tiingo
+STL,2017-11-01,2022-03-01,,Sterling Bancorp,acquired,2022-03-01,wiki,tiingo
+UE,2015-06-01,2022-03-01,0001611547,Urban Edge Properties,alive,2022-03-01,wiki,tiingo
+CONE,2017-04-01,2022-04-01,0001553023,CyrusOne,acquired,2021-12-30,defm14a,tiingo
+CRNC,2021-08-01,2022-04-01,0001768267,Cerence,alive,2022-04-01,wiki,tiingo
+HFC,2021-07-01,2022-04-01,0000048039,HollyFrontier,acquired,2021-10-29,defm14a,none
+MOH,2017-01-01,2022-04-01,0001179929,Molina Healthcare,alive,2022-04-01,wiki,tiingo
+ADS,2021-01-01,2022-05-01,0001101215,Alliance Data Systems,acquired,2021-11-08,8k-2.01,none
+CFX,2019-10-01,2022-05-01,,,unknown,2022-05-01,none,none
+CPT,2012-12-01,2022-05-01,0000906345,Camden,alive,2022-05-01,wiki,tiingo
+PRG,2021-03-01,2022-05-01,0001808834,PROG Holdings,alive,2022-05-01,wiki,tiingo
+SGMS,2018-03-01,2022-05-01,0000750004,Scientific Games,acquired,2022-04-04,8k-2.01,none
+MIME,2021-09-01,2022-06-01,,Mimecast,acquired,2022-06-01,wiki,tiingo
+TPH,2017-01-01,2022-06-01,,Tri Pointe Homes,alive,2022-06-01,wiki,tiingo
+APPS,2021-10-01,2022-07-01,0000317788,Digital Turbine,alive,2022-07-01,wiki,tiingo
+RAMP,2018-12-01,2022-07-01,0000733269,LiveRamp,alive,2022-07-01,wiki,tiingo
+TRN,2012-12-01,2022-07-01,0000099780,Trinity Industries,acquired,2022-01-05,8k-2.01,tiingo
+URBN,2017-04-01,2022-07-01,0000912615,Urban Outfitters,alive,2022-07-01,wiki,tiingo
+YELP,2019-10-01,2022-07-01,0001345016,Yelp,alive,2022-07-01,wiki,tiingo
+CCMP,2020-11-01,2022-08-01,0001102934,CMC Materials,acquired,2022-07-06,8k-2.01,tiingo
+CDK,2015-06-01,2022-08-01,0001609702,CDK Global,acquired,2022-07-06,8k-2.01,tiingo
+COHR,2017-04-01,2022-08-01,0000820318,Coherent Corp.,acquired,2021-08-05,425,tiingo
+PSB,2019-10-01,2022-08-01,,PS Business Parks,acquired,2022-08-01,wiki,tiingo
+SAFM,2017-11-01,2022-08-01,0000812128,Sanderson Farms,acquired,2022-07-22,8k-2.01,tiingo
+SIX,2017-11-01,2022-08-01,0000701374,Six Flags,alive,2022-08-01,wiki,tiingo
+ACC,2013-11-01,2022-09-01,0001283630,American Campus Communities,acquired,2022-06-16,defm14a,tiingo
+SAIL,2021-03-01,2022-09-01,,SailPoint Technologies,acquired,2022-09-01,wiki,tiingo
+AEO,2012-12-01,2022-10-01,0000919012,American Eagle Outfitters,alive,2022-10-01,wiki,tiingo
+ELY,2021-07-01,2022-10-01,,,unknown,2022-10-01,none,none
+HPP,2021-01-01,2022-10-01,0001482512,Hudson Pacific Properties,alive,2022-10-01,wiki,tiingo
+IIVI,2019-11-01,2022-10-01,,,unknown,2022-10-01,none,tiingo
+MCY,2012-12-01,2022-10-01,0000064996,Mercury General,alive,2022-10-01,wiki,tiingo
+MTX,2012-12-01,2022-10-01,0000891014,Minerals Technologies,alive,2022-10-01,wiki,tiingo
+EQT,2019-10-01,2022-11-01,0000033213,EQT Corporation,alive,2022-11-01,wiki,tiingo
+HAIN,2015-06-01,2022-11-01,0000910406,Hain Celestial Group,alive,2022-11-01,wiki,tiingo
+MLKN,2021-12-01,2022-11-01,0000066382,MillerKnoll,alive,2022-11-01,wiki,tiingo
+TRGP,2021-07-01,2022-11-01,0001389170,Targa Resources,acquired,2022-08-01,8k-2.01,tiingo
+Y,2013-09-01,2022-11-01,0000775368,Alleghany,acquired,2022-10-19,8k-2.01,tiingo
+BFH,2022-05-01,2022-12-01,0001101215,Bread Financial,alive,2022-12-01,wiki,tiingo
+FSLR,2017-04-01,2023-01-01,0001274494,First Solar,alive,2023-01-01,wiki,tiingo
+JW-A,2015-06-01,2023-01-01,,,unknown,2023-01-01,none,none
+NUS,2017-04-01,2023-01-01,0001021561,Nu Skin Enterprises,alive,2023-01-01,wiki,tiingo
+NUVA,2017-01-01,2023-01-01,0001142596,NuVasive,acquired,2023-02-09,425,tiingo
+SABR,2017-05-01,2023-01-01,0001597033,Sabre,distress,2023-09-01,form25,tiingo
+SMTC,2019-10-01,2023-01-01,0000088941,Semtech,acquired,2023-01-12,8k-2.01,tiingo
+STLD,2012-12-01,2023-01-01,0001022671,Steel Dynamics,alive,2023-01-01,wiki,tiingo
+RXO,2022-12-01,2023-02-01,0001929561,RXO,alive,2023-02-01,wiki,tiingo
+LHCG,2020-12-01,2023-03-01,0001303313,LHC Group,acquired,2023-02-22,8k-2.01,tiingo
+STOR,2021-03-01,2023-03-01,0001538990,Store Capital,acquired,2022-11-04,defm14a,tiingo
+CBRL,2017-01-01,2023-04-01,0001067294,Cracker Barrel,alive,2023-04-01,wiki,tiingo
+DY,2017-01-01,2023-04-01,0000067215,Dycom Industries,alive,2023-04-01,wiki,tiingo
+FICO,2012-12-01,2023-04-01,0000814547,Fair Isaac,alive,2023-04-01,wiki,tiingo
+HBI,2022-01-01,2023-04-01,0001359841,Hanesbrands,alive,2023-04-01,wiki,tiingo
+IAA,2021-03-01,2023-04-01,0001745041,IAA  Inc.,acquired,2023-02-10,defm14a,tiingo
+JBGS,2017-08-01,2023-04-01,0001689796,JBG Smith,alive,2023-04-01,wiki,tiingo
+KMT,2012-12-01,2023-04-01,0000055242,Kennametal,alive,2023-04-01,wiki,tiingo
+PEB,2019-10-01,2023-04-01,0001474098,Pebblebrook Hotel Trust,alive,2023-04-01,wiki,tiingo
+SLG,2021-04-01,2023-04-01,0001040971,SL Green Realty,alive,2023-04-01,wiki,tiingo
+TNDM,2021-10-01,2023-04-01,0001438133,Tandem Diabetes Care,acquired,2023-01-23,8k-2.01,tiingo
+UMPQ,2015-06-01,2023-04-01,0002017259,Umpqua Bank,acquired,2023-04-01,wiki,none
+VSAT,2017-01-01,2023-04-01,0000797721,Viasat,acquired,2023-01-09,8k-2.01,tiingo
+WAFD,2013-12-01,2023-04-01,0000936528,WaFd  Inc.,alive,2023-04-01,wiki,tiingo
+PACW,2015-06-01,2023-05-01,0001102112,PacWest Bancorp,alive,2023-05-01,wiki,tiingo
+AXON,2021-04-01,2023-06-01,0001069183,Axon Enterprise,alive,2023-06-01,wiki,tiingo
+DAN,2015-06-01,2023-07-01,0000026780,Dana Incorporated,alive,2023-07-01,wiki,tiingo
+DEI,2015-06-01,2023-07-01,0001364250,Douglas Emmett,alive,2023-07-01,wiki,tiingo
+FULT,2012-12-01,2023-07-01,0000700564,Fulton Financial Corporation,alive,2023-07-01,wiki,tiingo
+MAC,2020-11-01,2023-07-01,0000912242,Macerich,alive,2023-07-01,wiki,tiingo
+NAVI,2018-08-01,2023-07-01,,Navient,alive,2023-07-01,wiki,tiingo
+NGVT,2019-10-01,2023-07-01,0001653477,Ingevity Corp.,acquired,2023-03-24,8k-2.01,tiingo
+SITM,2022-01-01,2023-07-01,0001451809,SiTime,alive,2023-07-01,wiki,tiingo
+SPWR,2021-11-01,2023-07-01,0001838987,SunPower,acquired,2023-07-24,8k-2.01,tiingo
+VSCO,2021-09-01,2023-07-01,,Victoria's Secret,alive,2023-07-01,wiki,none
+WLY,2023-01-01,2023-07-01,0000107140,John Wiley & Sons,alive,2023-07-01,wiki,tiingo
+BOH,2012-12-01,2023-08-01,0000046195,Bank of Hawaii,spinoff,2023-08-01,wiki,tiingo
+LSI,2017-01-01,2023-09-01,,Life Storage,acquired,2023-09-01,wiki,none
+MRCY,2021-03-01,2023-09-01,0001049521,Mercury Systems,alive,2023-09-01,wiki,tiingo
+PDCE,2022-03-01,2023-09-01,0000077877,PDC Energy,acquired,2023-07-07,defm14a,tiingo
+STAA,2021-05-01,2023-09-01,0000718937,STAAR Surgical,alive,2023-09-01,wiki,tiingo
+UNVR,2021-01-01,2023-09-01,0001494319,Univar Solutions,acquired,2023-05-02,defm14a,none
+CATY,2012-12-01,2023-11-01,0000861842,Cathay Bank,alive,2023-11-01,wiki,tiingo
+ENR,2012-12-01,2023-11-01,0001632790,Energizer,alive,2023-11-01,wiki,tiingo
+FL,2019-10-01,2023-11-01,0000850209,Foot Locker,alive,2023-11-01,wiki,tiingo
+HE,2012-12-01,2023-11-01,0000354707,Hawaiian Electric Industries,alive,2023-11-01,wiki,tiingo
+HIW,2012-12-01,2023-11-01,0000921082,Highwoods Properties,alive,2023-11-01,wiki,tiingo
+HUBB,2017-01-01,2023-11-01,0000048898,Hubbell Incorporated,alive,2023-11-01,wiki,tiingo
+JBLU,2012-12-01,2023-11-01,0001158463,JetBlue,alive,2023-11-01,wiki,tiingo
+KSS,2021-03-01,2023-11-01,0000885639,Kohl's,alive,2023-11-01,wiki,tiingo
+NATI,2012-12-01,2023-11-01,0000935494,National Instruments,acquired,2023-05-25,defm14a,tiingo
+NCR,2012-12-01,2023-11-01,,,unknown,2023-11-01,none,none
+OFC,2012-12-01,2023-11-01,,,unknown,2023-11-01,none,none
+OMCL,2022-08-01,2023-11-01,0000926326,Omnicell,alive,2023-11-01,wiki,tiingo
+PZZA,2017-01-01,2023-11-01,0000901491,Papa John's,alive,2023-11-01,wiki,tiingo
+SXT,2012-12-01,2023-11-01,0000310142,Sensient Technologies,alive,2023-11-01,wiki,tiingo
+SYNH,2018-05-01,2023-11-01,0001610950,Syneos Health,acquired,2023-06-27,defm14a,none
+TRIP,2020-11-01,2023-11-01,0001526520,Tripadvisor,alive,2023-11-01,wiki,tiingo
+VICR,2022-01-01,2023-11-01,0000751978,Vicor,alive,2023-11-01,wiki,tiingo
+WWE,2018-09-01,2023-11-01,,,unknown,2023-11-01,none,none
+XRX,2021-04-01,2023-11-01,0001770450,Xerox,alive,2023-11-01,wiki,tiingo
+ACIW,2012-12-01,2023-12-01,0000935036,ACI Worldwide,alive,2023-12-01,wiki,tiingo
+ENV,2021-07-01,2023-12-01,,Envestnet,alive,2023-12-01,wiki,tiingo
+ICUI,2018-05-01,2023-12-01,0000883984,ICU Medical,alive,2023-12-01,wiki,tiingo
+WOR,2012-12-01,2023-12-01,0000108516,Worthington Industries,acquired,2023-12-05,8k-2.01,tiingo
+BLDR,2021-03-01,2024-01-01,0001316835,Builders FirstSource,alive,2024-01-01,wiki,tiingo
+JBL,2015-06-01,2024-01-01,0000898293,Jabil,alive,2024-01-01,wiki,tiingo
+MODG,2022-10-01,2024-01-01,0000837465,Topgolf Callaway Brands,alive,2024-01-01,wiki,none
+VSTS,2023-11-01,2024-01-01,0001967649,Vestis,alive,2024-01-01,wiki,tiingo
+PDCO,2018-05-01,2024-02-01,,Patterson Companies,alive,2024-02-01,wiki,tiingo
+SRC,2019-10-01,2024-02-01,,Spirit Realty,acquired,2024-02-01,wiki,tiingo
+VYX,2023-11-01,2024-02-01,0000070866,NCR Voyix,acquired,2023-10-17,8k-2.01,tiingo
+CALX,2022-02-01,2024-04-01,0001406666,Calix,alive,2024-04-01,wiki,tiingo
+DECK,2012-12-01,2024-04-01,0000910521,Deckers Brands,alive,2024-04-01,wiki,tiingo
+DOC,2021-03-01,2024-04-01,0000765880,Physicians Realty Trust,acquired,2024-03-01,8k-2.01,tiingo
+MPW,2017-01-01,2024-04-01,,Medical Properties Trust,alive,2024-04-01,wiki,none
+NARI,2022-06-01,2024-04-01,0001531048,Inari Medical,acquired,2023-11-15,8k-2.01,tiingo
+RUN,2021-03-01,2024-04-01,0001469367,Sunrun,alive,2024-04-01,wiki,tiingo
+SMCI,2023-01-01,2024-04-01,0001375365,Supermicro,distress,2024-05-09,8k-3.01,tiingo
+CABO,2017-01-01,2024-05-01,0001632127,Cable One,alive,2024-05-01,wiki,tiingo
+FOXF,2021-03-01,2024-05-01,0001424929,Fox Factory,acquired,2023-11-15,8k-2.01,tiingo
+VST,2023-11-01,2024-06-01,0001692819,Vistra,acquired,2024-03-07,8k-2.01,tiingo
+AIRC,2021-01-01,2024-07-01,0001820877,Apartment Income REIT,acquired,2024-05-21,defm14a,tiingo
+GDDY,2023-11-01,2024-07-01,0001609711,GoDaddy,alive,2024-07-01,wiki,tiingo
+GO,2021-03-01,2024-07-01,0001771515,Grocery Outlet,alive,2024-07-01,wiki,tiingo
+HTZ,2023-04-01,2024-07-01,0001657853,Hertz,alive,2024-07-01,wiki,tiingo
+IART,2018-08-01,2024-07-01,0000917520,Integra LifeSciences,alive,2024-07-01,wiki,tiingo
+LEG,2022-01-01,2024-07-01,0000058492,Leggett & Platt,alive,2024-07-01,wiki,tiingo
+PENN,2022-10-01,2024-07-01,0000921738,Penn Entertainment,alive,2024-07-01,wiki,tiingo
+SWAV,2022-07-01,2024-07-01,0001642545,Shockwave Medical,acquired,2024-04-29,defm14a,none
+WERN,2012-12-01,2024-07-01,0000793074,Werner Enterprises,alive,2024-07-01,wiki,tiingo
+ETRN,2019-10-01,2024-08-01,0000033213,Equitrans Midstream,acquired,2024-07-22,8k-2.01,tiingo
+QDEL,2021-01-01,2024-08-01,0001906324,QuidelOrtho,alive,2024-08-01,wiki,tiingo
+GPS,2022-03-01,2024-09-01,,,unknown,2024-09-01,none,none
+ADNT,2018-09-01,2024-10-01,0001670541,Adient,alive,2024-10-01,wiki,tiingo
+ERIE,2023-09-01,2024-10-01,0000922621,Erie Indemnity,alive,2024-10-01,wiki,tiingo
+HELE,2017-01-01,2024-10-01,0000916789,Helen of Troy Limited,alive,2024-10-01,wiki,tiingo
+MP,2022-08-01,2024-10-01,0001801368,MP Materials,alive,2024-10-01,wiki,tiingo
+PGNY,2021-05-01,2024-10-01,0001551306,Progyny,alive,2024-10-01,wiki,tiingo
+TGNA,2017-07-01,2024-10-01,0000039899,Tegna Inc.,alive,2024-10-01,wiki,tiingo
+WOLF,2021-12-01,2024-10-01,0000895419,Wolfspeed,bankrupt,2025-07-01,failures,tiingo
+ZD,2021-11-01,2024-10-01,0001084048,Ziff Davis,alive,2024-10-01,wiki,tiingo
+CHK,2023-09-01,2024-11-01,0000895126,Chesapeake Energy,acquired,2024-10-01,8k-2.01,tiingo
+MDU,2012-12-01,2024-11-01,0000067716,MDU Resources,acquired,2024-11-01,8k-2.01,tiingo
+SWN,2022-08-01,2024-11-01,0000007332,Southwestern Energy,acquired,2024-05-20,defm14a,none
+AZTA,2022-01-01,2024-12-01,0000933974,Azenta,alive,2024-12-01,wiki,tiingo
+RCM,2021-07-01,2024-12-01,0001910851,R1 RCM,acquired,2024-10-16,defm14a,tiingo
+SRCL,2019-10-01,2024-12-01,0000861878,Stericycle,acquired,2024-07-10,defm14a,tiingo
+TPL,2024-07-01,2024-12-01,0001811074,Texas Pacific Land Corporation,alive,2024-12-01,wiki,tiingo
+LII,2012-12-01,2025-01-01,0001069202,Lennox International,alive,2025-01-01,wiki,tiingo
+ARWR,2020-11-01,2025-02-01,0000879407,Arrowhead Pharmaceuticals,alive,2025-02-01,wiki,tiingo
+CRI,2013-11-01,2025-02-01,0001060822,Carter's,alive,2025-02-01,wiki,tiingo
+ENOV,2022-05-01,2025-02-01,0001420800,Enovis,alive,2025-02-01,wiki,tiingo
+NYCB,2013-12-01,2025-02-01,0000910073,,acquired,2024-11-06,8k-2.01,none
+PNM,2012-12-01,2025-02-01,,,unknown,2025-02-01,none,none
+VSH,2012-12-01,2025-02-01,0000103730,Vishay Intertechnology,alive,2025-02-01,wiki,tiingo
+ALTM,2024-02-01,2025-04-01,0001977303,Arcadium Lithium,acquired,2024-11-20,defm14a,tiingo
+ALTR,2024-07-01,2025-04-01,0001701732,Altair Engineering,acquired,2024-12-18,defm14a,tiingo
+AZPN,2021-06-01,2025-04-01,0001726126,Aspen Technology,acquired,2025-04-01,wiki,tiingo
+CC,2017-02-01,2025-04-01,0001627223,Chemours,alive,2025-04-01,wiki,tiingo
+EXE,2024-11-01,2025-04-01,0000895126,Expand Energy,acquired,2024-10-01,8k-2.01,tiingo
+NEOG,2021-03-01,2025-04-01,0000711377,Neogen,alive,2025-04-01,wiki,tiingo
+TDC,2017-08-01,2025-04-01,0000816761,Teradata,alive,2025-04-01,wiki,tiingo
+TKO,2023-11-01,2025-04-01,0001973266,TKO Group Holdings,acquired,2024-12-23,defm14c,tiingo
+TPX,2013-12-01,2025-04-01,,,unknown,2025-04-01,none,none
+WSM,2012-12-01,2025-04-01,0000719955,Williams-Sonoma  Inc.,alive,2025-04-01,wiki,tiingo
+BERY,2023-07-01,2025-05-01,,Berry Global,acquired,2025-05-01,wiki,tiingo
+JWN,2021-01-01,2025-06-01,0000072333,Nordstrom,acquired,2025-04-10,defm14a,tiingo
+X,2015-06-01,2025-07-01,,U.S. Steel,acquired,2025-07-01,wiki,tiingo
+ZI,2023-07-01,2025-07-01,,,unknown,2025-07-01,none,none
+CHX,2021-02-01,2025-08-01,,ChampionX,acquired,2025-08-01,wiki,tiingo
+AMED,2019-10-01,2025-09-01,0000896262,Amedisys,acquired,2025-08-14,8k-2.01,tiingo
+LANC,2012-12-01,2025-09-01,,,unknown,2025-09-01,none,none
+IBKR,2019-10-01,2025-10-01,0001381197,Interactive Brokers,alive,2025-10-01,wiki,tiingo
+SKX,2017-01-01,2025-10-01,,Skechers,acquired,2025-10-01,wiki,tiingo
+SRPT,2024-07-01,2025-10-01,0000873303,Sarepta Therapeutics,alive,2025-10-01,wiki,tiingo
+ACHC,2017-05-01,2025-11-01,0001520697,Acadia Healthcare,alive,2025-11-01,wiki,tiingo
+EME,2016-12-01,2025-11-01,0000105634,Emcor,alive,2025-11-01,wiki,tiingo
+MAN,2012-12-01,2025-11-01,0000871763,ManpowerGroup,alive,2025-11-01,wiki,tiingo
+WEN,2012-12-01,2025-11-01,0000030697,Wendy's,alive,2025-11-01,wiki,tiingo
+WU,2022-01-01,2025-11-01,0001365135,Western Union,alive,2025-11-01,wiki,tiingo
+LNW,2022-05-01,2025-12-01,0000750004,Light & Wonder,distress,2025-11-03,form25,tiingo
+ALE,2018-04-01,2026-01-01,,Allete  Inc.,acquired,2026-01-01,wiki,tiingo
+CADE,2021-12-01,2026-02-01,0001299939,Cadence Bank,acquired,2026-02-01,wiki,tiingo
+CIVI,2023-11-01,2026-02-01,0001509589,Civitas Resources,acquired,2025-12-22,defm14a,tiingo
+CMA,2025-02-01,2026-02-01,0000028412,Comerica,acquired,2025-11-25,defm14a,tiingo
+FIX,2024-01-01,2026-02-01,0001035983,Comfort Systems USA,alive,2026-02-01,wiki,tiingo
+FYBR,2022-11-01,2026-02-01,0000020520,Frontier Communications,acquired,2026-01-20,8k-2.01,tiingo
+IRDM,2021-05-01,2026-02-01,0001418819,Iridium Communications,alive,2026-02-01,wiki,tiingo
+NSP,2019-10-01,2026-02-01,0001000753,Insperity,alive,2026-02-01,wiki,tiingo
+PCH,2012-12-01,2026-02-01,0001338749,PotlatchDeltic,acquired,2025-12-23,defm14a,tiingo
+POWI,2022-01-01,2026-02-01,0000833640,Power Integrations,alive,2026-02-01,wiki,tiingo
+PRGO,2021-10-01,2026-02-01,0001585364,Perrigo,alive,2026-02-01,wiki,tiingo
+SNV,2012-12-01,2026-02-01,0000018349,Synovus,acquired,2025-09-30,defm14a,none
+UA,2022-07-01,2026-02-01,0001336917,Under Armour,alive,2026-02-01,wiki,tiingo
+UAA,2022-07-01,2026-02-01,0001336917,Under Armour,alive,2026-02-01,wiki,tiingo
+VAC,2018-10-01,2026-02-01,0001524358,Marriott Vacations Worldwide,alive,2026-02-01,wiki,tiingo
+CIEN,2012-12-01,2026-03-01,0000936395,Ciena,alive,2026-03-01,wiki,tiingo
+ASGN,2018-11-01,2026-04-01,0000890564,ASGN Inc.,alive,2026-04-01,wiki,none
+COHR,2022-10-01,2026-04-01,0000820318,Coherent Corp.,alive,2026-04-01,wiki,tiingo
+GTM,2025-07-01,2026-04-01,0001794515,ZoomInfo,alive,2026-04-01,wiki,tiingo
+KMPR,2013-09-01,2026-04-01,0000860748,Kemper Corporation,alive,2026-04-01,wiki,tiingo
+LITE,2018-05-01,2026-04-01,0001633978,Lumentum,alive,2026-04-01,wiki,tiingo
+SATS,2025-04-01,2026-04-01,0001920406,EchoStar,acquired,2026-01-16,8k-2.01,none
+CASY,2017-01-01,2026-05-01,0000726958,Casey's,alive,2026-05-01,wiki,tiingo
+FLO,2012-12-01,2026-06-01,0001128928,Flowers Foods,alive,2026-06-01,wiki,tiingo
+PSTG,2024-02-01,2026-06-01,,,unknown,2026-06-01,none,none
+BLKB,2017-08-01,2026-07-01,0001280058,Blackbaud,alive,2026-07-01,wiki,tiingo
+BRBR,2022-04-01,2026-07-01,0001772016,BellRing Brands,alive,2026-07-01,wiki,tiingo
+CNXC,2021-03-01,2026-07-01,0001803599,Concentrix,alive,2026-07-01,wiki,tiingo
+COTY,2021-03-01,2026-07-01,0001024305,Coty,alive,2026-07-01,wiki,tiingo
+FLEX,2024-12-01,2026-07-01,0000866374,Flex Ltd.,alive,2026-07-01,wiki,tiingo
+MASI,2017-04-01,2026-07-01,0000937556,Masimo,acquired,2026-04-01,defm14a,tiingo
+BLD,2021-03-01,2026-08-01,0001633931,TopBuild Corp.,acquired,2026-05-29,defm14a,none
+GT,2019-10-01,2026-08-01,0000042582,Goodyear Tire & Rubber,alive,2026-08-01,wiki,tiingo
+GTLS,2022-04-01,2026-08-01,0000892553,Chart Industries,acquired,2026-07-16,8k-2.01,tiingo
+JHG,2017-07-01,2026-08-01,0001274173,Janus Henderson,acquired,2026-03-11,defm14a,none
+NSA,2021-06-01,2026-08-01,0001618563,National Storage Affiliates Trust,acquired,2026-06-12,defm14a,tiingo
+TMHC,2020-12-01,2026-08-01,,Taylor Morrison,acquired,2026-08-01,wiki,tiingo
