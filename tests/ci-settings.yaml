@@ -25625,6 +25625,29 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   reads "the book's edge is the momentum factor's" and earns one owner question for the hold lane, nothing in the
 #   buy lane moving; a lead of 1.0 or more at both is the first such statement in this file. The three rows trail (j)
 #   on the full sample, (v) ahead of (j) in <=2001 and behind in 2008-13, (w) ahead in 2002-07.
+# (#1327) VERDICT, 2026-11-04: the book's edge is NOT only the momentum factor's; it leads MSCI USA Momentum by about
+#   one point a year, less than it leads the S&P. Probes 41797087561 (`universe fund pit`) and 41797097719 (`... dead`)
+#   on 6487e7b, 12 8, knobs backtest_tr_ruler=true, grid=[{}]; tools/book_vs_factor.py against MSCI USA Momentum USD
+#   net (index 703025, monthly from 1997-01; 2 of 38 and 2 of 40 buckets open earlier and are skipped) and against RSP
+#   adjusted closes (2003-04 on, 23/38 and 25/40 buckets). Top-10 book minus the series, mean|median, p20, worst five:
+#     pit   12y   vs ^SP500TR +2.4|+2.0   vs momentum +1.0|+0.9  p20 -1.7  worst5 -3.9   vs RSP +3.0|+2.7
+#     pit    8y   vs ^SP500TR +2.5|+2.2   vs momentum +0.6|+0.9  p20 -2.1  worst5 -6.0   vs RSP +2.5|+2.5
+#     dead  12y   vs ^SP500TR +1.6|+1.6   vs momentum +0.3|+0.8  p20 -2.5  worst5 -5.2   vs RSP +2.3|+2.2
+#     dead   8y   vs ^SP500TR +1.7|+1.3   vs momentum -0.2|+0.4  p20 -4.1  worst5 -6.5   vs RSP +1.7|+2.1
+#   Era medians against momentum (<=2001 / 2002-07 / 2008-13 / >=2014): pit 12y -1.4 / +1.8 / +1.6 / -0.2 (2 buckets),
+#   pit 8y -2.4 / +2.2 / +1.3 / +2.3 (4), dead 12y -2.3 / +1.2 / +1.3 / -0.2, dead 8y -4.0 / +0.6 / +0.7 / +2.3.
+#   Reading: the equal-weight tilt is not the edge (the book beats RSP by more than it beats ^SP500TR); about half
+#   the lead over the cap-weighted S&P is the factor's, and the factor beat the book on windows opening 1997-2001 on
+#   every lane and horizon. No hold-lane question: the trigger (median at or under +0.5 at both horizons) is not met
+#   on either lane (pit +0.9/+0.9, dead +0.8/+0.4), and the +1.0 lead is not reached either.
+#   EXPECTED, quoted against what happened: median between -0.5 and +0.5 at 12y and 8y, MISSED on pit (+0.9 both) and
+#   on dead at 12y (+0.8), HELD on dead at 8y (+0.4). Worst era <=2001, HELD on all four. (j) minus the factor +0.5
+#   to +1.0, NOT READ: the TR probes ran without `rivals`. The price-ruler rivals log 41797077659 puts (j)'s median
+#   +2.0 (12y) and +1.7 (8y) over the shipped book, so (j) likely reads well above +1.0 (medians do not add; no claim).
+#   The three information rows trail (j) on the full sample, HELD (book medians (v) +1.4/+1.1, (w) -1.4/-0.1, (x)
+#   -0.9/-2.7 against (j) +4.8/+4.5 at 12y/8y). (v) ahead of (j) in <=2001 and behind in 2008-13, HELD (+12.1 vs +5.1
+#   and -1.1 vs +6.4 at 12y; +12.1 vs +4.5 and -0.6 vs +4.6 at 8y). (w) ahead in 2002-07, MISSED (-1.9 vs +4.2 and
+#   +0.2 vs +4.9). (x) carries the deepest worst five of the table (-12.4 at 12y, -12.9 at 8y). Record only; no knob.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

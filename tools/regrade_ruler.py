@@ -149,10 +149,22 @@ def parse_rows(text, label):
     lines = [PREFIX.sub("", l, count=1) for l in text.splitlines()]
     rescore = any(ROW.match(l) for l in lines)
     rows, seen, group = [], {}, 0
+    rivals, held = {}, None  # (#1318) rival rows by (id, HOLD years); `held` = the last HOLD years printed, filed or not
     cur = None if rescore else new_row(label, 0)
     if cur:
         rows.append(cur)
     for line in lines:
+        h = HOLD.search(line)
+        if h:
+            held = int(h.group(1))
+        m = RIVAL_BOOK.match(line)
+        if m:  # (§4.1) a rivals row's per-bucket excess, filed as its own row `rival:<id>` on its horizon's group below.
+            # (#1318) Matched before the `cur` skip: a rescore log prints the RIVALS block in the walk preamble, before
+            # any row header, and the 8y block before the 8y control opens its group.
+            r = rivals.setdefault((m.group(1), held), new_row("rival:" + m.group(1), None))
+            r["years"] = held
+            r["books"].setdefault(int(m.group(2)), (float(m.group(3)), []))
+            continue
         m = ROW.match(line)
         if m:
             if m.group(1) in seen:
@@ -186,15 +198,6 @@ def parse_rows(text, label):
         if b and b[0] not in cur["books"]:  # the first block only: `BOOK stock`/`BOOK coin` do not match
             cur["books"][b[0]] = (b[1], b[2])
             continue
-        m = RIVAL_BOOK.match(line)
-        if m:  # (§4.1) a rivals row's per-bucket excess: filed as its own row `rival:<id>` in this group, no names
-            key = "rival:" + m.group(1)
-            if key not in seen:
-                seen[key] = new_row(key, group)
-                seen[key]["years"] = cur["years"] if cur else None
-                rows.append(seen[key])
-            seen[key]["books"].setdefault(int(m.group(2)), (float(m.group(3)), []))
-            continue
         m = H2H_LOW.search(line)
         if m and cur["h2h"] is None:
             cur["h2h"] = tuple(int(g) for g in m.groups())  # (h1, n, h25, n)
@@ -210,6 +213,13 @@ def parse_rows(text, label):
         m = POOL.search(line)
         if m and cur["pool"] is None:
             cur["pool"] = (int(m.group(1)), int(m.group(2)))
+    groups = {}
+    for r in rows:
+        groups.setdefault(r["years"], r["group"])
+    for r in rivals.values():  # a horizon with no graded row has no control to read against: left out
+        if r["years"] in groups:
+            r["group"] = groups[r["years"]]
+            rows.append(r)
     return rows
 
 
@@ -461,6 +471,19 @@ class Tests(unittest.TestCase):
         self.assertEqual((g["buckets"], g["median"]), (2, 0.5))
         self.assertEqual(rows[1]["years"], 12, "a rival row inherits the group's horizon")
         self.assertEqual(g["eras"]["<=2001"], (2, 0.5, 0.5))
+
+    def test_rival_lines_in_a_rescore_preamble_file_on_their_horizon(self):
+        P = "probe\tbacktest\t2026-11-04T08:10:28.0000000Z "
+        riv = lambda y, b, e: P + f"── RIVALS (#560): equal-weight top-10 books on one pond, HOLD {y}y no-sell, excess vs the index ──\n" + P + f"  BOOK rival v b{b} {e} pts/yr\n"
+        hdr = lambda y: P + f"── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {y}y no-sell, vs ^GSPC) ──\n"
+        book = lambda b: P + f"  BOOK b{b} +1.0 pts/yr | A +10% B +20% C +30% D +40% E +50% F +1% G +2% H +3% I +4% J +5%\n"
+        text = (
+            hdr(12) + riv(12, 3992, "-2.0") + P + "══ rescore row {} ══\n" + hdr(12) + book(3992)
+            + hdr(8) + riv(8, 4000, "+3.0") + P + "══ rescore row {} ══\n" + hdr(8) + book(4000)
+        )
+        rows = parse_rows(text, "x")  # (#1318) both RIVALS blocks print before their horizon's first row header
+        self.assertEqual([(r["label"], r["group"], r["years"], sorted(r["books"])) for r in rows],
+                         [("{}", 0, 12, [3992]), ("{}", 1, 8, [4000]), ("rival:v", 0, 12, [3992]), ("rival:v", 1, 8, [4000])])
 
     def test_era_of_bucket_and_era_stats(self):
         self.assertEqual(era_of(2000 * 2 + 1), "<=2001")
