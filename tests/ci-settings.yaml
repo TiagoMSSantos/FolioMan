@@ -25620,6 +25620,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # EXPECTED: every ablation row INSIDE at 12y and 8y, so the fund terms' edge is not demonstrable at this n. A removal
 #   reading OUTSIDE POSITIVE ships by subtraction after one owner question; OUTSIDE NEGATIVE records that the term
 #   earned its keep. REVERT RULE: a refusal ships nothing.
+# (#1324) VERDICT, 2026-11-04: the shipped fund terms STAND; no removal passes. Probe 41835768896 (main 5ee083d,
+#   `universe fund pit dead`, 12 8, rescore nulls=200 holdout). The dead lane now reads 437 series (342 pool members
+#   filled, 178 of them dead) and tests/dead-fundamentals.csv: 345 series, 257 of the 342 filled members carry 10-K
+#   statements (tools/item6_fundamentals.py, Item 6 selected data as filed). Gain over control, mean|median, at 12y
+#   and 8y; the band at 12y / 8y; the cells that fail:
+#     growth_fund_extra []      -0.3|-0.2   -0.5|-0.7   INSIDE / INSIDE    RU1 (17/38, 17/40), RU3, RU-E at 8y
+#                                                                          (2008-13 -0.8)
+#     growth_max_peg 0.0        +0.3|-0.1   +0.2|-0.7   INSIDE / INSIDE    RU1 (19/38, 19/40), RU3 at 8y
+#     growth_fund_weight 0.0    +1.1|+1.1   +0.7|+0.5   OUTSIDE / INSIDE   RU2 (worst five -4.6 against -4.1 at 12y,
+#                                                                          -5.6 against -4.5 at 8y; worst window
+#                                                                          -10.8 against -8.9 at 8y), RU-E at 8y
+#                                                                          (<=2001 -0.4)
+#     all three                 +1.1|+1.7   +0.2|+0.2   OUTSIDE / INSIDE   RU1 (19/38, 18/40), RU2 at 8y (worst
+#                                                                          five -5.7), RU-E at 8y (>=2014 -1.5,
+#                                                                          <=2001 -0.4)
+#   No tail gain clears its band. Control itself fails RU1 at 8y on this lane: the shipped top five beat names 6-10 in
+#   19 of 40 windows (47.5 %; 21/38 at 12y). EXPECTED, every ablation row INSIDE at 12y and 8y: HELD at 8y for all
+#   four, MISSED at 12y for growth_fund_weight 0.0 and the all-three row, which read OUTSIDE upward; both gains sit in
+#   2002-07 (+2.8 / +2.9 over control at 12y) and both rows deepen the worst windows. Read with (#1326)'s fund -0.07
+#   row (+1.15 median at 12y, INSIDE, RU2 fail), this is the second 12y reading where less fund weight lifts the middle
+#   and costs the tail. A re-grade cannot ship it; re-ask only in its own pre-registered receipt whose bar reads RU2
+#   at both horizons. Nothing ships.
+#   WALK CENSUS, (#1320)'s READING, (#1296)'s MORTALITY line on this run against the pre-(#1320) dead run 41797097719
+#     (6487e7b, same lanes): 12y 12 -> 25 of 113 cutoffs covered (base 4.7 % dead, 13.5 % acquired), 8y 8 -> 25 of
+#     138 (base 3.2 % / 9.2 %); a cutoff is covered at half either base, (#1312)'s floors. Dead-lane series 370 -> 437,
+#     filled pool members 275 -> 342, median gated pool 220 -> 234 at 12y and 235 -> 249 at 8y. The 1990s cutoffs stay
+#     UNDER-COVERED: the free price tables and the map reach too few of the 1996-2000 exits ((#1320): 41 of 151).
+#   Both runs read 0 Tiingo series on main: Actions caches are scoped by ref, so fills saved by a tag's probe never
+#     reach a main run.
 # (#1325) SIGN-FLIP CLOSURE, PRE-REGISTERED 2026-11-03 before any run. Row: (#1326).
 # WHY: (#558) drew the weights at x0, x0.5 and x2 and (#1239) at x0 to x2.5; no weight was ever drawn NEGATIVE except
 #   growth_proximity_weight -1.0 ((#48), "uniformly slightly WORSE than neutralizing it").
