@@ -8,10 +8,13 @@ same reason. EDGAR's own ticker file knows today's symbols only. This tool rebui
 EDGAR alone, keyless, in this precedence (the first rule that fires wins; a tie writes nothing):
 
   phrase   EDGAR full-text search (2001 on), the filer's OWN 10-K / 10-K405 / 10-Q / 8-K saying
-           "under the symbol <TK>", "ticker symbol <TK>", "symbol <TK>", "NYSE: <TK>" or "Nasdaq: <TK>" inside
-           [span start - 1y, span end + 1y]. An acquirer's S-4 quotes the target's symbol too, so only those
-           four forms count. The CIK must have filed a 10-K inside the span (its submissions JSON), and its
-           first filing must not come more than 18 months after the exit ((#1310): a later holder of the symbol).
+           "under the symbol <TK>", "ticker symbol <TK>" or "symbol <TK>" inside [span start - 1y, span end + 1y].
+           An acquirer's S-4 quotes the target's symbol too, so only those four forms count. The CIK must have
+           filed a 10-K inside the span (its submissions JSON), and its first filing must not come more than 18
+           months after the exit ((#1310): a later holder of the symbol). (#1320) It must also FILL the span: first
+           filing within a year of the span's start (or of May 1996, EDGAR's phase-in end) and a 10-K within 18
+           months of its end; a filer quoting a partner's symbol rarely does. "NYSE: <TK>" / "Nasdaq: <TK>" were
+           dropped: 33 of 33 spans they took on the first live run were another filer's.
   name     the same search on the member's name (the roster's `name` column, from Wikipedia), forms
            10-K / 10-K405 only; the EDGAR filer name's normalised tokens must contain the member name's.
   index    1996-2000 exits (before full-text search): the EDGAR quarterly master index (master.idx), 10-K
@@ -21,7 +24,9 @@ EDGAR alone, keyless, in this precedence (the first rule that fires wins; a tie 
   figi     (--figi) OpenFIGI's mapping API with includeUnlistedEquities, the one free source that names a DELISTED
            symbol (Bloomberg's symbology: "BDK US" -> BLACK & DECKER CORP); the name then goes through the name or
            index rule. Only 44 of the 361 unmapped pre-2014 exits carry a name in the roster, so this is what the
-           1996-2000 era needs. Verify one batch by hand before trusting it; not reachable from every network.
+           1996-2000 era needs. OpenFIGI names the symbol's holder TODAY, so a CIK found through it must fill the
+           span too (Bank One's ONE -> POWER ONE). Not reachable from every network.
+  WRONG    (#1320) pairs checked wrong by hand that pass every guard; never written, whatever rule finds them.
   roster   a CIK the roster already carries ((#1310): EDGAR's ticker file, Q-symbols matched to their BRD case)
            is copied, never re-derived.
 
@@ -59,7 +64,14 @@ OWN_FORMS = ("10-K", "10-K405", "10-KT", "10-K/A", "10-K405/A", "10-Q", "10-Q/A"
 COMPANY_TICKERS = "https://www.sec.gov/files/company_tickers.json"
 OPENFIGI = "https://api.openfigi.com/v3/mapping"  # free, keyless at 25 requests a minute, 10 jobs a request
 ANNUAL = ("10-K", "10-K405", "10-KT", "10-K/A", "10-K405/A")
-PHRASES = ('"under the symbol {t}"', '"ticker symbol {t}"', '"symbol {t}"', '"NYSE: {t}"', '"Nasdaq: {t}"', '"NASDAQ: {t}"')
+# (#1320) "NYSE: <TK>" / "Nasdaq: <TK>" are dropped: the first live run took 33 spans through them and every one was
+# another filer quoting a partner's symbol (MERISEL's 10-K "Nasdaq: ACAS", NRG's "NYSE: CEG"); 0 were right.
+PHRASES = ('"under the symbol {t}"', '"ticker symbol {t}"', '"symbol {t}"')
+EDGAR_FULL = datetime.date(1996, 5, 31)  # every domestic filer was on EDGAR by May 1996 (the phase-in's end)
+# (#1320) wrong pairs the span check cannot see, checked by hand: AT&T CORP's 10-K quotes its AT&T Wireless tracking
+# stock (AWE is AT&T WIRELESS SERVICES); CCB is Capital Cities/ABC, not COASTAL FINANCIAL; TA is Transamerica, not
+# the TRAVELCENTERS OF AMERICA OpenFIGI names (today's holder of the symbol).
+WRONG = {("AWE", "0000005907"), ("CCB", "0000935930"), ("TA", "0001038523")}
 FTS_FROM = datetime.date(2001, 1, 1)  # full-text search indexes 2001 on
 MIN_MAPPED = 20  # a run that resolves fewer new spans writes nothing (a broken search, not a thin answer)
 HEADER = ["ticker", "start_date", "end_date", "cik", "edgar_name", "source", "confidence"]
@@ -149,6 +161,18 @@ def in_span(filings, start, end):
     return any(f.split("/")[0] in ("10-K", "10-K405", "10-KT") and lo <= d <= hi for f, d in filings)
 
 
+def fills_span(filings, start, end):
+    """(#1320) Did this CIK file from the span's opening (EDGAR from mid-1996) to within 18 months of its close? The
+    phrase rule checks no name and the OpenFIGI rules borrow today's holder's, so those two also need this: EMC's
+    symbol hit SCANDIUM INTERNATIONAL (first filing 2007), Bank One's ONE hit POWER ONE (1997), Harrah's HET hit Park
+    Place's CAESARS ENTERTAINMENT INC (1998). A partial CIK (DIRECTV's 2009 holding company for a 2006 span) is lost too."""
+    if not filings:
+        return False
+    first = min(d for _, d in filings)
+    annual = [d for f, d in filings if f.split("/")[0] in ANNUAL]
+    return bool(annual) and (first - max(start, EDGAR_FULL)).days <= 365 and (end - max(annual)).days <= LATER_HOLDER_DAYS
+
+
 def contains_tokens(edgar_name, member_name):
     """Do the member name's normalised tokens all appear in the EDGAR filer name's (corporate suffixes and state
     qualifiers dropped on both sides)? 'Tosco' in 'TOSCO CORP'; 'Fleming Companies' in 'FLEMING COMPANIES INC /OK/'."""
@@ -169,7 +193,7 @@ def by_phrase(tk, start, end, fetch):
             seen[cik] = (k + n, nm or name)
         if seen:
             break  # the first phrase with any own-form hit decides; the others only add noise words
-    fit = {c: v for c, v in seen.items() if in_span(filings_of(c, fetch), start, end)}
+    fit = {c: v for c, v in seen.items() if (tk, c) not in WRONG and in_span(f := filings_of(c, fetch), start, end) and fills_span(f, start, end)}
     if len(fit) == 1:
         (cik, (_, name)), = fit.items()
         return cik, name
@@ -290,20 +314,23 @@ def resolve(row, fetch, fetch_text, hand=None, current=None, figi=None):
     ambiguous = got[1] if got else None
     names = [row.get("name", "")] if row.get("name") else []
     names += [n for n in (figi or {}).get(tk, []) if n not in names]
+    # a name the roster carries is the member's own; an OpenFIGI one may be a later holder's, so its CIK must fill the span
+    ok = lambda got, nm: got and got[0] != "ambiguous" and (tk, got[0]) not in WRONG and (
+        nm == row.get("name") or fills_span(filings_of(got[0], fetch), start, end))
     for nm in names:
         got = by_name(nm, start, end, fetch)
-        if got and got[0] != "ambiguous":
+        if ok(got, nm):
             return got[0], got[1], "name" if nm == row.get("name") else "figi-name", "B"
-        ambiguous = ambiguous or (got[1] if got else None)
+        ambiguous = ambiguous or (got[1] if got and got[0] == "ambiguous" else None)
     got = by_current(tk, start, end, current or {}, fetch)
     if got:
         return got[0], got[1], "current", "B"
     if start < FTS_FROM + datetime.timedelta(days=365):
         for nm in names:
             got = by_index(nm, start, end, fetch_text)
-            if got and got[0] != "ambiguous":
+            if ok(got, nm):
                 return got[0], got[1], "index" if nm == row.get("name") else "figi-index", "C"
-            ambiguous = ambiguous or (got[1] if got else None)
+            ambiguous = ambiguous or (got[1] if got and got[0] == "ambiguous" else None)
     return "", ("ambiguous: " + " | ".join(ambiguous)) if ambiguous else ("no filer found" if names else "no filer found, and no name to search by"), "none", ""
 
 
@@ -422,7 +449,7 @@ class Tests(unittest.TestCase):
     def edgar(self):
         e = FakeEdgar()
         e.fts[('"under the symbol FLM"', OWN_FORMS)] = body([hit("FLEMING COMPANIES INC /OK/", "0000352949", "10-K", "2002-03-06")])
-        e.subs["0000352949"] = subs([("10-K", "2002-03-06"), ("10-K", "2001-03-28"), ("8-K", "2003-04-01")])
+        e.subs["0000352949"] = subs([("10-K", "2002-03-06"), ("10-K", "2001-03-28"), ("10-K", "1997-03-20"), ("8-K", "2003-04-01")])
         # Tosco: the phrase hits the acquirer's S-4 only; the name query finds Tosco's own 10-K405
         e.fts[('"symbol TOS"', OWN_FORMS)] = body([hit("PHILLIPS PETROLEUM CO", "0000078214", "S-4", "2001-02-20")])
         e.fts[('"Tosco Corp"', ANNUAL)] = body([hit("TOSCO CORP", "0000074091", "10-K405", "2001-03-30"), hit("PHILLIPS PETROLEUM CO", "0000078214", "10-K", "2001-03-21")])
@@ -433,8 +460,14 @@ class Tests(unittest.TestCase):
         e.subs["0001222333"] = subs([("10-K", "2012-11-29"), ("8-K", "2004-11-18")])
         # two own-form filers inside the span: ambiguous, nothing written
         e.fts[('"under the symbol ABC"', OWN_FORMS)] = body([hit("ABC CORP", "0000000001", "10-K", "2005-03-01"), hit("ABC HOLDINGS INC", "0000000002", "10-K", "2005-03-02")])
-        e.subs["0000000001"] = subs([("10-K", "2005-03-01")])
-        e.subs["0000000002"] = subs([("10-K", "2005-03-02")])
+        e.subs["0000000001"] = subs([("10-K", "2005-03-01"), ("10-K", "2000-03-01")])
+        e.subs["0000000002"] = subs([("10-K", "2005-03-02"), ("10-K", "2000-03-02")])
+        # a symbol phrase in a filer that only reached EDGAR 11 years into the span (EMC -> SCANDIUM INTERNATIONAL)
+        e.fts[('"symbol EMC"', OWN_FORMS)] = body([hit("SCANDIUM INTERNATIONAL MINING CORP", "0000000003", "10-K", "2007-03-30")])
+        e.subs["0000000003"] = subs([("10-K", "2007-03-30"), ("10-K", "2016-03-30")])
+        # a hand-checked wrong pair: AT&T CORP quotes its tracking stock AWE
+        e.fts[('"symbol AWE"', OWN_FORMS)] = body([hit("AT&T CORP", "0000005907", "10-K", "2002-03-01")])
+        e.subs["0000005907"] = subs([("10-K", "2002-03-01"), ("10-K", "2004-03-01"), ("10-K", "1997-03-01")])
         return e
 
     def test_phrase_rule_finds_fleming_through_its_own_10k(self):
@@ -457,6 +490,19 @@ class Tests(unittest.TestCase):
         got = resolve({"ticker": "ABC", "start_date": "2000-01-01", "end_date": "2005-06-01", "cik": "", "name": ""}, e, e.text)
         self.assertEqual(got[2], "none")
         self.assertTrue(got[1].startswith("ambiguous: ABC CORP | ABC HOLDINGS INC"))
+
+    def test_a_filer_that_starts_filing_years_into_the_span_is_refused(self):
+        e = self.edgar()
+        got = resolve({"ticker": "EMC", "start_date": "1996-01-02", "end_date": "2016-09-07", "cik": "", "name": ""}, e, e.text)
+        self.assertEqual(got[2], "none", "its 10-Ks sit inside the span but it never filed for 1996-2006: %r" % (got,))
+
+    def test_a_hand_checked_wrong_pair_is_never_written(self):
+        e = self.edgar()
+        got = resolve({"ticker": "AWE", "start_date": "2001-07-09", "end_date": "2004-10-27", "cik": "", "name": ""}, e, e.text)
+        self.assertEqual(got[2], "none", "AT&T CORP fills the span, yet AWE is AT&T Wireless: %r" % (got,))
+
+    def test_no_phrase_names_an_exchange(self):
+        self.assertFalse([p for p in PHRASES if "NYSE" in p or "Nasdaq" in p], "a partner's 10-K quotes 'Nasdaq: ACAS'")
 
     def test_roster_and_hand_ciks_are_copied_not_searched(self):
         e = self.edgar()
