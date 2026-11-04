@@ -568,4 +568,4 @@ Caveats:
   • Long-horizon (MAX monthly): only names alive for the FULL 12y window enter, so
     survivorship bias is WORSE than the daily path, and vol/MA are monthly-bar approximations.
 backtest: 215 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
-backtest: DEAD (#751) — tests/dead-members.csv + (#1314) tests/dead-prices.csv + (#752) .tiingo_dead_members.csv (0 series, 0 dead, 0 replacing the archive's): 370 series (259 censored at their file's end), 0 refused (last bar >30d before the S&P exit); 16 pool member(s) Yahoo could not score walk on them, 15 of them dead, crash cut x0.7
+backtest: DEAD (#751) — tests/dead-members.csv + (#1314) tests/dead-prices.csv + (#752) .tiingo_dead_members.csv (0 series, 0 dead, 0 replacing the archive's): 437 series (259 censored at their file's end), 0 refused (last bar >30d before the S&P exit); 16 pool member(s) Yahoo could not score walk on them, 15 of them dead, crash cut x0.7
