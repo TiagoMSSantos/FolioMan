@@ -1584,6 +1584,41 @@ const TIINGO_DEAD_CSV: &str = ".tiingo_dead_members.csv";
 /// [`DEAD_MEMBERS_CSV`], written by `tools/item5_prices.py`. Its tickers are the roster's `series none`
 /// rows, so no name is in both files; read as one file with the archive, so both share its end.
 const DEAD_PRICES_CSV: &str = "tests/dead-prices.csv";
+/// (#1323) Item 6 "Selected Financial Data" rows for exited members, written by
+/// `tools/item6_fundamentals.py` from their 10-Ks: `ticker,cik,period_end,filed,revenue,op_income,
+/// net_income,eps,prior_eps,assets`, money in dollars, a dash for no value. Each fiscal year comes from
+/// the EARLIEST filing that printed it and carries that filing's date, so the as-of join sees only what
+/// was public by a cutoff. Read only when `dead` and `fund` are both on, and only for the names the dead
+/// arm fills: the Yahoo slot's rows go with its series, since a reused ticker files for a new company.
+const DEAD_FUNDAMENTALS_CSV: &str = "tests/dead-fundamentals.csv";
+
+/// (#1323) [`DEAD_FUNDAMENTALS_CSV`] as FundRows per ticker. Margins and ROA are % of revenue and of
+/// assets, as the SEC path derives them. A non-positive revenue or assets figure is a parse artifact and
+/// drops, so no ratio divides by it. A header or `#` line fails the date parse and drops.
+fn dead_fund_rows(csv: &str) -> HashMap<String, Vec<core::FundRow>> {
+    let mut out: HashMap<String, Vec<core::FundRow>> = HashMap::new();
+    for l in csv.lines() {
+        let [tk, _cik, end, filed, rev, op, ni, eps, prior, assets] = l.split(',').collect::<Vec<_>>()[..] else { continue };
+        let date = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
+        let (Some(period_end), Some(filed)) = (date(end), date(filed)) else { continue };
+        let f = |s: &str| s.parse::<f64>().ok().filter(|x| x.is_finite());
+        let (revenue, assets) = (f(rev).filter(|x| *x > 0.0), f(assets).filter(|x| *x > 0.0));
+        let pct = |x: Option<f64>, d: Option<f64>| Some(x? / d? * 100.0);
+        out.entry(tk.to_string()).or_default().push(core::FundRow {
+            filed,
+            period_end,
+            revenue,
+            op_margin: pct(f(op), revenue),
+            net_margin: pct(f(ni), revenue),
+            roa: pct(f(ni), assets),
+            assets,
+            eps: f(eps),
+            prior_eps: f(prior),
+            ..Default::default()
+        });
+    }
+    out
+}
 
 /// (#751) The dead members' series from [`DEAD_MEMBERS_CSV`]: `ticker,month,close,div` rows, month as
 /// `YYYY-MM`, split-adjusted like Yahoo's price-only close, each bar dated at its month's first day as
@@ -2174,7 +2209,10 @@ pub async fn run(args: Vec<String>) {
         let t_n = t_charts.len();
         refused += t_refused;
         charts.extend(t_charts);
-        let (mut filled, mut ends) = (0, HashSet::new());
+        // (#1323) the filled names' own 10-K statements, read only when the fund lane scores them
+        let dead_funds =
+            if fund { dead_fund_rows(&std::fs::read_to_string(DEAD_FUNDAMENTALS_CSV).unwrap_or_default()) } else { HashMap::new() };
+        let (mut filled, mut ends, mut with_funds) = (0, HashSet::new(), 0);
         for tk in &tickers {
             let (Some((chart, is_dead)), Some(spans)) = (charts.get(tk), pit_spans.get(tk)) else { continue };
             let slot = fetched.iter().position(|f| f.as_ref().is_some_and(|x| x.0 == tk));
@@ -2182,7 +2220,9 @@ pub async fn run(args: Vec<String>) {
             if !wants_dead_fill(yahoo.as_ref().map(|c| c.dates.as_slice()), min_history, spans, chart.dates.last().copied().filter(|_| *is_dead)) {
                 continue;
             }
-            let entry = Some((tk, Hist::Parsed(chart.clone()), None, None, None));
+            let rows = dead_funds.get(tk).cloned();
+            with_funds += usize::from(rows.is_some());
+            let entry = Some((tk, Hist::Parsed(chart.clone()), rows, None, None));
             match slot {
                 Some(k) => fetched[k] = entry,
                 None => fetched.push(entry),
@@ -2200,6 +2240,12 @@ pub async fn run(args: Vec<String>) {
             ends.len(),
             if charts.is_empty() { " — FILES MISSING OR EMPTY, so this arm is the control" } else { "" }
         );
+        if fund {
+            eprintln!(
+                "backtest: DEAD fundamentals (#1323) — {DEAD_FUNDAMENTALS_CSV}: {} series, {with_funds} of the {filled} filled member(s) carry 10-K statements",
+                dead_funds.len()
+            );
+        }
         ends
     } else {
         HashSet::new()
@@ -14691,6 +14737,40 @@ mod tests {
         assert_eq!(gone.closes, [10.0, 12.0]);
         assert_eq!(gone.divs, [(d("2010-06-01"), 0.5)], "only paid dividends become events");
         assert_eq!(dead_member_charts("", &spans).1, 0, "no file, no census");
+    }
+
+    /// (#1323) The Item 6 rows become FundRows the as-of join reads by filing date: margins and ROA are
+    /// derived, a zero revenue or assets drops with every ratio over it, and a later fiscal year
+    /// stays invisible until the filing that printed it.
+    #[test]
+    fn dead_fund_rows_derive_ratios_and_join_as_filed() {
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
+        let near = |a: Option<f64>, b: f64| assert!(a.is_some_and(|a| (a - b).abs() < 1e-9), "{a:?} vs {b}");
+        let csv = "ticker,cik,period_end,filed,revenue,op_income,net_income,eps,prior_eps,assets\n# 10-K\n\
+                   GONE,1,1995-12-31,1996-03-20,1000,120,70,1.4,1.1,1400\n\
+                   GONE,1,1994-12-31,1995-03-15,800,80,40,0.8,,1000\n\
+                   GONE,1,1993-12-31,1995-03-15,0,10,5,,,0\nODD,1,1995-12-31\n";
+        let all = dead_fund_rows(csv);
+        assert_eq!(all.keys().collect::<Vec<_>>(), ["GONE"], "header, comment and short lines drop");
+        let rows = &all["GONE"];
+        assert_eq!(rows.len(), 3);
+        let r95 = &rows[0];
+        assert_eq!((r95.filed, r95.period_end), (d("1996-03-20"), d("1995-12-31")));
+        near(r95.op_margin, 12.0);
+        near(r95.net_margin, 7.0);
+        near(r95.roa, 5.0);
+        assert_eq!((r95.revenue, r95.assets, r95.eps, r95.prior_eps), (Some(1000.0), Some(1400.0), Some(1.4), Some(1.1)));
+        assert_eq!(rows[1].prior_eps, None, "an empty cell is no value");
+        let r93 = &rows[2];
+        assert_eq!((r93.revenue, r93.op_margin, r93.net_margin), (None, None, None), "zero revenue drops its ratios");
+        assert_eq!((r93.assets, r93.roa, r93.eps), (None, None, None), "zero assets too");
+        // as of 1996-03-19 the 1995 year is not yet filed: `now` is 1994, and 1993's margin is unknown
+        let before = core::fund_factors(rows, d("1996-03-19"), FUND_LOOKBACK_YRS);
+        assert_eq!(before.margin_trend, None);
+        let after = core::fund_factors(rows, d("1996-03-20"), FUND_LOOKBACK_YRS);
+        near(after.margin_trend, 2.0);
+        near(after.roic, 120.0 / 1400.0 * 100.0); // EBIT over assets: no ROE, so no invested capital
+        assert!(dead_fund_rows("").is_empty(), "no file, no rows");
     }
 
     /// (#1314) The 10-K file is read as one file with the archive: a ticker in both would splice two
