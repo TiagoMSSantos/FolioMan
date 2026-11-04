@@ -10831,12 +10831,13 @@ mod tests {
     /// buckets average what there is; no bucket reads NaN, which no band calls outside.
     #[test]
     fn search_tails_reads_p20_and_the_five_worst() {
-        // ten buckets, one name each, realized -7 -4 -1 0 0.5 1 2 3 3.5 9 against a flat index
+        // ten buckets, one name each, realized -7 -4 -1 0 0.5 1 2 3 3.5 9 against a flat index; p20 is
+        // core::percentile's rank, index round(0.2 * 9) = 2, so -1
         let realized = [-7.0, -4.0, -1.0, 0.0, 0.5, 1.0, 2.0, 3.0, 3.5, 9.0];
         let bench_r = [0.0; 10];
         let books: Vec<Vec<usize>> = (0..10).map(|i| vec![i]).collect();
         let (p20, worst5) = search_tails(&books, &realized, &bench_r, 1);
-        assert!((p20 + 4.0).abs() < 1e-9, "{p20}");
+        assert!((p20 + 1.0).abs() < 1e-9, "{p20}");
         assert!((worst5 + 2.3).abs() < 1e-9, "{worst5}");
         let (p20, worst5) = search_tails(&books[..3], &realized, &bench_r, 1);
         assert!((p20 + 7.0).abs() < 1e-9 && (worst5 + 4.0).abs() < 1e-9, "under five buckets, all of them: {p20} {worst5}");
