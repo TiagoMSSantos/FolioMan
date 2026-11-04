@@ -25491,6 +25491,34 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   both. If no row reads TAIL or flips on RU-E, the refusals stand on a ruler that can see tails.
 # REVERT RULE: the two cells are display until a receipt adopts them; deleting the tail line and the tool's era table
 #   restores (#1306). No golden moves: the fixture never runs `rescore nulls>0`.
+# (#1318) VERDICT, 2026-11-04: the refusals STAND on a ruler that can see tails and eras. No row reads TAIL and no
+#   row reads PASS. Probes, rescore nulls=200 holdout at 12 and 8: 41797057288 (tag probe-46db026, 46db026 plus the
+#   tail line: (#1297) consensus 3, (#1303) sharpe 12, (#1298) plus 5/8/10, `universe fund pit`); 41797067414 (tag
+#   probe-0a8b953: (#1315) CHS 5/10 and (#1316) Item 1A 10/20, `universe fund pit dead`; that tree still holds both
+#   knobs, so d5e5b16 was not needed); 41797077659 (main: (#1313) rev_accel -0.1/-0.3/-1.0 and (#1290) ocf_at_chg
+#   1.0, `universe fund pit`, beside the (#1326) grid). Every control and every (#1308) row reproduces its old PRIMARY
+#   numbers to the decimal. Tail gain over control, p20 | worst five, against its band, 12y then 8y:
+#     plus 8        +0.19 [-0.09,+0.27] | +0.00 [+0.00,+0.08]    +0.00 [+0.00,+0.08] | +0.00 [+0.00,+0.00]
+#     plus 10       +0.19 [-0.51,+0.55] | -0.32 [-0.35,+0.40]    +0.44 [-0.58,+0.40] | -0.71 [-0.38,+0.47]
+#     CHS 10        -1.08 [-0.78,+0.76] | +0.22 [-1.06,+1.03]    +0.68 [-0.91,+1.43] | +1.30 [-1.12,+1.35]
+#     Item 1A 20    +0.00 [-0.87,+1.05] | +1.06 [-1.26,+0.85]    +0.00 [-1.19,+1.22] | +1.41 [-1.10,+1.18]
+#   Every other row's two tail gains sit inside their bands, except sharpe 12's p20 at 8y (+0.44 [-0.29,+0.31]) with
+#   its worst five at 0.00. RU-E fails only on rows already refused: CHS 5 (2008-13 -1.1 at 8y; -0.3 at 12y is the
+#   floor), CHS 10 (<=2001 -0.6 at 12y, 2008-13 -1.1 at 8y), rev_accel
+#   -0.3 (>=2014 -0.4 at 8y) and ocf_at_chg 1.0 (>=2014 -0.3 at 8y). Plus 8 passes RU-E; its gain sits in <=2001
+#   (+1.6 at 12y, +0.6 at 8y) and is 0.0 in every later era. The RU flips stay closed by the band: (#1316) Item 1A
+#   10 (RU pass, old rank-1 22/40 against 23/40 at 8y) reads INSIDE like (#1308)'s plus 5, consensus 3 and sharpe
+#   12; ocf_at_chg 1.0 now fails RU3 at 8y on main. Plus 8 stays closed by (#1308)'s confirmation run.
+#   TOOL FIXES found by this read, no number moves: the Rust tail line printed TAIL OUTSIDE for plus 10 at 8y with
+#   its worst five DOWN 0.71, because OUTSIDE read either side of the band. `print_rescore_bands` and
+#   tools/regrade_ruler.py's RU-T now need both tail gains up; a tail outside on the losing side is RU2's failure.
+#   The tool's SUMMARY also crashed on its second row (a loop variable rebound the RU2 horizon filter); fixed, and a
+#   test runs the summary on two rows.
+#   EXPECTED, quoted against what happened: Item 1A 20 reads TAIL at 8y if its worst-window gain is spread over the
+#   five worst buckets, MISSED: the worst-five gain is spread and clears its band at both horizons (8y worst window
+#   -10.4 -> -5.9), but its p20 gains 0.00, and RU-T as registered needs both. This receipt does not move the bar
+#   after reading it. CHS 10 TAIL INSIDE because its p20 fell, HELD (-1.08 at 12y, under its band). Plus 8 passes
+#   RU-E with INSIDE tails, HELD. rev_accel INSIDE on both, HELD. The two cells stay display; nothing ships.
 # (#1319) HISTORICAL TICKER -> CIK MAP (DN0), PRE-REGISTERED 2026-11-03 before any live run. Row: (#1320) the first
 #   build of tests/ticker-cik.csv.
 # WHY: (#1241) refused EX-27 fundamentals on this gap and said "reopen only if a free historical ticker-to-CIK or
@@ -25560,6 +25588,24 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   -0.15, dividend_weight -0.5, growth_fund_weight -0.07, growth_underwater_weight -0.3; calmar, smoothness, value and
 #   turnover ship at 0 and are skipped as (#1239) skipped them. BAR: (#1306) and the band.
 # EXPECTED: every row INSIDE or a clear loss. This closes the sign question in writing; nothing ships.
+# (#1326) VERDICT, 2026-11-04: the shipped signs STAND; no flip passes. Probe 41797077659 (main, `universe fund pit`,
+#   12 8, rescore nulls=200 holdout). Gain over control, mean|median, at 12y and 8y; the band; the cells that fail:
+#     trend -0.15       -0.15|-0.60   -0.34|-0.48   INSIDE    RU1 (18/38, 19/40), RU2 at 8y, RU3, RU-E (2002-07
+#                                                             -1.8 / -2.5)
+#     accel -0.5        -0.01|-0.08   +1.28|+0.96   INSIDE    RU1 and RU3 at 12y, RU-E (2008-13 -2.1 / -1.9)
+#     sharpe -0.05      -0.05|-0.13   -0.03|-0.15   INSIDE    RU3, RU-E at 8y (2002-07 -0.4)
+#     quality -0.15     -0.18|+0.39   -0.50|-0.67   INSIDE    RU1 at 12y, RU3, RU-E at 8y (>=2014 -1.3)
+#     dividend -0.5     +0.52|+1.41   +0.84|+1.02   OUTSIDE   RU1: the top five beat names 6-10 in 18/38 and 19/40
+#                                                             (control 24/38, 21/40); worst window -7.2 / -8.7
+#                                                             against -4.0 / -6.6
+#     fund -0.07        +0.00|+1.15   -0.07|-0.14   INSIDE    RU2 at 12y (worst five -3.5 against -2.7), RU3 at 8y
+#     underwater -0.3   +0.00|+0.00   +0.00|+0.00   INSIDE    inert: the term moves no pit name at either horizon
+#   No tail gain clears its band. EXPECTED, every row INSIDE or a clear loss: HELD for six rows, MISSED for dividend
+#   -0.5, which reads OUTSIDE upward at both horizons and fails only RU1. Penalising yield lifts the top-10 book's
+#   median by +1.0 to +1.4 pts/yr beyond chance, but the gain lands in names 6-10: the score's order inverts at the
+#   head. It agrees with (#598)'s dividend x0 tell and with (#599)'s refusal of x0 on the blend, the book that is
+#   bought. A re-grade cannot ship it; re-ask only in its own pre-registered receipt that reads the blend ((#599)'s bar)
+#   and RU1 together.
 # (#1327) THE BOOK AGAINST THE FACTOR IT RESEMBLES, PRE-REGISTERED 2026-11-03, record only; three information rows.
 # WHY: (#805) reads the top-10 book at +2.3 to +2.8 pts/yr and the (j) blend at +3.2 to +4.2 over ^SP500TR on the pit
 #   lane. The S&P 500 Momentum index paid +3.0 over the S&P 500 from 1995 (14.07 vs 11.08 %/yr, S&P DJI) and the MSCI

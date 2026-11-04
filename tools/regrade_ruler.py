@@ -28,7 +28,7 @@ grid's 12y, 8y, 20y and stress logs together and the summary reads each rule on 
 Not wired into the binary: run it by hand on downloaded probe logs (`gh run view <id> --log`, or the
 `Probe dump` artifact), and quote the table in the receipt. `--selftest` runs the unit tests.
 """
-import argparse, json, math, os, re, sys, unittest
+import argparse, contextlib, io, json, math, os, re, sys, unittest
 
 ROW = re.compile(r"^══ rescore row (.*) ══\s*$")
 HOLD = re.compile(r"HOLD (\d+)y no-sell")
@@ -264,7 +264,8 @@ def verdicts(g, c):
     out["old_pool"] = (g["pool"][1] >= 0.8 * c["pool"][1]) if g["pool"] and c["pool"] else None
     out["band"] = (g["band"][2] == "OUTSIDE") if g["band"] else None
     # (#1317) RU-T: TAIL when the row's p20 and worst-five gains sit outside their own null band and RU3 holds
-    out["RU_T"] = (g["tail"][2] == "OUTSIDE" and bool(out["RU3"])) if g.get("tail") else None
+    # (#1318) both gains must be up: a tail outside its band on the losing side is RU2's failure, not TAIL
+    out["RU_T"] = (g["tail"][2] == "OUTSIDE" and g["tail"][0] > 0 and g["tail"][1] > 0 and bool(out["RU3"])) if g.get("tail") else None
     # (#1306 L1) RU-E: no era pays for another. The row's median gain over control in its worst era, over the
     # eras where both rows hold >= ERA_MIN buckets; None when no era qualifies.
     ge, ce = g.get("eras", {}), c.get("eras", {})
@@ -338,9 +339,9 @@ def report(logs, primary="pit"):
         bands = got("band", prim)
         band = "OUTSIDE" if bands and all(bands) else ("INSIDE" if bands else "n/a")
         tails = got("RU_T", prim)
-        tail = "TAIL" if tails and all(tails) else ("-" if tails else "n/a")
+        tail_s = "TAIL" if tails and all(tails) else ("-" if tails else "n/a")  # not `tail`: that name is the RU2 horizon filter above
         flip = "  <- FLIPS" if ru_pass != old_pass else ""
-        print(f"  RU {'pass' if ru_pass else 'FAIL'}   old {'pass' if old_pass else 'FAIL'}   band {band:<7}   tail {tail:<4}   RU-E {'pass' if era_ok else 'FAIL'}   cells {len(cells)}   {label}{flip}")
+        print(f"  RU {'pass' if ru_pass else 'FAIL'}   old {'pass' if old_pass else 'FAIL'}   band {band:<7}   tail {tail_s:<4}   RU-E {'pass' if era_ok else 'FAIL'}   cells {len(cells)}   {label}{flip}")
 
 
 class Tests(unittest.TestCase):
@@ -399,6 +400,10 @@ class Tests(unittest.TestCase):
         self.assertTrue(v["RU3"])
         self.assertTrue(v["band"])
         self.assertIsNone(v["old_rank1"], "row 1 printed no head-to-head line")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            report([("x", text)], "pit")  # (#1318) the summary loop once rebound `tail` and crashed on row 2
+        self.assertEqual(sum(1 for l in out.getvalue().splitlines() if l.startswith("  RU ")), 2)
 
     def test_prefixed_multi_horizon_log_groups_per_horizon(self):
         P = "probe\tbacktest\t2026-11-02T10:24:53.0000000Z "
@@ -441,6 +446,8 @@ class Tests(unittest.TestCase):
         v = verdicts(grade_row(rows[1]), grade_row(rows[0]))
         self.assertEqual(v["band"], False)
         self.assertEqual(v["RU_T"], True, "TAIL: outside its own band with RU3 held, while PRIMARY sits inside")
+        worse = rows[1] | {"tail": (0.44, -0.71, "OUTSIDE")}  # (#1318) the plus 10 row at 8y: worst five fell
+        self.assertEqual(verdicts(grade_row(worse), grade_row(rows[0]))["RU_T"], False)
 
     def test_rival_book_lines_become_their_own_rows(self):
         text = (

@@ -1155,7 +1155,7 @@ fn print_rescore_bands(rows: &[Rescored], graded: &[Sample], sealed: &[Sample], 
             println!(
                 "  row {}: tail gain p20 {tp:+.2} | worst5 {tw:+.2} ; tail band p20 [{pl:+.2},{ph:+.2}] worst5 [{wl:+.2},{wh:+.2}] ({nulls}) -> {}",
                 r.line,
-                if po && wo { "TAIL OUTSIDE" } else { "TAIL INSIDE" }
+                if po && wo && tp > 0.0 && tw > 0.0 { "TAIL OUTSIDE" } else { "TAIL INSIDE" } // (#1318) outside on the losing side is RU2's, never TAIL
             );
         }
     }
