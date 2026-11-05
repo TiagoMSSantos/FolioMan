@@ -666,7 +666,9 @@ jobs:
           # cites its run id (70 of 71 were, 2026-11-05), so it goes at the next sweep instead of at 7 days.
           # The receipt keeps the numbers; only its link to the log dies. An uncited dump keeps the 7 days.
           # If the file fetch fails, the pattern list is empty and matches nothing, so nothing is deleted.
-          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" --jq '.workflow_runs[] | select(.display_title == "Probe dump") | .id' \
+          # (#1331) Every probe.yml run, not only dumps: a cited `Probe` goes too instead of at 2 days (6 of 9
+          # were cited, 2026-11-05). Only probe.yml: a cited CI, CodeQL or Pages run keeps the commit's checks.
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" --jq '.workflow_runs[] | select(.path == ".github/workflows/probe.yml") | .id' \
               | grep -Fxf <(gh api -H 'Accept: application/vnd.github.raw' "repos/$GITHUB_REPOSITORY/contents/tests/ci-settings.yaml" | grep -oE '[0-9]{10,}')); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
