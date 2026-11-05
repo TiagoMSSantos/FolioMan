@@ -1315,7 +1315,7 @@ const PLANT_DRAWS: u64 = 20;
 /// ticker mixed with the seed through [`next_rand`], so a draw plants the same names at every horizon.
 fn planted(q: &Quote, seed: u64) -> bool {
     let mut h = q.ticker.bytes().fold(0xcbf2_9ce4_8422_2325 ^ seed, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
-    picks::asset_class(q) == 2 && next_rand(&mut h) % 5 == 0
+    picks::asset_class(q) == 2 && next_rand(&mut h).is_multiple_of(5)
 }
 
 /// (#1332) A forward return of `r` % over `years` with `x` %/yr added, compounded: what a planted name earns.
@@ -12251,7 +12251,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal time");
+        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant time");
         assert_eq!(
             all,
             Args {
@@ -12289,6 +12289,7 @@ mod tests {
                 nulls: 4,
                 holdout: true,
                 reveal: true,
+                plant: true,
                 time: true,
                 tickers: vec![]
             }
