@@ -25800,6 +25800,36 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   so the smallest passing X is 4 (the middle band); X = 0.5 passes on 4 draws or fewer; the 20 % row swaps 1 to 4
 #   names into each top-10 bucket.
 # REVERT RULE: record only; `plant` prints one block and changes no book, no knob and no page.
+# (#1333) VERDICT on (#1332), 2026-11-05, record only: THE BAR IS BLIND (the third band). Probe 41995368276 on main
+#   1341059, holdout sealed (12y cuts 0 samples, 8y cuts 7345), stock windows scored 5150 and 6488 at 12y, 9184 and
+#   8596 at 8y. Per draw: all three rows OUTSIDE on the winning side. Each row's cell: the mean|median gain over
+#   row 0, then the band top mean|median, averaged over the 20 draws.
+#               12y pass   8y pass   both   20 % row at 12y (gain / band top)    40 % row at 12y (gain / band top)
+#   X = 0.5     0/20       0/20      0/20   +0.08|+0.19 / +0.48|+0.79, out 0     +0.01|+0.33 / +0.68|+0.97, out 0
+#   X = 1       0/20       1/20      0/20   +0.14|+0.20 / +0.48|+0.80, out 0     +0.11|+0.40 / +0.68|+0.97, out 0
+#   X = 2       0/20       1/20      0/20   +0.25|+0.24 / +0.48|+0.79, out 1     +0.31|+0.52 / +0.67|+1.00, out 2
+#   X = 4       1/20       1/20      1/20   +0.49|+0.45 / +0.48|+0.76, out 6     +0.73|+0.92 / +0.68|+0.98, out 9
+#   At 8y and X = 4, the 20 % row read +0.59|+0.57 / +0.52|+0.88, out 5, and the 40 % row +0.88|+0.94 / +0.70|+1.13,
+#   out 8. The 10 % row never gained more than +0.19 against a band top of +0.35|+0.60 or wider, and it read OUTSIDE
+#   on at most 1 draw at any X. Every pass is seed 1, and its passes do not track X (at 8y it passes from X = 1), so
+#   they come from the real returns of the names its nudge lifts: the luck the band is there to discount.
+#   The rows swapped 0.5, 0.9 and 1.8 names into each top-10 bucket at both horizons.
+# AGAINST EXPECTED: wrong on the band. X = 2 was to pass the 20 % and 40 % rows on 16 draws or more; it passed them
+#   on 2 at most. Nothing passes at 4, so the answer is the third band, not the middle one. X = 0.5 passing 4 draws
+#   or fewer was right (0). The 20 % row swapped 0.9 names, just under the 1 to 4 expected.
+# READING: a row's book gain is about (names it swaps / 10) x (their edge over the names they replace): 0.9 swaps x
+#   4 %/yr / 10 = 0.36 %/yr, read +0.49. The band top sits at +0.35 to +0.70 %/yr in mean and +0.6 to +1.1 in median. It
+#   widens as a row moves more names, because each swap carries one stock's forward-return noise, which dwarfs any
+#   steady edge. So the bar sees a row only when its book gain clears about +0.5 to +0.7 %/yr in mean and +0.8 to +1.1
+#   in median at both horizons. A tilt that moves 1 or 2 names in 10 must pick names beating the ones they replace by
+#   well over 4 %/yr, and no lead on file claims that (founder-led firms 4.4, best employers 3.5, published factors
+#   about 0.8). The control's own 12y book is +1.9 (median +1.3) %/yr over the S&P 500, so the bar's floor is about a
+#   third of the whole mean lead and most of the median one. This test does not grade a row that rebuilds most of the
+#   book: such a row carries more edge and more noise at once.
+# DECISION, per the (#1332) bands: the buy rules freeze. No buy-rule candidate ships on backtest evidence, and no
+#   round hunts the literature or old data for one. The refusals of rounds 9-16 read "too small to see", not
+#   "nothing there". The (#1239) monthly campaign and `track` carry the lane; a buy rule reopens only on 12
+#   monthly links of that forward record. Nothing moves: no knob, no golden, no page.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
