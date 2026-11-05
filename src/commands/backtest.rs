@@ -1276,6 +1276,11 @@ fn shuffled(samples: &[Sample], seed: u64) -> Vec<f64> {
 /// arms either. `bench_r` is each sample's index leg, NaN where it has none. Picking never reads
 /// `realized`, so one book prices every shuffle of it.
 fn top_books(samples: &[Sample], bench_r: &[f64], tuning: &BuyHeuristic, scorer: impl Fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>) -> Vec<Vec<usize>> {
+    top_n_books(samples, bench_r, tuning, scorer, VERDICT_TOP)
+}
+
+/// (#1334) [`top_books`] at any book size: `plant` grades wider books to see whether width sharpens the band.
+fn top_n_books(samples: &[Sample], bench_r: &[f64], tuning: &BuyHeuristic, scorer: impl Fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>, top: usize) -> Vec<Vec<usize>> {
     let mut by_cutoff: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
     for (i, s) in samples.iter().enumerate().filter(|(_, s)| picks::asset_class(&s.quote) != 0) {
         by_cutoff.entry(bucket(s.date)).or_default().push(i);
@@ -1293,7 +1298,7 @@ fn top_books(samples: &[Sample], bench_r: &[f64], tuning: &BuyHeuristic, scorer:
         .into_values()
         .map(|mut v| {
             v.sort_by(|a, b| b.0.total_cmp(&a.0));
-            v.iter().take(VERDICT_TOP).map(|x| x.3.parse().expect("a sample index")).collect()
+            v.iter().take(top).map(|x| x.3.parse().expect("a sample index")).collect()
         })
         .collect()
 }
@@ -1335,74 +1340,86 @@ fn outside_up(null: &[(f64, f64)], gain: (f64, f64)) -> bool {
     gain.0 > 0.0 && gain.1 > 0.0 && null_band(null.iter().map(|g| g.0), gain.0).2 && null_band(null.iter().map(|g| g.1), gain.1).2
 }
 
+/// (#1334) The book sizes `plant` grades: the shipped top 10, then wider books, each against its own row 0.
+const PLANT_BOOKS: [usize; 4] = [VERDICT_TOP, 20, 30, 50];
+
 /// (#1332) The PLANT block: how large an edge the (#1292) null band can see. Each draw plants +X %/yr on about
 /// one stock in five ([`planted`], [`plant_return`]) and grades three rows that lift a planted name's score by
 /// [`PLANT_NUDGES`] against the shipped book, on the same `nulls` shuffles the band uses, of the planted returns.
 /// A draw passes an edge when all three rows read [`outside_up`]. The rows' books depend on the draw, not the edge.
-#[mutants::skip] // prints only: `planted`, `plant_return`, `swapped` and `outside_up` are graded by unit tests
+/// (#1334) It runs once per [`PLANT_BOOKS`] size, every line led by `top N`.
+#[mutants::skip] // prints only: `planted`, `plant_return`, `swapped`, `outside_up` and `top_n_books` are graded by unit tests
 fn print_plant_power(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic, nulls: usize) {
     let legs = bench_legs(samples, bench, years);
-    let control = top_books(samples, &legs, tuning, picks::growth_scores_ranked);
-    let mut moved = [0.0; PLANT_NUDGES.len()];
-    // per edge and row: the summed gain mean, gain median, band top mean, band top median; draws outside
-    let mut sums = [[[0.0; 4]; PLANT_NUDGES.len()]; PLANT_EDGES.len()];
-    let mut outs = [[0; PLANT_NUDGES.len()]; PLANT_EDGES.len()];
-    let mut passed = vec![Vec::new(); PLANT_EDGES.len()];
-    for seed in 1..=PLANT_DRAWS {
-        let rows: Vec<Vec<Vec<usize>>> = PLANT_NUDGES
-            .iter()
-            .map(|&t| {
-                top_books(samples, &legs, tuning, |qs, tu| {
-                    let scores = picks::growth_scores_ranked(qs, tu);
-                    scores.into_iter().zip(qs).map(|(v, &q)| v.map(|v| if planted(q, seed) { v + t * v.abs() } else { v })).collect()
-                })
-            })
-            .collect();
-        for (m, b) in moved.iter_mut().zip(&rows) {
-            *m += swapped(&control, b) / PLANT_DRAWS as f64;
-        }
-        let books: Vec<&[Vec<usize>]> = std::iter::once(control.as_slice()).chain(rows.iter().map(Vec::as_slice)).collect();
-        for (e, &x) in PLANT_EDGES.iter().enumerate() {
-            let mut s = samples.to_vec();
-            for p in s.iter_mut().filter(|p| planted(&p.quote, seed)) {
-                p.realized = plant_return(p.realized, x, years);
-            }
-            let realized: Vec<f64> = s.iter().map(|p| p.realized).collect();
-            let null = null_gains(&s, &legs, years, &books, nulls);
-            let base = search_excess(&control, &realized, &legs, years);
-            let mut all = true;
-            for (j, b) in rows.iter().enumerate() {
-                let g = search_excess(b, &realized, &legs, years);
-                let gain = (g.0 - base.0, g.1 - base.1);
-                let (_, top_m, _) = null_band(null[j + 1].iter().map(|g| g.0), gain.0);
-                let (_, top_d, _) = null_band(null[j + 1].iter().map(|g| g.1), gain.1);
-                for (acc, v) in sums[e][j].iter_mut().zip([gain.0, gain.1, top_m, top_d]) {
-                    *acc += v / PLANT_DRAWS as f64;
-                }
-                let out = outside_up(&null[j + 1], gain);
-                outs[e][j] += usize::from(out);
-                all &= out;
-            }
-            if all {
-                passed[e].push(seed);
-            }
-        }
-    }
     println!(
-        "\n── PLANT (#1332): the null band's eyesight. Each of {PLANT_DRAWS} draws plants +X %/yr on about 1 stock in 5 and grades rows lifting a planted name's score 10/20/40 % against the shipped book on {nulls} shuffles; a draw passes X when all three rows read OUTSIDE on the winning side ──"
+        "\n── PLANT (#1332): the null band's eyesight. Each of {PLANT_DRAWS} draws plants +X %/yr on about 1 stock in 5 and grades rows lifting a planted name's score 10/20/40 % against the shipped book on {nulls} shuffles; a draw passes X when all three rows read OUTSIDE on the winning side; (#1334) once per book size ──"
     );
-    let lifts: Vec<String> = PLANT_NUDGES.iter().zip(&moved).map(|(t, m)| format!("+{:.0} % {m:.1}", t * 100.0)).collect();
-    println!("  names swapped into each top-10 bucket, mean over draws: {}", lifts.join(" | "));
-    for (e, x) in PLANT_EDGES.iter().enumerate() {
-        let cells: Vec<String> = PLANT_NUDGES
-            .iter()
-            .enumerate()
-            .map(|(j, t)| {
-                let [gm, gd, tm, td] = sums[e][j];
-                format!("+{:.0} % gain {gm:+.2}|{gd:+.2} band top {tm:+.2}|{td:+.2} out {}/{PLANT_DRAWS}", t * 100.0, outs[e][j])
-            })
-            .collect();
-        println!("  plant {x:+.1}/yr: {} ; pass {}/{PLANT_DRAWS} seeds {:?}", cells.join(" ; "), passed[e].len(), passed[e]);
+    for top in PLANT_BOOKS {
+        let control = top_n_books(samples, &legs, tuning, picks::growth_scores_ranked, top);
+        let mut moved = [0.0; PLANT_NUDGES.len()];
+        // per edge and row: the summed gain mean, gain median, band top mean, band top median; draws outside
+        let mut sums = [[[0.0; 4]; PLANT_NUDGES.len()]; PLANT_EDGES.len()];
+        let mut outs = [[0; PLANT_NUDGES.len()]; PLANT_EDGES.len()];
+        let mut passed = vec![Vec::new(); PLANT_EDGES.len()];
+        for seed in 1..=PLANT_DRAWS {
+            let rows: Vec<Vec<Vec<usize>>> = PLANT_NUDGES
+                .iter()
+                .map(|&t| {
+                    top_n_books(
+                        samples,
+                        &legs,
+                        tuning,
+                        |qs, tu| {
+                            let scores = picks::growth_scores_ranked(qs, tu);
+                            scores.into_iter().zip(qs).map(|(v, &q)| v.map(|v| if planted(q, seed) { v + t * v.abs() } else { v })).collect()
+                        },
+                        top,
+                    )
+                })
+                .collect();
+            for (m, b) in moved.iter_mut().zip(&rows) {
+                *m += swapped(&control, b) / PLANT_DRAWS as f64;
+            }
+            let books: Vec<&[Vec<usize>]> = std::iter::once(control.as_slice()).chain(rows.iter().map(Vec::as_slice)).collect();
+            for (e, &x) in PLANT_EDGES.iter().enumerate() {
+                let mut s = samples.to_vec();
+                for p in s.iter_mut().filter(|p| planted(&p.quote, seed)) {
+                    p.realized = plant_return(p.realized, x, years);
+                }
+                let realized: Vec<f64> = s.iter().map(|p| p.realized).collect();
+                let null = null_gains(&s, &legs, years, &books, nulls);
+                let base = search_excess(&control, &realized, &legs, years);
+                let mut all = true;
+                for (j, b) in rows.iter().enumerate() {
+                    let g = search_excess(b, &realized, &legs, years);
+                    let gain = (g.0 - base.0, g.1 - base.1);
+                    let (_, top_m, _) = null_band(null[j + 1].iter().map(|g| g.0), gain.0);
+                    let (_, top_d, _) = null_band(null[j + 1].iter().map(|g| g.1), gain.1);
+                    for (acc, v) in sums[e][j].iter_mut().zip([gain.0, gain.1, top_m, top_d]) {
+                        *acc += v / PLANT_DRAWS as f64;
+                    }
+                    let out = outside_up(&null[j + 1], gain);
+                    outs[e][j] += usize::from(out);
+                    all &= out;
+                }
+                if all {
+                    passed[e].push(seed);
+                }
+            }
+        }
+        let lifts: Vec<String> = PLANT_NUDGES.iter().zip(&moved).map(|(t, m)| format!("+{:.0} % {m:.1}", t * 100.0)).collect();
+        println!("  top {top}: names swapped into each bucket's book, mean over draws: {}", lifts.join(" | "));
+        for (e, x) in PLANT_EDGES.iter().enumerate() {
+            let cells: Vec<String> = PLANT_NUDGES
+                .iter()
+                .enumerate()
+                .map(|(j, t)| {
+                    let [gm, gd, tm, td] = sums[e][j];
+                    format!("+{:.0} % gain {gm:+.2}|{gd:+.2} band top {tm:+.2}|{td:+.2} out {}/{PLANT_DRAWS}", t * 100.0, outs[e][j])
+                })
+                .collect();
+            println!("  top {top} plant {x:+.1}/yr: {} ; pass {}/{PLANT_DRAWS} seeds {:?}", cells.join(" ; "), passed[e].len(), passed[e]);
+        }
     }
 }
 
@@ -10876,7 +10893,7 @@ mod tests {
     }
 
     /// (#1239) Per bucket, oldest first: the ten best scores, the earlier name kept on a tie at the cut,
-    /// with the coin, the name lacking an index leg and the unscored name all left out.
+    /// with the coin, the name lacking an index leg and the unscored name all left out. (#1334) Any other size too.
     #[test]
     fn top_books_hold_the_top_ten_per_bucket() {
         let (a, b) = (ymd(2010, 1, 5), ymd(2010, 7, 5));
@@ -10890,6 +10907,7 @@ mod tests {
         let mut bench_r = vec![0.0; samples.len()];
         bench_r[15] = f64::NAN;
         assert_eq!(top_books(&samples, &bench_r, &BuyHeuristic::default(), swap_scorer), vec![(2..12).collect::<Vec<usize>>(), vec![1, 0]]);
+        assert_eq!(top_n_books(&samples, &bench_r, &BuyHeuristic::default(), swap_scorer, 3), vec![vec![2, 3, 4], vec![1, 0]], "(#1334) a narrower book");
     }
 
     /// (#1239) Bucket excesses 50 (the `book_excess` pin's book), 0 and 20 at 1y: mean 70/3, median 20. An

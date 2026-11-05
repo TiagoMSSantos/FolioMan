@@ -362,12 +362,16 @@ fn rescore_reprints_the_golden_books_from_a_dump() {
     // (#1292) the null band runs by default, one verdict line per row; row {} against itself is inside
     let band: Vec<&str> = got.lines().filter(|l| l.starts_with("  row ") && (l.ends_with("-> INSIDE") || l.ends_with("-> OUTSIDE"))).collect();
     assert!(got.contains("── NULL BAND (#1292)") && band.len() == 2 && band[0].ends_with("-> INSIDE"), "{got}");
-    // (#1332) the PLANT block prints only on `plant`, and then once, on row 0: one line per planted edge
+    // (#1332) the PLANT block prints only on `plant`, and then once, on row 0: one line per planted edge,
+    // (#1334) for each of the four book sizes
     assert!(!got.contains("── PLANT (#1332)"), "{got}");
     let paths = [dump.to_str().expect("utf-8 path"), grid.to_str().expect("utf-8 path")];
     let planted = report_at(&cfg, &["rescore", paths[0], paths[1], "plant", "nulls=5"], None);
-    let edges: Vec<&str> = planted.lines().filter(|l| l.starts_with("  plant +")).collect();
-    assert!(planted.matches("── PLANT (#1332)").count() == 1 && edges.len() == 4 && edges.iter().all(|l| l.contains(" ; pass ")), "{planted}");
+    let edges: Vec<&str> = planted.lines().filter(|l| l.starts_with("  top ") && l.contains(" plant +")).collect();
+    assert!(planted.matches("── PLANT (#1332)").count() == 1 && edges.len() == 16 && edges.iter().all(|l| l.contains(" ; pass ")), "{planted}");
+    for top in [10, 20, 30, 50] {
+        assert_eq!(edges.iter().filter(|l| l.starts_with(&format!("  top {top} plant +"))).count(), 4, "{planted}");
+    }
 
     std::fs::write(&grid, "{\"backtest_tr_ruler\":true}\n").expect("write grid");
     let refused = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))

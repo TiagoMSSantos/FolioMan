@@ -25830,6 +25830,29 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   round hunts the literature or old data for one. The refusals of rounds 9-16 read "too small to see", not
 #   "nothing there". The (#1239) monthly campaign and `track` carry the lane; a buy rule reopens only on 12
 #   monthly links of that forward record. Nothing moves: no knob, no golden, no page.
+# (#1334) DOES A WIDER BOOK SHARPEN THE BAR? PRE-REGISTERED 2026-11-05 before any run. Row: (#1335).
+# WHY: (#1333) found the top-10 bar blind because a tilt swaps 1 or 2 names and each swap brings one stock's noise.
+#   A wider book swaps more names for the same tilt, so its gain keeps its size while its noise shrinks, in theory
+#   by the square root of the width. The owner asked to measure that before deciding the freeze for good.
+# TEST: (#1332)'s `plant`, unchanged (20 draws, X = 0.5, 1, 2 and 4, nudges 10/20/40 %, 200 shuffles, holdout
+#   sealed), graded on equal-weight books of the top 10 (the control, which must reprint (#1333)'s numbers), 20, 30
+#   and 50 names per bucket. Each size gets its own row 0, the shipped scorer's book at that size.
+# PASS: as (#1332), per size: all three rows OUTSIDE on the winning side at 12y AND at 8y, and an X passes a size on
+#   16 of 20 draws. The answer is the smallest X any size passes, and the smallest size that passes it.
+# BANDS, the (#1332) three, the owner's choice: smallest passing X at or under 1: that size becomes the buy-rule
+#   bar, and the next round re-grades the strongest refused leads on it, pre-registered, reading the (#1293)
+#   holdout once. Over 1 and at or under 4: build only leads whose own evidence claims at least that X, graded on
+#   that size. Nothing passes at 4 on any size: the (#1333) freeze stands and the bar work ends.
+# SHIP RULE, fixed now for that next round: a lead that clears the wider bar ships without a top-10 veto; its
+#   top-10 numbers print for information. The bought 10 are the head of the same ranking, so a tilt that lifts
+#   winners into the wider book lifts them into the top 10 on average, and a top-10 guard is a coin flip.
+# RUN: one probe on main, `years="12 8" args="universe fund pit"`, grid=[{}], rescore="plant holdout".
+# EXPECTED: the 10 % row binds at every size. At top 10 and X = 4 it gained +0.17|+0.12 against a band top of
+#   +0.36|+0.61: about 0.9 band-sigmas in mean and 0.4 in median. The square-root rule gives top 50 about 2.0 and 0.9,
+#   short of the 3 to 4 that 16 passing draws on all six cells need. So nothing passes at 4 on any size and the freeze
+#   stands; top 50's 20 % and 40 % rows read OUTSIDE at X = 4 on 16 draws or more at each horizon; X = 1 passes 4 draws
+#   or fewer at every size; the names swapped grow about in proportion to the book (top 50 about 2.5 / 4.5 / 9).
+# REVERT RULE: record only; `plant` prints more lines and changes no book, no knob and no page.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
