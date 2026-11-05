@@ -648,6 +648,19 @@ jobs:
                   | .id'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
+          # (#1329) DEAD PROBE TAGS: a probe dispatched on a short-lived `probe-*` tag (round 16 ran its old-code
+          # and pond arms that way) is spent once the tag is deleted: the receipt keeps its numbers and the code
+          # can no longer be dispatched. So its runs go at the next sweep, `Probe dump` runs included, instead of
+          # waiting out the 2-day or 90-day rules above. A run on a tag that still exists is left to those rules.
+          # If the tag lookup fails, the pass is skipped: an empty list would read every live tag as deleted.
+          if tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/probe-" --jq '.[].ref | ltrimstr("refs/tags/")'); then
+            live=$(jq -Rnc '[inputs | select(. != "")]' <<<"$tags")
+            for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&event=workflow_dispatch&status=completed" \
+                | jq -r --argjson live "$live" '.workflow_runs[] | select((.head_branch // "") | startswith("probe-"))
+                    | select(.head_branch as $b | $live | index($b) | not) | .id'); do
+              gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+            done
+          fi
           # (#562) COUNT CAP, PER WORKFLOW: keep the 20 newest completed runs of each workflow and delete
           # the rest, even when they are younger than 2 days. The cap only bites where runs pile up: a
           # 10-arm probe batch made 67 runs on 2026-10-11. ci/codeql/pages and (#611) automerge already
