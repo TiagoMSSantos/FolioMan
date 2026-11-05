@@ -1,5 +1,6 @@
 name: Probe
-# (#1227) A `grid` or (#1239) `search` run is titled `Probe dump`, so pages.yml's sweep can keep its dumps 90 days.
+# (#1227) A `grid` or (#1239) `search` run is titled `Probe dump`, so pages.yml's sweep can keep its dumps
+# (#1330) until a receipt cites the run id, 7 days at most.
 run-name: Probe${{ (inputs.grid != '' || inputs.search != '') && ' dump' || '' }}
 
 # (#548) A `backtest` run graded on CI, not on the local PC (USER DECISION 2026-10-11: CI runs what CI
@@ -8,7 +9,7 @@ run-name: Probe${{ (inputs.grid != '' || inputs.search != '') && ' dump' || '' }
 # whole report — every fund factor's AUC, the held-book and survival rows — for a factor or knob probe.
 # Read it with `gh run view <id> --log`, and check `windows scored` on every horizon before grading.
 # Read it within 2 days: (#553) pages.yml's catch-all deletes every run 2 days after it finishes, except
-# (#1227) a `grid` or (#1239) `search` run, kept 90 days.
+# (#1227) a `grid` or (#1239) `search` run, kept (#1330) until a receipt cites its run id, 7 days at most.
 #
 # MANUAL ONLY, and it never writes a cache Pages or the gate read. The caches it saves are (#559)'s
 # `folioman-fec-`, (#728)'s `folioman-fail-` and (#752)'s `folioman-tiingo-`, which only a `pac` /
@@ -37,10 +38,10 @@ on:
         type: boolean
         default: false
       grid:
-        description: "(#1227) a JSON array of buy_heuristic rows, e.g. [{}, {\"growth_accel_weight\": 0}]: each horizon also dumps its samples (encrypted, kept 90 days) and `backtest rescore` re-runs the books once per row"
+        description: "(#1227) a JSON array of buy_heuristic rows, e.g. [{}, {\"growth_accel_weight\": 0}]: each horizon also dumps its samples (encrypted, kept until a receipt cites the run, 7 days at most) and `backtest rescore` re-runs the books once per row"
         default: ""
       search:
-        description: "(#1239) `backtest search` options, e.g. configs=5000 nulls=200: each horizon also dumps its samples (encrypted, kept 90 days), then one knob search runs over every dump"
+        description: "(#1239) `backtest search` options, e.g. configs=5000 nulls=200: each horizon also dumps its samples (encrypted, kept until a receipt cites the run, 7 days at most), then one knob search runs over every dump"
         default: ""
       rescore:
         description: "(#1292) `backtest rescore` options for a grid run, e.g. nulls=0 or holdout: the null band runs at 200 shuffles unless nulls= says otherwise; (#1293) holdout seals the 2016-on samples, reveal reads them once at ship time"
@@ -282,7 +283,7 @@ jobs:
           name: samples
           path: samples-*.jsonl.tgz.enc
           if-no-files-found: ignore
-          retention-days: 90
+          retention-days: 7   # (#1330) pages.yml deletes the run by then anyway
       # (#1225) A `pit dead` run journals the SIZED record `screen` cites under BUY NOW, but only on this
       # runner. Upload it so the row can be copied into a local journal without a local run. It is graded
       # on tests/ci-settings.yaml, so a local `screen` on other settings prints it with its drift warning.

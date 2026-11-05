@@ -635,10 +635,11 @@ jobs:
           # Runs of a still-OPEN PR are its review verdict (#402) and are never touched; once the PR closes,
           # merged or not, its runs go too, failed ones included. REST `status: completed` covers cancelled,
           # failed and skipped; an in-flight run is never listed. The 2 days count from the finish.
-          # (#1227) A `Probe dump` run (probe.yml with a `grid`) holds samples dumps a later rescore reads, and
-          # deleting a run deletes its artifacts, so it is kept until they expire at 90 days.
+          # (#1227) A `Probe dump` run (probe.yml with a `grid` or `search`) holds samples dumps, and deleting
+          # a run deletes its artifacts, so it was kept until they expired at 90 days. (#1330) Nothing reads an
+          # old dump (a rescore reads its own run's samples; the campaign dispatches a fresh probe), so 7 days.
           cutoff=$(date -u -d '2 days ago' +%FT%TZ)
-          dumps=$(date -u -d '90 days ago' +%FT%TZ)
+          dumps=$(date -u -d '7 days ago' +%FT%TZ)
           open=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --limit 200 --json headRefName -q '[.[].headRefName]')
           for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&created=%3C$cutoff" \
               | jq -r --arg cutoff "$cutoff" --arg dumps "$dumps" --argjson open "$open" '.workflow_runs[]
@@ -661,12 +662,20 @@ jobs:
               gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
             done
           fi
+          # (#1330) READ DUMPS: a `Probe dump` has been read once a receipt in tests/ci-settings.yaml on main
+          # cites its run id (70 of 71 were, 2026-11-05), so it goes at the next sweep instead of at 7 days.
+          # The receipt keeps the numbers; only its link to the log dies. An uncited dump keeps the 7 days.
+          # If the file fetch fails, the pattern list is empty and matches nothing, so nothing is deleted.
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" --jq '.workflow_runs[] | select(.display_title == "Probe dump") | .id' \
+              | grep -Fxf <(gh api -H 'Accept: application/vnd.github.raw' "repos/$GITHUB_REPOSITORY/contents/tests/ci-settings.yaml" | grep -oE '[0-9]{10,}')); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
           # (#562) COUNT CAP, PER WORKFLOW: keep the 20 newest completed runs of each workflow and delete
           # the rest, even when they are younger than 2 days. The cap only bites where runs pile up: a
           # 10-arm probe batch made 67 runs on 2026-10-11. ci/codeql/pages and (#611) automerge already
           # keep ~1 each through their own sweeps, which stay as they are. One probe batch (<= 10 runs)
           # still fits under 20, so its logs survive until they are tallied. Open-PR runs are exempt and
-          # are not counted, and so (#1227) are `Probe dump` runs, which the 90-day rule above ends.
+          # are not counted, and so (#1227) are `Probe dump` runs, which (#1330) the rules above end.
           for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" --jq '.workflow_runs[]' \
               | jq -rs --argjson open "$open" '[.[] | select(.display_title != "Probe dump")
                   | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))]
