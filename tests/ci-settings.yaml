@@ -25773,6 +25773,33 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   and (#558) step 2, the Portuguese hold-duration CGT exclusion that `cgt_hold_schedule` ships empty until an
 #   accountant confirms it. A next buy-heuristic round needs a new free data source or a question about the +0.9
 #   lead itself; until then the monthly campaign and `track` carry the lane.
+# (#1332) THE SHIP BAR'S EYESIGHT, PRE-REGISTERED 2026-11-05 before any run. Row: (#1333).
+# WHY: rounds 9-16 refused every buy-rule candidate on the (#1292) null band, and no receipt says how large an edge
+#   that band can see. Published factors claim about 0.8 %/yr long-short in large caps after 2005 (Chen 2026: 7 bp
+#   a month); the band on a row's top-10 gain over row 0 is about +-0.3 a year at 12y and +-0.3 to +-0.6 at 8y. If
+#   the bar cannot see an edge of that size, the refusals read "too small to see", not "nothing there".
+# TEST: `backtest rescore <dump> <grid> plant` plants a known edge in the real dump and asks whether the bar sees it.
+#   Each of 20 draws (seeds 1-20) picks about one stock in five by a hash of ticker and seed (the same names at every
+#   horizon of a draw) and adds +X %/yr to their realized return, compounded over the horizon:
+#   ((1 + r/100)(1 + X/100)^years - 1) x 100, for X = 0.5, 1, 2 and 4. The test rows are the shipped scorer with each
+#   planted name's score raised by 20 % (score + 0.2 |score|), with neighbours at 10 % and 40 %: an idea that leans
+#   toward the winners without knowing them. Row 0 is the shipped book on grid row 0's tuning. The band is (#1292)'s:
+#   200 within-(bucket, class) shuffles, here of the planted returns. Funds and coins are never planted, and the
+#   (#1293) holdout stays sealed (`holdout`).
+# PASS, one draw: all three nudged rows OUTSIDE (the mean and the median gain both outside the band and both above
+#   0) at 12y AND at 8y; each horizon prints its passing seeds, intersected by hand. An edge X passes on 16 of 20
+#   draws, and the answer is the smallest passing X. RU1-RU3, RU-E and RU-T are not read, and a steady bonus on
+#   random names is the easiest edge there is to see, so the answer is a floor: a real idea of that size is harder.
+# BANDS, fixed now: smallest passing X at or under 1: the bar sees edges of published size, so the old refusals
+#   read "nothing there", and the next round hunts new data, not new rules on old data. Over 1 and at or under 4:
+#   the bar sees only large claims; build only leads whose own evidence claims at least X a year (founder-led firms
+#   4.4, best employers 3.5), and stop the literature hunts. Nothing passes at 4: the bar is blind; no buy rule can
+#   ship on backtest evidence, so the rules freeze and the (#1239) forward record carries the lane.
+# RUN: one probe on main, `years="12 8" args="universe fund pit"`, grid=[{}], rescore="plant holdout".
+# EXPECTED: the 10 % row binds: X = 2 passes the 20 % and 40 % rows on 16 or more draws and the 10 % row on fewer,
+#   so the smallest passing X is 4 (the middle band); X = 0.5 passes on 4 draws or fewer; the 20 % row swaps 1 to 4
+#   names into each top-10 bucket.
+# REVERT RULE: record only; `plant` prints one block and changes no book, no knob and no page.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

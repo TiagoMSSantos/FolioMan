@@ -837,6 +837,7 @@ struct Args {
     nulls: usize,
     holdout: bool,
     reveal: bool,
+    plant: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -887,6 +888,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.starts_with("nulls=") => a_.nulls = a[6..].parse().expect("nulls=K takes a whole number"),
             _ if a.eq_ignore_ascii_case("holdout") => a_.holdout = true, // (#1293) drop the samples cut on or after HOLDOUT_FROM
             _ if a.eq_ignore_ascii_case("reveal") => (a_.holdout, a_.reveal) = (true, true), // (#1293) ... and print them once, apart
+            _ if a.eq_ignore_ascii_case("plant") => a_.plant = true, // (#1332) rescore: how large an edge the null band sees
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -998,8 +1000,9 @@ struct Dumped {
 ///
 /// (#1292) After the last row, `nulls` shuffles price each row's top-10 gain over row 0 against noise
 /// ([`print_rescore_bands`]); `nulls=0` skips that. (#1293) `holdout` drops the samples cut on or after
-/// [`HOLDOUT_FROM`] from every table, and `reveal` prints their books once, apart.
-fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool) {
+/// [`HOLDOUT_FROM`] from every table, and `reveal` prints their books once, apart. (#1332) `plant` prints
+/// [`print_plant_power`] on grid row 0, after its tables.
+fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool) {
     let (years, bench, samples) = load_dump(dump);
     let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
     let mut rows = Vec::new();
@@ -1024,6 +1027,9 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         report_sized_book(&s, &bench, years, &tuning, &settings.sizing, settings.top_picks, &[]);
         let books = |s: &[Sample]| top_books(s, &bench_legs(s, &bench, years), &tuning, picks::growth_scores_ranked);
         let (graded, sealed_books) = (books(&s), books(&sealed));
+        if plant && rows.is_empty() {
+            print_plant_power(&s, &bench, years, &tuning, nulls);
+        }
         rows.push(Rescored { line: line.to_string(), tuning, graded, sealed: sealed_books });
         last = (s, sealed);
     }
@@ -1269,7 +1275,7 @@ fn shuffled(samples: &[Sample], seed: u64) -> Vec<f64> {
 /// on score ((#1283) no value brake: the bought book is unbraked). The sector and corr caps are left out; `search` refuses a config that
 /// arms either. `bench_r` is each sample's index leg, NaN where it has none. Picking never reads
 /// `realized`, so one book prices every shuffle of it.
-fn top_books(samples: &[Sample], bench_r: &[f64], tuning: &BuyHeuristic, scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>) -> Vec<Vec<usize>> {
+fn top_books(samples: &[Sample], bench_r: &[f64], tuning: &BuyHeuristic, scorer: impl Fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>) -> Vec<Vec<usize>> {
     let mut by_cutoff: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
     for (i, s) in samples.iter().enumerate().filter(|(_, s)| picks::asset_class(&s.quote) != 0) {
         by_cutoff.entry(bucket(s.date)).or_default().push(i);
@@ -1298,6 +1304,106 @@ fn search_excess(books: &[Vec<usize>], realized: &[f64], bench_r: &[f64], years:
     let excess: Vec<f64> =
         books.iter().filter_map(|p| book_excess(&p.iter().map(|&i| (realized[i], bench_r[i])).collect::<Vec<_>>(), years)).collect();
     (excess.iter().sum::<f64>() / excess.len().max(1) as f64, median(excess))
+}
+
+/// (#1332) `plant`: the edges planted, in %/yr; the lifts the test rows give a planted name's score; the draws.
+const PLANT_EDGES: [f64; 4] = [0.5, 1.0, 2.0, 4.0];
+const PLANT_NUDGES: [f64; 3] = [0.1, 0.2, 0.4];
+const PLANT_DRAWS: u64 = 20;
+
+/// (#1332) Whether draw `seed` plants this name: stocks only, about one in five, by an FNV-1a hash of the
+/// ticker mixed with the seed through [`next_rand`], so a draw plants the same names at every horizon.
+fn planted(q: &Quote, seed: u64) -> bool {
+    let mut h = q.ticker.bytes().fold(0xcbf2_9ce4_8422_2325 ^ seed, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+    picks::asset_class(q) == 2 && next_rand(&mut h) % 5 == 0
+}
+
+/// (#1332) A forward return of `r` % over `years` with `x` %/yr added, compounded: what a planted name earns.
+fn plant_return(r: f64, x: f64, years: i64) -> f64 {
+    ((1.0 + r / 100.0) * (1.0 + x / 100.0).powi(years as i32) - 1.0) * 100.0
+}
+
+/// (#1332) Names a bucket's book holds that the control's does not, averaged over the buckets.
+fn swapped(control: &[Vec<usize>], books: &[Vec<usize>]) -> f64 {
+    let n: usize = control.iter().zip(books).map(|(c, b)| b.iter().filter(|i| !c.contains(i)).count()).sum();
+    n as f64 / control.len().max(1) as f64
+}
+
+/// (#1332) The (#1292) bar's read of one row: its (mean, median) gain over row 0 sits outside its null band on
+/// both moments, and on the winning side.
+fn outside_up(null: &[(f64, f64)], gain: (f64, f64)) -> bool {
+    gain.0 > 0.0 && gain.1 > 0.0 && null_band(null.iter().map(|g| g.0), gain.0).2 && null_band(null.iter().map(|g| g.1), gain.1).2
+}
+
+/// (#1332) The PLANT block: how large an edge the (#1292) null band can see. Each draw plants +X %/yr on about
+/// one stock in five ([`planted`], [`plant_return`]) and grades three rows that lift a planted name's score by
+/// [`PLANT_NUDGES`] against the shipped book, on the same `nulls` shuffles the band uses, of the planted returns.
+/// A draw passes an edge when all three rows read [`outside_up`]. The rows' books depend on the draw, not the edge.
+#[mutants::skip] // prints only: `planted`, `plant_return`, `swapped` and `outside_up` are graded by unit tests
+fn print_plant_power(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic, nulls: usize) {
+    let legs = bench_legs(samples, bench, years);
+    let control = top_books(samples, &legs, tuning, picks::growth_scores_ranked);
+    let mut moved = [0.0; PLANT_NUDGES.len()];
+    // per edge and row: the summed gain mean, gain median, band top mean, band top median; draws outside
+    let mut sums = [[[0.0; 4]; PLANT_NUDGES.len()]; PLANT_EDGES.len()];
+    let mut outs = [[0; PLANT_NUDGES.len()]; PLANT_EDGES.len()];
+    let mut passed = vec![Vec::new(); PLANT_EDGES.len()];
+    for seed in 1..=PLANT_DRAWS {
+        let rows: Vec<Vec<Vec<usize>>> = PLANT_NUDGES
+            .iter()
+            .map(|&t| {
+                top_books(samples, &legs, tuning, |qs, tu| {
+                    let scores = picks::growth_scores_ranked(qs, tu);
+                    scores.into_iter().zip(qs).map(|(v, &q)| v.map(|v| if planted(q, seed) { v + t * v.abs() } else { v })).collect()
+                })
+            })
+            .collect();
+        for (m, b) in moved.iter_mut().zip(&rows) {
+            *m += swapped(&control, b) / PLANT_DRAWS as f64;
+        }
+        let books: Vec<&[Vec<usize>]> = std::iter::once(control.as_slice()).chain(rows.iter().map(Vec::as_slice)).collect();
+        for (e, &x) in PLANT_EDGES.iter().enumerate() {
+            let mut s = samples.to_vec();
+            for p in s.iter_mut().filter(|p| planted(&p.quote, seed)) {
+                p.realized = plant_return(p.realized, x, years);
+            }
+            let realized: Vec<f64> = s.iter().map(|p| p.realized).collect();
+            let null = null_gains(&s, &legs, years, &books, nulls);
+            let base = search_excess(&control, &realized, &legs, years);
+            let mut all = true;
+            for (j, b) in rows.iter().enumerate() {
+                let g = search_excess(b, &realized, &legs, years);
+                let gain = (g.0 - base.0, g.1 - base.1);
+                let (_, top_m, _) = null_band(null[j + 1].iter().map(|g| g.0), gain.0);
+                let (_, top_d, _) = null_band(null[j + 1].iter().map(|g| g.1), gain.1);
+                for (acc, v) in sums[e][j].iter_mut().zip([gain.0, gain.1, top_m, top_d]) {
+                    *acc += v / PLANT_DRAWS as f64;
+                }
+                let out = outside_up(&null[j + 1], gain);
+                outs[e][j] += usize::from(out);
+                all &= out;
+            }
+            if all {
+                passed[e].push(seed);
+            }
+        }
+    }
+    println!(
+        "\n── PLANT (#1332): the null band's eyesight. Each of {PLANT_DRAWS} draws plants +X %/yr on about 1 stock in 5 and grades rows lifting a planted name's score 10/20/40 % against the shipped book on {nulls} shuffles; a draw passes X when all three rows read OUTSIDE on the winning side ──"
+    );
+    let lifts: Vec<String> = PLANT_NUDGES.iter().zip(&moved).map(|(t, m)| format!("+{:.0} % {m:.1}", t * 100.0)).collect();
+    println!("  names swapped into each top-10 bucket, mean over draws: {}", lifts.join(" | "));
+    for (e, x) in PLANT_EDGES.iter().enumerate() {
+        let cells: Vec<String> = PLANT_NUDGES
+            .iter()
+            .enumerate()
+            .map(|(j, t)| {
+                let [gm, gd, tm, td] = sums[e][j];
+                format!("+{:.0} % gain {gm:+.2}|{gd:+.2} band top {tm:+.2}|{td:+.2} out {}/{PLANT_DRAWS}", t * 100.0, outs[e][j])
+            })
+            .collect();
+        println!("  plant {x:+.1}/yr: {} ; pass {}/{PLANT_DRAWS} seeds {:?}", cells.join(" ; "), passed[e].len(), passed[e]);
+    }
 }
 
 /// (#1239) `backtest search <dump>... [configs=N] [nulls=K] [holdout]`: a seeded random search of the knob space on
@@ -1936,7 +2042,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, stock_rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -1969,7 +2075,7 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     if rescore_dump {
-        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal);
+        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal, plant);
         return;
     }
     if search_dumps {
@@ -10873,6 +10979,49 @@ mod tests {
         assert!(null_gains(&samples, &bench_r, 1, &[], 5).is_empty() && null_gains(&samples, &bench_r, 1, &[&books0], 0) == [Vec::new()]);
     }
 
+    /// (#1332) A draw plants the same stocks every time, about one in five, and never a coin: `BTC-EUR`'s hash
+    /// picks it on seed 3, and its class keeps it out. The pins are the FNV-1a + xorshift draw, recomputed apart.
+    #[test]
+    fn planted_is_a_seeded_fifth_of_the_stocks_and_never_a_coin() {
+        let pick = |seed| (0..40).filter(|k| planted(&Quote::stub(&format!("T{k}"), "€1.00", "", "T"), seed)).collect::<Vec<_>>();
+        assert_eq!(pick(1), [5, 6, 18, 22, 24, 28, 35]);
+        assert_eq!(pick(2), [2, 3, 8, 29, 36]);
+        for seed in 1..=3 {
+            let n = (0..2000).filter(|k| planted(&Quote::stub(&format!("N{k}"), "€1.00", "", "N"), seed)).count();
+            assert!((340..=460).contains(&n), "seed {seed} planted {n} of 2000");
+        }
+        assert!((1..=20).all(|seed| !planted(&Quote::stub("BTC-EUR", "€1.00", "", "BTC"), seed)), "a coin is never planted");
+    }
+
+    /// (#1332) The planted return compounds the edge over the horizon on top of the real one; a zero edge or a
+    /// zero-year horizon leaves it alone.
+    #[test]
+    fn plant_return_compounds_the_edge_on_the_real_return() {
+        assert!((plant_return(10.0, 5.0, 2) - 21.275).abs() < 1e-9, "{}", plant_return(10.0, 5.0, 2));
+        assert!((plant_return(-50.0, 4.0, 0) + 50.0).abs() < 1e-9 && (plant_return(30.0, 0.0, 12) - 30.0).abs() < 1e-9);
+    }
+
+    /// (#1332) Names a book holds that the control does not, per bucket, averaged; no bucket reads zero.
+    #[test]
+    fn swapped_counts_the_new_names_per_bucket() {
+        assert!((swapped(&[vec![0, 1, 2], vec![3, 4]], &[vec![0, 1, 9], vec![7, 8]]) - 1.5).abs() < 1e-9);
+        assert_eq!(swapped(&[vec![0, 1]], &[vec![1, 0]]), 0.0);
+        assert_eq!(swapped(&[], &[]), 0.0);
+    }
+
+    /// (#1332) A row passes only when both moments sit outside their band AND above zero: a gain under a band
+    /// that sits wholly above zero is outside, yet a loss.
+    #[test]
+    fn outside_up_needs_both_moments_outside_and_winning() {
+        let g: Vec<(f64, f64)> = (0..=40).map(|k| (k as f64 * 0.05 - 1.0, k as f64 * 0.05 - 1.0)).collect();
+        assert!(outside_up(&g, (2.0, 2.0)));
+        assert!(!outside_up(&g, (-2.0, -2.0)) && !outside_up(&g, (2.0, 0.5)) && !outside_up(&g, (0.5, 2.0)) && !outside_up(&g, (2.0, -2.0)));
+        let high = vec![(1.0, 1.0); 41];
+        assert!(!outside_up(&high, (0.0, 0.0)) && !outside_up(&high, (-0.5, -0.5)), "below a band above zero is no win");
+        assert!(!outside_up(&high, (0.0, 2.0)) && !outside_up(&high, (2.0, 0.0)), "a zero gain on either moment is no win, outside or not");
+        assert!(!outside_up(&[], (5.0, 5.0)), "an empty null is never outside");
+    }
+
     /// (#1317) The tail of a book: nearest-rank p20 and the mean of the five worst buckets; fewer than five
     /// buckets average what there is; no bucket reads NaN, which no band calls outside.
     #[test]
@@ -12065,6 +12214,7 @@ mod tests {
         assert!(std::panic::catch_unwind(|| p("configs=0")).is_err() && std::panic::catch_unwind(|| p("nulls=x")).is_err(), "configs must be above 0, nulls a whole number");
         assert!(p("holdout").holdout && !p("holdout").reveal && p("HOLDOUT").holdout && !p("search").holdout, "(#1293) `holdout` seals the 2016-on samples");
         assert!(p("reveal").holdout && p("reveal").reveal && p("reveal").tickers.is_empty(), "(#1293) `reveal` seals them too and prints them apart");
+        assert!(p("plant").plant && p("PLANT").plant && !p("holdout").plant && !p("plant").holdout && p("plant").tickers.is_empty(), "(#1332) `plant` is a keyword, not a ticker");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
