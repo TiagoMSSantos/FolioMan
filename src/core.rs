@@ -4289,6 +4289,7 @@ pub struct FundFactors {
     pub book_yield: Option<f64>,     // (#409) book ÷ market cap, % (high = cheap). PROBE-ONLY, None live
     pub mcap: Option<f64>,           // (#409) as-of market cap, TRADING currency. Backtest fills
     pub small_pct: Option<f64>,      // (#409) same-date percentile of mcap, 0-100, high = SMALL. Backtest stamps
+    pub ey_pct: Option<f64>,         // (#1341) same-date percentile of earnings_yield, 0-100, high = cheap. Backtest stamps
     // (#410) R&D ÷ market cap (Chan-Lakonishok-Sougiannis 2001) and net payout yield (Boudoukh et al.
     // 2007). Levels off the as-of row like `fcf_ttm`; the yields need a price, so the backtest fills them.
     pub rnd_ttm: Option<f64>,        // (#410) as-of R&D level, reporting currency
@@ -4990,6 +4991,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         book_yield: None,
         mcap: None,
         small_pct: None,
+        ey_pct: None,
         // (#410) levels only, like (#408)
         rnd_ttm: now.and_then(|r| Some(r.rnd_margin? * r.revenue? / 100.0)),
         payout_ttm: now.and_then(|r| Some(r.payout_margin? * r.revenue? / 100.0)),
@@ -5836,6 +5838,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "value_composite" => f.value_composite,           // (#408) same-date percentile mean of 4 yields
         "book_yield" => f.book_yield,                     // (#409) book ÷ market cap: measured, unweighted
         "small_pct" => f.small_pct,                       // (#409) same-date size percentile, high = small
+        "ey_pct" => f.ey_pct,                             // (#1341) same-date earnings_yield percentile, high = cheap
         "rnd_yield" => f.rnd_yield,                       // (#410) R&D ÷ market cap: measured, unweighted
         "payout_yield" => f.payout_yield,                 // (#410) net payout ÷ market cap, sign kept
         "rnd_growth" => f.rnd_growth,                     // (#532) 3y ΔR&D ÷ old revenue: measured, unweighted
@@ -6852,6 +6855,7 @@ mod tests {
             book_yield: Some(31.0),
             mcap: Some(90.0),
             small_pct: Some(32.0),
+            ey_pct: Some(77.0),
             rnd_ttm: Some(100.0),
             payout_ttm: Some(110.0),
             rnd_yield: Some(33.0),
@@ -6913,6 +6917,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "value_composite"), Some(30.0));
         assert_eq!(select_fund_factor(&f, "book_yield"), Some(31.0)); // (#409)
         assert_eq!(select_fund_factor(&f, "small_pct"), Some(32.0));
+        assert_eq!(select_fund_factor(&f, "ey_pct"), Some(77.0)); // (#1341)
         assert_eq!(select_fund_factor(&f, "rnd_yield"), Some(33.0)); // (#410)
         assert_eq!(select_fund_factor(&f, "payout_yield"), Some(34.0));
         assert_eq!(select_fund_factor(&f, "noa"), Some(35.0)); // (#411) NOT asset_growth: the level of the balance sheet, not its growth

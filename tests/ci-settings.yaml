@@ -26032,6 +26032,54 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   (ocf_me, fcf_me, ni_me). beta_60m and market_equity fail: a low-beta or a small third trails the raw market. The
 #   guard is loose by design, so 1 to 4 passers ship, at most one per cluster.
 # REVERT RULE: the proof is record only. Each ship carries its own receipt, its off switch and the pull rule above.
+# (#1340) VERDICT, 2026-11-06, on (#1339), record only: 7 of the 42 pass, all of them Value. One run, 14 s, on the
+#   pinned files. Unit checks: (i) over 9337 developed ex-US country-months be_me's mean sits 0.0081 RMS from the
+#   USD market and 0.0285 from the local one, so USD; (ii) over 890 US months its gap's slope on the risk-free rate
+#   is -0.97, so EXCESS. The market column stays mkt_vw_cap_exc. No check swapped a column.
+# PASSERS, in guard order, each as US t and post mean %/yr, then developed ex-US t and post mean %/yr:
+#   ni_me 4.08 +2.4, 2.26 +2.7; be_me 2.69 +1.0, 2.64 +2.8; fcf_me 4.99 +3.1, 2.77 +4.2; sale_me 3.62 +2.6,
+#   2.69 +2.2; ocf_me 4.49 +1.1, 2.24 +2.0; chcsho_12m 5.30 +1.9, 2.41 +1.4; ebitda_mev 4.87 +0.3, 2.82 +1.2.
+# FAILS AS THE RULE READS, with no rounding and no second look. ret_12_1 passes the US (t 5.35) but its developed
+#   t is 1.9567, 0.003 short; ret_6_1 (1.75) and ret_9_1 (1.16) miss by more. div12m_me and bev_mev pass developed
+#   ex-US only (US t 1.49; 1.87 with a post mean of -0.1). 14 pass the US only: ret_60_12, oaccruals_at, capx_gr1,
+#   rd_me, capex_abn, noa_at, noa_gr1a, capx_gr2, capx_gr3, eqnpo_me, at_gr1, oaccruals_ni, rd5_at, ocf_at_chg1.
+#   debt_gr3 has a US t of 5.78 but a post mean of -0.0. age's earning third trails abroad (t -4.22).
+# AGAINST EXPECTED: the count, 7, is inside 3 to 10; cash-flow value led (ni_me, fcf_me, ocf_me); beta_60m (t
+#   -0.19 US, +0.16 developed) and market_equity (1.70 US with a post mean of -0.9, 0.02 developed) failed as
+#   forecast. Momentum did NOT lead: it fails developed ex-US, so that half of the forecast was wrong.
+# CLUSTER RULE: all 7 sit in one cluster, Value, so this route ships at most ONE of them. The guard tries ni_me
+#   first (twin earnings_yield). A refusal hands the cluster to be_me (book_yield), then fcf_me, sale_me, ocf_me,
+#   chcsho_12m (buyback_yield) and ebitda_mev (ebitda_yield). The first guard PASS closes the cluster and the route.
+# (#1341) NI_ME HARM GUARD, PRE-REGISTERED 2026-11-06 before any run. Row: (#1342).
+# WHY: (#1340) left 7 passers, all Value, so one ship at most; the cluster rule sends ni_me through the (#1339)
+#   harm guard first.
+# TWIN, built now: `ey_pct`. `stamp_cohort_ranks` already ranks earnings_yield (net income over market cap, the
+#   twin (#1339) names for ni_me) against the same cutoff's names that carry it, as one of the four legs
+#   value_composite averages. It now also keeps that leg alone as `ey_pct`: 0 to 100, high = cheap = JKP's earning
+#   end. The dump is written after the stamp, so `rescore` reads it as the walk wrote it. Live and page twins are
+#   built only on a SHIP.
+# GUARD, built now: `backtest rescore <dump> <grid> guard` prints a GUARD block after the bands. For each row after
+#   row 0 it shows: the top-10 and pond mean gains over row 0, each with the 2.5 % edge of its band (same shuffles
+#   as the NULL BAND); the pool against row 0's; the share of scored stock samples the row's new terms read on; the
+#   top-10 names moved; and the verdict. The clauses run in order: UNGRADEABLE (coverage under half), INERT (no
+#   moved name), then PASS or FAIL. Under `reveal`, the two gains again on the sealed samples alone.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout" (200 shuffles), grid:
+#   [{}, {"growth_fund_extra": [{"factor": "roic", "weight": 0.25, "cap": 40.0, "neutral": 17.3},
+#   {"factor": "margin_trend", "weight": -0.3, "cap": 10.0, "neutral": 0.0},
+#   {"factor": "ey_pct", "weight": 0.03, "cap": 100.0, "neutral": 50.0}]}]
+#   Row 1 is the shipped two terms plus the new one, as (#1339) fixed it: +3 points at best, +1.5 when missing.
+# PASS: row 1 reads PASS in the GUARD block at 12y AND at 8y. Only then a second probe with rescore="guard holdout
+#   reveal" reads the sealed 2016-on 8y samples once, and both GUARD HOLDOUT gains must not sit under their edges.
+#   Both = SHIP per (#1339): one owner question, since the page moves, then the live and page twins and a golden
+#   rebless on the ship SHA.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = ni_me REFUSED and recorded. The Value cluster
+#   stays open, and be_me goes next, with a `bm_pct` twin (book_yield's same-date percentile) and its own receipt.
+# EXPECTED: PASS at both horizons, about 3 in 5. A 3-point tilt moves about 1 top-10 name a bucket, so the gains
+#   sit near 0 and well above a 2.5 % edge. The likeliest fail is the 12y top-10 gain under its edge: cheap names
+#   trailed the growth book in the US after 2010, and a tilt toward them could swap out a long runner.
+#   UNGRADEABLE is unlikely: earnings_yield reads on most stock samples in the pit fund walk.
+# REVERT RULE: `guard` and `ey_pct` are record only. `guard` is off by default and `ey_pct` enters no shipped term,
+#   so no book, knob, golden or page moves.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

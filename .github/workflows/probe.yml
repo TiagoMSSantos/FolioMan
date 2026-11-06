@@ -44,7 +44,7 @@ on:
         description: "(#1239) `backtest search` options, e.g. configs=5000 nulls=200: each horizon also dumps its samples (encrypted, kept until a receipt cites the run, 7 days at most), then one knob search runs over every dump"
         default: ""
       rescore:
-        description: "(#1292) `backtest rescore` options for a grid run, e.g. nulls=0 or holdout: the null band runs at 200 shuffles unless nulls= says otherwise; (#1293) holdout seals the 2016-on samples, reveal reads them once at ship time; (#1332) plant prints how large an edge the band sees; (#1337) pond prints whether a top-half ruler sees one"
+        description: "(#1292) `backtest rescore` options for a grid run, e.g. nulls=0 or holdout: the null band runs at 200 shuffles unless nulls= says otherwise; (#1293) holdout seals the 2016-on samples, reveal reads them once at ship time; (#1332) plant prints how large an edge the band sees; (#1337) pond prints whether a top-half ruler sees one; (#1341) guard prints the (#1339) paper route's harm guard"
         default: ""
 
 # No concurrency group (#550): a probe saves no shared cache (each FEC save is keyed on its own run id), so arms dispatched together run in parallel.
@@ -177,7 +177,7 @@ jobs:
           done
           read -ra rescore <<< "$RESCORE"
           for o in "${rescore[@]}"; do
-            [[ $o =~ ^(nulls=[0-9]+|holdout|reveal|plant|pond)$ ]] || { echo "::error::bad rescore option '$o'"; exit 1; }
+            [[ $o =~ ^(nulls=[0-9]+|holdout|reveal|plant|pond|guard)$ ]] || { echo "::error::bad rescore option '$o'"; exit 1; }
           done
           # (#550) an arm edits the checked-out yaml in place: each key must already sit on exactly one
           # `  key:` line and the value must be a plain number, so a typo fails the run instead of grading

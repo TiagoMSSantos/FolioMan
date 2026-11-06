@@ -378,6 +378,14 @@ fn rescore_reprints_the_golden_books_from_a_dump() {
     let edges: Vec<&str> = pond.lines().filter(|l| l.starts_with("  pond plant +")).collect();
     assert!(pond.matches("── POND (#1337)").count() == 1 && edges.len() == 3 && edges.iter().all(|l| l.contains(" ; pass ")), "{pond}");
     assert!(!pond.contains("── PLANT (#1332)"), "{pond}");
+    // (#1341) the GUARD block likewise: only on `guard`, and then once, after the bands, one line per row after
+    // row 0; `reveal` then adds a GUARD HOLDOUT line or block
+    assert!(!got.contains("── GUARD (#1339)") && !pond.contains("── GUARD (#1339)"), "{pond}");
+    let guarded = report_at(&cfg, &["rescore", paths[0], paths[1], "guard", "reveal", "nulls=5"], None);
+    let verdicts: Vec<&str> = guarded.lines().filter(|l| l.starts_with("  row ") && l.contains(" ; pond gain ") && !l.contains("sealed")).collect();
+    let graded = |l: &str| ["PASS", "FAIL", "INERT", "UNGRADEABLE"].iter().any(|v| l.ends_with(&format!("-> {v}")));
+    assert!(guarded.matches("── GUARD (#1339)").count() == 1 && verdicts.len() == 1 && graded(verdicts[0]), "{guarded}");
+    assert!(guarded.matches("  GUARD HOLDOUT").count() == 1, "{guarded}");
 
     std::fs::write(&grid, "{\"backtest_tr_ruler\":true}\n").expect("write grid");
     let refused = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))

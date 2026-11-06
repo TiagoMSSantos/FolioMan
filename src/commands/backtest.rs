@@ -839,6 +839,7 @@ struct Args {
     reveal: bool,
     plant: bool,
     pond: bool,
+    guard: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -891,6 +892,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("reveal") => (a_.holdout, a_.reveal) = (true, true), // (#1293) ... and print them once, apart
             _ if a.eq_ignore_ascii_case("plant") => a_.plant = true, // (#1332) rescore: how large an edge the null band sees
             _ if a.eq_ignore_ascii_case("pond") => a_.pond = true, // (#1337) rescore: ... and the top-half pond ruler
+            _ if a.eq_ignore_ascii_case("guard") => a_.guard = true, // (#1341) rescore: the (#1339) paper route's harm guard
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -1004,7 +1006,8 @@ struct Dumped {
 /// ([`print_rescore_bands`]); `nulls=0` skips that. (#1293) `holdout` drops the samples cut on or after
 /// [`HOLDOUT_FROM`] from every table, and `reveal` prints their books once, apart. (#1332) `plant` prints
 /// [`print_plant_power`] on grid row 0, after its tables. (#1337) `pond` prints [`print_pond_power`] there too.
-fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool, pond: bool) {
+/// (#1341) `guard` prints [`print_guard`], the (#1339) paper route's harm guard, after the bands.
+fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool, pond: bool, guard: bool) {
     let (years, bench, samples) = load_dump(dump);
     let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
     let mut rows = Vec::new();
@@ -1029,16 +1032,23 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         report_sized_book(&s, &bench, years, &tuning, &settings.sizing, settings.top_picks, &[]);
         let books = |s: &[Sample]| top_books(s, &bench_legs(s, &bench, years), &tuning, picks::growth_scores_ranked);
         let (graded, sealed_books) = (books(&s), books(&sealed));
+        let ranked = |s: &[Sample]| {
+            if guard { top_n_books(s, &bench_legs(s, &bench, years), &tuning, picks::growth_scores_ranked, usize::MAX) } else { Vec::new() }
+        };
+        let (ranked, ranked_sealed) = (ranked(&s), ranked(&sealed));
         if plant && rows.is_empty() {
             print_plant_power(&s, &bench, years, &tuning, nulls);
         }
         if pond && rows.is_empty() {
             print_pond_power(&s, &bench, years, &tuning, nulls);
         }
-        rows.push(Rescored { line: line.to_string(), tuning, graded, sealed: sealed_books });
+        rows.push(Rescored { line: line.to_string(), tuning, graded, sealed: sealed_books, ranked, ranked_sealed });
         last = (s, sealed);
     }
     print_rescore_bands(&rows, &last.0, &last.1, &bench, years, nulls, reveal);
+    if guard {
+        print_guard(&rows, &last.0, &last.1, &bench, years, nulls, reveal);
+    }
 }
 
 /// (#1292) One `rescore` grid row, kept for the blocks printed after the last one.
@@ -1048,6 +1058,10 @@ struct Rescored {
     /// its top-10 book per bucket on the graded samples, then on the (#1293) sealed ones
     graded: Vec<Vec<usize>>,
     sealed: Vec<Vec<usize>>,
+    /// (#1341) under `guard`, every scored name per bucket, best first, on the graded then the sealed samples;
+    /// empty otherwise
+    ranked: Vec<Vec<usize>>,
+    ranked_sealed: Vec<Vec<usize>>,
 }
 
 /// Each sample's index return over `years` from its cutoff, NaN where the index has no full window.
@@ -1538,6 +1552,101 @@ fn print_pond_power(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64
             })
             .collect();
         println!("  pond plant {x:+.1}/yr: {} ; pass {}/{PLANT_DRAWS} seeds {:?}", cells.join(" ; "), passed[e].len(), passed[e]);
+    }
+}
+
+/// (#1341) The (#1339) guard's coverage clause: the share of a ranking's stocks whose quote's fund row (the copy
+/// the scorer reads) carries every one of `factors`. Funds do not count. No factor reads 1; no stock reads 0.
+fn guard_coverage(samples: &[Sample], ranked: &[Vec<usize>], factors: &[&str]) -> f64 {
+    if factors.is_empty() {
+        return 1.0;
+    }
+    let stocks: Vec<&Quote> = ranked.iter().flatten().map(|&i| samples[i].quote.as_ref()).filter(|q| picks::asset_class(q) == 2).collect();
+    let reads = stocks.iter().filter(|q| factors.iter().all(|f| q.fund.as_ref().and_then(|x| core::select_fund_factor(x, f)).is_some())).count();
+    reads as f64 / stocks.len().max(1) as f64
+}
+
+/// (#1341) The (#1339) harm guard's read of one row, its clauses in order: coverage under half is UNGRADEABLE, no
+/// moved top-10 name is INERT, and PASS needs a pool of 80 % of row 0's or more and each (gain, band edge) pair,
+/// top-10 then pond, with the gain not under its edge. An empty null's NaN edge fails.
+fn guard_verdict(coverage: f64, moved: f64, pool: f64, top: (f64, f64), pond: (f64, f64)) -> &'static str {
+    if coverage < 0.5 {
+        "UNGRADEABLE"
+    } else if moved == 0.0 {
+        "INERT"
+    } else if pool >= 0.8 && top.0 >= top.1 && pond.0 >= pond.1 {
+        "PASS"
+    } else {
+        "FAIL"
+    }
+}
+
+/// (#1341) The GUARD block: the (#1339) paper route's harm guard, each row against row 0. Its top-10 and pond
+/// ((#1337) top half of the scored stocks) mean gains over row 0, each against the 2.5 % edge of the band the same
+/// two books gain on the `nulls` shuffles; its pool (scored names) against row 0's; the share of scored stocks its
+/// new `growth_fund_extra` terms read on; the top-10 names it moves; then [`guard_verdict`]. Under `reveal`, the two
+/// gains again on the sealed samples alone. As in the NULL BAND, the books leave the sector and corr caps out.
+#[mutants::skip] // prints only: `guard_coverage`, `guard_verdict`, `pond_books`, `null_gains` and `null_band` are graded by unit tests
+fn print_guard(rows: &[Rescored], graded: &[Sample], sealed: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, nulls: usize, reveal: bool) {
+    let Some(first) = rows.first() else { return };
+    // per row: (mean gain over row 0, its band's 2.5 % edge) for the top-10 book, then for the pond
+    let read = |samples: &[Sample], top: Vec<&[Vec<usize>]>, ranked: Vec<&[Vec<usize>]>| -> Vec<((f64, f64), (f64, f64))> {
+        let legs = bench_legs(samples, bench, years);
+        let realized: Vec<f64> = samples.iter().map(|s| s.realized).collect();
+        let ponds: Vec<Vec<Vec<usize>>> = ranked.iter().map(|r| pond_books(samples, r)).collect();
+        let one = |set: &[&[Vec<usize>]]| -> Vec<(f64, f64)> {
+            let base = search_excess(set[0], &realized, &legs, years).0;
+            set.iter()
+                .zip(null_gains(samples, &legs, years, set, nulls))
+                .map(|(b, n)| {
+                    let g = search_excess(b, &realized, &legs, years).0 - base;
+                    (g, null_band(n.iter().map(|x| x.0), g).0)
+                })
+                .collect()
+        };
+        one(&top).into_iter().zip(one(&ponds.iter().map(Vec::as_slice).collect::<Vec<_>>())).collect()
+    };
+    let pool = |r: &Rescored| r.ranked.iter().map(Vec::len).sum::<usize>() as f64;
+    let reads = read(graded, rows.iter().map(|r| r.graded.as_slice()).collect(), rows.iter().map(|r| r.ranked.as_slice()).collect());
+    println!(
+        "\n── GUARD (#1339)/(#1341): the paper route's harm guard. Each row's top-10 and pond (top half of the scored stocks) mean gain over row 0, against the 2.5 % edge of the band the same books gain on {nulls} shuffles; PASS needs both gains not under their edges, a pool of 80 % of row 0's or more, its new terms read on half the scored stocks or more (else UNGRADEABLE) and a moved top-10 name (else INERT) ──"
+    );
+    for (r, (top, pond)) in rows.iter().zip(&reads).skip(1) {
+        let new: Vec<&str> =
+            r.tuning.growth_fund_extra.iter().map(|t| t.factor.as_str()).filter(|f| !first.tuning.growth_fund_extra.iter().any(|t| t.factor == *f)).collect();
+        let (cover, share, moved) = (guard_coverage(graded, &r.ranked, &new), pool(r) / pool(first).max(1.0), swapped(&first.graded, &r.graded));
+        println!(
+            "  row {}: top-10 gain {:+.2} edge {:+.2} ; pond gain {:+.2} edge {:+.2} ; pool {:.1} % ; [{}] read on {:.1} % of scored stocks ; {moved:.2} top-10 name(s) moved a bucket -> {}",
+            r.line,
+            top.0,
+            top.1,
+            pond.0,
+            pond.1,
+            share * 100.0,
+            new.join(", "),
+            cover * 100.0,
+            guard_verdict(cover, moved, share, *top, *pond)
+        );
+    }
+    if !reveal {
+        return;
+    }
+    if sealed.is_empty() {
+        println!("  GUARD HOLDOUT: no sealed sample at this horizon");
+        return;
+    }
+    println!("  GUARD HOLDOUT (#1293), read once at ship time on the {} sealed sample(s); coverage, pool and moved names are read above", sealed.len());
+    let reads = read(sealed, rows.iter().map(|r| r.sealed.as_slice()).collect(), rows.iter().map(|r| r.ranked_sealed.as_slice()).collect());
+    for (r, (top, pond)) in rows.iter().zip(&reads).skip(1) {
+        println!(
+            "  row {}: sealed top-10 gain {:+.2} edge {:+.2} ; pond gain {:+.2} edge {:+.2} -> {}",
+            r.line,
+            top.0,
+            top.1,
+            pond.0,
+            pond.1,
+            guard_verdict(1.0, 1.0, 1.0, *top, *pond)
+        );
     }
 }
 
@@ -2177,7 +2286,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, stock_rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, pond, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, pond, guard, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -2210,7 +2319,7 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     if rescore_dump {
-        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal, plant, pond);
+        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal, plant, pond, guard);
         return;
     }
     if search_dumps {
@@ -7007,6 +7116,8 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// thread count). A leg with fewer than 2 names at a date ranks nothing; a name needs ≥2 ranked legs.
 /// (#409) Market cap ranks the same way as a fifth column, alone, into `small_pct` = 100 − its
 /// percentile, so the smallest name at a cutoff reads 100. It never enters the composite.
+/// (#1341) The earnings_yield leg's percentile, one of the four the composite averages, is also kept alone
+/// as `ey_pct` (high = cheap): the (#1339) paper route's twin of JKP's ni_me.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
 /// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
@@ -7035,6 +7146,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             let pcts: Vec<f64> = ranked[..4].iter().flatten().copied().collect();
             f.value_composite = (pcts.len() >= 2).then(|| pcts.iter().sum::<f64>() / pcts.len() as f64);
             f.small_pct = ranked[4].map(|p| 100.0 - p);
+            f.ey_pct = ranked[0];
         }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
@@ -11190,6 +11302,45 @@ mod tests {
         assert!(!neighbours_pass(&[true, false, true]) && !neighbours_pass(&[false; 3]) && !neighbours_pass(&[true]) && !neighbours_pass(&[]));
     }
 
+    /// (#1341) Coverage counts the ranked stocks whose quote's fund row carries every new factor: of three stocks
+    /// one carries both and one only `ey_pct`; the fund ranked among them carries both and does not count. No
+    /// factor reads 1, a ranking with no stock 0.
+    #[test]
+    fn guard_coverage_counts_the_stocks_carrying_every_new_factor() {
+        use crate::core::FundFactors;
+        let a = ymd(2010, 1, 5);
+        let with = |t: &str, f: Option<FundFactors>| {
+            let mut s = swap_sample(a, t, 1.0, 0.0, 0.0);
+            Arc::make_mut(&mut s.quote).fund = f;
+            s
+        };
+        let both = FundFactors { ey_pct: Some(60.0), book_yield: Some(3.0), ..Default::default() };
+        let mut samples =
+            vec![with("S0", Some(both.clone())), with("S1", Some(FundFactors { ey_pct: Some(10.0), ..Default::default() })), with("S2", None), with("E", Some(both))];
+        Arc::make_mut(&mut samples[3].quote).instrument_type = "ETF".into();
+        let ranked = [vec![3, 0, 1], vec![2]];
+        assert!((guard_coverage(&samples, &ranked, &["ey_pct", "book_yield"]) - 1.0 / 3.0).abs() < 1e-9);
+        assert!((guard_coverage(&samples, &ranked, &["ey_pct"]) - 2.0 / 3.0).abs() < 1e-9);
+        assert_eq!(guard_coverage(&samples, &ranked, &[]), 1.0, "no new factor");
+        assert_eq!(guard_coverage(&samples, &[], &[]), 1.0, "no new factor, no stock");
+        assert_eq!(guard_coverage(&samples, &[vec![3]], &["ey_pct"]), 0.0, "no ranked stock");
+    }
+
+    /// (#1341) The guard's clauses in order: thin coverage is UNGRADEABLE before anything, then no moved name is
+    /// INERT, then PASS needs the pool and both gains held, each edge itself holding; a NaN edge fails.
+    #[test]
+    fn guard_verdict_reads_the_clauses_in_order() {
+        let ok = (0.0, -0.1);
+        assert_eq!(guard_verdict(0.5, 0.1, 0.8, (-0.1, -0.1), (-0.2, -0.2)), "PASS", "every edge holds");
+        assert_eq!(guard_verdict(0.49, 0.0, 0.0, (-1.0, 0.0), ok), "UNGRADEABLE");
+        assert_eq!(guard_verdict(0.5, 0.0, 0.0, (-1.0, 0.0), ok), "INERT");
+        assert_eq!(guard_verdict(1.0, 2.0, 0.79, ok, ok), "FAIL", "a thin pool");
+        assert_eq!(guard_verdict(1.0, 2.0, 1.0, (-0.2, -0.1), ok), "FAIL", "a top-10 gain under its edge");
+        assert_eq!(guard_verdict(1.0, 2.0, 1.0, ok, (-0.2, -0.1)), "FAIL", "a pond gain under its edge");
+        assert_eq!(guard_verdict(1.0, 2.0, 1.0, (0.0, f64::NAN), ok), "FAIL", "an empty null's top-10 edge");
+        assert_eq!(guard_verdict(1.0, 2.0, 1.0, ok, (0.0, f64::NAN)), "FAIL", "an empty null's pond edge");
+    }
+
     /// (#1317) The tail of a book: nearest-rank p20 and the mean of the five worst buckets; fewer than five
     /// buckets average what there is; no bucket reads NaN, which no band calls outside.
     #[test]
@@ -11336,21 +11487,21 @@ mod tests {
         let w = || row(2, "W", Some(9.0), Some(9.0), None, None, 50.0);
         let stamped = |mut v: Vec<Sample>| {
             stamp_cohort_ranks(&mut v);
-            let mut out: Vec<(String, Option<f64>, Option<f64>)> = v
+            let mut out: Vec<(String, Option<f64>, Option<f64>, Option<f64>)> = v
                 .iter()
                 .map(|s| {
                     let f = s.fund.as_ref().unwrap();
-                    (s.quote.ticker.clone(), f.value_composite, f.small_pct)
+                    (s.quote.ticker.clone(), f.value_composite, f.small_pct, f.ey_pct)
                 })
                 .collect();
             out.sort_by(|a, b| a.0.cmp(&b.0));
             out
         };
         let want = vec![
-            ("W".into(), None, None),
-            ("X".into(), Some(50.0), Some(0.0)),
-            ("Y".into(), Some(75.0), Some(100.0)),
-            ("Z".into(), None, Some(50.0)),
+            ("W".into(), None, None, None),
+            ("X".into(), Some(50.0), Some(0.0), Some(100.0)),
+            ("Y".into(), Some(75.0), Some(100.0), Some(50.0)),
+            ("Z".into(), None, Some(50.0), Some(0.0)),
         ];
         assert_eq!(stamped(vec![x(), y(), z(), w()]), want);
         assert_eq!(stamped(vec![z(), x(), y(), w()]), want);
@@ -12384,6 +12535,7 @@ mod tests {
         assert!(p("reveal").holdout && p("reveal").reveal && p("reveal").tickers.is_empty(), "(#1293) `reveal` seals them too and prints them apart");
         assert!(p("plant").plant && p("PLANT").plant && !p("holdout").plant && !p("plant").holdout && p("plant").tickers.is_empty(), "(#1332) `plant` is a keyword, not a ticker");
         assert!(p("pond").pond && p("POND").pond && !p("plant").pond && !p("pond").plant && p("pond").tickers.is_empty(), "(#1337) `pond` is a keyword, not a ticker");
+        assert!(p("guard").guard && p("GUARD").guard && !p("pond").guard && !p("guard").pond && p("guard").tickers.is_empty(), "(#1341) `guard` is a keyword, not a ticker");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -12420,7 +12572,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant pond time");
+        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant pond guard time");
         assert_eq!(
             all,
             Args {
@@ -12460,6 +12612,7 @@ mod tests {
                 reveal: true,
                 plant: true,
                 pond: true,
+                guard: true,
                 time: true,
                 tickers: vec![]
             }
