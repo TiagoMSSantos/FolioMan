@@ -304,7 +304,8 @@ def targets(root):
                 if not l.startswith("#") and not l.startswith("ticker,"):
                     tk, month = l.split(",", 2)[:2]
                     last[tk] = max(last.get(tk, ""), month)
-    rows = {r["ticker"]: r for r in csv.DictReader(x for x in open(os.path.join(root, "tests/dead-roster.csv")) if not x.startswith("#"))}
+    with open(os.path.join(root, "tests/dead-roster.csv")) as fh:
+        rows = {r["ticker"]: r for r in csv.DictReader(x for x in fh if not x.startswith("#"))}
     mapped = i5.cik_map(root)
     out = {}
     for tk in sorted(last):
@@ -423,7 +424,8 @@ def main():
     p.add_argument("--selftest", action="store_true")
     a = p.parse_args()
     if a.selftest:
-        return selftest()
+        selftest()
+        return
     if not a.cache:
         p.error("--cache is required")
     build(a)

@@ -221,7 +221,8 @@ def own_rows(series, by_cik):
 def pond(history, tickers):
     """{cik: [ticker, ...]} for the bare-ticker EQUITY series in the long price cache that SEC maps.
     Streamed entry by entry: the cache is too big to hold parsed whole."""
-    txt = open(history, "rb").read().decode("utf-8", "replace")
+    with open(history, "rb") as fh:
+        txt = fh.read().decode("utf-8", "replace")
     dec = json.JSONDecoder()
     i, n, out = txt.index("{") + 1, len(txt), collections.defaultdict(list)
     while i < n:

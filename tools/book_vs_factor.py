@@ -61,7 +61,8 @@ def load_levels(path):
 
 def load_cache_levels(path, symbol="^GSPC"):
     """The fixture/long cache's adjusted closes for `symbol` -> {month key: level}."""
-    d = json.load(open(path))
+    with open(path) as fh:
+        d = json.load(fh)
     r = d[symbol][1]["chart"]["result"][0]
     out = {}
     for t, c in zip(r["timestamp"], r["indicators"]["adjclose"][0]["adjclose"]):
@@ -195,7 +196,8 @@ class Tests(unittest.TestCase):
         path = os.path.join(here, "..", "tests", "fixture", "backtest-12-pit.golden")
         if not os.path.exists(path):
             self.skipTest("no fixture here")
-        rows = rr.parse_rows(open(path).read(), "pit")
+        with open(path) as fh:
+            rows = rr.parse_rows(fh.read(), "pit")
         bench = {m: 100 * 1.07 ** ((m - 1990 * 12) / 12.0) for m in range(1990 * 12, 2027 * 12)}
         factor = {m: 100 * 1.09 ** ((m - 1990 * 12) / 12.0) for m in range(1990 * 12, 2027 * 12)}
         rep = reprice(rows[0]["books"], rows[0]["years"], bench, factor)

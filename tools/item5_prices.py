@@ -332,14 +332,15 @@ def cik_map(root, path="tests/ticker-cik.csv"):
     p = os.path.join(root, path)
     if not os.path.exists(p):
         return {}
-    rows = csv.DictReader(x for x in open(p) if not x.startswith("#"))
-    return {r["ticker"]: r["cik"] for r in rows if r.get("cik")}
+    with open(p) as fh:
+        return {r["ticker"]: r["cik"] for r in csv.DictReader(x for x in fh if not x.startswith("#")) if r.get("cik")}
 
 
 def targets(root, roster="tests/dead-roster.csv", before="2014"):
     """{ticker: cik} of roster names that need this source: an exit before `before` with no free series, keyed by
     the roster's CIK, else (#1319) `tests/ticker-cik.csv`'s, else the hand `Q` map."""
-    rows = list(csv.DictReader(x for x in open(os.path.join(root, roster)) if not x.startswith("#")))
+    with open(os.path.join(root, roster)) as fh:
+        rows = list(csv.DictReader(x for x in fh if not x.startswith("#")))
     mapped = cik_map(root)
     out = {}
     for r in rows:
@@ -395,10 +396,12 @@ def brd_cases(path):
 
 def build(args):
     root = args.root
-    spans = json.load(open(os.path.join(root, ".sp500_history.json")))
+    with open(os.path.join(root, ".sp500_history.json")) as fh:
+        spans = json.load(fh)
     yahoo = {}
     if os.path.exists(args.yahoo):
-        yahoo = json.load(open(args.yahoo))
+        with open(args.yahoo) as fh:
+            yahoo = json.load(fh)
     else:
         print("warning: no %s, Yahoo exclusion skipped" % args.yahoo, file=sys.stderr)
     brd = brd_cases(args.brd) if args.brd else {}
@@ -436,7 +439,7 @@ def build(args):
         if gap > 15:  # the walk refuses a dead series that stops before the exit
             report.append((tk, "ends %d months before the exit" % gap))
             continue
-        pad = (ex.year, ex.month) if 0 < gap <= 15 else None
+        pad = (ex.year, ex.month) if gap > 0 else None
         rows = monthly(s, pad)
         term = ""
         cases = brd.get(cik.lstrip("0"), []) if tk not in NO_TERMINAL else []
