@@ -372,6 +372,12 @@ fn rescore_reprints_the_golden_books_from_a_dump() {
     for top in [10, 20, 30, 50] {
         assert_eq!(edges.iter().filter(|l| l.starts_with(&format!("  top {top} plant +"))).count(), 4, "{planted}");
     }
+    // (#1337) the POND block likewise: only on `pond`, and then once, on row 0, one line per planted edge
+    assert!(!got.contains("── POND (#1337)") && !planted.contains("── POND (#1337)"), "{planted}");
+    let pond = report_at(&cfg, &["rescore", paths[0], paths[1], "pond", "nulls=5"], None);
+    let edges: Vec<&str> = pond.lines().filter(|l| l.starts_with("  pond plant +")).collect();
+    assert!(pond.matches("── POND (#1337)").count() == 1 && edges.len() == 3 && edges.iter().all(|l| l.contains(" ; pass ")), "{pond}");
+    assert!(!pond.contains("── PLANT (#1332)"), "{pond}");
 
     std::fs::write(&grid, "{\"backtest_tr_ruler\":true}\n").expect("write grid");
     let refused = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))

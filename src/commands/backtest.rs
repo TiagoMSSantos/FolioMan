@@ -838,6 +838,7 @@ struct Args {
     holdout: bool,
     reveal: bool,
     plant: bool,
+    pond: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -889,6 +890,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("holdout") => a_.holdout = true, // (#1293) drop the samples cut on or after HOLDOUT_FROM
             _ if a.eq_ignore_ascii_case("reveal") => (a_.holdout, a_.reveal) = (true, true), // (#1293) ... and print them once, apart
             _ if a.eq_ignore_ascii_case("plant") => a_.plant = true, // (#1332) rescore: how large an edge the null band sees
+            _ if a.eq_ignore_ascii_case("pond") => a_.pond = true, // (#1337) rescore: ... and the top-half pond ruler
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -1001,8 +1003,8 @@ struct Dumped {
 /// (#1292) After the last row, `nulls` shuffles price each row's top-10 gain over row 0 against noise
 /// ([`print_rescore_bands`]); `nulls=0` skips that. (#1293) `holdout` drops the samples cut on or after
 /// [`HOLDOUT_FROM`] from every table, and `reveal` prints their books once, apart. (#1332) `plant` prints
-/// [`print_plant_power`] on grid row 0, after its tables.
-fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool) {
+/// [`print_plant_power`] on grid row 0, after its tables. (#1337) `pond` prints [`print_pond_power`] there too.
+fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool, pond: bool) {
     let (years, bench, samples) = load_dump(dump);
     let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
     let mut rows = Vec::new();
@@ -1029,6 +1031,9 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         let (graded, sealed_books) = (books(&s), books(&sealed));
         if plant && rows.is_empty() {
             print_plant_power(&s, &bench, years, &tuning, nulls);
+        }
+        if pond && rows.is_empty() {
+            print_pond_power(&s, &bench, years, &tuning, nulls);
         }
         rows.push(Rescored { line: line.to_string(), tuning, graded, sealed: sealed_books });
         last = (s, sealed);
@@ -1420,6 +1425,119 @@ fn print_plant_power(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f6
                 .collect();
             println!("  top {top} plant {x:+.1}/yr: {} ; pass {}/{PLANT_DRAWS} seeds {:?}", cells.join(" ; "), passed[e].len(), passed[e]);
         }
+    }
+}
+
+/// (#1337) `pond`: the edges planted, in %/yr. A zero edge plants nothing, so its passes are false alarms.
+const POND_EDGES: [f64; 3] = [0.0, 2.0, 4.0];
+
+/// (#1337) The pond ruler's book per bucket: the top half, rounded up, of the stocks in a [`top_n_books`]
+/// ranking, best score first. Funds leave; the ranking already dropped coins, legless and unscored names.
+fn pond_books(samples: &[Sample], ranked: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    ranked
+        .iter()
+        .map(|b| {
+            let mut stocks: Vec<usize> = b.iter().copied().filter(|&i| picks::asset_class(&samples[i].quote) == 2).collect();
+            stocks.truncate(stocks.len().div_ceil(2));
+            stocks
+        })
+        .collect()
+}
+
+/// (#1337) The pond ruler's read of one row: its mean gain over the shipped half wins and sits outside its null
+/// band, and the top-10 book's mean gain is not under its own band's low edge. An empty null passes nothing.
+fn pond_row_passes(pond_null: &[(f64, f64)], pond_gain: f64, book_null: &[(f64, f64)], book_gain: f64) -> bool {
+    pond_gain > 0.0 && null_band(pond_null.iter().map(|g| g.0), pond_gain).2 && book_gain >= null_band(book_null.iter().map(|g| g.0), book_gain).0
+}
+
+/// (#1337) A draw passes one horizon when two neighbouring rows pass (10+20 % or 20+40 %), as the ship rule
+/// asks two neighbouring weights to.
+fn neighbours_pass(rows: &[bool]) -> bool {
+    rows.windows(2).any(|w| w[0] && w[1])
+}
+
+/// (#1337) The POND block: whether the pond ruler sees a planted edge. As in [`print_plant_power`], each draw
+/// plants +X %/yr ([`POND_EDGES`]) on about one stock in five and builds rows lifting a planted name's score by
+/// [`PLANT_NUDGES`]. Here a row is graded on the top half of the scored stocks ([`pond_books`]) against the
+/// shipped half, with the top-10 book as a guard ([`pond_row_passes`]), on the same `nulls` shuffles the band
+/// uses. A draw passes X at this horizon when two neighbouring rows pass ([`neighbours_pass`]); the 12y AND 8y
+/// read intersects the seed lists of the two logs.
+#[mutants::skip] // prints only: `pond_books`, `pond_row_passes`, `neighbours_pass` and the plant helpers are graded by unit tests
+fn print_pond_power(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic, nulls: usize) {
+    let legs = bench_legs(samples, bench, years);
+    let top10 = |r: &Vec<Vec<usize>>| -> Vec<Vec<usize>> { r.iter().map(|b| b.iter().take(VERDICT_TOP).copied().collect()).collect() };
+    let ranked = top_n_books(samples, &legs, tuning, picks::growth_scores_ranked, usize::MAX);
+    let (pond, book) = (pond_books(samples, &ranked), top10(&ranked));
+    let size = pond.iter().map(Vec::len).sum::<usize>() as f64 / pond.len().max(1) as f64;
+    println!(
+        "\n── POND (#1337): the pond ruler's eyesight. Each of {PLANT_DRAWS} draws plants +X %/yr on about 1 stock in 5 and grades rows lifting a planted name's score 10/20/40 % on the top half of the scored stocks ({size:.1} names a bucket, {} buckets) against the shipped half on {nulls} shuffles; a row passes when its mean gain wins and sits OUTSIDE and the top-10 book's mean gain is not under its band; a draw passes X when two neighbouring rows pass ──",
+        pond.len()
+    );
+    let mut moved = [0.0; PLANT_NUDGES.len()];
+    // per edge and row: the summed pond gain, pond band top, top-10 gain, top-10 band low; rows passing
+    let mut sums = [[[0.0; 4]; PLANT_NUDGES.len()]; POND_EDGES.len()];
+    let mut outs = [[0; PLANT_NUDGES.len()]; POND_EDGES.len()];
+    let mut passed = vec![Vec::new(); POND_EDGES.len()];
+    for seed in 1..=PLANT_DRAWS {
+        let rows: Vec<Vec<Vec<usize>>> = PLANT_NUDGES
+            .iter()
+            .map(|&t| {
+                top_n_books(
+                    samples,
+                    &legs,
+                    tuning,
+                    |qs, tu| {
+                        let scores = picks::growth_scores_ranked(qs, tu);
+                        scores.into_iter().zip(qs).map(|(v, &q)| v.map(|v| if planted(q, seed) { v + t * v.abs() } else { v })).collect()
+                    },
+                    usize::MAX,
+                )
+            })
+            .collect();
+        let ponds: Vec<Vec<Vec<usize>>> = rows.iter().map(|r| pond_books(samples, r)).collect();
+        let tops: Vec<Vec<Vec<usize>>> = rows.iter().map(top10).collect();
+        for (m, p) in moved.iter_mut().zip(&ponds) {
+            *m += swapped(&pond, p) / PLANT_DRAWS as f64;
+        }
+        let pond_set: Vec<&[Vec<usize>]> = std::iter::once(pond.as_slice()).chain(ponds.iter().map(Vec::as_slice)).collect();
+        let book_set: Vec<&[Vec<usize>]> = std::iter::once(book.as_slice()).chain(tops.iter().map(Vec::as_slice)).collect();
+        for (e, &x) in POND_EDGES.iter().enumerate() {
+            let mut s = samples.to_vec();
+            for p in s.iter_mut().filter(|p| planted(&p.quote, seed)) {
+                p.realized = plant_return(p.realized, x, years);
+            }
+            let realized: Vec<f64> = s.iter().map(|p| p.realized).collect();
+            let (pond_null, book_null) = (null_gains(&s, &legs, years, &pond_set, nulls), null_gains(&s, &legs, years, &book_set, nulls));
+            let (pond_base, book_base) = (search_excess(&pond, &realized, &legs, years).0, search_excess(&book, &realized, &legs, years).0);
+            let mut pass = [false; PLANT_NUDGES.len()];
+            for (j, row) in pass.iter_mut().enumerate() {
+                let pond_gain = search_excess(&ponds[j], &realized, &legs, years).0 - pond_base;
+                let book_gain = search_excess(&tops[j], &realized, &legs, years).0 - book_base;
+                let (_, band_top, _) = null_band(pond_null[j + 1].iter().map(|g| g.0), pond_gain);
+                let (band_low, _, _) = null_band(book_null[j + 1].iter().map(|g| g.0), book_gain);
+                for (acc, v) in sums[e][j].iter_mut().zip([pond_gain, band_top, book_gain, band_low]) {
+                    *acc += v / PLANT_DRAWS as f64;
+                }
+                *row = pond_row_passes(&pond_null[j + 1], pond_gain, &book_null[j + 1], book_gain);
+                outs[e][j] += usize::from(*row);
+            }
+            if neighbours_pass(&pass) {
+                passed[e].push(seed);
+            }
+        }
+    }
+    let lifts: Vec<String> = PLANT_NUDGES.iter().zip(&moved).map(|(t, m)| format!("+{:.0} % {m:.1}", t * 100.0)).collect();
+    println!("  pond: names swapped into each bucket's half, mean over draws: {}", lifts.join(" | "));
+    for (e, x) in POND_EDGES.iter().enumerate() {
+        let cells: Vec<String> = PLANT_NUDGES
+            .iter()
+            .enumerate()
+            .map(|(j, t)| {
+                let [pg, pt, bg, bl] = sums[e][j];
+                format!("+{:.0} % gain {pg:+.2} band top {pt:+.2} top-10 {bg:+.2} band low {bl:+.2} row {}/{PLANT_DRAWS}", t * 100.0, outs[e][j])
+            })
+            .collect();
+        println!("  pond plant {x:+.1}/yr: {} ; pass {}/{PLANT_DRAWS} seeds {:?}", cells.join(" ; "), passed[e].len(), passed[e]);
     }
 }
 
@@ -2059,7 +2177,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, stock_rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, pond, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -2092,7 +2210,7 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     if rescore_dump {
-        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal, plant);
+        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal, plant, pond);
         return;
     }
     if search_dumps {
@@ -11040,6 +11158,38 @@ mod tests {
         assert!(!outside_up(&[], (5.0, 5.0)), "an empty null is never outside");
     }
 
+    /// (#1337) The pond is the top half of a ranking's stocks, rounded up, best first: five stocks keep three and
+    /// the fund ranked among them leaves; two keep one, one keeps itself, an empty bucket stays empty.
+    #[test]
+    fn pond_books_keep_the_top_half_of_the_ranked_stocks() {
+        let a = ymd(2010, 1, 5);
+        let mut samples: Vec<Sample> = (0..6).map(|k| swap_sample(a, &format!("S{k}"), 1.0, 0.0, 0.0)).collect();
+        Arc::make_mut(&mut samples[2].quote).instrument_type = "ETF".into();
+        let ranked = [vec![5, 2, 0, 4, 1, 3], vec![3, 4], vec![1], vec![]];
+        assert_eq!(pond_books(&samples, &ranked), [vec![5, 0, 4], vec![3], vec![1], vec![]]);
+    }
+
+    /// (#1337) A row passes only on a winning pond gain outside its band AND a top-10 gain not under the book
+    /// band's low edge, the edge itself holding; an empty null passes nothing.
+    #[test]
+    fn pond_row_passes_needs_a_winning_outside_pond_and_a_held_book() {
+        let g: Vec<(f64, f64)> = (0..=40).map(|k| (k as f64 * 0.05 - 1.0, 0.0)).collect();
+        let lo = null_band(g.iter().map(|x| x.0), 0.0).0;
+        assert!(pond_row_passes(&g, 2.0, &g, 0.0) && pond_row_passes(&g, 2.0, &g, lo), "the book band's low edge holds");
+        assert!(!pond_row_passes(&g, 0.5, &g, 0.0), "a pond gain inside its band");
+        assert!(!pond_row_passes(&g, -2.0, &g, 0.0), "a pond loss outside its band");
+        assert!(!pond_row_passes(&g, 2.0, &g, lo - 0.01), "a top-10 book under its band");
+        assert!(!pond_row_passes(&[(1.0, 0.0); 41], 0.0, &g, 0.0), "a zero gain is no win, outside or not");
+        assert!(!pond_row_passes(&[], 5.0, &g, 0.0) && !pond_row_passes(&g, 2.0, &[], 0.0), "an empty null passes nothing");
+    }
+
+    /// (#1337) Two adjacent rows must pass; two passing rows apart, or fewer than two rows, do not.
+    #[test]
+    fn neighbours_pass_needs_two_adjacent_rows() {
+        assert!(neighbours_pass(&[true, true, false]) && neighbours_pass(&[false, true, true]) && neighbours_pass(&[true; 3]));
+        assert!(!neighbours_pass(&[true, false, true]) && !neighbours_pass(&[false; 3]) && !neighbours_pass(&[true]) && !neighbours_pass(&[]));
+    }
+
     /// (#1317) The tail of a book: nearest-rank p20 and the mean of the five worst buckets; fewer than five
     /// buckets average what there is; no bucket reads NaN, which no band calls outside.
     #[test]
@@ -12233,6 +12383,7 @@ mod tests {
         assert!(p("holdout").holdout && !p("holdout").reveal && p("HOLDOUT").holdout && !p("search").holdout, "(#1293) `holdout` seals the 2016-on samples");
         assert!(p("reveal").holdout && p("reveal").reveal && p("reveal").tickers.is_empty(), "(#1293) `reveal` seals them too and prints them apart");
         assert!(p("plant").plant && p("PLANT").plant && !p("holdout").plant && !p("plant").holdout && p("plant").tickers.is_empty(), "(#1332) `plant` is a keyword, not a ticker");
+        assert!(p("pond").pond && p("POND").pond && !p("plant").pond && !p("pond").plant && p("pond").tickers.is_empty(), "(#1337) `pond` is a keyword, not a ticker");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -12269,7 +12420,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant time");
+        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant pond time");
         assert_eq!(
             all,
             Args {
@@ -12308,6 +12459,7 @@ mod tests {
                 holdout: true,
                 reveal: true,
                 plant: true,
+                pond: true,
                 time: true,
                 tickers: vec![]
             }

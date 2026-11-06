@@ -25882,6 +25882,38 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # DECISION, per the (#1334) bands: the (#1333) freeze stands and the bar work ends. No book size becomes a bar, no
 #   lead is re-graded and no round hunts for one. A buy rule reopens only on 12 monthly links of the (#1239)
 #   forward record. `plant` keeps its four sizes as a record. Nothing moves: no knob, no golden, no page.
+# (#1337) POND RULER EYESIGHT, PRE-REGISTERED 2026-11-06 before any run. Row: (#1338).
+# WHY: (#1333) and (#1335) found the null-band bar blind to +4 %/yr planted on one stock in five, at books of 10, 20,
+#   30 and 50 names: a tilt swaps 1 to 5 names and each swap brings one stock's noise. The owner asked how a backtest
+#   can tell a real improvement from luck. This test grades a ruler that reads many more names: the top half of the
+#   scored stocks in each half-year bucket, about 85 to 95 names, equal weight, long-only, against the shipped half.
+# TEST: `backtest rescore <dump> <grid> pond`, built on (#1332)'s `plant`: 20 draws (seeds 1-20) plant +X %/yr on
+#   the same hashed fifth of the stocks, for X = 0, 2 and 4 (X = 0 plants nothing, so its passes are false alarms).
+#   The rows lift each planted name's score by 10, 20 and 40 %. Each row is ranked once; its pond is the top half,
+#   rounded up, of the stocks in that ranking, and its top-10 book is the head of the same ranking. Row 0 is the
+#   shipped scorer on grid row 0's tuning. The bands are (#1292)'s within-(bucket, class) shuffles of the planted
+#   returns, 200 of them, one band for the ponds and one for the top-10 books. Funds and coins are never planted
+#   and leave the pond. The (#1293) holdout stays sealed (`holdout`), so the 8y leg reads only the samples before
+#   2016.
+# PASS, one row: its pond mean gain over row 0's pond is above 0 and sits OUTSIDE the pond band, AND its top-10 mean
+#   gain over row 0's book is not under the 2.5 % edge of the top-10 band. The median is not read. One draw passes a
+#   horizon when two neighbouring rows pass (10 + 20 % or 20 + 40 %), and passes X when it does so at 12y AND at 8y:
+#   each horizon prints its passing seeds and a reader intersects them. 20y is not graded.
+# BANDS, fixed now, the owner's choice: ADOPT when X = 2 passes on 16 of 20 draws or more AND X = 0 passes on 1 or
+#   fewer. Anything else is REFUSE: the (#1333) freeze stands, the lane ends, the numbers are recorded, and no ruler
+#   variant (another share of the pond, another statistic, more draws) is tried.
+# NEW SHIP RULE IF ADOPTED, fixed now: a buy-rule candidate ships when, at 12y AND at 8y, its pond mean gain wins and
+#   sits OUTSIDE the pond band, its top-10 mean gain is not under the 2.5 % edge of its band, its pool holds at least
+#   80 % of the control's, and two neighbouring weights pass (the looser one ships). Then `reveal` reads the sealed
+#   2016-on 8y samples once: the pond mean gain there must be above 0, or the candidate is a TIE. The worst-window
+#   -0.5 clause and the rank-1 head-to-head clause are dropped. Only leads whose own evidence claims at least 2 %/yr
+#   are graded on it: founder-led firms (4.4) and best employers (3.5), both needing hand-built data, a separate
+#   ask. Leads refused at about 0.8 %/yr stay closed.
+# RUN: one probe on main, `years="12 8" args="universe fund pit"`, grid=[{}], rescore="pond holdout".
+# EXPECTED: REFUSE. The pond holds 85 to 95 names a bucket. Its band top on the 40 % row sits near +0.23 %/yr at 12y
+#   ((#1335)'s top-50 +0.32, narrowed by the square root of the width). X = 4 passes on more than half the draws,
+#   X = 2 on 3 to 8 and X = 0 on 1 or fewer. The odds of the adopt band are about 1 in 4.
+# REVERT RULE: record only; `pond` prints one block and changes no book, no knob and no page.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
