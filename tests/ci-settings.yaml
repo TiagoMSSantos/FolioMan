@@ -26080,6 +26080,25 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   UNGRADEABLE is unlikely: earnings_yield reads on most stock samples in the pit fund walk.
 # REVERT RULE: `guard` and `ey_pct` are record only. `guard` is off by default and `ey_pct` enters no shipped term,
 #   so no book, knob, golden or page moves.
+# (#1342) VERDICT, 2026-11-06, on (#1341), record only: ni_me reads UNGRADEABLE at 12y AND at 8y, so it is REFUSED as
+#   the rule reads. Probe run 42282073705 on 9cef347, rescore="guard holdout", 200 shuffles. GUARD row 1:
+#   horizon  top-10 gain / edge  pond gain / edge  pool     ey_pct reads on  top-10 moved  verdict
+#   12y      -0.01 / -0.29       +0.04 / -0.12     100.0 %  21.5 %           0.39          UNGRADEABLE
+#   8y       +0.07 / -0.34       -0.01 / -0.10     100.0 %  25.8 %           0.45          UNGRADEABLE
+#   The gain and pool clauses would pass, but the coverage clause comes first and reads under half.
+# WHY THE COVERAGE IS LOW: TIME, NOT WIRING. A census of the probe's own dumps (every stock sample, by cutoff year)
+#   finds no SEC fact before 2010. ey_pct reads on 0 % of stocks in 1996-2009, 41 % in 2010, then 74-86 % in each
+#   year from 2011. The walk's factor table agrees: at 12y earnings_yield has n 2639, as wide as the widest SEC
+#   factor (net_margin, 2705). The twin is wired: `stamp_cohort_ranks` copies it into the quote before the dump.
+# THE SAME WALL BLOCKS THE REST OF THE CLUSTER, with no run needed. Over all 12y stock samples the twins' inputs
+#   read on: book_yield 22.9 %, fcf_cap_yield 20.0 %, sales_ev_yield 24.1 %, ebitda_yield 19.8 %, buyback_yield
+#   24.0 % (ey_pct 25.0 %, which the guard's scored-stock count puts at 21.5 %). So be_me, fcf_me, sale_me, ocf_me,
+#   chcsho_12m and ebitda_mev are all UNGRADEABLE as (#1339) reads, and the route as written ships nothing in Value.
+# ALSO SEEN: before 2010 the missing twin fills at its neutral, +1.5 points on every stock. That constant lands
+#   before the score's multipliers (the (#59) note in `growth_score`), so it reorders a few names for no ni_me
+#   reason. The full-span gains above carry that noise, so they are not a clean read of ni_me either.
+# AGAINST EXPECTED: wrong. (#1341) called UNGRADEABLE unlikely; it counted samples, not the years they cover.
+# NEXT: the Value cluster waits on the owner's call. The sealed 2016-on 8y samples (82-86 % coverage) stay unread.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
