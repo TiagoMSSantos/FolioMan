@@ -26157,6 +26157,59 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   SHA. Until then `report_is_pinned` reads red on this push, and its mutants legs grade nothing.
 # CLUSTER RULE: Value is now closed. be_me, fcf_me, sale_me, ocf_me, chcsho_12m and ebitda_mev are not graded.
 # REVERT RULE: the (#1339) pull rule. Only a newer JKP release re-grades the term; a fail there removes it.
+# (#1346) THE PAPER ROUTE ON JKP'S 2026 RELEASE, PRE-REGISTERED 2026-11-06 before any portfolio return of the new
+#   release was read. Row: (#1347).
+# WHY: JKP published a new data release, a Python rewrite on S3, with months to 2025-12: 12 more than the 2025-03-05
+#   set (#1339) pinned. The (#1339) PULL RULE takes a ship off "when a newer JKP release fails its proof", so the
+#   shipped ey_pct term (#1345) must pass again, and the other 41 ideas get the same new read.
+# DATA: https://jkpfactors-data.s3.amazonaws.com, manifest public/availability.json, Last-Modified 2026-08-04.
+#   - Legs and be_me: public/portfolios/[<c>]_[all_factors]_[monthly]_[vw_cap].zip (brackets URL-encoded), one
+#     file per country in USA + DEV, 23 files. Each holds one csv: location,name,pf,n,freq,weighting,date,ret.
+#   - Market: public/[all_countries]_[mkt]_[monthly]_[vw_cap].zip. Its one return, `ret`, is USD excess.
+#   - Weights and the old market columns: the pinned (#1339) market_returns.csv.
+#   md5: market_returns.csv c6d16b139912935e388caa2085c6faac, mkt.zip c229192c868213a1c7c624ddf51a0f67;
+#   pf/<c>.zip:
+#   aus ac7698e23768602a065e8dd450e94f6f, aut 5ff5e5b8d0369c50ca5233da28b1e1cc, bel 2338a33404edc84c427a8b93d9413edf,
+#   can 1844882f379ed2ebef823bf83a7843c8, che 9f30e1bb7f6b373b8790743da6f4fe96, deu a98d053c653ad2bcf51063b0f1d8a8d8,
+#   dnk 14aaadb5d77cebf4c8f1a469fe7cf99a, esp dcb6154eedbf43afbedd68c62c29735d, fin 6f90a11f0b2994298b1090b27e1b27f1,
+#   fra ec90b9d3fffadb80c71c42168f4b235b, gbr 6371e660a1fb03659463228f2bae4f27, hkg 31b496c961cb88bf703d8cbe451cdb74,
+#   irl b29d0cf49df2ce999487d7f8e18070b1, isr a6da4f36acf04a8beb5bfe3a1ad7668f, ita ddc21bb8d5674f2b67b1b7e3ac46c543,
+#   jpn 483b9bc9b561747328533bccc2eb3db7, nld 4cfce4f48c19ea884d3b5febc98b2349, nor ab7f33869aae914f715d1cdb1d90c3ae,
+#   nzl 9451d888974b39283778fa7607e6a005, prt 8c809110efaa210510a6cd04c249de4a, sgp 7897a0f9cef60812da055d26f7c226c5,
+#   swe 13b3f0cea3f1515dba216f39deec3402, usa 144d8f56f92665caa7457f2f84c017e7.
+# RULES: the (#1339) menu, order and bars, unchanged. The same 42 ideas; t >= 1.96 in BOTH regions; a post-
+#   publication mean above 0; at least 60 post months, else UNGRADEABLE; at least 5 names per country-month.
+#   - Developed ex-US weights: each country's me_lag1 from the old file. The 2025 months hold the country's
+#     2024-12-31 weight. A country-month with no old weight drops out.
+#   - Unit checks (i) and (ii) run unchanged on the overlap (to 2024-12): the new be_me portfolios against the old
+#     market columns. New check (iii): over the overlap, the new market return must sit nearer (RMS) the old
+#     mkt_vw_cap_exc than the old mkt_vw_cap_lcl. All three must pick USD excess, and every month is then graded on
+#     the new release's own return. Any other pick reads UNGRADEABLE, since the new file has no other column.
+#     Already measured on the market files alone: RMS to exc 0.0003-0.0037 in usa, jpn, deu, gbr and can; to lcl
+#     0.021-0.031.
+#   - Portugal has no rd_me, rd_sale or rd5_at. Those country-months drop out, like any missing cell.
+#   - The cluster rule applies as written: one ship per cluster, guarded in menu order, each on top of the ships
+#     before it. A passer the guard refuses leaves its cluster open.
+# BRANCHES, one probe at a time, in menu order:
+#   - ni_me PASSES: ey_pct stays, and Value stays taken.
+#   - ni_me FAILS: the pull rule removes ey_pct, after one owner question since the page moves. The 4 term lines
+#     go, the config pin goes back to 2 terms, and the goldens re-bless. Value then reopens: the next Value passer
+#     gets the full (#1339) guard, the sealed 2016-on 8y years included. Its receipt says those years were read
+#     once before, for ni_me (probe 42286340556).
+#   - Each passer in an open cluster gets its own pre-registration, twin and guard probe, then `reveal` once on a
+#     guard PASS, then one owner question on a ship. A twin built from SEC facts grades 2011+ (`sec`, #1343); a
+#     twin built from prices grades the full span.
+#   - Momentum is open: the (#584) interleave is its own lane, not a paper-route ship. A momentum passer's twin is
+#     the same-date percentile of the 12-1 price return, graded on the full span.
+# RUN: `python3 -I -B tools/jkp_proof.py <dir>` once, on a dir holding the 25 files above as pf/<c>.zip, mkt.zip
+#   and market_returns.csv. CI grades the tool's new loader through its --selftest in the "Tool selftests" step.
+# RE-CHECK: no CI watcher. At the start of each buy-rule session, a HEAD request on public/availability.json
+#   compares Last-Modified with 2026-08-04. A newer date is a newer release, and this receipt's procedure runs again.
+# EXPECTED: 12 more months move each full-sample t only a little, so most rows keep their (#1340) verdict: 6 to 9
+#   of the 42 pass. ni_me passes again (old t 4.08 US, 2.26 DEV). ret_12_1 in developed ex-US is a coin flip (old t
+#   1.9567). The rewrite may move old months a little too; a t that moves by more than 0.5 gets its loader path
+#   checked before the verdict is written. New guard probes: 0 to 2.
+# REVERT RULE: the proof is record only. A pull or a ship lands under its own receipt and the (#1339) rules.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

@@ -23,12 +23,25 @@ three-portfolio mean confirm it before any premium is printed: over developed ex
 closer (RMS) to the USD market than to the local one; and in the US its gap to the raw market, regressed on the
 risk-free rate (raw minus excess market), must have a slope nearer -1 (excess) than 0 (raw).
 
-Usage: python3 -I -B tools/jkp_proof.py <dir holding pfs.csv and market_returns.csv>
+(#1346) JKP's 2026 release (S3 bucket jkpfactors-data, Last-Modified 2026-08-04, months to 2025-12) ships one
+zip per country (`pf/<c>.zip`) and one market file (`mkt.zip`) whose only return is USD excess. A dir holding
+`mkt.zip` reads that layout: the legs and be_me come from the new zips; the market columns for checks (i) and (ii)
+and every `me_lag1` weight come from the pinned old `market_returns.csv`, a 2025 month holding the country's
+2024-12-31 weight. Check (iii) confirms the new return sits nearer the old USD excess market than the local one;
+the gaps are then graded on the new return (`ret_2026`).
+
+Usage: python3 -I -B tools/jkp_proof.py <dir holding pfs.csv (or mkt.zip and pf/*.zip) and market_returns.csv>
+       python3 -I tools/jkp_proof.py --selftest
 Stdlib only. The data is downloaded and untrusted: it is parsed as numbers and text, never executed.
 """
 import csv
+import glob
+import io
 import math
+import os
 import sys
+import tempfile
+import zipfile
 from collections import defaultdict
 
 # (name, publication year, JKP direction, Kelly-Pedersen cluster), in (#1339) order: year, then name.
@@ -53,6 +66,9 @@ MENU = [
 DEV = ("JPN HKG GBR CAN AUS DEU FRA SWE CHE SGP ITA ESP ISR NLD NOR BEL DNK FIN NZL AUT IRL PRT").split()
 MIN_N, MIN_POST, T_BAR = 5, 60, 1.96
 MKT_COLS = ("me_lag1", "mkt_vw_cap", "mkt_vw_cap_lcl", "mkt_vw_cap_exc")
+LONG_PF = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU}
+KEEP = set(DEV) | {"USA"}
+HELD = "2024-12-31"  # (#1346) the old file's last month; its me_lag1 weighs each country through 2025
 
 
 def num(s):
@@ -116,14 +132,25 @@ def grade(gaps, year):
     return {"T": len(xs), "mean": mean(xs) if xs else None, "t": t, "P": len(post), "post": pm, "v": v}
 
 
-def load(d):
+def old_market(d):
     mkt = {}
-    keep = set(DEV) | {"USA"}
     with open(f"{d}/market_returns.csv", newline="") as f:
         for r in csv.DictReader(f):
-            if r["excntry"] in keep:
+            if r["excntry"] in KEEP:
                 mkt[(r["excntry"], r["eom"])] = {k: num(r[k]) for k in MKT_COLS}
-    long_pf = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU}
+    return mkt
+
+
+def put(legs, bm, name, c, pf, eom, ret, n):
+    """One menu cell in a kept country: be_me feeds the unit check, the earning third feeds the legs."""
+    if name == "be_me" and ret is not None:
+        bm[(c, eom)][pf] = ret
+    if pf == LONG_PF[name]:
+        legs[name][c][eom] = (ret, int(num(n) or 0))
+
+
+def load(d):
+    mkt = old_market(d)
     legs = defaultdict(lambda: defaultdict(dict))  # name -> country -> eom -> (ret, n)
     bm = defaultdict(dict)  # (country, eom) -> pf -> be_me ret_vw_cap, for the unit check
     with open(f"{d}/pfs.csv", newline="") as f:
@@ -131,14 +158,40 @@ def load(d):
         h = {k: i for i, k in enumerate(next(rd))}
         ic, ich, ipf, ie, i_n, iret = (h[k] for k in ("excntry", "characteristic", "pf", "eom", "n", "ret_vw_cap"))
         for r in rd:
-            name, c = r[ich], r[ic]
-            if name not in long_pf or c not in keep:
-                continue
-            pf, ret = int(r[ipf]), num(r[iret])
-            if name == "be_me" and ret is not None:
-                bm[(c, r[ie])][pf] = ret
-            if pf == long_pf[name]:
-                legs[name][c][r[ie]] = (ret, int(num(r[i_n]) or 0))
+            if r[ich] in LONG_PF and r[ic] in KEEP:
+                put(legs, bm, r[ich], r[ic], int(r[ipf]), r[ie], num(r[iret]), r[i_n])
+    return mkt, legs, bm
+
+
+def zip_rows(src):
+    """The rows of a zip's one csv member (a path or a file object); several members is not JKP's layout."""
+    with zipfile.ZipFile(src) as z:
+        (member,) = z.namelist()
+        with z.open(member) as f:
+            yield from csv.DictReader(io.TextIOWrapper(f, encoding="utf-8", newline=""))
+
+
+def overlay(mkt, rows):
+    """(#1346) Adds each (country, eom, ret) as ret_2026; a month past the old file holds its HELD weight."""
+    for c, eom, ret in rows:
+        m = mkt.get((c, eom))
+        if m is None:
+            m = mkt[(c, eom)] = dict.fromkeys(MKT_COLS)
+            m["me_lag1"] = mkt.get((c, HELD), {}).get("me_lag1")
+        m["ret_2026"] = ret
+    return mkt
+
+
+def load_2026(d):
+    """(#1346) The 2026 layout: `mkt.zip` + `pf/*.zip`, with the old market file for checks and weights."""
+    new = ((r["location"].upper(), r["date"], num(r["ret"])) for r in zip_rows(f"{d}/mkt.zip"))
+    mkt = overlay(old_market(d), [x for x in new if x[0] in KEEP])
+    legs = defaultdict(lambda: defaultdict(dict))
+    bm = defaultdict(dict)
+    for p in sorted(glob.glob(f"{d}/pf/*.zip")):
+        for r in zip_rows(p):
+            if r["name"] in LONG_PF and r["location"].upper() in KEEP:
+                put(legs, bm, r["name"], r["location"].upper(), int(float(r["pf"])), r["date"], num(r["ret"]), r["n"])
     return mkt, legs, bm
 
 
@@ -169,6 +222,19 @@ def unit_check(mkt, bm):
     return usd, excess, lines
 
 
+def check_new_market(mkt):
+    """(#1346) unit check (iii): the new return's RMS gap to the old USD excess market against the local one."""
+    se, sl = [], []
+    for m in mkt.values():
+        r = m.get("ret_2026")
+        if r is not None and m["mkt_vw_cap_exc"] is not None and m["mkt_vw_cap_lcl"] is not None:
+            se.append((r - m["mkt_vw_cap_exc"]) ** 2)
+            sl.append((r - m["mkt_vw_cap_lcl"]) ** 2)
+    rx, rl = math.sqrt(mean(se)), math.sqrt(mean(sl))
+    return rx < rl, (f"unit check (iii): {len(se)} country-months, the new market return's RMS gap to the old USD "
+                     f"excess market {rx:.4f}, to the old local one {rl:.4f} -> {'USD EXCESS' if rx < rl else 'OTHER'}")
+
+
 def cell(g):
     pct = lambda x: "    -" if x is None else f"{x * 1200:+5.1f}"
     t = "    -" if g["t"] is None else f"{g['t']:+5.2f}"
@@ -176,12 +242,17 @@ def cell(g):
 
 
 def report(d):
-    mkt, legs, bm = load(d)
+    new = os.path.exists(f"{d}/mkt.zip")
+    mkt, legs, bm = (load_2026 if new else load)(d)
     usd, excess, lines = unit_check(mkt, bm)
-    print("\n".join(lines))
     col = market_column(usd, excess)
+    if new:
+        ok, line = check_new_market(mkt)
+        lines.append(line)
+        col = "ret_2026" if ok and col == "mkt_vw_cap_exc" else None  # the new file has no other market column
+    print("\n".join(lines))
     if col is None:
-        print("market column: none (local excess returns have no market twin) -> UNGRADEABLE, nothing passes")
+        print("market column: none the release can grade on -> UNGRADEABLE, nothing passes")
         return 1
     print(f"market column: {col}; gaps in %/yr (monthly x 12); post = from 1 Jan of the year after publication")
     print(f"{'idea':14s} {'year':4s} {'dir':>3s} {'cluster':14s} |   US: T  mean     t    P  post v     "
@@ -214,8 +285,35 @@ def demo():
     assert grade(up, 1994)["v"] == "PASS"
     assert grade(up, 1996)["v"] == "UNGRADEABLE"  # 1997-2000 holds 48 months, under 60
     assert grade({e: -x for e, x in up.items()}, 1994)["v"] == "FAIL"
+    # (#1346) the 2026 layout end to end: a 2025 month holds the 2024-12 weight, a country with none drops out
+    with tempfile.TemporaryDirectory() as d:
+        with open(f"{d}/market_returns.csv", "w", newline="") as f:
+            f.write("excntry,eom,me_lag1,mkt_vw_cap,mkt_vw_cap_lcl,mkt_vw_cap_exc\n"
+                    "USA,2024-12-31,2.0,0.012,0.012,0.010\nGBR,2024-12-31,1.0,0.02,0.05,0.019\n")
+        with zipfile.ZipFile(f"{d}/mkt.zip", "w") as z:
+            z.writestr("m.csv", "location,name,date,ret\nusa,mkt,2024-12-31,0.011\nusa,mkt,2025-01-31,0.02\n"
+                                "gbr,mkt,2024-12-31,0.018\nnzl,mkt,2025-01-31,0.03\nzzz,mkt,2025-01-31,9\n")
+        os.mkdir(f"{d}/pf")
+        with zipfile.ZipFile(f"{d}/pf/usa.zip", "w") as z:
+            z.writestr("p.csv", "location,name,pf,n,date,ret\nusa,be_me,3.0,7,2025-01-31,0.05\n"
+                                "usa,be_me,1.0,7,2025-01-31,0.01\nusa,not_on_menu,3.0,7,2025-01-31,1\n")
+        with zipfile.ZipFile(f"{d}/pf/nzl.zip", "w") as z:
+            z.writestr("p.csv", "location,name,pf,n,date,ret\nnzl,be_me,3.0,9,2025-01-31,0.9\n")
+        mkt, legs, bm = load_2026(d)
+    assert mkt[("USA", "2025-01-31")]["me_lag1"] == 2.0 and mkt[("USA", "2025-01-31")]["mkt_vw_cap"] is None
+    assert mkt[("USA", "2024-12-31")]["ret_2026"] == 0.011 and ("ZZZ", "2025-01-31") not in mkt
+    assert mkt[("NZL", "2025-01-31")]["me_lag1"] is None
+    assert legs["be_me"]["USA"] == {"2025-01-31": (0.05, 7)} and bm[("USA", "2025-01-31")] == {3: 0.05, 1: 0.01}
+    assert "not_on_menu" not in legs
+    g = region_gaps(legs["be_me"], mkt, ["USA", "NZL"], "ret_2026", True)
+    assert list(g) == ["2025-01-31"] and abs(g["2025-01-31"] - 0.03) < 1e-12, g
+    ok, line = check_new_market(mkt)
+    assert ok and line.startswith("unit check (iii): 2 country-months"), line
 
 
 if __name__ == "__main__":
     demo()
+    if sys.argv[1:] == ["--selftest"]:
+        print("jkp_proof selftest: ok")
+        sys.exit(0)
     sys.exit(report(sys.argv[1]))
