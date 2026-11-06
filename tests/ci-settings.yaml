@@ -25936,6 +25936,102 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   wherever the cut sits. A wider ruler only dilutes them.
 # DECISION, per the (#1337) bands: REFUSE. Grading a buy rule on our own backtest evidence stays closed, the ruler
 #   lane ends and no variant is tried. `pond` stays as a record. Nothing moves: no knob, no golden, no page.
+# (#1339) THE PAPER ROUTE, PRE-REGISTERED 2026-11-06 before any return was read. Row: (#1340).
+# WHY: (#1333), (#1335) and (#1338) found that no ruler built on our own backtest sees a buy-rule edge of realistic
+#   size (+2 to +4 %/yr). The owner asked to keep improving the buy rules and chose this route: a small idea ships on
+#   OTHER people's proof, read in data we never mined, plus our own harm guard. Our backtest no longer has to SEE the
+#   gain; it only has to show the idea does no visible harm.
+# PROOF (`tools/jkp_proof.py`, stdlib) on the free Jensen-Kelly-Pedersen global data, factor data set 2025-03-05,
+#   months to 2024-12 (pfs.csv md5 806189ca21e5316cc3aef508c0747b2d, market_returns.csv md5
+#   c6d16b139912935e388caa2085c6faac). The gap is the idea's earning third (portfolio 3 at JKP direction +1,
+#   portfolio 1 at -1, capped value weights) minus the same country-month market. A country-month counts when the
+#   third holds 5 names or more. US = USA. Developed ex-US = MSCI "developed" minus USA (22 countries), one gap a
+#   month, weighted by each market's start-of-month equity. PASS needs, in BOTH regions, a full-sample t of 1.96 or
+#   more AND a mean gap above 0 from 1 January of the year after publication. Fewer than 60 such months in a region
+#   is UNGRADEABLE, which fails.
+# UNIT RULE: JKP's code builds the portfolios from USD excess returns, so the market column is mkt_vw_cap_exc. Two
+#   checks on be_me's three-portfolio mean print before any premium. Across developed ex-US country-months it must
+#   sit closer (RMS) to the USD market than to the local one. In the US its gap to the raw market, regressed on the
+#   risk-free rate, must have a slope nearer -1 than 0. A failed check swaps in the column the checks pick; local
+#   excess has no column, so then nothing passes.
+# MENU, pool 1, fixed now: 42 ideas, graded in this order (publication year, then name). Each line: JKP name, year,
+#   direction, Kelly-Pedersen cluster = our twin, then the twin's earning end. A "built" twin already exists in
+#   `core::select_fund_factor`. A "new" one is built only for an idea that reaches the harm guard. Book is
+#   `book_ttm`; cap is shares times the close; "back k" is the filing k fiscal years back.
+#   beta_60m 1973 -1 Low Risk = new: beta of the last 60 month-end returns on the walk's bench (36 or more); low
+#   div12m_me 1979 +1 Value = new: the last 12 months' dividends over the close; high
+#   market_equity 1981 -1 Size = built small_pct (100 minus the cap percentile); high
+#   ni_me 1983 +1 Value = built earnings_yield; high
+#   be_me 1985 +1 Value = built book_yield; high
+#   ret_60_12 1985 -1 Investment = new: the close 12 months back over the close 60 months back, minus 1; low
+#   debt_me 1988 +1 Value = new: debt over cap; high
+#   at_me 1992 +1 Value = new: assets over cap; high
+#   ret_12_1, ret_3_1, ret_6_1, ret_9_1 1993 +1 Momentum = new: the close 1 month back over the close 12, 3, 6 or 9
+#     months back, minus 1; high
+#   fcf_me 1994 +1 Value = new: fcf_margin times revenue, over cap; high
+#   sale_gr1 1994 -1 Investment = built rev_yoy; low
+#   sale_gr3 1994 -1 Investment = new: revenue over revenue back 3, minus 1; low
+#   oaccruals_at 1996 -1 Accruals = new: (net_margin minus ocf_margin) times revenue, over assets; low
+#   sale_me 1996 +1 Value = new: revenue over cap; high
+#   dsale_drec 1998 -1 Profit Growth = new: 1y % change of revenue minus 1y % change of receivables; low
+#   dsale_dsga 1998 +1 Profit Growth = new: 1y % change of revenue minus 1y % change of SG&A; high
+#   capx_gr1 2001 -1 Investment = new: capex over capex back 1, minus 1; low
+#   rd_me 2001 +1 Size = built rnd_yield; high
+#   rd_sale 2001 +1 Low Leverage = new: rnd_margin; high
+#   capex_abn 2004 -1 Debt Issuance = built capex_abn; low
+#   noa_at 2004 -1 Debt Issuance = built noa (sign already flipped); high
+#   noa_gr1a 2004 -1 Investment = new: 1y change of (net debt plus book), over assets back 1; low
+#   ocf_me 2004 +1 Value = new: operating cash flow over cap; high
+#   age 2005 -1 Low Leverage = new: years since the first bar of the name's own price series; low
+#   be_gr1a 2005 -1 Investment = new: 1y change of book, over assets back 1; low
+#   sti_gr1a 2005 +1 Seasonality = new: 1y change of short-term investments, over assets back 1; high
+#   capx_gr2, capx_gr3 2006 -1 Investment = new: capex over capex back 2 or 3, minus 1; low
+#   bev_mev 2007 +1 Value = new: (book plus net debt) over (cap plus net debt); high
+#   eqnpo_me 2007 +1 Value = built payout_yield; high
+#   netdebt_me 2007 -1 Low Leverage = new: net debt over cap; low
+#   at_gr1 2008 -1 Investment = new: assets over assets back 1, minus 1; low
+#   chcsho_12m 2008 -1 Value = built buyback_yield (sign already flipped); high
+#   debt_gr3 2008 -1 Debt Issuance = new: debt over debt back 3, minus 1; low
+#   ebitda_mev 2011 +1 Value = built ebitda_yield; high
+#   oaccruals_ni 2011 -1 Accruals = built accrual_gap (sign already flipped); high
+#   rd5_at 2011 +1 Low Leverage = new: the sum over k = 0 to 4 of (1 - 0.2k) times R&D back k, over assets; high
+#   cash_at 2012 +1 Low Leverage = new: cash (debt minus net debt) over assets; high
+#   ocf_at_chg1 2019 +1 Profit Growth = built ocf_at_chg; high
+# EXCLUDED, fixed now: the other 111 of JKP's 153. (a) Profitability or quality, by Kelly-Pedersen cluster or by JKP
+#   group: the owner's standing refusal. (b) Daily-window signals (_21d, _126d, _252d, _1260d, ret_1_0): our series
+#   are not always daily (#117), and a one-month state does not fit a multi-year hold. (c) Quarterly or seasonal
+#   signals (niq_, saleq_, ocfq_, ni_inc8q, seas_): our rows are annual. (d) Lines we do not parse: inventory, PP&E,
+#   the current split, employees, tax, financial assets, issuance flows, retained earnings. (e) A model we do not
+#   run: ival_me, eq_dur, ni_ar1, ni_ivol, earnings_variability, resff3_, mispricing_, qmj, beta_dimson. (f) Shipped
+#   already: ret_12_7 (#584). (g) A nominal price or split basis: prc, eqnpo_12m.
+# CLUSTER RULE: at most one paper-route ship per Kelly-Pedersen cluster (13, from their public label file). Once a
+#   cluster holds a ship, its later passers read "cluster taken" and are never put through the guard. A passer the
+#   guard refuses leaves its cluster open.
+# HARM GUARD, for each passer in order, on top of the ships before it. One probe on main, `years="12 8"
+#   args="universe fund pit"`, grid [{}, {growth_fund_extra: the shipped terms plus the new one}], rescore "guard
+#   holdout". The new term reads the twin's same-date percentile among that cutoff's names that carry it, turned so
+#   the earning end reads 100. It has weight 0.03, cap 100 and neutral 50: +3 points at best, +1.5 in the middle or
+#   when missing, 0 at worst. Fixed now and never tuned. PASS needs all of these, at 12y AND at 8y:
+#   - the row's top-10 mean gain over row 0 is not under the 2.5 % edge of the top-10 band;
+#   - the row's pond mean gain ((#1337)'s top half) is not under the 2.5 % edge of the pond band;
+#   - the pool holds 80 % of row 0's or more;
+#   - the twin reads on half the scored stock samples or more (else UNGRADEABLE);
+#   - at least one top-10 name moves in some bucket (else INERT).
+#   Then `reveal` reads the sealed 2016-on 8y samples once, and both gains there must not sit under their 2.5 %
+#   edges. All of that = SHIP: the term, its live and page twins, one owner question since the page moves, and a
+#   golden rebless on the ship SHA. Any fail = REFUSED and recorded, and the next passer goes through the guard.
+# PULL RULE: a ship comes off when a later probe that grades its off switch puts its on row under a 2.5 % edge
+#   (top-10 or pond, either horizon), or when a newer JKP release fails its proof. Never on our forward returns
+#   alone. Each ship keeps its own receipt and its off switch: drop its term.
+# POOL 2 (founder-led firms, best employers, spin-offs): JKP has no column for them, so they are UNGRADEABLE under
+#   this proof and none ships on this route. The (#1337) pond ruler stays refused as a way to grade on our own
+#   evidence; here it serves only inside the harm guard.
+# RUN: `python3 -I -B tools/jkp_proof.py <dir>` on the files above, once, before any harm-guard code is written.
+# EXPECTED: a long third that beats the market at t 1.96 in both regions is far stricter than a long-short spread,
+#   so most ideas fail. 3 to 10 of the 42 pass, led by momentum (ret_12_1, ret_6_1, ret_9_1) and cash-flow value
+#   (ocf_me, fcf_me, ni_me). beta_60m and market_equity fail: a low-beta or a small third trails the raw market. The
+#   guard is loose by design, so 1 to 4 passers ship, at most one per cluster.
+# REVERT RULE: the proof is record only. Each ship carries its own receipt, its off switch and the pull rule above.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
