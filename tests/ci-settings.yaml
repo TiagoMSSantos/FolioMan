@@ -26119,6 +26119,25 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   half-years the bands are about twice as wide as the full span's, so the no-harm edges sit further down. The
 #   likeliest fail is still the 12y top-10 gain, if the tilt swaps out a 2011-2014 runner.
 # REVERT RULE: `sec` is record only and off by default, so no book, knob, golden or page moves.
+# (#1344) VERDICT, 2026-11-06, on (#1343): ni_me PASSES the harm guard at 12y AND at 8y, and the sealed holdout
+#   holds, so the term is a SHIP per (#1339). Guard probe run 42285610005 on 619b2a4, rescore="guard holdout sec",
+#   200 shuffles. SEC ERA left out 7677 samples at 12y and 7685 at 8y; HOLDOUT sealed 0 at 12y and 7345 at 8y.
+#   horizon  top-10 gain / edge  pond gain / edge  pool     ey_pct reads on  top-10 moved  verdict
+#   12y      -0.11 / -1.04       -0.06 / -0.47     100.0 %  86.1 %           0.50          PASS
+#   8y       -0.25 / -0.96       -0.14 / -0.38     100.0 %  87.2 %           0.70          PASS
+#   NULL BAND, row 1: 12y mean -0.11, median -0.66, band [-1.04, +0.93], INSIDE; 8y mean -0.25, median -0.55,
+#   band [-0.96, +1.17], INSIDE. So the term is invisible to our own ruler, as (#1338) said any small idea would be.
+# HOLDOUT, read once: probe run 42286340556 on 619b2a4, rescore="guard holdout reveal sec". It printed the graded
+#   rows above byte for byte, then on the 7345 sealed 2016-on 8y samples: top-10 gain +0.23 / edge -0.45, pond gain
+#   -0.15 / edge -0.29 -> PASS. The 12y leg has no sealed sample (its last cutoff is 2014-09).
+# AGAINST EXPECTED: right on the verdict (PASS at both, called about 3 in 5) and on coverage (86-87 %). The 12y
+#   top-10 gain was not the fail it was called the likeliest one to be: -0.11 sits nearly 1 point above its edge.
+# WHAT THIS DOES NOT SAY: it does not say ni_me adds return here. The (#1340) JKP proof carries that claim; the guard
+#   only says the 3-point tilt shows no harm on our data, and the sealed years agree.
+# NEXT: the live page moves, so one owner question comes first. On a yes, the ship lands under its own receipt and
+#   Row: a live `ey_pct` stamp (the same-date percentile of earnings_yield over the screened stocks, the
+#   `stamp_cohort_ranks` formula), the `ey_pct` term (weight 0.03, cap 100, neutral 50) in growth_fund_extra, and a
+#   golden rebless on the ship SHA. The cluster rule then closes Value: be_me and the rest are not graded.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
