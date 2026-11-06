@@ -410,7 +410,7 @@ fn search_grades_against_the_golden_book_from_a_dump() {
     report_at_env(&cfg, &["12"], None, &[("FOLIOMAN_BACKTEST_SAMPLES", dump.as_path())]);
     let args = ["search", dump.to_str().expect("utf-8 path"), "configs=20", "nulls=5"];
     let got = report_at(&cfg, &args, None);
-    assert!(got.contains("  shipped: 12y top-10 excess +2.7 (med +4.4)\n"), "{got}");
+    assert!(got.contains("  shipped: 12y top-10 excess +2.8 (med +4.4)\n"), "{got}");
     assert!(got.contains("  VERDICT: ") && got.contains("  GRID ROW: {"), "{got}");
     assert_eq!(report_at(&cfg, &args, Some("1")), got, "one worker must print the same search");
 }

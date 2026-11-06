@@ -4196,7 +4196,7 @@ pub struct FundFactors {
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub core_factor: Option<f64>,  // (#426) the as-of row's `core_factor`: the share of its GAAP EPS that `eps_ttm` kept (1 = clean)
-    pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). Set in the backtest loop from the native as-of close; the live path fills it only when `growth_fund_factor: earnings_yield` selects it (fetch.rs gates the fill to dodge the currency skew — see `earnings_yield` fn)
+    pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). Set in the backtest loop from the native as-of close; the live path (`fetch::enrich_fund_factor`) fills it for every priced name from the native close, converted to the statements' currency. (#1345) `ey_pct` ranks it live
     // (EV/EBITDA probe) capital-structure-neutral value cousin of earnings_yield. The three as-of LEVELS
     // are price-free (set here from the latest filed row); ebitda_yield itself is EBITDA ÷ enterprise value
     // (EV = shares·price + net_debt), so it needs the as-of price -> filled in the backtest loop like
@@ -5465,11 +5465,10 @@ pub fn rate_as_of(series: &BTreeMap<NaiveDate, f64>, date: NaiveDate) -> Option<
 }
 
 /// (Item 19) As-of earnings yield = EPS ÷ price, in % — a VALIDATABLE valuation level (high = cheap), the
-/// honest counterpart to the live-only `pe_ratio` damp (which is backtest-blind). PROBE-ONLY: computed in
-/// the backtest from the native as-of close + native EPS (same currency, so the ratio is clean). NOT wired
-/// into the live screen — live `price_eur` is EUR while FMP EPS is USD, so a live computation would be a
-/// currency train-serve skew (the Item 16 trap); wire live only once a native live price exists AND the
-/// backtest probe shows both OOS halves +. None on a missing EPS or a non-positive price (no div-by-zero,
+/// honest counterpart to the live-only `pe_ratio` damp (which is backtest-blind). Computed in the
+/// backtest from the native as-of close + native EPS (same currency, so the ratio is clean). Live it divides
+/// by the native close converted to the statements' currency, never `price_eur`, so there is no currency
+/// skew (the Item 16 trap); (#1345) the `ey_pct` term ranks it on the live page. None on a missing EPS or a non-positive price (no div-by-zero,
 /// no garbage ratio).
 pub fn earnings_yield(eps: Option<f64>, price: f64) -> Option<f64> {
     match eps {

@@ -664,7 +664,12 @@ mod tests {
         assert!(why("n").ends_with("Also matching \"n\": AAPL, VWCE.DE"), "the rest in pool order: {}", why("n"));
         assert!(why("vwce.l").starts_with("VWCE.DE is left out: no trading volume is reported for it."), "by alias: {}", why("vwce.l"));
         assert!(why("msft").starts_with("MSFT is left out: no trading volume is reported for it."), "{}", why("msft"));
-        assert!(why(" nvidia ").contains("\n\n─── how the SCORE was computed — NVIDIA Corp (NVD.DE), score 6.70"));
+        // (#1345) the header carries the row's own score, so a scoring ship moves this pin with it
+        let (s, page) = load("", &u).expect("loads");
+        let nvd = page.quotes.iter().find(|q| q.ticker == "NVD.DE").expect("the winner row");
+        let score = crate::picks::growth_score(nvd, &s.buy_heuristic).expect("scores");
+        let head = format!("\n\n─── how the SCORE was computed — NVIDIA Corp (NVD.DE), score {score:.2}");
+        assert!(score > 1.0 && why(" nvidia ").contains(&head), "{score}: {}", why(" nvidia "));
         assert!(!why("nvidia").contains("Also matching"), "the hit itself is not an also");
         assert!(why("i").ends_with("\n\nAlso matching \"i\": VWCE.DE, MSFT, NVD.DE"), "{}", why("i"));
         assert!(why("NOPE").starts_with("Nothing on this page matches \"NOPE\". The page keeps one listing per company"));

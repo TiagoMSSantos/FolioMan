@@ -1827,8 +1827,9 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // (Item 19) as-of earnings yield from the NATIVE close (currency-consistent with native EPS),
         // mirroring the backtest's `f.earnings_yield = earnings_yield(eps_ttm, closes[i])` so the live
         // and validated valuation share one definition. None when there's no EPS (crypto/ETF/no source)
-        // or no native price -> select_fund_factor("earnings_yield") then stays neutral. Inert unless
-        // `growth_fund_factor: earnings_yield` is set; the caller already gates on growth_fund_weight > 0.
+        // or no native price -> select_fund_factor("earnings_yield") then stays neutral. (#1345) Live, not
+        // inert: the stamp after this loop ranks it into `ey_pct`. Only the TTM swap below waits on
+        // `growth_fund_factor: earnings_yield`, so the shipped term reads the annual EPS the backtest reads.
         // (#1) prefer the SEC roll-forward TTM EPS — the SAME number behind the fixed live P/E — over the
         // annual-only `eps_ttm` fund_factors derives from SEC 10-K rows (which is stale for a mid-ramp
         // grower: LITE FY 0.37 vs TTM 5.7). Only when this factor is selected, so other factors pay no
