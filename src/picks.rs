@@ -7709,6 +7709,12 @@ pub(crate) fn momentum_12_1(q: &Quote) -> Option<f64> {
     net_return(q, "1Y", "1M")
 }
 
+/// (#1348) 6-1 momentum, %: the 6M leg net of its last month, JKP's ret_6_1 (the close a month back over the
+/// close six months back, minus 1). A missing 1M reads 0; a missing 6M has none.
+pub(crate) fn momentum_6_1(q: &Quote) -> Option<f64> {
+    net_return(q, "6M", "1M")
+}
+
 /// (#587) The `long` leg's return net of its last `short` one, %: a missing `short` reads 0, a missing `long`
 /// has none, and a wiped `short` is floored at 1%.
 fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {

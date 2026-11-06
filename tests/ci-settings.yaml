@@ -26248,6 +26248,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   3. capx_gr3, Investment, 2006. Twin new: capex over capex 3 fiscal years back, minus 1; low. SEC facts, so `sec`.
 # NEXT: ret_6_1's guard pre-registration, its twin and one guard probe. The sealed 2016-on 8y years were read once
 #   before, for ni_me (probe 42286340556); each later `reveal` receipt says so.
+# (#1348) RET_6_1 HARM GUARD, PRE-REGISTERED 2026-11-06 before this run. Row: (#1349).
+# WHY: (#1347) passed ret_6_1 on JKP's 2026 release (US t 2.72, post +1.9; developed ex-US t 2.22, post +2.5), and
+#   Momentum holds no paper-route ship (the (#584) interleave is a book rule, not a term), so it is first in the
+#   guard queue. Proof stays JKP's; our backtest only has to show no visible harm.
+# TWIN: `mom61_pct`, the same-date percentile (0-100, high = winner) of picks::momentum_6_1, the as-of quote's 6M
+#   leg net of its 1M leg (the close a month back over the close six months back, minus 1). stamp_cohort_ranks
+#   ranks it among the same date's names with a fund row, as it ranks ey_pct; a name with no fund row or no 6M leg
+#   reads None. Prices need no SEC fact, so a fund row from before 2010 still carries the twin.
+# TERM: {factor: mom61_pct, weight: 0.03, cap: 100, neutral: 50}, added after ey_pct, the (#1339) term unchanged.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout" (200 shuffles), full
+#   span, no `sec`. Grid: [{}, {growth_fund_extra: roic + margin_trend + ey_pct as shipped, then the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y. Only then a second probe, rescore="guard holdout reveal", reads the
+#   sealed 2016-on 8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were
+#   read once before, for ni_me (probe 42286340556), so this holdout is not blind; its receipt says so. Both =
+#   SHIP per (#1339), after one owner question, because the page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = ret_6_1 REFUSED, record only. rd_me goes
+#   next, with the rnd_yield twin under `sec` and its own receipt.
+# EXPECTED: coverage 60-90 % of scored stocks (a stock with no SEC facts on file has no fund row). PASS about 1 in
+#   2. INERT is the likeliest other read: the growth gates already admit trailing winners and the momentum half
+#   already sorts on 12-1, so a 3-point tilt toward the last six months moves few top-10 names.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

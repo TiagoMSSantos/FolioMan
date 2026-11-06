@@ -7138,6 +7138,8 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// percentile, so the smallest name at a cutoff reads 100. It never enters the composite.
 /// (#1341) The earnings_yield leg's percentile, one of the four the composite averages, is also kept alone
 /// as `ey_pct` (high = cheap): the (#1339) paper route's twin of JKP's ni_me.
+/// (#1348) The 6-1 return ([`picks::momentum_6_1`], off the as-of quote) ranks the same way, over the same date's
+/// names with a fund row, into `mom61_pct` (high = winner): the route's twin of JKP's ret_6_1.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
 /// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
@@ -7167,6 +7169,14 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             f.value_composite = (pcts.len() >= 2).then(|| pcts.iter().sum::<f64>() / pcts.len() as f64);
             f.small_pct = ranked[4].map(|p| 100.0 - p);
             f.ey_pct = ranked[0];
+        }
+        let mom: Vec<Option<f64>> = day.iter().map(|s| s.fund.as_ref().and(picks::momentum_6_1(&s.quote))).collect();
+        let mut col: Vec<f64> = mom.iter().flatten().copied().collect();
+        col.sort_by(f64::total_cmp);
+        for (s, m) in day.iter_mut().zip(mom) {
+            if let Some(f) = s.fund.as_mut() {
+                f.mom61_pct = if col.len() >= 2 { m.map(|v| rank(&col, v)) } else { None };
+            }
         }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
@@ -11539,6 +11549,31 @@ mod tests {
         let mut day1: Vec<FundFactors> = [x(), y(), z()].into_iter().filter_map(|s| s.fund).collect();
         crate::core::stamp_ey_pct(&mut day1);
         assert_eq!(day1.iter().map(|f| f.ey_pct).collect::<Vec<_>>(), [Some(100.0), Some(50.0), Some(0.0)]);
+    }
+
+    /// (#1348) `mom61_pct` ranks the 6-1 return among the same date's names with a fund row. A gained 20 % over
+    /// 6M after a flat month; B's 21 % came with a 10 % last month (1.21 / 1.10 = +10 %), so A ranks over B. C has
+    /// no 6M leg, so it reads None; D has no fund row, so it neither ranks nor stamps.
+    #[test]
+    fn stamp_cohort_ranks_ranks_the_6_1_return() {
+        let row = |t: &str, m1: f64, m6: Option<f64>, fund: bool| {
+            let mut q = Quote::stub(t, "1", "", t);
+            q.perf = crate::core::HORIZONS
+                .iter()
+                .map(|(l, _)| match *l {
+                    "1M" => Some(m1),
+                    "6M" => m6,
+                    _ => None,
+                }
+                .map(|v| ("x".to_string(), v)))
+                .collect();
+            Sample { date: ymd(2010, 1, 1), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: fund.then(Default::default), trail: Vec::new() }
+        };
+        let mut v = vec![row("A", 0.0, Some(20.0), true), row("B", 10.0, Some(21.0), true), row("C", 0.0, None, true), row("D", 0.0, Some(90.0), false)];
+        stamp_cohort_ranks(&mut v);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().and_then(|f| f.mom61_pct)).collect();
+        assert_eq!(got, [Some(100.0), Some(0.0), None, None]);
+        assert_eq!(v[0].quote.fund.as_ref().and_then(|f| f.mom61_pct), Some(100.0), "the scorer's copy carries it too");
     }
 
     /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads
