@@ -25914,6 +25914,28 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   ((#1335)'s top-50 +0.32, narrowed by the square root of the width). X = 4 passes on more than half the draws,
 #   X = 2 on 3 to 8 and X = 0 on 1 or fewer. The odds of the adopt band are about 1 in 4.
 # REVERT RULE: record only; `pond` prints one block and changes no book, no knob and no page.
+# (#1338) VERDICT, 2026-11-06, on (#1337), record only: THE POND RULER IS BLIND TOO (REFUSE). Probe 42271039330 on
+#   main b8b0e09, holdout sealed (12y cuts 0 samples, 8y cuts 7345), stock windows scored 5150 and 6488 at 12y,
+#   9184 and 8596 at 8y. The pond holds 85.6 names a bucket over 38 buckets at 12y and 86.7 over 40 at 8y. The
+#   10/20/40 % rows swap 1.8 / 3.4 / 5.9 names into it at 12y and 1.8 / 3.3 / 5.8 at 8y. Cells: the pond mean gain
+#   over row 0's pond / its band top, averaged over the 20 draws, then the draws passing the row.
+#            draws passing X        40 % row, 12y               40 % row, 8y
+#            12y    8y     both     gain / band top, pass       gain / band top, pass
+#   X = 0    0      0      0        +0.01 / +0.24, 0            -0.02 / +0.18, 0
+#   X = 2    1      6      1        +0.15 / +0.25, 3            +0.13 / +0.18, 4
+#   X = 4    8      16     8        +0.30 / +0.25, 15           +0.28 / +0.18, 17
+#   X = 2's one draw is seed 11; X = 4's eight are seeds 3, 4, 6, 11, 15, 16, 17 and 19. The top-10 guard never binds
+#   on the means: every row's top-10 mean gain sits above its band's low edge (-0.35 to -0.72) at every X.
+# AGAINST EXPECTED: right on REFUSE, on the pond's size (85 to 95; it reads 86 to 87) and on the 40 % row's 12y band top
+#   (+0.23 forecast, +0.25 read). Right that X = 0 false-alarms 1 draw or fewer (0). Wrong on X = 4, forecast to pass
+#   more than half the draws: it passes 8 at both horizons (16 at 8y, 8 at 12y). Wrong on X = 2, forecast 3 to 8: 1.
+# READING: the band narrowed as the square root says (top 50's +0.32 to +0.25 at 12y), but the swaps did not grow with
+#   the ruler. The pond takes in 1.8 / 3.4 / 5.9 names, about what a top-50 book takes in (1.5 / 2.8 / 5.4), and
+#   spreads them over 86. So the 40 % row's gain at X = 4 halves (top 50's +0.58 to +0.30) while its band top falls
+#   by a quarter: it clears the band by +0.05 at 12y, against top 50's +0.26. A tilt moves the few names near a cut,
+#   wherever the cut sits. A wider ruler only dilutes them.
+# DECISION, per the (#1337) bands: REFUSE. Grading a buy rule on our own backtest evidence stays closed, the ruler
+#   lane ends and no variant is tried. `pond` stays as a record. Nothing moves: no knob, no golden, no page.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
