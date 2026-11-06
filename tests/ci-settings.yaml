@@ -26099,6 +26099,26 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   reason. The full-span gains above carry that noise, so they are not a clean read of ni_me either.
 # AGAINST EXPECTED: wrong. (#1341) called UNGRADEABLE unlikely; it counted samples, not the years they cover.
 # NEXT: the Value cluster waits on the owner's call. The sealed 2016-on 8y samples (82-86 % coverage) stay unread.
+# (#1343) NI_ME HARM GUARD ON THE SEC ERA, PRE-REGISTERED 2026-11-06 before this run. Row: (#1344).
+# WHY: (#1342) read ni_me UNGRADEABLE because no SEC fact reaches the walk before 2010. The owner chose to grade the
+#   (#1339) guard on the years the twin can exist in, rather than close the route.
+# RULE CHANGE, for the Value cluster: `rescore ... sec` drops every sample cut before 2011-01-01 (`SEC_FROM`) from
+#   every table. It runs after the per-row stamps and before the holdout split, so the sealed 2016-on samples stay
+#   as they were. All five guard clauses then read on what is left: 12y cutoffs 2011-01 to 2014-09 (8 half-years)
+#   and 8y cutoffs 2011-01 to 2015-09 (10 half-years). The clauses, their order and the term stay as (#1339) and
+#   (#1341) fixed them.
+# SECOND LOOK, said now: (#1342) printed full-span gains that include these years, so this read is not blind. Only
+#   the sealed 2016-on 8y samples (6 half-years, never read) are a clean test, so the holdout step below binds.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), the
+#   (#1341) grid unchanged.
+# PASS: row 1 reads PASS at 12y AND at 8y. Only then a second probe, rescore="guard holdout reveal sec", reads the
+#   sealed 8y samples once, and both GUARD HOLDOUT gains must not sit under their edges. Both = SHIP per (#1339).
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = ni_me REFUSED. be_me goes next under this same
+#   rule, with a `bm_pct` twin and its own receipt.
+# EXPECTED: PASS at both, about 3 in 5. Coverage from 2011 is 74-86 % a year, so UNGRADEABLE is out. With 8 and 10
+#   half-years the bands are about twice as wide as the full span's, so the no-harm edges sit further down. The
+#   likeliest fail is still the 12y top-10 gain, if the tilt swaps out a 2011-2014 runner.
+# REVERT RULE: `sec` is record only and off by default, so no book, knob, golden or page moves.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

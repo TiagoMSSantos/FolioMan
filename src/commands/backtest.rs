@@ -840,6 +840,7 @@ struct Args {
     plant: bool,
     pond: bool,
     guard: bool,
+    sec: bool,
     time: bool,
     tickers: Vec<String>,
 }
@@ -893,6 +894,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("plant") => a_.plant = true, // (#1332) rescore: how large an edge the null band sees
             _ if a.eq_ignore_ascii_case("pond") => a_.pond = true, // (#1337) rescore: ... and the top-half pond ruler
             _ if a.eq_ignore_ascii_case("guard") => a_.guard = true, // (#1341) rescore: the (#1339) paper route's harm guard
+            _ if a.eq_ignore_ascii_case("sec") => a_.sec = true, // (#1343) rescore: grade only the samples cut on or after SEC_FROM
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -1006,8 +1008,9 @@ struct Dumped {
 /// ([`print_rescore_bands`]); `nulls=0` skips that. (#1293) `holdout` drops the samples cut on or after
 /// [`HOLDOUT_FROM`] from every table, and `reveal` prints their books once, apart. (#1332) `plant` prints
 /// [`print_plant_power`] on grid row 0, after its tables. (#1337) `pond` prints [`print_pond_power`] there too.
-/// (#1341) `guard` prints [`print_guard`], the (#1339) paper route's harm guard, after the bands.
-fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool, pond: bool, guard: bool) {
+/// (#1341) `guard` prints [`print_guard`], the (#1339) paper route's harm guard, after the bands. (#1343) `sec`
+/// first drops the samples cut before [`SEC_FROM`] ([`sec_era`]) from every table, the sealed ones untouched.
+fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool, pond: bool, guard: bool, sec: bool) {
     let (years, bench, samples) = load_dump(dump);
     let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
     let mut rows = Vec::new();
@@ -1024,6 +1027,11 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         let mut s = samples.clone();
         stamp_sector_cohorts(&mut s, &bench, &tuning); // on every sample: a cutoff's floors read the one before it
         stamp_admit_tenure(&mut s, &tuning); // (#1304) judged under the row's rules, so redone per row
+        if sec {
+            let n = s.len();
+            s = sec_era(s);
+            println!("  SEC ERA (#1343): {} sample(s) cut before {SEC_FROM} are left out of every table below", n - s.len());
+        }
         let (s, sealed) = if holdout { split_holdout(s) } else { (s, Vec::new()) };
         if holdout {
             println!("  HOLDOUT (#1293): {} sample(s) cut on or after {HOLDOUT_FROM} are sealed and left out of every table below", sealed.len());
@@ -1076,6 +1084,18 @@ const HOLDOUT_FROM: chrono::NaiveDate = match chrono::NaiveDate::from_ymd_opt(20
     Some(d) => d,
     None => panic!("2016-01-01 is a date"),
 };
+
+/// (#1343) The first cutoff the (#1339) harm guard grades a Value twin on: no SEC fact reaches the walk before
+/// 2010, so before this date no stock carries the twin and every one sits at its neutral ((#1342)).
+const SEC_FROM: chrono::NaiveDate = match chrono::NaiveDate::from_ymd_opt(2011, 1, 1) {
+    Some(d) => d,
+    None => panic!("2011-01-01 is a date"),
+};
+
+/// (#1343) `samples` cut on or after [`SEC_FROM`], in order.
+fn sec_era(samples: Vec<Sample>) -> Vec<Sample> {
+    samples.into_iter().filter(|s| s.date >= SEC_FROM).collect()
+}
 
 /// (#1293) `samples` split at [`HOLDOUT_FROM`]: those cut before it, then the sealed rest, each in order.
 fn split_holdout(samples: Vec<Sample>) -> (Vec<Sample>, Vec<Sample>) {
@@ -2286,7 +2306,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, stock_rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, pond, guard, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, pond, guard, sec, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -2319,7 +2339,7 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     if rescore_dump {
-        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal, plant, pond, guard);
+        rescore(&tickers[0], &tickers[1], &settings, nulls, holdout, reveal, plant, pond, guard, sec);
         return;
     }
     if search_dumps {
@@ -11395,6 +11415,16 @@ mod tests {
         assert_eq!(sealed.iter().map(|s| s.date).collect::<Vec<_>>(), [dates[1], dates[3]]);
     }
 
+    /// (#1343) The SEC era starts 2011-01-01: a sample cut that day is kept, the day before is dropped, and the
+    /// rest keep their order.
+    #[test]
+    fn sec_era_keeps_every_cutoff_from_2011() {
+        assert_eq!(SEC_FROM, ymd(2011, 1, 1));
+        let dates = [ymd(2016, 7, 1), ymd(2010, 12, 31), ymd(2011, 1, 1), ymd(1999, 1, 4), ymd(2012, 6, 29)];
+        let kept = sec_era(dates.iter().map(|d| sample(*d, 0.0)).collect());
+        assert_eq!(kept.iter().map(|s| s.date).collect::<Vec<_>>(), [dates[0], dates[2], dates[4]]);
+    }
+
     /// (#1292) One index leg per sample: +10% over the year from 2010, NaN where no full year follows.
     #[test]
     fn bench_legs_price_each_sample_and_mark_a_short_series_nan() {
@@ -12536,6 +12566,7 @@ mod tests {
         assert!(p("plant").plant && p("PLANT").plant && !p("holdout").plant && !p("plant").holdout && p("plant").tickers.is_empty(), "(#1332) `plant` is a keyword, not a ticker");
         assert!(p("pond").pond && p("POND").pond && !p("plant").pond && !p("pond").plant && p("pond").tickers.is_empty(), "(#1337) `pond` is a keyword, not a ticker");
         assert!(p("guard").guard && p("GUARD").guard && !p("pond").guard && !p("guard").pond && p("guard").tickers.is_empty(), "(#1341) `guard` is a keyword, not a ticker");
+        assert!(p("sec").sec && p("SEC").sec && !p("guard").sec && !p("sec").guard && p("sec").tickers.is_empty(), "(#1343) `sec` is a keyword, not a ticker");
         assert!(p("time").time && p("TIME").time && !p("12").time && p("time").tickers.is_empty(), "(#1118) `time` is a keyword, not a ticker");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
         assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
@@ -12572,7 +12603,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant pond guard time");
+        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant pond guard sec time");
         assert_eq!(
             all,
             Args {
@@ -12613,6 +12644,7 @@ mod tests {
                 plant: true,
                 pond: true,
                 guard: true,
+                sec: true,
                 time: true,
                 tickers: vec![]
             }
