@@ -11535,6 +11535,10 @@ mod tests {
         ];
         assert_eq!(stamped(vec![x(), y(), z(), w()]), want);
         assert_eq!(stamped(vec![z(), x(), y(), w()]), want);
+        // (#1345) the live twin ranks the same day's yields to the same numbers
+        let mut day1: Vec<FundFactors> = [x(), y(), z()].into_iter().filter_map(|s| s.fund).collect();
+        crate::core::stamp_ey_pct(&mut day1);
+        assert_eq!(day1.iter().map(|f| f.ey_pct).collect::<Vec<_>>(), [Some(100.0), Some(50.0), Some(0.0)]);
     }
 
     /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads

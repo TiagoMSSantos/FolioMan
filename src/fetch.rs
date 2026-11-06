@@ -1881,6 +1881,13 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // the price-dependent fields above, or the extra terms would read a half-built earnings_yield.
         q.fund = Some(ff);
     }
+    // (#1345) the `ey_pct` term's twin, after the loop because a percentile needs every name's yield.
+    // shortcut: the cohort is the slice the caller passed. `screen` passes the whole universe, as the backtest
+    // ranks the whole pool; `check`, `size` and the shadow tables rank within their own few names, and report's
+    // verdict mirror stamps none (its one name reads the neutral). The term is worth 3 points at most, so
+    // `size` on typed names (score ÷ volatility weights) can move by that much. Rank against the screen
+    // universe's yields if that ever matters.
+    core::stamp_ey_pct(quotes.iter_mut().filter_map(|q| q.fund.as_mut()));
 }
 
 /// Fill the DISPLAY-ONLY income-statement snapshot (rev_yoy / eps_yoy / net_margin_fy) on the quotes

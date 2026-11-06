@@ -5866,6 +5866,20 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
     }
 }
 
+/// (#1345) The live twin of the backtest's `ey_pct` stamp (`stamp_cohort_ranks` in commands/backtest.rs): each
+/// name's percentile of `earnings_yield` among the names passed in, 0-100, high = cheap. Same formula: the count
+/// of strictly lower yields over n−1, times 100, so ties share the lower rank and input order never matters.
+/// Fewer than 2 yields rank nothing. A name with no yield reads None, and the term's neutral fills it.
+pub fn stamp_ey_pct<'a>(funds: impl IntoIterator<Item = &'a mut FundFactors>) {
+    let mut funds: Vec<&mut FundFactors> = funds.into_iter().collect();
+    let mut col: Vec<f64> = funds.iter().filter_map(|f| f.earnings_yield).collect();
+    col.sort_by(f64::total_cmp);
+    let rank = |v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
+    for f in funds.iter_mut() {
+        f.ey_pct = if col.len() >= 2 { f.earnings_yield.map(rank) } else { None };
+    }
+}
+
 /// (#344) The (#94) as-of splice trim's gate, lifted out of `backtest_quote` so it can be graded:
 /// the knob ships OFF in both regimes, so inside that function its `&&` and its `!` were never read by
 /// any test. Crypto is exempt either way — a coin's real 13x weeks are not redenomination joints.
@@ -6985,6 +6999,21 @@ mod tests {
         assert_eq!(peg_yield(Some(5.0), Some(0.0), 100.0), None); // zero growth -> PEG infinite -> None
         assert_eq!(peg_yield(Some(5.0), None, 100.0), None); // no CAGR -> None
         assert_eq!(peg_yield(Some(5.0), Some(20.0), 0.0), None); // non-positive price -> earnings_yield None -> None
+    }
+
+    /// (#1345) Yields 9, 1, 5, 5 rank 100, 0, 33.3, 33.3 (ties share the lower rank, over n−1 = 3). A name with
+    /// no yield reads None, even over a stale stamp. Two yields rank 0 and 100; one yield ranks nothing.
+    #[test]
+    fn stamp_ey_pct_ranks_earnings_yield_over_the_names_passed_in() {
+        let ff = |ey: Option<f64>| FundFactors { earnings_yield: ey, ey_pct: Some(42.0), ..Default::default() };
+        let pcts = |mut v: Vec<FundFactors>| {
+            stamp_ey_pct(&mut v);
+            v.iter().map(|f| f.ey_pct.map(|p| (p * 10.0).round() / 10.0)).collect::<Vec<_>>()
+        };
+        let four = [Some(100.0), Some(0.0), Some(33.3), None, Some(33.3)];
+        assert_eq!(pcts(vec![ff(Some(9.0)), ff(Some(1.0)), ff(Some(5.0)), ff(None), ff(Some(5.0))]), four);
+        assert_eq!(pcts(vec![ff(Some(4.0)), ff(Some(2.0))]), [Some(100.0), Some(0.0)]);
+        assert_eq!(pcts(vec![ff(Some(7.0)), ff(None)]), [None, None]);
     }
 
     /// (FX) The three rules the price-joined factors rest on, pinned because each fails silently.

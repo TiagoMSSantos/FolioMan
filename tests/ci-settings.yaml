@@ -20832,6 +20832,10 @@ buy_heuristic:
       weight: -0.3           # (#1289) -0.2, -0.5 and -1.0 also pass; -0.1 is inert
       cap: 10.0              # (#1289) a rise past 10 points costs no more, so the dock tops out at 3
       neutral: 0.0           # (#1289) a missing trend costs nothing
+    - factor: ey_pct         # (#1345) the paper route's ni_me twin; receipt in the (#1344) and (#1345) blocks
+      weight: 0.03           # (#1339) fixed by the route before any grade, never tuned
+      cap: 100.0             # (#1339) a percentile tops out at 100, so the tilt tops out at 3 points
+      neutral: 50.0          # (#1339) a missing yield ranks as the middle name, 1.5 points
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
@@ -26138,6 +26142,21 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Row: a live `ey_pct` stamp (the same-date percentile of earnings_yield over the screened stocks, the
 #   `stamp_cohort_ranks` formula), the `ey_pct` term (weight 0.03, cap 100, neutral 50) in growth_fund_extra, and a
 #   golden rebless on the ship SHA. The cluster rule then closes Value: be_me and the rest are not graded.
+# (#1345) NI_ME TWIN SHIPPED 2026-11-06 on the owner's word, per the (#1344) result and the (#1339) route.
+# WHAT: a third `growth_fund_extra` term, `ey_pct`, at weight 0.03, cap 100 and neutral 50, all three fixed by
+#   (#1339) before any grade. A stock gains up to 3 points of score for being cheap on earnings against the names
+#   ranked with it: the cheapest earns 3, the middle name 1.5, the dearest 0.
+# LIVE STAMP: `core::stamp_ey_pct`, called once at the end of `fetch::enrich_fund_factor`, ranks earnings_yield
+#   over the names that call was given, with the `stamp_cohort_ranks` formula (the count of strictly lower yields
+#   over n-1, times 100). `screen` passes its whole universe, as the backtest ranks its whole pool on a date. The
+#   page re-ranks the stamped universe.json rows, so it reads the same number. A name with no yield reads 50, and
+#   so does every ETF and coin, since `growth_fund_scope_by_class` is false: the guard graded that same fill.
+# SHORTCUT: `check`, `size` and the shadow tables rank within their own few names, and report's verdict mirror
+#   stamps none, so their tilt can differ from the screen's by up to 3 points. The call site says so.
+# GOLDENS: the term reaches every fixture walk, so the next commit re-blesses them from a bless=true probe on this
+#   SHA. Until then `report_is_pinned` reads red on this push, and its mutants legs grade nothing.
+# CLUSTER RULE: Value is now closed. be_me, fcf_me, sale_me, ocf_me, chcsho_12m and ebitda_mev are not graded.
+# REVERT RULE: the (#1339) pull rule. Only a newer JKP release re-grades the term; a fail there removes it.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
