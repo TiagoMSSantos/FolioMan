@@ -522,7 +522,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(g["buckets"], 41)
         self.assertEqual(g["worst"], rows[0]["top10"][2], "the BOOK minimum is the printed worst window")
         self.assertAlmostEqual(g["mean"], rows[0]["top10"][0], delta=0.051, msg="the BOOK mean is the printed excess")
-        self.assertEqual(g["rank1"][:2], (14, 36))  # (#1370) the band 5.0 rebless moved rank 1's wins 16 -> 14
+        self.assertEqual(g["rank1"][:2], (15, 36))  # (#1373) the band 10.0 rebless moved rank 1's wins 14 -> 15
 
 
 def main():
