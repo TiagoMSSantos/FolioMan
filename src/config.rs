@@ -322,8 +322,9 @@ impl Default for Widths {
 
 /// (G+) One additional fundamental tilt term: which `FundFactors` field, how much per point, and the
 /// clamp applied before weighting. What the score adds is `weight × clamp(value, 0, cap)` — the same
-/// arithmetic as the primary `growth_fund_*` term, just repeatable. An unknown `factor` name reads
-/// None and contributes 0, exactly like the primary (`core::select_fund_factor`).
+/// arithmetic as the primary `growth_fund_*` term, just repeatable. (#1359) A `factor` name
+/// `core::select_fund_factor` does not route is refused at load by [`settings_of`], and an overlay's terms
+/// merge into the shipped list by `factor` name (see [`merge_yaml`]).
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)] // no `default` — a term with a missing weight or cap is a config bug, not a 0
 pub struct FundTerm {
@@ -1617,6 +1618,11 @@ fn drop_retired(v: &mut serde_yaml::Value) {
 /// override only replaces the knobs it names); a null overlay value overrides NOTHING; for anything
 /// else, `over` wins outright.
 /// (#817) A retired knob in `over` is dropped first: see [`RETIRED`].
+/// (#1359) A list of `{factor: …}` terms (only `growth_fund_extra` has that shape) merges by factor name: an
+/// entry whose name the base holds merges into that term key by key, and a new name is appended. So
+/// `{factor: roic, weight: 0}` turns one term off and keeps its cap and neutral, and an upload lists only
+/// what it changes. An empty list is not a term list, so `[]` still clears them all. Any other list
+/// replaces the base list.
 pub(crate) fn merge_yaml(base: &mut serde_yaml::Value, mut over: serde_yaml::Value) {
     drop_retired(&mut over);
     match (base, over) {
@@ -1630,6 +1636,14 @@ pub(crate) fn merge_yaml(base: &mut serde_yaml::Value, mut over: serde_yaml::Val
                 }
             }
         }
+        (serde_yaml::Value::Sequence(b), serde_yaml::Value::Sequence(o)) if is_term_list(&o) => {
+            for t in o {
+                match b.iter_mut().find(|x| x.get("factor") == t.get("factor")) {
+                    Some(x) => merge_yaml(x, t),
+                    None => b.push(t),
+                }
+            }
+        }
         // A bare `key:` with nothing under it — every knob commented out — names no knobs, so by the
         // contract above it replaces no knobs. Without this arm null is "anything else" and wins
         // outright, deleting the whole base subtree: on 2026-08-03 a commented-out `buy_heuristic:`
@@ -1638,6 +1652,12 @@ pub(crate) fn merge_yaml(base: &mut serde_yaml::Value, mut over: serde_yaml::Val
         (_, serde_yaml::Value::Null) => {}
         (b, o) => *b = o,
     }
+}
+
+/// (#1359) A non-empty list whose every entry names a `factor`: the shape [`merge_yaml`] and [`overlay_diff`]
+/// key by name.
+fn is_term_list(v: &[serde_yaml::Value]) -> bool {
+    !v.is_empty() && v.iter().all(|t| t.get("factor").is_some())
 }
 
 /// The canonical base mapping to overlay onto. Empty when the overlay IS the fixture (CI sets
@@ -1718,7 +1738,8 @@ fn config_fatal(path: &Path, detail: &str) -> ! {
 /// (#909) The merged config as [`Settings`]. serde_yaml names the key a wrong-typed value sits under only
 /// when it reads text (a `Value` keeps no path), so a failure is read again as text for that name; the
 /// line number that adds counts the merged config, not the user's file, so it is cut. (#1304) An unknown
-/// `growth_ranker` id is refused here too, with the list of ids.
+/// `growth_ranker` id is refused here too, with the list of ids. (#1359) So is a fund factor name no
+/// `core::select_fund_factor` arm routes, in `growth_fund_factor` or any `growth_fund_extra` term.
 pub fn settings_of(merged: &serde_yaml::Value) -> Result<Settings, String> {
     let s: Settings = serde_yaml::from_value(merged.clone()).map_err(|e| {
         let Some(named) = serde_yaml::to_string(merged).ok().and_then(|t| serde_yaml::from_str::<Settings>(&t).err()) else {
@@ -1728,6 +1749,10 @@ pub fn settings_of(merged: &serde_yaml::Value) -> Result<Settings, String> {
         named.split(" at line ").next().unwrap_or(&named).to_string()
     })?;
     crate::picks::ranker(&s.buy_heuristic.growth_ranker)?;
+    let bh = &s.buy_heuristic;
+    for f in std::iter::once(&bh.growth_fund_factor).chain(bh.growth_fund_extra.iter().map(|t| &t.factor)) {
+        crate::core::fund_factor_known(f)?;
+    }
     Ok(s)
 }
 
@@ -1823,7 +1848,8 @@ fn drift_lines(base: &serde_yaml::Mapping, over: &serde_yaml::Mapping) -> Vec<St
 /// (#1119) `config show --diff`: every overlay leaf that moves the base, as `a.b: base -> overlay`, in the
 /// overlay's order. Leaves compare as in [`drift_lines`], so 5 and 5.0 are one value. A null or a [`RETIRED`]
 /// key changes nothing in [`merge_yaml`], so neither is listed. A key the base lacks shows `?`. Values print
-/// as JSON, which keeps a list on one line.
+/// as JSON, which keeps a list on one line. (#1359) A term list diffs per term, as it merges, under
+/// `path[factor]`, so an unchanged term prints nothing.
 pub fn overlay_diff(base: &serde_yaml::Value, over: &serde_yaml::Value) -> Vec<String> {
     fn walk(base: Option<&serde_yaml::Value>, over: &serde_yaml::Value, path: &str, out: &mut Vec<String>) {
         let fmt = |v: &serde_yaml::Value| serde_json::to_string(v).unwrap_or_default();
@@ -1833,6 +1859,13 @@ pub fn overlay_diff(base: &serde_yaml::Value, over: &serde_yaml::Value) -> Vec<S
                     let name = serde_yaml::to_string(key).unwrap_or_default().trim().to_string();
                     let path = if path.is_empty() { name } else { format!("{path}.{name}") };
                     walk(base.and_then(|b| b.get(key)), v, &path, out);
+                }
+            }
+            serde_yaml::Value::Sequence(terms) if is_term_list(terms) => {
+                for t in terms {
+                    let name = t.get("factor").and_then(|f| f.as_str()).unwrap_or_default();
+                    let base_t = base.and_then(|b| b.as_sequence()).and_then(|b| b.iter().find(|x| x.get("factor") == t.get("factor")));
+                    walk(base_t, t, &format!("{path}[{name}]"), out);
                 }
             }
             serde_yaml::Value::Null => {}
@@ -2774,6 +2807,25 @@ mod tests {
         assert!(ranked("nope").is_err_and(|e| e.contains("growth_ranker \"nope\" is not one of: shipped, gates_off")));
     }
 
+    /// (#1359) On the shipped settings, an upload that lists one new term keeps the shipped five and adds it,
+    /// and a fund factor name no router arm knows is refused at load, in a term or as the primary factor.
+    #[test]
+    fn settings_of_refuses_an_unknown_fund_factor() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml")).expect("read tests/ci-settings.yaml");
+        let load = |over: &str| {
+            let mut v: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse tests/ci-settings.yaml");
+            merge_yaml(&mut v, serde_yaml::from_str(over).expect("overlay"));
+            settings_of(&v).map(|s| s.buy_heuristic.growth_fund_extra)
+        };
+        let names = |terms: Vec<FundTerm>| terms.into_iter().map(|t| t.factor).collect::<Vec<_>>();
+        let term = |f: &str| format!("buy_heuristic:\n  growth_fund_extra:\n    - {{factor: {f}, weight: 0.05, cap: 10, neutral: 0}}\n");
+        assert_eq!(load(&term("buyback_yield")).map(names), Ok(["roic", "margin_trend", "ey_pct", "mom61_pct", "capx_pct", "buyback_yield"].map(String::from).to_vec()));
+        let off = load("buy_heuristic:\n  growth_fund_extra:\n    - {factor: roic, weight: 0}\n").expect("a weight alone merges into the shipped term");
+        assert_eq!((off.len(), off[0].weight, off[0].cap, off[0].neutral), (5, 0.0, 40.0, 17.3), "the README's turn-one-off line");
+        assert!(load(&term("roic_typo")).is_err_and(|e| e.contains("fund factor \"roic_typo\" is not one of: rev_cagr, ")));
+        assert!(load("buy_heuristic:\n  growth_fund_factor: nope\n").is_err_and(|e| e.contains("fund factor \"nope\" is not one of")));
+    }
+
     /// (PIT) The default membership source, pinned by SHAPE rather than by host. Nothing else in the
     /// tree reads this string, so without a pin `default_sp500_history` is free to return anything at
     /// all — and the failure it would cause is silent: a URL that fetches but does not parse leaves
@@ -3135,6 +3187,11 @@ mod tests {
         let over = y("a:\n  b: 17.0\n  c: 1.0\n  s: [x, y]\n  n: ~\nt: keep\nnew: 3\ngrowth_leg_dock: 2\n");
         assert_eq!(overlay_diff(&base, &over), ["a.b: 19.0 -> 17.0", r#"a.s: ["x"] -> ["x","y"]"#, "new: ? -> 3"]);
         assert!(overlay_diff(&base, &base).is_empty());
+        // (#1359) a term list diffs per term by factor name: order and an equal weight are no difference
+        let base = y("t: [{factor: x, weight: 1}, {factor: y, weight: 2}]\n");
+        let over = y("t: [{factor: y, weight: 9}, {factor: z, weight: 3}, {factor: x, weight: 1.0}]\n");
+        assert_eq!(overlay_diff(&base, &over), ["t[y].weight: 2 -> 9", r#"t[z].factor: ? -> "z""#, "t[z].weight: ? -> 3"]);
+        assert_eq!(overlay_diff(&base, &y("t: []\n")), [r#"t: [{"factor":"x","weight":1},{"factor":"y","weight":2}] -> []"#]);
         // the baseline source: code defaults serialize to a mapping with the real knob values
         let defaults = serde_yaml::to_value(BuyHeuristic::default()).unwrap();
         assert_eq!(defaults["growth_min_range_pct"].as_f64(), Some(80.0));
@@ -3222,6 +3279,23 @@ mod tests {
         assert_eq!(base["b"]["x"].as_u64(), Some(10));
         assert_eq!(base["b"]["y"].as_u64(), Some(20));
         assert_eq!(base["c"].as_u64(), Some(3)); // the rest of the overlay still applies
+    }
+
+    /// (#1359) A list of `{factor: …}` terms merges by name: a same-name entry merges into its term key by
+    /// key, a new name appends, and `[]` clears them all. Any other list still replaces the base list.
+    #[test]
+    fn term_lists_merge_by_factor() {
+        let y = |s: &str| serde_yaml::from_str::<serde_yaml::Value>(s).unwrap();
+        let mut base = y("l: [a, b]\nt: [{factor: x, weight: 1}, {factor: y, weight: 2, cap: 5}]\n");
+        merge_yaml(&mut base, y("l: [c]\nt: [{factor: y, weight: 9}, {factor: z, weight: 3}]\n"));
+        assert_eq!(base["l"], y("[c]"), "a plain list replaces");
+        let names: Vec<_> = base["t"].as_sequence().unwrap().iter().map(|t| t["factor"].as_str().unwrap()).collect();
+        assert_eq!(names, ["x", "y", "z"], "the base order holds and a new name appends");
+        assert_eq!(base["t"][1]["weight"].as_u64(), Some(9), "the same name's weight wins");
+        assert_eq!(base["t"][1]["cap"].as_u64(), Some(5), "a key the entry leaves out is kept");
+        assert_eq!(base["t"][0]["weight"].as_u64(), Some(1), "an unnamed term is kept");
+        merge_yaml(&mut base, y("t: []\n"));
+        assert_eq!(base["t"], y("[]"), "an empty list clears every term");
     }
 
     /// (#817) A retired knob in an overlay is dropped, not refused: `deny_unknown_fields` would fail a

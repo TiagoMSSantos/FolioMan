@@ -184,8 +184,8 @@ leads at 20 years, on only 22 windows (receipt (#798)). See the `[FOIL]` tags in
 Goal: change what the `screen` growth ranking surfaces. The shipped knobs live in
 `tests/ci-settings.yaml`, which CI and the page read. A local `config/settings.yaml`, the file
 `FOLIOMAN_CONFIG` names, or a file uploaded on the page is merged over it, so it only needs the
-knobs you change. A list is the one exception: it replaces the shipped list instead of merging
-(see [Adding a fundamentals term](#adding-a-fundamentals-term)). Edit `buy_heuristic:` there, then
+knobs you change. A list replaces the shipped list, except `growth_fund_extra`, which merges by
+factor name (see [Adding a fundamentals term](#adding-a-fundamentals-term)). Edit `buy_heuristic:` there, then
 **validate on CI with a `probe.yml` dispatch**: `knobs=` overrides numbers and `extra=` adds fund
 terms, for that run only. `cargo run -- backtest` runs the same walk locally. Watch rho (rank
 correlation), the top-vs-bottom-half edge in points, and that both out-of-sample halves stay
@@ -228,7 +228,7 @@ flag anything before about 2027-09, and a flag on its own is noise (#1358).
 | Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
 | Tilt toward cheap-on-earnings (SEC P/E for US filers; FMP fallback with `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
 | Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | shipped 0.07 (`peg_yield`); 0 = off |
-| Add or reweigh more fundamentals terms | `growth_fund_extra` (a list) | shipped 5 terms; copy all 5, then edit |
+| Add or reweigh more fundamentals terms | `growth_fund_extra` (a list) | shipped 5 terms; list only the terms you add or change |
 | Admit fewer near-miss stocks | `growth_gate_soft` | lower (0 = every gate a hard wall) |
 | Give the momentum side more or fewer of every 10 book slots | `growth_momentum_slots` | shipped 5 |
 
@@ -237,24 +237,24 @@ flag anything before about 2027-09, and a flag on its own is noise (#1358).
 `growth_fund_extra` is a list of extra fundamentals terms added to the growth score. Each term
 adds `weight × clamp(value, 0, cap)`, in the factor's own units. A name with no value scores the
 term's `neutral` instead. The factor names are the arms of `core::select_fund_factor` in
-`src/core.rs`, 65 of them. A name it does not route reads as missing for every row, so a typo
-quietly adds the same `neutral` to everyone.
+`src/core.rs`, 65 of them. A name it does not route is refused when the settings load, and the
+error lists all 65, so a typo cannot quietly score every row the same.
 
-**A list replaces the shipped list. It does not merge.** A settings file that lists only your new
-term silently drops the 5 shipped terms. Copy all 5, then add yours:
+**The list merges with the shipped 5 terms by factor name.** List only what you change:
+
+- A new name adds a term. Give all four fields.
+- A shipped name changes only the fields you give. The others keep their shipped values.
+- `weight: 0` turns one term off.
+- An empty list, `growth_fund_extra: []`, turns all of them off.
 
 ```yaml
 buy_heuristic:
   growth_fund_extra:
-    - {factor: roic, weight: 0.25, cap: 40.0, neutral: 17.3}
-    - {factor: margin_trend, weight: -0.3, cap: 10.0, neutral: 0.0}
-    - {factor: ey_pct, weight: 0.03, cap: 100.0, neutral: 50.0}
-    - {factor: mom61_pct, weight: 0.03, cap: 100.0, neutral: 50.0}
-    - {factor: capx_pct, weight: 0.03, cap: 100.0, neutral: 50.0}
-    - {factor: buyback_yield, weight: 0.05, cap: 10.0, neutral: 0.0}  # yours: % of shares bought back in a year
+    - {factor: buyback_yield, weight: 0.05, cap: 10.0, neutral: 0.0}  # adds: % of shares bought back in a year
+    - {factor: roic, weight: 0}                                       # turns the shipped roic term off
 ```
 
-The last line only shows the shape: buyback yield is on the measured-dead list below. On CI, a
+The first line only shows the shape: buyback yield is on the measured-dead list below. On CI, a
 `probe.yml` dispatch with `extra=buyback_yield:0.05:10:0` appends the same term to the shipped list
 for one run, and it refuses a name `select_fund_factor` does not route.
 

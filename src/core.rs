@@ -5885,6 +5885,32 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
     }
 }
 
+/// (#1359) Every name `select_fund_factor` routes, in arm order. `fund_factor_known_names_are_the_router_arms`
+/// reads the match above and fails when an arm is added or dropped without this list.
+pub(crate) const FUND_FACTOR_NAMES: &[&str] = &[
+    "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth", "rev_yoy", "eps_yoy", "net_margin", "roe",
+    "quality", "roic", "insider_net_buys_90d", "earnings_yield", "ebitda_yield", "peg_yield", "buyback_yield", "fcf_margin",
+    "interest_cover", "net_cash_rev", "margin_stability", "accrual_gap", "asset_growth", "gp_assets", "cf_assets", "noa",
+    "op_leverage", "mscore", "sbc", "goodwill", "org_cap", "int_yield", "rev_stability", "fcf_ev_yield", "sales_ev_yield",
+    "value_composite", "book_yield", "small_pct", "ey_pct", "mom61_pct", "rnd_pct", "rnd_yield", "payout_yield", "rnd_growth",
+    "lynch_yield", "sgr_yield", "exp_neg", "op_rd", "discipline", "fair_yield", "oe_fair_yield", "fcf_cap_yield", "low_turnover",
+    "low_dro", "capex_light", "share_iss_5y", "netdebt_assets", "eps_streak", "underdep", "cgo", "ocf_at_chg", "capex_abn",
+    "capx_pct", "insider_own_pct", "composite",
+];
+
+/// (#1359) Refuse a fund factor name the router does not know. `select_fund_factor` reads one as None, so a
+/// typo in `growth_fund_factor` or a `growth_fund_extra` term used to fill every row with the same neutral and
+/// move nothing, silently. `config::settings_of` calls this for every configured name, so the page, a local
+/// overlay and `FOLIOMAN_CONFIG` all refuse it at load. Names built in code (the backtest's calibration row)
+/// never pass through here.
+pub(crate) fn fund_factor_known(name: &str) -> Result<(), String> {
+    if FUND_FACTOR_NAMES.contains(&name) {
+        Ok(())
+    } else {
+        Err(format!("fund factor {name:?} is not one of: {}", FUND_FACTOR_NAMES.join(", ")))
+    }
+}
+
 /// (#1345) The live twin of the backtest's `ey_pct` stamp (`stamp_cohort_ranks` in commands/backtest.rs): each
 /// name's percentile of `earnings_yield` among the names passed in, 0-100, high = cheap. Same formula: the count
 /// of strictly lower yields over n−1, times 100, so ties share the lower rank and input order never matters.
@@ -6836,6 +6862,24 @@ mod tests {
         let edge = red_flags(&clean, None, None, Some(-10.0 - 1e-9))[5];
         assert!(over, "10.1% more shares is over the bound");
         assert!(!edge, "the slack edge itself reads clean");
+    }
+
+    /// (#1359) The load-time name list is the router's arms, read from this file's source, so adding a factor
+    /// arm without listing it (or listing a name with no arm) fails here, not on a user's upload.
+    #[test]
+    fn fund_factor_known_names_are_the_router_arms() {
+        let src = include_str!("core.rs");
+        let body = src.split("pub fn select_fund_factor(").nth(1).and_then(|b| b.split("\n}\n").next()).unwrap();
+        let mut arms: Vec<&str> =
+            body.lines().filter_map(|l| l.trim_start().strip_prefix('"')?.split_once("\" =>").map(|(n, _)| n)).collect();
+        let mut listed = FUND_FACTOR_NAMES.to_vec();
+        arms.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(arms.len(), 65, "{arms:?}");
+        assert_eq!(arms, listed);
+        assert!(fund_factor_known("roic").is_ok());
+        assert!(fund_factor_known("composite").is_ok());
+        assert!(fund_factor_known("roic_typo").is_err_and(|e| e.contains("fund factor \"roic_typo\" is not one of: rev_cagr, rev_accel, ")));
     }
 
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None
