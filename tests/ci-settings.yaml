@@ -26518,6 +26518,31 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # WHAT IT LEAVES: no guard probe and no owner question on a new SEC line. Size, Accruals, Debt Issuance, Seasonality,
 #   Profit Growth and Low Leverage stay open, with no JKP candidate left in them. The paper route has nothing more
 #   to read until a JKP release newer than 2026-08-04, whose Last-Modified each buy-rule session checks.
+# (#1358) RECORD, 2026-11-07, record only, no knob, no code. The forward reopen gate cannot see a realistic edge, and
+#   it has no fixed reading. Owner's choice: write it down. Freezing one reading at link 12 and an anytime-valid
+#   reader were both offered and declined.
+# THE RULE READ: `track::clears` and `both_verdict` flag REOPEN SIGNAL when a row has 12+ monthly lines AND 12+
+#   chained links, each with mean AND median above 0 ((#323), (#336), (#338)).
+# ASSUMPTIONS, not measured: stock-specific volatility ~35 %/yr (~10 %/month), and a 10-20 name shadow set against
+#   the bought book. The journal holds 3 monthly lines and 2 links, too few to measure its own noise.
+# POWER: one link's shadow-minus-book gap has an sd of ~3.5 %/month. 12 links give an SE of ~1 %/month, ~12 %/yr.
+#   "Mean > 0" reads true 80 % of the time only for a true edge near 10 %/yr. A one-sided 5 % test needs ~30 %/yr.
+#   A true +0.8 %/yr edge reads mean > 0 with a probability of ~0.53, against ~0.50 for no edge.
+# FALSE FLAGS: with no edge, mean and median (correlation ~0.8) are both above 0 at one reading ~40 % of the time,
+#   ~30 % with the chained reading added. The code already concedes that many rows at once let one clear by chance.
+#   What was not on file: every month after link 12 is a fresh reading. By the arcsine law, a no-edge row flags at
+#   some point between links 12 and 36 with a probability of ~0.65-0.7.
+# HOW LONG A VALID TEST TAKES: a fixed single reading, one-sided 5 % at 80 % power, needs 6.18 x sigma^2 / delta^2
+#   years (sigma and delta in %/yr). A 12-name row (sigma ~10) at delta 4 needs ~39 years. Anytime-valid tests
+#   (mSPRT, e-values, confidence sequences) stay valid however often they are read, but take about twice as long
+#   (Johari, Pekelis and Walsh, arXiv 1512.04922 v3, 2019; Ramdas, Grunwald, Vovk and Shafer, arXiv 2210.01948 v2,
+#   2023). Daily returns do not shorten this: the variance of the mean edge falls with calendar time, not with the
+#   number of samples.
+# WHAT IT CHANGES: "12 links, ~2027-09" is the first date a row CAN flag, not a verdict date. A REOPEN SIGNAL alone is
+#   noise. It buys at most the backtest re-grade that (#334) and (#415) already require. That re-grade is blind
+#   below ~5 %/yr (#1333), so a flag never ships anything by itself. The one channel with power stays the paper
+#   route (#1339). HEAD on JKP's public/availability.json, 2026-11-07: Last-Modified 2026-08-04 03:27:36 GMT,
+#   unchanged, so it stays shut.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
