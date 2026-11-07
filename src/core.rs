@@ -4341,6 +4341,12 @@ pub struct FundFactors {
     // name invests above its own habit). Both off the as-of rows, no price; a bank or insurer reads None
     pub ocf_at_chg: Option<f64>,
     pub capex_abn: Option<f64>,
+    // (#1353) the paper route's capx_gr3 twin. `capx_gr3`: capex (OCF minus FCF, each the filing's margin times
+    // its revenue) over the capex 3 fiscal years back, minus 1, %, off the as-of rows and kept for every firm, as
+    // JKP keeps banks. `capx_pct`: its same-date percentile, 0-100, HIGH = LOW capex growth (the paper's buy
+    // side). Backtest stamps `capx_pct`; live reads None
+    pub capx_gr3: Option<f64>,
+    pub capx_pct: Option<f64>,
     // (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal
     // and Ruenzi 2014 measure the CEO's stake; this is the wider directors-and-officers cut SEC's insider
     // data sets carry. Only the backtest fills it, under `insider`, from tests/insider_own.csv. PROBE-ONLY
@@ -5059,6 +5065,13 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             let mean = (1..4).map(capex_rev).sum::<Option<f64>>()? / 3.0;
             (mean > 0.0).then_some((capex_rev(0)? / mean - 1.0) * 100.0)
         }),
+        // (#1353) Anderson-Garcia-Feijoo 2006, the JKP `capx_gr3` row: capex now over capex 3 fiscal years back,
+        // minus 1, % (`grow`, so the old capex must be positive). No financial filter: JKP keeps every firm
+        capx_gr3: {
+            let capex = |k: i64| Some(capex_rev(k)? * back(k)?.revenue?);
+            grow(capex(0), capex(3))
+        },
+        capx_pct: None,
         insider_own_pct: None, // (#1301) set in the backtest loop, from the insider holdings table
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
@@ -5865,6 +5878,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "cgo" => f.cgo,                                   // (#1287) capital-gains overhang, %: measured, unweighted
         "ocf_at_chg" => f.ocf_at_chg,                     // (#1290) 1y change in OCF over assets, points: measured, unweighted
         "capex_abn" => f.capex_abn,                       // (#1290) capex over revenue against its 3y mean, %: measured, unweighted
+        "capx_pct" => f.capx_pct,                         // (#1353) same-date capx_gr3 percentile, high = LOW capex growth
         "insider_own_pct" => f.insider_own_pct,           // (#1301) insiders' holding, % of shares: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
@@ -6897,6 +6911,8 @@ mod tests {
             cgo: Some(58.0),
             ocf_at_chg: Some(59.0),
             capex_abn: Some(60.0),
+            capx_gr3: Some(82.0),
+            capx_pct: Some(83.0),
             insider_own_pct: Some(61.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
@@ -6969,6 +6985,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "cgo"), Some(58.0)); // (#1287)
         assert_eq!(select_fund_factor(&f, "ocf_at_chg"), Some(59.0)); // (#1290)
         assert_eq!(select_fund_factor(&f, "capex_abn"), Some(60.0)); // (#1290)
+        assert_eq!(select_fund_factor(&f, "capx_pct"), Some(83.0)); // (#1353)
         assert_eq!(select_fund_factor(&f, "insider_own_pct"), Some(61.0)); // (#1301)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
@@ -7929,6 +7946,29 @@ mod tests {
         let flat = [r(2020, 10.0, Some(10.0)), r(2021, 10.0, Some(10.0)), r(2022, 10.0, Some(10.0)), r(2023, 20.0, Some(10.0))];
         assert_eq!(f(&flat).1, None, "a zero capex mean is no ratio");
         assert_eq!(f(&[FundRow { assets: Some(0.0), ..four[2].clone() }, four[3].clone()]).0, None, "a zero asset base");
+    }
+
+    /// (#1353) `capx_gr3` is capex now over capex 3 fiscal years back, minus 1: 5 % of 100 in 2020 is 5, and 10 %
+    /// of 200 in 2023 is 20, so +300 %. A bank keeps its value (JKP filters none); a missing leg, no row 3 fiscal
+    /// years back or a zero old capex is None.
+    #[test]
+    fn capex_growth_reads_three_fiscal_years_back() {
+        let r = |y: i32, rev: f64, ocf: f64, fcf: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(rev),
+            ocf_margin: Some(ocf),
+            fcf_margin: fcf,
+            ..Default::default()
+        };
+        let g = |rows: &[FundRow]| fund_factors(rows, NaiveDate::from_ymd_opt(2024, 6, 1).unwrap(), 5).capx_gr3;
+        let rows = [r(2020, 100.0, 15.0, Some(10.0)), r(2023, 200.0, 20.0, Some(10.0))];
+        assert!((g(&rows).unwrap() - 300.0).abs() < 1e-9);
+        let bank: Vec<FundRow> = rows.iter().map(|x| FundRow { financial: true, ..x.clone() }).collect();
+        assert!((g(&bank).unwrap() - 300.0).abs() < 1e-9, "JKP keeps every firm");
+        assert_eq!(g(&[r(2020, 100.0, 15.0, None), rows[1].clone()]), None, "the old year misses FCF");
+        assert_eq!(g(&rows[1..]), None, "no row 3 fiscal years back");
+        assert_eq!(g(&[r(2020, 100.0, 10.0, Some(10.0)), rows[1].clone()]), None, "a zero old capex is no ratio");
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of

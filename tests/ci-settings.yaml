@@ -26343,6 +26343,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   miners and utilities file no R&D line. Guess 45-65 % (the growth book leans to tech and health care). If it
 #   grades, PASS about 1 in 2.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1353) CAPX_GR3 HARM GUARD, PRE-REGISTERED 2026-11-07 before this run. Row: (#1354).
+# WHY: (#1347) passed capx_gr3 on JKP's 2026 release (US t 4.07, post +1.5; developed ex-US t 2.28, post +1.2),
+#   and Investment holds no paper-route ship, so it is third in the guard queue. Proof stays JKP's; our backtest
+#   only has to show no visible harm.
+# TWIN: `capx_gr3`, this fiscal year's capex over the capex 3 fiscal years back, minus 1, in % (JKP's capx/capx
+#   lag 3 years minus 1, Anderson-Garcia-Feijoo 2006). Capex = operating cash flow minus free cash flow, each the
+#   filing's margin times its revenue, as (#1290)'s capex_abn reads it. None unless both years carry both legs and
+#   the old capex is positive. No financial filter: JKP's characteristic keeps every firm. stamp_cohort_ranks then
+#   ranks it into `capx_pct` (0-100, HIGH = LOW capex growth, the paper's buy side) over the date's names that
+#   carry one. Only as-of SEC rows yield one, so a fund row with no filing yet never joins the column.
+# TERM: {factor: capx_pct, weight: 0.03, cap: 100, neutral: 50}, added after the shipped terms, the earlier
+#   paper-route terms unchanged.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), so
+#   cutoffs before 2011-01-01 drop. Grid: [{}, {growth_fund_extra: the shipped terms, then the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y. Only then a second probe, rescore="guard holdout reveal sec", reads the
+#   sealed 2016-on 8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were read
+#   before (ni_me, probe 42286340556; ret_6_1, probe 42357657397; rd_me too, if (#1352) reached its reveal), so
+#   this holdout is not blind; its receipt says so. Both = SHIP per (#1339), after one owner question, because the
+#   page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = capx_gr3 REFUSED, record only. The guard
+#   queue is then empty: the (#1347) passers in open clusters are all graded.
+# EXPECTED: coverage needs 4 fiscal years of cash-flow legs, so 2011-2013 cutoffs reach back into thin early XBRL.
+#   Guess 60-75 % of scored stocks. If it grades, PASS about 1 in 2.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
