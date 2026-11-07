@@ -144,7 +144,7 @@ by hand.
 | 127 | (#106) print the DISTRIBUTION of the held book's terminal multiple across windows — d10 / median / d90, plus… | knob | `print_book_deciles` | SHIPPED true | #106 #124 #128 #140 #1114 #1153 | — |
 | 128 | (#563) ALL-GATES-SOFT: a name that fails knob gates is scored with those gates waived (`picks::waived`, the M… | knob | `growth_gate_soft` | SHIPPED 0.8 | #186 #192 #258 #560 #563 #1282 | — |
 | 129 | (#1230) the ETF twin of growth_gate_soft: a fund failing knob gates scores waived x f^n at THIS f. 0.0 = fund… | knob | `growth_gate_soft_etf` | SHIPPED 0.0 | #160 #421 #552 #566 #1230 #1364 | — |
-| 130 | (#1362) the growth bar's taper: a STOCK under its `cagr` or `cagr-life` floor by less than this many %/yr is… | knob | `growth_cagr_soft_band` | SHIPPED 1.5 | #52 #57 #1354 #1362 #1363 #1364 | — |
+| 130 | (#1362) the growth bar's taper: a STOCK under its `cagr` or `cagr-life` floor by less than this many %/yr is… | knob | `growth_cagr_soft_band` | SHIPPED 2.5 | #57 #565 #1354 #1362 #1366 #1367 | — |
 | 131 | (#1245) each of three corporate events inside this many months before a backtest cutoff (a dividend cut to un… | knob | `growth_event_months` | SHIPPED 0 | #1245 | — |
 | 132 | (#104) print, beside every lane's rho and edge, how much of the pool's EXTREME upside the ranking actually he… | knob | `print_recall_capture` | SHIPPED true | #91 #104 #140 #154 #160 #172 | — |
 | 133 | (#103) journal the CORE shortlist alongside the ranked slice, so `track` can one day grade the buy-and-hold h… | knob | `journal_core_list` | SHIPPED true | #103 #253 #285 #758 #784 #795 | — |
