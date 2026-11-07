@@ -30,7 +30,11 @@ and every `me_lag1` weight come from the pinned old `market_returns.csv`, a 2025
 2024-12-31 weight. Check (iii) confirms the new return sits nearer the old USD excess market than the local one;
 the gaps are then graded on the new return (`ret_2026`).
 
+(#1356) MENU 2 holds the 14 ideas (#1339) left out under exclusion (d), "lines we do not parse", whose
+Kelly-Pedersen cluster held no ship when the owner opened it. Same order rule, same bars; `--menu 2` grades it.
+
 Usage: python3 -I -B tools/jkp_proof.py <dir holding pfs.csv (or mkt.zip and pf/*.zip) and market_returns.csv>
+       python3 -I -B tools/jkp_proof.py <dir> --menu 2
        python3 -I tools/jkp_proof.py --selftest
 Stdlib only. The data is downloaded and untrusted: it is parsed as numbers and text, never executed.
 """
@@ -62,11 +66,21 @@ MENU = [
     ("oaccruals_ni", 2011, -1, "Accruals"), ("rd5_at", 2011, 1, "Low Leverage"), ("cash_at", 2012, 1, "Low Leverage"),
     ("ocf_at_chg1", 2019, 1, "Profit Growth"),
 ]
+# (#1356) menu 2, in the same order rule
+MENU2 = [
+    ("dsale_dinv", 1998, 1, "Profit Growth"), ("sale_emp_gr1", 1998, 1, "Profit Growth"),
+    ("kz_index", 2001, 1, "Seasonality"), ("cowc_gr1a", 2005, -1, "Accruals"), ("fnl_gr1a", 2005, -1, "Debt Issuance"),
+    ("lti_gr1a", 2005, -1, "Seasonality"), ("ncol_gr1a", 2005, -1, "Debt Issuance"),
+    ("nfna_gr1a", 2005, 1, "Debt Issuance"), ("taccruals_at", 2005, -1, "Accruals"),
+    ("dbnetis_at", 2006, -1, "Seasonality"), ("tangibility", 2009, 1, "Low Leverage"),
+    ("taccruals_ni", 2011, -1, "Accruals"), ("tax_gr1a", 2011, 1, "Profit Growth"),
+    ("aliq_mat", 2014, -1, "Low Leverage"),
+]
 # MSCI "developed" in JKP's Country_Classification.xlsx, minus USA
 DEV = ("JPN HKG GBR CAN AUS DEU FRA SWE CHE SGP ITA ESP ISR NLD NOR BEL DNK FIN NZL AUT IRL PRT").split()
 MIN_N, MIN_POST, T_BAR = 5, 60, 1.96
 MKT_COLS = ("me_lag1", "mkt_vw_cap", "mkt_vw_cap_lcl", "mkt_vw_cap_exc")
-LONG_PF = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU}
+LONG_PF = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU + MENU2}
 KEEP = set(DEV) | {"USA"}
 HELD = "2024-12-31"  # (#1346) the old file's last month; its me_lag1 weighs each country through 2025
 
@@ -241,7 +255,7 @@ def cell(g):
     return f"{g['T']:4d} {pct(g['mean'])} {t} {g['P']:4d} {pct(g['post'])} {g['v'][:5]:5s}"
 
 
-def report(d):
+def report(d, menu=MENU):
     new = os.path.exists(f"{d}/mkt.zip")
     mkt, legs, bm = (load_2026 if new else load)(d)
     usd, excess, lines = unit_check(mkt, bm)
@@ -258,18 +272,22 @@ def report(d):
     print(f"{'idea':14s} {'year':4s} {'dir':>3s} {'cluster':14s} |   US: T  mean     t    P  post v     "
           f"|  DEV: T  mean     t    P  post v     | verdict")
     passers = []
-    for name, year, di, cl in MENU:
+    for name, year, di, cl in menu:
         us = grade(region_gaps(legs[name], mkt, ["USA"], col, False), year)
         dev = grade(region_gaps(legs[name], mkt, DEV, col, True), year)
         ok = us["v"] == "PASS" and dev["v"] == "PASS"
         if ok:
             passers.append((name, cl))
         print(f"{name:14s} {year:4d} {di:+3d} {cl:14s} | {cell(us)} | {cell(dev)} | {'PASS' if ok else 'fail'}")
-    print(f"passers, in order: {len(passers)} of {len(MENU)}: " + ", ".join(f"{n} ({c})" for n, c in passers))
+    print(f"passers, in order: {len(passers)} of {len(menu)}: " + ", ".join(f"{n} ({c})" for n, c in passers))
     return 0
 
 
 def demo():
+    order = lambda m: m == sorted(m, key=lambda x: (x[1], x[0]))
+    assert order(MENU) and order(MENU2) and len(MENU) == 42 and len(MENU2) == 14 and len(LONG_PF) == 56
+    assert LONG_PF["taccruals_at"] == 1 and LONG_PF["tax_gr1a"] == 3
+    assert not {c for *_, c in MENU2} & {"Value", "Momentum", "Investment"}  # the clusters holding a ship
     assert num("0.5") == 0.5 and num("") is None and num("NA") is None and num("nan") is None
     assert abs(slope([0, 1, 2], [0, -1, -2]) + 1) < 1e-12
     assert market_column(True, True) == "mkt_vw_cap_exc" and market_column(False, True) is None
@@ -316,4 +334,6 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         print("jkp_proof selftest: ok")
         sys.exit(0)
-    sys.exit(report(sys.argv[1]))
+    if sys.argv[2:] not in ([], ["--menu", "2"]):
+        sys.exit("usage: jkp_proof.py <dir> [--menu 2]")
+    sys.exit(report(sys.argv[1], MENU2 if sys.argv[2:] else MENU))

@@ -26437,6 +26437,66 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   empty until a newer JKP release (pin 2026-08-04) or a cluster reopens.
 # REVERT RULE: the (#1339) pull rule. Only a newer JKP release re-grades the term; a fail there removes it.
 
+# (#1356) THE PAPER ROUTE'S MENU 2, PRE-REGISTERED 2026-11-07 before any menu-2 return was read. Row: (#1357).
+# WHY: the (#1355) guard queue is empty. Value, Momentum and Investment each hold a ship; Size, Accruals, Debt
+#   Issuance, Seasonality, Profit Growth and Low Leverage hold none. (#1339) left 14 ideas in those open clusters out
+#   under exclusion (d), "lines we do not parse". The owner chose to grade all 14 with the same proof and bars. A
+#   passer whose twin needs a line we do not carry gets its own owner question before any reader is written.
+# DATA: the 25 files (#1346) pinned, JKP's 2026 release (Last-Modified 2026-08-04); their md5s are re-checked before
+#   the run. The 14 names were checked to exist in the USA zip by reading its name column alone.
+# MENU 2, fixed now: 14 ideas, in (#1339)'s order (publication year, then name). Each line: JKP name, year,
+#   direction, Kelly-Pedersen cluster = our twin, then the twin's earning end. "Now" = built from lines `FundRow`
+#   already carries; "line" = needs one it does not carry, named in brackets. "Back k" is the filing k fiscal years
+#   back. Net income and operating cash flow are net_margin and ocf_margin times revenue; cash is debt minus net
+#   debt; a missing short-term investments line reads 0, and a missing debt line leaves the twin missing.
+#   dsale_dinv 1998 +1 Profit Growth = line (inventory): 1y % change of revenue minus 1y % change of inventory; high
+#   sale_emp_gr1 1998 +1 Profit Growth = line (employees, as filed each year): 1y % change of revenue per employee;
+#     high
+#   kz_index 2001 +1 Seasonality = line (net PP&E, dividends): the Kaplan-Zingales index, -1.002 cash flow over
+#     PP&E back 1, +0.283 Q, +3.139 debt over (debt plus book), -39.368 dividends over PP&E back 1, -1.315 cash
+#     over PP&E back 1; high
+#   cowc_gr1a 2005 -1 Accruals = line (the current split): 1y change of (current assets minus cash and short-term
+#     investments) minus (current liabilities minus short-term debt), over assets back 1; low
+#   fnl_gr1a 2005 -1 Debt Issuance = now: 1y change of debt, over assets back 1; low
+#   lti_gr1a 2005 -1 Seasonality = line (long-term investments): their 1y change, over assets back 1; low
+#   ncol_gr1a 2005 -1 Debt Issuance = line (total liabilities): 1y change of (total liabilities minus current
+#     liabilities minus long-term debt), over assets back 1; low
+#   nfna_gr1a 2005 +1 Debt Issuance = now: 1y change of (short-term investments minus debt), over assets back 1;
+#     high
+#   taccruals_at 2005 -1 Accruals = now: net income minus operating cash flow, plus the 1y change of (short-term
+#     investments minus debt), over assets; low
+#   dbnetis_at 2006 -1 Seasonality = now: 1y change of debt, over assets; low. The change in the debt balance
+#     stands in for the issuance and repayment flows we do not parse.
+#   tangibility 2009 +1 Low Leverage = line (inventory, gross PP&E): cash plus 0.715 receivables plus 0.547
+#     inventory plus 0.535 gross PP&E, over assets; high
+#   taccruals_ni 2011 -1 Accruals = now: taccruals_at's numerator, over the absolute net income; low
+#   tax_gr1a 2011 +1 Profit Growth = now: 1y change of tax (pretax income minus net income), over assets back 1;
+#     high. Net income also carries discontinued items and minority shares, so this tax line is approximate.
+#   aliq_mat 2014 -1 Low Leverage = line (current assets, intangibles): cash plus 0.75 (current assets minus cash)
+#     plus 0.5 (assets minus current assets minus goodwill and intangibles), over the market assets back 1 (assets
+#     minus book plus cap); low
+#   Each "now" twin drops long-term investments and preferred stock from JKP's net financial assets: we parse
+#   neither. Size has no menu-2 name. at_be, pi_nix and z_score sit in open clusters, but JKP's group for each is
+#   Profitability, so exclusion (a) still refuses them; every other open-cluster name falls to (b), (c), (e), (f)
+#   or (g).
+# RULES: (#1339)'s proof, bars and cluster rule, unchanged, on (#1346)'s loader, market column and weights.
+#   `tools/jkp_proof.py <dir> --menu 2` grades the 14 and prints nothing of menu 1 but the unit checks, which must
+#   read as (#1347)'s did.
+# HARM GUARD: (#1339)'s, unchanged: weight 0.03, cap 100, neutral 50, on top of the five shipped terms, rescore
+#   "guard holdout sec", since every menu-2 twin is built from SEC facts. The sealed 2016-on 8y samples were read
+#   three times already (ni_me, ret_6_1, capx_gr3); each later `reveal` receipt says so.
+# BRANCHES, in menu order, at most one ship per cluster, each passer guarded on top of the ships before it:
+#   - a "now" passer gets its own guard pre-registration, twin and probe, as (#1353) did;
+#   - a "line" passer first gets one owner question. A new line means new fetch code and a facts cache bump, and a
+#     bump starves new names for about one run. "No" refuses it and leaves its cluster open;
+#   - a cluster's later passers wait while an earlier one is in the guard.
+# RUN: `python3 -I -B tools/jkp_proof.py <dir> --menu 2` on the files above, once, before any twin is written.
+# EXPECTED: menu 1's accruals and debt ideas passed the US only (oaccruals_at, oaccruals_ni, noa_at, capex_abn,
+#   debt_gr3), so the same shape is likely here: taccruals_at, taccruals_ni and fnl_gr1a pass the US and miss
+#   developed ex-US. ncol_gr1a, sale_emp_gr1, tangibility and aliq_mat carry JKP's significance flag 0 (not
+#   significant in their own papers) and fail. 0 to 2 of the 14 pass, and 0 or 1 reaches a guard.
+# REVERT RULE: the proof is record only. Each ship carries its own receipt, its off switch and the pull rule.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
