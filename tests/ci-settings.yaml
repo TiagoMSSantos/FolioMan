@@ -21812,6 +21812,41 @@ buy_heuristic:
   #  GOLDENS: they read this file, so the next commit re-blesses them from a bless=true probe on this SHA wherever a
   #  fixture stock misses its bar by less than 2.5 %/yr.
   #  REVERT RULE: growth_cagr_soft_band 1.5 is the (#1364) lane bit for bit; 0.0 is the pre-(#1364) lane.
+  # (#1368) GROWTH-BAR TAPER LADDER 3.0 / 4.0 / 5.0, PRE-REGISTERED 2026-11-07 before these runs. Row: (#1369).
+  #  WHY: after the (#1367) ship (band 2.5) the owner asked to set growth_cagr_soft_band to a bigger value. They chose
+  #  to grade a ladder of three bands over keeping 2.5, over one value (4.0) and over 5.0 alone.
+  #  RULE: the same straight line stretched further, no code change (`cagr_dock` reads the band live):
+  #    miss %/yr   1.0     2.0     3.0     4.0     5.0 or more
+  #    band 2.5    x0.92   x0.84   x0.80   x0.80   x0.80 (shipped)
+  #    band 3.0    x0.933  x0.867  x0.80   x0.80   x0.80
+  #    band 4.0    x0.95   x0.90   x0.85   x0.80   x0.80
+  #    band 5.0    x0.96   x0.92   x0.88   x0.84   x0.80
+  #  Stocks only, `cagr` and `cagr-life` only. Every other gate, every fund and every coin keeps f; the Série E rungs
+  #  stay hard. A band b keeps the full x0.80 at 19 - b %/yr and below, so 4.0 and 5.0 reach the 16-15 %/yr bars that
+  #  were refused as hard lines (the 2026-08-01 ladder, (#135), (#561) stage 2). A taper is not a line, so it is run.
+  #  RUN: two probes on main, dispatched together (a probe saves no shared cache), each years="12 8",
+  #  args="universe fund pit", rescore="guard" (200 shuffles), no `sec` and no holdout, as in (#1365):
+  #    A, against no taper: grid '[{"growth_cagr_soft_band": 0}, {"growth_cagr_soft_band": 3},
+  #      {"growth_cagr_soft_band": 4}, {"growth_cagr_soft_band": 5}]'. It reads each rung's whole change.
+  #    B, against the shipped 2.5: grid '[{}, {"growth_cagr_soft_band": 3}, {"growth_cagr_soft_band": 4},
+  #      {"growth_cagr_soft_band": 5}]'. It reads each step from 2.5 alone.
+  #  The guard reads each row against row 0, so rows 1-3 are the rungs 3.0, 4.0 and 5.0.
+  #  PASS (owner, 2026-11-07, "Each rung alone"): a rung whose own row reads PASS or INERT in all 4 reads (A or B, at
+  #  12y or 8y) is eligible. A FAIL in any of its 4 reads refuses that rung only, record only. Eligible rungs go to one
+  #  owner question, which picks one of them or keeps 2.5, because the page moves. UNGRADEABLE cannot occur (no fund
+  #  term, so coverage reads 1.0); if it reads, the run is broken and is re-dispatched, not read. Each log's windows
+  #  scored are checked against (#1366)'s (5150/6488 at 12y, 9184/8596 at 8y); a run cut short is re-dispatched.
+  #  The cost of judging rungs alone: 3 rungs are 3 looks, so a harmful rung is likelier to slip past one guard.
+  #  CROSS-CHECK: A minus B on the same rung must give (#1366)'s 2.5-against-0 top-10 gains (12y -0.13, 8y +0.13);
+  #  if not, the runs read different samples and both are re-dispatched.
+  #  EXPECTED: top-10 names moved rise with the band: A above (#1366)'s 0.71 / 0.72, B from about 0.1 at 3.0, where
+  #  B may read INERT. All gains INSIDE the null band ((#1333)): the guard can show harm, never a gain. Rung 5.0 in A
+  #  at 12y is the likeliest FAIL ((#1366)'s 2.5 already sat at -0.13 against an edge of -0.37).
+  #  LIVE, estimated from the 20Y and TR-CAGR columns on the 2026-11-07 17:09Z page (TR rounds to whole %), on the 13
+  #  growth seats: 3.0 changes none. 3.5 and 4.0 seat Ross ROST and drop Alphabet ABEA.DE (Ross misses on both legs,
+  #  so a wider band lifts it more). 5.0 seats ROST and EMCOR EME and drops ABEA.DE and Keysight KEYS. Each seat is
+  #  1.56 % of new money. The head and the 12 momentum seats stay. Leaving the buy list never sells ((#388)).
+  #  REVERT RULE: if no rung ships, the band stays 2.5, so no page or golden moves.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
