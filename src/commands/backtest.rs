@@ -16901,11 +16901,14 @@ mod tests {
 
         // SCORE PIN. Same receipt rule. Tolerance is wide enough that reassociating a float sum is not a
         // red build and narrow enough that a real term change is: the value is ~-520 in units of pts.
+        // (#1350) -520.2 -> -518.5: the shipped `mom61_pct` term. The fixture has no fund rows, so it reads its
+        // neutral 50 on every sample, and a constant fill lands on the multiplied side of the score ((#59)), so it
+        // re-ranks. The live re-validation is the (#1349) harm guard on `universe fund pit`, 12y and 8y.
         let (rho, edge) = lane_metrics(&samples, growth_score, &tuning);
         assert!(rho.is_some(), "too few scored samples to correlate — the fixture stopped reaching the lane");
         assert!(
-            (edge - -520.2).abs() < 0.5,
-            "GROWTH edge on the fixture moved to {edge:+.1} pts (pinned -520.2) — the score arithmetic \
+            (edge - -518.5).abs() < 0.5,
+            "GROWTH edge on the fixture moved to {edge:+.1} pts (pinned -518.5) — the score arithmetic \
              changed. Re-validate with a live `backtest universe` before moving this pin; see the note \
              above for why the sign is not the thing being asserted"
         );
