@@ -258,7 +258,8 @@ def verdicts(g, c):
     out = {}
     if g["ru1_n"] and c["ru1_n"]:
         slack = 100.0 * max(1, g["ru1_n"] // SLACK_DENOM) / g["ru1_n"]
-        out["RU1"] = g["ru1_pct"] >= 50.0 and g["ru1_pct"] >= c["ru1_pct"] - slack
+        # (#1383) 1e-9: 100*29/46 sits one ulp under 100*30/46 - 100/46, so one window down read as two.
+        out["RU1"] = g["ru1_pct"] >= 50.0 and g["ru1_pct"] >= c["ru1_pct"] - slack - 1e-9
     else:
         out["RU1"] = None
     out["RU2"] = (g["p20"] >= c["p20"] - TAIL_SLACK and g["worst5"] >= c["worst5"] - TAIL_SLACK) if g["buckets"] and c["buckets"] else None
@@ -509,6 +510,8 @@ class Tests(unittest.TestCase):
         c2 = dict(c, ru1_pct=100.0 * 24 / 46)
         self.assertTrue(verdicts(dict(c2, ru1_pct=100.0 * 23 / 46), c2)["RU1"], "one window down, above 50 %: passes")
         self.assertFalse(verdicts(dict(c2, ru1_pct=100.0 * 22 / 46), c2)["RU1"], "two windows down fails the slack")
+        c3 = dict(c, ru1_pct=100.0 * 30 / 46)
+        self.assertTrue(verdicts(dict(c3, ru1_pct=100.0 * 29 / 46), c3)["RU1"], "29 of 46 against 30: one window")
 
     def test_goldens_parse_as_one_row_each(self):
         here = os.path.dirname(os.path.abspath(__file__))
