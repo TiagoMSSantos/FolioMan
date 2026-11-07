@@ -115,7 +115,7 @@ by hand.
 | 98 | (#1136) the bubble damp: the growth score keeps max(1 − this × flags/5, 0.5) of itself, the flags being a 2Y… | knob | `growth_bubble_weight` | SHIPPED 0.0 | #1134 #1135 #1136 #1137 #1138 | — |
 | 99 | (L) liquidity tilt: bonus per ln(turnover/€1B), added OUTSIDE the brake. Rewards deep-liquid mega-caps (easy… | knob | `growth_turnover_weight` | SHIPPED 0.0 | #20 #1136 #1137 #1138 | — |
 | 100 | (#4) crypto's OWN overextension cap (% above the 200wk SMA at which the brake maxes). Crypto routinely rides… | knob | `growth_overext_cap_crypto` | SHIPPED 100.0 | #4 | — |
-| 101 | (#1375) the stretch brake's free zone: no cut while the price sits up to this many % above its 200wk SMA, the… | knob | `growth_overext_free` | DEFAULT | #1375 | — |
+| 101 | (#1375) the stretch brake's free zone: no cut while the price sits up to this many % above its 200wk SMA, the… | knob | `growth_overext_free` | SHIPPED 60.0 | #1375 #1377 #1378 | — |
 | 102 | (G) reward per pt of the as-of FUNDAMENTAL factor (see growth_score / fund_factor). The fund lane proves WHIC… | knob | `growth_fund_weight` | SHIPPED 0.07 | #3 #26 #39 #40 #424 #425 | — |
 | 103 | (G) cap (in the factor's own pts) on the fund factor fed into that reward, so one data-artifact (+9000% rev)… | knob | `growth_fund_cap` | SHIPPED 300.0 | #3 #26 #39 #40 #424 #425 | — |
 | 104 | (#87) what an ABSENT `fund_factor` is worth, in the factor's own pts, before weight and cap. Third of the thr… | knob | `growth_fund_neutral` | SHIPPED 0.0 | #43 #87 | — |

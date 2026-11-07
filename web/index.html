@@ -186,10 +186,12 @@
   <details class="note" id="braked-note">
     <summary>about this table</summary>
     The Stocks table cuts the score of a stock that has risen far above its own 200-week (about 4-year)
-    average price. The further above, the lower its score, down to a small fraction at 100% above. A
+    average price. Up to 60% above there is no cut. Past that, the further above, the lower its score,
+    down to a small fraction at 100% above. A
     stock here passes every buy rule (MISSES 0). Its score without the cut (UNCUT) is at or above the entry bar, the lowest score in the Stocks table (BAR). So the cut is the only thing keeping it out. CUT is
-    the multiplier, and how far above the average the stock was. The cut stays because every softer
-    version tried so far lost money on past prices. A weaker cut, a higher minimum, a minimum for
+    the multiplier, and how far above the average the stock was. Leaving the first 60% uncut showed no
+    loss on past prices. Past 60% the cut stays, because every other softer version tried so far lost
+    money on past prices. A weaker cut, a higher minimum, a minimum for
     stocks backed by earnings and a trend-adjusted distance were all refused. This table only shows what
     the cut costs today. Your own settings file does not change it.
   </details>
@@ -291,7 +293,7 @@
 
   <details class="note">
     <summary>about the rankings</summary>
-    The three ranked tables (Stocks, ETFs, Crypto) rank for a hold of 20 years or more. A top name sits at or near its own high of about 10 years. It has strong proven growth per year over the long run, and a faster recent year. Its score is cut the further it has run above its 200-week (about 4-year)
+    The three ranked tables (Stocks, ETFs, Crypto) rank for a hold of 20 years or more. A top name sits at or near its own high of about 10 years. It has strong proven growth per year over the long run, and a faster recent year. Its score is cut the further it has run past 60% above its 200-week (about 4-year)
     average. Crypto is ranked against Bitcoin, the base of that market. These picks swing more than the
     whole market and depend on the times: today's leading industries and themes may not lead again.
   </details>

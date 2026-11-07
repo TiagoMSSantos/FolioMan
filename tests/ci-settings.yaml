@@ -22064,6 +22064,30 @@ buy_heuristic:
   #  gain, which this guard cannot show.
   #  NEXT: per the (#1376) rule, one owner question picks +20, +40 or +60, or keeps today, after a live estimate of
   #  the seats each size moves. A ship re-blesses the goldens on the ship SHA.
+  # (#1378) STRETCH-BRAKE FREE ZONE +60 SHIPPED 2026-11-07 on the owner's word, per (#1377) and the (#1376) rule.
+  #  WHAT: growth_overext_free 0 -> 60, no code change past (#1375). No cut while a price sits up to 60 % above its
+  #  200wk SMA; past that a straight line falls to the same floor 0.05 at the same cap 100. After the 0.5 exponent:
+  #    % above    57      65      70      77      80      90      100 or more
+  #    before     x0.68   x0.62   x0.58   x0.52   x0.49   x0.38   x0.22
+  #    now        x1.00   x0.94   x0.87   x0.77   x0.72   x0.54   x0.22
+  #  The 150 hard stretch gate, the cap and the `!` late-cycle flag stay. Stocks, funds and coins alike; the coin
+  #  part ships UNGRADED (the backtest holds no coins).
+  #  WHY THIS SIZE: the owner picked +60 over +20, +40 and keeping today (I had recommended +20), told first that
+  #  every size swaps the same one seat today, that only +20 read top-10 and pond gains at or above 0 at both
+  #  horizons, and that +60 came nearest to a harm edge ((#1377): 8y top-10 -0.64 against -0.73, 88 %).
+  #  LIVE, estimated on the 2026-11-07 20:02Z page by scaling each stock row's score by the square root of its new
+  #  cut over its old one (ABV-MA column): one of the 13 growth seats moves. Ross Stores ROST (19.1 -> ~26.6) comes
+  #  in and ARM (19.8; 24 % under its average, so it gains nothing) goes out. Each seat is 1.56 % of new money.
+  #  The heads stay Fortinet FTNT (~49.0), LAR0.DE (~47.1) and APC.DE (~41.0). Nvidia NVD.DE (+57 %) goes uncut,
+  #  20.8 -> ~30.7, and stays a 1.56 % seat. Alphabet ABEA.DE (~25.0) holds the last seat by ~0.2 over NetApp
+  #  NTAP (~24.8), so that edge is +-1 seat. Arista ANET (+77 %, 14.6 -> ~21.8), Vertiv VRT (~18.3) and Broadcom
+  #  1YD.DE (~17.7) rise but take no seat; Dell 12DA.DE (+129 %) keeps its cut. The ETFs, the coin and the REIT
+  #  watch list move no seat, and the 12 momentum seats stay. Leaving the buy list never sells ((#388)).
+  #  WHAT THIS DOES NOT SAY: the ruler is blind at this size ((#1333)). The guard saw no harm, not a gain.
+  #  PAGE: the ran-too-far note and the ranked-tables note now say the cut starts past 60 % above the average.
+  #  GOLDENS: they read this file, so the next commit re-blesses them from a bless=true probe on this SHA wherever a
+  #  fixture name sits more than 0 % above its 200wk SMA.
+  #  REVERT RULE: growth_overext_free 0 is the pre-(#1378) brake bit for bit (the (#1375) test pins it).
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
@@ -23509,6 +23533,7 @@ buy_heuristic:
                                  #   validated edge gets neutralized (same rule as growth_value_weight). Thin listings are a
                                  #   GATE problem: use min_avg_turnover_eur (e.g. 1000000) to drop them outright. 0.5 = old tilt
   growth_overext_cap_crypto: 100.0 # (#4) crypto's own brake cap; =equity (no change). Raise (e.g. 200) to brake crypto later — unvalidated (crypto windows too sparse to isolate)
+  growth_overext_free: 60.0      # (#1378) SHIPPED 60 on the owner's word, 2026-11-07; (#1377) PASS in all 6 reads
 
   # (4) Crypto market-greed damp from Bitcoin NUPL (already fetched for the screen footer). High NUPL
   # = whole-market euphoria/top -> shrink ALL crypto scores (thins the crypto tables in a frothy top,
