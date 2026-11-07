@@ -14627,7 +14627,7 @@ mod tests {
             score_parts(&stretched(ticker, above), &tune(free)).expect("the fixture clears every gate").overext_damp
         };
         let d = |above: f64, free: f64| damp("TEST", above, free);
-        for above in [0.0, 20.0, 57.0, 100.0, 150.0] {
+        for above in [0.0_f64, 20.0, 57.0, 100.0, 150.0] {
             let shipped = 1.0 - (above.min(100.0) / 100.0) * (1.0 - 0.05);
             for free in [0.0, -1.0, f64::NAN] {
                 assert_eq!(d(above, free).to_bits(), shipped.to_bits(), "zone {free} is the shipped brake at {above}");
