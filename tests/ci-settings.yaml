@@ -21738,7 +21738,7 @@ buy_heuristic:
   #  NEXT: the live page moves (about 2 of the 13 growth seats), so one owner question comes first. On a yes, the ship
   #  sets growth_cagr_soft_band: 1.5 beside growth_gate_soft, adds the MISSES help clause and re-blesses the goldens
   #  on the ship SHA.
-  growth_cagr_soft_band: 10.0    # (#1373) SHIPPED 10.0 on the owner's word, 2026-11-07; (#1372) PASS in all 12 reads
+  growth_cagr_soft_band: 2.5     # (#1374) back to 2.5 on the owner's word, 2026-11-07; (#1366) PASS in all 4 reads
   # (#1364) GROWTH-BAR TAPER SHIPPED 2026-11-07 on the owner's word, per the (#1363) result and the (#1362) rule.
   #  WHAT: a stock under its `cagr` or `cagr-life` floor by less than 1.5 %/yr is docked 1 - 0.2 x miss/1.5, not
   #  x0.8: 0.6 under reads x0.92, 1.2 under x0.84, 1.5 or more under x0.80 as before. Every other rule keeps x0.8,
@@ -21984,6 +21984,25 @@ buy_heuristic:
   #  GOLDENS: they read this file, so the next commit re-blesses them from a bless=true probe on this SHA wherever a
   #  fixture stock misses its bar by less than 10 %/yr.
   #  REVERT RULE: growth_cagr_soft_band 5.0 is the (#1370) lane bit for bit; 0.0 is the pre-(#1364) lane.
+  # (#1374) TAPER BAND BACK TO 2.5, SHIPPED 2026-11-07 on the owner's word, per the (#1366) result.
+  #  WHAT: growth_cagr_soft_band 10.0 -> 2.5, no code change. A stock under its `cagr` or `cagr-life` floor by less
+  #  than 2.5 %/yr is docked 1 - 0.2 x miss/2.5: 0.6 under reads x0.952, 1.5 under x0.88, and 2.5 or more under
+  #  x0.80 as before. Every other rule keeps x0.8, funds and coins stay hard, and the Série E rungs still refuse.
+  #  WHY: the owner asked why Alphabet ABEA.DE fell to #26, the first growth row off the 13 seats. A wide band ranks
+  #  on the uncut score. Alphabet misses by 0.6 %/yr on one tag, so a band past 2.5 adds little to it (x0.976 at
+  #  5.0, x0.988 at 10.0), while names with bigger misses or two missed tags gain more: from 2.5 to 10.0, Ross ROST
+  #  went 19.1 -> 22.6, Jabil JBL 20.2 -> 25.4 and EMCOR EME 18.9 -> 20.2, while Alphabet went 19.2 -> 19.9.
+  #  Asked "WDYT is better? Band current, 5 or 2.5?", I recommended 2.5 and the owner picked it. Probe A's top-10
+  #  gain against band 0 slides as the band widens ((#1366), (#1369), (#1372)): 12y -0.13 at 2.5, -0.42 at 5.0,
+  #  -0.53 at 10.0; 8y +0.13, -0.02, -0.19. A wide band is also a lower bar by another name (18-15 refused).
+  #  LIVE, from a replay of the 2026-11-07 18:18Z page at band 2.5 (the same replay rebuilt all 5 pages of the day):
+  #  Alphabet ABEA.DE and ARM come back on the 13 growth seats; Ross ROST and EMCOR EME leave them. The last seat is
+  #  +-1 (TR rounds to whole %). The head seats and the 12 momentum seats stay. Leaving the list never sells ((#388)).
+  #  WHAT THIS DOES NOT SAY: the ruler is blind at this size ((#1333)). Every one of those gains is inside the noise,
+  #  so 2.5 is the least-harm read, a lean and not a proven gain.
+  #  GOLDENS: no src/ change since the (#1367) rebless 79748ad, so this commit restores that commit's goldens and
+  #  both pins (the backtest_fixture search pin and the regrade_ruler rank-1 pin).
+  #  REVERT RULE: growth_cagr_soft_band 10.0 is the (#1373) lane bit for bit; 0.0 is the pre-(#1364) lane.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.

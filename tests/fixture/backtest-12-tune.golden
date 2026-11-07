@@ -1,9 +1,9 @@
 
 ══ TUNE — growth lane, honest out-of-sample (1159 train / 498 test cutoffs, 500 draws) ══
-  shipped default      TEST: rho +0.11  edge +47.7  terciles +381.0/+17.6/+346.1 SCRAMBLED
+  shipped default      TEST: rho +0.07  edge -45.5  terciles +335.4/+33.5/+375.3 SCRAMBLED
   inert on this sample (skipped, kept at default): growth_fund_weight
-  search winner       TRAIN: rho +0.04  edge +16.4
-  search winner        TEST: rho +0.06  edge -27.5  terciles +289.7/+235.0/+213.4 monotone   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
+  search winner       TRAIN: rho +0.06  edge +23.2
+  search winner        TEST: rho +0.03  edge -15.8  terciles +245.7/+279.0/+212.1 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
   weights (searched dims only):
     growth_trend_weight    0.328
     long_trend_cap         40.301
@@ -13,5 +13,14 @@
     calmar_weight          0.971
     growth_overext_floor   0.088
     growth_mom121_weight   0.493
-  -> winner does NOT beat the default on the held-out TEST edge (-27.5 vs +47.7); the shipped knobs already generalise. SHIP NOTHING.
+  -> winner BEATS the default on TEST (-15.8 vs -45.5). Paste the weights into settings.yaml, then re-run plain `backtest universe` to confirm.
+  parsimony (winner, each weight -> 0, TEST edge Δ vs -15.8):
+    growth_trend_weight    edge -23.7 Δ-7.9
+    long_trend_cap         edge -15.8 Δ+0.0
+    growth_accel_weight    edge -18.9 Δ-3.1
+    growth_accel_cap       edge -18.9 Δ-3.1
+    sharpe_weight          edge +29.2 Δ+45.1
+    calmar_weight          edge -15.8 Δ+0.0
+    growth_overext_floor   edge +76.4 Δ+92.3
+    growth_mom121_weight   edge -50.7 Δ-34.8
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
