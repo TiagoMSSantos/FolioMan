@@ -21777,6 +21777,28 @@ buy_heuristic:
   #  miss eases too) and EMCOR EME ~19.0 contest the last growth seat, too close to call, so 0-1 of the 13 growth
   #  seats changes. Stocks whose cagr-life leg sits 1.5-2.5 under may rise too. The head and the 12 momentum seats stay.
   #  REVERT RULE: on FAIL the band stays 1.5, so no page or golden moves.
+  # (#1366) VERDICT, 2026-11-07, on (#1365): PASS in all 4 reads, so growth_cagr_soft_band 2.5 is a SHIP
+  #  Guard probes on 9cf1879, rescore="guard", 200 shuffles: A (against band 0) run 42392638599, B (against the
+  #  shipped 1.5) run 42392648150. Windows scored 5150/6488 at 12y and 9184/8596 at 8y in both, the same as (#1363).
+  #    probe  horizon  top-10 gain / edge  pond gain / edge  pool     top-10 moved  verdict
+  #    A      12y      -0.13 / -0.37       +0.01 / -0.13     100.0 %  0.71          PASS
+  #    A      8y       +0.13 / -0.44       +0.02 / -0.08     100.0 %  0.72          PASS
+  #    B      12y      +0.02 / -0.25       -0.00 / -0.08     100.0 %  0.32          PASS
+  #    B      8y       +0.11 / -0.32       +0.00 / -0.07     100.0 %  0.30          PASS
+  #  NULL BAND, row 1, all INSIDE: A 12y mean -0.13 in [-0.37, +0.46], median +0.64 against [-0.69, +0.55]; A 8y
+  #  mean +0.13 in [-0.44, +0.36], median +0.73 against [-0.83, +0.72]; B 12y mean +0.02 in [-0.25, +0.28], median
+  #  +0.32 in [-0.49, +0.43]; B 8y mean +0.11 in [-0.32, +0.20], median +0.12 in [-0.60, +0.59]. Both A medians sit
+  #  just past their upper edges, and OUTSIDE needs both moments. TAIL INSIDE in all 4: A 12y p20 +0.37, worst5
+  #  -0.92 against [-1.10, +1.01]; A 8y p20 +0.82, worst5 -0.22; B 12y p20 +0.24, worst5 -0.13; B 8y p20 +0.82,
+  #  worst5 -0.26 against [-0.49, +0.77].
+  #  CROSS-CHECK: A minus B gives (#1363)'s 1.5-against-0 top-10 gains to the cent (12y -0.15, 8y +0.02), so the two
+  #  runs and the (#1363) run read the same samples.
+  #  AGAINST EXPECTED: A moved 0.71 / 0.72 names per bucket and B 0.32 / 0.30, inside the guessed 0.6-1.2 and 0.1-0.5.
+  #  The 12y A gain (-0.13) is no nearer its edge than (#1363)'s 1.5 was (-0.15 against -0.29).
+  #  WHAT THIS DOES NOT SAY: the ruler is blind at this size ((#1333)). The guard saw no harm, not a gain. The case for
+  #  the ship is the owner's: an 18 %/yr grower should not pay what a 16 %/yr grower pays.
+  #  NEXT: the live page may move (0-1 of the 13 growth seats), so one owner question comes first. On a yes, the ship
+  #  sets growth_cagr_soft_band: 2.5 and re-blesses the goldens on the ship SHA.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
