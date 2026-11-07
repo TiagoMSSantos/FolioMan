@@ -22003,6 +22003,41 @@ buy_heuristic:
   #  GOLDENS: no src/ change since the (#1367) rebless 79748ad, so this commit restores that commit's goldens and
   #  both pins (the backtest_fixture search pin and the regrade_ruler rank-1 pin).
   #  REVERT RULE: growth_cagr_soft_band 10.0 is the (#1373) lane bit for bit; 0.0 is the pre-(#1364) lane.
+  # (#1376) STRETCH-BRAKE FREE ZONE +20 / +40 / +60, PRE-REGISTERED 2026-11-07 before this run. Row: (#1377).
+  #  WHY: the owner asked why Nvidia NVD.DE sits at #15, then "why are we penalizing fast steady growers?". The
+  #  stretch brake cuts a name by how far its price sits above its ~200-week average, from the first % above it, and a
+  #  steady compounder sits above it with no blow-off: about +37 % at 19 %/yr, about +59 % at 30 %/yr. Every past
+  #  easing was refused (floor (#574), cap (#575), earnings waiver (#577), own pace (#579), PEG waiver (#581),
+  #  exponents (#1135)); a free zone was never graded. The owner chose "Test a free zone on CI" in the shape "free,
+  #  then steeper", for every class, one number for all classes, sizes +20 / +40 / +60, each size judged alone.
+  #  RULE ((#1375), growth_overext_free = s): no cut up to s % above, then a straight line from 1.0 at s down to the
+  #  same floor 0.05 at the same cap (100; a coin reads the crypto cap, also 100). Past the cap nothing moves, and the
+  #  150 hard stretch gate stays. The cut a name keeps, after the 0.5 exponent:
+  #    % above    20      40      57      77      100 or more
+  #    s 0        x0.90   x0.79   x0.68   x0.52   x0.22 (shipped)
+  #    s 20       x1.00   x0.87   x0.75   x0.57   x0.22
+  #    s 40       x1.00   x1.00   x0.86   x0.64   x0.22
+  #    s 60       x1.00   x1.00   x1.00   x0.77   x0.22
+  #  Stocks, funds and coins alike. The backtest holds no coins, so the coin part ships UNGRADED if a size ships. The
+  #  `!` late-cycle flag and the braked table read the cap, which does not move.
+  #  RUN: one probe on main at this commit, years="12 8", args="universe fund pit", rescore="guard" (200 shuffles),
+  #  no `sec` and no holdout, as in (#1371), grid '[{}, {"growth_overext_free": 20}, {"growth_overext_free": 40},
+  #  {"growth_overext_free": 60}]'. Row 0 is the shipped brake (the knob is 0 today), so rows 1-3 are the sizes. One
+  #  probe is enough: with today at 0 there is no second base to read the step from.
+  #  PASS (owner, 2026-11-07, "Each size alone"): a size whose own row reads PASS or INERT at both 12y and 8y is
+  #  eligible. A FAIL in either read refuses that size only, record only. Eligible sizes go to one owner question,
+  #  which picks one of them or keeps today, because the page moves.
+  #  WIRING CHECK: every size must move top-10 names; 0.00 moved means the knob does not reach the walk, so it is
+  #  fixed and re-run, not read. UNGRADEABLE cannot occur (no fund term, so coverage reads 1.0); if it reads, the run
+  #  is broken and is re-dispatched. Windows scored must match (#1372)'s (5150/6488 at 12y, 9184/8596 at 8y); a run
+  #  cut short is re-dispatched. Three sizes are three looks, so a harmful size is likelier to slip past.
+  #  EXPECTED: +60 is the likeliest FAIL: (#574) and (#579) both found that braking stretched names less costs edge,
+  #  and +60 frees the whole steady-compounder band. Top-10 names moved rise with the size. All gains INSIDE the null
+  #  band ((#1333)): the guard can show harm, never a gain.
+  #  LIVE, rough: Nvidia NVD.DE, +57 % above, scores 20.8 today; about 22.9 at +20, 26.3 at +40 and 30.7 at +60,
+  #  where it would take a head seat. Seat moves for each eligible size are estimated before the owner question.
+  #  REVERT RULE: if no size ships, the knob stays 0, the shipped brake bit for bit, so no page or golden moves; if
+  #  every size FAILs, the knob is deleted and its name retired.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
