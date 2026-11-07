@@ -5478,7 +5478,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("NAME", "The company's name; click to open the company's own website (or its Wikipedia article)"),
         ("UNCUT", "Buy score without the ran-too-far cut, every other rule the same. It is at or above BAR, so the cut alone keeps the stock out of the Stocks table"),
         ("BAR", "Entry bar: the lowest buy score in the Stocks table, watchlist rows aside; what a stock needs to be listed there"),
-        ("CUT", "The ran-too-far cut: the factor that multiplies the buy score, then how far the price sits above its 200-week average, as in ABV-MA. ᵈ = listed under ~4 years, so the 200-day average stands in. The factor falls from ×1 at the average to ×0.05 at 100% above it. It is averaged with another part of the score, so the score falls by less"),
+        ("CUT", "The ran-too-far cut: the factor that multiplies the buy score, then how far the price sits above its 200-week average, as in ABV-MA. ᵈ = listed under ~4 years, so the 200-day average stands in. At today's settings it is ×1 up to 60% above the average, then falls to ×0.22 at 100% above it and beyond"),
     ]);
     // (#525) the REITs table: `reit_rows`, then the stock columns like Young
     let reits = fixed(&[
@@ -6038,7 +6038,8 @@ pub fn braked_rows(stocks: &serde_json::Value, quotes: &[Quote], pinned: &[Strin
                 ["NAME", q.name],
                 ["UNCUT", format!("{nb:.1}")],
                 ["BAR", format!("{cut:.1}")],
-                ["CUT", format!("×{:.2} at {:+.0}%", p.overext_damp, q.above_ma_pct)],
+                // (#1386) the factor the score really takes: overext_damp^exp (the damp line in `score_parts`)
+                ["CUT", format!("×{:.2} at {:+.0}%", p.overext_damp.powf(tuning.growth_overext_exp.max(0.0)), q.above_ma_pct)],
             ])
         })
         .collect()
@@ -12504,7 +12505,7 @@ mod tests {
                 ["NAME", "Nvidia"],
                 ["UNCUT", cut],
                 ["BAR", cut],
-                ["CUT", "×0.09 at +96%"]
+                ["CUT", "×0.30 at +96%"] // (#1386) √0.088: the raw damp ×0.09 enters the score square-rooted
             ]])
         );
         assert_eq!(braked_rows(&serde_json::json!([]), &quotes, &[], &t), serde_json::json!([]), "no table, no cut");
