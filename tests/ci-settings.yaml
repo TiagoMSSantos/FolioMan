@@ -21750,6 +21750,33 @@ buy_heuristic:
   #  GOLDENS: they read this file, so the next commit re-blesses them from a bless=true probe on this SHA wherever a
   #  fixture stock sits under its bar by less than the band.
   #  REVERT RULE: growth_cagr_soft_band 0.0 is the pre-ship lane bit for bit; the code stays.
+  # (#1365) WIDER GROWTH-BAR TAPER, BAND 2.5, PRE-REGISTERED 2026-11-07 before these runs. Row: (#1366).
+  #  WHY: after the (#1364) ship the owner asked to cut less again above 18 %/yr. Alphabet ABEA.DE (18.4 %/yr, 0.6
+  #  under) reads 18.5 on the 2026-11-07 16:17Z page, 0.5 short of Ross ROST's 19.0 on the last growth seat. The
+  #  owner picked a wider band over a flat x0.95 from 18 (a cliff at 18) and over the 18 line (refused, (#52)).
+  #  RULE: growth_cagr_soft_band 1.5 -> 2.5, the same straight line stretched, no code change:
+  #    miss %/yr   0.6     1.0     1.5     2.0     2.5 or more
+  #    band 1.5    x0.92   x0.867  x0.80   x0.80   x0.80 (shipped)
+  #    band 2.5    x0.952  x0.92   x0.88   x0.84   x0.80
+  #  Stocks only, `cagr` and `cagr-life` only. Every other gate, every fund and every coin keeps f; the Série E rungs
+  #  stay hard.
+  #  RUN: two probes on main, dispatched together (a probe saves no shared cache), each years="12 8",
+  #  args="universe fund pit", rescore="guard" (200 shuffles), no `sec` and no holdout, as in (#1362):
+  #    A, against no taper: grid '[{"growth_cagr_soft_band": 0}, {"growth_cagr_soft_band": 2.5}]'. It grades the
+  #      whole change from the pre-(#1364) lane, so steps that each pass alone cannot add up unseen.
+  #    B, against the shipped 1.5: grid '[{}, {"growth_cagr_soft_band": 2.5}]'. It grades the step alone.
+  #  PASS (owner, 2026-11-07, "Any FAIL stops"): row 1 reading FAIL in any of the 4 reads (A or B, at 12y or 8y) =
+  #  REFUSED, the band stays 1.5, record only. PASS or INERT in all 4 = SHIP at 2.5 after one owner question, because
+  #  the page moves. UNGRADEABLE cannot occur (no fund term, so coverage reads 1.0); if it reads, the run is broken
+  #  and is re-dispatched, not graded. Each log's windows scored are checked against (#1363)'s (5150/6488 at 12y,
+  #  9184/8596 at 8y); a run cut short is re-dispatched, not graded.
+  #  EXPECTED: A moves more top-10 names than (#1363)'s 0.45 / 0.48, about 0.6-1.2 per bucket; B about 0.1-0.5, and
+  #  INERT only if no top-10 name moves. All gains INSIDE the null band ((#1333)): the guard can show harm, never a
+  #  gain. (#1363)'s 12y top-10 gain sat at -0.15 against an edge of -0.29, so A at 12y is the likeliest FAIL.
+  #  LIVE, estimated from the 20Y column legs on the 2026-11-07 16:17Z page: Alphabet ~19.1, Ross ~19.2 (its own 0.15
+  #  miss eases too) and EMCOR EME ~19.0 contest the last growth seat, too close to call, so 0-1 of the 13 growth
+  #  seats changes. Stocks whose cagr-life leg sits 1.5-2.5 under may rise too. The head and the 12 momentum seats stay.
+  #  REVERT RULE: on FAIL the band stays 1.5, so no page or golden moves.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
