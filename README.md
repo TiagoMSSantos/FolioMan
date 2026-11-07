@@ -182,11 +182,14 @@ leads at 20 years, on only 22 windows (receipt (#798)). See the `[FOIL]` tags in
 ## Tuning the buy heuristic
 
 Goal: change what the `screen` growth ranking surfaces. The shipped knobs live in
-`tests/ci-settings.yaml`, which CI and the page read. A local `config/settings.yaml` (or the file
-`FOLIOMAN_CONFIG` names) is merged over it, so it only needs the knobs you change. Edit
-`buy_heuristic:` there, then **validate with `cargo run -- backtest`** or a `probe.yml` dispatch
-with `knobs=` (watch rho = rank correlation, the top-vs-bottom-half edge in points, and that both
-out-of-sample halves stay positive). Two rules:
+`tests/ci-settings.yaml`, which CI and the page read. A local `config/settings.yaml`, the file
+`FOLIOMAN_CONFIG` names, or a file uploaded on the page is merged over it, so it only needs the
+knobs you change. A list is the one exception: it replaces the shipped list instead of merging
+(see [Adding a fundamentals term](#adding-a-fundamentals-term)). Edit `buy_heuristic:` there, then
+**validate on CI with a `probe.yml` dispatch**: `knobs=` overrides numbers and `extra=` adds fund
+terms, for that run only. `cargo run -- backtest` runs the same walk locally. Watch rho (rank
+correlation), the top-vs-bottom-half edge in points, and that both out-of-sample halves stay
+positive. Two rules:
 
 - **Only knobs NOT tagged `[FOIL]` affect `screen`.** The `[FOIL]` knobs (`discount_*`,
   `momentum_*` but not `growth_momentum_*`, `min_score`, `cheap_*`, `sustained_*`, `min_1y_pct`,
@@ -204,6 +207,15 @@ default out-of-sample, the defaults already generalize (a clean null is a succes
 genuine winner into `settings.yaml` yourself; `tune` never writes. Inert knobs (e.g. the fund weight
 with no fundamental coverage) are detected and skipped so the search doesn't waste draws on them.
 
+**How much a backtest can see.** The backtest cannot see a buy-rule edge of realistic size. Three
+separate checks (#1333), (#1335), (#1338) showed the ship bar stays blind to a gain of about
++4 %/yr. So a refused knob means "too small to see", not "worse". Small ideas ship by another
+route instead, the paper route (#1339). An idea must first pass on other people's data: the free
+Jensen-Kelly-Pedersen (JKP) factor set, with a t of 1.96 or more in both the US and developed
+ex-US markets. It then enters at a fixed weight of 0.03, and our backtest only has to show it does
+no visible harm. The forward record (#1239), which grades the live picks month by month, cannot
+flag anything before about 2027-09, and a flag on its own is noise (#1358).
+
 | Want… | Turn this (LIVE knob) | Direction |
 |-------|-----------------------|-----------|
 | Fewer, higher-conviction stock picks | `growth_min_cagr`, `growth_min_range_pct` | raise |
@@ -216,15 +228,59 @@ with no fundamental coverage) are detected and skipped so the search doesn't was
 | Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
 | Tilt toward cheap-on-earnings (SEC P/E for US filers; FMP fallback with `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
 | Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | shipped 0.07 (`peg_yield`); 0 = off |
+| Add or reweigh more fundamentals terms | `growth_fund_extra` (a list) | shipped 5 terms; copy all 5, then edit |
 | Admit fewer near-miss stocks | `growth_gate_soft` | lower (0 = every gate a hard wall) |
 | Give the momentum side more or fewer of every 10 book slots | `growth_momentum_slots` | shipped 5 |
 
-### Current status (2026-10): the defaults are a measured optimum
+### Adding a fundamentals term
+
+`growth_fund_extra` is a list of extra fundamentals terms added to the growth score. Each term
+adds `weight × clamp(value, 0, cap)`, in the factor's own units. A name with no value scores the
+term's `neutral` instead. The factor names are the arms of `core::select_fund_factor` in
+`src/core.rs`, 65 of them. A name it does not route reads as missing for every row, so a typo
+quietly adds the same `neutral` to everyone.
+
+**A list replaces the shipped list. It does not merge.** A settings file that lists only your new
+term silently drops the 5 shipped terms. Copy all 5, then add yours:
+
+```yaml
+buy_heuristic:
+  growth_fund_extra:
+    - {factor: roic, weight: 0.25, cap: 40.0, neutral: 17.3}
+    - {factor: margin_trend, weight: -0.3, cap: 10.0, neutral: 0.0}
+    - {factor: ey_pct, weight: 0.03, cap: 100.0, neutral: 50.0}
+    - {factor: mom61_pct, weight: 0.03, cap: 100.0, neutral: 50.0}
+    - {factor: capx_pct, weight: 0.03, cap: 100.0, neutral: 50.0}
+    - {factor: buyback_yield, weight: 0.05, cap: 10.0, neutral: 0.0}  # yours: % of shares bought back in a year
+```
+
+The last line only shows the shape: buyback yield is on the measured-dead list below. On CI, a
+`probe.yml` dispatch with `extra=buyback_yield:0.05:10:0` appends the same term to the shipped list
+for one run, and it refuses a name `select_fund_factor` does not route.
+
+**14 names grade in the backtest but cannot move the page or `screen`.** The backtest fills them
+for each past date; the live path does not.
+
+- 12 are always missing live, so every row gets the same `neutral` and the term cannot rank on the
+  factor: `ebitda_yield`, `fcf_ev_yield`, `sales_ev_yield`, `book_yield`, `payout_yield`,
+  `value_composite`, `small_pct`, `rnd_pct`, `low_turnover`, `cgo`, `insider_own_pct`, `exp_neg`.
+- 2 are compared within their sector in the backtest but read raw live: `low_dro`, `underdep`.
+
+So a backtest pass on one of these does not carry over to the live table. Shipping one first needs a
+live stamp, the way `ey_pct` got one in (#1345).
+
+### Current status (2026-11): every shipped knob passed its bar; the bar cannot see small edges
 
 Every shipped knob was graded by CI's backtest gate (12y and 8y walk-forward, point-in-time and
-stress pools), and each knob's receipt sits beside it in `tests/ci-settings.yaml`. The ship rule
-for ANY knob change is the same bar: the edge must hold with BOTH out-of-sample halves positive,
-or the change reverts.
+stress pools), and each knob's receipt sits beside it in `tests/ci-settings.yaml`. A knob change
+ships by one of two routes:
+
+- **The backtest bar.** The edge must hold with BOTH out-of-sample halves positive, or the change
+  reverts.
+- **The paper route (#1339).** The idea passes on JKP's data, enters at a fixed weight of 0.03, and
+  must do no visible harm in our backtest. It shipped `ey_pct` (#1345), `mom61_pct` (#1350) and
+  `capx_pct` (#1355). Its second menu passed 0 of 14 (#1357). It reopens only when JKP publishes
+  newer data.
 
 Measured dead — don't re-run these:
 
@@ -236,10 +292,12 @@ Measured dead — don't re-run these:
   the 0.8 soft dock covers for stocks. Coins have their own floor (`min_1y_pct_crypto`).
 - **Shorter horizons** — the edge is a LONG-horizon signal: negative under 3y, rising through
   10y. Selling early converts a validated signal into noise.
-- **Every fundamentals factor through the fund lane except `peg_yield`** — margins, profitability,
-  rev/eps growth, buyback yield and SEC-computed ROE all fail out-of-sample against the price-only
-  baseline. `peg_yield` (1/PEG) at weight 0.07 is the only live fund tilt; it replaced the earlier
-  `earnings_yield` tilt at 1.0. Form-4 insider net-buys fail too. Graded on SEC's bulk insider
+- **Most fundamentals factors through the fund lane** — margins, profitability, rev/eps growth,
+  buyback yield and SEC-computed ROE all fail out-of-sample against the price-only baseline. Six
+  fund terms are live. `peg_yield` (1/PEG) at weight 0.07 is the main tilt; it replaced the
+  earlier `earnings_yield` tilt at 1.0. The five `growth_fund_extra` terms are `roic` at 0.25, the
+  `margin_trend` dock at −0.3 (#1289), and `ey_pct`, `mom61_pct` and `capx_pct` at 0.03 each, on
+  the paper route. Form-4 insider net-buys fail too. Graded on SEC's bulk insider
   data sets (2006 on) by (#1247), their held book trails the index at 12y and 8y, and both
   out-of-sample halves trail the same-set score book (#1248).
 
