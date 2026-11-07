@@ -1889,6 +1889,9 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
     // `size` on typed names (score ÷ volatility weights) can move by that much. Rank against the screen
     // universe's yields if that ever matters.
     core::stamp_ey_pct(quotes.iter_mut().filter_map(|q| q.fund.as_mut()));
+    // (#1350) the `mom61_pct` term's twin, the backtest's own function, over the stocks in the same slice (the
+    // same shortcut as above). A price twin: it reads the 6M and 1M legs, never a filing.
+    crate::picks::stamp_mom61_pct(quotes.iter_mut());
 }
 
 /// Fill the DISPLAY-ONLY income-statement snapshot (rev_yoy / eps_yoy / net_margin_fy) on the quotes

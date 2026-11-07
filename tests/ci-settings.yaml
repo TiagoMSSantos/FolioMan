@@ -20836,6 +20836,10 @@ buy_heuristic:
       weight: 0.03           # (#1339) fixed by the route before any grade, never tuned
       cap: 100.0             # (#1339) a percentile tops out at 100, so the tilt tops out at 3 points
       neutral: 50.0          # (#1339) a missing yield ranks as the middle name, 1.5 points
+    - factor: mom61_pct      # (#1350) the paper route's ret_6_1 twin; receipt in the (#1349) and (#1350) blocks
+      weight: 0.03           # (#1339) fixed by the route before any grade, never tuned
+      cap: 100.0             # (#1339) a percentile tops out at 100, so the tilt tops out at 3 points
+      neutral: 50.0          # (#1339) a stock with no 6M leg, and every ETF and coin, reads 1.5 points
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
@@ -26297,6 +26301,24 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Row: a live `mom61_pct` stamp (picks::momentum_6_1's same-date percentile over the screened stocks, the
 #   `stamp_cohort_ranks` formula), the term mom61_pct 0.03/100/50 in growth_fund_extra after ey_pct, and a golden
 #   rebless on the ship SHA. The cluster rule then closes Momentum. rd_me (Size) is graded next either way.
+# (#1350) RET_6_1 TWIN SHIPPED 2026-11-07 on the owner's word, per the (#1349) result and the (#1339) route.
+# WHAT: a fourth `growth_fund_extra` term, `mom61_pct`, at weight 0.03, cap 100 and neutral 50, all three fixed by
+#   (#1339) before any grade. A stock gains up to 3 points of score for its 6-1 return (the close a month back over
+#   the close six months back) against the stocks ranked with it: the top winner earns 3, the middle stock 1.5, the
+#   worst 0. Example: a stock up 40 % over that stretch at percentile 95 earns about 2.9 points; one down 20 % at
+#   percentile 10 earns 0.3.
+# LIVE STAMP: `picks::stamp_mom61_pct`, ONE function that both the backtest's `stamp_cohort_ranks` and the end of
+#   `fetch::enrich_fund_factor` call, so the live number and the graded number cannot drift apart. It ranks
+#   `picks::momentum_6_1` over the stocks in the slice it is given (the count of strictly lower returns over n-1,
+#   times 100). `screen` passes its whole universe, as the backtest ranks every stock on a date. The page re-ranks
+#   the stamped universe.json rows, so it reads the same number. A stock with no 6M leg reads 50, and so does every
+#   ETF and coin, since `growth_fund_scope_by_class` is false: the guard graded that same fill.
+# SHORTCUT: as (#1345): `check`, `size` and the shadow tables rank within their own few names, and report's verdict
+#   mirror stamps none, so their tilt can differ from the screen's by up to 3 points.
+# GOLDENS: the term reaches every fixture walk, so the next commit re-blesses them from a bless=true probe on this
+#   SHA. Until then `report_is_pinned` reads red on this push, and its mutants legs grade nothing.
+# CLUSTER RULE: Momentum is now closed. The (#584) interleave stays as it is; it was never a paper-route ship.
+# REVERT RULE: the (#1339) pull rule. Only a newer JKP release re-grades the term; a fail there removes it.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

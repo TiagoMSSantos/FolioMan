@@ -7715,6 +7715,24 @@ pub(crate) fn momentum_6_1(q: &Quote) -> Option<f64> {
     net_return(q, "6M", "1M")
 }
 
+/// (#1350) The one `mom61_pct` stamp, for the live fetch and the backtest alike, so the page and the graded walk
+/// cannot drift apart: each stock's percentile of `momentum_6_1` among the stocks passed in, 0-100, high =
+/// winner. Same formula as `core::stamp_ey_pct`: the count of strictly lower returns over n−1, times 100. ETFs
+/// and coins neither rank nor stamp. A stock with a 6-1 return and no fund row gets a default row to carry the
+/// stamp (the default row is score-neutral for every other term). Fewer than 2 returns rank nothing.
+pub fn stamp_mom61_pct<'a>(quotes: impl IntoIterator<Item = &'a mut Quote>) {
+    let mut quotes: Vec<&mut Quote> = quotes.into_iter().collect();
+    let mom: Vec<Option<f64>> = quotes.iter().map(|q| if asset_class(q) == 2 { momentum_6_1(q) } else { None }).collect();
+    let mut col: Vec<f64> = mom.iter().flatten().copied().collect();
+    col.sort_by(f64::total_cmp);
+    let rank = |v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
+    for (q, m) in quotes.iter_mut().zip(mom) {
+        if let Some(v) = m.filter(|_| col.len() >= 2) {
+            q.fund.get_or_insert_with(Default::default).mom61_pct = Some(rank(v));
+        }
+    }
+}
+
 /// (#587) The `long` leg's return net of its last `short` one, %: a missing `short` reads 0, a missing `long`
 /// has none, and a wiped `short` is floored at 1%.
 fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {

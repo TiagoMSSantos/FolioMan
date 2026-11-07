@@ -7138,7 +7138,7 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// percentile, so the smallest name at a cutoff reads 100. It never enters the composite.
 /// (#1341) The earnings_yield leg's percentile, one of the four the composite averages, is also kept alone
 /// as `ey_pct` (high = cheap): the (#1339) paper route's twin of JKP's ni_me.
-/// (#1348) The 6-1 return ([`picks::momentum_6_1`], off the as-of quote) ranks the same way, over the same date's
+/// (#1348) The 6-1 return ([`picks::stamp_mom61_pct`], off the as-of quote) ranks the same way, over the same date's
 /// stocks with a 6M leg, into the scorer's copy's `mom61_pct` (high = winner): the route's twin of JKP's ret_6_1.
 /// A stock with no fund row gets a default one there to carry it; `s.fund` stays as filed.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
@@ -7202,15 +7202,9 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
         // (#1348) The 6-1 return ranks over the date's stocks with a 6M leg, fund row or not. A fund row can
         // exist only because the name files with the SEC later (the known leak in tests/backtest_fixture.rs),
         // so a cohort keyed on it reads the future. Stamped on the scorer's copy alone: `s.fund` keeps its
-        // presence, which the fund-covered cohorts skip on.
-        let mom: Vec<Option<f64>> = day.iter().map(|s| if picks::asset_class(&s.quote) == 2 { picks::momentum_6_1(&s.quote) } else { None }).collect();
-        let mut col: Vec<f64> = mom.iter().flatten().copied().collect();
-        col.sort_by(f64::total_cmp);
-        for (s, m) in day.iter_mut().zip(mom) {
-            if let Some(v) = m.filter(|_| col.len() >= 2) {
-                Arc::make_mut(&mut s.quote).fund.get_or_insert_with(Default::default).mom61_pct = Some(rank(&col, v));
-            }
-        }
+        // presence, which the fund-covered cohorts skip on. (#1350) The live fetch calls the same function, and
+        // every quote here is already unique (the copy-back above), so `make_mut` clones nothing.
+        picks::stamp_mom61_pct(day.iter_mut().map(|s| Arc::make_mut(&mut s.quote)));
     }
 }
 
