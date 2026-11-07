@@ -3796,12 +3796,12 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "1d", hdr: "1D", width: 8, right: true, help: "price change over the last trading day" },
     ColSpec { key: "1w", hdr: "1W", width: 8, right: true, help: "price change over the last week" },
     ColSpec { key: "1m", hdr: "1M", width: 8, right: true, help: "price change over the last month" },
-    ColSpec { key: "1y", hdr: "1Y", width: 8, right: true, help: "total price change over the last year, for example +25% = €1,000 became €1,250" },
-    ColSpec { key: "2y", hdr: "2Y", width: 8, right: true, help: "total price change over the last 2 years, not per year" },
-    ColSpec { key: "5y", hdr: "5Y", width: 8, right: true, help: "total price change over the last 5 years, not per year, for example +100% = the price doubled" },
-    ColSpec { key: "8y", hdr: "8Y", width: 8, right: true, help: "total price change over the last 8 years, not per year" },
-    ColSpec { key: "10y", hdr: "10Y", width: 8, right: true, help: "total price change over the last 10 years, not per year" },
-    ColSpec { key: "20y", hdr: "20Y", width: 8, right: true, help: "total price change over the last 20 years, not per year" },
+    ColSpec { key: "1y", hdr: "1Y", width: 8, right: true, help: "price change over about a year: the average price of the last 105 trading days (about 5 months) against the average from 6 to 18 months ago. Not what a buy exactly a year ago made: after a sharp fall in the last month a stock can read +70% here while a buyer from a year ago is up only 6%" },
+    ColSpec { key: "2y", hdr: "2Y", width: 8, right: true, help: "price change over about 2 years, not per year: the average price of the last 105 trading days (about 5 months) against the average from 21 to 27 months ago" },
+    ColSpec { key: "5y", hdr: "5Y", width: 8, right: true, help: "price change over about 5 years, not per year: the average price of the last 105 trading days (about 5 months) against the average from 4 to 6 years ago, for example +100% = the price roughly doubled" },
+    ColSpec { key: "8y", hdr: "8Y", width: 8, right: true, help: "price change over about 8 years, not per year: the average price of the last 105 trading days (about 5 months) against the average from 7 to 9 years ago" },
+    ColSpec { key: "10y", hdr: "10Y", width: 8, right: true, help: "price change over about 10 years, not per year: the average price of the last 105 trading days (about 5 months) against the average from 9 to 11 years ago" },
+    ColSpec { key: "20y", hdr: "20Y", width: 8, right: true, help: "price change over about 20 years, not per year: the average price of the last 105 trading days (about 5 months) against the average from 19 to 21 years ago" },
     ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true, help: "Years of price history since listing: how much record backs CAGR and LEG. More years = more trust in them" },
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true, help: "Risk: the typical size of one day's price move over the last year (a daily figure, not yearly); higher = a bumpier ride, for example 2% = a usual day moves about 2%; n/a = too few closes on the chart" },
     // (#1199) `Profile::beta`, stamped by `screen`. Display only
@@ -5341,7 +5341,7 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
                     c.help
                 ),
                 "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => format!(
-                    "{unit} — {}. Both ends are averages of a few days' closes, so one odd day does not move it. ≈ = the record covers most of the span but not all, so the cell shows its whole-life change; a dash = listed for less than the span; n/a = listed long enough, but no usable price at the start",
+                    "{unit} — {}. Both ends are averages over months, so one odd day does not move it, and a rise or fall in the last few months shows only in part. ≈ = the record covers most of the span but not all, so the cell shows its whole-life change; a dash = listed for less than the span; n/a = listed long enough, but no usable price at the start",
                     c.help
                 ),
                 "rank" => format!(
@@ -12936,6 +12936,29 @@ mod tests {
         let mut bare = serde_json::json!({"help": {}});
         stamp_core_cols(&mut bare, &[q.clone()], &w, &t, &FundPeMap::new(), &FundPeMap::new());
         assert_eq!(bare, serde_json::json!({"help": {}}), "an absent table stays absent");
+    }
+
+    /// (#1361) The >=1Y legs are smoothed (`core::horizon_changes`): the mean of the last
+    /// `endpoint_smooth_days` closes against the mean within ±`anchor_windows` days of the start. The
+    /// help names the shipped spans, so a change to either knob in ci-settings reds this until the
+    /// words follow. Live 2026-11-07: FIX read 1Y +71% while a buy exactly a year earlier was up 6%.
+    #[test]
+    fn long_leg_help_names_the_shipped_smoothing() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml")).expect("read tests/ci-settings.yaml");
+        let s: crate::config::Settings = serde_yaml::from_str(&text).expect("parse tests/ci-settings.yaml");
+        let help = web_help(false, &[]);
+        let end = format!("the last {} trading days (about {} months)", s.buy_heuristic.endpoint_smooth_days, s.buy_heuristic.endpoint_smooth_days / 21);
+        for (leg, days) in [("1Y", 365), ("2Y", 730), ("5Y", 1825), ("8Y", 2920), ("10Y", 3650), ("20Y", 7300)] {
+            let half = s.anchor_windows.get(leg).copied().unwrap_or_else(|| crate::core::default_anchor_half(days));
+            let (from, to) = (days - half, days + half);
+            let start = if days < 1825 {
+                format!("from {} to {} months ago", (from as f64 / 30.44).round(), (to as f64 / 30.44).round())
+            } else {
+                format!("from {} to {} years ago", from / 365, to / 365)
+            };
+            let t = &help["lanes"][leg];
+            assert!(t.contains(&end) && t.contains(&start), "{leg} must name {end:?} and {start:?}: {t}");
+        }
     }
 
     /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and
