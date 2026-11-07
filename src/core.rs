@@ -4291,6 +4291,7 @@ pub struct FundFactors {
     pub small_pct: Option<f64>,      // (#409) same-date percentile of mcap, 0-100, high = SMALL. Backtest stamps
     pub ey_pct: Option<f64>,         // (#1341) same-date percentile of earnings_yield, 0-100, high = cheap. Backtest stamps
     pub mom61_pct: Option<f64>,      // (#1348) same-date percentile of the 6-1 return, 0-100, high = winner. Backtest stamps
+    pub rnd_pct: Option<f64>,        // (#1351) same-date percentile of rnd_yield, 0-100, high = R&D-rich. Backtest stamps
     // (#410) R&D ÷ market cap (Chan-Lakonishok-Sougiannis 2001) and net payout yield (Boudoukh et al.
     // 2007). Levels off the as-of row like `fcf_ttm`; the yields need a price, so the backtest fills them.
     pub rnd_ttm: Option<f64>,        // (#410) as-of R&D level, reporting currency
@@ -4994,6 +4995,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         small_pct: None,
         ey_pct: None,
         mom61_pct: None,
+        rnd_pct: None,
         // (#410) levels only, like (#408)
         rnd_ttm: now.and_then(|r| Some(r.rnd_margin? * r.revenue? / 100.0)),
         payout_ttm: now.and_then(|r| Some(r.payout_margin? * r.revenue? / 100.0)),
@@ -5841,6 +5843,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "small_pct" => f.small_pct,                       // (#409) same-date size percentile, high = small
         "ey_pct" => f.ey_pct,                             // (#1341) same-date earnings_yield percentile, high = cheap
         "mom61_pct" => f.mom61_pct,                       // (#1348) same-date 6-1 return percentile, high = winner
+        "rnd_pct" => f.rnd_pct,                           // (#1351) same-date rnd_yield percentile, high = R&D-rich
         "rnd_yield" => f.rnd_yield,                       // (#410) R&D ÷ market cap: measured, unweighted
         "payout_yield" => f.payout_yield,                 // (#410) net payout ÷ market cap, sign kept
         "rnd_growth" => f.rnd_growth,                     // (#532) 3y ΔR&D ÷ old revenue: measured, unweighted
@@ -6873,6 +6876,7 @@ mod tests {
             small_pct: Some(32.0),
             ey_pct: Some(77.0),
             mom61_pct: Some(78.0),
+            rnd_pct: Some(79.0),
             rnd_ttm: Some(100.0),
             payout_ttm: Some(110.0),
             rnd_yield: Some(33.0),
@@ -6936,6 +6940,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "small_pct"), Some(32.0));
         assert_eq!(select_fund_factor(&f, "ey_pct"), Some(77.0)); // (#1341)
         assert_eq!(select_fund_factor(&f, "mom61_pct"), Some(78.0)); // (#1348)
+        assert_eq!(select_fund_factor(&f, "rnd_pct"), Some(79.0)); // (#1351)
         assert_eq!(select_fund_factor(&f, "rnd_yield"), Some(33.0)); // (#410)
         assert_eq!(select_fund_factor(&f, "payout_yield"), Some(34.0));
         assert_eq!(select_fund_factor(&f, "noa"), Some(35.0)); // (#411) NOT asset_growth: the level of the balance sheet, not its growth

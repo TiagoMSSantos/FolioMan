@@ -26319,6 +26319,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   SHA. Until then `report_is_pinned` reads red on this push, and its mutants legs grade nothing.
 # CLUSTER RULE: Momentum is now closed. The (#584) interleave stays as it is; it was never a paper-route ship.
 # REVERT RULE: the (#1339) pull rule. Only a newer JKP release re-grades the term; a fail there removes it.
+# (#1351) RD_ME HARM GUARD, PRE-REGISTERED 2026-11-07 before this run. Row: (#1352).
+# WHY: (#1347) passed rd_me on JKP's 2026 release (US t 3.91, post +3.1; developed ex-US t 2.51, post +2.1), and
+#   Size holds no paper-route ship, so it is second in the guard queue. Proof stays JKP's; our backtest only has
+#   to show no visible harm.
+# TWIN: `rnd_pct`, the same-date percentile (0-100, high = R&D-rich) of `rnd_yield` (#410), the as-of R&D over the
+#   cutoff's market cap, positive-only. stamp_cohort_ranks ranks it as a sixth column over the date's names that
+#   carry one, as it ranks ey_pct. A name with no R&D fact reads None and fills at the neutral. JKP builds its R&D
+#   ratios from xrd with no zero-fill (`rd_at= xrd/at_x;`, `rd_sale= xrd/sale_x;` in the SAS accounting_chars.sas;
+#   rd_me's own line was not read verbatim), so its sorts also hold R&D reporters only.
+# TERM: {factor: rnd_pct, weight: 0.03, cap: 100, neutral: 50}, added after the shipped terms (roic,
+#   margin_trend, ey_pct, mom61_pct), each unchanged.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), so
+#   cutoffs before 2011-01-01 drop (SEC facts start 2010). Grid: [{}, {growth_fund_extra: the shipped terms, then
+#   the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y. Only then a second probe, rescore="guard holdout reveal sec", reads the
+#   sealed 2016-on 8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were
+#   read twice before (ni_me, probe 42286340556; ret_6_1, probe 42357657397), so this holdout is not blind; its
+#   receipt says so. Both = SHIP per (#1339), after one owner question, because the page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = rd_me REFUSED, record only. capx_gr3 goes
+#   next, with its own twin under `sec` and its own receipt.
+# EXPECTED: UNGRADEABLE is a real risk: coverage counts the ranked stocks carrying `rnd_pct`, and banks, retailers,
+#   miners and utilities file no R&D line. Guess 45-65 % (the growth book leans to tech and health care). If it
+#   grades, PASS about 1 in 2.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

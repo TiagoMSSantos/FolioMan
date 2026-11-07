@@ -7141,14 +7141,16 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// (#1348) The 6-1 return ([`picks::stamp_mom61_pct`], off the as-of quote) ranks the same way, over the same date's
 /// stocks with a 6M leg, into the scorer's copy's `mom61_pct` (high = winner): the route's twin of JKP's ret_6_1.
 /// A stock with no fund row gets a default one there to carry it; `s.fund` stays as filed.
+/// (#1351) `rnd_yield` ranks the same way as a sixth column, alone, into `rnd_pct` (high = R&D-rich): the route's
+/// twin of JKP's rd_me. Only an as-of R&D fact yields one, so a fund row with no filing yet never joins it.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
 /// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
 /// `underdep` is demeaned the same way, for Peddireddy's industry benchmark.
 /// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
 fn stamp_cohort_ranks(samples: &mut [Sample]) {
-    let legs: [fn(&core::FundFactors) -> Option<f64>; 5] =
-        [|f| f.earnings_yield, |f| f.ebitda_yield, |f| f.fcf_ev_yield, |f| f.sales_ev_yield, |f| f.mcap];
+    let legs: [fn(&core::FundFactors) -> Option<f64>; 6] =
+        [|f| f.earnings_yield, |f| f.ebitda_yield, |f| f.fcf_ev_yield, |f| f.sales_ev_yield, |f| f.mcap, |f| f.rnd_yield];
     let rank = |col: &[f64], v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
     for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
         let cols: Vec<Vec<f64>> = legs
@@ -7170,6 +7172,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             f.value_composite = (pcts.len() >= 2).then(|| pcts.iter().sum::<f64>() / pcts.len() as f64);
             f.small_pct = ranked[4].map(|p| 100.0 - p);
             f.ey_pct = ranked[0];
+            f.rnd_pct = ranked[5];
         }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
@@ -11582,6 +11585,24 @@ mod tests {
         assert_eq!(got, [Some(50.0), Some(0.0), None, Some(100.0), None]);
         assert!(v[4].quote.fund.is_none(), "an ETF gets no default row");
         assert!(v[3].fund.is_none() && v.iter().all(|s| s.fund.as_ref().is_none_or(|f| f.mom61_pct.is_none())), "the filed copy stays as filed");
+    }
+
+    /// (#1351) `rnd_pct` ranks rnd_yield among the same date's names that carry one: P's 4 % over Q's 1 % reads
+    /// 100 and 0. R files no R&D, so it reads None and its row does not join the column.
+    #[test]
+    fn stamp_cohort_ranks_ranks_the_rnd_yield() {
+        let row = |t: &str, rnd: Option<f64>| Sample {
+            date: ymd(2012, 1, 1),
+            realized: 0.0,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: Some(crate::core::FundFactors { rnd_yield: rnd, ..Default::default() }),
+            trail: Vec::new(),
+        };
+        let mut v = vec![row("P", Some(4.0)), row("Q", Some(1.0)), row("R", None)];
+        stamp_cohort_ranks(&mut v);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.rnd_pct)).collect();
+        assert_eq!(got, [Some(100.0), Some(0.0), None]);
     }
 
     /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads
