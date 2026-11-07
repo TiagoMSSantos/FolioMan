@@ -21701,7 +21701,7 @@ buy_heuristic:
   #  WHY: on 2026-11-07 the owner re-asked why a stock a hair under the growth bar ranks lower. Alphabet ABEA.DE sits
   #  0.6 %/yr under 19, so its 20.0 is docked to 16.0 and it ranks #27, off the buy list. The owner picked "Gentle cut
   #  near 19": keep the 19 line and cut less for a small miss. This is the per-gate door the (#567) RE-OPEN line above
-  #  left open. A dip bonus stays closed ((#724)), and moving the line to 18-15 stays refused (2026-08-01 ladder, (#52)).
+  #  left open. A dip bonus stays closed ((#724)); moving the line to 18-15 stays refused (2026-08-01 ladder, (#52)).
   #  RULE: growth_cagr_soft_band ((#1362), acb0a3f). A STOCK under its `cagr` or `cagr-life` floor by less than the
   #  band is docked 1 - (1 - f) x miss/band, with f = growth_gate_soft 0.8. A miss of the band or more is docked f, as
   #  today. The band under test is 1.5, the close-miss margin `gate_fails` already uses for the two cagr tags:
@@ -21721,6 +21721,23 @@ buy_heuristic:
   #  seats stay.
   #  REVERT RULE: on FAIL the knob stays 0 and the code stays. Off is the shipped lane bit for bit, so no page or
   #  golden moves.
+  #── (#1363) VERDICT, 2026-11-07, on (#1362): PASS at 12y AND at 8y, so growth_cagr_soft_band 1.5 is a SHIP ──
+  #  Guard probe run 42387870369 on a64401a, rescore="guard", 200 shuffles. Windows scored 5150/6488 at 12y and
+  #  9184/8596 at 8y, the same as the (#1354) run, so no window was cut.
+  #    horizon  top-10 gain / edge  pond gain / edge  pool     top-10 moved  verdict
+  #    12y      -0.15 / -0.29       +0.02 / -0.08     100.0 %  0.45          PASS
+  #    8y       +0.02 / -0.36       +0.02 / -0.05     100.0 %  0.48          PASS
+  #  NULL BAND, row 1: 12y mean -0.15, median +0.32, band mean [-0.29, +0.40], median [-0.46, +0.45], INSIDE. 8y
+  #  mean +0.02, median +0.61, band mean [-0.36, +0.34], median [-0.68, +0.58], INSIDE: the median alone sits past
+  #  its edge, and OUTSIDE needs both. TAIL INSIDE at both: 12y p20 +0.13 in [-0.75, +0.80] and worst5 -0.80 against
+  #  [-0.77, +0.77]; 8y p20 +0.00 and worst5 +0.04. The 12y worst-five mean sits 0.03 past its lower edge, on that
+  #  moment alone.
+  #  AGAINST EXPECTED: 0.45 and 0.48 names moved per bucket, inside the guessed 0.3-1; both gains inside the band.
+  #  WHAT THIS DOES NOT SAY: the ruler sees no gain at this size ((#1333)). The case for the ship is the owner's: a
+  #  0.6 %/yr miss should not cost what a 5 %/yr miss costs. The guard says only that the backtest shows no harm.
+  #  NEXT: the live page moves (about 2 of the 13 growth seats), so one owner question comes first. On a yes, the ship
+  #  sets growth_cagr_soft_band: 1.5 beside growth_gate_soft, adds the MISSES help clause and re-blesses the goldens
+  #  on the ship SHA.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
