@@ -26254,8 +26254,12 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   guard queue. Proof stays JKP's; our backtest only has to show no visible harm.
 # TWIN: `mom61_pct`, the same-date percentile (0-100, high = winner) of picks::momentum_6_1, the as-of quote's 6M
 #   leg net of its 1M leg (the close a month back over the close six months back, minus 1). stamp_cohort_ranks
-#   ranks it among the same date's names with a fund row, as it ranks ey_pct; a name with no fund row or no 6M leg
-#   reads None. Prices need no SEC fact, so a fund row from before 2010 still carries the twin.
+#   ranks it among the same date's stocks (picks::asset_class 2) with a 6M leg, fund row or not, and writes it on
+#   the scorer's copy (`quote.fund`) alone, adding a default row where a stock has none. A stock with no 6M leg,
+#   an ETF and a coin read None. Prices need no SEC fact, so the twin reads on the full span.
+# AMENDED 2026-11-07, before any run: the first build (d5cf833) ranked over the names with a fund row and reddened
+#   CI's look-ahead test (ACGL 2013-07-01 moved). A fund row can exist only because a name files with the SEC
+#   LATER (FERG, first 10-K 2024), so that cohort read the future. The owner chose the all-stocks cohort above.
 # TERM: {factor: mom61_pct, weight: 0.03, cap: 100, neutral: 50}, added after ey_pct, the (#1339) term unchanged.
 # RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout" (200 shuffles), full
 #   span, no `sec`. Grid: [{}, {growth_fund_extra: roic + margin_trend + ey_pct as shipped, then the term above}].
@@ -26265,8 +26269,8 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   SHIP per (#1339), after one owner question, because the page moves.
 # FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = ret_6_1 REFUSED, record only. rd_me goes
 #   next, with the rnd_yield twin under `sec` and its own receipt.
-# EXPECTED: coverage 60-90 % of scored stocks (a stock with no SEC facts on file has no fund row). PASS about 1 in
-#   2. INERT is the likeliest other read: the growth gates already admit trailing winners and the momentum half
+# EXPECTED (amended with the cohort): coverage 95-100 % of scored stocks, since a ranked growth stock carries
+#   years of prices and so a 6M leg. PASS about 1 in 2. INERT is the likeliest other read: the growth gates already admit trailing winners and the momentum half
 #   already sorts on 12-1, so a 3-point tilt toward the last six months moves few top-10 names.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 

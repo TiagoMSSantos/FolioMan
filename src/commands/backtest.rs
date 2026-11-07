@@ -7139,7 +7139,8 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// (#1341) The earnings_yield leg's percentile, one of the four the composite averages, is also kept alone
 /// as `ey_pct` (high = cheap): the (#1339) paper route's twin of JKP's ni_me.
 /// (#1348) The 6-1 return ([`picks::momentum_6_1`], off the as-of quote) ranks the same way, over the same date's
-/// names with a fund row, into `mom61_pct` (high = winner): the route's twin of JKP's ret_6_1.
+/// stocks with a 6M leg, into the scorer's copy's `mom61_pct` (high = winner): the route's twin of JKP's ret_6_1.
+/// A stock with no fund row gets a default one there to carry it; `s.fund` stays as filed.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
 /// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
@@ -7170,14 +7171,6 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             f.small_pct = ranked[4].map(|p| 100.0 - p);
             f.ey_pct = ranked[0];
         }
-        let mom: Vec<Option<f64>> = day.iter().map(|s| s.fund.as_ref().and(picks::momentum_6_1(&s.quote))).collect();
-        let mut col: Vec<f64> = mom.iter().flatten().copied().collect();
-        col.sort_by(f64::total_cmp);
-        for (s, m) in day.iter_mut().zip(mom) {
-            if let Some(f) = s.fund.as_mut() {
-                f.mom61_pct = if col.len() >= 2 { m.map(|v| rank(&col, v)) } else { None };
-            }
-        }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
             (v[(v.len() - 1) / 2] + v[v.len() / 2]) / 2.0
@@ -7205,6 +7198,18 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
         // factor sweep reads `s.fund` and was right. Copy the stamped struct back so both read the same.
         for s in day.iter_mut() {
             Arc::make_mut(&mut s.quote).fund = s.fund.clone();
+        }
+        // (#1348) The 6-1 return ranks over the date's stocks with a 6M leg, fund row or not. A fund row can
+        // exist only because the name files with the SEC later (the known leak in tests/backtest_fixture.rs),
+        // so a cohort keyed on it reads the future. Stamped on the scorer's copy alone: `s.fund` keeps its
+        // presence, which the fund-covered cohorts skip on.
+        let mom: Vec<Option<f64>> = day.iter().map(|s| if picks::asset_class(&s.quote) == 2 { picks::momentum_6_1(&s.quote) } else { None }).collect();
+        let mut col: Vec<f64> = mom.iter().flatten().copied().collect();
+        col.sort_by(f64::total_cmp);
+        for (s, m) in day.iter_mut().zip(mom) {
+            if let Some(v) = m.filter(|_| col.len() >= 2) {
+                Arc::make_mut(&mut s.quote).fund.get_or_insert_with(Default::default).mom61_pct = Some(rank(&col, v));
+            }
         }
     }
 }
@@ -11551,9 +11556,10 @@ mod tests {
         assert_eq!(day1.iter().map(|f| f.ey_pct).collect::<Vec<_>>(), [Some(100.0), Some(50.0), Some(0.0)]);
     }
 
-    /// (#1348) `mom61_pct` ranks the 6-1 return among the same date's names with a fund row. A gained 20 % over
+    /// (#1348) `mom61_pct` ranks the 6-1 return among the same date's stocks, fund row or not. A gained 20 % over
     /// 6M after a flat month; B's 21 % came with a 10 % last month (1.21 / 1.10 = +10 %), so A ranks over B. C has
-    /// no 6M leg, so it reads None; D has no fund row, so it neither ranks nor stamps.
+    /// no 6M leg, so it reads None. D has no fund row, ranks top on +90 % and gets a default row on the scorer's
+    /// copy alone. E is an ETF, so its +5 % neither ranks nor stamps. No `s.fund` is touched.
     #[test]
     fn stamp_cohort_ranks_ranks_the_6_1_return() {
         let row = |t: &str, m1: f64, m6: Option<f64>, fund: bool| {
@@ -11569,11 +11575,19 @@ mod tests {
                 .collect();
             Sample { date: ymd(2010, 1, 1), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: fund.then(Default::default), trail: Vec::new() }
         };
-        let mut v = vec![row("A", 0.0, Some(20.0), true), row("B", 10.0, Some(21.0), true), row("C", 0.0, None, true), row("D", 0.0, Some(90.0), false)];
+        let mut v = vec![
+            row("A", 0.0, Some(20.0), true),
+            row("B", 10.0, Some(21.0), true),
+            row("C", 0.0, None, true),
+            row("D", 0.0, Some(90.0), false),
+            row("E", 0.0, Some(5.0), false),
+        ];
+        Arc::make_mut(&mut v[4].quote).instrument_type = "ETF".into();
         stamp_cohort_ranks(&mut v);
-        let got: Vec<Option<f64>> = v.iter().map(|s| s.fund.as_ref().and_then(|f| f.mom61_pct)).collect();
-        assert_eq!(got, [Some(100.0), Some(0.0), None, None]);
-        assert_eq!(v[0].quote.fund.as_ref().and_then(|f| f.mom61_pct), Some(100.0), "the scorer's copy carries it too");
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.mom61_pct)).collect();
+        assert_eq!(got, [Some(50.0), Some(0.0), None, Some(100.0), None]);
+        assert!(v[4].quote.fund.is_none(), "an ETF gets no default row");
+        assert!(v[3].fund.is_none() && v.iter().all(|s| s.fund.as_ref().is_none_or(|f| f.mom61_pct.is_none())), "the filed copy stays as filed");
     }
 
     /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads
