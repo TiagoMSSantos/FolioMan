@@ -1106,7 +1106,8 @@ fn backtest_fund_report_is_pinned_with_every_lane() {
 /// same commit; a golden added later starts at zero.
 #[test]
 fn goldens_hold_only_the_known_nan_and_inf_cells() {
-    let known = [("backtest-12-lanes.golden", (81, 4)), ("backtest-12-fund-lanes.golden", (69, 0))];
+    // (#1378) 81 -> 82 and 69 -> 70: the free zone empties the winners' `brake + dock` cohort (6 and 7 -> 0).
+    let known = [("backtest-12-lanes.golden", (82, 4)), ("backtest-12-fund-lanes.golden", (70, 0))];
     for (name, _) in known {
         assert!(fixture_dir().join(name).is_file(), "{name} is gone: move its counts to the golden that replaced it");
     }
