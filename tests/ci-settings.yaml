@@ -21847,6 +21847,41 @@ buy_heuristic:
   #  so a wider band lifts it more). 5.0 seats ROST and EMCOR EME and drops ABEA.DE and Keysight KEYS. Each seat is
   #  1.56 % of new money. The head and the 12 momentum seats stay. Leaving the buy list never sells ((#388)).
   #  REVERT RULE: if no rung ships, the band stays 2.5, so no page or golden moves.
+  # (#1369) VERDICT, 2026-11-07, on (#1368): PASS in all 12 reads, so rungs 3.0, 4.0 and 5.0 are all eligible
+  #  Guard probes on 0cf73b4, rescore="guard", 200 shuffles: A (against band 0) run 42395748957, B (against the
+  #  shipped 2.5) run 42395755502. Windows scored 5150/6488 at 12y and 9184/8596 at 8y in both, the same as (#1366).
+  #    rung  probe  horizon  top-10 gain / edge  pond gain / edge  pool     top-10 moved  verdict
+  #    3.0   A      12y      -0.20 / -0.37       +0.03 / -0.15     100.0 %  0.74          PASS
+  #    3.0   A      8y       +0.10 / -0.43       +0.02 / -0.11     100.0 %  0.74          PASS
+  #    3.0   B      12y      -0.07 / -0.09       +0.01 / -0.04     100.0 %  0.03          PASS
+  #    3.0   B      8y       -0.03 / -0.07       +0.00 / -0.04     100.0 %  0.02          PASS
+  #    4.0   A      12y      -0.27 / -0.50       +0.01 / -0.14     100.0 %  0.87          PASS
+  #    4.0   A      8y       +0.05 / -0.49       +0.00 / -0.11     100.0 %  0.87          PASS
+  #    4.0   B      12y      -0.14 / -0.27       -0.00 / -0.07     100.0 %  0.29          PASS
+  #    4.0   B      8y       -0.08 / -0.21       -0.02 / -0.06     100.0 %  0.28          PASS
+  #    5.0   A      12y      -0.42 / -0.52       -0.02 / -0.16     100.0 %  1.05          PASS
+  #    5.0   A      8y       -0.02 / -0.52       -0.03 / -0.14     100.0 %  1.02          PASS
+  #    5.0   B      12y      -0.29 / -0.41       -0.03 / -0.11     100.0 %  0.50          PASS
+  #    5.0   B      8y       -0.15 / -0.33       -0.05 / -0.10     100.0 %  0.46          PASS
+  #  NULL BAND, rows 1-3: INSIDE and TAIL INSIDE in all 12 reads, since OUTSIDE needs both moments. The single moments
+  #  past an edge:
+  #    3.0: A 12y median +0.64 above [-0.70, +0.55] and A 8y median +0.73 above [-0.83, +0.72], as (#1366)'s 2.5
+  #      read; A 12y worst5 -1.42 below [-1.26, +1.22].
+  #    4.0: B 12y p20 -0.96 below [-0.74, +0.70].
+  #    5.0: B 12y median -1.15 below [-0.73, +0.67] and p20 -0.96 below [-0.87, +0.75]; B 8y median -0.56 below
+  #      [-0.52, +0.66].
+  #  CROSS-CHECK: A minus B on each rung gives (#1366)'s 2.5-against-0 top-10 gains to the cent (12y -0.13, 8y
+  #  +0.13), so both runs and the (#1366) runs read the same samples.
+  #  AGAINST EXPECTED: names moved rise with the band, as called: A 0.74 / 0.87 / 1.05 at 12y, above (#1366)'s 0.71,
+  #  and B 0.03 / 0.29 / 0.50. B at 3.0 moved 0.03 / 0.02, near INERT but not. Rung 5.0 in A at 12y came nearest
+  #  its edge, as called: -0.42 against -0.52, 81 % of the way. B at 3.0, 12y is next: -0.07 against -0.09, 78 %.
+  #  The top-10 gain falls as the band widens in all 4 reads: A 12y -0.20 / -0.27 / -0.42, A 8y +0.10 / +0.05 /
+  #  -0.02, B 12y -0.07 / -0.14 / -0.29, B 8y -0.03 / -0.08 / -0.15.
+  #  WHAT THIS DOES NOT SAY: the ruler is blind at this size ((#1333)). The guard saw no harm, not a gain. The slide
+  #  with the band and the low single moments sit inside the noise, so they do not prove harm either. They lean one
+  #  way, though, and 5.0 carries three of them. Three rungs were three looks ((#1368)).
+  #  NEXT: per the (#1368) rule, one owner question picks 3.0, 4.0 or 5.0, or keeps 2.5, after a fresh live
+  #  estimate of the seats each rung moves. A ship re-blesses the goldens on the ship SHA.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
