@@ -1749,11 +1749,14 @@ pub fn settings_of(merged: &serde_yaml::Value) -> Result<Settings, String> {
         named.split(" at line ").next().unwrap_or(&named).to_string()
     })?;
     crate::picks::ranker(&s.buy_heuristic.growth_ranker)?;
-    let bh = &s.buy_heuristic;
-    for f in std::iter::once(&bh.growth_fund_factor).chain(bh.growth_fund_extra.iter().map(|t| &t.factor)) {
-        crate::core::fund_factor_known(f)?;
-    }
+    fund_factors_known(&s.buy_heuristic)?;
     Ok(s)
+}
+
+/// (#1359) Every fund factor name in `bh` (`growth_fund_factor` and each `growth_fund_extra` term) is one
+/// `core::select_fund_factor` routes. (#1360) `backtest rescore` checks each grid row with it too.
+pub(crate) fn fund_factors_known(bh: &BuyHeuristic) -> Result<(), String> {
+    std::iter::once(&bh.growth_fund_factor).chain(bh.growth_fund_extra.iter().map(|t| &t.factor)).try_for_each(|f| crate::core::fund_factor_known(f))
 }
 
 /// Read + parse the settings (base + overlay). Exits 1 with a clear message if missing/invalid —

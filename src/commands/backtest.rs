@@ -992,9 +992,28 @@ struct Dumped {
     vol_change: Option<f64>,
 }
 
+/// (#1360) A grid row's tuning: the row merges over `base` as an upload does (`config::merge_yaml`), so a
+/// one-term `growth_fund_extra` adds that term to the shipped ones, weight 0 turns one off and `[]` clears
+/// them all. A RESCORE_FIXED or retired key, or an unknown fund factor name, is refused.
+fn grid_tuning(base: &serde_yaml::Value, line: &str) -> Result<BuyHeuristic, String> {
+    let row: serde_yaml::Mapping = serde_json::from_str(line).map_err(|e| format!("a grid row is one JSON object: {e}"))?;
+    if let Some(k) = RESCORE_FIXED.iter().find(|k| row.contains_key(**k)) {
+        return Err(format!("`{k}` is fixed when the walk runs; grade it with a probe arm, not a grid row"));
+    }
+    if let Some(k) = config::RETIRED.iter().find(|k| row.contains_key(**k)) {
+        return Err(format!("`{k}` is retired; a grid row cannot set it"));
+    }
+    let mut v = base.clone();
+    config::merge_yaml(&mut v, serde_yaml::Value::Mapping(row));
+    let t: BuyHeuristic = serde_yaml::from_value(v).map_err(|e| format!("grid row {line}: {e}"))?;
+    config::fund_factors_known(&t)?;
+    Ok(t)
+}
+
 /// (#1227) `backtest rescore <dump> <grid>`: the top-N books and the SIZED row, re-run on a samples dump
-/// once per grid row, with no fetch and no walk. A grid row is one JSON object of `buy_heuristic` keys laid
-/// over the loaded config's; `{}` is the config itself. Run it under the config the dump was made with.
+/// once per grid row, with no fetch and no walk. A grid row is one JSON object of `buy_heuristic` keys merged
+/// over the loaded config's as an upload is ((#1360), see [`grid_tuning`]); `{}` is the config itself. Run it
+/// under the config the dump was made with.
 ///
 /// Only the cross-sectional stamps that read the tuning are redone: the sector door's floors and (#1304) the
 /// admit tenure. The cohort
@@ -1012,17 +1031,11 @@ struct Dumped {
 /// first drops the samples cut before [`SEC_FROM`] ([`sec_era`]) from every table, the sealed ones untouched.
 fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, holdout: bool, reveal: bool, plant: bool, pond: bool, guard: bool, sec: bool) {
     let (years, bench, samples) = load_dump(dump);
-    let base = serde_json::to_value(&settings.buy_heuristic).expect("tuning as json");
+    let base = serde_yaml::to_value(&settings.buy_heuristic).expect("tuning as yaml");
     let mut rows = Vec::new();
     let mut last = (Vec::new(), Vec::new()); // dates, classes and returns are the same in every row
     for line in std::fs::read_to_string(grid).expect("read the grid").lines() {
-        let row: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line).expect("a grid row is one JSON object");
-        if let Some(k) = RESCORE_FIXED.iter().find(|k| row.contains_key(**k)) {
-            panic!("rescore: `{k}` is fixed when the walk runs; grade it with a probe arm, not a grid row");
-        }
-        let mut v = base.clone();
-        v.as_object_mut().expect("tuning is an object").extend(row);
-        let tuning: BuyHeuristic = serde_json::from_value(v).unwrap_or_else(|e| panic!("rescore: grid row {line}: {e}"));
+        let tuning = grid_tuning(&base, line).unwrap_or_else(|e| panic!("rescore: {e}"));
         println!("\n══ rescore row {line} ══");
         let mut s = samples.clone();
         stamp_sector_cohorts(&mut s, &bench, &tuning); // on every sample: a cutoff's floors read the one before it
@@ -11381,6 +11394,29 @@ mod tests {
         assert_eq!(guard_verdict(1.0, 2.0, 1.0, ok, (-0.2, -0.1)), "FAIL", "a pond gain under its edge");
         assert_eq!(guard_verdict(1.0, 2.0, 1.0, (0.0, f64::NAN), ok), "FAIL", "an empty null's top-10 edge");
         assert_eq!(guard_verdict(1.0, 2.0, 1.0, ok, (0.0, f64::NAN)), "FAIL", "an empty null's pond edge");
+    }
+
+    /// (#1360) A grid row merges over the shipped tuning as an upload does: a one-term `growth_fund_extra`
+    /// keeps the shipped terms and appends, a same-name entry merges key by key, `[]` clears them all; a fixed,
+    /// retired or misspelled name, or a row that is not one object, is refused.
+    #[test]
+    fn grid_rows_merge_like_an_upload() {
+        let shipped = shipped_tuning();
+        let (n, base) = (shipped.growth_fund_extra.len(), serde_yaml::to_value(&shipped).expect("tuning as yaml"));
+        let terms = |row: &str| grid_tuning(&base, row).expect(row).growth_fund_extra;
+        let t = grid_tuning(&base, "{}").expect("the empty row");
+        assert_eq!((t.growth_fund_extra.len(), t.growth_max_peg), (n, shipped.growth_max_peg), "{{}} is the shipped tuning");
+        let added = terms(r#"{"growth_fund_extra":[{"factor":"buyback_yield","weight":0.05,"cap":10.0,"neutral":0.0}]}"#);
+        assert_eq!((added.len(), added[0].factor.as_str(), added[n].factor.as_str()), (n + 1, "roic", "buyback_yield"));
+        let off = terms(r#"{"growth_fund_extra":[{"factor":"roic","weight":0}]}"#);
+        let roic = &shipped.growth_fund_extra[0];
+        assert_eq!((off.len(), off[0].weight, off[0].cap, off[0].neutral), (n, 0.0, roic.cap, roic.neutral), "weight 0 keeps cap and neutral");
+        assert!(terms(r#"{"growth_fund_extra":[]}"#).is_empty(), "[] clears them all");
+        let err = |row: &str| grid_tuning(&base, row).err().expect(row);
+        assert!(err(r#"{"growth_fund_extra":[{"factor":"roic_typo","weight":1,"cap":10}]}"#).contains("\"roic_typo\" is not one of"));
+        assert!(err(r#"{"backtest_tr_ruler":true}"#).contains("`backtest_tr_ruler` is fixed"));
+        assert!(err(r#"{"growth_min_net_margin":1}"#).contains("`growth_min_net_margin` is retired"));
+        assert!(err("[1]").contains("a grid row is one JSON object"));
     }
 
     /// (#1317) The tail of a book: nearest-rank p20 and the mean of the five worst buckets; fewer than five
