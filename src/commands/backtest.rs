@@ -11412,7 +11412,7 @@ mod tests {
         let roic = &shipped.growth_fund_extra[0];
         assert_eq!((off.len(), off[0].weight, off[0].cap, off[0].neutral), (n, 0.0, roic.cap, roic.neutral), "weight 0 keeps cap and neutral");
         assert!(terms(r#"{"growth_fund_extra":[]}"#).is_empty(), "[] clears them all");
-        let err = |row: &str| grid_tuning(&base, row).err().expect(row);
+        let err = |row: &str| grid_tuning(&base, row).expect_err(row);
         assert!(err(r#"{"growth_fund_extra":[{"factor":"roic_typo","weight":1,"cap":10}]}"#).contains("\"roic_typo\" is not one of"));
         assert!(err(r#"{"backtest_tr_ruler":true}"#).contains("`backtest_tr_ruler` is fixed"));
         assert!(err(r#"{"growth_min_net_margin":1}"#).contains("`growth_min_net_margin` is retired"));
