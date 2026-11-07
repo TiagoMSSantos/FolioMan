@@ -16991,11 +16991,13 @@ mod tests {
         // re-ranks. The live re-validation is the (#1349) harm guard on `universe fund pit`, 12y and 8y.
         // (#1355) -518.5 -> -484.0: the shipped `capx_pct` term, the same neutral-50 fill; the live
         // re-validation is the (#1354) harm guard.
+        // (#1378) -484.0 -> -536.6: the shipped `growth_overext_free` 60, so a fixture name up to 60 % above
+        // its 200wk SMA goes uncut; the live re-validation is the (#1377) harm guard.
         let (rho, edge) = lane_metrics(&samples, growth_score, &tuning);
         assert!(rho.is_some(), "too few scored samples to correlate — the fixture stopped reaching the lane");
         assert!(
-            (edge - -484.0).abs() < 0.5,
-            "GROWTH edge on the fixture moved to {edge:+.1} pts (pinned -484.0) — the score arithmetic \
+            (edge - -536.6).abs() < 0.5,
+            "GROWTH edge on the fixture moved to {edge:+.1} pts (pinned -536.6) — the score arithmetic \
              changed. Re-validate with a live `backtest universe` before moving this pin; see the note \
              above for why the sign is not the thing being asserted"
         );
