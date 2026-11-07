@@ -26273,6 +26273,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   years of prices and so a 6M leg. PASS about 1 in 2. INERT is the likeliest other read: the growth gates already admit trailing winners and the momentum half
 #   already sorts on 12-1, so a 3-point tilt toward the last six months moves few top-10 names.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1349) VERDICT, 2026-11-07, on (#1348): ret_6_1 PASSES the harm guard at 12y AND at 8y, and the sealed holdout
+#   holds, so the term is a SHIP per (#1339). Guard probe run 42357290349 on 84bbf12, rescore="guard holdout", 200
+#   shuffles, full span. HOLDOUT sealed 0 samples at 12y and 7345 at 8y. Windows scored 5150/6488 at 12y and
+#   9184/8596 at 8y.
+#   horizon  top-10 gain / edge  pond gain / edge  pool     mom61_pct reads on  top-10 moved  verdict
+#   12y      +0.44 / -0.42       -0.04 / -0.16     100.0 %  100.0 %             0.74          PASS
+#   8y       +0.54 / -0.41       -0.09 / -0.15     100.0 %  100.0 %             0.75          PASS
+#   NULL BAND, row 1: 12y mean +0.44, median +0.46, band mean [-0.42, +0.41], median [-0.66, +0.68], INSIDE (the mean
+#   alone sits over its top edge); 8y mean +0.54, median +1.06, band mean [-0.41, +0.44], median [-1.03, +0.81],
+#   OUTSIDE on the high side. TAIL INSIDE at both (12y p20 +0.37, worst5 +0.79; 8y p20 +0.00, worst5 +0.78).
+# HOLDOUT, read a second time: probe run 42357657397 on 84bbf12, rescore="guard holdout reveal". It printed the graded
+#   rows above byte for byte, then on the 7345 sealed 2016-on 8y samples: top-10 gain +0.45 / edge -0.64, pond gain
+#   +0.00 / edge -0.18 -> PASS. The same samples were read once before, for ni_me (probe 42286340556), so this read is
+#   not blind. The 12y leg has no sealed sample.
+# AGAINST EXPECTED: right on coverage (100 %, called 95-100 %) and on the verdict (PASS, called about 1 in 2). Wrong
+#   on the likeliest other read: INERT was the call, yet 0.74-0.75 of a top-10 name moves per bucket, more than
+#   ni_me's 0.50-0.70.
+# WHAT THIS DOES NOT SAY: the 8y OUTSIDE is one cell of our own ruler, which (#1333)-(#1338) showed is blind at this
+#   size, so it proves no return; the (#1347) JKP proof carries that claim. The guard says the 3-point tilt shows no
+#   harm on our data, and the sealed years agree.
+# NEXT: the live page moves, so one owner question comes first. On a yes, the ship lands under its own receipt and
+#   Row: a live `mom61_pct` stamp (picks::momentum_6_1's same-date percentile over the screened stocks, the
+#   `stamp_cohort_ranks` formula), the term mom61_pct 0.03/100/50 in growth_fund_extra after ey_pct, and a golden
+#   rebless on the ship SHA. The cluster rule then closes Momentum. rd_me (Size) is graded next either way.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
