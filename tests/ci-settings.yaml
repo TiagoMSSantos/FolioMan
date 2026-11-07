@@ -26496,6 +26496,28 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   developed ex-US. ncol_gr1a, sale_emp_gr1, tangibility and aliq_mat carry JKP's significance flag 0 (not
 #   significant in their own papers) and fail. 0 to 2 of the 14 pass, and 0 or 1 reaches a guard.
 # REVERT RULE: the proof is record only. Each ship carries its own receipt, its off switch and the pull rule.
+# (#1357) VERDICT, 2026-11-07, on (#1356): 0 of the 14 pass. Menu 2 is closed, and no twin is built. One run, on the
+#   25 pinned files, whose md5s were re-checked first (all matched). CI graded the --menu 2 path on 4bc85db ("tool
+#   selftests: 10 passed").
+# UNIT CHECKS read as (#1347)'s did: (i) 0.0082 to the USD market against 0.0285 to the local one; (ii) slope -0.96,
+#   so EXCESS; (iii) 0.0010 against 0.0265, so USD EXCESS.
+# EACH ROW, in menu order, as US t and post mean %/yr, then developed ex-US t and post mean %/yr:
+#   dsale_dinv 5.72 +0.5, -0.04 +0.2; sale_emp_gr1 1.74 +0.1, -0.93 +0.3; kz_index -0.46 +0.1, -0.76 +0.6;
+#   cowc_gr1a 6.51 +1.0, 0.28 +1.7; fnl_gr1a 6.47 +0.4, 0.82 +1.3; lti_gr1a 1.79 +0.5, -0.39 +0.5;
+#   ncol_gr1a 2.34 -0.1, -0.49 +0.4; nfna_gr1a 6.58 +0.3, 0.89 +1.3; taccruals_at 3.13 +0.9, -0.15 -0.5;
+#   dbnetis_at 3.89 -0.1, 0.17 +0.7; tangibility 1.75 +0.5, 0.15 -0.2; taccruals_ni 3.86 +0.1, -0.21 -1.1;
+#   tax_gr1a 3.19 +1.1, 1.14 +0.8; aliq_mat -2.02 +0.5, -2.12 -1.5.
+# WHY NONE PASSES: 7 pass the US (dsale_dinv, cowc_gr1a, fnl_gr1a, nfna_gr1a, taccruals_at, taccruals_ni,
+#   tax_gr1a). ncol_gr1a and dbnetis_at clear the US t but have a post mean below 0. Not one clears developed ex-US:
+#   the best t there is tax_gr1a's 1.14. Menu 1's accruals and debt ideas showed the same shape: strong in the US,
+#   absent abroad.
+# aliq_mat reads significant the wrong way in both regions (t -2.02 and -2.12). Its paper's buy side lost. Flipping
+#   a direction after reading its returns is a result-led choice, so the flip is no candidate.
+# AGAINST EXPECTED: as called. taccruals_at, taccruals_ni and fnl_gr1a pass the US and miss developed ex-US;
+#   ncol_gr1a, sale_emp_gr1, tangibility and aliq_mat fail; the count, 0, sits in the 0 to 2 band.
+# WHAT IT LEAVES: no guard probe and no owner question on a new SEC line. Size, Accruals, Debt Issuance, Seasonality,
+#   Profit Growth and Low Leverage stay open, with no JKP candidate left in them. The paper route has nothing more
+#   to read until a JKP release newer than 2026-08-04, whose Last-Modified each buy-rule session checks.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
