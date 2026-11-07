@@ -21738,7 +21738,7 @@ buy_heuristic:
   #  NEXT: the live page moves (about 2 of the 13 growth seats), so one owner question comes first. On a yes, the ship
   #  sets growth_cagr_soft_band: 1.5 beside growth_gate_soft, adds the MISSES help clause and re-blesses the goldens
   #  on the ship SHA.
-  growth_cagr_soft_band: 2.5     # (#1367) SHIPPED 2.5 on the owner's word, 2026-11-07; (#1366) PASS in all 4 reads
+  growth_cagr_soft_band: 5.0     # (#1370) SHIPPED 5.0 on the owner's word, 2026-11-07; (#1369) PASS in all 12 reads
   # (#1364) GROWTH-BAR TAPER SHIPPED 2026-11-07 on the owner's word, per the (#1363) result and the (#1362) rule.
   #  WHAT: a stock under its `cagr` or `cagr-life` floor by less than 1.5 %/yr is docked 1 - 0.2 x miss/1.5, not
   #  x0.8: 0.6 under reads x0.92, 1.2 under x0.84, 1.5 or more under x0.80 as before. Every other rule keeps x0.8,
@@ -21882,6 +21882,21 @@ buy_heuristic:
   #  way, though, and 5.0 carries three of them. Three rungs were three looks ((#1368)).
   #  NEXT: per the (#1368) rule, one owner question picks 3.0, 4.0 or 5.0, or keeps 2.5, after a fresh live
   #  estimate of the seats each rung moves. A ship re-blesses the goldens on the ship SHA.
+  # (#1370) TAPER BAND 5.0 SHIPPED 2026-11-07 on the owner's word, per the (#1369) result and the (#1368) rule.
+  #  WHAT: growth_cagr_soft_band 2.5 -> 5.0, no code change. A stock under its `cagr` or `cagr-life` floor by less
+  #  than 5 %/yr is docked 1 - 0.2 x miss/5: 1.0 under reads x0.96, 2.0 under x0.92, 3.0 under x0.88, 4.0 under
+  #  x0.84, and 5.0 or more under x0.80 as before. Every other rule keeps x0.8, funds and coins stay hard, and the
+  #  Série E rungs (8Y+, 20Y+) still refuse.
+  #  WHY THIS RUNG: the owner picked 5.0 over 3.0, 4.0 and keeping 2.5, told first that it sat nearest its harm edge
+  #  (A 12y -0.42 against -0.52) and carried three of the low single moments ((#1369)).
+  #  LIVE, estimated on the 2026-11-07 17:22Z page from the 20Y and TR-CAGR columns: Ross ROST (~21.1) and EMCOR EME
+  #  (~19.8) join the 13 growth seats; Alphabet ABEA.DE and Keysight KEYS (~19.7 each) leave, on a 0.1 margin. Each
+  #  seat is 1.56 % of new money. The head seats and the 12 momentum seats stay. Leaving the buy list never sells
+  #  ((#388)).
+  #  WHAT THIS DOES NOT SAY: the ruler is blind at this size ((#1333)). The guard saw no harm, not a gain.
+  #  GOLDENS: they read this file, so the next commit re-blesses them from a bless=true probe on this SHA wherever a
+  #  fixture stock misses its bar by less than 5 %/yr.
+  #  REVERT RULE: growth_cagr_soft_band 2.5 is the (#1367) lane bit for bit; 0.0 is the pre-(#1364) lane.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
