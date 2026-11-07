@@ -1791,10 +1791,15 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // (#4) per-class cap: crypto rides far above its long SMA normally, so it gets its own (looser) cap.
     let overext_cap = if crypto { tuning.growth_overext_cap_crypto } else { tuning.growth_overext_cap };
     let overext = quote.above_ma_pct.max(0.0).min(overext_cap);
-    let overext_damp = if overext_cap > 0.0 {
-        1.0 - (overext / overext_cap) * (1.0 - tuning.growth_overext_floor) // 1.0 at trend .. floor at the cap
+    // (#1375) the free zone: no cut up to `growth_overext_free` % above, then the same line made steeper, down to the
+    // same floor at the same cap. `max` maps a negative or NaN zone to 0, where `cap > free` is the old `cap > 0` and
+    // `overext - 0.0` and `overext_cap - 0.0` are exact, so the shipped brake is bit for bit. A zone at or past the
+    // cap is that class's brake off, as cap 0 is, and nothing divides by 0.
+    let free = tuning.growth_overext_free.max(0.0);
+    let overext_damp = if overext_cap > free {
+        1.0 - ((overext - free).max(0.0) / (overext_cap - free)) * (1.0 - tuning.growth_overext_floor) // 1.0 up to the zone's edge .. floor at the cap
     } else {
-        1.0 // cap 0 = brake disabled
+        1.0 // cap 0 (or a zone covering it) = brake disabled
     };
     // (L) liquidity tilt, added OUTSIDE the brake so a parabolic stretch can't crush it: deep-liquid
     // mega-caps are easier to hold/exit over decades and harder to manipulate, a real quality the
@@ -3480,14 +3485,29 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("  trust        = history-completeness damp                = {:.3}\n", p.trust));
     say(&mut s, "Trust in the price history: 1.000 = a full, clean long record; a short or patchy one shrinks the score.");
     if p.overext_cap > 0.0 {
-        s.push_str(&format!("  overext_damp = 1 − (min(above_MA,cap)/cap)×(1−floor)    = 1 − ({:.1}/{:.0})×(1−{:.2}) = {:.3}\n",
-            p.overext, p.overext_cap, tuning.growth_overext_floor, p.overext_damp));
-        if p.overext > 0.0 {
+        let free = tuning.growth_overext_free.max(0.0); // (#1375) the free zone; 0 prints the shipped lines byte for byte
+        if free == 0.0 {
+            s.push_str(&format!("  overext_damp = 1 − (min(above_MA,cap)/cap)×(1−floor)    = 1 − ({:.1}/{:.0})×(1−{:.2}) = {:.3}\n",
+                p.overext, p.overext_cap, tuning.growth_overext_floor, p.overext_damp));
+        } else if p.overext > free {
+            s.push_str(&format!(
+                "  overext_damp = 1 − ((min(above_MA,cap)−free)/(cap−free))×(1−floor) = 1 − (({:.1}−{free:.0})/({:.0}−{free:.0}))×(1−{:.2}) = {:.3}\n",
+                p.overext, p.overext_cap, tuning.growth_overext_floor, p.overext_damp));
+        } else {
+            s.push_str(&format!("  overext_damp = (min(above_MA,cap) {:.1} inside the free zone {free:.0})  = {:.3}\n", p.overext, p.overext_damp));
+        }
+        if p.overext > free {
             // (#1084) the distance itself: `p.overext` stops at the cap, so a name 150% above read "100%"
+            let zone = if free > 0.0 { format!("no cut up to {free:.0}%, ") } else { String::new() };
             say(&mut s, &format!(
-                "Ran-too-far brake: the price is {:.1}% above its ~200-week average (full brake at {:.0}%). \
+                "Ran-too-far brake: the price is {:.1}% above its ~200-week average ({zone}full brake at {:.0}%). \
                  Prices far above it often fall back, so the score is cut, at most to ×{:.2}.",
                 quote.above_ma_pct, p.overext_cap, tuning.growth_overext_floor));
+        } else if p.overext > 0.0 {
+            say(&mut s, &format!(
+                "Ran-too-far brake: the price is {:.1}% above its ~200-week average, within the {free:.0}% it may run \
+                 before any cut, so no cut.",
+                quote.above_ma_pct));
         } else {
             say(&mut s, "Ran-too-far brake: the price is not above its ~200-week average, so no cut.");
         }
@@ -14582,6 +14602,62 @@ mod tests {
         assert!(s.contains("        Growth just under its bar is cut less, by the size of the miss: cagr 0.6%/yr under → ×0.92 (×0.80 from 1.5%/yr under).\n"), "{s}");
         let s0 = ex(&at(0.6, 0.0));
         assert!(s0.contains("Missed gates (cagr)") && !s0.contains("cut less"), "{s0}");
+    }
+
+    /// (#1375) The stretch brake's free zone: no cut up to `growth_overext_free` % above the 200wk SMA, then the
+    /// same line made steeper, down to the same floor at the same cap. 0, a negative and NaN are the shipped brake
+    /// bit for bit; a zone at or past the cap turns the brake off with no 0/0; a coin reads its own cap.
+    #[test]
+    fn overext_free_zone_eases_only_names_under_the_cap() {
+        let tune = |free: f64| BuyHeuristic {
+            growth_overext_cap: 100.0,
+            growth_overext_cap_crypto: 200.0,
+            growth_overext_floor: 0.05,
+            growth_overext_free: free,
+            ..BuyHeuristic::default()
+        };
+        let stretched = |ticker: &str, above: f64| {
+            let mut q = gate_fixture();
+            q.ticker = ticker.into();
+            q.perf = legs(&[("1M", 2.0), ("1Y", 40.0), ("5Y", 200.0)]);
+            q.above_ma_pct = above;
+            q
+        };
+        let damp = |ticker: &str, above: f64, free: f64| {
+            score_parts(&stretched(ticker, above), &tune(free)).expect("the fixture clears every gate").overext_damp
+        };
+        let d = |above: f64, free: f64| damp("TEST", above, free);
+        for above in [0.0, 20.0, 57.0, 100.0, 150.0] {
+            let shipped = 1.0 - (above.min(100.0) / 100.0) * (1.0 - 0.05);
+            for free in [0.0, -1.0, f64::NAN] {
+                assert_eq!(d(above, free).to_bits(), shipped.to_bits(), "zone {free} is the shipped brake at {above}");
+            }
+        }
+        assert_eq!(d(20.0, 40.0), 1.0, "inside the zone");
+        assert_eq!(d(40.0, 40.0), 1.0, "on its edge");
+        assert_eq!(d(57.0, 40.0), 1.0 - (17.0 / 60.0) * (1.0 - 0.05), "past it, the steeper line");
+        assert_eq!(d(100.0, 40.0), d(100.0, 0.0), "the same floor at the same cap");
+        assert_eq!(d(150.0, 40.0), d(100.0, 40.0), "past the cap nothing moves");
+        assert_eq!(d(150.0, 100.0), 1.0, "a zone at the cap is the brake off, not 0/0");
+        assert_eq!(d(150.0, 250.0), 1.0, "past the cap too");
+        assert_eq!(damp("BTC-EUR", 120.0, 40.0), 1.0 - (80.0 / 160.0) * (1.0 - 0.05), "a coin against its own cap");
+        assert_eq!(damp("BTC-EUR", 120.0, 0.0), 1.0 - (120.0 / 200.0) * (1.0 - 0.05));
+
+        // the walkthrough: the shipped lines at zone 0, the zone's own lines past it and inside it
+        let ex = |above: f64, free: f64| {
+            let (q, t) = (stretched("TEST", above), tune(free));
+            explain_growth_score(&q, &t, growth_score(&q, &t).unwrap()).unwrap()
+        };
+        let s0 = ex(57.0, 0.0);
+        assert!(s0.contains("overext_damp = 1 − (min(above_MA,cap)/cap)×(1−floor)") && s0.contains("average (full brake at 100%)"), "{s0}");
+        let s = ex(57.0, 40.0);
+        assert!(s.contains("overext_damp = 1 − ((min(above_MA,cap)−free)/(cap−free))×(1−floor) = 1 − ((57.0−40)/(100−40))"), "{s}");
+        assert!(s.contains("average (no cut up to 40%, full brake at 100%)"), "{s}");
+        for above in [20.0, 40.0] {
+            let s = ex(above, 40.0);
+            assert!(s.contains("inside the free zone 40)  = 1.000") && s.contains("within the 40% it may run before any cut"), "{s}");
+        }
+        assert!(ex(0.0, 40.0).contains("the price is not above its ~200-week average"));
     }
 
     /// (#328) A gate-clearing STOCK with a GICS label and a chosen 5Y leg — the only two inputs the
