@@ -22088,6 +22088,32 @@ buy_heuristic:
   #  GOLDENS: they read this file, so the next commit re-blesses them from a bless=true probe on this SHA wherever a
   #  fixture name sits more than 0 % above its 200wk SMA.
   #  REVERT RULE: growth_overext_free 0 is the pre-(#1378) brake bit for bit (the (#1375) test pins it).
+  # (#1379) STRETCH BRAKE OFF vs THE SHIPPED +60, PRE-REGISTERED 2026-11-07 before this run. Row: (#1380).
+  #  WHY: after (#1378) the owner asked "what is the goal of punishing when asset is growing in value?" and chose
+  #  "Re-test brake-off on CI". The only brake-off read is the (#100)/C5 ablation (-457 lane edge at 20y), on a
+  #  ruler retired since; (#1135) graded only harder exponents, and (#1377) only free zones up to +60. Brake off has
+  #  never been read on today's guard ruler.
+  #  ARM: growth_overext_free 100. The zone then covers the cap (100 for stocks and funds, the crypto cap 100 for
+  #  coins), so the (#1375) code takes its `else` branch: no stretch cut at any % above the 200wk SMA. Today a name
+  #  keeps x1.00 up to 60 % above, x0.77 at 77 %, x0.54 at 90 % and x0.22 at 100 % or more; with the arm, x1.00
+  #  everywhere. The 150 stretch gate (soft: one more x0.80 past 150 %), the cap and the `!` flag do not move.
+  #  RUN: one probe on main at this commit, years="12 8", args="universe fund pit", rescore="guard" (200 shuffles),
+  #  no `sec` and no holdout, as in (#1376), grid '[{}, {"growth_overext_free": 100}]'. Row 0 is the shipped +60,
+  #  so row 1 reads brake off against today.
+  #  PASS (the (#1376) rule): row 1 reads PASS or INERT at both 12y and 8y -> eligible, and one owner question ships
+  #  it or keeps +60, because the page moves. A FAIL in either read refuses it, record only, and +60 stays.
+  #  WIRING CHECK: row 1 must move top-10 names; 0.00 moved means the arm did not reach the walk, so it is fixed and
+  #  re-run, not read. UNGRADEABLE cannot occur (no fund term); if it reads, the run is broken and re-dispatched.
+  #  Windows scored should match (#1377) (5150/6488 at 12y, 9184/8596 at 8y); a run cut short is re-dispatched.
+  #  EXPECTED: FAIL, most likely at 8y top-10. (#1377) read harm growing with the size (8y top-10 +0.07 / +0.08 /
+  #  -0.64 at +20 / +40 / +60, the last 88 % of the way to its edge), and brake off also frees the +100 % blow-offs
+  #  that keep x0.22 today. Top-10 names moved above (#1377)'s +60 (2.21 at 12y, 2.15 at 8y).
+  #  LIVE, rough, on the 2026-11-07 page: Dell 12DA.DE (+129 % above, 1Y +236 % but 1M -38 %) goes from 12.3 to
+  #  about 55, the top growth head; Arista ANET (+77 %) takes a seat; APC.DE drops from a head to a small seat;
+  #  KEYS and Alphabet ABEA.DE lose their seats. The 12 momentum seats do not move (they never read the brake).
+  #  WHAT THIS CANNOT SAY: the ruler is blind to a gain at this size ((#1333)), so a PASS means no harm was seen,
+  #  not that profit rises. The coin part is ungraded (the backtest holds no coins).
+  #  REVERT RULE: nothing moves unless a PASS ships on the owner's word; growth_overext_free 60 stays as (#1378).
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
