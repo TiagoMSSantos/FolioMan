@@ -26343,6 +26343,24 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   miners and utilities file no R&D line. Guess 45-65 % (the growth book leans to tech and health care). If it
 #   grades, PASS about 1 in 2.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1352) VERDICT, 2026-11-07, on (#1351): rd_me is UNGRADEABLE at 12y AND at 8y, so it is REFUSED, record only.
+#   Guard probe run 42360845157 on e8a91fe, rescore="guard holdout sec", 200 shuffles. SEC ERA left out 7677
+#   samples cut before 2011-01-01 at 12y and 7685 at 8y; HOLDOUT sealed 0 at 12y and 7345 at 8y. Windows scored
+#   5150/6488 at 12y and 9184/8596 at 8y; the guard read 8 buckets at 12y and 10 at 8y.
+#   horizon  top-10 gain / edge  pond gain / edge  pool     rnd_pct reads on  top-10 moved  verdict
+#   12y      +0.07 / -0.80       +0.01 / -0.45     100.0 %  38.9 %            0.62          UNGRADEABLE
+#   8y       +0.09 / -0.71       +0.09 / -0.23     100.0 %  39.8 %            0.60          UNGRADEABLE
+#   NULL BAND, row 1: 12y mean +0.07, median +0.49, band mean [-0.80, +0.75], median [-1.11, +1.14], INSIDE; 8y
+#   mean +0.09, median +0.40, band mean [-0.71, +0.80], median [-1.42, +1.14], INSIDE. TAIL INSIDE at both (12y p20
+#   -0.16, worst5 +0.13; 8y p20 +0.00, worst5 +0.10).
+# WHY UNGRADEABLE: the (#1339) floor asks a new term to read on half the scored stocks or more. Only about 2 in 5
+#   carry an R&D fact, so the other 3 in 5 sit at the neutral 50 and a grade would describe a minority of the
+#   book. Both gains sit inside their bands and over their edges, so nothing shows harm either; the floor decides.
+# AGAINST EXPECTED: UNGRADEABLE was the named risk, but the coverage guess, 45-65 %, was high: 39-40 %.
+# NOT RE-ASKED: a zero-filled R&D (JKP does not zero-fill) or an R&D-reporter cohort would each change the twin
+#   after this read, so the route allows neither. A newer JKP release would not lift our coverage either.
+# NEXT: capx_gr3 (#1353) on the four shipped terms. `rnd_pct` stays a backtest-only stamp in no term. rd_me was
+#   the one Size passer in (#1347), so Size stays open with no candidate waiting.
 # (#1353) CAPX_GR3 HARM GUARD, PRE-REGISTERED 2026-11-07 before this run. Row: (#1354).
 # WHY: (#1347) passed capx_gr3 on JKP's 2026 release (US t 4.07, post +1.5; developed ex-US t 2.28, post +1.2),
 #   and Investment holds no paper-route ship, so it is third in the guard queue. Proof stays JKP's; our backtest
@@ -26367,6 +26385,32 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # EXPECTED: coverage needs 4 fiscal years of cash-flow legs, so 2011-2013 cutoffs reach back into thin early XBRL.
 #   Guess 60-75 % of scored stocks. If it grades, PASS about 1 in 2.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1354) VERDICT, 2026-11-07, on (#1353): capx_gr3 PASSES the harm guard at 12y AND at 8y, and the sealed holdout
+#   holds, so the term is a SHIP per (#1339). Guard probe run 42361202607 on e8a91fe, rescore="guard holdout sec",
+#   200 shuffles. SEC ERA left out 7677 samples cut before 2011-01-01 at 12y and 7685 at 8y; HOLDOUT sealed 0 at 12y
+#   and 7345 at 8y. Windows scored 5150/6488 at 12y and 9184/8596 at 8y.
+#   horizon  top-10 gain / edge  pond gain / edge  pool     capx_pct reads on  top-10 moved  verdict
+#   12y      +0.22 / -0.65       -0.08 / -0.22     100.0 %  70.7 %             0.50          PASS
+#   8y       +0.36 / -0.71       -0.05 / -0.21     100.0 %  74.7 %             0.60          PASS
+#   NULL BAND, row 1: 12y mean +0.22, median +0.00, band mean [-0.65, +0.89], median [-0.99, +1.08], INSIDE; 8y
+#   mean +0.36, median +0.00, band mean [-0.71, +0.74], median [-1.10, +1.15], INSIDE. TAIL INSIDE at both (12y p20
+#   +0.16, worst5 +0.33; 8y p20 +1.21, worst5 +0.84).
+# HOLDOUT, read a second time: probe run 42361540115 on e8a91fe, rescore="guard holdout reveal sec". Its graded rows
+#   carry the same gains, coverage and moved names as above. Its edges differ a little (12y top-10 -0.73, pond
+#   -0.46; 8y -0.92, -0.30) because the pond drifted between the two runs (8y windows 9160 against 9184, 6972 sealed
+#   samples against 7345), and both rows still read PASS. On the 6972 sealed 2016-on 8y samples: top-10 gain -0.31 /
+#   edge -1.06, pond gain -0.06 / edge -0.26 -> PASS. These years were read before, for ni_me (probe 42286340556)
+#   and ret_6_1 (probe 42357657397), so this read is not blind; rd_me never reached its reveal. The 12y leg has no
+#   sealed sample.
+# AGAINST EXPECTED: coverage landed inside the guessed 60-75 % (70.7 % and 74.7 %). The verdict was called a coin
+#   flip and came out PASS.
+# WHAT THIS DOES NOT SAY: every gain sits inside its null band, so our ruler sees no return, as (#1333)-(#1338) said
+#   it would at this size; the (#1347) JKP proof carries that claim. The sealed top-10 gain is negative, only not
+#   past its edge: the 2016-on years lean slightly against the term, inside noise.
+# NEXT: the live page moves, so one owner question comes first. On a yes, the ship lands under its own receipt and
+#   Row: a live `capx_pct` stamp (core::stamp_capx_pct, the stamp_cohort_ranks formula over the screened names'
+#   capx_gr3, then 100 minus it), the term capx_pct 0.03/100/50 in growth_fund_extra after mom61_pct, and a golden
+#   rebless on the ship SHA. The cluster rule then closes Investment, and the guard queue is empty.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
