@@ -22213,6 +22213,35 @@ buy_heuristic:
   #  result: no winner. Every gap is expected INSIDE the null band ((#1333)); six looks at one knob also raise the
   #  odds of a lucky winner, which the strict rule is there to resist.
   #  REVERT RULE: nothing moves unless a winner ships on the owner's word; growth_overext_free 60 stays as (#1378).
+  # (#1385) VERDICT, 2026-11-07, on (#1384): NO SIZE IS ELIGIBLE, so the shipped +60 stays. The guard reads PASS in
+  #  all 10 reads, but regrade_ruler reads RU FAIL and RU-E FAIL for every size, so the strict win rule never applies.
+  #  Probe run 42418298781, rescore="guard", 200 shuffles, on the prereg SHA a3b9d03. Windows scored 5150/6488 at 12y
+  #  and 9184/8596 at 8y, the same as (#1382). Top-10 names moved 0.53 to 2.08, so every row is wired.
+  #  GUARD, top-10 gain / pond gain over +60: 12y 10 -0.29 / +0.10, 30 +0.00 / +0.05, 50 -0.16 / +0.01, 70 +0.18 /
+  #  -0.02, 90 +0.25 / +0.01; 8y 10 +0.55 / +0.12, 30 +0.70 / +0.07, 50 +0.01 / +0.01, 70 +0.02 / -0.04, 90 -0.03 /
+  #  -0.03. All INSIDE the band.
+  #  RU RULER (tools/regrade_ruler.py, lane pit); RU1 = windows where the top 5 beat names 6-10:
+  #    free  12y mean  med   worst  p20   worst5 RU1    | 8y mean  med   worst  p20   worst5 RU1    | fails
+  #    60    +3.4   +3.5  -3.0   +1.3  -1.6   21/38  |   +3.1  +3.4  -4.8   +0.3  -3.6   30/46  | control
+  #    10    +3.1   +4.0  -5.3   +1.3  -3.0   19/38  |   +3.7  +3.8  -6.6   +1.1  -3.4   19/46  | 12y RU1-RU3, 8y RU1
+  #    30    +3.4   +3.8  -4.0   +1.3  -2.4   20/38  |   +3.8  +3.7  -6.4   +1.6  -3.2   20/46  | 12y RU2, 8y RU1
+  #    50    +3.3   +3.2  -3.5   +1.2  -1.8   22/38  |   +3.1  +3.1  -4.8   +1.0  -3.6   27/46  | RU3 both, 8y RU1
+  #    70    +3.6   +3.1  -3.9   +1.2  -1.2   23/38  |   +3.1  +3.1  -4.1   +0.0  -2.5   29/46  | RU3 both
+  #    90    +3.7   +3.5  -3.8   +1.1  -1.9   25/38  |   +3.1  +3.3  -5.8   -0.4  -3.7   32/46  | 8y RU2 RU3
+  #  Plus RU-E FAIL for every size at 8y (90 at 12y too): the 8y 2008-13 starts lose 0.4 to 0.6 for 10 to 90.
+  #  READ: the whole curve, free 0 to off ((#1380), (#1382) and here), shows one trade. Tighter brakes (0 to 30) lift
+  #  the median (12y +0.3 to +0.5, 8y +0.3 to +0.9) but deepen the worst window (12y -4.0 to -6.7 against -3.0, 8y
+  #  -6.4 to -6.6 against -4.8) and order the top 10 worse (8y RU1 16 to 20 of 46 against 30). Looser ones (70 to
+  #  off) do not lift the median (12y 2.2 to 3.5 against 3.5) and lose in the 8y 2002-13 starts. +60 has the
+  #  shallowest 12y worst window of all eleven sizes; only 70 is shallower at 8y (-4.1). Neighbours read jagged (the
+  #  8y 2008-13 gain runs 0 +0.2, 10 -0.4, 20 +0.2, 30 -0.6, 40 +0.1, 50 -0.6), so most gaps are noise, as the band
+  #  says ((#1333)).
+  #  STRICT WIN RULE, read for the record: no size is above +60 on median, worst window and RU1 at both horizons (90
+  #  ties the 12y median and is deeper on both worst windows; 70 is shallower at 8y but deeper at 12y).
+  #  AGAINST EXPECTED: 10 and 30 failed RU1 at 8y as called; 90 failed RU3 and RU-E as called; 50 and 70 were
+  #  expected to pass the ruler and instead failed RU3 (median 3.1 to 3.2 against 3.5 at 12y, 3.4 at 8y) and RU-E.
+  #  REVERT RULE: nothing moves; growth_overext_free 60 stays as (#1378). The free zone is now graded at every 10 from
+  #  0 to off, and no size reads better than +60 on the RU ruler. No owner question is due.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
