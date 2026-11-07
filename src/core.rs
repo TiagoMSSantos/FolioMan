@@ -4344,7 +4344,7 @@ pub struct FundFactors {
     // (#1353) the paper route's capx_gr3 twin. `capx_gr3`: capex (OCF minus FCF, each the filing's margin times
     // its revenue) over the capex 3 fiscal years back, minus 1, %, off the as-of rows and kept for every firm, as
     // JKP keeps banks. `capx_pct`: its same-date percentile, 0-100, HIGH = LOW capex growth (the paper's buy
-    // side). Backtest stamps `capx_pct`; live reads None
+    // side). Backtest stamps `capx_pct`; (#1355) live too, `stamp_capx_pct`
     pub capx_gr3: Option<f64>,
     pub capx_pct: Option<f64>,
     // (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal
@@ -5899,6 +5899,18 @@ pub fn stamp_ey_pct<'a>(funds: impl IntoIterator<Item = &'a mut FundFactors>) {
     }
 }
 
+/// (#1355) The live twin of the backtest's `capx_pct` stamp: [`stamp_ey_pct`]'s formula over `capx_gr3`, then
+/// 100 minus it, as `stamp_cohort_ranks` writes it, so the slowest capex grower among the names passed in reads 100.
+pub fn stamp_capx_pct<'a>(funds: impl IntoIterator<Item = &'a mut FundFactors>) {
+    let mut funds: Vec<&mut FundFactors> = funds.into_iter().collect();
+    let mut col: Vec<f64> = funds.iter().filter_map(|f| f.capx_gr3).collect();
+    col.sort_by(f64::total_cmp);
+    let rank = |v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
+    for f in funds.iter_mut() {
+        f.capx_pct = if col.len() >= 2 { f.capx_gr3.map(|v| 100.0 - rank(v)) } else { None };
+    }
+}
+
 /// (#344) The (#94) as-of splice trim's gate, lifted out of `backtest_quote` so it can be graded:
 /// the knob ships OFF in both regimes, so inside that function its `&&` and its `!` were never read by
 /// any test. Crypto is exempt either way — a coin's real 13x weeks are not redenomination joints.
@@ -7040,6 +7052,21 @@ mod tests {
         assert_eq!(pcts(vec![ff(Some(9.0)), ff(Some(1.0)), ff(Some(5.0)), ff(None), ff(Some(5.0))]), four);
         assert_eq!(pcts(vec![ff(Some(4.0)), ff(Some(2.0))]), [Some(100.0), Some(0.0)]);
         assert_eq!(pcts(vec![ff(Some(7.0)), ff(None)]), [None, None]);
+    }
+
+    /// (#1355) Capex growth 50, -10, 20, 20 % reads 0, 100, 66.7, 66.7: ties share the lower percentile, 33.3, so
+    /// both read 100 minus it. No capx_gr3 reads None over a stale stamp. Two growths read 100 and 0; one ranks nothing.
+    #[test]
+    fn stamp_capx_pct_ranks_capex_growth_low_first() {
+        let ff = |g: Option<f64>| FundFactors { capx_gr3: g, capx_pct: Some(42.0), ..Default::default() };
+        let pcts = |mut v: Vec<FundFactors>| {
+            stamp_capx_pct(&mut v);
+            v.iter().map(|f| f.capx_pct.map(|p| (p * 10.0).round() / 10.0)).collect::<Vec<_>>()
+        };
+        let four = [Some(0.0), Some(100.0), Some(66.7), None, Some(66.7)];
+        assert_eq!(pcts(vec![ff(Some(50.0)), ff(Some(-10.0)), ff(Some(20.0)), ff(None), ff(Some(20.0))]), four);
+        assert_eq!(pcts(vec![ff(Some(4.0)), ff(Some(2.0))]), [Some(0.0), Some(100.0)]);
+        assert_eq!(pcts(vec![ff(Some(3.0)), ff(None)]), [None, None]);
     }
 
     /// (FX) The three rules the price-joined factors rest on, pinned because each fails silently.

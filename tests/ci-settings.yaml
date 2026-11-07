@@ -20840,6 +20840,10 @@ buy_heuristic:
       weight: 0.03           # (#1339) fixed by the route before any grade, never tuned
       cap: 100.0             # (#1339) a percentile tops out at 100, so the tilt tops out at 3 points
       neutral: 50.0          # (#1339) a stock with no 6M leg, and every ETF and coin, reads 1.5 points
+    - factor: capx_pct       # (#1355) the paper route's capx_gr3 twin; receipt in the (#1354) and (#1355) blocks
+      weight: 0.03           # (#1339) fixed by the route before any grade, never tuned
+      cap: 100.0             # (#1339) a percentile tops out at 100, so the tilt tops out at 3 points
+      neutral: 50.0          # (#1339) a name with no 3-year capex leg, and every ETF and coin, reads 1.5 points
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
@@ -26411,6 +26415,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Row: a live `capx_pct` stamp (core::stamp_capx_pct, the stamp_cohort_ranks formula over the screened names'
 #   capx_gr3, then 100 minus it), the term capx_pct 0.03/100/50 in growth_fund_extra after mom61_pct, and a golden
 #   rebless on the ship SHA. The cluster rule then closes Investment, and the guard queue is empty.
+# (#1355) CAPX_GR3 TWIN SHIPPED 2026-11-07 on the owner's word, per the (#1354) result and the (#1339) route.
+# WHAT: a fifth `growth_fund_extra` term, `capx_pct`, at weight 0.03, cap 100 and neutral 50, all three fixed by
+#   (#1339) before any grade. A name gains up to 3 points of score when its capex (operating cash flow minus free
+#   cash flow) grew slowly over 3 fiscal years against the names ranked with it: the slowest grower earns 3, the
+#   middle name 1.5, the fastest 0. Example: a name that cut capex 10 % since 3 years ago and reads capx_pct 90
+#   earns about 2.7 points; one that grew it 50 % and reads 15 earns about 0.45.
+# LIVE STAMP: `core::stamp_capx_pct`, called at the end of `fetch::enrich_fund_factor` after `ey_pct`'s stamp. It
+#   ranks `capx_gr3` over the names in the slice that carry one (the count of strictly lower growths over n-1,
+#   times 100) and writes 100 minus it, the `stamp_cohort_ranks` formula. `capx_gr3` itself is the shared
+#   `core::fund_factors` field, and the live call reads 5 fiscal years back, so the 3-year leg reaches. `screen`
+#   passes its whole universe, as the backtest ranks every name with a fund row on a date. The page re-ranks the
+#   stamped universe.json rows, so it reads the same number. A name with no 3-year capex leg reads 50, and so does
+#   every ETF and coin, since none carries a capex leg: the guard graded that same fill.
+# SHORTCUT: as (#1345): `check`, `size` and the shadow tables rank within their own few names, and report's verdict
+#   mirror stamps none, so their tilt can differ from the screen's by up to 3 points.
+# GOLDENS: the term reaches every fixture walk that carries capex legs, so the next commit re-blesses them from a
+#   bless=true probe on this SHA. Until then `report_is_pinned` may read red on this push, and its mutants legs
+#   grade nothing.
+# CLUSTER RULE: Investment is now closed. The (#1347) passers in open clusters are all graded, so the guard queue is
+#   empty until a newer JKP release (pin 2026-08-04) or a cluster reopens.
+# REVERT RULE: the (#1339) pull rule. Only a newer JKP release re-grades the term; a fail there removes it.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
