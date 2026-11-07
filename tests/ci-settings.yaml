@@ -22242,6 +22242,27 @@ buy_heuristic:
   #  expected to pass the ruler and instead failed RU3 (median 3.1 to 3.2 against 3.5 at 12y, 3.4 at 8y) and RU-E.
   #  REVERT RULE: nothing moves; growth_overext_free 60 stays as (#1378). The free zone is now graded at every 10 from
   #  0 to off, and no size reads better than +60 on the RU ruler. No owner question is due.
+  # (#1387) STRETCH-BRAKE FREE ZONE SWEEP 61 TO 69 BY 1 vs THE SHIPPED +60, PRE-REGISTERED 2026-11-07 before this
+  #  run. Row: (#1388).
+  #  WHY: after (#1385) the owner asked to try every free zone from 61 to 69, one point apart, for a gain on +60.
+  #  RUN: one probe on main at this commit, years="12 8", args="universe fund pit", rescore="guard" (200 shuffles),
+  #  no `sec` and no holdout, grid '[{}, {"growth_overext_free": 61}, {"growth_overext_free": 62}, ...,
+  #  {"growth_overext_free": 69}]' (nine sizes). Row 0 is the shipped +60. tools/regrade_ruler.py reads the same log
+  #  (lane pit). This commit also carries the (#1386) CUT column fix, which is display only (`braked_rows`), so the
+  #  walk is the one (#1385) graded.
+  #  ELIGIBLE and STRICT WIN RULE: the same as (#1384). Eligible = against row 0 the guard reads PASS or INERT at both
+  #  12y and 8y, AND regrade_ruler reads RU1, RU2, RU3 and RU-E pass at both. An eligible size wins only if, at BOTH
+  #  horizons, it is above row 0 on median excess, worst window and the RU1 tally, each as regrade_ruler prints it
+  #  (0.1 %/yr; a tie is not above). Two winners: the larger 12y + 8y median sum, then the one nearest 60. No
+  #  winner: +60 stays. A winner goes to one owner question, because the page moves.
+  #  WIRING: (#1382) and (#1385) proved the knob reaches the walk. A one-point step can leave every top-10 name in
+  #  place, so a row with 0.00 names moved reads as the same book as +60, not as a wiring fault. Only if all nine
+  #  rows read 0.00 is the wiring re-checked. Windows scored must match (#1385) (5150/6488 at 12y, 9184/8596 at 8y).
+  #  EXPECTED: 50 and 70 moved about half a top-10 name against +60 ((#1385)), so each one-point step moves less; most
+  #  rows read the +60 book or a gap of 0.1 to 0.3, and 70 failed RU3 and RU-E, so sizes near 70 likely fail the
+  #  same way. Expected result: no winner. Nine looks at one knob raise the odds of a lucky winner, which the strict
+  #  rule is there to resist; any gap is expected INSIDE the null band ((#1333)).
+  #  REVERT RULE: nothing moves unless a winner ships on the owner's word; growth_overext_free 60 stays as (#1378).
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
