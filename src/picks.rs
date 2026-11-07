@@ -1925,6 +1925,26 @@ fn gate_soft(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     }
 }
 
+/// (#1362) One waived gate's dock. A stock's `cagr` / `cagr-life` miss smaller than `growth_cagr_soft_band`
+/// docks in proportion, 1 - (1 - f) x miss/band; any other tag, a fund, a miss of the band or more, or the
+/// band off (0, negative, NaN) docks f. `open` is [`waived`]'s tuning, so `cagr` reads the leg the gate
+/// failed on (a `history` waiver moves it to the 1Y rung) against the floor `tuning` sets. A failed leg's
+/// miss is above 0, so x carries the band's sign and `x > 0` is the off switch: a band of 0 makes x
+/// infinite or NaN, a negative band makes it negative, and none of those can boost a score.
+fn cagr_dock(quote: &Quote, tuning: &BuyHeuristic, open: &BuyHeuristic, tag: &str, f: f64) -> f64 {
+    let band = tuning.growth_cagr_soft_band;
+    let got = match tag {
+        _ if asset_class(quote) != 2 => None,
+        "cagr" => long_cagr_pct(quote, open),
+        "cagr-life" => life_leg_cagr(quote),
+        _ => None,
+    };
+    match got.map(|g| (min_cagr_floor(quote, tuning) - g) / band) {
+        Some(x) if x > 0.0 && x < 1.0 => 1.0 - (1.0 - f) * x,
+        _ => f,
+    }
+}
+
 /// (#563) [`score_parts_hard`], with `growth_gate_soft` armed: a name the knob gates refuse is scored
 /// with exactly the gates it fails waived ([`waived`], the same what-if the MISSES column shows) and
 /// docked f^n, n = gates waived. At 0.0 nothing reaches `waived`, so the lane is bit for bit the hard one;
@@ -1942,18 +1962,22 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     }
     // shortcut: clones the tuning and re-runs the gates (tags only) per FAILING quote while the knob is armed;
     // precompute per pool if a probe arm slows. (#576) the walkthrough prints the f^n as its soft dock line.
-    let (mut p, n) = match hard {
-        Some(p) => (p, 0),
+    let (mut p, n, taper) = match hard {
+        Some(p) => (p, 0, 1.0),
         None => {
             let (open, tags, _) = waived(quote, tuning, false)?;
             // (#1282) The Série E rungs are a mandate ((#315)), not a dockable gate: under the hurdle = refused.
             if tags.iter().any(|g| matches!(g.0, "8Y+" | "20Y+")) {
                 return None;
             }
-            (score_parts_hard(quote, &open)?, tags.len())
+            // (#1362) a dock of f counts into the powi as before; a tapered `cagr` dock multiplies in. At band 0
+            // every dock is f, the taper is the empty product 1.0 and the lane is bit for bit (powi(n) is not
+            // bitwise a product of n factors once n >= 4, so the plain docks stay a powi).
+            let docks: Vec<f64> = tags.iter().map(|g| cagr_dock(quote, tuning, &open, g.0, f)).collect();
+            (score_parts_hard(quote, &open)?, docks.iter().filter(|&&d| d == f).count(), docks.iter().filter(|&&d| d != f).product::<f64>())
         }
     };
-    p.gate_soft = f.powi((n + k) as i32);
+    p.gate_soft = f.powi((n + k) as i32) * taper;
     p.score = compose_score(&p, tuning);
     Some(p)
 }
@@ -3558,9 +3582,22 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     // wraps the product in brackets; a name that cleared its gates keeps its old line
     let dock = p.gate_soft;
     let (open, dock_frag) = if dock != 1.0 {
-        let tags = waived(quote, tuning, false).map(|w| w.1.iter().map(|g| g.0).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+        let w = waived(quote, tuning, false);
+        let tags = w.as_ref().map(|w| w.1.iter().map(|g| g.0).collect::<Vec<_>>().join(", ")).unwrap_or_default();
         s.push_str(&format!("  soft dock    = gate_soft                                = {dock:.3}\n"));
-        say(&mut s, &format!("Missed gates ({tags}): each one cuts the whole score by ×{:.2} instead of keeping the name out.", gate_soft(quote, tuning)));
+        let f = gate_soft(quote, tuning);
+        say(&mut s, &format!("Missed gates ({tags}): each one cuts the whole score by ×{f:.2} instead of keeping the name out."));
+        // (#1362) a tapered dock is not f, so f is not 1 and the miss is the dock solved back for x × band
+        let band = tuning.growth_cagr_soft_band;
+        let cut: Vec<String> = w
+            .iter()
+            .flat_map(|(t, g, _)| g.iter().map(move |g| (g.0, cagr_dock(quote, tuning, t, g.0, f))))
+            .filter(|&(_, d)| d != f)
+            .map(|(g, d)| format!("{g} {:.1}%/yr under → ×{d:.2}", (1.0 - d) / (1.0 - f) * band))
+            .collect();
+        if !cut.is_empty() {
+            say(&mut s, &format!("Growth just under its bar is cut less, by the size of the miss: {} (×{f:.2} from {band:.1}%/yr under).", cut.join(", ")));
+        }
         ("(", format!("){} {dock:.3}", if base_is_negative(p.score) { " ÷" } else { " ×" }))
     } else {
         ("", String::new())
@@ -14473,6 +14510,78 @@ mod tests {
         assert_eq!(compose_score(&p, &neg), up * 0.25);
         p.base = -8.0;
         assert_eq!(compose_score(&p, &neg), (-8.0 + 2.0) / 0.25, "a negative score sinks further, never toward 0");
+    }
+
+    /// (#1362) `growth_cagr_soft_band`: a stock's `cagr` / `cagr-life` miss under the band docks in proportion,
+    /// 1 - (1 - f) x miss/band, so 0.6 under at band 1.5 is x0.92. A miss of the band or more, any other tag, a
+    /// fund and the band off (0, negative, NaN) all dock f. `score_parts` multiplies a tapered dock into the f^n
+    /// of the plain ones, a `history` waiver's miss is read on the 1Y rung it opened, and the walkthrough prints
+    /// the cut it made.
+    #[test]
+    fn cagr_band_tapers_a_close_growth_miss() {
+        let q = gate_fixture();
+        let g = long_cagr_pct(&q, &BuyHeuristic::default()).expect("the fixture's 5Y leg");
+        let at = |miss: f64, band: f64| BuyHeuristic {
+            growth_min_cagr: g + miss,
+            growth_min_cagr_etf: 0.0,
+            growth_gate_soft: 0.8,
+            growth_cagr_soft_band: band,
+            ..BuyHeuristic::default()
+        };
+        let dock = |q: &Quote, tag: &str, b: &BuyHeuristic, f: f64| cagr_dock(q, b, b, tag, f);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(close(dock(&q, "cagr", &at(0.6, 1.5), 0.8), 0.92), "0.6 under a band of 1.5");
+        assert!(close(dock(&q, "cagr", &at(1.2, 1.5), 0.8), 0.84), "1.2 under");
+        assert_eq!(dock(&q, "cagr", &at(3.0, 1.5), 0.8), 0.8, "a miss past the band docks f");
+        // both ends are open: at x = 1, 1 - (1 - f) is not f in floats at f = 0.1, and at x = 0 the taper reads 1
+        let edge = at(0.6, 1.5);
+        let one = BuyHeuristic { growth_cagr_soft_band: min_cagr_floor(&q, &edge) - g, ..edge.clone() };
+        assert_eq!(dock(&q, "cagr", &one, 0.1), 0.1, "a miss of exactly the band docks f");
+        assert_eq!(dock(&q, "cagr", &at(0.0, 1.5), 0.8), 0.8, "on the floor there is no miss to taper");
+        for band in [0.0, -1.0, f64::NAN] {
+            assert_eq!(dock(&q, "cagr", &at(0.6, band), 0.8), 0.8, "band {band} is off");
+        }
+        assert_eq!(dock(&q, "range", &at(0.6, 1.5), 0.8), 0.8, "every other gate keeps f");
+        let life = Quote { life_cagr: Some(g - 10.0), ..q.clone() };
+        assert!(close(dock(&life, "cagr-life", &at(-9.4, 1.5), 0.8), 0.92), "cagr-life reads the life leg");
+        assert_eq!(dock(&life, "cagr", &at(-9.4, 1.5), 0.8), 0.8, "the 5Y leg clears that floor");
+        let mut fund = q.clone();
+        fund.instrument_type = "ETF".into();
+        assert_eq!(asset_class(&fund), 1);
+        assert_eq!(dock(&fund, "cagr", &at(0.6, 1.5), 0.8), 0.8, "a fund never tapers");
+
+        // score_parts: the plain docks stay f^n and the taper multiplies in; at band 0 it is f^n bit for bit
+        let b = at(0.6, 1.5);
+        let mut three = q.clone();
+        three.range_pct = 20.0;
+        three.perf = legs(&[("1M", 2.0), ("1Y", -5.0), ("5Y", 200.0)]);
+        let (open, tags, _) = waived(&three, &b, false).expect("an assessable failer");
+        assert!(tags.len() >= 3 && ["range", "cagr", "1Y+"].iter().all(|t| tags.iter().any(|g| g.0 == *t)), "{tags:?}");
+        let d = cagr_dock(&three, &b, &open, "cagr", 0.8);
+        assert!(close(d, 0.92), "{d}");
+        assert_eq!(score_parts(&three, &b).expect("soft, it scores").gate_soft, 0.8f64.powi(tags.len() as i32 - 1) * d);
+        let off = score_parts(&three, &at(0.6, 0.0)).expect("soft, it scores").gate_soft;
+        assert_eq!(off.to_bits(), 0.8f64.powi(tags.len() as i32).to_bits(), "band 0 is the shipped f^n");
+
+        // a `history` waiver opens the 1Y rung, and the cagr miss is read there: the number MISSES prints
+        let mut short = q.clone();
+        short.perf = legs(&[("1M", 2.0), ("1Y", 18.6)]);
+        let h = BuyHeuristic { growth_min_cagr: 19.0, ..at(0.0, 1.5) };
+        let (open, tags, _) = waived(&short, &h, false).expect("an assessable failer");
+        assert!(tags.iter().any(|g| g.0 == "history") && tags.iter().any(|g| g.0 == "cagr"), "{tags:?}");
+        let miss = 19.0 - long_cagr_pct(&short, &open).expect("the 1Y rung");
+        assert!(close(miss, 0.4), "{miss}");
+        let d = cagr_dock(&short, &h, &open, "cagr", 0.8);
+        assert!(close(d, 1.0 - 0.2 * miss / 1.5), "{d}");
+        assert_eq!(cagr_dock(&short, &h, &h, "cagr", 0.8), 0.8, "the 5Y ladder has no leg to read");
+        assert_eq!(score_parts(&short, &h).expect("soft, it scores").gate_soft, 0.8f64.powi(tags.len() as i32 - 1) * d);
+
+        // the walkthrough prints the cut it made, and nothing at band 0
+        let ex = |t: &BuyHeuristic| explain_growth_score(&q, t, growth_score(&q, t).unwrap()).unwrap();
+        let s = ex(&b);
+        assert!(s.contains("        Growth just under its bar is cut less, by the size of the miss: cagr 0.6%/yr under → ×0.92 (×0.80 from 1.5%/yr under).\n"), "{s}");
+        let s0 = ex(&at(0.6, 0.0));
+        assert!(s0.contains("Missed gates (cagr)") && !s0.contains("cut less"), "{s0}");
     }
 
     /// (#328) A gate-clearing STOCK with a GICS label and a chosen 5Y leg — the only two inputs the
