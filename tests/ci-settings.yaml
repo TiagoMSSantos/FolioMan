@@ -22038,6 +22038,32 @@ buy_heuristic:
   #  where it would take a head seat. Seat moves for each eligible size are estimated before the owner question.
   #  REVERT RULE: if no size ships, the knob stays 0, the shipped brake bit for bit, so no page or golden moves; if
   #  every size FAILs, the knob is deleted and its name retired.
+  # (#1377) VERDICT, 2026-11-07, on (#1376): PASS in all 6 reads, so the free zones +20, +40 and +60 are all eligible
+  #  Guard probe run 42409246469, rescore="guard", 200 shuffles, on 4a29f6e: one commit past the prereg 3e54a14, and
+  #  that commit only types one float array in the new test (E0689 on CI), so the scorer is the registered one.
+  #  Windows scored 5150/6488 at 12y and 9184/8596 at 8y, the same as (#1372).
+  #    size  horizon  top-10 gain / edge  pond gain / edge  pool     top-10 moved  verdict
+  #    +20   12y      +0.17 / -0.41       +0.02 / -0.16     100.0 %  0.53          PASS
+  #    +20   8y       +0.07 / -0.34       +0.01 / -0.07     100.0 %  0.48          PASS
+  #    +40   12y      +0.31 / -0.60       -0.06 / -0.24     100.0 %  1.42          PASS
+  #    +40   8y       +0.08 / -0.62       -0.07 / -0.14     100.0 %  1.28          PASS
+  #    +60   12y      +0.21 / -0.78       -0.09 / -0.30     100.0 %  2.21          PASS
+  #    +60   8y       -0.64 / -0.73       -0.11 / -0.18     100.0 %  2.15          PASS
+  #  NULL BAND, rows 1-3: INSIDE and TAIL INSIDE in all 6 reads, and none of the 24 single moments is past an edge.
+  #  Nearest: +60 at 8y, mean -0.64 against [-0.73, +0.74] (88 % of the way), median -0.91 against [-1.10, +1.20]
+  #  and p20 -1.32 against [-1.59, +1.30] (83 % each); then +20 at 8y, median -0.51 against [-0.62, +0.60] (82 %).
+  #  The medians sit under the means in all 6 reads (12y +0.00 / -0.62 / -0.49, 8y -0.51 / -0.50 / -0.91): what a
+  #  zone gains, it gains in a few windows, and the typical window reads a little worse, all inside noise.
+  #  AGAINST EXPECTED: names moved rise with the size, as called: 0.53 / 1.42 / 2.21 at 12y and 0.48 / 1.28 / 2.15
+  #  at 8y, so the knob reaches the walk. +60 was called the likeliest FAIL; it passed, but its 8y top-10 read is
+  #  the nearest any read came to its edge (88 %), and its 8y pond read is the nearest pond read (-0.11 against
+  #  -0.18, 61 %). +20 is the only size whose top-10 and pond gains are both at or above 0 at both horizons.
+  #  WHAT THIS DOES NOT SAY: the ruler is blind at this size ((#1333)), so the guard saw no harm, not a gain, and no
+  #  read here says the brake costs profit. The coin part is ungraded (the backtest holds no coins). Three sizes
+  #  are three looks, so a harmful size is likelier to slip past; the past refusals ((#574), (#579)) asked for a
+  #  gain, which this guard cannot show.
+  #  NEXT: per the (#1376) rule, one owner question picks +20, +40 or +60, or keeps today, after a live estimate of
+  #  the seats each size moves. A ship re-blesses the goldens on the ship SHA.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
