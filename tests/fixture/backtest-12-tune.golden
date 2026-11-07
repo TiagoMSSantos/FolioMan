@@ -1,9 +1,9 @@
 
 ══ TUNE — growth lane, honest out-of-sample (1159 train / 498 test cutoffs, 500 draws) ══
-  shipped default      TEST: rho +0.07  edge -56.1  terciles +358.3/+131.4/+251.5 SCRAMBLED
+  shipped default      TEST: rho +0.07  edge -42.0  terciles +337.6/+33.0/+373.6 SCRAMBLED
   inert on this sample (skipped, kept at default): growth_fund_weight
-  search winner       TRAIN: rho +0.06  edge +32.9
-  search winner        TEST: rho +0.02  edge -30.1  terciles +254.1/+248.6/+234.9 monotone   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
+  search winner       TRAIN: rho +0.06  edge +28.8
+  search winner        TEST: rho +0.02  edge -30.1  terciles +254.1/+247.7/+235.9 monotone   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
   weights (searched dims only):
     growth_trend_weight    0.034
     long_trend_cap         16.008
@@ -13,14 +13,14 @@
     calmar_weight          1.284
     growth_overext_floor   0.115
     growth_mom121_weight   0.150
-  -> winner BEATS the default on TEST (-30.1 vs -56.1). Paste the weights into settings.yaml, then re-run plain `backtest universe` to confirm.
+  -> winner BEATS the default on TEST (-30.1 vs -42.0). Paste the weights into settings.yaml, then re-run plain `backtest universe` to confirm.
   parsimony (winner, each weight -> 0, TEST edge Δ vs -30.1):
     growth_trend_weight    edge -30.1 Δ+0.0
     long_trend_cap         edge -30.1 Δ+0.0
-    growth_accel_weight    edge -95.7 Δ-65.5
-    growth_accel_cap       edge -95.7 Δ-65.5
-    sharpe_weight          edge +50.3 Δ+80.4
+    growth_accel_weight    edge -93.2 Δ-63.1
+    growth_accel_cap       edge -93.2 Δ-63.1
+    sharpe_weight          edge +63.7 Δ+93.8
     calmar_weight          edge -30.1 Δ+0.0
-    growth_overext_floor   edge +54.1 Δ+84.3
-    growth_mom121_weight   edge -38.6 Δ-8.5
+    growth_overext_floor   edge +33.5 Δ+63.6
+    growth_mom121_weight   edge -41.7 Δ-11.5
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
