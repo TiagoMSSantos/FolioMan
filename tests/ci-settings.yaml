@@ -21697,6 +21697,30 @@ buy_heuristic:
   #  READING: past 0.8 the 8-20y books barely move (stress paired medians 0.00, pit within +-0.25). Only 1y gains,
   #  and pit 8y and both 2y cells lose. 0.8 is now an interior peak of 0.3 / 0.45 / 0.6 / 0.8 / 0.9 / 1.0.
   #  RE-OPEN: none on f. A stock re-ask needs a different mechanism (e.g. per-gate f), pre-registered first.
+  #── (#1362) GROWTH-BAR TAPER HARM GUARD, PRE-REGISTERED 2026-11-07 before this run. Row: (#1363). ──
+  #  WHY: on 2026-11-07 the owner re-asked why a stock a hair under the growth bar ranks lower. Alphabet ABEA.DE sits
+  #  0.6 %/yr under 19, so its 20.0 is docked to 16.0 and it ranks #27, off the buy list. The owner picked "Gentle cut
+  #  near 19": keep the 19 line and cut less for a small miss. This is the per-gate door the (#567) RE-OPEN line above
+  #  left open. A dip bonus stays closed ((#724)), and moving the line to 18-15 stays refused (2026-08-01 ladder, (#52)).
+  #  RULE: growth_cagr_soft_band ((#1362), acb0a3f). A STOCK under its `cagr` or `cagr-life` floor by less than the
+  #  band is docked 1 - (1 - f) x miss/band, with f = growth_gate_soft 0.8. A miss of the band or more is docked f, as
+  #  today. The band under test is 1.5, the close-miss margin `gate_fails` already uses for the two cagr tags:
+  #    miss %/yr   0.1     0.6    1.2    1.5 or more
+  #    dock        x0.987  x0.92  x0.84  x0.80 (today's)
+  #  Every other gate, every fund and every coin keeps f. The Série E rungs stay hard.
+  #  RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard" (200 shuffles), grid
+  #  '[{}, {"growth_cagr_soft_band": 1.5}]'. No `sec` and no holdout: a price-leg dock needs no SEC era. The knob acts
+  #  at score time and is not in RESCORE_FIXED, so the grid row grades it. No fund term is added, so coverage reads 1.0.
+  #  PASS (owner, 2026-11-07, "FAIL stops; else ship"): row 1 reading FAIL at 12y OR at 8y = REFUSED, record only.
+  #  PASS or INERT at both = SHIP at 1.5 after one owner question, because the page moves. UNGRADEABLE cannot occur
+  #  at coverage 1.0; if it reads, the run is broken and is re-dispatched, not graded.
+  #  EXPECTED: 0.3-1 top-10 name moved per bucket, both gains INSIDE the null band, because the bar is blind under
+  #  ~4 %/yr ((#1333)). A taper buys about the same names as a lower floor ((#561) stage 2), so this guard can show
+  #  harm but never prove a gain. Live page estimate from data.json 2026-11-07: 2 of the 13 growth seats change
+  #  (Alphabet and Ross in, Cisco and Mastercard out, 1.56 % of new money each). The head weights and the 12 momentum
+  #  seats stay.
+  #  REVERT RULE: on FAIL the knob stays 0 and the code stays. Off is the shipped lane bit for bit, so no page or
+  #  golden moves.
   #── (#801) RE-GRADED 2026-10-20 (pre-registered before any run) — HARD GATES vs THE 0.8 DOCK ON THE (#790) GRID ──
   #  WHY: (#790) moved every gate number, and (#566) was graded on the old staggered walk. This asks the question in
   #  reverse: if hard gates (growth_gate_soft=0) beat the shipped 0.8 dock, (#566) does not hold and the owner decides.
