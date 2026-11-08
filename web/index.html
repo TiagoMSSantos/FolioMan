@@ -22,7 +22,7 @@
     <a href="#h-exposure">Exposure</a> · <a href="#h-core">CORE</a> · <a href="#h-track">Track record</a><br>
     Watch only: <a href="#h-attention">Attention</a> · <a href="#h-berkshire">Berkshire</a> ·
     <a href="#h-social">Social</a> · <a href="#h-young">Young</a> · <a href="#h-braked">Ran too far</a> · <a href="#h-reits">REITs</a> · <a href="#h-upcoming">IPOs</a><br>
-    Background: <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-trading">Trading</a>
+    Background: <a href="#h-week">This week</a> · <a href="#h-inflation">Inflation</a> · <a href="#h-bonds">Bonds</a> · <a href="#h-trading">Trading</a>
   </nav>
   <!-- (#1254) Two ways to use the page, and the amount box. app.js names the whole-world fund in
        #start-fund and fills the BUY € column from the amount, which is never stored. -->
@@ -234,6 +234,21 @@
     a deal can be pulled.
   </details>
   <div id="upcoming"></div>
+
+  <!-- (#1409) Display only: CI's CNBC/ECB feeds and Yahoo charts (`commands::week_web_rows`, `news_web_rows`),
+       so an upload keeps them. No rule, knob or journal reads them. -->
+  <h2 title="Last week in markets and on the buy list. Context only: the buy rules never read it" id="h-week">This week</h2>
+  <details class="note" id="week-note">
+    <summary>about this week</summary>
+    How the S&amp;P 500, the euro and Bitcoin moved over the last 7 days, which names joined or left the buy
+    list since it was saved about a week ago (and why), and the headlines of each day next to that day's
+    S&amp;P 500 move. Headlines come from CNBC Finance, CNBC Economy and the ECB's press releases. Days are
+    New York days. This is context only: a headline next to a move does not prove it caused the move, and
+    the buy rules never read any of it.
+  </details>
+  <div id="week"></div>
+  <h2 title="Headlines by day next to that day's S&amp;P 500 move: CNBC Finance, CNBC Economy and the ECB's press releases" id="h-news">Headlines by day</h2>
+  <div id="news"></div>
 
   <!-- (#249) The footer table `screen` prints below its three rankings, published because its
        cumulative columns cover the spans the tables above carry (2Y/5Y/20Y) and longer ones — a row

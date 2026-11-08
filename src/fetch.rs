@@ -2092,6 +2092,60 @@ fn between_all<'a>(s: &'a str, open: &str, close: &str) -> Vec<&'a str> {
     out
 }
 
+/// (#1409) One RSS item for the page's "This week" panel: when it was published, which feed, its title and link.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Headline {
+    pub at: DateTime<chrono::FixedOffset>,
+    pub source: &'static str,
+    pub title: String,
+    pub link: String,
+}
+
+/// (#1409) An RSS 2.0 body's `<item>`s as [`Headline`]s, in feed order. CDATA unwrapped, entities decoded (`&amp;` last).
+/// An item with no RFC 2822 `pubDate` (CNBC prints `GMT`, the ECB `+0100`), an empty title, or a non-`https://` link
+/// is dropped.
+pub fn parse_rss(xml: &str, source: &'static str) -> Vec<Headline> {
+    let field = |item: &str, tag: &str| {
+        let raw = between(item, &format!("<{tag}>"), &format!("</{tag}>"))?.trim();
+        let raw = raw.strip_prefix("<![CDATA[").and_then(|r| r.strip_suffix("]]>")).unwrap_or(raw);
+        let text = raw.replace("&quot;", "\"").replace("&apos;", "'").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+        Some(text.trim().to_string()).filter(|t| !t.is_empty())
+    };
+    between_all(xml, "<item>", "</item>")
+        .into_iter()
+        .filter_map(|item| {
+            let at = DateTime::parse_from_rfc2822(&field(item, "pubDate")?).ok()?;
+            let link = field(item, "link").filter(|l| l.starts_with("https://"))?;
+            Some(Headline { at, source, title: field(item, "title")?, link })
+        })
+        .collect()
+}
+
+/// (#1409) The page's "This week" inputs, display only: headlines (CNBC Finance, CNBC Economy, ECB) and 1mo daily charts.
+pub struct Week {
+    pub headlines: Vec<Headline>,
+    pub spx: Option<Chart>,
+    pub eurusd: Option<Chart>,
+    pub btc: Option<Chart>,
+}
+
+/// (#1409) [`Week`] off the network, every request at once.
+/// ponytail: no cache or stale fallback; the page rebuilds every few minutes, add one if blips stick.
+#[mutants::skip] // (#1409) async network shell; parse_rss and the row builders carry the tests
+pub async fn fetch_week(client: &Client, urls: &Urls) -> Week {
+    let chart = |t: &'static str| async move { chart_json(client, urls, t, "1mo").await.and_then(|j| parse_chart(&j, t)) };
+    let (fin, eco, ecb, spx, eurusd, btc) = tokio::join!(
+        get_text(client, &urls.cnbc_finance_rss),
+        get_text(client, &urls.cnbc_economy_rss),
+        get_text(client, &urls.ecb_press_rss),
+        chart("^GSPC"),
+        chart("EURUSD=X"),
+        chart("BTC-EUR"),
+    );
+    let feed = |body: Option<String>, source| body.map(|b| parse_rss(&b, source)).unwrap_or_default();
+    Week { headlines: [feed(fin, "CNBC Finance"), feed(eco, "CNBC Economy"), feed(ecb, "ECB")].concat(), spx, eurusd, btc }
+}
+
 /// (Item 4) Parse a Form-4 ownership XML into open-market transactions. Pairs the i-th
 /// `<transactionDate><value>…</value>` with the i-th `<transactionCode>…</transactionCode>` (Form 4 emits
 /// one of each per transaction, in order); keeps only `P` (purchase) / `S` (sale). Pure -> unit-tested.
@@ -16115,6 +16169,32 @@ pub(crate) mod tests {
         assert!(!on.contains("range="), "{on}");
     }
 
+    /// (#1409) CNBC- and ECB-shaped items: entities and CDATA decoded, a `GMT` time with no seconds and a `+0100` one
+    /// read, and an `http://` link, a missing `pubDate` or an empty title dropped. The channel's own title is no item.
+    #[test]
+    fn parse_rss_reads_cnbc_and_ecb_items() {
+        let xml = r#"<rss><channel><title>Feed</title><pubDate>Fri, 06 Nov 2026 22:00:00 GMT</pubDate>
+<item><title>Stocks &apos;rally&apos; &amp; bonds</title><link>https://www.cnbc.com/a.html</link><pubDate>Fri, 06 Nov 2026 21:05:00 GMT</pubDate></item>
+<item><title><![CDATA[Fed holds]]></title><link> https://www.cnbc.com/b.html </link><pubDate>Thu, 05 Nov 2026 14:00 GMT</pubDate></item>
+<item><title> ECB keeps rates </title><link>https://www.ecb.europa.eu/c.html</link><pubDate>Thu, 05 Nov 2026 14:15:00 +0100</pubDate></item>
+<item><title>Plain http</title><link>http://example.com/d</link><pubDate>Thu, 05 Nov 2026 10:00:00 GMT</pubDate></item>
+<item><title>No date</title><link>https://example.com/e</link></item>
+<item><title> </title><link>https://example.com/f</link><pubDate>Thu, 05 Nov 2026 10:00:00 GMT</pubDate></item>
+</channel></rss>"#;
+        let got = parse_rss(xml, "ECB");
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).expect("a test time");
+        let want = |title: &str, link: &str, when: &str| Headline { at: at(when), source: "ECB", title: title.into(), link: link.into() };
+        assert_eq!(
+            got,
+            vec![
+                want("Stocks 'rally' & bonds", "https://www.cnbc.com/a.html", "2026-11-06T21:05:00Z"),
+                want("Fed holds", "https://www.cnbc.com/b.html", "2026-11-05T14:00:00Z"),
+                want("ECB keeps rates", "https://www.ecb.europa.eu/c.html", "2026-11-05T14:15:00+01:00"),
+            ]
+        );
+        assert!(parse_rss("<rss></rss>", "ECB").is_empty());
+    }
+
     /// (#1389) `parse_chart` carries Yahoo's `meta.dataGranularity` out, and the committed fixture is the
     /// census the receipt quotes: 58 `1mo`, 88 `1wk`, 38 `1d`, 12 `3mo`, 3 `1h` — the `3mo` names being
     /// the pre-1985 listings and ^GSPC itself. A payload without the field reads "".
@@ -16321,7 +16401,7 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 59] = [
+        const FIELDS: [&str; 62] = [
             "openfigi_mapping", "fred", "ecb_fx", "shiller", "cboe",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "yahoo_query2", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
@@ -16333,7 +16413,7 @@ pub(crate) mod tests {
             "trackingdifferences", "nasdaq_profile", "nasdaq_target", "nasdaq_summary", "finra_short",
             "wikipedia_search", "wikidata_entity", "sec_fts", "ark_trades", "openinsider_clusters",
             "apewisdom", "google_trends_rss", "hn_stories", "nasdaq_ipo_overview", "sec_fts_s1",
-            "nasdaq_ipo_experts", "fec_bulk",
+            "nasdaq_ipo_experts", "fec_bulk", "cnbc_finance_rss", "cnbc_economy_rss", "ecb_press_rss",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\nyoutube_more_feeds: [\"{base}\"]\n")); // the two non-String fields

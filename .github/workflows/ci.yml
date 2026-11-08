@@ -120,16 +120,19 @@ jobs:
       # (#418) The Pages deploy gates on web/payload-contracts.jq; this proves the gate can still say no.
       # Each broken payload must FAIL it (BUY% sums to 85, a ticker in two lanes, a NaN cell, (#888) a
       # NaN in a table the scan once skipped) and the clean one — whose name contains "inf" mid-word — must pass.
+      # (#1409) A news HEADLINE cell is the feed's words, so its NaN passes; a NaN in any other news cell fails.
       - name: Payload contracts reject broken payloads
         run: |
           for bad in \
             '{"stocks":[[["TICKER","A"],["BUY%","85%"]]]}' \
             '{"stocks":[[["TICKER","A"]]],"etfs":[[["TICKER","A"]]]}' \
             '{"stocks":[[["TICKER","A"],["PRICE","€NaN"]]]}' \
-            '{"social":[[["TICKER","A"],["P/E","NaN"]]]}'; do
+            '{"social":[[["TICKER","A"],["P/E","NaN"]]]}' \
+            '{"news":[[["DAY","x"],["SOURCE","NaN"]]]}'; do
             if echo "$bad" | jq -e -f web/payload-contracts.jq > /dev/null; then echo "contract passed a broken payload: $bad"; exit 1; fi
           done
           echo '{"stocks":[[["TICKER","A"],["BUY%","100%"],["NAME","Infrastructure"]]]}' | jq -e -f web/payload-contracts.jq > /dev/null
+          echo '{"news":[[["HEADLINE","NaN and inf traders",null]]]}' | jq -e -f web/payload-contracts.jq > /dev/null
       # (#430) The page's CSP meta allows no inline code, and a blocked script fails silently on the
       # live page with no red run. So index.html keeps its CSP and nothing inline: no <script> body, no
       # <style>, no style= or on…= attribute. The proof that the grep can say no runs first.

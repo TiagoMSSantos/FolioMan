@@ -1062,6 +1062,14 @@ pub struct Urls {
     // (#483) Google Trends' daily US trending searches, RSS.
     #[serde(default = "default_google_trends_rss_url")]
     pub google_trends_rss: String,
+    // (#1409) The page's "This week" headlines: CNBC's Finance and Economy RSS and the ECB's press releases.
+    // Display only: no rule, knob or journal reads them.
+    #[serde(default = "default_cnbc_finance_rss_url")]
+    pub cnbc_finance_rss: String,
+    #[serde(default = "default_cnbc_economy_rss_url")]
+    pub cnbc_economy_rss: String,
+    #[serde(default = "default_ecb_press_rss_url")]
+    pub ecb_press_rss: String,
     // (#483) Hacker News stories with 100+ points created after `{since}` (unix seconds), via Algolia.
     #[serde(default = "default_hn_stories_url")]
     pub hn_stories: String,
@@ -1432,6 +1440,18 @@ fn default_apewisdom_url() -> String {
 
 fn default_google_trends_rss_url() -> String {
     "https://trends.google.com/trending/rss?geo=US".to_string()
+}
+
+fn default_cnbc_finance_rss_url() -> String {
+    "https://www.cnbc.com/id/10000664/device/rss/rss.html".to_string()
+}
+
+fn default_cnbc_economy_rss_url() -> String {
+    "https://www.cnbc.com/id/20910258/device/rss/rss.html".to_string()
+}
+
+fn default_ecb_press_rss_url() -> String {
+    "https://www.ecb.europa.eu/rss/press.html".to_string()
 }
 
 fn default_hn_stories_url() -> String {
@@ -3205,7 +3225,7 @@ mod tests {
         assert_eq!(settings.urls.youtube_feed, "https://www.youtube.com/feeds/videos.xml?channel_id=UCS01CiRDAiyhR_mTHXDW23A");
         assert_eq!(settings.urls.dataroma_buys, "https://www.dataroma.com/m/g/portfolio_b.php?q=q&o=c");
         // (#475) the newer sources, unpinned too
-        for key in ["youtube_more_feeds", "sec_fts", "ark_trades", "openinsider_clusters", "apewisdom", "google_trends_rss", "hn_stories"] {
+        for key in ["youtube_more_feeds", "sec_fts", "ark_trades", "openinsider_clusters", "apewisdom", "google_trends_rss", "hn_stories", "cnbc_finance_rss", "cnbc_economy_rss", "ecb_press_rss"] {
             assert!(!text.contains(key), "fixture must exercise the DEFAULT of {key}");
         }
         assert_eq!(settings.urls.youtube_more_feeds.len(), 12);
@@ -3219,6 +3239,10 @@ mod tests {
         assert!(["{start}", "{end}", "{cik}"].iter().all(|k| settings.urls.sec_fts.contains(k)));
         assert_eq!(settings.urls.ark_trades, "https://arkfunds.io/api/v2/etf/trades?symbol={fund}&date_from={start}&date_to={end}");
         assert_eq!(settings.urls.openinsider_clusters, "http://openinsider.com/latest-cluster-buys");
+        // (#1409)
+        assert_eq!(settings.urls.cnbc_finance_rss, "https://www.cnbc.com/id/10000664/device/rss/rss.html");
+        assert_eq!(settings.urls.cnbc_economy_rss, "https://www.cnbc.com/id/20910258/device/rss/rss.html");
+        assert_eq!(settings.urls.ecb_press_rss, "https://www.ecb.europa.eu/rss/press.html");
     }
 
     /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.

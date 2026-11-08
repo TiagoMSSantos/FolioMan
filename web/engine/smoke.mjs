@@ -60,7 +60,8 @@ try {
   // (#811) `intraday`, from Yahoo's daily bars, ranked by screen alone.
   // (#1140) `track` and `track_note`, from the journal, which the engine does not read.
   // (#1223) `trading_buynow`, the BUY NOW stocks on the same daily bars.
-  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits", "intraday", "trading_buynow", "track", "track_note"];
+  // (#1409) `week` and `news`, CI's feeds and charts.
+  const ci = ["attention", "berkshire", "social", "exposure", "bonds", "young", "upcoming", "reits", "intraday", "trading_buynow", "track", "track_note", "week", "news"];
   // (#458) and their glossaries: screen stamps the stock columns' help onto those tables, the engine has no rows to stamp
   for (const k of ci) [want, got].forEach((p) => delete p.help?.[k]);
   // (#950) over both payloads' keys: a table only the engine writes is drift too, not a silent extra

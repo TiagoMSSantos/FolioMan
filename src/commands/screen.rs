@@ -2002,11 +2002,13 @@ pub async fn run(args: Vec<String>) {
     }
     // (#696) The 13F, Attention and Social Arbitrage sources read no quote, so they ride under the quote
     // fetch. After it they took 19s of run 39063079997's screen. Their stamps stay where they were below.
-    let (mut quotes, (brk, brk_held, brk_holdings), attention, social_feeds) = tokio::join!(
+    // (#1409) and the page's "This week" feeds and charts, display only
+    let (mut quotes, (brk, brk_held, brk_holdings), attention, social_feeds, week) = tokio::join!(
         fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, intraday, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal),
         fetch::fetch_brk(&client, &settings.urls),
         fetch::fetch_attention(&client, &settings.urls),
         fetch::fetch_social(&client, &settings.urls),
+        fetch::fetch_week(&client, &settings.urls),
     );
     // anything from the Xetra ETF feed IS an ETF, even if Yahoo tags it EQUITY (structured products
     // like BNP Paribas Issuance) — force it so it can't leak into the stocks table past the sector filter
@@ -2635,6 +2637,11 @@ pub async fn run(args: Vec<String>) {
         top["page_min_cagr"] = serde_json::json!(settings.page_min_cagr); // (#526) the page hides rows under it
         top["social_cagr_floor"] = serde_json::json!(soc.buy.growth_min_cagr); // (#538) the Social table greys under its own
         top["bonds"] = serde_json::json!(bonds);
+        // (#1409) the "This week" panel, display only: no rule, knob or journal reads it
+        let base = crate::commands::track::journal_week_ago(&run_date);
+        let markets = [("S&P 500", week.spx.as_ref(), "in dollars"), ("Euro vs dollar", week.eurusd.as_ref(), "up = a euro buys more dollars"), ("Bitcoin", week.btc.as_ref(), "in euros")];
+        top["week"] = serde_json::json!(crate::commands::week_web_rows(markets, &sized_now, &shipped_now, base.as_ref().map(|s| (s.date.as_str(), s.sized.as_slice())), &quotes, &settings.buy_heuristic));
+        top["news"] = serde_json::json!(crate::commands::news_web_rows(&week.headlines, week.spx.as_ref(), chrono::Utc::now()));
         // (#811) (#824) its own NAME links first, on a payload of its own: a bare quote stamped on the
         // other tables would relink their REPORTS cells
         let mut intra = serde_json::json!({ "intraday": trading.rows });

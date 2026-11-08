@@ -1306,6 +1306,24 @@ pub(crate) fn journal_prior(date: &str) -> Option<Snapshot> {
     prior_month(&snaps, date).cloned()
 }
 
+/// (#1409) The line the page's "This week" book rows diff against: the newest dated on or before `date` minus 7 days,
+/// else the oldest (a journal under a week old). A line that sized nothing is skipped. None with no sized line or a
+/// bad date.
+pub(crate) fn week_base<'a>(snaps: &'a [Snapshot], date: &str) -> Option<&'a Snapshot> {
+    let d = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let cut = (d - chrono::Duration::days(7)).to_string();
+    let sized = || snaps.iter().filter(|s| !s.sized.is_empty());
+    sized().filter(|s| s.date <= cut).max_by(|a, b| a.date.cmp(&b.date)).or_else(|| sized().min_by(|a, b| a.date.cmp(&b.date)))
+}
+
+/// (#1409) [`week_base`]'s line off disk. Only its TICKERS reach the page, so (as for [`journal_prior`]) it needs no
+/// split restatement.
+#[mutants::skip] // (#1409) a file read wired to a tested fn, reachable only from `screen::run`
+pub(crate) fn journal_week_ago(date: &str) -> Option<Snapshot> {
+    let (snaps, _) = read_snapshots();
+    week_base(&snaps, date).cloned()
+}
+
 /// (#335) The gap that decides the exit shadow; the other one prints for information.
 const EXIT_DECIDES: &str = "kept minus failed";
 
@@ -2154,6 +2172,20 @@ mod tests {
         assert_eq!(prior("2026-11-01"), Some("2026-09-03"), "no October line: September is the last book");
         assert_eq!(prior("2026-07-20"), None, "nothing before July");
         assert_eq!(prior("garbage"), None);
+    }
+
+    /// (#1409) The "This week" base: the newest sized line on or before 7 days back (the cut itself counts), else the
+    /// oldest sized line; a line that sized nothing never counts.
+    #[test]
+    fn week_base_is_the_newest_sized_line_a_week_back() {
+        let sized = |d: &str| with_sized(snap(d, None, &[]), &[("X", 1.0)]);
+        let snaps = vec![sized("2026-10-30"), snap("2026-11-01", None, &[]), sized("2026-11-02"), sized("2026-11-05")];
+        let base = |d: &str| week_base(&snaps, d).map(|s| s.date.as_str());
+        assert_eq!(base("2026-11-08"), Some("2026-10-30"), "11-01 is on or before the cut but sized nothing");
+        assert_eq!(base("2026-11-09"), Some("2026-11-02"), "exactly 7 days back counts");
+        assert_eq!(base("2026-11-04"), Some("2026-10-30"), "nothing a week old: the oldest sized line");
+        assert_eq!(base("garbage"), None);
+        assert_eq!(week_base(&[], "2026-11-08").map(|s| s.date.as_str()), None);
     }
 
     /// (#335) What left: the prior book's names minus today's, in the prior book's order, with what

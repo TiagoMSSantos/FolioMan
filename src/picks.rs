@@ -5571,6 +5571,18 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("S&P 500", "The S&P 500's price change over the same two days, in euros; n/a = no S&P 500 close saved at one end"),
         ("EXCESS", "BOOK minus S&P 500, in points, for example +2.0pp = the buy list rose 2 points more than the index; above 0 = the buy list beat the index; n/a = no S&P 500 figure"),
     ]);
+    // (#1409) `commands::week_web_rows` / `news_web_rows`
+    let week = fixed(&[
+        ("WHAT", "What moved: the S&P 500, the euro against the dollar and Bitcoin over the last week; then each name that joined or left the buy list since the list saved about 7 days ago"),
+        ("CHANGE", "A market's price change over the week, for example +2.0% = €1,000 became €1,020 (S&P 500 in dollars, Bitcoin in euros; up on the euro row = a euro buys more dollars); for a name that joined, its BUY% today; out = it left"),
+        ("DETAIL", "The two days compared (the last close on or before 7 days back, and the newest), or why a name joined or left: bought for its buy score or for momentum; now fails = the rule it breaks; still passes = higher-ranked names or a cap took its seat"),
+    ]);
+    let news = fixed(&[
+        ("DAY", "The day the headline was published, New York time (winter time all year, so in summer a late-evening headline can land a day late)"),
+        ("S&P 500", "The S&P 500's change that day, close against the session before, in dollars; today's figure still moves until the close; no session = a weekend, a holiday or no price"),
+        ("SOURCE", "The feed: CNBC Finance, CNBC Economy or the ECB's press releases; — = no headline that day"),
+        ("HEADLINE", "The feed's title, linked to the story; the same title on two feeds shows once, the newest. Context only: a headline next to a move does not prove it caused it, and the buy rules never read it"),
+    ]);
     BTreeMap::from([
         ("lanes", lanes),
         ("flags", RANK_FLAGS.iter().map(|(f, what)| (f.to_string(), what.to_string())).collect()),
@@ -5588,6 +5600,8 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("trading_buynow", intraday.clone()),
         ("intraday", intraday),
         ("track", track),
+        ("week", week),
+        ("news", news),
     ])
 }
 

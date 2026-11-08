@@ -266,6 +266,102 @@ mod tests {
             "no fetch is None — a zero here would print CHEAP for every market, and 0.00% is a rate that really happened"
         );
     }
+
+    /// (#1409) A daily chart from (y, m, d, close) bars, every other field blank.
+    fn chart(bars: &[((i32, u32, u32), f64)]) -> crate::fetch::Chart {
+        let n = bars.len();
+        crate::fetch::Chart {
+            dates: bars.iter().map(|&((y, m, d), _)| chrono::NaiveDate::from_ymd_opt(y, m, d).expect("a real date")).collect(),
+            closes: bars.iter().map(|b| b.1).collect(),
+            volumes: vec![0.0; n],
+            opens: vec![f64::NAN; n],
+            highs: vec![f64::NAN; n],
+            lows: vec![f64::NAN; n],
+            currency: "USD".into(),
+            name: String::new(),
+            instrument_type: String::new(),
+            granularity: String::new(),
+            divs: vec![],
+            splits: vec![],
+        }
+    }
+
+    /// (#1409) Each row's cell texts, so a whole table reads as one assert.
+    fn texts(rows: &[Vec<serde_json::Value>]) -> Vec<Vec<String>> {
+        rows.iter().map(|r| r.iter().map(|c| c[1].as_str().expect("a text cell").to_string()).collect()).collect()
+    }
+
+    /// (#1409) The week strip: the S&P 500 reads its last close against the last close on or before 7 days back (a
+    /// Friday over a weekend gap, never the older bar), a chart under a week old and a missing one read n/a; then the
+    /// buy list against the base: joiners with BUY% and which half bought them, leavers with today's reason.
+    #[test]
+    fn week_web_rows_read_markets_then_who_joined_and_left() {
+        let spx = chart(&[((2026, 10, 29), 50.0), ((2026, 10, 30), 100.0), ((2026, 11, 2), 101.0), ((2026, 11, 6), 110.0)]);
+        let short = chart(&[((2026, 11, 5), 1.0), ((2026, 11, 6), 2.0)]);
+        let markets = [("S&P 500", Some(&spx), "in dollars"), ("Euro vs dollar", Some(&short), "euro"), ("Bitcoin", None, "in euros")];
+        let own = |v: &[(&str, f64)]| v.iter().map(|(t, w)| (t.to_string(), *w)).collect::<Vec<_>>();
+        let now = own(&[("A", 40.0), ("M", 10.0), ("B", 50.0)]);
+        let shipped = ["A".to_string(), "B".to_string()];
+        let before = own(&[("A", 50.0), ("L", 25.0), ("Z", 25.0)]);
+        let l = crate::core::Quote::stub("L", "1", "", "L");
+        let tuning = crate::config::BuyHeuristic::default();
+        let why_l = left_because(Some(&crate::picks::unranked_reason(&l, &tuning)));
+        let rows = week_web_rows(markets, &now, &shipped, Some(("2026-10-30", before.as_slice())), std::slice::from_ref(&l), &tuning);
+        let s = |v: [&str; 3]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            texts(&rows),
+            vec![
+                s(["S&P 500", "+10.0%", "2026-10-30 to 2026-11-06, in dollars"]),
+                s(["Euro vs dollar", "n/a", "no price a week old this run"]),
+                s(["Bitcoin", "n/a", "no price a week old this run"]),
+                s(["Joined: M", "BUY% 10.0%", "not on the buy list on 2026-10-30; bought for momentum"]),
+                s(["Joined: B", "BUY% 50.0%", "not on the buy list on 2026-10-30; bought for its buy score"]),
+                s(["Left: L", "out", why_l.as_str()]),
+                s(["Left: Z", "out", "not priced this run"]),
+            ]
+        );
+        let none = week_web_rows(markets, &now, &shipped, None, &[], &tuning);
+        assert_eq!(texts(&none)[3..], [s(["Buy list", "n/a", "no saved buy list yet to compare with"])]);
+        let same = week_web_rows(markets, &now, &shipped, Some(("2026-10-30", now.as_slice())), &[], &tuning);
+        assert_eq!(texts(&same)[3..], [s(["Buy list", "no change", "same names as on 2026-10-30"])]);
+        assert_eq!(left_because(Some("clears every gate")), "still passes the buy rules; higher-ranked names or a cap took its seat");
+        assert_eq!(left_because(Some("leveraged")), "now fails: leveraged");
+    }
+
+    /// (#1409) Headlines by day at New York winter time: 03:00 UTC on Nov 9 is still Sunday Nov 8 there, and a
+    /// 03:00 UTC Saturday headline is Friday's. Newest first, a repeated title shows once (the newest), a day with
+    /// none reads "(no headline)", a day's S&P 500 is its close vs the session before, and a week-old headline is out.
+    #[test]
+    fn news_web_rows_group_headlines_by_new_york_day() {
+        let at = |s: &str| chrono::DateTime::parse_from_rfc3339(s).expect("a test time");
+        let h = |t: &str, when: &str, source: &'static str| crate::fetch::Headline { at: at(when), source, title: t.into(), link: format!("https://x/{}", t.to_lowercase()) };
+        let headlines = [
+            h("Late", "2026-11-09T02:00:00Z", "CNBC Finance"),
+            h("Jobs", "2026-11-06T15:00:00Z", "CNBC Economy"),
+            h("Jobs", "2026-11-06T14:00:00Z", "CNBC Finance"),
+            h("Fed", "2026-11-07T03:00:00Z", "ECB"),
+            h("Old", "2026-10-30T12:00:00Z", "ECB"),
+        ];
+        let spx = chart(&[((2026, 11, 4), 100.0), ((2026, 11, 5), 102.0), ((2026, 11, 6), 99.96)]);
+        let now = at("2026-11-09T03:00:00Z").with_timezone(&chrono::Utc);
+        let rows = news_web_rows(&headlines, Some(&spx), now);
+        let s = |v: [&str; 4]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            texts(&rows),
+            vec![
+                s(["Sun 2026-11-08", "no session", "CNBC Finance", "Late"]),
+                s(["Sat 2026-11-07", "no session", "—", "(no headline)"]),
+                s(["Fri 2026-11-06", "-2.0%", "ECB", "Fed"]),
+                s(["Fri 2026-11-06", "-2.0%", "CNBC Economy", "Jobs"]),
+                s(["Thu 2026-11-05", "+2.0%", "—", "(no headline)"]),
+                s(["Wed 2026-11-04", "no session", "—", "(no headline)"]),
+                s(["Tue 2026-11-03", "no session", "—", "(no headline)"]),
+                s(["Mon 2026-11-02", "no session", "—", "(no headline)"]),
+            ]
+        );
+        assert_eq!(rows[0][3], serde_json::json!(["HEADLINE", "Late", "https://x/late"]));
+        assert!(news_web_rows(&[], Some(&spx), now).is_empty(), "no feed answered: no rows");
+    }
 }
 
 /// (#366) The inflation table's cumulative horizons, shared by the footer and the page so the two
@@ -420,6 +516,104 @@ pub(crate) fn bond_web_rows(
                 row("USA in EUR", yld, eur)
             });
             std::iter::once(row(label, yld, index)).chain(eur)
+        })
+        .collect()
+}
+
+/// (#1409) A chart's week: the last close vs the last close dated on or before its last date minus 7 days, as
+/// (from, to, %). None with no bar that old.
+fn week_move(c: &crate::fetch::Chart) -> Option<(chrono::NaiveDate, chrono::NaiveDate, f64)> {
+    let (&to, &now) = (c.dates.last()?, c.closes.last()?);
+    let i = c.dates.partition_point(|d| *d <= to - chrono::Duration::days(7)).checked_sub(1)?;
+    Some((c.dates[i], to, (now / c.closes[i] - 1.0) * 100.0))
+}
+
+/// (#1409) Why a name left the buy list, off `picks::unranked_reason` today (None = no quote this run).
+fn left_because(reason: Option<&str>) -> String {
+    match reason {
+        None => "not priced this run".into(),
+        Some("clears every gate") => "still passes the buy rules; higher-ranked names or a cap took its seat".into(),
+        Some(r) => format!("now fails: {r}"),
+    }
+}
+
+/// (#1409) The page's "This week" strip, display only: each market's [`week_move`], then the buy list against `base`
+/// (the journal's (date, sized book) about a week back, `track::week_base`): joiners with their BUY% and which half
+/// bought them, leavers with [`left_because`]. One row says so when there is no base or no change.
+pub(crate) fn week_web_rows(
+    markets: [(&str, Option<&crate::fetch::Chart>, &str); 3],
+    sized_now: &[(String, f64)],
+    shipped_now: &[String],
+    base: Option<(&str, &[(String, f64)])>,
+    quotes: &[crate::core::Quote],
+    tuning: &crate::config::BuyHeuristic,
+) -> Vec<Vec<serde_json::Value>> {
+    use serde_json::json;
+    let row = |what: String, change: String, detail: String| vec![json!(["WHAT", what]), json!(["CHANGE", change]), json!(["DETAIL", detail])];
+    let mut rows: Vec<_> = markets
+        .iter()
+        .map(|&(label, chart, unit)| match chart.and_then(week_move) {
+            Some((from, to, pct)) => row(label.into(), signed_pct(pct), format!("{from} to {to}, {unit}")),
+            None => row(label.into(), "n/a".into(), "no price a week old this run".into()),
+        })
+        .collect();
+    let Some((date, before)) = base else {
+        rows.push(row("Buy list".into(), "n/a".into(), "no saved buy list yet to compare with".into()));
+        return rows;
+    };
+    let has = |book: &[(String, f64)], t: &str| book.iter().any(|(x, _)| x == t);
+    for (t, w) in sized_now.iter().filter(|(t, _)| !has(before, t)) {
+        let why = if shipped_now.contains(t) { "its buy score" } else { "momentum" };
+        rows.push(row(format!("Joined: {t}"), format!("BUY% {w:.1}%"), format!("not on the buy list on {date}; bought for {why}")));
+    }
+    for (t, _) in before.iter().filter(|(t, _)| !has(sized_now, t)) {
+        let reason = quotes.iter().find(|q| &q.ticker == t).map(|q| crate::picks::unranked_reason(q, tuning));
+        rows.push(row(format!("Left: {t}"), "out".into(), left_because(reason.as_deref())));
+    }
+    if rows.len() == markets.len() {
+        rows.push(row("Buy list".into(), "no change".into(), format!("same names as on {date}")));
+    }
+    rows
+}
+
+/// (#1409) The fixed UTC offset the page's news days are cut at: New York's winter time.
+/// ponytail: an hour off under US daylight saving (a 23:00-24:00 New York headline lands a day late); add a tz table
+/// if a misdated headline shows.
+const NEWS_UTC_OFFSET_SECS: i32 = -5 * 3600;
+
+/// (#1409) The page's headlines by day, display only: the 7 days to `now`'s, newest first. Each row carries that day's
+/// S&P 500 close vs the session before (or "no session"), the feed and the linked title. Only the newest copy of a
+/// repeated title shows; a day with none gets one "(no headline)" row. No headline at all = no rows (feeds unavailable).
+pub(crate) fn news_web_rows(headlines: &[crate::fetch::Headline], spx: Option<&crate::fetch::Chart>, now: chrono::DateTime<chrono::Utc>) -> Vec<Vec<serde_json::Value>> {
+    use serde_json::json;
+    if headlines.is_empty() {
+        return Vec::new();
+    }
+    let tz = chrono::FixedOffset::east_opt(NEWS_UTC_OFFSET_SECS).expect("a valid offset");
+    let today = now.with_timezone(&tz).date_naive();
+    let session = |d: chrono::NaiveDate| {
+        spx.and_then(|c| {
+            let i = c.dates.iter().position(|x| *x == d)?.checked_sub(1)?;
+            Some(signed_pct((c.closes[i + 1] / c.closes[i] - 1.0) * 100.0))
+        })
+        .unwrap_or_else(|| "no session".into())
+    };
+    let mut sorted: Vec<_> = headlines.iter().collect();
+    sorted.sort_by(|a, b| b.at.cmp(&a.at));
+    let mut seen = std::collections::HashSet::new();
+    let sorted: Vec<_> = sorted.into_iter().filter(|h| seen.insert(h.title.as_str())).collect();
+    (0..7)
+        .flat_map(|back| {
+            let day = today - chrono::Duration::days(back);
+            let spx_cell = session(day);
+            let cells = |source: &str, headline: serde_json::Value| {
+                vec![json!(["DAY", day.format("%a %Y-%m-%d").to_string()]), json!(["S&P 500", spx_cell]), json!(["SOURCE", source]), headline]
+            };
+            let mut rows: Vec<_> = sorted.iter().filter(|h| h.at.with_timezone(&tz).date_naive() == day).map(|h| cells(h.source, json!(["HEADLINE", h.title, h.link]))).collect();
+            if rows.is_empty() {
+                rows.push(cells("—", json!(["HEADLINE", "(no headline)"])));
+            }
+            rows
         })
         .collect()
 }

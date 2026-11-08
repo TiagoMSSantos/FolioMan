@@ -294,7 +294,7 @@ function apply(n) {
   const q = document.getElementById("filter").value.trim().toLowerCase();
   const all = document.getElementById("allrows").checked;
   for (const t of document.querySelectorAll(".scroll table")) {
-    if (t.closest("#inflation, #bonds, #intraday, #trading_buynow, #approaches, #track")) continue; // (#811) every intraday row shows, unfiltered; (#1140) every track row; (#1221) every approach; (#1223) every BUY NOW stock
+    if (t.closest("#inflation, #bonds, #intraday, #trading_buynow, #approaches, #track, #week, #news")) continue; // (#811) every intraday row shows, unfiltered; (#1140) every track row; (#1221) every approach; (#1223) every BUY NOW stock; (#1409) every week and news row
     const id = t.closest("div[id]").id;
     const cap = id === "exposure" ? Infinity : n;
     const heads = [...t.rows[0].cells].map((th) => th.textContent);
@@ -740,6 +740,13 @@ function render(data, prev) {
   if (data.bonds) {
     document.getElementById("bonds").replaceChildren(table(data.bonds, "(bond feeds unavailable)", help.bonds));
   }
+  // (#1409) CI's feeds and charts, display only, so an upload keeps CI's tables
+  if (data.week) {
+    document.getElementById("week").replaceChildren(table(data.week, "(week data unavailable)", help.week));
+  }
+  if (data.news) {
+    document.getElementById("news").replaceChildren(table(data.news, "(news feeds unavailable)", help.news));
+  }
   if (data.berkshire) {
     document.getElementById("berkshire").replaceChildren(table(data.berkshire, "(Berkshire 13F unavailable)", help.berkshire));
   }
@@ -808,7 +815,7 @@ function render(data, prev) {
   // (#1254) The start box names one whole-world fund in CORE; (#1258) which one is `startFund`'s.
   document.getElementById("start-fund").textContent = startFund(data.core || [], data.help?.core?.MISSES || "");
   // (#445) An upload carries no shadow tables, so CI's CSV rows for those stay, like the tables do.
-  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday", "trading_buynow", "track"]) {
+  for (const id of [...LANES, "core", "inflation", "bonds", "attention", "berkshire", "social", "young", "braked", "reits", "upcoming", "intraday", "trading_buynow", "track", "week", "news"]) {
     if (data[id]) sheet(id, data[id]);
   }
   glossary(data, { ...help, approaches: APPROACH_HELP });
@@ -847,6 +854,8 @@ function glossary(data, help) {
     ["CORE", "core", [data.core]],
     ["Inflation", "inflation", [data.inflation]],
     ["Bonds", "bonds", [data.bonds]],
+    ["This week", "week", [data.week]],
+    ["Headlines by day", "news", [data.news]],
     // (#452) the shadow tables. An upload carries none, so these groups drop from its glossary; the
     // tables CI rendered keep their hover text.
     ["Attention", "attention", [data.attention]],

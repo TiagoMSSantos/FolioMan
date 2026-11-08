@@ -6,9 +6,10 @@
 #   3. no cell anywhere reads NaN or inf (word-bounded, so "Information" / "Infrastructure" pass).
 #      (#888) Every key but the `help` glossary is read: a hand-kept table list lost `.social` when
 #      (#444) renamed it, and a new table would slip out the same way.
+#      (#1409) Except a news HEADLINE cell: a headline is the feed's words, and "NaN" may be the news.
 [.stocks[]?, .etfs[]?, .crypto[]?] as $rows
 | [$rows[] | (map(select(.[0] == "BUY%"))[0][1] // "") | select(. != "") | rtrimstr("%") | tonumber] as $w
 | [$rows[] | map(select(.[0] == "TICKER"))[0][1]] as $t
 | (($w | length) == 0 or ((($w | add) - 100) | fabs) <= 2)
   and (($t | length) == ($t | unique | length))
-  and ([del(.help) | .. | strings | select(test("(^|[^A-Za-z])(NaN|inf)([^A-Za-z]|$)"))] | length == 0)
+  and ([del(.help, (.news[]?[]? | select(.[0] == "HEADLINE"))) | .. | strings | select(test("(^|[^A-Za-z])(NaN|inf)([^A-Za-z]|$)"))] | length == 0)
