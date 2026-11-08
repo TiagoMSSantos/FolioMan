@@ -42,10 +42,15 @@ OTHER third, the one the paper says trails (portfolio 1 when JKP's direction is 
 is graded as the market minus that third, so the same bar reads as its mirror: the worst third trails at a t of
 -1.96 or below, and its gap stays below 0 after publication, in both regions.
 
+(#1411) `--losers --beyond` grades menu 3's passers in a cluster that already holds a ship (Momentum, Investment)
+the way `--beyond` grades Value's: each trailing gap, regressed on the shipped idea's trailing gap, must clear the
+same two-part bar on its intercept in both regions.
+
 Usage: python3 -I -B tools/jkp_proof.py <dir holding pfs.csv (or mkt.zip and pf/*.zip) and market_returns.csv>
        python3 -I -B tools/jkp_proof.py <dir> --menu 2
        python3 -I -B tools/jkp_proof.py <dir> --beyond
        python3 -I -B tools/jkp_proof.py <dir> --losers
+       python3 -I -B tools/jkp_proof.py <dir> --losers --beyond
        python3 -I tools/jkp_proof.py --selftest
 Stdlib only. The data is downloaded and untrusted: it is parsed as numbers and text, never executed.
 """
@@ -98,6 +103,8 @@ LONG_PF = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU + MENU2}
 # (#1410) menu 3: every idea of menus 1 and 2 in the order rule; `--losers` keeps the third at the other end
 MENU3 = sorted(MENU + MENU2, key=lambda x: (x[1], x[0]))
 LOSERS = False
+# (#1411) menu 3's passers whose cluster holds a ship, in menu order, each with that cluster's shipped idea
+LOSER_QUEUE = (("ret_12_1", "ret_6_1"), ("ret_9_1", "ret_6_1"), ("noa_gr1a", "capx_gr3"))
 KEEP = set(DEV) | {"USA"}
 HELD = "2024-12-31"  # (#1346) the old file's last month; its me_lag1 weighs each country through 2025
 
@@ -315,26 +322,30 @@ def inputs(d):
     return mkt, legs, col
 
 
-def report_beyond(d):
-    """(#1402) Each Value passer, in guard order, graded on what it adds beyond the base in each region."""
+def report_beyond(d, queue=tuple((n, BASE) for n in VALUE_QUEUE)):
+    """(#1402) Each passer, in guard order, graded on what it adds beyond its base in each region. (#1411) Under
+    `--losers` both gaps are the market minus the trailing third."""
     mkt, legs, col = inputs(d)
     if col is None:
         return 1
+    side = trail if LOSERS else (lambda g: g)
     regions = (("USA",), False), (DEV, True)
-    base = [region_gaps(legs[BASE], mkt, cs, col, w) for cs, w in regions]
-    year = {name: y for name, y, *_ in MENU}
+    gaps = lambda name: [side(region_gaps(legs[name], mkt, cs, col, w)) for cs, w in regions]
+    year = {name: y for name, y, *_ in MENU + MENU2}
     b = lambda g: "    -" if g["b"] is None else f"{g['b']:+5.2f}"
-    print(f"beyond {BASE}: alpha = intercept of the idea's monthly gap on {BASE}'s, months both carry; b = slope")
-    print(f"{'idea':14s} {'year':4s} |   US:     b    T alpha     t    P  post v     "
+    print("beyond: alpha = intercept of the idea's monthly gap on its base's, months both carry; b = slope"
+          + ("; gaps = market minus the trailing third" if LOSERS else ""))
+    print(f"{'idea':14s} {'year':4s} {'base':9s} |   US:     b    T alpha     t    P  post v     "
           f"|  DEV:     b    T alpha     t    P  post v     | verdict")
     passers = []
-    for name in VALUE_QUEUE:
-        us, dev = (beyond(region_gaps(legs[name], mkt, cs, col, w), g, year[name]) for (cs, w), g in zip(regions, base))
+    for name, base in queue:
+        us, dev = (beyond(g, gb, year[name]) for g, gb in zip(gaps(name), gaps(base)))
         ok = us["v"] == "PASS" and dev["v"] == "PASS"
         if ok:
             passers.append(name)
-        print(f"{name:14s} {year[name]:4d} | {b(us)} {cell(us)} | {b(dev)} {cell(dev)} | {'PASS' if ok else 'fail'}")
-    print(f"passers beyond {BASE}, in guard order: {len(passers)} of {len(VALUE_QUEUE)}: " + ", ".join(passers))
+        print(f"{name:14s} {year[name]:4d} {base:9s} | {b(us)} {cell(us)} | {b(dev)} {cell(dev)} | "
+              f"{'PASS' if ok else 'fail'}")
+    print(f"passers beyond their base, in guard order: {len(passers)} of {len(queue)}: " + ", ".join(passers))
     return 0
 
 
@@ -402,6 +413,13 @@ def demo():
     assert beyond({e: v - 0.008 for e, v in y.items()}, x, 1994)["v"] == "FAIL"  # alpha -0.004
     assert beyond(y, {e: 0.01 for e in months}, 1994)["v"] == "UNGRADEABLE"  # a flat base has no slope
     assert beyond(y, dict(list(x.items())[:2]), 1994)["T"] == 2  # only the months both carry
+    # (#1411) the loser queue is in menu order, each idea beside its own cluster's ship; trailing both gaps flips
+    # the alpha and keeps the slope
+    cl = {n: c for n, _, _, c in MENU3}
+    assert [n for n, _ in LOSER_QUEUE] == [n for n, *_ in MENU3 if n in dict(LOSER_QUEUE)]
+    assert all(cl[n] == cl[s] and s in ("ret_6_1", "capx_gr3") for n, s in LOSER_QUEUE)
+    gt = beyond(trail(y), trail(x), 1994)
+    assert abs(gt["mean"] + g["mean"]) < 1e-12 and abs(gt["b"] - g["b"]) < 1e-12 and gt["v"] == "FAIL", gt
     # (#1346) the 2026 layout end to end: a 2025 month holds the 2024-12 weight, a country with none drops out
     with tempfile.TemporaryDirectory() as d:
         with open(f"{d}/market_returns.csv", "w", newline="") as f:
@@ -444,9 +462,12 @@ if __name__ == "__main__":
         sys.exit(0)
     if sys.argv[2:] == ["--beyond"]:
         sys.exit(report_beyond(sys.argv[1]))
+    if sys.argv[2:] == ["--losers", "--beyond"]:
+        LOSERS = True
+        sys.exit(report_beyond(sys.argv[1], LOSER_QUEUE))
     if sys.argv[2:] == ["--losers"]:
         LOSERS = True
         sys.exit(report(sys.argv[1], MENU3))
     if sys.argv[2:] not in ([], ["--menu", "2"]):
-        sys.exit("usage: jkp_proof.py <dir> [--menu 2 | --beyond | --losers]")
+        sys.exit("usage: jkp_proof.py <dir> [--menu 2 | --beyond | --losers [--beyond]]")
     sys.exit(report(sys.argv[1], MENU2 if sys.argv[2:] else MENU))

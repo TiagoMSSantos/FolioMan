@@ -27361,6 +27361,64 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # REVERT RULE: the proof is record only. Each candidate goes through its own guard receipt under the (#1339) rules,
 #   and a ship carries its off switch (drop its term) and the (#1339) pull rule, which also pulls it when a newer
 #   JKP release fails this loser proof.
+# (#1411) VERDICT, 2026-11-08, on (#1410): 10 of the 56 pass, in menu order: ret_12_1 and ret_9_1 (Momentum),
+#   sale_me (Value), noa_gr1a (Investment), ocf_me (Value), nfna_gr1a (Debt Issuance), dbnetis_at (Seasonality),
+#   chcsho_12m and ebitda_mev (Value), and ocf_at_chg1 (Profit Growth). One run, 19 s, on the 25 pinned files, whose
+#   md5s were re-checked first (all matched). CI graded --losers on 6c7bf07 ("tool selftests: 10 passed").
+# UNIT CHECKS read as (#1347)'s did: (i) 9337 country-months, 0.0082 to the USD market against 0.0285 to the local
+#   one; (ii) 890 months, slope -0.96, so EXCESS; (iii) 11406 country-months, 0.0010 against 0.0265, so USD EXCESS.
+#   Market column ret_2026.
+# EACH ROW, in menu order, as US t and post mean %/yr, then the same developed ex-US. A positive t means the
+#   idea's worst third trails its market:
+#   beta_60m -1.24 -0.9, 0.44 +0.4; div12m_me -0.08 +0.7, 1.32 +1.5; market_equity 0.99 -0.3, 0.16 +0.1; ni_me 1.75
+#   +2.1, 2.44 +2.1; be_me 0.75 +0.3, 2.26 +2.0; ret_60_12 0.76 -0.3, 1.07 +0.6; debt_me 0.12 +0.1, 1.01 +0.2; at_me
+#   0.94 +1.0, 2.10 +1.1; ret_12_1 3.27 +2.2, 2.76 +3.6; ret_3_1 0.36 +0.4, 1.66 +1.9; ret_6_1 1.39 +2.0, 2.20 +2.8;
+#   ret_9_1 2.44 +2.7, 2.32 +3.2; fcf_me 4.19 +3.8, 0.70 +2.1; sale_gr1 1.07 +1.2, 0.77 +0.1; sale_gr3 0.07 +0.1, 1.24
+#   +0.4; oaccruals_at 4.85 +1.4, 1.14 +1.4; sale_me 2.53 +2.3, 2.64 +1.8; dsale_dinv 3.78 +0.3, -0.75 +0.6;
+#   dsale_drec -2.81 -0.0, 0.69 -0.5; dsale_dsga -0.37 -0.5, 0.88 +0.3; sale_emp_gr1 0.10 -0.5, 0.40 +0.3; capx_gr1
+#   2.68 +1.1, 1.14 +1.0; kz_index -1.76 -0.4, -0.80 -0.2; rd_me 1.69 +0.3, 2.24 +0.9; rd_sale 0.21 -0.7, 0.12 -0.3;
+#   capex_abn 2.02 -0.1, 0.41 -0.1; noa_at 6.00 +1.6, 1.46 +1.7; noa_gr1a 4.59 +1.3, 3.25 +2.0; ocf_me 3.50 +1.9, 2.32
+#   +2.4; age -0.98 -0.5, -0.65 -0.4; be_gr1a 1.00 +0.3, 0.37 +0.0; cowc_gr1a 3.08 -0.3, 1.45 +1.2; fnl_gr1a 4.90
+#   +0.2, 1.24 +1.9; lti_gr1a 0.29 +0.1, 0.16 -0.3; ncol_gr1a -0.44 -0.6, 0.06 -0.1; nfna_gr1a 4.91 +0.1, 2.63 +1.8;
+#   sti_gr1a -1.00 -0.6, -0.20 -0.4; taccruals_at 1.83 +0.1, 0.55 -0.7; capx_gr2 2.99 +0.6, 0.76 +0.6; capx_gr3 1.51
+#   +0.5, 0.46 +0.4; dbnetis_at 3.74 +0.6, 2.58 +1.3; bev_mev 0.55 -0.6, 1.90 +0.3; eqnpo_me 2.14 +2.0, 1.73 +0.4;
+#   netdebt_me -0.13 +0.7, 0.17 +0.5; at_gr1 2.11 +0.7, 1.51 +0.1; chcsho_12m 2.63 +0.3, 3.55 +0.8; debt_gr3 2.14
+#   -0.6, 2.09 +0.8; tangibility 1.41 -0.2, 1.96 -0.0; ebitda_mev 2.73 +0.7, 2.92 +1.5; oaccruals_ni 5.02 -0.1, 0.74
+#   +0.8; rd5_at -0.04 +0.8, 0.77 +1.2; taccruals_ni 1.65 -0.5, -0.42 -0.3; tax_gr1a 0.72 +0.3, 0.01 +0.8; cash_at
+#   1.41 +1.4, 1.55 +1.2; aliq_mat -5.01 -2.2, -2.84 -2.7; ocf_at_chg1 2.66 +0.2, 3.05 +2.1.
+#   Post months run from 624 (beta_60m, US) down to 72 (ocf_at_chg1, both regions), just over the 60 floor.
+# THE CLUSTER RULE, applied:
+#   - Value is closed: sale_me, ocf_me, chcsho_12m and ebitda_mev are record only.
+#   - Momentum holds ret_6_1 and Investment holds capx_gr3, so ret_12_1, ret_9_1 and noa_gr1a go to the beyond step
+#     (below). Momentum has one second seat, so if ret_12_1 ships, ret_9_1 is record only.
+#   - Open clusters, one candidate each: nfna_gr1a (Debt Issuance), dbnetis_at (Seasonality), ocf_at_chg1 (Profit
+#     Growth). Both menu-2 passers have "now" twins built from lines we already carry, so the (#1356) owner
+#     question does not fire.
+#   - No shipped idea passes again. Their worst thirds mostly do NOT trail in both regions: ret_6_1 fails the US
+#     (t 1.39), capx_gr3 fails both (1.51, 0.46), ni_me fails the US (1.75) and fcf_me fails developed ex-US
+#     (0.70). That is record only. The pull rule pulls a LOSER ship on a failed loser proof, and these four
+#     shipped on their earning thirds, so nothing is pulled.
+# AN OVERLAP, flagged now, before any guard: the twins of noa_gr1a (1y change of net debt plus book), nfna_gr1a
+#   (1y change of short-term investments minus debt) and dbnetis_at (1y change of debt) all move with a firm's new
+#   borrowing. Each docks much the same names, so shipping two or three would dock debt growth two or three times.
+#   The rule as pre-registered still grades each one; every later guard runs on the book with the earlier ships
+#   in, so its INERT and edge clauses see only what it adds. The overlap goes to the owner with any second ship.
+# AGAINST EXPECTED: 10 passes sit over the 2 to 8 band, and 3 open-cluster candidates plus 3 beyond-step ones sit
+#   over the 0 to 2 band. ret_12_1 and ret_9_1 passed, as called; ret_3_1 failed (developed t 1.66), against the
+#   call. market_equity failed, as called. The US-only shape repeated for oaccruals_at, at_gr1, capx_gr1, capx_gr2,
+#   noa_at and fnl_gr1a (and cowc_gr1a fails the US post mean, -0.3), but noa_gr1a, called US-only, passed both.
+#   Four Value losers passed; none was called. aliq_mat reads significant the WRONG way in both regions again.
+# MULTIPLE TESTING: 10 two-region passes of 56 is far above the under-one false pass the AND bar allows, so the
+#   losing side carries real signal on this release. It does not make any one row safe; the guard still grades it.
+# NEXT, in menu order. (1) `tools/jkp_proof.py <dir> --losers --beyond`, run once after CI grades its selftest on
+#   the commit that carries this text. It runs (#1402)'s regression on the market-minus-trailer gaps, as (#1410)
+#   fixed in words: ret_12_1 and ret_9_1 on ret_6_1's, noa_gr1a on capx_gr3's. Row: (#1412). EXPECTED: noa_gr1a
+#   passes (its loser loads little on capx_gr3's); ret_12_1 passes the US and is a coin flip abroad; ret_9_1 fails
+#   developed ex-US, since its loser gap is mostly ret_6_1's. (2) The guard chain, one candidate at a time in menu
+#   order: the beyond passers (1993, 2004), then nfna_gr1a (2005), dbnetis_at (2006) and ocf_at_chg1 (2019). Each
+#   gets its own pre-registration and twin, and one guard probe with the term {<twin>: 0.09, cap 33.3, neutral 50}
+#   (plus `sec` for an SEC twin). A pass then reads the sealed holdout: its 5th read, and one more per later
+#   reveal. A ship waits for the owner's word.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
