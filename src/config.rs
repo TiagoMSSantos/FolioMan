@@ -2860,7 +2860,7 @@ mod tests {
         assert!(ranked("nope").is_err_and(|e| e.contains("growth_ranker \"nope\" is not one of: shipped, gates_off")));
     }
 
-    /// (#1359) On the shipped settings, an upload that lists one new term keeps the shipped five and adds it,
+    /// (#1359) On the shipped settings, an upload that lists one new term keeps the shipped six and adds it,
     /// and a fund factor name no router arm knows is refused at load, in a term or as the primary factor.
     #[test]
     fn settings_of_refuses_an_unknown_fund_factor() {
@@ -2872,9 +2872,9 @@ mod tests {
         };
         let names = |terms: Vec<FundTerm>| terms.into_iter().map(|t| t.factor).collect::<Vec<_>>();
         let term = |f: &str| format!("buy_heuristic:\n  growth_fund_extra:\n    - {{factor: {f}, weight: 0.05, cap: 10, neutral: 0}}\n");
-        assert_eq!(load(&term("buyback_yield")).map(names), Ok(["roic", "margin_trend", "ey_pct", "mom61_pct", "capx_pct", "buyback_yield"].map(String::from).to_vec()));
+        assert_eq!(load(&term("buyback_yield")).map(names), Ok(["roic", "margin_trend", "ey_pct", "mom61_pct", "capx_pct", "fcf_pct", "buyback_yield"].map(String::from).to_vec()));
         let off = load("buy_heuristic:\n  growth_fund_extra:\n    - {factor: roic, weight: 0}\n").expect("a weight alone merges into the shipped term");
-        assert_eq!((off.len(), off[0].weight, off[0].cap, off[0].neutral), (5, 0.0, 40.0, 17.3), "the README's turn-one-off line");
+        assert_eq!((off.len(), off[0].weight, off[0].cap, off[0].neutral), (6, 0.0, 40.0, 17.3), "the README's turn-one-off line");
         assert!(load(&term("roic_typo")).is_err_and(|e| e.contains("fund factor \"roic_typo\" is not one of: rev_cagr, ")));
         assert!(load("buy_heuristic:\n  growth_fund_factor: nope\n").is_err_and(|e| e.contains("fund factor \"nope\" is not one of")));
     }

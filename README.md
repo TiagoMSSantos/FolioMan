@@ -278,9 +278,9 @@ ships by one of two routes:
 - **The backtest bar.** The edge must hold with BOTH out-of-sample halves positive, or the change
   reverts.
 - **The paper route (#1339).** The idea passes on JKP's data, enters at a fixed weight of 0.03, and
-  must do no visible harm in our backtest. It shipped `ey_pct` (#1345), `mom61_pct` (#1350) and
-  `capx_pct` (#1355). Its second menu passed 0 of 14 (#1357). It reopens only when JKP publishes
-  newer data.
+  must do no visible harm in our backtest. It shipped `ey_pct` (#1345), `mom61_pct` (#1350),
+  `capx_pct` (#1355) and `fcf_pct` (#1406), the second Value ship once (#1402) let a cluster hold
+  two. Its second menu passed 0 of 14 (#1357). It reopens only when JKP publishes newer data.
 
 Measured dead — don't re-run these:
 
@@ -293,11 +293,11 @@ Measured dead — don't re-run these:
 - **Shorter horizons** — the edge is a LONG-horizon signal: negative under 3y, rising through
   10y. Selling early converts a validated signal into noise.
 - **Most fundamentals factors through the fund lane** — margins, profitability, rev/eps growth,
-  buyback yield and SEC-computed ROE all fail out-of-sample against the price-only baseline. Six
+  buyback yield and SEC-computed ROE all fail out-of-sample against the price-only baseline. Seven
   fund terms are live. `peg_yield` (1/PEG) at weight 0.07 is the main tilt; it replaced the
-  earlier `earnings_yield` tilt at 1.0. The five `growth_fund_extra` terms are `roic` at 0.25, the
-  `margin_trend` dock at −0.3 (#1289), and `ey_pct`, `mom61_pct` and `capx_pct` at 0.03 each, on
-  the paper route. Form-4 insider net-buys fail too. Graded on SEC's bulk insider
+  earlier `earnings_yield` tilt at 1.0. The six `growth_fund_extra` terms are `roic` at 0.25, the
+  `margin_trend` dock at −0.3 (#1289), and `ey_pct`, `mom61_pct`, `capx_pct` and `fcf_pct` at 0.03
+  each, on the paper route. Form-4 insider net-buys fail too. Graded on SEC's bulk insider
   data sets (2006 on) by (#1247), their held book trails the index at 12y and 8y, and both
   out-of-sample halves trail the same-set score book (#1248).
 
