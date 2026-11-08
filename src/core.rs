@@ -4357,7 +4357,7 @@ pub struct FundFactors {
     pub capx_pct: Option<f64>,
     // (#1404) the paper route's fcf_me twin. `fcf_yield`: the as-of fiscal year's FCF (`fcf_ttm`) over the as-of
     // market cap, %, SIGN KEPT, so a cash burner ranks last as JKP keeps it; no financial filter. `fcf_pct`: its
-    // same-date percentile, 0-100, high = FCF-rich. The backtest fills both; live reads None
+    // same-date percentile, 0-100, high = FCF-rich. The backtest fills both; (#1406) live too, `stamp_fcf_pct`
     pub fcf_yield: Option<f64>,
     pub fcf_pct: Option<f64>,
     // (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal
@@ -5085,7 +5085,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             grow(capex(0), capex(3))
         },
         capx_pct: None,
-        fcf_yield: None, // (#1404) needs the as-of price, set in the backtest loop
+        fcf_yield: None, // (#1404) needs the as-of price, set in the backtest loop and in enrich_fund_factor
         fcf_pct: None,
         insider_own_pct: None, // (#1301) set in the backtest loop, from the insider holdings table
         exp_neg: None,
@@ -5950,6 +5950,18 @@ pub fn stamp_capx_pct<'a>(funds: impl IntoIterator<Item = &'a mut FundFactors>) 
     let rank = |v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
     for f in funds.iter_mut() {
         f.capx_pct = if col.len() >= 2 { f.capx_gr3.map(|v| 100.0 - rank(v)) } else { None };
+    }
+}
+
+/// (#1406) The live twin of the backtest's `fcf_pct` stamp: [`stamp_ey_pct`]'s formula over `fcf_yield`, as
+/// `stamp_cohort_ranks` writes it, so the most FCF-rich name among the names passed in reads 100.
+pub fn stamp_fcf_pct<'a>(funds: impl IntoIterator<Item = &'a mut FundFactors>) {
+    let mut funds: Vec<&mut FundFactors> = funds.into_iter().collect();
+    let mut col: Vec<f64> = funds.iter().filter_map(|f| f.fcf_yield).collect();
+    col.sort_by(f64::total_cmp);
+    let rank = |v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
+    for f in funds.iter_mut() {
+        f.fcf_pct = if col.len() >= 2 { f.fcf_yield.map(rank) } else { None };
     }
 }
 
@@ -7247,6 +7259,22 @@ mod tests {
         let four = [Some(0.0), Some(100.0), Some(66.7), None, Some(66.7)];
         assert_eq!(pcts(vec![ff(Some(50.0)), ff(Some(-10.0)), ff(Some(20.0)), ff(None), ff(Some(20.0))]), four);
         assert_eq!(pcts(vec![ff(Some(4.0)), ff(Some(2.0))]), [Some(0.0), Some(100.0)]);
+        assert_eq!(pcts(vec![ff(Some(3.0)), ff(None)]), [None, None]);
+    }
+
+    /// (#1406) FCF yields 8, -3, 2, 2 % read 100, 0, 33.3, 33.3: ties share the lower percentile, and a cash burner
+    /// keeps its sign, so it ranks last. No fcf_yield reads None over a stale stamp. Two yields read 100 and 0; one
+    /// ranks nothing.
+    #[test]
+    fn stamp_fcf_pct_ranks_fcf_yield_high_first() {
+        let ff = |y: Option<f64>| FundFactors { fcf_yield: y, fcf_pct: Some(42.0), ..Default::default() };
+        let pcts = |mut v: Vec<FundFactors>| {
+            stamp_fcf_pct(&mut v);
+            v.iter().map(|f| f.fcf_pct.map(|p| (p * 10.0).round() / 10.0)).collect::<Vec<_>>()
+        };
+        let four = [Some(100.0), Some(0.0), Some(33.3), None, Some(33.3)];
+        assert_eq!(pcts(vec![ff(Some(8.0)), ff(Some(-3.0)), ff(Some(2.0)), ff(None), ff(Some(2.0))]), four);
+        assert_eq!(pcts(vec![ff(Some(4.0)), ff(Some(2.0))]), [Some(100.0), Some(0.0)]);
         assert_eq!(pcts(vec![ff(Some(3.0)), ff(None)]), [None, None]);
     }
 

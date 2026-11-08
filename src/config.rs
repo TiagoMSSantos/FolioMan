@@ -2996,7 +2996,7 @@ mod tests {
         // where the rejected interest_cover paid nothing (Δ+0.0/+0.0/+5.4), plus held-book OOS +3.3/+4.3.
         // Pin factor, weight AND cap: weight × cap is ONE dial (receipt (#3)), so any of the three drifting
         // alone re-ranks the live book under a config that still matches its receipt.
-        assert_eq!(h.growth_fund_extra.len(), 5, "{receipts}");
+        assert_eq!(h.growth_fund_extra.len(), 6, "{receipts}");
         assert_eq!(h.growth_fund_extra[0].factor, "roic", "{receipts}");
         assert_eq!(h.growth_fund_extra[0].weight, 0.25, "the measured ablation peak — {receipts}");
         assert_eq!(h.growth_fund_extra[0].cap, 40.0, "matches quality_cap — {receipts}");
@@ -3022,6 +3022,11 @@ mod tests {
         assert_eq!(h.growth_fund_extra[4].weight, 0.03, "the route's fixed weight — {receipts}");
         assert_eq!(h.growth_fund_extra[4].cap, 100.0, "a percentile tops out at 100, so 3 points — {receipts}");
         assert_eq!(h.growth_fund_extra[4].neutral, 50.0, "a name with no 3-year capex leg ranks as the middle name — {receipts}");
+        // (#1406) the paper route's fcf_me twin, the Value cluster's second and last ship: the same fixed route numbers.
+        assert_eq!(h.growth_fund_extra[5].factor, "fcf_pct", "{receipts}");
+        assert_eq!(h.growth_fund_extra[5].weight, 0.03, "the route's fixed weight — {receipts}");
+        assert_eq!(h.growth_fund_extra[5].cap, 100.0, "a percentile tops out at 100, so 3 points — {receipts}");
+        assert_eq!(h.growth_fund_extra[5].neutral, 50.0, "a name with no FCF yield ranks as the middle name — {receipts}");
         // (#72) 2026-08-12: graded under Ship Rule v2 and HELD at 0.15 — ten `backtest {8,12} universe
         // fund` runs at 0 / 0.075 / 0.15 / 0.30 plus a 20y pair. Pinned here, with the fund tilt it
         // interacts with ((#3d)), because NOTHING ELSE GUARDS IT: `backtest_fixture` runs offline and

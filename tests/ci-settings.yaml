@@ -20850,6 +20850,10 @@ buy_heuristic:
       weight: 0.03           # (#1339) fixed by the route before any grade, never tuned
       cap: 100.0             # (#1339) a percentile tops out at 100, so the tilt tops out at 3 points
       neutral: 50.0          # (#1339) a name with no 3-year capex leg, and every ETF and coin, reads 1.5 points
+    - factor: fcf_pct        # (#1406) the paper route's fcf_me twin; receipt in the (#1405) and (#1406) blocks
+      weight: 0.03           # (#1339) fixed by the route before any grade, never tuned
+      cap: 100.0             # (#1339) a percentile tops out at 100, so the tilt tops out at 3 points
+      neutral: 50.0          # (#1339) a name with no FCF yield, and every ETF and coin, reads 1.5 points
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
@@ -27274,6 +27278,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   screened names' fcf_yield, high = FCF-rich), the term fcf_pct 0.03/100/50 in growth_fund_extra after capx_pct,
 #   and a golden rebless with all four pins. Value then holds its two ships and closes under (#1402), so chcsho_12m
 #   and ebitda_mev get no turn. On a no, fcf_me is refused and the turn passes to chcsho_12m.
+# (#1406) FCF_ME TWIN SHIPPED 2026-11-08 on the owner's word, per the (#1405) result, the (#1339) route and the
+#   (#1402) rule changes. The owner was told, before the word, that the developed ex-US pass leans on thin 1980s
+#   months, that the 8y guard margin is thin and that this was the fourth read of the sealed years.
+# WHAT: a sixth `growth_fund_extra` term, `fcf_pct`, at weight 0.03, cap 100 and neutral 50, all three fixed by
+#   (#1339) before any grade. A name gains up to 3 points of score when its free cash flow over its market cap
+#   ranks high against the names ranked with it: the most FCF-rich earns 3, the middle name 1.5 and the deepest
+#   cash burner 0. Example: a name whose FCF is 8 % of its cap and reads fcf_pct 90 earns about 2.7 points; one
+#   burning cash at -3 % that reads 5 earns about 0.15.
+# LIVE STAMP: `fetch::enrich_fund_factor` fills `fcf_yield` in its loop, `core::cap_yield` over `fcf_ttm`,
+#   `shares_ttm` and the close in the filer's currency, the price earnings_yield reads, exactly as the backtest
+#   fills it. `core::stamp_fcf_pct`, called after capx_pct's stamp, ranks it over the names in the slice that carry
+#   one (the count of strictly lower yields over n-1, times 100), the `stamp_cohort_ranks` formula. `screen` passes
+#   its whole universe, and the page re-ranks the stamped universe.json rows, so it reads the same number. A name
+#   with no FCF row or share count reads 50, and so does every ETF and coin: the guard graded that same fill.
+# SHORTCUT: as (#1345): `check`, `size` and the shadow tables rank within their own few names, and report's verdict
+#   mirror stamps none, so their tilt can differ from the screen's by up to 3 points.
+# GOLDENS: the term reaches every fixture walk that carries an FCF row, so the next commit re-blesses them from a
+#   bless=true probe on this SHA. Until then `report_is_pinned` may read red on this push, and its mutants legs
+#   grade nothing.
+# CLUSTER RULE: Value now holds its two ships (ey_pct and fcf_pct) and is closed under (#1402), so chcsho_12m and
+#   ebitda_mev get no turn. Every (#1347) passer in an open cluster is graded, so the guard queue is empty until a
+#   newer JKP release (pin 2026-08-04) or a cluster reopens.
+# REVERT RULE: the (#1339) pull rule, plus the (#1402) beyond proof. A newer JKP release re-grades the term, and a
+#   fail on either removes it.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to

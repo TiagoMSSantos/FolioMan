@@ -1896,6 +1896,8 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         ff.sgr_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, core::sgr_pct(&ff), p));
         if let Some(p) = price { crate::picks::stamp_fair_yields(&mut ff, p) } // (#523) shadow only, exactly as backtest.rs
         ff.cap_fund = price.zip(ff.shares_ttm).map(|(p, n)| p * n); // (#462) display only
+        // (#1406) the `fcf_pct` term's yield, exactly as backtest.rs fills it: FCF over the cap, sign kept
+        ff.fcf_yield = price.and_then(|p| core::cap_yield(ff.fcf_ttm, ff.shares_ttm, p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
         // (G+) carry the whole struct so `growth_fund_extra`'s named terms resolve here too. Set AFTER
         // the price-dependent fields above, or the extra terms would read a half-built earnings_yield.
@@ -1914,6 +1916,9 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
     // (#1355) the `capx_pct` term's twin, the same slice and shortcut as `ey_pct`. A filing twin: capx_gr3 is
     // filled by `fund_factors` above, which reads 5 fiscal years back, so the 3-year leg reaches.
     core::stamp_capx_pct(quotes.iter_mut().filter_map(|q| q.fund.as_mut()));
+    // (#1406) the `fcf_pct` term's twin, the same slice and shortcut as `ey_pct`. Its fcf_yield is filled in the
+    // loop above, off the same as-of filing row and price as earnings_yield.
+    core::stamp_fcf_pct(quotes.iter_mut().filter_map(|q| q.fund.as_mut()));
 }
 
 /// Fill the DISPLAY-ONLY income-statement snapshot (rev_yoy / eps_yoy / net_margin_fy) on the quotes
