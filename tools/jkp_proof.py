@@ -37,9 +37,15 @@ Kelly-Pedersen cluster held no ship when the owner opened it. Same order rule, s
 in each region, the idea's monthly gap is regressed on ni_me's over the months both carry, and the intercept must
 clear the same two-part bar (t at least 1.96, and a mean above 0 after publication over 60 months or more).
 
+(#1410) `--losers` is menu 3: the 56 ideas of menus 1 and 2, merged in the same order rule, each graded on its
+OTHER third, the one the paper says trails (portfolio 1 when JKP's direction is +1, portfolio 3 when -1). The gap
+is graded as the market minus that third, so the same bar reads as its mirror: the worst third trails at a t of
+-1.96 or below, and its gap stays below 0 after publication, in both regions.
+
 Usage: python3 -I -B tools/jkp_proof.py <dir holding pfs.csv (or mkt.zip and pf/*.zip) and market_returns.csv>
        python3 -I -B tools/jkp_proof.py <dir> --menu 2
        python3 -I -B tools/jkp_proof.py <dir> --beyond
+       python3 -I -B tools/jkp_proof.py <dir> --losers
        python3 -I tools/jkp_proof.py --selftest
 Stdlib only. The data is downloaded and untrusted: it is parsed as numbers and text, never executed.
 """
@@ -89,6 +95,9 @@ DEV = ("JPN HKG GBR CAN AUS DEU FRA SWE CHE SGP ITA ESP ISR NLD NOR BEL DNK FIN 
 MIN_N, MIN_POST, T_BAR = 5, 60, 1.96
 MKT_COLS = ("me_lag1", "mkt_vw_cap", "mkt_vw_cap_lcl", "mkt_vw_cap_exc")
 LONG_PF = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU + MENU2}
+# (#1410) menu 3: every idea of menus 1 and 2 in the order rule; `--losers` keeps the third at the other end
+MENU3 = sorted(MENU + MENU2, key=lambda x: (x[1], x[0]))
+LOSERS = False
 KEEP = set(DEV) | {"USA"}
 HELD = "2024-12-31"  # (#1346) the old file's last month; its me_lag1 weighs each country through 2025
 
@@ -188,10 +197,11 @@ def old_market(d):
 
 
 def put(legs, bm, name, c, pf, eom, ret, n):
-    """One menu cell in a kept country: be_me feeds the unit check, the earning third feeds the legs."""
+    """One menu cell in a kept country: be_me feeds the unit check, the earning third (under `--losers`, the
+    trailing one) feeds the legs."""
     if name == "be_me" and ret is not None:
         bm[(c, eom)][pf] = ret
-    if pf == LONG_PF[name]:
+    if pf == (4 - LONG_PF[name] if LOSERS else LONG_PF[name]):
         legs[name][c][eom] = (ret, int(num(n) or 0))
 
 
@@ -328,16 +338,24 @@ def report_beyond(d):
     return 0
 
 
+def trail(gaps):
+    """(#1410) The market minus the leg, so `grade`'s bar passes a leg that TRAILS."""
+    return {e: -x for e, x in gaps.items()}
+
+
 def report(d, menu=MENU):
     mkt, legs, col = inputs(d)
     if col is None:
         return 1
+    side = trail if LOSERS else (lambda g: g)
+    if LOSERS:
+        print("losers: each idea's other third; gap = market minus that third, so PASS = it trails")
     print(f"{'idea':14s} {'year':4s} {'dir':>3s} {'cluster':14s} |   US: T  mean     t    P  post v     "
           f"|  DEV: T  mean     t    P  post v     | verdict")
     passers = []
     for name, year, di, cl in menu:
-        us = grade(region_gaps(legs[name], mkt, ["USA"], col, False), year)
-        dev = grade(region_gaps(legs[name], mkt, DEV, col, True), year)
+        us = grade(side(region_gaps(legs[name], mkt, ["USA"], col, False)), year)
+        dev = grade(side(region_gaps(legs[name], mkt, DEV, col, True)), year)
         ok = us["v"] == "PASS" and dev["v"] == "PASS"
         if ok:
             passers.append((name, cl))
@@ -366,6 +384,9 @@ def demo():
     assert grade(up, 1994)["v"] == "PASS"
     assert grade(up, 1996)["v"] == "UNGRADEABLE"  # 1997-2000 holds 48 months, under 60
     assert grade({e: -x for e, x in up.items()}, 1994)["v"] == "FAIL"
+    # (#1410) menu 3 is both menus in the order rule; a leg 1 %/month under its market passes as a trailer
+    assert order(MENU3) and len(MENU3) == 56 and {n for n, *_ in MENU3} == set(LONG_PF)
+    assert grade(trail({e: -x for e, x in up.items()}), 1994)["v"] == "PASS" and grade(trail(up), 1994)["v"] == "FAIL"
     # (#1402) the queue is the Value cluster in menu order, without the base; an idea that only copies the base
     # earns no alpha, and one with a steady extra gap passes on it
     menu_value = [n for n, *_, c in MENU if c == "Value"]
@@ -396,6 +417,15 @@ def demo():
         with zipfile.ZipFile(f"{d}/pf/nzl.zip", "w") as z:
             z.writestr("p.csv", "location,name,pf,n,date,ret\nnzl,be_me,3.0,9,2025-01-31,0.9\n")
         mkt, legs, bm = load_2026(d)
+        # (#1410) `--losers` keeps be_me's portfolio 1, the unit check still sees both thirds, NZL (no 1) drops out
+        global LOSERS
+        LOSERS = True
+        try:
+            _, lose, lose_bm = load_2026(d)
+        finally:
+            LOSERS = False
+    assert lose["be_me"]["USA"] == {"2025-01-31": (0.01, 7)} and "NZL" not in lose["be_me"], lose["be_me"]
+    assert lose_bm == bm
     assert mkt[("USA", "2025-01-31")]["me_lag1"] == 2.0 and mkt[("USA", "2025-01-31")]["mkt_vw_cap"] is None
     assert mkt[("USA", "2024-12-31")]["ret_2026"] == 0.011 and ("ZZZ", "2025-01-31") not in mkt
     assert mkt[("NZL", "2025-01-31")]["me_lag1"] is None
@@ -414,6 +444,9 @@ if __name__ == "__main__":
         sys.exit(0)
     if sys.argv[2:] == ["--beyond"]:
         sys.exit(report_beyond(sys.argv[1]))
+    if sys.argv[2:] == ["--losers"]:
+        LOSERS = True
+        sys.exit(report(sys.argv[1], MENU3))
     if sys.argv[2:] not in ([], ["--menu", "2"]):
-        sys.exit("usage: jkp_proof.py <dir> [--menu 2 | --beyond]")
+        sys.exit("usage: jkp_proof.py <dir> [--menu 2 | --beyond | --losers]")
     sys.exit(report(sys.argv[1], MENU2 if sys.argv[2:] else MENU))

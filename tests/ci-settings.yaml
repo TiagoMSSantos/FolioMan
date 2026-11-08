@@ -27302,6 +27302,65 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   newer JKP release (pin 2026-08-04) or a cluster reopens.
 # REVERT RULE: the (#1339) pull rule, plus the (#1402) beyond proof. A newer JKP release re-grades the term, and a
 #   fail on either removes it.
+# (#1410) THE LOSER-THIRD PROOF (MENU 3), PRE-REGISTERED 2026-11-08 before any loser-third return was read.
+#   Row: (#1411).
+# WHY: every paper-route proof so far ((#1339), (#1346), (#1356), (#1402)) graded only each idea's EARNING third. Our
+#   terms also dock the worst third: a name at percentile 0 loses the 3 points the top name gains. Published work
+#   (Stambaugh, Yu and Yuan, "The short of it", 2012) puts much of an anomaly's return in its losing side. So a new
+#   question can be asked of the same pinned data: does each idea's WORST third trail its market, at home and abroad?
+#   The JKP pin has not moved (Last-Modified 2026-08-04). The guard queue is empty, and every own-evidence lane is
+#   closed ((#1333)-(#1338), (#1390)-(#1399)).
+# OWNER CHOICES, 2026-11-08: this proof, all 56 ideas, the exact mirror bar, a dock-only tilt and today's cluster
+#   rule. An earlier working note said "no menu 3 on the same release". The owner overrode it, because menu 3 asks
+#   a NEW question of the release (the losing third), not the old one again.
+# MENU 3, fixed now: the 42 ideas of (#1339) and the 14 of (#1356), 56 in all, merged in (#1339)'s order rule
+#   (publication year, then name). Names, years, directions, clusters and twins are as those receipts list them.
+# PROOF (`tools/jkp_proof.py <dir> --losers`): each idea keeps its OTHER third, the one its paper says trails
+#   (portfolio 1 at JKP direction +1, portfolio 3 at -1). The gap is the market minus that third, so a trailing
+#   third reads as a positive gap and the existing bar applies unchanged. PASS needs, in the US AND developed ex-US,
+#   a full-sample t of 1.96 or more on that gap (the third trails at t -1.96 or below) AND a mean gap above 0 from
+#   1 January of the year after publication. Fewer than 60 such months in a region is UNGRADEABLE, which fails.
+#   Regions, the 5-name floor, the me_lag1 weights, the `ret_2026` market column and unit checks (i)-(iii) are
+#   (#1346)'s, unchanged, and the checks must read as (#1347)'s did.
+# MULTIPLE TESTING, in plain words: this adds 56 more two-region tests on one release, after 56 earning-side tests
+#   on it. With no real effect, a region clears t 1.96 one way about 1 time in 40. The two-region AND is the guard: a
+#   fluke has to show in both. The regions share global shocks, so a joint fluke is likelier than 1 in 1600, but
+#   still well under one expected false pass across the 56.
+# TILT ON A SHIP, fixed now and never tuned: {factor: <twin>, weight: 0.09, cap: 33.3, neutral: 50}. The twin is the
+#   idea's same-date percentile, turned as (#1339)'s twins are, so JKP's earning side reads high. picks.rs already
+#   adds weight times the value clamped to 0..cap. So the worst third scores 0 to 3 points by percentile, and every
+#   name above it, plus a name with no value (it reads 50), gets the full 3. Example: a name at percentile 10 earns
+#   0.9 points, one at 20 earns 1.8, and one at 34 or above earns 3. Only the trailing third moves against the rest.
+# CLUSTER RULE, (#1339)'s and (#1402)'s, unchanged:
+#   - An open cluster (Low Risk, Size, Accruals, Profit Growth, Low Leverage, Debt Issuance, Seasonality) sends its
+#     first loser passer in menu order to the guard, and ships at most one.
+#   - Momentum (ret_6_1) and Investment (capx_gr3) hold one ship each. A loser passer there may take the second seat
+#     only if its trailing third trails BEYOND the shipped idea's trailing third. That is (#1402)'s regression run
+#     on the market-minus-trailer gaps, with the shipped idea's gap as the regressor; its intercept t and its post
+#     mean must clear the same two-part bar in both regions. Its code is written only when such a passer exists,
+#     and CI grades it through the tool selftest before its one run.
+#   - Value holds two ships (ey_pct, fcf_pct) and is closed: its loser passers are record only.
+#   - A shipped idea (ni_me, ret_6_1, capx_gr3, fcf_me) passing again is record only: its twin already docks its
+#     worst third.
+#   - A menu-2 passer whose twin needs a line we do not carry gets the (#1356) owner question first.
+#   - Profitability and quality stay refused; they are not on the menu.
+# HARM GUARD, for each candidate in order, under its own pre-registration: (#1339)'s probe and clauses, unchanged
+#   but for the term above. Rescore "guard holdout", plus `sec` for a twin built from SEC facts; a price twin grades
+#   the full span. Coverage under 50 % of scored stocks is UNGRADEABLE. Then `reveal` reads the sealed 2016-on 8y
+#   samples, which were read four times before (ni_me, ret_6_1, capx_gr3, fcf_me). That read would be the fifth,
+#   and its receipt says so. A ship waits for the owner's word, since the page moves.
+# DATA: the 25 files (#1346) pinned; their md5s are re-checked before the run.
+# RUN: `python3 -I -B tools/jkp_proof.py <dir> --losers`, once, after CI is green on the commit that carries this
+#   text, and before any twin is written. CI grades the flag through its --selftest in the "Tool selftests" step.
+# EXPECTED, written after the earning-side rows were read: the three thirds roughly average to the market, so those
+#   rows hint at the loser side, and this call is informed, not blind. 2 to 8 of the 56 pass. The US-only shape of
+#   menus 1 and 2 repeats: high-accrual and fast-growing thirds (oaccruals_at, cowc_gr1a, at_gr1, noa_gr1a) trail in
+#   the US and not abroad, so most rows fail developed ex-US. Momentum losers (ret_12_1, ret_9_1, ret_3_1) are the
+#   likeliest two-region passers, which routes them to the beyond step. market_equity's big third IS most of a
+#   value-weighted market, so it fails. 0 to 2 ship candidates reach a guard.
+# REVERT RULE: the proof is record only. Each candidate goes through its own guard receipt under the (#1339) rules,
+#   and a ship carries its off switch (drop its term) and the (#1339) pull rule, which also pulls it when a newer
+#   JKP release fails this loser proof.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
