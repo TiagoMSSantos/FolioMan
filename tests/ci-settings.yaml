@@ -27419,6 +27419,61 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   gets its own pre-registration and twin, and one guard probe with the term {<twin>: 0.09, cap 33.3, neutral 50}
 #   (plus `sec` for an SEC twin). A pass then reads the sealed holdout: its 5th read, and one more per later
 #   reveal. A ship waits for the owner's word.
+# (#1412) VERDICT, 2026-11-08, on (#1411)'s step (1): 1 of the 3 passes beyond its base: noa_gr1a beyond capx_gr3.
+#   ret_12_1 and ret_9_1 fail beyond ret_6_1 in developed ex-US, so Momentum gets no second seat from menu 3, and
+#   both are record only. One run, 19 s, on the 25 pinned files, whose md5s were re-checked first (25 of 25
+#   matched). CI graded --losers --beyond on 34e1f31 ("tool selftests: 10 passed", run 42499204486).
+# UNIT CHECKS read as (#1347)'s did: (i) 9337 country-months, 0.0082 to the USD market against 0.0285 to the local
+#   one; (ii) 890 months, slope -0.96, so EXCESS; (iii) 11406 country-months, 0.0010 against 0.0265, so USD EXCESS.
+#   Market column ret_2026. Gaps are the market minus the trailing third, so a positive alpha means the idea's
+#   worst third trails by more than its base's worst third predicts.
+# EACH ROW, as US slope on the base, months both carry, alpha %/yr, alpha t, post months and post mean %/yr, then
+#   the same developed ex-US:
+#   ret_12_1 on ret_6_1: +0.88 1188 +2.1 3.90 384 +0.5 PASS, +0.85 523 +1.2 1.75 384 +1.3 FAIL -> fail.
+#   ret_9_1 on ret_6_1: +0.89 1191 +1.2 2.58 384 +0.9 PASS, +0.94 524 +0.5 0.86 384 +0.6 FAIL -> fail.
+#   noa_gr1a on capx_gr3: +0.97 866 +2.0 5.50 252 +0.9 PASS, +0.56 485 +2.4 3.68 252 +1.8 PASS -> PASS.
+# AGAINST EXPECTED: noa_gr1a passed, as called, but not for the reason given. Its US loser gap loads heavily on
+#   capx_gr3's (slope 0.97), not little, and its alpha survives that load (t 5.50). Abroad it loads 0.56. ret_12_1
+#   passed the US, as called, and its coin flip abroad landed on FAIL (t 1.75). ret_9_1 failed developed ex-US
+#   (t 0.86), as called.
+# NEXT: the guard queue, in menu order: noa_gr1a (2004), then nfna_gr1a (2005), dbnetis_at (2006) and ocf_at_chg1
+#   (2019), each under its own pre-registration and twin. noa_gr1a's is (#1413), below.
+# (#1413) NOA_GR1A HARM GUARD, PRE-REGISTERED 2026-11-08 before this run. Row: (#1414).
+# WHY: (#1411) found noa_gr1a's worst third (the fastest NOA growers) trailing its market in the US (t 4.59, post
+#   +1.3 %/yr) and in developed ex-US (t 3.25, post +2.0), and (#1412) found it trailing beyond capx_gr3's worst
+#   third in both regions. It heads the menu-3 guard queue. The proof stays JKP's; our backtest only has to show no
+#   visible harm.
+# TWIN: `noa_gr1a`, net operating assets now minus a fiscal year back, over that year's total assets, in %
+#   (Hirshleifer, Hou, Teoh and Zhang 2004; JKP's noa_gr1a). NOA is net debt plus book, book being net margin times
+#   revenue over ROE: the level the `noa` term already reads. The year back is the as-of rows' `back(1)` by period
+#   end, as capx_gr3's twin finds its years. No financial filter applies, as JKP keeps every firm. shortcut: JKP's
+#   NOA also counts minority interest and preferred stock, which our rows do not carry. A missing leg, ROE 0 or
+#   assets 0 reads None, never 0. stamp_cohort_ranks ranks it as a ninth column, alone, into `noa_pct` = 100 minus
+#   its percentile (0-100, high = SLOW NOA growth, JKP's earning side) over the date's names that carry one. Only
+#   as-of SEC rows yield one, and live reads None until a ship stamps it.
+# TERM: {factor: noa_pct, weight: 0.09, cap: 33.3, neutral: 50}, the (#1410) dock-only shape, added after the six
+#   shipped terms (roic, margin_trend, ey_pct, mom61_pct, capx_pct, fcf_pct), which stay unchanged. The worst third
+#   by NOA growth scores 0 to 3 points by percentile; every other name, and a name with no value, gets the full 3.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), so
+#   cutoffs before 2011-01-01 drop. Grid: [{}, {growth_fund_extra: the shipped terms, then the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y under the (#1339) clauses: top-10 and pond gains not under their edges,
+#   pool at least 80 %, noa_pct read on at least 50 % of scored stocks (else UNGRADEABLE) and at least one top-10
+#   name moved (else INERT). Only then a second probe, rescore="guard holdout reveal sec", reads the sealed 2016-on
+#   8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were read four times
+#   before (ni_me, probe 42286340556; ret_6_1, probe 42357657397; capx_gr3, probe 42361540115; fcf_me, probe
+#   42479970202). So this fifth read is not blind, and an Investment twin's read leans on capx_gr3's; the receipt
+#   says so. Both = SHIP per (#1339) and (#1410), after one owner question, because the page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = noa_gr1a REFUSED, record only. The turn then
+#   passes to nfna_gr1a, under its own pre-registration.
+# OVERLAP, flagged before the run: the US loser gap loads 0.97 on capx_gr3's (0.56 abroad), so noa_pct docks many
+#   of the names capx_pct already docks; the INERT and edge clauses see only what it adds to the book with
+#   capx_pct in. It also moves with new borrowing, as nfna_gr1a and dbnetis_at do ((#1411)'s overlap note).
+# EXPECTED: two fiscal years of net debt, margin, revenue, ROE and assets reach fewer names than one year of FCF, so
+#   coverage is 75-85 % of scored stocks, between capx_pct's (70.7 % and 74.7 %) and fcf_pct's (80.9 % and 82.5 %).
+#   The dock touches only the worst third, at three times the weight, so the top-10 moves about as much as it did
+#   for capx_pct (0.50 and 0.60). Four of the route's five earlier guards passed (rd_me was ungradeable), but this
+#   is the first dock-only tilt, so PASS about 3 in 5.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to

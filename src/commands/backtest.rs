@@ -7213,13 +7213,15 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// the slowest capex grower reads 100: the route's twin of JKP's capx_gr3, buy side low.
 /// (#1404) `fcf_yield` ranks the same way as an eighth column, alone, into `fcf_pct` (high = FCF-rich): the
 /// route's twin of JKP's fcf_me. Its sign is kept, so a cash burner ranks at the bottom instead of dropping out.
+/// (#1413) `noa_gr1a` ranks the same way as a ninth column, alone, into `noa_pct` = 100 − its percentile, so the
+/// slowest NOA grower reads 100: the route's twin of JKP's noa_gr1a, buy side low.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
 /// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
 /// `underdep` is demeaned the same way, for Peddireddy's industry benchmark.
 /// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
 fn stamp_cohort_ranks(samples: &mut [Sample]) {
-    let legs: [fn(&core::FundFactors) -> Option<f64>; 8] = [
+    let legs: [fn(&core::FundFactors) -> Option<f64>; 9] = [
         |f| f.earnings_yield,
         |f| f.ebitda_yield,
         |f| f.fcf_ev_yield,
@@ -7228,6 +7230,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
         |f| f.rnd_yield,
         |f| f.capx_gr3,
         |f| f.fcf_yield,
+        |f| f.noa_gr1a,
     ];
     let rank = |col: &[f64], v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
     for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
@@ -7253,6 +7256,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             f.rnd_pct = ranked[5];
             f.capx_pct = ranked[6].map(|p| 100.0 - p);
             f.fcf_pct = ranked[7];
+            f.noa_pct = ranked[8].map(|p| 100.0 - p);
         }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
@@ -11762,6 +11766,24 @@ mod tests {
         stamp_cohort_ranks(&mut v);
         let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.fcf_pct)).collect();
         assert_eq!(got, [Some(100.0), Some(0.0), None]);
+    }
+
+    /// (#1413) `noa_pct` is 100 minus noa_gr1a's same-date percentile: P's NOA up 40 % of assets reads 0, Q's down 5 %
+    /// reads 100, and R with no noa_gr1a reads None.
+    #[test]
+    fn stamp_cohort_ranks_ranks_noa_growth_low_first() {
+        let row = |t: &str, g: Option<f64>| Sample {
+            date: ymd(2012, 1, 1),
+            realized: 0.0,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: Some(crate::core::FundFactors { noa_gr1a: g, ..Default::default() }),
+            trail: Vec::new(),
+        };
+        let mut v = vec![row("P", Some(40.0)), row("Q", Some(-5.0)), row("R", None)];
+        stamp_cohort_ranks(&mut v);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.noa_pct)).collect();
+        assert_eq!(got, [Some(0.0), Some(100.0), None]);
     }
 
     /// (#1408) rescore refuses the one-endpoint knob only when it is on and no sample carries a ratio.

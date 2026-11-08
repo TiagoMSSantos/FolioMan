@@ -4367,6 +4367,12 @@ pub struct FundFactors {
     // same-date percentile, 0-100, high = FCF-rich. The backtest fills both; (#1406) live too, `stamp_fcf_pct`
     pub fcf_yield: Option<f64>,
     pub fcf_pct: Option<f64>,
+    // (#1413) the paper route's noa_gr1a twin. `noa_gr1a`: net operating assets (net debt plus book, the level
+    // `noa` reads) now minus a fiscal year back, over that year's total assets, %, off the as-of rows; no financial
+    // filter, as JKP keeps every firm. `noa_pct`: its same-date percentile, 0-100, HIGH = SLOW NOA growth (the
+    // paper's buy side). `fund_factors` fills `noa_gr1a` live and in the backtest; only the backtest stamps `noa_pct`
+    pub noa_gr1a: Option<f64>,
+    pub noa_pct: Option<f64>,
     // (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal
     // and Ruenzi 2014 measure the CEO's stake; this is the wider directors-and-officers cut SEC's insider
     // data sets carry. Only the backtest fills it, under `insider`, from tests/insider_own.csv. PROBE-ONLY
@@ -5094,6 +5100,14 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         capx_pct: None,
         fcf_yield: None, // (#1404) needs the as-of price, set in the backtest loop and in enrich_fund_factor
         fcf_pct: None,
+        // (#1413) Hirshleifer-Hou-Teoh-Zhang 2004, the JKP `noa_gr1a` row: NOA (net debt plus book, as `noa` builds
+        // it) now minus a fiscal year back, over that year's assets, %. shortcut: JKP's NOA also counts minority
+        // interest and preferred stock, which the rows do not carry. ROE 0 or assets 0 reads inf/NaN and drops out
+        noa_gr1a: {
+            let level = |r: &FundRow| Some(r.net_debt? + r.net_margin? * r.revenue? / r.roe?);
+            yr_ago.and_then(|old| Some((level(now?)? - level(old)?) / old.assets? * 100.0)).filter(|v| v.is_finite())
+        },
+        noa_pct: None,
         insider_own_pct: None, // (#1301) set in the backtest loop, from the insider holdings table
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
@@ -5902,6 +5916,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "capex_abn" => f.capex_abn,                       // (#1290) capex over revenue against its 3y mean, %: measured, unweighted
         "capx_pct" => f.capx_pct,                         // (#1353) same-date capx_gr3 percentile, high = LOW capex growth
         "fcf_pct" => f.fcf_pct,                           // (#1404) same-date fcf_yield percentile, high = FCF-rich
+        "noa_pct" => f.noa_pct,                           // (#1413) same-date noa_gr1a percentile, high = SLOW NOA growth
         "insider_own_pct" => f.insider_own_pct,           // (#1301) insiders' holding, % of shares: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
@@ -5918,7 +5933,7 @@ pub(crate) const FUND_FACTOR_NAMES: &[&str] = &[
     "value_composite", "book_yield", "small_pct", "ey_pct", "mom61_pct", "rnd_pct", "rnd_yield", "payout_yield", "rnd_growth",
     "lynch_yield", "sgr_yield", "exp_neg", "op_rd", "discipline", "fair_yield", "oe_fair_yield", "fcf_cap_yield", "low_turnover",
     "low_dro", "capex_light", "share_iss_5y", "netdebt_assets", "eps_streak", "underdep", "cgo", "ocf_at_chg", "capex_abn",
-    "capx_pct", "fcf_pct", "insider_own_pct", "composite",
+    "capx_pct", "fcf_pct", "noa_pct", "insider_own_pct", "composite",
 ];
 
 /// (#1359) Refuse a fund factor name the router does not know. `select_fund_factor` reads one as None, so a
@@ -7059,7 +7074,7 @@ mod tests {
         let mut listed = FUND_FACTOR_NAMES.to_vec();
         arms.sort_unstable();
         listed.sort_unstable();
-        assert_eq!(arms.len(), 66, "{arms:?}");
+        assert_eq!(arms.len(), 67, "{arms:?}");
         assert_eq!(arms, listed);
         assert!(fund_factor_known("roic").is_ok());
         assert!(fund_factor_known("composite").is_ok());
@@ -7155,6 +7170,8 @@ mod tests {
             capx_pct: Some(83.0),
             fcf_yield: Some(84.0),
             fcf_pct: Some(85.0),
+            noa_gr1a: Some(88.0),
+            noa_pct: Some(89.0),
             insider_own_pct: Some(61.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
@@ -7229,6 +7246,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "capex_abn"), Some(60.0)); // (#1290)
         assert_eq!(select_fund_factor(&f, "capx_pct"), Some(83.0)); // (#1353)
         assert_eq!(select_fund_factor(&f, "fcf_pct"), Some(85.0)); // (#1404)
+        assert_eq!(select_fund_factor(&f, "noa_pct"), Some(89.0)); // (#1413)
         assert_eq!(select_fund_factor(&f, "insider_own_pct"), Some(61.0)); // (#1301)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
@@ -8243,6 +8261,34 @@ mod tests {
         assert_eq!(g(&[r(2020, 100.0, 15.0, None), rows[1].clone()]), None, "the old year misses FCF");
         assert_eq!(g(&rows[1..]), None, "no row 3 fiscal years back");
         assert_eq!(g(&[r(2020, 100.0, 10.0, Some(10.0)), rows[1].clone()]), None, "a zero old capex is no ratio");
+    }
+
+    /// (#1413) `noa_gr1a` is NOA now minus a fiscal year back, over that year's assets: 30 of net debt plus 200 of
+    /// book (a 10 % margin on 200 of revenue at a 10 % ROE) is 230 in 2023, 20 plus 100 is 120 in 2022, and 110 over
+    /// 2022's 220 of assets is +50 %. A bank keeps its value (JKP filters none); no row a fiscal year back, a missing
+    /// leg or ROE 0 is None, never 0.
+    #[test]
+    fn noa_growth_reads_a_fiscal_year_back_over_lagged_assets() {
+        let r = |y: i32, nd: f64, rev: f64, roe: Option<f64>, assets: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            net_debt: Some(nd),
+            net_margin: Some(10.0),
+            revenue: Some(rev),
+            roe,
+            assets: Some(assets),
+            ..Default::default()
+        };
+        let g = |rows: &[FundRow]| fund_factors(rows, NaiveDate::from_ymd_opt(2024, 6, 1).unwrap(), 5).noa_gr1a;
+        let rows = [r(2022, 20.0, 100.0, Some(10.0), 220.0), r(2023, 30.0, 200.0, Some(10.0), 900.0)];
+        assert!((g(&rows).unwrap() - 50.0).abs() < 1e-9);
+        let bank: Vec<FundRow> = rows.iter().map(|x| FundRow { financial: true, ..x.clone() }).collect();
+        assert!((g(&bank).unwrap() - 50.0).abs() < 1e-9, "JKP keeps every firm");
+        let shrank = [rows[0].clone(), r(2023, -40.0, 200.0, Some(10.0), 900.0)];
+        assert!((g(&shrank).unwrap() - 40.0 / 220.0 * 100.0).abs() < 1e-9, "net cash counts against NOA");
+        assert_eq!(g(&rows[1..]), None, "no row a fiscal year back");
+        assert_eq!(g(&[r(2022, 20.0, 100.0, None, 220.0), rows[1].clone()]), None, "the old year misses ROE");
+        assert_eq!(g(&[r(2022, 20.0, 100.0, Some(0.0), 220.0), rows[1].clone()]), None, "ROE 0 is no book");
     }
 
     /// (#405) `gp_assets` is gross profit over total assets on the as-of row: a 40% margin on 100 of
