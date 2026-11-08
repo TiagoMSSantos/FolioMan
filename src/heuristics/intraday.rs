@@ -36,6 +36,10 @@
 //! day's rate; the key, RIGHT/FAIL and GAIN/LOSS fold into the key column's hover, one EARLY EXIT column
 //! holds the row's own market's exit hour, and the BUY NOW stocks get a table of their own. The journal
 //! keeps each row's BEST, and `track` grades it month by month against buying and holding the same name.
+//! (#1423) LEGS and GAP, record only: every liquid pond session split at the open into its night leg (the
+//! prior close to the open) and its day leg (the open to the close), equal weight by session, and the day
+//! leg by quintile of the session's own overnight gap. The question they answer is the one every key above
+//! begged: is there a same-session return to rank at all, or does the premium sit in the leg no key trades.
 
 use crate::config::session;
 use crate::core;
@@ -334,6 +338,95 @@ pub fn report(market: &str, k: u8, days: &[Day], cost_bps: f64) -> String {
         h.h2 * 100.0,
         if passes(&h, 0.0) { "PASS" } else { "FAIL" }
     )
+}
+
+/// (#1423) One session of the LEGS census: the equal-weight pond means of the night leg, the day leg, and the
+/// day leg by quintile of the night leg (Q1 = the deepest gap down, Q5 = the biggest gap up), plus the count.
+pub struct Legs {
+    pub date: NaiveDate,
+    pub n: usize,
+    pub night: f64,
+    pub day: f64,
+    pub quintiles: [f64; 5],
+}
+
+/// (#1423) Every completed session before `today` with at least `BOOK` liquid members that print both legs,
+/// in date order. Night = ln(open / prior close), day = ln(close / open), both log returns so the two legs add
+/// up to the close-to-close move. A session needs the prior bar (`i >= 1`) and finite, positive prints on
+/// all three; a name outside its member spans or under the turnover floor is skipped, as in [`sessions`].
+/// Quintiles split the session's names sorted by night leg then ticker (a stable order), `len / 5` names
+/// each with the remainder falling to the last quintile.
+pub fn legs(pond: &[Member], today: NaiveDate) -> Vec<Legs> {
+    let mut by: BTreeMap<NaiveDate, Vec<(&str, f64, f64)>> = BTreeMap::new();
+    for &(tk, c, fx, spans) in pond {
+        for i in 1..completed(c, today) {
+            if spans.is_some_and(|s| !core::sp500_member_at(s, c.dates[i])) || !liquid(c, i, fx) {
+                continue;
+            }
+            if let (Some(night), Some(day)) = (ln(c.opens[i], c.closes[i - 1]), ln(c.closes[i], c.opens[i])) {
+                by.entry(c.dates[i]).or_default().push((tk, night, day));
+            }
+        }
+    }
+    by.into_iter()
+        .filter(|(_, v)| v.len() >= BOOK)
+        .map(|(date, mut v)| {
+            v.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+            let n = v.len();
+            let night = mean(&v.iter().map(|x| x.1).collect::<Vec<_>>());
+            let day = mean(&v.iter().map(|x| x.2).collect::<Vec<_>>());
+            let mut quintiles = [0.0; 5];
+            for (q, slot) in quintiles.iter_mut().enumerate() {
+                let (a, b) = (q * n / 5, if q == 4 { n } else { (q + 1) * n / 5 });
+                *slot = mean(&v[a..b].iter().map(|x| x.2).collect::<Vec<_>>());
+            }
+            Legs { date, n, night, day, quintiles }
+        })
+        .collect()
+}
+
+/// (#1423) The LEGS census as two lines per market. Line one: the pond's night and day legs in basis points a
+/// session with t and halves, their gap, the close-to-open hold net of one round trip a session, and the
+/// round trip that would break it even. Line two: the day leg by quintile of the session's own overnight
+/// gap, Q1 minus Q5, and the Q1 book (buy the deepest gap-downs at the open, sell at the close) net of cost
+/// against the (#809) bar read on the gross: a key is worth building only if that gross clears t >= 3.
+pub fn legs_report(market: &str, days: &[Legs], cost_bps: f64) -> String {
+    let Some(first) = days.first() else {
+        return format!("  {market} LEGS            no session with {BOOK}+ liquid names printing both legs");
+    };
+    let last = &days[days.len() - 1];
+    let col = |f: &dyn Fn(&Legs) -> f64| days.iter().map(|l| f(l)).collect::<Vec<f64>>();
+    let fmt = |s: &Stats| format!("{:+.2} bp/d (t {:+.2}; halves {:+.2}|{:+.2})", s.mean * 1e4, s.t, s.h1 * 1e4, s.h2 * 1e4);
+    let (Some(night), Some(day), Some(gap)) = (stats(&col(&|l: &Legs| l.night)), stats(&col(&|l: &Legs| l.day)), stats(&col(&|l: &Legs| l.night - l.day))) else {
+        return format!("  {market} LEGS            {} session(s), too few for a t", days.len());
+    };
+    let mut ns: Vec<usize> = days.iter().map(|l| l.n).collect();
+    ns.sort_unstable();
+    let mut out = format!(
+        "  {market} LEGS            {} sessions {}..{} median {} names  night {}  day {}  night-day {}  close-to-open hold net of {cost_bps:.0} bp {:+.1} bp/d, break-even round trip {:.1} bp",
+        night.n,
+        first.date,
+        last.date,
+        ns[ns.len() / 2],
+        fmt(&night),
+        fmt(&day),
+        fmt(&gap),
+        night.mean * 1e4 - cost_bps,
+        night.mean * 1e4
+    );
+    let qs: Vec<Option<Stats>> = (0..5).map(|q| stats(&col(&|l: &Legs| l.quintiles[q]))).collect();
+    if let Some(q1) = &qs[0] {
+        let spread = stats(&col(&|l: &Legs| l.quintiles[0] - l.quintiles[4]));
+        let cells: Vec<String> = qs.iter().enumerate().map(|(i, q)| q.as_ref().map_or(format!("Q{} n/a", i + 1), |s| format!("Q{} {:+.1} (t {:+.1})", i + 1, s.mean * 1e4, s.t))).collect();
+        let net = q1.mean * 1e4 - cost_bps;
+        let verdict = if q1.t >= 3.0 && q1.mean > 0.0 && net > 0.0 && q1.h1 > 0.0 && q1.h2 > 0.0 { "PASS" } else { "FAIL" };
+        out.push_str(&format!(
+            "\n  {market} GAP quintiles   day leg by the session's own overnight gap, Q1 = deepest gap down: {}  Q1-Q5 {}  Q1 book net of {cost_bps:.0} bp {net:+.1} bp/d -> {verdict}",
+            cells.join("  "),
+            spread.as_ref().map_or("n/a".to_string(), |s| format!("{:+.1} (t {:+.1}; halves {:+.1}|{:+.1})", s.mean * 1e4, s.t, s.h1 * 1e4, s.h2 * 1e4)),
+        ));
+    }
+    out
 }
 
 /// (#811) Today's book on key `k`: the members in the index today that clear the floor, ranked on the
@@ -1279,6 +1372,52 @@ mod tests {
         let mut v = [("B", 1.0, ()), ("A", 1.0, ()), ("C", 2.0, ()), ("D", -1.0, ())];
         by_key(&mut v);
         assert_eq!(v.iter().map(|x| x.0).collect::<Vec<_>>(), ["C", "A", "B", "D"]);
+    }
+
+    /// (#1423) Twelve names, 32 bars. Every name opens each session `n` tenths of a percent above the prior
+    /// close (its night leg, n = 0..11) and closes 1 % under its open (the day leg, the same for all), so the
+    /// session's night mean is the mean of 0..11 tenths, the day mean is ln(0.99), the quintiles all read
+    /// ln(0.99), and Q1 holds the smallest gaps. Bar 30 is the first past the turnover window; bar 31, dated
+    /// today, is not completed; the first bar has no prior close. A name under the floor drops out, and nine
+    /// names are no session.
+    #[test]
+    fn the_legs_census_splits_each_session_at_the_open() {
+        let names: Vec<String> = (0..12).map(|n| format!("N{n:02}")).collect();
+        let charts: Vec<Chart> = (0..12)
+            .map(|n| {
+                let gap = 1.0 + n as f64 / 1000.0;
+                let (mut o, mut c) = (vec![0.0; 32], vec![0.0; 32]);
+                (o[0], c[0]) = (100.0, 100.0);
+                for i in 1..32 {
+                    o[i] = c[i - 1] * gap;
+                    c[i] = o[i] * 0.99;
+                }
+                chart(&o, &c, 1e5)
+            })
+            .collect();
+        let pond: Vec<Member> = names.iter().zip(&charts).map(|(t, c)| (t.as_str(), c, 1.0, None)).collect();
+        let days = legs(&pond, d(32));
+        assert_eq!(days.iter().map(|l| l.date).collect::<Vec<_>>(), [d(30), d(31)], "bars 30 and 31 are completed and past the floor");
+        let day = &days[0];
+        assert_eq!(day.n, 12);
+        let night = (0..12).map(|n| (1.0 + n as f64 / 1000.0_f64).ln()).sum::<f64>() / 12.0;
+        assert!((day.night - night).abs() < 1e-12, "{} vs {night}", day.night);
+        assert!((day.day - 0.99_f64.ln()).abs() < 1e-12);
+        assert!(day.quintiles.iter().all(|q| (q - 0.99_f64.ln()).abs() < 1e-12), "{:?}", day.quintiles);
+        assert!(legs(&pond, d(31)).len() == 1, "bar 31 dated today is not completed");
+        let thin = chart(&vec![100.0; 32], &vec![100.0; 32], 1.0);
+        let mut pond = pond.clone();
+        pond[11].1 = &thin;
+        assert_eq!(legs(&pond, d(32))[0].n, 11);
+        pond[10].1 = &thin;
+        pond[9].1 = &thin;
+        assert!(legs(&pond, d(32)).is_empty(), "nine names is no session");
+        // the report reads the pooled numbers back in basis points and names the break-even round trip
+        let line = legs_report("XX", &days, 20.0);
+        assert!(line.contains("XX LEGS") && line.contains("2 sessions") && line.contains("XX GAP quintiles"), "{line}");
+        assert!(line.contains(&format!("break-even round trip {:.1} bp", night * 1e4)), "{line}");
+        assert!(line.contains("-> FAIL"), "a 1 % daily loss is no PASS: {line}");
+        assert!(legs_report("XX", &[], 20.0).contains("no session"));
     }
 
     /// Name `n` of 12 gains `g` = 1 + n/1000 every session (its K3), and on the graded session

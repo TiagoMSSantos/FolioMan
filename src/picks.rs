@@ -1432,6 +1432,10 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     if quote.age_years.is_some_and(|a| a < min_age_years(quote, tuning)) { // a 0 bar never fires: ages are not negative
         return None; // too young -> no multi-year record to trust as a proven compounder
     }
+    // (#1425) maximum listing age, the floor's twin, mirrored in gate_failures as "old". 0 = off. See the knob.
+    if tuning.growth_max_age_years > 0.0 && quote.age_years.is_some_and(|a| a > tuning.growth_max_age_years) {
+        return None;
+    }
     // (AUM) ETF minimum fund size (EUR-approximate, from the BF etp_search payload). A sub-scale
     // fund is the one instrument a 20y hold can lose WITHOUT the strategy failing: issuers liquidate/
     // merge small funds, forcing a taxable exit mid-hold. ETF-only (companies aren't funds; crypto has
@@ -2720,7 +2724,7 @@ pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) ->
 /// MISSES helps: their cells in the lanes, CORE and exposure carry no per-cell hover.
 macro_rules! rule_key {
     () => {
-        "cagr = grew too slowly per year; cagr-life = grew too slowly over its whole life; lifetime = lost money over its whole life; 1Y+ = too weak over the last year; 5Y+ = too weak over 5 years; 8Y+ = too weak over 8 years; 20Y+ = too weak over 20 years; peg = price too high for its growth; range = price too low in its 10-year range; range8y = price too low in its 8-year range; stretch = ran too far above its 4-year trend; history = too little price history; young = listed too few years; liquidity = trades too little each day; aum = fund too small, could close; volatile = swings too much day to day; spike = jumped too much in one day; maxdd = once fell too far from a peak"
+        "cagr = grew too slowly per year; cagr-life = grew too slowly over its whole life; lifetime = lost money over its whole life; 1Y+ = too weak over the last year; 5Y+ = too weak over 5 years; 8Y+ = too weak over 8 years; 20Y+ = too weak over 20 years; peg = price too high for its growth; range = price too low in its 10-year range; range8y = price too low in its 8-year range; stretch = ran too far above its 4-year trend; history = too little price history; young = listed too few years; liquidity = trades too little each day; aum = fund too small, could close; volatile = swings too much day to day; spike = jumped too much in one day; maxdd = once fell too far from a peak; old = listed too many years for this rule"
     };
 }
 
@@ -2729,6 +2733,7 @@ macro_rules! rule_key {
 pub(crate) fn plain_gate(g: &str) -> &'static str {
     match g {
         "young" => "listed too few years",
+        "old" => "listed too many years for this rule", // (#1425)
         "history" => "too little price history",
         "aum" => "fund too small, could close",
         "range" => "price too low in its 10-year range",
@@ -2879,6 +2884,10 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     let mut fails: Vec<(&'static str, String, bool)> = Vec::new();
     if too_young {
         fails.push(young_fail(quote.age_years.unwrap())); // has the CAGR leg but still under the age floor
+    }
+    // (#1425) the age cap, the floor's twin: close = within five years of the cap
+    if let Some(a) = quote.age_years.filter(|a| tuning.growth_max_age_years > 0.0 && *a > tuning.growth_max_age_years) {
+        fails.push(("old", format!("{a:.0}y listed (cap {:.0}y)", tuning.growth_max_age_years), a <= tuning.growth_max_age_years + 5.0));
     }
     // (AUM) ETF fund-size gate, same scoping as score_parts: None AUM never fails. Close = within
     // half the floor (a €60M fund vs a €100M line is a "watch it grow" case, €5M is a hard reject).
@@ -3051,6 +3060,7 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
             (t.growth_min_age_years, t.growth_min_leg_years) = (0.0, t.growth_min_leg_years.min(1.0));
             t.growth_min_age_years_crypto = 0.0; // (#1300)
         }
+        "old" => t.growth_max_age_years = 0.0, // (#1425)
         "aum" => t.growth_min_aum_etf = 0.0,
         "range" => (t.growth_min_range_pct, t.growth_min_range_pct_crypto) = (OFF, OFF),
         "range8y" => (t.growth_min_range_pct_8y, t.growth_min_range_pct_8y_crypto) = (0.0, 0.0),
@@ -3079,7 +3089,7 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
 pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
     let mut t = tuning.clone();
     for tag in [
-        "young", "aum", "range", "range8y", "cagr", "1Y+", "1M-knife", "5Y+", "8Y+", "20Y+", "liquidity", "stretch",
+        "young", "old", "aum", "range", "range8y", "cagr", "1Y+", "1M-knife", "5Y+", "8Y+", "20Y+", "liquidity", "stretch",
         "lifetime", "volatile", "spike", "mvrv", "peg", "maxdd",
     ] {
         waive_gate(&mut t, tag);
@@ -9923,6 +9933,20 @@ mod tests {
     assert!(gate_failures(&young, &age_t).unwrap().iter().any(|(g, _, _)| *g == "young")); // ...with an explicit reason
     assert!(growth_score(&aged(Some(9.0)), &age_t).is_some()); // old enough -> scored
     assert!(growth_score(&aged(None), &age_t).is_some()); // unknown age -> can't judge -> pass (backtest quotes)
+    // --- (#1425) the age CAP, the floor's twin: off at 0, refuses above it with an "old" reason, waived by its tag ---
+    let cap_t = BuyHeuristic { growth_max_age_years: 40.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&aged(Some(60.0)), &tuning).is_some(), "cap OFF (default 0) -> a 60-year listing still scores");
+    let old = aged(Some(60.0));
+    assert!(growth_score(&old, &cap_t).is_none(), "cap ON -> over it -> excluded");
+    let old_fails = gate_failures(&old, &cap_t).unwrap();
+    assert!(old_fails.iter().any(|(g, why, close)| *g == "old" && why.contains("60y listed (cap 40y)") && !close), "{old_fails:?}");
+    assert!(gate_failures(&aged(Some(43.0)), &cap_t).unwrap().iter().any(|(g, _, close)| *g == "old" && *close), "within five years of the cap is a near miss");
+    assert!(growth_score(&aged(Some(40.0)), &cap_t).is_some(), "at the cap is in: the rule is strictly above");
+    assert!(growth_score(&aged(None), &cap_t).is_some(), "unknown age -> can't judge -> pass");
+    let mut waived = cap_t.clone();
+    waive_gate(&mut waived, "old");
+    assert!(growth_score(&old, &waived).is_some() && gates_off(&cap_t).growth_max_age_years == 0.0, "the tag waives the cap, and gates_off lists it");
+    assert_eq!(plain_gate("old"), "listed too many years for this rule");
     // young name WITHOUT a CAGR leg: the silent long_leg_fixed None becomes an explicit reason.
     let mut young_noleg = quote(5.0, &[("1Y", 10.0)]);
     young_noleg.age_years = Some(2.0);
@@ -12831,7 +12855,7 @@ mod tests {
     /// never holds ": " or " (", which split a MISSES hover line into its tag.
     #[test]
     fn plain_gate_names_every_rule_in_its_own_words() {
-        let tags = ["young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
+        let tags = ["young", "old", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
         let labels: std::collections::BTreeSet<&str> = tags.iter().map(|g| plain_gate(g)).collect();
         assert_eq!(labels.len(), tags.len(), "one label per rule");
         assert!(!labels.contains("a buy rule"), "no rule falls through");

@@ -4054,6 +4054,8 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         for k in 1..=intraday::KEYS.len() as u8 {
             println!("{}", intraday::report(market, k, &intraday::walk(k, &pond, today), cost));
         }
+        // (#1423) the two legs of every pond session and the day leg by overnight-gap quintile, record only
+        println!("{}", intraday::legs_report(market, &intraday::legs(&pond, today), cost));
         // today's members, each ranked every day: US*, and (#1215) the pond the holds census's book is ranked on
         let now: Vec<intraday::Member> = pond
             .iter()
@@ -4065,6 +4067,7 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
             for k in 1..=intraday::KEYS.len() as u8 {
                 println!("{}", intraday::report("US*", k, &intraday::walk(k, &now, today), cost));
             }
+            println!("{}", intraday::legs_report("US*", &intraday::legs(&now, today), cost)); // (#1423)
         }
         let k = settings.intraday_key;
         held.push((

@@ -23335,6 +23335,10 @@ buy_heuristic:
   #     stands; growth_max_above_ma stays 150.
   # (#1286) retired: growth_untested_hard: false # (#1285) refuse a stock failing `untested` even under growth_gate_soft. false = docked
   # (#1286) retired: growth_stretch_hard: false  # (#1285) the same switch for `stretch` (growth_max_above_ma). false = docked
+  growth_max_age_years: 0.0      # (#1425) PRE-REGISTERED 2026-11-08, UNMEASURED. The age floor's twin: refuse a name LISTED LONGER than
+                                 #   this many years (quote.age_years). 0.0 = off, byte-identical. Not a view on old companies: it states the
+                                 #   accidental exclusion (#1390) found in the mixed bars so honest bars can be asked whether it reproduces the
+                                 #   shipped book. Grid rows 30/40/50 on the (#1389) arm; row (#1426) decides; the owner's word ships anything.
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which
@@ -28065,6 +28069,78 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   on the mean, not about 0.3. No winner, as called.
 # REVERT RULE: nothing moved; both knobs stay as shipped. The key's own comment now cites this receipt, so
 #   `growth_max_vol` leaves NO_RECEIPT in src/config.rs.
+# (#1423) LEGS AND GAP CENSUS, PRE-REGISTERED 2026-11-08 before any run, record only, no knob, no page. Rows: none;
+#   the verdict goes under this block.
+# WHY: twelve same-session keys ((#810)-(#836)), 1,314 hour-pair slices ((#1216)), seven holds ((#1215)) and 47 trading
+#   rules ((#1218)) all lose net of cost, and the re-ask condition is "a NEW key at gross t >= 3". None of them asked
+#   the prior question: is there a same-session return to rank at all? Lou, Polk and Skouras (JFE 2019), Kelly and
+#   Clark (2011) and Bogousslavsky (JFE 2021) all find the US equity premium accrues in the NIGHT leg (the prior
+#   close to the open) and the DAY leg (the open to the close) averages near zero; the same literature finds a
+#   session's day leg runs AGAINST its own overnight gap (Berkman, Koch, Tuttle and Zhang, JFQA 2012). A buy at the
+#   open and a sale at the close trades the leg with no premium; every key above was asked to rank noise.
+# CENSUS (`backtest N intraday` prints it as LEGS after each market's keys, US, US* and EU; `heuristics::intraday::legs`):
+#   every liquid pond session, equal weight: night = ln(open / prior close), day = ln(close / open), both legs' mean
+#   in bp a session with t and halves, night minus day, the close-to-open hold net of one round trip a session, and
+#   the round trip that would break it even. Then GAP: the day leg by quintile of the session's own overnight gap
+#   (Q1 = the deepest gap down), Q1 minus Q5, and the Q1 book (buy the deepest gap-downs at the open, sell at the
+#   close) net of cost. The gap uses the SESSION'S OWN open: a buy that waits for the opening print, not a pre-open
+#   key; Yahoo's open is the first print, not the auction. Unit test `the_legs_census_splits_each_session_at_the_open`.
+# BAR, fixed now. (1) LEGS is information: no bar, no knob, no trade. It states where the pond's return sits.
+#   (2) GAP earns a KEY only if Q1's GROSS day leg clears t >= 3 with both halves above 0 AND Q1 minus Q5 clears t >= 3
+#   in both US and EU; then the key is built as K13 and graded on the (#809) bar like the twelve before it. Net of
+#   cost it is expected to lose, as every key has; a key is built to close the question, not to trade.
+# EXPECTED: US night leg +3 to +5 bp a session (t 3 to 5 on ~2500 sessions), day leg -1 to +1 bp (t under 1): the
+#   premium is overnight, as published; the close-to-open hold loses at 50 bp and breaks even near 4 bp, under any
+#   retail round trip. EU night leg smaller (the Frankfurt session overlaps New York's morning). GAP: Q1 above Q5 by
+#   5 to 15 bp a session, gross t 3 to 6 on the US pond (the published reversal), Q1 alone +2 to +8 bp: a K13 may be
+#   earned and is then expected to FAIL net at 50/20 bp like K1-K12. Nothing ships either way.
+# (#1424) THE HOLDING-PERIOD EXCLUSION, PRIMARY TEXT READ 2026-11-08, record only. Knob: `cgt_hold_schedule` (empty
+#   ships; the (#108) block gives the three rungs; the owner's rule that an accountant confirms first stands).
+# READ: Portal das Finanças, Código do IRS artigo 43.º, consolidated page dated 08/11/2026, and the May-2026
+#   redação page (irs43ra_202605). n.º 5: for "valores mobiliários admitidos à negociação ou a partes de organismos de
+#   investimento coletivo abertos, sob a forma contratual ou societária" — listed shares AND open-ended funds, UCITS
+#   ETFs among them — the positive balance under art. 10.º n.º 1 b) is excluded (a) "10 % ... detidos por um período
+#   superior a 2 anos e inferior a 5 anos", (b) 20 % "igual ou superior a 5 anos e inferior a 8 anos", (c) 30 %
+#   "igual ou superior a 8 anos". No englobamento condition sits in n.º 5 (n.º 6 keeps the option). n.º 8 d): shares
+#   of the same kind and rights sell oldest first (FIFO), per depositary (n.º 9). Redação: Lei n.º 31/2024, 28 June;
+#   the 2026 change (Decreto-Lei n.º 97/2026) renumbers a cross-reference in n.º 12 and leaves n.os 5-11 word for word.
+# WHAT IT IS WORTH, arithmetic (no backtest): at 28 % on the gain, a lot sold after 8+ years pays an effective
+#   19.6 %. Pre-tax 10 %/yr: after-tax CAGR 7.80 -> 8.49 at 8y (+0.69 pts/yr), 8.08 -> 8.69 at 12y (+0.62),
+#   8.51 -> 9.00 at 20y (+0.49); at 13 %/yr, +0.85 / +0.73 / +0.55. The deferral edge the footer prints (never-sell
+#   against yearly rotation, 10 %/yr, 20y) widens from +1.31 to +1.80 pts/yr. That is larger than any knob gain a
+#   receipt in this file has read since (#1239), and it is law, not a backtest claim.
+# WHAT IT CHANGES IN THE BOOK: nothing in selection. Two things in the exit: (a) a lot is worth 10 points more of its
+#   gain the day it turns 8 years old, so the tax model should not treat an 8y-and-a-day sale and a 7y-and-364-day
+#   sale alike — the schedule does this once armed; (b) FIFO is the law, not a choice, so the oldest lot of a name
+#   is the one sold, which is the lot with the deepest exclusion: a partial sale always realises the cheapest tax.
+# NOT DONE HERE: the knob stays empty. The owner's condition is an accountant's confirmation of the taxpayer's own
+#   case (residence, englobamento, the 2024 mandatory-aggregation rule for short holds at high incomes); this block
+#   supplies the primary text and the date it was read, which the (#108) block said it lacked.
+# (#1425) THE ARTIFACT AS A RULE: THE AGE CAP ON HONEST BARS, PRE-REGISTERED 2026-11-08 before any run. Row: (#1426).
+#   Knob: `growth_max_age_years` (0.0 ships; a grid row sets it, since `age_years` rides every dump).
+# WHY: (#1390) read true monthly bars OUTSIDE NEGATIVE, 0.9-1.3 %/yr under the shipped book on the paired buckets,
+#   and (#1396) found no cap that recovers it: "the loss sits in the bars, not in the caps' fit". The names the
+#   mixed bars mis-measure are the pre-1985 listings (quarterly bars: stretch 2-3x overstated, 1Y leg halved,
+#   (#1389)) — so on the shipped bars the oldest names are DAMPED OR REFUSED BY ACCIDENT, and (#1390)'s era table
+#   shows that accident paid in the 2002-13 cutoffs (GE, C, AIG, F, the old economy into the GFC) and cost in the
+#   others. The shipped edge therefore carries an unwritten rule: "not the oldest listings". This block writes it
+#   down as a knob so the honest bars can be asked whether the rule, stated, does what the accident did.
+# ARM: the (#1389) arm, knobs="long_chart_explicit_span=true", years="12 8", args="universe fund pit", rescore="guard"
+#   (200 shuffles), grid '[{}, {"growth_max_age_years": 30.0}, {"growth_max_age_years": 40.0}, {"growth_max_age_years":
+#   50.0}]'. Row 0 is the honest-bars book (#1390) graded. The shipped-bars control is (#1390)'s control.
+# BAR, two reads. (A) RECOVERY: a cap row whose 12y and 8y median, worst window and RU1 tally all sit within the
+#   (#1333) band of the SHIPPED-BARS control (0.5 mean / 0.8 median) reproduces the shipped book on honest input:
+#   the lane's edge is "young-ish growth names", the receipt says so, and the owner is asked ONE question: ship
+#   that cap WITH the honest bars (`long_chart_explicit_span: true`, the cap at the recovering size, goldens
+#   re-blessed), so the code states what the data was doing. (B) NO RECOVERY: no cap row comes within the band; the
+#   receipt records that the mixed-bar edge over honest bars was an artifact that no stated rule reproduces, and the
+#   (#1390)/(#1392) knobs stay off as decided. Either read is a fact about the shipped lane, not a tuning.
+# EXPECTED: the 40 cap recovers most of the 2002-13 gap (its era median back toward +3.9 / +4.2 from +2.0 / +3.5)
+#   and gives back part of the <=2001 and >=2014 gains; 12y paired median within 0.5 of the shipped control, worst
+#   window still under it by 1-3 points (the quarterly cohort's stretch gate also refused names the cap keeps). The
+#   honest prior is (A) on median and (B) on the tail. The 30 cap over-prunes (it removes 1990s listings); 50 does
+#   little. Nothing ships without the owner's word.
+# REVERT RULE: the knob to 0.0.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
