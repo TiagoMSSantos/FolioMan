@@ -27614,6 +27614,83 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   about 3 in 4 (six of the route's seven guard probes passed). The holdout, on near twins of nfna_gr1a's names,
 #   whose sealed pond missed by 0.03, passes about 1 in 3, and the whole about 1 in 4.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1418) VERDICT, 2026-11-08, on (#1417): dbnetis_at's twin dbnet_pct PASSES the harm guard at 12y AND at 8y, but
+#   the sealed holdout FAILS on the pond, so dbnetis_at is REFUSED, record only. Guard probe run 42507071152 on
+#   15ae940, rescore="guard holdout sec", 200 shuffles. SEC ERA left out 7677 samples cut before 2011-01-01 at 12y
+#   and 7685 at 8y; HOLDOUT sealed 0 at 12y and 7345 at 8y. Windows scored 5150/6488 at 12y and 9184/8596 at 8y. CI
+#   passed the twin on 15ae940 (run 42506605852, whose mutants gate took 6 of the diff's 15 under its budget), and
+#   mutation census 42507068598 caught all 15 since 68dfc58 (0 missed, 0 timeout, 0 unviable).
+#   horizon  top-10 gain / edge  pond gain / edge  pool     dbnet_pct reads on  top-10 moved  verdict
+#   12y      +0.11 / -0.61       +0.01 / -0.81     100.0 %  84.0 %              0.38          PASS
+#   8y       +0.53 / -0.99       +0.09 / -0.32     100.0 %  85.7 %              0.60          PASS
+#   NULL BAND, row 1: 12y mean +0.11, median -0.20, band mean [-0.61, +0.60], median [-0.89, +0.85], INSIDE; 8y
+#   mean +0.53, median +0.09, band mean [-0.99, +0.76], median [-1.23, +1.27], INSIDE. TAIL INSIDE at both (12y p20
+#   +0.07, worst5 -0.06; 8y p20 +0.00, worst5 +0.57). Every top-10 number above, its null and tail bands included,
+#   is (#1416)'s for nfna_pct to the cent: the two docks pick the same graded top-10 books, and only the pond moved
+#   (12y +0.01 against nfna_pct's +0.02, 8y +0.09 against +0.10).
+# HOLDOUT, read a seventh time: probe run 42507653949 on 15ae940, rescore="guard holdout reveal sec". Its graded rows
+#   carry the same gains, edges, coverage and moved names as above, over the same windows and the same 7345 sealed
+#   samples, so the pond did not drift between the two runs. On the sealed 2016-on 8y samples: top-10 gain +0.27
+#   (median +1.06) / edge -0.96, pond gain -0.35 / edge -0.29 -> FAIL, the pond 0.06 under its edge. The sealed
+#   top-10 rose (excess +0.1, median +0.7, against row 0's -0.2, median -0.4, over 6 buckets); the loss sits in the
+#   wider pond for the third time running: noa_gr1a -0.36 against -0.28, nfna_gr1a -0.32 against -0.29, dbnetis_at
+#   -0.35 against -0.29. This read was not blind: it was the seventh of these years, after two failed debt docks, as
+#   (#1417) said it would be. The 12y leg has no sealed sample.
+# AGAINST EXPECTED: coverage read the same 84.0 % and 85.7 % as nfna_pct's, as called, and the top-10 moved the
+#   called 0.38 and 0.60. The guard passed (called about 3 in 4) and the holdout failed (called about 2 in 3); the
+#   whole was called about 1 in 4.
+# WHAT THIS DOES NOT SAY: it does not show that dbnetis_at's worst third does not trail; the (#1411) proof on JKP's
+#   data stands, as record. Every guard gain sits inside its null band. It says that three docks on new borrowing,
+#   each passing the guard, each cost the sealed 2016-on pond about a third of a point, past its edge by 0.03 to
+#   0.08, while the sealed top-10 did not lose (+0.77, +0.00, +0.27). No other debt dock is queued.
+# NEXT: the refused twin's code (dbnetis_at, dbnet_pct and stamp_cohort_ranks' eleventh column) stays, as the other
+#   two did; no term reads it, and no setting moves. The turn passes to ocf_at_chg1, under (#1419) below.
+# (#1419) OCF_AT_CHG1 HARM GUARD, PRE-REGISTERED 2026-11-08 before this run. Row: (#1420).
+# WHY: (#1411) found ocf_at_chg1's worst third (the firms whose cash return on assets fell most over a year)
+#   trailing its market in the US (t 2.66, post +0.2 %/yr) and in developed ex-US (t 3.05, post +2.1), over 72 post
+#   months in each region, just over the 60 floor. It is the open Profit Growth cluster's only loser passer, so no
+#   beyond step applies, and it is the last name in the menu-3 guard queue. Profit Growth is not Profitability or
+#   Quality, the owner's standing refusal: it grades a one-year change, not a level. The proof stays JKP's; our
+#   backtest only has to show no visible harm.
+# TWIN: the (#1290) column `ocf_at_chg`, unchanged: operating cash flow (the cash margin times revenue) over the same
+#   filing's total assets, in %, now minus a fiscal year back, in points (Bouchaud, Krueger, Landier and Thesmar
+#   2019). JKP builds ocf_at_chg1 the same way, ocf_x / at_x less its value 12 months back. stamp_cohort_ranks ranks
+#   it as a twelfth column, alone, into `ocf_pct` = its percentile (0-100, high = the cash return rose most, JKP's
+#   earning side, direction +1, no flip) over the date's names that carry one. Only as-of SEC rows yield one, and
+#   live reads None until a ship stamps it. shortcut: the column reads None for a bank or insurer, where JKP keeps
+#   every firm, so such a name takes the neutral 50 and the full 3 points, never a dock. Refitting the column would
+#   rewrite (#1290)'s record, so it stays as built.
+# TERM: {factor: ocf_pct, weight: 0.09, cap: 33.3, neutral: 50}, the (#1410) dock-only shape, added after the six
+#   shipped terms (roic, margin_trend, ey_pct, mom61_pct, capx_pct, fcf_pct), which stay unchanged. The refused
+#   noa_pct, nfna_pct and dbnet_pct are not in the grid. The worst third by cash-return change scores 0 to 3 points
+#   by percentile; every other name, and a name with no value, gets the full 3.
+# OWN EVIDENCE, flagged before the run: (#1290) graded this column on our ruler as a BONUS on its rising side (weight
+#   0.2, 0.5 and 1.0, cap 10, so up to 2 to 10 points) and refused it at every weight: the mean fell 0.3 to 0.4, and
+#   its held-loser AUC (0.45 at 12y, 0.42 at 8y) read against the paper. This term asks a different question (does
+#   docking the FALLING third harm?) at a third of the smallest of those sizes, and the bar is blind under +2-4 %/yr
+#   ((#1333)), so (#1290) neither proves nor voids it. It leans against the twin, and the receipt says so.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), so
+#   cutoffs before 2011-01-01 drop. Grid: [{}, {growth_fund_extra: the shipped terms, then the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y under the (#1339) clauses: top-10 and pond gains not under their edges,
+#   pool at least 80 %, ocf_pct read on at least 50 % of scored stocks (else UNGRADEABLE) and at least one top-10
+#   name moved (else INERT). Only then a second probe, rescore="guard holdout reveal sec", reads the sealed 2016-on
+#   8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were read seven times
+#   before (ni_me, probe 42286340556; ret_6_1, 42357657397; capx_gr3, 42361540115; fcf_me, 42479970202; noa_gr1a,
+#   42502478033; nfna_gr1a, 42505926930; dbnetis_at, 42507653949). So this eighth read is not blind: three debt docks
+#   failed there on the pond. ocf_pct docks other names (a falling cash return, not new borrowing), so their misses
+#   need not carry over; the receipt says so. Both = SHIP per (#1339) and (#1410), after one owner question, because
+#   the page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = ocf_at_chg1 REFUSED, record only. The menu-3
+#   guard queue is then empty, so menus 1 to 3 hold no candidate left on this JKP release.
+# OVERLAP, flagged before the run: ocf_at_chg ranks 0.32 with margin_trend ((#1290), Spearman, pooled), whose
+#   shipped term docks a RISING operating margin (weight -0.3, cap 10). ocf_pct docks the other tail, a falling cash
+#   return, so the two mostly dock different names. fcf_pct reads a level (free cash flow over price), not a change.
+# EXPECTED: coverage under the debt twins', since banks and insurers read None and both years need the cash margin,
+#   revenue and assets: 75 to 84 % at both horizons. The top-10 moves about as much as the earlier docks (0.3 to
+#   0.6). The guard passes about 2 in 3 (seven of the route's eight guard probes passed; (#1290)'s lean shaves it).
+#   The holdout, on names that are not a debt dock's, passes about 1 in 2 (four of its seven reads passed), and the
+#   whole about 1 in 3.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
