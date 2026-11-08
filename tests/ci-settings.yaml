@@ -27474,6 +27474,77 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   for capx_pct (0.50 and 0.60). Four of the route's five earlier guards passed (rd_me was ungradeable), but this
 #   is the first dock-only tilt, so PASS about 3 in 5.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1414) VERDICT, 2026-11-08, on (#1413): noa_gr1a's twin noa_pct PASSES the harm guard at 12y AND at 8y, but the
+#   sealed holdout FAILS on the pond, so noa_gr1a is REFUSED, record only. Guard probe run 42501639951 on 2788c0c,
+#   rescore="guard holdout sec", 200 shuffles. SEC ERA left out 7677 samples cut before 2011-01-01 at 12y and 7685
+#   at 8y; HOLDOUT sealed 0 at 12y and 7345 at 8y. Windows scored 5150/6488 at 12y and 9184/8596 at 8y. CI graded
+#   the twin on 2788c0c (run 42501134810), and mutation census 42501637033 caught all 21 of 9cf0d97's mutants (0
+#   missed, 0 timeout, 0 unviable).
+#   horizon  top-10 gain / edge  pond gain / edge  pool     noa_pct reads on  top-10 moved  verdict
+#   12y      -0.45 / -0.62       -0.06 / -0.82     100.0 %  80.0 %            0.38          PASS
+#   8y       -0.12 / -0.88       +0.04 / -0.27     100.0 %  81.4 %            0.50          PASS
+#   NULL BAND, row 1: 12y mean -0.45, median +0.00, band mean [-0.62, +0.58], median [-1.10, +0.78], INSIDE; 8y
+#   mean -0.12, median +0.00, band mean [-0.88, +0.59], median [-1.56, +1.38], INSIDE. TAIL INSIDE at both (12y p20
+#   -0.05, worst5 -0.33; 8y p20 +0.00, worst5 -0.11).
+# HOLDOUT, read a fifth time: probe run 42502478033 on 2788c0c, rescore="guard holdout reveal sec". Its graded rows
+#   carry the same gains, edges, coverage and moved names as above, over the same windows and the same 7345 sealed
+#   samples, so the pond did not drift between the two runs. On the sealed 2016-on 8y samples: top-10 gain +0.77
+#   (median +1.92) / edge -1.67, pond gain -0.36 / edge -0.28 -> FAIL, the pond 0.08 under its edge. The sealed
+#   top-10 itself rose (excess +0.6, median +1.5, against row 0's -0.2, median -0.4, over 6 buckets); the loss sits
+#   in the wider pond, the top half of the scored stocks. These years were read before, for ni_me (probe
+#   42286340556), ret_6_1 (probe 42357657397), capx_gr3 (probe 42361540115) and fcf_me (probe 42479970202), so this
+#   read was not blind, and an Investment twin's read leaned on capx_gr3's. The 12y leg has no sealed sample.
+# SCALING, checked in JKP's code after the run: its noa_gr1a divides the 12-month NOA change by the LAGGED assets,
+#   lag12(at_x), as our twin does, so the refusal is not a scaling slip.
+# AGAINST EXPECTED: coverage landed inside the guessed 75-85 % (80.0 % and 81.4 %). The top-10 moved a little less
+#   than capx_pct's (0.38 and 0.50 against 0.50 and 0.60), close to the call. A PASS was called about 3 in 5; the
+#   guard passed and the holdout failed, so the call missed.
+# WHAT THIS DOES NOT SAY: it does not show that noa_gr1a's worst third does not trail. The (#1411) and (#1412) proofs
+#   on JKP's data stand, as record. It says our guard could not clear the dock on the sealed years: a miss of 0.08
+#   on a span read a fifth time, which the rule as pre-registered refuses. Every guard gain sits inside its null band.
+# NEXT: the refused twin's code (noa_gr1a, noa_pct and stamp_cohort_ranks' ninth column) stays, as rd_me's refused
+#   twin did; no term reads it, and no setting moves. The turn passes to nfna_gr1a, under (#1415) below.
+# (#1415) NFNA_GR1A HARM GUARD, PRE-REGISTERED 2026-11-08 before this run. Row: (#1416).
+# WHY: (#1411) found nfna_gr1a's worst third (the firms whose net financial assets fell fastest, mostly new
+#   borrowers) trailing its market in the US (t 4.91, post +0.1 %/yr) and in developed ex-US (t 2.63, post +1.8). It
+#   is the open Debt Issuance cluster's first loser passer, so no beyond step applies, and (#1414) refused noa_gr1a,
+#   so it heads the guard queue. The proof stays JKP's; our backtest only has to show no visible harm.
+# TWIN: `nfna_gr1a`, net financial assets now minus a fiscal year back, over NOW's total assets, in % (Richardson,
+#   Sloan, Soliman and Tuna 2005; JKP's nfna_gr1a). NFNA is short-term investments (`sti`) minus total debt (`debt`).
+#   JKP's code builds it as coalesce(ivst, 0) + coalesce(ivao, 0) - (dltt + dlc + coalesce(pstk, 0)) and divides
+#   the 12-month change by the CURRENT at_x. So a missing sti reads 0, a missing debt reads None, and the
+#   denominator is this year's assets. (#1356)'s menu line said "over assets back 1"; JKP's code wins, and this
+#   receipt corrects it. The year back is `back(1)` by period end, as noa_gr1a's twin found its year. No financial
+#   filter applies, as JKP keeps every firm. shortcut: JKP also adds long-term investments (ivao) and subtracts
+#   preferred stock (pstk), which our rows do not carry; an IFRS filer has no sti tag, so its sti reads 0, as JKP's
+#   coalesce would. Assets 0 reads None. stamp_cohort_ranks ranks it as a tenth column, alone, into `nfna_pct` = its
+#   percentile (0-100, high = FAST NFNA growth, JKP's earning side, direction +1) over the date's names that carry
+#   one. Only as-of SEC rows yield one, and live reads None until a ship stamps it.
+# TERM: {factor: nfna_pct, weight: 0.09, cap: 33.3, neutral: 50}, the (#1410) dock-only shape, added after the six
+#   shipped terms (roic, margin_trend, ey_pct, mom61_pct, capx_pct, fcf_pct), which stay unchanged. The refused
+#   noa_pct is not in the grid. The worst third by NFNA growth scores 0 to 3 points by percentile; every other name,
+#   and a name with no value, gets the full 3.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), so
+#   cutoffs before 2011-01-01 drop. Grid: [{}, {growth_fund_extra: the shipped terms, then the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y under the (#1339) clauses: top-10 and pond gains not under their edges,
+#   pool at least 80 %, nfna_pct read on at least 50 % of scored stocks (else UNGRADEABLE) and at least one top-10
+#   name moved (else INERT). Only then a second probe, rescore="guard holdout reveal sec", reads the sealed 2016-on
+#   8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were read five times
+#   before (ni_me, probe 42286340556; ret_6_1, 42357657397; capx_gr3, 42361540115; fcf_me, 42479970202; noa_gr1a,
+#   42502478033). So this sixth read is not blind: noa_gr1a's sealed pond failed, and nfna_pct docks many of the
+#   same borrowers, so this read leans on that one; the receipt says so. Both = SHIP per (#1339) and (#1410), after
+#   one owner question, because the page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = nfna_gr1a REFUSED, record only. The turn then
+#   passes to dbnetis_at, under its own pre-registration.
+# OVERLAP, flagged before the run: nfna_gr1a and noa_gr1a both move with new borrowing ((#1411)'s overlap note), and
+#   dbnetis_at is the debt change alone. noa_pct is refused and not in the book, so this guard sees nfna_pct's whole
+#   effect, the part it shares with noa_pct included. A ship here would leave dbnetis_at's guard only what it adds.
+# EXPECTED: two fiscal years of debt and one of assets reach more names than noa_gr1a's legs, so coverage is 82-92 %
+#   of scored stocks, over noa_pct's (80.0 % and 81.4 %). The dock touches only the worst third at three times the
+#   weight, as noa_pct's did, so the top-10 moves about as much (0.38 and 0.50). The guard passes about 3 in 4 (five
+#   of the route's six guard probes passed), but noa_gr1a's sealed pond failed on overlapping names, so the holdout
+#   passes about 1 in 2, and the whole about 2 in 5.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
