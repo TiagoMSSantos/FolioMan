@@ -27409,6 +27409,36 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # REVERT RULE: nothing moves. The span and window knobs stay off ((#1390), (#1392)), so the shipped caps keep reading
 #   the bars they were fitted on.
 
+# (#1398) THE EQUITY VOL GATE ON DAILY UNITS, PRE-REGISTERED 2026-11-08 before any run. Row: (#1399). No new knob.
+# WHY: `growth_max_vol` (P4b) is the one growth hard gate never graded. It ships 0.0 (off) with an UNFITTED ladder
+#   off / 4 / 3 / 2.5 / 2 % a day. It was blocked on (#97): the backtest's `volatility_pct` is a stdev of monthly
+#   bars, about 4.58x the daily stdev the live gate reads, so a monthly grid prices a different gate. (#176) called
+#   the pair ungradeable on a saturated column. (#1131) found that re-open condition holds, and the plain walk of
+#   probe 42465636239 (863f757) still meets it: median gated pool 177 at 12y and 179 at 8y, 0 buckets saturated.
+#   That walk's CEILING SWEEP prints `growth_max_vol 3.0` in monthly units (it refuses 315 of 321 at 12y), so it
+#   prices nothing usable. The owner picked this test on 2026-11-08 as the last never-graded knob.
+# RUNS, two probes on the commit that carries this text, years="12 8", args="universe fund pit":
+#   P0, the control: no knobs, no grid. The shipped book.
+#   P1, the arm: knobs="vol_daily_equivalent=true", rescore="guard" (200 shuffles), grid
+#     '[{}, {"growth_max_vol": 4.0}, {"growth_max_vol": 3.0}, {"growth_max_vol": 2.5}, {"growth_max_vol": 2.0}]'.
+#   P1 row 0 is the units fix alone, with sharpe_cap 15, sharpe_cap_etf 9 and sharpe_weight 0.05 as shipped. The
+#   grid rows read `volatility_pct` from P1's dump, in daily units, as the live gate does. `windows scored` must
+#   match between P0 and P1 row 0; a mismatch voids the pair.
+# BAR, the owner's choice of 2026-11-08 ("beat both"): a rung must beat the fix alone AND the shipped book.
+#   ELIGIBLE exactly as (#1387), against P1 row 0: guard PASS or INERT at both horizons, and RU1, RU2, RU3 and RU-E
+#   pass at both (tools/regrade_ruler.py, lane pit).
+#   WIN: an eligible rung is above P1 row 0 AND above P0 on median excess, worst window and the RU1 tally, at 12y and
+#   at 8y (0.1 %/yr; a tie is not above). P0 is read by a second regrade_ruler table with P0's logs first, split at
+#   the 8y header, so P0 is that table's control. No winner = the gate stays 0.0 and the units fix stays off.
+# EXPECTED: rung 4 refuses a few names a cutoff and reads INERT or INSIDE. A typical S&P stock's monthly stdev of
+#   7-9 % restates to 1.5-2.0 % a day, so rungs 2.5 and 2 cut deep into the pond and read OUTSIDE NEGATIVE: they
+#   drop the runners, as (#1244)'s momentum vol cut did. P1 row 0 sits about 0.3 under P0 at 12y, as (#1132) read.
+#   No winner. Recorded either way: P1's own CEILING SWEEP row `growth_max_vol 3.0`, now in daily units.
+# ON A WIN: one owner question. The ship is `vol_daily_equivalent` true plus the winning `growth_max_vol`, a goldens
+#   rebless and all four pins, in one commit. Live moves only through the gate, since live is bit-identical in the
+#   units fix ((#176)). sharpe_cap 15 then binds in the backtest as it already does live.
+# REVERT RULE: nothing moves unless a winner ships on the owner's word.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
