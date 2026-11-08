@@ -27691,6 +27691,38 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   The holdout, on names that are not a debt dock's, passes about 1 in 2 (four of its seven reads passed), and the
 #   whole about 1 in 3.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1420) VERDICT, 2026-11-08, on (#1419): ocf_at_chg1's twin ocf_pct PASSES the harm guard at 12y AND at 8y, but
+#   the sealed holdout FAILS on the pond, so ocf_at_chg1 is REFUSED, record only. Guard probe run 42508974072 on
+#   12c108a, rescore="guard holdout sec", 200 shuffles. SEC ERA left out 7677 samples cut before 2011-01-01 at 12y
+#   and 7685 at 8y; HOLDOUT sealed 0 at 12y and 7345 at 8y. Windows scored 5150/6488 at 12y and 9184/8596 at 8y. CI
+#   passed the twin on 12c108a (run 42508564232, whose mutants gate took 6 of the diff's 7 under its budget), and
+#   mutation census 42508971678 caught all 7 since 15ae940 (0 missed).
+#   horizon  top-10 gain / edge  pond gain / edge  pool     ocf_pct reads on  top-10 moved  verdict
+#   12y      -0.43 / -0.76       +0.01 / -0.92     100.0 %  82.7 %            0.50          PASS
+#   8y       +0.11 / -0.88       +0.10 / -0.32     100.0 %  83.9 %            0.60          PASS
+#   NULL BAND, row 1: 12y mean -0.43, median +0.00, band mean [-0.76, +0.71], median [-1.10, +1.05], INSIDE; 8y
+#   mean +0.11, median +0.46, band mean [-0.88, +0.75], median [-1.23, +1.46], INSIDE. TAIL INSIDE at both (12y p20
+#   +0.07, worst5 -0.30; 8y p20 +0.00, worst5 +0.05).
+# HOLDOUT, read an eighth time: probe run 42509652669 on 12c108a, rescore="guard holdout reveal sec". Its graded
+#   rows carry the same gains, edges, coverage and moved names as above, over the same windows and the same 7345
+#   sealed samples, so the pond did not drift between the two runs. On the sealed 2016-on 8y samples: top-10 gain
+#   -0.09 (median +0.00) / edge -0.55, pond gain -0.45 / edge -0.32 -> FAIL, the pond 0.13 under its edge, the
+#   widest of the four menu-3 misses. The sealed top-10 held about level (excess -0.3, median -0.4, against row 0's
+#   -0.2, median -0.4, over 6 buckets). This read was not blind: it was the eighth of these years, after three
+#   failed debt docks, as (#1419) said it would be. The 12y leg has no sealed sample.
+# AGAINST EXPECTED: coverage landed inside the guessed 75-84 % (82.7 % and 83.9 %), and the top-10 moved inside the
+#   called 0.3-0.6 (0.50 and 0.60). The guard passed (called about 2 in 3) and the holdout failed (called about 1 in
+#   2); the whole was called about 1 in 3. (#1290)'s lean against the column held on the sealed years. The 12y
+#   top-10 gain sits near its edge again (-0.43 against -0.76), as noa_pct's did (-0.45 against -0.62).
+# WHAT THIS DOES NOT SAY: it does not show that ocf_at_chg1's worst third does not trail; the (#1411) proof on JKP's
+#   data stands, as record. Every guard gain sits inside its null band. It says that all four menu-3 docks passed
+#   the guard and all four cost the sealed 2016-on pond past its edge (by 0.03 to 0.13), while no sealed top-10 fell
+#   past its own edge. Those years have now been read eight times (four passes shipped, four fails refused), so each
+#   further read of them is worth less than the last.
+# NEXT: the refused twin's code (ocf_pct and stamp_cohort_ranks' twelfth column) stays, as the debt twins' did; no
+#   term reads it, and no setting moves. The menu-3 guard queue is empty: menus 1 to 3 hold no candidate on the
+#   2026-08-04 JKP release, so the paper route reopens only on a newer release or a new question pre-registered
+#   before any run.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
