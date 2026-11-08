@@ -27204,6 +27204,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   months of cutoffs (young IPOs), and the two pull opposite ways. The URL form was not re-fetched from the sandbox that
 #   wrote this (Yahoo is robots-blocked there); the evidence for it is the owner's two censuses.
 # REVERT RULE: the knob to false; the span cache file can be deleted.
+# (#1390) VERDICT, 2026-11-08, on (#1389): OUTSIDE NEGATIVE. The knob stays false, and (#1395) runs next, as the
+#   prereg requires. Arm: probe 42465642023, knobs="long_chart_explicit_span=true". Control: the plain walk of probe
+#   42465636239 (no knobs; its walk is that grid's row {}). Both on 863f757, years="12 8", args="universe fund pit".
+# BARS: the arm prints `backtest: (#1389) bars by Yahoo dataGranularity: 1mo 5837` at both horizons, and no other
+#   size. Every series arrived monthly, so this is a verdict and not a census.
+# WINDOWS SCORED, ON-SALE / GROWTH: 12y 5150 / 6488 control, 5142 / 6555 arm; 8y 9184 / 8596 control, 9230 / 8677
+#   arm. The arm scores no b3992, the first bucket, so it holds 37 and 45 buckets against 38 and 46. GROWTH windows
+#   rose instead of falling as called; the log does not say which cohort added them.
+# RU RULER (tools/regrade_ruler.py, lane pit, each plain log split at its 8y header, since the tool reads the first
+#   HOLD horizon of a plain log). RU1 = windows where the top 5 beat names 6-10. Rows "window" and "both" are (#1392):
+#     arm      12y mean  med   worst  p20   worst5 RU1    | 8y mean  med   worst  p20   worst5 RU1    | fails
+#     control      +3.4  +3.5  -3.0   +1.3  -1.6   21/38  |   +3.1  +3.4  -4.8   +0.3  -3.6   30/46  | -
+#     span         +2.6  +3.0  -4.8   -0.3  -2.1   15/37  |   +2.7  +2.9  -5.3   -0.2  -2.6   23/45  | 12y RU1
+#     window       +3.3  +3.0  -3.9   +1.2  -1.3   19/38  |   +3.2  +3.7  -5.4   +0.3  -3.2   25/46  | none
+#     both         +2.4  +3.0  -8.6   +0.2  -3.5   18/37  |   +2.6  +2.9  -6.9   -0.3  -3.0   22/45  | RU1 both
+#   RU2, RU3 and RU-E pass on every row.
+# BAR: the median is inside (-0.5 at 12y and at 8y, band 0.8). The 12y worst window is outside (-4.8 against -3.0,
+#   1.8 under, band 0.8), and the 12y RU1 cell FAILS (15/37 against 21/38). The mean falls 0.8 at 12y and 0.4 at 8y.
+# PAIRED, on the buckets both sides score (37 at 12y, 45 at 8y): 12y gain mean -0.93, median -1.30, 14 up, 23 down;
+#   8y -0.42 / -0.80, 20 up, 25 down. The loss is in the picks, not in the dropped bucket.
+# ERA, median excess control -> arm, 12y: <=2001 +1.6 -> +2.9, 2002-07 +3.9 -> +2.0, 2008-13 +4.2 -> +3.5, >=2014
+#   +1.5 -> +6.5 (2 buckets); 8y: +2.0 -> +4.4, +4.2 -> +0.4, +5.1 -> +4.4, +1.4 -> +4.4. Monthly bars help the
+#   oldest and newest starts and cost the 2002-13 starts, the ones that carry most buckets.
+# AGAINST EXPECTED: the bars line read `1mo` only, as called. The median moved 0.5, inside the |0.2-0.6| called; the
+#   sign came out negative. The tail was not called and is what fails.
+# READ: true monthly bars make the book worse UNDER THE SHIPPED CAPS. The caps were fitted on the mixed bars, so this
+#   loss may be the caps' and not the data's. (#1395) grades that, on this arm. NOT RUN here: the `backtest 20`
+#   record line, and step 2 (`universe` without `pit`), which waits for (#117)'s 36-volume-bar filter.
+# REVERT RULE: nothing moved; `urls.long_chart_explicit_span` stays false.
 # (#1391) THE WINDOW: RANGE, DRAWDOWN AND R² OVER THE LIVE SCREEN'S TEN YEARS, PRE-REGISTERED 2026-11-08. Row: (#1392).
 #   Knob: `backtest_live_window_years` (0.0 ships; 10.0 is the live window; RESCORE_FIXED, so a probe arm with
 #   knobs="backtest_live_window_years=10.0", never a grid row). NOT A BUY RULE, the same (#1389) kind.
@@ -27236,6 +27265,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   |0.2-0.5| pts/yr, sign unknown - the names whole-life admits are decliners (MMM GE VFC BIIB), which argues up; the
 #   names it refuses are post-2000 recoverers at 2010-2013 cutoffs, which argues down; the RU-E era table says which.
 # REVERT RULE: the knob to 0.0.
+# (#1392) VERDICT, 2026-11-08, on (#1391): OUTSIDE NEGATIVE, alone and with the (#1389) bars. The knob stays 0.0.
+#   Alone: probe 42465649193, knobs="backtest_live_window_years=10.0". Together: probe 42465655677, both knobs. The
+#   control, the ruler table (rows "window" and "both") and the bar are (#1390)'s, above.
+# ALONE: windows scored 12y 5150 / 6513, 8y 9184 / 8657 (ON-SALE unchanged; GROWTH +25 and +61). Against control:
+#   12y mean -0.1, median -0.5, worst window -0.9, RU1 19/38 against 21/38; 8y mean +0.1, median +0.3, worst -0.6,
+#   RU1 25/46 against 30/46. Every RU cell passes. Only the 12y worst window is outside the 0.8 band, by 0.1 (-3.9
+#   against -3.0). The RU1 tally also falls 2 and 5 windows, with the cell still passing.
+#   PAIRED on the 38 and 46 common buckets: 12y mean -0.16, median +0.00 (9 up, 13 down, 16 tied); 8y +0.05 / +0.00
+#   (16 up, 11 down, 19 tied). ERA, median control -> arm, 12y: +1.6 -> +1.6, +3.9 -> +4.3, +4.2 -> +4.5, +1.5 -> +2.1;
+#   8y: +2.0 -> +1.6, +4.2 -> +4.7, +5.1 -> +4.7, +1.4 -> +1.6. On the picks it is a tie; on the bar it misses by
+#   one window.
+# TOGETHER: windows scored 12y 5142 / 6580, 8y 9230 / 8738. 12y mean -1.0, median -0.5, worst -8.6 against -3.0, RU1
+#   18/37 FAILS; 8y mean -0.5, median -0.5, worst -6.9 against -4.8, RU1 22/45 FAILS. Paired: 12y mean -1.19, median
+#   -1.20; 8y -0.60 / -0.40. The window does not offset the span arm's loss; it deepens the tail at both horizons.
+# THE 8Y GATE'S FIRST BACKTEST READING (probe 42465649193; it never ran in a backtest before): `growth_min_range_pct_8y`
+#   80 binds. Among the top-1 % winners the ranking missed, it is a blocker for 3 of 131 at 12y (2.4 % of their missed
+#   wealth) and 11 of 224 at 8y (6.5 %), and the SOLE blocker for 0 and 1 of them. The gate sweep's -10 notch admits 0
+#   new names at both horizons. The gate stays as shipped.
+# AGAINST EXPECTED: the median moved -0.5 at 12y and +0.3 at 8y, inside the |0.2-0.5| called, sign mixed as called.
+#   The pool shift (-10 % / +2 % of name-cutoffs) was not read from these logs.
+# REVERT RULE: nothing moved; `backtest_live_window_years` stays 0.0.
 # (#1393) ONE ENDPOINT FOR BOTH LEGS OF A MOMENTUM KEY, PRE-REGISTERED 2026-11-08. Row: (#1394). Knob:
 #   `momentum_one_endpoint` (false ships). NOT A BUY RULE: the key stays 12-7; this makes it the 12-7 its receipt names.
 # THE DEFECT, definitional and shared by the live screen: `picks::net_return` divides the long leg's return by the short
@@ -27260,6 +27310,20 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   ships if INSIDE all the same - a key that is not the return its receipt names cannot be re-graded as that return;
 #   OUTSIDE NEGATIVE records that the accidental tilt earned its keep and names it as a term (`momentum_12_7_rev`)
 #   instead of a side effect. REVERT RULE: the knob to false.
+# (#1394) FIRST READ 2026-11-08, on (#1393): INERT BY CONSTRUCTION, so no verdict yet. Probe 42465636239, grid
+#   '[{}, {"momentum_one_endpoint": true}]', rescore="guard", on 863f757: the row moved 0.00 top-10 names at 12y and
+#   at 8y, gain +0.00 in a +0.00 band, so the guard reads INERT. The fault is the prereg's, not the knob's. `backtest
+#   rescore` prints no rivals, and the guard grades the plain shipped top-10, which reads no momentum key. The key
+#   reaches the rival books ((a) 12-1, (j) "5 shipped + 5 momentum", (k), (l) to (n)) and the live 12-7 interleave
+#   (`growth_momentum_slots` 5), whose backtest copy is (j). (#1311) recorded the same trap: "Three
+#   probes, not a grid: `backtest rescore` prints no rivals, and (j) is the book this knob moves."
+# DEVIATION, stated before the run: two probes on the commit that carries this text, years="12 8",
+#   args="universe fund pit rivals": C with no knobs, and A with knobs="momentum_one_endpoint=true". Windows scored and
+#   the plain top-10 BOOK lines must match between C and A, since the plain book never reads the key; a mismatch
+#   voids the pair. BAR, on rival (j): A's excess mean not under C's by more than 0.5 %/yr, its median by more than
+#   0.8, and its worst window by more than 0.8, at 12y and at 8y. (j) prints mean, median, win and worst only, so RU1
+#   and RU2 have no line there, as (#1311) read it. INSIDE ships, as (#1393) says. OUTSIDE NEGATIVE records that the
+#   tilt earned its keep. The other rival rows are printed for the record only.
 # (#1395) THE THREE BAR-FITTED CAPS RE-GRADED ON MONTHLY BARS, PRE-REGISTERED 2026-11-08, runs only after (#1390) and
 #   (#1392) are written. Row: (#1396). No new knob.
 # WHY: `growth_overext_free` 60 ((#1378), swept 0-90 by (#1382)/(#1385)/(#1388): "no size beats +60", every row INSIDE),
