@@ -599,7 +599,7 @@ pub(crate) fn news_web_rows(headlines: &[crate::fetch::Headline], spx: Option<&c
         .unwrap_or_else(|| "no session".into())
     };
     let mut sorted: Vec<_> = headlines.iter().collect();
-    sorted.sort_by(|a, b| b.at.cmp(&a.at));
+    sorted.sort_by_key(|h| std::cmp::Reverse(h.at));
     let mut seen = std::collections::HashSet::new();
     let sorted: Vec<_> = sorted.into_iter().filter(|h| seen.insert(h.title.as_str())).collect();
     (0..7)
