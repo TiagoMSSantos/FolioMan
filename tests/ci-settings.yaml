@@ -27545,6 +27545,75 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   of the route's six guard probes passed), but noa_gr1a's sealed pond failed on overlapping names, so the holdout
 #   passes about 1 in 2, and the whole about 2 in 5.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1416) VERDICT, 2026-11-08, on (#1415): nfna_gr1a's twin nfna_pct PASSES the harm guard at 12y AND at 8y, but
+#   the sealed holdout FAILS on the pond, so nfna_gr1a is REFUSED, record only. Guard probe run 42505346536 on
+#   68dfc58, rescore="guard holdout sec", 200 shuffles. SEC ERA left out 7677 samples cut before 2011-01-01 at 12y
+#   and 7685 at 8y; HOLDOUT sealed 0 at 12y and 7345 at 8y. Windows scored 5150/6488 at 12y and 9184/8596 at 8y. CI
+#   passed the twin on 68dfc58 (run 42504788492, whose mutants gate took 6 of the diff's 15 under its budget), and
+#   mutation census 42505343846 caught all 15 since 2788c0c (0 missed, 0 timeout, 0 unviable).
+#   horizon  top-10 gain / edge  pond gain / edge  pool     nfna_pct reads on  top-10 moved  verdict
+#   12y      +0.11 / -0.61       +0.02 / -0.40     100.0 %  84.0 %             0.38          PASS
+#   8y       +0.53 / -0.99       +0.10 / -0.30     100.0 %  85.7 %             0.60          PASS
+#   NULL BAND, row 1: 12y mean +0.11, median -0.20, band mean [-0.61, +0.60], median [-0.89, +0.85], INSIDE; 8y
+#   mean +0.53, median +0.09, band mean [-0.99, +0.76], median [-1.23, +1.27], INSIDE. TAIL INSIDE at both (12y p20
+#   +0.07, worst5 -0.06; 8y p20 +0.00, worst5 +0.57).
+# HOLDOUT, read a sixth time: probe run 42505926930 on 68dfc58, rescore="guard holdout reveal sec". Its graded rows
+#   carry the same gains, edges, coverage and moved names as above, over the same windows and the same 7345 sealed
+#   samples, so the pond did not drift between the two runs. On the sealed 2016-on 8y samples: top-10 gain +0.00 /
+#   edge -0.81, pond gain -0.32 / edge -0.29 -> FAIL, the pond 0.03 under its edge. The sealed top-10 held level
+#   (excess -0.2, median -0.1, against row 0's -0.2, median -0.4, over 6 buckets); the loss sits in the wider pond
+#   again, as noa_gr1a's did (-0.36 against -0.28). This read was not blind: it was the sixth of these years, and it
+#   leaned on noa_gr1a's failed pond, as (#1415) said it would. The 12y leg has no sealed sample.
+# AGAINST EXPECTED: coverage landed inside the guessed 82-92 % (84.0 % and 85.7 %), over noa_pct's, as called. The
+#   top-10 moved about as noa_pct's did (0.38 and 0.50 called; 0.38 and 0.60 read). The whole was called about 2 in
+#   5; the guard passed and the holdout failed, the branch the call gave about 1 in 2.
+# WHAT THIS DOES NOT SAY: it does not show that nfna_gr1a's worst third does not trail; the (#1411) proof on JKP's
+#   data stands, as record. Every guard gain sits inside its null band. It says that twice now a dock on fast new
+#   borrowers cost the sealed 2016-on pond about a third of a point, just past its edge, while the sealed top-10 did
+#   not lose.
+# NEXT: the refused twin's code (nfna_gr1a, nfna_pct and stamp_cohort_ranks' tenth column) stays, as noa_gr1a's
+#   did; no term reads it, and no setting moves. The turn passes to dbnetis_at, under (#1417) below.
+# (#1417) DBNETIS_AT HARM GUARD, PRE-REGISTERED 2026-11-08 before this run. Row: (#1418).
+# WHY: (#1411) found dbnetis_at's worst third (the firms whose debt grew fastest against their assets) trailing its
+#   market in the US (t 3.74, post +0.6 %/yr) and in developed ex-US (t 2.58, post +1.3). It is the open
+#   Seasonality cluster's only loser passer (JKP files net debt issuance there), so no beyond step applies, and
+#   (#1416) refused nfna_gr1a, so it heads the guard queue. The proof stays JKP's; our backtest only has to show no
+#   visible harm.
+# TWIN: `dbnetis_at`, total debt now minus a fiscal year back, over NOW's total assets, in % (Bradshaw, Richardson
+#   and Sloan 2006; JKP's dbnetis_at). JKP's code builds it as (dstnetis_x + dltnetis_x) / at_x, where dltnetis_x =
+#   coalesce(dltis - dltr, ltdch, dif12(dltt)) and dstnetis_x = coalesce(dlcch, dif12(dlc)). Its last fallbacks are
+#   the 12-month balance changes, which our twin uses for both legs, as (#1356)'s menu line said. Their sum is the
+#   change in total debt, (#703)'s `debt`, and the denominator is the CURRENT at_x. The year back is `back(1)` by
+#   period end, as the earlier twins found theirs. A missing debt in either year reads None, as JKP's dif12 of a gap
+#   is missing; no financial filter applies, as JKP keeps every firm. Assets 0 reads None. shortcut: a balance change
+#   also counts debt assumed in an acquisition, currency swings and lease reclassifications, which the issuance and
+#   repayment flows would not. stamp_cohort_ranks ranks it as an eleventh column, alone, into `dbnet_pct` = 100 minus
+#   its percentile (0-100, high = SLOW debt growth, JKP's earning side, direction -1) over the date's names that
+#   carry one. Only as-of SEC rows yield one, and live reads None until a ship stamps it.
+# TERM: {factor: dbnet_pct, weight: 0.09, cap: 33.3, neutral: 50}, the (#1410) dock-only shape, added after the six
+#   shipped terms (roic, margin_trend, ey_pct, mom61_pct, capx_pct, fcf_pct), which stay unchanged. The refused
+#   noa_pct and nfna_pct are not in the grid. The worst third by debt growth scores 0 to 3 points by percentile;
+#   every other name, and a name with no value, gets the full 3.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), so
+#   cutoffs before 2011-01-01 drop. Grid: [{}, {growth_fund_extra: the shipped terms, then the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y under the (#1339) clauses: top-10 and pond gains not under their edges,
+#   pool at least 80 %, dbnet_pct read on at least 50 % of scored stocks (else UNGRADEABLE) and at least one top-10
+#   name moved (else INERT). Only then a second probe, rescore="guard holdout reveal sec", reads the sealed 2016-on
+#   8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were read six times before
+#   (ni_me, probe 42286340556; ret_6_1, 42357657397; capx_gr3, 42361540115; fcf_me, 42479970202; noa_gr1a,
+#   42502478033; nfna_gr1a, 42505926930). So this seventh read is not blind: two docks on new borrowers failed
+#   there, by 0.08 and 0.03 on the pond, and dbnet_pct docks much the same names; the receipt says so. Both = SHIP
+#   per (#1339) and (#1410), after one owner question, because the page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = dbnetis_at REFUSED, record only. The turn then
+#   passes to ocf_at_chg1, under its own pre-registration.
+# OVERLAP, flagged before the run: dbnetis_at is nfna_gr1a without its short-term investment leg, over the same
+#   current assets, so the two docks mostly hit the same names. Both refused twins are out of the book, so this
+#   guard sees dbnet_pct's whole effect.
+# EXPECTED: the legs that can be missing are nfna_gr1a's (debt in both years, assets now), so coverage reads the
+#   same 84.0 % and 85.7 %, give or take a name. The top-10 moves about as much (0.38 and 0.60). The guard passes
+#   about 3 in 4 (six of the route's seven guard probes passed). The holdout, on near twins of nfna_gr1a's names,
+#   whose sealed pond missed by 0.03, passes about 1 in 3, and the whole about 1 in 4.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to

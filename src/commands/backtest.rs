@@ -7217,13 +7217,15 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// slowest NOA grower reads 100: the route's twin of JKP's noa_gr1a, buy side low.
 /// (#1415) `nfna_gr1a` ranks the same way as a tenth column, alone, into `nfna_pct` (high = fast NFNA growth, a firm
 /// paying debt down): the route's twin of JKP's nfna_gr1a, buy side high.
+/// (#1417) `dbnetis_at` ranks the same way as an eleventh column, alone, into `dbnet_pct` = 100 − its percentile, so
+/// the slowest debt grower reads 100: the route's twin of JKP's dbnetis_at, buy side low.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
 /// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
 /// `underdep` is demeaned the same way, for Peddireddy's industry benchmark.
 /// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
 fn stamp_cohort_ranks(samples: &mut [Sample]) {
-    let legs: [fn(&core::FundFactors) -> Option<f64>; 10] = [
+    let legs: [fn(&core::FundFactors) -> Option<f64>; 11] = [
         |f| f.earnings_yield,
         |f| f.ebitda_yield,
         |f| f.fcf_ev_yield,
@@ -7234,6 +7236,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
         |f| f.fcf_yield,
         |f| f.noa_gr1a,
         |f| f.nfna_gr1a,
+        |f| f.dbnetis_at,
     ];
     let rank = |col: &[f64], v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
     for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
@@ -7261,6 +7264,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             f.fcf_pct = ranked[7];
             f.noa_pct = ranked[8].map(|p| 100.0 - p);
             f.nfna_pct = ranked[9];
+            f.dbnet_pct = ranked[10].map(|p| 100.0 - p);
         }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
@@ -11805,6 +11809,24 @@ mod tests {
         let mut v = vec![row("P", Some(-40.0)), row("Q", Some(5.0)), row("R", None)];
         stamp_cohort_ranks(&mut v);
         let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.nfna_pct)).collect();
+        assert_eq!(got, [Some(0.0), Some(100.0), None]);
+    }
+
+    /// (#1417) `dbnet_pct` is 100 minus dbnetis_at's same-date percentile: P's debt up 40 % of assets reads 0, Q's
+    /// down 5 % reads 100, and R with no dbnetis_at reads None.
+    #[test]
+    fn stamp_cohort_ranks_ranks_debt_issuance_low_first() {
+        let row = |t: &str, g: Option<f64>| Sample {
+            date: ymd(2012, 1, 1),
+            realized: 0.0,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: Some(crate::core::FundFactors { dbnetis_at: g, ..Default::default() }),
+            trail: Vec::new(),
+        };
+        let mut v = vec![row("P", Some(40.0)), row("Q", Some(-5.0)), row("R", None)];
+        stamp_cohort_ranks(&mut v);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.dbnet_pct)).collect();
         assert_eq!(got, [Some(0.0), Some(100.0), None]);
     }
 
