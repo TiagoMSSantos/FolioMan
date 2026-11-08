@@ -25046,6 +25046,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   The NULL line now prints the max beside p50 and p95. Under this rule look 1 reads the floor on both
 #   counts (+0.65 is below p95 +1.15, so below the max too, and p5 is -0.16).
 #   Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1421) RESULT, look 2, read under (#1240)'s rule: probe run 41662697774 on 522563d (`universe fund pit dead`,
+#   years 12 8, configs=5000 nulls=200), dispatched by campaign.yml on 2026-11-03 and read 2026-11-08.
+#   The shipped config changed between the two looks. GROWTH windows scored 8165 at 12y and 10626 at 8y,
+#   against look 1's 12469 and 16339, while the ON-SALE counts rose (6142 and 10425 against 5995 and 10281).
+#   The likeliest cause is (#1282) (7327527), which refuses a stock under the Série E hurdle instead of
+#   docking it; this receipt did not test that. (#1283) took the value brake out of the search, so it scales
+#   6 caps, not 7. So look 2 grades a different shipped book on fewer samples; it is not a repeat of look 1.
+#   The shipped top-10 excess reads +2.5 (median +2.5) at 12y and at 8y. 82 of the 5000 configs (1.6%) beat
+#   it on both moments at both horizons. The best config gains +0.41 pts/yr: 12y +3.2 (median +3.2), 8y
+#   +2.9 (+2.9), with the history notch (growth_min_leg_years to 2) loosened once. On shuffled returns the
+#   same search finds a best gain of +0.71 at the median shuffle, +1.16 at p95 and +1.72 at the max, so
+#   p = 0.866 that a search this wide finds +0.41 by luck. 200 nudges of the winner read p5 -0.14, p50 +0.30.
+#   PARSIMONY: putting back the dividend, underwater or sharpe weight, sharpe_cap or long_trend_cap leaves
+#   the gain at +0.39 to +0.44, so those moves carry nothing. Putting back the trend, proximity or fund weight,
+#   growth_overext_floor or growth_overext_exp leaves +0.00 to +0.27. Putting back growth_accel_weight,
+#   growth_trust_exp, growth_accel_cap or the quality weight drops it below 0 (-0.26, -0.12, -0.07, -0.05).
+#   Putting back the history notch lifts it to +0.52. That neighbour was not among the 5000 configs the null
+#   prices, so it is a post-hoc pick and grades nothing.
+#   ACROSS THE TWO LOOKS: growth_accel_cap and growth_trust_exp carry part of both winners' gain (look 2's
+#   raises them from 50 to 83.3 and from 0.5 to 0.93). Both winners sit under their null's p50 (+0.65
+#   against +0.72, +0.41 against +0.71), so that is no lead: even a noise-floor winner leans on some knobs.
+#   VERDICT: the noise floor on both counts. +0.41 is below the null max +1.72, and JITTER p5 is -0.14. No
+#   probe arm runs and no knob moves. Look 3 is the campaign's run of 2026-12-03, kept 35 days ((#1422)).
+#   Nothing here reaches rank, BUY NOW, size, trade or the broker.
 # (#1241) EX-27 GO/NO-GO CENSUS, 2026-10-30, record only: NO-GO. Could SEC's free Financial Data Schedules
 #   (EX-27, filed with every 10-K from the mid-1990s to mid-2001, public domain, tagged NET-INCOME, EPS,
 #   TOTAL-ASSETS) fill the FUNDAMENTAL BLACKOUT near the top of this file for the 1996-2001 cutoffs, dead
