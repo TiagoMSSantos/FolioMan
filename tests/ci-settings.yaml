@@ -23139,6 +23139,7 @@ buy_heuristic:
   #   DO NOT open either on the strength of the "SWEEPABLE ON DAY ONE" line above; it is superseded.
   #   The ladders below are left exactly as written — they are still the right ladders IF the lane
   #   ever exists to run them on.
+  #   (#1399), 2026-11-08: P4b ran behind the (#97) units fix on its ladder. No rung passes; it stays off.
   #
   # BOTH ARE UNFITTED JUDGEMENT VALUES — specifically, the OFF state. They are NON-CRYPTO on purpose:
   # coins already carry three tail knobs of their own, and a coin's ordinary week clears every rung
@@ -23166,7 +23167,7 @@ buy_heuristic:
                                  #   BELOW THE CRYPTO ONE, and copying 3.0 across would ship an inert knob.
                                  #   Also unlike its crypto sibling it is not edge-blind: the pool is
                                  #   overwhelmingly equities, so a sweep here has the samples to vote.
-                                 #   UNFITTED. Suggested ladder: off / 4 / 3 / 2.5 / 2. 0 = off.
+                                 #   (#1399): its ladder 4 / 3 / 2.5 / 2, in daily units, passes no rung. 0 = off.
   growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7
@@ -27438,6 +27439,34 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   rebless and all four pins, in one commit. Live moves only through the gate, since live is bit-identical in the
 #   units fix ((#176)). sharpe_cap 15 then binds in the backtest as it already does live.
 # REVERT RULE: nothing moves unless a winner ships on the owner's word.
+# (#1399) VERDICT, 2026-11-08, on (#1398): NO WINNER. `growth_max_vol` stays 0.0 and `vol_daily_equivalent` stays
+#   false. P0, the control: probe 42470973356, no knobs. P1, the arm: probe 42470980354,
+#   knobs="vol_daily_equivalent=true", rescore="guard", the five-row grid. Both on ffb0e13, years="12 8",
+#   args="universe fund pit". WINDOWS SCORED, ON-SALE / GROWTH, match: 12y 5150 / 6488 and 8y 9184 / 8596 on both.
+# RU RULER (tools/regrade_ruler.py, lane pit, P0 split at its 8y header). RU1 = windows where the top 5 beat 6-10:
+#     row        12y mean  med   worst  p20   worst5 RU1    | 8y mean  med   worst  p20   worst5 RU1
+#     P0             +3.4  +3.5  -3.0   +1.3  -1.6   21/38  |   +3.1  +3.4  -4.8   +0.3  -3.6   30/46
+#     fix alone      +3.3  +3.5  -3.5   +1.2  -2.0   21/38  |   +3.0  +3.4  -5.1   +0.4  -3.8   30/46
+#     vol 4          +3.3  +3.5  -3.0   +1.2  -1.4   21/38  |   +3.2  +3.3  -4.1   +0.6  -2.8   28/46
+#     vol 3          +3.3  +3.2  -3.7   +0.8  -1.2   23/38  |   +3.1  +3.3  -4.1   +0.4  -2.5   28/46
+#     vol 2.5        +3.0  +2.7  -5.4   +1.0  -2.2   27/38  |   +2.9  +3.3  -5.2   +0.3  -3.8   31/46
+#     vol 2          +3.3  +2.8  -3.3   +1.8  -1.5   24/38  |   +3.3  +3.6  -5.1   +1.0  -3.0   26/46
+# ELIGIBLE ((#1387), against the fix alone): no rung. Rung 4 fails RU1 at 8y (28/46 against 30/46) and RU-E at 8y
+#   (2008-13 gain -0.5). Rung 3 fails RU3 at 12y, RU1 at 8y and RU-E at both. Rung 2.5 fails RU3 at both and RU-E
+#   at 8y. Rung 2 fails RU3 at 12y, RU1 at 8y (26/46), RU-E at both, and the 8y guard: its pond gain -0.18 is under
+#   the -0.13 edge. Every other guard cell reads PASS, with band and tail INSIDE.
+# WIN: none, even before eligibility. No rung's 12y median is above +3.5, the fix alone's and P0's; rung 4 ties it.
+# THE FIX ALONE against P0: mean -0.1 at both horizons, median and RU1 tied, worst window -0.5 at 12y and -0.3 at 8y.
+# CENSUS, P1's CEILING SWEEP row `growth_max_vol 3.0`, now in daily units: at 12y it refuses 77 names (mean -7.5,
+#   median -111.2 pts) and keeps 244 (+29.8, -70.8); at 8y it refuses 78 (-5.7, -62.2) and keeps 343 (+34.4,
+#   -11.3). Both print REFUSES WORSE THAN IT KEEPS. In P0's monthly units the same row refused 315 of 321 and 408 of
+#   421. So the gate does pick out worse names, but few of them reach the top 10: rung 3 moves 1.11 top-10 names a
+#   bucket at 12y and 0.93 at 8y, for a top-10 gain of -0.06 and +0.06.
+# AGAINST EXPECTED: rung 4 read INSIDE, as called, but fails RU1 at 8y. Rungs 2.5 and 2 read INSIDE on the guard, not
+#   OUTSIDE NEGATIVE as called; their 12y median fell 0.8 and 0.7, and both fail RU3. The fix alone sat 0.1 under P0
+#   on the mean, not about 0.3. No winner, as called.
+# REVERT RULE: nothing moved; both knobs stay as shipped. The key's own comment now cites this receipt, so
+#   `growth_max_vol` leaves NO_RECEIPT in src/config.rs.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

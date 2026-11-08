@@ -80,7 +80,7 @@ by hand.
 | 63 | (1) % ABOVE the 200wk SMA at which the overextension brake maxes out | knob | `growth_overext_cap` | SHIPPED 100.0 | #24 #64 #69 #558 #566 #574 | — |
 | 64 | hard gate: reject equities more than this % above the 200wk SMA — the extreme blow-off cohort the overext bra… | knob | `growth_max_above_ma` | SHIPPED 150.0 | #24 #63 #64 #69 #575 #833 | — |
 | 65 | (#833) a stock with fewer than LONG_MA_SESSIONS closes has no 200wk average, so its stretch reading is 0 and… | knob | `growth_brake_min_sessions` | SHIPPED 0 | #26 #138 #558 #566 #573 #833 | — |
-| 66 | (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — m… | knob | `growth_require_lifetime_uptrend` | SHIPPED true | #24 #25 #64 #183 #184 #1285 | — |
+| 66 | (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — m… | knob | `growth_require_lifetime_uptrend` | SHIPPED true | #24 #25 #64 #183 #184 #1399 | — |
 | 67 | (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name t… | knob | `growth_maxdd_cap` | SHIPPED 0.0 | #26 #60 #74 #134 #135 #137 | — |
 | 68 | (#26) crypto's OWN maxdd cap. Coins crash >90% every cycle, so the equity cap would gate Bitcoin itself (-83%… | knob | `growth_maxdd_cap_crypto` | SHIPPED 84.0 | #26 #60 #74 #134 #135 #137 | — |
 | 69 | (#36) crypto-only hard gate: reject coins whose daily-return stdev (quote.volatility_pct, the VOL column) exc… | knob | `growth_max_vol_crypto` | SHIPPED 3.0 | #36 | — |
@@ -88,10 +88,10 @@ by hand.
 | 71 | (#1300) a COIN's own listing-age floor, on top of growth_min_age_years: a coin must be at least this many yea… | knob | `growth_min_age_years_crypto` | SHIPPED 8.0 | #33 #160 #178 #511 #1291 #1300 | — |
 | 72 | (AUM) ETF-only hard gate: reject a fund smaller than this (quote.aum_eur, EUR-approx from the BF universe pay… | knob | `growth_min_aum_etf` | SHIPPED 100000000 | #511 #1291 #1306 #1315 #1316 | — |
 | 73 | (#37) hard gate: reject a name whose PEG exceeds this — too expensive for the growth it actually delivers. Ex… | knob | `growth_max_peg` | SHIPPED 2.0 | #37 #120 #139 #160 #186 #266 | — |
-| 74 | (#37 funds) the ETF table's OWN valuation ceiling, same PEG units and same arithmetic as growth_max_peg, appl… | knob | `growth_max_peg_etf` | SHIPPED 2.0 | #37 #41 #97 #127 #566 #817 | — |
+| 74 | (#37 funds) the ETF table's OWN valuation ceiling, same PEG units and same arithmetic as growth_max_peg, appl… | knob | `growth_max_peg_etf` | SHIPPED 2.0 | #37 #41 #97 #566 #817 #1399 | — |
 | 75 | (V) hard gate: reject a name whose FILER states no EPS in any filing, so `growth_max_peg` can never price it.… | knob | `growth_require_peg` | SHIPPED true | #538 | — |
-| 76 | (P4a) hard gate: reject a non-crypto name whose LARGEST single-bar move in the trailing month exceeded this %… | knob | `growth_max_daily_1m` | SHIPPED 0.0 | #38 #41 #97 #127 #168 #817 | — |
-| 77 | (P4b) hard gate: the EQUITY/ETF twin of growth_max_vol_crypto — reject a non-crypto name whose daily-return s… | knob | `growth_max_vol` | SHIPPED 0.0 |  | — |
+| 76 | (P4a) hard gate: reject a non-crypto name whose LARGEST single-bar move in the trailing month exceeded this %… | knob | `growth_max_daily_1m` | SHIPPED 0.0 | #38 #41 #97 #127 #817 #1399 | — |
+| 77 | (P4b) hard gate: the EQUITY/ETF twin of growth_max_vol_crypto — reject a non-crypto name whose daily-return s… | knob | `growth_max_vol` | SHIPPED 0.0 | #1399 | — |
 | 78 | (#41) REDUNDANCY skip on the shown stock table: walk the ranked rows and drop one whose 36-month trailing-ret… | knob | `growth_corr_cap` | SHIPPED 0.0 | #40 #41 #120 #140 #192 #193 | — |
 | 79 | (#75) VALUE BRAKE: reject the most-expensive-FOR-THEIR-GROWTH P% of a cohort by `fund.peg_yield` (high = chea… | knob | `growth_value_floor_pct` | SHIPPED 40.0 | #41 #47 #71 #72 #75 #1283 | — |
 | 80 | (#44) multiply the growth score of a COMMODITY-LINKED row — GICS Energy/Materials, or a fund whose name carri… | knob | `growth_commodity_damp` | SHIPPED 0.2 | #1 #3 #44 #508 #910 | — |
