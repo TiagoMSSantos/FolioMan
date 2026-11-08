@@ -361,6 +361,13 @@ pub struct Quote {
     // anywhere else (stub, `check`, price-only probes) and None means INERT: the shipped floor stands.
     pub bench_1y_pct: Option<f64>,     // the index's trailing 1Y return (%) at this date; caps `growth_min_1y_pct`
     pub bench_range_pct: Option<f64>,  // the index's own `range_pct` over the SAME ~10y window names use; caps `growth_min_range_pct`
+    /// (#1393) `measure_endpoint(closes) / closes.last()` — the smoothed-over-raw endpoint ratio of the
+    /// series this quote was built from, filled by BOTH quote builders (`fetch::quote_one` on the daily
+    /// chart, `backtest_quote` on the cutoff slice). `picks::net_return` divides it out of a momentum key
+    /// under `momentum_one_endpoint`, so the 12-7 and 12-1 keys read `p_short/p_long - 1` instead of
+    /// carrying the mixed-endpoint tilt. None (stub, dumps and journal rows before the field) = 1.0 = today's key.
+    #[serde(default)]
+    pub endpoint_ratio: Option<f64>,
     /// (#328) The CAGR floor THIS quote's GICS sector earned from the sector door, or None when the
     /// door found no cohort for it. DERIVED per run and STAMPED by the caller, never fetched and never
     /// configured: `screen` stamps it from the current pool, `backtest` from the cutoff BEFORE this one
@@ -524,6 +531,7 @@ impl Quote {
             stats_8y: None,
             bench_1y_pct: None,    // (#326) no market context on a stub -> the regime valve is inert
             bench_range_pct: None, // (#326) ditto
+            endpoint_ratio: None, // (#1393) no series on a stub -> the momentum keys read as before
             sector: None, // (#44) stamped in `screen` from the universe CSV; stubs/backtest stay None
             aum_eur: None,
             ter_fallback: None,
@@ -5959,6 +5967,20 @@ fn pit_splice_trim(on: bool, ticker: &str) -> bool {
 /// input to `growth_min_1y_pct`, to `accel` (the heaviest term in the lane) and to `mom121` — was a
 /// DIFFERENT ESTIMATOR in train and in serve. Pass an empty map for the old behaviour, which is what
 /// the shipped lane still does until `backtest_anchor_windows` is turned on.
+/// (#1391) The last `years` calendar years of a cutoff slice, by DATE — `closes[i..]` where `i` is the
+/// first bar on or after `dates.last() - years`, so a quarterly, weekly or monthly series all answer
+/// "ten years" with ten years. `years <= 0.0` is the whole slice (the knob's off state); a slice shorter
+/// than the window is also the whole slice. `dates` and `closes` are parallel.
+pub fn live_window<'a>(dates: &[NaiveDate], closes: &'a [f64], years: f64) -> &'a [f64] {
+    if years <= 0.0 || closes.is_empty() || dates.len() != closes.len() {
+        return closes;
+    }
+    let Some(last) = dates.last() else { return closes };
+    let from = *last - Duration::days((years * 365.25).round() as i64);
+    let i = dates.partition_point(|d| *d < from);
+    &closes[i.min(closes.len() - 1)..]
+}
+
 pub fn backtest_quote(
     ticker: &str,
     dates: &[NaiveDate],
@@ -6002,8 +6024,17 @@ pub fn backtest_quote(
     quote.div_eur = dividend_sums(divs, d, Some(1.0));
     quote.price_eur = c.last().copied();
     quote.perf = horizon_changes(d, c, None, windows, None); // calendar-based -> cadence-agnostic
-    quote.drawdown_pct = pct_from_high(c); // all-time anchor as of the `as_of` index
-    quote.range_pct = price_pct_rank(c);
+    // (#1393) the endpoint ratio the momentum keys divide out, off the same slice `perf` was measured on
+    quote.endpoint_ratio = c.last().filter(|&&last| last > 0.0).map(|last| measure_endpoint(c) / last);
+    // (#1391) THE WINDOW. The live screen measures range, drawdown and R² on its ~10y daily chart
+    // (`fetch::quote_one`) and `backtest::bench_range_pct` reads the index over a trailing 10 calendar
+    // years, but these four were whole-life here — for a 2014 cutoff on GE, 1962-2014. Under
+    // `backtest_live_window_years` they read the last N calendar years of the slice (by DATE, so the bar
+    // size cannot change the span), and `stats_8y` is filled as `quote_one` fills it, so the 8y range gate
+    // runs in the backtest for the first time. 0.0 = whole-life, byte-identical: `w` is the whole slice.
+    let w = live_window(d, c, crate::config::backtest_live_window_years());
+    quote.drawdown_pct = pct_from_high(w); // (#1391) windowed; whole-life ("all-time anchor") at 0.0
+    quote.range_pct = price_pct_rank(w);
     // cadence = bars/year (252 daily, 12 monthly): vol over ~1y of bars; the long MA window scaled
     // from its daily session count so the SAME ~4y/200wk span is used on either cadence (cadence=252
     // reproduces the daily path exactly). note: monthly bars APPROXIMATE the daily vol/MA, not
@@ -6035,7 +6066,7 @@ pub fn backtest_quote(
     // (#833) the young-name floor scales with the cadence exactly as the window does
     let brake_min = per_cadence(crate::config::growth_brake_min_sessions(), cadence);
     quote.above_ma_pct = above_long_ma_pct(c, stretch_window(c.len(), long_ma, brake_min));
-    quote.trend_r2 = trend_r2(c);
+    quote.trend_r2 = trend_r2(w); // (#1391) windowed; whole-life at 0.0
     quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
     // (#3j) whole-life endpoint CAGR over the SAME `[..=as_of]` slice, from the SAME `core::life_cagr`
     // the live fetch calls -> train==serve, exactly like `trend_cagr` above.
@@ -6071,7 +6102,18 @@ pub fn backtest_quote(
     let divs_to_date: f64 =
         d.last().map_or(0.0, |cut| divs.iter().filter(|(dt, _)| dt <= cut).map(|(_, v)| v).sum());
     quote.tr_cagr = tr_life_cagr(d, c, divs_to_date);
-    quote.max_drawdown_pct = max_drawdown_pct(c);
+    quote.max_drawdown_pct = max_drawdown_pct(w); // (#1391) windowed; whole-life at 0.0
+    // (#1391) the 8y twin, exactly as `fetch::quote_one` builds it (2920 days back, the run's cadence for
+    // the underwater years); None when the knob is off, which is what every golden was blessed on, and
+    // None when the slice is not longer than 8y — "its whole span IS the window", the field's own rule.
+    if crate::config::backtest_live_window_years() > 0.0 {
+        quote.stats_8y = d.last().map(|last| d.partition_point(|x| *x < *last - Duration::days(2920))).filter(|&i| i > 0).map(|i| Stats8 {
+            range_pct: price_pct_rank(&c[i..]),
+            trend_r2: trend_r2(&c[i..]),
+            max_drawdown_pct: max_drawdown_pct(&c[i..]),
+            underwater_yrs: longest_underwater_yrs(&c[i..], cadence),
+        });
+    }
     // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only — no
     // score path reads roll*/worst*). The hit-rate/worst windows scale with the run's cadence
     // (bars/year) so a MONTHLY run measures the same 5y/10y calendar span the daily run does — a
@@ -6331,6 +6373,86 @@ pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#1389) A deterministic 15 %/yr path with a random-walk noise of 3 %/month (an LCG, seed 13), 30 years
+    /// of bars dated the 1st of the month — and the same path read on the 1st of each QUARTER, which is what
+    /// Yahoo's `range=max` hands the long fetch for every pre-1985 listing.
+    fn synthetic_monthly_and_quarterly() -> ((Vec<NaiveDate>, Vec<f64>), (Vec<NaiveDate>, Vec<f64>)) {
+        let (mut x, g, sigma) = (13_u64, 1.15_f64.ln() / 12.0, 0.03);
+        let (mut dates, mut closes, mut lc) = (Vec::new(), Vec::new(), 100.0_f64.ln());
+        for m in 0..360_i32 {
+            dates.push(NaiveDate::from_ymd_opt(1990 + m / 12, (m % 12 + 1) as u32, 1).unwrap());
+            if m > 0 {
+                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let z = (2.0 * (x as f64 / 18446744073709551616.0) - 1.0) * 3.0_f64.sqrt();
+                lc += g + sigma * z;
+            }
+            closes.push(lc.exp());
+        }
+        let q: Vec<(NaiveDate, f64)> =
+            dates.iter().zip(&closes).filter(|(d, _)| matches!(d.month(), 1 | 4 | 7 | 10)).map(|(d, c)| (*d, *c)).collect();
+        ((dates, closes), (q.iter().map(|x| x.0).collect(), q.iter().map(|x| x.1).collect()))
+    }
+
+    /// (#1389) THE BAR-MIX DEFECT, PINNED. `backtest_quote` is handed `cadence` 12 for every series of a
+    /// long run, but Yahoo answers `range=max` with QUARTERLY bars for a pre-1985 listing (and ^GSPC), so
+    /// its constants mean the wrong thing there: the 47-bar long average is 11.75 years instead of 3.9, so
+    /// the stretch above it triples and crosses the 150 hard gate on a path the monthly reading puts under
+    /// 100; the 5-bar endpoint is 15 months instead of 5, so the 1Y leg reads a different return; a
+    /// quarterly log slope annualised ×12 is ~3.4× the monthly `trend_cagr`. Same path, same code, same
+    /// cadence argument — only the sampling differs. (#117) fixed the constants per series and lost; the
+    /// explicit-span fetch (`urls.long_chart_explicit_span`) fixes the DATA. This test is what keeps the
+    /// "a backtest run is single-cadence" assumption from returning unnoticed. (The unit suite measures at
+    /// the default 252 cadence, so the smoothing here is 105 bars, not the walk's 5; the gaps are wider still.)
+    #[test]
+    fn a_quarterly_series_under_cadence_12_is_not_the_monthly_one() {
+        let ((md, mc), (qd, qc)) = synthetic_monthly_and_quarterly();
+        assert_eq!((mc.len(), qc.len()), (360, 120));
+        let m = backtest_quote("X", &md, &mc, &[], mc.len() - 1, 12, &BTreeMap::new());
+        let q = backtest_quote("X", &qd, &qc, &[], qc.len() - 1, 12, &BTreeMap::new());
+        assert!(m.above_ma_pct < 100.0 && q.above_ma_pct > 150.0, "stretch monthly {:.1} vs quarterly {:.1}: the quarterly reading crosses growth_max_above_ma", m.above_ma_pct, q.above_ma_pct);
+        assert!(q.above_ma_pct > 2.0 * m.above_ma_pct, "{:.1} vs {:.1}", m.above_ma_pct, q.above_ma_pct);
+        let (tm, tq) = (m.trend_cagr.unwrap(), q.trend_cagr.unwrap());
+        assert!(tq > 2.5 * tm && tm > 10.0 && tm < 20.0, "trend_cagr monthly {tm:.1} vs quarterly {tq:.1}: a quarterly slope ×12");
+        let one_y = |x: &Quote| x.perf.iter().zip(HORIZONS).find(|(_, (l, _))| *l == "1Y").and_then(|(p, _)| p.as_ref().map(|p| p.1)).unwrap();
+        assert!((one_y(&m) - one_y(&q)).abs() > 3.0, "1Y leg monthly {:.1} vs quarterly {:.1}: a 15-month endpoint is not a 5-month one", one_y(&m), one_y(&q));
+        assert!(m.volatility_pct.is_some() && q.volatility_pct.is_some());
+        // (#1393) both readings carry the endpoint ratio the momentum keys divide out; a riser's is under 1
+        assert!(m.endpoint_ratio.is_some_and(|r| r > 0.0 && r < 1.0), "{:?}", m.endpoint_ratio);
+    }
+
+    /// (#1391) `live_window` is a span in CALENDAR years, so monthly and quarterly bars both answer "ten
+    /// years" with ten years (the bar ON the boundary is in: 121 monthly, 41 quarterly); 0.0 and a short
+    /// slice are the whole slice. On a 20-year path that runs 100 -> 1000 in its first five years, falls to
+    /// 100 by year seven, sits there and steps to 200 in its last twenty months, the whole-life percentile
+    /// fails the 80 range bar (most of its closes are the old peak) while the ten-year window clears it —
+    /// the backtest's whole-life reading and the live screen's ten-year one decide the HARD gate
+    /// differently (12.9 % of fixture cutoffs). The step is inside the endpoint smoothing either way, so
+    /// the percentiles are the same at the unit suite's 105-bar endpoint and the backtest's 5-bar one.
+    /// With the knob off (the test's ambient config) `backtest_quote` still reads whole-life and leaves
+    /// `stats_8y` None, which is what every golden was blessed on.
+    #[test]
+    fn live_window_is_calendar_years_and_moves_the_range_gate() {
+        let ((md, mc), (qd, qc)) = synthetic_monthly_and_quarterly();
+        assert_eq!(live_window(&md, &mc, 10.0).len(), 121, "ten years of monthly bars, boundary bar in");
+        assert_eq!(live_window(&qd, &qc, 10.0).len(), 41, "ten years of quarterly bars, boundary bar in");
+        assert_eq!(live_window(&md, &mc, 0.0).len(), 360, "0.0 is the whole slice");
+        assert_eq!(live_window(&md[..24], &mc[..24], 10.0).len(), 24, "a short slice is the whole slice");
+        let d: Vec<NaiveDate> = (0..240_i32).map(|m| NaiveDate::from_ymd_opt(2000 + m / 12, (m % 12 + 1) as u32, 1).unwrap()).collect();
+        let c: Vec<f64> = (0..240).map(|m| match m {
+            0..=60 => 100.0 + 15.0 * m as f64,         // 100 -> 1000 by year five
+            61..=84 => 1000.0 - 37.5 * (m - 60) as f64, // -> 100 by year seven
+            85..=219 => 100.0,
+            _ => 200.0,                                // the last twenty months
+        }).collect();
+        let win = live_window(&d, &c, 10.0);
+        assert_eq!(win.len(), 121);
+        let (whole, ten) = (price_pct_rank(&c), price_pct_rank(win));
+        assert!(whole < 65.0 && ten > 80.0, "whole-life {whole:.1} refuses the 80 bar, the ten-year window {ten:.1} admits");
+        let q = backtest_quote("X", &d, &c, &[], c.len() - 1, 12, &BTreeMap::new());
+        assert!((q.range_pct - whole).abs() < 1e-9 && q.stats_8y.is_none(), "knob off: whole-life, no 8y stats");
+        assert!(q.max_drawdown_pct > 89.0 && max_drawdown_pct(win) < 1e-9, "the 90 % fall is outside the window: {} vs {}", q.max_drawdown_pct, max_drawdown_pct(win));
+    }
 
     /// (#473) universe.json carries the buyer count on the flagged names alone, and the wasm engine
     /// reads it back unchanged.

@@ -15199,6 +15199,12 @@ buy_heuristic:
                                  #   5044 tickers (one name resolved between them), which is cache drift
                                  #   and not a treatment; every effect above is orders of magnitude
                                  #   larger than one ticker in five thousand.
+  momentum_one_endpoint: false   # (#1393) PRE-REGISTERED 2026-11-08, UNMEASURED. false = the shipped momentum keys carry the smoothed/raw
+                                 #   endpoint tilt every momentum receipt was graded with; true divides it out (`Quote.endpoint_ratio`), live and
+                                 #   backtest together. Row (#1394) decides; see the (#1393) block after (#1358). Grid-gradeable on a new dump only.
+  backtest_live_window_years: 0.0 # (#1391) PRE-REGISTERED 2026-11-08, UNMEASURED. 0.0 = `backtest_quote` measures range, drawdown and R²
+                                 #   whole-life and leaves `stats_8y` None, the window every fitted receipt was measured under; 10.0 = the live
+                                 #   screen's ten years (`core::live_window`). RESCORE_FIXED: a probe arm, never a grid row. Row (#1392) decides.
   vol_daily_equivalent: false    # (#97) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  # the raw per-bar scale every vol-reading receipt in this file was
                                  # fitted at. This is the one knob here that INVALIDATES OTHER RECEIPTS
@@ -27142,6 +27148,141 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   below ~5 %/yr (#1333), so a flag never ships anything by itself. The one channel with power stays the paper
 #   route (#1339). HEAD on JKP's public/availability.json, 2026-11-07: Last-Modified 2026-08-04 03:27:36 GMT,
 #   unchanged, so it stays shut.
+# (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
+#   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
+# NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
+#   the backtest's own input, the (#117)/(#97)/(#263) kind, graded for HARM only. Nothing here claims an edge.
+# THE DEFECT, read in the code and the fixture: `backtest::run` sets `cadence` 12 for every series of a long run
+#   (backtest.rs `let monthly = long || years >= 8`), `fetch::chart_json_long` asks Yahoo `range=max&interval=1mo`, and
+#   Yahoo answers `range=max` at ~500 points whatever interval is asked: a listing older than ~41 years arrives as
+#   QUARTERLY bars, one younger than ~9.6 years as WEEKLY, under ~2 years DAILY. tests/fixture/.long_history_cache.json
+#   by `meta.dataGranularity`: 1mo 58 | 1wk 88 | 1d 38 | 3mo 12 | 1h 3; the 3mo names are AIG BA C CCL F GE INTC MMM
+#   NWL T VFC and ^GSPC ITSELF (168 bars, 1984-12 to 2026, median gap 91 d). Live cache per (#117): 1mo 1818 | 1wk
+#   2059 | 1d 1155 | 1h 317 | 3mo 304 | 1y 172, and (#173) read "cached AAPL/MSFT/JNJ all read 4.0 bars/yr". Nothing read
+#   the field back; (#117) said so and fixed the CONSTANTS per series instead of the data, which admitted the thin `1y`
+#   cohort of the universe pond and lost; its revert rule asks for the granularity filter to be KEPT. Here the filter
+#   is the intended one: `min_history` 36 is three calendar years for every name once every name is monthly.
+# WHAT CADENCE 12 DOES TO A `3mo` SERIES (`core::backtest_quote`): `volatility_pct` over 12 quarterly returns, sqrt(3)
+#   wider per bar against `sharpe_cap` 15; `long_ma` 47 bars = 11.75 YEARS instead of 3.9, so `above_ma_pct` is the
+#   distance above a decade average and `growth_max_above_ma` 150, `growth_overext_free` 60 and the brake bite on trend;
+#   the 5-bar `measure_endpoint` = 15 months, so the 1Y leg is a different return; `trend_cagr` annualises a quarterly
+#   slope x12. To a `1wk` series: `min_history` 36 = 36 WEEKS (a 2017+ listing enters 8 months after its IPO), vol over
+#   12 weeks, the long MA over 47 weeks, `last_decade` 2.3 years. The benchmark's quarterly bars misplace entry and
+#   exit by up to a quarter. MEASURED OFFLINE 2026-11-04 (cadence_window_probe.py, in the round-16 doc's folder: the 37
+#   true-monthly fixture names with >20y re-read on the first bar of each quarter, cadence 12 both ways, 1202 half-year
+#   cutoffs from 2010): vol median 7.05 -> 12.20 (x1.70); above_ma median 16.0 -> 37.5; the 150 hard gate decides
+#   differently on 131 of 1202 cutoffs (10.9 %); the linear overext damp median 0.85 -> 0.64; the 1Y leg median +8.25
+#   -> +5.13, median |difference| 7.6 pts; trend_cagr +8.7 -> +28.0. Per name: ASML stretch 42 -> 125, GOOG 41 -> 127,
+#   ODFL 55 -> 182, EW 49 -> 152. The pinned unit test (`a_quarterly_series_under_cadence_12_is_not_the_monthly_one`)
+#   is a 15 %/yr path sampled both ways: stretch 47 vs 153, trend 15 vs 53, the 1Y legs 12 pts apart.
+# WHO IT TOUCHES: every pre-1985 listing in the pit pond, about a third of the 12y names and the oldest blue chips
+#   (AAPL MSFT WMT HD JNJ KO PG XOM GE MMM ...). Every receipt on the stretch brake, the cap and the range gate —
+#   (#1378), (#1382), (#1385), (#1388), (#3k), (#24) — was graded with those names' stretch 2-3x overstated and their
+#   1Y leg halved. The sweeps' "all INSIDE" readings are readings of a corrupted field for that third of the pond.
+# THE FIX: on, `chart_json_long` asks `period1=0&period2=<now+1d>&interval=1mo` (the form `fetch_history_since` uses,
+#   (#1219); the (#296)/(#307) censuses got monthly bars from 1985 this way) and caches in its own file
+#   (.long_history_cache.span.json), so no `range=max` payload is ever served as monthly and the committed fixture
+#   is untouched. `Chart.granularity` carries `meta.dataGranularity`; the run prints `backtest: (#1389) bars by Yahoo
+#   dataGranularity: ...` (the receipt's proof that every name arrived `1mo`) and refuses a series that did not, and
+#   refuses the whole run if the benchmark did not. Off: no line, no refusal, byte-identical goldens.
+# RUNS: a probe on main, years="12 8", args="universe fund pit", knobs="long_chart_explicit_span=true", no grid (the
+#   fields move in the WALK, so no `rescore` row can grade this), against the shipped run of the same day as control;
+#   tools/regrade_ruler.py <control.log> <arm.log> (lane pit) for RU1-RU3, RU-E and RU-T; `backtest 20` for the record
+#   (n_eff 0.5). Then step 2, `universe` without `pit`, ONLY with (#117)'s filter kept explicitly: refuse a name whose
+#   explicit-span series holds fewer than 36 monthly bars with volume > 0 at the cutoff, and record the cutoff counts
+#   beside (#117)'s 4541 / 11502. Windows scored WILL differ from control (the weekly cohort enters 28 months later; the
+#   quarterly cohort's cutoffs are unchanged): print both and say so; it is the fix, not a fault.
+# BAR, HARM ONLY: the arm's top-10 median excess, worst window and RU1 tally, as regrade_ruler prints them, each not
+#   under control by more than the (#1333) band (0.5 mean / 0.8 median %/yr) at 12y and 8y, and RU3 held. INSIDE either
+#   way SHIPS: the fix is right by construction (the goldens re-bless from a regenerated fixture cache, `cargo test
+#   --release --test backtest_fixture -- --ignored regen` with the knob on). OUTSIDE NEGATIVE records the loss and
+#   triggers (#1395) FIRST — the three bar-fitted caps re-graded on monthly bars — before any further knob is touched:
+#   tuning on mixed bars is tuning on an artifact.
+# EXPECTED: the bars line reads `1mo <n>` and nothing else (if Yahoo coarsens an explicit span past some length the
+#   line shows it and this stops here as a census); 12y/8y median moves |0.2-0.6| pts/yr with the sign UNKNOWN - the
+#   quarterly cohort gains admission (its stretch and 1Y leg were under-read), the weekly cohort loses its first 28
+#   months of cutoffs (young IPOs), and the two pull opposite ways. The URL form was not re-fetched from the sandbox that
+#   wrote this (Yahoo is robots-blocked there); the evidence for it is the owner's two censuses.
+# REVERT RULE: the knob to false; the span cache file can be deleted.
+# (#1391) THE WINDOW: RANGE, DRAWDOWN AND R² OVER THE LIVE SCREEN'S TEN YEARS, PRE-REGISTERED 2026-11-08. Row: (#1392).
+#   Knob: `backtest_live_window_years` (0.0 ships; 10.0 is the live window; RESCORE_FIXED, so a probe arm with
+#   knobs="backtest_live_window_years=10.0", never a grid row). NOT A BUY RULE, the same (#1389) kind.
+# THE DEFECT: `fetch::quote_one` measures `range_pct`, `drawdown_pct`, `max_drawdown_pct` and `trend_r2` on its ~10y
+#   daily chart and fills `stats_8y`; `backtest::bench_range_pct` reads the index over a trailing 10 CALENDAR years and
+#   (#326) called that "the SAME statistic and window names are ranked on". In `core::backtest_quote` the four were
+#   WHOLE-LIFE - for a 2014 cutoff on GE, 1962-2014 - and `stats_8y` was None, so `growth_min_range_pct` 80 (HARD),
+#   `growth_proximity_weight` 1, the consistency multiplier, Calmar and the 98.5 wipeout refusal were graded on a
+#   different window than they run on, and `growth_min_range_pct_8y` 80 never ran in a backtest at all (picks.rs:
+#   "LIVE-ONLY BY CONSTRUCTION"). The code's own example is PGR ("powered by decades now outside the window",
+#   picks.rs (S-8Y)); the backtest is that example at every cutoff.
+# MEASURED OFFLINE 2026-11-04 (cadence_window_probe.py part B: 65 fixture names with >=13y, 1666 half-year cutoffs
+#   since 2010, whole-life vs trailing 10 calendar years): range_pct median 90.3 vs 84.0; the 80 gate decides
+#   differently on 215 of 1666 cutoffs (12.9 %) - whole-life admits / 10y refuses 180, the reverse 35; max drawdown
+#   median 70.9 vs 52.0; cutoffs at the wipeout bar 69 vs 22; trend_r2 median 0.696 vs 0.526. MMM 2024-01: 83 whole-
+#   life (admitted), 5 over ten years (refused live; at its decade low), R² 0.95 vs 0.25. GE 2010-01: 72 vs 5. BIIB
+#   2025-01: 65 vs 2.5. The direction is systematic: the backtest admits old names in decade-long declines that still
+#   sit above their 1980s prices and refuses recovered names still under a 2000 peak.
+# THE FIX: `core::live_window(dates, closes, years)` - the last N CALENDAR years of the slice by date, so the bar size
+#   cannot change the span - feeds the four fields, and `stats_8y` is filled as `quote_one` fills it (2920 days back,
+#   the run's cadence for the underwater years). `life_cagr`, `age_years`, `tr_cagr`, `capped_cagr` and `trend_cagr`
+#   stay whole-life as (#3j)/(#182)/(#99) document. 0.0 = the whole slice, byte-identical. Unit test
+#   `live_window_is_calendar_years_and_moves_the_range_gate`: 121 monthly / 41 quarterly bars for ten years; a
+#   100 -> 1000 -> 100 -> 200 path fails the 80 bar whole-life and clears it over ten years; knob off leaves whole-life
+#   and `stats_8y` None.
+# RUNS AND BAR: the (#1389) cells with knobs="backtest_live_window_years=10.0" (alone first - a calendar window needs
+#   no bar assumption - then together with long_chart_explicit_span=true); the (#1389) harm bar; the 8y gate's first
+#   backtest reading recorded whatever the number. INSIDE ships, OUTSIDE NEGATIVE records and stops.
+# EXPECTED: the gated pool loses ~10 % of name-cutoffs (the 180) and gains ~2 % (the 35); 12y/8y median moves
+#   |0.2-0.5| pts/yr, sign unknown - the names whole-life admits are decliners (MMM GE VFC BIIB), which argues up; the
+#   names it refuses are post-2000 recoverers at 2010-2013 cutoffs, which argues down; the RU-E era table says which.
+# REVERT RULE: the knob to 0.0.
+# (#1393) ONE ENDPOINT FOR BOTH LEGS OF A MOMENTUM KEY, PRE-REGISTERED 2026-11-08. Row: (#1394). Knob:
+#   `momentum_one_endpoint` (false ships). NOT A BUY RULE: the key stays 12-7; this makes it the 12-7 its receipt names.
+# THE DEFECT, definitional and shared by the live screen: `picks::net_return` divides the long leg's return by the short
+#   leg's, and `core::horizon_changes` gives a leg of >= 1Y the SMOOTHED endpoint (`measure_endpoint`, ~5 months of bars)
+#   and a shorter one the RAW last close, so the shipped 12-7 key (`growth_momentum_key` 1, five of the ten slots) and
+#   12-1 (`momentum_12_1`, rival row (a)) equal (smooth_now/raw_now) x (p_-6m/p_-12m) - 1: the 12-7 return times about
+#   one minus the name's last two months' return, a short-term REVERSAL tilt that is in no definition, receipt or
+#   source. The (#1350) 6-1 twin reads two raw legs and the 13-60 value leg two smoothed ones; neither moves. MEASURED
+#   OFFLINE 2026-11-04 (net_return_probe.py, 1769 cutoffs of the fixture's monthly names): key minus true 12-7 median
+#   -2.0 pts, median |error| 4.85, p10/p90 -11.4/+8.3; sixty flat bars and a last print of 125 read -16 % against a
+#   true 0 %. On a `3mo` series the smoothing is 15 months and the error grows with it.
+# THE FIX: `Quote.endpoint_ratio` = measure_endpoint / last close, filled by both quote builders and serialised into
+#   every dump from now on; the knob is read from `tuning` (`momentum_keys`, `key_mom121`), so a `rescore` grid row
+#   `{"momentum_one_endpoint": true}` grades it on a dump walked with this commit in - and is REFUSED on an older dump,
+#   whose quotes carry no ratio and would grade the shipped key under the arm's name. Unit test
+#   `one_endpoint_removes_the_tilt_from_the_momentum_key`: the flat-year case reads 0.0 on and -16.0 off, through
+#   `net_key` and through a quote.
+# RUNS AND BAR: one probe on main, years="12 8", args="universe fund pit", grid '[{}, {"momentum_one_endpoint": true}]',
+#   rescore="guard" (200 shuffles); the guard on the (j) book, and regrade_ruler on the log for RU1-RU3 and RU-E.
+# EXPECTED: the momentum half re-sorts about one name in ten per cutoff; |delta| <= 0.4 pts/yr, INSIDE. The honest
+#   prior is a small loss or a tie: a one-month reversal tilt is mildly positive for a 12-1 sort in the literature. It
+#   ships if INSIDE all the same - a key that is not the return its receipt names cannot be re-graded as that return;
+#   OUTSIDE NEGATIVE records that the accidental tilt earned its keep and names it as a term (`momentum_12_7_rev`)
+#   instead of a side effect. REVERT RULE: the knob to false.
+# (#1395) THE THREE BAR-FITTED CAPS RE-GRADED ON MONTHLY BARS, PRE-REGISTERED 2026-11-08, runs only after (#1390) and
+#   (#1392) are written. Row: (#1396). No new knob.
+# WHY: `growth_overext_free` 60 ((#1378), swept 0-90 by (#1382)/(#1385)/(#1388): "no size beats +60", every row INSIDE),
+#   `long_trend_cap` 30 ((#3k), chosen under the retired 20y-king rule against a 12y curve pointing to 25; RE-OPENABLE
+#   on its own receipt) and `growth_max_above_ma` 150 ((#24)) all read `above_ma_pct`, `volatility_pct` or the capped
+#   CAGR, the three fields (#1389) showed mis-read 2-3x on a third of the pond. A sweep that read INSIDE on corrupted
+#   input is not a verdict about the knob. The owner's question of 2026-11-07 - why Apple, Alphabet, Nvidia and Amazon
+#   sit at score #6, #16, #7 and off the table - is decided by exactly these three numbers (the cap flattens Nvidia's
+#   ~56 %/yr to FTNT's 30; the brake and the stretch gate read Apple's and Microsoft's quarterly bars).
+# RUNS, on the (#1389)+(#1391) arm (knobs="long_chart_explicit_span=true backtest_live_window_years=10.0"), years="12 8",
+#   args="universe fund pit", rescore="guard" (200 shuffles), THREE grids, one probe each:
+#   (a) '[{}, {"growth_overext_free": 40}, {"growth_overext_free": 50}, {"growth_overext_free": 70}, {"growth_overext_free": 80}]'
+#   (b) '[{}, {"long_trend_cap": 25.0}, {"long_trend_cap": 40.0}, {"long_trend_cap": 50.0}, {"long_trend_cap": 0.0}]'
+#   (c) '[{}, {"growth_max_above_ma": 120.0}, {"growth_max_above_ma": 200.0}, {"growth_max_above_ma": 0.0}]'
+#   Row 0 of each is the shipped value on the fixed bars. ELIGIBLE and STRICT WIN RULE exactly as (#1387): eligible =
+#   guard PASS or INERT at both horizons AND RU1, RU2, RU3, RU-E pass at both; a winner is above row 0 on median excess,
+#   worst window and the RU1 tally at BOTH horizons (0.1 %/yr; a tie is not above); no winner = the shipped value stays.
+# EXPECTED: the free-zone rows move more names than (#1388)'s 0.05-0.66 (the quarterly cohort's stretch is now a third
+#   of what the sweep saw) and still read INSIDE; the cap ladder reads INSIDE at 25 and 40, with 50 and 0.0 moving 1-2
+#   names a bucket toward the fastest compounders; no winner under the strict rule, which (#1333) says is the likely
+#   reading of any true +0.5 %/yr. A winner goes to one owner question. If (#1390) read OUTSIDE NEGATIVE, this is the
+#   re-fit that receipt requires, and its row 0 is the loss being explained.
+# REVERT RULE: nothing moves unless a winner ships on the owner's word.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
@@ -27506,6 +27647,10 @@ ntfy_topic: "ci-smoke-tests-unused"
 # any and it falls back to the SAME URL, so the backtest gate already fetches them either way.
 urls:
   yahoo_chart: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={range}&interval=1d&events=div,split"
+  # (#1389) false = the long history on `range=max`, which Yahoo answers at ~500 points of whatever bar size fits
+  #   (quarterly for pre-1985 listings and ^GSPC, weekly for 2017+ ones); true = an explicit `period1=0&period2=<now>`
+  #   span at `interval=1mo`, cached in .long_history_cache.span.json. PRE-REGISTERED 2026-11-08, UNMEASURED; row (#1390).
+  long_chart_explicit_span: false
   # hourly bars over ~5 days -> screen 1h/6h/12h columns (counted as 1/6/12 bars back, not wall-clock,
   # so stocks fill too despite overnight gaps; 5d ensures >=13 bars even for a 6.5h trading day).
   yahoo_intraday: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={range}&interval=60m"

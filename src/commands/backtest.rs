@@ -470,6 +470,16 @@ fn bucket(d: chrono::NaiveDate) -> i32 {
 /// of extra or missing price path between them. The bar count also weighted the sample by granularity
 /// (6 bars is six months monthly, six weeks weekly, six sessions daily), which (#117) could only fix
 /// by rescaling a knob that ships off. A calendar grid fixes both at once.
+/// (#1389) The bars census as one line, `1d 38 | 1mo 58 | 3mo 12 | refused 12`: alphabetical by
+/// `BTreeMap`, so the line is stable run to run; an absent `dataGranularity` reads `unknown`; an empty
+/// census reads `none`.
+fn bars_census_line(census: &BTreeMap<String, usize>) -> String {
+    if census.is_empty() {
+        return "none".to_string();
+    }
+    census.iter().map(|(g, n)| format!("{} {n}", if g.is_empty() { "unknown" } else { g })).collect::<Vec<_>>().join(" | ")
+}
+
 fn cutoffs(dates: &[chrono::NaiveDate], from: usize) -> impl Iterator<Item = usize> + '_ {
     (from..dates.len()).filter(move |&i| i == 0 || bucket(dates[i - 1]) != bucket(dates[i]))
 }
@@ -962,7 +972,8 @@ fn bench_path(dump: &std::path::Path) -> std::path::PathBuf {
 /// row that changed it would print the old run under a new name. Grade these with a probe run per arm.
 /// (#1284) The walk also builds `event_flags` from `growth_event_months` and picks `quote.fund_factor` by
 /// `growth_fund_factor`; `rescore` rebuilds neither.
-const RESCORE_FIXED: [&str; 16] = [
+const RESCORE_FIXED: [&str; 17] = [
+    "backtest_live_window_years", // (#1391) range/drawdown/R² are computed in the walk's `backtest_quote`
     "backtest_anchor_windows",
     "backtest_tr_ruler",
     "drop_dead_ticker_series",
@@ -1036,6 +1047,12 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
     let mut last = (Vec::new(), Vec::new()); // dates, classes and returns are the same in every row
     for line in std::fs::read_to_string(grid).expect("read the grid").lines() {
         let tuning = grid_tuning(&base, line).unwrap_or_else(|e| panic!("rescore: {e}"));
+        // (#1393) the one-endpoint key reads `Quote.endpoint_ratio`, which a dump walked before the field
+        // existed does not carry: every quote reads None, the knob is silently inert, and the row would
+        // grade the shipped key under the arm's name. Refuse it, the way RESCORE_FIXED refuses a walk knob.
+        if tuning.momentum_one_endpoint && samples.iter().all(|s| s.quote.endpoint_ratio.is_none()) {
+            panic!("rescore: `momentum_one_endpoint` needs a dump walked with (#1393) in — this one carries no endpoint_ratio; walk again");
+        }
         println!("\n══ rescore row {line} ══");
         let mut s = samples.clone();
         stamp_sector_cohorts(&mut s, &bench, &tuning); // on every sample: a cutoff's floors read the one before it
@@ -2043,6 +2060,7 @@ fn dead_member_charts(csv: &str, spans: &core::MemberSpans) -> (HashMap<String, 
             currency: "USD".to_string(),
             name: tk.to_string(),
             instrument_type: "EQUITY".to_string(),
+            granularity: "1mo".to_string(), // (#1389) the archive carries the quarter's price forward MONTHLY (tests/dead-prices.csv)
             divs: bars.iter().filter(|b| b.2 != 0.0).map(|b| (b.0, b.2)).collect(),
             splits: Vec::new(),
         };
@@ -2687,11 +2705,24 @@ pub async fn run(args: Vec<String>) {
         fetch::fetch_history_long(&client, &settings.urls, bench_sym).await
     } else {
         fetch::fetch_history(&client, &settings.urls, bench_sym).await
+    };
+    // (#1389) under the explicit-span knob the RULER must be monthly too: ^GSPC arrives as quarterly bars
+    // on `range=max` (168 bars, 1984-12 -> 2026, in the fixture), and a quarterly benchmark misplaces every
+    // entry and exit level by up to a quarter. A ruler the knob could not fix refuses the run outright.
+    let span_knob = monthly && settings.urls.long_chart_explicit_span;
+    if let Some(g) = bench.as_ref().map(|c| c.granularity.as_str()).filter(|g| span_knob && *g != "1mo") {
+        println!("backtest: (#1389) {bench_sym} arrived as `{g}` bars under long_chart_explicit_span; refusing the run — a quarterly ruler is what the knob exists to remove.");
+        return;
     }
-    // (FX) an index LEVEL, never joined to a filing — nothing to convert, so drop the currency. Nor is
-    // it ever scored, so it needs no asset-class stamp either: prices only.
-    .map(|c| (c.dates, c.closes))
-    .unwrap_or_default();
+    let bench = bench
+        // (FX) an index LEVEL, never joined to a filing — nothing to convert, so drop the currency. Nor is
+        // it ever scored, so it needs no asset-class stamp either: prices only.
+        .map(|c| (c.dates, c.closes))
+        .unwrap_or_default();
+    // (#1389) the bar size each long payload actually carries, by Yahoo's `meta.dataGranularity`; printed
+    // under the knob as the receipt's proof that every name arrived monthly, and `refused` counts the
+    // series the knob turned away. Off, nothing is printed and nothing is refused: byte-identical goldens.
+    let bars_census = std::sync::Mutex::new(BTreeMap::<String, usize>::new());
     let dead_terminals = std::sync::atomic::AtomicUsize::new(0);
     // (#1296) `(cutoff, None = alive or Some(crashed) = terminal)` per index member sample: the mortality census
     let exit_marks = std::sync::Mutex::new(Vec::new());
@@ -2709,6 +2740,16 @@ pub async fn run(args: Vec<String>) {
                 Some(c) => c,
                 None => return Vec::new(),
             };
+            // (#1389) count the bar size; under the explicit-span knob a series that is still not monthly
+            // is refused here rather than read at 12 bars/yr by `backtest_quote`.
+            if monthly {
+                let mut census = bars_census.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                *census.entry(chart.granularity.clone()).or_insert(0) += 1;
+                if span_knob && chart.granularity != "1mo" {
+                    *census.entry("refused".to_string()).or_insert(0) += 1;
+                    return Vec::new();
+                }
+            }
             // (#424) as-filed EPS and share counts onto the chart's split basis, BEFORE any cutoff divides
             // them by a close. Without it a pre-split filing over an adjusted close read the factor of every
             // later split too cheap (NFLX 70x), and splits follow run-ups, so the bias favoured future winners.
@@ -2923,6 +2964,11 @@ pub async fn run(args: Vec<String>) {
         })
         .collect() };
     let per_ticker = walk(years);
+    if span_knob {
+        // (#1389) one line, under the knob only; taken (not cloned) so a later 0y walk starts a fresh count
+        let census = std::mem::take(&mut *bars_census.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        println!("backtest: (#1389) bars by Yahoo dataGranularity: {}", bars_census_line(&census));
+    }
     // (#1296) this horizon's marks only: a later 0y walk for the roll books must not add to them
     let deaths = mortality(&std::mem::take(&mut *exit_marks.lock().unwrap_or_else(std::sync::PoisonError::into_inner)), years);
     lap("walk");
@@ -11069,6 +11115,25 @@ mod tests {
         assert_eq!(cgo(&gap, &close, at, Some(100.0)), Some(0.0));
     }
 
+    /// (#1389) The bars census line: alphabetical, an absent `dataGranularity` reads `unknown`, nothing reads
+    /// `none`. The fixture's own mix is the receipt's census: 1d 38 | 1h 3 | 1mo 58 | 1wk 88 | 3mo 12.
+    #[test]
+    fn bars_census_line_is_stable_and_names_the_unknown() {
+        let census: BTreeMap<String, usize> =
+            [("1mo", 58), ("3mo", 12), ("1wk", 88), ("1d", 38), ("1h", 3), ("", 1), ("refused", 13)].into_iter().map(|(g, n)| (g.to_string(), n)).collect();
+        assert_eq!(bars_census_line(&census), "unknown 1 | 1d 38 | 1h 3 | 1mo 58 | 1wk 88 | 3mo 12 | refused 13");
+        assert_eq!(bars_census_line(&BTreeMap::new()), "none");
+    }
+
+    /// (#1391) A grid row cannot grade the window knob: its fields are computed in the walk.
+    #[test]
+    fn the_window_knob_is_fixed_for_rescore() {
+        let base = serde_yaml::to_value(BuyHeuristic::default()).unwrap();
+        let err = grid_tuning(&base, r#"{"backtest_live_window_years": 10.0}"#).err().expect("refused");
+        assert!(err.contains("backtest_live_window_years") && err.contains("probe arm"), "{err}");
+        assert!(grid_tuning(&base, r#"{"momentum_one_endpoint": true}"#).is_ok(), "the endpoint knob is a score-time read and may ride a grid row");
+    }
+
     /// (#790) Each cutoff lands on the first bar of its half-year bucket. The monthly record runs
     /// 2000-03 to 2002-02, so bar 0 opens the first bucket and bars 4 (2000-07), 10 (2001-01), 16 and
     /// 22 open the rest. A start inside a bucket waits for the next opening, and a start in the last
@@ -12961,7 +13026,7 @@ mod tests {
                 .collect();
             q
         };
-        let mom = |pairs: &[(&str, f64)]| picks::momentum_12_1(&quote(pairs));
+        let mom = |pairs: &[(&str, f64)]| picks::momentum_12_1(&quote(pairs), false);
         assert!((mom(&[("1Y", 20.0), ("1M", 10.0)]).unwrap() - (1.2 / 1.1 - 1.0) * 100.0).abs() < 1e-9);
         assert!((mom(&[("1Y", 20.0)]).unwrap() - 20.0).abs() < 1e-9, "a missing 1M nets nothing out");
         assert_eq!(mom(&[("1M", 5.0)]), None, "no 1Y, no momentum");

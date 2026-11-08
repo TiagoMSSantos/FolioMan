@@ -146,6 +146,12 @@ fn is_flat_head(w: &f64) -> bool {
     *w == Sizing::default().head_weight
 }
 
+/// (#1391) 0.0 is the off switch of `backtest_live_window_years`; off serialises nothing, so every
+/// `tuning_fp` journaled before the knob existed still matches.
+fn is_off_years(y: &f64) -> bool {
+    *y == 0.0
+}
+
 impl Sizing {
     /// (#285) How many CORE rows actually RECEIVE money — the knob read once, with its "0 is read as
     /// 1" rule applied here and nowhere else (non-negotiable #4). Two surfaces depend on this number
@@ -611,6 +617,10 @@ pub struct BuyHeuristic {
     pub cost_per_rebalance: bool, // (#96) charge the turnover round trip once per ~6mo REBALANCE inside the hold instead of once per hold. `turnover_frac` is a per-rebalance number (mean Jaccard between consecutive ~6mo buckets) but the charge was applied once against a `years`-long cumulative edge, so a book re-formed forty times over a 20y hold paid one round trip. Moves the printed `net` and can newly fire "NET <= 0: too churny to trade". OFF = the single charge every golden and every fitted receipt was measured under.
     pub backtest_drop_lookahead_sector: bool, // (#95) stop stamping TODAY's GICS sector onto a historical cutoff. `stamp_asset_class` fills `quote.sector` from the current universe fetch, so a 1995 cutoff is labelled with the classification the company carries in 2026 — and that label REACHES THE SCORE: `picks::is_commodity` reads it and drives `commodity_damp`. A name reclassified since (Industrials -> Information Technology is the common one) is damped, or not damped, on a fact from thirty years after the decision. Unlike the point-in-time universe there is no as-of source to substitute: GICS history is not in any feed this tool reads. So the only honest options are today's label or NO label, and this knob picks between them. true = `quote.sector` stays None in the backtest, which makes `is_commodity` false and `commodity_damp` inert there (missing data passes, the house rule) — the walk then measures the lane WITHOUT the damp, which is at least a thing that could have been computed in 1995. false = today's label, today's behaviour, byte-identical, and the DEFAULT. Does not touch the LIVE path, where today's sector IS the point-in-time sector
     pub splice_trim_point_in_time: bool, // (#94) move the redenomination trim from PARSE time to CUTOFF time, so a splice cannot delete history that had not happened yet. `splice_trim_start` keeps the LAST qualifying step in the whole series and `parse_chart` drains everything before it — so a 2015 redenomination deletes all pre-2015 bars for a 2005 cutoff, and `age_years`, `life_cagr`, MAXDD and trend R² are then computed on a record the walk could not have seen. Its own receipt measures the reach: 138/3346 non-crypto series (4.1%), median trimmed series losing 72% of its record. true = `parse_chart` leaves the series whole and `core::backtest_quote` trims over `[..=as_of]` instead, which is the same answer at the last bar (so LIVE is unchanged in the merged-series path, which already re-trims) and a knowable answer at every earlier one. false = trim at parse, today's behaviour, byte-identical, and the DEFAULT
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1393) still matches
+    pub momentum_one_endpoint: bool, // (#1393) read BOTH legs of a momentum key off the SAME endpoint. `picks::net_return` divides the long leg's return by the short leg's, and `core::horizon_changes` gives a leg of >= 1Y the SMOOTHED endpoint (`measure_endpoint`, the mean of the last ~5 months of bars) and a shorter leg the RAW last close — so the shipped 12-7 key (`growth_momentum_key` 1) and 12-1 (`momentum_12_1`, rival row (a)) equal (smooth_now/raw_now) x (p_-6m/p_-12m) - 1, not p_-6m/p_-12m - 1: a hidden tilt of about minus the name's last two months' return, i.e. a short-term REVERSAL exposure no receipt graded. Measured offline on the fixture's monthly names (1769 cutoffs): median error -2.0 pts, median |error| 4.85, p10/p90 -11.4/+8.3; sixty flat bars and a last print of 125 read -16% against a true 0%. The 6-1 twin (`momentum_6_1`, both legs raw) and the 13-60 value leg (both smoothed) share an endpoint already and never move. true = divide the tilt out through `Quote.endpoint_ratio` (filled by both quote builders), so the key is the return its receipt names; live and backtest move together; a `rescore` grid row grades it on a dump walked after the field existed, and is refused on an older dump. false = today's key, byte-identical, and the DEFAULT
+    #[serde(skip_serializing_if = "is_off_years")] // 0.0 serialises nothing, so every `tuning_fp` journaled before (#1391) still matches
+    pub backtest_live_window_years: f64, // (#1391) measure `range_pct`, `drawdown_pct`, `max_drawdown_pct` and `trend_r2` in `core::backtest_quote` over the LAST this-many calendar years of the cutoff's slice, and fill `stats_8y` the way `fetch::quote_one` does, instead of over the whole `[..=as_of]` record. The live screen computes all four on its ~10y daily chart (`fetch.rs` `quote_one`) and `backtest::bench_range_pct` reads the index over a trailing 10 calendar years, but the names' own fields in the backtest were whole-life — for a 2014 cutoff on GE, 1962-2014 — so `growth_min_range_pct` (HARD), `growth_proximity_weight`, the consistency multiplier, Calmar and the 98.5 wipeout refusal were graded on a different window than they run on, and `growth_min_range_pct_8y` never ran in the backtest at all. Measured offline on the fixture (65 names, 1666 cutoffs): the 80 range gate decides differently on 12.9% of cutoffs (whole-life admits / 10y refuses 180, the reverse 35; MMM 2024-01 reads 83 whole-life and 5 over 10y), median max drawdown 70.9 vs 52.0, median R² 0.70 vs 0.53. Walk-only (RESCORE_FIXED): the fields are computed in the walk, so a grid row cannot grade it. 10.0 = the live window. 0.0 = whole-life, byte-identical, and the DEFAULT
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#784) still matches
     pub sec_line_filed_gate: bool, // (#784) serve a SEC row as its strict twin (`core::FundRow::strict`, every line filed by revenue's filed date, `financial` off bank facts filed by then) until `full_from`, the date its last late line was filed. A line first filed later, such as the next 10-K's comparative or a tag the first filing did not use, otherwise reaches the walk about a year early (#758). Live it is a no-op: today is past every `full_from`. OFF = the leaky rows every golden and gate floor was measured on
     pub demean_by_market: bool, // (#93) split the peer group `demean` subtracts by LISTING MARKET as well as by cutoff bucket and asset class. `realized` is `closes[fwd]/closes[i] - 1` — a ratio of two closes in the LISTING currency, with no FX conversion anywhere on the return path — so a EUR UCITS line, a GBp LSE line and a USD S&P name are pooled into one peer mean with their FX returns stripped. The de-mean is then a mixture of currencies and every `relative` in the group carries the FX move over that window as contamination. Splitting the group by market makes the FX return COMMON to the group, so subtracting the mean cancels it, at no fetch: `Quote::stub` already fills `market` from the ticker suffix. It over-splits — Germany, France and the Netherlands all trade in EUR and become three groups — so a market slice thinner than MIN_PEER_GROUP pools with its bucket's other thin slices, or joins the bucket's largest slice when those are thin too (#1231), rather than de-meaning against nobody. Does NOT fix the ABSOLUTE leg, which still compares native-currency books to ^GSPC; see the receipt. false = one pooled group, today's behaviour, byte-identical, and the DEFAULT
@@ -840,6 +850,8 @@ impl Default for BuyHeuristic {
             cost_per_rebalance: false, // (#96) OFF = one round trip per hold, which is the arithmetic every fitted receipt in ci-settings was measured under. ON is the honest charge and is EXPECTED to turn long-horizon `net` numbers negative — that is the finding, not a regression.
             backtest_drop_lookahead_sector: false, // (#95) OFF = today's sector stamped at every cutoff, which is what every golden and every fitted receipt was measured under. Turning it on makes commodity_damp INERT in the backtest — a deliberate reachability change, and the reason `growth_gate_reachability_pin` describes the default and not this arm
             splice_trim_point_in_time: false, // (#94) OFF = the parse-time trim every golden and every fitted receipt was measured under. Turning it on lengthens the record of ~4% of names at every early cutoff, which moves age, life_cagr, MAXDD and R² for those names
+            momentum_one_endpoint: false, // (#1393) OFF = the mixed-endpoint key every momentum receipt was graded on; on moves the live book and the backtest together
+            backtest_live_window_years: 0.0, // (#1391) OFF = whole-life range/drawdown/R² in the backtest, the window every fitted receipt was measured under; 10.0 is the live screen's
             sec_line_filed_gate: false, // (#784) OFF = every line served at revenue's filed date, which every golden and every fitted receipt was measured under; see ci-settings for the price
             demean_by_market: false,       // (#93) OFF = the pooled (bucket, class) peer group every edge, rho and OOS number in this repo was measured against. Turning it on re-cuts the SELECTION metric itself, so it re-measures everything at once
             drop_dead_ticker_series: false, // (#122) OFF = today's behaviour byte-for-byte, which every golden in tests/fixture pins. Turning it on removes 34 contaminated series from the walk; grade it under Ship Rule v2 before shipping any other value
@@ -954,6 +966,18 @@ pub struct Urls {
     // merge is a no-op, so the shipped lane and every golden stay byte-identical (non-negotiable #1).
     #[serde(default)]
     pub membership_csv: Vec<String>,
+    // (#1389) Ask Yahoo for the long history on an explicit `period1=0&period2=<now>` span instead of
+    // `range=max`. `range=max` is answered at ~500 points whatever interval is asked, so a pre-1985
+    // listing (and ^GSPC itself) arrives as QUARTERLY bars, a 2017+ one as WEEKLY and a 2024+ one as
+    // DAILY, while `backtest` reads every series at 12 bars/yr (`long_ma` 47 bars, vol over 12, the 5-bar
+    // endpoint, `min_history` 36). The fixture cache carries the mix: 58 `1mo`, 88 `1wk`, 38 `1d`,
+    // 12 `3mo` (AIG BA C CCL F GE INTC MMM NWL T VFC ^GSPC), 3 `1h`. An explicit span is served at the
+    // interval asked ((#1219) `fetch_history_since`; the (#296)/(#307) censuses). Payloads fetched this way
+    // live in their own cache file (`fetch::LONG_CACHE_FILE_SPAN`), so a `range=max` payload is never
+    // served as monthly and the committed fixture is untouched. Under this knob `backtest` prints a bars
+    // census line and refuses a series that still is not `1mo`. false = `range=max`, byte-identical, the DEFAULT.
+    #[serde(default)]
+    pub long_chart_explicit_span: bool,
     pub nupl: String,          // latest Bitcoin NUPL (net unrealized profit/loss) -> screen sentiment line
     // (#45) PER-COIN MVRV (market cap / realized cap), the generalization of `nupl` above — same
     // quantity, one row per coin instead of Bitcoin's alone (NUPL = 1 - 1/MVRV; cross-checked live at
@@ -2442,6 +2466,28 @@ pub fn splice_trim_point_in_time() -> bool {
         ambient()
             .map(|s| s.buy_heuristic.splice_trim_point_in_time)
             .unwrap_or(false)
+    })
+}
+
+/// (#1389) free accessor read by `fetch::long_cache_file`, which has no `Urls` handle: on, the long
+/// history is fetched on an explicit span and cached in its own file.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+pub fn long_chart_explicit_span() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| ambient().map(|s| s.urls.long_chart_explicit_span).unwrap_or(false))
+}
+
+/// (#1391) free accessor read by `core::backtest_quote`, which has no `tuning` handle: the trailing
+/// window, in calendar years, that range, drawdown and R² are measured over; 0.0 = whole-life.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+pub fn backtest_live_window_years() -> f64 {
+    use std::sync::OnceLock;
+    static YEARS: OnceLock<f64> = OnceLock::new();
+    *YEARS.get_or_init(|| {
+        ambient()
+            .map(|s| s.buy_heuristic.backtest_live_window_years)
+            .unwrap_or(0.0)
     })
 }
 

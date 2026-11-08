@@ -1459,7 +1459,9 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     // `is_some_and`: no `stats_8y` = under 8y of record = its whole span IS the window, already judged
     // by the bar above. Missing data is not a failed bar, same as every other gate here.
     // LIVE-ONLY BY CONSTRUCTION: `stats_8y` is set only in fetch.rs, so this is inert in the backtest —
-    // the validated edge cannot move, and equally cannot vouch for this gate.
+    // the validated edge cannot move, and equally cannot vouch for this gate. (#1391) UNTIL the
+    // `backtest_live_window_years` knob is on: `core::backtest_quote` then fills `stats_8y` the way
+    // `quote_one` does, and this bar is graded for the first time.
     let min_range_8y = if crypto { tuning.growth_min_range_pct_8y_crypto } else { tuning.growth_min_range_pct_8y };
     if min_range_8y > 0.0 && quote.stats_8y.as_ref().is_some_and(|s| s.range_pct < min_range_8y) {
         return None; // near its 10y high only because the window is long enough to hide the last 8 years
@@ -2179,8 +2181,8 @@ fn key_gates_off(qs: &[&Quote], _: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f6
 }
 
 /// (#1304) [`momentum_12_1`], any class.
-fn key_mom121(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
-    qs.iter().map(|q| momentum_12_1(q)).collect()
+fn key_mom121(qs: &[&Quote], _: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    qs.iter().map(|q| momentum_12_1(q, t.momentum_one_endpoint)).collect()
 }
 
 /// (#1304) Quality, ROE where the quality field is missing.
@@ -7762,15 +7764,17 @@ pub(crate) fn momentum_slot(i: usize, slots: usize) -> bool {
 }
 
 /// (#560) 12-1 momentum, %: the trailing year net of its last month, the same formula as the growth
-/// score's `mom121` term. A missing 1M reads 0; a missing 1Y has no momentum.
-pub(crate) fn momentum_12_1(q: &Quote) -> Option<f64> {
-    net_return(q, "1Y", "1M")
+/// score's `mom121` term. A missing 1M reads 0; a missing 1Y has no momentum. (#1393) `one_endpoint` =
+/// `momentum_one_endpoint`: the legs straddle the 1Y line, so the knob applies.
+pub(crate) fn momentum_12_1(q: &Quote, one_endpoint: bool) -> Option<f64> {
+    net_return(q, "1Y", "1M", one_endpoint)
 }
 
 /// (#1348) 6-1 momentum, %: the 6M leg net of its last month, JKP's ret_6_1 (the close a month back over the
-/// close six months back, minus 1). A missing 1M reads 0; a missing 6M has none.
+/// close six months back, minus 1). A missing 1M reads 0; a missing 6M has none. (#1393) Both legs are under a
+/// year and share the raw endpoint, so the one-endpoint knob never touches it.
 pub(crate) fn momentum_6_1(q: &Quote) -> Option<f64> {
-    net_return(q, "6M", "1M")
+    net_return(q, "6M", "1M", false)
 }
 
 /// (#1350) The one `mom61_pct` stamp, for the live fetch and the backtest alike, so the page and the graded walk
@@ -7793,10 +7797,35 @@ pub fn stamp_mom61_pct<'a>(quotes: impl IntoIterator<Item = &'a mut Quote>) {
 
 /// (#587) The `long` leg's return net of its last `short` one, %: a missing `short` reads 0, a missing `long`
 /// has none, and a wiped `short` is floored at 1%.
-fn net_return(q: &Quote, long: &str, short: &str) -> Option<f64> {
+///
+/// (#1393) THE ENDPOINT MIX. `core::horizon_changes` gives a leg of >= 1Y the SMOOTHED endpoint (the mean of
+/// the last ~5 months of bars) and a shorter leg the RAW last close, so with `long` = 1Y and `short` = 6M
+/// this ratio is `(smooth_now / p_-12m) / (raw_now / p_-6m)` = `(smooth_now / raw_now) · (p_-6m / p_-12m)`:
+/// the 12-7 return times a factor of about one minus the name's last two months' return — a short-term
+/// reversal tilt no receipt graded (median −2.0 pts, p10/p90 −11.4/+8.3 on the fixture's monthly names;
+/// sixty flat bars and a last print of 125 read −16 % against a true 0 %). With `one_endpoint`
+/// (`momentum_one_endpoint`) the tilt is divided out through `Quote.endpoint_ratio` — only when the two legs
+/// straddle the 1Y line, since two smoothed legs (`5Y` net of `1Y`) or two raw ones (`6M` net of `1M`)
+/// already share an endpoint. None (a stub, an old dump) is 1.0: the key as before.
+fn net_return(q: &Quote, long: &str, short: &str, one_endpoint: bool) -> Option<f64> {
     let r = perf_pct(q, long)?;
     let s = perf_pct(q, short).unwrap_or(0.0);
-    Some(((1.0 + r / 100.0) / (1.0 + s / 100.0).max(0.01) - 1.0) * 100.0)
+    let straddles = horizon_days(long) >= 365 && horizon_days(short) < 365;
+    let endpoint = if straddles && one_endpoint { q.endpoint_ratio.filter(|e| *e > 0.0).unwrap_or(1.0) } else { 1.0 };
+    Some(net_key(r, s, endpoint))
+}
+
+/// (#1393) The arithmetic of [`net_return`], split out so the knob's algebra is unit-testable without a quote:
+/// `long` % net of `short` %, divided by the smoothed/raw `endpoint` ratio (1.0 = the shipped key).
+/// `(s_now/p_long) / (r_now/p_short) / (s_now/r_now) = p_short/p_long`.
+fn net_key(long_pct: f64, short_pct: f64, endpoint: f64) -> f64 {
+    ((1.0 + long_pct / 100.0) / (1.0 + short_pct / 100.0).max(0.01) / endpoint - 1.0) * 100.0
+}
+
+/// (#1393) A horizon label's span in days from `core::HORIZONS`; 0 for a label the table does not carry,
+/// which `net_return` reads as "shorter than a year" (the raw-endpoint side), as `horizon_changes` would.
+fn horizon_days(label: &str) -> i64 {
+    HORIZONS.iter().find(|(l, _)| *l == label).map_or(0, |(_, d)| *d)
 }
 
 /// (#587) The momentum half's sort keys over one candidate set, in input order, highest first. A name
@@ -7832,14 +7861,14 @@ fn vol_cut(mut keys: Vec<Option<f64>>, trails: &[&[f64]], cut: f64) -> Vec<Optio
 /// [`momentum_keys`] before the (#1244) cut.
 fn keys_by_knob(qs: &[&Quote], trails: &[&[f64]], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
     let short = if tuning.growth_momentum_key == 1 { "6M" } else { "1M" };
-    let mom: Vec<Option<f64>> = qs.iter().map(|q| net_return(q, "1Y", short).filter(|_| asset_class(q) == 2)).collect();
+    let mom: Vec<Option<f64>> = qs.iter().map(|q| net_return(q, "1Y", short, tuning.momentum_one_endpoint).filter(|_| asset_class(q) == 2)).collect();
     if tuning.growth_momentum_key >= 3 {
         return residual_momentum(&mom, trails, tuning.growth_momentum_key == 4);
     }
     if tuning.growth_momentum_key != 2 {
         return mom;
     }
-    let value: Vec<Option<f64>> = qs.iter().zip(&mom).map(|(q, m)| m.and(net_return(q, "5Y", "1Y")).map(|r| -r)).collect();
+    let value: Vec<Option<f64>> = qs.iter().zip(&mom).map(|(q, m)| m.and(net_return(q, "5Y", "1Y", false)).map(|r| -r)).collect();
     let pct = |xs: &[Option<f64>]| {
         let present: Vec<f64> = xs.iter().flatten().copied().collect();
         let mut r = crate::core::ranks(&present).into_iter().map(|r| r / (present.len() as f64 + 1.0));
@@ -9282,6 +9311,7 @@ mod tests {
             stats_8y: None, // (S-8Y) display-only diagnostic; None keeps `as_8y_window` the identity here
             bench_1y_pct: None,    // (#326) no market context -> regime valve inert; the valve's own tests set these
             bench_range_pct: None,
+            endpoint_ratio: None,  // (#1393) no series behind a fixture quote -> the momentum keys read as before
             splits: Vec::new(), // (#82) journal-replay only (`track`/`sim`); nothing in the score reads it
             event_flags: 0,
             jump_ahead: false,
@@ -14070,6 +14100,34 @@ mod tests {
         quotes.push(dark);
         let got: Vec<&str> = momentum_order(&quotes, &t).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, ["CCC", "AAA", "BBB"]);
+    }
+
+    /// (#1393) The endpoint mix in the momentum key, and the knob's algebra. Sixty flat bars at 100 and a
+    /// last print of 125: the 1Y leg reads the SMOOTHED endpoint (the mean of the last five bars, 105) and
+    /// the 6M leg the RAW one (125), so the shipped key is (1.05/1.25 − 1) = −16 % where the 12-7 return
+    /// (p_-6m/p_-12m − 1) is 0 %. Dividing the smoothed/raw ratio 105/125 out gives 0; a ratio of 1.0 (the
+    /// knob off, a stub, an old dump) is the shipped key bit for bit. Two legs on the same side of the 1Y
+    /// line never straddle, so `5Y` net of `1Y` and `6M` net of `1M` keep their endpoint whatever the knob says.
+    #[test]
+    fn one_endpoint_removes_the_tilt_from_the_momentum_key() {
+        let (one_year, six_months, ratio) = (5.0, 25.0, 105.0 / 125.0);
+        assert!((net_key(one_year, six_months, 1.0) - (-16.0)).abs() < 1e-9, "the shipped key carries the tilt");
+        assert!(net_key(one_year, six_months, ratio).abs() < 1e-9, "one endpoint: the true 12-7 of a flat year is 0");
+        // a steady 15%/yr path: p_-12 = 100, p_-6 = 107.238, raw now 115, smooth 112 -> key = p_-6/p_-12 - 1 = 7.238%
+        let (p12, p6, raw, smooth) = (100.0, 107.238, 115.0, 112.0);
+        let key = net_key((smooth / p12 - 1.0) * 100.0, (raw / p6 - 1.0) * 100.0, smooth / raw);
+        assert!((key - (p6 / p12 - 1.0) * 100.0).abs() < 1e-9, "{key}");
+        assert_eq!((horizon_days("1Y"), horizon_days("6M"), horizon_days("5Y"), horizon_days("1M"), horizon_days("nope")), (365, 182, 1825, 30, 0));
+        assert!(horizon_days("1Y") >= 365 && horizon_days("6M") < 365, "12-7 straddles the line");
+        assert!(!(horizon_days("5Y") >= 365 && horizon_days("1Y") < 365), "the value leg does not");
+        assert!(!(horizon_days("6M") >= 365), "nor the 6-1 twin");
+        // through a quote: the knob off reads the tilted key, on reads the true one; a quote with no ratio is untouched
+        let mut q = Quote::stub("X", "€1", "", "X");
+        q.perf = legs(&[("1Y", one_year), ("6M", six_months)]);
+        assert!((net_return(&q, "1Y", "6M", true).unwrap() - (-16.0)).abs() < 1e-9, "no ratio on the quote -> the shipped key");
+        q.endpoint_ratio = Some(ratio);
+        assert!((net_return(&q, "1Y", "6M", false).unwrap() - (-16.0)).abs() < 1e-9);
+        assert!(net_return(&q, "1Y", "6M", true).unwrap().abs() < 1e-9);
     }
 
     /// (#587) `growth_momentum_key`: 0 = 12-1, 1 = 12-7, 2 = the 12-1 percentile plus the value percentile (the

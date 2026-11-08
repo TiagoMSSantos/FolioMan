@@ -1139,6 +1139,7 @@ mod tests {
             currency: "EUR".into(),
             name: String::new(),
             instrument_type: "EQUITY".into(),
+            granularity: "1d".into(),
             divs: vec![],
             splits: vec![],
         }

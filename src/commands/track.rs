@@ -2742,6 +2742,7 @@ mod tests {
             currency: "EUR".into(),
             name: String::new(),
             instrument_type: String::new(),
+            granularity: String::new(),
             divs: vec![],
             splits: vec![],
         };
@@ -2780,6 +2781,7 @@ mod tests {
             currency: "EUR".into(),
             name: String::new(),
             instrument_type: String::new(),
+            granularity: String::new(),
             divs: vec![],
             splits: vec![],
         };

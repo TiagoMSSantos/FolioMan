@@ -227,6 +227,12 @@ pub struct Chart {
     pub currency: String,
     pub name: String,
     pub instrument_type: String, // Yahoo meta.instrumentType ("ETF"/"EQUITY"/...); "" if absent
+    /// (#1389) Yahoo `meta.dataGranularity` — the bar size this payload actually carries ("1mo", "3mo",
+    /// "1wk", "1d", "1h", "1y"); "" if absent. `range=max` is answered at ~500 points whatever interval
+    /// was asked, so the long fetch's "monthly" series is monthly for 31% of the live cache (#117) and
+    /// nothing read this back before. `backtest` prints a census of it and, under
+    /// `urls.long_chart_explicit_span`, refuses a series that is not `1mo`.
+    pub granularity: String,
     pub divs: Vec<(NaiveDate, f64)>, // (ex-date, amount/share) from events.dividends
     /// (#82) (effective date, ratio) from events.splits — a 4:1 split is `4.0`. Ascending by date.
     /// The series in `closes` is ALREADY retro-adjusted for every one of these, which is exactly why
@@ -304,6 +310,20 @@ fn keep_recent(ticker: &str, v: &Value) {
     RECENT.lock().unwrap().insert(ticker.to_string(), chart);
 }
 
+/// (#1389) The long-history URL: `range=max&interval=1mo` as shipped, or — under
+/// `urls.long_chart_explicit_span` — `period1=0&period2=<now + 1 day>&interval=1mo`, the form
+/// `fetch_history_since` already uses because "`range=max` coarsens". `now` is a parameter so the
+/// test can pin the string. Same `{ticker}` substitution and the same `interval=1d` -> `1mo` rewrite
+/// on both arms; the cache key stays the ticker, the cache FILE differs (`long_cache_file`).
+pub(crate) fn long_chart_url(urls: &Urls, ticker: &str, now: i64) -> String {
+    let url = urls.yahoo_chart.replace("{ticker}", ticker).replace("interval=1d", "interval=1mo");
+    if urls.long_chart_explicit_span {
+        url.replace("range={range}", &format!("period1=0&period2={}", now + 86_400))
+    } else {
+        url.replace("{range}", "max")
+    }
+}
+
 /// Full-history chart at MONTHLY resolution. Yahoo coarsens interval=1d to ~monthly bars once the
 /// span passes ~10y anyway (which silently breaks 1D/1W/1M), so ask for 1mo explicitly and use this
 /// ONLY to back-fill horizons older than the ~10y daily window (the 20Y column / long dividend sums).
@@ -345,11 +365,7 @@ pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Opti
     if let Some((_, v)) = LONG_CACHE_NEW.lock().unwrap().iter().find(|(t, _)| t == ticker) {
         return Some(Cow::Owned(v.clone()));
     }
-    let url = urls
-        .yahoo_chart
-        .replace("{ticker}", ticker)
-        .replace("{range}", "max")
-        .replace("interval=1d", "interval=1mo");
+    let url = long_chart_url(urls, ticker, chrono::Utc::now().timestamp());
     // via `Value` deliberately: `get_json` already parses to validate the body, and re-serializing that
     // tree is what keeps a freshly fetched entry byte-for-byte what `long_cache_save` used to write.
     let v = get_json(client, &url).await?;
@@ -553,6 +569,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         // Yahoo's own asset-class tag — reliable where the name string isn't (ETF shortNames like
         // "ISHARES III PLC ISHRS CORE MSCI" carry no "ETF"/"UCITS" marker). Drives the ETF table split.
         instrument_type: meta.get("instrumentType").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        granularity: meta.get("dataGranularity").and_then(|v| v.as_str()).unwrap_or("").to_string(), // (#1389)
         divs,
         splits,
     })
@@ -1178,6 +1195,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // other caller of this builder (`check`, `report`, explicit-args runs).
         bench_1y_pct: None,
         bench_range_pct: None,
+        // (#1393) the smoothed/raw endpoint ratio of this daily chart, for the momentum keys' one-endpoint knob
+        endpoint_ratio: (cur_close > 0.0).then(|| core::measure_endpoint(&chart.closes) / cur_close),
     }
 }
 
@@ -7046,7 +7065,18 @@ fn long_skip_save() {
 /// `pub` alongside the TTL for `backtest_edge_holds`, which decides whether to run a full wide
 /// backtest or skip green by asking whether THIS file is fresh enough to serve it.
 pub const LONG_CACHE_FILE: &str = ".long_history_cache.json";
+/// (#1389) The long cache of EXPLICIT-SPAN payloads (`urls.long_chart_explicit_span`). A separate file,
+/// same format: a `range=max` payload (quarterly for a pre-1985 listing) must never be served as the
+/// monthly series the knob exists to fetch, and the committed fixture file stays byte-identical.
+pub const LONG_CACHE_FILE_SPAN: &str = ".long_history_cache.span.json";
 pub const LONG_CACHE_TTL_DAYS: i64 = 7;
+
+/// (#1389) Which long cache this process reads and writes: the span file under the knob, else the
+/// shipped one. Read from the ambient settings because `long_cache_save` has no `Urls` handle; in a
+/// real run the `Urls` every fetch carries ARE the ambient settings' urls, so the two never disagree.
+fn long_cache_file() -> &'static str {
+    if crate::config::long_chart_explicit_span() { LONG_CACHE_FILE_SPAN } else { LONG_CACHE_FILE }
+}
 static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, &'static RawValue)>> = std::sync::OnceLock::new();
 /// This run's live fetches (collected concurrently, written ONCE in `quotes`).
 static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Box<RawValue>)>> = std::sync::Mutex::new(Vec::new());
@@ -7068,7 +7098,7 @@ static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Box<RawValue>)>> = std::syn
 /// grows per call — it happens once, and "freeing" it would only ever happen at exit.
 fn long_cache_load() -> &'static HashMap<String, (NaiveDate, &'static RawValue)> {
     LONG_CACHE.get_or_init(|| {
-        std::fs::read(crate::config::data_path(LONG_CACHE_FILE))
+        std::fs::read(crate::config::data_path(long_cache_file()))
             .ok()
             .map(|b| &*Box::leak(b.into_boxed_slice()))
             .and_then(|b| serde_json::from_slice::<HashMap<String, (String, &'static RawValue)>>(b).ok())
@@ -7115,7 +7145,7 @@ pub fn long_cache_save() {
     for (t, v) in new.iter() {
         m.insert(t.as_str(), (today.to_string(), &**v));
     }
-    let _ = std::fs::write(crate::config::data_path(LONG_CACHE_FILE), serde_json::to_string(&m).unwrap_or_default());
+    let _ = std::fs::write(crate::config::data_path(long_cache_file()), serde_json::to_string(&m).unwrap_or_default());
 }
 /// Per-row BF keyData facts: share-class + replication tokens ("Acc"/"Dist"; "Swap"/"Full"/"Opt"/
 /// "Hybr"/"Samp") and the benchmark-index name (lowercased at capture so twin matching is one `==`;
@@ -16073,6 +16103,43 @@ pub(crate) mod tests {
         assert_eq!((sectors["QQEUA.DE"].as_str(), sectors["QQUSB"].as_str()), ("Information Technology", "Financials"), "the sector travels with the swap");
         // Safe to delete again: `seed_cik_map` no longer reads this file, it sets `EU_TO_US` directly.
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// (#1389) The long-history URL on both arms of `urls.long_chart_explicit_span`. Off is the shipped
+    /// `range=max&interval=1mo`; on swaps the range for `period1=0&period2=<now + 1 day>` and keeps
+    /// `interval=1mo`, the form `fetch_history_since` uses — Yahoo serves the interval asked on an
+    /// explicit span and ~500 points of whatever it likes on `range=max`. The ticker lands in both.
+    #[test]
+    fn long_chart_url_asks_an_explicit_span_under_the_knob() {
+        let mut urls = stub_urls("http://stub/");
+        urls.yahoo_chart = "http://stub/chart/{ticker}?range={range}&interval=1d&events=div,split".to_string();
+        assert_eq!(long_chart_url(&urls, "GE", 1_700_000_000), "http://stub/chart/GE?range=max&interval=1mo&events=div,split");
+        urls.long_chart_explicit_span = true;
+        let on = long_chart_url(&urls, "GE", 1_700_000_000);
+        assert_eq!(on, "http://stub/chart/GE?period1=0&period2=1700086400&interval=1mo&events=div,split");
+        assert!(!on.contains("range="), "{on}");
+    }
+
+    /// (#1389) `parse_chart` carries Yahoo's `meta.dataGranularity` out, and the committed fixture is the
+    /// census the receipt quotes: 58 `1mo`, 88 `1wk`, 38 `1d`, 12 `3mo`, 3 `1h` — the `3mo` names being
+    /// the pre-1985 listings and ^GSPC itself. A payload without the field reads "".
+    #[test]
+    fn parse_chart_reads_the_bar_size_and_the_fixture_is_a_mix() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture/.long_history_cache.json");
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let cache: BTreeMap<String, (String, Value)> = serde_json::from_str(&raw).unwrap();
+        let mut census: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (ticker, (_, j)) in &cache {
+            if let Some(c) = parse_chart(j, ticker) {
+                census.entry(c.granularity.clone()).or_default().push(ticker.clone());
+            }
+        }
+        let n = |g: &str| census.get(g).map_or(0, Vec::len);
+        assert_eq!((n("1mo"), n("1wk"), n("1d"), n("3mo"), n("1h")), (58, 88, 38, 12, 3), "{:?}", census.iter().map(|(g, t)| (g, t.len())).collect::<Vec<_>>());
+        assert!(census["3mo"].iter().any(|t| t == "^GSPC"), "the benchmark itself is quarterly on range=max");
+        assert!(census["3mo"].iter().any(|t| t == "GE") && census["3mo"].iter().any(|t| t == "MMM"));
+        let bare: Value = serde_json::json!({"chart": {"result": [{"meta": {}, "timestamp": [86400, 172800], "indicators": {"quote": [{"close": [1.0, 1.01]}]}}]}});
+        assert_eq!(parse_chart(&bare, "X").expect("a parsed chart").granularity, "");
     }
 
     /// (#404) A ticker this run already fetched is served from memory. The Xetra re-check fetches every
