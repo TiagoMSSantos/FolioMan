@@ -27324,6 +27324,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   0.8, and its worst window by more than 0.8, at 12y and at 8y. (j) prints mean, median, win and worst only, so RU1
 #   and RU2 have no line there, as (#1311) read it. INSIDE ships, as (#1393) says. OUTSIDE NEGATIVE records that the
 #   tilt earned its keep. The other rival rows are printed for the record only.
+# (#1394) VERDICT, 2026-11-08, on (#1393): OUTSIDE NEGATIVE, on one window. `momentum_one_endpoint` stays false.
+#   The pair ran as the deviation above says, on c3869b3: C probe 42467345662 with no knobs, A probe 42467350564 with
+#   knobs="momentum_one_endpoint=true". Windows scored match (5150 / 6488 at 12y, 9184 / 8596 at 8y) and the plain
+#   top-10 BOOK lines are identical (38 and 46 buckets), so the pair stands.
+# BAR ON RIVAL (j), A against C: 12y mean +4.4 / +4.4, median +4.7 / +4.3, worst window -3.0 / -1.6 (1.4 under, band
+#   0.8: OUTSIDE); 8y mean +5.3 / +5.1, median +3.9 / +4.1, worst -3.9 / -4.4. Only the 12y worst window misses. A's
+#   worst is b4018, where C reads -1.5; C's worst is b3998, where A reads -1.1.
+# PAIRED on (j)'s 38 and 46 buckets: 12y mean -0.01, median +0.15 (20 up, 16 down); 8y +0.17 / +0.00 (21 up, 22
+#   down). On the middle of the book it is a tie.
+# THE OTHER MOMENTUM BOOKS, record only, paired mean gain 12y / 8y: (a) 12-1 -0.91 / -0.24, (o) -1.24 / -1.18, (p)
+#   -1.03 / -1.11, (r) -1.25 / -1.17, (s) -0.70 / -1.22, (k) -0.08 / -0.32, (l) -0.30 / -0.21, (m) -0.07 / +0.03, (n)
+#   -0.06 / -0.20. The books that sort mainly on momentum ((a), (o), (p), (r), (s)) lose 0.70 to 1.25 %/yr, except
+#   (a) at 8y. The books that give it half the seats or blend it with the score ((j) to (n)) move 0.32 or less.
+#   The other rival rows print the same numbers on both sides.
+# READ: in this pond the hidden reversal tilt is part of what makes the momentum books pay. Removing it costs about
+#   1 %/yr wherever momentum leads the sort. As (#1393) says, it is now named as a term, `momentum_12_7_rev`: the
+#   12-7 return times about one minus the last two months' return. No code moves; the shipped key keeps reading it.
+# AGAINST EXPECTED: (j) moved inside the |0.4| called on mean and median, the tie the prior allowed. The 12y tail was
+#   not called. Removing the tilt cost the 12-1 book (a) 0.91 %/yr at 12y, more than "mildly positive" suggests. The
+#   re-sort rate (one name in ten, called) went unmeasured: the rivals print no names-moved line.
+# REVERT RULE: nothing moved; the knob stays false.
 # (#1395) THE THREE BAR-FITTED CAPS RE-GRADED ON MONTHLY BARS, PRE-REGISTERED 2026-11-08, runs only after (#1390) and
 #   (#1392) are written. Row: (#1396). No new knob.
 # WHY: `growth_overext_free` 60 ((#1378), swept 0-90 by (#1382)/(#1385)/(#1388): "no size beats +60", every row INSIDE),
@@ -27347,6 +27368,46 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   reading of any true +0.5 %/yr. A winner goes to one owner question. If (#1390) read OUTSIDE NEGATIVE, this is the
 #   re-fit that receipt requires, and its row 0 is the loss being explained.
 # REVERT RULE: nothing moves unless a winner ships on the owner's word.
+# (#1396) VERDICT, 2026-11-08, on (#1395): NO WINNER. No row of the three grids is eligible, so the three shipped caps
+#   stay: `growth_overext_free` 60, `long_trend_cap` 30 and `growth_max_above_ma` 150. Probes 42467330277 (a),
+#   42467335552 (b) and 42467340492 (c), rescore="guard", 200 shuffles, on c3869b3, each with the (#1395) arm's two
+#   knobs. Every log prints bars `1mo 5837` only, and windows scored 5142 / 6580 at 12y and 9230 / 8738 at 8y, the
+#   (#1392) "both" arm's. So row 0 of each grid is that arm at the shipped caps.
+# ROW 0 FAILS RU1 ITSELF: the top 5 beat names 6-10 in 18/37 windows at 12y and 22/45 at 8y, under the 50 % floor.
+#   An eligible row had to lift that tally over half at both horizons.
+# RU RULER (tools/regrade_ruler.py, lane pit), 12y cells left of the first bar, 8y right of it. "free" =
+#   growth_overext_free, "cap" = long_trend_cap, "off" = 0.0. A fail with no horizon fails at both:
+#     row       mean   med worst   p20 worst5    RU1 |  mean   med worst   p20 worst5    RU1 | fails
+#     row 0     +2.4  +3.0  -8.6  +0.2   -3.5  18/37 |  +2.6  +2.9  -6.9  -0.3   -3.0  22/45 | RU1
+#     free 40   +2.5  +2.6  -5.6  +0.8   -2.1  18/37 |  +2.8  +2.5  -5.9  +0.5   -2.2  20/45 | RU1 RU3; 8y RU-E
+#     free 50   +2.3  +2.5  -8.6  +0.3   -2.6  17/37 |  +2.7  +2.9  -6.9  -0.5   -2.7  18/45 | RU1 RU-E; 12y RU3
+#     free 70   +2.0  +1.8  -6.4  -0.5   -3.3  25/37 |  +2.2  +2.4  -5.8  -1.2   -3.0  26/45 | RU2 RU3 RU-E; 12y guard
+#     free 80   +2.3  +2.1  -6.4  -0.1   -3.3  20/37 |  +2.4  +2.8  -5.8  -0.6   -3.3  25/45 | RU3 RU-E
+#     cap 25    +2.4  +3.0  -8.6  +0.2   -3.4  19/37 |  +2.6  +2.9  -6.9  -0.2   -3.0  21/45 | 8y RU1
+#     cap 40    +2.4  +2.9  -8.6  +0.2   -3.4  16/37 |  +2.6  +2.9  -6.9  -0.3   -3.2  22/45 | RU1
+#     cap 50    +2.3  +2.9  -8.6  -0.3   -3.4  17/37 |  +2.6  +2.9  -6.9  -0.3   -3.2  21/45 | RU1
+#     cap off   +2.3  +2.9  -8.6  -0.5   -3.5  19/37 |  +2.6  +2.9  -6.9  -0.6   -3.2  22/45 | 8y RU1; 12y RU2
+#   Grid (c) reads row 0's numbers on every row, cell for cell, era lines included.
+# GUARD, top-10 gain over row 0, 12y / 8y: free 40 +0.16 / +0.23, 50 -0.03 / +0.16, 70 -0.38 / -0.36, 80 -0.03 /
+#   -0.20; cap 25 -0.01 / +0.04, 40 -0.01 / +0.03, 50 -0.03 / +0.05, off -0.06 / +0.01. All PASS, except free 70 at
+#   12y: FAIL, its gain under the -0.36 edge and its null band OUTSIDE (median gain -1.21). Top-10 names moved a
+#   bucket: free 0.67 to 1.81, cap 0.13 to 0.22. Grid (c) reads INERT at 120, 200 and off: 0.00 names moved at both
+#   horizons, pond gain -0.03 to +0.03. On monthly bars the stretch gate changes no top-10 name from 120 to off.
+# ELIGIBLE: none. Free 40 and 50 and cap 40 and 50 fail RU1 at both horizons. Cap 25 and cap off pass it at 12y
+#   (19/37) and fail it at 8y (21/45, 22/45). Free 70 and 80 pass RU1 at both and fail RU3 and RU-E at both.
+#   STRICT WIN RULE: moot, and no row would have won it: none is above row 0's 12y median of +3.0 (cap 25 and grid
+#   (c) tie it).
+# READ: the re-fit does not explain (#1390)'s loss. No cap setting tested gets back the mixed-bar control (12y median
+#   +3.5, worst window -3.0, RU1 21/38; 8y +3.4 / -4.8 / 30/46). The free zone trades the tail against the order.
+#   Free 40 cuts the worst window (-8.6 to -5.6 at 12y, -6.9 to -5.9 at 8y) and costs 0.4 of median at both. Free 70
+#   and 80 lift RU1 over half at both horizons and cost 1.2 and 0.9 of 12y median. The trend cap barely binds on
+#   these bars. So the loss sits in the bars, not in the caps' fit: the true monthly series ranks a worse book at
+#   every cap tested.
+# AGAINST EXPECTED: the free rows moved more names than (#1388)'s 0.05-0.66, as called, but free 70 did not stay
+#   INSIDE. The cap ladder read INSIDE at 25 and 40, as called; 50 and 0.0 moved 0.13 to 0.22 names a bucket, not
+#   1-2. Grid (c)'s inertness was not called. No winner, as called.
+# REVERT RULE: nothing moves. The span and window knobs stay off ((#1390), (#1392)), so the shipped caps keep reading
+#   the bars they were fitted on.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
