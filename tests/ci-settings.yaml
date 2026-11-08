@@ -28116,6 +28116,21 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NOT DONE HERE: the knob stays empty. The owner's condition is an accountant's confirmation of the taxpayer's own
 #   case (residence, englobamento, the 2024 mandatory-aggregation rule for short holds at high incomes); this block
 #   supplies the primary text and the date it was read, which the (#108) block said it lacked.
+# TOOL (added 2026-11-08, same read): `python3 -I tools/exit_tax.py` prices ONE lot's exit under the rules above and the
+#   two the model leaves out, for the accountant conversation, not for the binary: the flat 28 % (art. 72.º), the
+#   ladder, the ENGLOBAMENTO option (the included gain on the art. 68.º scale over the year's other taxable income,
+#   art. 68.º-A solidarity above 80k/250k, the art. 69.º quociente conjugal with --joint), a sale cut into equal
+#   yearly TRANCHES (each a year older on the ladder, each riding the low brackets again), and the art. 5.º n.º 3
+#   insurance/capitalisation WRAPPER (4/5 of the income taxed after 5y, 2/5 after 8y: 22.4 / 11.2 % effective) against
+#   its yearly fee. Two 2026 bracket readings ship by name (`oe2026` AICCOPN note of 2026-01-07 on Lei n.º 73-A/2025;
+#   `oe2026-sept` Cofidis page of 2026-10-27) because they disagree on the first six rates by 0.3-0.5 pts; --brackets
+#   takes a table. What it reads on a 10k lot at 10 %/yr for 20y (gain 57,275): the ladder alone leaves 56,049 after
+#   tax; englobamento in a year with NO other income leaves 57,493 in one tranche and 62,263 over five (an effective
+#   8.7 % on the gain), i.e. +11 % of the lot's after-tax value, worth about +0.5 pts/yr more of after-tax CAGR on top
+#   of the ladder's +0.49; with 40k of other income englobamento LOSES (30.6 % vs 19.6 %) single and about ties joint,
+#   so the lever is for a low-income exit year (a retirement, a sabbatical), not a rule. A wrapper breaks even at a
+#   fee near 0.45 %/yr on the same lot (above that the 11.2 % rate does not pay for the drag). Selftest on
+#   hand-computed brackets; not advice; the knob is untouched.
 # (#1425) THE ARTIFACT AS A RULE: THE AGE CAP ON HONEST BARS, PRE-REGISTERED 2026-11-08 before any run. Row: (#1426).
 #   Knob: `growth_max_age_years` (0.0 ships; a grid row sets it, since `age_years` rides every dump).
 # WHY: (#1390) read true monthly bars OUTSIDE NEGATIVE, 0.9-1.3 %/yr under the shipped book on the paired buckets,
@@ -28141,6 +28156,80 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   honest prior is (A) on median and (B) on the tail. The 30 cap over-prunes (it removes 1990s listings); 50 does
 #   little. Nothing ships without the owner's word.
 # REVERT RULE: the knob to 0.0.
+# (#1427) THE EVENTS CENSUS, PRE-REGISTERED 2026-11-08 before any run, record only, no knob, no page. Rows: none; the
+#   verdict goes under this block. Data: tests/event-dates.csv, written by `tools/event_dates.py`.
+# WHY: every same-session census so far conditions on PRICE (the twelve keys), the CLOCK ((#1214) hours, (#1216)
+#   weekday / month turn / pre-holiday / expiry) or the LEG ((#1423)); none conditions on a SCHEDULED INFORMATION
+#   RELEASE, the one thing the literature says moves single names and the index on a known date. Two kinds, one
+#   census. `earnings`: the 8-K Item 2.02 filing date of every member since 2012 (the SEC's own stamp, no vendor
+#   calendar), the window from the close before the first session on or after the filing date to the close of the
+#   session after, which holds both a before-the-open and an after-the-close report. Beaver (1968), Frazzini and
+#   Lamont (2007) and Barber, De George, Lehavy and Trueman (2013) read a premium in announcement windows of several
+#   percent a year, in most countries; later work reads it smaller after 2010. `fomc` (ticker `*`, one observation
+#   a date): the 113 statement dates 2013-2026 from the Fed's own calendar pages. Lucca and Moench (2015) read +49 bp
+#   in the 24 hours BEFORE scheduled announcements 1994-2011; Kurov, Wolfe and Gilbert and others read it gone or
+#   reversed after 2011-15. Both claims are testable on bars the repo already fetches, at the repo's own cost rule.
+# CENSUS (`backtest N intraday` prints EVENTS after LEGS, per pond US, EU and (#1428) EUETF; `heuristics::intraday::
+#   events`): per kind, the priced events' count, names and span; the window's raw mean in bp with t and halves;
+#   for a named kind the same window LESS THE POND'S OWN MOVE over it (a crowded reporting week's market move
+#   cannot pass as the names' own); the two sessions apart (D = the event session, D+1 the one after); what ANY two
+#   consecutive pond sessions earned equal weight over the walk; the mean net of one round trip. A `*` kind prices
+#   the pond's equal-weight mean of the two sessions, with the round trip once. An event drops when the name is
+#   not liquid at the buy close, outside its member spans, or has no completed session after it. Unit test
+#   `the_events_census_reads_the_calendar_and_prices_each_window`.
+# BAR, fixed now. A kind earns ONE owner question (a two-session trade around the event, nothing in the buy rules)
+#   only if its raw window clears t >= 3 with both halves above 0, beats what any two pond sessions earn, its mean
+#   NET of the market's round trip (50 bp US, 20 bp EU) is above 0, and, for a named kind, the pond-adjusted window
+#   clears t >= 3 as well, in the US pond; anything less is recorded and closes the question for that kind. The
+#   (#1218) trading rules, the keys and the page are untouched either way.
+# EXPECTED: earnings raw +10 to +30 bp an event on ~20,000 events (gross t 3 to 8; the premium is real), pond-adjusted
+#   about the same, net of 50 bp NEGATIVE -> FAIL on net; the break-even round trip (the gross mean) lands between 10
+#   and 30 bp, under any retail broker's: the one honest follow-up is which broker gets under it, not a key. fomc:
+#   D leg (close D-1 to close D) +5 to +15 bp on ~110 dates with t under 2 after 2013 (the drift faded, as read),
+#   D+1 near 0; FAIL. EUETF: the FOMC statement (20:00 CET) falls after the Xetra close, so the pond's reaction
+#   sits in D+1 there; same verdict. Nothing ships either way.
+# ponytail: the calendar ships with the 113 fomc rows alone. The sandbox that wrote this could not reach sec.gov (its
+#   egress policy refused the host), so the earnings rows arrive when the owner runs `python3 -I tools/event_dates.py`
+#   (one submissions request a CIK at the SEC pace, ~650 CIKs plus the long filers' older pages: minutes). Until
+#   then the US line reads the fomc kind alone and the earnings kind is "no kind".
+# (#1428) THE VENUE LEGS, PRE-REGISTERED 2026-11-08 before any run, record only, no knob, no page. Rows: none; the
+#   verdict goes under this block.
+# WHY: (#1423) splits a US name's session at New York's open. A Xetra-listed S&P 500 tracker splits the SAME index
+#   at a different hour: its night leg (17:30 to 09:00 CET) holds New York's last 4.5 hours and the US overnight, its
+#   day leg (09:00 to 17:30 CET) holds the US pre-market and New York's first two hours. Boyarchenko, Larsen and
+#   Whelan (2020) read most of the S&P futures' overnight return accruing in the EUROPEAN MORNING hours; if so, the
+#   Xetra tracker's DAY leg carries a drift the US bars cannot show, and it is a leg a European retail account can
+#   hold at a 20 bp round trip. The pond `heuristics::intraday::EU_ETFS` (18 Xetra / Amsterdam lines on the S&P 500,
+#   Nasdaq 100, MSCI World / ACWI / EM, DAX and Euro Stoxx 50) runs the (#1423) LEGS census and the (#1427) EVENTS
+#   census alone, printed as EUETF after the US and EU markets.
+# BAR, fixed now. The EUETF DAY leg earns ONE owner question only if its mean clears t >= 3 with both halves above 0
+#   and its mean net of 20 bp is above 0 (the break-even line says how far it is). GAP is not graded on this pond:
+#   its lines track a handful of indices, so the quintiles read the same gap. Nothing in the buy rules moves.
+# EXPECTED: day leg +2 to +5 bp a session on ~2,500 sessions (t 2 to 4), break-even round trip near 3 bp: real, and
+#   under 20 bp -> FAIL. Night leg +1 to +3 bp (the US afternoon plus overnight, part of it already in the day leg's
+#   drift). The fomc kind here reads the D+1 session. Nothing ships either way.
+# (#1429) THE CRYPTO HOLDING RULE, PRIMARY TEXT READ 2026-11-08, record only. Knob: none moves; `cgt_hold_schedule` (#108)
+#   and `capital_gains_tax_pct` price every arm at one rate, which is wrong for the crypto sleeve (`budget_crypto`) by law.
+# READ: Portal das Finanças, Código do IRS artigo 10.º, page of 08/11/2026 (latest alteration listed: Decreto-Lei n.º 97/2026
+#   of 20 May, which RENUMBERED the crypto numbers). n.º 1 k) (Lei n.º 24-D/2022): "Alienação onerosa de criptoativos que não
+#   constituam valores mobiliários" is a category G gain. n.º 22 (ex-n.º 19): "São excluídos os ganhos obtidos, bem como as
+#   perdas incorridas, resultantes das operações previstas na alínea k) do n.º 1 (...) relativas a criptoativos detidos por um
+#   período igual ou superior a 365 dias" — the gain AND the loss, excluded outright, no ladder. n.º 20-21 (ex-17/18): the
+#   definition, with NFTs ("criptoativos únicos e não fungíveis") outside it. n.º 24 (ex-21): the exclusion does not apply
+#   when the taxpayer or the payer is not resident in an EU/EEA state or a treaty / information-exchange jurisdiction (its
+#   text still cross-references the old numbers). n.º 25 (ex-22): losing Portuguese residence counts as a disposal.
+#   NOT in art. 10.º: the transitional rule that counts the holding period before 2023 (it sat in the OE 2023 law itself).
+# WHAT IT IS WORTH, arithmetic (no backtest; `python3 -I tools/exit_tax.py --asset crypto`): a crypto lot held 365 days or
+#   more pays 0 % against a security's 28 % or 19.6 %. Pre-tax 10 %/yr for 20y: after-tax CAGR 8.51 (flat) / 9.00 (ladder)
+#   -> 10.00, +1.49 / +1.00 pts/yr. That is the largest exit lever this file has priced, it is law, and it applies to ONE
+#   sleeve: the book's crypto budget is the owner's call on risk, not on tax, and nothing here argues for a bigger one.
+# WHAT IT CHANGES IN THE BOOK: nothing in selection. In the exit: (a) never sell a crypto lot under 365 days unless the
+#   loss is wanted (a loss on a lot under 365 days enters the year's category G balance; past 365 days n.º 22 excludes the
+#   loss with the gain, so there is nothing to harvest); (b) the
+#   after-tax footer should price the crypto sleeve at 0 % past a year, so a per-class schedule (`cgt_hold_schedule` for
+#   securities, a 100 % rung at 1 year for crypto) is the honest shape of the knob once the owner's accountant rule is met;
+#   (c) the exchange must sit in an EU/EEA or treaty jurisdiction for n.º 22 to hold (n.º 24), a venue choice, not a rule.
+# NOT DONE HERE: no knob, no footer change; the owner's accountant rule (the (#108) block) stands, and the goldens would move.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

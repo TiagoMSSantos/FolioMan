@@ -1989,6 +1989,10 @@ const TIINGO_DEAD_CSV: &str = ".tiingo_dead_members.csv";
 /// [`DEAD_MEMBERS_CSV`], written by `tools/item5_prices.py`. Its tickers are the roster's `series none`
 /// rows, so no name is in both files; read as one file with the archive, so both share its end.
 const DEAD_PRICES_CSV: &str = "tests/dead-prices.csv";
+/// (#1427) The EVENTS calendar `backtest N intraday` prices: `ticker,date,kind` rows written by
+/// `tools/event_dates.py`, the 8-K Item 2.02 filing dates of today's members (`earnings`) and the FOMC
+/// statement dates with ticker `*` (`fomc`). Absent, the census prints one line saying so and nothing else.
+const EVENT_DATES_CSV: &str = "tests/event-dates.csv";
 /// (#1323) Item 6 "Selected Financial Data" rows for exited members, written by
 /// `tools/item6_fundamentals.py` from their 10-Ks: `ticker,cik,period_end,filed,revenue,op_income,
 /// net_income,eps,prior_eps,assets`, money in dollars, a dash for no value. Each fiscal year comes from
@@ -4034,6 +4038,8 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
     );
     // (#1215) per market, the book the holds census grades on 60m bars and its daily lines; (#1216) and the
     // calendar census's daily lines with each slice's check
+    // (#1427) the EVENTS calendar; an absent or empty file prices nothing and the report line says so
+    let calendar = intraday::read_events(&std::fs::read_to_string(EVENT_DATES_CSV).unwrap_or_default());
     let mut held = Vec::new();
     // the walk sorts each session by key then ticker, so fetch completion order cannot move a number
     for (market, names, cost) in [("US", &us, intraday::COST_BPS_US), ("EU", &eu, intraday::COST_BPS_EU)] {
@@ -4056,6 +4062,8 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         }
         // (#1423) the two legs of every pond session and the day leg by overnight-gap quintile, record only
         println!("{}", intraday::legs_report(market, &intraday::legs(&pond, today), cost));
+        // (#1427) the calendar's events priced on this pond: the names' own windows and the pond's on `*` dates
+        println!("{}", intraday::events_report(market, &intraday::events(&pond, &calendar, today), cost));
         // today's members, each ranked every day: US*, and (#1215) the pond the holds census's book is ranked on
         let now: Vec<intraday::Member> = pond
             .iter()
@@ -4075,6 +4083,23 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
             intraday::daily_holds(market, k, &pond, today, cost, &intraday::HOLDS),
             intraday::daily_slices(market, k, &pond, today, cost),
         ));
+    }
+    // (#1428) the venue legs: the EU-listed UCITS ETF lines on the LEGS and EVENTS censuses alone, record only.
+    // A Xetra S&P 500 tracker's night leg holds the US afternoon and overnight, its day leg the US morning.
+    {
+        let names: Vec<String> = intraday::EU_ETFS.iter().map(|t| t.to_string()).collect();
+        let charts: Vec<(&str, fetch::Chart)> = stream::iter(&names)
+            .map(|tk| async move { Some((tk.as_str(), fetch::fetch_history(client, &settings.urls, tk).await?)) })
+            .buffer_unordered(fetch::fetch_concurrency())
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        let pond: Vec<intraday::Member> =
+            charts.iter().filter_map(|(tk, c)| Some((*tk, c, intraday::rate_for(&c.currency, Some(usd))?, None))).collect();
+        let cost = intraday::COST_BPS_EU;
+        println!("  EUETF pond: {} of {} UCITS ETF lines fetched in EUR or USD; cost {cost} bp round trip", pond.len(), names.len());
+        println!("{}", intraday::legs_report("EUETF", &intraday::legs(&pond, today), cost));
+        println!("{}", intraday::events_report("EUETF", &intraday::events(&pond, &calendar, today), cost));
     }
     // (#1214) the census the Intraday table's hour knobs are picked from: today's members, as on the page
     println!("\n── (#1214) BUY AND SELL HOURS: buy at the open or a 60m bar's end, sell at a later one, every name equal weight, 2y ──");

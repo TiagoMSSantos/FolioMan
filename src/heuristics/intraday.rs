@@ -40,6 +40,10 @@
 //! prior close to the open) and its day leg (the open to the close), equal weight by session, and the day
 //! leg by quintile of the session's own overnight gap. The question they answer is the one every key above
 //! begged: is there a same-session return to rank at all, or does the premium sit in the leg no key trades.
+//! (#1427) EVENTS, record only: the two sessions around a dated release, each member's 8-K Item 2.02 filing
+//! (`earnings`) and the FOMC statement (`fomc`, the pond as one), from `tests/event-dates.csv`, raw and less
+//! the pond's own move, against what any two sessions earn. (#1428) The same LEGS and EVENTS censuses on
+//! `EU_ETFS`, the Xetra and Amsterdam trackers whose session splits New York's day at a different hour.
 
 use crate::config::session;
 use crate::core;
@@ -78,6 +82,19 @@ pub const EU_POND: &[&str] = &[
     "STMPA.PA", "WLN.PA", "ASML.AS", "ADYEN.AS", "AD.AS", "INGA.AS", "PRX.AS", "WKL.AS", "PHIA.AS", "HEIA.AS",
     "MT.AS", "ABI.BR", "ARGX.BR", "IBE.MC", "SAN.MC", "BBVA.MC", "ITX.MC", "ENEL.MI", "ENI.MI", "ISP.MI",
     "UCG.MI", "RACE.MI", "STLAM.MI", "NOKIA.HE", "NDA-FI.HE",
+];
+
+/// (#1428) The EU-listed UCITS ETF pond for the venue-legs census: the largest accumulating and distributing
+/// trackers of the S&P 500, the Nasdaq 100, MSCI World / ACWI / EM and the DAX and Euro Stoxx 50 on Xetra and
+/// Euronext Amsterdam, where Yahoo prints opens. A Xetra S&P 500 tracker's night leg (17:30 to 09:00 CET) holds
+/// the US session's last 4.5 hours and the US overnight; its day leg (09:00 to 17:30 CET) holds the US
+/// pre-market and the first two US hours: the split the census grades, with the (#1216) slices on the US bars
+/// as the control.
+/// shortcut: a static list of today's largest lines, so a tracker that was thin in 2016 is read as liquid on
+/// the day it clears the turnover floor and not before.
+pub const EU_ETFS: &[&str] = &[
+    "SXR8.DE", "CSPX.AS", "VUAA.DE", "SPYL.DE", "SXRV.DE", "EXXT.DE", "EQQQ.DE", "EUNL.DE", "IWDA.AS", "IQQW.DE",
+    "XDWD.DE", "VWCE.DE", "VWRL.AS", "IUSQ.DE", "IS3N.DE", "XMME.DE", "EXS1.DE", "EXW1.DE",
 ];
 
 /// One pond member: ticker, daily chart, EUR per unit of its currency, and its index spans (`None` =
@@ -427,6 +444,161 @@ pub fn legs_report(market: &str, days: &[Legs], cost_bps: f64) -> String {
         ));
     }
     out
+}
+
+/// (#1427) One row of the EVENTS calendar: the name it dates (`*` = every pond member, one observation per
+/// date), the date, and the kind the census pools it under (`earnings`, `fomc`, ...).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    pub ticker: String,
+    pub date: NaiveDate,
+    pub kind: String,
+}
+
+/// (#1427) The rows of tests/event-dates.csv, `ticker,date,kind` with the date as YYYY-MM-DD. A header, a `#`
+/// line, or a row that does not parse drops, as the other test CSVs read; rows come back sorted by kind,
+/// ticker and date with duplicates kept once, so the file's order cannot move a number.
+pub fn read_events(text: &str) -> Vec<Event> {
+    let mut v: Vec<Event> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut it = l.split(',').map(str::trim);
+            let (tk, date, kind) = (it.next()?, it.next()?, it.next()?);
+            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+            (!tk.is_empty() && !kind.is_empty()).then(|| Event { ticker: tk.to_uppercase(), date, kind: kind.to_string() })
+        })
+        .collect();
+    v.sort_by(|a, b| (&a.kind, &a.ticker, a.date).cmp(&(&b.kind, &b.ticker, b.date)));
+    v.dedup();
+    v
+}
+
+/// (#1427) One priced event: the session it fell on, the name (`*` for the pond), the two session returns, and the
+/// pond-adjusted window (None for a `*` event).
+type Obs<'a> = (NaiveDate, &'a str, f64, f64, Option<f64>);
+
+fn column(v: &[Obs<'_>], f: impl Fn(&Obs<'_>) -> f64) -> Vec<f64> {
+    v.iter().map(f).collect()
+}
+
+/// (#1427) One kind's census: how many events priced, on how many names (0 for a `*` kind, which prices the
+/// pond), the dated span, and the stats of the window from the close before the event's first session to the
+/// close of the session after (`raw`), of that window less the pond's own move over it (`adj`, None for a `*`
+/// kind, whose window IS the pond's move), of its two sessions apart (`pre` = the event session, `post` =
+/// the one after), and `base`, what any two consecutive pond sessions earned equal weight over the whole walk.
+pub struct EventStats {
+    pub kind: String,
+    pub n: usize,
+    pub names: usize,
+    pub first: NaiveDate,
+    pub last: NaiveDate,
+    pub raw: Stats,
+    pub adj: Option<Stats>,
+    pub pre: Stats,
+    pub post: Stats,
+    pub base: f64,
+}
+
+/// (#1427) The EVENTS census. An event dated D on a name prices the name's first session on or after D as
+/// `pre` (close D-1 to close D) and the session after as `post`; both must be completed before `today`, the
+/// name must clear the (#809) turnover floor at the buy close and sit in its member spans, else the event
+/// drops. A `*` event prices the equal-weight pond mean of the same two sessions, one observation per date.
+/// Everything is a log return, so the window is `pre + post`. Only a kind with two or more priced events
+/// reports. Session means with fewer than `BOOK` liquid names are left out of the pond's own series, so a
+/// thin early date cannot stand in for the market.
+pub fn events(pond: &[Member], rows: &[Event], today: NaiveDate) -> Vec<EventStats> {
+    // the pond's equal-weight close-to-close log return per completed session
+    let mut by_date: BTreeMap<NaiveDate, Vec<f64>> = BTreeMap::new();
+    for &(_, c, fx, spans) in pond {
+        for i in 1..completed(c, today) {
+            if spans.is_some_and(|s| !core::sp500_member_at(s, c.dates[i])) || !liquid(c, i, fx) {
+                continue;
+            }
+            if let Some(r) = ln(c.closes[i], c.closes[i - 1]) {
+                by_date.entry(c.dates[i]).or_default().push(r);
+            }
+        }
+    }
+    let market: BTreeMap<NaiveDate, f64> = by_date.into_iter().filter(|(_, v)| v.len() >= BOOK).map(|(d, v)| (d, mean(&v))).collect();
+    let base = if market.is_empty() { 0.0 } else { 2.0 * mean(&market.values().copied().collect::<Vec<_>>()) };
+    let members: HashMap<&str, &Member> = pond.iter().map(|m| (m.0, m)).collect();
+    let mut kinds: BTreeMap<&str, Vec<Obs>> = BTreeMap::new();
+    for ev in rows {
+        let obs = if ev.ticker == "*" {
+            let mut it = market.range(ev.date..);
+            match (it.next(), it.next()) {
+                (Some((&d0, &pre)), Some((_, &post))) => Some((d0, "*", pre, post, None)),
+                _ => None,
+            }
+        } else {
+            members.get(ev.ticker.as_str()).and_then(|&&(tk, c, fx, spans)| {
+                let i = c.dates.partition_point(|d| *d < ev.date);
+                if i < 1 || i + 1 >= completed(c, today) || !liquid(c, i, fx) || spans.is_some_and(|s| !core::sp500_member_at(s, c.dates[i])) {
+                    return None;
+                }
+                let (pre, post) = (ln(c.closes[i], c.closes[i - 1])?, ln(c.closes[i + 1], c.closes[i])?);
+                let (m0, m1) = (market.get(&c.dates[i])?, market.get(&c.dates[i + 1])?);
+                Some((c.dates[i], tk, pre, post, Some(pre + post - m0 - m1)))
+            })
+        };
+        if let Some(o) = obs {
+            kinds.entry(ev.kind.as_str()).or_default().push(o);
+        }
+    }
+    kinds
+        .into_iter()
+        .filter_map(|(kind, mut v)| {
+            v.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+            let raw = stats(&column(&v, |o| o.2 + o.3))?;
+            let adj = if v.iter().all(|o| o.4.is_some()) { stats(&column(&v, |o| o.4.unwrap_or(0.0))) } else { None };
+            let mut names: Vec<&str> = v.iter().map(|o| o.1).filter(|t| *t != "*").collect();
+            names.sort_unstable();
+            names.dedup();
+            Some(EventStats {
+                kind: kind.to_string(),
+                n: v.len(),
+                names: names.len(),
+                first: v[0].0,
+                last: v[v.len() - 1].0,
+                raw,
+                adj,
+                pre: stats(&column(&v, |o| o.2))?,
+                post: stats(&column(&v, |o| o.3))?,
+                base,
+            })
+        })
+        .collect()
+}
+
+/// (#1427) One graded line per kind. The bar, fixed in the receipt before the first run: the window beats
+/// what any two pond sessions earn, at t >= 3 in both halves, net of one round trip; a named kind must also
+/// clear t >= 3 on the pond-adjusted window, so a market move on a crowded reporting day cannot pass as the
+/// names' own. `*` kinds price the pond itself and carry the round trip once, as the book would.
+pub fn events_report(market: &str, kinds: &[EventStats], cost_bps: f64) -> String {
+    if kinds.is_empty() {
+        return format!("  {market} EVENTS          no kind with two or more priced events (tests/event-dates.csv missing, empty, or dated past the bars)");
+    }
+    let fmt = |s: &Stats| format!("{:+.1} bp (t {:+.2}; halves {:+.1}|{:+.1})", s.mean * 1e4, s.t, s.h1 * 1e4, s.h2 * 1e4);
+    kinds
+        .iter()
+        .map(|e| {
+            let net = e.raw.mean * 1e4 - cost_bps;
+            let pass = e.raw.t >= 3.0 && e.raw.mean > e.base && net > 0.0 && e.raw.h1 > 0.0 && e.raw.h2 > 0.0 && e.adj.as_ref().is_none_or(|a| a.t >= 3.0);
+            let verdict = if pass { "PASS" } else { "FAIL" };
+            match &e.adj {
+                Some(adj) => format!(
+                    "  {market} EVENTS {:<9} {} events {}..{} on {} names  close D-1 -> D+1 {}  less the pond's move {}  split D {:+.1} (t {:+.2}) | D+1 {:+.1} (t {:+.2})  any two sessions {:+.1}  net of {cost_bps:.0} bp {net:+.1} -> {verdict}",
+                    e.kind, e.n, e.first, e.last, e.names, fmt(&e.raw), fmt(adj), e.pre.mean * 1e4, e.pre.t, e.post.mean * 1e4, e.post.t, e.base * 1e4
+                ),
+                None => format!(
+                    "  {market} EVENTS {:<9} {} dates {}..{}  pond close D-1 -> D+1 {}  split D {:+.1} (t {:+.2}) | D+1 {:+.1} (t {:+.2})  any two sessions {:+.1}  net of {cost_bps:.0} bp {net:+.1} -> {verdict}",
+                    e.kind, e.n, e.first, e.last, fmt(&e.raw), e.pre.mean * 1e4, e.pre.t, e.post.mean * 1e4, e.post.t, e.base * 1e4
+                ),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// (#811) Today's book on key `k`: the members in the index today that clear the floor, ranked on the
@@ -1418,6 +1590,62 @@ mod tests {
         assert!(line.contains(&format!("break-even round trip {:.1} bp", night * 1e4)), "{line}");
         assert!(line.contains("-> FAIL"), "a 1 % daily loss is no PASS: {line}");
         assert!(legs_report("XX", &[], 20.0).contains("no session"));
+    }
+
+    /// (#1427) Twelve flat names; N00 steps up 2 % at bar 31, N01 1 % at bar 35 and another 0.5 % at bar 36.
+    /// The calendar dates N00 and N01 on their steps (earnings) and the pond on the same two dates (fomc).
+    #[test]
+    fn the_events_census_reads_the_calendar_and_prices_each_window() {
+        let names: Vec<String> = (0..12).map(|n| format!("N{n:02}")).collect();
+        let charts: Vec<Chart> = (0..12)
+            .map(|n| {
+                let c: Vec<f64> = (0..40)
+                    .map(|i| match (n, i) {
+                        (0, i) if i >= 31 => 102.0,
+                        (1, i) if i >= 36 => 101.5,
+                        (1, i) if i >= 35 => 101.0,
+                        _ => 100.0,
+                    })
+                    .collect();
+                chart(&c, &c, 1e5)
+            })
+            .collect();
+        let pond: Vec<Member> = names.iter().zip(&charts).map(|(t, c)| (t.as_str(), c, 1.0, None)).collect();
+        let text = format!(
+            "# (#1427) a comment\nticker,date,kind\nN00,{},earnings\nN01,{},earnings\n*,{},fomc\n*,{},fomc\nbad,row\nN02,2020-13-40,earnings\nN00,{},earnings\nN02,{},earnings\nN03,{},earnings\nZZZ,{},earnings\n",
+            d(31),
+            d(35),
+            d(31),
+            d(35),
+            d(31),
+            d(39),
+            d(45),
+            d(31)
+        );
+        let rows = read_events(&text);
+        assert_eq!(rows.len(), 7, "header, comment, the short row and the bad date drop; the duplicate folds: {rows:?}");
+        assert_eq!((rows[0].ticker.as_str(), rows[0].date, rows[0].kind.as_str()), ("N00", d(31), "earnings"));
+        assert_eq!((rows[5].ticker.as_str(), rows[5].date), ("*", d(31)), "kinds sort, `*` after the names of an earlier kind");
+        let ks = events(&pond, &rows, d(40));
+        assert_eq!(ks.iter().map(|k| k.kind.as_str()).collect::<Vec<_>>(), ["earnings", "fomc"]);
+        let (e, f) = (&ks[0], &ks[1]);
+        // N02 dated 39 has no completed session after it, N03 dated 45 none at all, ZZZ is no member
+        assert_eq!((e.n, e.names, e.first, e.last), (2, 2, d(31), d(35)), "two priced events");
+        let raw = (1.02_f64.ln() + 1.015_f64.ln()) / 2.0;
+        assert!((e.raw.mean - raw).abs() < 1e-12, "{} vs {raw}", e.raw.mean);
+        assert!((e.pre.mean - (1.02_f64.ln() + 1.01_f64.ln()) / 2.0).abs() < 1e-12);
+        assert!((e.post.mean - (101.5_f64 / 101.0).ln() / 2.0).abs() < 1e-12);
+        let adj = e.adj.as_ref().expect("a named kind is pond-adjusted");
+        assert!((adj.mean - raw * 11.0 / 12.0).abs() < 1e-12, "the pond's move is one twelfth of the name's own: {}", adj.mean);
+        assert!((e.base - raw / 30.0).abs() < 1e-12, "ten pond sessions clear the floor, two of them move: {}", e.base);
+        assert_eq!((f.n, f.names, f.first, f.last), (2, 0, d(31), d(35)));
+        assert!(f.adj.is_none() && (f.raw.mean - raw / 12.0).abs() < 1e-12, "the pond's own window: {}", f.raw.mean);
+        let line = events_report("XX", &ks, 50.0);
+        assert!(line.contains("XX EVENTS earnings  2 events") && line.contains("on 2 names") && line.contains("XX EVENTS fomc      2 dates"), "{line}");
+        assert!(line.lines().next().is_some_and(|l| l.ends_with("-> PASS")), "173 bp at t 7 in both halves clears the bar: {line}");
+        assert!(line.lines().nth(1).is_some_and(|l| l.ends_with("-> FAIL")), "14 bp does not pay a 50 bp round trip: {line}");
+        assert!(events_report("XX", &[], 50.0).contains("no kind"));
+        assert!(events(&pond, &rows, d(32)).is_empty(), "with bar 32 not completed, no event has its session after");
     }
 
     /// Name `n` of 12 gains `g` = 1 + n/1000 every session (its K3), and on the graded session
