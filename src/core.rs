@@ -4355,6 +4355,11 @@ pub struct FundFactors {
     // side). Backtest stamps `capx_pct`; (#1355) live too, `stamp_capx_pct`
     pub capx_gr3: Option<f64>,
     pub capx_pct: Option<f64>,
+    // (#1404) the paper route's fcf_me twin. `fcf_yield`: the as-of fiscal year's FCF (`fcf_ttm`) over the as-of
+    // market cap, %, SIGN KEPT, so a cash burner ranks last as JKP keeps it; no financial filter. `fcf_pct`: its
+    // same-date percentile, 0-100, high = FCF-rich. The backtest fills both; live reads None
+    pub fcf_yield: Option<f64>,
+    pub fcf_pct: Option<f64>,
     // (#1301) directors' and officers' combined holding, % of the as-of share count. von Lilienfeld-Toal
     // and Ruenzi 2014 measure the CEO's stake; this is the wider directors-and-officers cut SEC's insider
     // data sets carry. Only the backtest fills it, under `insider`, from tests/insider_own.csv. PROBE-ONLY
@@ -5080,6 +5085,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             grow(capex(0), capex(3))
         },
         capx_pct: None,
+        fcf_yield: None, // (#1404) needs the as-of price, set in the backtest loop
+        fcf_pct: None,
         insider_own_pct: None, // (#1301) set in the backtest loop, from the insider holdings table
         exp_neg: None,
         op_rd: now.and_then(|r| Some((r.gross_margin? - r.sga_margin?) * r.revenue? / r.assets.filter(|a| *a > 0.0)?)),
@@ -5887,6 +5894,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "ocf_at_chg" => f.ocf_at_chg,                     // (#1290) 1y change in OCF over assets, points: measured, unweighted
         "capex_abn" => f.capex_abn,                       // (#1290) capex over revenue against its 3y mean, %: measured, unweighted
         "capx_pct" => f.capx_pct,                         // (#1353) same-date capx_gr3 percentile, high = LOW capex growth
+        "fcf_pct" => f.fcf_pct,                           // (#1404) same-date fcf_yield percentile, high = FCF-rich
         "insider_own_pct" => f.insider_own_pct,           // (#1301) insiders' holding, % of shares: measured, unweighted
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
@@ -5903,7 +5911,7 @@ pub(crate) const FUND_FACTOR_NAMES: &[&str] = &[
     "value_composite", "book_yield", "small_pct", "ey_pct", "mom61_pct", "rnd_pct", "rnd_yield", "payout_yield", "rnd_growth",
     "lynch_yield", "sgr_yield", "exp_neg", "op_rd", "discipline", "fair_yield", "oe_fair_yield", "fcf_cap_yield", "low_turnover",
     "low_dro", "capex_light", "share_iss_5y", "netdebt_assets", "eps_streak", "underdep", "cgo", "ocf_at_chg", "capex_abn",
-    "capx_pct", "insider_own_pct", "composite",
+    "capx_pct", "fcf_pct", "insider_own_pct", "composite",
 ];
 
 /// (#1359) Refuse a fund factor name the router does not know. `select_fund_factor` reads one as None, so a
@@ -7001,7 +7009,7 @@ mod tests {
         let mut listed = FUND_FACTOR_NAMES.to_vec();
         arms.sort_unstable();
         listed.sort_unstable();
-        assert_eq!(arms.len(), 65, "{arms:?}");
+        assert_eq!(arms.len(), 66, "{arms:?}");
         assert_eq!(arms, listed);
         assert!(fund_factor_known("roic").is_ok());
         assert!(fund_factor_known("composite").is_ok());
@@ -7095,6 +7103,8 @@ mod tests {
             capex_abn: Some(60.0),
             capx_gr3: Some(82.0),
             capx_pct: Some(83.0),
+            fcf_yield: Some(84.0),
+            fcf_pct: Some(85.0),
             insider_own_pct: Some(61.0),
             exp_neg: Some(44.0),
             op_rd: Some(45.0),
@@ -7168,6 +7178,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "ocf_at_chg"), Some(59.0)); // (#1290)
         assert_eq!(select_fund_factor(&f, "capex_abn"), Some(60.0)); // (#1290)
         assert_eq!(select_fund_factor(&f, "capx_pct"), Some(83.0)); // (#1353)
+        assert_eq!(select_fund_factor(&f, "fcf_pct"), Some(85.0)); // (#1404)
         assert_eq!(select_fund_factor(&f, "insider_own_pct"), Some(61.0)); // (#1301)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics

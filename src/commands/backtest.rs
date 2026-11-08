@@ -2908,6 +2908,8 @@ pub async fn run(args: Vec<String>) {
                             // and net payout over the cap with its sign, so a net issuer ranks last.
                             f.rnd_yield = px.and_then(|p| core::ev_ebitda_yield(f.rnd_ttm, f.shares_ttm, None, p));
                             f.payout_yield = px.and_then(|p| core::cap_yield(f.payout_ttm, f.shares_ttm, p));
+                            // (#1404) FCF over the cap, sign kept like payout: the twin of JKP's fcf_me
+                            f.fcf_yield = px.and_then(|p| core::cap_yield(f.fcf_ttm, f.shares_ttm, p));
                             // (#413) intangible-adjusted book over the cap, positive-only like book
                             f.int_yield = px.and_then(|p| core::ev_ebitda_yield(f.int_book_ttm, f.shares_ttm, None, p));
                             // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
@@ -7204,13 +7206,15 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// twin of JKP's rd_me. Only an as-of R&D fact yields one, so a fund row with no filing yet never joins it.
 /// (#1353) `capx_gr3` ranks the same way as a seventh column, alone, into `capx_pct` = 100 − its percentile, so
 /// the slowest capex grower reads 100: the route's twin of JKP's capx_gr3, buy side low.
+/// (#1404) `fcf_yield` ranks the same way as an eighth column, alone, into `fcf_pct` (high = FCF-rich): the
+/// route's twin of JKP's fcf_me. Its sign is kept, so a cash burner ranks at the bottom instead of dropping out.
 /// (#533) `low_dro` becomes its distance from the median of the same date's same-sector names, as Wang
 /// adjusts by industry; a name with no sector reads None. shortcut: today's GICS (11 sectors, #95) for
 /// Wang's FF48 history; a finer key needs an as-of industry feed this tool does not read. (#1287)
 /// `underdep` is demeaned the same way, for Peddireddy's industry benchmark.
 /// `samples` must be date-sorted: `chunk_by_mut` groups runs, not dates.
 fn stamp_cohort_ranks(samples: &mut [Sample]) {
-    let legs: [fn(&core::FundFactors) -> Option<f64>; 7] = [
+    let legs: [fn(&core::FundFactors) -> Option<f64>; 8] = [
         |f| f.earnings_yield,
         |f| f.ebitda_yield,
         |f| f.fcf_ev_yield,
@@ -7218,6 +7222,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
         |f| f.mcap,
         |f| f.rnd_yield,
         |f| f.capx_gr3,
+        |f| f.fcf_yield,
     ];
     let rank = |col: &[f64], v: f64| col.partition_point(|x| x.total_cmp(&v).is_lt()) as f64 / (col.len() - 1) as f64 * 100.0;
     for day in samples.chunk_by_mut(|a, b| a.date == b.date) {
@@ -7242,6 +7247,7 @@ fn stamp_cohort_ranks(samples: &mut [Sample]) {
             f.ey_pct = ranked[0];
             f.rnd_pct = ranked[5];
             f.capx_pct = ranked[6].map(|p| 100.0 - p);
+            f.fcf_pct = ranked[7];
         }
         let median = |mut v: Vec<f64>| {
             v.sort_by(f64::total_cmp);
@@ -11732,6 +11738,25 @@ mod tests {
         stamp_cohort_ranks(&mut v);
         let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.capx_pct)).collect();
         assert_eq!(got, [Some(0.0), Some(100.0), None]);
+    }
+
+    /// (#1404) `fcf_pct` is fcf_yield's same-date percentile, high = FCF-rich: P at 8 % reads 100, Q burning cash
+    /// at -3 % reads 0 (its sign is kept, so it ranks last instead of dropping out), and R with no fcf_yield
+    /// reads None.
+    #[test]
+    fn stamp_cohort_ranks_ranks_fcf_yield_high_first() {
+        let row = |t: &str, y: Option<f64>| Sample {
+            date: ymd(2012, 1, 1),
+            realized: 0.0,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: Some(crate::core::FundFactors { fcf_yield: y, ..Default::default() }),
+            trail: Vec::new(),
+        };
+        let mut v = vec![row("P", Some(8.0)), row("Q", Some(-3.0)), row("R", None)];
+        stamp_cohort_ranks(&mut v);
+        let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.fcf_pct)).collect();
+        assert_eq!(got, [Some(100.0), Some(0.0), None]);
     }
 
     /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads

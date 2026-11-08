@@ -27220,6 +27220,32 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   3, sits over the 0 to 1 band.
 # NEXT: fcf_me's guard pre-registration, its new twin (fcf_margin times revenue, over the cap, one fiscal year;
 #   high) and one guard probe with "guard holdout sec". A refusal hands the turn to chcsho_12m, then ebitda_mev.
+# (#1404) FCF_ME HARM GUARD, PRE-REGISTERED 2026-11-08 before this run. Row: (#1405).
+# WHY: (#1403) passed fcf_me beyond ni_me in the US (alpha +1.5 %/yr, t 3.29, post +2.1) and in developed ex-US
+#   (alpha +3.4, t 2.51, post +4.3), and it heads the (#1402) queue now that be_me has failed. The proof stays JKP's;
+#   our backtest only has to show no visible harm. Its developed ex-US pass leans on a few thin 1980s months (the
+#   (#1403) record-only look), and the owner sees that at the ship question.
+# TWIN: `fcf_yield`, the as-of fiscal year's free cash flow over the as-of market cap, in %, SIGN KEPT (JKP's fcf_me,
+#   Lakonishok-Shleifer-Vishny 1994). FCF is the filing's FCF margin times its revenue (`fcf_ttm`, (#408)). The cap is
+#   the as-of share count times the as-of close in the filer's currency, as earnings_yield reads it, through
+#   `core::cap_yield`, as payout_yield uses it. A cash burner keeps its negative yield and ranks last, as JKP keeps
+#   it, and no financial filter applies. stamp_cohort_ranks ranks it as an eighth column, alone, into `fcf_pct`
+#   (0-100, high = FCF-rich) over the date's names that carry one. Only as-of SEC rows yield one.
+# TERM: {factor: fcf_pct, weight: 0.03, cap: 100, neutral: 50}, added after the five shipped terms (roic,
+#   margin_trend, ey_pct, mom61_pct, capx_pct), which stay unchanged.
+# RUN: one probe on main, years="12 8", args="universe fund pit", rescore="guard holdout sec" (200 shuffles), so
+#   cutoffs before 2011-01-01 drop. Grid: [{}, {growth_fund_extra: the shipped terms, then the term above}].
+# PASS: row 1 reads PASS at 12y AND at 8y. Only then a second probe, rescore="guard holdout reveal sec", reads the
+#   sealed 2016-on 8y samples, and both GUARD HOLDOUT gains must not sit under their edges. Those samples were read
+#   three times before (ni_me, probe 42286340556; ret_6_1, probe 42357657397; capx_gr3, probe 42361540115). So this
+#   fourth read is not blind, and a Value twin's read leans on ni_me's; the receipt says so. Both = SHIP per (#1339)
+#   and (#1402), after one owner question, because the page moves.
+# FAIL, INERT or UNGRADEABLE at either horizon, or a failed holdout = fcf_me REFUSED, record only. The turn then
+#   passes to chcsho_12m, then to ebitda_mev, each under its own pre-registration.
+# EXPECTED: one fiscal year of FCF plus a share count reaches most SEC-era names, so coverage is 85-95 % of scored
+#   stocks. fcf_pct moves with ey_pct, so the top-10 moves less than it did for capx_pct (0.50 and 0.60). Three of
+#   the route's four earlier guards passed (rd_me was ungradeable), so PASS about 2 in 3.
+# REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
