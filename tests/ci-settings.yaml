@@ -27410,15 +27410,15 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Four Value losers passed; none was called. aliq_mat reads significant the WRONG way in both regions again.
 # MULTIPLE TESTING: 10 two-region passes of 56 is far above the under-one false pass the AND bar allows, so the
 #   losing side carries real signal on this release. It does not make any one row safe; the guard still grades it.
-# NEXT, in menu order. (1) `tools/jkp_proof.py <dir> --losers --beyond`, run once after CI grades its selftest on
-#   the commit that carries this text. It runs (#1402)'s regression on the market-minus-trailer gaps, as (#1410)
-#   fixed in words: ret_12_1 and ret_9_1 on ret_6_1's, noa_gr1a on capx_gr3's. Row: (#1412). EXPECTED: noa_gr1a
-#   passes (its loser loads little on capx_gr3's); ret_12_1 passes the US and is a coin flip abroad; ret_9_1 fails
-#   developed ex-US, since its loser gap is mostly ret_6_1's. (2) The guard chain, one candidate at a time in menu
-#   order: the beyond passers (1993, 2004), then nfna_gr1a (2005), dbnetis_at (2006) and ocf_at_chg1 (2019). Each
-#   gets its own pre-registration and twin, and one guard probe with the term {<twin>: 0.09, cap 33.3, neutral 50}
-#   (plus `sec` for an SEC twin). A pass then reads the sealed holdout: its 5th read, and one more per later
-#   reveal. A ship waits for the owner's word.
+# NEXT, in menu order, PRE-REGISTERED 2026-11-08 here, before either run. (1) `tools/jkp_proof.py <dir> --losers
+#   --beyond`, run once after CI grades its selftest on the commit that carries this text. It runs (#1402)'s regression
+#   on the market-minus-trailer gaps, as (#1410) fixed in words: ret_12_1 and ret_9_1 on ret_6_1's, noa_gr1a on
+#   capx_gr3's. Row: (#1412). EXPECTED: noa_gr1a passes (its loser loads little on capx_gr3's); ret_12_1 passes the US
+#   and is a coin flip abroad; ret_9_1 fails developed ex-US, since its loser gap is mostly ret_6_1's. (2) The guard
+#   chain, one candidate at a time in menu order: the beyond passers (1993, 2004), then nfna_gr1a (2005), dbnetis_at
+#   (2006) and ocf_at_chg1 (2019). Each gets its own pre-registration and twin, and one guard probe with the term
+#   {<twin>: 0.09, cap 33.3, neutral 50} (plus `sec` for an SEC twin). A pass then reads the sealed holdout: its 5th
+#   read, and one more per later reveal. A ship waits for the owner's word.
 # (#1412) VERDICT, 2026-11-08, on (#1411)'s step (1): 1 of the 3 passes beyond its base: noa_gr1a beyond capx_gr3.
 #   ret_12_1 and ret_9_1 fail beyond ret_6_1 in developed ex-US, so Momentum gets no second seat from menu 3, and
 #   both are record only. One run, 19 s, on the 25 pinned files, whose md5s were re-checked first (25 of 25
