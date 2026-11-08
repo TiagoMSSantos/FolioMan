@@ -635,16 +635,21 @@ jobs:
           # Runs of a still-OPEN PR are its review verdict (#402) and are never touched; once the PR closes,
           # merged or not, its runs go too, failed ones included. REST `status: completed` covers cancelled,
           # failed and skipped; an in-flight run is never listed. The 2 days count from the finish.
-          # (#1227) A `Probe dump` run (probe.yml with a `grid` or `search`) holds samples dumps, and deleting
-          # a run deletes its artifacts, so it was kept until they expired at 90 days. (#1330) Nothing reads an
-          # old dump (a rescore reads its own run's samples; the campaign dispatches a fresh probe), so 7 days.
+          # (#1227) A `Probe dump` run (probe.yml with a `grid`, and a `search` until (#1422)) holds samples
+          # dumps, and deleting a run deletes its artifacts, so it was kept until they expired at 90 days.
+          # (#1330) Nothing reads an old dump (a rescore reads its own run's samples; the campaign dispatches a
+          # fresh probe), so 7 days.
+          # (#1422) A `Probe search` run (probe.yml with `search`, the monthly campaign's look) keeps 35 days:
+          # look 2 sat unread for 5 of its 7 days, and 35 keeps each look until the next month's has landed.
           cutoff=$(date -u -d '2 days ago' +%FT%TZ)
           dumps=$(date -u -d '7 days ago' +%FT%TZ)
+          searches=$(date -u -d '35 days ago' +%FT%TZ)
           open=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --limit 200 --json headRefName -q '[.[].headRefName]')
           for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&created=%3C$cutoff" \
-              | jq -r --arg cutoff "$cutoff" --arg dumps "$dumps" --argjson open "$open" '.workflow_runs[]
+              | jq -r --arg cutoff "$cutoff" --arg dumps "$dumps" --arg searches "$searches" --argjson open "$open" '.workflow_runs[]
                   | select(.status == "completed" and .updated_at < $cutoff)
                   | select(.display_title != "Probe dump" or .updated_at < $dumps)
+                  | select(.display_title != "Probe search" or .updated_at < $searches)
                   | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))
                   | .id'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
@@ -677,9 +682,10 @@ jobs:
           # 10-arm probe batch made 67 runs on 2026-10-11. ci/codeql/pages and (#611) automerge already
           # keep ~1 each through their own sweeps, which stay as they are. One probe batch (<= 10 runs)
           # still fits under 20, so its logs survive until they are tallied. Open-PR runs are exempt and
-          # are not counted, and so (#1227) are `Probe dump` runs, which (#1330) the rules above end.
+          # are not counted, and so (#1227) are `Probe dump` and (#1422) `Probe search` runs, which (#1330) the
+          # rules above end.
           for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=completed" --jq '.workflow_runs[]' \
-              | jq -rs --argjson open "$open" '[.[] | select(.display_title != "Probe dump")
+              | jq -rs --argjson open "$open" '[.[] | select(.display_title | IN("Probe dump", "Probe search") | not)
                   | select(.event != "pull_request" or (.head_branch as $b | $open | index($b) | not))]
                   | group_by(.workflow_id)[] | sort_by(.created_at) | reverse | .[20:][] | .id'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
