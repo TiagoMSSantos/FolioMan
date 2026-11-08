@@ -6402,8 +6402,8 @@ mod tests {
     /// quarterly log slope annualised ×12 is ~3.4× the monthly `trend_cagr`. Same path, same code, same
     /// cadence argument — only the sampling differs. (#117) fixed the constants per series and lost; the
     /// explicit-span fetch (`urls.long_chart_explicit_span`) fixes the DATA. This test is what keeps the
-    /// "a backtest run is single-cadence" assumption from returning unnoticed. (The unit suite measures at
-    /// the default 252 cadence, so the smoothing here is 105 bars, not the walk's 5; the gaps are wider still.)
+    /// "a backtest run is single-cadence" assumption from returning unnoticed. (The unit suite pins
+    /// `endpoint_smooth_days` to 1, so every endpoint here is the raw last close, not the walk's 5-bar mean.)
     #[test]
     fn a_quarterly_series_under_cadence_12_is_not_the_monthly_one() {
         let ((md, mc), (qd, qc)) = synthetic_monthly_and_quarterly();
@@ -6417,8 +6417,10 @@ mod tests {
         let one_y = |x: &Quote| x.perf.iter().zip(HORIZONS).find(|(_, (l, _))| *l == "1Y").and_then(|(p, _)| p.as_ref().map(|p| p.1)).unwrap();
         assert!((one_y(&m) - one_y(&q)).abs() > 3.0, "1Y leg monthly {:.1} vs quarterly {:.1}: a 15-month endpoint is not a 5-month one", one_y(&m), one_y(&q));
         assert!(m.volatility_pct.is_some() && q.volatility_pct.is_some());
-        // (#1393) both readings carry the endpoint ratio the momentum keys divide out; a riser's is under 1
-        assert!(m.endpoint_ratio.is_some_and(|r| r > 0.0 && r < 1.0), "{:?}", m.endpoint_ratio);
+        // (#1393) both readings carry the endpoint ratio the momentum keys divide out. (#1397) It is exactly 1
+        // here: under cfg!(test) `endpoint_smooth_days` is 1, so smoothed == raw. A riser's ratio under 1 is
+        // pinned by `picks::tests::one_endpoint_removes_the_tilt_from_the_momentum_key`.
+        assert_eq!((m.endpoint_ratio, q.endpoint_ratio), (Some(1.0), Some(1.0)));
     }
 
     /// (#1391) `live_window` is a span in CALENDAR years, so monthly and quarterly bars both answer "ten
@@ -6428,7 +6430,9 @@ mod tests {
     /// fails the 80 range bar (most of its closes are the old peak) while the ten-year window clears it —
     /// the backtest's whole-life reading and the live screen's ten-year one decide the HARD gate
     /// differently (12.9 % of fixture cutoffs). The step is inside the endpoint smoothing either way, so
-    /// the percentiles are the same at the unit suite's 105-bar endpoint and the backtest's 5-bar one.
+    /// the percentiles are the same at the unit suite's 1-bar endpoint and the backtest's 5-bar one.
+    /// (#1397) The low stretch crawls up 0.001 a bar: an exactly flat one is a (#263) placeholder, and
+    /// ci-settings' `flat_run_max_years: 2.0` cut it, which left `backtest_quote` the last 20 bars.
     /// With the knob off (the test's ambient config) `backtest_quote` still reads whole-life and leaves
     /// `stats_8y` None, which is what every golden was blessed on.
     #[test]
@@ -6442,7 +6446,7 @@ mod tests {
         let c: Vec<f64> = (0..240).map(|m| match m {
             0..=60 => 100.0 + 15.0 * m as f64,         // 100 -> 1000 by year five
             61..=84 => 1000.0 - 37.5 * (m - 60) as f64, // -> 100 by year seven
-            85..=219 => 100.0,
+            85..=219 => 100.0 + 0.001 * (m - 84) as f64, // never byte-equal, so `flat_trim_start` keeps it
             _ => 200.0,                                // the last twenty months
         }).collect();
         let win = live_window(&d, &c, 10.0);

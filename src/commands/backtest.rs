@@ -11129,7 +11129,7 @@ mod tests {
     #[test]
     fn the_window_knob_is_fixed_for_rescore() {
         let base = serde_yaml::to_value(BuyHeuristic::default()).unwrap();
-        let err = grid_tuning(&base, r#"{"backtest_live_window_years": 10.0}"#).err().expect("refused");
+        let err = grid_tuning(&base, r#"{"backtest_live_window_years": 10.0}"#).expect_err("refused");
         assert!(err.contains("backtest_live_window_years") && err.contains("probe arm"), "{err}");
         assert!(grid_tuning(&base, r#"{"momentum_one_endpoint": true}"#).is_ok(), "the endpoint knob is a score-time read and may ride a grid row");
     }

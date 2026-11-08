@@ -3530,7 +3530,7 @@ mod tests {
             "nupl_euphoria", "nupl_damp_floor", "nupl_capitulation", "nupl_boost_ceiling",
             "calmar_weight", "calmar_cap", "prefer_eur", "half_life_days", "mcap_pivot_eur",
             "runup_cap_pct", "universe_size", "fetch_concurrency_multiplier", "compute_threads",
-            "sectors", "ntfy_topic", "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote",
+            "sectors", "ntfy_topic", "yahoo_intraday", "yahoo_search", "yahoo_quote",
             "euribor", "us_cpi", "pt_cpi", "eu_hicp", "coingecko_markets", "euronext_lisbon",
             "ntfy",
         ];

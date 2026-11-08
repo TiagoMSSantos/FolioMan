@@ -566,11 +566,23 @@ async fn euronext_lisbon_parses() {
         return;
     }
     let settings = config::load();
-    let Some(v) = live_json(fetch::euronext_lisbon_request(&fetch::client(), &settings.urls), "Euronext Lisbon").await else {
-        return;
-    };
-    let n = core::euronext_lisbon_symbols(&v).len();
-    assert!(n >= 15, "API DRIFT [Euronext Lisbon]: healthy reply parsed to {n} symbols, want >= 15");
+    // (#1397) two tries 400 ms apart, as `fetch_euronext_lisbon` makes: the venue sometimes answers 200 with an
+    // empty table (it did on CI run 42460319634 and served 32 rows minutes later), so a red here means the
+    // screen lost Lisbon too.
+    let mut n = 0;
+    for attempt in 0..2 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+        let Some(v) = live_json(fetch::euronext_lisbon_request(&fetch::client(), &settings.urls), "Euronext Lisbon").await else {
+            return;
+        };
+        n = core::euronext_lisbon_symbols(&v).len();
+        if n >= 15 {
+            break;
+        }
+    }
+    assert!(n >= 15, "API DRIFT [Euronext Lisbon]: healthy reply parsed to {n} symbols twice, want >= 15");
 }
 
 /// (round 79) Euribor drift net. `fetch_euribor_3m` scrapes euribor-rates.eu HTML (fragile, says
