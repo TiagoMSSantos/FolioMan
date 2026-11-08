@@ -2860,6 +2860,12 @@ mod tests {
         assert!(ranked("nope").is_err_and(|e| e.contains("growth_ranker \"nope\" is not one of: shipped, gates_off")));
     }
 
+    /// (#1408) 0.0 is the window knob's off switch, which serialises nothing; any other value is written.
+    #[test]
+    fn only_zero_years_is_off() {
+        assert!(is_off_years(&0.0) && !is_off_years(&10.0));
+    }
+
     /// (#1359) On the shipped settings, an upload that lists one new term keeps the shipped six and adds it,
     /// and a fund factor name no router arm knows is refused at load, in a term or as the primary factor.
     #[test]

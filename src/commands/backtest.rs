@@ -1021,6 +1021,11 @@ fn grid_tuning(base: &serde_yaml::Value, line: &str) -> Result<BuyHeuristic, Str
     Ok(t)
 }
 
+/// (#1408) True when a grid row turns `momentum_one_endpoint` on over a dump with no `endpoint_ratio` at all.
+fn needs_endpoint_walk(one_endpoint: bool, samples: &[Sample]) -> bool {
+    one_endpoint && samples.iter().all(|s| s.quote.endpoint_ratio.is_none())
+}
+
 /// (#1227) `backtest rescore <dump> <grid>`: the top-N books and the SIZED row, re-run on a samples dump
 /// once per grid row, with no fetch and no walk. A grid row is one JSON object of `buy_heuristic` keys merged
 /// over the loaded config's as an upload is ((#1360), see [`grid_tuning`]); `{}` is the config itself. Run it
@@ -1050,7 +1055,7 @@ fn rescore(dump: &str, grid: &str, settings: &config::Settings, nulls: usize, ho
         // (#1393) the one-endpoint key reads `Quote.endpoint_ratio`, which a dump walked before the field
         // existed does not carry: every quote reads None, the knob is silently inert, and the row would
         // grade the shipped key under the arm's name. Refuse it, the way RESCORE_FIXED refuses a walk knob.
-        if tuning.momentum_one_endpoint && samples.iter().all(|s| s.quote.endpoint_ratio.is_none()) {
+        if needs_endpoint_walk(tuning.momentum_one_endpoint, &samples) {
             panic!("rescore: `momentum_one_endpoint` needs a dump walked with (#1393) in — this one carries no endpoint_ratio; walk again");
         }
         println!("\n══ rescore row {line} ══");
@@ -11757,6 +11762,20 @@ mod tests {
         stamp_cohort_ranks(&mut v);
         let got: Vec<Option<f64>> = v.iter().map(|s| s.quote.fund.as_ref().and_then(|f| f.fcf_pct)).collect();
         assert_eq!(got, [Some(100.0), Some(0.0), None]);
+    }
+
+    /// (#1408) rescore refuses the one-endpoint knob only when it is on and no sample carries a ratio.
+    #[test]
+    fn one_endpoint_needs_a_dump_with_ratios() {
+        let row = |ratio: Option<f64>| {
+            let mut q = Quote::stub("P", "1", "", "P");
+            q.endpoint_ratio = ratio;
+            Sample { date: ymd(2012, 1, 1), realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
+        };
+        let old = [row(None), row(None)];
+        assert!(!needs_endpoint_walk(false, &old), "knob off: any dump");
+        assert!(needs_endpoint_walk(true, &old), "knob on, no ratio anywhere: walk again");
+        assert!(!needs_endpoint_walk(true, &[row(None), row(Some(0.9))]), "one ratio = a dump walked with (#1393) in");
     }
 
     /// (#533) `low_dro` is demeaned within (date, sector): Tech −10/−30/−60 has median −30, so it reads

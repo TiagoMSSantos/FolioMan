@@ -14128,6 +14128,12 @@ mod tests {
         q.endpoint_ratio = Some(ratio);
         assert!((net_return(&q, "1Y", "6M", false).unwrap() - (-16.0)).abs() < 1e-9);
         assert!(net_return(&q, "1Y", "6M", true).unwrap().abs() < 1e-9);
+        // (#1408) a pair under a year (6-1) or wholly over it (60-12) never divides, and a zero ratio reads as none
+        q.perf = legs(&[("1Y", one_year), ("6M", six_months), ("5Y", 40.0), ("1M", 3.0)]);
+        assert_eq!(net_return(&q, "6M", "1M", true), net_return(&q, "6M", "1M", false));
+        assert_eq!(net_return(&q, "5Y", "1Y", true), net_return(&q, "5Y", "1Y", false));
+        q.endpoint_ratio = Some(0.0);
+        assert!((net_return(&q, "1Y", "6M", true).unwrap() - (-16.0)).abs() < 1e-9);
     }
 
     /// (#587) `growth_momentum_key`: 0 = 12-1, 1 = 12-7, 2 = the 12-1 percentile plus the value percentile (the

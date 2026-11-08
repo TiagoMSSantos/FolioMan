@@ -989,17 +989,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // (#1034) the chart's own bars a year (365 for a coin) and the 200-week window in those bars
     let bars_yr = core::daily_bars_per_year(ticker);
     let long_ma = core::per_cadence(crate::config::LONG_MA_SESSIONS, bars_yr);
-    let stats_8y = chart
-        .dates
-        .last()
-        .map(|last| chart.dates.partition_point(|d| *d < *last - chrono::Duration::days(2920)))
-        .filter(|&i| i > 0)
-        .map(|i| core::Stats8 {
-            range_pct: core::price_pct_rank(&chart.closes[i..]),
-            trend_r2: core::trend_r2(&chart.closes[i..]),
-            max_drawdown_pct: core::max_drawdown_pct(&chart.closes[i..]),
-            underwater_yrs: core::longest_underwater_yrs(&chart.closes[i..], bars_yr),
-        });
+    let stats_8y = core::stats_8y(&chart.dates, &chart.closes, bars_yr);
 
     let cur_close = *chart.closes.last().unwrap();
     let rate = eur_rate(client, urls, &chart.currency, fx_cache).await;
@@ -1196,7 +1186,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         bench_1y_pct: None,
         bench_range_pct: None,
         // (#1393) the smoothed/raw endpoint ratio of this daily chart, for the momentum keys' one-endpoint knob
-        endpoint_ratio: (cur_close > 0.0).then(|| core::measure_endpoint(&chart.closes) / cur_close),
+        endpoint_ratio: core::endpoint_ratio(&chart.closes),
     }
 }
 

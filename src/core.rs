@@ -1194,6 +1194,13 @@ pub fn measure_endpoint(closes: &[f64]) -> f64 {
     endpoint_avg(closes, span_to_bars(crate::config::endpoint_smooth_days(), cadence))
 }
 
+/// (#1408) The (#1393) endpoint ratio the momentum keys divide out: the smoothed endpoint over the raw last
+/// close. None when the last close is not positive, or there is none. `fetch::quote_one` and
+/// `backtest_quote` both read it here.
+pub fn endpoint_ratio(closes: &[f64]) -> Option<f64> {
+    closes.last().filter(|&&last| last > 0.0).map(|last| measure_endpoint(closes) / last)
+}
+
 /// Trading-days span -> bar count at `cadence` bars/year (252 = daily -> identity), min 1.
 fn span_to_bars(span_days: usize, cadence: usize) -> usize {
     (span_days * cadence / 252).max(1)
@@ -5997,8 +6004,29 @@ pub fn live_window<'a>(dates: &[NaiveDate], closes: &'a [f64], years: f64) -> &'
     }
     let Some(last) = dates.last() else { return closes };
     let from = *last - Duration::days((years * 365.25).round() as i64);
+    // `from` is never after the last date, so the last bar fails `*d < from` and `i < closes.len()`
     let i = dates.partition_point(|d| *d < from);
-    &closes[i.min(closes.len() - 1)..]
+    &closes[i..]
+}
+
+/// (#1408) The 8-year twin of the range, R², drawdown and underwater stats, over `closes[i..]` from the first
+/// bar on or after `dates.last()` minus 2920 days, `bars_yr` bars a year for the underwater years. None when no
+/// bar predates that cutoff: the whole record IS its 8-year window. `fetch::quote_one` and `backtest_quote` both
+/// build it here.
+pub fn stats_8y(dates: &[NaiveDate], closes: &[f64], bars_yr: usize) -> Option<Stats8> {
+    let i = dates.last().map(|last| dates.partition_point(|d| *d < *last - Duration::days(2920))).filter(|&i| i > 0)?;
+    Some(Stats8 {
+        range_pct: price_pct_rank(&closes[i..]),
+        trend_r2: trend_r2(&closes[i..]),
+        max_drawdown_pct: max_drawdown_pct(&closes[i..]),
+        underwater_yrs: longest_underwater_yrs(&closes[i..], bars_yr),
+    })
+}
+
+/// (#1408) [`stats_8y`] only while the (#1391) window knob is on (`years > 0.0`); None at 0.0, the off state
+/// every golden was blessed on.
+fn window_stats_8y(years: f64, dates: &[NaiveDate], closes: &[f64], bars_yr: usize) -> Option<Stats8> {
+    if years > 0.0 { stats_8y(dates, closes, bars_yr) } else { None }
 }
 
 pub fn backtest_quote(
@@ -6045,7 +6073,7 @@ pub fn backtest_quote(
     quote.price_eur = c.last().copied();
     quote.perf = horizon_changes(d, c, None, windows, None); // calendar-based -> cadence-agnostic
     // (#1393) the endpoint ratio the momentum keys divide out, off the same slice `perf` was measured on
-    quote.endpoint_ratio = c.last().filter(|&&last| last > 0.0).map(|last| measure_endpoint(c) / last);
+    quote.endpoint_ratio = endpoint_ratio(c);
     // (#1391) THE WINDOW. The live screen measures range, drawdown and R² on its ~10y daily chart
     // (`fetch::quote_one`) and `backtest::bench_range_pct` reads the index over a trailing 10 calendar
     // years, but these four were whole-life here — for a 2014 cutoff on GE, 1962-2014. Under
@@ -6126,14 +6154,7 @@ pub fn backtest_quote(
     // (#1391) the 8y twin, exactly as `fetch::quote_one` builds it (2920 days back, the run's cadence for
     // the underwater years); None when the knob is off, which is what every golden was blessed on, and
     // None when the slice is not longer than 8y — "its whole span IS the window", the field's own rule.
-    if crate::config::backtest_live_window_years() > 0.0 {
-        quote.stats_8y = d.last().map(|last| d.partition_point(|x| *x < *last - Duration::days(2920))).filter(|&i| i > 0).map(|i| Stats8 {
-            range_pct: price_pct_rank(&c[i..]),
-            trend_r2: trend_r2(&c[i..]),
-            max_drawdown_pct: max_drawdown_pct(&c[i..]),
-            underwater_yrs: longest_underwater_yrs(&c[i..], cadence),
-        });
-    }
+    quote.stats_8y = window_stats_8y(crate::config::backtest_live_window_years(), d, c, cadence);
     // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only — no
     // score path reads roll*/worst*). The hit-rate/worst windows scale with the run's cadence
     // (bars/year) so a MONTHLY run measures the same 5y/10y calendar span the daily run does — a
@@ -6476,6 +6497,23 @@ mod tests {
         let q = backtest_quote("X", &d, &c, &[], c.len() - 1, 12, &BTreeMap::new());
         assert!((q.range_pct - whole).abs() < 1e-9 && q.stats_8y.is_none(), "knob off: whole-life, no 8y stats");
         assert!(q.max_drawdown_pct > 89.0 && max_drawdown_pct(win) < 1e-9, "the 90 % fall is outside the window: {} vs {}", q.max_drawdown_pct, max_drawdown_pct(win));
+        // (#1408) the cut is `*d < from`: a bar exactly `years` back is in, an older one is out
+        let last = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let days = |n: i64| last - Duration::days(n);
+        assert_eq!(live_window(&[days(2000), days(1461), last], &[1.0, 2.0, 3.0], 4.0).len(), 2, "1461 days = 4 years, in");
+        assert_eq!(live_window(&[days(5000), last], &[1.0, 2.0, 3.0], 4.0).len(), 3, "dates and closes disagree: the whole slice");
+        // (#1408) the 8y stats ride the knob: none at 0.0, the full twin when on
+        let eight = stats_8y(&d, &c, 12).map(|s| s.max_drawdown_pct);
+        assert!(eight.is_some() && window_stats_8y(0.0, &d, &c, 12).is_none());
+        assert_eq!(window_stats_8y(10.0, &d, &c, 12).map(|s| s.max_drawdown_pct), eight);
+    }
+
+    /// (#1408) The endpoint ratio is the smoothed endpoint over the raw last close, None with no positive last close.
+    #[test]
+    fn endpoint_ratio_needs_a_positive_last_close() {
+        assert_eq!(endpoint_ratio(&[]), None);
+        assert_eq!(endpoint_ratio(&[1.0, 0.0]), None, "a zero last close has no ratio");
+        assert_eq!(endpoint_ratio(&[3.0, 3.0]), Some(1.0), "flat closes: smoothed = raw at any span");
     }
 
     /// (#473) universe.json carries the buyer count on the flagged names alone, and the wasm engine
