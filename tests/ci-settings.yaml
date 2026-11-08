@@ -27149,6 +27149,48 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   below ~5 %/yr (#1333), so a flag never ships anything by itself. The one channel with power stays the paper
 #   route (#1339). HEAD on JKP's public/availability.json, 2026-11-07: Last-Modified 2026-08-04 03:27:36 GMT,
 #   unchanged, so it stays shut.
+# (#1402) THE SECOND VALUE SHIP, PRE-REGISTERED 2026-11-08 before any beyond-ni_me return was read. Row: (#1403).
+# WHY: our own backtest cannot see a buy-rule edge under about 4 %/yr ((#1333), (#1335), (#1338), (#1358)), so the
+#   paper route (#1339) stays the one channel with power. Its guard queue is empty ((#1357)), and JKP's pin has not
+#   moved: HEAD on public/availability.json, 2026-11-08, Last-Modified 2026-08-04 03:27:36 GMT, ETag
+#   9fcc2ee284f9d14dfbf3546706bc8d4e. Only Value has passers left: (#1347) found 7 waiting behind ey_pct.
+# OWNER RULE CHANGES, 2026-11-08, for Value, the one cluster with a passer left:
+#   - CAP 2: a cluster may hold two paper-route ships, not one. After a second Value ship, Value is closed.
+#   - ORDER: the waiting passers go in (#1339)'s menu order, and a refused one hands the turn to the next:
+#     be_me, fcf_me, sale_me, ocf_me, bev_mev, chcsho_12m, ebitda_mev.
+#   - BEYOND: each must also prove return beyond the shipped ni_me, so a second term does not pay twice for the same
+#     cheapness. This stands in for what the one-per-cluster rule guarded.
+# BEYOND PROOF (`tools/jkp_proof.py <dir> --beyond`): in each region, the idea's monthly gap, as (#1339) builds it,
+#   is regressed on ni_me's gap by plain OLS over the months both carry. The alpha is the intercept. PASS needs, in
+#   the US AND developed ex-US, an alpha t of 1.96 or more AND a mean above 0, from 1 January of the year after the
+#   idea's publication, of the gap minus the full-sample slope times ni_me's gap. Fewer than 60 such months in a
+#   region is UNGRADEABLE, which fails. This is (#1339)'s two-part bar, the owner's pick. Regions, legs, weights,
+#   market column and unit checks are (#1346)'s, unchanged, and the checks must read as (#1347)'s did.
+# DATA: the 25 files (#1346) pinned, JKP's 2026 release; their md5s are re-checked before the run.
+# RUN: `python3 -I -B tools/jkp_proof.py <dir> --beyond`, once, after CI is green on the commit that carries this
+#   text, and before any twin is written.
+# TWINS, from (#1339)'s menu, each built only when its idea reaches the guard:
+#   - be_me = built book_yield (book over cap); high. Its term, `bm_pct`, is a new 8th `stamp_cohort_ranks` column
+#     plus a live stamp, built the way ey_pct was.
+#   - fcf_me, sale_me, ocf_me and bev_mev = new, as (#1339) defines them. fcf_me's twin is one year of FCF over
+#     cap; fcf_cap_yield ((#523)) is a 3-year median, so it is not the twin.
+#   - chcsho_12m = built buyback_yield; ebitda_mev = built ebitda_yield; both high.
+# HARM GUARD: (#1339)'s, unchanged: weight 0.03, cap 100 and neutral 50, on top of the five shipped terms (roic,
+#   margin_trend, ey_pct, mom61_pct, capx_pct), rescore "guard holdout sec", every clause at 12y AND at 8y, then
+#   `reveal`. The sealed 2016-on 8y samples were read three times (ni_me, ret_6_1, capx_gr3). This read would be the
+#   fourth, and a Value twin's read leans on ni_me's; the receipt says so. Each guard gets its own
+#   pre-registration and probe, as (#1353) did.
+# BRANCHES: the first beyond passer in order goes through the guard. A guard PASS plus a reveal PASS = one owner
+#   question, since the page moves. On a yes: the term, its live stamp, a goldens rebless and all four pins, in one
+#   commit. A refusal hands the turn to the next beyond passer. No beyond passer = nothing is built, and Value
+#   stays at one ship.
+# EXPECTED: the long Value thirds move together, so most of each idea's gap is ni_me's. be_me fails the US: its own
+#   US t (2.81) and post mean (+1.1) sit under ni_me's (4.21, +2.5). sale_me, bev_mev and ebitda_mev fail the same
+#   way. fcf_me and chcsho_12m carry the most beyond ni_me: cash against accrual earnings, and a share-count
+#   signal. Both may pass the US, but their developed ex-US t's sit near the bar before any regression, so 0 or 1
+#   of the 7 pass.
+# REVERT RULE: the proof is record only. A ship carries its own receipt, its off switch (drop its term) and the
+#   (#1339) pull rule, which also pulls it when a newer JKP release fails its beyond proof.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to

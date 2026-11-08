@@ -33,8 +33,13 @@ the gaps are then graded on the new return (`ret_2026`).
 (#1356) MENU 2 holds the 14 ideas (#1339) left out under exclusion (d), "lines we do not parse", whose
 Kelly-Pedersen cluster held no ship when the owner opened it. Same order rule, same bars; `--menu 2` grades it.
 
+(#1402) `--beyond` grades the Value cluster's passers, in guard order, on what each adds beyond the shipped ni_me:
+in each region, the idea's monthly gap is regressed on ni_me's over the months both carry, and the intercept must
+clear the same two-part bar (t at least 1.96, and a mean above 0 after publication over 60 months or more).
+
 Usage: python3 -I -B tools/jkp_proof.py <dir holding pfs.csv (or mkt.zip and pf/*.zip) and market_returns.csv>
        python3 -I -B tools/jkp_proof.py <dir> --menu 2
+       python3 -I -B tools/jkp_proof.py <dir> --beyond
        python3 -I tools/jkp_proof.py --selftest
 Stdlib only. The data is downloaded and untrusted: it is parsed as numbers and text, never executed.
 """
@@ -76,6 +81,9 @@ MENU2 = [
     ("taccruals_ni", 2011, -1, "Accruals"), ("tax_gr1a", 2011, 1, "Profit Growth"),
     ("aliq_mat", 2014, -1, "Low Leverage"),
 ]
+# (#1402) the second Value ship: the cluster's (#1347) passers in guard order, each graded beyond the shipped base
+VALUE_QUEUE = ("be_me", "fcf_me", "sale_me", "ocf_me", "bev_mev", "chcsho_12m", "ebitda_mev")
+BASE = "ni_me"
 # MSCI "developed" in JKP's Country_Classification.xlsx, minus USA
 DEV = ("JPN HKG GBR CAN AUS DEU FRA SWE CHE SGP ITA ESP ISR NLD NOR BEL DNK FIN NZL AUT IRL PRT").split()
 MIN_N, MIN_POST, T_BAR = 5, 60, 1.96
@@ -144,6 +152,30 @@ def grade(gaps, year):
     else:
         v = "PASS" if t is not None and t >= T_BAR and pm > 0 else "FAIL"
     return {"T": len(xs), "mean": mean(xs) if xs else None, "t": t, "P": len(post), "post": pm, "v": v}
+
+
+def beyond(gy, gx, year):
+    """(#1402) OLS of an idea's monthly gap on the base's, over the months both carry. `mean` and `t` are the
+    intercept's (the alpha); `post` is the mean, from 1 January of the year after publication, of the gap minus the
+    full-sample slope times the base's gap. Same verdict rule as `grade`."""
+    ms = [e for e in gy if e in gx]
+    xs, ys = [gx[e] for e in ms], [gy[e] for e in ms]
+    n = len(ms)
+    mx = mean(xs) if xs else 0.0
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if n < 3 or sxx == 0:
+        return {"T": n, "mean": None, "t": None, "P": 0, "post": None, "v": "UNGRADEABLE", "b": None}
+    b = slope(xs, ys)
+    a = mean(ys) - b * mx
+    se = math.sqrt(sum((y - a - b * x) ** 2 for x, y in zip(xs, ys)) / (n - 2) * (1 / n + mx * mx / sxx))
+    t = a / se if se > 0 else None
+    post = [y - b * x for e, x, y in zip(ms, xs, ys) if e >= f"{year + 1}-01-01"]
+    pm = mean(post) if post else None
+    if len(post) < MIN_POST:
+        v = "UNGRADEABLE"
+    else:
+        v = "PASS" if t is not None and t >= T_BAR and pm > 0 else "FAIL"
+    return {"T": n, "mean": a, "t": t, "P": len(post), "post": pm, "v": v, "b": b}
 
 
 def old_market(d):
@@ -255,7 +287,8 @@ def cell(g):
     return f"{g['T']:4d} {pct(g['mean'])} {t} {g['P']:4d} {pct(g['post'])} {g['v'][:5]:5s}"
 
 
-def report(d, menu=MENU):
+def inputs(d):
+    """Loads either layout and prints the unit checks: (market rows, legs, the market column or None)."""
     new = os.path.exists(f"{d}/mkt.zip")
     mkt, legs, bm = (load_2026 if new else load)(d)
     usd, excess, lines = unit_check(mkt, bm)
@@ -267,8 +300,38 @@ def report(d, menu=MENU):
     print("\n".join(lines))
     if col is None:
         print("market column: none the release can grade on -> UNGRADEABLE, nothing passes")
+    else:
+        print(f"market column: {col}; gaps in %/yr (monthly x 12); post = from 1 Jan of the year after publication")
+    return mkt, legs, col
+
+
+def report_beyond(d):
+    """(#1402) Each Value passer, in guard order, graded on what it adds beyond the base in each region."""
+    mkt, legs, col = inputs(d)
+    if col is None:
         return 1
-    print(f"market column: {col}; gaps in %/yr (monthly x 12); post = from 1 Jan of the year after publication")
+    regions = (("USA",), False), (DEV, True)
+    base = [region_gaps(legs[BASE], mkt, cs, col, w) for cs, w in regions]
+    year = {name: y for name, y, *_ in MENU}
+    b = lambda g: "    -" if g["b"] is None else f"{g['b']:+5.2f}"
+    print(f"beyond {BASE}: alpha = intercept of the idea's monthly gap on {BASE}'s, months both carry; b = slope")
+    print(f"{'idea':14s} {'year':4s} |   US:     b    T alpha     t    P  post v     "
+          f"|  DEV:     b    T alpha     t    P  post v     | verdict")
+    passers = []
+    for name in VALUE_QUEUE:
+        us, dev = (beyond(region_gaps(legs[name], mkt, cs, col, w), g, year[name]) for (cs, w), g in zip(regions, base))
+        ok = us["v"] == "PASS" and dev["v"] == "PASS"
+        if ok:
+            passers.append(name)
+        print(f"{name:14s} {year[name]:4d} | {b(us)} {cell(us)} | {b(dev)} {cell(dev)} | {'PASS' if ok else 'fail'}")
+    print(f"passers beyond {BASE}, in guard order: {len(passers)} of {len(VALUE_QUEUE)}: " + ", ".join(passers))
+    return 0
+
+
+def report(d, menu=MENU):
+    mkt, legs, col = inputs(d)
+    if col is None:
+        return 1
     print(f"{'idea':14s} {'year':4s} {'dir':>3s} {'cluster':14s} |   US: T  mean     t    P  post v     "
           f"|  DEV: T  mean     t    P  post v     | verdict")
     passers = []
@@ -303,6 +366,21 @@ def demo():
     assert grade(up, 1994)["v"] == "PASS"
     assert grade(up, 1996)["v"] == "UNGRADEABLE"  # 1997-2000 holds 48 months, under 60
     assert grade({e: -x for e, x in up.items()}, 1994)["v"] == "FAIL"
+    # (#1402) the queue is the Value cluster in menu order, without the base; an idea that only copies the base
+    # earns no alpha, and one with a steady extra gap passes on it
+    menu_value = [n for n, *_, c in MENU if c == "Value"]
+    assert [n for n in menu_value if n in VALUE_QUEUE] == list(VALUE_QUEUE) and BASE in menu_value
+    assert BASE not in VALUE_QUEUE
+    x = {e: 0.01 if i % 2 else -0.01 for i, e in enumerate(months)}
+    y = {e: 0.004 + 0.5 * x[e] + 0.002 * (i % 3 - 1) for i, e in enumerate(months)}
+    g = beyond(y, x, 1994)
+    assert g["v"] == "PASS" and abs(g["b"] - 0.5) < 1e-9 and abs(g["mean"] - 0.004) < 1e-9 and g["P"] == 72, g
+    assert abs(g["post"] - 0.004) < 1e-9, g
+    assert beyond(y, x, 1996)["v"] == "UNGRADEABLE"
+    assert beyond({e: 2 * v for e, v in x.items()}, x, 1994)["v"] == "FAIL"  # a pure copy: alpha 0, no spread
+    assert beyond({e: v - 0.008 for e, v in y.items()}, x, 1994)["v"] == "FAIL"  # alpha -0.004
+    assert beyond(y, {e: 0.01 for e in months}, 1994)["v"] == "UNGRADEABLE"  # a flat base has no slope
+    assert beyond(y, dict(list(x.items())[:2]), 1994)["T"] == 2  # only the months both carry
     # (#1346) the 2026 layout end to end: a 2025 month holds the 2024-12 weight, a country with none drops out
     with tempfile.TemporaryDirectory() as d:
         with open(f"{d}/market_returns.csv", "w", newline="") as f:
@@ -334,6 +412,8 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         print("jkp_proof selftest: ok")
         sys.exit(0)
+    if sys.argv[2:] == ["--beyond"]:
+        sys.exit(report_beyond(sys.argv[1]))
     if sys.argv[2:] not in ([], ["--menu", "2"]):
-        sys.exit("usage: jkp_proof.py <dir> [--menu 2]")
+        sys.exit("usage: jkp_proof.py <dir> [--menu 2 | --beyond]")
     sys.exit(report(sys.argv[1], MENU2 if sys.argv[2:] else MENU))
