@@ -27246,6 +27246,34 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   stocks. fcf_pct moves with ey_pct, so the top-10 moves less than it did for capx_pct (0.50 and 0.60). Three of
 #   the route's four earlier guards passed (rd_me was ungradeable), so PASS about 2 in 3.
 # REVERT RULE: record only. The twin enters no shipped term, so no book, knob, golden or page moves.
+# (#1405) VERDICT, 2026-11-08, on (#1404): fcf_me's twin fcf_pct PASSES the harm guard at 12y AND at 8y, and the
+#   sealed holdout holds, so the term is a SHIP per (#1339) and (#1402). Guard probe run 42479568252 on 24729f5,
+#   rescore="guard holdout sec", 200 shuffles. SEC ERA left out 7677 samples cut before 2011-01-01 at 12y and 7685
+#   at 8y; HOLDOUT sealed 0 at 12y and 7345 at 8y. Windows scored 5150/6488 at 12y and 9184/8596 at 8y.
+#   horizon  top-10 gain / edge  pond gain / edge  pool     fcf_pct reads on  top-10 moved  verdict
+#   12y      -0.03 / -0.35       -0.09 / -0.32     100.0 %  80.9 %            0.12          PASS
+#   8y       -0.19 / -0.27       -0.20 / -0.24     100.0 %  82.5 %            0.10          PASS
+#   NULL BAND, row 1: 12y mean -0.03, median +0.00, band mean [-0.35, +0.35], median [-0.70, +0.57], INSIDE; 8y
+#   mean -0.19, median -0.34, band mean [-0.27, +0.28], median [-0.66, +0.40], INSIDE. TAIL INSIDE at both (12y p20
+#   +0.00, worst5 -0.04; 8y p20 +0.00, worst5 +0.00).
+# HOLDOUT, read a fourth time: probe run 42479970202 on 24729f5, rescore="guard holdout reveal sec". Its graded rows
+#   carry the same gains, edges, coverage and moved names as above, over the same windows and the same 7345 sealed
+#   samples, so the pond did not drift between the two runs. On the sealed 2016-on 8y samples: top-10 gain +0.43
+#   (median +0.66) / edge -1.72, pond gain -0.10 / edge -0.36 -> PASS. These years were read before, for ni_me
+#   (probe 42286340556), ret_6_1 (probe 42357657397) and capx_gr3 (probe 42361540115), so this read is not blind,
+#   and a Value twin's read leans on ni_me's. The 12y leg has no sealed sample.
+# AGAINST EXPECTED: coverage landed under the guessed 85-95 % (80.9 % and 82.5 %), still well over the half the
+#   guard needs. The top-10 moved less than it did for capx_pct (0.12 and 0.10 against 0.50 and 0.60), as called.
+#   The verdict was called PASS about 2 in 3, and came out PASS.
+# WHAT THIS DOES NOT SAY: every gain sits inside its null band, so our ruler sees no return, as (#1333)-(#1338) said
+#   it would at this size; the (#1403) beyond proof on JKP's data carries that claim. Both 8y gains are negative and
+#   close to their edges (pond -0.20 against -0.24), so the margin to a FAIL is thin, though inside noise. fcf_me's
+#   developed ex-US pass leans on a few thin 1980s months (the (#1403) record-only look).
+# NEXT: the live page moves, so one owner question comes first. On a yes, the ship lands under its own receipt and
+#   Row: a live fcf_yield fill and `fcf_pct` stamp (core::stamp_fcf_pct, the stamp_cohort_ranks formula over the
+#   screened names' fcf_yield, high = FCF-rich), the term fcf_pct 0.03/100/50 in growth_fund_extra after capx_pct,
+#   and a golden rebless with all four pins. Value then holds its two ships and closes under (#1402), so chcsho_12m
+#   and ebitda_mev get no turn. On a no, fcf_me is refused and the turn passes to chcsho_12m.
 # (#1389) TRUE MONTHLY BARS FOR EVERY LONG SERIES (THE BAR MIX, THE DATA FIX), PRE-REGISTERED 2026-11-08 before any run.
 #   Row: (#1390). Knob: `urls.long_chart_explicit_span` (false ships; armed with knobs="long_chart_explicit_span=true").
 # NOT A BUY RULE. The (#1333) freeze is on buy-rule candidates graded on backtest evidence; this is a measurement fix to
