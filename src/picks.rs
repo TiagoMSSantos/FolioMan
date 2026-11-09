@@ -14345,6 +14345,21 @@ mod tests {
             let got = key(id);
             assert!(near(&got, want), "{id}: {got:?}");
         }
+        // (#1434) one armed term alone: a fund weight with no extras still keys every name, and fewer years under
+        // water rank higher
+        let off = BuyHeuristic {
+            growth_trend_weight: 0.0, growth_accel_weight: 0.0, sharpe_weight: 0.0, calmar_weight: 0.0,
+            quality_weight: 0.0, dividend_weight: 0.0, growth_fund_weight: 0.0, growth_fund_extra: vec![],
+            growth_mom121_weight: 0.0, growth_smoothness_weight: 0.0, growth_underwater_weight: 0.0,
+            growth_proximity_weight: 0.0, ..t.clone()
+        };
+        let fund = key_equal_terms(&qs, &trails, &BuyHeuristic { growth_fund_weight: 0.5, ..off.clone() });
+        assert!(fund.iter().all(Option::is_some), "{fund:?}");
+        let sunk = |y: f64| Quote { underwater_yrs: Some(y), ..gate_fixture() };
+        let (dry, wet) = (sunk(1.0), sunk(3.0));
+        let none: [&[f64]; 2] = [&[]; 2];
+        let k = key_equal_terms(&[&dry, &wet], &none, &BuyHeuristic { growth_underwater_weight: 0.3, ..off });
+        assert!(k[0] > k[1], "{k:?}");
     }
 
     /// (#1304) A ranker reorders the stocks alone and deals them the shipped scores by place: the best key takes

@@ -546,7 +546,8 @@ pub fn events(pond: &[Member], rows: &[Event], today: NaiveDate, h: usize) -> Ve
         } else {
             members.get(ev.ticker.as_str()).and_then(|&&(tk, c, fx, spans)| {
                 let i = c.dates.partition_point(|d| *d < ev.date);
-                if i < 1 || i + h >= completed(c, today) || !liquid(c, i, fx) || spans.is_some_and(|s| !core::sp500_member_at(s, c.dates[i])) {
+                // (#1434) `liquid` refuses any bar below WARMUP, so bar 0 never reaches `closes[i - 1]`
+                if i + h >= completed(c, today) || !liquid(c, i, fx) || spans.is_some_and(|s| !core::sp500_member_at(s, c.dates[i])) {
                     return None;
                 }
                 let (pre, post) = (ln(c.closes[i], c.closes[i - 1])?, ln(c.closes[i + h], c.closes[i])?);
@@ -1675,6 +1676,16 @@ mod tests {
         assert!(events_report("XX", &ks3, 50.0).contains("close D-1 -> D+3 ") && events_report("XX", &ks3, 50.0).contains("any 4 sessions"));
         // an event too close to the end for its horizon drops: N00 at 31 needs bar 34 completed; with today 34 it is not
         assert!(events(&pond, &rows, d(34), 3).is_empty(), "N00 needs bar 34 completed, N01 at 35 has no bars yet, the pond has no fourth session after 31");
+        // (#1434) the member guard: N02 under the turnover floor drops its event on a date the pond still prints,
+        // while N00 and N01 inside their index spans keep theirs
+        let thin = chart(&[100.0; 40], &[100.0; 40], 1.0);
+        let always = [(d(0), None)];
+        let mut pond = pond.clone();
+        pond[2].1 = &thin;
+        (pond[0].3, pond[1].3) = (Some(&always[..]), Some(&always[..]));
+        let rows = read_events(&format!("ticker,date,kind\nN00,{},earnings\nN01,{},earnings\nN02,{},earnings\n", d(31), d(35), d(31)));
+        let ks = events(&pond, &rows, d(40), 1);
+        assert_eq!(ks.iter().map(|k| (k.kind.as_str(), k.n)).collect::<Vec<_>>(), [("earnings", 2)]);
     }
 
     /// Name `n` of 12 gains `g` = 1 + n/1000 every session (its K3), and on the graded session
