@@ -147,7 +147,7 @@ by hand.
 | 130 | (#563) ALL-GATES-SOFT: a name that fails knob gates is scored with those gates waived (`picks::waived`, the M… | knob | `growth_gate_soft` | SHIPPED 0.8 | #186 #192 #258 #560 #563 #1282 | — |
 | 131 | (#1230) the ETF twin of growth_gate_soft: a fund failing knob gates scores waived x f^n at THIS f. 0.0 = fund… | knob | `growth_gate_soft_etf` | SHIPPED 0.0 | #160 #421 #552 #566 #1230 #1364 | — |
 | 132 | (#1362) the growth bar's taper: a STOCK under its `cagr` or `cagr-life` floor by less than this many %/yr is… | knob | `growth_cagr_soft_band` | SHIPPED 2.5 | #57 #565 #1354 #1362 #1366 #1374 | — |
-| 133 | (#1245) each of three corporate events inside this many months before a backtest cutoff (a dividend cut to un… | knob | `growth_event_months` | SHIPPED 0 | #1245 | — |
+| 133 | (#1245) each of three corporate events inside this many months before a backtest cutoff (a dividend cut to un… | knob | `growth_event_months` | SHIPPED 0 | #1245 #1333 #1431 | — |
 | 134 | (#104) print, beside every lane's rho and edge, how much of the pool's EXTREME upside the ranking actually he… | knob | `print_recall_capture` | SHIPPED true | #91 #104 #140 #154 #160 #172 | — |
 | 135 | (#103) journal the CORE shortlist alongside the ranked slice, so `track` can one day grade the buy-and-hold h… | knob | `journal_core_list` | SHIPPED true | #103 #253 #285 #758 #784 #795 | — |
 | 136 | (#102) the CORE admission TER ceiling, in percent, as a named number instead of a literal buried in `core::ho… | knob | `hold_max_ter` | SHIPPED 0.25 | #102 | — |
@@ -180,7 +180,7 @@ by hand.
 | 163 | (#597) of every 10 slots in the interleaved book (`growth_momentum_interleave`), how many the momentum order… | knob | `growth_momentum_slots` | SHIPPED 5 | #388 #560 #584 #597 #609 #630 | — |
 | 164 | (#1243) the momentum slots of every 10 in a CRASH bucket: the pond's equal-weight month (the mean of every tr… | knob | `growth_momentum_crash_slots` | SHIPPED 10 | #1243 | — |
 | 165 | (#1244) the share of the momentum half's keyed names, the jumpiest by the sd of their last 36 monthly returns… | knob | `growth_momentum_vol_cut` | SHIPPED 0.0 | #1244 #1311 | — |
-| 166 | (#1304) the order the stock half of the growth table is read in, one id of `picks::RANKERS`. "shipped" (the D… | knob | `growth_ranker` | SHIPPED shipped | #584 #1304 #1311 | — |
+| 166 | (#1304) the order the stock half of the growth table is read in, one id of `picks::RANKERS`. "shipped" (the D… | knob | `growth_ranker` | SHIPPED shipped | #584 #1304 #1311 #1333 #1431 | — |
 | 167 | (#101) at most this many stocks per GICS sector in the growth book; 0 = off and the DEFAULT. Nothing else in… | knob | `growth_sector_cap` | SHIPPED 0 | #101 #126 #557 #606 #630 #1142 | — |
 | 168 | (#97) restate `volatility_pct` (and its `downside_dev_pct` twin) in DAILY-equivalent units on any cadence, so… | knob | `vol_daily_equivalent` | OFF (false) | #37 #97 #175 #176 #1132 #1392 | Do not re-open by running the cap sweep — it would reproduce the VACUOUS reading this ent… |
 | 169 | (#96) restate a lane's `edge` in points PER YEAR beside the cumulative figure. `edge` is a spread of returns… | knob | `print_edge_annualized` | SHIPPED true | #37 #96 #176 #564 #1114 #1132 | — |
@@ -291,7 +291,7 @@ by hand.
 | 274 | (round 109) the cyclical detector: NEGATED sample stddev of net_margin across the as-of lookback rows (higher… | fund factor | `margin_stability` | MEASURED | #165 #407 #415 | new reason, see receipt |
 | 275 | (P2) ACCRUAL GAP: how much of the as-of EPS is NOT backed by cash, NEGATED so high = safer, the same orientat… | fund factor | `accrual_gap` | MEASURED | #165 #410 | new reason, see receipt |
 | 276 | (P3) ASSET GROWTH over the same `yrs` lookback `rev_cagr` uses, NEGATED so high = safer, like every other sur… | fund factor | `asset_growth` | MEASURED | #410 | new reason, see receipt |
-| 277 | (#405) GROSS PROFITABILITY (Novy-Marx 2013): gross profit ÷ total assets, %, off the same as-of row. `gross_m… | fund factor | `gp_assets` | MEASURED | #165 #405 #417 #550 | new reason, see receipt |
+| 277 | (#405) GROSS PROFITABILITY (Novy-Marx 2013): gross profit ÷ total assets, %, off the same as-of row. `gross_m… | fund factor | `gp_assets` | MEASURED | #159 #165 #405 #417 #550 | new reason, see receipt |
 | 278 | (#407) CASH-BASED PROFITABILITY (Ball-Gerakos-Linnainmaa-Nikolaev 2016), proxied: free cash flow ÷ total asse… | fund factor | `cf_assets` | MEASURED | #407 #417 #550 | new reason, see receipt |
 | 279 | (#407) SALES-GROWTH STABILITY (Mohanram 2005, G-score signal G5): −sample std of year-over-year revenue growt… | fund factor | `rev_stability` | MEASURED | #165 #407 #412 #417 | 25 -> 27 ALSO READ, NOT RE-ASKED: held-book rev_stability AUC 12y/8y 0 |
 | 280 | (#408) FCF ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew) (#408) O'Shaughnessy value family; 27 -… | fund factor | `fcf_ev_yield` | MEASURED | #408 #523 | 5 (n=64/125, win 78% at 8y), sales_ev_yield and the composite BANKED FOR THE ~2027-09 REO… |

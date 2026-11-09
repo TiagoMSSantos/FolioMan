@@ -9,6 +9,11 @@ Rows are `ticker,date,kind`. Two kinds:
             day leg, one that reports after the close moves in the night leg into D+1 (a filing accepted after
             17:30 ET is dated the next business day, which the same window still holds): the census prices the
             close D-1 -> close D+1 window, with the session split printed beside it.
+  restatement, unregistered_sale, departure  (#1432) one row per (ticker, filing date) of every 8-K whose items
+            include 4.02 (Non-Reliance on Previously Issued Financial Statements: a restatement), 3.02 (Unregistered
+            Sales of Equity Securities: dilution outside a registered offering) or 5.02 (Departure of Directors or
+            Certain Officers), from the same submissions JSON; the census prices them at the one-year horizon too,
+            as a harm cohort read on the pond, not a same-session trade.
   fomc      ticker `*` (the whole pond, one observation a date): the FOMC statement release dates 2013-2026,
             checked line by line against federalreserve.gov/monetarypolicy/fomccalendars.htm and
             fomchistorical2013..2020.htm on 2026-11-08 (statement day of each meeting; the unscheduled 2019-10-11,
@@ -33,6 +38,8 @@ MEMBERS = "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_
 TICKER_CIK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "ticker-cik.csv")
 START = datetime.date(2012, 1, 1)  # 8-K items are tagged in the submissions JSON from about 2005; the 10y bars start ~2016
 HEADER = ["ticker", "date", "kind"]
+# (#1427)/(#1432) the 8-K items each kind is read off; an 8-K/A and a form other than 8-K never count
+ITEMS = {"2.02": "earnings", "4.02": "restatement", "3.02": "unregistered_sale", "5.02": "departure"}
 MIN_EARNINGS = 8000  # a broken-scan guard: ~600 members x 4 a year x 10+ years is 24,000+; a third of that
 
 # (date, how) — statement release dates; `scheduled-future` for a meeting not yet held on 2026-11-08
@@ -69,30 +76,35 @@ FOMC = [
 ]
 
 
-def result_dates(page, start):
-    """The filing dates of the 8-Ks on one submissions page whose items include 2.02, on or after `start`.
+def result_dates(page, start, item="2.02"):
+    """The filing dates of the 8-Ks on one submissions page whose items include `item`, on or after `start`.
     The first page keeps its arrays under filings.recent; the older pages carry them at the top level."""
     arrays = page.get("filings", {}).get("recent", page)
     out = set()
     for form, date, items in zip(arrays.get("form", []), arrays.get("filingDate", []), arrays.get("items", [])):
-        if form == "8-K" and "2.02" in [x.strip() for x in (items or "").split(",")] and date >= start.isoformat():
+        if form == "8-K" and item in [x.strip() for x in (items or "").split(",")] and date >= start.isoformat():
             out.add(date)
     return out
 
 
-def earnings(cik, cache_dir, start):
-    """Every 2.02 filing date for one CIK, across the first page and each older page that reaches `start`."""
+def earnings(cik, cache_dir, start, item="2.02"):
+    """Every `item` filing date for one CIK, across the first page and each older page that reaches `start`."""
     first = _get(SUBMISSIONS.format(cik=str(cik).zfill(10)), cache_dir)
     if not first:
         return set()
-    dates = result_dates(first, start)
+    dates = result_dates(first, start, item)
     for page in first.get("filings", {}).get("files", []):
         if page.get("filingTo", "9999-12-31") < start.isoformat():
             continue
         more = _get(PAGE.format(name=page["name"]), cache_dir)
         if more:
-            dates |= result_dates(more, start)
+            dates |= result_dates(more, start, item)
     return dates
+
+
+def all_kinds(cik, cache_dir, start):
+    """{kind: dates} for every item in `ITEMS`, from the pages the cache already holds after the first item."""
+    return {kind: sorted(earnings(cik, cache_dir, start, item)) for item, kind in ITEMS.items()}
 
 
 def members(text, start):
@@ -118,8 +130,12 @@ def ciks(tickers, sec_map, ticker_cik_text):
 
 
 def rows(by_ticker, today):
-    """CSV rows sorted by kind, ticker, date: the earnings dates per ticker, then the pond's FOMC dates."""
-    out = [(t, d, "earnings") for t, ds in by_ticker.items() for d in ds]
+    """CSV rows sorted by kind, ticker, date: each ticker's dates per kind (a plain list is the earnings kind),
+    then the pond's FOMC dates."""
+    out = []
+    for t, kinds in by_ticker.items():
+        kinds = kinds if isinstance(kinds, dict) else {"earnings": kinds}
+        out += [(t, d, kind) for kind, ds in kinds.items() for d in ds]
     out += [("*", d, "fomc") for d, _ in FOMC if d <= today.isoformat()]
     return sorted(set(out))
 
@@ -138,6 +154,8 @@ def selftest():
     first = {"filings": {"recent": {"form": ["8-K", "8-K/A", "8-K", "8-K", "10-Q"], "filingDate": ["2024-01-25", "2024-01-26", "2011-10-18", "2024-04-25", "2024-05-01"],
                                     "items": ["2.02,9.01", "2.02", "2.02", "5.02,9.01", ""]}, "files": [{"name": "CIK0000000042-submissions-001.json", "filingTo": "2015-01-01"}, {"name": "old.json", "filingTo": "2011-12-31"}]}}
     assert result_dates(first, start) == {"2024-01-25"}, "only an original 8-K with item 2.02 on or after the start"
+    assert result_dates(first, start, "5.02") == {"2024-04-25"} and result_dates(first, start, "4.02") == set(), "(#1432) other items"
+    assert set(ITEMS.values()) == {"earnings", "restatement", "unregistered_sale", "departure"}
     page = {"form": ["8-K"], "filingDate": ["2014-07-22"], "items": ["2.02"]}
     assert result_dates(page, start) == {"2014-07-22"}, "older pages carry the arrays at the top level"
     assert members("ticker,start_date,end_date\nAAPL,1982-11-30,\nEK,1957-03-04,2010-01-01\nBRK.B,2010-02-16,\nX,1957-03-04,2014-07-02\n", start) == {"AAPL", "BRK-B", "X"}
@@ -145,10 +163,13 @@ def selftest():
     tc = "# comment\nticker,start_date,end_date,cik,edgar_name,source,confidence\nX,1996-01-02,2014-07-02,0001163302,United States Steel,roster,R\nX,1957-01-01,1990-01-01,0000000001,old,roster,R\n"
     assert ciks({"AAPL", "BRK-B", "X", "NOPE"}, sec_map, tc) == {"AAPL": "320193", "BRK-B": "1067983", "X": "0001163302"}, "the latest exited row wins"
     today = datetime.date(2026, 11, 8)
-    r = rows({"MSFT": {"2024-01-30"}, "AAPL": {"2024-02-01", "2024-01-25"}}, today)
+    r = rows({"MSFT": {"2024-01-30"}, "AAPL": {"earnings": ["2024-02-01", "2024-01-25"], "departure": ["2024-03-01"]}}, today)
+    assert ("AAPL", "2024-03-01", "departure") in r and ("MSFT", "2024-01-30", "earnings") in r, "(#1432) a kinds dict and a plain list both read"
     assert r[:3] == [("*", "2013-01-30", "fomc"), ("*", "2013-03-20", "fomc"), ("*", "2013-05-01", "fomc")]
     assert ("*", "2026-12-09", "fomc") not in r and ("*", "2026-10-28", "fomc") in r, "a future meeting waits"
-    assert r[-3:] == [("AAPL", "2024-01-25", "earnings"), ("AAPL", "2024-02-01", "earnings"), ("MSFT", "2024-01-30", "earnings")]
+    earn = [x for x in r if x[2] == "earnings"]
+    assert earn == [("AAPL", "2024-01-25", "earnings"), ("AAPL", "2024-02-01", "earnings"), ("MSFT", "2024-01-30", "earnings")]
+    assert r[0] == ("*", "2013-01-30", "fomc") and [x for x in r if x[2] == "departure"] == [("AAPL", "2024-03-01", "departure")]
     dates = [d for d, _ in FOMC]
     assert dates == sorted(dates) and len(set(dates)) == len(dates) == 114, len(dates)
     assert sum(how == "unscheduled" for _, how in FOMC) == 3 and all(d[:4] in map(str, range(2013, 2027)) for d in dates)
@@ -190,14 +211,15 @@ def main():
             mapping = ciks(tickers, sec_map, fh.read())
         print("pond: %d tickers, %d with a CIK, %d without (%s)" % (len(tickers), len(mapping), len(tickers) - len(mapping), ",".join(sorted(tickers - set(mapping))[:12])))
         for n, (t, cik) in enumerate(sorted(mapping.items()), 1):
-            by_ticker[t] = sorted(earnings(cik, a.cache, start))
+            by_ticker[t] = all_kinds(cik, a.cache, start)  # (#1432) every kind off the same cached pages
             if n % 50 == 0 or n == len(mapping):
-                print("  %d/%d  %s %d dates" % (n, len(mapping), t, len(by_ticker[t])), file=sys.stderr)
-        n_rows = sum(map(len, by_ticker.values()))
+                print("  %d/%d  %s %d earnings dates" % (n, len(mapping), t, len(by_ticker[t]["earnings"])), file=sys.stderr)
+        n_rows = sum(len(k["earnings"]) for k in by_ticker.values())
         if not a.tickers and n_rows < MIN_EARNINGS:
             raise SystemExit("only %d earnings rows (floor %d): refusing to write" % (n_rows, MIN_EARNINGS))
     out = rows(by_ticker, today)
-    note = "%d earnings rows on %d names from %s, %d fomc dates, as of %s" % (sum(map(len, by_ticker.values())), len(by_ticker), start, sum(r[2] == "fomc" for r in out), today)
+    counts = ", ".join("%d %s" % (sum(r[2] == k for r in out), k) for k in sorted({r[2] for r in out}))
+    note = "%s rows on %d names from %s, as of %s" % (counts, len(by_ticker), start, today)
     with open(a.out, "w") as fh:
         fh.write(csv_text(out, note))
     print("wrote %s: %d rows (%s)" % (a.out, len(out), note))

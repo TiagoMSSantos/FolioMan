@@ -1,4 +1,4 @@
-# (#1427) the EVENTS calendar: 0 earnings rows on 0 names from 2012-01-01, 113 fomc dates, as of 2026-11-08; written by tools/event_dates.py
+# (#1427) the EVENTS calendar: 113 fomc rows on 0 names from 2012-01-01, as of 2026-11-09; written by tools/event_dates.py
 ticker,date,kind
 *,2013-01-30,fomc
 *,2013-03-20,fomc

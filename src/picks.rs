@@ -2119,8 +2119,9 @@ pub(crate) struct Ranker {
     pub keys: fn(&[&Quote], &[&[f64]], &BuyHeuristic) -> Vec<Option<f64>>,
 }
 
-/// (#1304) Every [`Ranker`], in the rivals table's order: its first nine rows, then the five new ones.
-pub(crate) const RANKERS: [Ranker; 17] = [
+/// (#1304) Every [`Ranker`], in the rivals table's order: its first nine rows, then the five new ones, (#1327)
+/// the three predictors, (#1431) the two Occam rows.
+pub(crate) const RANKERS: [Ranker; 19] = [
     Ranker { id: "shipped", label: "shipped (plain top-10)", walk_only: false, keys: key_shipped },
     Ranker { id: "gates_off", label: "(d) gates-off shipped", walk_only: false, keys: key_gates_off },
     Ranker { id: "mom121", label: "(a) momentum 12-1", walk_only: false, keys: key_mom121 },
@@ -2139,6 +2140,9 @@ pub(crate) const RANKERS: [Ranker; 17] = [
     Ranker { id: "lt_rev5", label: "(v) long-term reversal, -5Y", walk_only: false, keys: key_lt_rev5 },
     Ranker { id: "div_yield", label: "(w) dividend yield, 1Y", walk_only: false, keys: key_div_yield },
     Ranker { id: "low_vol", label: "(x) low volatility", walk_only: false, keys: key_low_vol },
+    // (#1431) Occam's rows: the shipped score's information with none of its fitted weights, and the lane's two words alone
+    Ranker { id: "equal_terms", label: "(y) equal-weight armed terms", walk_only: false, keys: key_equal_terms },
+    Ranker { id: "two_terms", label: "(z) trend + accel only", walk_only: false, keys: key_two_terms },
 ];
 
 /// (#1304) The [`Ranker`] `id` names; an unknown id is an error that lists every id.
@@ -2235,6 +2239,71 @@ fn key_low_vol(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>
 /// (#1304) [`key_tr_life`] for names with a 10Y leg only.
 fn key_tr_life10(qs: &[&Quote], _: &[&[f64]], _: &BuyHeuristic) -> Vec<Option<f64>> {
     qs.iter().map(|q| q.tr_cagr.filter(|_| perf_pct(q, "10Y").is_some())).collect()
+}
+
+/// (#1431) Occam's row: the shipped score's ARMED additive terms, each read as its cross-sectional percentile and
+/// averaged with EQUAL weight, so the row carries the information the shipped book ranks on and none of its fitted
+/// weights, caps, multipliers or docks. A term joins while its weight in `t` is non-zero, so a probe that arms a
+/// term arms it here too; each is oriented as the term pays: the capped long CAGR, the acceleration over it, the
+/// risk bonus, quality, the dividend reward, the fund line (the fill and the extra terms, as `score_parts` sums
+/// them), 12-1 momentum, smoothness, minus the years under water, and the range position the proximity dock
+/// reads. A name missing any armed column reads None, as [`rank_mean`] does; with no term armed, nobody ranks.
+fn key_equal_terms(qs: &[&Quote], _: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    let col = |f: &dyn Fn(&Quote) -> Option<f64>| qs.iter().copied().map(f).collect::<Vec<Option<f64>>>();
+    let armed = |w: f64| w != 0.0;
+    let mut cols: Vec<Vec<Option<f64>>> = Vec::new();
+    if armed(t.growth_trend_weight) {
+        cols.push(col(&|q| Some(capped_trend(long_cagr_pct(q, t)?, t))));
+    }
+    if armed(t.growth_accel_weight) {
+        cols.push(col(&|q| Some(accel_raw(perf_pct(q, "1Y")?, long_cagr_pct(q, t)?, t))));
+    }
+    if armed(t.sharpe_weight) || armed(t.calmar_weight) {
+        cols.push(col(&|q| Some(risk_bonus(q, long_cagr_pct(q, t)?, t.sharpe_weight, t.calmar_weight, t))));
+    }
+    if armed(t.quality_weight) {
+        cols.push(col(&|q| Some(quality_reward(q, t))));
+    }
+    if armed(t.dividend_weight) {
+        cols.push(col(&|q| Some(dividend_reward(q, t.dividend_weight, t))));
+    }
+    if armed(t.growth_fund_weight) || t.growth_fund_extra.iter().any(|e| armed(e.weight)) {
+        cols.push(col(&|q| {
+            let extra: f64 = t
+                .growth_fund_extra
+                .iter()
+                .map(|e| {
+                    let v = q.fund.as_ref().and_then(|f| crate::core::select_fund_factor(f, &e.factor));
+                    e.weight * v.unwrap_or(missing_fundamental(q, t, e.neutral)).clamp(0.0, e.cap)
+                })
+                .sum();
+            Some(t.growth_fund_weight * fund_fill(q, t) + extra)
+        }));
+    }
+    if armed(t.growth_mom121_weight) {
+        cols.push(col(&|q| momentum_12_1(q, t.momentum_one_endpoint)));
+    }
+    if armed(t.growth_smoothness_weight) {
+        cols.push(col(&|q| Some(q.trend_r2)));
+    }
+    if armed(t.growth_underwater_weight) {
+        cols.push(col(&|q| Some(-q.underwater_yrs.unwrap_or(0.0))));
+    }
+    if armed(t.growth_proximity_weight) {
+        cols.push(col(&|q| Some(q.range_pct)));
+    }
+    if cols.is_empty() {
+        return vec![None; qs.len()];
+    }
+    rank_mean(&cols)
+}
+
+/// (#1431) The minimal rule: the lane's two words and nothing else, proven compounding (the capped long CAGR) and
+/// building (the last year's acceleration over it), at equal percentile weight; no fund line, no damp, no dock.
+fn key_two_terms(qs: &[&Quote], _: &[&[f64]], t: &BuyHeuristic) -> Vec<Option<f64>> {
+    let trend: Vec<Option<f64>> = qs.iter().map(|q| Some(capped_trend(long_cagr_pct(q, t)?, t))).collect();
+    let accel: Vec<Option<f64>> = qs.iter().map(|q| Some(accel_raw(perf_pct(q, "1Y")?, long_cagr_pct(q, t)?, t))).collect();
+    rank_mean(&[trend, accel])
 }
 
 /// (#1304) [`momentum_keys`] (the shipped momentum key) over the names with at most `k` crowd marks.
@@ -14268,6 +14337,10 @@ mod tests {
             ("rank_avg_mom_lowk", [third, third, third, n]),
             // momentum 2/3, 1/3, 0; under water 2/3, 0, 1/3; trend R2 0, 1/3, 2/3
             ("rank_avg_mom_tested", [Some(4.0 / 9.0), Some(2.0 / 9.0), third, n]),
+            // (#1431) A alone carries a long leg, so it alone has every armed column (trend, accel, risk, quality,
+            // dividend, range on the code defaults), each at percentile 0 of its own column; the others read None
+            ("equal_terms", [Some(0.0), n, n, n]),
+            ("two_terms", [Some(0.0), n, n, n]),
         ] {
             let got = key(id);
             assert!(near(&got, want), "{id}: {got:?}");

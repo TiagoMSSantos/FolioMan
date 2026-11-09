@@ -17,9 +17,15 @@ arithmetic aid for a conversation with an accountant, not advice; the repo's rul
     python3 -I tools/exit_tax.py --cost 10000 --value 67275 --years 20 --other-income 0 --tranches 1 3 5
     python3 -I tools/exit_tax.py --cost 10000 --cagr 10 --years 20 --wrapper-fee 0.5
     python3 -I tools/exit_tax.py --cost 10000 --cagr 10 --years 20 --asset crypto
+    python3 -I tools/exit_tax.py --lots lots.csv [--today 2026-11-09]   # per-lot "cost of selling now" (#1424)
     python3 -I tools/exit_tax.py --selftest
+
+--lots reads `ticker,buy_date,cost,value[,asset]` and prints, per lot, the tax a sale TODAY pays, the next rung
+of the ladder (the day the lot turns > 2, >= 5 or >= 8 years old; 365 days for a crypto asset), the tax at that
+rung on today's value and the days to wait: the friction the behaviour-gap literature says an investor needs to
+see before selling a long-held lot in a drawdown.
 """
-import argparse
+import argparse, csv, datetime, io
 
 FLAT = 0.28  # art. 72.º autonomous rate on the positive balance of securities gains
 # art. 43.º n.º 5, read 2026-11-08: (min_years, excluded share), the widest satisfied rung wins
@@ -100,6 +106,59 @@ def wrapper_break_even(cost, cagr, years, fee_grid=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5
     return bare, rows
 
 
+def add_years(d, years):
+    """`d` moved `years` ahead; a 29 February lands on 1 March."""
+    try:
+        return d.replace(year=d.year + years)
+    except ValueError:
+        return d.replace(year=d.year + years, month=3, day=1)
+
+
+def rung_dates(buy, asset="securities"):
+    """The days a lot's exclusion steps up, as (date, excluded share), in order."""
+    if asset == "crypto":
+        return [(buy + datetime.timedelta(days=365), 1.0)]
+    return [(add_years(buy, 2) + datetime.timedelta(days=1), 0.10), (add_years(buy, 5), 0.20), (add_years(buy, 8), 0.30)]
+
+
+def held_years(buy, today):
+    return (today - buy).days / 365.25
+
+
+def lot_friction(buy, cost, value, today, asset="securities"):
+    """One lot: (years held, excluded share now, tax now, next rung date or None, excluded share then, tax then)."""
+    years = held_years(buy, today)
+    gain = max(0.0, value - cost)
+    now = excluded(years, asset)
+    tax_now = FLAT * gain * (1.0 - now)
+    nxt = next(((d, x) for d, x in rung_dates(buy, asset) if d > today), None)
+    if nxt is None:
+        return years, now, tax_now, None, now, tax_now
+    return years, now, tax_now, nxt[0], nxt[1], FLAT * gain * (1.0 - nxt[1])
+
+
+def lots_report(text, today):
+    """The `--lots` table for a CSV `ticker,buy_date,cost,value[,asset]`; comment and bad rows drop."""
+    rows = [r for r in csv.DictReader(l for l in io.StringIO(text) if not l.startswith("#"))]
+    out = [f"lots on {today}: tax if sold today (28 % on the gain less the exclusion) and at the next rung of the ladder",
+           "  ticker    bought      held   excl  tax now    next rung   excl  tax then   saving  wait"]
+    total_now = total_then = 0.0
+    for r in rows:
+        try:
+            buy = datetime.date.fromisoformat(r["buy_date"].strip())
+            cost, value = float(r["cost"]), float(r["value"])
+        except (KeyError, ValueError, AttributeError):
+            continue
+        asset = (r.get("asset") or "securities").strip() or "securities"
+        years, now, tax_now, when, then, tax_then = lot_friction(buy, cost, value, today, asset)
+        total_now += tax_now
+        total_then += tax_then
+        rung = f"{when}  {then * 100:3.0f} %  {tax_then:8,.0f}  {tax_now - tax_then:7,.0f}  {(when - today).days:4d} d" if when else "  (top rung reached)"
+        out.append(f"  {r['ticker'].strip():8s}  {buy}  {years:4.1f} y  {now * 100:3.0f} %  {tax_now:8,.0f}  {rung}")
+    out.append(f"  total tax if everything sold today {total_now:,.0f}; after each lot's next rung {total_then:,.0f}; the deferral itself (the footer's never-sell edge) is on top")
+    return "\n".join(out)
+
+
 def fmt(cost, value, years, other, brackets, tranches, name, joint=False, asset="securities"):
     gain = value - cost
     print(f"lot: cost {cost:,.0f}  value {value:,.0f}  gain {gain:,.0f}  held {years} y  other taxable income {other:,.0f}/yr  brackets {name}{' joint' if joint else ''}  asset {asset}")
@@ -141,6 +200,19 @@ def selftest():
     assert excluded(0.9, "crypto") == 0.0 and excluded(1.0, "crypto") == 1.0 and excluded(20, "crypto") == 1.0
     assert sale(10000, 67275, 20, 0, b, 1, asset="crypto") == (0.28 * 57275, 0.0, 0.0), "a year-old crypto lot owes nothing"
     assert sale(10000, 12000, 0.5, 0, b, 1, asset="crypto")[1] == 0.28 * 2000, "under 365 days the flat rate applies"
+    # --lots: a lot bought 2019-03-01 is 7.7 years old on 2026-11-09 (20 % excluded), its 8-year rung is 2027-03-01
+    today = datetime.date(2026, 11, 9)
+    y, now, tax_now, when, then, tax_then = lot_friction(datetime.date(2019, 3, 1), 1000.0, 3000.0, today)
+    assert 7.6 < y < 7.8 and now == 0.20 and abs(tax_now - 0.28 * 2000 * 0.8) < 1e-9 and when == datetime.date(2027, 3, 1) and then == 0.30
+    assert abs(tax_then - 0.28 * 2000 * 0.7) < 1e-9
+    assert lot_friction(datetime.date(2010, 1, 1), 1.0, 2.0, today)[3] is None, "past the top rung there is no next one"
+    assert rung_dates(datetime.date(2024, 2, 29))[0] == (datetime.date(2026, 3, 2), 0.10), "a leap-day buy turns > 2 years on 2 March"
+    assert rung_dates(datetime.date(2026, 1, 1), "crypto") == [(datetime.date(2027, 1, 1), 1.0)]
+    text = "# a comment\nticker,buy_date,cost,value,asset\nAAA,2019-03-01,1000,3000,\nBTC,2026-06-01,500,900,crypto\nbad,row\n"
+    rep = lots_report(text, today)
+    assert "AAA       2019-03-01   7.7 y   20 %       448  2027-03-01   30 %       392       56   112 d" in rep, rep
+    assert "BTC       2026-06-01   0.4 y    0 %       112  2027-06-01  100 %         0      112   204 d" in rep, rep
+    assert "total tax if everything sold today 560; after each lot's next rung 392" in rep, rep
     assert abs(wrapper_tax(100.0, 8.5) - 11.2) < 1e-9 and abs(wrapper_tax(100.0, 6) - 22.4) < 1e-9 and abs(wrapper_tax(100.0, 3) - 28.0) < 1e-9
     print("exit_tax selftest ok")
 
@@ -157,10 +229,18 @@ def main():
     ap.add_argument("--wrapper-fee", type=float, help="print the wrapper comparison; the value is only a reminder, the grid is fixed")
     ap.add_argument("--joint", action="store_true", help="tributação conjunta: --other-income is the couple's, taxed on the quociente conjugal")
     ap.add_argument("--asset", choices=["securities", "crypto"], default="securities", help="crypto = a criptoativo that is not a valor mobiliário (art. 10.º n.º 22)")
+    ap.add_argument("--lots", help="a CSV of held lots (ticker,buy_date,cost,value[,asset]): print the per-lot sell friction and exit")
+    ap.add_argument("--today", help="the valuation date for --lots, YYYY-MM-DD (default: today)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         selftest()
+        return
+    if a.lots:
+        today = datetime.date.fromisoformat(a.today) if a.today else datetime.date.today()
+        with open(a.lots) as fh:
+            print(lots_report(fh.read(), today))
+        print("\nnot advice: the ladder as read on 2026-11-08; FIFO per depositary decides which lot a partial sale realises.")
         return
     if a.brackets in BRACKETS:
         brackets, name = BRACKETS[a.brackets], a.brackets

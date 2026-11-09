@@ -4062,8 +4062,10 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         }
         // (#1423) the two legs of every pond session and the day leg by overnight-gap quintile, record only
         println!("{}", intraday::legs_report(market, &intraday::legs(&pond, today), cost));
-        // (#1427) the calendar's events priced on this pond: the names' own windows and the pond's on `*` dates
-        println!("{}", intraday::events_report(market, &intraday::events(&pond, &calendar, today), cost));
+        // (#1427) the calendar's events priced on this pond: the names' own windows and the pond's on `*` dates;
+        // (#1432) then the same kinds read as one-year cohorts
+        println!("{}", intraday::events_report(market, &intraday::events(&pond, &calendar, today, 1), cost));
+        println!("{}", intraday::events_report(market, &intraday::events(&pond, &calendar, today, intraday::COHORT_SESSIONS), cost));
         // today's members, each ranked every day: US*, and (#1215) the pond the holds census's book is ranked on
         let now: Vec<intraday::Member> = pond
             .iter()
@@ -4099,7 +4101,7 @@ async fn intraday_ruler(client: &reqwest::Client, settings: &config::Settings) {
         let cost = intraday::COST_BPS_EU;
         println!("  EUETF pond: {} of {} UCITS ETF lines fetched in EUR or USD; cost {cost} bp round trip", pond.len(), names.len());
         println!("{}", intraday::legs_report("EUETF", &intraday::legs(&pond, today), cost));
-        println!("{}", intraday::events_report("EUETF", &intraday::events(&pond, &calendar, today), cost));
+        println!("{}", intraday::events_report("EUETF", &intraday::events(&pond, &calendar, today, 1), cost));
     }
     // (#1214) the census the Intraday table's hour knobs are picked from: today's members, as on the page
     println!("\n── (#1214) BUY AND SELL HOURS: buy at the open or a 60m bar's end, sell at a later one, every name equal weight, 2y ──");
@@ -6311,7 +6313,7 @@ fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
 /// (#1304) Rows 2 to 8 and (o) to (s) are keyed by the `growth_ranker` registry (`picks::RANKERS`), whose
 /// labels these are; (t) holds every pond name with no crowd mark at equal weight, (u) row 0's order with a
 /// book of 20.
-const RIVALS: [&str; 24] = [
+const RIVALS: [&str; 26] = [
     "shipped (plain top-10)",
     "(d) gates-off shipped",
     "(a) momentum 12-1",
@@ -6336,6 +6338,8 @@ const RIVALS: [&str; 24] = [
     "(v) long-term reversal, -5Y",
     "(w) dividend yield, 1Y",
     "(x) low volatility",
+    "(y) equal-weight armed terms",
+    "(z) trend + accel only",
 ];
 
 /// (#560) A gap under this many pts/yr is a tie, neither a win nor a loss. Pre-registered.
@@ -6562,6 +6566,9 @@ fn rival_books(
         books[20].extend(rival_excess(&keyed(0), 20, years)); // (#1304) (u)
         for (j, book) in books.iter_mut().skip(21).take(3).enumerate() {
             book.extend(rival_excess(&rekey(ranked(14 + j)), VERDICT_TOP, years)); // (#1327) (v) to (x), the registry's rows 14 to 16
+        }
+        for (j, book) in books.iter_mut().skip(24).take(2).enumerate() {
+            book.extend(rival_excess(&rekey(ranked(17 + j)), VERDICT_TOP, years)); // (#1431) (y) and (z), the registry's rows 17 and 18
         }
         pond.insert(*b, rows.iter().map(|r| (r.1, r.2)).collect());
     }
@@ -13270,6 +13277,7 @@ mod tests {
         assert_eq!(RIVALS[..9], labels[..9]);
         assert_eq!(RIVALS[14..19], labels[9..14]);
         assert_eq!(RIVALS[21..24], labels[14..17]); // (#1327) (v) to (x)
+        assert_eq!(RIVALS[24..26], labels[17..19]); // (#1431) (y) and (z)
     }
 
     /// (#560) `rival_books` on a stand-in scorer (shipped = `range_pct`, open adds `avg_turnover_eur`).
@@ -13304,7 +13312,7 @@ mod tests {
         // (#600) (l)/(m)/(n): S2 has no 1Y, so no momentum key, and S1 is alone in all three.
         // (#1304) Neither name carries a crowd mark: (o)/(p)/(r) are S1 on its momentum key, (q) finds no 6M and
         // (s) no years under water, (t) holds both, (u) is row 0's S1.
-        let want: [&[f64]; 24] = [
+        let want: [&[f64]; 26] = [
             &[20.0],
             &[10.0],
             &[20.0],
@@ -13329,6 +13337,8 @@ mod tests {
             &[], // (#1327) (v): no 5Y leg in this pond
             &[], // (w): no dividend record
             &[], // (x): no daily volatility on a stub
+            &[], // (#1431) (y): the stubs carry no long leg, so the armed trend column keys nobody
+            &[], // (z): the same two columns, nobody
         ];
         assert_eq!(books.len(), RIVALS.len());
         for (i, (got, want)) in books.iter().zip(want).enumerate() {
