@@ -23339,6 +23339,13 @@ buy_heuristic:
                                  #   this many years (quote.age_years). 0.0 = off, byte-identical. Not a view on old companies: it states the
                                  #   accidental exclusion (#1390) found in the mixed bars so honest bars can be asked whether it reproduces the
                                  #   shipped book. (#1426) graded 30/40/50 on the (#1389) arm: no cap recovers the shipped book, so it stays off.
+  growth_refuse_financials: false # (#1435) PRE-REGISTERED 2026-11-10, back from RETIRED for one honest-bars question: refuse a bank or
+                                 #   insurer filer (`fund.financial`, tag `financial`). (#1299) retired it UNGRADEABLE because on the shipped
+                                 #   mixed bars it refused names the top 10 never held; (#1426) read the honest bars losing 2002-07 "in other
+                                 #   names", the GFC cohort the accident damped. false = off, byte-identical; a grid row arms it.
+  growth_refuse_sector_top_dog: false # (#1435) the same question's second row: refuse the largest market cap in its sector at the cutoff
+                                 #   (`quote.sector_top_dog`, stamped by the walk; tag `topdog`). Expected to HURT the >=2014 era (it refuses
+                                 #   Apple there), so it is the control that says the recovery is not "refuse the biggest". false = off.
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which
@@ -28393,6 +28400,81 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   point-in-time memberships exist for the US alone (`sp500_ticker_start_end.csv`); (c) the MidCap pond, the one
 #   extra pond with point-in-time spans, was REFUSED on the lane (#1322). The gain, +4 to +2, does not reach any
 #   question still open. Recorded so the next plan does not re-propose it.
+# (#1435) THE ACCIDENT'S STATED TWIN, SECOND TRY: THE RETIRED GATES ON HONEST BARS, PRE-REGISTERED 2026-11-10 before any
+#   run. Knobs: `growth_refuse_financials`, `growth_refuse_sector_top_dog` (both false ship, byte-identical; back from
+#   `RETIRED`, where (#1299) put them). Row: (#1438). "The bars question reopens only on a new question pre-registered
+#   before any run" ((#1426) NEXT): this is that question.
+# WHY, from (#1426)'s own table. The honest bars (`long_chart_explicit_span: true`) lose to the shipped mixed bars in
+#   ONE era and win in the others: median excess by cutoff era, 12y | 8y, control (shipped bars) against row 0 (honest):
+#     <=2001  +2.0 | +2.2 against +2.4 | +3.1      2002-07  +3.9 | +4.3 against +2.1 | +0.5
+#     2008-13 +4.2 | +5.1 against +4.2 | +4.3      >=2014  +1.4 | +1.4 against +6.5 | +4.9  (2 and 10 buckets)
+#   The 12y mean, the worst window and RU1 that decided (B) are carried by 2002-07; the last decade, the one a buyer
+#   today is closest to, reads the honest bars 3.5 pts/yr AHEAD over 10 buckets at 8y. (#1390)'s era note names the
+#   2002-13 winners the accident bought by refusing: "GE, C, AIG, F, the old economy into the GFC". (#1426) read that
+#   the age cap barely binds on honest bars (0.02-0.03 top-10 names moved), so the gap sits in OTHER names than the
+#   pre-1972 listings a 40-year cap refuses in 2002-07. The (#1277) gates were built for exactly that cohort: a
+#   financial filer (C, AIG; GE's filings read industrial), the biggest company in its sector (GE, C). (#1299)
+#   retired them UNGRADEABLE because on the SHIPPED bars they "refuse names the top 10 never held" — the mixed bars
+#   had already damped those names by accident, so the stated rule had nothing left to do. On honest bars it has.
+#   And the same table says what the accident COSTS: the >=2014 gap is the honest bars admitting old listings the
+#   mixed bars damp — Apple (listed 1980, quarterly bars to 1985) is the one the owner asked about on 2026-11-07.
+# ARM: the (#1389) arm, knobs="long_chart_explicit_span=true", years="12 8", args="universe fund pit", rescore="guard"
+#   (200 shuffles), grid '[{}, {"growth_refuse_financials": true}, {"growth_refuse_sector_top_dog": true},
+#   {"growth_refuse_financials": true, "growth_refuse_sector_top_dog": true}]'. Row 0 is the honest book (#1426) graded;
+#   the control is (#1426)'s fresh shipped-bars probe (42590607431) or a fresh one on the same tree.
+# BAR, fixed now, three reads on the RU ruler and the era table. (A) RECOVERY: a gate row whose 12y and 8y medians,
+#   worst windows and RU1 tallies all sit within the (#1333) band of the shipped-bars control AND whose >=2014 era
+#   stays within 1.0 of row 0's: the honest bars plus a stated rule reproduce the shipped book in every era, and the
+#   owner is asked ONE question, ship honest bars WITH that gate (both knobs on, goldens re-blessed), because that
+#   configuration alone wins every era. (B) PARTIAL: the 2002-07 era median closes by half or more of its gap but a
+#   cell stays outside the band: recorded as "the accident is part financials, part something not yet named"; the
+#   remainder is the next question, not a knob. (C) NOTHING: no row moves 2002-07 by half its gap: the accident is
+#   not the GFC cohort; recorded, both knobs back to `RETIRED` in the next refactor.
+# EXPECTED: financials alone closes about half of 2002-07 (C and AIG are flagged, GE and F are not) and leaves >=2014
+#   untouched: read (B). Top dog alone closes a little more of 2002-07 (GE, C) and cuts >=2014 by 2-4 points (Apple):
+#   its job is to show the recovery is not "refuse the biggest". Both together: 2002-07 within 0.5 of the control,
+#   >=2014 cut. Nothing ships without the owner's word; the honest prior is (B).
+# (#1436) THE DIVIDEND TERM AFTER TAX, PRE-REGISTERED 2026-11-10 before any run. Knob: `dividend_weight` (0.5 ships).
+#   Rows: a grid on the shipped arm, 0.17 and 0.0; (#1439) decides. The paper route's logic with ARITHMETIC in the
+#   proof's seat: the change is certain in sign by law, the backtest is the harm guard, not the proof.
+# WHY: the term pays `dividend_weight` x min(yield, cap) x keep (0.72) = 0.36 score points per GROSS yield point;
+#   the trend term pays `growth_trend_weight` 0.15 per point of price CAGR. So the score buys one point of dividend
+#   yield as if it were 2.4 points of CAGR. For a Portuguese 20-year holder the opposite ordering is the law: a
+#   dividend is taxed 28 % the year it is paid and the reinvested remainder starts a younger lot; the same return
+#   as price is taxed once, at exit, at 28 % on 70 % of the gain (#1424). Arithmetic (reinvest after tax, basis
+#   raised by the reinvested euros, exit on the 30 % rung, 20y): at 10 %/yr total return every yield point costs
+#   0.19 pts/yr of after-tax CAGR against the same return as price (3 % yield: 8.44 against 9.00); at 13 %/yr 0.20.
+#   A yield point is worth about 0.81 of a price point after tax, so the weight that prices it like the trend term
+#   is 0.15 x 0.81 / 0.72 = 0.17, not 0.5. (#62) zeroed the term and read the rank-1 column byte-identical at
+#   20/12/8y: the ruler cannot see this knob either way, which is exactly the case (#1339) wrote the route for.
+#   The (#1327) rival (w), dividend yield as a ranker, reads -0.7 excess on the fixture pond: yield predicts
+#   nothing here that the term would be paying for.
+# WHAT IT IS WORTH: small and certain. The shipped book yields under 1 %, so the book's own after-tax drag from the
+#   mis-weight is 0.1-0.2 pts/yr; the value is in the ranking's honesty (a 3 % yielder stops outscoring a non-payer
+#   with 4 more points of CAGR) and in the CORE sleeve's distributing lines, where (#109) `growth_acc_drag` (off,
+#   unmeasurable) prices the same fact and should be read in the same sitting.
+# BAR, fixed now: on `years="12 8" args="universe fund pit" rescore="guard" grid='[{}, {"dividend_weight": 0.17},
+#   {"dividend_weight": 0.0}]'`, the 0.17 row ships if it shows no visible harm under the (#1333) band (medians,
+#   worst window, RU1 within the band of row 0); the 0.0 row is the control that says whether 0.17 and 0.0 differ at
+#   all (if not, 0.17 still ships: it is the arithmetic's number). A visible LOSS on 0.17 keeps 0.5 and is recorded as
+#   the one case where the price ruler sees what the tax arithmetic does not (a yield that predicts total return).
+# EXPECTED: INSIDE the band on every cell, rank-1 byte-identical as in (#62) at 12y, a 0.1-0.3 median move at 8y
+#   either way; ships at 0.17 with the goldens re-blessed. Live: one or two high-yield rows drop a place.
+# (#1437) HORIZON DECAY OF THE SHIPPED TILTS, PRE-REGISTERED 2026-11-10, record only, no knob, no code. One probe:
+#   `years="3 1" args="universe fund pit"`. The fund-factor AUC table and the held-book-by-factor list print at any
+#   horizon; this reads them at 3 and 1 years beside the 12 and 8 the file holds.
+# WHY: the paper route's proof is JKP's MONTHLY-rebalanced thirds; the book holds twenty years and never rotates. A
+#   slow characteristic (value, investment, profitability) keeps paying across the hold; a fast one (momentum) pays
+#   its year and reverses (long-term reversal, (#1327) rival (v)). The route guards HARM at 12y and 8y, where the
+#   ruler is blind, and never reads the horizon the tilt was proved at. Reading each `*_pct` column's AUC at 1y and
+#   3y against its 8y and 12y says which of the four 0.03 ships (ey_pct, mom61_pct, capx_pct, fcf_pct) decays in a
+#   never-sell book, which is information about what the route can and cannot carry.
+# BAR: none; a verdict line records, per shipped column, AUC at 1 / 3 / 8 / 12 and whether the 1y reading is on the
+#   paper's side at |AUC - 0.5| >= 0.10. A column on the paper's side at 1y and at 0.5 by 8y is a decaying tilt; the
+#   record goes under this block and the route's receipt (#1339) gains one sentence: "fast characteristics are proved
+#   at a horizon the book does not hold".
+# EXPECTED: mom61_pct 0.58-0.62 at 1y, 0.50-0.53 at 8y (decays); ey_pct, capx_pct, fcf_pct within 0.05 of their 8y
+#   readings at 1y (slow). Nothing moves either way at 0.03.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

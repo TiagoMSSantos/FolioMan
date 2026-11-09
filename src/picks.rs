@@ -1436,6 +1436,14 @@ fn score_parts_hard(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> 
     if tuning.growth_max_age_years > 0.0 && quote.age_years.is_some_and(|a| a > tuning.growth_max_age_years) {
         return None;
     }
+    // (#1435) the two (#1277) stock gates, back for the honest-bars question, mirrored in gate_failures as
+    // "financial" and "topdog"; each passes a field the quote lacks. false = off.
+    if tuning.growth_refuse_financials && asset_class(quote) == 2 && quote.fund.as_ref().is_some_and(|f| f.financial) {
+        return None;
+    }
+    if tuning.growth_refuse_sector_top_dog && asset_class(quote) == 2 && quote.sector_top_dog == Some(true) {
+        return None;
+    }
     // (AUM) ETF minimum fund size (EUR-approximate, from the BF etp_search payload). A sub-scale
     // fund is the one instrument a 20y hold can lose WITHOUT the strategy failing: issuers liquidate/
     // merge small funds, forcing a taxable exit mid-hold. ETF-only (companies aren't funds; crypto has
@@ -2803,6 +2811,8 @@ pub(crate) fn plain_gate(g: &str) -> &'static str {
     match g {
         "young" => "listed too few years",
         "old" => "listed too many years for this rule", // (#1425)
+        "financial" => "a bank or insurer, whose growth is balance-sheet growth", // (#1435)
+        "topdog" => "the biggest company in its sector",                           // (#1435)
         "history" => "too little price history",
         "aum" => "fund too small, could close",
         "range" => "price too low in its 10-year range",
@@ -2957,6 +2967,13 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     // (#1425) the age cap, the floor's twin: close = within five years of the cap
     if let Some(a) = quote.age_years.filter(|a| tuning.growth_max_age_years > 0.0 && *a > tuning.growth_max_age_years) {
         fails.push(("old", format!("{a:.0}y listed (cap {:.0}y)", tuning.growth_max_age_years), a <= tuning.growth_max_age_years + 5.0));
+    }
+    // (#1435) the restored stock gates' reasons, leg for leg with `score_parts_hard`; neither has a near miss
+    if tuning.growth_refuse_financials && asset_class(quote) == 2 && quote.fund.as_ref().is_some_and(|f| f.financial) {
+        fails.push(("financial", format!("a financial filer, sector {}", quote.sector.as_deref().unwrap_or("unknown")), false));
+    }
+    if tuning.growth_refuse_sector_top_dog && asset_class(quote) == 2 && quote.sector_top_dog == Some(true) {
+        fails.push(("topdog", format!("the largest company in {}", quote.sector.as_deref().unwrap_or("its sector")), false));
     }
     // (AUM) ETF fund-size gate, same scoping as score_parts: None AUM never fails. Close = within
     // half the floor (a €60M fund vs a €100M line is a "watch it grow" case, €5M is a hard reject).
@@ -3130,6 +3147,8 @@ fn waive_gate(t: &mut BuyHeuristic, tag: &str) {
             t.growth_min_age_years_crypto = 0.0; // (#1300)
         }
         "old" => t.growth_max_age_years = 0.0, // (#1425)
+        "financial" => t.growth_refuse_financials = false, // (#1435)
+        "topdog" => t.growth_refuse_sector_top_dog = false, // (#1435)
         "aum" => t.growth_min_aum_etf = 0.0,
         "range" => (t.growth_min_range_pct, t.growth_min_range_pct_crypto) = (OFF, OFF),
         "range8y" => (t.growth_min_range_pct_8y, t.growth_min_range_pct_8y_crypto) = (0.0, 0.0),
@@ -3159,7 +3178,7 @@ pub(crate) fn gates_off(tuning: &BuyHeuristic) -> BuyHeuristic {
     let mut t = tuning.clone();
     for tag in [
         "young", "old", "aum", "range", "range8y", "cagr", "1Y+", "1M-knife", "5Y+", "8Y+", "20Y+", "liquidity", "stretch",
-        "lifetime", "volatile", "spike", "mvrv", "peg", "maxdd",
+        "lifetime", "volatile", "spike", "mvrv", "peg", "maxdd", "financial", "topdog",
     ] {
         waive_gate(&mut t, tag);
     }
@@ -10016,6 +10035,26 @@ mod tests {
     waive_gate(&mut waived, "old");
     assert!(growth_score(&old, &waived).is_some() && gates_off(&cap_t).growth_max_age_years == 0.0, "the tag waives the cap, and gates_off lists it");
     assert_eq!(plain_gate("old"), "listed too many years for this rule");
+    // --- (#1435) the two restored stock gates: off at false, refuse with their tag, waived by it, listed in gates_off ---
+    let mut bank = aged(Some(20.0));
+    bank.fund = Some(crate::core::FundFactors { financial: true, ..Default::default() });
+    bank.sector = Some("Financials".into());
+    let fin_t = BuyHeuristic { growth_refuse_financials: true, ..BuyHeuristic::default() };
+    assert!(growth_score(&bank, &BuyHeuristic::default()).is_some() && growth_score(&bank, &fin_t).is_none(), "a bank scores at false and is refused at true");
+    assert!(gate_failures(&bank, &fin_t).unwrap().iter().any(|(g, why, close)| *g == "financial" && why.contains("Financials") && !close));
+    let mut dog = aged(Some(20.0));
+    dog.sector_top_dog = Some(true);
+    let dog_t = BuyHeuristic { growth_refuse_sector_top_dog: true, ..BuyHeuristic::default() };
+    assert!(growth_score(&dog, &dog_t).is_none() && growth_score(&aged(Some(20.0)), &dog_t).is_some(), "only the stamped top dog is refused");
+    assert!(gate_failures(&dog, &dog_t).unwrap().iter().any(|(g, why, _)| *g == "topdog" && why.contains("its sector")));
+    let mut both = dog_t.clone();
+    both.growth_refuse_financials = true;
+    waive_gate(&mut both, "financial");
+    waive_gate(&mut both, "topdog");
+    assert!(!both.growth_refuse_financials && !both.growth_refuse_sector_top_dog && growth_score(&bank, &both).is_some());
+    let off = gates_off(&BuyHeuristic { growth_refuse_financials: true, growth_refuse_sector_top_dog: true, ..BuyHeuristic::default() });
+    assert!(!off.growth_refuse_financials && !off.growth_refuse_sector_top_dog, "gates_off lists both tags");
+    assert_eq!((plain_gate("financial"), plain_gate("topdog")), ("a bank or insurer, whose growth is balance-sheet growth", "the biggest company in its sector"));
     // young name WITHOUT a CAGR leg: the silent long_leg_fixed None becomes an explicit reason.
     let mut young_noleg = quote(5.0, &[("1Y", 10.0)]);
     young_noleg.age_years = Some(2.0);
@@ -12924,7 +12963,7 @@ mod tests {
     /// never holds ": " or " (", which split a MISSES hover line into its tag.
     #[test]
     fn plain_gate_names_every_rule_in_its_own_words() {
-        let tags = ["young", "old", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover"];
+        let tags = ["young", "old", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact", "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "exchange", "peg", "maxdd", "leveraged", "commodity", "hedged", "stablecoin", "wipeout", "no-turnover", "financial", "topdog"];
         let labels: std::collections::BTreeSet<&str> = tags.iter().map(|g| plain_gate(g)).collect();
         assert_eq!(labels.len(), tags.len(), "one label per rule");
         assert!(!labels.contains("a buy rule"), "no rule falls through");

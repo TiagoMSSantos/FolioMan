@@ -81,183 +81,183 @@ by hand.
 | 64 | hard gate: reject equities more than this % above the 200wk SMA — the extreme blow-off cohort the overext bra… | knob | `growth_max_above_ma` | SHIPPED 150.0 | #24 #63 #64 #69 #575 #833 | — |
 | 65 | (#833) a stock with fewer than LONG_MA_SESSIONS closes has no 200wk average, so its stretch reading is 0 and… | knob | `growth_brake_min_sessions` | SHIPPED 0 | #26 #138 #558 #566 #573 #833 | — |
 | 66 | (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — m… | knob | `growth_require_lifetime_uptrend` | SHIPPED true | #24 #25 #64 #183 #184 #1399 | — |
-| 67 | (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name t… | knob | `growth_maxdd_cap` | SHIPPED 0.0 | #26 #60 #74 #134 #135 #137 | — |
-| 68 | (#26) crypto's OWN maxdd cap. Coins crash >90% every cycle, so the equity cap would gate Bitcoin itself (-83%… | knob | `growth_maxdd_cap_crypto` | SHIPPED 84.0 | #26 #60 #74 #134 #135 #137 | — |
-| 69 | (#36) crypto-only hard gate: reject coins whose daily-return stdev (quote.volatility_pct, the VOL column) exc… | knob | `growth_max_vol_crypto` | SHIPPED 3.0 | #36 | — |
-| 70 | (#1425) hard gate, the twin of the floor below: refuse a name LISTED LONGER than this many years (quote.age_y… | knob | `growth_max_age_years` | SHIPPED 0.0 | #24 #64 #1285 #1390 #1392 #1425 | — |
-| 71 | (#33) hard gate: reject a name younger than this many years (quote.age_years, the YRS column = whole-life lis… | knob | `growth_min_age_years` | SHIPPED 0.0 | #3 #33 #182 #1389 #1390 #1426 | — |
-| 72 | (#1300) a COIN's own listing-age floor, on top of growth_min_age_years: a coin must be at least this many yea… | knob | `growth_min_age_years_crypto` | SHIPPED 8.0 | #33 #160 #178 #511 #1291 #1300 | — |
-| 73 | (AUM) ETF-only hard gate: reject a fund smaller than this (quote.aum_eur, EUR-approx from the BF universe pay… | knob | `growth_min_aum_etf` | SHIPPED 100000000 | #511 #1291 #1306 #1315 #1316 | — |
-| 74 | (#37) hard gate: reject a name whose PEG exceeds this — too expensive for the growth it actually delivers. Ex… | knob | `growth_max_peg` | SHIPPED 2.0 | #37 #120 #139 #160 #186 #266 | — |
-| 75 | (#37 funds) the ETF table's OWN valuation ceiling, same PEG units and same arithmetic as growth_max_peg, appl… | knob | `growth_max_peg_etf` | SHIPPED 2.0 | #37 #41 #97 #566 #817 #1399 | — |
-| 76 | (V) hard gate: reject a name whose FILER states no EPS in any filing, so `growth_max_peg` can never price it.… | knob | `growth_require_peg` | SHIPPED true | #538 | — |
-| 77 | (P4a) hard gate: reject a non-crypto name whose LARGEST single-bar move in the trailing month exceeded this %… | knob | `growth_max_daily_1m` | SHIPPED 0.0 | #38 #41 #97 #127 #817 #1399 | — |
-| 78 | (P4b) hard gate: the EQUITY/ETF twin of growth_max_vol_crypto — reject a non-crypto name whose daily-return s… | knob | `growth_max_vol` | SHIPPED 0.0 | #1399 | — |
-| 79 | (#41) REDUNDANCY skip on the shown stock table: walk the ranked rows and drop one whose 36-month trailing-ret… | knob | `growth_corr_cap` | SHIPPED 0.0 | #40 #41 #120 #140 #192 #193 | — |
-| 80 | (#75) VALUE BRAKE: reject the most-expensive-FOR-THEIR-GROWTH P% of a cohort by `fund.peg_yield` (high = chea… | knob | `growth_value_floor_pct` | SHIPPED 40.0 | #41 #47 #71 #72 #75 #1283 | — |
-| 81 | (#44) multiply the growth score of a COMMODITY-LINKED row — GICS Energy/Materials, or a fund whose name carri… | knob | `growth_commodity_damp` | SHIPPED 0.2 | #1 #3 #44 #508 #910 | — |
-| 82 | (#45) multiply the growth score of an ETF whose LIVE quote currency is not EUR (`quote_currency`, straight fr… | knob | `growth_fx_damp` | SHIPPED 0.98 | #1 #3 #44 #45 #508 | — |
-| 83 | (#472) multiply the growth score of a stock Berkshire Hathaway's NEWEST 13F holds (`Quote::brk_held`, the `W`… | knob | `growth_brk_held_boost` | SHIPPED 1.20 | #436 #442 #472 #518 #544 #737 | — |
-| 84 | (#472) the same multiplier for a stock Dataroma's superinvestors bought last quarter (8+ to list), or the (#4… | knob | `growth_superinvestor_boost` | SHIPPED 1.0 | #470 #472 #473 #518 #544 #614 | — |
-| 85 | (#473) buyers per `growth_superinvestor_boost` step: the user's "x1.1 per 3 superinvestors", counted from zer… | knob | `growth_superinvestor_step` | SHIPPED 3 | #472 #473 #737 #738 | — |
-| 86 | (#473) the multiplier for a stock the Social table names through a recent social-arbitrage video or the hand… | knob | `growth_social_boost` | SHIPPED 1.05 | #473 | — |
-| 87 | (#545) the CAPEX/OCF column's bar, in %: a stock whose trailing-twelve-month capex is above this share of its… | knob | `growth_capex_ocf_max` | SHIPPED 70 | #545 #834 | — |
-| 88 | (#545) the multiplier above `growth_capex_ocf_max`. Equities with SEC 10-Q cash lines only; a bank, an insure… | knob | `growth_capex_ocf_penalty` | SHIPPED 0.80 | #86 #545 #547 #834 | — |
-| 89 | (#496) multiply the growth score of an exchange's own token (`picks::EXCHANGE_TOKENS`: BNB, GT, OKB, CRO…), a… | knob | `growth_exchange_token_damp` | SHIPPED 0.5 | #494 #496 #509 | — |
-| 90 | (#511) refuse an exchange's own token (`picks::EXCHANGE_TOKENS`) outright, gate tag `exchange`: the coin is o… | knob | `growth_refuse_exchange_tokens` | SHIPPED true | #496 #511 | — |
-| 91 | (#494) keep ONE ranked fund per benchmark index, the cheapest euro line (the INDEX cell's ` · TICKER`); the o… | knob | `growth_etf_one_per_index` | SHIPPED true | #245 #318 #494 #509 #510 #547 | — |
-| 92 | (#510) ALSO keep one ranked fund per HOLDINGS clique: index groups (as `growth_etf_one_per_index` keys them,… | knob | `growth_etf_one_per_overlap` | SHIPPED 7 | #245 #313 #318 #494 #509 #510 | — |
-| 93 | (#34) ETF cost drag: dock the growth score by the ACTUAL 20-year wealth multiple the expense ratio eats, (1-T… | knob | `growth_ter_drag` | SHIPPED true | #34 | — |
-| 94 | (#47) replace `trust_factor`'s single 10Y cliff with a graded record-length ladder: 20Y leg -> 1.00, 8Y -> 0.… | knob | `growth_trust_ladder` | DEFAULT | #47 | — |
-| 95 | (#49) the BOTTOM two rungs of that ladder, and the only tier that is a knob instead of a constant. The (#47)… | knob | `growth_trust_young` | SHIPPED 0.5 | #47 #49 | — |
-| 96 | (1) growth-score multiplier at that cap (e.g. 0.4 = a fully-stretched name keeps 40% of its score); 1.0 = bra… | knob | `growth_overext_floor` | SHIPPED 0.05 | #100 #496 #1133 | — |
-| 97 | (#1133) the trust dock's exponent in the growth damp, `damp = trust^this × overext_damp^growth_overext_exp`.… | knob | `growth_trust_exp` | SHIPPED 0.5 | #1133 | — |
-| 98 | (#1133) the overextension brake's exponent in that damp. 0.5 = DEFAULT (a 0.05 floor delivers 0.224); 1.0 = t… | knob | `growth_overext_exp` | SHIPPED 0.5 | #1133 #1134 #1135 | — |
-| 99 | (#1136) the bubble damp: the growth score keeps max(1 − this × flags/5, 0.5) of itself, the flags being a 2Y… | knob | `growth_bubble_weight` | SHIPPED 0.0 | #1134 #1135 #1136 #1137 #1138 | — |
-| 100 | (L) liquidity tilt: bonus per ln(turnover/€1B), added OUTSIDE the brake. Rewards deep-liquid mega-caps (easy… | knob | `growth_turnover_weight` | SHIPPED 0.0 | #20 #1136 #1137 #1138 | — |
-| 101 | (#4) crypto's OWN overextension cap (% above the 200wk SMA at which the brake maxes). Crypto routinely rides… | knob | `growth_overext_cap_crypto` | SHIPPED 100.0 | #4 | — |
-| 102 | (#1375) the stretch brake's free zone: no cut while the price sits up to this many % above its 200wk SMA, the… | knob | `growth_overext_free` | SHIPPED 60.0 | #1375 #1377 #1378 | — |
-| 103 | (G) reward per pt of the as-of FUNDAMENTAL factor (see growth_score / fund_factor). The fund lane proves WHIC… | knob | `growth_fund_weight` | SHIPPED 0.07 | #3 #26 #39 #40 #424 #425 | — |
-| 104 | (G) cap (in the factor's own pts) on the fund factor fed into that reward, so one data-artifact (+9000% rev)… | knob | `growth_fund_cap` | SHIPPED 300.0 | #3 #26 #39 #40 #424 #425 | — |
-| 105 | (#87) what an ABSENT `fund_factor` is worth, in the factor's own pts, before weight and cap. Third of the thr… | knob | `growth_fund_neutral` | SHIPPED 0.0 | #43 #87 | — |
-| 106 | (#87) the OTHER half of one missing-data policy, and the half a neutral fill alone gets backwards. A neutral… | knob | `growth_fund_scope_by_class` | OFF (false) | #40 #43 #59 #87 #1129 #1130 | Re-open only with a ruler that does |
-| 107 | (G) WHICH as-of FundFactors term the fund tilt weighs: rev_cagr \| rev_accel \| gross_margin \| op_margin \|… | knob | `growth_fund_factor` | SHIPPED "peg_yield" | #2 #3 #784 | — |
-| 108 | (G+) ADDITIONAL fundamental tilt terms, summed on top of the single `growth_fund_*` term above. The three kno… | knob | `growth_fund_extra` | SHIPPED list | #3 #40 #43 #87 #1129 #1130 | — |
-| 109 | (Item 22) WHICH fundamentals feed BOTH the `backtest <set> fund` lane AND the live `screen`/`check` fund tilt… | knob | `fund_source` | SHIPPED "sec" | #1 #3 #147 #173 #180 #181 | — |
-| 110 | (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-te… | knob | `growth_mom121_weight` | DEFAULT |  | — |
-| 111 | (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank | knob | `growth_mom121_cap` | DEFAULT |  | — |
-| 112 | (E) additive reward per unit of trend_r2 (R² of the log-price trend fit, 0..1; 0 also = no history) — pays na… | knob | `growth_smoothness_weight` | SHIPPED 0.0 | #1 #59 #60 #61 #62 | — |
-| 113 | additive PENALTY per year of the longest below-prior-peak stretch (core::longest_underwater_yrs — the drawdow… | knob | `growth_underwater_weight` | SHIPPED 0.3 | #1 #3 #59 #60 #223 #817 | — |
-| 114 | (Item 20) authority of the P/E multiplier (value_factor) in the GROWTH lane only — BACKTEST-BLIND until (#147… | knob | `growth_value_weight` | SHIPPED 0.0 | #1 #95 #134 #145 #147 #159 | — |
-| 115 | (#48) authority of the PROXIMITY multiplier — the growth score's `range_pct/100` term, which docks a name in… | knob | `growth_proximity_weight` | SHIPPED 1.0 | #8 #48 #497 #599 #819 | — |
-| 116 | (#73) REPOINTED — this is now the window on `growth_min_cagr`'s WHOLE-LIFE REJECT BAR (leg 2), not on the ran… | knob | `life_cagr_max_years` | SHIPPED 0.0 | #3 #14 #37 #51 #73 #130 | — |
-| 117 | (splice) redenomination-splice trimmer: drop history BEFORE the last step whose implied WEEKLY growth factor… | knob | `splice_max_weekly_rate` | SHIPPED 2.0 | #117 #497 | — |
-| 118 | (#263) plateau trimmer, the splice trimmer's twin: drop history BEFORE the last run of byte-identical consecu… | knob | `flat_run_max_years` | SHIPPED 2.0 | #8 #117 #263 | — |
-| 119 | (#112) add one named hazard to the backtest's caveat block: the most common way a twenty-year single-stock ho… | knob | `print_acquisition_hazard` | SHIPPED true | #8 #48 #108 #112 #819 #1114 | — |
-| 120 | (#112) print the book's CURRENCY exposure under the ranking, looking funds through to their holdings instead… | knob | `print_currency_mix` | SHIPPED true | #108 #112 #1114 | — |
-| 121 | (#111) print, per lane, the OWN-POOL base rate behind the whole thesis: of the samples whose trailing leg had… | knob | `print_base_rates` | SHIPPED true | #111 #124 #127 #128 #192 #1114 | — |
-| 122 | (#111) hold horizon, in years, for the REVERSE-DCF line printed under the ranking: the EPS growth rate today'… | knob | `implied_growth_years` | SHIPPED 10 | #111 #124 #127 #128 #192 #1114 | — |
-| 123 | (#111) the %/yr TOTAL PRICE RETURN the reverse-DCF line assumes its reader demands. Not a gate, not a score i… | knob | `implied_growth_required_pct` | SHIPPED 8.0 | #111 #1114 | — |
-| 124 | (#110) symmetric threshold, in percentage points, that splits the LEVEL entry state into CHEAP / NEUTRAL / RI… | knob | `entry_excess_yield_band` | SHIPPED 0.0 | #110 #306 #1114 | — |
-| 125 | (#109) dock a DISTRIBUTING share class by the twenty-year cost of paying tax on every payout instead of defer… | knob | `growth_acc_drag` | OFF (false) | #109 #306 | RE-OPEN: a disagreeing corner reaching 2H windows on the backtest's own buckets |
-| 126 | (#108) the headline capital-gains rate the backtest's after-tax footer prices both arms at, in percent. Was t… | knob | `capital_gains_tax_pct` | SHIPPED 28.0 | #108 | — |
-| 127 | (#108) holding-period exclusions applied to the GAIN before `capital_gains_tax_pct`, longest-hold rung wins.… | knob | `cgt_hold_schedule` | OFF ([]) | #108 | new reason, see receipt |
-| 128 | (#107) how many perturbed knob vectors `picks::rank_robustness` scores the universe under, to print a MEDIAN… | knob | `rank_perturb_k` | SHIPPED 50 | #107 #1153 | — |
-| 129 | (#106) print the DISTRIBUTION of the held book's terminal multiple across windows — d10 / median / d90, plus… | knob | `print_book_deciles` | SHIPPED true | #106 #124 #128 #140 #1114 #1153 | — |
-| 130 | (#563) ALL-GATES-SOFT: a name that fails knob gates is scored with those gates waived (`picks::waived`, the M… | knob | `growth_gate_soft` | SHIPPED 0.8 | #186 #192 #258 #560 #563 #1282 | — |
-| 131 | (#1230) the ETF twin of growth_gate_soft: a fund failing knob gates scores waived x f^n at THIS f. 0.0 = fund… | knob | `growth_gate_soft_etf` | SHIPPED 0.0 | #160 #421 #552 #566 #1230 #1364 | — |
-| 132 | (#1362) the growth bar's taper: a STOCK under its `cagr` or `cagr-life` floor by less than this many %/yr is… | knob | `growth_cagr_soft_band` | SHIPPED 2.5 | #57 #565 #1354 #1362 #1366 #1374 | — |
-| 133 | (#1245) each of three corporate events inside this many months before a backtest cutoff (a dividend cut to un… | knob | `growth_event_months` | SHIPPED 0 | #1245 #1333 #1431 | — |
-| 134 | (#104) print, beside every lane's rho and edge, how much of the pool's EXTREME upside the ranking actually he… | knob | `print_recall_capture` | SHIPPED true | #91 #104 #140 #154 #160 #172 | — |
-| 135 | (#103) journal the CORE shortlist alongside the ranked slice, so `track` can one day grade the buy-and-hold h… | knob | `journal_core_list` | SHIPPED true | #103 #253 #285 #758 #784 #795 | — |
-| 136 | (#102) the CORE admission TER ceiling, in percent, as a named number instead of a literal buried in `core::ho… | knob | `hold_max_ter` | SHIPPED 0.25 | #102 | — |
-| 137 | (#267) the CORE admission AUM floor, in EUR, as a named number instead of the `1e9` literal buried in `core::… | knob | `hold_min_aum_eur` | SHIPPED 1000000000 | #102 #224 #267 #300 #301 #302 | — |
-| 138 | (#202) TER ceiling, in percent, for a NEW eighth CORE sleeve holding world SMALL-CAP funds; 0.0 = the sleeve… | knob | `hold_size_sleeve_ter` | SHIPPED 0.35 | #95 #102 #197 #201 #202 #220 | — |
-| 139 | (#102) accept an EU-domiciled fund as UCITS even when the NAME omits the token. `hold_miss_reason` requires t… | knob | `hold_ucits_or_domicile` | SHIPPED true | #95 #102 #196 #197 #1037 | — |
-| 140 | (#233) admit SWAP-BASED (synthetic) ETFs to the CORE lane. `hold_miss_leg`'s replication leg refuses everythi… | knob | `hold_allow_swap` | SHIPPED true | #95 #197 #204 #224 #233 #1037 | — |
-| 141 | (#240) admit a fund whose TER we never fetched to the CORE lane. `hold_miss_leg`'s TER leg refuses TWO popula… | knob | `hold_allow_unknown_ter` | SHIPPED true | #222 #224 #226 #233 #240 #241 | — |
-| 142 | (#269) a SECOND, LOWER CORE admission floor in EUR that buys NEW INDEX FAMILIES ONLY. A fund whose AUM sits b… | knob | `hold_min_aum_eur_new_family` | SHIPPED 500000000 | #224 #238 #239 #251 #268 #269 | — |
-| 143 | (#273) a THIRD CORE admission AUM floor, scoped to the WORLD SECTOR SLEEVE rather than to a fund's index fami… | knob | `hold_sector_sleeve_aum` | SHIPPED 90000000 | #220 #224 #237 #269 #272 #273 | — |
-| 144 | (#274) read an ISSUER SHARE-CLASS CODE (`1C` = Xtrackers/DWS Capitalising) as an accumulating class when the… | knob | `hold_issuer_share_class_codes` | SHIPPED true | #20 #171 #242 #272 #274 #278 | — |
-| 145 | (#233) TER credit, in percentage points, given to a SWAP fund at GEO tier 3 (US) when the CORE sleeve sorts -… | knob | `hold_us_swap_ter_credit` | SHIPPED 0.10 | #204 #220 #224 #231 #233 #234 | — |
-| 146 | (#102) require a NARROW/GEO token to sit at a word start before it disqualifies or classifies a fund name. `c… | knob | `hold_name_tokens` | OFF (false) | #95 #102 #195 #231 #233 #234 | Set true to re-open, and re-run the pair above — a pond that has grown may trip what this… |
-| 147 | (#217) turn on a TENTH CORE sleeve holding world FACTOR funds -- quality, value and equal weight, plus moment… | knob | `hold_factor_sleeve` | SHIPPED true | #210 #217 #222 #226 #228 #234 | — |
-| 148 | (#218) turn on an ELEVENTH CORE sleeve holding world/US SECTOR funds -- technology, health care, financials,… | knob | `hold_sector_sleeve` | SHIPPED true | #102 #210 #216 #217 #218 #224 | — |
-| 149 | (#214) fill each CORE sleeve FAMILY-FIRST: one pass takes the best fund of each DISTINCT index family (which… | knob | `hold_family_first` | SHIPPED true | #197 #198 #207 #214 #215 #279 | — |
-| 150 | (#272) key a CORE fund's INDEX FAMILY on `Quote::benchmark` -- BF's own index name -- instead of on the `core… | knob | `hold_family_key_benchmark` | SHIPPED true | #202 #203 #210 #220 #269 #272 | — |
-| 151 | (#207) rows kept in the ALL-WORLD sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it… | knob | `hold_per_tier_all_world` | SHIPPED 7 | #120 #197 #203 #207 #210 #213 | — |
-| 152 | (#251) rows kept in the DEVELOPED sleeve alone (tier 1), overriding `hold_per_tier` there, AND the switch for… | knob | `hold_per_tier_developed` | SHIPPED 8 | #120 #197 #203 #227 #239 #251 | — |
-| 153 | (#231) rows kept in the US sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it, byte-… | knob | `hold_per_tier_us` | SHIPPED 9 | #197 #231 #234 #239 #240 #282 | — |
-| 154 | (#237) rows kept in the EUROPE sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it, b… | knob | `hold_per_tier_europe` | SHIPPED 5 | #197 #207 #213 #224 #237 #282 | — |
-| 155 | (#230) rows kept in the SMALL-CAP sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it… | knob | `hold_per_tier_size` | SHIPPED 4 | #197 #214 #229 #230 #237 #272 | — |
-| 156 | (#228) rows kept in the world FACTOR sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit… | knob | `hold_per_tier_factor` | SHIPPED 5 | #197 #200 #207 #215 #216 #228 | — |
-| 157 | (#220) rows kept in the world SECTOR sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit… | knob | `hold_per_tier_sector` | SHIPPED 23 | #197 #218 #220 #229 #272 #273 | — |
-| 158 | (#227) turn on a TWELFTH CORE sleeve holding SINGLE-MARKET funds -- DAX, Euro Stoxx 50, MSCI EMU, FTSE 100, K… | knob | `hold_per_tier_country` | SHIPPED 17 | #120 #210 #217 #227 #236 #273 | — |
-| 159 | (#239) turn on a THIRTEENTH CORE sleeve holding the NASDAQ-100 -- the one member of the exchange's index suit… | knob | `hold_per_tier_nasdaq` | SHIPPED 2 | #202 #215 #216 #234 #239 #283 | — |
-| 160 | (#197) rows kept per breadth sleeve in the buy-and-hold CORE table, as a named number instead of the bare `co… | knob | `hold_per_tier` | SHIPPED 6 | #120 #195 #197 #234 #242 #272 | — |
-| 161 | (#584) the BUY NOW book alternates the shipped score book with the momentum order (`growth_momentum_key`, 12-… | knob | `growth_momentum_interleave` | SHIPPED true | #197 #242 #272 #584 #585 #817 | — |
-| 162 | (#587) the momentum half's sort key (`picks::momentum_keys`: the live book, the backtest's `momentum_ranked`… | knob | `growth_momentum_key` | SHIPPED 1 | #584 #585 #586 #587 #609 #817 | — |
-| 163 | (#597) of every 10 slots in the interleaved book (`growth_momentum_interleave`), how many the momentum order… | knob | `growth_momentum_slots` | SHIPPED 5 | #388 #560 #584 #597 #609 #630 | — |
-| 164 | (#1243) the momentum slots of every 10 in a CRASH bucket: the pond's equal-weight month (the mean of every tr… | knob | `growth_momentum_crash_slots` | SHIPPED 10 | #1243 | — |
-| 165 | (#1244) the share of the momentum half's keyed names, the jumpiest by the sd of their last 36 monthly returns… | knob | `growth_momentum_vol_cut` | SHIPPED 0.0 | #1244 #1311 | — |
-| 166 | (#1304) the order the stock half of the growth table is read in, one id of `picks::RANKERS`. "shipped" (the D… | knob | `growth_ranker` | SHIPPED shipped | #584 #1304 #1311 #1333 #1431 | — |
-| 167 | (#101) at most this many stocks per GICS sector in the growth book; 0 = off and the DEFAULT. Nothing else in… | knob | `growth_sector_cap` | SHIPPED 0 | #101 #126 #557 #606 #630 #1142 | — |
-| 168 | (#97) restate `volatility_pct` (and its `downside_dev_pct` twin) in DAILY-equivalent units on any cadence, so… | knob | `vol_daily_equivalent` | OFF (false) | #37 #97 #175 #176 #1132 #1392 | Do not re-open by running the cap sweep — it would reproduce the VACUOUS reading this ent… |
-| 169 | (#96) restate a lane's `edge` in points PER YEAR beside the cumulative figure. `edge` is a spread of returns… | knob | `print_edge_annualized` | SHIPPED true | #37 #96 #176 #564 #1114 #1132 | — |
-| 170 | (#96) charge the turnover round trip once per ~6mo REBALANCE inside the hold instead of once per hold. `turno… | knob | `cost_per_rebalance` | OFF (false) | #96 #176 #177 | new reason, see receipt |
-| 171 | (#95) stop stamping TODAY's GICS sector onto a historical cutoff. `stamp_asset_class` fills `quote.sector` fr… | knob | `backtest_drop_lookahead_sector` | OFF (false) | #44 #94 #95 #96 #176 #177 | new reason, see receipt |
-| 172 | (#94) move the redenomination trim from PARSE time to CUTOFF time, so a splice cannot delete history that had… | knob | `splice_trim_point_in_time` | OFF (false) | #44 #94 #139 #173 #188 #189 | TO REOPEN: build the YRS check the block above asks for — does the column stop misstating… |
-| 173 | (#1393) read BOTH legs of a momentum key off the SAME endpoint. `picks::net_return` divides the long leg's re… | knob | `momentum_one_endpoint` | OFF (false) | #97 #116 #117 #1358 #1393 #1394 | (#556) RE-ASKED 2026-10-11, after (#552) let Apple, Applied Materials and Broadcom in: 5… |
-| 174 | (#1391) measure `range_pct`, `drawdown_pct`, `max_drawdown_pct` and `trend_r2` in `core::backtest_quote` over… | knob | `backtest_live_window_years` | SHIPPED 0.0 | #1358 #1391 #1392 #1393 #1394 | — |
-| 175 | (#784) serve a SEC row as its strict twin (`core::FundRow::strict`, every line filed by revenue's filed date,… | knob | `sec_line_filed_gate` | SHIPPED true | #2 #3 #758 #784 | — |
-| 176 | (#93) split the peer group `demean` subtracts by LISTING MARKET as well as by cutoff bucket and asset class.… | knob | `demean_by_market` | SHIPPED true | #93 #94 #139 #173 #1231 #1232 | — |
-| 177 | (#122) DROP a ticker whose Yahoo mapping no longer points at the company it names. A dead company's ticker is… | knob | `drop_dead_ticker_series` | OFF (false) | #47 #93 #121 #122 #1231 #1232 | new reason, see receipt |
-| 178 | (#92) print, beside the top-N ladder table, how many rungs the eye is choosing between. WRITTEN FOR A DEBT TH… | knob | `print_selection_count` | SHIPPED true | #47 #91 #92 #120 #121 #1114 | — |
-| 179 | (#91) print, beside every window count that carries a verdict, how many INDEPENDENT trials that count is wort… | knob | `print_n_eff` | SHIPPED true | #89 #90 #91 #120 #124 #1114 | — |
-| 180 | (#135) print the same-window head-to-head a SECOND time against the 6-10 book, beside today's 11-20 one. WHY:… | knob | `print_h2h_mid_ladder` | SHIPPED true | #89 #90 #124 #130 #135 #1114 | — |
-| 181 | (#159) print, for the GROWTH lane, the held book split into the names that MADE money and those that LOST it,… | knob | `print_held_loser_factors` | SHIPPED true | #9 #100 #128 #129 #151 #159 | — |
-| 182 | (#1242) print, after the GROWTH lane, a seeded bootstrap band on each held-book loser AUC of the seven profit… | knob | `print_held_loser_bands` | OFF (false) | #1242 | new reason, see receipt |
-| 183 | (#1278) print, after the GROWTH lane, the held-book loser AUC of every registered fund factor twice: raw, and… | knob | `print_sector_neutral_auc` | OFF (false) | #1278 | new reason, see receipt |
-| 184 | (#90) how much history to DROP off the end of the earlier side of every train/test and early/late split, so t… | knob | `split_purge_months` | SHIPPED 0 | #89 #90 #91 #124 #151 #160 | — |
-| 185 | (#1227) resample whole TICKERS in `bootstrap_edge_ci` instead of runs of ~6-month cutoff buckets. WHY: (#119)… | knob | `bootstrap_cluster` | SHIPPED true | #89 #119 #1227 | — |
-| 186 | (#119) block length, in ~6-month cutoff buckets, for `bootstrap_edge_ci`, where 0 means DERIVE IT FROM THE HO… | knob | `bootstrap_block_buckets` | SHIPPED 0 | #89 #119 | — |
-| 187 | (#88) the OTHER half of the real-vs-nominal skew, and the same shape: `core::backtest_quote` hardcoded an EMP… | knob | `backtest_anchor_windows` | OFF (false) | #88 #89 #119 #120 #149 #188 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
-| 188 | (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw cl… | knob | `use_adjusted_close` | OFF (false) | #53 #266 #304 #804 #807 #808 | A re-open needs a PRE-REGISTERED total-return refit of `growth_min_cagr`, graded X vs A o… |
-| 189 | (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return comp… | knob | `backtest_tr_ruler` | OFF (false) | #120 #149 #188 #303 #304 #804 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
-| 190 | (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone) | knob | `nupl_euphoria` | SHIPPED 0.5 |  | — |
-| 191 | (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off | knob | `nupl_damp_floor` | SHIPPED 0.5 |  | — |
-| 192 | (4) NUPL below this starts BOOSTING crypto scores (~0.25 = fear/accumulation zone); 0 = boost off | knob | `nupl_capitulation` | SHIPPED 0.25 |  | — |
-| 193 | (4) crypto-score multiplier at NUPL=0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — k… | knob | `nupl_boost_ceiling` | SHIPPED 1.3 |  | — |
-| 194 | (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap) exceeds this. The cla… | knob | `crypto_max_mvrv` | SHIPPED 1.6 | #37 #45 #64 #395 #835 | — |
-| 195 | (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off | knob | `sharpe_weight` | SHIPPED 0.05 | #60 #62 #63 #70 #178 #599 | — |
-| 196 | (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation… | knob | `onsale_sharpe_weight` | SHIPPED 0.0 | #60 #62 #63 #70 #178 #599 | — |
-| 197 | (B) cap on that CAGR/volatility ratio fed into the reward | knob | `sharpe_cap` | SHIPPED 15.0 | #97 #100 | — |
-| 198 | (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily s… | knob | `sharpe_cap_etf` | SHIPPED 9.0 | #37 #97 #100 | — |
-| 199 | (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off | knob | `calmar_weight` | SHIPPED 0.0 |  | — |
-| 200 | (C) cap on that CAGR/max-drawdown ratio fed into the reward | knob | `calmar_cap` | SHIPPED 2.0 |  | — |
-| 201 | dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD | knob | `prefer_eur` | SHIPPED true |  | — |
-| 202 | (#1154) growth GATE (stocks only): lowers `growth_min_cagr` by this many %/yr per tenfold of market cap above… | knob | `growth_min_cagr_size_slope` | SHIPPED 0.0 | #192 #266 #316 #317 #318 #1154 | — |
-| 203 | (#1154) the market cap at which `growth_min_cagr_size_slope` starts to lower the floor; at or below it the fl… | knob | `growth_min_cagr_size_pivot` | SHIPPED 10000000000 | #192 #266 #1154 #1156 | — |
-| 204 | deleted after a measurement refused it | deleted knob | `growth_min_net_margin` | RETIRED | #38 #817 | new reason, see receipt |
-| 205 | deleted after a measurement refused it | deleted knob | `growth_max_margin_swing` | RETIRED | #39 #817 | new reason, see receipt |
-| 206 | deleted after a measurement refused it | deleted knob | `growth_max_dilution_pct` | RETIRED | #817 | new reason, see receipt |
-| 207 | deleted after a measurement refused it | deleted knob | `growth_min_interest_cover` | RETIRED | #817 | new reason, see receipt |
-| 208 | deleted after a measurement refused it | deleted knob | `growth_min_fcf_margin` | RETIRED | #817 | new reason, see receipt |
-| 209 | deleted after a measurement refused it | deleted knob | `growth_min_net_cash_rev` | RETIRED | #817 | new reason, see receipt |
-| 210 | deleted after a measurement refused it | deleted knob | `growth_soft_life_hard` | RETIRED | #568 #817 | new reason, see receipt |
-| 211 | deleted after a measurement refused it | deleted knob | `growth_hard_life_floor` | RETIRED | #576 #817 | new reason, see receipt |
-| 212 | deleted after a measurement refused it | deleted knob | `growth_hard_loss` | RETIRED | #576 #817 | new reason, see receipt |
-| 213 | deleted after a measurement refused it | deleted knob | `growth_soft_drop_misses` | RETIRED | #582 #817 | new reason, see receipt |
-| 214 | deleted after a measurement refused it | deleted knob | `growth_soft_hard_gates` | RETIRED | #566 #797 #802 #803 #817 | new reason, see receipt |
-| 215 | deleted after a measurement refused it | deleted knob | `growth_overext_peg_waive` | RETIRED | #581 #817 | new reason, see receipt |
-| 216 | deleted after a measurement refused it | deleted knob | `growth_overext_backed_floor` | RETIRED | #577 #817 | new reason, see receipt |
-| 217 | deleted after a measurement refused it | deleted knob | `growth_overext_trend_adjust` | RETIRED | #579 #817 | new reason, see receipt |
-| 218 | deleted after a measurement refused it | deleted knob | `growth_peg_taper_k` | RETIRED | #550 #817 | new reason, see receipt |
-| 219 | deleted after a measurement refused it | deleted knob | `growth_red_flag_dock` | RETIRED | #729 #730 #817 | new reason, see receipt |
-| 220 | deleted after a measurement refused it | deleted knob | `growth_momentum_miss_cap` | RETIRED | #585 #817 | new reason, see receipt |
-| 221 | deleted after a measurement refused it | deleted knob | `growth_momentum_keep_age` | RETIRED | #586 #817 | new reason, see receipt |
-| 222 | deleted after a measurement refused it | deleted knob | `growth_gate_on_tr_cagr` | RETIRED | #99 #303 #806 #817 | new reason, see receipt |
-| 223 | deleted after a measurement refused it | deleted knob | `underwater_monthly` | RETIRED | #3 #223 #817 | new reason, see receipt |
-| 224 | deleted after a measurement refused it | deleted knob | `hold_domicile_penalty` | RETIRED | #213 #226 #235 #267 #268 #817 | WHY THIS CLEARS (#235)'s BAR for re-opening a refused floor -- "a tier-set chosen for a r… |
-| 225 | deleted after a measurement refused it | deleted knob | `backtest_calendar_cadence` | RETIRED | #117 #817 | new reason, see receipt |
-| 226 | deleted after a measurement refused it | deleted knob | `growth_tr_life_weight` | RETIRED | #572 #818 | new reason, see receipt |
-| 227 | deleted after a measurement refused it | deleted knob | `growth_tr_life_penalty` | RETIRED | #572 #818 | new reason, see receipt |
-| 228 | deleted after a measurement refused it | deleted knob | `growth_tr_life_pivot` | RETIRED | #572 #818 | new reason, see receipt |
-| 229 | deleted after a measurement refused it | deleted knob | `growth_er_weight` | RETIRED | #145 #818 | (#145) then found the same blindness had hollowed `growth_er_weight`'s composite and four… |
-| 230 | deleted after a measurement refused it | deleted knob | `growth_er_cap` | RETIRED | #818 | new reason, see receipt |
-| 231 | deleted after a measurement refused it | deleted knob | `growth_record_weight` | RETIRED | #133 #818 | new reason, see receipt |
-| 232 | deleted after a measurement refused it | deleted knob | `growth_rank_normalise` | RETIRED | #144 #818 | new reason, see receipt |
-| 233 | deleted after a measurement refused it | deleted knob | `growth_leg_dock` | RETIRED | #566 #818 | new reason, see receipt |
-| 234 | deleted after a measurement refused it | deleted knob | `growth_base_offset` | RETIRED | #144 #150 #818 | new reason, see receipt |
-| 235 | deleted after a measurement refused it | deleted knob | `growth_record_full_years` | RETIRED | #818 | new reason, see receipt |
-| 236 | deleted after a measurement refused it | deleted knob | `growth_geomean_fold` | RETIRED | #8 #48 #819 | new reason, see receipt |
-| 237 | deleted after a measurement refused it | deleted knob | `growth_max_trend_r2` | RETIRED | #1277 #1280 | new reason, see receipt |
-| 238 | deleted after a measurement refused it | deleted knob | `growth_min_underwater_yrs` | RETIRED | #1277 #1280 #1286 | new reason, see receipt |
-| 239 | deleted after a measurement refused it | deleted knob | `growth_untested_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
-| 240 | deleted after a measurement refused it | deleted knob | `growth_stretch_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
-| 241 | deleted after a measurement refused it | deleted knob | `growth_refuse_financials` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
-| 242 | deleted after a measurement refused it | deleted knob | `growth_financial_max_asset_growth` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
-| 243 | deleted after a measurement refused it | deleted knob | `growth_refuse_sector_top_dog` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
+| 67 | (#1435) refuse a stock whose SEC filings read as a bank or insurer (`fund.financial`, tag `financial`): its g… | knob | `growth_refuse_financials` | OFF (false) | #1299 #1389 #1390 #1426 #1435 | new reason, see receipt |
+| 68 | (#1435) refuse the stock with the largest market cap in its sector at the cutoff (`quote.sector_top_dog`, tag… | knob | `growth_refuse_sector_top_dog` | OFF (false) | #1299 #1426 #1435 | new reason, see receipt |
+| 69 | (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name t… | knob | `growth_maxdd_cap` | SHIPPED 0.0 | #26 #60 #74 #134 #135 #137 | — |
+| 70 | (#26) crypto's OWN maxdd cap. Coins crash >90% every cycle, so the equity cap would gate Bitcoin itself (-83%… | knob | `growth_maxdd_cap_crypto` | SHIPPED 84.0 | #26 #60 #74 #134 #135 #137 | — |
+| 71 | (#36) crypto-only hard gate: reject coins whose daily-return stdev (quote.volatility_pct, the VOL column) exc… | knob | `growth_max_vol_crypto` | SHIPPED 3.0 | #36 | — |
+| 72 | (#1425) hard gate, the twin of the floor below: refuse a name LISTED LONGER than this many years (quote.age_y… | knob | `growth_max_age_years` | SHIPPED 0.0 | #24 #64 #1285 #1390 #1392 #1425 | — |
+| 73 | (#33) hard gate: reject a name younger than this many years (quote.age_years, the YRS column = whole-life lis… | knob | `growth_min_age_years` | SHIPPED 0.0 | #3 #33 #139 #160 #178 #182 | — |
+| 74 | (#1300) a COIN's own listing-age floor, on top of growth_min_age_years: a coin must be at least this many yea… | knob | `growth_min_age_years_crypto` | SHIPPED 8.0 | #33 #160 #178 #511 #1291 #1300 | — |
+| 75 | (AUM) ETF-only hard gate: reject a fund smaller than this (quote.aum_eur, EUR-approx from the BF universe pay… | knob | `growth_min_aum_etf` | SHIPPED 100000000 | #511 #1291 #1306 #1315 #1316 | — |
+| 76 | (#37) hard gate: reject a name whose PEG exceeds this — too expensive for the growth it actually delivers. Ex… | knob | `growth_max_peg` | SHIPPED 2.0 | #37 #120 #139 #160 #186 #266 | — |
+| 77 | (#37 funds) the ETF table's OWN valuation ceiling, same PEG units and same arithmetic as growth_max_peg, appl… | knob | `growth_max_peg_etf` | SHIPPED 2.0 | #37 #41 #97 #566 #817 #1399 | — |
+| 78 | (V) hard gate: reject a name whose FILER states no EPS in any filing, so `growth_max_peg` can never price it.… | knob | `growth_require_peg` | SHIPPED true | #538 | — |
+| 79 | (P4a) hard gate: reject a non-crypto name whose LARGEST single-bar move in the trailing month exceeded this %… | knob | `growth_max_daily_1m` | SHIPPED 0.0 | #38 #41 #97 #127 #817 #1399 | — |
+| 80 | (P4b) hard gate: the EQUITY/ETF twin of growth_max_vol_crypto — reject a non-crypto name whose daily-return s… | knob | `growth_max_vol` | SHIPPED 0.0 | #1399 | — |
+| 81 | (#41) REDUNDANCY skip on the shown stock table: walk the ranked rows and drop one whose 36-month trailing-ret… | knob | `growth_corr_cap` | SHIPPED 0.0 | #40 #41 #120 #140 #192 #193 | — |
+| 82 | (#75) VALUE BRAKE: reject the most-expensive-FOR-THEIR-GROWTH P% of a cohort by `fund.peg_yield` (high = chea… | knob | `growth_value_floor_pct` | SHIPPED 40.0 | #41 #47 #71 #72 #75 #1283 | — |
+| 83 | (#44) multiply the growth score of a COMMODITY-LINKED row — GICS Energy/Materials, or a fund whose name carri… | knob | `growth_commodity_damp` | SHIPPED 0.2 | #1 #3 #44 #508 #910 | — |
+| 84 | (#45) multiply the growth score of an ETF whose LIVE quote currency is not EUR (`quote_currency`, straight fr… | knob | `growth_fx_damp` | SHIPPED 0.98 | #1 #3 #44 #45 #508 | — |
+| 85 | (#472) multiply the growth score of a stock Berkshire Hathaway's NEWEST 13F holds (`Quote::brk_held`, the `W`… | knob | `growth_brk_held_boost` | SHIPPED 1.20 | #436 #442 #472 #518 #544 #737 | — |
+| 86 | (#472) the same multiplier for a stock Dataroma's superinvestors bought last quarter (8+ to list), or the (#4… | knob | `growth_superinvestor_boost` | SHIPPED 1.0 | #470 #472 #473 #518 #544 #614 | — |
+| 87 | (#473) buyers per `growth_superinvestor_boost` step: the user's "x1.1 per 3 superinvestors", counted from zer… | knob | `growth_superinvestor_step` | SHIPPED 3 | #472 #473 #737 #738 | — |
+| 88 | (#473) the multiplier for a stock the Social table names through a recent social-arbitrage video or the hand… | knob | `growth_social_boost` | SHIPPED 1.05 | #473 | — |
+| 89 | (#545) the CAPEX/OCF column's bar, in %: a stock whose trailing-twelve-month capex is above this share of its… | knob | `growth_capex_ocf_max` | SHIPPED 70 | #545 #834 | — |
+| 90 | (#545) the multiplier above `growth_capex_ocf_max`. Equities with SEC 10-Q cash lines only; a bank, an insure… | knob | `growth_capex_ocf_penalty` | SHIPPED 0.80 | #86 #545 #547 #834 | — |
+| 91 | (#496) multiply the growth score of an exchange's own token (`picks::EXCHANGE_TOKENS`: BNB, GT, OKB, CRO…), a… | knob | `growth_exchange_token_damp` | SHIPPED 0.5 | #494 #496 #509 | — |
+| 92 | (#511) refuse an exchange's own token (`picks::EXCHANGE_TOKENS`) outright, gate tag `exchange`: the coin is o… | knob | `growth_refuse_exchange_tokens` | SHIPPED true | #496 #511 | — |
+| 93 | (#494) keep ONE ranked fund per benchmark index, the cheapest euro line (the INDEX cell's ` · TICKER`); the o… | knob | `growth_etf_one_per_index` | SHIPPED true | #245 #318 #494 #509 #510 #547 | — |
+| 94 | (#510) ALSO keep one ranked fund per HOLDINGS clique: index groups (as `growth_etf_one_per_index` keys them,… | knob | `growth_etf_one_per_overlap` | SHIPPED 7 | #245 #313 #318 #494 #509 #510 | — |
+| 95 | (#34) ETF cost drag: dock the growth score by the ACTUAL 20-year wealth multiple the expense ratio eats, (1-T… | knob | `growth_ter_drag` | SHIPPED true | #34 | — |
+| 96 | (#47) replace `trust_factor`'s single 10Y cliff with a graded record-length ladder: 20Y leg -> 1.00, 8Y -> 0.… | knob | `growth_trust_ladder` | DEFAULT | #47 | — |
+| 97 | (#49) the BOTTOM two rungs of that ladder, and the only tier that is a knob instead of a constant. The (#47)… | knob | `growth_trust_young` | SHIPPED 0.5 | #47 #49 | — |
+| 98 | (1) growth-score multiplier at that cap (e.g. 0.4 = a fully-stretched name keeps 40% of its score); 1.0 = bra… | knob | `growth_overext_floor` | SHIPPED 0.05 | #100 #496 #1133 | — |
+| 99 | (#1133) the trust dock's exponent in the growth damp, `damp = trust^this × overext_damp^growth_overext_exp`.… | knob | `growth_trust_exp` | SHIPPED 0.5 | #1133 | — |
+| 100 | (#1133) the overextension brake's exponent in that damp. 0.5 = DEFAULT (a 0.05 floor delivers 0.224); 1.0 = t… | knob | `growth_overext_exp` | SHIPPED 0.5 | #1133 #1134 #1135 | — |
+| 101 | (#1136) the bubble damp: the growth score keeps max(1 − this × flags/5, 0.5) of itself, the flags being a 2Y… | knob | `growth_bubble_weight` | SHIPPED 0.0 | #1134 #1135 #1136 #1137 #1138 | — |
+| 102 | (L) liquidity tilt: bonus per ln(turnover/€1B), added OUTSIDE the brake. Rewards deep-liquid mega-caps (easy… | knob | `growth_turnover_weight` | SHIPPED 0.0 | #20 #1136 #1137 #1138 | — |
+| 103 | (#4) crypto's OWN overextension cap (% above the 200wk SMA at which the brake maxes). Crypto routinely rides… | knob | `growth_overext_cap_crypto` | SHIPPED 100.0 | #4 | — |
+| 104 | (#1375) the stretch brake's free zone: no cut while the price sits up to this many % above its 200wk SMA, the… | knob | `growth_overext_free` | SHIPPED 60.0 | #1375 #1377 #1378 | — |
+| 105 | (G) reward per pt of the as-of FUNDAMENTAL factor (see growth_score / fund_factor). The fund lane proves WHIC… | knob | `growth_fund_weight` | SHIPPED 0.07 | #3 #26 #39 #40 #424 #425 | — |
+| 106 | (G) cap (in the factor's own pts) on the fund factor fed into that reward, so one data-artifact (+9000% rev)… | knob | `growth_fund_cap` | SHIPPED 300.0 | #3 #26 #39 #40 #424 #425 | — |
+| 107 | (#87) what an ABSENT `fund_factor` is worth, in the factor's own pts, before weight and cap. Third of the thr… | knob | `growth_fund_neutral` | SHIPPED 0.0 | #43 #87 | — |
+| 108 | (#87) the OTHER half of one missing-data policy, and the half a neutral fill alone gets backwards. A neutral… | knob | `growth_fund_scope_by_class` | OFF (false) | #40 #43 #59 #87 #1129 #1130 | Re-open only with a ruler that does |
+| 109 | (G) WHICH as-of FundFactors term the fund tilt weighs: rev_cagr \| rev_accel \| gross_margin \| op_margin \|… | knob | `growth_fund_factor` | SHIPPED "peg_yield" | #2 #3 #784 | — |
+| 110 | (G+) ADDITIONAL fundamental tilt terms, summed on top of the single `growth_fund_*` term above. The three kno… | knob | `growth_fund_extra` | SHIPPED list | #3 #40 #43 #87 #1129 #1130 | — |
+| 111 | (Item 22) WHICH fundamentals feed BOTH the `backtest <set> fund` lane AND the live `screen`/`check` fund tilt… | knob | `fund_source` | SHIPPED "sec" | #1 #3 #147 #173 #180 #181 | — |
+| 112 | (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-te… | knob | `growth_mom121_weight` | DEFAULT |  | — |
+| 113 | (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank | knob | `growth_mom121_cap` | DEFAULT |  | — |
+| 114 | (E) additive reward per unit of trend_r2 (R² of the log-price trend fit, 0..1; 0 also = no history) — pays na… | knob | `growth_smoothness_weight` | SHIPPED 0.0 | #1 #59 #60 #61 #62 | — |
+| 115 | additive PENALTY per year of the longest below-prior-peak stretch (core::longest_underwater_yrs — the drawdow… | knob | `growth_underwater_weight` | SHIPPED 0.3 | #1 #3 #59 #60 #223 #817 | — |
+| 116 | (Item 20) authority of the P/E multiplier (value_factor) in the GROWTH lane only — BACKTEST-BLIND until (#147… | knob | `growth_value_weight` | SHIPPED 0.0 | #1 #95 #134 #145 #147 #159 | — |
+| 117 | (#48) authority of the PROXIMITY multiplier — the growth score's `range_pct/100` term, which docks a name in… | knob | `growth_proximity_weight` | SHIPPED 1.0 | #8 #48 #497 #599 #819 | — |
+| 118 | (#73) REPOINTED — this is now the window on `growth_min_cagr`'s WHOLE-LIFE REJECT BAR (leg 2), not on the ran… | knob | `life_cagr_max_years` | SHIPPED 0.0 | #3 #14 #37 #51 #73 #130 | — |
+| 119 | (splice) redenomination-splice trimmer: drop history BEFORE the last step whose implied WEEKLY growth factor… | knob | `splice_max_weekly_rate` | SHIPPED 2.0 | #117 #497 | — |
+| 120 | (#263) plateau trimmer, the splice trimmer's twin: drop history BEFORE the last run of byte-identical consecu… | knob | `flat_run_max_years` | SHIPPED 2.0 | #8 #117 #263 | — |
+| 121 | (#112) add one named hazard to the backtest's caveat block: the most common way a twenty-year single-stock ho… | knob | `print_acquisition_hazard` | SHIPPED true | #8 #48 #108 #112 #819 #1114 | — |
+| 122 | (#112) print the book's CURRENCY exposure under the ranking, looking funds through to their holdings instead… | knob | `print_currency_mix` | SHIPPED true | #108 #112 #1114 | — |
+| 123 | (#111) print, per lane, the OWN-POOL base rate behind the whole thesis: of the samples whose trailing leg had… | knob | `print_base_rates` | SHIPPED true | #111 #124 #127 #128 #192 #1114 | — |
+| 124 | (#111) hold horizon, in years, for the REVERSE-DCF line printed under the ranking: the EPS growth rate today'… | knob | `implied_growth_years` | SHIPPED 10 | #111 #124 #127 #128 #192 #1114 | — |
+| 125 | (#111) the %/yr TOTAL PRICE RETURN the reverse-DCF line assumes its reader demands. Not a gate, not a score i… | knob | `implied_growth_required_pct` | SHIPPED 8.0 | #111 #1114 | — |
+| 126 | (#110) symmetric threshold, in percentage points, that splits the LEVEL entry state into CHEAP / NEUTRAL / RI… | knob | `entry_excess_yield_band` | SHIPPED 0.0 | #110 #306 #1114 | — |
+| 127 | (#109) dock a DISTRIBUTING share class by the twenty-year cost of paying tax on every payout instead of defer… | knob | `growth_acc_drag` | OFF (false) | #109 #306 | RE-OPEN: a disagreeing corner reaching 2H windows on the backtest's own buckets |
+| 128 | (#108) the headline capital-gains rate the backtest's after-tax footer prices both arms at, in percent. Was t… | knob | `capital_gains_tax_pct` | SHIPPED 28.0 | #108 | — |
+| 129 | (#108) holding-period exclusions applied to the GAIN before `capital_gains_tax_pct`, longest-hold rung wins.… | knob | `cgt_hold_schedule` | OFF ([]) | #108 | new reason, see receipt |
+| 130 | (#107) how many perturbed knob vectors `picks::rank_robustness` scores the universe under, to print a MEDIAN… | knob | `rank_perturb_k` | SHIPPED 50 | #107 #1153 | — |
+| 131 | (#106) print the DISTRIBUTION of the held book's terminal multiple across windows — d10 / median / d90, plus… | knob | `print_book_deciles` | SHIPPED true | #106 #124 #128 #140 #1114 #1153 | — |
+| 132 | (#563) ALL-GATES-SOFT: a name that fails knob gates is scored with those gates waived (`picks::waived`, the M… | knob | `growth_gate_soft` | SHIPPED 0.8 | #186 #192 #258 #560 #563 #1282 | — |
+| 133 | (#1230) the ETF twin of growth_gate_soft: a fund failing knob gates scores waived x f^n at THIS f. 0.0 = fund… | knob | `growth_gate_soft_etf` | SHIPPED 0.0 | #160 #421 #552 #566 #1230 #1364 | — |
+| 134 | (#1362) the growth bar's taper: a STOCK under its `cagr` or `cagr-life` floor by less than this many %/yr is… | knob | `growth_cagr_soft_band` | SHIPPED 2.5 | #57 #565 #1354 #1362 #1366 #1374 | — |
+| 135 | (#1245) each of three corporate events inside this many months before a backtest cutoff (a dividend cut to un… | knob | `growth_event_months` | SHIPPED 0 | #1245 #1333 #1431 | — |
+| 136 | (#104) print, beside every lane's rho and edge, how much of the pool's EXTREME upside the ranking actually he… | knob | `print_recall_capture` | SHIPPED true | #91 #104 #140 #154 #160 #172 | — |
+| 137 | (#103) journal the CORE shortlist alongside the ranked slice, so `track` can one day grade the buy-and-hold h… | knob | `journal_core_list` | SHIPPED true | #103 #253 #285 #758 #784 #795 | — |
+| 138 | (#102) the CORE admission TER ceiling, in percent, as a named number instead of a literal buried in `core::ho… | knob | `hold_max_ter` | SHIPPED 0.25 | #102 | — |
+| 139 | (#267) the CORE admission AUM floor, in EUR, as a named number instead of the `1e9` literal buried in `core::… | knob | `hold_min_aum_eur` | SHIPPED 1000000000 | #102 #224 #267 #300 #301 #302 | — |
+| 140 | (#202) TER ceiling, in percent, for a NEW eighth CORE sleeve holding world SMALL-CAP funds; 0.0 = the sleeve… | knob | `hold_size_sleeve_ter` | SHIPPED 0.35 | #95 #102 #197 #201 #202 #220 | — |
+| 141 | (#102) accept an EU-domiciled fund as UCITS even when the NAME omits the token. `hold_miss_reason` requires t… | knob | `hold_ucits_or_domicile` | SHIPPED true | #95 #102 #196 #197 #1037 | — |
+| 142 | (#233) admit SWAP-BASED (synthetic) ETFs to the CORE lane. `hold_miss_leg`'s replication leg refuses everythi… | knob | `hold_allow_swap` | SHIPPED true | #95 #197 #204 #224 #233 #1037 | — |
+| 143 | (#240) admit a fund whose TER we never fetched to the CORE lane. `hold_miss_leg`'s TER leg refuses TWO popula… | knob | `hold_allow_unknown_ter` | SHIPPED true | #222 #224 #226 #233 #240 #241 | — |
+| 144 | (#269) a SECOND, LOWER CORE admission floor in EUR that buys NEW INDEX FAMILIES ONLY. A fund whose AUM sits b… | knob | `hold_min_aum_eur_new_family` | SHIPPED 500000000 | #224 #238 #239 #251 #268 #269 | — |
+| 145 | (#273) a THIRD CORE admission AUM floor, scoped to the WORLD SECTOR SLEEVE rather than to a fund's index fami… | knob | `hold_sector_sleeve_aum` | SHIPPED 90000000 | #220 #224 #237 #269 #272 #273 | — |
+| 146 | (#274) read an ISSUER SHARE-CLASS CODE (`1C` = Xtrackers/DWS Capitalising) as an accumulating class when the… | knob | `hold_issuer_share_class_codes` | SHIPPED true | #20 #171 #242 #272 #274 #278 | — |
+| 147 | (#233) TER credit, in percentage points, given to a SWAP fund at GEO tier 3 (US) when the CORE sleeve sorts -… | knob | `hold_us_swap_ter_credit` | SHIPPED 0.10 | #204 #220 #224 #231 #233 #234 | — |
+| 148 | (#102) require a NARROW/GEO token to sit at a word start before it disqualifies or classifies a fund name. `c… | knob | `hold_name_tokens` | OFF (false) | #95 #102 #195 #231 #233 #234 | Set true to re-open, and re-run the pair above — a pond that has grown may trip what this… |
+| 149 | (#217) turn on a TENTH CORE sleeve holding world FACTOR funds -- quality, value and equal weight, plus moment… | knob | `hold_factor_sleeve` | SHIPPED true | #210 #217 #222 #226 #228 #234 | — |
+| 150 | (#218) turn on an ELEVENTH CORE sleeve holding world/US SECTOR funds -- technology, health care, financials,… | knob | `hold_sector_sleeve` | SHIPPED true | #102 #210 #216 #217 #218 #224 | — |
+| 151 | (#214) fill each CORE sleeve FAMILY-FIRST: one pass takes the best fund of each DISTINCT index family (which… | knob | `hold_family_first` | SHIPPED true | #197 #198 #207 #214 #215 #279 | — |
+| 152 | (#272) key a CORE fund's INDEX FAMILY on `Quote::benchmark` -- BF's own index name -- instead of on the `core… | knob | `hold_family_key_benchmark` | SHIPPED true | #202 #203 #210 #220 #269 #272 | — |
+| 153 | (#207) rows kept in the ALL-WORLD sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it… | knob | `hold_per_tier_all_world` | SHIPPED 7 | #120 #197 #203 #207 #210 #213 | — |
+| 154 | (#251) rows kept in the DEVELOPED sleeve alone (tier 1), overriding `hold_per_tier` there, AND the switch for… | knob | `hold_per_tier_developed` | SHIPPED 8 | #120 #197 #203 #227 #239 #251 | — |
+| 155 | (#231) rows kept in the US sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it, byte-… | knob | `hold_per_tier_us` | SHIPPED 9 | #197 #231 #234 #239 #240 #282 | — |
+| 156 | (#237) rows kept in the EUROPE sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it, b… | knob | `hold_per_tier_europe` | SHIPPED 5 | #197 #207 #213 #224 #237 #282 | — |
+| 157 | (#230) rows kept in the SMALL-CAP sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit it… | knob | `hold_per_tier_size` | SHIPPED 4 | #197 #214 #229 #230 #237 #272 | — |
+| 158 | (#228) rows kept in the world FACTOR sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit… | knob | `hold_per_tier_factor` | SHIPPED 5 | #197 #200 #207 #215 #216 #228 | — |
+| 159 | (#220) rows kept in the world SECTOR sleeve alone, overriding `hold_per_tier` there; 0 = no override, inherit… | knob | `hold_per_tier_sector` | SHIPPED 23 | #197 #218 #220 #229 #272 #273 | — |
+| 160 | (#227) turn on a TWELFTH CORE sleeve holding SINGLE-MARKET funds -- DAX, Euro Stoxx 50, MSCI EMU, FTSE 100, K… | knob | `hold_per_tier_country` | SHIPPED 17 | #120 #210 #217 #227 #236 #273 | — |
+| 161 | (#239) turn on a THIRTEENTH CORE sleeve holding the NASDAQ-100 -- the one member of the exchange's index suit… | knob | `hold_per_tier_nasdaq` | SHIPPED 2 | #202 #215 #216 #234 #239 #283 | — |
+| 162 | (#197) rows kept per breadth sleeve in the buy-and-hold CORE table, as a named number instead of the bare `co… | knob | `hold_per_tier` | SHIPPED 6 | #120 #195 #197 #234 #242 #272 | — |
+| 163 | (#584) the BUY NOW book alternates the shipped score book with the momentum order (`growth_momentum_key`, 12-… | knob | `growth_momentum_interleave` | SHIPPED true | #197 #242 #272 #584 #585 #817 | — |
+| 164 | (#587) the momentum half's sort key (`picks::momentum_keys`: the live book, the backtest's `momentum_ranked`… | knob | `growth_momentum_key` | SHIPPED 1 | #584 #585 #586 #587 #609 #817 | — |
+| 165 | (#597) of every 10 slots in the interleaved book (`growth_momentum_interleave`), how many the momentum order… | knob | `growth_momentum_slots` | SHIPPED 5 | #388 #560 #584 #597 #609 #630 | — |
+| 166 | (#1243) the momentum slots of every 10 in a CRASH bucket: the pond's equal-weight month (the mean of every tr… | knob | `growth_momentum_crash_slots` | SHIPPED 10 | #1243 | — |
+| 167 | (#1244) the share of the momentum half's keyed names, the jumpiest by the sd of their last 36 monthly returns… | knob | `growth_momentum_vol_cut` | SHIPPED 0.0 | #1244 #1311 | — |
+| 168 | (#1304) the order the stock half of the growth table is read in, one id of `picks::RANKERS`. "shipped" (the D… | knob | `growth_ranker` | SHIPPED shipped | #584 #1304 #1311 #1333 #1431 | — |
+| 169 | (#101) at most this many stocks per GICS sector in the growth book; 0 = off and the DEFAULT. Nothing else in… | knob | `growth_sector_cap` | SHIPPED 0 | #101 #126 #557 #606 #630 #1142 | — |
+| 170 | (#97) restate `volatility_pct` (and its `downside_dev_pct` twin) in DAILY-equivalent units on any cadence, so… | knob | `vol_daily_equivalent` | OFF (false) | #37 #97 #175 #176 #1132 #1392 | Do not re-open by running the cap sweep — it would reproduce the VACUOUS reading this ent… |
+| 171 | (#96) restate a lane's `edge` in points PER YEAR beside the cumulative figure. `edge` is a spread of returns… | knob | `print_edge_annualized` | SHIPPED true | #37 #96 #176 #564 #1114 #1132 | — |
+| 172 | (#96) charge the turnover round trip once per ~6mo REBALANCE inside the hold instead of once per hold. `turno… | knob | `cost_per_rebalance` | OFF (false) | #96 #176 #177 | new reason, see receipt |
+| 173 | (#95) stop stamping TODAY's GICS sector onto a historical cutoff. `stamp_asset_class` fills `quote.sector` fr… | knob | `backtest_drop_lookahead_sector` | OFF (false) | #44 #94 #95 #96 #176 #177 | new reason, see receipt |
+| 174 | (#94) move the redenomination trim from PARSE time to CUTOFF time, so a splice cannot delete history that had… | knob | `splice_trim_point_in_time` | OFF (false) | #44 #94 #139 #173 #188 #189 | TO REOPEN: build the YRS check the block above asks for — does the column stop misstating… |
+| 175 | (#1393) read BOTH legs of a momentum key off the SAME endpoint. `picks::net_return` divides the long leg's re… | knob | `momentum_one_endpoint` | OFF (false) | #97 #116 #117 #1358 #1393 #1394 | (#556) RE-ASKED 2026-10-11, after (#552) let Apple, Applied Materials and Broadcom in: 5… |
+| 176 | (#1391) measure `range_pct`, `drawdown_pct`, `max_drawdown_pct` and `trend_r2` in `core::backtest_quote` over… | knob | `backtest_live_window_years` | SHIPPED 0.0 | #1358 #1391 #1392 #1393 #1394 | — |
+| 177 | (#784) serve a SEC row as its strict twin (`core::FundRow::strict`, every line filed by revenue's filed date,… | knob | `sec_line_filed_gate` | SHIPPED true | #2 #3 #758 #784 | — |
+| 178 | (#93) split the peer group `demean` subtracts by LISTING MARKET as well as by cutoff bucket and asset class.… | knob | `demean_by_market` | SHIPPED true | #93 #94 #139 #173 #1231 #1232 | — |
+| 179 | (#122) DROP a ticker whose Yahoo mapping no longer points at the company it names. A dead company's ticker is… | knob | `drop_dead_ticker_series` | OFF (false) | #47 #93 #121 #122 #1231 #1232 | new reason, see receipt |
+| 180 | (#92) print, beside the top-N ladder table, how many rungs the eye is choosing between. WRITTEN FOR A DEBT TH… | knob | `print_selection_count` | SHIPPED true | #47 #91 #92 #120 #121 #1114 | — |
+| 181 | (#91) print, beside every window count that carries a verdict, how many INDEPENDENT trials that count is wort… | knob | `print_n_eff` | SHIPPED true | #89 #90 #91 #120 #124 #1114 | — |
+| 182 | (#135) print the same-window head-to-head a SECOND time against the 6-10 book, beside today's 11-20 one. WHY:… | knob | `print_h2h_mid_ladder` | SHIPPED true | #89 #90 #124 #130 #135 #1114 | — |
+| 183 | (#159) print, for the GROWTH lane, the held book split into the names that MADE money and those that LOST it,… | knob | `print_held_loser_factors` | SHIPPED true | #9 #100 #128 #129 #151 #159 | — |
+| 184 | (#1242) print, after the GROWTH lane, a seeded bootstrap band on each held-book loser AUC of the seven profit… | knob | `print_held_loser_bands` | OFF (false) | #1242 | new reason, see receipt |
+| 185 | (#1278) print, after the GROWTH lane, the held-book loser AUC of every registered fund factor twice: raw, and… | knob | `print_sector_neutral_auc` | OFF (false) | #1278 | new reason, see receipt |
+| 186 | (#90) how much history to DROP off the end of the earlier side of every train/test and early/late split, so t… | knob | `split_purge_months` | SHIPPED 0 | #89 #90 #91 #124 #151 #160 | — |
+| 187 | (#1227) resample whole TICKERS in `bootstrap_edge_ci` instead of runs of ~6-month cutoff buckets. WHY: (#119)… | knob | `bootstrap_cluster` | SHIPPED true | #89 #119 #1227 | — |
+| 188 | (#119) block length, in ~6-month cutoff buckets, for `bootstrap_edge_ci`, where 0 means DERIVE IT FROM THE HO… | knob | `bootstrap_block_buckets` | SHIPPED 0 | #89 #119 | — |
+| 189 | (#88) the OTHER half of the real-vs-nominal skew, and the same shape: `core::backtest_quote` hardcoded an EMP… | knob | `backtest_anchor_windows` | OFF (false) | #88 #89 #119 #120 #149 #188 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
+| 190 | (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw cl… | knob | `use_adjusted_close` | OFF (false) | #53 #266 #304 #804 #807 #808 | A re-open needs a PRE-REGISTERED total-return refit of `growth_min_cagr`, graded X vs A o… |
+| 191 | (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return comp… | knob | `backtest_tr_ruler` | OFF (false) | #120 #149 #188 #303 #304 #804 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
+| 192 | (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone) | knob | `nupl_euphoria` | SHIPPED 0.5 |  | — |
+| 193 | (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off | knob | `nupl_damp_floor` | SHIPPED 0.5 |  | — |
+| 194 | (4) NUPL below this starts BOOSTING crypto scores (~0.25 = fear/accumulation zone); 0 = boost off | knob | `nupl_capitulation` | SHIPPED 0.25 |  | — |
+| 195 | (4) crypto-score multiplier at NUPL=0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — k… | knob | `nupl_boost_ceiling` | SHIPPED 1.3 |  | — |
+| 196 | (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap) exceeds this. The cla… | knob | `crypto_max_mvrv` | SHIPPED 1.6 | #37 #45 #64 #395 #835 | — |
+| 197 | (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off | knob | `sharpe_weight` | SHIPPED 0.05 | #60 #62 #63 #70 #178 #599 | — |
+| 198 | (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation… | knob | `onsale_sharpe_weight` | SHIPPED 0.0 | #60 #62 #63 #70 #178 #599 | — |
+| 199 | (B) cap on that CAGR/volatility ratio fed into the reward | knob | `sharpe_cap` | SHIPPED 15.0 | #97 #100 | — |
+| 200 | (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily s… | knob | `sharpe_cap_etf` | SHIPPED 9.0 | #37 #97 #100 | — |
+| 201 | (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off | knob | `calmar_weight` | SHIPPED 0.0 |  | — |
+| 202 | (C) cap on that CAGR/max-drawdown ratio fed into the reward | knob | `calmar_cap` | SHIPPED 2.0 |  | — |
+| 203 | dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD | knob | `prefer_eur` | SHIPPED true |  | — |
+| 204 | (#1154) growth GATE (stocks only): lowers `growth_min_cagr` by this many %/yr per tenfold of market cap above… | knob | `growth_min_cagr_size_slope` | SHIPPED 0.0 | #192 #266 #316 #317 #318 #1154 | — |
+| 205 | (#1154) the market cap at which `growth_min_cagr_size_slope` starts to lower the floor; at or below it the fl… | knob | `growth_min_cagr_size_pivot` | SHIPPED 10000000000 | #192 #266 #1154 #1156 | — |
+| 206 | deleted after a measurement refused it | deleted knob | `growth_min_net_margin` | RETIRED | #38 #817 | new reason, see receipt |
+| 207 | deleted after a measurement refused it | deleted knob | `growth_max_margin_swing` | RETIRED | #39 #817 | new reason, see receipt |
+| 208 | deleted after a measurement refused it | deleted knob | `growth_max_dilution_pct` | RETIRED | #817 | new reason, see receipt |
+| 209 | deleted after a measurement refused it | deleted knob | `growth_min_interest_cover` | RETIRED | #817 | new reason, see receipt |
+| 210 | deleted after a measurement refused it | deleted knob | `growth_min_fcf_margin` | RETIRED | #817 | new reason, see receipt |
+| 211 | deleted after a measurement refused it | deleted knob | `growth_min_net_cash_rev` | RETIRED | #817 | new reason, see receipt |
+| 212 | deleted after a measurement refused it | deleted knob | `growth_soft_life_hard` | RETIRED | #568 #817 | new reason, see receipt |
+| 213 | deleted after a measurement refused it | deleted knob | `growth_hard_life_floor` | RETIRED | #576 #817 | new reason, see receipt |
+| 214 | deleted after a measurement refused it | deleted knob | `growth_hard_loss` | RETIRED | #576 #817 | new reason, see receipt |
+| 215 | deleted after a measurement refused it | deleted knob | `growth_soft_drop_misses` | RETIRED | #582 #817 | new reason, see receipt |
+| 216 | deleted after a measurement refused it | deleted knob | `growth_soft_hard_gates` | RETIRED | #566 #797 #802 #803 #817 | new reason, see receipt |
+| 217 | deleted after a measurement refused it | deleted knob | `growth_overext_peg_waive` | RETIRED | #581 #817 | new reason, see receipt |
+| 218 | deleted after a measurement refused it | deleted knob | `growth_overext_backed_floor` | RETIRED | #577 #817 | new reason, see receipt |
+| 219 | deleted after a measurement refused it | deleted knob | `growth_overext_trend_adjust` | RETIRED | #579 #817 | new reason, see receipt |
+| 220 | deleted after a measurement refused it | deleted knob | `growth_peg_taper_k` | RETIRED | #550 #817 | new reason, see receipt |
+| 221 | deleted after a measurement refused it | deleted knob | `growth_red_flag_dock` | RETIRED | #729 #730 #817 | new reason, see receipt |
+| 222 | deleted after a measurement refused it | deleted knob | `growth_momentum_miss_cap` | RETIRED | #585 #817 | new reason, see receipt |
+| 223 | deleted after a measurement refused it | deleted knob | `growth_momentum_keep_age` | RETIRED | #586 #817 | new reason, see receipt |
+| 224 | deleted after a measurement refused it | deleted knob | `growth_gate_on_tr_cagr` | RETIRED | #99 #303 #806 #817 | new reason, see receipt |
+| 225 | deleted after a measurement refused it | deleted knob | `underwater_monthly` | RETIRED | #3 #223 #817 | new reason, see receipt |
+| 226 | deleted after a measurement refused it | deleted knob | `hold_domicile_penalty` | RETIRED | #213 #226 #235 #267 #268 #817 | WHY THIS CLEARS (#235)'s BAR for re-opening a refused floor -- "a tier-set chosen for a r… |
+| 227 | deleted after a measurement refused it | deleted knob | `backtest_calendar_cadence` | RETIRED | #117 #817 | new reason, see receipt |
+| 228 | deleted after a measurement refused it | deleted knob | `growth_tr_life_weight` | RETIRED | #572 #818 | new reason, see receipt |
+| 229 | deleted after a measurement refused it | deleted knob | `growth_tr_life_penalty` | RETIRED | #572 #818 | new reason, see receipt |
+| 230 | deleted after a measurement refused it | deleted knob | `growth_tr_life_pivot` | RETIRED | #572 #818 | new reason, see receipt |
+| 231 | deleted after a measurement refused it | deleted knob | `growth_er_weight` | RETIRED | #145 #818 | (#145) then found the same blindness had hollowed `growth_er_weight`'s composite and four… |
+| 232 | deleted after a measurement refused it | deleted knob | `growth_er_cap` | RETIRED | #818 | new reason, see receipt |
+| 233 | deleted after a measurement refused it | deleted knob | `growth_record_weight` | RETIRED | #133 #818 | new reason, see receipt |
+| 234 | deleted after a measurement refused it | deleted knob | `growth_rank_normalise` | RETIRED | #144 #818 | new reason, see receipt |
+| 235 | deleted after a measurement refused it | deleted knob | `growth_leg_dock` | RETIRED | #566 #818 | new reason, see receipt |
+| 236 | deleted after a measurement refused it | deleted knob | `growth_base_offset` | RETIRED | #144 #150 #818 | new reason, see receipt |
+| 237 | deleted after a measurement refused it | deleted knob | `growth_record_full_years` | RETIRED | #818 | new reason, see receipt |
+| 238 | deleted after a measurement refused it | deleted knob | `growth_geomean_fold` | RETIRED | #8 #48 #819 | new reason, see receipt |
+| 239 | deleted after a measurement refused it | deleted knob | `growth_max_trend_r2` | RETIRED | #1277 #1280 | new reason, see receipt |
+| 240 | deleted after a measurement refused it | deleted knob | `growth_min_underwater_yrs` | RETIRED | #1277 #1280 #1286 | new reason, see receipt |
+| 241 | deleted after a measurement refused it | deleted knob | `growth_untested_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
+| 242 | deleted after a measurement refused it | deleted knob | `growth_stretch_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
+| 243 | deleted after a measurement refused it | deleted knob | `growth_financial_max_asset_growth` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
 | 244 | deleted after a measurement refused it | deleted knob | `growth_consensus_min` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
 | 245 | deleted after a measurement refused it | deleted knob | `growth_consensus_dock` | RETIRED | #1297 | new reason, see receipt |
 | 246 | deleted after a measurement refused it | deleted knob | `growth_hard_tags` | RETIRED | #1297 | new reason, see receipt |
