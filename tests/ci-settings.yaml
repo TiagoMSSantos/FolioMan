@@ -23335,10 +23335,10 @@ buy_heuristic:
   #     stands; growth_max_above_ma stays 150.
   # (#1286) retired: growth_untested_hard: false # (#1285) refuse a stock failing `untested` even under growth_gate_soft. false = docked
   # (#1286) retired: growth_stretch_hard: false  # (#1285) the same switch for `stretch` (growth_max_above_ma). false = docked
-  growth_max_age_years: 0.0      # (#1425) PRE-REGISTERED 2026-11-08, UNMEASURED. The age floor's twin: refuse a name LISTED LONGER than
+  growth_max_age_years: 0.0      # (#1425) PRE-REGISTERED 2026-11-08, (#1426) NO RECOVERY. The age floor's twin: refuse a name LISTED LONGER than
                                  #   this many years (quote.age_years). 0.0 = off, byte-identical. Not a view on old companies: it states the
                                  #   accidental exclusion (#1390) found in the mixed bars so honest bars can be asked whether it reproduces the
-                                 #   shipped book. Grid rows 30/40/50 on the (#1389) arm; row (#1426) decides; the owner's word ships anything.
+                                 #   shipped book. (#1426) graded 30/40/50 on the (#1389) arm: no cap recovers the shipped book, so it stays off.
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which
@@ -28156,6 +28156,51 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   honest prior is (A) on median and (B) on the tail. The 30 cap over-prunes (it removes 1990s listings); 50 does
 #   little. Nothing ships without the owner's word.
 # REVERT RULE: the knob to 0.0.
+# (#1426) VERDICT, 2026-11-09, on (#1425): NO RECOVERY, read (B). No age cap brings the honest-bars book back to the
+#   shipped book, so `growth_max_age_years` stays 0.0 and no owner question is asked. Arm probe 42590510707 on
+#   f76dde1, knobs="long_chart_explicit_span=true", rescore="guard", 200 shuffles, the pre-registered grid. Its log
+#   prints bars `1mo 5838` at both horizons; windows scored 5142 / 6555 at 12y and 9230 / 8677 at 8y.
+# DEVIATION: the shipped-bars control is a fresh plain probe, 42590607431 on the same f76dde1 (windows 5150 / 6488
+#   and 9184 / 8596), not (#1390)'s. fcf_pct (#1406) and its goldens moved the book after (#1390)'s 863f757, so
+#   that control no longer measures what ships.
+# RU RULER (tools/regrade_ruler.py, lane pit), 12y cells left of the first bar, 8y right of it. "cap N" =
+#   growth_max_age_years N; row 0 = the arm with no cap. A fail with no horizon fails at both:
+#     row       mean   med worst   p20 worst5    RU1 |  mean   med worst   p20 worst5    RU1 | fails
+#     control   +3.6  +3.4  -3.5  +1.3   -0.7  22/38 |  +3.4  +3.5  -3.6  +0.6   -2.3  27/46 | none
+#     row 0     +2.6  +2.7  -4.8  -0.6   -2.2  18/37 |  +2.9  +3.1  -5.3  -0.6   -2.6  25/45 | 12y RU1
+#     cap 30    +2.6  +2.9  -4.8  -0.6   -2.4  18/37 |  +2.7  +2.7  -5.3  -0.3   -2.6  25/45 | 12y RU1; 8y RU3
+#                                                                                              RU-E old-prim
+#     cap 40    +2.6  +2.9  -4.8  -0.6   -2.2  18/37 |  +2.9  +3.1  -5.3  -0.6   -2.6  25/45 | 12y RU1
+#   Cap 50 reads row 0's numbers on every cell, era lines included.
+# ERA, median excess by cutoff era, 12y | 8y (buckets: control 12/12/12/2 and 12/12/12/10, arm 11/12/12/2 and
+#   11/12/12/10):
+#     row        <=2001        2002-07       2008-13       >=2014
+#     control    +2.0 | +2.2   +3.9 | +4.3   +4.2 | +5.1   +1.4 | +1.4
+#     row 0      +2.4 | +3.1   +2.1 | +0.5   +4.2 | +4.3   +6.5 | +4.9
+#     cap 30     +2.4 | +3.1   +2.3 | +0.5   +4.5 | +4.7   +6.5 | +2.8
+#     cap 40     +2.4 | +3.1   +2.1 | +0.5   +4.5 | +4.7   +6.5 | +4.9
+# GUARD, 12y / 8y: cap 30 top-10 gain +0.04 / -0.17 (edge -0.18 / -0.51), pond +0.00 / -0.04 (edge -0.15 / -0.11),
+#   0.14 / 0.31 top-10 names moved a bucket, PASS. Cap 40 +0.06 / +0.04 (edge -0.06 / -0.07), pond -0.01 / -0.01
+#   (edge -0.09 / -0.05), 0.03 / 0.02 names moved, PASS. Cap 50 INERT: 0.00 names moved at both. Pool 100.0 % on
+#   every row. NULL BAND INSIDE on every row; cap 40's 12y median gain +0.21 sits just past its band's +0.20 top,
+#   but OUTSIDE needs both moments. TAIL INSIDE on every row.
+# BAR READ: (A) needed every cell within the (#1333) band of the control. Cap 40's medians are inside (12y +2.9 against
+#   +3.4, 8y +3.1 against +3.5), but its 12y mean is 1.0 under (+2.6 against +3.6), its worst window is 1.3 and 1.7
+#   under (-4.8 against -3.5, -5.3 against -3.6), and its 12y RU1 is 18/37 (48.6 %) against 22/38 (57.9 %), under
+#   the 50 % floor. Every cap row reads the same worst windows and RU1 tallies as row 0. So (B).
+# AGAINST EXPECTED: the 40 cap was called to recover most of the 2002-13 gap. It did not: the 2002-07 era stays
+#   +2.1 at 12y (control +3.9) and +0.5 at 8y (control +4.3); only 2008-13 moved, +0.3 and +0.4. The 12y median
+#   came within 0.5 of the control (+2.9 against +3.4, from row 0's +2.7) and the worst window stayed 1-3 points
+#   under, both as called. The 30 cap over-pruned, as called (8y median -0.4, >=2014 era -2.2 over row 0, RU-E
+#   FAIL); 50 did nothing, as called.
+# READ: the cap barely binds on honest bars (0.02-0.03 top-10 names moved a bucket at 40), because the oldest
+#   listings rarely reach the honest-bars top 10. So the honest bars lose their 2002-07 windows in other names, and
+#   the (#1389) story (the mixed bars refuse old listings by accident) does not carry the gap. The mixed-bar edge
+#   over honest bars is an artifact that no age rule tested reproduces. The (#1390)/(#1392) knobs stay off, and the
+#   shipped bars stay, as decided.
+# NEXT: no setting moves. The cap's code stays (0.0 = off, byte-identical). The bars question reopens only on a new
+#   question pre-registered before any run.
+# REVERT RULE: nothing to revert; the knob stays 0.0.
 # (#1427) THE EVENTS CENSUS, PRE-REGISTERED 2026-11-08 before any run, record only, no knob, no page. Rows: none; the
 #   verdict goes under this block. Data: tests/event-dates.csv, written by `tools/event_dates.py`.
 # WHY: every same-session census so far conditions on PRICE (the twelve keys), the CLOCK ((#1214) hours, (#1216)
