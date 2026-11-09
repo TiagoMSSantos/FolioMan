@@ -19,7 +19,7 @@ arithmetic aid for a conversation with an accountant, not advice; the repo's rul
     python3 -I tools/exit_tax.py --cost 10000 --cagr 10 --years 20 --asset crypto
     python3 -I tools/exit_tax.py --selftest
 """
-import argparse, sys
+import argparse
 
 FLAT = 0.28  # art. 72.º autonomous rate on the positive balance of securities gains
 # art. 43.º n.º 5, read 2026-11-08: (min_years, excluded share), the widest satisfied rung wins
@@ -149,7 +149,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cost", type=float, default=10000.0)
     ap.add_argument("--value", type=float, help="sale value; or give --cagr and it is cost x (1 + cagr)^years")
-    ap.add_argument("--cagr", type=float, help="pre-tax %/yr, used when --value is absent and for --wrapper-fee")
+    ap.add_argument("--cagr", type=float, help="pre-tax %%/yr, used when --value is absent and for --wrapper-fee")
     ap.add_argument("--years", type=float, default=20.0)
     ap.add_argument("--other-income", type=float, default=0.0, help="the sale year's other rendimento coletável")
     ap.add_argument("--tranches", type=int, nargs="+", default=[1, 3, 5], help="sell over this many consecutive years, equal gains")
@@ -160,7 +160,8 @@ def main():
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
-        return selftest()
+        selftest()
+        return
     if a.brackets in BRACKETS:
         brackets, name = BRACKETS[a.brackets], a.brackets
     else:

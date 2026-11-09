@@ -22,10 +22,10 @@ Not wired into the binary: run it by hand and commit the CSV; `backtest N intrad
     python3 -I tools/event_dates.py --selftest
 Under `MIN_EARNINGS` earnings rows the tool refuses to write, as the other SEC tools do on a broken scan.
 """
-import argparse, collections, csv, datetime, io, os, sys, urllib.request
+import argparse, csv, datetime, io, os, sys, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from failures_from_sec import PACE, TICKERS, UA, _get  # noqa: E402  one SEC identity for every tool
+from failures_from_sec import TICKERS, UA, _get  # noqa: E402  one SEC identity for every tool
 
 SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik}.json"
 PAGE = "https://data.sec.gov/submissions/{name}"
@@ -34,7 +34,6 @@ TICKER_CIK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tes
 START = datetime.date(2012, 1, 1)  # 8-K items are tagged in the submissions JSON from about 2005; the 10y bars start ~2016
 HEADER = ["ticker", "date", "kind"]
 MIN_EARNINGS = 8000  # a broken-scan guard: ~600 members x 4 a year x 10+ years is 24,000+; a third of that
-_last = [0.0]
 
 # (date, how) — statement release dates; `scheduled-future` for a meeting not yet held on 2026-11-08
 FOMC = [
