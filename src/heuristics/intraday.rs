@@ -412,7 +412,7 @@ pub fn legs_report(market: &str, days: &[Legs], cost_bps: f64) -> String {
         return format!("  {market} LEGS            no session with {BOOK}+ liquid names printing both legs");
     };
     let last = &days[days.len() - 1];
-    let col = |f: &dyn Fn(&Legs) -> f64| days.iter().map(|l| f(l)).collect::<Vec<f64>>();
+    let col = |f: &dyn Fn(&Legs) -> f64| days.iter().map(f).collect::<Vec<f64>>();
     let fmt = |s: &Stats| format!("{:+.2} bp/d (t {:+.2}; halves {:+.2}|{:+.2})", s.mean * 1e4, s.t, s.h1 * 1e4, s.h2 * 1e4);
     let (Some(night), Some(day), Some(gap)) = (stats(&col(&|l: &Legs| l.night)), stats(&col(&|l: &Legs| l.day)), stats(&col(&|l: &Legs| l.night - l.day))) else {
         return format!("  {market} LEGS            {} session(s), too few for a t", days.len());
