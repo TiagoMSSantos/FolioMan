@@ -28783,6 +28783,17 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   are daily inside the same ten years (a sampling difference (#1398)/(#1399) priced on the vol gate), and it stays
 #   blind where the walk is blind by construction (as-of fundamentals against TTM, the turnover sentinel, the
 #   holder boosts), as every receipt since (#87) has said.
+# RESULT, 2026-11-10, on 888bdd1 (code read, no run; the owner's ask to move CI's walk onto this arm): the move
+#   stops at its first step. `regen_backtest_fixture` (tests/backtest_fixture.rs) reads the repo's
+#   `.long_history_cache.json` and writes the fixture's file of the same name; both names are fixed in the test.
+#   With `long_chart_explicit_span` on, the binary reads `.long_history_cache.span.json` (`fetch::long_cache_file`).
+#   No span file sits in tests/fixture/ or at the repo root, and ci.yml, pages.yml and probe.yml cache
+#   `.long_history_cache.json` only. So the regen cannot pick a span file up, and a fixture walk on this arm finds
+#   no cache file to read.
+# VERDICT: NOT DONE, stopped before any edit. The route needs the regen to copy the span file, a CI job that warms a
+#   span cache for the fixture's tickers, a full rebless, and a new read of the two ratchet floors ((#316), (#1236)).
+#   CI's gate, ratchets and goldens stay on the shipped walk. The PROPOSED RULE above already runs each deciding
+#   read on both arms. The owner's word reopens it.
 # (#1441) THE HEAD WEIGHT ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-10 before any run. Knob: `sizing.head_weight`
 #   (8.0 ships). Row: (#1442). Eight probes.
 # WHY: the first five names weigh 8 against a later name's 1: 63 % of gross on 2026-11-10 (FTNT, SNDK, APC.DE, WDC,
