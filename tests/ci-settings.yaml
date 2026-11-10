@@ -28367,6 +28367,14 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   and the footer's row count (24 -> 26, the 5 % bar split across them). Re-bless with `FOLIOMAN_BLESS=1 cargo test
 #   --test backtest_fixture` after reading the two new rows; nothing else in them moves.
 # REVERT RULE: `growth_ranker: shipped`.
+# AMENDED 2026-11-10, before any run of this block ((#1440)): the rivals probe runs TWICE, on the shipped arm (no knobs)
+#   and on the live-equivalent arm (knobs="long_chart_explicit_span=true backtest_live_window_years=10.0"), same
+#   years and args. The bar is read on each; where the two arms disagree the LIVE-EQUIVALENT arm decides, because
+#   `growth_ranker` changes what the page ranks and that arm is the walk of what the page computes. Rows (j) (the
+#   interleave the page runs) and (u) (the same book 20 wide) are read beside (y) and (z) as information. READ WITH
+#   `python3 -I tools/verdict.py rivals <log>`, which applies this bar as written: LOSS at a horizon = the mean or
+#   the median gap under -0.5, or both at or under -0.2, or a worst window more than 1.0 under shipped's; WIN = both
+#   gaps at +0.2 or more; else TIE; a row needs both 12y and 8y, and one LOSS horizon is a LOSS. Row: (#1445).
 # (#1432) THE 8-K HARM KINDS AND THE COHORT HORIZON, PRE-REGISTERED 2026-11-09 before any run, record only, no knob.
 #   Extends (#1427): `tools/event_dates.py` writes three more kinds off the same submissions pages, `restatement`
 #   (Item 4.02, non-reliance on previously issued financial statements), `unregistered_sale` (Item 3.02, equity sold
@@ -28434,6 +28442,16 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   untouched: read (B). Top dog alone closes a little more of 2002-07 (GE, C) and cuts >=2014 by 2-4 points (Apple):
 #   its job is to show the recovery is not "refuse the biggest". Both together: 2002-07 within 0.5 of the control,
 #   >=2014 cut. Nothing ships without the owner's word; the honest prior is (B).
+# AMENDED 2026-11-10, before any run of this block ((#1440)). (1) TWO arms, one grid each: the (#1389) arm as written,
+#   and the live-equivalent arm, knobs="long_chart_explicit_span=true backtest_live_window_years=10.0", which is the
+#   walk of what the page computes; the control for both is one plain shipped-arm probe on the same tree. Where the
+#   arms disagree the live-equivalent arm decides. (2) The cells, so no reader has to choose them: per horizon, a row
+#   against the CONTROL's top-10 book needs its mean within 0.5, its median within 0.8, its worst window within 0.8
+#   and RU1 at 50 % or more and not under the control's by more than one window in 40 (`regrade_ruler`'s slack);
+#   the >=2014 cell is the row's era median against arm row 0's, read where both hold 4 buckets or more (so at 8y,
+#   and at 12y only once it has them). (A) = every cell at 12y AND 8y, and >=2014 within 1.0. (B) = not (A), and
+#   the 2002-07 era median closes half or more of the gap between arm row 0 and the control at every horizon that
+#   reads the era. (C) = neither. READ WITH `python3 -I tools/verdict.py gates --control <control log> --arm <arm log>`.
 # (#1436) THE DIVIDEND TERM AFTER TAX, PRE-REGISTERED 2026-11-10 before any run. Knob: `dividend_weight` (0.5 ships).
 #   Rows: a grid on the shipped arm, 0.17 and 0.0; (#1439) decides. The paper route's logic with ARITHMETIC in the
 #   proof's seat: the change is certain in sign by law, the backtest is the harm guard, not the proof.
@@ -28460,6 +28478,11 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the one case where the price ruler sees what the tax arithmetic does not (a yield that predicts total return).
 # EXPECTED: INSIDE the band on every cell, rank-1 byte-identical as in (#62) at 12y, a 0.1-0.3 median move at 8y
 #   either way; ships at 0.17 with the goldens re-blessed. Live: one or two high-yield rows drop a place.
+# AMENDED 2026-11-10, before any run of this block ((#1440)): the grid runs on the shipped arm and on the live-
+#   equivalent arm (knobs="long_chart_explicit_span=true backtest_live_window_years=10.0"). "No visible harm" is, on
+#   BOTH arms, at 12y AND 8y: the GUARD line of the 0.17 row reads PASS or INERT, and RU1, RU2 and RU3 do not fail
+#   against row 0. READ WITH `python3 -I tools/verdict.py guard --row '"dividend_weight":0.17' <log>` on each
+#   arm's log: SHIP on both = the row ships; KEEP on either = 0.5 stays and the harm is recorded.
 # (#1437) HORIZON DECAY OF THE SHIPPED TILTS, PRE-REGISTERED 2026-11-10, record only, no knob, no code. One probe:
 #   `years="3 1" args="universe fund pit"`. The fund-factor AUC table and the held-book-by-factor list print at any
 #   horizon; this reads them at 3 and 1 years beside the 12 and 8 the file holds.
@@ -28475,6 +28498,88 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   at a horizon the book does not hold".
 # EXPECTED: mom61_pct 0.58-0.62 at 1y, 0.50-0.53 at 8y (decays); ey_pct, capx_pct, fcf_pct within 0.05 of their 8y
 #   readings at 1y (slow). Nothing moves either way at 0.03.
+# (#1440) THE LIVE-EQUIVALENT ARM, RECORD 2026-11-10, no knob, no code. What the walk measures against what the page
+#   runs, and the arm every pending read should also run on. A proposal of method; the owner's word adopts it.
+# FACTS, from the code. The PAGE (`fetch::quote_one`): volatility, the stretch over the long average, the range
+#   position, R², the drawdowns and the years under water are computed on the ~10-year DAILY chart; the 1Y, 5Y and
+#   10Y legs on the merged series by date; the `range=max` monthly series only back-fills the horizons past ten
+#   years, the life CAGR and the age. The WALK (`core::backtest_quote`) under the shipped knobs: every one of those
+#   on the `range=max` series read at 12 bars a year (quarterly for pre-1985 listings and ^GSPC, weekly for 2017+
+#   ones, (#1389)), over the WHOLE LIFE instead of ten years, with `growth_min_range_pct_8y` never run ((#1391)).
+#   The two knobs (#1389) and (#1391) built make the walk compute what the page computes; (#1390) and (#1392) graded
+#   them as if they were buy rules, read them OUTSIDE NEGATIVE, and left them off.
+# THE READING NOBODY WROTE DOWN. The "both" row of (#1390)'s table is therefore the walk of the rule the page runs:
+#     arm                    12y mean  med   worst  RU1    | 8y mean  med   worst  RU1
+#     shipped walk               +3.4  +3.5  -3.0   21/38  |   +3.1  +3.4  -4.8   30/46
+#     live-equivalent (both)     +2.4  +3.0  -8.6   18/37  |   +2.6  +2.9  -6.9   22/45
+#   The page's rule keeps a positive median excess (+3.0 | +2.9) and loses a point of mean at 12y, most of its tail
+#   (the worst window -8.6 against -3.0) and the order inside its top ten (RU1, the top five against names 6-10,
+#   under 50 % at both horizons). Every guard, null band and rivals table since has been read on the first row.
+# WHAT RESTS ON THE FIRST ROW AT UNDER A POINT: `head_weight` 8 ((#584) C: +0.3/+0.2 and +0.2/+0.2, "the margin IS the
+#   bar"; 63-68 % of gross in five names); the interleave's five slots ((#584): "pit is a tie"); the four 0.03 ships'
+#   harm guards. (#1396) already re-fitted the three caps on this arm and found no winner; the rest was never asked.
+# PROPOSED RULE: a pre-registered run names its arm. A guard, a rivals read or a weight read that decides what the
+#   PAGE does runs on the live-equivalent arm, knobs="long_chart_explicit_span=true backtest_live_window_years=10.0",
+#   beside the shipped arm, and where they disagree the live-equivalent arm decides. CI's gate, its ratchets
+#   ((#316), (#1236)) and the goldens stay on the shipped walk until the owner decides otherwise: switching them is
+#   its own decision, because the 20y S+inter floor and every golden move with it.
+# NOT CLAIMED: that the live-equivalent arm predicts better. It is the only arm that measures the shipped page; the
+#   mixed bars' 2002-07 advantage ((#1426)) belongs to a rule the page cannot run.
+# shortcut: "live-equivalent" is the closest the walk comes, not identity. Its bars are true MONTHLY and the page's
+#   are daily inside the same ten years (a sampling difference (#1398)/(#1399) priced on the vol gate), and it stays
+#   blind where the walk is blind by construction (as-of fundamentals against TTM, the turnover sentinel, the
+#   holder boosts), as every receipt since (#87) has said.
+# (#1441) THE HEAD WEIGHT ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-10 before any run. Knob: `sizing.head_weight`
+#   (8.0 ships). Row: (#1442). Eight probes.
+# WHY: the first five names weigh 8 against a later name's 1: 63 % of gross on 2026-11-10 (FTNT, SNDK, APC.DE, WDC,
+#   ASML at 12.7 % each), two of them the momentum half's storage names. Each rung shipped on a read of +0.1 to +0.3
+#   pts/yr on the shipped walk ((#558), (#584) C), under the floor (#1333) found a month later, and the tilt is paid
+#   for by the order inside the top ten, which the live-equivalent arm reads as absent (RU1 18/37 and 22/45,
+#   (#1440)). (#584) C asked "does the head concentrate on noise?" on the shipped walk and read no; this asks it on
+#   the walk of what the page computes.
+# RUNS: the live-equivalent arm at 20y with `rivals`, the (#584) C cell on the two POINT-IN-TIME lanes: years="20",
+#   args="universe fund pit rivals" and args="universe fund pit dead rivals", each with knobs=
+#   "long_chart_explicit_span=true backtest_live_window_years=10.0 head_weight=H" for H = 1, 2, 4 and 8. The cell is
+#   the `S+inter never-sell` row against index DCA (mean, median, worst program), the book the page shows. Not the
+#   stress lane (#584) C read: under explicit spans a lane without `pit` waits on (#117)'s 36-volume-bar filter
+#   ((#1389) step 2), so `pit dead` is the second lane.
+# BAR, fixed now (`python3 -I tools/verdict.py head --lane pit 1=.. 2=.. 4=.. 8=.. --lane dead 1=.. 2=.. 4=.. 8=..`): a
+#   tilted rung QUALIFIES when it beats the FLAT book (H = 1) by +0.2 or more on mean AND median in BOTH lanes, the
+#   (#584) C step, with its worst program no more than 0.5 under flat's. None qualifies -> SHIP 1.0, the flat (#313)
+#   book and the code default. Else the best rung is the one with the largest smallest-lane mean gain, and the bar
+#   ships the SMALLEST qualifying rung whose mean gain is within 0.2 of the best one's in both lanes (a doubling
+#   that adds less than the bar's own step buys concentration, not return). On the shipped walk's own (#584) C rows
+#   (pit and stress) this bar picks 8 (rungs 2 and 4 read +0.0 on the stress median), so it is not built to revert.
+# ON A SHIP BELOW 8: `size`, BUY% and the page move; `head_weight` is fingerprinted, so BUY NOW warns until the next
+#   walk journals. CI's (#1236) floor is read on the SHIPPED walk: (#584) C read 8 against 1 at +0.8 on pit, so the
+#   gate's S+inter (+6.3 at ship, floor +5.3) may land near its floor; if it lands under, the receipt measures the
+#   new reading and justifies the floor in the (#1236) block, as that block's own text allows. The owner's word ships.
+# EXPECTED: with no order inside the top ten, rung 8 beats flat by under +0.2 on at least one median: nothing
+#   qualifies and the book goes flat, each of the 25 names at 3.8 % and the head's share of gross from 63 % to
+#   19 %. A rung that does qualify on this arm would be the first evidence that the head's order survives honest
+#   input, and is recorded as that.
+# REVERT RULE: `head_weight: 8.0`.
+# (#1443) THE SECTOR CAP ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-10 before any run. Knob: `growth_sector_cap`
+#   (0 ships). Row: (#1444). Four probes. A RISK choice by the knob's own rule, re-asked because the arm changed.
+# WHY: (#557) graded caps 1-5 on the shipped walk under the owner's bar and read that k3, k4 and k5 qualify and
+#   "none lifts a worst window in any cell", so no cap bought any risk and 0 stayed. The worst windows it read were
+#   the shipped walk's (-6.4 at 12y); the live-equivalent arm's is -8.6 ((#1440)), a tail the first read never saw.
+#   On 2026-11-10 the sized book holds 76 % of gross in Information Technology (89 % with ASML, tagged "other"), its
+#   five 12.7 % names FTNT, SNDK, APC.DE, WDC and ASML: `sizing.max_sector_pct` 25 does not bind on the equal-weight
+#   book, so nothing between the score and the order limits a sector, as (#101) said.
+# RUNS: knobs="long_chart_explicit_span=true backtest_live_window_years=10.0" alone (the control) and with
+#   growth_sector_cap=3, =4 and =5, each years="20 12 8", args="universe fund pit". The cell is the growth lane's
+#   `top-10 book` line: median excess and worst window. The non-pit lane (#557) also read waits on (#117)'s filter
+#   under explicit spans ((#1390)), so this read holds three cells, not six.
+# BAR, (#557)'s, unchanged (`python3 -I tools/verdict.py cap --control .. --cap 3=.. 4=.. 5=..`): a cap qualifies when,
+#   in every cell, its median is no more than 0.1 under the control's AND its worst window is not under the
+#   control's. Among qualifiers the largest smallest worst-window gain wins, a tie going to the larger cap. A
+#   winner that lifts no worst window is indistinguishable from off: 0 stays. A winner that lifts one is ONE owner
+#   question, a deliberate risk choice, never an edge claim.
+# EXPECTED: on this arm the tail is deeper and less of it is one sector's, so a cap moves it by under a point: k4 or
+#   k5 qualify and lift nothing, k3 lifts the 12y worst window by 0.5 to 2 and costs 0.1 to 0.3 of median in one
+#   cell. The honest prior is "0 stays, again", with the tail it was graded on now on file.
+# REVERT RULE: `growth_sector_cap: 0`.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
