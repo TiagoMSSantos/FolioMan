@@ -110,6 +110,10 @@ pub const HOLDS: [usize; 7] = [0, 1, 2, 5, 10, 15, 21];
 /// (#1432) The horizon the EVENTS census reads a kind as a cohort at: one trading year of sessions after the event.
 pub const COHORT_SESSIONS: usize = 252;
 
+/// (#1446) How many calendar days after its date a pond-wide (`*`) event may find the pond's next session: a long
+/// weekend with a holiday on each side. Past that the date is not that session's event.
+const SNAP_DAYS: i64 = 4;
+
 /// One graded session: how many names ranked, the gross mean open-to-close return of the book and of
 /// every ranked name, and (#829) the share of each that closed above its open.
 pub struct Day {
@@ -509,7 +513,8 @@ pub struct EventStats {
 /// first session on or after D as `pre` (close D-1 to close D) and the `h` sessions after it as `post` (close D
 /// to close D+h); all must be completed before `today`, the name must clear the (#809) turnover floor at the buy
 /// close and sit in its member spans, else the event drops. A `*` event prices the equal-weight pond mean of the
-/// same sessions, one observation per date. Everything is a log return, so the window is `pre + post`, and the
+/// same sessions, one observation per date, and drops when the pond prints no session within `SNAP_DAYS` calendar
+/// days of D (#1446). Everything is a log return, so the window is `pre + post`, and the
 /// pond's move over a window is the sum of its session means, read off one prefix sum over the pond's own
 /// calendar (a session the pond does not print drops the event). Only a kind with two or more priced events
 /// reports. Session means with fewer than `BOOK` liquid names are left out of the pond's series, so a thin early
@@ -542,7 +547,10 @@ pub fn events(pond: &[Member], rows: &[Event], today: NaiveDate, h: usize) -> Ve
     for ev in rows {
         let obs = if ev.ticker == "*" {
             let p = market.partition_point(|(d, _)| *d < ev.date);
-            (p + h < market.len()).then(|| (market[p].0, "*", market[p].1, span(p + 1, p + h), None))
+            // (#1446) without the day cap every date older than the pond's bars priced the pond's FIRST session:
+            // 59 of 113 fomc dates read the Xetra pond's 2020-03-12 as their own
+            (p + h < market.len() && (market[p].0 - ev.date).num_days() <= SNAP_DAYS)
+                .then(|| (market[p].0, "*", market[p].1, span(p + 1, p + h), None))
         } else {
             members.get(ev.ticker.as_str()).and_then(|&&(tk, c, fx, spans)| {
                 let i = c.dates.partition_point(|d| *d < ev.date);
@@ -1686,6 +1694,11 @@ mod tests {
         let rows = read_events(&format!("ticker,date,kind\nN00,{},earnings\nN01,{},earnings\nN02,{},earnings\n", d(31), d(35), d(31)));
         let ks = events(&pond, &rows, d(40), 1);
         assert_eq!(ks.iter().map(|k| (k.kind.as_str(), k.n)).collect::<Vec<_>>(), [("earnings", 2)]);
+        // (#1446) the pond's series starts at bar 30 (the turnover window): a pond date 4 days ahead of it prices
+        // that session, one 5 days ahead is no event of it and drops
+        let rows = read_events(&format!("ticker,date,kind\n*,{},fomc\n*,{},fomc\n*,{},fomc\n", d(25), d(26), d(31)));
+        let ks = events(&pond, &rows, d(40), 1);
+        assert_eq!((ks[0].n, ks[0].first, ks[0].last), (2, d(30), d(31)), "bar 30 is SNAP_DAYS after the 26th, one more after the 25th");
     }
 
     /// Name `n` of 12 gains `g` = 1 + n/1000 every session (its K3), and on the graded session
