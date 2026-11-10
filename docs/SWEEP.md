@@ -26,7 +26,8 @@ Use the `Probe` workflow (`.github/workflows/probe.yml`, manual dispatch). Input
 - `years`: horizons, one run each (default `12 8`; the 20 year leg takes `20`).
 - `args`: what follows the horizon (default `universe fund pit`; the survivorship legs are `pit dead` and
   `stress`).
-- `knobs`: `key=value` overrides for this run only, numbers only.
+- `knobs`: `key=value` overrides for this run only: numbers, `true`/`false`, and one list, the `cgt_hold_schedule`
+  rungs with no space in them (`cgt_hold_schedule=[{"min_years":2,"excluded_pct":10}]`).
 - `extra`: extra `growth_fund_extra` terms for this run only.
 
 Dispatch the control (no `knobs`) and the arm (with `knobs`) on the same commit, together. There is no

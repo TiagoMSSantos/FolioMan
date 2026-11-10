@@ -26,7 +26,7 @@ on:
         description: "backtest args after the horizon"
         default: "universe fund pit"
       knobs:
-        description: "(#550) ci-settings overrides for this run only, space-separated key=value (numbers only)"
+        description: "(#550) ci-settings overrides for this run only, space-separated key=value (numbers, true/false, or the cgt_hold_schedule rung list)"
         default: ""
       extra:
         description: "(#742) growth_fund_extra terms added for this run only, space-separated factor:weight:cap:neutral"
@@ -183,10 +183,13 @@ jobs:
           done
           # (#550) an arm edits the checked-out yaml in place: each key must already sit on exactly one
           # `  key:` line and the value must be a plain number, so a typo fails the run instead of grading
-          # the control under an arm's name. (#570) `true`/`false` too, for the bool knobs.
+          # the control under an arm's name. (#570) `true`/`false` too, for the bool knobs. (#1424) One list
+          # knob: `cgt_hold_schedule` takes its rungs as a flow list with no space in it, e.g.
+          # cgt_hold_schedule=[{"min_years":2,"excluded_pct":10},{"min_years":5,"excluded_pct":20}]
+          rungs='^\[(\{"min_years":[0-9]+(\.[0-9]+)?,"excluded_pct":[0-9]+(\.[0-9]+)?\},?)*\]$'
           for kv in "${knobs[@]}"; do
             k=${kv%%=*}; v=${kv#*=}
-            [[ $kv == *=* && $k =~ ^[a-z0-9_]+$ && $v =~ ^(-?[0-9]+(\.[0-9]+)?|true|false)$ ]] || { echo "::error::bad knob '$kv'"; exit 1; }
+            [[ $kv == *=* && $k =~ ^[a-z0-9_]+$ && ( $v =~ ^(-?[0-9]+(\.[0-9]+)?|true|false)$ || ( $k == cgt_hold_schedule && $v =~ $rungs ) ) ]] || { echo "::error::bad knob '$kv'"; exit 1; }
             [[ $(grep -c "^  $k: " tests/ci-settings.yaml) == 1 ]] || { echo "::error::'$k' is not one ci-settings line"; exit 1; }
             sed -i -E "s/^(  $k: )[^ ]+/\1$v/" tests/ci-settings.yaml
             grep "^  $k: " tests/ci-settings.yaml | cut -c1-80
