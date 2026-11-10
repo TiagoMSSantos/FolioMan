@@ -28175,6 +28175,45 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   >= 5 / >= 8 years; 365 days for a crypto lot), the tax then and the days to wait. Morningstar's "Mind the Gap"
 #   reads investors about 1.1 pts/yr under their own funds over ten years, mostly from selling into drawdowns; a
 #   dated, priced friction is the cheapest known counter, and it is arithmetic, not a rule. Nothing on the page.
+# RESULT, 2026-11-10, on 0debd49 (probes 42902293517 control, 42902311967 arm A, 42902330371 arm B; `backtest 20
+#   universe fund pit dead rolls`): the owner asked on 2026-11-10 for the walk to be TESTED with the ladder on,
+#   without the accountant's confirmation. probe.yml takes the rungs as a `knobs` value since 1c6593e. Arm A is the
+#   law's ladder: 10 / 20 / 30 % at 2 / 5 / 8 years. Arm B puts the first rung at 3 years (the owner's wording) and is
+#   otherwise A. All three runs score 3214 and 4803 windows and grade 22 programs; the Tiingo cache missed on all
+#   three alike, so the arms are like for like.
+#   FOOTER, top-10 book after tax: never-sell +7.2 -> +7.7 %/yr; yearly rotation +6.2 on all three; deferral edge
+#   +1.0 -> +1.5 pts/yr. The arms tag the line `[held 20y taxed at 19.6%, rotation at 28.0%]`. A and B read the same.
+#   (#311) LINES, control -> A (B the same): top-10 roll +8.0 -> +8.5 against never-sell +8.2 -> +8.8, delta -0.3
+#   (med -0.2) -> -0.2 (med -0.2), win 45% of 22. SIZED roll +7.6 -> +8.1 against +7.7 -> +8.2, -0.1 (med -0.1) on
+#   both. Never-sell against index DCA (+6.3 -> +6.8): top-10 +1.9 (med +1.7) -> +2.0 (med +1.8); SIZED +1.4 (med
+#   +1.4) on both; win 100% of 22 on every arm.
+#   ROLL LADDER, mean delta against never-sell, pts/yr: control then arm A (all = sell-all, lv = leavers):
+#                3m         6m         1y         2y         3y         5y         7y         10y
+#     top-10 all -6.1 -6.6  -4.1 -4.7  -2.2 -2.7  -2.7 -2.9  -2.2 -2.4  -1.8 -2.0  -0.8 -0.9  -0.3 -0.3
+#     top-10 lv  -2.8 -3.3  -2.8 -3.3  -1.5 -2.0  -2.4 -2.7  -1.9 -2.2  -1.7 -1.9  -0.7 -0.9  -0.3 -0.3
+#     SIZED all  -5.4 -5.9  -3.6 -4.1  -1.7 -2.2  -2.1 -2.4  -1.4 -1.7  -1.2 -1.3  -0.5 -0.6  -0.2 -0.1
+#     SIZED lv   -2.1 -2.6  -2.2 -2.7  -1.1 -1.6  -1.9 -2.1  -1.2 -1.5  -1.1 -1.3  -0.4 -0.5  -0.1 -0.1
+#   Every median is below zero on every row of every arm, and the best win rate is 45% of 22, at 10y. Never-sell
+#   gains +0.5 to +0.6 %/yr from the 19.6 % rate. A roll under 2 years gains nothing (its printed return is the
+#   control's), and the 10y roll gains as much as never-sell, so the gap widens at every rung under 10y.
+#   ARM B against A: the footer and the (#311) lines are the same. The 2y rows move: top-10 all -2.9 (med -2.8) ->
+#   -3.2 (med -3.1), top-10 lv -2.7 -> -2.9, SIZED all -2.4 (med -2.3) -> -2.6 (med -2.6), SIZED lv -2.1 -> -2.4, and
+#   the 2y roll's return falls back to the control's (+5.5 and +5.6 sell-all). On the other rows no printed return
+#   moves by more than 0.1, and one program's win flips (7y SIZED lv, 14% -> 9% of 22).
+#   BOUNDARY: `cgt_rate` counts whole years and grants a rung at `years >= min_years`. The law's first rung asks for
+#   more than 2 years, so arm A gives a roll sold at exactly 24 months a 10 % it would not get that day. Arm B's 2y
+#   rows are the strict reading of that one sale. If the knob is ever armed, this boundary needs a read first.
+#   PICK LINE: the census prints `PICK 10y leavers ... -> SHIP` on the control and on both arms, at +0.0 mean and
+#   median against the shipped roll. It sells 94 % of the same book instead of 100 %; (#1224) read the same effect
+#   at 91 % and did not pick it. The ladder does not cause it, it trails never-sell on every arm, and (#1235) made
+#   never-sell the plan, so nothing ships from it.
+#   CRYPTO: the 365-day rule has no knob and the walk's pool holds no coin, so no walk can test it. `--lots` prices
+#   it per lot: 28 % of the gain before day 365, nothing after.
+# VERDICT: TESTED, NOT ARMED. The knob stays `[]`. With the ladder on, no roll rung meets the (#1235) reopen rule:
+#   each one still loses to never-sell on mean and median on both books, and all but the 10y rung lose by more. The
+#   test moves printed after-tax lines only and nothing in selection. The accountant's condition above was set aside
+#   by the owner for this test and is not claimed here. Arming the knob on main moves goldens and waits on the
+#   owner's word.
 # (#1425) THE ARTIFACT AS A RULE: THE AGE CAP ON HONEST BARS, PRE-REGISTERED 2026-11-08 before any run. Row: (#1426).
 #   Knob: `growth_max_age_years` (0.0 ships; a grid row sets it, since `age_years` rides every dump).
 # WHY: (#1390) read true monthly bars OUTSIDE NEGATIVE, 0.9-1.3 %/yr under the shipped book on the paired buckets,
