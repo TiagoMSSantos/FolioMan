@@ -28912,6 +28912,55 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   with the brake off the passers' rank order goes flat in the late half (+0.14 -> +0.01) while the mean rises. A
 #   brake fully off was read on this one leg only, not on the pit top-10 ruler. The two reds still wait for the
 #   owner's word.
+# OWNER'S WORD, 2026-11-11, after (#1449). On red (2): loosen the check on that one leg, so that it fires only when
+#   the passer edge reads under -10 ("Loosen to -10"); the other three legs keep > 0. Not built: it goes in with the
+#   move, under its own receipt. On red (1): no move yet; first find why the 20y winners-held share fell on this
+#   arm ("Dig into alarm 1 first").
+# RESULT, 2026-11-11, on 7ade51b (a 2 x 2 census on the 20y leg, `20 universe winners rivals`: the shipped bars or
+#   `long_chart_explicit_span=true`, the whole-life window or `backtest_live_window_years=10.0`; probes 43008247781,
+#   43008269815, 43008289425, 43008306964). Called before the logs were read: the span knob alone takes GE from 21
+#   held windows to about 6, and the window knob alone leaves it at 21. Both held. The (#606) line, in book slots:
+#     bars, window          held    slots  winners  score half  momentum half  GE  every other name
+#     shipped, whole life   13.2 %   613      81        32            49       21         60
+#     shipped, 10 years     13.4 %   613      82        32            50       21         61
+#     span, whole life      10.6 %   650      69        22            47        6         63
+#     span, 10 years        10.6 %   650      69        22            47        6         63
+#   The span rows print `1mo 5696`, 3 cutoffs refused by the volume floor and 12080 cutoffs; the shipped rows 9256.
+#   The four gate legs (the RESULT on 312eba1 above; shipped / arm), winner slots of all slots, then GE's and every
+#   other name's: 20y 81 of 613 / 69 of 650, GE 21 / 6, others 60 / 63; 12y 97 of 773 / 92 of 810, GE 18 / 4, others
+#   79 / 88; 8y 111 of 853 / 101 of 890, GE 14 / 3, others 97 / 98; 8y fund 104 of 853 / 98 of 890, GE 14 / 3,
+#   others 90 / 95.
+# THE (#606) NAMES VETO, never read on this arm before (its six cells: `universe fund pit rivals winners` and the
+#   same with `stress`, years "8 12 20"; shipped / arm; probes 43009365363 / 43009380889 pit, 43009397392 /
+#   43009414016 stress, on 7ade51b). The stress cells print the pit cells' lines, name for name:
+#     cell   held             winner slots of slots    score half  momentum half  top-10 excess, worst
+#     8y     10.9 / 11.6 %    50 of 460 / 52 of 450     20 / 19       30 / 33     +3.4 -3.6 / +2.6 -6.9
+#     12y    13.7 / 12.2 %    52 of 380 / 45 of 370     30 / 19       22 / 26     +3.6 -3.5 / +2.3 -8.6
+#     20y     8.6 /  6.7 %    19 of 220 / 14 of 210      5 /  1       14 / 13     +2.7 -2.6 / +1.3 -3.0
+#   No cell falls by 2.0: +0.7, -1.5 and -1.9 (1.97 on the slot counts, 0.03 short of the veto). GE is held in no
+#   cell on either arm. Winners the shipped walk holds and the arm drops, 20y: AZO 4 -> 1, HUM 2 -> 0, AAPL 3 -> 2,
+#   ADSK, MCO and ORCL 1 -> 0 (ADBE 0 -> 2, AMD and DDS 0 -> 1 come in). 12y: GILD 3 -> 0, AZO 6 -> 3, SBUX 4 -> 2,
+#   APH 3 -> 1, ORCL 2 -> 0, HUM 2 -> 1, ORLY 5 -> 4, NFLX 4 -> 3, UNH 2 -> 1, ADSK, ASH, TSN and WMT 1 -> 0 (AAPL
+#   3 -> 7, TJX 1 -> 3, AMD 1 -> 2 and six new names at 1 come in). The arm's bars line reads `1mo 5844` (pit) and
+#   `1mo 5849` (stress).
+# WHAT IT SAYS: on the gate's legs the fall is one name. GE's count drops by 15 at 20y, more than the whole fall of
+#   12 winner slots, and every other name's winner slots rise on all four legs. Their share of the slots is level
+#   at 20y (9.8 % on the shipped bars, 9.7 % on the arm). The bars are the cause: the span knob alone gives the
+#   arm's line, and the 10-year window alone leaves GE at 21. The brake is not the cause: in the 8y fund census
+#   above GE reads 14 with the brake on and off on the shipped bars, and 3 and 3 on the arm. GE is a pre-1985
+#   listing, so `range=max` served it as quarterly bars (260 `3mo` bars from 1962 in the fixture), and (#1389) lists
+#   what cadence 12 does to such a series: the trend slope annualised x12, a 15-month 1Y leg, the stretch against
+#   an 11.75-year average. Which of those fields carried GE is not isolated: the log prints no per-name field.
+#   GE's winner flag is sound on both arms, since `forward_return` ends each window by date, `years * 365` days
+#   after the cutoff. The pit lane tells a second story, with no GE in it: there the score half holds fewer
+#   winners on the arm at 12y and 20y, spread over six or more names, and the top-10 row is lower, as (#1390)
+#   and round 20 already read. The gate does not run that lane; its legs hold today's survivors.
+# VERDICT: THE OLD 20y GATE READING LEANED ON GE AS READ ON QUARTERLY BARS. Every other name's winner slots are 9.8 %
+#   of the shipped walk's 20y slots, under the 11.0 floor already, so the floor was cleared by one name held through
+#   the bar defect. On this arm (#606)'s own rule, the first reading minus 2 points, rounded down, gives 20y 8, 12y 9
+#   and 8y 9 (the fund leg shares 8y's). The names veto does not fire, by 0.03 at 20y. No floor moves here: (#606)
+#   says "never lower one to get green" and that a ship which lowers a reading justifies its new floor in the
+#   receipt, so the floor waits for the owner's word and goes in with the move.
 # (#1441) THE HEAD WEIGHT ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-10 before any run. Knob: `sizing.head_weight`
 #   (8.0 ships). Row: (#1442). Eight probes.
 # WHY: the first five names weigh 8 against a later name's 1: 63 % of gross on 2026-11-10 (FTNT, SNDK, APC.DE, WDC,
