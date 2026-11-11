@@ -1,0 +1,240 @@
+# (#1450) What one ci-settings knob moves on the PUBLISHED page, measured before the knob moves (owner's word,
+# 2026-11-11: "Measure first"). One runner runs `screen` three times: control, the knob arm, control again. The
+# two controls share their settings, so whatever differs between them is noise (a price moved while the job ran).
+# tools/screen_ab.py counts a row or a cell for the knob only where both controls agree and the arm does not.
+#
+# Every run starts where a Pages runner starts. The caches Pages restores are restored once and parked in a tar;
+# before each run everything untracked but `target/` is deleted and the tar is put back. The monthly history
+# cache is NOT restored: under `long_chart_explicit_span` the page reads a file no cache holds yet, so all three
+# runs fetch every long series live, like for like.
+#
+# MANUAL ONLY. It never deploys and it never saves a cache: every restore is `actions/cache/restore`, with the
+# path list of its pages.yml twin (the cache version hashes the list). Read the run within 2 days: the catch-all
+# in pages.yml deletes it then, and its artifact with it.
+name: Screen A/B
+
+on:
+  workflow_dispatch:
+    inputs:
+      knobs:
+        description: "ci-settings overrides for the arm run only, space-separated key=value (numbers or true/false)"
+        required: true
+        type: string
+
+# Copied from ci.yml's top-level env; they MUST stay identical, or rust-cache computes a key of its own.
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+permissions:
+  contents: read
+
+# One at a time: a run is three cold screens, about 56k paced calls. A third dispatch cancels the pending one.
+concurrency:
+  group: screen-ab
+  cancel-in-progress: false
+
+jobs:
+  ab:
+    runs-on: ubuntu-24.04
+    # Three cold screens at about 6 minutes each (run 36247201539), plus a build when the binary cache misses.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # pages.yml's restores, in its order, and no `.long_history_cache.json` (see the top).
+      - name: Restore fetch caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            .sec_cache
+            .isin_cache.json
+            .venue_isins.json
+            .regulatory_isins.json
+            .fund_facts_cache.json
+            .holdings_cache.json
+            .eu_listing_cache.json
+          key: folioman-fetch-${{ github.run_id }}
+          restore-keys: folioman-fetch-
+      - name: Restore listing cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .listing_cache.json
+          key: folioman-listings-${{ github.run_id }}
+          restore-keys: folioman-listings-
+      - name: Restore pageview cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .wiki_pageviews_cache.json
+          key: folioman-wikiviews-${{ github.run_id }}
+          restore-keys: folioman-wikiviews-
+      - name: Restore TD cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .td_cache.json
+          key: folioman-td-${{ github.run_id }}
+          restore-keys: folioman-td-
+      - name: Restore justETF cells cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .justetf_cells_cache.json
+          key: folioman-justetf-cells-${{ github.run_id }}
+          restore-keys: folioman-justetf-cells-
+      - name: Restore profile cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .profile_cache.json
+          key: folioman-profile4-${{ github.run_id }}
+          restore-keys: folioman-profile4-
+      - name: Restore IPO cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .ipo_cache.json
+          key: folioman-ipo2-${{ github.run_id }}
+          restore-keys: folioman-ipo2-
+      - name: Restore the Wikidata listings
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .wikidata_listings.json
+          key: folioman-wikidata-${{ github.run_id }}
+          restore-keys: folioman-wikidata-
+      - name: Restore App Store ranks cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .appstore_ranks.json
+          key: folioman-appstore-${{ github.run_id }}
+          restore-keys: folioman-appstore-
+      - name: Restore YouTube feeds cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .youtube_feeds.json
+          key: folioman-youtube-${{ github.run_id }}
+          restore-keys: folioman-youtube-
+      - name: Restore EDINET cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .edinet_brk.json
+          key: folioman-edinet-${{ github.run_id }}
+          restore-keys: folioman-edinet-
+      - name: Restore Eulerpool cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .eulerpool_fcf.json
+          key: folioman-eulerpool-${{ github.run_id }}
+          restore-keys: folioman-eulerpool-
+      - name: Restore Eulerpool fundamentals cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .eulerpool_fund.json
+          key: folioman-epfund-${{ github.run_id }}
+          restore-keys: folioman-epfund-
+      - name: Restore the inflation feeds
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            .fmp_cache/us_cpi*.json
+            .fmp_cache/pt_cpi.json
+            .fmp_cache/eu_hicp*.json
+            .fmp_cache/fred_*.json
+          key: folioman-macro-${{ github.run_id }}
+          restore-keys: folioman-macro-
+
+      # Everything untracked at this point is a restored cache: `target/` comes later. tar keeps each file's
+      # mtime, which the day-fresh feeds are aged from.
+      - name: Park the caches
+        run: git ls-files -o -z | tar --null -T - -cf "$RUNNER_TEMP/caches.tar"
+
+      # (#686) pages.yml's own binary: the same key formula and path, so a push that moved no source restores the
+      # exact file the page last ran. Never saved here. On a miss, backtest-gate's release deps and Pages' build line.
+      - name: Key the binary
+        id: bin-key
+        run: echo "key=folioman-bin-$(rustc -V | cut -d' ' -f2)-${{ hashFiles('src/**', 'Cargo.toml', 'Cargo.lock', '.cargo/config.toml', '.github/workflows/pages.yml') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the binary
+        id: bin
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: target/release/folioman
+          key: ${{ steps.bin-key.outputs.key }}
+      - if: steps.bin.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: folioman-gate
+          save-if: false
+      - name: Build
+        if: steps.bin.outputs.cache-hit != 'true'
+        run: cargo build --release --locked --config 'profile.release.package.folioman.opt-level=1'
+
+      # pages.yml's Screen env. The four keys are OPTIONAL there and here, and reach the step only through `env:`:
+      # never an argument, never echoed. The input reaches the shell only through env and `read -ra`, never as
+      # interpolated script text. The knobs are checked and written to a copy BEFORE the first run, so a bad one
+      # costs no screen; the arm copies that file over tests/ci-settings.yaml (read at run time, no rebuild).
+      - name: Screen three times, then list what the knob moved
+        env:
+          KNOBS: ${{ inputs.knobs }}
+          FOLIOMAN_CONFIG: ${{ github.workspace }}/tests/ci-settings.yaml
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+          EULERPOOL_API_KEY: ${{ secrets.EULERPOOL_API_KEY }}
+          FOLIOMAN_FETCH_CONCURRENCY: 64
+        run: |
+          set -o pipefail
+          A=$RUNNER_TEMP/ab; mkdir -p "$A"; bad=0
+          read -ra kvs <<< "$KNOBS"
+          [ "${#kvs[@]}" -gt 0 ] || { echo "::error::no knob: the arm would be a third control"; exit 1; }
+          cp tests/ci-settings.yaml "$RUNNER_TEMP/arm.yaml"
+          for kv in "${kvs[@]}"; do
+            k=${kv%%=*}; v=${kv#*=}
+            [[ $kv == *=* && $k =~ ^[a-z0-9_]+$ && $v =~ ^(-?[0-9]+(\.[0-9]+)?|true|false)$ ]] || { echo "::error::bad knob '$kv'"; exit 1; }
+            [[ $(grep -c "^  $k: " "$RUNNER_TEMP/arm.yaml") == 1 ]] || { echo "::error::'$k' is not one ci-settings line"; exit 1; }
+            sed -i -E "s/^(  $k: )[^ ]+/\1$v/" "$RUNNER_TEMP/arm.yaml"
+          done
+          if cmp -s tests/ci-settings.yaml "$RUNNER_TEMP/arm.yaml"; then echo "::error::the knobs change nothing"; exit 1; fi
+
+          one() {  # one <name> [arm]
+            echo "::group::screen $1"
+            git checkout -q -- .
+            git clean -fdxq -e /target
+            tar -xf "$RUNNER_TEMP/caches.tar"
+            if [ "${2:-}" = arm ]; then cp "$RUNNER_TEMP/arm.yaml" tests/ci-settings.yaml; fi
+            echo "settings lines off the committed file:"
+            git diff -U0 -- tests/ci-settings.yaml | grep -E '^[+-]  ' | cut -c1-80 || echo "(none)"
+            time ./target/release/folioman screen 2>&1 | tee "$A/$1.log"
+            echo "::endgroup::"
+            cp .screen_web.json "$A/$1.web.json"
+            cp .screen_universe.json "$A/$1.universe.json"
+            # pages.yml's Validate checks: a payload Pages would refuse is red here too, after the listing.
+            if ! { jq -e '(.stocks | length) + (.etfs | length) + (.crypto | length) > 0' .screen_web.json \
+                && jq -e -f web/payload-contracts.jq .screen_web.json \
+                && jq -e -f web/universe-contracts.jq .screen_universe.json; } > /dev/null; then
+              echo "::error::$1: the payload breaks a contract Pages checks"; bad=1
+            fi
+            jq -r --arg n "$1" '"\($n): generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) rows, degraded \(.degraded // [])"' .screen_web.json
+            # Which monthly-history file the run wrote, and Yahoo's bar size on each series in it (#1389).
+            for f in .long_history_cache.json .long_history_cache.span.json; do
+              if [ -s "$f" ]; then
+                echo "$1: $f: $(grep -o '"dataGranularity":"[^"]*"' "$f" | sort | uniq -c | tr -s ' \n' ' ')"
+              else
+                echo "$1: $f: absent"
+              fi
+            done
+          }
+          one c1
+          one arm arm
+          one c2
+
+          for p in web universe; do
+            echo "::group::what the knob moved: $p payload"
+            python3 -I tools/screen_ab.py "$A/c1.$p.json" "$A/arm.$p.json" "$A/c2.$p.json" | tee "$A/$p.diff.txt"
+            echo "::endgroup::"
+          done
+          exit "$bad"
+
+      # The payloads and the screen logs are what Pages already publishes on these settings. No key and no private
+      # settings file is in this directory.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ !cancelled() }}
+        with:
+          name: screen-ab
+          path: ${{ runner.temp }}/ab/
+          retention-days: 7

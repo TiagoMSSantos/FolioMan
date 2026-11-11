@@ -28961,6 +28961,11 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   and 8y 9 (the fund leg shares 8y's). The names veto does not fire, by 0.03 at 20y. No floor moves here: (#606)
 #   says "never lower one to get green" and that a ship which lowers a reading justifies its new floor in the
 #   receipt, so the floor waits for the owner's word and goes in with the move.
+# OWNER'S WORD, 2026-11-11, after the names-veto read. On red (1): lower the 20y floor alone, 11 -> 8 ("Lower 20-year
+#   only"); 8 is (#606)'s rule on this arm's first reading (10.6 minus 2, rounded down). The 12y floor stays 9. The
+#   8y floor stays 10 where the rule gives 9: the 8y fund leg reads 11.0 on this arm (98 of 890), so that check
+#   keeps a margin of 1.0. Not built: it goes in with the move, under its own receipt. On the published page, which
+#   reads the same settings file: "Measure first", so (#1450) lists what the move changes there before it is made.
 # (#1441) THE HEAD WEIGHT ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-10 before any run. Knob: `sizing.head_weight`
 #   (8.0 ships). Row: (#1442). Eight probes.
 # WHY: the first five names weigh 8 against a later name's 1: 63 % of gross on 2026-11-10 (FTNT, SNDK, APC.DE, WDC,
@@ -29119,6 +29124,55 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   brake is not the lever for it: off, that leg read +4.2, about 0 too, and this ruler refuses the brake off.
 # RE-OPEN: the brake off on this arm only on the forward record's 12 monthly links or on a new ruler.
 # REVERT RULE: `growth_overext_cap: 100.0` and `growth_overext_free: 60.0`, unchanged.
+# (#1450) THE PUBLISHED PAGE ON THE LIVE-EQUIVALENT ARM'S KNOBS, PRE-REGISTERED 2026-11-11 before any run. Knobs, on
+#   the arm run of screen-ab.yml only: `long_chart_explicit_span` true, `backtest_live_window_years` 10.0. Row:
+#   (#1451). One dispatch. Record only: no outcome ships.
+# WHY: the move under (#1440) flips `long_chart_explicit_span` for every reader of this file, and the page is one:
+#   `screen` on Pages reads it. The probes measured the walk alone. Asked whether the page moves with the walk, the
+#   owner chose "Measure first" (2026-11-11): before the move, one CI job builds the page both ways on one day and
+#   lists every row that changes, and the owner decides with the list in hand.
+# RUN: screen-ab.yml on main, knobs="long_chart_explicit_span=true backtest_live_window_years=10.0". One runner runs
+#   `screen` three times, control / arm / control, each from the caches Pages restores and with no monthly history
+#   cache, so all three fetch every long series that day. tools/screen_ab.py reads the three `.screen_web.json` and
+#   the three `.screen_universe.json`: a row or a cell counts for the knob only where both controls agree and the
+#   arm does not. Where the controls disagree it is noise and carries no claim.
+# BAR: none. A census: it grades no knob and no buy rule.
+# WHAT EACH OUTCOME DOES: nothing ships on any of them. The listing goes to the owner, who picks: the page moves with
+#   the walk, the page keeps the shipped bars (a second knob, not built), or the move stops.
+# WIRING CHECK: each control prints no settings line off the committed file and writes `.long_history_cache.json`
+#   alone; the arm prints the two knob lines and writes `.long_history_cache.span.json` alone. All three read
+#   `0 cache hits` on the monthly series and pass the three Pages contract checks. A miss on any of these voids the
+#   run: it is fixed and run again, not read. So does a noisy day: the controls disagreeing on `perf[10]` for more
+#   than half of the old quotes below; the run is then repeated with the markets shut.
+# WHAT THE KNOBS REACH, by code reading: `long_chart_explicit_span` changes the long fetch's URL (`range=max` to
+#   `period1=0&period2=<now + 1 day>`) and its cache file. `quote_one` takes from that series only the bars dated
+#   before the first bar of the 10-year daily chart, and reads `perf`, `age_years`, the life legs and the long
+#   dividend sums off the merged series. The 5Y, 10Y and 20Y legs average every bar within 12 months of their
+#   target date. Volatility, stretch, range, R2, drawdowns and `stats_8y` stay on the daily chart.
+#   `backtest_live_window_years` is read in `core::backtest_quote` alone, so it is inert on the page. The run moves
+#   both knobs together, as the move would, and does not isolate that.
+# BANDS (mine, from the local `.long_history_cache.json` of 2026-10-11, 6900 series): `range=max` answered `3mo` for
+#   every series whose first bar was 1989-02 or older (303 series), `1wk` or finer for a first bar from 2017-06 on,
+#   and `1mo` between (the oldest started 1989-07, 449 points). So the cut sits near 450 monthly points, about 37.5
+#   years, where (#1389) wrote about 500. On the page payload of 2026-11-11T11:22Z, 239 of 5483 quotes are older
+#   than 37.7 years (each carries a 20Y leg; 150 US symbols, 89 `.DE` twins), 1353 are aged 10.2 to 37.3 and 3855
+#   are 10.2 or younger. 13 of the 37 Stocks rows are that old: APC.DE WDC LAR0.DE INL.DE AP2.DE MTE.DE KLA.DE TER
+#   ROST MNST TRV GL CAT1.DE.
+# EXPECTED (each HELD or MISSED in the row):
+#   1. Each control's file carries 200 or more `3mo` series; the arm's file carries none, and `1mo` alone.
+#   2. Of the quotes older than 37.7 years, 100 or more read another `perf[10]` (the 20Y leg) on the arm with the
+#      controls agreed: about 24 monthly bars stand in that leg's average where about 8 quarterly ones did.
+#   3. No quote aged 10.2 to 37.3 years reads a knob cell in `age_years` or `perf[10]`: both arms serve it the same
+#      monthly bars.
+#   4. The 5 quotes listed before 1970 read `age_years` between 56.7 and 57.0 on the arm: `period1=0` is 1970-01-01.
+#   5. One or more of the 13 old Stocks rows reads a knob cell in a column other than RANK.
+#   Not predicted: which rows enter or leave, and the quotes of 10.2 years or less. Such a quote has no bar before
+#   its daily chart but the one that holds its first trade date. The arm dates that bar at the month's start where
+#   `range=max` dated it at the week's or the day's, so `age_years` may read up to a month older and the life legs
+#   may start from another close. The probes never read this: the walk merges no daily chart.
+# WHAT THIS CANNOT SAY: whether the arm's list is the better one. It is one day's page. A row that enters or leaves
+#   on a noisy cell carries no claim. The monthly cache is cold here, where Pages keeps each series 7 days.
+# REVERT RULE: none. No shipped value moves; the workflow is manual and saves no cache.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
