@@ -25089,6 +25089,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   VERDICT: the noise floor on both counts. +0.41 is below the null max +1.72, and JITTER p5 is -0.14. No
 #   probe arm runs and no knob moves. Look 3 is the campaign's run of 2026-12-03, kept 35 days ((#1422)).
 #   Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1458) KNOB SEARCH, LOOK 3, AN EXTRA LOOK BY HAND, PRE-REGISTERED 2026-11-11 before the run. Row: (#1459).
+# WHY: the owner asked on 2026-11-11 what can still improve the buy heuristic. The facts read that day: the forward
+#   record holds 2 of its 12 monthly links, the JKP pin has no new release, the book size is closed ((#1457)) and
+#   the (#1333) freeze stands. That freeze keeps the (#1239) monthly campaign open, and from those facts the owner
+#   picked "Knob search today": the search runs now, not on the cron's 2026-12-03. Looks 1 and 2 walked the old
+#   daily-bar history. Main walks monthly bars with a 10-year live window since 9e3c39a ((#1452)), and no search
+#   has run on that history. The shipped config also moved since look 2: the four (#1339) paper-route terms, the
+#   (#1374) soft band and the (#1378) free stretch. So look 3 grades another shipped book on another price
+#   history; it is not a repeat of look 2.
+# WHAT RUNS: campaign.yml, dispatched by hand on the commit that carries this block, so the cron's own inputs:
+#   years 12 8, `universe fund pit dead`, configs=5000 nulls=200, no `holdout`. No code and no value changes.
+# RULE: the (#1240) rule, unchanged. The winner must beat 0 and the best gain of every one of the 200 shuffles, and
+#   its JITTER p5 must be above 0. A search with no edge clears the first test about 1 time in 201, so one more
+#   look adds about half a percent of luck. The search grades the score-only top 10; the page's book also holds
+#   5 momentum seats ((#584)), which no searched knob moves.
+# LOOKS: this is look 3. The cron's run of 2026-12-03 is then look 4; the look number in the (#1421) block's last
+#   lines is replaced by this line.
+# EXPECTED, written before the run: the noise-floor reading. Predictions that can fail: the header reads 13
+#   weights, 6 caps and 12 gate notches; the shipped top-10 excess is above 0 at 12y and at 8y; between 1 and 500
+#   of the 5000 configs beat the shipped one; the null's p50 lies between +0.3 and +1.5.
+# ON A PASS: the row records it and the GRID ROW goes to the owner in one question before any probe arm runs. The
+#   (#1333) freeze is later than (#1240), and under it no knob ships on backtest evidence. A knife-edge is
+#   recorded and runs nothing.
+#   Nothing here reaches rank, BUY NOW, size, trade or the broker.
 # (#1241) EX-27 GO/NO-GO CENSUS, 2026-10-30, record only: NO-GO. Could SEC's free Financial Data Schedules
 #   (EX-27, filed with every 10-K from the mid-1990s to mid-2001, public domain, tagged NET-INCOME, EPS,
 #   TOTAL-ASSETS) fill the FUNDAMENTAL BLACKOUT near the top of this file for the 1996-2001 cutoffs, dead
