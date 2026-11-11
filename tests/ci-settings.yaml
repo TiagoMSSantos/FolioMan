@@ -25113,6 +25113,44 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   (#1333) freeze is later than (#1240), and under it no knob ships on backtest evidence. A knife-edge is
 #   recorded and runs nothing.
 #   Nothing here reaches rank, BUY NOW, size, trade or the broker.
+# (#1459) RESULT, look 3, read under (#1240)'s rule: probe run 43078515811 on ea0eb96 (`universe fund pit dead`,
+#   years 12 8, configs=5000 nulls=200), dispatched by hand through campaign.yml on 2026-11-11 and read the same
+#   day, as pre-registered in (#1458). It is the first look on the monthly price history. GROWTH windows scored
+#   8660 at 12y and 11184 at 8y, against look 2's 8165 and 10626; the ON-SALE counts read 6233 and 10262, against
+#   6142 and 10425. The header reads 13 weights, 6 caps and 12 gate notches.
+#   The shipped top-10 excess reads +1.6 (median +1.2) at 12y and +2.1 (+2.1) at 8y; look 2 read +2.5 (+2.5) at
+#   both on the daily-bar history. 828 of the 5000 configs (16.6%) beat it on both moments at both horizons. The
+#   best config gains +1.00 pts/yr: 12y +3.0 (median +3.1), 8y +3.1 (+3.6), with the peg notch loosened once
+#   (growth_max_peg 2.0 to off). On shuffled returns the same search finds a best gain of +0.72 at the median
+#   shuffle, +1.16 at p95 and +1.49 at the max, so p = 0.164 that a search this wide finds +1.00 by luck. 200
+#   nudges of the winner read p5 +0.74, p50 +0.97.
+#   WINNER, shipped value to the winner's, rounded: growth_fund_weight 0.07 to 0.0056, long_trend_cap 30 to 53.8,
+#   growth_trend_weight 0.15 to 0.302, growth_proximity_weight 1.0 to 0.469, growth_max_peg 2.0 to 0,
+#   dividend_weight 0.5 to 0.392, growth_trust_exp 0.5 to 0.308, growth_accel_weight 0.50 to 0.347,
+#   growth_overext_floor 0.05 to 0.095, growth_underwater_weight 0.3 to 0.067, sharpe_cap 15 to 8.35,
+#   quality_weight 0.15 to 0.162, growth_accel_cap 50 to 52.5, growth_overext_exp 0.5 to 0.768, sharpe_weight
+#   0.05 to 0.0103.
+#   PARSIMONY: putting back growth_fund_weight drops the gain to +0.09, so that one move carries most of it.
+#   Putting back long_trend_cap leaves +0.46, growth_trend_weight +0.58 and growth_proximity_weight +0.70.
+#   Putting back growth_max_peg, dividend_weight, growth_trust_exp or growth_accel_weight leaves +0.86 to +0.91.
+#   Putting back any of the other seven leaves +0.97 to +1.04, so those moves carry nothing.
+#   ACROSS THE THREE LOOKS: growth_accel_cap and growth_trust_exp carried part of both earlier winners and carry
+#   little of this one (+1.03 and +0.89 when put back). This winner leans on growth_fund_weight. The fund weight
+#   also sat among the knobs that carried part of look 2's winner (put back: +0.00 to +0.27 of +0.41), but the
+#   earlier blocks did not record which way their winners moved it, and both runs are deleted, so the looks
+#   cannot be compared on that knob. The WINNER line above is kept for look 4 to compare against.
+#   Two readings differ from looks 1 and 2: the winner holds under its nudges (JITTER p5 +0.74, against -0.16
+#   and -0.14), and it sits above its null's p50 (+1.00 against +0.72), where the earlier two sat under theirs.
+#   Neither is the test: the winner is still under the null's p95 and under its max.
+#   PREDICTIONS of (#1458): three of four held. The header held. The shipped excess is above 0 at 12y and at 8y:
+#   held. The null's p50 is +0.72, inside +0.3 to +1.5: held. The count of configs that beat the shipped one
+#   MISSED: 828 is above the 500 written down, against 145 and 82 in looks 1 and 2. The null prices the best
+#   gain only, so that count has no price for luck and grades nothing; look 4 reads it again. The expected
+#   reading, the noise floor, held.
+#   VERDICT, 2026-11-11: the noise floor, as the run printed it. +1.00 is not above the null max +1.49, so the
+#   first test of (#1240) fails; the second one, JITTER p5 above 0, would have held. No probe arm runs and no
+#   knob moves. Look 4 is the campaign's run of 2026-12-03, kept 35 days ((#1422)).
+#   Nothing here reaches rank, BUY NOW, size, trade or the broker.
 # (#1241) EX-27 GO/NO-GO CENSUS, 2026-10-30, record only: NO-GO. Could SEC's free Financial Data Schedules
 #   (EX-27, filed with every 10-K from the mid-1990s to mid-2001, public domain, tagged NET-INCOME, EPS,
 #   TOTAL-ASSETS) fill the FUNDAMENTAL BLACKOUT near the top of this file for the 1996-2001 cutoffs, dead
