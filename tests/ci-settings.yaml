@@ -29010,6 +29010,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   -8.6), deepens the 20y one by 0.4 (-3.0 to -3.4) and costs 0.4 of median at 12y and 0.2 at 8y. The deeper tail
 #   of this arm is not one sector's: no cap reaches it.
 # REVERT RULE: `growth_sector_cap: 0`, unchanged.
+# (#1448) THE STRETCH BRAKE OFF ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-11 before any run. Knob:
+#   `growth_overext_cap` (100 ships; 0 is the brake off). Row: (#1449). One probe. Record only: no outcome ships.
+# WHY: the (#1440) dig read the 8y fund leg's passer edge at 0 on monthly bars with the brake (-1.3) and without it
+#   (+4.2), on that one leg. Asked what the gate's check should do on that leg, the owner chose "Test penalty-off
+#   first": read the brake off on the top-10 ruler before any alarm moves. That ruler read the brake off on mixed
+#   bars only ((#1380): the worst window twice as deep; RU2, RU3 and RU-E fail at both horizons). On this arm
+#   (#1396) read the free zone at 40 to 80 (no row eligible; 70 and 80 fail RU3 and RU-E) and never the brake off.
+# RUN: knobs="long_chart_explicit_span=true backtest_live_window_years=10.0", years="12 8", args="universe fund pit",
+#   rescore="guard" (200 shuffles), grid '[{}, {"growth_overext_cap": 0.0}]'. Row 0 is this arm at the shipped
+#   brake. Row 1 takes the `else` branch of the (#1375) code for stocks and funds: x1.00 at any stretch. Coins read
+#   their own cap, which does not move, and the backtest holds none ((#1379)). The 150 stretch gate does not move.
+#   Then tools/regrade_ruler.py reads the same log, lane pit.
+# BAR, (#1395)'s, unchanged: ELIGIBLE = against row 0 the guard reads PASS or INERT at both horizons AND RU1, RU2,
+#   RU3 and RU-E pass at both. STRICT WIN = eligible and above row 0 on median excess, worst window and the RU1
+#   tally at BOTH horizons (0.1 %/yr; a tie is not above).
+# WHAT EACH OUTCOME DOES: nothing ships on any of them. The brake is a buy rule under the (#1333) freeze, so even a
+#   strict win waits for the forward record's 12 monthly links and then for the owner's word. NOT ELIGIBLE: the
+#   brake stays for cause on this arm, and the 8y fund check goes back to the owner with -1.3 as its reading.
+#   ELIGIBLE or a STRICT WIN: recorded as a candidate for the forward record, and the check goes back to the owner
+#   with both readings (-1.3 and +4.2), each about 0.
+# WIRING CHECK: row 1 must move top-10 names; 0.00 moved means the knob did not reach the walk, so it is fixed and
+#   re-run, not read. Both rows read one dump, so they score the same windows. Bars must print `1mo` only.
+# EXPECTED: NOT ELIGIBLE. Row 1 fails RU3 or RU-E at one horizon or more, as free 70 and 80 did at both. The 12y
+#   median falls by 0.5 to 1.2 under row 0's. The worst window is no deeper than row 0's (free 70 and 80 read -6.4
+#   against -8.6 at 12y), and RU1 passes (they lifted its tally over half). Top-10 names moved above the free
+#   grid's largest, 1.81 a bucket.
+# WHAT THIS CANNOT SAY: the ruler is blind to a gain under 2 to 4 %/yr ((#1333)), so a pass would mean no harm was
+#   seen, not more profit.
+# REVERT RULE: `growth_overext_cap: 100.0` and `growth_overext_free: 60.0`, unchanged.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
