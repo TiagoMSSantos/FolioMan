@@ -27994,6 +27994,31 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # AGAINST EXPECTED: the median moved -0.5 at 12y and +0.3 at 8y, inside the |0.2-0.5| called, sign mixed as called.
 #   The pool shift (-10 % / +2 % of name-cutoffs) was not read from these logs.
 # REVERT RULE: nothing moved; `backtest_live_window_years` stays 0.0.
+# (#1464) REBLESS AND BEFORE/AFTER FOR (#1463), 2026-11-11: the trend's slope rides the ten-year window. A fix, not a
+#   knob: no setting moves, and on the page only the reason's words change.
+# RUNS: tag `probe-trend` at 73295a0 against main 6579008, the same hour and the same pond (5042 names resolved from
+#   cache on both sides). Control 43099861089 and arm 43099842930 (`universe winners rivals` at 20, 12 and 8); control
+#   43099058276 and arm 43099880108 (`8 universe fund winners`); bless 43099898020. The three runs on the tag go when
+#   the tag is deleted ((#1329)). The controls print the gate lines CI run 43093962786 printed on the same commit.
+# GATE-READ LINES: windows scored are the same at every horizon (GROWTH 10050 / 14369 / 17228). Passer edge, passer
+#   lift, both OOS halves, the Série E share, WINNERS HELD and every DCA row print the same at 20y, 12y, 8y and on the
+#   8y fund leg: passer edge +60.4 / +55.8 / +11.1 / -1.3, winners held 10.6 / 11.4 / 11.3 / 11.0 %, SIZED DCA +6.8,
+#   S+inter DCA +10.6, and the fund leg's coverage, peg_yield, split and core counts. One gate-read number moves: the
+#   12y top-10 excess, +6.2 -> +6.3 (median +7.2 on both sides). No floor and no ratchet is nearer than it was.
+# WHAT MOVES: 172 / 284 / 248 report lines at 20y / 12y / 8y and 278 on the fund leg, all in the research tables.
+#   The whole-lane edge: 20y -484.5 -> -477.6, 12y -80.1 -> -80.3, 8y -19.1 -> -19.3, 8y fund -17.5 on both sides.
+#   The `lifetime` count in the brake table's `brake alone` row: 20y 7 -> 3, 12y 5 -> 4, 8y 5 -> 4; in its
+#   `brake + dock` row: 9 -> 11, 9 -> 13, 12 -> 12. The gate moves in both directions, as (#1391) measured for the
+#   range gate: it stops refusing a name for a decline that ended more than ten years ago, and it starts refusing a
+#   name whose last ten years slope down after an older rise.
+# GOLDENS: 12 of 13 move (`backtest-12-tune` does not), 138 lines, copied unedited from the bless artifact. No
+#   `top-10 book` line moves in any of them, so the search pin (+2.8, med +3.3) and the regrade rank-1 pin hold; the
+#   NaN/inf map holds; the unit edge pin is graded whole-life (the window answers 0.0 under test) and does not move.
+#   The rows that move most are the two that read the slope itself: `sortino` -105.3 -> -13.0 and `sharpe_ref`
+#   -131.4 -> -14.2 at 12y (pit: -8.8 -> +23.3 and -22.9 -> +28.3). On the fund fixture the `growth_trend_weight x0`
+#   swap row reads SPLIT where it read "holds" (mean -18.3 -> +4.4, median -77.0 -> -58.3). Both are research rows
+#   and no knob moves on them.
+# REVERT RULE: revert (#1463) and this commit together.
 # (#1393) ONE ENDPOINT FOR BOTH LEGS OF A MOMENTUM KEY, PRE-REGISTERED 2026-11-08. Row: (#1394). Knob:
 #   `momentum_one_endpoint` (false ships). NOT A BUY RULE: the key stays 12-7; this makes it the 12-7 its receipt names.
 # THE DEFECT, definitional and shared by the live screen: `picks::net_return` divides the long leg's return by the short

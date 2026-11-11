@@ -53,7 +53,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
       -> at most 42.3% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
       cagr        + cagr-life      1 winners     1.8% of the missed wealth   both near-miss:    0 ( 0.0%)
       range       + 1Y+            1 winners     1.0% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 2.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:3% 4:9% 5:3% 6:5% 7:25% 8:13%
+      -> exactly-2-gate winners hold 2.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:3% 3:2% 4:6% 5:3% 6:5% 7:26% 8:13%
     why the ≥10× misses were missed (104 of 163 winners = 85% of their wealth; capture above is the rest):
       range                      46 winners    47.7% of the missed wealth   sole blocker:    0 ( 0.0%)
       history                    26 winners    31.9% of the missed wealth   sole blocker:   26 (31.9%)
@@ -69,7 +69,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
       cagr-life   + 1Y+            1 winners     0.7% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 5Y+            2 winners     0.5% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 1Y+            1 winners     0.4% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 5.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:41% 2:6% 3:2% 4:8% 5:8% 6:8% 7:18% 8:9%
+      -> exactly-2-gate winners hold 5.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:41% 2:6% 3:4% 4:5% 5:8% 6:8% 7:18% 8:9%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     no factor fills both sides — no as-of fundamentals, or the book never lost money
     (0 of 61 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
@@ -96,7 +96,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
     growth_smoothness_weight rho -0.13 Δ+0.00   edge -586.3 Δ+0.0
     growth_underwater_weight rho -0.13 Δ+0.00   edge -586.3 Δ+0.0
     quality_weight       rho -0.13 Δ+0.00   edge -586.3 Δ+0.0
-    growth_trust_ladder→on rho -0.10 Δ+0.03   edge -554.6 Δ+31.7
+    growth_trust_ladder→on rho -0.09 Δ+0.03   edge -554.6 Δ+31.7
     proximity            rho -0.11 Δ+0.02   edge -387.3 Δ+199.0
     growth_dividend      rho -0.12 Δ+0.01   edge -519.1 Δ+67.3
     growth_trust_young→0.7 (no extra dock) rho -0.13 Δ+0.00   edge -586.3 Δ+0.0
@@ -113,7 +113,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   0.00   rho -0.12  edge -660.2  winsor -417.5  OOS -0.33 | +0.08  [off]
   0.15   rho -0.13  edge -586.3  winsor -338.5  OOS -0.33 | +0.06  [SHIPPED]
   0.25   rho -0.13  edge -562.8  winsor -315.0  OOS -0.33 | +0.05
-  0.35   rho -0.14  edge -605.4  winsor -357.7  OOS -0.32 | +0.04
+  0.35   rho -0.14  edge -605.4  winsor -357.7  OOS -0.32 | +0.05
   0.45   rho -0.14  edge -602.0  winsor -354.2  OOS -0.32 | +0.04
   0.55   rho -0.14  edge -600.2  winsor -352.4  OOS -0.32 | +0.03
   0.70   rho -0.15  edge -597.5  winsor -349.7  OOS -0.32 | +0.02
@@ -134,7 +134,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   25.00  rho -0.13  edge -586.3  winsor -338.5  OOS -0.33 | +0.07
   30.00  rho -0.13  edge -586.3  winsor -338.5  OOS -0.33 | +0.06  [SHIPPED]
   40.00  rho -0.13  edge -581.5  winsor -333.7  OOS -0.32 | +0.06
-  50.00  rho -0.13  edge -585.3  winsor -337.5  OOS -0.32 | +0.05
+  50.00  rho -0.13  edge -585.3  winsor -337.5  OOS -0.32 | +0.06
   60.00  rho -0.13  edge -585.3  winsor -337.5  OOS -0.32 | +0.05
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
@@ -147,7 +147,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   (at −1.0 the 80%-of-range name is multiplied by 1.20). Clamped at 0, so no rung can produce a negative factor.
   -1.00  rho -0.09  edge -351.9  winsor -194.8  OOS -0.23 | +0.07
   -0.50  rho -0.10  edge -321.5  winsor -164.4  OOS -0.26 | +0.07
-  0.00   rho -0.11  edge -387.3  winsor -230.2  OOS -0.28 | +0.07  [off]
+  0.00   rho -0.11  edge -387.3  winsor -230.2  OOS -0.28 | +0.08  [off]
   0.50   rho -0.12  edge -563.5  winsor -315.7  OOS -0.31 | +0.07
   1.00   rho -0.13  edge -586.3  winsor -338.5  OOS -0.33 | +0.06  [SHIPPED]
   1.50   rho -0.13  edge -609.6  winsor -368.5  OOS -0.34 | +0.06
@@ -181,9 +181,9 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   0.00   rho -0.12  edge -519.1  winsor -278.0  OOS -0.32 | +0.08  [off]
   0.25   rho -0.12  edge -528.9  winsor -287.8  OOS -0.33 | +0.07
   0.50   rho -0.13  edge -586.3  winsor -338.5  OOS -0.33 | +0.06  [SHIPPED]
-  1.00   rho -0.14  edge -656.0  winsor -408.3  OOS -0.33 | +0.04
+  1.00   rho -0.14  edge -656.0  winsor -408.3  OOS -0.33 | +0.05
   1.50   rho -0.15  edge -700.5  winsor -452.7  OOS -0.33 | +0.03
-  3.00   rho -0.17  edge -861.3  winsor -612.8  OOS -0.34 | -0.03
+  3.00   rho -0.17  edge -861.3  winsor -612.8  OOS -0.34 | -0.02
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -221,7 +221,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
 ── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-10 ENTRANTS minus the names they DISPLACED, realized fwd %) ──
   a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).
   RE-PROBE needs mean AND median positive and means a full A/B round, never a weight move. k/N = buckets that swapped.
-  growth_trend_weight x0       swapped 15/68 buckets  mean +299.6 | med -255.6 pts  -> SPLIT — mean (+299.6) and median (-255.6) disagree: the gap is driven by the tail, not the typical name. Read the median.
+  growth_trend_weight x0       swapped 15/68 buckets  mean +500.5 | med -255.6 pts  -> SPLIT — mean (+500.5) and median (-255.6) disagree: the gap is driven by the tail, not the typical name. Read the median.
   growth_trend_weight x2       swapped 14/68 buckets  mean +422.3 | med +157.0 pts  -> RE-PROBE (entrants beat the displaced)
   growth_accel_weight x0       swapped 26/68 buckets  mean +215.5 | med +65.5 pts  -> RE-PROBE (entrants beat the displaced)
   growth_accel_weight x2       swapped 22/68 buckets  mean +542.3 | med -33.0 pts  -> SPLIT — mean (+542.3) and median (-33.0) disagree: the gap is driven by the tail, not the typical name. Read the median.
@@ -259,8 +259,8 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   worst_5y       n=758   rho -0.13  edge -702.7  OOS -0.09 | -0.19
   underwater_neg n/a (only 0 cutoffs carry this stat)
   downside_dev_neg n=928   rho -0.03  edge -761.7  OOS -0.25 | +0.20
-  sortino        n=927   rho -0.19  edge -1057.0  OOS -0.32 | -0.07
-  sharpe_ref     n=928   rho -0.21  edge -1142.4  OOS -0.31 | -0.11
+  sortino        n=927   rho -0.17  edge -1084.0  OOS -0.29 | -0.10
+  sharpe_ref     n=928   rho -0.18  edge -1104.8  OOS -0.28 | -0.14
 
 ── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 20y no-sell, vs ^GSPC) [best of 13, unhaircut] ──
   POOL CENSUS (#149): 58 bucket(s), median gated pool 13, graded basket 10 -> 20 saturated (pool <= basket), 399 substitutable name(s); the rank-1 h2h GUARD below reads off the other 38

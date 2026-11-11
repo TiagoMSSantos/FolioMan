@@ -56,7 +56,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       range       + 1Y+            1 winners     1.6% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 1Y+            1 winners     1.0% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr-life   + stretch        1 winners     0.6% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 5.6% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:55% 2:6% 3:1% 4:8% 5:4% 6:9% 7:10% 8:5%
+      -> exactly-2-gate winners hold 5.6% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:55% 2:6% 3:2% 4:7% 5:4% 6:9% 7:11% 8:5%
     why the ≥10× misses were missed (81 of 146 winners = 61% of their wealth; capture above is the rest):
       history                    19 winners    41.5% of the missed wealth   sole blocker:   19 (41.5%)
       range                      34 winners    36.2% of the missed wealth   sole blocker:    0 ( 0.0%)
@@ -70,7 +70,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       cagr        + 5Y+            2 winners     1.1% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 1Y+            1 winners     0.7% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr-life   + 1Y+            1 winners     0.6% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 8.5% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:45% 2:9% 3:5% 4:8% 5:7% 6:10% 7:12% 8:4%
+      -> exactly-2-gate winners hold 8.5% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:45% 2:9% 3:6% 4:8% 5:6% 6:10% 7:8% 8:7%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     rev_cagr              winners n=9    med      4.66   losers n=6    med      8.46   gap     -3.80   AUC  0.44
     rev_accel             winners n=9    med     -1.27   losers n=6    med      1.19   gap     -2.46   AUC  0.46
@@ -194,7 +194,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   0.00   rho -0.02  edge -58.0  winsor -21.4  OOS -0.16 | +0.08  [off]
   0.50   rho -0.02  edge -107.9  winsor -69.2  OOS -0.17 | +0.09
   1.00   rho -0.02  edge -108.2  winsor -69.5  OOS -0.18 | +0.10  [SHIPPED]
-  1.50   rho -0.02  edge -94.7  winsor -56.0  OOS -0.18 | +0.10
+  1.50   rho -0.02  edge -94.7  winsor -56.0  OOS -0.18 | +0.11
   2.00   rho -0.02  edge -112.7  winsor -73.9  OOS -0.17 | +0.11
   3.00   rho -0.01  edge -114.7  winsor -75.8  OOS -0.16 | +0.11
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
@@ -265,7 +265,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-10 ENTRANTS minus the names they DISPLACED, realized fwd %) ──
   a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).
   RE-PROBE needs mean AND median positive and means a full A/B round, never a weight move. k/N = buckets that swapped.
-  growth_trend_weight x0       swapped 17/84 buckets  mean -18.3 | med -77.0 pts  -> holds
+  growth_trend_weight x0       swapped 17/84 buckets  mean +4.4 | med -58.3 pts  -> SPLIT — mean (+4.4) and median (-58.3) disagree: the gap is driven by the tail, not the typical name. Read the median.
   growth_trend_weight x2       swapped 18/84 buckets  mean +206.9 | med +10.3 pts  -> RE-PROBE (entrants beat the displaced)
   growth_accel_weight x0       swapped 38/84 buckets  mean -170.0 | med -64.3 pts  -> holds
   growth_accel_weight x2       swapped 29/84 buckets  mean +241.8 | med +30.4 pts  -> RE-PROBE (entrants beat the displaced)
@@ -454,8 +454,8 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   worst_5y       n=1501  rho +0.15  edge +35.4  OOS -0.16 | +0.27
   underwater_neg n/a (only 0 cutoffs carry this stat)
   downside_dev_neg n=1734  rho +0.06  edge -105.7  OOS -0.11 | +0.23
-  sortino        n=1733  rho -0.02  edge -105.3  OOS -0.27 | +0.18
-  sharpe_ref     n=1734  rho -0.05  edge -131.4  OOS -0.30 | +0.16
+  sortino        n=1733  rho +0.09  edge -13.0  OOS -0.28 | +0.33
+  sharpe_ref     n=1734  rho +0.07  edge -14.2  OOS -0.31 | +0.33
 
 ── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 12y no-sell, vs ^GSPC) [best of 13, unhaircut] ──
   POOL CENSUS (#149): 74 bucket(s), median gated pool 18, graded basket 10 -> 20 saturated (pool <= basket), 607 substitutable name(s); the rank-1 h2h GUARD below reads off the other 54
@@ -1963,7 +1963,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── WINNERS (#583): each window's top 5% stocks by real forward return, filed by what keeps them out of the shipped top-10 book; gap = own CAGR minus the window's book, pts/yr, HOLD 12y ──
   held (in the top-10 book)  winners   55 ( 43%) gap +8.5 (med +8.8) | all   579 gap -3.8 (med -3.3) beat book 34% | cagr-life 36, cagr 28, 5Y+ 14, history 13, range 9, 1Y+ 8
   refused (no score)         winners    9 (  7%) gap +23.1 (med +24.2) | all   443 gap -10.2 (med -10.1) beat book 12% | 8Y+ 8, cagr 8, cagr-life 8, 5Y+ 7, range 7, range8y 7
-  brake alone                winners   10 (  8%) gap +14.2 (med +15.3) | all    63 gap -2.9 (med -3.3) beat book 37% | cagr-life 9, cagr 3, lifetime 3, 5Y+ 2, stretch 2, 1Y+ 1
+  brake alone                winners   10 (  8%) gap +14.2 (med +15.3) | all    63 gap -2.9 (med -3.3) beat book 37% | cagr-life 9, cagr 3, 5Y+ 2, lifetime 2, stretch 2, 1Y+ 1
   gate dock alone            winners   18 ( 14%) gap +14.2 (med +13.4) | all   335 gap -4.3 (med -4.1) beat book 34% | cagr-life 12, 5Y+ 11, cagr 10, range 8, 1Y+ 6, range8y 6
   brake + dock               winners    0 (  0%) gap -0.0 (med NaN) | all     7 gap -0.4 (med +0.8) beat book 57% |
   score blind                winners   36 ( 28%) gap +18.2 (med +16.6) | all   202 gap -0.2 (med +1.1) beat book 55% | cagr 21, cagr-life 19, history 13, 1Y+ 10, 5Y+ 10, range 10

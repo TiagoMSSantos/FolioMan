@@ -56,7 +56,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       range       + 1Y+            1 winners     1.7% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 1Y+            1 winners     1.0% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr-life   + stretch        1 winners     0.6% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 5.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:57% 2:6% 3:2% 4:6% 5:4% 6:9% 7:10% 8:5%
+      -> exactly-2-gate winners hold 5.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:57% 2:6% 3:2% 4:5% 5:4% 6:9% 7:11% 8:5%
     why the ≥10× misses were missed (78 of 146 winners = 59% of their wealth; capture above is the rest):
       history                    19 winners    42.6% of the missed wealth   sole blocker:   19 (42.6%)
       range                      34 winners    37.3% of the missed wealth   sole blocker:    0 ( 0.0%)
@@ -70,7 +70,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       cagr        + 5Y+            2 winners     1.2% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 1Y+            1 winners     0.7% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr-life   + 1Y+            1 winners     0.6% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 8.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:46% 2:9% 3:6% 4:5% 5:7% 6:9% 7:12% 8:4%
+      -> exactly-2-gate winners hold 8.8% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:46% 2:9% 3:7% 4:5% 5:7% 6:10% 7:9% 8:8%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     no factor fills both sides — no as-of fundamentals, or the book never lost money
     (0 of 61 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
@@ -222,7 +222,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-10 ENTRANTS minus the names they DISPLACED, realized fwd %) ──
   a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).
   RE-PROBE needs mean AND median positive and means a full A/B round, never a weight move. k/N = buckets that swapped.
-  growth_trend_weight x0       swapped 20/84 buckets  mean -149.8 | med -67.6 pts  -> holds
+  growth_trend_weight x0       swapped 20/84 buckets  mean -130.5 | med -43.6 pts  -> holds
   growth_trend_weight x2       swapped 18/84 buckets  mean +102.7 | med +10.3 pts  -> RE-PROBE (entrants beat the displaced)
   growth_accel_weight x0       swapped 35/84 buckets  mean -106.0 | med -63.4 pts  -> holds
   growth_accel_weight x2       swapped 29/84 buckets  mean +35.8 | med +3.5 pts  -> RE-PROBE (entrants beat the displaced)
@@ -260,8 +260,8 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   worst_5y       n=1501  rho +0.15  edge +35.4  OOS -0.16 | +0.27
   underwater_neg n/a (only 0 cutoffs carry this stat)
   downside_dev_neg n=1734  rho +0.06  edge -105.7  OOS -0.11 | +0.23
-  sortino        n=1733  rho -0.02  edge -105.3  OOS -0.27 | +0.18
-  sharpe_ref     n=1734  rho -0.05  edge -131.4  OOS -0.30 | +0.16
+  sortino        n=1733  rho +0.09  edge -13.0  OOS -0.28 | +0.33
+  sharpe_ref     n=1734  rho +0.07  edge -14.2  OOS -0.31 | +0.33
 
 ── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 12y no-sell, vs ^GSPC) [best of 13, unhaircut] ──
   POOL CENSUS (#149): 74 bucket(s), median gated pool 18, graded basket 10 -> 20 saturated (pool <= basket), 607 substitutable name(s); the rank-1 h2h GUARD below reads off the other 54

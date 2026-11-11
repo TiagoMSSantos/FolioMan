@@ -3,10 +3,10 @@
   pick the hold with the highest NET edge; if they're flat, the longest (cheapest) wins.
   `null` is the information-free floor for THAT hold — an edge no bigger is not a signal.
   1y hold  edge +2.3  turnover 31%  net +2.2 pts   null +2.8  n=1798
-  2y hold  edge +3.7  turnover 31%  net +3.7 pts   null +4.6  n=1745
-  3y hold  edge -0.3  turnover 31%  net -0.3 pts   null +1.5  n=1694
+  2y hold  edge +3.8  turnover 31%  net +3.7 pts   null +4.6  n=1745
+  3y hold  edge -0.2  turnover 31%  net -0.3 pts   null +1.5  n=1694
   5y hold  edge -8.2  turnover 31%  net -8.2 pts   null -3.6  n=1579
-  8y hold  edge -36.5  turnover 31%  net -36.6 pts   null -31.6  n=1419
+  8y hold  edge -37.0  turnover 31%  net -37.0 pts   null -31.2  n=1419
   10y hold  edge -48.4  turnover 31%  net -48.5 pts   null -41.5  n=1288
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
 backtest: hold-period sweep over [1, 2, 3, 5, 8, 10]y windows (200 tickers)…
