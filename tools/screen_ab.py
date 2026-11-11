@@ -7,7 +7,8 @@ differently). A row or a cell counts for the KNOB only when both controls agree 
 
 Reads `.screen_web.json` (every top-level array of rows; a row is a list of [column, value, link, tip] cells, keyed
 by its TICKER cell) and `.screen_universe.json` (`quotes`, keyed by ticker; an object or a list is one column a
-member, so `perf[10]`, the 20Y leg, is read apart from `perf[0]`, the 1D leg that moves with the price).
+leaf, so `perf[10][1]`, the 20Y leg's percent, is read apart from `perf[10][0]`, its then-price label, which is
+written at the live exchange rate and moves between two screens of one day).
 The universe has thousands of rows, so its list prints five changes a column; the counts are always whole.
 
     python3 -I tools/screen_ab.py c1.json arm.json c2.json
@@ -32,6 +33,15 @@ def keyed(rows):
     return out
 
 
+def flat(row, k, x):
+    """One column a leaf of a quote's member: `fund.roic`, `perf[10][1]`."""
+    if isinstance(x, (dict, list)) and x:
+        for k2, x2 in x.items() if isinstance(x, dict) else enumerate(x):
+            flat(row, f"{k}.{k2}" if isinstance(x, dict) else f"{k}[{k2}]", x2)
+    else:
+        row[k] = x
+
+
 def tables(doc):
     """{table: {row key: {column: value}}}. Top-level values that are not row tables form the one row of `(top)`."""
     out = {"(top)": {"": {}}}
@@ -41,8 +51,7 @@ def tables(doc):
             for q in v:
                 row = out[name][q["ticker"]] = {}
                 for k, x in q.items():
-                    row.update({f"{k}.{k2}": x2 for k2, x2 in x.items()} if isinstance(x, dict) else
-                               {f"{k}[{i}]": x2 for i, x2 in enumerate(x)} if isinstance(x, list) else {k: x})
+                    flat(row, k, x)
         elif isinstance(v, list) and v and all(isinstance(r, list) for r in v):
             out[name] = keyed(v)
         else:
@@ -118,12 +127,17 @@ def selftest():
     # rows without a ticker key on their first cells; a repeated key is numbered
     assert list(keyed([[["DAY", "Mon"], ["HEADLINE", "x"]], [["DAY", "Mon"], ["HEADLINE", "x"]]])) == \
         ["Mon | x", "Mon | x #2"]
-    # the universe: keyed by ticker, objects and lists one column a member, five changes a column at most
+    # the universe: keyed by ticker, objects and lists one column a leaf, five changes a column at most
     def uni(x, n=8):
         return {"quotes": [{"ticker": f"T{i}", "fund": {"roic": x}, "perf": [["p", 5], ["q", x]]} for i in range(n)]}
     counts, lines = diff(uni(1), uni(2), uni(1), cap=5, out=lambda _: None)
     assert counts["quotes"] == {"knob cells": 16} and len(lines) == 10, (counts, lines)
-    assert lines[:2] == ["quotes  T0  fund.roic  1 -> 2", 'quotes  T0  perf[1]  ["q", 1] -> ["q", 2]'], lines
+    assert lines[:2] == ["quotes  T0  fund.roic  1 -> 2", "quotes  T0  perf[1][1]  1 -> 2"], lines
+    # a leg's label that moved between the controls is noise on the label alone: its percent keeps the knob read
+    drift = uni(1)
+    drift["quotes"][0]["perf"][1][0] = "r"
+    counts, _ = diff(uni(1), uni(2), drift, cap=5, out=lambda _: None)
+    assert counts["quotes"] == {"knob cells": 16, "noise cells": 1}, counts
     print("screen_ab selftest ok")
 
 

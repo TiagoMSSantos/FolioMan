@@ -29173,6 +29173,15 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # WHAT THIS CANNOT SAY: whether the arm's list is the better one. It is one day's page. A row that enters or leaves
 #   on a noisy cell carries no claim. The monthly cache is cold here, where Pages keeps each series 7 days.
 # REVERT RULE: none. No shipped value moves; the workflow is manual and saves no cache.
+# VOID RUN, 2026-11-11: run 43020170988 on 22e07e1 passed every wiring line but the last. tools/screen_ab.py read
+#   `perf[10]` as one cell, the pair of the leg's then-price label and its percent, and the two controls disagreed
+#   on that pair for 206 of the 239 old quotes. The cause is the label alone: it is a euro price written at the live
+#   exchange rate (my reading: the labels moved by the 0.05 % that the euro price of an unmoved US close moved
+#   between the control screens, 9 minutes apart). The percent agreed on 239 of 239. By the wiring check the run is
+#   void and carries no reading. The fix is in the tool: one column a leaf, so the percent is `perf[10][1]` and the
+#   label `perf[10][0]`. The second run reads `perf[10]` in the wiring check and in EXPECTED 2 and 3 as that
+#   percent; nothing else above changes. The void run's payloads were opened to find the cause, so its numbers
+#   were seen before the second run. EXPECTED stands as written, the lines the void run missed included.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
