@@ -1556,7 +1556,8 @@ sizing:
                       #   raised it 2 -> 4; (#584) C raised it 4 -> 8 under the momentum interleave: on 24 names
                       #   the head holds 13.6% each (67.8% of gross) and the rest 1.7%. Coins untouched. 1.0 = the
                       #   flat (#313) book and the code default. Read the (#322), (#558) and (#584) HEAD WEIGHT
-                      #   receipts. Anything not above 0 is read as 1.
+                      #   receipts. Anything not above 0 is read as 1. (#1442) the live-equivalent ladder
+                      #   1/2/4/8 read flat under its bar; the owner's word, 2026-11-11, keeps 8.
   head_skip_commodity: true  # (#495) USER DECISION 2026-10-06: a `c` commodity-price name (GICS Energy/Materials,
                       #   or a miner/oil/uranium-named fund) never takes one of those five double shares. It
                       #   moves to just after the head, still bought at a tail share. On the day MPC (refiner,
@@ -28889,6 +28890,11 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NEXT: one owner question, flat (1.0) or stay (8.0). A ship below 8 moves `size`, BUY% and the page, as the block
 #   above says.
 # REVERT RULE: `head_weight: 8.0`, unchanged.
+# OWNER'S WORD, 2026-11-11: STAY AT 8. The question was put with both lanes' rows above and the two books in plain
+#   words (the top five at 8 shares against 1, 63 % of gross, or 25 equal names at 3.8 % each); the answer was "Stay
+#   at 8x". `head_weight: 8.0` stays, and no golden, `size`, BUY% or page line moves. The bar's reading, flat, is on
+#   record and is not shipped: the bar left the ship to this word. Asked again only on a new ruler or on the
+#   forward record's 12 monthly links, not on this arm's rows a second time.
 # (#1443) THE SECTOR CAP ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-10 before any run. Knob: `growth_sector_cap`
 #   (0 ships). Row: (#1444). Four probes. A RISK choice by the knob's own rule, re-asked because the arm changed.
 # WHY: (#557) graded caps 1-5 on the shipped walk under the owner's bar and read that k3, k4 and k5 qualify and
