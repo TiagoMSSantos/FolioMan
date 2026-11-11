@@ -29352,6 +29352,52 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   not these, so no bar reads the fall. Nor why two coins have no monthly series.
 # RE-OPEN: a regen on another day, to read whether APT-USD and PI-EUR come back.
 # REVERT RULE: with (#1452); the two ratchets go back to 5.3 and 4.4 in the same push.
+# (#1455) THE BOOK SIZE ON THE PAGE'S PRICE HISTORY, PRE-REGISTERED 2026-11-11 before any run. Knob:
+#   `sizing.book_names` (25 ships). Row: (#1456). Twelve probes. A SHAPE choice: no reading here is a gain claim.
+# WHY: the owner asked on 2026-11-11 what the buy rules can still improve and, with no profit lever open, picked
+#   "Change shape, not profit", then "Fewer names", then "measure and choose the one with best results", then, for
+#   a run where no size clearly wins, "Fewest names, no worse". The book grew 10 -> 20 ((#317)) and 20 -> 25
+#   ((#321)) in September on "no worse" reads of flat weights and the old price history, and (#321) wrote that the
+#   pit pool held about 15 names a window, so ranks 16-25 were never read. Since then the first five weigh 8 shares
+#   against a later name's 1 ((#584), kept by the owner's word under (#1442)) and the walk moved to monthly bars
+#   and the 10-year window ((#1452)). On 2026-11-11 the page's book is full at 25: five names at 12.5 % each,
+#   twenty at 1.56 %, one coin at 6.25 %. A smaller book does not grow the small orders much; it removes them and
+#   moves the money to the first five: at 20 names 13.6 % each and fifteen at 1.70 %, at 15 names 15.0 % and ten
+#   at 1.875 %, at 10 names 16.7 % and five at 2.08 %.
+# RUNS: main's own config, no arm knobs ((#1452) made the page's price history the walk's). years="20",
+#   knobs="book_names=N" for N = 10, 15, 20 and 25 on three sets of args, all twelve dispatched in one batch on one
+#   commit, so the 25 rows are the control of that day's pond:
+#     pit   args="universe fund pit rivals"
+#     dead  args="universe fund pit dead rivals"
+#     gate  args="universe winners rivals", the backtest gate's own 20y run (tests/network.rs)
+#   The cell on pit and dead is the (#1441) one: the `S+inter never-sell` row against index DCA (mean, median,
+#   worst program), the book the page shows. On gate the cells are the three lines the gate holds to a floor.
+# WIRING: each probe log echoes its `  book_names: N` line. The gate run at 25 reprints what CI read on 25cf42a:
+#   S+inter +10.0 (med +9.0), SIZED +6.7, SIZED Serie E 100 %, each within 0.1 (the pond may have moved a day).
+# BAR, fixed now, read on the printed one-decimal rows, each size against the 25 row of its own lane:
+#   1. ELIGIBLE: a size whose gate run holds all three floors as they stand (S+inter mean +9.0, SIZED +5.7, SIZED
+#      Serie E 90 %). No floor is lowered for a shape knob; a size under a floor is out, whatever its other rows.
+#   2. CLEAR WIN: an eligible size that beats 25 by +0.2 or more on mean AND median in BOTH pit and dead, with its
+#      worst program no more than 0.5 under 25's in each. If several do, the one with the largest smallest-lane
+#      mean gain is picked, a tie going to the smaller book.
+#   3. NO CLEAR WIN: the SMALLEST eligible size that is NO WORSE: at most 0.3 under 25 on mean and on median in
+#      both lanes, and its worst program at most 0.5 under 25's in each. This is the owner's tie rule.
+#   4. NEITHER: KEEP 25.
+#   The bar picks; it does not ship. The pick goes to the owner with this table and with what the page changes
+#   (each row's share at the picked size, and the rows that keep their place in the list with no share).
+# EXPECTED: 1. No size is a clear win: none beats 25 by +0.2 on the mean in both lanes. 2. The rows at 20 and 25
+#   read within 0.1 of each other on every pit and dead cell: (#321) read a pool of about 15 names a window.
+#   3. Each smaller book moves weight to the first five, so the worst program falls or holds as the book shrinks
+#   and never rises by more than 0.1, as it fell with each head rung under (#1442). 4. Rule 3 picks 15 or 10; if
+#   10 is out, it is out on a worst program or a gate floor, not on a mean. 5. All four sizes hold the gate floors.
+# ON A SHIP: the `book_names` line and the `shipped_config_pin` literal move together; `size`, BUY% and the page
+#   move; `book_names` is fingerprinted, so BUY NOW warns until the next walk journals. The goldens are re-read by
+#   a bless probe and reblessed only if they move. A gate reading that rose lifts its floor by the ratchet rule.
+# WHAT IT CANNOT SAY: that a smaller book earns more. Rule 3 is a no-harm read under a bar that cannot see
+#   +4 %/yr ((#1333), (#1335)), on a price-only walk with no fees and no FX: the saved small orders are a cost the
+#   rows do not count. It reads one day's pond and one price history. The forward record has 2 of its 12 monthly
+#   links, so the buy rules stay frozen: this knob sizes the book the frozen rules fill and moves no rule.
+# REVERT RULE: `book_names: 25`.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
