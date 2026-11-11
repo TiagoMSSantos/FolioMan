@@ -484,6 +484,17 @@ fn cutoffs(dates: &[chrono::NaiveDate], from: usize) -> impl Iterator<Item = usi
     (from..dates.len()).filter(move |&i| i == 0 || bucket(dates[i - 1]) != bucket(dates[i]))
 }
 
+/// (#1389) step 2, (#117)'s floor kept explicitly. Once every long series is monthly, the bar-count floor
+/// alone admits a listing that has the bars but did not trade in them: the thin end (#117) lost on. True
+/// when the listing's OWN record holds fewer than `floor` bars with volume > 0 up to and including `at`
+/// (own, so a (#327) donor's years lend nothing). An EMPTY record is a dead-archive series, which carries
+/// prices only (`dead_member_charts`), and is never judged thin.
+/// shortcut: a live series Yahoo sends with no volume at all (a mutual fund) reads all zeros, not empty,
+/// and is refused at every cutoff.
+fn thin_volume(own: &[(chrono::NaiveDate, f64)], at: chrono::NaiveDate, floor: usize) -> bool {
+    !own.is_empty() && own.iter().filter(|(d, v)| *d <= at && *v > 0.0).count() < floor
+}
+
 /// (#91) How many INDEPENDENT trials a printed window count is actually worth.
 ///
 /// A "window" here is a ~6-month entry bucket and the hold is `years`, so two consecutive windows share
@@ -2733,6 +2744,8 @@ pub async fn run(args: Vec<String>) {
     // series the knob turned away. Off, nothing is printed and nothing is refused: byte-identical goldens.
     let bars_census = std::sync::Mutex::new(BTreeMap::<String, usize>::new());
     let dead_terminals = std::sync::atomic::AtomicUsize::new(0);
+    // (#1389) step 2: the cutoffs `thin_volume` turned away, counted under the knob only
+    let thin_cutoffs = std::sync::atomic::AtomicUsize::new(0);
     // (#1296) `(cutoff, None = alive or Some(crashed) = terminal)` per index member sample: the mortality census
     let exit_marks = std::sync::Mutex::new(Vec::new());
     lap("fetch");
@@ -2844,6 +2857,11 @@ pub async fn run(args: Vec<String>) {
                         };
                         if !realized.is_finite() {
                             // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff.
+                            continue;
+                        }
+                        // (#1389) step 2, (#117)'s floor: monthly bars the listing did not trade in are not history
+                        if span_knob && thin_volume(&own_volume, dates[i], min_history) {
+                            thin_cutoffs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             continue;
                         }
                         dead_terminals.fetch_add(usize::from(terminal), std::sync::atomic::Ordering::Relaxed);
@@ -2979,6 +2997,12 @@ pub async fn run(args: Vec<String>) {
         // (#1389) one line, under the knob only; taken (not cloned) so a later 0y walk starts a fresh count
         let census = std::mem::take(&mut *bars_census.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
         println!("backtest: (#1389) bars by Yahoo dataGranularity: {}", bars_census_line(&census));
+        // (#117)'s floor, step 2: swapped to 0 for the same reason. The kept count is the report's own
+        // `cutoffs with a forward window` line.
+        println!(
+            "backtest: (#117) volume floor: {} cutoffs refused (fewer than {min_history} own bars with volume > 0)",
+            thin_cutoffs.swap(0, std::sync::atomic::Ordering::Relaxed)
+        );
     }
     // (#1296) this horizon's marks only: a later 0y walk for the roll books must not add to them
     let deaths = mortality(&std::mem::take(&mut *exit_marks.lock().unwrap_or_else(std::sync::PoisonError::into_inner)), years);
@@ -11185,6 +11209,22 @@ mod tests {
             [("1mo", 58), ("3mo", 12), ("1wk", 88), ("1d", 38), ("1h", 3), ("", 1), ("refused", 13)].into_iter().map(|(g, n)| (g.to_string(), n)).collect();
         assert_eq!(bars_census_line(&census), "unknown 1 | 1d 38 | 1h 3 | 1mo 58 | 1wk 88 | 3mo 12 | refused 13");
         assert_eq!(bars_census_line(&BTreeMap::new()), "none");
+    }
+
+    /// (#1389) step 2, the (#117) volume floor: 36 own bars with volume, the last ON the cutoff, pass and
+    /// 35 do not; a bar with no volume and a bar after the cutoff do not count; an empty record (a
+    /// dead-archive series, prices only) is never thin.
+    #[test]
+    fn thin_volume_counts_own_volume_bars_up_to_the_cutoff() {
+        let m = |k: i32| NaiveDate::from_ymd_opt(2000 + k / 12, (k % 12) as u32 + 1, 1).unwrap();
+        let own: Vec<_> = (0..40).map(|k| (m(k), 10.0)).collect();
+        assert!(!thin_volume(&own, m(35), 36)); // bars 0..=35, the 36th on the cutoff
+        assert!(thin_volume(&own, m(34), 36)); // 35, and the five bars after the cutoff do not count
+        let mut gap = own.clone();
+        gap[6].1 = 0.0;
+        assert!(thin_volume(&gap, m(35), 36)); // a bar with no volume does not count
+        assert!(!thin_volume(&gap, m(36), 36));
+        assert!(!thin_volume(&[], m(35), 36)); // prices only: not judged
     }
 
     /// (#1391) A grid row cannot grade the window knob: its fields are computed in the walk.
