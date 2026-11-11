@@ -143,6 +143,7 @@
 //!     FOLIOMAN_BLESS=1 cargo test --release --test backtest_fixture -- --nocapture
 //! Regenerating the frozen cache from a warm real one (rare — only to add tickers or refresh history):
 //!     cargo test --release --test backtest_fixture -- --ignored regen
+//! (#1452) On CI: probe.yml with `regen` on fetches the 200 names on the runner and uploads the file.
 
 use std::path::{Path, PathBuf};
 
@@ -193,7 +194,7 @@ fn fixture_tickers() -> Vec<String> {
 /// which list is wrong, instead of a diff per golden that says the numbers moved.
 #[test]
 fn fixture_tickers_are_exactly_the_frozen_cache() {
-    let path = fixture_dir().join(".long_history_cache.json");
+    let path = fixture_dir().join(history_file());
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let cache: std::collections::BTreeMap<String, serde_json::Value> =
         serde_json::from_str(&raw).expect("the frozen cache parses as a ticker-keyed object");
@@ -216,6 +217,19 @@ fn repo() -> PathBuf {
 /// is picked up by the ordinary cache path, with no test-only plumbing inside `fetch.rs`.
 fn fixture_dir() -> PathBuf {
     repo().join("tests/fixture")
+}
+
+/// (#1452) The frozen history file the binary under test reads: `fetch::long_cache_file`'s pick. Every pinned
+/// run merges its overlay over tests/ci-settings.yaml, so the knob is read from that file, not from this
+/// process's own config, which on a developer's machine is another file. A line scan, as probe.yml's knob
+/// loop reads it: ~40 tests call this, and a YAML parse of that file costs each of them a second in debug.
+fn history_file() -> &'static str {
+    let raw = std::fs::read_to_string(repo().join("tests/ci-settings.yaml")).expect("read tests/ci-settings.yaml");
+    match raw.lines().find_map(|l| l.strip_prefix("  long_chart_explicit_span: ")) {
+        Some(v) if v.starts_with("true") => folioman::fetch::LONG_CACHE_FILE_SPAN,
+        Some(_) => folioman::fetch::LONG_CACHE_FILE,
+        None => panic!("tests/ci-settings.yaml carries no `  long_chart_explicit_span:` line"),
+    }
 }
 
 /// The ONE thing the golden must not carry: an absolute machine path, which differs per checkout and
@@ -260,7 +274,7 @@ fn pin_at(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>) {
 /// `pin_at` with extra environment for the child, for the one input a run reads from its process
 /// environment rather than its config (`FOLIOMAN_UNIVERSE_SNAPSHOT`).
 fn pin_at_env(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>, envs: &[(&str, &Path)]) {
-    let cache = fixture_dir().join(".long_history_cache.json");
+    let cache = fixture_dir().join(history_file());
     assert!(
         cache.is_file(),
         "frozen cache missing at {} — regenerate it with \
@@ -508,7 +522,7 @@ fn fixture_copy(name: &str, reverse: bool) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir); // what an earlier run banked here must not be read
     std::fs::create_dir_all(dir.join("config")).expect("mkdir");
-    for f in [".long_history_cache.json", ".sp500_history.json"] {
+    for f in [history_file(), ".sp500_history.json"] {
         std::fs::copy(fixture_dir().join(f), dir.join(f)).expect("copy frozen cache");
     }
     // (#364) the frozen SEC rows `fund` reads. Copied for every run: without `fund` nothing opens them.
@@ -665,7 +679,7 @@ fn backtest_fund_report_is_split_invariant() {
         let cfg = fixture_copy(name, false);
         let root = cfg.parent().and_then(Path::parent).expect("the copy's data root");
 
-        let cache_path = root.join(".long_history_cache.json");
+        let cache_path = root.join(history_file());
         let mut cache: Value = serde_json::from_str(&std::fs::read_to_string(&cache_path).expect("read cache")).expect("parse cache");
         let r = &mut cache[tk][1]["chart"]["result"][0];
         assert!(r["events"]["splits"].is_null(), "{tk} must be split-free in the fixture, or this doubles a real split");
@@ -825,7 +839,7 @@ fn fixture_cut(name: &str, t: Option<chrono::NaiveDate>) -> PathBuf {
     let cfg = fixture_copy(name, false);
     let dir = cfg.parent().and_then(Path::parent).expect("<dir>/config/settings.yaml").to_path_buf();
     let end = t.map_or(i64::MAX, |d| d.and_hms_opt(0, 0, 0).expect("midnight").and_utc().timestamp());
-    let path = dir.join(".long_history_cache.json");
+    let path = dir.join(history_file());
     let mut cache: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read cache")).expect("cache json");
     for entry in cache.as_object_mut().expect("ticker -> [fetched, chart]").values_mut() {
         let Some(r) = entry.pointer_mut("/1/chart/result/0") else { continue };
@@ -1239,8 +1253,9 @@ fn backtest_daily_cadence_stops_when_nothing_resolves() {
     assert!(out.contains("too few to correlate"), "the run should stop with nothing to correlate:\n{out}");
 }
 
-/// Rebuild `tests/fixture/.long_history_cache.json` from a warm real one. `#[ignore]`d: it needs the
-/// developer's own ~125 MB cache, which CI and a fresh clone do not have.
+/// Rebuild the frozen history file (`history_file()`, in `tests/fixture/`) from the repo root's warm real one of
+/// the same name. `#[ignore]`d: it needs the developer's own ~125 MB cache, which CI and a fresh clone do not
+/// have. (#1452) probe.yml's `regen` step fetches the 200 names on its runner and runs this there.
 ///
 /// Trims what the parser provably never reads — `open`/`high`/`low` are absent from every read site in
 /// the project (`parse_chart` takes `close` and `volume` from `quote[0]`, `adjclose` only behind
@@ -1249,9 +1264,9 @@ fn backtest_daily_cadence_stops_when_nothing_resolves() {
 /// the trim. `adjclose` is KEPT: it is read when `use_adjusted_close` is flipped, and a fixture that
 /// silently changes meaning under a knob is worse than a slightly larger one.
 #[test]
-#[ignore = "needs a warm real .long_history_cache.json; regenerates the committed fixture"]
+#[ignore = "needs a warm real history cache at the repo root; regenerates the committed fixture"]
 fn regen_backtest_fixture() {
-    let src = repo().join(".long_history_cache.json");
+    let src = repo().join(history_file());
     let raw = std::fs::read_to_string(&src)
         .unwrap_or_else(|e| panic!("read {}: {e} — run `folioman screen` first to warm it", src.display()));
     let all: std::collections::HashMap<String, (String, serde_json::Value)> =
@@ -1296,7 +1311,7 @@ fn regen_backtest_fixture() {
     }
     assert!(missing.is_empty(), "not in the real cache (warm it, or drop them from the recipe): {missing:?}");
 
-    let dst = fixture_dir().join(".long_history_cache.json");
+    let dst = fixture_dir().join(history_file());
     std::fs::create_dir_all(dst.parent().unwrap()).expect("mkdir fixture");
     let body = serde_json::to_string(&out).expect("serialize fixture");
     std::fs::write(&dst, &body).expect("write fixture");

@@ -29254,6 +29254,52 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # WHAT IT CANNOT SAY: as pre-registered. One day's page; no claim that either list is the better one.
 # RE-OPEN: one dispatch of screen-ab.yml on another day.
 # REVERT RULE: none. No shipped value moves.
+# (#1452) THE WALK AND THE PAGE MOVE TO THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-11 before the regen run and
+#   before the flip. Knobs: `long_chart_explicit_span` false -> true, `backtest_live_window_years` 0.0 -> 10.0. Rows:
+#   (#1453) the two gate bars, (#1454) the verdict.
+# WHY: (#1440) read the walk on the arm that prices history as the live screen does, monthly bars for every name
+#   and the screen's 10-year window, and dug its two red checks. (#1451) listed what the page changes. The owner
+#   asked for the move to be built (2026-11-11).
+# OWNER'S WORD, 2026-11-11, each a pick in a question dialog. On the page, with the (#1451) list in hand: "Switch
+#   page too", so the page and the tests read one price history. On the five Xetra lines that read as their US
+#   lines under the 60-bar floor: "Keep rule as is"; `EU_MIN_BARS` stays 60 and no code moves. On the fixture: "Add
+#   the switch", a manual `regen` input on probe.yml. On the two gate bars: the words under (#1440), "Loosen to
+#   -10" and "Lower 20-year only". On the four steps below, read out in order: "Yes, build it".
+# STEPS, on main, graded by CI alone:
+#   1. This push. probe.yml gains `regen`, and tests/backtest_fixture.rs reads the frozen history file the knob
+#      names (`history_file()`). The knob is still false, so nothing that runs today changes.
+#   2. One probe, regen=true knobs="long_chart_explicit_span=true": the runner fetches the fixture's 200 names on
+#      the span URL and uploads `tests/fixture/.long_history_cache.span.json`. It is checked and committed beside
+#      the old file, which stays: two unit tests in src/fetch.rs read it by name, and the revert needs it.
+#   3. The flip, one push: the two knob lines, the cache path of ci.yml, pages.yml and probe.yml, and the two gate
+#      bars. The page moves with this push, since Pages screens on this file.
+#   4. The rebless, one push: probe.yml bless=true on the flip commit, then every golden and every pin the
+#      fixture or the knobs moved, and the two monthly-buying ratchets raised.
+# THE TWO GATE BARS, in step 3, as the owner picked them: `WINNERS_HELD_FLOOR` at 20y 11.0 -> 8.0 (12y stays 9.0 and
+#   8y 10.0); the passer-edge check on the 8y `universe winners fund` leg fires under -10, and the other three legs
+#   keep > 0. Both follow the arm's readings and the two digs under (#1440). No buy rule moves with them.
+# THE RATCHETS, in step 4, by (#316) and (#1236), "raise a floor when a round lifts its reading": `S_INTER_DCA_FLOOR`
+#   5.3 and `SIZED_DCA_FLOOR` 4.4 each go to the flip commit's gate reading minus 1.0 (the arm read +10.0 and +6.7,
+#   so about 9.0 and 5.7). `SERIE_E_DCA_FLOOR` stays 90: the arm read 100 and the rule is minus 10. None is lowered.
+# RED BETWEEN STEPS 3 AND 4, expected and not a fault: `report_is_pinned` and any other test that pins a number
+#   read off the frozen fixture, so integration-tests and coverage; both mutants legs then grade nothing. Step 4
+#   pins each again at its new reading.
+# EXPECTED (each HELD or MISSED in the row):
+#   1. The regen file holds the fixture's 200 names and no other, every series `1mo`. The committed file reads
+#      `1mo` 58, `1wk` 88, `1d` 38, `3mo` 12, `1h` 3 and `1y` 1 (LU3003218107-USD.LU, with no bar at all).
+#   2. On the flip commit backtest-gate is green. 20y winners held reads between 8.0 and 11.0 (the arm: 10.6) and
+#      the 8y fund passer edge between -10 and +5 (the arm: -1.3). The other three legs' passer edges read above
+#      0 (the arm: +60.4, +55.8, +11.1).
+#   3. The 20y never-sell lines read +9.0 or more on S+inter and +5.7 or more on SIZED, and SIZED Serie E 100 %.
+#   4. The bless moves every golden of tests/fixture/.
+#   5. The first Pages run on the flip commit is green.
+# IF ANOTHER GATE CHECK FIRES on the flip commit: the two knob lines and the two bars go back in one push, and the
+#   check is read before anything else moves. No third bar is touched without the owner's word.
+# WHAT THIS CANNOT SAY: that the arm's book is the better one. The move changes the bars the walk reads and no buy
+#   rule; (#1440) and its digs are the evidence, and the page list of (#1451) is one day's.
+# REVERT RULE: the two knob lines back to false and 0.0, the cache paths back, the 20y floor back to 11.0 and the
+#   fund leg's bar back to > 0 (the shipped bars read 13.2 and +35.2), the two ratchets back to 5.3 and 4.4, and a
+#   rebless. One push and one bless.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

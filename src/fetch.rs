@@ -18280,7 +18280,9 @@ pub(crate) mod tests {
             assert_eq!(saved.get(t), Some(d), "a fresh skip survives the rewrite: {t}");
         }
         long_cache_save();
-        let banked = std::fs::read_to_string(crate::config::data_path(LONG_CACHE_FILE)).expect("long cache written");
+        // (#1452) the file the knob names, spelled out here so a mutated `long_cache_file` still reds this
+        let file = if crate::config::long_chart_explicit_span() { LONG_CACHE_FILE_SPAN } else { LONG_CACHE_FILE };
+        let banked = std::fs::read_to_string(crate::config::data_path(file)).expect("long cache written");
         assert!(banked.contains(&format!("\"{}\"", tk("8Y"))), "the monthly series fetched here is banked");
     }
 

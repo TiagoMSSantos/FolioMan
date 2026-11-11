@@ -48,6 +48,10 @@ on:
       rescore:
         description: "(#1292) `backtest rescore` options for a grid run, e.g. nulls=0 or holdout: the null band runs at 200 shuffles unless nulls= says otherwise; (#1293) holdout seals the 2016-on samples, reveal reads them once at ship time; (#1332) plant prints how large an edge the band sees; (#1337) pond prints whether a top-half ruler sees one; (#1341) guard prints the (#1339) paper route's harm guard; (#1343) sec grades only the samples cut from 2011"
         default: ""
+      regen:
+        description: "(#1452) rebuild the frozen fixture's monthly history file instead of a backtest: fetches the 200 fixture names on this runner under the run's knobs and uploads the file; no horizon runs"
+        type: boolean
+        default: false
 
 # No concurrency group (#550): a probe saves no shared cache (each FEC save is keyed on its own run id), so arms dispatched together run in parallel.
 # (#752) Tiingo fills are the exception: dispatch them one at a time, an hour apart (see the fill step).
@@ -164,12 +168,15 @@ jobs:
           GRID: ${{ inputs.grid }}
           SEARCH: ${{ inputs.search }}
           RESCORE: ${{ inputs.rescore }}
+          REGEN: ${{ inputs.regen }}
           # (#1227) every horizon grades one universe, as backtest-gate's do. A grid run's dump walk must
           # also see the names its report walk saw, or `rescore` row {} would not reprint that report.
           FOLIOMAN_UNIVERSE_SNAPSHOT: ${{ runner.temp }}/universe.json
         # Inputs reach the shell only through env and `read -ra`, never as interpolated script text.
         run: |
           read -ra years <<< "$YEARS"
+          # (#1452) a regen run applies the knobs and builds the binary, and walks no horizon
+          if [[ $REGEN == true ]]; then years=(); fi
           read -ra args <<< "$ARGS"
           read -ra knobs <<< "$KNOBS"
           read -ra extra <<< "$EXTRA"
@@ -231,6 +238,34 @@ jobs:
             dumps=("${years[@]/#/samples-}")
             ./target/release/folioman backtest search "${dumps[@]/%/.jsonl}" "${search[@]}"
           fi
+      # (#1452) The frozen fixture's history file, rebuilt on this runner: its only source was a developer's warm
+      # cache, and the walk no longer runs on a developer's machine. The fixture's config is an overlay over
+      # tests/ci-settings.yaml, so the fetch below runs under this run's knobs and writes the file
+      # `fetch::long_cache_file` names under them, into tests/fixture/. The ignored regen test reads the repo
+      # root's copy, trims it as it always did and writes the fixture. It also rewrites tests/fixture/.sec_cache
+      # from the root's, and that is NOT uploaded: the frozen SEC rows stay as committed. Download the artifact,
+      # check it (the 200 names, the bar size) and commit it by path.
+      - name: regen the fixture history
+        id: regen
+        if: ${{ !inputs.bless && inputs.regen }}
+        run: |
+          f=.long_history_cache.json
+          if grep -q '^  long_chart_explicit_span: true' tests/ci-settings.yaml; then f=.long_history_cache.span.json; fi
+          rm -f "tests/fixture/$f"   # the file must be this run's fetch, not the committed one
+          echo "::group::fetch the fixture's names"
+          FOLIOMAN_CONFIG=tests/fixture/config/settings.yaml ./target/release/folioman backtest 12
+          echo "::endgroup::"
+          mv "tests/fixture/$f" "$f"
+          cargo test --locked --release --test backtest_fixture -- --ignored regen_backtest_fixture --nocapture
+          echo "file=tests/fixture/$f" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ !inputs.bless && inputs.regen }}
+        with:
+          name: fixture-history
+          path: ${{ steps.regen.outputs.file }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
       # (#752) After the backtests, because the `pit` run writes the membership spans it reads. It fetches
       # up to 45 names a run (a free key allows 50 requests an hour), so dispatch fills one at a time, an
       # hour apart: `years=8 args="universe pit dead" fill=true`. Once every candidate is answered, a run
