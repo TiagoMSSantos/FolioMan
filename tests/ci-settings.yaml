@@ -29513,6 +29513,14 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   The bar was fixed before the runs and it stands; these rows go to the owner with the revert rule below.
 # REVERT RULE, AFTER THE REBLESS: `book_names: 25`, the pin literal back to 25, and the goldens of 25cf42a. The
 #   gate at 25 read +10.0 and +6.7, over the raised floors by 0.4 and 0.9; a floor is never lowered in silence.
+# OWNER'S WORD, 2026-11-11, ON THOSE ROWS: KEEP 10. The question was put in a dialog after the rebless went green
+#   (CI 43062666377 on c8c7267: 16 jobs, the gate at S+inter +10.6 over 9.6 and SIZED +6.8 over 5.8). It said in
+#   plain words that the agreed test, monthly buying of the book the page shows, reads the same at 10 and 25, and
+#   that the same book without momentum picks, bought once and held, reads +1.8 %/yr over the index at 25 names,
+#   +1.8 at 20, +1.3 at 15 and +1.1 at 10 (the pit lane; the option for 20 gave the dead lane's +1.1 for +1.4),
+#   a gap smaller than the tests can trust that points one way every time. The picks were keep 10 (up to 0.7 %/yr
+#   less on that second test, five names holding 83 % of the money), go back to 25, or try 20. The answer was
+#   "Keep 10 names (Recommended)". The book size is closed: a re-ask needs a new ruler or the twelve forward links.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
