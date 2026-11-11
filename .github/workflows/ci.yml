@@ -599,7 +599,7 @@ jobs:
       - name: integration + live API drift nets (skip-on-throttle, fail-on-drift)
         # `--test '*'` also picks up backtest_edge_holds, which no longer carries #[ignore]. It
         # green-skips HERE — debug assertions are on, and a runner has no persisted
-        # .long_history_cache.json — which is what keeps this job inside 45 min. The backtest-gate job
+        # .long_history_cache.span.json — which is what keeps this job inside 45 min. The backtest-gate job
         # below forces it to run. The same glob is what runs backtest_fixture (the frozen-data golden
         # pin, and the only end-to-end net over real data). Do NOT replace this glob with an explicit
         # list: a new tests/*.rs file joins no job on its own, so the glob is the thing that keeps them
@@ -634,7 +634,7 @@ jobs:
   # THREE HORIZONS (plus a fourth, fund-lane 8y leg), ONE FETCH. SHIP RULE v2 grades top-10 at 20y and
   # 8y with 12y as the consistency read on the wide lane this gate walks (`pit` swaps 20y for 12y, #139),
   # so gating only 12y guarded a lane the rule does not vote on. All three are >= 8y, which takes the
-  # MONTHLY path and shares one .long_history_cache.json — the first run pays the wide fetch, the other
+  # MONTHLY path and shares one .long_history_cache.span.json — the first run pays the wide fetch, the other
   # two read it off disk (~127s each). That is why this costs ~+4 min and not 3x. Do not collapse it
   # back to a single run to "save time"; the saving is small and the coverage loss is the whole point.
   backtest-gate:
@@ -652,7 +652,7 @@ jobs:
       # only writer). The path list MUST stay identical to pages.yml's "Restore fetch caches": the
       # cache version hashes it, and any difference silently misses. 2.75 MiB. Cold, the universe
       # fetch was ~167s and resolved ~170 fewer names than the warm ~80s one that Pages ships.
-      # `.long_history_cache.json` is NOT Pages': the step after this one is its only writer, and
+      # `.long_history_cache.span.json` is NOT Pages': the step after this one is its only writer, and
       # (#361) Pages restores it read-only, because `screen` reads it too.
       - name: Restore Pages' fetch caches
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -700,7 +700,7 @@ jobs:
         run: echo "d=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: .long_history_cache.json
+          path: .long_history_cache.span.json
           key: folioman-longhist-${{ steps.day.outputs.d }}
           restore-keys: folioman-longhist-
       - name: walk-forward edge gate (skip-on-throttle, fail-on-collapse)

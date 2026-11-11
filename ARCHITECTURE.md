@@ -58,7 +58,9 @@ own data root.
 ## Goldens
 
 `tests/fixture/*.golden` pin whole `backtest` reports. They run the real binary over a frozen cache
-(`tests/fixture/.long_history_cache.json`, plus `.sp500_history.json` and `.sec_cache/`) with
+(`tests/fixture/.long_history_cache.span.json`, the file ci-settings' `long_chart_explicit_span` names;
+`.long_history_cache.json` beside it is the `range=max` one the knob's off arm reads; plus
+`.sp500_history.json` and `.sec_cache/`) with
 `FOLIOMAN_OFFLINE=1`, so nothing can be fetched. The universe is the `tickers:` list in
 `tests/fixture/config/settings.yaml`, and a test checks that list equals the cache's keys. The config is
 deliberately thin: it overlays only `tickers:` on `ci-settings.yaml`, so moving a shipped knob moves the

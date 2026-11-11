@@ -23,7 +23,7 @@
 //! `backtest {20,12,8} universe winners` and an 8y `fund` leg over ~4900 live tickers and measures
 //! REGIME — whether the shipped edge still holds on today's market. It now runs under the same
 //! skip-when-you-can't contract as everything else: release profile + a warm
-//! `.long_history_cache.json` and it runs (almost no network); debug or cold and it prints why and
+//! `.long_history_cache.span.json` and it runs (almost no network); debug or cold and it prints why and
 //! skips green. `FOLIOMAN_BACKTEST_GATE=1` FORCES it past both guards — that
 //! is how ci.yml's `backtest-gate` job runs it on every push, and a runner is always debug and cold:
 //!
@@ -654,7 +654,7 @@ fn sec_throttled_skips_only_a_partial_refusal() {
 /// - **Release only.** Measured on the same warm cache: 127s release, 355s debug (2.8x), and
 ///   `CARGO_BIN_EXE_folioman` is whichever profile the test was built in. A plain `cargo test` would
 ///   otherwise pay six minutes for a walk-forward the release job does in two.
-/// - **Warm history cache only.** With `.long_history_cache.json` fresh the run reads its ~3900
+/// - **Warm history cache only.** With `.long_history_cache.span.json` fresh the run reads its ~3900
 ///   monthly payloads off disk; cold, it would fetch every one of them. A fresh clone must not
 ///   discover that by doing it.
 ///
@@ -677,7 +677,9 @@ fn backtest_edge_holds() {
     // shortcut: size+mtime, not a parse. Deciding whether to skip by deserializing 88 MB of JSON costs
     // more than either wrong guess — a wrong "warm" just fetches the misses, a wrong "cold" just skips.
     if !forced {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fetch::LONG_CACHE_FILE);
+        // (#1452) the file the span knob names, as `fetch::long_cache_file` picks it
+        let file = if config::long_chart_explicit_span() { fetch::LONG_CACHE_FILE_SPAN } else { fetch::LONG_CACHE_FILE };
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
         let fresh = std::fs::metadata(path).ok().and_then(|m| {
             let age = m.modified().ok()?.elapsed().ok()?;
             // 20 MB ~ 600 tickers; a populated cache is ~125 MB for ~3900. Below that the run would fetch.
@@ -687,7 +689,7 @@ fn backtest_edge_holds() {
             eprintln!(
                 "backtest-gate SKIPPED — {} is missing, stale (>{}d) or too small to serve ~4900 \
                  tickers. Run `folioman screen` to warm it, or set FOLIOMAN_BACKTEST_GATE=1 to fetch live",
-                fetch::LONG_CACHE_FILE,
+                file,
                 fetch::LONG_CACHE_TTL_DAYS
             );
             return;
@@ -813,10 +815,14 @@ fn backtest_edge_holds() {
         // written for. A passer's score is bit-identical at any f, so this is that question, unchanged.
         // What it cannot see is the failer tail; the top-10 row below grades the book that tail reaches.
         let edge = num_after(growth, markers::PASSER_EDGE).expect("a completed GROWTH run prints its passer edge");
+        // (#1453) the 8y fund leg fires under -10, the owner's bar (2026-11-11): on true monthly bars it read -1.3
+        // (312eba1), and the +35.2 it read before was the stretch brake on quarterly bars ((#1440)). The others keep > 0.
+        let bar = if fund && years == 8 { -10.0 } else { 0.0 };
         assert!(
-            edge > 0.0,
-            "{leg}: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy ~+212 at 12y, CI 2026-10-15) — a \
-             scoring-code change or a default-tuning edit broke the walk-forward edge; fix it before merging"
+            edge > bar,
+            "{leg}: GROWTH validated edge COLLAPSED to {edge:+.1} pts, under the {bar:+.0} bar (12y read +55.8 on \
+             monthly bars, the probe on 312eba1) — a scoring-code change or a default-tuning edit broke the \
+             walk-forward edge; fix it before merging"
         );
         // (SHIP RULE v2) the metric the screen footer actually quotes. The lane edge above grades the
         // top-HALF against the bottom-HALF, which can stay healthy while the small book a reader buys
@@ -903,7 +909,9 @@ fn backtest_edge_holds() {
         // that drops the window's best names from either half reds here, even when every average above passes.
         // Floors = the first CI reading (6b3e71a: 20y 13.9, 12y 11.7, 8y 12.7, 8y fund 12.4) minus 2 pts, rounded
         // down; the 8y fund leg shares 8y's, set off the lower reading. The (#606) receipt pre-registers the rule.
-        const WINNERS_HELD_FLOOR: [(i64, f64); 3] = [(20, 11.0), (12, 9.0), (8, 10.0)];
+        // (#1453) 20y 11.0 -> 8.0 with the move to true monthly bars, the owner's bar (2026-11-11): the arm read 10.6
+        // (312eba1) and the fall from 13.2 is one name, GE ((#1440)). 12y and 8y stay.
+        const WINNERS_HELD_FLOOR: [(i64, f64); 3] = [(20, 8.0), (12, 9.0), (8, 10.0)];
         let floor = WINNERS_HELD_FLOOR.iter().find(|f| f.0 == years).map_or(0.0, |f| f.1);
         match num_after(growth, markers::WINNERS_HELD) {
             Some(share) => {
@@ -1128,7 +1136,7 @@ fn backtest_edge_holds() {
     // does not vote on. 20 leads: hardest lane, and the horizon the screen footer quotes.
     //
     // This is NEARLY FREE, and the reason must not be lost — `monthly = long || years >= 8`
-    // (commands/backtest.rs), so all three take the MONTHLY path and share ONE .long_history_cache.json.
+    // (commands/backtest.rs), so all three take the MONTHLY path and share ONE .long_history_cache.span.json.
     // The first run pays the wide fetch, the other two read it off disk (~127s each). Three horizons
     // cost about +4 min, not 3x. Do NOT "optimize" this back to a single run, and do NOT add a 5y rung:
     // below 8 the run switches to daily cadence and pays a SECOND full fetch.

@@ -640,7 +640,8 @@ fn run_isolated_dirs(name: &str, overlay: &str, files: &[(&str, &str)], dirs: &[
 /// entry state stays unwritten, so the next cron run retries both instead of believing they went out.
 #[test]
 fn alert_warns_and_records_nothing_when_the_push_is_refused() {
-    let routes = vec![("ci-smoke-tests-unused", 404, ""), ("range=", 200, DIP_CHART)];
+    // (#1452) `period1=0&` is the long fetch under ci-settings' span knob, which carries no `range=`
+    let routes = vec![("ci-smoke-tests-unused", 404, ""), ("range=", 200, DIP_CHART), ("period1=0&", 200, DIP_CHART)];
     let (code, _, stderr) = run_routed("alert-refused", routes, "", &[], &[], &["alert", "ZZDIP"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stderr.contains("ntfy push failed for ZZDIP — dip alert NOT delivered"), "{stderr}");
@@ -1204,7 +1205,8 @@ fn screen_warns_when_it_cannot_persist_its_state() {
 /// from its high prints the entry-state banner and the deploy line with the drawdown multiplier.
 #[test]
 fn screen_drops_a_stale_listing_and_prints_the_drawdown_entry_state_and_deploy_line() {
-    let routes = vec![("range=", 200, DIP_CHART)];
+    // (#1452) `period1=0&` is the long fetch under ci-settings' span knob, which carries no `range=`
+    let routes = vec![("range=", 200, DIP_CHART), ("period1=0&", 200, DIP_CHART)];
     let (code, stdout, stderr) = run_routed("screen-dip", routes, "monthly_deploy_eur: 300\n", &[], &[], &["screen", "ZZDIP"]);
     assert_eq!(code, 0, "{stderr}");
     let stale = line_with(&stderr, "stale listing(s)");

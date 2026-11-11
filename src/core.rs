@@ -6526,8 +6526,9 @@ mod tests {
     /// the percentiles are the same at the unit suite's 1-bar endpoint and the backtest's 5-bar one.
     /// (#1397) The low stretch crawls up 0.001 a bar: an exactly flat one is a (#263) placeholder, and
     /// ci-settings' `flat_run_max_years: 2.0` cut it, which left `backtest_quote` the last 20 bars.
-    /// With the knob off (the test's ambient config) `backtest_quote` still reads whole-life and leaves
-    /// `stats_8y` None, which is what every golden was blessed on.
+    /// With the knob off `backtest_quote` reads whole-life and leaves `stats_8y` None. (#1452) ci-settings
+    /// ships 10.0 and the goldens are blessed on it; `config::backtest_live_window_years` answers 0.0 under
+    /// `cfg!(test)`, so the off arm below reads the same in both CI regimes.
     #[test]
     fn live_window_is_calendar_years_and_moves_the_range_gate() {
         let ((md, mc), (qd, qc)) = synthetic_monthly_and_quarterly();

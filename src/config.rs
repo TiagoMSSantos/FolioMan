@@ -2512,6 +2512,11 @@ pub fn long_chart_explicit_span() -> bool {
 /// window, in calendar years, that range, drawdown and R² are measured over; 0.0 = whole-life.
 #[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn backtest_live_window_years() -> f64 {
+    // (#1452) ci-settings ships 10.0, and a unit test's synthetic series is graded whole-life, as
+    // `endpoint_smooth_days` pins its inert 1. The fixture goldens run the real binary on the shipped 10.0.
+    if cfg!(test) {
+        return 0.0;
+    }
     use std::sync::OnceLock;
     static YEARS: OnceLock<f64> = OnceLock::new();
     *YEARS.get_or_init(|| {

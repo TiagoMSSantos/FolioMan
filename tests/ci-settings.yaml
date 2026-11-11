@@ -15203,9 +15203,12 @@ buy_heuristic:
   momentum_one_endpoint: false   # (#1393) PRE-REGISTERED 2026-11-08, UNMEASURED. false = the shipped momentum keys carry the smoothed/raw
                                  #   endpoint tilt every momentum receipt was graded with; true divides it out (`Quote.endpoint_ratio`), live and
                                  #   backtest together. Row (#1394) decides; see the (#1393) block after (#1358). Grid-gradeable on a new dump only.
-  backtest_live_window_years: 0.0 # (#1391) PRE-REGISTERED 2026-11-08, UNMEASURED. 0.0 = `backtest_quote` measures range, drawdown and R²
-                                 #   whole-life and leaves `stats_8y` None, the window every fitted receipt was measured under; 10.0 = the live
-                                 #   screen's ten years (`core::live_window`). RESCORE_FIXED: a probe arm, never a grid row. Row (#1392) decides.
+  backtest_live_window_years: 10.0 # (#1391) PRE-REGISTERED 2026-11-08. 0.0 = `backtest_quote` reads range, drawdown
+                                   #   and R2 whole-life and leaves `stats_8y` None, the window every receipt before
+                                   #   (#1452) was measured under; 10.0 = the live screen's ten years
+                                   #   (`core::live_window`). RESCORE_FIXED: a probe arm, never a grid row. Row (#1392)
+                                   #   read it OUTSIDE NEGATIVE as a ship on the edge. 10.0 since 2026-11-11 is the
+                                   #   owner's move of the walk and the page to one price history: the (#1452) block.
   vol_daily_equivalent: false    # (#97) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  # the raw per-bar scale every vol-reading receipt in this file was
                                  # fitted at. This is the one knob here that INVALIDATES OTHER RECEIPTS
@@ -29300,6 +29303,20 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # REVERT RULE: the two knob lines back to false and 0.0, the cache paths back, the 20y floor back to 11.0 and the
 #   fund leg's bar back to > 0 (the shipped bars read 13.2 and +35.2), the two ratchets back to 5.3 and 4.4, and a
 #   rebless. One push and one bless.
+# (#1453) THE TWO GATE BARS MOVE WITH THE FLIP, 2026-11-11, a row of (#1452). Both sit in `backtest_edge_holds`,
+#   tests/network.rs, and both moved in the commit that turned the two knobs on.
+#   1. `WINNERS_HELD_FLOOR` at 20y: 11.0 -> 8.0. 12y stays 9.0; 8y and the 8y fund leg stay 10.0. On 312eba1 the arm
+#      read 10.6 against 13.2 shipped, and the dig under (#1440) read the fall as one name, GE, on quarterly bars.
+#   2. The passer-edge check on the 8y `universe winners fund` leg fires under -10. The other three legs keep > 0.
+#      On 312eba1 the arm read -1.3 against +35.2 shipped, and the dig under (#1440) read the shipped figure as
+#      the stretch brake on quarterly bars; (#1449) then left the brake on.
+# OWNER'S WORD, 2026-11-11, each a pick in a question dialog and each recorded under (#1440): "Lower 20-year only"
+#   and "Loosen to -10".
+# TWO BARS ARE LOWERED HERE, in the open and on the owner's word. The price history under them changed; no buy
+#   rule moved and none got worse.
+# WHAT THIS CANNOT SAY: that 8.0 and -10 are fitted. Each stands on one reading of the arm and a margin the owner
+#   picked. The flip commit's own readings go in row (#1454).
+# REVERT RULE: with (#1452): 11.0 and > 0.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
@@ -29666,8 +29683,10 @@ urls:
   yahoo_chart: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={range}&interval=1d&events=div,split"
   # (#1389) false = the long history on `range=max`, which Yahoo answers at ~500 points of whatever bar size fits
   #   (quarterly for pre-1985 listings and ^GSPC, weekly for 2017+ ones); true = an explicit `period1=0&period2=<now>`
-  #   span at `interval=1mo`, cached in .long_history_cache.span.json. PRE-REGISTERED 2026-11-08, UNMEASURED; row (#1390).
-  long_chart_explicit_span: false
+  #   span at `interval=1mo`, cached in .long_history_cache.span.json. PRE-REGISTERED 2026-11-08; row (#1390) read it
+  #   OUTSIDE NEGATIVE as a ship on the edge. true since 2026-11-11 is the owner's move of the walk and the page to
+  #   one price history: the (#1452) block.
+  long_chart_explicit_span: true
   # hourly bars over ~5 days -> screen 1h/6h/12h columns (counted as 1/6/12 bars back, not wall-clock,
   # so stocks fill too despite overnight gaps; 5d ensures >=13 bars even for a 6.5h trading day).
   yahoo_intraday: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={range}&interval=60m"
