@@ -5868,8 +5868,12 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // (round 107) survival inputs. Duration lines: operating cash flow, capex, interest expense.
     let ocf = collect(tags.ocf, &money);
     let mut capex = collect(tags.capex, &money);
+    // (#1462) the larger line is served under its OWN filed date. `max` on the value alone left the first
+    // line's date on the other line's number, so an as-of row read a floor line before it was filed.
+    // shortcut: until the larger line is filed the smaller one is not served, so the strict twin reads
+    // no capex line for that year; serve the smaller one there if two filings ever sit far apart.
     for (end, v) in collect(tags.capex_floor, &money) {
-        capex.entry(end).and_modify(|c| c.1 = c.1.max(v.1)).or_insert(v);
+        capex.entry(end).and_modify(|c| if v.1 > c.1 { *c = v }).or_insert(v);
     }
     // (#703) a magnitude: LKQ, DIS and FTV file the expense negative
     let intexp: std::collections::BTreeMap<_, _> =
@@ -6114,7 +6118,7 @@ fn cash_ttm(g: &Value, tags: &FactTags, money: &str, fy_end: NaiveDate) -> Optio
     };
     let (ocf, mut capex) = (spans(tags.ocf), spans(tags.capex));
     for (k, v) in spans(tags.capex_floor) {
-        capex.entry(k).and_modify(|c| c.2 = c.2.max(v.2)).or_insert(v);
+        capex.entry(k).and_modify(|c| if v.2 > c.2 { *c = v }).or_insert(v); // (#1462) its own filed date, as in `parse_sec_facts`
     }
     let both = |k: &(NaiveDate, NaiveDate)| {
         let (&(_, fo, o), &(_, fc, c)) = (ocf.get(k)?, capex.get(k)?);
@@ -12771,6 +12775,20 @@ pub(crate) mod tests {
         }}}));
         let twin = bank[0].strict.as_deref().expect("a late bank line splits off a twin");
         assert_eq!((bank[0].financial, twin.financial, bank[0].full_from), (true, false, day(late)));
+        // (#1462) the capex floor line: the larger of the two lines is served under its own filed date.
+        // On operating cash flow 300 and a capex line of 40: (free cash flow margin, full_from, the twin's margin)
+        let capex = |line_filed: &str, floor: f64, floor_filed: &str| {
+            let rows = parse_sec_facts(&json!({"facts": {"us-gaap": {
+                "Revenues": line(1000.0, on),
+                "NetCashProvidedByUsedInOperatingActivities": line(300.0, on),
+                "PaymentsToAcquirePropertyPlantAndEquipment": line(40.0, line_filed),
+                "PaymentsForConstructionInProcess": line(floor, floor_filed),
+            }}}));
+            (rows[0].fcf_margin, rows[0].full_from, rows[0].strict.as_deref().map(|t| t.fcf_margin))
+        };
+        assert_eq!(capex(on, 100.0, late), (Some(20.0), day(late), Some(None)), "a larger floor filed late is a late line");
+        assert_eq!(capex(on, 40.0, late), (Some(26.0), None, None), "a tie keeps the capex line and its date");
+        assert_eq!(capex(late, 100.0, on), (Some(20.0), None, None), "a larger floor filed on time is on time");
     }
 
     /// (#785) A per-share line first filed after revenue keeps its own filed date, the day whose split
@@ -13026,6 +13044,14 @@ pub(crate) mod tests {
         let mut small = facts(false);
         small["PaymentsForConstructionInProcess"] = json!({"units": {"USD": [fact("2025-01-01", "2025-12-31", "10-K", "2026-02-04", 1.0)]}});
         assert_eq!(got(&small), got(&facts(false)), "LUV");
+        // (#1462) a larger construction line filed later dates the TTM by its own filing; a tie keeps the capex line's
+        let floor_late = |val: f64| {
+            let mut g = facts(false);
+            g["PaymentsForConstructionInProcess"] = json!({"units": {"USD": [fact("2025-01-01", "2025-12-31", "10-K", "2026-03-01", val)]}});
+            got(&g)
+        };
+        assert_eq!(floor_late(100.0), (day("2025-12-31"), day("2026-03-01"), 164.71, 100.0, Some(52.40), Some(36.40)));
+        assert_eq!(floor_late(91.45), got(&facts(false)), "a tie");
         // the year-ago span ends a year before, so Q1 2025 is never it
         let mut q1 = facts(true);
         for (tag, v) in [("NetCashProvidedByUsedInOperatingActivities", 30.0), ("PaymentsToAcquirePropertyPlantAndEquipment", 20.0)] {
