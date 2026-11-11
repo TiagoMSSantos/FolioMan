@@ -1,17 +1,19 @@
+backtest: (#1389) bars by Yahoo dataGranularity: 1mo 198
+backtest: (#117) volume floor: 7 cutoffs refused (fewer than 36 own bars with volume > 0)
 
-══ TUNE — growth lane, honest out-of-sample (1159 train / 498 test cutoffs, 500 draws) ══
-  shipped default      TEST: rho +0.09  edge +23.6  terciles +324.9/+145.8/+270.0 SCRAMBLED
+══ TUNE — growth lane, honest out-of-sample (1213 train / 521 test cutoffs, 500 draws) ══
+  shipped default      TEST: rho -0.00  edge -82.9  terciles +284.5/+191.5/+346.7 SCRAMBLED
   inert on this sample (skipped, kept at default): growth_fund_weight
-  search winner       TRAIN: rho +0.07  edge -11.7
-  search winner        TEST: rho +0.05  edge -47.8  terciles +269.7/+272.3/+195.0 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
+  search winner       TRAIN: rho +0.00  edge -49.7
+  search winner        TEST: rho -0.02  edge -110.5  terciles +224.0/+321.3/+275.5 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
   weights (searched dims only):
-    growth_trend_weight    0.328
-    long_trend_cap         40.301
-    growth_accel_weight    0.945
-    growth_accel_cap       75.131
-    sharpe_weight          2.605
-    calmar_weight          0.971
-    growth_overext_floor   0.088
-    growth_mom121_weight   0.493
-  -> winner does NOT beat the default on the held-out TEST edge (-47.8 vs +23.6); the shipped knobs already generalise. SHIP NOTHING.
+    growth_trend_weight    0.674
+    long_trend_cap         54.859
+    growth_accel_weight    0.867
+    growth_accel_cap       79.527
+    sharpe_weight          0.363
+    calmar_weight          2.390
+    growth_overext_floor   0.281
+    growth_mom121_weight   0.370
+  -> winner does NOT beat the default on the held-out TEST edge (-110.5 vs -82.9); the shipped knobs already generalise. SHIP NOTHING.
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…

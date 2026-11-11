@@ -960,10 +960,13 @@ fn backtest_edge_holds() {
         // +6.2 -> +5.2 (med +5.6, win 100% of 37, worst +1.2), Série E 100% of 37; the reading fell, so no floor rose.
         // (#322) the head-tilted book, 2026-09-19: +5.3 (med +5.7, worst +1.2) against a same-day flat control of
         // +5.1, Série E 100% of 37; still under the +5.4 ship day, so no floor rose.
+        // (#1454) the walk moved to monthly bars and the screen's 10-year window ((#1452)). On 9e3c39a, CI's own args,
+        // 2026-11-11: SIZED +6.7 (med +5.8), S+inter +10.0 (med +9.0), Série E 100%. The readings rose, so the two
+        // pts/yr floors rise to the reading minus 1.0; Série E's reading is 100 as before, so its floor stays.
         if years == 20 {
-            const SIZED_DCA_FLOOR: f64 = 4.4;
+            const SIZED_DCA_FLOOR: f64 = 5.7; // (#1454), was 4.4
             const SERIE_E_DCA_FLOOR: f64 = 90.0;
-            const S_INTER_DCA_FLOOR: f64 = 5.3; // (#1236)
+            const S_INTER_DCA_FLOOR: f64 = 9.0; // (#1236), (#1454), was 5.3
             const S_INTER_DCA: &str = "S+inter never-sell"; // (#636) the lane name is 7 wide: one space, not SIZED's three
             let row = |m: &str| growth.lines().find(|l| l.trim_start().starts_with(m));
             let x = row(markers::SIZED_DCA).and_then(|l| num_after(l, "->"));
@@ -996,8 +999,8 @@ fn backtest_edge_holds() {
             // The median is the two rows' medians subtracted, not the median of the paired differences. A missing row
             // means `rivals` left the args above or the lane was renamed.
             // (#1236) S+inter is the book the page shows, so it gets (#316)'s ratchet: the reading on b2fa377, CI's
-            // own args, 2026-10-30, was S+inter +6.3 (med +6.5) against SIZED +4.8 (med +5.0); the floor is +6.3
-            // minus 1.0. The difference stays print-only.
+            // own args, 2026-10-30, was S+inter +6.3 (med +6.5) against SIZED +4.8 (med +5.0); the floor was +6.3
+            // minus 1.0 until (#1454) read +10.0 on monthly bars and raised it. The difference stays print-only.
             let cols = |l: Option<&str>| Some((num_after(l?, "->")?, num_after(l?, "(med ")?));
             match (cols(row(S_INTER_DCA)), cols(row(markers::SIZED_DCA))) {
                 (Some((sx, sm)), Some((zx, zm))) => {

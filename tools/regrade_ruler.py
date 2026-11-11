@@ -522,10 +522,10 @@ class Tests(unittest.TestCase):
             rows = parse_rows(fh.read(), "pit")
         self.assertEqual(len(rows), 1)
         g = grade_row(rows[0])
-        self.assertEqual(g["buckets"], 41)
+        self.assertEqual(g["buckets"], 54)  # (#1454) the monthly fixture grades 54 windows, where the old one graded 41
         self.assertEqual(g["worst"], rows[0]["top10"][2], "the BOOK minimum is the printed worst window")
         self.assertAlmostEqual(g["mean"], rows[0]["top10"][0], delta=0.051, msg="the BOOK mean is the printed excess")
-        self.assertEqual(g["rank1"][:2], (15, 36))  # (#1406) the fcf_pct rebless moved rank 1's wins 17 -> 15
+        self.assertEqual(g["rank1"][:2], (19, 37))  # (#1454) the monthly-fixture rebless moved rank 1 from (15, 36)
 
 
 def main():
