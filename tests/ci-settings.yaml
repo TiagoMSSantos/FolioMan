@@ -29182,6 +29182,78 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   label `perf[10][0]`. The second run reads `perf[10]` in the wiring check and in EXPECTED 2 and 3 as that
 #   percent; nothing else above changes. The void run's payloads were opened to find the cause, so its numbers
 #   were seen before the second run. EXPECTED stands as written, the lines the void run missed included.
+# (#1451) VERDICT, 2026-11-11, on (#1450): the list is read; nothing ships and the pick is the owner's. On the arm's
+#   knobs the page keeps every buy share and the same 37 Stocks companies. Six Stocks ranks move, one fund row
+#   enters with no share, and five Xetra twins show as their US lines.
+#   Run 43029000603 on 7bba984, 13:25Z to 13:41Z, before the US open; the three screens are stamped 13:30:53Z,
+#   13:36:08Z and 13:41:21Z. It is the second run; the first is void (above).
+# WIRING CHECK: PASS on every line. Each control printed no settings line and wrote `.long_history_cache.json`
+#   alone (245 `3mo`, 1732 `1mo`, 2376 `1wk`, 1381 `1d`, 172 `1h`, 35 or 36 `1y`, 1 `5m`). The arm printed the two
+#   knob lines and wrote `.long_history_cache.span.json` alone, 5945 `1mo`. All three read `0 cache hits` on the
+#   monthly series (14618, 14639 and 14627 paced calls, in run order) and passed the three contract checks. The
+#   controls disagreed on the `perf[10]` percent for 0 of the 239 old quotes.
+# THE BUY LIST (`.screen_web.json`; a knob cell is one where both controls agree and the arm does not):
+#   BUY%: no cell moves in any table, knob or noise.
+#   Stocks, 37 rows on all three: one venue swap, `1ZB.DE` out and `BE` in (Bloom Energy; rank 18, share 1.56 %
+#   and score 3.7 on both lines). Six ranks move: JBL 19 to 13 (score 26.7 to 28.6), DVA 13 to 15, KLA.DE 15 to 17,
+#   FIX 17 to 19, ARM 30 to 31, MNST 31 to 30 (score 19.7 to 21.7). AP2.DE gains a `cagr-life` miss and keeps its
+#   row (score 33.9 to 33.4). 89 knob cells: YRS 19, TR-CAGR 19, 20Y 16, SCORE 11, PEG 9, RANK 6, FAIR-CAP 3, and
+#   one each in MISSES, PRICE, FAIR, FAIR-OE, S-8Y and EV/EBITDA. 121 noise cells.
+#   ETFs, 8 / 9 / 8 rows: `ESIF.L` enters at rank 8 with a blank BUY%, and EXA1.AS reads rank 9. ESIF.L's rate
+#   since listing reads 20.59 %/yr on the arm against 18.96 on the controls, where the gate asks 19.00; the arm's
+#   log names the two rows one bet. The table's 9 knob cells hold none in SCORE.
+#   Crypto (1 row) and Braked (2 rows): TR-CAGR and YRS cells alone; BTC-EUR reads +55 % where it read +58 %.
+#   CORE, 99 rows: none enters or leaves and 45 ranks move. BCFP.DE loses its `cagr-life` miss and rises 31 to 7,
+#   so the 24 rows between step down one; WEXU.DE gains a `cagr` miss and VEXA.DE a `cagr-life` one (74 to 88,
+#   90 to 93).
+#   Reits, Young and Attention: no row enters or leaves; 15, 26 and 9 ranks move. Social: the Bloom Energy swap.
+#   Berkshire: no rank moves. Bonds, Inflation, News and Upcoming: no knob cell. Trading buy-now, 25 rows: the
+#   Bloom Energy swap at rank 2. Intraday: two PRICE cells, ZAL.DE by 2 cents and ADS.DE by 10.
+#   `track`, `week` and `exposure` key a row on its cells, so a moved cell reads there as one row out and one in:
+#   their row counts carry no claim (the tool's limit). Exposure's three are the AAPL, WDC and AMAT score cells.
+#   The arm's week box reads the venue swap as two rows, `Joined: BE` and `Left: 1ZB.DE`, the second as
+#   `not priced this run`.
+# THE UNIVERSE (`.screen_universe.json`; 5484, 5485 and 5485 quotes, 5479 of them in all three): 30384 knob cells.
+#   The largest columns: `age_years` 5038, `life_cagr` 4224, `tr_cagr` 4212, `life_return_pct` 3876,
+#   `fund.mom61_pct` 608, `young_ret_pct` 403 and `growth_sector_floor` 241. The legs' percents, each counted again
+#   under `perf_nominal`: 1Y 421, 10Y 352, 6M 292, 5Y 254, 20Y 248, 2Y 227, 8Y 222, 3M 133, 1M 100, 1W 44, 1D 31.
+#   `fund.mom61_pct` is a rank among one run's stocks, 614 on the controls and 615 on the arm (read off the
+#   fractions), and moves 0.61 points at most; `growth_sector_floor` moves 0.17 %/yr at most. Where a quote's price
+#   reads the same on all three, no leg of 8Y or less moves on a line older than 9.4 years, and the legs of 6M or
+#   less move only on lines under 1.2 years old; those moves are not traced further. Five quotes swap: the Xetra
+#   twins 07G0.DE, 1ZB.DE, 7DB.DE, GLO.DE and LXI.DE read as FANG, BE, CPAY, GPN and LII. 12 quotes read another
+#   volatility and drawdown and 14 another R2, 8 of the 14 under 3 years old; the moves are small (JOFE.MI's
+#   drawdown the largest, 0.29 to 1.37) and not traced. At the payload's top, `base` carries the two knob lines and
+#   `fund_pe` gains ESIF.L and XNAS.L; XNAS.L leaves the `cagr-life` miss list as BCFP.DE does, borrows that fund's
+#   P/E and is on no table.
+# WHY AGES MOVE (my reading): the explicit span holds one more month at a series' start. Of the 1352 quotes aged
+#   10.2 to 37.3 years, 1235 read 28 to 31 days older on the arm, 4 more than that, 1 younger and 109 the same;
+#   the controls disagree on the other 3. A live fetch of both forms in one minute (2026-11-11, 13:49Z) read
+#   KLA.DE at 236 monthly bars from 2007-04-30 on the span against 235 from 2007-05-31 on `range=max`. The rate
+#   since listing then starts from another close. Where the controls agree on it, it moves by 1 %/yr or more on
+#   83 of 1122 quotes of that band and on 850 of 2970 of 10.2 years or less (5th to 95th percentile -0.85 to
+#   +0.84 and -3.32 to +4.51). JBL is the case on the list: 17.25 to 18.01 %/yr.
+#   The misses that flip are growth-rate readings; ESIF.L's sat 0.04 under its line on the controls.
+# WHY THE TWINS SWAP: the 60-bar floor of `eu_chart_ok`, not a trim. The same live fetch, replayed through a Python
+#   copy of the check (not the binary): Yahoo's record of each of the five starts 2021-01. `range=max` answers it
+#   in weekly bars, 306 or 307 stamps with 108 to 209 closes, and passes. The span answers 72 monthly stamps with
+#   27 to 50 closes, under `EU_MIN_BARS` 60, and fails; the 5-year depth floor passes on both (5.83 to 5.86).
+#   KLA.DE, a twin that stays, passes on both. So on the arm the density floor counts months with a close, and a
+#   line of 5.9 years with empty months cannot reach 60. Whether that floor keeps its count is a question for the
+#   move.
+# AGAINST EXPECTED: 1 HELD: 245 and 245 `3mo`; the arm none. 2 HELD: 239 of 239; arm less control on the 20Y
+#   percent reads a median of +1.7 points (10th to 90th percentile -4.7 to +14.8; MNST the lowest at -89.6,
+#   +1804.4 to +1714.8; APC.DE the highest at +245.8, +5414.5 to +5660.3). 3 MISSED: 1240 of those 1352 quotes read
+#   another `age_years` and 9 another 20Y percent. The cause is the month above; the bands were read off
+#   `range=max` alone and could not show it. 4 HELD: ALD0.DE, GCP.DE, IBM.DE, IP and MMM.DE read 56.86, from 64.86.
+#   5 HELD: 13 of 13. Outside the five: the code reading kept volatility, drawdowns and R2 on the daily chart, and
+#   12 to 14 quotes moved there.
+# WHAT IT SAYS: on this day's page the knobs change no buy share and no Stocks company. They change the long
+#   record: one more month at the start of most series and monthly bars for the 239 oldest, and with them the YRS,
+#   TR-CAGR and 20Y columns, six Stocks ranks, one fund row with no share and five venue lines.
+# WHAT IT CANNOT SAY: as pre-registered. One day's page; no claim that either list is the better one.
+# RE-OPEN: one dispatch of screen-ab.yml on another day.
+# REVERT RULE: none. No shipped value moves.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
