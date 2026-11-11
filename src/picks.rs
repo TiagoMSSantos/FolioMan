@@ -16929,8 +16929,8 @@ mod tests {
         );
         assert_eq!(
             raw["sizing"]["book_names"].as_u64(),
-            Some(25),
-            "(#321) that book is the top-25; the 20y fund pit DCA row graded 25 no worse than (#317)'s 20"
+            Some(10),
+            "(#1457) that book is the top-10 on the owner's word; (#1456) read no size a clear win over (#321)'s 25"
         );
         assert!(
             raw["top_picks"].as_u64() >= raw["sizing"]["book_names"].as_u64(),

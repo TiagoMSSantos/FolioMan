@@ -1546,11 +1546,13 @@ sizing:
                       #   book. Coins keep the crypto-budget weight above; the first `book_names` other names
                       #   split the rest equally, with no name or sector cap, and no tracker is funded once the
                       #   picks fill the book. Read the (#313) and (#316) receipts. false = the SIZED book.
-  book_names: 25      # (#317) ROUND 100 — how many names that book buys, in score order. 10 = the (#313)/(#316)
+  book_names: 10      # (#317) ROUND 100 — how many names that book buys, in score order. 10 = the (#313)/(#316)
                       #   top-10 and the code default; 20 graded no worse than 10 on the 20y fund pit DCA row.
-                      #   (#321) ROUND 104 widened it to 25, again no worse. The book buys
+                      #   (#321) ROUND 104 widened it to 25, again no worse. (#1457) back to 10 on the owner's
+                      #   word: (#1456) read no size a clear win over 25 on the page's price history, and the
+                      #   owner's tie rule takes the smallest size no worse. A shape, not a gain. The book buys
                       #   min(this, ranked non-coin), so it is a CEILING: live supply, not this number, sets
-                      #   the row count. Read the (#317) and (#321) receipts. 0 is read as 1.
+                      #   the row count. Read the (#317), (#321) and (#1455)-(#1457) receipts. 0 is read as 1.
   head_weight: 8.0    # (#322) ROUND 105 — each of that book's first five names (`size::HEAD`, the backtest's
                       #   rank-1 / 2-5 slice boundary) weighs this many shares against a later name's 1. (#558)
                       #   raised it 2 -> 4; (#584) C raised it 4 -> 8 under the momentum interleave: on 24 names
@@ -29458,6 +29460,32 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NEXT: one owner question with these rows and the page list: 10 (the rule's pick), 15 or 20 (each also no
 #   worse), or stay at 25.
 # REVERT RULE: `book_names: 25`, unchanged.
+# OWNER'S WORD, 2026-11-11: 10 NAMES. The question was put in a dialog with four picks, 10 (the rule's pick), 15,
+#   20 or stay at 25, after the line that no size earns more than another and the differences are noise. The pick
+#   for 10 said in plain words: the same top ten as today; the first five at 16.6 % of the money each (83 %
+#   together, 62 % today) and the next five at 2.1 %; fifteen names lose their share, six staying on the list with
+#   no share, eight leaving the stock list and one more dropping; technology 93 % of all money for 86 %, the rest
+#   the coin; the worst test case 0.3 %/yr deeper; 10 orders a month, not 25; "Not a profit gain". The picks for
+#   15 and 20 said their page had not been measured. The answer was "10 names (Recommended)". The ship follows.
+# (#1457) SHIPPED 2026-11-11 on the owner's word under (#1456): `book_names` 25 -> 10. A SHAPE choice by the
+#   owner's tie rule, not a gain: no row of (#1456) says a book of 10 earns more than one of 25.
+# WHAT MOVES: the `book_names` line and the `shipped_config_pin` literal, together in this commit. `size`, BUY%
+#   and the page follow as the (#1456) Screen A/B listed them: ten rows keep a share, six keep their place with
+#   none, and the momentum and `b` rows the book no longer funds leave the stocks table. `book_names` is in the
+#   sizing fingerprint, and 10 is the code default, so the key leaves the fingerprint and BUY NOW warns until the
+#   next walk journals. The `week` table lists dropped names as "Left", as the A/B's arm did. `top_picks: 25`
+#   stays: it cuts the ranked list, and the pin asks only that it be no smaller than the book.
+# WHAT DOES NOT MOVE: no score, gate or rank rule. The forward record has 2 of its 12 monthly links and the buy
+#   rules stay frozen; this knob sizes the book those rules fill. `head_weight: 8.0` stays ((#1442)).
+# SAID BEFORE THE PUSH: 1. the backtest gate stays green on this commit with the floors as they stand, since the
+#   gate lane read S+inter +10.6 and SIZED +6.8 at 10 against floors of 9.0 and 5.7; 2. the fixture goldens go
+#   stale on the rows of the book `size` funds (`SIZED`, and `S+inter` where a golden prints it), so
+#   `report_is_pinned` reds here and a bless probe on this commit re-reads them, as (#1452) and (#1454) did;
+#   the "top-25" in the `SIZED` diagnostic stays, since it prints `top_picks`; 3. no golden line outside those
+#   rows moves, the search line and the ruler's rank-1 pin among them, since no score moved.
+# AFTER IT: the rebless commit carries the goldens and every pin they move, and the two monthly-buying ratchets
+#   in tests/network.rs rise by their own rule from this commit's gate reading (a reading less 1.0, never down).
+# REVERT RULE: `book_names: 25`, the pin literal back to 25, and the goldens of 25cf42a.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

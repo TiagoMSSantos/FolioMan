@@ -163,7 +163,7 @@ picks::ranked           dedup currency twins + dual-class shares, one fund per b
         ↓
 picks::print_lane       split per class (stocks / ETFs / crypto), print Top-N each
         ↓
-picks::buy_book         BUY NOW: a 25-name equal-weight book, the first five at 8 shares each
+picks::buy_book         BUY NOW: a 10-name equal-weight book, the first five at 8 shares each
                         (`head_weight`), score names and 12-7 momentum names interleaved S M S M …
         ↓
 NUPL + macro footer     Bitcoin sentiment + Euribor / Certificados de Aforro / inflation baselines
