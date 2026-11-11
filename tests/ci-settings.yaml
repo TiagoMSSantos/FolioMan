@@ -29398,6 +29398,66 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   rows do not count. It reads one day's pond and one price history. The forward record has 2 of its 12 monthly
 #   links, so the buy rules stay frozen: this knob sizes the book the frozen rules fill and moves no rule.
 # REVERT RULE: `book_names: 25`.
+# (#1456) VERDICT, 2026-11-11, on (#1455): NO CLEAR WIN, AND RULE 3 READS 10. Nothing moves yet: the bar picks and
+#   the owner's word ships, so `book_names: 25` stays until that word is given.
+#   Probes on c467f80, years="20", knobs "book_names=N", one batch dispatched 15:45Z to 15:47Z. pit (args="universe
+#   fund pit rivals", bars 1mo 5848): N=25 43051573479, N=20 43051630977, N=15 43051689658, N=10 43051747198. dead
+#   (args="universe fund pit dead rivals", bars 1mo 6137): N=25 43051591973, N=20 43051650375, N=15 43051709299,
+#   N=10 43051766576. gate (args="universe winners rivals", bars 1mo 5700): N=25 43051611989, N=20 43051669501,
+#   N=15 43051728029, N=10 43051784198. Each log echoes its `  book_names: N` line. The rows, each against index
+#   DCA, pit and dead over 21 programs and gate over 68:
+#     pit   book_names 10  S+inter never-sell +4.7 (med +4.7) worst +2.6
+#     pit   book_names 15  S+inter never-sell +4.4 (med +4.5) worst +2.6
+#     pit   book_names 20  S+inter never-sell +4.6 (med +4.5) worst +2.8
+#     pit   book_names 25  S+inter never-sell +4.6 (med +4.8) worst +2.9
+#     dead  book_names 10  S+inter never-sell +3.8 (med +3.7) worst +1.6
+#     dead  book_names 15  S+inter never-sell +3.9 (med +3.5) worst +1.9
+#     dead  book_names 20  S+inter never-sell +3.9 (med +3.4) worst +1.9
+#     dead  book_names 25  S+inter never-sell +3.7 (med +3.3) worst +1.9
+#     gate  book_names 10  S+inter +10.6 (med +9.8) worst +5.9 | SIZED +6.8 (med +5.9) worst +4.9 | Serie E 100 %
+#     gate  book_names 15  S+inter +10.3 (med +9.5) worst +5.9 | SIZED +6.8 (med +5.8) worst +4.9 | Serie E 100 %
+#     gate  book_names 20  S+inter +10.2 (med +9.3) worst +6.6 | SIZED +6.8 (med +5.8) worst +4.8 | Serie E 100 %
+#     gate  book_names 25  S+inter +10.0 (med +9.0) worst +6.5 | SIZED +6.7 (med +5.8) worst +4.8 | Serie E 100 %
+#     10 against 25: pit mean +0.1 median -0.1 worst -0.3; dead mean +0.1 median +0.4 worst -0.3; gate floors held
+#     15 against 25: pit mean -0.2 median -0.3 worst -0.3; dead mean +0.2 median +0.2 worst +0.0; gate floors held
+#     20 against 25: pit mean +0.0 median -0.3 worst -0.1; dead mean +0.2 median +0.1 worst +0.0; gate floors held
+#     VERDICT: smallest no worse -> book_names 10
+# THE BAR: 1. all four sizes are eligible. 2. No size is a clear win: none has +0.2 on mean and on median in both
+#   lanes. 3. 10, 15 and 20 are each no worse and 10 is the smallest. The pick is a shape, not a gain: its +0.1
+#   on each mean is under the bar's own step and far under what the ruler can see.
+# WIRING: HELD. The gate run at 25 reprints CI's lines on 25cf42a to the decimal, and pit and dead at 25 reprint
+#   the rung-8 rows of (#1442), read a day earlier.
+# AGAINST EXPECTED: 1 HELD. 2 MISSED: 20 against 25 reads -0.3 on the pit median and +0.2 on the dead mean, so
+#   ranks 21 to 25 are filled and they move the rows. 3 HELD: from 25 down to 10 the worst program reads +2.9,
+#   +2.8, +2.6, +2.6 on pit and +1.9, +1.9, +1.9, +1.6 on dead; on gate +6.5, +6.6, +5.9, +5.9, the one rise
+#   inside 0.1. 4 HELD: 10, and nothing put it out. 5 HELD. Not asked: on the gate lane the mean and the median
+#   rise with each smaller book (+10.0 to +10.6, +9.0 to +9.8) while the worst falls 0.6. Pit and dead do not
+#   repeat it, so it is one lane's reading and no claim.
+# THE PAGE AT 10: Screen A/B run 43052754589 on c467f80, knobs="book_names=10". Its wiring holds: the controls
+#   print no settings line, the arm prints its one knob line, the three payload checks pass (stocks rows 37, 30,
+#   39). Said before the dispatch: BUY% moves on 25 rows and no row, rank or score moves. HELD on the ten rows
+#   that keep a share, MISSED on the rest:
+#   - The same ten names in the same order. The first five go 12.44 % -> 16.59 % of gross each (62 % -> 83 %) and
+#     the next five 1.56 % -> 2.07 %. Five of the ten are momentum picks (`m`), two of them among the first five.
+#   - Six rows keep their place and lose their share: DVA, LAR0.DE, ABEA.DE, KLA.DE, EME, M4I.DE.
+#   - EIGHT ROWS LEAVE THE STOCKS TABLE, which the block above did not foresee: six momentum picks (LU2.DE, MRVL,
+#     CIEN, TER, 12DA.DE, FLEX) and two `b` rows (KEYS, CIS.DE). Such a row is listed only while the book funds
+#     it: `splice_sides` places `book_cut()` names and `web_top` shows a `b` row only when bought. The rows under
+#     them renumber (M4I.DE 25 -> 16, FFIV 35 -> 27). The fifteenth share sat on a row the two controls disagree
+#     on (FIX, then BE), so that row is noise and carries no knob claim.
+#   - BUY NOW lists 10 rows for 25. The exposure table reads Information Technology 93.3 % of gross for 85.6 %, and
+#     Industrials, Communication Services, Financials and Health Care read nothing: with the coin's 6.7 % the
+#     stock book is one sector. The arm's `week` table lists eleven of the fifteen as "Left", each with the gate
+#     it fails today, though the cause is the smaller book.
+# WHAT IT SAYS: a book of 10 is no worse than 25 by the owner's tie rule on both point-in-time lanes, and it holds
+#   the gate's floors. WHAT IT CANNOT SAY: what the block above lists, and this: the rows grade only the 21 and
+#   68 programs they walked. At 10 the worst program reads 0.3 deeper on both point-in-time lanes, inside the 0.5
+#   limit, and five names hold 83 % of the money, so one name's accident weighs more than at 25.
+# ON A SHIP OF 10: as the block above says. The two ratchets would read 9.6 (S+inter, +10.6 less 1.0) and 5.8
+#   (SIZED, +6.8 less 1.0) by their own rule, re-read on the ship's own CI run.
+# NEXT: one owner question with these rows and the page list: 10 (the rule's pick), 15 or 20 (each also no
+#   worse), or stay at 25.
+# REVERT RULE: `book_names: 25`, unchanged.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
