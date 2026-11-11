@@ -23178,7 +23178,7 @@ buy_heuristic:
                                  #   Also unlike its crypto sibling it is not edge-blind: the pool is
                                  #   overwhelmingly equities, so a sweep here has the samples to vote.
                                  #   (#1399): its ladder 4 / 3 / 2.5 / 2, in daily units, passes no rung. 0 = off.
-  growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
+  growth_require_lifetime_uptrend: true # (#25) reject equities whose log-trend CAGR (fit on the ~10y chart; the backtest fits the same window since (#1463)) or listing-to-date CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7
                                  #   (wins +87.9) / on +119.4 (wins +91.5), OOS +0.13|+0.08 both + either way. CAVEAT: barely binds
@@ -27959,7 +27959,10 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # THE FIX: `core::live_window(dates, closes, years)` - the last N CALENDAR years of the slice by date, so the bar size
 #   cannot change the span - feeds the four fields, and `stats_8y` is filled as `quote_one` fills it (2920 days back,
 #   the run's cadence for the underwater years). `life_cagr`, `age_years`, `tr_cagr`, `capped_cagr` and `trend_cagr`
-#   stay whole-life as (#3j)/(#182)/(#99) document. 0.0 = the whole slice, byte-identical. Unit test
+#   stay whole-life as (#3j)/(#182)/(#99) document. [(#1463), 2026-11-11: `trend_cagr` was on that list in error.
+#   None of the three receipts documents it, and `fetch::quote_one` fits it on the same ~10y chart as `trend_r2`,
+#   so the lifetime gate read a whole-record slope here and a ten-year slope on the page. It rides the window now;
+#   the other four stay whole-life.] 0.0 = the whole slice, byte-identical. Unit test
 #   `live_window_is_calendar_years_and_moves_the_range_gate`: 121 monthly / 41 quarterly bars for ten years; a
 #   100 -> 1000 -> 100 -> 200 path fails the 80 bar whole-life and clears it over ten years; knob off leaves whole-life
 #   and `stats_8y` None.

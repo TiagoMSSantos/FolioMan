@@ -6167,7 +6167,10 @@ pub fn backtest_quote(
     let brake_min = per_cadence(crate::config::growth_brake_min_sessions(), cadence);
     quote.above_ma_pct = above_long_ma_pct(c, stretch_window(c.len(), long_ma, brake_min));
     quote.trend_r2 = trend_r2(w); // (#1391) windowed; whole-life at 0.0
-    quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
+    // (#14) same fit, annualized by the run's cadence. (#1463) Over the window too: `fetch::quote_one` fits it on
+    // the chart it fits the R² on, and this line read the whole slice, so the lifetime gate refused on a
+    // fifty-year slope here and on a ten-year one on the page. Whole-life at 0.0.
+    quote.trend_cagr = trend_cagr(w, cadence);
     // (#3j) whole-life endpoint CAGR over the SAME `[..=as_of]` slice, from the SAME `core::life_cagr`
     // the live fetch calls -> train==serve, exactly like `trend_cagr` above.
     //
@@ -6550,6 +6553,11 @@ mod tests {
         let q = backtest_quote("X", &d, &c, &[], c.len() - 1, 12, &BTreeMap::new());
         assert!((q.range_pct - whole).abs() < 1e-9 && q.stats_8y.is_none(), "knob off: whole-life, no 8y stats");
         assert!(q.max_drawdown_pct > 89.0 && max_drawdown_pct(win) < 1e-9, "the 90 % fall is outside the window: {} vs {}", q.max_drawdown_pct, max_drawdown_pct(win));
+        // (#1463) the trend's slope reads the window as well: this path falls 8.1 % a year whole-life, which the
+        // lifetime gate refuses, and rises 5.9 % a year over its last ten years, which it admits
+        let (life_t, ten_t) = (trend_cagr(&c, 12).unwrap(), trend_cagr(win, 12).unwrap());
+        assert!((life_t + 8.11).abs() < 0.01 && (ten_t - 5.86).abs() < 0.01, "whole-life {life_t:.2}, ten years {ten_t:.2}");
+        assert_eq!(q.trend_cagr, Some(life_t), "knob off: the whole-life slope");
         // (#1408) the cut is `*d < from`: a bar exactly `years` back is in, an older one is out
         let last = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let days = |n: i64| last - Duration::days(n);

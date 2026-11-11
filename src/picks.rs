@@ -2801,7 +2801,7 @@ pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) ->
 /// MISSES helps: their cells in the lanes, CORE and exposure carry no per-cell hover.
 macro_rules! rule_key {
     () => {
-        "cagr = grew too slowly per year; cagr-life = grew too slowly over its whole life; lifetime = lost money over its whole life; 1Y+ = too weak over the last year; 5Y+ = too weak over 5 years; 8Y+ = too weak over 8 years; 20Y+ = too weak over 20 years; peg = price too high for its growth; range = price too low in its 10-year range; range8y = price too low in its 8-year range; stretch = ran too far above its 4-year trend; history = too little price history; young = listed too few years; liquidity = trades too little each day; aum = fund too small, could close; volatile = swings too much day to day; spike = jumped too much in one day; maxdd = once fell too far from a peak; old = listed too many years for this rule"
+        "cagr = grew too slowly per year; cagr-life = grew too slowly over its whole life; lifetime = price trend down over 10 years, or lost money since listing; 1Y+ = too weak over the last year; 5Y+ = too weak over 5 years; 8Y+ = too weak over 8 years; 20Y+ = too weak over 20 years; peg = price too high for its growth; range = price too low in its 10-year range; range8y = price too low in its 8-year range; stretch = ran too far above its 4-year trend; history = too little price history; young = listed too few years; liquidity = trades too little each day; aum = fund too small, could close; volatile = swings too much day to day; spike = jumped too much in one day; maxdd = once fell too far from a peak; old = listed too many years for this rule"
     };
 }
 
@@ -2827,7 +2827,7 @@ pub(crate) fn plain_gate(g: &str) -> &'static str {
         "20Y+" => "too weak over 20 years",
         "liquidity" => "trades too little each day",
         "stretch" => "ran too far above its 4-year trend",
-        "lifetime" => "lost money over its whole life",
+        "lifetime" => "price trend down over 10 years, or lost money since listing",
         "volatile" => "swings too much day to day",
         "spike" => "jumped too much in one day",
         "mvrv" => "coin far above holders' average cost",
@@ -3058,7 +3058,8 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     }
     if !crypto && tuning.growth_require_lifetime_uptrend {
         if let Some(t) = quote.trend_cagr.filter(|&t| t <= 0.0) {
-            fails.push(("lifetime", format!("{t:+.1}%/yr whole-life trend (need >0)"), t > -3.0));
+            // (#1463) the slope is fit on the ~10y chart (`fetch::quote_one`); the whole-life leg is the one below
+            fails.push(("lifetime", format!("{t:+.1}%/yr 10-year trend (need >0)"), t > -3.0));
         } else if let Some(l) = quote.life_cagr.filter(|&l| l <= 0.0) {
             // window trend positive but true listing-to-date CAGR negative: collapsed before the
             // fetched window, recovered inside it (MSCI Greece pattern) — still a lifetime loser.
@@ -10951,7 +10952,7 @@ mod tests {
     bad.above_ma_pct = 300.0;             // stretch: far above the 200wk SMA cap
     bad.avg_turnover_eur = Some(1_000.0); // liquidity: below the €1M floor (still Some -> assessable)
     bad.max_drawdown_pct = 90.0;          // maxdd: worse than the 50% cap
-    bad.trend_cagr = Some(-5.0);          // lifetime: whole-life trend <= 0
+    bad.trend_cagr = Some(-5.0);          // lifetime: 10-year trend <= 0
     let fails = gate_failures(&bad, &gt).unwrap();
     let has = |t: &str| fails.iter().any(|(g, _, _)| *g == t);
     assert!(has("1M-knife"), "1M -30% vs a -20% floor must fire the knife reason");
@@ -16820,9 +16821,9 @@ mod tests {
             // LIFETIME -- the trend leg first, the listing-to-date leg only when the trend is not negative
             ("lifetime off ignores a falling trend", "lifetime", life_k, 0.0, with(|q| q.trend_cagr = Some(-5.0)), None),
             ("lifetime calls a slight trend decline close", "lifetime", life_k, 1.0, with(|q| q.trend_cagr = Some(-1.0)),
-                Some(("-1.0%/yr whole-life trend (need >0)", true))),
+                Some(("-1.0%/yr 10-year trend (need >0)", true))),
             ("lifetime stops at its 3pp trend margin", "lifetime", life_k, 1.0, with(|q| q.trend_cagr = Some(-3.0)),
-                Some(("-3.0%/yr whole-life trend (need >0)", false))),
+                Some(("-3.0%/yr 10-year trend (need >0)", false))),
             ("lifetime calls a slight listing loss close", "lifetime", life_k, 1.0, with(|q| q.life_cagr = Some(-1.0)),
                 Some(("-1.0%/yr since listing (need >0)", true))),
             ("lifetime stops at its 3pp listing margin", "lifetime", life_k, 1.0, with(|q| q.life_cagr = Some(-3.0)),

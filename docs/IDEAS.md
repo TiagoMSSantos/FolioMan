@@ -80,7 +80,7 @@ by hand.
 | 63 | (1) % ABOVE the 200wk SMA at which the overextension brake maxes out | knob | `growth_overext_cap` | SHIPPED 100.0 | #24 #64 #69 #558 #566 #574 | — |
 | 64 | hard gate: reject equities more than this % above the 200wk SMA — the extreme blow-off cohort the overext bra… | knob | `growth_max_above_ma` | SHIPPED 150.0 | #24 #63 #64 #69 #575 #833 | — |
 | 65 | (#833) a stock with fewer than LONG_MA_SESSIONS closes has no 200wk average, so its stretch reading is 0 and… | knob | `growth_brake_min_sessions` | SHIPPED 0 | #26 #138 #558 #566 #573 #833 | — |
-| 66 | (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — m… | knob | `growth_require_lifetime_uptrend` | SHIPPED true | #24 #25 #64 #183 #184 #1399 | — |
+| 66 | (#25) hard gate: reject equities whose log-trend CAGR (quote.trend_cagr, the slope fit on the ~10y chart) or… | knob | `growth_require_lifetime_uptrend` | SHIPPED true | #24 #25 #64 #1391 #1399 #1463 | — |
 | 67 | (#1435) refuse a stock whose SEC filings read as a bank or insurer (`fund.financial`, tag `financial`): its g… | knob | `growth_refuse_financials` | OFF (false) | #1299 #1389 #1390 #1426 #1435 | new reason, see receipt |
 | 68 | (#1435) refuse the stock with the largest market cap in its sector at the cutoff (`quote.sector_top_dog`, tag… | knob | `growth_refuse_sector_top_dog` | OFF (false) | #1299 #1426 #1435 | new reason, see receipt |
 | 69 | (#26) hard gate: reject equities whose worst-ever drawdown MAGNITUDE exceeds this % (e.g. 83 rejects a name t… | knob | `growth_maxdd_cap` | SHIPPED 0.0 | #26 #60 #74 #134 #135 #137 | — |
@@ -190,7 +190,7 @@ by hand.
 | 173 | (#95) stop stamping TODAY's GICS sector onto a historical cutoff. `stamp_asset_class` fills `quote.sector` fr… | knob | `backtest_drop_lookahead_sector` | OFF (false) | #44 #94 #95 #96 #176 #177 | new reason, see receipt |
 | 174 | (#94) move the redenomination trim from PARSE time to CUTOFF time, so a splice cannot delete history that had… | knob | `splice_trim_point_in_time` | OFF (false) | #44 #94 #139 #173 #188 #189 | TO REOPEN: build the YRS check the block above asks for — does the column stop misstating… |
 | 175 | (#1393) read BOTH legs of a momentum key off the SAME endpoint. `picks::net_return` divides the long leg's re… | knob | `momentum_one_endpoint` | OFF (false) | #97 #116 #117 #1358 #1393 #1394 | (#556) RE-ASKED 2026-10-11, after (#552) let Apple, Applied Materials and Broadcom in: 5… |
-| 176 | (#1391) measure `range_pct`, `drawdown_pct`, `max_drawdown_pct` and `trend_r2` in `core::backtest_quote` over… | knob | `backtest_live_window_years` | SHIPPED 10.0 | #1358 #1391 #1392 #1393 #1394 #1452 | — |
+| 176 | (#1391) measure `range_pct`, `drawdown_pct`, `max_drawdown_pct` and `trend_r2` in `core::backtest_quote` over… | knob | `backtest_live_window_years` | SHIPPED 10.0 | #1358 #1391 #1393 #1394 #1452 #1463 | — |
 | 177 | (#784) serve a SEC row as its strict twin (`core::FundRow::strict`, every line filed by revenue's filed date,… | knob | `sec_line_filed_gate` | SHIPPED true | #2 #3 #758 #784 | — |
 | 178 | (#93) split the peer group `demean` subtracts by LISTING MARKET as well as by cutoff bucket and asset class.… | knob | `demean_by_market` | SHIPPED true | #93 #94 #139 #173 #1231 #1232 | — |
 | 179 | (#122) DROP a ticker whose Yahoo mapping no longer points at the company it names. A dead company's ticker is… | knob | `drop_dead_ticker_series` | OFF (false) | #47 #93 #121 #122 #1231 #1232 | new reason, see receipt |
