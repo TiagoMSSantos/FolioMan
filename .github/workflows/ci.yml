@@ -252,6 +252,23 @@ jobs:
           done
           [ "$n" -ge 9 ] || { echo "only $n tools ran a selftest"; exit 1; }
           echo "tool selftests: $n passed"
+      # (#1460) CodeQL's `py/file-not-closed` came back for the third time on 2026-11-10/11: a bare `open(`
+      # in a helper script, 16 alerts in all. The scanner only opens an alert; by its own header codeql.yml
+      # gates nothing. This step reds the push instead: in every tracked .py file an `open(` call must sit
+      # on a `with` line. A method call (a zip member's `z.open(`) is not matched. The rule first runs on
+      # three known lines, so a broken pattern cannot pass on zero matches.
+      # shortcut: a line-based grep; a `with` wrapped over two lines, or a docstring that spells the call,
+      # trips it. Move to an `ast` walk when that happens.
+      - name: Python opens files under with
+        run: |
+          loose() { grep -HnE '(^|[^.[:alnum:]_])open\(' "$@" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*with ' || true; }
+          [ -n "$(printf 'd = json.load(open(p))\n' | loose)" ] || { echo "the rule missed a bare open("; exit 1; }
+          [ -z "$(printf 'with open(p) as f:\n    r = csv.reader(z.open(n))\n' | loose)" ] || { echo "the rule flagged a with line or z.open("; exit 1; }
+          mapfile -d '' -t files < <(git ls-files -z '*.py')
+          [ "${#files[@]}" -ge 15 ] || { echo "only ${#files[@]} Python files listed"; exit 1; }
+          hits=$(loose "${files[@]}")
+          [ -z "$hits" ] || { echo "open( outside a with statement:"; echo "$hits"; exit 1; }
+          echo "python opens: ${#files[@]} files, every open( sits on a with line"
 
   build:
     runs-on: ubuntu-24.04

@@ -492,7 +492,10 @@ def main():
     q.add_argument("log")
     q.add_argument("--row", help="a substring of the row's compact JSON, e.g. '\"dividend_weight\":0.17'")
     a = ap.parse_args()
-    read = lambda p: open(p, encoding="utf-8", errors="replace").read()
+    def read(p):
+        with open(p, encoding="utf-8", errors="replace") as f:
+            return f.read()
+
     if a.cmd == "gates":
         gates(read(a.control), read(a.arm))
     elif a.cmd == "rivals":

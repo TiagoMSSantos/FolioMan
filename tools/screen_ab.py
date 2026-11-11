@@ -143,10 +143,14 @@ def selftest():
 
 def main():
     if "--selftest" in sys.argv:
-        return selftest()
+        selftest()
+        return
     if len(sys.argv) != 4:
         sys.exit(__doc__)
-    docs = [json.load(open(p, encoding="utf-8")) for p in sys.argv[1:]]
+    docs = []
+    for p in sys.argv[1:]:
+        with open(p, encoding="utf-8") as f:
+            docs.append(json.load(f))
     diff(*docs, cap=5 if "quotes" in docs[0] else None)
 
 
