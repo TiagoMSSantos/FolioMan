@@ -2924,7 +2924,7 @@ fn gate_fails(quote: &Quote, tuning: &BuyHeuristic, why: bool) -> Option<Vec<(&'
     // CAGR leg would `?`-bail the next line to a SILENT None (0.0 in the table, no reason) — so when
     // the leg is missing AND the age gate fires, return the young reason alone instead of dropping it.
     let age_bar = min_age_years(quote, tuning); // (#1300) a coin's own floor too
-    let young_fail = |a: f64| ("young", format!("{a:.0}y listed (need ≥{age_bar:.0}y)"), a >= age_bar - 1.0);
+    let young_fail = |a: f64| ("young", format!("{a:.d$}y listed (need ≥{age_bar:.d$}y)", d = bar_dp(a, age_bar, 0)), a >= age_bar - 1.0);
     let too_young = quote.age_years.is_some_and(|a| a < age_bar);
     let Some((long_cum, long_years)) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years) else {
         // No leg at or above `growth_min_leg_years` (5y+ at the shipped value) -> the name can't be ranked
@@ -5762,7 +5762,7 @@ pub(crate) fn shipped_book(
 /// the column is there. A macro, so [`WATCH_BUY_HELP`] reuses it word for word.
 macro_rules! buy_part {
     () => {
-        "the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 25 stocks and funds, plus any coins. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row"
+        "the part of new money the buy list puts here, for example 8% = €80 of €1,000. On this page's settings the list holds 10 stocks and funds, plus any coins. Of every 10 places, 5 go to the best buy scores. The other 5 go to the stocks that rose most from 12 to 6 months ago (m rows). The first five names get 8 times the weight of each later one; an energy or materials name (c) never takes one of the five. Coins come first, at their crypto share. Blank = the buy list does not buy this row"
     };
 }
 const BUY_HELP: &str = concat!("Buy list share: ", buy_part!());
@@ -13195,6 +13195,32 @@ mod tests {
         }
     }
 
+    /// (#1461) The BUY% help and the Braked table's CUT help spell shipped numbers as words on the page.
+    /// (#1457) took the book from 25 names to 10 and the help went on saying 25. A change to any of these
+    /// knobs in ci-settings reds this until the words follow.
+    #[test]
+    fn help_numbers_follow_the_shipped_settings() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml")).expect("read tests/ci-settings.yaml");
+        let s: crate::config::Settings = serde_yaml::from_str(&text).expect("parse tests/ci-settings.yaml");
+        let (t, slots) = (&s.buy_heuristic, s.buy_heuristic.growth_momentum_slots);
+        assert_eq!(HEAD, 5, "the help says \"the first five names\"");
+        for want in [
+            format!("the list holds {} stocks and funds, plus any coins", s.sizing.book_cut()),
+            format!("Of every 10 places, {} go to the best buy scores. The other {slots} go to", 10 - slots),
+            format!("The first five names get {} times the weight of each later one", s.sizing.head_share()),
+        ] {
+            assert!(BUY_HELP.contains(&want), "the BUY% help must say {want:?}: {BUY_HELP}");
+        }
+        let help = web_help(false, &[]);
+        let cut = format!(
+            "×1 up to {}% above the average, then falls to ×{:.2} at {}% above it",
+            t.growth_overext_free,
+            t.growth_overext_floor.powf(t.growth_overext_exp),
+            t.growth_overext_cap
+        );
+        assert!(help["braked"]["CUT"].contains(&cut), "the CUT help must say {cut:?}: {}", help["braked"]["CUT"]);
+    }
+
     /// (#400) Every header the page can show has glossary text in ITS table's map: a lane's, CORE's, and
     /// the inflation table's, whose span header is dynamic. The >=1Y legs name the unit `real` says was
     /// printed; the <1Y legs are nominal either way.
@@ -16749,6 +16775,8 @@ mod tests {
             ("coin age spares a coin exactly its age", "young", cage_k, 8.0, aged_coin(8.0), None),
             ("coin age calls a year short close", "young", cage_k, 8.0, aged_coin(7.0), Some(("7y listed (need ≥8y)", true))),
             ("coin age stops at two years short", "young", cage_k, 8.0, aged_coin(6.0), Some(("6y listed (need ≥8y)", false))),
+            // (#1461) an age that rounds onto its bar prints the decimal: 7.6 years read "8y listed (need ≥8y)"
+            ("coin age prints the decimal a rounded miss hides", "young", cage_k, 8.0, aged_coin(7.6), Some(("7.6y listed (need ≥8.0y)", true))),
             ("coin age ignores a stock", "young", cage_k, 8.0, with(|q| q.age_years = Some(3.0)), None),
             ("aum spares a fund exactly on it", "aum", aum_k, 1e8, etf("FUND.DE", 1e8), None),
             ("aum ignores a coin filed as an ETF", "aum", aum_k, 1e8, etf("XYZ-EUR", 5e6), None),
