@@ -29486,6 +29486,33 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # AFTER IT: the rebless commit carries the goldens and every pin they move, and the two monthly-buying ratchets
 #   in tests/network.rs rise by their own rule from this commit's gate reading (a reading less 1.0, never down).
 # REVERT RULE: `book_names: 25`, the pin literal back to 25, and the goldens of 25cf42a.
+# RESULT, 2026-11-11, on 2cb7300: CI run 43060624137 and bless probe 43060649059 (13 `report_is_pinned` passed).
+#   SAID BEFORE THE PUSH, read back. 1 HELD: backtest-gate green, 20y S+inter +10.6 (med +9.8) and SIZED +6.8 (med
+#   +5.9), Serie E 100 %, the probe's own numbers. 2 HELD: integration-tests and coverage are red on 19 and 18
+#   tests of the `backtest_fixture` target and on nothing else, each a compare of a report with a golden; every
+#   other job is green; "top-25" stays in each `SIZED` diagnostic. 3 HELD: eleven goldens move and only on `SIZED`
+#   rows, the one `all entries (SIZED)` line in each and, in backtest-20, the three `SIZED` monthly-buying lines;
+#   -halflife and -tune do not move. The search line, the ruler's rank-1 pin and the NaN/inf map, (82, 4) and
+#   (70, 0), hold unedited, and `regrade_ruler.py --selftest` passes.
+# THE REBLESS: the eleven goldens are that probe's artifact, copied in unedited. The two ratchets in
+#   tests/network.rs rise by their own rule: S+inter 9.0 -> 9.6 (+10.6 less 1.0), SIZED 5.7 -> 5.8 (+6.8 less 1.0).
+# READ AFTER THE SHIP, OFF THE (#1455) BAR, AND AGAINST THE PICK: `SIZED` is the sized book by score alone;
+#   `S+inter`, the (#1455) cell, is that book with the momentum picks, the one the page shows. On `S+inter` 10 read
+#   no worse. On `SIZED` it reads LOWER, and (#1456) quoted no `SIZED` row from the two point-in-time lanes.
+#   The frozen fixture, 25 -> 10, one buy held (`all entries (SIZED)` excess): 12y +3.4 -> +2.8 (win 84 % -> 73 %),
+#   12y fund +3.4 -> +2.8, 8y +3.8 -> +3.4, 20y +2.0 -> +1.1 (win 79 % -> 71 %), 12y pit -0.8 -> -1.1 (worst -6.0
+#   -> -9.0), 12y dead -1.2 -> -1.7. Its 20y monthly buying against index DCA: +2.9 (med +2.8) -> +2.2 (med +2.2),
+#   worst +1.4 -> +0.0, and Serie E's best case beaten in 54 of 58 programs (93 %) for 58 of 58.
+#   The (#1456) probe logs, re-read for the same rows, 10 against 25. One buy held: pit +1.1 for +1.8 (win 76 %
+#   for 81 %, worst -3.7 for -2.8), dead +0.8 for +1.4 (win 57 % for 81 %, worst -2.5 for -1.6), gate +5.6 for
+#   +5.7. Monthly buying against index DCA: pit +2.2 (med +2.0) for +2.3 (med +2.3), dead +1.2 (med +1.3) for +1.5
+#   (med +1.4), gate +6.8 (med +5.9) for +6.7 (med +5.8), Serie E 100 % on all six.
+#   So the score-only book of 10 reads lower than that of 25 on five of the six live means, by 0.1 to 0.7, and on
+#   every fixture row, by 0.3 to 0.9. Each gap is under what the ruler can see ((#1333)), but they share a sign.
+#   The dialog's line that no size earns more and the differences are noise was read on the (#1455) cells alone.
+#   The bar was fixed before the runs and it stands; these rows go to the owner with the revert rule below.
+# REVERT RULE, AFTER THE REBLESS: `book_names: 25`, the pin literal back to 25, and the goldens of 25cf42a. The
+#   gate at 25 read +10.0 and +6.7, over the raised floors by 0.4 and 0.9; a floor is never lowered in silence.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

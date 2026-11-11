@@ -435,7 +435,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── SECTOR BOOK (#328): what a top-1-per-GICS-sector door would add to the cleared book, every name equal-weight, held 12y ──
   cleared      n=788    book +7.0%/yr  excess -0.5  win 15%  worst -7.5  OOS -0.1/-0.9  top10 -1.3/-7.0
   (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. `excess`/`bar` are the UNCAPPED book; (#330) the `ship` verdict decides and is read at top10 (excess/worst), the published basket — excess >= that column's `bar`, the p95 of 200 same-n refused cohorts entered at the cohort's own ranks, AND worst >= cleared -1.0, at 20y, 12y and 8y. `inert` = the door's names never reach the published basket)
-  all entries (SIZED)          book +6.3%/yr  excess -1.2  win 13%  worst -9.0  OOS -1.1/-1.4   (windows 54, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
+  all entries (SIZED)          book +5.9%/yr  excess -1.7  win 13%  worst -9.0  OOS -1.6/-1.7   (windows 54, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 12y ──
   cap  off  book +6.2%/yr  excess -1.3  win 15%  worst -7.0  OOS -1.0/-1.6  [cap off = plain top-10 book]

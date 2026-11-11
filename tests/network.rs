@@ -963,10 +963,12 @@ fn backtest_edge_holds() {
         // (#1454) the walk moved to monthly bars and the screen's 10-year window ((#1452)). On 9e3c39a, CI's own args,
         // 2026-11-11: SIZED +6.7 (med +5.8), S+inter +10.0 (med +9.0), Série E 100%. The readings rose, so the two
         // pts/yr floors rise to the reading minus 1.0; Série E's reading is 100 as before, so its floor stays.
+        // (#1457) the book buys 10 names for 25. On 2cb7300, CI's own args, 2026-11-11: SIZED +6.8 (med +5.9), S+inter
+        // +10.6 (med +9.8), Série E 100%. Both pts/yr readings rose, so both floors rise to the reading minus 1.0.
         if years == 20 {
-            const SIZED_DCA_FLOOR: f64 = 5.7; // (#1454), was 4.4
+            const SIZED_DCA_FLOOR: f64 = 5.8; // (#1454), (#1457), was 5.7
             const SERIE_E_DCA_FLOOR: f64 = 90.0;
-            const S_INTER_DCA_FLOOR: f64 = 9.0; // (#1236), (#1454), was 5.3
+            const S_INTER_DCA_FLOOR: f64 = 9.6; // (#1236), (#1454), (#1457), was 9.0
             const S_INTER_DCA: &str = "S+inter never-sell"; // (#636) the lane name is 7 wide: one space, not SIZED's three
             let row = |m: &str| growth.lines().find(|l| l.trim_start().starts_with(m));
             let x = row(markers::SIZED_DCA).and_then(|l| num_after(l, "->"));

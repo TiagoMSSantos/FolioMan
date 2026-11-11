@@ -1850,7 +1850,7 @@ WINNERS HELD (#606): 11.6% of 602 blend book slots are winners (base 5%); score 
 ── SECTOR BOOK (#328): what a top-1-per-GICS-sector door would add to the cleared book, every name equal-weight, held 12y ──
   cleared      n=1186   book +13.1%/yr  excess +4.0  win 84%  worst -10.2  OOS +2.5/+5.6  top10 +2.8/-10.2
   (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. `excess`/`bar` are the UNCAPPED book; (#330) the `ship` verdict decides and is read at top10 (excess/worst), the published basket — excess >= that column's `bar`, the p95 of 200 same-n refused cohorts entered at the cohort's own ranks, AND worst >= cleared -1.0, at 20y, 12y and 8y. `inert` = the door's names never reach the published basket)
-  all entries (SIZED)          book +12.5%/yr  excess +3.4  win 84%  worst -10.2  OOS +2.1/+4.7   (windows 74, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
+  all entries (SIZED)          book +11.9%/yr  excess +2.8  win 73%  worst -10.2  OOS +1.8/+3.8   (windows 74, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 12y ──
   cap  off  book +11.8%/yr  excess +2.8  win 77%  worst -10.2  OOS +1.7/+3.8  [cap off = plain top-10 book]
