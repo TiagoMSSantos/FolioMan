@@ -447,6 +447,14 @@ async fn probe(req: reqwest::RequestBuilder, ctx: &str) -> Option<reqwest::Respo
         eprintln!("network smoke [{ctx}] SKIPPED — throttled/unavailable: HTTP {status}");
         return None;
     }
+    // (#1447) An outage page behind a redirect is unavailability, not drift. On 2026-11-11 Eurostat answered 307 to
+    // `sorry.ec.europa.eu`, which serves "Server temporarily unavailable" as a 200 HTML page: `inflation_eu_parses`
+    // read it as a healthy reply with no rates and failed twice. Only that host prefix skips; any other non-JSON 200
+    // is still drift.
+    if resp.url().host_str().is_some_and(|h| h.starts_with("sorry.")) {
+        eprintln!("network smoke [{ctx}] SKIPPED — outage page: {}", resp.url());
+        return None;
+    }
     Some(resp)
 }
 
