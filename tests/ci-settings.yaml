@@ -28883,6 +28883,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT: NOT MOVED YET. The two reds are gate checks outside the two DCA ratchets, so they wait for the owner's
 #   word, as does a CI step that regenerates the fixture on this arm. The gate's legs hold today's survivors, so the
 #   higher top-10 rows on the arm are no proof of a gain. The volume floor is built and inert while the knob is false.
+# OWNER'S WORD, 2026-11-11: no move yet. First find why the 8y fund leg's passer edge reads under 0 on this arm
+#   ("Dig into alarm 2 first").
+# RESULT, 2026-11-11, on 8289b5a (a 2 x 2 census on the 8y fund leg, `8 universe winners fund`: the shipped bars or
+#   this arm, the stretch brake on or off through `growth_overext_cap=0.0`; probes 42987781374, 42987796954,
+#   42987811846, 42987826339). Called before the run: brake off lifts this arm's passer edge above 0 and lowers the
+#   shipped walk's. Both held. The brake damps the score and gates nothing, so each pair scores the same windows
+#   (14075 shipped, 17228 arm) and the same passers. GROWTH section:
+#     bars, brake    passer edge  passer lift  passer OOS    crowd edge, 90 % band    winsor  top-10 excess
+#     shipped, on       +35.2       +24.7     +0.21 +0.15   +15.1 [-3.7 .. +31.7]    +21.3   +3.3 (+5.5) -16.2
+#     shipped, off       -1.5       -11.9     -0.05 +0.00    +2.6 [-13.9 .. +17.8]    +9.0   +3.3 (+4.5) -16.2
+#     arm, on            -1.3       +58.3     +0.08 +0.14   -17.5 [-38.8 .. +3.0]     -0.2   +6.4 (+7.2) -13.0
+#     arm, off           +4.2       +63.8     +0.04 +0.01   +10.6 [-6.0 .. +27.4]    +18.9   +7.1 (+7.2) -13.0
+#   Winners held 12.2 / 12.7 / 11.0 / 11.1 %. Crowd edge by era, oldest first: shipped on +12.3 -39.3 +11.2 +32.3, off
+#   -28.2 -19.7 +20.7 +45.1; arm on -22.9 -76.2 +0.5 +3.1, off +27.6 -67.0 +21.6 +33.3.
+# WHAT IT SAYS: the brake carried the whole shipped passer edge on this leg. Without it the shipped walk reads -1.5,
+#   the arm's own number. (#1389) names the cause: under `range=max` a pre-1985 listing came as quarterly bars, so
+#   `above_ma_pct` was the distance above a 12-year average, and the brake docked names by that. On monthly bars it
+#   is the distance above a 4-year average. The brake's ablation row then flips sign on every lane read (the crowd
+#   edge's change when the brake is removed, shipped / arm): 8y fund -12.5 / +28.0; 8y -10.6 / +27.7; 20y +66.1 /
+#   +178.3; pit 12y -27.5 / +10.2; pit 8y -2.9 / +9.3 (pit rows: probes 42771646322 / 42771672991 on 386a619). The
+#   new thin names are not the cause: on the pit lane, windows like for like, the passer edge falls as far (12y
+#   +147.6 -> +63.9, 8y +87.8 -> +36.9). The 10-year window is not the cause either: the span knob alone reads -2.4
+#   on step 2's lane (the RESULT under (#1390)).
+# VERDICT: THE OLD PASS ON THIS LEG WAS THE BAR DEFECT. On monthly bars the 8y fund passer edge sits at 0 with the
+#   brake (-1.3) and without it (+4.2), and all four crowd bands straddle 0. No knob moves. The brake stays as
+#   shipped: it is a buy rule under the (#1333) freeze, (#1395) refused its free zone at 40 to 80 on this arm, and
+#   with the brake off the passers' rank order goes flat in the late half (+0.14 -> +0.01) while the mean rises. A
+#   brake fully off was read on this one leg only, not on the pit top-10 ruler. The two reds still wait for the
+#   owner's word.
 # (#1441) THE HEAD WEIGHT ON THE LIVE-EQUIVALENT ARM, PRE-REGISTERED 2026-11-10 before any run. Knob: `sizing.head_weight`
 #   (8.0 ships). Row: (#1442). Eight probes.
 # WHY: the first five names weigh 8 against a later name's 1: 63 % of gross on 2026-11-10 (FTNT, SNDK, APC.DE, WDC,
