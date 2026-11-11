@@ -29039,6 +29039,37 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # WHAT THIS CANNOT SAY: the ruler is blind to a gain under 2 to 4 %/yr ((#1333)), so a pass would mean no harm was
 #   seen, not more profit.
 # REVERT RULE: `growth_overext_cap: 100.0` and `growth_overext_free: 60.0`, unchanged.
+# (#1449) VERDICT, 2026-11-11, on (#1448): NOT ELIGIBLE. The brake stays on this arm and nothing moves.
+#   Probe 42994079904 on 3d5738b, rescore="guard", 200 shuffles, the arm's two knobs. Bars `1mo 5844` only. The
+#   (#117) floor refused 773 cutoffs at 12y and 1607 at 8y. Both rows read one dump: windows scored 5079 / 6578 at
+#   12y and 8837 / 8731 at 8y. Row 0 reads the cells round 20's log of this arm read with no floor (probe
+#   42771672991 on 386a619), the 8y worst5 apart (-3.5 there): the floor moved no top-10 cell.
+# RU RULER (tools/regrade_ruler.py, lane pit), 12y cells left of the first bar, 8y right of it:
+#     row        mean   med  trim worst   p20 worst5    RU1 |  mean   med  trim worst   p20 worst5    RU1 | fails
+#     row 0      +2.3  +2.9  +2.4  -8.6  -0.6   -3.7  20/37 |  +2.6  +2.9  +2.8  -6.9  -0.6   -3.4  26/45 | none
+#     brake off  +2.5  +2.4  +2.5  -4.3  -0.7   -2.8  17/37 |  +3.0  +2.5  +2.6  -6.0  -0.9   -4.3  27/45 | below
+#   The brake off fails RU3 and RU-E at both horizons, RU1 at 12y and RU2 at 8y. RU3: the median falls 0.5 at 12y
+#   and 0.4 at 8y (slack 0.1). RU-E: the median gain over row 0 by cutoff era (to 2001, 2002-07, 2008-13, from
+#   2014) reads -1.7, +0.3, +0.5, +0.6 at 12y and -1.5, +0.3, -0.2, +0.0 at 8y, so the cost sits in the
+#   cutoffs up to 2001 (slack 0.3). RU1: the top 5 beat names 6-10 in 17/37 windows at 12y, under half; rank 1
+#   alone beats them in 11/37 against row 0's 15/37, and in 15/45 against 21/45 at 8y. RU2: the five worst 8y
+#   windows average -4.3 against -3.4 (slack 0.5).
+# GUARD: PASS at both. Top-10 gain over row 0 +0.20 at 12y (edge -0.99) and +0.34 at 8y (edge -0.82); pond gain
+#   +0.08 (edge -0.27) and +0.15 (edge -0.15). The null band and the tail band read INSIDE at both: median gain
+#   -0.51 and -0.38. Top-10 names moved a bucket: 4.30 and 4.00, so the knob reached the walk.
+# WHAT IT SAYS: with the brake off the mean rises 0.2 to 0.4 and the 12y worst window halves (-8.6 to -4.3), while
+#   the median falls 0.4 to 0.5 and the rank-1 name loses to names 6-10 more often. Each banded moment (mean,
+#   median, p20, worst5) sits inside the shuffle band, so the run shows no profit from the brake off. The guard sees no harm; the RU ruler,
+#   which is the bar, refuses.
+# AGAINST EXPECTED: "NOT ELIGIBLE" HELD. "Fails RU3 or RU-E at one horizon or more" HELD: both, at both. "The 12y
+#   median falls by 0.5 to 1.2" HELD at its edge (0.5). "The worst window is no deeper than row 0's" HELD (-4.3
+#   against -8.6, -6.0 against -6.9). "Top-10 names moved above 1.81" HELD. "RU1 passes" MISSED at 12y (17/37). Its
+#   premise was stale too: row 0 passes RU1 here (20/37, 26/45), where (#1396) read 18/37 and 22/45 on c3869b3.
+#   Round 20's log on 386a619 already reads 20/37 and 26/45, so that move came before the floor; it is not traced.
+# FOR THE 8y FUND CHECK ((#1440)): as pre-registered, the check goes back to the owner with -1.3 as its reading. The
+#   brake is not the lever for it: off, that leg read +4.2, about 0 too, and this ruler refuses the brake off.
+# RE-OPEN: the brake off on this arm only on the forward record's 12 monthly links or on a new ruler.
+# REVERT RULE: `growth_overext_cap: 100.0` and `growth_overext_free: 60.0`, unchanged.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
