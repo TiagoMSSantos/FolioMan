@@ -29059,8 +29059,8 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   -0.51 and -0.38. Top-10 names moved a bucket: 4.30 and 4.00, so the knob reached the walk.
 # WHAT IT SAYS: with the brake off the mean rises 0.2 to 0.4 and the 12y worst window halves (-8.6 to -4.3), while
 #   the median falls 0.4 to 0.5 and the rank-1 name loses to names 6-10 more often. Each banded moment (mean,
-#   median, p20, worst5) sits inside the shuffle band, so the run shows no profit from the brake off. The guard sees no harm; the RU ruler,
-#   which is the bar, refuses.
+#   median, p20, worst5) sits inside the shuffle band, so the run shows no profit from the brake off. The guard
+#   sees no harm; the RU ruler, which is the bar, refuses.
 # AGAINST EXPECTED: "NOT ELIGIBLE" HELD. "Fails RU3 or RU-E at one horizon or more" HELD: both, at both. "The 12y
 #   median falls by 0.5 to 1.2" HELD at its edge (0.5). "The worst window is no deeper than row 0's" HELD (-4.3
 #   against -8.6, -6.0 against -6.9). "Top-10 names moved above 1.81" HELD. "RU1 passes" MISSED at 12y (17/37). Its
