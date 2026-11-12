@@ -1635,6 +1635,35 @@ fn link_px(n: &Snapshot, t: &str) -> Option<f64> {
         .filter(|p| *p > 0.0)
 }
 
+/// (#1469) The names whose stored price steps like a share split between two neighbouring record
+/// lines: `(ticker, the last line before the step, the first line after it)`. Called on the restated
+/// journal, so a split the feed lists or the hand list holds (`core::hand_splits`) shows no step, and
+/// what is left is a split nobody listed, which grades every book that held the name at a false loss
+/// (two funds, October 2026: (#1468)). The price is [`link_px`]'s, the one the chained links read;
+/// the bar is the chart trimmer's own (`core::splice_trim_start`, weekly rate), so a line gap of a
+/// month is not mistaken for a step and an off bar reports nothing. Coins are exempt, as they are
+/// from the trimmer. Nothing is corrected here: a real collapse reads the same, so a person checks
+/// the name and adds the row.
+/// shortcut: a 2:1 split sits ON the 2.0 bar and can pass unseen; the feed lists those for stocks,
+/// and the two unlisted ones were 80:1 and 100:1. A tighter bar would name every bad week instead.
+pub(crate) fn split_suspects(snaps: &[Snapshot], max_weekly_rate: f64) -> Vec<(String, String, String)> {
+    let names: std::collections::BTreeSet<&str> = snaps
+        .iter()
+        .flat_map(|s| s.rows.iter().map(|(t, _)| t).chain(s.exit.iter().map(|(t, ..)| t)).chain(s.carry.iter().map(|(t, _)| t)))
+        .map(String::as_str)
+        .filter(|t| !crate::picks::is_currency_quoted(t))
+        .collect();
+    names
+        .into_iter()
+        .filter_map(|t| {
+            let (dates, closes): (Vec<_>, Vec<_>) =
+                snaps.iter().filter_map(|s| Some((chrono::NaiveDate::parse_from_str(&s.date, "%Y-%m-%d").ok()?, link_px(s, t)?))).unzip();
+            let i = crate::core::splice_trim_start(&dates, &closes, max_weekly_rate);
+            (i > 0).then(|| (t.to_string(), dates[i - 1].to_string(), dates[i].to_string()))
+        })
+        .collect()
+}
+
 /// (#336) Each month's executed book held to the NEXT month's graded line: `(that line's date, names
 /// held, graded)`
 /// per consecutive pair of `sim::monthly_firsts`. The end prices come off the later line itself
@@ -1821,7 +1850,13 @@ pub(crate) fn web_track(
         .filter(|g| g.spy_pct.is_some())
         .map(|g| g.days)
         .max();
-    (rows, web_note(wins, n, sum, oldest, chain_sum(&links)))
+    // (#1469) first in the note, so the summary under the Stocks heading carries it too. Not a DEGRADED
+    // entry: it stands until a row is added by hand, and a degraded run's record line is held back.
+    let warn: String = split_suspects(snaps, crate::config::splice_max_weekly_rate())
+        .iter()
+        .map(|(t, a, b)| format!("Check {t}: its saved price steps like a share split between {a} and {b}, and no split is listed for it. Lists that hold it are graded wrong until the split is added by hand. "))
+        .collect();
+    (rows, warn + &web_note(wins, n, sum, oldest, chain_sum(&links)))
 }
 
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
@@ -3016,6 +3051,39 @@ mod tests {
         assert_eq!(snaps[0].rows[0].1, Some(349.8 / 80.0));
         assert_eq!(snaps[0].rows[1].1, Some(100.0), "no row for it, no restatement");
         assert_eq!(snaps[1].rows[0].1, Some(4.4), "the first line on the new share is left alone");
+    }
+
+    /// (#1469) A fund whose stored price falls to a hundredth between two lines is named with both
+    /// dates, wherever the later lines hold its close; a coin with the same step, a steady name and
+    /// an off bar name nothing.
+    #[test]
+    fn split_suspects_names_a_step_no_split_explains() {
+        let mut snaps = vec![
+            snap("2026-10-01", None, &[("FUND.L", Some(500.0)), ("BTC-EUR", Some(500.0)), ("CALM", Some(10.0))]),
+            snap("2026-10-02", None, &[("FUND.L", Some(505.0)), ("BTC-EUR", Some(5.0)), ("CALM", Some(11.0))]),
+            with_exit(snap("2026-10-05", None, &[("BTC-EUR", Some(5.1)), ("CALM", Some(10.5))]), &[("FUND.L", Some(5.05), false)]),
+            snap("2026-10-06", None, &[("CALM", Some(10.6))]),
+        ];
+        snaps[3].carry = vec![("FUND.L".into(), Some(5.1))];
+        assert_eq!(split_suspects(&snaps, 2.0), vec![("FUND.L".to_string(), "2026-10-02".to_string(), "2026-10-05".to_string())]);
+        assert!(split_suspects(&snaps, 0.0).is_empty(), "an off bar reports nothing");
+    }
+
+    /// (#1469) The page's note opens with the warning wherever the splice bar is on, ahead of the
+    /// record's own sentence; a steady record, and any record under an off bar, opens as it always did.
+    #[test]
+    fn web_track_note_opens_with_the_split_warning() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 21).expect("a real date");
+        let px = |t: &str| (t == "A.L").then_some(1.0);
+        let line = |date: &str, a: f64| snap(date, Some(100.0), &[("A.L", Some(a))]);
+        let calm = web_track(&[line("2026-10-01", 100.0), line("2026-10-02", 101.0)], today, &px, Some(110.0)).1;
+        let stepped = web_track(&[line("2026-10-01", 100.0), line("2026-10-02", 1.0)], today, &px, Some(110.0)).1;
+        assert!(!calm.starts_with("Check "), "{calm}");
+        if crate::config::splice_max_weekly_rate() > 1.0 {
+            assert!(stepped.starts_with("Check A.L: its saved price steps like a share split between 2026-10-01 and 2026-10-02, and no split is listed for it. "), "{stepped}");
+        } else {
+            assert!(!stepped.starts_with("Check "), "{stepped}");
+        }
     }
 
     /// grade(): zero-day windows and unpriced books grade nothing; a priced book computes the
