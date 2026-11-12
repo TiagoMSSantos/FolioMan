@@ -2549,6 +2549,11 @@ pub async fn run(args: Vec<String>) {
             "Berkshire 13F feed down (growth_brk_held_boost off; no w or W marks)".to_string(),
         );
     }
+    // (#1465) Without the index the line's `spx` is null, and a month that opens on such a line has no
+    // S&P 500 leg to chain. Named here so (#765) holds the line for a run that priced the index.
+    if !spx.first().and_then(|q| q.price_eur).is_some_and(|p| p > 0.0) {
+        degraded.push("S&P 500 price down (the record line would carry no index price)".to_string());
+    }
     // (#79) the web payload's home: the same gitignored data dir `.screen_state.json` uses, written
     // on every run rather than behind a flag — it is one small file, and a knob nobody sets is a knob
     // not worth having. The Pages workflow copies it next to `web/index.html` and deploys.

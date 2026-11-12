@@ -1097,7 +1097,8 @@ fn screen_without_arguments_counts_the_universe_and_reports_the_wikidata_pond_cu
 
 /// With every optional feed dead the run still finishes, and the closing DEGRADED line names each one so a
 /// weakened run reads differently from a normal one. A coin with no MVRV is counted on stdout. (#1103) The
-/// 13F too: without it the shipped `growth_brk_held_boost` scores no name.
+/// 13F too: without it the shipped `growth_brk_held_boost` scores no name. (#1465) And the S&P 500 quote:
+/// without it the record line carries no index price, so the line waits for a run that priced it.
 #[test]
 fn screen_degraded_line_names_the_dead_feeds() {
     let (code, stdout, stderr) = run_isolated("screen-degraded-feeds", "{}\n", &[], &["screen", "BTC-EUR"]);
@@ -1107,6 +1108,7 @@ fn screen_degraded_line_names_the_dead_feeds() {
     assert!(degraded.contains("EU HICP feed down (inflation adjustment off)"), "{degraded}");
     assert!(degraded.contains("MVRV feed down (crypto_max_mvrv ceiling off; every coin passes it)"), "{degraded}");
     assert!(degraded.contains("Berkshire 13F feed down (growth_brk_held_boost off; no w or W marks)"), "{degraded}");
+    assert!(degraded.contains("S&P 500 price down (the record line would carry no index price)"), "{degraded}");
     assert!(stdout.contains("Crypto valuation: 0 of 1 coins carry an MVRV (the rest pass the ceiling free)"), "{stdout}");
 }
 
@@ -1212,6 +1214,7 @@ fn screen_drops_a_stale_listing_and_prints_the_drawdown_entry_state_and_deploy_l
     let stale = line_with(&stderr, "stale listing(s)");
     assert!(stale.contains("(>7d since last close)") && stale.contains("ZZDIP ("), "{stale}");
     assert!(stdout.contains("ENTRY STATE: DRAWDOWN — S&P 500"), "{stdout}");
+    assert!(!stderr.contains("S&P 500 price down"), "(#1465) a priced index is not a dead feed: {stderr}");
     assert!(stdout.contains("DEPLOY THIS MONTH: €600 — base €300 × 2 (DRAWDOWN entry state)"), "{stdout}");
 }
 
