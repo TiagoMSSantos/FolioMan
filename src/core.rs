@@ -5212,7 +5212,12 @@ pub fn split_factor_since(splits: &[(NaiveDate, f64)], since: NaiveDate) -> f64 
 /// names and which take their sibling's date.
 /// A new row is added when the page's Track record names a fund under (#1469), with one more for
 /// each other line of that fund the pool reads.
-const HAND_SPLITS: &[(&str, (i32, u32, u32), f64)] = &[("LYBK.DE", (2026, 10, 28), 80.0), ("BNKE.PA", (2026, 10, 28), 80.0), ("SP5C.L", (2026, 10, 29), 100.0), ("SP5C.PA", (2026, 10, 29), 100.0)];
+/// (#1471) SRECHA.SW is a row of another kind: the fund split 7 for 1 on 2021-09-01 and the feed put
+/// every bar on the new share except the first, December 2009, so the long history opens on a fall to
+/// a seventh that no holder saw and the page read 17 years at a loss. The chart parser looks for a
+/// step near the row's date, so the row is dated at the first bar on the new share, January 2010,
+/// not at the split; no record line is that old, and the record restates nothing for it.
+const HAND_SPLITS: &[(&str, (i32, u32, u32), f64)] = &[("LYBK.DE", (2026, 10, 28), 80.0), ("BNKE.PA", (2026, 10, 28), 80.0), ("SP5C.L", (2026, 10, 29), 100.0), ("SP5C.PA", (2026, 10, 29), 100.0), ("SRECHA.SW", (2010, 1, 1), 7.0)];
 
 /// (#1468) The [`HAND_SPLITS`] rows of `ticker` in the shape [`split_factor_since`] reads.
 pub fn hand_splits(ticker: &str) -> Vec<(NaiveDate, f64)> {
@@ -7472,7 +7477,7 @@ mod tests {
     /// (#1468) The hand list answers for its own tickers only, on the date of the first record line
     /// quoted on the new share: the line before it restates, that line does not.
     #[test]
-    fn hand_splits_lists_the_two_funds_and_nothing_else() {
+    fn hand_splits_lists_its_funds_and_nothing_else() {
         let day = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
         assert_eq!(hand_splits("LYBK.DE"), vec![(day(10, 28), 80.0)]);
         assert_eq!(hand_splits("SP5C.L"), vec![(day(10, 29), 100.0)]);
@@ -7481,6 +7486,9 @@ mod tests {
         assert!(hand_splits("LYBK").is_empty() && hand_splits("AAPL").is_empty() && hand_splits("").is_empty());
         assert_eq!(split_factor_since(&hand_splits("LYBK.DE"), day(10, 27)), 80.0, "the last line on the old share");
         assert_eq!(split_factor_since(&hand_splits("LYBK.DE"), day(10, 28)), 1.0, "the first line on the new share");
+        // (#1471) dated at the false first bar of the long history, years before the oldest record line
+        assert_eq!(hand_splits("SRECHA.SW"), vec![(NaiveDate::from_ymd_opt(2010, 1, 1).unwrap(), 7.0)]);
+        assert_eq!(split_factor_since(&hand_splits("SRECHA.SW"), day(1, 1)), 1.0, "no record line restates");
     }
 
     /// (#424) `restate_for_splits` moves a filing onto the chart's basis, and only a filing that needs it.

@@ -15499,6 +15499,14 @@ pub(crate) mod tests {
         // whole where the trimmer is off, cut at the step where it is on: never rescaled
         let other = parse_chart(&j, "LYBK.F").unwrap().closes;
         assert!(other == vec![360.0, 4.5, 4.4] || other == vec![4.5, 4.4], "{other:?}");
+        // 6 — (#1471) the SRECHA.SW row: the one bar the feed left on the old share, at the head of the
+        // long monthly history, moves onto the new one
+        let j = serde_json::json!({"chart": {"result": [{
+            "timestamp": [1259668800, 1262347200, 1265025600], // 2009-12-01, 2010-01-01, 2010-02-01 at noon UTC
+            "indicators": {"quote": [{"close": [49.0, 7.0, 7.5], "volume": [1.0, 2.0, 3.0]}]}
+        }]}});
+        let fund = parse_chart(&j, "SRECHA.SW").unwrap();
+        assert_eq!((fund.closes, fund.volumes), (vec![7.0, 7.0, 7.5], vec![7.0, 2.0, 3.0]));
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
