@@ -412,8 +412,8 @@ fn bar_date(secs: i64, gmtoffset: i64) -> Option<NaiveDate> {
 
 /// (#826) Yahoo serves a European session's last daily bar with a null close (and adjclose) from the
 /// close to the next open, while `meta.regularMarketPrice` already holds that close: fill the bar from
-/// it when `meta.regularMarketTime` falls on the bar's own exchange date. Only `fetch_recent` and (#924)
-/// `keep_recent` call it.
+/// it when `meta.regularMarketTime` falls on the bar's own exchange date. `fetch_recent`, (#924)
+/// `keep_recent` and (#1470) `quote_one` call it.
 fn fill_last_close(j: &mut Value) -> Option<()> {
     let r = j.pointer_mut("/chart/result/0")?;
     let off = r.pointer("/meta/gmtoffset").and_then(Value::as_i64).unwrap_or(0);
@@ -813,7 +813,7 @@ pub async fn price_in(client: &Client, urls: &Urls, fx: &FxCache, close_native: 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
 pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>, score_on_nominal: bool) -> Quote {
-    let (chart_j, chart_long_j, titles, intra) = tokio::join!(
+    let (mut chart_j, chart_long_j, titles, intra) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
         // (~3652) for 1D..10Y, plus turnover/SMA/range/R². The pre-10y span (the 20Y column) is
@@ -839,6 +839,11 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         async { if intraday { intraday_closes(client, urls, ticker).await } else { None } },
     );
 
+    // (#1470) the feed serves a session that has closed with a null close until the next open; unfilled,
+    // the parser drops that bar and the row's price and every return on it are one session old
+    if let Some(j) = chart_j.as_mut() {
+        fill_last_close(j);
+    }
     let parsed = chart_j.as_ref().and_then(|j| parse_chart(j, ticker));
     let mut chart = match parsed {
         Some(c) if !c.closes.is_empty() => c,
@@ -18209,6 +18214,20 @@ pub(crate) mod tests {
         let mut empty = body(quote, Value::Null);
         empty["chart"]["result"][0]["timestamp"] = serde_json::json!([]);
         assert_eq!(fill_last_close(&mut empty), None, "no bars, no panic");
+    }
+
+    /// (#1470) The quote path fills that bar too: the row shows the session that has closed, not the one before.
+    #[tokio::test]
+    async fn quote_one_reads_a_closed_session_served_with_a_null_close() {
+        // the sibling's three bars with the last close null; the quote is stamped 16:00 UTC on that bar's day
+        const BARS: &str = r#"{"chart":{"result":[{
+            "timestamp":[1577836800,1577923200,1578009600],
+            "indicators":{"quote":[{"close":[0.45,0.55,null],"volume":[100,200,300]}]},
+            "meta":{"currency":"EUR","regularMarketPrice":0.5,"regularMarketTime":1578067200}
+        }]}}"#;
+        let (base, client) = stub_server(BARS);
+        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), "ZZTESTFILL", 30, 0, false, false, &BTreeMap::new(), None, false).await;
+        assert_eq!(q.close_native, Some(0.5), "unfilled, the row reads 0.55, the session before");
     }
 
     /// (#81) The whole live quote assembly, which had no test at all, pinned at the one seam this
