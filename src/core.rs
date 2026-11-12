@@ -5199,6 +5199,26 @@ pub fn split_factor_since(splits: &[(NaiveDate, f64)], since: NaiveDate) -> f64 
     splits.iter().filter(|(d, r)| *d > since && *r > 0.0).map(|(_, r)| r).product()
 }
 
+/// (#1468) Share splits the price feed never listed, kept by hand: `(ticker, the first record line
+/// quoted on the new share, new shares per old share)`. Both funds split in October 2026 and the feed
+/// shows neither an event nor a restated history, only a bar where the price falls to an 80th or a
+/// 100th. Two readers, one list: the chart parser rescales the bars before that step
+/// (`fetch::undo_hand_splits`), and `track::adjust_for_splits` restates every record line before the
+/// date. The date is a record LINE date, not the bar's: a line holds the close of an earlier session,
+/// so the first line on the new share comes a day or two after the split bar, and a bar date here
+/// would leave the lines in between on the old share.
+/// A fund has one row per venue line the code reads: the record holds LYBK.DE and SP5C.L, and the pool
+/// prices the same two share classes on their Paris lines, BNKE.PA and SP5C.PA, which no record line
+/// names and which take their sibling's date.
+/// A new row is added when the page's Track record names a fund under (#1469), with one more for
+/// each other line of that fund the pool reads.
+const HAND_SPLITS: &[(&str, (i32, u32, u32), f64)] = &[("LYBK.DE", (2026, 10, 28), 80.0), ("BNKE.PA", (2026, 10, 28), 80.0), ("SP5C.L", (2026, 10, 29), 100.0), ("SP5C.PA", (2026, 10, 29), 100.0)];
+
+/// (#1468) The [`HAND_SPLITS`] rows of `ticker` in the shape [`split_factor_since`] reads.
+pub fn hand_splits(ticker: &str) -> Vec<(NaiveDate, f64)> {
+    HAND_SPLITS.iter().filter(|(t, ..)| *t == ticker).filter_map(|&(_, (y, m, d), r)| Some((NaiveDate::from_ymd_opt(y, m, d)?, r))).collect()
+}
+
 /// (#424) Put SEC rows' per-share figures on the price series' split basis, in place. Returns whether
 /// any row moved.
 ///
@@ -7447,6 +7467,20 @@ mod tests {
         // 5 — a reverse split is a ratio BELOW one, and it is carried, not filtered: 1:10 leaves one
         //     share where ten were, so the old price divides by 0.1 and gets ten times larger.
         assert_eq!(split_factor_since(&[(d(2021, 1), 0.1)], d(2020, 1)), 0.1);
+    }
+
+    /// (#1468) The hand list answers for its own tickers only, on the date of the first record line
+    /// quoted on the new share: the line before it restates, that line does not.
+    #[test]
+    fn hand_splits_lists_the_two_funds_and_nothing_else() {
+        let day = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        assert_eq!(hand_splits("LYBK.DE"), vec![(day(10, 28), 80.0)]);
+        assert_eq!(hand_splits("SP5C.L"), vec![(day(10, 29), 100.0)]);
+        assert_eq!(hand_splits("BNKE.PA"), hand_splits("LYBK.DE"), "the Paris line of the same share class");
+        assert_eq!(hand_splits("SP5C.PA"), hand_splits("SP5C.L"));
+        assert!(hand_splits("LYBK").is_empty() && hand_splits("AAPL").is_empty() && hand_splits("").is_empty());
+        assert_eq!(split_factor_since(&hand_splits("LYBK.DE"), day(10, 27)), 80.0, "the last line on the old share");
+        assert_eq!(split_factor_since(&hand_splits("LYBK.DE"), day(10, 28)), 1.0, "the first line on the new share");
     }
 
     /// (#424) `restate_for_splits` moves a filing onto the chart's basis, and only a filing that needs it.

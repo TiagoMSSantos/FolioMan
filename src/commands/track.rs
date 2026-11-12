@@ -258,7 +258,10 @@ pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&s
         // (#660) and the (#584) shipped-only order, whose own closes price the blend shadow's shipped leg
         let lanes = lanes.chain(snap.shipped.iter_mut().map(|(t, p)| (&*t, p)));
         for (ticker, px) in lanes.chain(snap.near.iter_mut().map(|(t, p, _)| (&*t, p))) {
-            let factor = factor_since(ticker, then);
+            // (#1468) times the hand list: a split the feed never listed is in no fetched quote, and this
+            // leg needs no fetch, so a name that left every list still restates. The parser drops the
+            // feed's own event for a hand row, so no split is counted by both.
+            let factor = factor_since(ticker, then) * crate::core::split_factor_since(&crate::core::hand_splits(ticker), then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
             // empty product, so the no-split case is exactly 1.0 and never near it.
             if factor > 0.0 && factor != 1.0 {
@@ -2999,6 +3002,20 @@ mod tests {
         let mut zeroed = vec![snap("2024-06-01", None, &[("AAA", Some(100.0))])];
         assert_eq!(adjust_for_splits(&mut zeroed, &|_, _| 0.0), 0);
         assert_eq!(zeroed[0].rows[0].1, Some(100.0));
+    }
+
+    /// (#1468) The hand list restates a record line with no fetched quote behind it: its factor
+    /// multiplies the one the quotes answer, for the listed fund and before the listed date only.
+    #[test]
+    fn adjust_for_splits_reads_the_hand_list_too() {
+        let mut snaps = vec![
+            snap("2026-10-27", None, &[("LYBK.DE", Some(349.8)), ("ABEC.DE", Some(100.0))]),
+            snap("2026-10-28", None, &[("LYBK.DE", Some(4.4))]),
+        ];
+        assert_eq!(adjust_for_splits(&mut snaps, &|_, _| 1.0), 1, "one price: the fund's last line on the old share");
+        assert_eq!(snaps[0].rows[0].1, Some(349.8 / 80.0));
+        assert_eq!(snaps[0].rows[1].1, Some(100.0), "no row for it, no restatement");
+        assert_eq!(snaps[1].rows[0].1, Some(4.4), "the first line on the new share is left alone");
     }
 
     /// grade(): zero-day windows and unpriced books grade nothing; a priced book computes the

@@ -432,6 +432,30 @@ fn fill_last_close(j: &mut Value) -> Option<()> {
     Some(())
 }
 
+/// (#1468) Undo the share splits the feed never listed (`core::hand_splits`) on one parsed chart, before
+/// the splice trimmer reads it. An unlisted 80:1 split is one bar where the price falls to an 80th; the
+/// trimmer reads that as a glue joint and cuts every bar before it, so a fund with years of history
+/// ranked as a listing a few days old. For each hand row every bar before the step is put on the new
+/// share: prices and per-share dividends divided by the ratio, share volume multiplied, which is the
+/// series the feed serves for a split it knows. The step is looked for only within 31 days of the
+/// row's date and only at about the row's ratio, so a row can never rescale some other fall, and a
+/// history the feed has repaired since shows no step and is left alone. The feed's own event near
+/// that date is dropped either way: the record is restated off the hand row
+/// (`track::adjust_for_splits`), and a feed event for the same split would restate it a second time.
+fn undo_hand_splits(hand: &[(NaiveDate, f64)], dates: &[NaiveDate], prices: [&mut Vec<f64>; 4], volumes: &mut [f64], divs: &mut [(NaiveDate, f64)], splits: &mut Vec<(NaiveDate, f64)>) {
+    let [closes, opens, highs, lows] = prices;
+    for &(day, ratio) in hand {
+        let near = |d: NaiveDate| (-31..=31).contains(&(d - day).num_days());
+        splits.retain(|(d, _)| !near(*d));
+        let Some(i) = (1..dates.len().min(closes.len())).find(|&i| near(dates[i]) && (0.67..1.5).contains(&(closes[i - 1] / closes[i] / ratio))) else { continue };
+        for leg in [&mut *closes, &mut *opens, &mut *highs, &mut *lows] {
+            leg.iter_mut().take(i).for_each(|x| *x /= ratio);
+        }
+        volumes.iter_mut().take(i).for_each(|x| *x *= ratio);
+        divs.iter_mut().filter(|(d, _)| *d < dates[i]).for_each(|(_, a)| *a /= ratio);
+    }
+}
+
 /// Parse a Yahoo chart payload into aligned dates+closes (null and non-positive closes dropped) + meta.
 ///
 /// `pub` for the network drift net, which health-probes the chart endpoint and then has to assert the
@@ -528,6 +552,8 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         })
         .unwrap_or_default();
     splits.sort_by_key(|(d, _)| *d);
+    // (#1468) before the trimmer below, which would read an unlisted split as a splice and cut the history
+    undo_hand_splits(&core::hand_splits(ticker), &dates, [&mut closes, &mut opens, &mut highs, &mut lows], &mut volumes, &mut divs, &mut splits);
 
     // (splice) drop everything before the last redenomination splice — an MXN head glued onto a GBP
     // tail feeds every downstream metric (life_cagr, MAXDD, R², year_returns) a fiction. One parse
@@ -15424,6 +15450,55 @@ pub(crate) mod tests {
         let mut hn = [q("HN", "EQUITY", false)];
         stamp_social(&mut hn, &[SocRow { ticker: "HN".into(), hn: 1, ..Default::default() }]);
         assert!(hn[0].social_tip, "a Hacker News story alone is a tip");
+    }
+
+    /// (#1468) `undo_hand_splits` puts the bars before an unlisted split on the new share and drops the
+    /// feed's own event for it; a step of another size, or one far from the row's date, is left alone.
+    #[test]
+    fn undo_hand_splits_rescales_only_the_listed_step() {
+        let day = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        let dates = [day(10, 22), day(10, 23), day(10, 26), day(10, 27)];
+        // the feed's events: 31 days either side of the row's date is "the same split", 32 is not
+        let feed = vec![(day(9, 26), 2.0), (day(9, 27), 3.0), (day(10, 26), 80.0), (day(11, 28), 5.0), (day(11, 29), 7.0)];
+        let run = |closes: [f64; 4], hand: &[(NaiveDate, f64)]| {
+            let (mut c, mut o, mut h, mut l) = (closes.to_vec(), closes.to_vec(), closes.map(|x| x + 1.0).to_vec(), vec![f64::NAN; 4]);
+            let mut v = vec![10.0, 20.0, 30.0, 0.0];
+            let mut divs = vec![(day(10, 23), 8.0), (day(10, 26), 0.5)];
+            let mut splits = feed.clone();
+            undo_hand_splits(hand, &dates, [&mut c, &mut o, &mut h, &mut l], &mut v, &mut divs, &mut splits);
+            (c, o, h, v, divs, splits)
+        };
+        let hand = [(day(10, 28), 80.0)];
+        // 1 — the 80:1 step on 10-26: the two bars before it move onto the new share, the two after stay
+        let (c, o, h, v, divs, splits) = run([352.0, 360.0, 4.5, 4.4], &hand);
+        assert_eq!(c, vec![4.4, 4.5, 4.5, 4.4]);
+        assert_eq!(o, c, "the open leg rides the close's rescale");
+        assert_eq!(h, vec![353.0 / 80.0, 361.0 / 80.0, 5.5, 5.4]);
+        assert_eq!(v, vec![800.0, 1600.0, 30.0, 0.0], "80 new shares trade for each old one");
+        assert_eq!(divs, vec![(day(10, 23), 0.1), (day(10, 26), 0.5)], "a payout on the step bar is already per new share");
+        assert_eq!(splits, vec![(day(9, 26), 2.0), (day(11, 29), 7.0)], "the feed's events within 31 days of the row are dropped");
+        // 2 — a real halving next to the row's date is not the listed split: nothing is rescaled
+        let (c, _, _, v, divs, splits) = run([9.0, 9.0, 4.5, 4.4], &hand);
+        assert_eq!((c, v, divs), (vec![9.0, 9.0, 4.5, 4.4], vec![10.0, 20.0, 30.0, 0.0], vec![(day(10, 23), 8.0), (day(10, 26), 0.5)]));
+        assert_eq!(splits.len(), 2, "the feed's event near the row goes either way");
+        // 3 — a step of the listed size two months from the row's date belongs to no row
+        let (c, _, _, _, _, splits) = run([352.0, 360.0, 4.5, 4.4], &[(day(12, 28), 80.0)]);
+        assert_eq!(c, vec![352.0, 360.0, 4.5, 4.4]);
+        assert_eq!(splits, vec![(day(9, 26), 2.0), (day(9, 27), 3.0), (day(10, 26), 80.0)]);
+        // 4 — no row, no change: every other ticker
+        let (c, _, _, _, _, splits) = run([352.0, 360.0, 4.5, 4.4], &[]);
+        assert_eq!((c, splits), (vec![352.0, 360.0, 4.5, 4.4], feed.clone()));
+        // 5 — wired into the parser, ahead of the splice trimmer: the fund keeps its bars from before the
+        // split, on the new share, and the same payload under another ticker is read as the feed sent it
+        let j = serde_json::json!({"chart": {"result": [{
+            "timestamp": [1792756800, 1793016000, 1793102400], // 2026-10-23, -26, -27 at noon UTC
+            "indicators": {"quote": [{"close": [360.0, 4.5, 4.4], "volume": [20.0, 30.0, 40.0]}]}
+        }]}});
+        let fund = parse_chart(&j, "LYBK.DE").unwrap();
+        assert_eq!((fund.dates[0], fund.closes, fund.volumes), (day(10, 23), vec![4.5, 4.5, 4.4], vec![1600.0, 30.0, 40.0]));
+        // whole where the trimmer is off, cut at the step where it is on: never rescaled
+        let other = parse_chart(&j, "LYBK.F").unwrap().closes;
+        assert!(other == vec![360.0, 4.5, 4.4] || other == vec![4.5, 4.4], "{other:?}");
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
