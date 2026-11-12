@@ -3568,10 +3568,12 @@ pub async fn run(args: Vec<String>) {
     // rank-based footers (which read positions, not prices) are unaffected either way; sharing one
     // restated copy is safe because it is restated exactly once: a second pass over the same copy
     // would divide its prices again (see `track.rs`).
+    // (#1466) Off every list this run priced, the same three the line's `exit` and `carry` read their
+    // closes from: a name only the side fetch holds kept its pre-split price here, and read unpriced below.
     let (mut snaps, _) = crate::commands::track::read_snapshots();
     crate::commands::track::adjust_for_splits(
         &mut snaps,
-        &crate::commands::track::split_factor_from(&quotes),
+        &|t: &str, since: chrono::NaiveDate| split_since(&[&quotes, &shadow_extra, &dropped_px], t, since),
     );
 
     // (trust line) the ranking's own live out-of-sample grade: every past journaled book (#322: the
@@ -3580,12 +3582,13 @@ pub async fn run(args: Vec<String>) {
     // names, so this run's quotes already price them (a narrow watchlist run may grade fewer rows;
     // track's table stays the honest view). Today's own snapshot is 0 days old and grades nothing,
     // so no self-grade.
+    // (#1466) "This run's quotes" are the pool plus the side fetch: a past buy that left the pool is
+    // priced by the dropped list, the one today's line stores its exit close from, and the pool alone
+    // graded that book without it.
     {
         if !snaps.is_empty() {
             let today = chrono::Local::now().date_naive();
-            let px_now = |t: &str| {
-                quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0)
-            };
+            let px_now = |t: &str| close_eur(&[&quotes, &shadow_extra, &dropped_px], t).filter(|p| *p > 0.0);
             let spx_now = spx.first().and_then(|q| q.price_eur).filter(|p| *p > 0.0);
             let (wins, n, sum) = crate::commands::track::verdict_stats(&snaps, today, &px_now, spx_now);
             // (#1140) the page's Track record table off the same quotes, patched into the payload written above
@@ -3942,6 +3945,11 @@ fn dropped_graded(prior: Option<&crate::commands::track::Snapshot>, named: bool,
 /// (#663) Today's close in EUR for `t`, off the first list that holds it.
 fn close_eur(lists: &[&[Quote]], t: &str) -> Option<f64> {
     lists.iter().flat_map(|l| l.iter()).find(|q| q.ticker == t).and_then(|q| q.price_eur)
+}
+
+/// (#1466) The split factor for `t` since `since`, off the first list that holds it; 1.0 when none does.
+fn split_since(lists: &[&[Quote]], t: &str, since: chrono::NaiveDate) -> f64 {
+    lists.iter().flat_map(|l| l.iter()).find(|q| q.ticker == t).map_or(1.0, |q| core::split_factor_since(&q.splits, since))
 }
 
 /// (tests round 4) Stale drift-net nag. The live network probes are the only thing that catches a
@@ -5888,6 +5896,18 @@ mod tests {
         assert_eq!(close_eur(&[&quotes, &dropped], "A"), Some(2.5));
         assert_eq!(close_eur(&[&quotes, &dropped], "B"), Some(4.0));
         assert_eq!(close_eur(&[&quotes, &dropped], "Z"), None);
+    }
+
+    /// (#1466) The page restates a stored price off the lists the line read it from: a name only the
+    /// dropped list holds still finds its split, and a name no list holds stays as stored.
+    #[test]
+    fn split_since_reads_the_first_list_that_holds_the_ticker() {
+        let d = |s: &str| s.parse::<chrono::NaiveDate>().expect("a date");
+        let q = |t: &str, ratio: f64| Quote { splits: vec![(d("2026-10-26"), ratio)], ..Quote::stub(t, "€1", "", t) };
+        let (quotes, dropped) = ([q("A", 4.0)], [q("B", 80.0)]);
+        assert_eq!(split_since(&[&quotes, &dropped], "A", d("2026-10-01")), 4.0);
+        assert_eq!(split_since(&[&quotes, &dropped], "B", d("2026-10-01")), 80.0);
+        assert_eq!(split_since(&[&quotes, &dropped], "Z", d("2026-10-01")), 1.0);
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
