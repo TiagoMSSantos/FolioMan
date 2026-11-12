@@ -577,7 +577,7 @@ pub(crate) fn week_web_rows(
 }
 
 /// (#1409) The fixed UTC offset the page's news days are cut at: New York's winter time.
-/// ponytail: an hour off under US daylight saving (a 23:00-24:00 New York headline lands a day late); add a tz table
+/// shortcut: an hour off under US daylight saving (a 23:00-24:00 New York headline lands a day late); add a tz table
 /// if a misdated headline shows.
 const NEWS_UTC_OFFSET_SECS: i32 = -5 * 3600;
 

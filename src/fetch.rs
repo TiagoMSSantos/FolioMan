@@ -2190,7 +2190,7 @@ pub struct Week {
 }
 
 /// (#1409) [`Week`] off the network, every request at once.
-/// ponytail: no cache or stale fallback; the page rebuilds every few minutes, add one if blips stick.
+/// shortcut: no cache or stale fallback; the page rebuilds every few minutes, add one if blips stick.
 #[mutants::skip] // (#1409) async network shell; parse_rss and the row builders carry the tests
 pub async fn fetch_week(client: &Client, urls: &Urls) -> Week {
     let chart = |t: &'static str| async move { chart_json(client, urls, t, "1mo").await.and_then(|j| parse_chart(&j, t)) };
