@@ -456,6 +456,35 @@ fn undo_hand_splits(hand: &[(NaiveDate, f64)], dates: &[NaiveDate], prices: [&mu
     }
 }
 
+/// (#1472) Put every bar of a London line on one price unit. The feed serves some London lines with
+/// pence bars and pound bars mixed through one history, and a few with only part of the history put on
+/// the new share after a 100 for 1 split. Either way a bar reads a hundred times the bar next to it,
+/// the splice trimmer cuts everything before the newest such step, and a fund that is years old ranked
+/// as a listing a few weeks old. Walking from the newest bar back, a bar that is 67 to 150 times off
+/// the bar after it, either way, moves by exactly 100 onto that bar's unit, its open, high and low with
+/// it; the band is the hand list's own, 0.67 to 1.5 of the ratio. The newest bar is the anchor: the
+/// price and the currency the feed states are that bar's. Volumes count shares, and the payouts of a
+/// line with mixed bars come on one unit all through, so neither moves.
+/// shortcut: a real 100 for 1 split the feed never listed gets the same rescale, which is right for
+/// the prices and leaves the share volume before it a hundred times short; a `core::HAND_SPLITS` row,
+/// read first, is the fix for a fund where that matters. The other ceiling: a true fall or rise of 67
+/// to 150 times inside one bar, which a leveraged product can in theory print on monthly bars, reads as
+/// a slip and leaves the history; the trimmer cut the history at that same bar before, so the fall was
+/// never shown, but the line now keeps its years.
+fn undo_unit_slips(prices: [&mut Vec<f64>; 4]) {
+    let [closes, opens, highs, lows] = prices;
+    for i in (0..closes.len().saturating_sub(1)).rev() {
+        let (bar, next) = (closes[i], closes[i + 1]);
+        let (up, down) = ((67.0..150.0).contains(&(next / bar)), (67.0..150.0).contains(&(bar / next)));
+        if !(up || down) {
+            continue;
+        }
+        for leg in [&mut *closes, &mut *opens, &mut *highs, &mut *lows] {
+            if up { leg[i] *= 100.0 } else { leg[i] /= 100.0 }
+        }
+    }
+}
+
 /// Parse a Yahoo chart payload into aligned dates+closes (null and non-positive closes dropped) + meta.
 ///
 /// `pub` for the network drift net, which health-probes the chart endpoint and then has to assert the
@@ -554,6 +583,11 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     splits.sort_by_key(|(d, _)| *d);
     // (#1468) before the trimmer below, which would read an unlisted split as a splice and cut the history
     undo_hand_splits(&core::hand_splits(ticker), &dates, [&mut closes, &mut opens, &mut highs, &mut lows], &mut volumes, &mut divs, &mut splits);
+    // (#1472) after the hand list, which also restates the volumes and payouts of a split it lists and
+    // leaves no step here; before the trimmer, for the same reason as the hand list
+    if ticker.ends_with(".L") {
+        undo_unit_slips([&mut closes, &mut opens, &mut highs, &mut lows]);
+    }
 
     // (splice) drop everything before the last redenomination splice — an MXN head glued onto a GBP
     // tail feeds every downstream metric (life_cagr, MAXDD, R², year_returns) a fiction. One parse
@@ -15507,6 +15541,50 @@ pub(crate) mod tests {
         }]}});
         let fund = parse_chart(&j, "SRECHA.SW").unwrap();
         assert_eq!((fund.closes, fund.volumes), (vec![7.0, 7.0, 7.5], vec![7.0, 2.0, 3.0]));
+    }
+
+    /// (#1472) `undo_unit_slips` moves a bar a hundred times off the bar after it onto that bar's unit,
+    /// either way and through a run of such bars, and leaves every other step alone; the parser runs it
+    /// on London lines only, after the hand list.
+    #[test]
+    fn undo_unit_slips_puts_a_london_line_on_one_unit() {
+        let run = |closes: &[f64]| {
+            let (mut c, mut o, mut h, mut l) = (closes.to_vec(), closes.to_vec(), closes.iter().map(|x| x + 1.0).collect::<Vec<f64>>(), vec![f64::NAN; closes.len()]);
+            undo_unit_slips([&mut c, &mut o, &mut h, &mut l]);
+            (c, o, h)
+        };
+        // 1 — pound bars in a pence history, a run of two and one alone: all onto the newest bar's pence
+        let (c, o, h) = run(&[19.0, 19.5, 1960.0, 20.0, 2010.0]);
+        assert_eq!(c, vec![1900.0, 1950.0, 1960.0, 2000.0, 2010.0]);
+        assert_eq!(o, c, "the open leg rides the close's rescale");
+        assert_eq!(h, vec![2000.0, 2050.0, 1961.0, 2100.0, 2011.0]);
+        // 2 — the other way: the newest bars are in pounds and the pence bars before them divide
+        let (c, _, h) = run(&[1900.0, 1950.0, 20.0, 20.5]);
+        assert_eq!(c, vec![19.0, 19.5, 20.0, 20.5]);
+        assert_eq!(h, vec![19.01, 19.51, 21.0, 21.5]);
+        // 3 — only a step of about a hundred is a unit slip: 67x and 149x are, 66x, 150x and two 20x steps are not
+        assert_eq!(run(&[10.0, 200.0, 4000.0]).0, vec![10.0, 200.0, 4000.0]);
+        assert_eq!((run(&[10.0, 660.0]).0, run(&[10.0, 1500.0]).0), (vec![10.0, 660.0], vec![10.0, 1500.0]));
+        assert_eq!((run(&[10.0, 670.0]).0, run(&[10.0, 1490.0]).0), (vec![1000.0, 670.0], vec![1000.0, 1490.0]));
+        assert_eq!((run(&[5.0]).0, run(&[]).0), (vec![5.0], vec![]), "nothing to compare, nothing moved");
+        // 4 — wired into the parser for London lines, ahead of the splice trimmer: the line keeps its pound
+        // bar, in pence, and the same payload under another market's ticker is read as the feed sent it
+        let j = serde_json::json!({"chart": {"result": [{
+            "timestamp": [1792756800, 1793016000, 1793102400], // 2026-10-23, -26, -27 at noon UTC
+            "indicators": {"quote": [{"close": [19.5, 1960.0, 2000.0], "volume": [20.0, 30.0, 40.0]}]}
+        }]}});
+        let london = parse_chart(&j, "ZZTZ.L").unwrap();
+        assert_eq!((london.closes, london.volumes), (vec![1950.0, 1960.0, 2000.0], vec![20.0, 30.0, 40.0]));
+        let other = parse_chart(&j, "ZZTZ.DE").unwrap().closes;
+        assert!(other == vec![19.5, 1960.0, 2000.0] || other == vec![1960.0, 2000.0], "{other:?}");
+        // 5 — a London line on the hand list: the listed 100 for 1 split is undone there first, volumes
+        // with it, and this rule finds no step left
+        let j = serde_json::json!({"chart": {"result": [{
+            "timestamp": [1792756800, 1793016000, 1793102400],
+            "indicators": {"quote": [{"close": [350.0, 3.6, 3.5], "volume": [20.0, 30.0, 40.0]}]}
+        }]}});
+        let listed = parse_chart(&j, "SP5C.L").unwrap();
+        assert_eq!((listed.closes, listed.volumes), (vec![3.5, 3.6, 3.5], vec![2000.0, 30.0, 40.0]));
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
