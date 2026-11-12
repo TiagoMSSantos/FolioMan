@@ -1875,7 +1875,8 @@ async fn trading_table(
 #[mutants::skip]
 pub async fn run(args: Vec<String>) {
     let started = std::time::Instant::now();
-    let run_date = chrono::Local::now().date_naive().to_string();
+    let run_day = chrono::Local::now().date_naive();
+    let run_date = run_day.to_string();
     // `--explain [TICKER]`: after the tables, print the SCORE arithmetic for TICKER (a flag with no
     // ticker, or no flag at all, still explains the #1 row — that footer is always on). The named
     // ticker is also added to the scan, so `screen --explain NVDA` ranks + explains just NVDA.
@@ -2615,11 +2616,12 @@ pub async fn run(args: Vec<String>) {
     // (#811) the Intraday shadow table, ranked for the session dated `run_date` (the journal's date, so
     // `track` grades the session it ranked for); key 0 (the default) fetches nothing
     // (#1223) and the BUY NOW stocks priced the same ways: read off the book, never fed back to it
-    let intra_today = chrono::Local::now().date_naive();
+    // (#1467) `run_day` is that same clock read: a second read here put a run that crossed midnight on the
+    // next session while the journal kept the first
     let buy_stocks: Vec<String> = sized_now.iter().filter(|(t, _)| quotes.iter().any(|q| &q.ticker == t && q.instrument_type == "EQUITY")).map(|(t, _)| t.clone()).collect();
     let trading = match settings.intraday_key {
         0 => Trading::default(),
-        k => intraday_book(&client, &settings, k, intra_today, &buy_stocks).await,
+        k => intraday_book(&client, &settings, k, run_day, &buy_stocks).await,
     };
     // (#403) the page's BUY% IS this book, so the page and the BUY NOW list below cannot disagree
     if let Some(mut top) = web_json.take().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
