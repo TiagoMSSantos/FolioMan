@@ -29849,6 +29849,19 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   of them United Kingdom and Switzerland lines and young listings, and 0 % if Yahoo's month bars close on their
 #   month's last session as `bar_check` assumes (a census reading most months off says the assumption is wrong).
 # REVERT RULE: none; the knob ships false and moves nothing.
+# RESULT 2026-11-13, read on the (#1494) fix (Screen A/B 43496344808 on 4afd36c; the arm alone prints the census, and
+#   no BUY NOW name or share moves in any table; the arm's other cell moves follow its Yahoo crumb handshake failing):
+#   BARS 350 of 362483 months off by over 2 % (0.10 %), 239 of them UK and Switzerland lines; the highest share is
+#   Italy's, 54 of 19859 (0.27 %); worst BX27.L 2024-09 +9900 %, EEMK.PA 2016-12 +900 %, CON3.L 2023-12 +478.7 %.
+#   FIELDS: P-M medians 0.70 at 1M, 0.88 at 1Y, 0.03 at 6M, 0.01 on range and 0.00 on every other field; M-W leads
+#   on every field but stretch and the 1Y yield (both 0.00 medians), 10Y the largest at 10.49 / 38.21. BOOK: M keeps
+#   9 of 10 on both keys, W 7 on the score and 9 on the momentum key.
+# VERDICT: RECORD, the knob stays false. Said before the run: BOOK in range; BARS under 0.5 %, UK and Switzerland
+#   the most, as said; the anchor gap does NOT lead at 1Y (P-M 0.88 against M-W 1.69; said above 1 point and leading).
+#   Trigger 2 is silent: no market has over 1 % of its months off. Trigger 1: W moves 3 score seats (out DVA, KLA.DE,
+#   FIX; in M4I.DE, NTAP, 5AP.DE) and 1 momentum seat (out BE, in ARM), and 10Y is the one field still far off after
+#   (#1494); BOOK takes every field from W at once, so it cannot say which field moves a seat. A 10Y fix needs that
+#   split first; none is pre-registered here.
 
 # (#1494) THE CENSUS'S W MEASURES ON ITS OWN CADENCE, 2026-11-13, PRE-REGISTERED before the re-run. A fix, no knob.
 # WHY: the first (#1484) arm (Screen A/B 43489666836) read M-W medians of 19.3 points at 1Y, 35.3 at 5Y, 46.6 at 10Y,
@@ -29866,6 +29879,13 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   and every P-M and BARS line stay within pond drift of the first arm; BOOK W keeps 6 to 9 of 10 seats on the score
 #   and 5 to 9 on the momentum key. A field still far off after the fix is a real skew, for (#1484)'s first trigger.
 # REVERT RULE: none; the census is display only and ships off.
+# RESULT 2026-11-13, Screen A/B 43496344808 on 4afd36c, against the first arm's: M-W median / p90 at 1Y 1.69 / 9.09
+#   (19.33 / 55.34), 5Y 1.47 / 8.70 (35.34 / 99.13), 10Y 10.49 / 38.21 (46.60 / 164.03), CAGR 0.16 / 0.75 (3.85 /
+#   9.28), range 2.41 / 13.05 (31.49 / 45.71), drawdown 1.39 / 5.79 (10.18 / 34.19); 1M, 3M, 6M, max DD, R2, vol,
+#   stretch and the 1Y yield within 0.02 of the first arm; every P-M line the same; BARS the same but UK's 35 more
+#   months checked (pond drift). BOOK W 7 of 10 on the score and 9 on the momentum key (2 and 1 before).
+# VERDICT: the fix holds. 5 of the 6 fields it reads land under their bars and both BOOK lines in range; 10Y misses
+#   (10.49, said under 5), the one field still far off, for (#1484)'s first trigger.
 
 # (#1490) THE QUEUE, 2026-11-13: `tools/queue.py` lists every pre-registered receipt no verdict has read. A tool, no
 #   knob, no run. WHY: a plan written on 2026-11-13 called (#1423), (#1427), (#1428), (#1430), (#1432) and (#1437) open;
