@@ -4521,7 +4521,7 @@ fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
     out.push("  FIELDS, n / median / p90 of |gap|: P-M is the anchor map alone (same bars), M-W the bars alone (same map)".to_string());
     for (label, f) in fields {
         let gap = |a: &Quote, b: &Quote| Some((f(a, tuning)? - f(b, tuning)?).abs()).filter(|g| g.is_finite());
-        let mut pm: Vec<f64> = with.iter().filter_map(|(q, p)| gap(*q, &p.merged)).collect();
+        let mut pm: Vec<f64> = with.iter().filter_map(|(q, p)| gap(q, &p.merged)).collect();
         let mut mw: Vec<f64> = with.iter().filter_map(|(_, p)| gap(&p.merged, &p.walk)).collect();
         let (pm, mw) = (spread(&mut pm), spread(&mut mw));
         out.push(format!("    {label:<9} P-M {} / {:.2} / {:.2}    M-W {} / {:.2} / {:.2}", pm.0, pm.1, pm.2, mw.0, mw.1, mw.2));
@@ -4551,6 +4551,7 @@ mod tests {
 
     /// (#1484) The census helpers: the spread of a set of gaps, the overlap of two books, and the census over two
     /// stub quotes, one with the walk's view and one without (it reads the one, says how many, and prints its bars).
+    /// The range field is set on all three views (P 3, M 1, W 0.25), so its P-M and M-W gaps are pinned as values.
     #[test]
     fn parity_census_reads_only_quotes_with_a_view() {
         assert_eq!(spread(&mut [3.0, 1.0, 2.0]), (3, 2.0, 3.0));
@@ -4561,14 +4562,19 @@ mod tests {
         assert_eq!(overlap(&page, &other), (2, vec!["A"], vec!["D"]));
         let mut seen = core::Quote::stub("S", "€1", "", "S");
         seen.market = "USA".into();
-        let view = core::Quote::stub("S", "€1", "", "S");
+        seen.range_pct = 3.0;
+        let mut merged = core::Quote::stub("S", "€1", "", "S");
+        merged.range_pct = 1.0;
+        let mut walk = merged.clone();
+        walk.range_pct = 0.25;
         let bars = core::BarCheck { checked: 12, off: 1, worst: -3.5, worst_at: chrono::NaiveDate::from_ymd_opt(2024, 3, 1) };
-        seen.parity = Some(Box::new(core::Parity { walk: view.clone(), merged: view, bars }));
+        seen.parity = Some(Box::new(core::Parity { walk, merged, bars }));
         let bare = core::Quote::stub("B", "€1", "", "B");
         let text = parity_census(&[seen, bare], &config::BuyHeuristic::default());
         assert!(text.starts_with("── PARITY CENSUS (#1484): the walk's view of 1 of 2 scored names ──"), "{text}");
         assert!(text.contains("USA 12 checked, 1 off by over 2 %") && text.contains("S 2024-03 -3.5 %"), "{text}");
         assert!(text.contains("    1Y        P-M 0 / NaN / NaN"), "a stub has no legs to compare: {text}");
+        assert!(text.contains("    range     P-M 1 / 2.00 / 2.00    M-W 1 / 0.75 / 0.75"), "|3 - 1| and |1 - 0.25|: {text}");
     }
     use std::collections::{HashMap, HashSet};
 
