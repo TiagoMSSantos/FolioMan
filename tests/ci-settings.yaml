@@ -29960,6 +29960,32 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   tag's screen A/B only cells of the 31 lines move (CP60.DE and 3SIL.L are the two with recent bars), and no BUY
 #   NOW name or share.
 
+# (#1495) THE PAPER ROUTE'S MENU 5: THE LAST THREE OPEN-CLUSTER NAMES, PRE-REGISTERED 2026-11-13 before any menu-5
+#   return was read. Row: the owner's word first ("Menu 5: 3 untested names", 2026-11-13), then (#1339)'s own steps.
+#   Like (#1430), this block REOPENS a standing exclusion and says so.
+# WHY: (#1356) built menu 2 from the clusters that held no ship and left three of their names out under (a) alone:
+#   "at_be, pi_nix and z_score sit in open clusters, but JKP's group for each is Profitability, so exclusion (a) still
+#   refuses them". (#1430) then graded the Profitability and Quality clusters on the route's own bar (0 of 13; none
+#   clears developed ex-US), so (a) now stands on that bar and not on a refusal. These three are the only
+#   open-cluster names that (a) alone keeps from the route.
+# MENU 5, fixed now (`tools/jkp_proof.py <dir> --menu 5`), in the order rule (JKP publication year, then name); each
+#   line: JKP name, year, direction, cluster = twin and its earning end. No twin is built today; one is built only for
+#   an idea that reaches the harm guard.
+#   at_be 1992 -1 Low Leverage = new: total assets over book equity; low
+#   z_score 1998 +1 Low Leverage = new: Altman's Z (five ratios to assets or liabilities, his weights); high
+#   pi_nix 2004 +1 Seasonality = new: pretax income over net income; high
+# BAR: (#1339)'s, unchanged: PASS needs t >= 1.96 on the full-sample monthly gap AND a mean gap above 0 from 1 January
+#   of the year after publication, over 60 months or more, in the US AND in developed ex-US. The cluster rule holds:
+#   at_be and z_score share Low Leverage, so at most one of the two ships. HARM GUARD, for each passer in menu order
+#   on top of the ships before it: (#1430)'s, the twin as a `*_pct` percentile column at weight 0.03, one probe
+#   `years="12 8" args="universe fund pit" rescore="guard"`, refused on any visible harm under the (#1333) band,
+#   shipped otherwise with the goldens re-blessed, after a screen A/B on a probe tag (the owner's rule: test before
+#   Pages).
+# EXPECTED: 0 of the 3 pass, on the base rate: menus 2 and 4 passed 0 of 27 outside the Value, Momentum and
+#   Investment clusters, all with one shape, strong in the US and absent abroad.
+# NOT DONE HERE: the twins and the guard. The run is one call on the 25 pinned files of (#1346); its RESULT and
+#   VERDICT follow in this block.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

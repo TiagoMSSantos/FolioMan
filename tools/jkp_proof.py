@@ -57,9 +57,16 @@ The twins already registered: ni_be = roe, ebit_sale = op_margin, gp_at = gp_ass
 opex_at = op_leverage; op_at, ope_be, ebit_bev, at_turnover, dgp_dsale and the lagged-denominator pairs are new,
 built only for an idea that reaches the harm guard.
 
+(#1495) `--menu 5` is the three names of the open clusters that (#1356) left out under (a) alone, because JKP
+files each under Profitability: at_be (Low Leverage, the low third earns), z_score (Low Leverage) and pi_nix
+(Seasonality). The owner opened them on 2026-11-13, as (#1430) opened menu 4. Same order rule, same bar, same
+cluster rule: at_be and z_score share Low Leverage, so at most one of the two ships. Every twin is new (total
+assets over book equity, the Altman Z, pretax over net income), built only for an idea that reaches the harm guard.
+
 Usage: python3 -I -B tools/jkp_proof.py <dir holding pfs.csv (or mkt.zip and pf/*.zip) and market_returns.csv>
        python3 -I -B tools/jkp_proof.py <dir> --menu 2
        python3 -I -B tools/jkp_proof.py <dir> --menu 4
+       python3 -I -B tools/jkp_proof.py <dir> --menu 5
        python3 -I -B tools/jkp_proof.py <dir> --beyond
        python3 -I -B tools/jkp_proof.py <dir> --losers
        python3 -I -B tools/jkp_proof.py <dir> --losers --beyond
@@ -112,6 +119,8 @@ MENU4 = [
     ("op_atl1", 2015, 1, "Quality"), ("ope_be", 2015, 1, "Profitability"), ("ope_bel1", 2015, 1, "Profitability"),
     ("ocf_at", 2019, 1, "Profitability"),
 ]
+# (#1495) menu 5: the open-cluster names (#1356) refused under (a) alone, in the same order rule
+MENU5 = [("at_be", 1992, -1, "Low Leverage"), ("z_score", 1998, 1, "Low Leverage"), ("pi_nix", 2004, 1, "Seasonality")]
 # (#1402) the second Value ship: the cluster's (#1347) passers in guard order, each graded beyond the shipped base
 VALUE_QUEUE = ("be_me", "fcf_me", "sale_me", "ocf_me", "bev_mev", "chcsho_12m", "ebitda_mev")
 BASE = "ni_me"
@@ -119,7 +128,7 @@ BASE = "ni_me"
 DEV = ("JPN HKG GBR CAN AUS DEU FRA SWE CHE SGP ITA ESP ISR NLD NOR BEL DNK FIN NZL AUT IRL PRT").split()
 MIN_N, MIN_POST, T_BAR = 5, 60, 1.96
 MKT_COLS = ("me_lag1", "mkt_vw_cap", "mkt_vw_cap_lcl", "mkt_vw_cap_exc")
-LONG_PF = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU + MENU2 + MENU4}
+LONG_PF = {name: (3 if di == 1 else 1) for name, _, di, _ in MENU + MENU2 + MENU4 + MENU5}
 # (#1410) menu 3: every idea of menus 1 and 2 in the order rule; `--losers` keeps the third at the other end
 MENU3 = sorted(MENU + MENU2, key=lambda x: (x[1], x[0]))
 LOSERS = False
@@ -397,11 +406,15 @@ def report(d, menu=MENU):
 
 def demo():
     order = lambda m: m == sorted(m, key=lambda x: (x[1], x[0]))
-    assert order(MENU) and order(MENU2) and len(MENU) == 42 and len(MENU2) == 14 and len(LONG_PF) == 69
+    assert order(MENU) and order(MENU2) and len(MENU) == 42 and len(MENU2) == 14 and len(LONG_PF) == 72
     # (#1430) menu 4 is the two refused clusters alone, every leg the paper's earning third, no name shared with menus 1-2
     assert order(MENU4) and len(MENU4) == 13 and {c for *_, c in MENU4} == {"Profitability", "Quality"}
     assert all(di == 1 for _, _, di, _ in MENU4) and not {n for n, *_ in MENU4} & {n for n, *_ in MENU + MENU2}
     assert LONG_PF["taccruals_at"] == 1 and LONG_PF["tax_gr1a"] == 3
+    # (#1495) menu 5 shares no name with menus 1, 2 or 4; at_be's earning leg is the low third
+    assert order(MENU5) and len(MENU5) == 3
+    assert not {n for n, *_ in MENU5} & {n for n, *_ in MENU + MENU2 + MENU4}
+    assert LONG_PF["at_be"] == 1 and LONG_PF["z_score"] == 3 and LONG_PF["pi_nix"] == 3
     assert not {c for *_, c in MENU2} & {"Value", "Momentum", "Investment"}  # the clusters holding a ship
     assert num("0.5") == 0.5 and num("") is None and num("NA") is None and num("nan") is None
     assert abs(slope([0, 1, 2], [0, -1, -2]) + 1) < 1e-12
@@ -419,7 +432,7 @@ def demo():
     assert grade(up, 1996)["v"] == "UNGRADEABLE"  # 1997-2000 holds 48 months, under 60
     assert grade({e: -x for e, x in up.items()}, 1994)["v"] == "FAIL"
     # (#1410) menu 3 is both menus in the order rule; a leg 1 %/month under its market passes as a trailer
-    assert order(MENU3) and len(MENU3) == 56 and {n for n, *_ in MENU3} | {n for n, *_ in MENU4} == set(LONG_PF)
+    assert order(MENU3) and len(MENU3) == 56 and {n for n, *_ in MENU3 + MENU4 + MENU5} == set(LONG_PF)
     assert grade(trail({e: -x for e, x in up.items()}), 1994)["v"] == "PASS" and grade(trail(up), 1994)["v"] == "FAIL"
     # (#1402) the queue is the Value cluster in menu order, without the base; an idea that only copies the base
     # earns no alpha, and one with a steady extra gap passes on it
@@ -493,6 +506,8 @@ if __name__ == "__main__":
         sys.exit(report(sys.argv[1], MENU3))
     if sys.argv[2:] == ["--menu", "4"]:
         sys.exit(report(sys.argv[1], MENU4))  # (#1430)
+    if sys.argv[2:] == ["--menu", "5"]:
+        sys.exit(report(sys.argv[1], MENU5))  # (#1495)
     if sys.argv[2:] not in ([], ["--menu", "2"]):
-        sys.exit("usage: jkp_proof.py <dir> [--menu 2 | --menu 4 | --beyond | --losers [--beyond]]")
+        sys.exit("usage: jkp_proof.py <dir> [--menu 2 | --menu 4 | --menu 5 | --beyond | --losers [--beyond]]")
     sys.exit(report(sys.argv[1], MENU2 if sys.argv[2:] else MENU))
