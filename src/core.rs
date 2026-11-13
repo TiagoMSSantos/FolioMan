@@ -247,6 +247,27 @@ fn is_zero(n: &u32) -> bool {
     *n == 0
 }
 
+/// (#1484) What `core::bar_check` read: monthly bars checked against the daily chart, how many were off by over 2 %,
+/// the largest gap (monthly over daily, %) and the month it sat in.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BarCheck {
+    pub checked: usize,
+    pub off: usize,
+    pub worst: f64,
+    pub worst_at: Option<NaiveDate>,
+}
+
+/// (#1484) The walk's view of one live name, filled by `fetch::quote_one` under `print_parity` only: `walk` is
+/// [`backtest_quote`] on the long monthly chart the walk itself reads (the walk's anchor map), `merged` the same
+/// function on the page's own merged series (the page's bars on the walk's anchor map), `bars` the monthly bars
+/// against the daily chart.
+#[derive(Debug, Clone)]
+pub struct Parity {
+    pub walk: Quote,
+    pub merged: Quote,
+    pub bars: BarCheck,
+}
+
 // (#391) serde: the page engine re-ranks the published pool (`web::Universe`) in the browser.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Quote {
@@ -368,6 +389,9 @@ pub struct Quote {
     /// carrying the mixed-endpoint tilt. None (stub, dumps and journal rows before the field) = 1.0 = today's key.
     #[serde(default)]
     pub endpoint_ratio: Option<f64>,
+    /// (#1484) the walk's view of this name, `print_parity` only; never serialized, so no journal or page payload moves
+    #[serde(skip)]
+    pub parity: Option<Box<Parity>>,
     /// (#328) The CAGR floor THIS quote's GICS sector earned from the sector door, or None when the
     /// door found no cohort for it. DERIVED per run and STAMPED by the caller, never fetched and never
     /// configured: `screen` stamps it from the current pool, `backtest` from the cutoff BEFORE this one
@@ -532,6 +556,7 @@ impl Quote {
             bench_1y_pct: None,    // (#326) no market context on a stub -> the regime valve is inert
             bench_range_pct: None, // (#326) ditto
             endpoint_ratio: None, // (#1393) no series on a stub -> the momentum keys read as before
+            parity: None,
             sector: None, // (#44) stamped in `screen` from the universe CSV; stubs/backtest stay None
             aum_eur: None,
             ter_fallback: None,
@@ -3801,6 +3826,33 @@ pub fn anchor_strict(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, hal
     }
     let i = d.partition_point(|x| *x <= target).checked_sub(1)?;
     ((target - d[i]).num_days() <= half.max(5)).then_some(c[i])
+}
+
+/// (#1484) The long monthly chart against the daily one: each monthly bar inside the daily window, the last (current)
+/// month excepted, against the daily close of its month's last session, the last daily bar before the next monthly
+/// bar. `off` counts gaps over 2 %; `worst` is the largest gap, monthly over daily in %, at `worst_at`. Yahoo stamps a
+/// monthly bar on its month's first session and closes it on the last, so a healthy month reads 0.
+pub fn bar_check(mdates: &[NaiveDate], mcloses: &[f64], ddates: &[NaiveDate], dcloses: &[f64]) -> BarCheck {
+    let mut out = BarCheck::default();
+    let Some(&first) = ddates.first() else {
+        return out;
+    };
+    for (w, &m) in mdates.windows(2).zip(mcloses) {
+        let Some(j) = ddates.partition_point(|d| *d < w[1]).checked_sub(1) else {
+            continue;
+        };
+        let d = dcloses.get(j).copied().unwrap_or(0.0);
+        if w[0] < first || ddates[j] < w[0] || m <= 0.0 || d <= 0.0 {
+            continue;
+        }
+        let gap = (m / d - 1.0) * 100.0;
+        out.checked += 1;
+        out.off += usize::from(gap.abs() > 2.0);
+        if gap.abs() > out.worst.abs() {
+            (out.worst, out.worst_at) = (gap, Some(w[0]));
+        }
+    }
+    out
 }
 
 /// (#327) Overlap a proxy pair must show before one series may donate its history to another.
@@ -12513,4 +12565,25 @@ fn anchor_strict_respects_bar_cadence() {
     assert!(leg(&horizon_changes_with(&gap, gc, None, &page, None, false), "1D").is_some());
     assert_eq!(leg(&horizon_changes_with(&gap, gc, None, &page, None, true), "1D"), None, "six days from its target");
     assert_eq!(anchor_strict(&days[..1], &dc[..1], days[0], 7), None, "one bar is all endpoint");
+}
+
+
+/// (#1484) Monthly bars against daily ones: a month whose bar closes on its last session reads 0; a bar 5 % off reads
+/// one off, and is the worst; a month before the daily chart starts and the current (last) month are not checked.
+#[test]
+fn bar_check_reads_each_month_against_its_last_session() {
+    let day = |y: i32, m: u32, d: u32| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    let ddates: Vec<NaiveDate> = (0..200).map(|k| day(2021, 1, 1) + Duration::days(k)).collect();
+    let dcloses: Vec<f64> = (0..200).map(|k| 100.0 + f64::from(k)).collect();
+    let mdates: Vec<NaiveDate> = [(2020, 12), (2021, 1), (2021, 2), (2021, 3), (2021, 4), (2021, 5), (2021, 6), (2021, 7)].iter().map(|&(y, m)| day(y, m, 1)).collect();
+    let mut mcloses: Vec<f64> = mdates.windows(2).map(|w| ddates.iter().rposition(|x| *x < w[1]).map_or(100.0, |i| dcloses[i])).collect();
+    mcloses.push(dcloses[dcloses.len() - 1]);
+    assert_eq!(mdates[0], day(2020, 12, 1), "the first month sits before the daily chart");
+    let clean = bar_check(&mdates, &mcloses, &ddates, &dcloses);
+    assert_eq!((clean.checked, clean.off, clean.worst), (6, 0, 0.0), "Jan-Jun checked, Dec 2020 and the current month not");
+    mcloses[3] *= 1.05;
+    let slip = bar_check(&mdates, &mcloses, &ddates, &dcloses);
+    assert_eq!((slip.checked, slip.off, slip.worst_at), (6, 1, Some(mdates[3])));
+    assert!((slip.worst - 5.0).abs() < 1e-9, "{}", slip.worst);
+    assert_eq!(bar_check(&mdates, &mcloses, &[], &[]), BarCheck::default(), "no daily chart, nothing checked");
 }

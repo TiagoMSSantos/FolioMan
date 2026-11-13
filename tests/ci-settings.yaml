@@ -23945,6 +23945,7 @@ buy_heuristic:
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
   payout_guard: false            # (#1477) drop flagged Yahoo payouts before the dividend term; false = as served
   anchor_cadence_aware: false    # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure
+  print_parity: false            # (#1484) the PARITY CENSUS after the page's tables: the walk's view, display only
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
@@ -29758,6 +29759,32 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the crypto lane's 1M knife moves (a month's move in place of an endpoint-blended one). Arm 2 keeps 90 % or more
 #   of the control's growth-scored cutoffs, reads `artifact` 0, and moves the top-10 mean by under 0.5 at 12y and 8y.
 # REVERT RULE: the knob ships false.
+
+# (#1484) THE PARITY CENSUS, PRE-REGISTERED 2026-11-13 before any run. Knob: `print_parity` (false ships). Row: (#1485).
+#   Display only: nothing here reaches rank, BUY NOW, size, trade or the broker.
+# WHY: every walk-against-page skew on file was found by hand: L5's bars and window ((#1390), (#1392)), the trend
+#   slope's window ((#1463)), the anchor map ((#88), (#1482)). Since (#1452) the walk reads only monthly bars, so a
+#   monthly bar Yahoo serves wrong is a number the walk reads and no check sees; yfinance's price-repair page lists
+#   that class (price data clearly missing or corrupt, rebuilt from a smaller interval). One census lists every skew
+#   with its size and says whether it reaches the book.
+# CHANGE: with the knob on, `fetch::quote_one` keeps three views of each name: the page's quote (P); W =
+#   `core::backtest_quote` on the long monthly chart the walk itself reads, on the walk's anchor map; M = the same
+#   function on the page's own merged series, on the walk's map. `core::bar_check` sets each monthly bar inside the
+#   daily window against the daily close of its month's last session. `screen` prints the census after the tables:
+#   BARS by market (checked, off by over 2 %, the worst ten); FIELDS, for 1M, 3M, 6M, 1Y, 5Y and 10Y, CAGR, range,
+#   drawdown, max drawdown, R2, volatility, stretch and the 1Y yield, n / median / p90 of |P - M| (the anchor map
+#   alone: same bars) and of |M - W| (the bars alone: same map); BOOK, the stock top 10 by growth score and by the
+#   momentum key on the page, and with every price field taken from M, then from W (overlap, out, in).
+# RUN: the Screen A/B job's knobs="print_parity=true" (its arm prints the census; the controls show what the knob
+#   changes, which must be nothing), or one `screen` locally with the knob on.
+# READ: the census block. RULE: record only, with two triggers. A field whose W view moves a top-10 seat in BOOK gets
+#   its own pre-registered measurement fix. A market with more than 1 % of its months off by over 2 % gets a bar
+#   question (a repair from the daily chart, or a hand list as (#1468) keeps).
+# SAID BEFORE THE RUN: BOOK overlap 7 to 9 of 10 for M and 6 to 9 for W on the score; FIELDS: the anchor gap leads at
+#   1Y (median above 1 point), the bar gap leads on range, max drawdown and R2; BARS: under 0.5 % of months off, most
+#   of them United Kingdom and Switzerland lines and young listings, and 0 % if Yahoo's month bars close on their
+#   month's last session as `bar_check` assumes (a census reading most months off says the assumption is wrong).
+# REVERT RULE: none; the knob ships false and moves nothing.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

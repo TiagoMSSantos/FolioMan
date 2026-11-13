@@ -965,6 +965,17 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         chart.splits.retain(|(d, _)| *d >= cut);
     }
 
+    // (#1484) under `print_parity` only: the walk's own view of this name (its long monthly chart, the walk's anchor
+    // map) and that chart's bars against this daily one, both taken before a proxy splice can glue donor bars under it
+    let parity_walk = if crate::config::print_parity() {
+        lc.as_ref().filter(|m| !m.closes.is_empty()).map(|m| {
+            let walk = core::backtest_quote(ticker, &m.dates, &m.closes, &m.divs, m.closes.len() - 1, 12, &BTreeMap::new());
+            (walk, core::bar_check(&m.dates, &m.closes, &chart.dates, &chart.closes))
+        })
+    } else {
+        None
+    };
+
     // (history_proxy) young listing of an old strategy: splice the configured older twin's closes
     // (rebased at the listing's first bar) UNDER the listing's own series, so every downstream metric
     // (5Y/10Y legs, range, SMA, R², age) reads the strategy's proven history while price/TER/turnover
@@ -1340,6 +1351,11 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         bench_range_pct: None,
         // (#1393) the smoothed/raw endpoint ratio of this daily chart, for the momentum keys' one-endpoint knob
         endpoint_ratio: core::endpoint_ratio(&chart.closes),
+        // (#1484) the merged view: the page's own series on the walk's anchor map, beside the walk's
+        parity: parity_walk.map(|(walk, bars)| {
+            let merged = core::backtest_quote(ticker, &long_dates, &long_closes, &long_divs, long_closes.len() - 1, 252, &BTreeMap::new());
+            Box::new(core::Parity { walk, merged, bars })
+        }),
     }
 }
 

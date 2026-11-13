@@ -9425,6 +9425,7 @@ mod tests {
             bench_1y_pct: None,    // (#326) no market context -> regime valve inert; the valve's own tests set these
             bench_range_pct: None,
             endpoint_ratio: None,  // (#1393) no series behind a fixture quote -> the momentum keys read as before
+            parity: None,
             splits: Vec::new(), // (#82) journal-replay only (`track`/`sim`); nothing in the score reads it
             event_flags: 0,
             jump_ahead: false,

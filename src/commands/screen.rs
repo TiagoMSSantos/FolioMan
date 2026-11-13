@@ -3826,6 +3826,12 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#1484) the PARITY CENSUS: what the walk reads for each scored name today, and the books it would rank. Display
+    // only; `fetch::quote_one` builds the views under the same knob, so off there is nothing to read and nothing prints.
+    if settings.buy_heuristic.print_parity {
+        println!("\n{}", parity_census(&quotes, &settings.buy_heuristic));
+    }
+
     // (round 34) fund flow: for today's top-10, net shares created/redeemed across the journal with
     // price appreciation divided OUT of AUM growth — is each fund GAINING or BLEEDING assets? A 20yr
     // durability axis orthogonal to every rank/return footer above: a fund bleeding AUM risks
@@ -4402,9 +4408,168 @@ fn switch_lines(
     })
 }
 
+/// (#1484) n, median and 90th percentile of `xs` (sorted in place); (0, NaN, NaN) when empty.
+fn spread(xs: &mut [f64]) -> (usize, f64, f64) {
+    if xs.is_empty() {
+        return (0, f64::NAN, f64::NAN);
+    }
+    xs.sort_by(f64::total_cmp);
+    let at = |q: f64| xs[((xs.len() - 1) as f64 * q).round() as usize];
+    (xs.len(), at(0.5), at(0.9))
+}
+
+/// (#1484) How many of `page`'s names `other` keeps, then the ones it drops and the ones it adds, in their order.
+fn overlap<'a>(page: &'a [String], other: &'a [String]) -> (usize, Vec<&'a str>, Vec<&'a str>) {
+    let out: Vec<&str> = page.iter().filter(|t| !other.contains(t)).map(String::as_str).collect();
+    let add: Vec<&str> = other.iter().filter(|t| !page.contains(t)).map(String::as_str).collect();
+    (page.len() - out.len(), out, add)
+}
+
+/// (#1484) `q` with every price field `core::backtest_quote` fills taken from `v` (the walk's or the merged view), and
+/// `perf_nominal` emptied so `picks::perf_pct` reads `v`'s legs. Turnover stays `q`'s: the walk's is a sentinel.
+fn walk_priced(q: &Quote, v: &Quote) -> Quote {
+    Quote {
+        perf: v.perf.clone(),
+        perf_nominal: Vec::new(),
+        endpoint_ratio: v.endpoint_ratio,
+        drawdown_pct: v.drawdown_pct,
+        range_pct: v.range_pct,
+        volatility_pct: v.volatility_pct,
+        max_daily_1m: v.max_daily_1m,
+        vol_change: v.vol_change,
+        below_ma_pct: v.below_ma_pct,
+        above_ma_pct: v.above_ma_pct,
+        trend_r2: v.trend_r2,
+        trend_cagr: v.trend_cagr,
+        life_cagr: v.life_cagr,
+        age_years: v.age_years,
+        capped_cagr: v.capped_cagr,
+        tr_cagr: v.tr_cagr,
+        max_drawdown_pct: v.max_drawdown_pct,
+        stats_8y: v.stats_8y.clone(),
+        roll5y_pos_pct: v.roll5y_pos_pct,
+        worst_5y_pct: v.worst_5y_pct,
+        roll10y_pos_pct: v.roll10y_pos_pct,
+        worst_10y_pct: v.worst_10y_pct,
+        underwater_yrs: v.underwater_yrs,
+        trend_r2_10y: v.trend_r2_10y,
+        underwater_yrs_10y: v.underwater_yrs_10y,
+        div_eur: v.div_eur.clone(),
+        price_eur: v.price_eur,
+        parity: None,
+        ..q.clone()
+    }
+}
+
+/// (#1484) The top 10 of `qs` by growth score and by momentum key, tickers in order (a tie goes to the ticker).
+fn parity_books(qs: &[&Quote], tuning: &config::BuyHeuristic) -> (Vec<String>, Vec<String>) {
+    let top = |keys: Vec<Option<f64>>| {
+        let mut v: Vec<(f64, &str)> = keys.into_iter().zip(qs).filter_map(|(k, q)| Some((k?, q.ticker.as_str()))).collect();
+        v.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+        v.into_iter().take(10).map(|(_, t)| t.to_string()).collect::<Vec<String>>()
+    };
+    let trails: Vec<&[f64]> = qs.iter().map(|q| q.trail_monthly.as_slice()).collect();
+    (top(picks::growth_scores_ranked(qs, tuning)), top(picks::momentum_keys(qs, &trails, tuning)))
+}
+
+/// (#1484) The PARITY CENSUS, three blocks over every scored name that carries the walk's view (`print_parity`).
+/// BARS: each long monthly bar inside the daily window against the daily close of its month's last session
+/// (`core::bar_check`), by market, and the worst ten. FIELDS: each price field the score reads, as n, median and
+/// p90 of the gap between the page (P) and M, the page's own bars on the walk's anchor map (the anchor skew alone),
+/// and between M and W, the walk's monthly bars (the bar skew). BOOK: the stock top 10 by growth score and by
+/// momentum key, read on the page and with every price field taken from M, then from W. Display only.
+/// shortcut: a re-priced quote keeps the page's cross-sectional stamps (fund percentiles, sector floors), so a seat
+/// that moves only through a stamp is not seen; and W ends on its month's first session, so its 1M and 3M legs carry
+/// that date shift. The block says both.
+fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
+    let with: Vec<(&Quote, &core::Parity)> = quotes.iter().filter_map(|q| q.parity.as_deref().map(|p| (q, p))).collect();
+    let mut out = vec![format!("── PARITY CENSUS (#1484): the walk's view of {} of {} scored names ──", with.len(), quotes.len())];
+    let mut markets: std::collections::BTreeMap<&str, (usize, usize)> = std::collections::BTreeMap::new();
+    let mut worst: Vec<(f64, &str, Option<chrono::NaiveDate>)> = Vec::new();
+    for (q, p) in &with {
+        let m = markets.entry(q.market.as_str()).or_insert((0, 0));
+        m.0 += p.bars.checked;
+        m.1 += p.bars.off;
+        if p.bars.off > 0 {
+            worst.push((p.bars.worst, q.ticker.as_str(), p.bars.worst_at));
+        }
+    }
+    worst.sort_by(|a, b| b.0.abs().total_cmp(&a.0.abs()).then_with(|| a.1.cmp(b.1)));
+    let cells: Vec<String> = markets.iter().map(|(m, (n, off))| format!("{m} {n} checked, {off} off by over 2 %")).collect();
+    out.push(format!("  BARS, monthly close against its month's last daily close: {}", if cells.is_empty() { "none".to_string() } else { cells.join(" | ") }));
+    let worst: Vec<String> = worst.iter().take(10).map(|(g, t, at)| format!("{t} {} {g:+.1} %", at.map_or_else(|| "?".to_string(), |d| d.format("%Y-%m").to_string()))).collect();
+    if !worst.is_empty() {
+        out.push(format!("    worst: {}", worst.join(" | ")));
+    }
+    type Field = (&'static str, fn(&Quote, &config::BuyHeuristic) -> Option<f64>);
+    let fields: [Field; 14] = [
+        ("1M", |q, _| picks::perf_pct(q, "1M")),
+        ("3M", |q, _| picks::perf_pct(q, "3M")),
+        ("6M", |q, _| picks::perf_pct(q, "6M")),
+        ("1Y", |q, _| picks::perf_pct(q, "1Y")),
+        ("5Y", |q, _| picks::perf_pct(q, "5Y")),
+        ("10Y", |q, _| picks::perf_pct(q, "10Y")),
+        ("CAGR", picks::long_cagr_pct),
+        ("range", |q, _| Some(q.range_pct)),
+        ("drawdown", |q, _| Some(q.drawdown_pct)),
+        ("max DD", |q, _| Some(q.max_drawdown_pct)),
+        ("R2", |q, _| Some(q.trend_r2)),
+        ("vol", |q, _| q.volatility_pct),
+        ("stretch", |q, _| Some(q.above_ma_pct)),
+        ("div 1Y", |q, _| core::dividend_yields(&q.div_eur, q.price_eur).first().copied().flatten()),
+    ];
+    out.push("  FIELDS, n / median / p90 of |gap|: P-M is the anchor map alone (same bars), M-W the bars alone (same map)".to_string());
+    for (label, f) in fields {
+        let gap = |a: &Quote, b: &Quote| Some((f(a, tuning)? - f(b, tuning)?).abs()).filter(|g| g.is_finite());
+        let mut pm: Vec<f64> = with.iter().filter_map(|(q, p)| gap(*q, &p.merged)).collect();
+        let mut mw: Vec<f64> = with.iter().filter_map(|(_, p)| gap(&p.merged, &p.walk)).collect();
+        let (pm, mw) = (spread(&mut pm), spread(&mut mw));
+        out.push(format!("    {label:<9} P-M {} / {:.2} / {:.2}    M-W {} / {:.2} / {:.2}", pm.0, pm.1, pm.2, mw.0, mw.1, mw.2));
+    }
+    let stocks: Vec<(&Quote, &core::Parity)> = with.iter().copied().filter(|(q, _)| picks::asset_class(q) == 2).collect();
+    let page: Vec<&Quote> = stocks.iter().map(|(q, _)| *q).collect();
+    let merged: Vec<Quote> = stocks.iter().map(|(q, p)| walk_priced(q, &p.merged)).collect();
+    let walk: Vec<Quote> = stocks.iter().map(|(q, p)| walk_priced(q, &p.walk)).collect();
+    let (ps, pm) = parity_books(&page, tuning);
+    let (ms, mm) = parity_books(&merged.iter().collect::<Vec<_>>(), tuning);
+    let (ws, wm) = parity_books(&walk.iter().collect::<Vec<_>>(), tuning);
+    out.push(format!("  BOOK, the stock top 10 read on the page against the same {} stocks re-priced by M and by W:", stocks.len()));
+    for (label, own, m, w) in [("score", &ps, &ms, &ws), ("momentum", &pm, &mm, &wm)] {
+        let cell = |other: &[String]| {
+            let (k, gone, new) = overlap(own, other);
+            format!("{k}/{} (out: {}; in: {})", own.len(), if gone.is_empty() { "-".to_string() } else { gone.join(" ") }, if new.is_empty() { "-".to_string() } else { new.join(" ") })
+        };
+        out.push(format!("    {label:<9} M {}    W {}", cell(m.as_slice()), cell(w.as_slice())));
+    }
+    out.push("  shortcut: re-priced quotes keep the page's cross-sectional stamps; W ends on its month's first session, so its 1M and 3M legs carry that shift".to_string());
+    out.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#1484) The census helpers: the spread of a set of gaps, the overlap of two books, and the census over two
+    /// stub quotes, one with the walk's view and one without (it reads the one, says how many, and prints its bars).
+    #[test]
+    fn parity_census_reads_only_quotes_with_a_view() {
+        assert_eq!(spread(&mut [3.0, 1.0, 2.0]), (3, 2.0, 3.0));
+        let (n, med, p90) = spread(&mut []);
+        assert!(n == 0 && med.is_nan() && p90.is_nan());
+        let t = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        let (page, other) = (t(&["A", "B", "C"]), t(&["B", "C", "D"]));
+        assert_eq!(overlap(&page, &other), (2, vec!["A"], vec!["D"]));
+        let mut seen = core::Quote::stub("S", "€1", "", "S");
+        seen.market = "USA".into();
+        let view = core::Quote::stub("S", "€1", "", "S");
+        let bars = core::BarCheck { checked: 12, off: 1, worst: -3.5, worst_at: chrono::NaiveDate::from_ymd_opt(2024, 3, 1) };
+        seen.parity = Some(Box::new(core::Parity { walk: view.clone(), merged: view, bars }));
+        let bare = core::Quote::stub("B", "€1", "", "B");
+        let text = parity_census(&[seen, bare], &config::BuyHeuristic::default());
+        assert!(text.starts_with("── PARITY CENSUS (#1484): the walk's view of 1 of 2 scored names ──"), "{text}");
+        assert!(text.contains("USA 12 checked, 1 off by over 2 %") && text.contains("S 2024-03 -3.5 %"), "{text}");
+        assert!(text.contains("    1Y        P-M 0 / NaN / NaN"), "a stub has no legs to compare: {text}");
+    }
     use std::collections::{HashMap, HashSet};
 
     /// (tests round 4) Stale-nets nag: never-ran/corrupt and stale stamps must nag with the exact
