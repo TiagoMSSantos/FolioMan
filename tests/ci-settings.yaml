@@ -29704,6 +29704,31 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   BUY% follows them; the 1W and 1M % columns move on most rows (display only); no ETF top-10 row moves.
 # REVERT RULE: none; the A/B moves nothing.
 
+# (#1486) THE RULER'S EYESIGHT AT 3y AND 1y, PRE-REGISTERED 2026-11-13 before any run. Row: (#1487). No knob, no Rust;
+#   `tools/verdict.py plant` reads it.
+# WHY: (#1332)'s `plant` measured the bar's floor only at 12y and 8y ((#1333), (#1335), (#1338)): band tops +0.5 to
+#   +0.7 %/yr in mean and +0.8 to +1.1 in median, and X = 4 passing 1 draw in 20. A planted edge is constant by
+#   construction, and on one span the annualised noise of a book's mean is roughly horizon-free (shorter windows
+#   are noisier each, and there are more of them). A real edge is not constant: Keloharju, Linnainmaa and Nyberg
+#   (JFE 141(3), 2021, the paper (#727) cites) find characteristic spreads live about a year for price signals and
+#   about three for accounting ones, with none long-run, so a lot's lifetime edge arrives in its first two or three
+#   years: about 2.2 %/yr read at 3y against about 0.6 at 12y for the same lot. If the floor holds at 3y, a 3y bar
+#   sees a front-loaded edge three to four times more easily, which is "a new ruler" in (#1333)'s and (#1457)'s
+#   terms, not a re-fit. (#1437) read the AUC table at 3y and 1y on 2026-11-10; nothing planted at those horizons.
+# RUN: one probe on main, years="3 1", args="universe fund pit", grid=[{}], rescore="plant holdout".
+# READ: `python3 -I tools/verdict.py plant <log>`: per horizon, each X's passing draws (a draw passes when all three
+#   nudged rows read OUTSIDE on the winning side, (#1332)'s rule) and the smallest X passing 16 of 20; then, per X,
+#   the seeds both horizons pass.
+# BANDS, (#1332)'s, per horizon: smallest passing X at or under 1 -> CANDIDATE BAR: a next round pre-registers the
+#   strongest refused leads on that horizon with the 12y and 8y books as a no-harm guard (detect early, guard late);
+#   over 1 and at or under 4 -> FLOOR, recorded; nothing passes at 4 -> BLIND there too, and the freeze stands on
+#   firmer ground.
+# SAID BEFORE THE RUN: the band tops land within 30 % of (#1333)'s in %/yr at both horizons; X = 4 passes on 3 of 20
+#   draws or fewer at 3y and at 1y, so BLIND for a constant edge. The read that matters sits beside it: with the floor
+#   near +0.6, a tilt that swaps one name in ten with a 4 to 6 %/yr edge over its first three years gains 0.4 to 0.6
+#   at 3y, at the floor rather than under it as at 12y.
+# REVERT RULE: record only; `plant` prints one block per horizon and changes no book, no knob and no page.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

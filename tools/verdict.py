@@ -36,6 +36,11 @@ Logs are `gh run view <id> --log > file` (or bare text). Rows, BOOK lines, bands
            horizon's top-10 book in both. The (#1247) rule: QUESTION when the arm moves the top-10 mean or median by
            0.1 or more at any horizon, else RECORD (the Screen A/B's page rows are the rule's other half).
                python3 -I tools/verdict.py payouts --control c.log --arm a.log
+  plant    (#1486) the ruler's eyesight at any horizon: the `top 10 plant X/yr` lines of a `rescore="plant"` log.
+           Per horizon, each X's passing draws and the smallest X passing 16 of 20, read against (#1332)'s bands:
+           at or under 1 -> CANDIDATE BAR; over 1 and at or under 4 -> FLOOR; nothing at 4 -> BLIND. Then, per X,
+           the seeds every horizon in the log passes.
+               python3 -I tools/verdict.py plant plant.log
   guard    (#1436) and any harm-guard grid: per horizon and row, the GUARD line's word and RU1-RU3 against row 0.
            `--row TEXT` names the row to decide (a substring of its JSON): SHIP when the guard reads PASS or INERT
            and no RU cell fails, at 12y and at 8y.
@@ -68,6 +73,8 @@ RECENT_SLACK, GAP_SHARE = 1.0, 0.5  # (#1435) >=2014 against arm row 0; the shar
 TIE, LOSS_BOTH, WORST_SLACK = 0.5, 0.2, 1.0  # (#1431)
 CAP_MEDIAN = 0.1  # (#557) how far a capped book's median may sit under the control's
 STEP, HEAD_WORST = 0.2, 0.5  # (#1441) the (#584) C step, and how far a rung's worst program may sit under flat's
+PLANT = re.compile(r"^\s*top (\d+) plant ([+-]?\d+\.\d)/yr: .* ; pass (\d+)/(\d+) seeds \[([\d, ]*)\]\s*$")
+PLANT_PASS = 16  # (#1332) an edge passes on 16 of 20 draws
 PAYOUT_MOVE = 0.1  # (#1477) the (#1247) rule: a top-10 mean or median moved this much at any horizon asks the owner
 PAYOUT_LINE = re.compile(r"backtest: \(#1477\) (.*)$")
 EPS = 1e-9
@@ -360,6 +367,40 @@ def payouts(control_text, arm_text, out=print):
     return "RECORD", []
 
 
+def plant_rows(text):
+    """{years: {X: (passes, draws, seeds)}} from each horizon's `top 10 plant` lines (the top-10 book only)."""
+    out = {}
+    for _, years, body in chunks(text):
+        for line in body.splitlines():
+            m = PLANT.match(line)
+            if m and m.group(1) == "10" and years is not None:
+                seeds = frozenset(int(x) for x in m.group(5).replace(" ", "").split(",") if x)
+                out.setdefault(years, {})[float(m.group(2))] = (int(m.group(3)), int(m.group(4)), seeds)
+    return out
+
+
+def plant(text, out=print):
+    """(#1486): {years: (word, smallest passing X or None)}, the word from (#1332)'s bands; {} when nothing reads."""
+    rows = plant_rows(text)
+    if not rows:
+        out("VERDICT: UNREAD — no `top 10 plant` line under a `rescore N` group")
+        return {}
+    words = {}
+    for y in sorted(rows, reverse=True):
+        xs = sorted(rows[y].items())
+        passing = [x for x, (p, _, _) in xs if p >= PLANT_PASS]
+        best = passing[0] if passing else None
+        word = "BLIND" if best is None else ("CANDIDATE BAR" if best <= 1 + EPS else "FLOOR")
+        words[y] = (word, best)
+        cells = "  ".join(f"X {x:+.1f} {p}/{n}" for x, (p, n, _) in xs)
+        out(f"  {y}y  {cells}  -> smallest passing X {'none' if best is None else format(best, '+.1f')}: {word}")
+    if len(rows) > 1:
+        for x in sorted(set.intersection(*(set(r) for r in rows.values()))):
+            both = sorted(frozenset.intersection(*(rows[y][x][2] for y in rows)))
+            out(f"  X {x:+.1f}: seeds every horizon passes {both} ({len(both)})")
+    return words
+
+
 def guard_rows(text):
     """{years: {row label: guard word}} from each horizon's GUARD block."""
     out, years, on = {}, None, False
@@ -512,6 +553,21 @@ def selftest():
     assert payouts(ctl, nudged, quiet) == ("QUESTION", [12])
     assert payouts(ctl, three([(1.9, -9.0), (3.0, -8.6), (2.8, -6.9)]), quiet) == ("QUESTION", [20, 8]), "either way"
     assert payouts(ctl, walk(12, 3.0, -8.6), quiet) == ("UNREAD", [])
+    # plant: the (#1332) table per horizon, top 10 only, and (#1332)'s bands
+    cell = "+10 % gain +0.08|+0.19 band top +0.48|+0.79 out 0/20 ; +20 % gain +0.25|+0.24 band top +0.48|+0.79 out 1/20"
+    pline = lambda top, x, seeds: f"  top {top} plant {x:+.1f}/yr: {cell} ; pass {len(seeds)}/20 seeds {list(seeds)}"
+    block = lambda y, rows: "\n".join([f"##[group]rescore {y}"] + [pline(10, x, s) for x, s in rows] + [pline(20, 4.0, range(1, 21)), "##[endgroup]"])
+    seen3 = [(0.5, []), (1.0, [3]), (2.0, list(range(1, 18))), (4.0, list(range(1, 21)))]
+    seen1 = [(0.5, list(range(1, 17))), (1.0, list(range(1, 21))), (2.0, list(range(1, 21))), (4.0, list(range(1, 21)))]
+    blind = [(0.5, []), (1.0, []), (2.0, [1]), (4.0, [1, 7])]
+    log = block(3, seen3) + "\n" + block(1, seen1)
+    assert plant_rows(log)[3][2.0][:2] == (17, 20) and 20 not in [k for k in plant_rows(log)], "top 20 lines are not the bar's"
+    assert plant(log, quiet) == {3: ("FLOOR", 2.0), 1: ("CANDIDATE BAR", 0.5)}
+    assert plant(block(3, blind), quiet) == {3: ("BLIND", None)}
+    shown = []
+    plant(log, shown.append)
+    assert "  X +1.0: seeds every horizon passes [3] (1)" in shown, shown
+    assert plant("nothing here", quiet) == {}
     print("verdict selftest ok")
 
 
@@ -531,6 +587,8 @@ def main():
     c = sub.add_parser("cap")
     c.add_argument("--control", required=True)
     c.add_argument("--cap", nargs="+", required=True, metavar="K=LOG")
+    pl = sub.add_parser("plant")
+    pl.add_argument("log")
     pa = sub.add_parser("payouts")
     pa.add_argument("--control", required=True)
     pa.add_argument("--arm", required=True)
@@ -552,6 +610,8 @@ def main():
         cap(read(a.control), {int(k): read(v) for k, v in (i.split("=", 1) for i in a.cap)})
     elif a.cmd == "payouts":
         payouts(read(a.control), read(a.arm))
+    elif a.cmd == "plant":
+        plant(read(a.log))
     else:
         guard(read(a.log), a.row)
 
