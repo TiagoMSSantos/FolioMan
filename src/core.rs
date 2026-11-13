@@ -1215,8 +1215,34 @@ pub fn set_measure_cadence(bars_per_year: usize) {
 /// the overext brake deliberately reads raw too (see `above_long_ma_pct`). Panics on empty input,
 /// same as the `.last().unwrap()` it replaces.
 pub fn measure_endpoint(closes: &[f64]) -> f64 {
-    let cadence = MEASURE_CADENCE.load(std::sync::atomic::Ordering::Relaxed);
-    endpoint_avg(closes, span_to_bars(crate::config::endpoint_smooth_days(), cadence))
+    endpoint_avg(closes, span_to_bars(crate::config::endpoint_smooth_days(), measure_cadence()))
+}
+
+thread_local! {
+    /// (#1494) The cadence of the one `backtest_quote` call running on this thread, if any.
+    static MEASURE_CADENCE_HERE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// (#1494) The cadence `measure_endpoint` converts its span by: the running `backtest_quote` call's own, else
+/// the process-wide one. The page's (#1484) parity census calls `backtest_quote` on monthly bars from a
+/// daily process, and on the process-wide 252 its smoothed endpoint averaged 105 MONTHS, not 5.
+fn measure_cadence() -> usize {
+    MEASURE_CADENCE_HERE.get().unwrap_or_else(|| MEASURE_CADENCE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// (#1494) Holds a cadence on this thread until dropped, then puts back the one it replaced.
+struct MeasureScope(Option<usize>);
+
+impl MeasureScope {
+    fn new(bars_per_year: usize) -> Self {
+        MeasureScope(MEASURE_CADENCE_HERE.replace(Some(bars_per_year)))
+    }
+}
+
+impl Drop for MeasureScope {
+    fn drop(&mut self) {
+        MEASURE_CADENCE_HERE.set(self.0);
+    }
 }
 
 /// (#1408) The (#1393) endpoint ratio the momentum keys divide out: the smoothed endpoint over the raw last
@@ -6211,6 +6237,9 @@ pub fn backtest_quote(
     cadence: usize,
     windows: &BTreeMap<String, i64>,
 ) -> Quote {
+    // (#1494) every measurement below reads `cadence`: the walk sets the process-wide one to it before calling,
+    // the page's parity census cannot (one daily process, monthly bars, other names priced on other threads)
+    let _cadence = MeasureScope::new(cadence);
     // (#94) THE AS-OF SPLICE TRIM. `parse_chart` used to drain the pre-splice head for the whole
     // record, which applies a redenomination retroactively: a 2015 glue joint deleted every pre-2015
     // bar for a 2005 cutoff, and `age_years` / `life_cagr` / MAXDD / trend R² were then measured on a
@@ -6661,6 +6690,21 @@ pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#1494) A scope holds its cadence for `measure_cadence`, a nested one shadows it, and each drop puts back
+    /// the one it replaced, down to none (the process-wide cadence again).
+    #[test]
+    fn measure_scope_holds_its_cadence_and_puts_back_the_one_before() {
+        let outer = MeasureScope::new(12);
+        assert_eq!(measure_cadence(), 12);
+        {
+            let _inner = MeasureScope::new(252);
+            assert_eq!(measure_cadence(), 252);
+        }
+        assert_eq!(measure_cadence(), 12);
+        drop(outer);
+        assert_eq!(MEASURE_CADENCE_HERE.get(), None);
+    }
 
     /// (#1389) A deterministic 15 %/yr path with a random-walk noise of 3 %/month (an LCG, seed 13), 30 years
     /// of bars dated the 1st of the month — and the same path read on the 1st of each QUARTER, which is what

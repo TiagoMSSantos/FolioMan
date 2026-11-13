@@ -29850,6 +29850,23 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   month's last session as `bar_check` assumes (a census reading most months off says the assumption is wrong).
 # REVERT RULE: none; the knob ships false and moves nothing.
 
+# (#1494) THE CENSUS'S W MEASURES ON ITS OWN CADENCE, 2026-11-13, PRE-REGISTERED before the re-run. A fix, no knob.
+# WHY: the first (#1484) arm (Screen A/B 43489666836) read M-W medians of 19.3 points at 1Y, 35.3 at 5Y, 46.6 at 10Y,
+#   3.9 on CAGR, 31.5 on range and 10.2 on drawdown, and W kept 2 and 1 of the page's 10 seats. Those gaps are not
+#   the bars. W is `core::backtest_quote` on monthly bars, called from the page, a daily process: `measure_endpoint`
+#   turned `endpoint_smooth_days` (105) into bars by the process-wide cadence, still 252 there, so W's smoothed
+#   endpoint was the mean of the last 105 MONTHLY closes, not 5. The walk sets that cadence before each call, so its
+#   own numbers never read it.
+# CHANGE: `backtest_quote` holds its own `cadence` on its thread for the call (`core::MeasureScope`), and
+#   `measure_endpoint` reads that one first. Every walk call passes the cadence the walk just set, the unit tests
+#   smooth over 1 bar, and W is built only with `print_parity` on, so the walk, the page and the goldens do not move.
+# RUN: the Screen A/B job's knobs="print_parity=true" on the fix. READ: the census block against the first arm's.
+# SAID BEFORE THE RUN: the fields that read the smoothed endpoint fall to M-W medians under 3 points at 1Y, 5 at 5Y
+#   and at 10Y, 0.5 on CAGR, 10 on range and 4 on drawdown; the rest (1M, 3M, 6M, max DD, R2, vol, stretch, div 1Y)
+#   and every P-M and BARS line stay within pond drift of the first arm; BOOK W keeps 6 to 9 of 10 seats on the score
+#   and 5 to 9 on the momentum key. A field still far off after the fix is a real skew, for (#1484)'s first trigger.
+# REVERT RULE: none; the census is display only and ships off.
+
 # (#1490) THE QUEUE, 2026-11-13: `tools/queue.py` lists every pre-registered receipt no verdict has read. A tool, no
 #   knob, no run. WHY: a plan written on 2026-11-13 called (#1423), (#1427), (#1428), (#1430), (#1432) and (#1437) open;
 #   each had been read in place on 2026-11-10 (a `RESULT` and a `VERDICT:` line inside its own block), so a grep for
