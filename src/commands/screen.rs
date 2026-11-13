@@ -4552,6 +4552,7 @@ mod tests {
     /// (#1484) The census helpers: the spread of a set of gaps, the overlap of two books, and the census over two
     /// stub quotes, one with the walk's view and one without (it reads the one, says how many, and prints its bars).
     /// The range field is set on all three views (P 3, M 1, W 0.25), so its P-M and M-W gaps are pinned as values.
+    /// (#1493) The book counts the one stock with a view, and a view with no gap names no worst month.
     #[test]
     fn parity_census_reads_only_quotes_with_a_view() {
         assert_eq!(spread(&mut [3.0, 1.0, 2.0]), (3, 2.0, 3.0));
@@ -4575,6 +4576,24 @@ mod tests {
         assert!(text.contains("USA 12 checked, 1 off by over 2 %") && text.contains("S 2024-03 -3.5 %"), "{text}");
         assert!(text.contains("    1Y        P-M 0 / NaN / NaN"), "a stub has no legs to compare: {text}");
         assert!(text.contains("    range     P-M 1 / 2.00 / 2.00    M-W 1 / 0.75 / 0.75"), "|3 - 1| and |1 - 0.25|: {text}");
+        assert!(text.contains("against the same 1 stocks"), "{text}");
+        let mut clean = core::Quote::stub("S", "€1", "", "S");
+        let view = core::Quote::stub("S", "€1", "", "S");
+        clean.parity = Some(Box::new(core::Parity { walk: view.clone(), merged: view, bars: core::BarCheck { checked: 3, ..core::BarCheck::default() } }));
+        let text = parity_census(&[clean], &config::BuyHeuristic::default());
+        assert!(text.contains("USA 3 checked, 0 off") && !text.contains("worst:"), "{text}");
+    }
+
+    /// (#1493) `parity_books`' momentum book holds the stocks with a key, the highest first, and none without one.
+    #[test]
+    fn parity_books_rank_the_keyed_stocks() {
+        let q = |t: &str, one_year: Option<f64>| {
+            let mut q = core::Quote::stub(t, "€1", "", t);
+            q.perf = core::HORIZONS.iter().map(|(l, _)| one_year.filter(|_| *l == "1Y").map(|v| ("x".to_string(), v))).collect();
+            q
+        };
+        let (a, b, c) = (q("A", Some(50.0)), q("B", Some(20.0)), q("C", None));
+        assert_eq!(parity_books(&[&c, &b, &a], &config::BuyHeuristic::default()).1, ["A", "B"]);
     }
 
     /// (#1484) `walk_priced` takes every price field from the view: against a view that differs from the row in each

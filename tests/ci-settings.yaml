@@ -29923,6 +29923,25 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # JKP: no data release after "Data Updated Through December 2025" (jkp-data discussion #89, 2026-04-16: the pinned
 #   files); a branch merged 2026-11-09 adds per-country size-group portfolios, not released. (#1478) watches.
 
+# (#1493) MAIN'S CENSUS ON ROUND 22, TRIAGED 2026-11-13. Tests, no knob. Census 43485422216 on 60affdd: files
+#   `src/commands/backtest.rs src/commands/screen.rs src/config.rs src/core.rs src/fetch.rs src/picks.rs`, regex `.`,
+#   exclude empty, tests `--lib`, since c87ddedd0d3b9bd20b19c4673e93e3830abb23f6. 34 missed.
+# KILLED (25, lines as at 60affdd): screen.rs `parity_books` 4466 (9 return swaps; its momentum book was never read);
+#   `parity_census` 4493:23 `>` to `>=` and 4529:107 `==` to `!=`; core.rs `anchor_strict` 3822:13 and
+#   `horizon_changes_with` 4013:28 `>` to `>=` (a zero half reads the day's last bar); `bar_check` 3845:25, 3845:45,
+#   3845:57 `||` to `&&`, 3845:38 `<` to `<=` and to `==` (the month the daily chart starts inside, a month with no
+#   session, one whose one session is its first day, a zero monthly close); `payout_flags` 6550:49 `<` to `<=` (the
+#   close before the ex-date), 6551:50 `>` to `>=` (a zero close), 6555:43 `>` to `>=` (exactly a quarter), 6562:37
+#   `-` to `+` and to `/`, 6562:42 and 6562:65 `/` to `%` (an even count's median).
+# EQUIVALENT (4): `bar_check` 3850:42 `>` to `>=`: `(m / d - 1) * 100` never lands on exactly 2.0 in f64 (the nearest
+#   case reads 2.0000000000000018). `payout_flags` 6564:39 `>` to `>=`, 6564:45 `&&` to `||`, 6564:52 `>` to `>=`: each
+#   admits only r = 0, a zero median or a negative value, so the slip ratio is inf, 0 or negative, never in
+#   [50, 150], and NaN fails `contains`.
+# GAPS (5): fetch.rs `quote_one` 971:32 delete `!`, 972:98 and 1356:112 `-` to `+` and to `/`: each sits under
+#   `config::print_parity()`, a process-wide OnceLock (config.rs:2513) the --lib suite always reads false.
+# PROOF RULE: a re-run with the same inputs on the fixing commit misses exactly the 4 EQUIVALENT and the 5 GAPS, plus
+#   whatever (#1494)'s `MeasureScope` code adds (triaged then).
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

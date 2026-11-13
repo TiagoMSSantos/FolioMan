@@ -12507,7 +12507,10 @@ fn bond_index_rebuilds_a_10y_return_from_yields() {
 /// is flagged; 8 days apart or 2 % off is not. D2: a payout over a quarter of the close before it is flagged even
 /// alone; one under it is not; a 100x slip either way is flagged against the median of 5 or more, and not against
 /// 4; 55x and 145x flag, 45x and 155x do not; a special dividend 12x the regular one and a monthly payer are left
-/// alone; a payout with no close before it gets no D2 check.
+/// alone; a payout with no close before it gets no D2 check. (#1493) A payout of exactly a quarter is not over it; a
+/// payout reads the close before its ex-date, never the ex-date's own, and a zero close is no close; an even count's
+/// median is the mean of its two middle ratios, so a slip 100x under (0.4 + 1.6) / 2 and one 60x under a median the
+/// low tail does not drag are flagged.
 #[test]
 fn payout_flags_catch_duplicates_and_unit_slips() {
     let day = |n: i64| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + Duration::days(n);
@@ -12545,6 +12548,12 @@ fn payout_flags_catch_duplicates_and_unit_slips() {
     let monthly: Vec<_> = (0..12).map(|k| (day(30 * k + 5), 0.4)).collect();
     assert_eq!(flagged(&monthly), vec![], "a monthly payer");
     assert_eq!(flagged(&[(day(-10), 1000.0)]), vec![], "no close before it, no D2 check");
+    assert_eq!(flagged(&[q(0, 25.0)]), vec![], "exactly a quarter is not over it");
+    assert_eq!(payout_flags(&dates[..2], &[100.0, 1.0], &[(dates[1], 0.5)]), vec![0], "read against the close before its ex-date, never the ex-date's own");
+    assert_eq!(payout_flags(&dates[..1], &[0.0], &[q(0, 0.5)]), vec![0], "a zero close is no close");
+    let even = |amounts: &[f64]| -> Vec<(usize, u8)> { flagged(&amounts.iter().enumerate().map(|(k, a)| q(k as i64, *a)).collect::<Vec<_>>()) };
+    assert_eq!(even(&[0.4, 0.4, 1.6, 1.6, 1.6, 0.01]), vec![(5, 2)], "an even count's median is the mean of its two middle ratios: 100x under (0.4 + 1.6) / 2");
+    assert_eq!(even(&[0.6, 0.6, 0.6, 0.6, 0.02, 0.01]), vec![(5, 2)], "60x under a median the low tail does not drag");
 }
 
 /// (#1477) The guard keeps payouts up to the last bar and drops what is flagged on that same history, so a
@@ -12580,7 +12589,8 @@ fn guard_payouts_reads_only_the_cutoffs_own_history() {
 /// (its window holds only the endpoint) and 1M with the endpoint averaged into its own anchor; with the switch on,
 /// 1D and 1W read None and 1M reads off the bar before the endpoint, while 1Y does not move. On daily bars under the
 /// page's map every leg reads the same either way; under the default map the endpoint leaves its own 1W anchor; and a
-/// 1D leg across a seven-day gap reads None only with the switch on.
+/// 1D leg across a seven-day gap reads None only with the switch on. (#1493) A zero half reads the day's last bar, not
+/// the mean of the day's bars, in the strict anchor and in the shipped one alike.
 #[test]
 fn anchor_strict_respects_bar_cadence() {
     let leg = |v: &[Option<(String, f64)>], label: &str| HORIZONS.iter().position(|(l, _)| *l == label).and_then(|i| v[i].as_ref().map(|(_, p)| *p));
@@ -12609,11 +12619,17 @@ fn anchor_strict_respects_bar_cadence() {
     assert!(leg(&horizon_changes_with(&gap, gc, None, &page, None, false), "1D").is_some());
     assert_eq!(leg(&horizon_changes_with(&gap, gc, None, &page, None, true), "1D"), None, "six days from its target");
     assert_eq!(anchor_strict(&days[..1], &dc[..1], days[0], 7), None, "one bar is all endpoint");
+    let (twice, tc) = ([days[0], days[1], days[1], days[2]], [1.0, 2.0, 4.0, 8.0]);
+    assert_eq!(anchor_strict(&twice, &tc, days[1], 0), Some(4.0), "a zero half reads the day's last bar, not its mean");
+    let zero: BTreeMap<String, i64> = [("1D".to_string(), 0)].into_iter().collect();
+    assert_eq!(leg(&horizon_changes_with(&twice, &tc, None, &zero, None, false), "1D"), Some(100.0), "and so does the shipped anchor");
 }
 
 
 /// (#1484) Monthly bars against daily ones: a month whose bar closes on its last session reads 0; a bar 5 % off reads
 /// one off, and is the worst; a month before the daily chart starts and the current (last) month are not checked.
+/// (#1493) Nor is a month the daily chart starts inside, a month with no session or one with no monthly close; a
+/// month whose one session is its first day is.
 #[test]
 fn bar_check_reads_each_month_against_its_last_session() {
     let day = |y: i32, m: u32, d: u32| NaiveDate::from_ymd_opt(y, m, d).unwrap();
@@ -12630,4 +12646,13 @@ fn bar_check_reads_each_month_against_its_last_session() {
     assert_eq!((slip.checked, slip.off, slip.worst_at), (6, 1, Some(mdates[3])));
     assert!((slip.worst - 5.0).abs() < 1e-9, "{}", slip.worst);
     assert_eq!(bar_check(&mdates, &mcloses, &[], &[]), BarCheck::default(), "no daily chart, nothing checked");
+    let kept = |keep: &dyn Fn(&NaiveDate) -> bool| {
+        let (dd, dc): (Vec<NaiveDate>, Vec<f64>) = ddates.iter().zip(&dcloses).filter(|(d, _)| keep(d)).map(|(d, c)| (*d, *c)).unzip();
+        bar_check(&mdates, &mcloses, &dd, &dc).checked
+    };
+    assert_eq!(kept(&|d: &NaiveDate| *d >= day(2021, 1, 15)), 5, "a month the daily chart starts inside is not checked");
+    assert_eq!(kept(&|d: &NaiveDate| d.month() != 2 || d.day() == 1), 6, "a month whose one session is its first day is");
+    assert_eq!(kept(&|d: &NaiveDate| d.month() != 3), 5, "a month with no session is not");
+    mcloses[4] = 0.0;
+    assert_eq!(bar_check(&mdates, &mcloses, &ddates, &dcloses).checked, 5, "nor a month with no monthly close");
 }
