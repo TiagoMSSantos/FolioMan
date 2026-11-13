@@ -6155,7 +6155,13 @@ pub fn backtest_quote(
     // Native currency on BOTH sides (`rate: Some(1.0)`, close as the price), and the yield is a ratio,
     // so the units cancel and no FX is needed. `price_eur` is read by exactly two things in picks.rs —
     // the dividend score term and the `div` display column — so filling it moves nothing else.
-    quote.div_eur = dividend_sums(divs, d, Some(1.0));
+    // (#1477) `payout_guard` drops the payouts `payout_flags` flags on this cutoff's own slice first; the page
+    // applies the same guard at its last bar, so train and serve read one payout list. Off, as walked.
+    quote.div_eur = if crate::config::payout_guard() {
+        dividend_sums(&guard_payouts(d, c, divs), d, Some(1.0))
+    } else {
+        dividend_sums(divs, d, Some(1.0))
+    };
     quote.price_eur = c.last().copied();
     quote.perf = horizon_changes(d, c, None, windows, None); // calendar-based -> cadence-agnostic
     // (#1393) the endpoint ratio the momentum keys divide out, off the same slice `perf` was measured on
@@ -6433,6 +6439,71 @@ pub fn dividend_yields(div_eur: &[Option<f64>], price_eur: Option<f64>) -> Vec<O
             Some(total / years / px? * 100.0)
         })
         .collect()
+}
+
+/// (#1477) Two checks on Yahoo's payout rows, from the classes yfinance's price-repair page lists (a duplicate
+/// within 7 days; a payout 100x too big or too small). One code per payout, in order:
+/// 0 clean; 1 (D1) a duplicate row: its ex-date 7 days or less after the payout before it, its amount within
+/// 1 % of that one; 2 (D2) out of scale: above a quarter of the last close before its ex-date, or, once 5 or
+/// more payouts that are neither D1 nor over that quarter carry a close before them, 50 to 150 times above or
+/// below their median ratio (a £/pence or $/cents slip). A payout with no close before it gets no D2 check.
+/// `dates`/`closes` are the history the payouts are read against, and only payouts up to its last bar should
+/// be passed: the median then sees nothing a cutoff could not. Nothing here knows which payouts are real.
+pub fn payout_flags(dates: &[NaiveDate], closes: &[f64], divs: &[(NaiveDate, f64)]) -> Vec<u8> {
+    let mut flags = vec![0u8; divs.len()];
+    for (j, w) in divs.windows(2).enumerate() {
+        let ((d0, a0), (d1, a1)) = (w[0], w[1]);
+        if (d1 - d0).num_days() <= 7 && (a1 - a0).abs() <= 0.01 * a0.abs().max(a1.abs()) {
+            flags[j + 1] = 1;
+        }
+    }
+    let ratio: Vec<Option<f64>> = divs
+        .iter()
+        .map(|(d, a)| {
+            let i = dates.partition_point(|x| x < d).checked_sub(1)?;
+            closes.get(i).copied().filter(|c| *c > 0.0).map(|c| a / c)
+        })
+        .collect();
+    for (f, r) in flags.iter_mut().zip(&ratio) {
+        if *f == 0 && r.is_some_and(|r| r > 0.25) {
+            *f = 2;
+        }
+    }
+    let mut pool: Vec<f64> = flags.iter().zip(&ratio).filter(|(f, _)| **f == 0).filter_map(|(_, r)| *r).collect();
+    if pool.len() >= 5 {
+        pool.sort_by(f64::total_cmp);
+        let med = (pool[(pool.len() - 1) / 2] + pool[pool.len() / 2]) / 2.0;
+        for (f, r) in flags.iter_mut().zip(&ratio) {
+            let off = r.filter(|r| *r > 0.0 && med > 0.0).map(|r| (r / med).max(med / r));
+            if *f == 0 && off.is_some_and(|o| (50.0..=150.0).contains(&o)) {
+                *f = 2;
+            }
+        }
+    }
+    flags
+}
+
+/// (#1477) `divs` up to and including the last bar of `dates`, less what [`payout_flags`] flags when read
+/// against that same history. Called with a cutoff's own slice, its flags see only the payouts and closes
+/// the cutoff could see, so the guard adds no look-ahead to the walk.
+pub fn guard_payouts(dates: &[NaiveDate], closes: &[f64], divs: &[(NaiveDate, f64)]) -> Vec<(NaiveDate, f64)> {
+    let Some(&last) = dates.last() else {
+        return Vec::new();
+    };
+    let seen: Vec<(NaiveDate, f64)> = divs.iter().copied().filter(|(d, _)| *d <= last).collect();
+    let flags = payout_flags(dates, closes, &seen);
+    seen.into_iter().zip(flags).filter(|(_, f)| *f == 0).map(|(p, _)| p).collect()
+}
+
+/// (#1477) The census's question for one cutoff: would the guard change its trailing-1Y payout sum, i.e. does
+/// a payout [`payout_flags`] flags on this history have its ex-date in the last 365 days of `dates`?
+pub fn payout_guard_moves_1y(dates: &[NaiveDate], closes: &[f64], divs: &[(NaiveDate, f64)]) -> bool {
+    let Some(&last) = dates.last() else {
+        return false;
+    };
+    let seen: Vec<(NaiveDate, f64)> = divs.iter().copied().filter(|(d, _)| *d <= last).collect();
+    let start = last - Duration::days(365);
+    seen.iter().zip(payout_flags(dates, closes, &seen)).any(|((d, _), f)| f != 0 && *d > start)
 }
 
 /// Signed % from a horizon entry; "n/a" if missing. ≥1000% drops the decimal so a +26522% 20Y cell
@@ -12299,4 +12370,77 @@ fn bond_index_rebuilds_a_10y_return_from_yields() {
     assert_eq!(index.keys().next(), Some(&24006), "the chain restarts after the hole");
     assert_eq!(bond_cum(&index, 2), None, "so 2Y reads n/a, never a splice");
     assert!(close(bond_cum(&index, 1).unwrap(), 6.167781186449828));
+}
+
+/// (#1477) The two payout checks. D1: a second row 7 days after the first with the same amount, or within 1 %,
+/// is flagged; 8 days apart or 2 % off is not. D2: a payout over a quarter of the close before it is flagged even
+/// alone; one under it is not; a 100x slip either way is flagged against the median of 5 or more, and not against
+/// 4; 55x and 145x flag, 45x and 155x do not; a special dividend 12x the regular one and a monthly payer are left
+/// alone; a payout with no close before it gets no D2 check.
+#[test]
+fn payout_flags_catch_duplicates_and_unit_slips() {
+    let day = |n: i64| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + Duration::days(n);
+    let dates: Vec<NaiveDate> = (0..60).map(|k| day(30 * k)).collect();
+    let closes = vec![100.0; 60];
+    let q = |k: i64, a: f64| (day(90 * k + 15), a);
+    let flagged = |divs: &[(NaiveDate, f64)]| -> Vec<(usize, u8)> {
+        payout_flags(&dates, &closes, divs).into_iter().enumerate().filter(|(_, f)| *f != 0).collect()
+    };
+    let payer = |a: f64, slip: Option<f64>| -> Vec<(NaiveDate, f64)> { (0..8).map(|k| q(k, if k == 5 { slip.unwrap_or(a) } else { a })).collect() };
+    let clean = payer(0.5, None);
+    assert_eq!(flagged(&clean), vec![], "a clean quarterly payer");
+    let with = |days: i64, amount: f64| {
+        let mut v = clean.clone();
+        v.insert(4, (clean[3].0 + Duration::days(days), amount));
+        v
+    };
+    assert_eq!(flagged(&with(7, 0.5)), vec![(4, 1)], "the same payout again 7 days later");
+    assert_eq!(flagged(&with(7, 0.505)), vec![(4, 1)], "within 1 %");
+    assert_eq!(flagged(&with(8, 0.5)), vec![], "8 days apart is two payouts");
+    assert_eq!(flagged(&with(7, 0.51)), vec![], "2 % apart is two payouts");
+    assert_eq!(flagged(&[q(0, 26.0)]), vec![(0, 2)], "over a quarter of the close, alone");
+    assert_eq!(flagged(&[q(0, 24.0)]), vec![], "under it, alone: no median to read against");
+    assert_eq!(flagged(&payer(0.5, Some(0.005))), vec![(5, 2)], "100x too small");
+    assert_eq!(flagged(&payer(0.1, Some(10.0))), vec![(5, 2)], "100x too big, under the quarter");
+    assert_eq!(flagged(&payer(0.1, Some(5.5))), vec![(5, 2)], "55x");
+    assert_eq!(flagged(&payer(0.1, Some(14.5))), vec![(5, 2)], "145x");
+    assert_eq!(flagged(&payer(0.1, Some(4.5))), vec![], "45x");
+    assert_eq!(flagged(&payer(0.1, Some(15.5))), vec![], "155x");
+    assert_eq!(flagged(&payer(0.5, Some(6.0))), vec![], "a special dividend 12x the regular one");
+    let four: Vec<_> = [0.5, 0.5, 0.5, 0.005].iter().enumerate().map(|(k, a)| q(k as i64, *a)).collect();
+    assert_eq!(flagged(&four), vec![], "4 payouts carry no median");
+    let five: Vec<_> = [0.5, 0.5, 0.5, 0.5, 0.005].iter().enumerate().map(|(k, a)| q(k as i64, *a)).collect();
+    assert_eq!(flagged(&five), vec![(4, 2)], "5 do");
+    let monthly: Vec<_> = (0..12).map(|k| (day(30 * k + 5), 0.4)).collect();
+    assert_eq!(flagged(&monthly), vec![], "a monthly payer");
+    assert_eq!(flagged(&[(day(-10), 1000.0)]), vec![], "no close before it, no D2 check");
+}
+
+/// (#1477) The guard keeps payouts up to the last bar and drops what is flagged on that same history, so a
+/// cutoff never reads a later payout: five early payouts at 0.01 that the full history (six more at 1.00) reads
+/// as 100x slips are clean on the early slice. The census question reads only the last 365 days.
+#[test]
+fn guard_payouts_reads_only_the_cutoffs_own_history() {
+    let day = |n: i64| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + Duration::days(n);
+    let dates: Vec<NaiveDate> = (0..60).map(|k| day(30 * k)).collect();
+    let closes = vec![100.0; 60];
+    let q = |k: i64, a: f64| (day(90 * k + 15), a);
+    let divs: Vec<_> = (0..11).map(|k| q(k, if k < 5 { 0.01 } else { 1.0 })).collect();
+    let early = guard_payouts(&dates[..=13], &closes[..=13], &divs);
+    assert_eq!(early, divs[..5].to_vec(), "on its own slice the early payer is clean, and nothing past day 390 is read");
+    assert_eq!(guard_payouts(&dates, &closes, &divs), divs[5..].to_vec(), "the whole history drops the five");
+    assert_eq!(guard_payouts(&[], &[], &divs), vec![]);
+    let mut dup: Vec<_> = (0..7).map(|k| q(k, 0.5)).collect();
+    dup.insert(4, (dup[3].0 + Duration::days(3), 0.5));
+    let at = &dates[..=20];
+    assert_eq!(guard_payouts(at, &closes[..=20], &dup).len(), 7, "the duplicate goes, the seven stay");
+    assert!(payout_guard_moves_1y(at, &closes[..=20], &dup), "a flagged payout 308 days before the cutoff");
+    let mut early_dup: Vec<_> = (0..7).map(|k| q(k, 0.5)).collect();
+    early_dup.insert(1, (day(22), 0.5));
+    assert!(!payout_guard_moves_1y(at, &closes[..=20], &early_dup), "flagged, but 578 days back");
+    assert!(!payout_guard_moves_1y(at, &closes[..=20], &(0..7).map(|k| q(k, 0.5)).collect::<Vec<_>>()), "nothing flagged");
+    assert!(!payout_guard_moves_1y(&[], &[], &dup));
+    let edge = |d: i64| vec![(day(d - 5), 0.5), (day(d), 0.5)];
+    assert!(!payout_guard_moves_1y(at, &closes[..=20], &edge(235)), "exactly 365 days back is outside the year");
+    assert!(payout_guard_moves_1y(at, &closes[..=20], &edge(236)), "364 days back is inside it");
 }

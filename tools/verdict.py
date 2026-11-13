@@ -31,6 +31,11 @@ Logs are `gh run view <id> --log > file` (or bare text). Rows, BOOK lines, bands
            Among qualifiers the largest smallest worst-window gain wins, a tie going to the larger cap; a winner
            that lifts no worst window is indistinguishable from off.
                python3 -I tools/verdict.py cap --control c.log --cap 3=k3.log 4=k4.log 5=k5.log
+  payouts  (#1477) the Yahoo payout census: one control log (no knobs) and one arm log (knobs payout_guard=true), each
+           with `payouts` in its args and the 20y, 12y and 8y walks. Prints the census lines of every walk, then each
+           horizon's top-10 book in both. The (#1247) rule: QUESTION when the arm moves the top-10 mean or median by
+           0.1 or more at any horizon, else RECORD (the Screen A/B's page rows are the rule's other half).
+               python3 -I tools/verdict.py payouts --control c.log --arm a.log
   guard    (#1436) and any harm-guard grid: per horizon and row, the GUARD line's word and RU1-RU3 against row 0.
            `--row TEXT` names the row to decide (a substring of its JSON): SHIP when the guard reads PASS or INERT
            and no RU cell fails, at 12y and at 8y.
@@ -63,6 +68,8 @@ RECENT_SLACK, GAP_SHARE = 1.0, 0.5  # (#1435) >=2014 against arm row 0; the shar
 TIE, LOSS_BOTH, WORST_SLACK = 0.5, 0.2, 1.0  # (#1431)
 CAP_MEDIAN = 0.1  # (#557) how far a capped book's median may sit under the control's
 STEP, HEAD_WORST = 0.2, 0.5  # (#1441) the (#584) C step, and how far a rung's worst program may sit under flat's
+PAYOUT_MOVE = 0.1  # (#1477) the (#1247) rule: a top-10 mean or median moved this much at any horizon asks the owner
+PAYOUT_LINE = re.compile(r"backtest: \(#1477\) (.*)$")
 EPS = 1e-9
 
 
@@ -326,6 +333,33 @@ def cap(control_text, caps, out=print):
     return "SHIP?", best
 
 
+def payouts(control_text, arm_text, out=print):
+    """(#1477): the census lines of each walk, each horizon's top-10 book in the control and the arm, and the (#1247)
+    rule: ("QUESTION", [horizons that moved]), ("RECORD", []) or ("UNREAD", [])."""
+    for kind, years, body in chunks(control_text):
+        for line in body.splitlines():
+            m = PAYOUT_LINE.search(line)
+            if m:
+                out(f"  {'' if years is None else str(years) + 'y '}{m.group(1)}")
+    control, arm = top10s(control_text), top10s(arm_text)
+    years = sorted(control, reverse=True)
+    if not years or set(control) != set(arm):
+        out("VERDICT: UNREAD — the control and the arm must hold the same horizons")
+        return "UNREAD", []
+    moved = []
+    for y in years:
+        (cm, cmed, cw), (am, amed, aw) = control[y], arm[y]
+        big = abs(am - cm) >= PAYOUT_MOVE - EPS or abs(amed - cmed) >= PAYOUT_MOVE - EPS
+        out(f"  {y}y top-10 mean {cm:+.1f} -> {am:+.1f}, median {cmed:+.1f} -> {amed:+.1f}, worst {cw:+.1f} -> {aw:+.1f}" + ("  MOVED" if big else ""))
+        if big:
+            moved.append(y)
+    if moved:
+        out(f"VERDICT: QUESTION — the guard moves the top-10 book by {PAYOUT_MOVE} or more at {', '.join(f'{y}y' for y in moved)}: one owner question")
+        return "QUESTION", moved
+    out(f"VERDICT: RECORD — no horizon moves by {PAYOUT_MOVE}; a top-10 page row the Screen A/B moves is the other trigger")
+    return "RECORD", []
+
+
 def guard_rows(text):
     """{years: {row label: guard word}} from each horizon's GUARD block."""
     out, years, on = {}, None, False
@@ -469,6 +503,15 @@ def selftest():
     assert cap(ctl, {3: hurts}, quiet) == ("KEEP", None) and cap(ctl, {3: walk(12, 3.0, -8.0)}, quiet)[0] == "UNREAD"
     assert cap(ctl, {3: lifts, 4: lifts}, quiet) == ("SHIP?", 4), "a tie goes to the larger cap"
     assert [k for k, _, _ in chunks(control)] == ["backtest", "backtest"] and chunks("bare")[0][0] == "whole"
+    # payouts: the census lines are echoed per walk, and the (#1247) rule reads the top-10 line of each horizon
+    census = "backtest: (#1477) payouts by market: USA 30211 read, D1 3, D2 0"
+    seen = []
+    assert payouts(ctl.replace("── GROWTH: HOLD 20y", census + "\n── GROWTH: HOLD 20y"), same, seen.append) == ("RECORD", [])
+    assert seen[0] == "  20y payouts by market: USA 30211 read, D1 3, D2 0", seen[0]
+    nudged = three([(2.0, -9.0), (3.1, -8.6), (2.9, -6.9)])     # the 12y median 0.1 up: the rule's own size
+    assert payouts(ctl, nudged, quiet) == ("QUESTION", [12])
+    assert payouts(ctl, three([(1.9, -9.0), (3.0, -8.6), (2.8, -6.9)]), quiet) == ("QUESTION", [20, 8]), "either way"
+    assert payouts(ctl, walk(12, 3.0, -8.6), quiet) == ("UNREAD", [])
     print("verdict selftest ok")
 
 
@@ -488,6 +531,9 @@ def main():
     c = sub.add_parser("cap")
     c.add_argument("--control", required=True)
     c.add_argument("--cap", nargs="+", required=True, metavar="K=LOG")
+    pa = sub.add_parser("payouts")
+    pa.add_argument("--control", required=True)
+    pa.add_argument("--arm", required=True)
     q = sub.add_parser("guard")
     q.add_argument("log")
     q.add_argument("--row", help="a substring of the row's compact JSON, e.g. '\"dividend_weight\":0.17'")
@@ -504,6 +550,8 @@ def main():
         head({items[0]: {int(k): read(v) for k, v in (i.split("=", 1) for i in items[1:])} for items in a.lane})
     elif a.cmd == "cap":
         cap(read(a.control), {int(k): read(v) for k, v in (i.split("=", 1) for i in a.cap)})
+    elif a.cmd == "payouts":
+        payouts(read(a.control), read(a.arm))
     else:
         guard(read(a.log), a.row)
 

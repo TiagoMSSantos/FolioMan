@@ -23943,6 +23943,7 @@ buy_heuristic:
   calmar_cap: 2.0                # (C) cap that CAGR/max-drawdown ratio
 
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
+  payout_guard: false            # (#1477) drop flagged Yahoo payouts before the dividend term; false = as served
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
@@ -29611,6 +29612,76 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   a gap smaller than the tests can trust that points one way every time. The picks were keep 10 (up to 0.7 %/yr
 #   less on that second test, five names holding 83 % of the money), go back to 25, or try 20. The answer was
 #   "Keep 10 names (Recommended)". The book size is closed: a re-ask needs a new ruler or the twelve forward links.
+
+# (#1477) THE YAHOO PAYOUT CENSUS, PRE-REGISTERED 2026-11-13 before any run. Knob: `payout_guard` (false ships).
+#   Row: (#1480). Record only: nothing here reaches rank, BUY NOW, size, trade or the broker without the owner's word.
+# WHY: yfinance's price-repair page (ranaroussi.github.io/yfinance/advanced/price_repair.html) lists how Yahoo's
+#   dividend rows go wrong: an adjustment missing or 100x off, a duplicate within 7 days, a payout 100x off the
+#   ex-date drop, a wrong ex-date, a fund's capital gains counted twice. Its PRICE classes are the ones (#1468),
+#   (#1471) and (#1472) just fixed. The payout side has no guard: `parse_chart` keeps every `events.dividends` row
+#   (only the splice cut and the hand splits touch it), `dividends_in_window` sums them raw, (#1472) says "volumes
+#   and payouts do not move", and the (#1247) census reads closes only.
+# WHERE IT CAN BITE: the dividend term, at most 0.5 x 6 x keep (2.16 points, 2.28 for an EU payer), and the DIV,
+#   PAYOUT% and FCF-PAY% columns. The walk's payout multiple reads payouts only under `backtest_tr_ruler` (off).
+# THE CHECKS, two of the five classes (`core::payout_flags`): D1 a payout 7 days or less after the one before it,
+#   its amount within 1 % of that one; D2 a payout above a quarter of the last close before its ex-date, or, once
+#   5 or more payouts that are neither D1 nor over the quarter carry a close before them, 50 to 150 times above or
+#   below their median ratio (a pound/pence or dollar/cent slip). Left out: the ex-date class (the walk reads
+#   monthly bars, so a date off by days moves nothing) and capital gains (the request is `events=div,split`). With
+#   the knob on, `core::guard_payouts` drops both before `dividend_sums`, at the page's last bar and on each
+#   cutoff's own slice, so a cutoff's median sees only the payouts it could have seen. The unit tests pin each
+#   threshold on both sides, the look-ahead case and the 365-day edge.
+# RUN: two probes on the shipped config, years="20 12 8", args="universe fund pit dead payouts": the control (no
+#   knobs) and the arm (knobs="payout_guard=true"). Not a grid row: the guard acts while the walk builds each
+#   sample, so `RESCORE_FIXED` refuses it, as it refuses (#1391)'s window. Then the Screen A/B job ((#1450)) with
+#   knobs="payout_guard=true".
+# READ: `python3 -I tools/verdict.py payouts --control <control log> --arm <arm log>`: (a) each walk's two census
+#   lines, `backtest: (#1477) payouts by market: ...` (per `core::market_of`: payouts read, D1, D2, on each whole
+#   series as served) and `... cutoffs whose trailing-1Y payout sum the guard would change: X of Y`; (b) each
+#   horizon's top-10 book in both logs. Then (c) the A/B's list of page rows the knob moves.
+# RULE, (#1247)'s: the arm moves the top-10 mean or median by 0.1 or more at any horizon, either way (the reader's
+#   QUESTION), or the A/B moves a top-10 page row -> ONE owner question: ship `payout_guard: true` as a measurement
+#   fix, graded for harm: `python3 -I tools/regrade_ruler.py <control log> <arm log>` reads RU1-RU3 with the
+#   control as each horizon's first row, and none may fail at 12y or 8y. Otherwise RECORD (the reader's word),
+#   and the knob goes to RETIRED in the next refactor.
+# SAID BEFORE THE RUN: 1. D1 counts a handful, mostly on USA; 2. D2 sits mostly on United Kingdom and Switzerland
+#   lines, where (#1472) and (#1471) found unit and split errors, and some D2 hits are spin-offs Yahoo books as cash
+#   payouts (real money, but a one-off that does not belong in a trailing yield); 3. under 1 % of cutoffs move;
+#   4. the arm moves the top-10 book by less than 0.1 at every horizon and the A/B moves no top-10 page row.
+#   The honest prior is RECORD: the term is capped and small. The value is a DIV column that reads true.
+# REVERT RULE: none; the knob ships false.
+
+# (#1478) THE JKP RELEASE NET, 2026-11-13: `jkp_release_is_the_pinned_one` in tests/network.rs. A tool, no knob.
+#   (#1420) closed the paper route "until a newer JKP release", and nothing watched for one. The net HEADs the S3
+#   manifest (https://jkpfactors-data.s3.amazonaws.com/public/availability.json) and reds when its Last-Modified no
+#   longer reads the pin (#1346) graded on, 04 Aug 2026; a throttle, 403 or outage skips like every other net.
+#   STATE ON 2026-11-13, read on the web: the newest data note is bkelly-lab/jkp-data discussion #89, "Data Updated
+#   Through December 2025", Apr 16, 2026, which is the pinned file. Pull request #327 (characteristic-managed
+#   portfolios with 1, 2 and 5 size groups for every country) was merged on 2026-11-09 into the branch `sign-cmp`,
+#   not `main`; issue #286 asks to move US returns from CRSP to a Bessembinder-corrected Compustat (unread: rate
+#   limit). The manifest lists no size-group files yet.
+#   WHEN IT REDS: 1. read the release notes and record what changed; a new source for US returns moves every US gap,
+#   so the four shipped tilts (ey, mom61, capx, fcf) are re-graded with the menus, not only new ideas; 2. pre-register
+#   and run `tools/jkp_proof.py` menus 1, 2 and 4; 3. if the release carries size-group files, pre-register a
+#   big-group re-grade of the four shipped tilts before reading it (a large-cap book proved on large caps); its bar
+#   for those files is written in that block, not here; 4. move JKP_PIN.
+
+# (#1479) THE HEAD WEIGHT ON THE BOOK OF 10, PRE-REGISTERED 2026-11-13 before any run. Knob: `sizing.head_weight`.
+#   Row: (#1481). (#1442) read NONE QUALIFIES on the 25-name book, so its bar read flat and the owner's word was
+#   left open. Since (#1457) the book is 10: the first five hold 16.59 % of gross each, 83 % together. The question
+#   is the same; the book it was read on is not.
+# RUN: (#1441)'s grid on today's main, where the walk is the live-equivalent arm ((#1452)) and the book is 10, so
+#   the only knob is the rung: years="20", knobs="head_weight=H", H = 8, 4, 2, 1; pit args="universe fund pit
+#   rivals", dead args="universe fund pit dead rivals"; 8 probes in one batch.
+# READ: `python3 -I tools/verdict.py head --lane pit 8=LOG 4=LOG 2=LOG 1=LOG --lane dead 8=LOG 4=LOG 2=LOG 1=LOG`
+#   on the `S+inter never-sell vs index DCA` row. The bar is (#1441)'s: a rung qualifies when it beats flat (H=1)
+#   by +0.2 or more on mean AND median in both lanes with its worst program no more than 0.5 under flat's; none
+#   qualifies -> flat; else the smallest qualifying rung whose mean gain is within 0.2 of the best's in each lane.
+# SAID BEFORE THE RUN: the reader picks flat again. The ten names are the same at every H and only their weights
+#   move, so every gap sits inside the null band ((#1292)) and under the ruler's eye ((#1333)). The bar picks and
+#   the owner's word ships, as in (#1442). Outside evidence, not a bar: of Bessembinder's 29,078 US stocks
+#   (1925-2023), 51.6 % had a negative lifetime return, and the best 100 of each decade still fell 32.5 % on
+#   average at their worst inside it.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

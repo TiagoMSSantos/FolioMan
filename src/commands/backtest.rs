@@ -480,6 +480,25 @@ fn bars_census_line(census: &BTreeMap<String, usize>) -> String {
     census.iter().map(|(g, n)| format!("{} {n}", if g.is_empty() { "unknown" } else { g })).collect::<Vec<_>>().join(" | ")
 }
 
+/// (#1477) The payout census as one line, `Germany 412 read, D1 0, D2 1 | USA 30211 read, D1 3, D2 0`: one
+/// cell per `core::market_of` market, alphabetical by `BTreeMap`, so the line is stable run to run; an empty
+/// census reads `none`.
+fn payout_census_line(census: &BTreeMap<String, [usize; 3]>) -> String {
+    if census.is_empty() {
+        return "none".to_string();
+    }
+    census.iter().map(|(m, [n, d1, d2])| format!("{m} {n} read, D1 {d1}, D2 {d2}")).collect::<Vec<_>>().join(" | ")
+}
+
+/// (#1477) One series into the payout census, under its market: its payouts read (one flag each), then how
+/// many `core::payout_flags` coded 1 (D1) and 2 (D2).
+fn payout_census_add(census: &mut BTreeMap<String, [usize; 3]>, market: String, flags: &[u8]) {
+    let row = census.entry(market).or_insert([0; 3]);
+    row[0] += flags.len();
+    row[1] += flags.iter().filter(|f| **f == 1).count();
+    row[2] += flags.iter().filter(|f| **f == 2).count();
+}
+
 fn cutoffs(dates: &[chrono::NaiveDate], from: usize) -> impl Iterator<Item = usize> + '_ {
     (from..dates.len()).filter(move |&i| i == 0 || bucket(dates[i - 1]) != bucket(dates[i]))
 }
@@ -852,6 +871,7 @@ struct Args {
     rescore: bool,
     level: bool,
     jumps: bool,
+    payouts: bool,
     draws: usize,
     search: bool,
     configs: usize,
@@ -905,6 +925,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("rescore") => a_.rescore = true, // (#1227) re-run the book reports on a samples dump
             _ if a.eq_ignore_ascii_case("level") => a_.level = true, // (#1238) the level x path 2x2 on the entry-state book
             _ if a.eq_ignore_ascii_case("jumps") => a_.jumps = true, // (#1247) the book with price-jump windows neutralised
+            _ if a.eq_ignore_ascii_case("payouts") => a_.payouts = true, // (#1477) the Yahoo payout census, by market
             // (#1227) rival (e)'s random books: 200 keeps the gate's cost, 5000 lets a p below 1/201 print
             _ if a.starts_with("draws=") => a_.draws = a[6..].parse().ok().filter(|n| *n > 0).expect("draws=N takes a whole number above 0"),
             _ if a.eq_ignore_ascii_case("search") => a_.search = true, // (#1239) seeded knob search on samples dumps
@@ -983,8 +1004,9 @@ fn bench_path(dump: &std::path::Path) -> std::path::PathBuf {
 /// row that changed it would print the old run under a new name. Grade these with a probe run per arm.
 /// (#1284) The walk also builds `event_flags` from `growth_event_months` and picks `quote.fund_factor` by
 /// `growth_fund_factor`; `rescore` rebuilds neither.
-const RESCORE_FIXED: [&str; 17] = [
+const RESCORE_FIXED: [&str; 18] = [
     "backtest_live_window_years", // (#1391) range/drawdown/R² are computed in the walk's `backtest_quote`
+    "payout_guard",               // (#1477) the as-of payouts are guarded in the walk's `backtest_quote` too
     "backtest_anchor_windows",
     "backtest_tr_ruler",
     "drop_dead_ticker_series",
@@ -2357,7 +2379,7 @@ pub async fn run(args: Vec<String>) {
 
     let Args {
         years, wide, long, fund, tune, insider, holders, pac, failures, rivals, stock_rivals, winners, halflife, stress, pit, dead, dead_flat, intraday, holdwindows, traderules,
-        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, pond, guard, sec, time, mut tickers,
+        leverage, lifecycle, bestpick, rolls, options, rescore: rescore_dump, level, jumps, payouts, draws, search: search_dumps, configs, nulls, holdout, reveal, plant, pond, guard, sec, time, mut tickers,
     } = parse_args(&args);
     // (#1118) `time`: wall seconds per phase on stderr, so a slow section shows without a profiler.
     // Off, nothing prints. The fetch line covers the universe list, the histories and the benchmark.
@@ -2743,6 +2765,10 @@ pub async fn run(args: Vec<String>) {
     // under the knob as the receipt's proof that every name arrived monthly, and `refused` counts the
     // series the knob turned away. Off, nothing is printed and nothing is refused: byte-identical goldens.
     let bars_census = std::sync::Mutex::new(BTreeMap::<String, usize>::new());
+    // (#1477) under `payouts` only: per market, the payouts read and the two flags `core::payout_flags`
+    // raises on each whole series, and the cutoffs whose trailing-1Y payout sum the guard would change
+    let payout_census = std::sync::Mutex::new(BTreeMap::<String, [usize; 3]>::new());
+    let (payout_cutoffs, payout_moved) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     let dead_terminals = std::sync::atomic::AtomicUsize::new(0);
     // (#1389) step 2: the cutoffs `thin_volume` turned away, counted under the knob only
     let thin_cutoffs = std::sync::atomic::AtomicUsize::new(0);
@@ -2808,6 +2834,10 @@ pub async fn run(args: Vec<String>) {
             // unreconstructable and `dividend_weight` shipped ungraded. `backtest_quote` slices it
             // to the cutoff, so no look-ahead arrives with it.
             let divs = chart.divs;
+            if payouts {
+                let flags = core::payout_flags(&dates, &closes, &divs); // (#1477) the whole series, as served
+                payout_census_add(&mut payout_census.lock().unwrap_or_else(std::sync::PoisonError::into_inner), core::market_of(tk), &flags);
+            }
             let splits = chart.splits; // (#1245) read by `event_flags`, after the restate above
             // (#1301) the name's insider holdings by month ([`insider_own_bulk`]); empty unless `insider`
             let own: &[(chrono::NaiveDate, f64)] =
@@ -2877,6 +2907,13 @@ pub async fn run(args: Vec<String>) {
                             quote.event_flags = event_flags(&divs, &splits, member_spans, span_origin, dates[i], m);
                         }
                         quote.jump_ahead = jumps && jump_ahead(&dates, &closes, i, years); // (#1247)
+                        if payouts {
+                            // (#1477) on the cutoff's own history, as the guard reads it
+                            payout_cutoffs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if core::payout_guard_moves_1y(&dates[..=i], &closes[..=i], &divs) {
+                                payout_moved.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
                         // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                         // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
                         // back(yrs)`, the row `yrs` fiscal years back). Passing the horizon meant `fund 12`
@@ -2993,6 +3030,16 @@ pub async fn run(args: Vec<String>) {
         })
         .collect() };
     let per_ticker = walk(years);
+    if payouts {
+        // (#1477) two lines, under `payouts` only; taken, as the bars census is, so a later walk starts afresh
+        let census = std::mem::take(&mut *payout_census.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        println!("backtest: (#1477) payouts by market: {}", payout_census_line(&census));
+        println!(
+            "backtest: (#1477) cutoffs whose trailing-1Y payout sum the guard would change: {} of {}",
+            payout_moved.swap(0, std::sync::atomic::Ordering::Relaxed),
+            payout_cutoffs.swap(0, std::sync::atomic::Ordering::Relaxed)
+        );
+    }
     if span_knob {
         // (#1389) one line, under the knob only; taken (not cloned) so a later 0y walk starts a fresh count
         let census = std::mem::take(&mut *bars_census.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
@@ -11211,6 +11258,21 @@ mod tests {
         assert_eq!(bars_census_line(&BTreeMap::new()), "none");
     }
 
+    /// (#1477) The payout census line: one cell per market in alphabetical order, the three counts in a fixed
+    /// order, and `none` when no series was read.
+    #[test]
+    fn payout_census_line_is_stable_and_names_each_count() {
+        let census: BTreeMap<String, [usize; 3]> =
+            [("USA", [30211, 3, 0]), ("Germany", [412, 0, 1])].into_iter().map(|(m, c)| (m.to_string(), c)).collect();
+        assert_eq!(payout_census_line(&census), "Germany 412 read, D1 0, D2 1 | USA 30211 read, D1 3, D2 0");
+        assert_eq!(payout_census_line(&BTreeMap::new()), "none");
+        let mut added = BTreeMap::new();
+        payout_census_add(&mut added, "USA".to_string(), &[0, 1, 0, 2]);
+        payout_census_add(&mut added, "USA".to_string(), &[0, 0, 2]);
+        payout_census_add(&mut added, "Germany".to_string(), &[]);
+        assert_eq!(payout_census_line(&added), "Germany 0 read, D1 0, D2 0 | USA 7 read, D1 1, D2 2", "two series add up under one market");
+    }
+
     /// (#1389) step 2, the (#117) volume floor: 36 own bars with volume, the last ON the cutoff, pass and
     /// 35 do not; a bar with no volume and a bar after the cutoff do not count; an empty record (a
     /// dead-archive series, prices only) is never thin.
@@ -11234,6 +11296,8 @@ mod tests {
         let err = grid_tuning(&base, r#"{"backtest_live_window_years": 10.0}"#).expect_err("refused");
         assert!(err.contains("backtest_live_window_years") && err.contains("probe arm"), "{err}");
         assert!(grid_tuning(&base, r#"{"momentum_one_endpoint": true}"#).is_ok(), "the endpoint knob is a score-time read and may ride a grid row");
+        let err = grid_tuning(&base, r#"{"payout_guard": true}"#).expect_err("refused");
+        assert!(err.contains("payout_guard") && err.contains("probe arm"), "(#1477) a dump already carries its payouts: {err}");
     }
 
     /// (#790) Each cutoff lands on the first bar of its half-year bucket. The monthly record runs
@@ -13007,7 +13071,7 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps draws=9 search configs=3 nulls=4 holdout reveal plant pond guard sec time");
+        let all = p("8 universe long fund tune insider holders pac rivals stockrivals winners halflife stress pit dead deadflat failures intraday holdwindows traderules leverage lifecycle bestpick rolls options rescore level jumps payouts draws=9 search configs=3 nulls=4 holdout reveal plant pond guard sec time");
         assert_eq!(
             all,
             Args {
@@ -13039,6 +13103,7 @@ mod tests {
                 rescore: true,
                 level: true,
                 jumps: true,
+                payouts: true,
                 draws: 9,
                 search: true,
                 configs: 3,

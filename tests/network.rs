@@ -526,6 +526,29 @@ async fn inflation_us_parses() {
     assert_live_inflation(&core::parse_bls_cpi(&d), "BLS CPI-U");
 }
 
+/// (#1478) JKP release net: the paper route's trigger. (#1420) closed the route "until a newer JKP release",
+/// and nothing watched for one. The pin is the S3 manifest's Last-Modified the route was graded on, 2026-08-04
+/// ((#1346), months to 2025-12). A HEAD, no body; a throttle, 403 or outage skips through `probe` like every
+/// other net. Red means JKP published: read what changed, pre-register, run `tools/jkp_proof.py` menus 1, 2
+/// and 4 on the new files (and re-grade the four shipped tilts if US returns changed source), then move the pin.
+const JKP_MANIFEST: &str = "https://jkpfactors-data.s3.amazonaws.com/public/availability.json";
+const JKP_PIN: &str = "04 Aug 2026";
+
+#[tokio::test]
+async fn jkp_release_is_the_pinned_one() {
+    if net_opt_out("jkp_release_is_the_pinned_one") {
+        return;
+    }
+    let Some(resp) = probe(fetch::client().head(JKP_MANIFEST), "JKP manifest").await else {
+        return;
+    };
+    let modified = resp.headers().get(reqwest::header::LAST_MODIFIED).and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(
+        modified.contains(JKP_PIN),
+        "JKP RELEASE: the manifest's Last-Modified reads {modified:?}, the pin {JKP_PIN}: the paper route reopens (#1420)"
+    );
+}
+
 /// (#372) Constituents drift net. The equity universe IS these ponds, and `constituent_ponds` drops
 /// an empty one with a stderr line, so a moved dataset or a reshaped CSV quietly empties the stock
 /// lane on every run. Parses the probed body with the universe's own `core::pond_rows` (no cache on

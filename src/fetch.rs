@@ -1198,7 +1198,12 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         mom_pct,
-        div_eur: core::dividend_sums(&long_divs, &long_dates, rate),
+        // (#1477) the guard the walk applies at each cutoff, here at the last bar; off, every payout as served
+        div_eur: if crate::config::payout_guard() {
+            core::dividend_sums(&core::guard_payouts(&long_dates, &long_closes, &long_divs), &long_dates, rate)
+        } else {
+            core::dividend_sums(&long_divs, &long_dates, rate)
+        },
         price_eur: rate.map(|r| cur_close * r),
         close_native: Some(cur_close), // (Item 19) native-currency close for a currency-consistent earnings_yield
         quote_currency: Some(chart.currency.clone()), // (FX) what close_native is denominated in — the proof a filer's EPS may be divided by it
