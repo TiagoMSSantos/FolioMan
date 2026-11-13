@@ -29985,6 +29985,19 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Investment clusters, all with one shape, strong in the US and absent abroad.
 # NOT DONE HERE: the twins and the guard. The run is one call on the 25 pinned files of (#1346); its RESULT and
 #   VERDICT follow in this block.
+# RESULT, 2026-11-13: 0 of the 3 pass. One run, 18 s, `python3 -I -B tools/jkp_proof.py <dir> --menu 5`, the tool as of
+#   ff9cbda, on the 25 pinned files of (#1346), whose md5s all match the list there. Market column `ret_2026`.
+#   UNIT CHECKS read as (#1430)'s did: (i) 0.0082 to the USD market against 0.0285 to the local one; (ii) slope -0.96,
+#   so EXCESS; (iii) 0.0010 against 0.0265, so USD EXCESS.
+#   EACH ROW, in menu order, as US t and post mean %/yr, then developed ex-US t and post mean %/yr:
+#     at_be -1.12 -1.7, -0.86 -0.4; z_score -0.20 -0.4, -0.75 -1.0; pi_nix 3.15 +0.7, 0.93 +0.3.
+#   Months graded: US 902 (at_be, pi_nix) and 764 (z_score), developed ex-US 526; post-publication months 396 (at_be),
+#   324 (z_score) and 252 (pi_nix).
+# VERDICT: menu 5 is closed. No twin is built, no guard probe runs, no column ships, and exclusion (a) now stands on
+#   the route's own bar for every open-cluster name. WHY NONE PASSES: at_be's low third and z_score's high third trail
+#   the market in both regions (US full-sample means -0.8 and -0.2 %/yr), so neither low leverage nor low distress
+#   earns on the long side alone; pi_nix passes the US (t 3.15, post +0.7 %/yr) and misses developed ex-US on t
+#   (0.93), the shape of menus 2 and 4. EXPECTED, quoted against what happened: "0 of the 3 pass" HELD.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
