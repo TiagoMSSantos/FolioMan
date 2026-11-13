@@ -5217,7 +5217,16 @@ pub fn split_factor_since(splits: &[(NaiveDate, f64)], since: NaiveDate) -> f64 
 /// a seventh that no holder saw and the page read 17 years at a loss. The chart parser looks for a
 /// step near the row's date, so the row is dated at the first bar on the new share, January 2010,
 /// not at the split; no record line is that old, and the record restates nothing for it.
-const HAND_SPLITS: &[(&str, (i32, u32, u32), f64)] = &[("LYBK.DE", (2026, 10, 28), 80.0), ("BNKE.PA", (2026, 10, 28), 80.0), ("SP5C.L", (2026, 10, 29), 100.0), ("SP5C.PA", (2026, 10, 29), 100.0), ("SRECHA.SW", (2010, 1, 1), 7.0)];
+/// (#1473) Five Swiss fund lines are rows of the SRECHA.SW kind. Each fund split in 2024 or 2025, long
+/// before the first record line, and the feed lists none of the five splits and restates no bar before
+/// them, so the pool read each fund at a loss it never had: SP500S.SW, an S&P 500 fund, read -5.7 %/yr
+/// over 10 years, and SMIA.SW -40.6 %/yr. Each row is dated at the first daily bar on the new share, and
+/// its ratio is the whole number the daily bars fall by at that bar: SP500S.SW 5.01, 5ESGS.SW 6.01,
+/// EURCHA.SW 4.00, WSRIC.SW 2.99, SMIA.SW 3.00. The weekly and monthly bars that hold the step are dated
+/// at most 22 days before it, inside the parser's window. SPHC.MI is not a row: its bars stop for ten
+/// months in 2020 and come back at 1/2.11 of the price, while the S&P 500 it follows rose 6.96 % between
+/// the two bars, so that step is a change of share class at a ratio nothing on file states.
+const HAND_SPLITS: &[(&str, (i32, u32, u32), f64)] = &[("LYBK.DE", (2026, 10, 28), 80.0), ("BNKE.PA", (2026, 10, 28), 80.0), ("SP5C.L", (2026, 10, 29), 100.0), ("SP5C.PA", (2026, 10, 29), 100.0), ("SRECHA.SW", (2010, 1, 1), 7.0), ("SP500S.SW", (2024, 9, 16), 5.0), ("5ESGS.SW", (2024, 9, 16), 6.0), ("EURCHA.SW", (2024, 9, 13), 4.0), ("WSRIC.SW", (2024, 9, 16), 3.0), ("SMIA.SW", (2025, 6, 23), 3.0)];
 
 /// (#1468) The [`HAND_SPLITS`] rows of `ticker` in the shape [`split_factor_since`] reads.
 pub fn hand_splits(ticker: &str) -> Vec<(NaiveDate, f64)> {

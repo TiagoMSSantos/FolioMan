@@ -448,11 +448,85 @@ fn undo_hand_splits(hand: &[(NaiveDate, f64)], dates: &[NaiveDate], prices: [&mu
         let near = |d: NaiveDate| (-31..=31).contains(&(d - day).num_days());
         splits.retain(|(d, _)| !near(*d));
         let Some(i) = (1..dates.len().min(closes.len())).find(|&i| near(dates[i]) && (0.67..1.5).contains(&(closes[i - 1] / closes[i] / ratio))) else { continue };
+        split_back(i, ratio, dates, [&mut *closes, &mut *opens, &mut *highs, &mut *lows], volumes, divs);
+    }
+}
+
+/// Put every bar before bar `i` on the share after a `ratio` for 1 split, as the feed does for a split
+/// it lists: prices and per-share payouts divided by the ratio, share volume multiplied.
+fn split_back(i: usize, ratio: f64, dates: &[NaiveDate], prices: [&mut Vec<f64>; 4], volumes: &mut [f64], divs: &mut [(NaiveDate, f64)]) {
+    for leg in prices {
+        leg.iter_mut().take(i).for_each(|x| *x /= ratio);
+    }
+    volumes.iter_mut().take(i).for_each(|x| *x *= ratio);
+    divs.iter_mut().filter(|(d, _)| *d < dates[i]).for_each(|(_, a)| *a /= ratio);
+}
+
+/// (#1475) Drop a lone bad bar from a fund line: one close 1.8 times or more off both of its
+/// neighbours, the same way, while the two neighbours agree within 10 %. The feed prints such a bar
+/// now and then (UST10.SW closed 9.96, 19.76 and 9.97 on three days running); kept, it is a doubling
+/// and a halving that never happened, in the drawdown, the range high and every leg over it. All six
+/// bar legs go together; payouts and splits are keyed by date and stay.
+/// shortcut: a true round trip of 1.8 times inside two bars, which a leveraged product could print on
+/// monthly bars, reads as a bad print and is dropped; two bad bars in a row are not seen, and neither
+/// is a bad first or last bar, which has one neighbour only.
+fn drop_lone_spikes(dates: &mut Vec<NaiveDate>, prices: [&mut Vec<f64>; 4], volumes: &mut Vec<f64>) {
+    let [closes, opens, highs, lows] = prices;
+    let c = closes.clone();
+    let bad: Vec<usize> = (1..c.len().saturating_sub(1))
+        .filter(|&i| {
+            let (a, b, n) = (c[i - 1], c[i], c[i + 1]);
+            (0.9..=1.1).contains(&(a / n)) && (b >= 1.8 * a.max(n) || 1.8 * b <= a.min(n))
+        })
+        .collect();
+    for &i in bad.iter().rev() {
+        dates.remove(i);
+        volumes.remove(i);
         for leg in [&mut *closes, &mut *opens, &mut *highs, &mut *lows] {
-            leg.iter_mut().take(i).for_each(|x| *x /= ratio);
+            leg.remove(i);
         }
-        volumes.iter_mut().take(i).for_each(|x| *x *= ratio);
-        divs.iter_mut().filter(|(d, _)| *d < dates[i]).for_each(|(_, a)| *a /= ratio);
+    }
+}
+
+/// (#1476) Guess a split the feed never listed, on a fund's daily bars: one bar where the close falls to
+/// 1/k of the bar before, k a whole number from 2 to 10 within 3 %, the old level held on each of the 5
+/// bars before it (above 1.5 times the new close) and the new level on each of the 5 bars from it
+/// (under the old close over 1.5), with no listed split within 31 days. The bars before it go on the
+/// new share (`split_back`) and the guess joins `splits`, so the record is restated off it
+/// (`track::adjust_for_splits`), the (#1469) check stops naming the fund, and `quote_one` puts the
+/// monthly head on the new share too. Without it the splice trimmer cuts every bar before the step, or,
+/// on a step too small for the trimmer, the history reads a crash.
+/// shortcut: a real one-day fall to a half, a third and so on that then holds for 5 days, which a
+/// leveraged product can print, reads as a split and is undone; the owner took that risk on 2026-11-13.
+/// A reverse split, a rise to k times, is not guessed. The backtest reads the monthly payload alone, so
+/// there a guess fires only on a young line the feed serves on daily bars.
+fn guess_splits(dates: &[NaiveDate], prices: [&mut Vec<f64>; 4], volumes: &mut [f64], divs: &mut [(NaiveDate, f64)], splits: &mut Vec<(NaiveDate, f64)>) {
+    let [closes, opens, highs, lows] = prices;
+    for i in 5..dates.len().min(closes.len()).saturating_sub(4) {
+        let (was, now) = (closes[i - 1], closes[i]);
+        let k = (was / now).round();
+        if !(2.0..=10.0).contains(&k) || (was / now / k - 1.0).abs() > 0.03 || splits.iter().any(|(d, _)| (*d - dates[i]).num_days().abs() <= 31) {
+            continue;
+        }
+        if closes[i - 5..i].iter().all(|c| *c > 1.5 * now) && closes[i..i + 5].iter().all(|c| c * 1.5 < was) {
+            split_back(i, k, dates, [&mut *closes, &mut *opens, &mut *highs, &mut *lows], volumes, divs);
+            splits.push((dates[i], k));
+        }
+    }
+    splits.sort_by_key(|(d, _)| *d);
+}
+
+/// (#1476) Put the monthly head (`closes`, `divs`: the monthly bars and payouts before the daily
+/// window) on the share the daily tail is on, for the splits the daily payload holds and the monthly
+/// one does not: a guessed split reads the daily bars only. Only when the seam shows that step, the
+/// last head close about k times the first daily close: the feed serves both payloads on the new share
+/// for a split it lists in one of them only, and there the seam is flat and nothing moves.
+fn head_onto_daily_share(closes: &mut [f64], divs: &mut [(NaiveDate, f64)], first_daily: f64, daily: &[(NaiveDate, f64)], monthly: &[(NaiveDate, f64)]) {
+    let k: f64 = daily.iter().filter(|(d, _)| !monthly.iter().any(|(e, _)| (*e - *d).num_days().abs() <= 31)).map(|(_, k)| k).product();
+    let Some(&last) = closes.last() else { return };
+    if !(0.67..1.5).contains(&k) && (0.67..1.5).contains(&(last / first_daily / k)) {
+        closes.iter_mut().for_each(|c| *c /= k);
+        divs.iter_mut().for_each(|(_, a)| *a /= k);
     }
 }
 
@@ -587,6 +661,14 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     // leaves no step here; before the trimmer, for the same reason as the hand list
     if ticker.ends_with(".L") {
         undo_unit_slips([&mut closes, &mut opens, &mut highs, &mut lows]);
+    }
+    // (#1475)/(#1476) fund lines only, never a stock or a coin: a stock's one-day halving can be real,
+    // and the feed lists a stock's splits; a coin is not an ETF. Before the trimmer, as above.
+    if meta.get("instrumentType").and_then(Value::as_str).is_some_and(|t| t.eq_ignore_ascii_case("ETF")) {
+        drop_lone_spikes(&mut dates, [&mut closes, &mut opens, &mut highs, &mut lows], &mut volumes);
+        if meta.get("dataGranularity").and_then(Value::as_str) == Some("1d") {
+            guess_splits(&dates, [&mut closes, &mut opens, &mut highs, &mut lows], &mut volumes, &mut divs, &mut splits);
+        }
     }
 
     // (splice) drop everything before the last redenomination splice — an MXN head glued onto a GBP
@@ -974,10 +1056,11 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
                 }
                 let mut dates = lc.dates[..keep].to_vec();
                 let mut closes = lc.closes[..keep].to_vec();
-                dates.extend_from_slice(&chart.dates);
-                closes.extend_from_slice(&chart.closes);
                 let mut divs: Vec<(NaiveDate, f64)> =
                     lc.divs.iter().filter(|(d, _)| *d < cut).cloned().collect();
+                head_onto_daily_share(&mut closes, &mut divs, chart.closes[0], &chart.splits, &lc.splits);
+                dates.extend_from_slice(&chart.dates);
+                closes.extend_from_slice(&chart.closes);
                 divs.extend(chart.divs.iter().cloned());
                 (dates, closes, divs)
             }
@@ -7298,6 +7381,11 @@ static BF_ROW_NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new
 /// `bf_ter_cascade` reads it to check that a same-stem sibling is the same issuer's fund.
 static BF_SYM_NAME: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
 
+/// (#1474) Symbol -> the ISIN its justETF link keys on: [`isin_by_symbol`] of the ISIN cache as
+/// `fetch_xetra_etfs` writes it back, so the same map `enrich_etf_cells` reads the link off. `bf_meta`
+/// reads a fund's home country from it, through [`link_domicile`].
+static LINK_ISIN: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+
 /// Yahoo-name -> BF value via name prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
 /// UCITS ETF" vs BF's "… - USD Acc"). None unless every BF row starting with that name AGREES.
 ///
@@ -7325,6 +7413,20 @@ fn bf_by_name<T: Clone + PartialEq>(list: &std::sync::OnceLock<Vec<(String, T)>>
 /// shape-checked (`core::is_isin`), but a short string must yield None, never panic.
 fn isin_domicile(isin: &str) -> Option<String> {
     isin.get(..2).map(|p| p.to_ascii_uppercase())
+}
+
+/// (#1474) The home country a fund row shows is the first two letters of the ISIN its own link keys
+/// on, whenever the row has a link; `dom`, the country the Börse Frankfurt cascade found, is kept only
+/// for a row with none. Some symbols are the target of two ISINs, often a fund and the fund it merged
+/// into or moved to another country: ACWL.L of FR0011093418 and LU1829220133. The cascade's facts are
+/// those of whichever ISIN resolved last, the link those of the smallest ISIN ((#1020)), so on 15 such
+/// rows the page printed one country next to a link to a fund of another, as MWRD.PA printed LU
+/// beside the page of an Irish fund. The link's ISIN is the one the row is keyed on everywhere else.
+fn link_domicile(links: Option<&HashMap<String, String>>, ticker: &str, dom: Option<String>) -> Option<String> {
+    match links.and_then(|m| m.get(ticker)) {
+        Some(isin) => isin_domicile(isin),
+        None => dom,
+    }
 }
 
 /// Yahoo cookie+crumb pair for the query2 quoteSummary API (required since 2023). Fetched once per
@@ -8028,7 +8130,9 @@ fn bf_aum_exact(ticker: &str) -> Option<f64> {
 /// (USE/REPL/bench) the TER's cascade over the meta maps — the facts ride the same etp_search row.
 #[mutants::skip] // (#850) as `bf_aum`.
 fn bf_meta(ticker: &str, name: &str) -> BfMeta {
-    bf_ter_cascade(BF_META.get(), &BF_META_NAMES, BF_SYM_NAME.get(), ticker, name).unwrap_or_default()
+    let mut m = bf_ter_cascade(BF_META.get(), &BF_META_NAMES, BF_SYM_NAME.get(), ticker, name).unwrap_or_default();
+    m.dom = link_domicile(LINK_ISIN.get(), ticker, m.dom);
+    m
 }
 
 /// (#45) Why `bf_meta` came back empty for one fund. Four causes print an identical `n/a` today, and
@@ -8575,13 +8679,14 @@ pub async fn fetch_xetra_etfs(
     // changes — so on any warm run `fresh` is empty, `isin_of` was empty, and justETF could not key a
     // single lookup. It reported "answered for 0 non-BF funds" with nothing wrong at either end.
     let mut isin_of = isin_by_symbol(&isin_cache);
+    let mut isin_cache = isin_cache;
     if !fresh.is_empty() {
-        let mut isin_cache = isin_cache;
         isin_cache.extend(fresh);
         if let Ok(json) = serde_json::to_string(&isin_cache) {
             let _ = std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), json);
         }
     }
+    let _ = LINK_ISIN.set(isin_by_symbol(&isin_cache));
     // split into the ticker list + the symbol->TER and symbol->AUM maps (each stored once;
     // fetch_expense / bf_aum read them).
     let mut ter_map: HashMap<String, f64> = HashMap::new();
@@ -15592,6 +15697,133 @@ pub(crate) mod tests {
         assert_eq!((listed.closes, listed.volumes), (vec![3.5, 3.6, 3.5], vec![2000.0, 30.0, 40.0]));
     }
 
+    /// (#1475) `drop_lone_spikes` drops one close 1.8 times or more off both of its neighbours, the same
+    /// way, when the two agree within 10 %, from all six legs; the parser runs it on fund lines only.
+    #[test]
+    fn drop_lone_spikes_drops_one_bad_bar_from_a_fund_line() {
+        let day = |d| NaiveDate::from_ymd_opt(2026, 10, d).unwrap();
+        let run = |closes: &[f64]| {
+            let mut dates: Vec<NaiveDate> = (1..=closes.len() as u32).map(day).collect();
+            let (mut c, mut o, mut h, mut l) = (closes.to_vec(), closes.to_vec(), closes.iter().map(|x| x + 1.0).collect::<Vec<f64>>(), closes.iter().map(|x| x - 1.0).collect::<Vec<f64>>());
+            let mut v: Vec<f64> = (0..closes.len()).map(|i| i as f64).collect();
+            drop_lone_spikes(&mut dates, [&mut c, &mut o, &mut h, &mut l], &mut v);
+            (dates, c, o, h, l, v)
+        };
+        // 1 — UST10.SW closed 9.96, 19.76 and 9.97: the middle bar goes, from every leg
+        let (dates, c, o, h, l, v) = run(&[10.0, 9.96, 19.76, 9.97, 10.0]);
+        assert_eq!(dates, vec![day(1), day(2), day(4), day(5)]);
+        assert_eq!(c, vec![10.0, 9.96, 9.97, 10.0]);
+        assert_eq!(o, c, "the open leg goes with the close");
+        assert_eq!(h, vec![11.0, 9.96 + 1.0, 9.97 + 1.0, 11.0]);
+        assert_eq!(l, vec![9.0, 9.96 - 1.0, 9.97 - 1.0, 9.0]);
+        assert_eq!(v, vec![0.0, 1.0, 3.0, 4.0], "and its volume");
+        // 2 — the other way: a bar under 1/1.8 of both neighbours
+        assert_eq!(run(&[10.0, 5.5, 10.5]).1, vec![10.0, 10.5]);
+        // 3 — no lone bad bar: 1.7 times off, neighbours 12 % apart, a step that holds, either way, a bad
+        // first or last bar (one neighbour only), too short to tell
+        let kept: [&[f64]; 7] = [&[10.0, 17.0, 10.0], &[10.0, 20.0, 11.2], &[10.0, 20.0, 20.0], &[20.0, 10.0, 10.0], &[20.0, 10.0], &[5.0], &[]];
+        for closes in kept {
+            assert_eq!(run(closes).1, closes.to_vec(), "{closes:?}");
+        }
+        // 4 — wired into the parser for fund lines, ahead of the splice trimmer; a stock's day is read as
+        // the feed sent it (a 1.98 step is inside the trimmer's 2.0 a week)
+        let payload = |kind: &str| serde_json::json!({"chart": {"result": [{
+            "meta": {"instrumentType": kind, "dataGranularity": "1d"},
+            "timestamp": [1792756800, 1793016000, 1793102400], // 2026-10-23, -26, -27 at noon UTC
+            "indicators": {"quote": [{"close": [9.96, 19.76, 9.97], "volume": [20.0, 30.0, 40.0]}]}
+        }]}});
+        let fund = parse_chart(&payload("ETF"), "ZZUST.SW").unwrap();
+        assert_eq!((fund.dates, fund.closes, fund.volumes), (vec![day(23), day(27)], vec![9.96, 9.97], vec![20.0, 40.0]));
+        assert_eq!(parse_chart(&payload("EQUITY"), "ZZUST.SW").unwrap().closes, vec![9.96, 19.76, 9.97]);
+    }
+
+    /// (#1476) `guess_splits` puts the bars before an unlisted one-bar fall to 1/k (k whole, 2 to 10,
+    /// within 3 %), each level held 5 bars, on the new share and lists the guess; the parser runs it on a
+    /// fund's daily bars only.
+    #[test]
+    fn guess_splits_undoes_an_unlisted_whole_split_on_daily_fund_bars() {
+        let day = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        let dates: Vec<NaiveDate> = (1..=10).map(|d| day(10, d)).collect();
+        let run = |closes: [f64; 10], listed: &[(NaiveDate, f64)]| {
+            let (mut c, mut o, mut h, mut l) = (closes.to_vec(), closes.to_vec(), closes.map(|x| x + 1.0).to_vec(), vec![f64::NAN; 10]);
+            let mut v = vec![1.0; 10];
+            let mut divs = vec![(day(10, 3), 6.0), (day(10, 6), 2.0)];
+            let mut splits = listed.to_vec();
+            guess_splits(&dates, [&mut c, &mut o, &mut h, &mut l], &mut v, &mut divs, &mut splits);
+            (c, o, h, v, divs, splits)
+        };
+        let split3 = [30.0, 33.0, 27.0, 30.0, 30.0, 10.0, 11.0, 9.0, 10.0, 12.0];
+        // 1 — an unlisted 3 for 1 split on 10-06: the five bars before it go on the new share
+        let (c, o, h, v, divs, splits) = run(split3, &[]);
+        assert_eq!(c, vec![10.0, 11.0, 9.0, 10.0, 10.0, 10.0, 11.0, 9.0, 10.0, 12.0]);
+        assert_eq!(o, c, "the open leg rides the close's rescale");
+        assert_eq!(h, vec![31.0 / 3.0, 34.0 / 3.0, 28.0 / 3.0, 31.0 / 3.0, 31.0 / 3.0, 11.0, 12.0, 10.0, 11.0, 13.0]);
+        assert_eq!(v, vec![3.0, 3.0, 3.0, 3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0], "3 new shares trade for each old one");
+        assert_eq!(divs, vec![(day(10, 3), 2.0), (day(10, 6), 2.0)], "a payout on the step bar is already per new share");
+        assert_eq!(splits, vec![(day(10, 6), 3.0)], "listed, so the record restates off it");
+        // 2 — the feed lists a split within 31 days: its own, nothing guessed; 32 days off is another one
+        let near = [(day(11, 6), 3.0)];
+        let (c, _, _, _, _, splits) = run(split3, &near);
+        assert_eq!((c, splits), (split3.to_vec(), near.to_vec()));
+        let (c, _, _, _, _, splits) = run(split3, &[(day(11, 7), 2.0)]);
+        assert_eq!(c[0], 10.0);
+        assert_eq!(splits, vec![(day(10, 6), 3.0), (day(11, 7), 2.0)], "kept in date order");
+        // 3 — not a split: 3.15 is 5 % off 3, a fall that does not hold 5 bars, an old level not held 5
+        // bars, a fall past 10 for 1, a rise
+        for closes in [
+            [30.0, 30.0, 30.0, 30.0, 31.5, 10.0, 10.0, 10.0, 10.0, 10.0],
+            [30.0, 30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 25.0, 10.0, 10.0],
+            [30.0, 12.0, 30.0, 30.0, 30.0, 10.0, 10.0, 10.0, 10.0, 10.0],
+            [110.0, 110.0, 110.0, 110.0, 110.0, 10.0, 10.0, 10.0, 10.0, 10.0],
+            [10.0, 10.0, 10.0, 10.0, 10.0, 30.0, 30.0, 30.0, 30.0, 30.0],
+        ] {
+            let (c, _, _, _, _, splits) = run(closes, &[]);
+            assert_eq!((c, splits), (closes.to_vec(), vec![]), "{closes:?}");
+        }
+        // 4 — wired into the parser on a fund's daily bars only: monthly bars and a stock are read as the
+        // feed sent them (whole where the splice trimmer is off, cut at the 3 for 1 step where it is on)
+        let ones = [1.0; 10];
+        let payload = |kind: &str, bars: &str| serde_json::json!({"chart": {"result": [{
+            "meta": {"instrumentType": kind, "dataGranularity": bars},
+            // 2026-10-26 to -30 and 11-02 to -06, at noon UTC
+            "timestamp": [1793016000, 1793102400, 1793188800, 1793275200, 1793361600, 1793620800, 1793707200, 1793793600, 1793880000, 1793966400],
+            "indicators": {"quote": [{"close": split3, "volume": ones}]}
+        }]}});
+        let fund = parse_chart(&payload("ETF", "1d"), "ZZSPL.SW").unwrap();
+        assert_eq!((fund.closes, fund.splits), (vec![10.0, 11.0, 9.0, 10.0, 10.0, 10.0, 11.0, 9.0, 10.0, 12.0], vec![(day(11, 2), 3.0)]));
+        for (kind, bars) in [("ETF", "1mo"), ("EQUITY", "1d")] {
+            let other = parse_chart(&payload(kind, bars), "ZZSPL.SW").unwrap();
+            assert!(other.closes == split3.to_vec() || other.closes == split3[5..].to_vec(), "{kind} {bars}: {:?}", other.closes);
+            assert!(other.splits.is_empty(), "{kind} {bars}");
+        }
+    }
+
+    /// (#1476) `head_onto_daily_share` puts the monthly head on the daily tail's share for the splits only
+    /// the daily payload holds, and only across a seam that shows the step.
+    #[test]
+    fn head_onto_daily_share_moves_the_head_only_across_a_seam_step() {
+        let day = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        let guess = [(day(2024, 9), 3.0)];
+        let run = |closes: &[f64], first_daily: f64, daily: &[(NaiveDate, f64)], monthly: &[(NaiveDate, f64)]| {
+            let (mut c, mut divs) = (closes.to_vec(), vec![(day(2015, 6), 6.0)]);
+            head_onto_daily_share(&mut c, &mut divs, first_daily, daily, monthly);
+            (c, divs)
+        };
+        let head = (vec![27.0, 30.0], vec![(day(2015, 6), 6.0)]);
+        // 1 — a guessed 3 for 1 split: the head ends 3 times the first daily close, so it moves, payouts too
+        assert_eq!(run(&[27.0, 30.0], 10.0, &guess, &[]), (vec![9.0, 10.0], vec![(day(2015, 6), 2.0)]));
+        // 2 — the monthly payload lists it too, within 31 days: the head is on the new share already
+        assert_eq!(run(&[27.0, 30.0], 10.0, &guess, &[(day(2024, 10), 3.0)]), head);
+        // 3 — a flat seam: the feed serves the head on the new share for a split it lists once only
+        assert_eq!(run(&[9.0, 10.0], 10.0, &guess, &[]), (vec![9.0, 10.0], vec![(day(2015, 6), 6.0)]));
+        // 4 — two splits only the daily payload holds: the seam shows their product
+        assert_eq!(run(&[54.0, 60.0], 10.0, &[(day(2019, 3), 2.0), (day(2024, 9), 3.0)], &[]), (vec![9.0, 10.0], vec![(day(2015, 6), 1.0)]));
+        // 5 — a 1.05 split is too close to a flat seam to tell apart; no split; no head
+        assert_eq!(run(&[10.5, 10.5], 10.0, &[(day(2024, 9), 1.05)], &[]), (vec![10.5, 10.5], vec![(day(2015, 6), 6.0)]));
+        assert_eq!(run(&[27.0, 30.0], 10.0, &[], &[]), head);
+        assert_eq!(run(&[], 10.0, &guess, &[]), (vec![], vec![(day(2015, 6), 6.0)]));
+    }
+
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
     /// edge handling that silently breaks if Yahoo/FMP change shape.
     #[test]
@@ -15728,6 +15960,19 @@ pub(crate) mod tests {
         assert_eq!(isin_domicile("lu0908500753"), Some("LU".to_string()));
         assert_eq!(isin_domicile("X"), None);
         assert_eq!(isin_domicile(""), None);
+    }
+
+    /// (#1474) A row with a link shows the home country of the link's ISIN, over the one the cascade found;
+    /// a row with no link keeps the cascade's, and so does every row of a run that built no link map.
+    #[test]
+    fn link_domicile_follows_the_link() {
+        let links: HashMap<String, String> = [("ACWL.L".to_string(), "FR0011093418".to_string())].into();
+        let lu = || Some("LU".to_string());
+        assert_eq!(link_domicile(Some(&links), "ACWL.L", lu()), Some("FR".to_string()));
+        assert_eq!(link_domicile(Some(&links), "ACWL.L", None), Some("FR".to_string()));
+        assert_eq!(link_domicile(Some(&links), "CW8.PA", lu()), lu());
+        assert_eq!(link_domicile(Some(&links), "CW8.PA", None), None);
+        assert_eq!(link_domicile(None, "ACWL.L", lu()), lu());
     }
 
     /// (round 42) `parse_yahoo_fund_facts` against canned quoteSummary shapes. Yahoo sends TER as a
