@@ -29796,6 +29796,32 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   this commit, (#1312) (applied in place by a later commit, not graded: the one false positive) and the open
 #   pre-registrations of rounds 21 and 22. `--since N` widens it; `--selftest` runs in the CI tool step.
 
+# (#1491) THE LITERATURE'S CEILING ON A NEVER-SELL EDGE, AND WHAT A 2026-11-13 WEB SEARCH ADDED, RECORD. No knob, no
+#   run: read it before a round hunts papers for a buy rule.
+# CEILING: Keloharju, Linnainmaa and Nyberg (JFE 141(3), 2021; (#727) cites it): a 46-predictor top-minus-bottom
+#   decile earns about 0.74 %/month in its first year after formation (t 4.5) and 0.25 in its second (t 1.6); the
+#   most persistent predictors last about three years, and "none of them identify long-term differences in expected
+#   returns". A lot held 20 years then earns about 6.7 % once (half the decile spread, long-only): +0.33 %/yr on the
+#   lot, +0.55 %/yr on a 20y monthly-DCA book, and +0.65 / +1.10 at twice the spread. (#1333)'s bar sees +4, so no
+#   published signal can pass it: the freeze's reason, from outside this file.
+# THE ZOO: Lassance and Martin-Utrera (SSRN 4760599): no significant gain over the low-beta anomaly alone from every
+#   newly published one. Low beta is a levered long-short effect an unlevered long-only book cannot use (`beta_60m`
+#   sat on menu 1, the low-vol row on (#1327)'s rivals).
+# SKEW: Bessembinder: 51.6 % of 29,078 US common stocks (1925-2023) lost money over their lives; the best 100 of each
+#   decade still fell 32.5 % on average at their worst inside it; characteristics explain under 2 % of the next
+#   decade's variation. Concentration sets the median outcome ((#1479)).
+# SAME DAY: Chague, De-Losso and Giovannetti: 97 % of the 1,551 Brazilian futures day traders who kept at it 300 days
+#   or more lost money; Barber, Lee, Liu and Odean (Journal of Financial Markets 2014): under 1 % of day traders
+#   predictably profit net of fees. The lane's own record agrees ((#1222), (#1423), (#1427), (#1428)).
+# SEARCHED AND DROPPED, so no round re-asks: multibagger traits (Yartseva 2025: picked on the outcome, and its live
+#   variables are the shipped tilts); the tug-of-war signal (Akbas et al., JFE 2022: a six-month, small-cap state);
+#   analyst long-term growth (Bordalo et al., JF 2019: our PEG divides by a price CAGR, and no LTG history exists);
+#   buyback and SEO drift (Fu and Huang, Management Science 2016: gone for 2003-2012 events); the index effect
+#   (Greenwood and Sammon, JF 2025: 7.4 % in the 1990s, under 1 % since); a loss-lot refresh (about +0.1 %/yr, and
+#   exits are closed).
+# JKP: no data release after "Data Updated Through December 2025" (jkp-data discussion #89, 2026-04-16: the pinned
+#   files); a branch merged 2026-11-09 adds per-country size-group portfolios, not released. (#1478) watches.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
