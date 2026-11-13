@@ -663,7 +663,8 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         undo_unit_slips([&mut closes, &mut opens, &mut highs, &mut lows]);
     }
     // (#1475)/(#1476) fund lines only, never a stock or a coin: a stock's one-day halving can be real,
-    // and the feed lists a stock's splits; a coin is not an ETF. Before the trimmer, as above.
+    // and the feed lists a stock's splits (the ones it misses are hand rows, (#1492)); a coin is not an
+    // ETF. Before the trimmer, as above.
     if meta.get("instrumentType").and_then(Value::as_str).is_some_and(|t| t.eq_ignore_ascii_case("ETF")) {
         drop_lone_spikes(&mut dates, [&mut closes, &mut opens, &mut highs, &mut lows], &mut volumes);
         if meta.get("dataGranularity").and_then(Value::as_str) == Some("1d") {

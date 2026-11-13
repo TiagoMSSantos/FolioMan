@@ -29942,6 +29942,24 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # PROOF RULE: a re-run with the same inputs on the fixing commit misses exactly the 4 EQUIVALENT and the 5 GAPS, plus
 #   whatever (#1494)'s `MeasureScope` code adds (triaged then).
 
+# (#1492) STOCK PRICE CHECK, 2026-11-13. Hand rows, no knob; the fund-only gate stays. A read of the cached long
+#   history (6900 lines, fetched 2026-10-04 to 2026-10-11) asked two things of the stock lines.
+# BAD PRICES: `drop_lone_spikes`, run as written on the EQUITY lines, fires 40 times (30 monthly bars, 9 quarterly,
+#   1 weekly, no daily one): 2 bad prices (DO2.DE 2008-01, C9F.DE 2007-11, both Xetra), 22 real moves it would
+#   delete (mostly crash and rebound months of the dot-com bust, 2008-09 and 2020-03: SBAC, GLW, NTAP, BKNG, AXP, MBI), 2
+#   misfires that keep the junk and drop the good bar (MTO.DE 2007-08, 3LN.DE 2007-11) and 14 unsure. No narrower
+#   variant rescues it: the two with no counter-example (daily bars only; a high over low of 8 or more with both
+#   neighbours under 2.5) fire on nothing. VERDICT: NO-GO; the gate in src/fetch.rs stays fund-only.
+# MISSED SPLITS: 39 confirmed, 38 on Frankfurt or Xetra lines and one on 3SIL.L (a WisdomTree ETP typed EQUITY),
+#   none on a US line. Each is a `HAND_SPLITS` row dated at the split with the split's ratio (digrin or
+#   bullfincher; SEC 8-K for EWL.DE, CP60.DE and EW1.F 2006; the issuer's notice for 3SIL.L). EWL.DE is dated at its
+#   step bar, 2010-07-01 (ex 2010-05-28, outside the parser's 31 days); ILU.DE is the weak row (line over twin 0.728
+#   before, 1.456 after, where 0.5 and 1.0 are exact); the four 1.5 rows pass a loose band and were replayed on
+#   monthly bars only. 3DEL.L (20x) and 3EUL.L (25x) show the same 2026-05-11 step but are typed ETF: the owner's.
+# PRE-REGISTERED: the goldens do not move (no fixture holds these tickers, and no record line names one); on the
+#   tag's screen A/B only cells of the 31 lines move (CP60.DE and 3SIL.L are the two with recent bars), and no BUY
+#   NOW name or share.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

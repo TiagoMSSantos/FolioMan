@@ -5339,7 +5339,17 @@ pub fn split_factor_since(splits: &[(NaiveDate, f64)], since: NaiveDate) -> f64 
 /// at most 22 days before it, inside the parser's window. SPHC.MI is not a row: its bars stop for ten
 /// months in 2020 and come back at 1/2.11 of the price, while the S&P 500 it follows rose 6.96 % between
 /// the two bars, so that step is a change of share class at a ratio nothing on file states.
-const HAND_SPLITS: &[(&str, (i32, u32, u32), f64)] = &[("LYBK.DE", (2026, 10, 28), 80.0), ("BNKE.PA", (2026, 10, 28), 80.0), ("SP5C.L", (2026, 10, 29), 100.0), ("SP5C.PA", (2026, 10, 29), 100.0), ("SRECHA.SW", (2010, 1, 1), 7.0), ("SP500S.SW", (2024, 9, 16), 5.0), ("5ESGS.SW", (2024, 9, 16), 6.0), ("EURCHA.SW", (2024, 9, 13), 4.0), ("WSRIC.SW", (2024, 9, 16), 3.0), ("SMIA.SW", (2025, 6, 23), 3.0)];
+/// (#1492) The second line's 39 rows are stock lines, 38 on Frankfurt or Xetra and one, 3SIL.L, on
+/// London. The feed restated no bar before any of their splits, so each line shows a fall at the split
+/// that no holder saw, while the US line of the same company, where one is cached, lists the split.
+/// Each row is dated at the split and its ratio is the split's, as digrin or bullfincher list it (SEC
+/// filings back EWL.DE, CP60.DE and EW1.F 2006; the issuer's notice backs 3SIL.L). EWL.DE is dated at
+/// its step bar, 2010-07-01: that thin line held its old price a month past the ex-date, 2010-05-28,
+/// outside the parser's window. CP60.DE lists its own split but restated no bar for it, and the row
+/// drops that event, so the split is not applied twice. No record line names any of these lines, so
+/// the record restates nothing.
+const HAND_SPLITS: &[(&str, (i32, u32, u32), f64)] = &[("LYBK.DE", (2026, 10, 28), 80.0), ("BNKE.PA", (2026, 10, 28), 80.0), ("SP5C.L", (2026, 10, 29), 100.0), ("SP5C.PA", (2026, 10, 29), 100.0), ("SRECHA.SW", (2010, 1, 1), 7.0), ("SP500S.SW", (2024, 9, 16), 5.0), ("5ESGS.SW", (2024, 9, 16), 6.0), ("EURCHA.SW", (2024, 9, 13), 4.0), ("WSRIC.SW", (2024, 9, 16), 3.0), ("SMIA.SW", (2025, 6, 23), 3.0),
+    ("2S3.F", (2004, 1, 15), 2.0), ("3SIL.L", (2026, 5, 11), 10.0), ("BL8.F", (2004, 8, 24), 2.0), ("BTL.F", (2001, 5, 31), 2.0), ("CHV.DE", (2004, 9, 13), 2.0), ("CP60.DE", (2024, 2, 20), 4.0), ("DAP.DE", (2004, 5, 21), 2.0), ("DAP.DE", (2010, 6, 14), 2.0), ("DO2.DE", (2010, 7, 6), 3.0), ("DUT.F", (2005, 5, 19), 2.0), ("DYH.F", (2000, 7, 20), 2.0), ("EW1.F", (2002, 6, 25), 2.0), ("EW1.F", (2006, 6, 26), 2.0), ("EWL.DE", (2010, 7, 1), 2.0), ("FXI.F", (2000, 10, 17), 2.0), ("GDX.F", (2006, 3, 27), 2.0), ("GRM.DE", (2010, 6, 9), 2.0), ("I5M.F", (2002, 1, 2), 1.5), ("I5M.F", (2004, 7, 1), 1.5), ("I5M.F", (2007, 1, 3), 1.5), ("IDP.DE", (2001, 1, 18), 3.0), ("ILU.DE", (2008, 9, 23), 2.0), ("JHY.F", (2001, 3, 5), 2.0), ("MCX.F", (2002, 4, 9), 2.0), ("MGG.F", (2005, 5, 19), 2.0), ("NKE.DE", (2007, 4, 3), 2.0), ("NTH.F", (2004, 6, 22), 2.0), ("OPC.DE", (2006, 8, 16), 2.0), ("QDI.F", (2001, 6, 1), 2.0), ("QDI.F", (2005, 6, 21), 2.0), ("RME.F", (2000, 4, 3), 2.0), ("SRB.DE", (2005, 10, 24), 2.0), ("SYM.F", (2002, 2, 1), 2.0), ("SYM.F", (2003, 11, 20), 2.0), ("SYM.F", (2004, 12, 1), 2.0), ("TB5.F", (2004, 3, 5), 1.5), ("TB5.F", (2007, 2, 23), 2.0), ("TR4.DE", (2010, 9, 3), 2.0), ("UNP.DE", (2008, 5, 29), 2.0)];
 
 /// (#1468) The [`HAND_SPLITS`] rows of `ticker` in the shape [`split_factor_since`] reads.
 pub fn hand_splits(ticker: &str) -> Vec<(NaiveDate, f64)> {
@@ -7687,6 +7697,7 @@ mod tests {
 
     /// (#1468) The hand list answers for its own tickers only, on the date of the first record line
     /// quoted on the new share: the line before it restates, that line does not.
+    /// (#1492) Its stock lines are listed too, each dated at the split.
     #[test]
     fn hand_splits_lists_its_funds_and_nothing_else() {
         let day = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
@@ -7700,6 +7711,8 @@ mod tests {
         // (#1471) dated at the false first bar of the long history, years before the oldest record line
         assert_eq!(hand_splits("SRECHA.SW"), vec![(NaiveDate::from_ymd_opt(2010, 1, 1).unwrap(), 7.0)]);
         assert_eq!(split_factor_since(&hand_splits("SRECHA.SW"), day(1, 1)), 1.0, "no record line restates");
+        // (#1492) a stock line, dated at the split
+        assert_eq!(hand_splits("CP60.DE"), vec![(NaiveDate::from_ymd_opt(2024, 2, 20).unwrap(), 4.0)]);
     }
 
     /// (#424) `restate_for_splits` moves a filing onto the chart's basis, and only a filing that needs it.
