@@ -16,9 +16,9 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
     held book     vs top 1%  winners (n=92   ): recall 26%   capture 29%
     held book     vs ≥10×    winners (n=63   ): recall 27%   capture 27%
   base rate at the 19%/yr bar: 74/325 (23%) of names that had cleared it cleared it again over 8y, vs 15% of the whole pool -> the record CARRIES information
-  vs null model (tuning off): rho -0.33  edge -153.3 pts  ->  tuning adds +121.5 pts
+  vs null model (tuning off): rho -0.33  edge -150.6 pts  ->  tuning adds +118.8 pts
   out-of-sample (split 2007-07-01): early rho -0.11  |  late rho -0.07
-  gate passers only  ->  passer edge -31.8 pts  ->  passer lift +121.5 pts  |  passer OOS early -0.11  |  passer OOS late -0.07
+  gate passers only  ->  passer edge -31.8 pts  ->  passer lift +118.8 pts  |  passer OOS early -0.11  |  passer OOS late -0.07
   edge by era (chronological quarters):
     1983-01-01 .. 1999-07-01  n=261    edge -88.0 pts
     1999-07-01 .. 2007-07-01  n=262    edge -17.6 pts
@@ -38,41 +38,39 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
 ── GROWTH (growth_score) ──
   windows scored: 1417
   Spearman(score, peer-relative): -0.01   [+1 winners-first, 0 none, − backwards]
-  top-half peer-relative +10.6 pts  vs  bottom-half +43.0 pts  ->  edge -32.4 pts   [= -3.31 pts/yr over the 8y hold]
-  90% bootstrap band on edge: [-85.7 … +9.8] pts  (STRADDLES 0 -> noise)
-  net of cost: edge -32.4 − turnover 33% × 20bps = net -32.5 pts  <- NET ≤ 0: too churny to trade
-  winsorized edge (1/99 clamp): -15.5 pts
+  top-half peer-relative +10.2 pts  vs  bottom-half +43.4 pts  ->  edge -33.2 pts   [= -3.39 pts/yr over the 8y hold]
+  90% bootstrap band on edge: [-87.5 … +8.6] pts  (STRADDLES 0 -> noise)
+  net of cost: edge -33.2 − turnover 34% × 20bps = net -33.3 pts  <- NET ≤ 0: too churny to trade
+  winsorized edge (1/99 clamp): -16.4 pts
   recall of the pool's extreme winners (what the ranking MISSED):
-    held book     vs top 1%  winners (n=92   ): recall 42%   capture 38%
-    held book     vs ≥10×    winners (n=63   ): recall 33%   capture 36%
-    why the top 1% misses were missed (53 of 92 winners = 62% of their wealth; capture above is the rest):
-      range                      25 winners    37.1% of the missed wealth   sole blocker:    0 ( 0.0%)
-      history                    10 winners    32.2% of the missed wealth   sole blocker:   10 (32.2%)
-      cagr                        9 winners    15.3% of the missed wealth   sole blocker:    0 ( 0.0%)
-      cagr-life                   4 winners     5.9% of the missed wealth   sole blocker:    2 ( 3.1%)
-      out-ranked                  2 winners     4.0% of the missed wealth   sole blocker:    0 ( 0.0%)
-      range8y                     1 winners     3.2% of the missed wealth   sole blocker:    0 ( 0.0%)
+    held book     vs top 1%  winners (n=92   ): recall 43%   capture 39%
+    held book     vs ≥10×    winners (n=63   ): recall 37%   capture 38%
+    why the top 1% misses were missed (52 of 92 winners = 61% of their wealth; capture above is the rest):
+      range                      24 winners    35.9% of the missed wealth   sole blocker:    0 ( 0.0%)
+      history                    10 winners    32.8% of the missed wealth   sole blocker:   10 (32.8%)
+      cagr                        9 winners    15.6% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr-life                   4 winners     6.0% of the missed wealth   sole blocker:    2 ( 3.2%)
+      out-ranked                  2 winners     4.1% of the missed wealth   sole blocker:    0 ( 0.0%)
+      range8y                     1 winners     3.3% of the missed wealth   sole blocker:    0 ( 0.0%)
       stretch                     1 winners     1.2% of the missed wealth   sole blocker:    1 ( 1.2%)
-      unassessable                1 winners     1.1% of the missed wealth   sole blocker:    0 ( 0.0%)
-      -> at most 36.5% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
-      cagr        + cagr-life      3 winners     5.2% of the missed wealth   both near-miss:    0 ( 0.0%)
-      range       + 1Y+            1 winners     1.9% of the missed wealth   both near-miss:    0 ( 0.0%)
+      unassessable                1 winners     1.2% of the missed wealth   sole blocker:    0 ( 0.0%)
+      -> at most 37.2% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
+      cagr        + cagr-life      3 winners     5.3% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr-life   + 1Y+            1 winners     1.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr-life   + stretch        1 winners     1.1% of the missed wealth   both near-miss:    0 ( 0.0%)
+      -> exactly-2-gate winners hold 8.2% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 0:4% 1:37% 2:8% 3:10% 4:6% 5:4% 6:14% 7:11% 8:5%
+    why the ≥10× misses were missed (40 of 63 winners = 62% of their wealth; capture above is the rest):
+      history                    12 winners    38.1% of the missed wealth   sole blocker:   12 (38.1%)
+      range                      14 winners    31.9% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr                        7 winners    15.2% of the missed wealth   sole blocker:    0 ( 0.0%)
+      out-ranked                  3 winners     5.7% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr-life                   2 winners     3.3% of the missed wealth   sole blocker:    1 ( 1.7%)
+      range8y                     1 winners     3.1% of the missed wealth   sole blocker:    0 ( 0.0%)
+      1Y+                         1 winners     2.7% of the missed wealth   sole blocker:    1 ( 2.7%)
+      -> at most 42.5% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
+      cagr        + cagr-life      1 winners     2.6% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr-life   + 1Y+            1 winners     1.7% of the missed wealth   both near-miss:    0 ( 0.0%)
-      cagr-life   + stretch        1 winners     1.0% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 9.9% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 0:4% 1:37% 2:10% 3:10% 4:6% 5:4% 6:14% 7:11% 8:5%
-    why the ≥10× misses were missed (42 of 63 winners = 64% of their wealth; capture above is the rest):
-      history                    12 winners    36.8% of the missed wealth   sole blocker:   12 (36.8%)
-      range                      15 winners    32.5% of the missed wealth   sole blocker:    0 ( 0.0%)
-      cagr                        8 winners    16.4% of the missed wealth   sole blocker:    0 ( 0.0%)
-      out-ranked                  3 winners     5.5% of the missed wealth   sole blocker:    0 ( 0.0%)
-      cagr-life                   2 winners     3.2% of the missed wealth   sole blocker:    1 ( 1.6%)
-      range8y                     1 winners     2.9% of the missed wealth   sole blocker:    0 ( 0.0%)
-      1Y+                         1 winners     2.6% of the missed wealth   sole blocker:    1 ( 2.6%)
-      -> at most 41.0% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
-      cagr        + cagr-life      1 winners     2.5% of the missed wealth   both near-miss:    0 ( 0.0%)
-      range       + 1Y+            1 winners     1.8% of the missed wealth   both near-miss:    0 ( 0.0%)
-      cagr-life   + 1Y+            1 winners     1.6% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 5.9% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 0:5% 1:41% 2:6% 3:11% 4:3% 5:10% 6:11% 7:8% 8:4%
+      -> exactly-2-gate winners hold 4.3% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 0:6% 1:43% 2:4% 3:9% 4:4% 5:10% 6:12% 7:9% 8:5%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     no factor fills both sides — no as-of fundamentals, or the book never lost money
     (0 of 61 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
@@ -80,47 +78,47 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
      (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
      by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
   base rate at the 19%/yr bar: 74/325 (23%) of names that had cleared it cleared it again over 8y, vs 15% of the whole pool -> the record CARRIES information
-  vs null model (tuning off): rho -0.14  edge -63.2 pts  ->  tuning adds +30.8 pts
-  out-of-sample (split 2005-01-01): early rho -0.17  |  late rho +0.10
-  gate passers only  ->  passer edge +17.3 pts  ->  passer lift +80.4 pts  |  passer OOS early +0.22  |  passer OOS late +0.04
+  vs null model (tuning off): rho -0.14  edge -67.3 pts  ->  tuning adds +34.1 pts
+  out-of-sample (split 2005-01-01): early rho -0.17  |  late rho +0.09
+  gate passers only  ->  passer edge +21.8 pts  ->  passer lift +89.0 pts  |  passer OOS early +0.24  |  passer OOS late +0.03
   edge by era (chronological quarters):
-    1973-01-01 .. 1998-07-01  n=354    edge -154.2 pts
-    1998-07-01 .. 2005-01-01  n=354    edge -22.4 pts
-    2005-01-01 .. 2011-07-01  n=354    edge -15.6 pts
-    2011-07-01 .. 2018-07-01  n=355    edge +18.2 pts
-  ablation (Δ vs full: rho -0.01, edge -32.4):
-    growth_trend_weight  rho -0.01 Δ-0.01   edge -43.3 Δ-10.8
-    growth_accel_weight  rho -0.03 Δ-0.02   edge -32.8 Δ-0.4
-    sharpe_weight        rho -0.01 Δ+0.00   edge -32.5 Δ-0.1
-    calmar_weight        rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    overext_brake        rho -0.00 Δ+0.00   edge -21.5 Δ+11.0
-    growth_fund_weight   rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    growth_mom121_weight rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    growth_smoothness_weight rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    growth_underwater_weight rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    quality_weight       rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    growth_trust_ladder→on rho +0.00 Δ+0.01   edge -16.9 Δ+15.6
-    proximity            rho +0.00 Δ+0.01   edge -25.0 Δ+7.4
-    growth_dividend      rho +0.01 Δ+0.02   edge -24.0 Δ+8.4
-    growth_trust_young→0.7 (no extra dock) rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    fund_extra:roic      rho -0.01 Δ+0.00   edge -30.6 Δ+1.8
-    fund_extra:margin_trend rho -0.01 Δ+0.00   edge -32.4 Δ+0.0
-    fund_extra:ey_pct    rho -0.01 Δ+0.00   edge -30.3 Δ+2.1
-    fund_extra:mom61_pct rho -0.01 Δ-0.00   edge -34.4 Δ-2.0
-    fund_extra:capx_pct  rho -0.01 Δ+0.00   edge -30.3 Δ+2.1
-    fund_extra:fcf_pct   rho -0.01 Δ+0.00   edge -30.3 Δ+2.1
-    null: base −4.3 (calibration) rho -0.01 Δ+0.00   edge -30.6 Δ+1.8
+    1973-01-01 .. 1998-07-01  n=354    edge -155.8 pts
+    1998-07-01 .. 2005-01-01  n=354    edge -21.3 pts
+    2005-01-01 .. 2011-07-01  n=354    edge -15.7 pts
+    2011-07-01 .. 2018-07-01  n=355    edge +18.1 pts
+  ablation (Δ vs full: rho -0.01, edge -33.2):
+    growth_trend_weight  rho -0.01 Δ-0.01   edge -38.1 Δ-4.9
+    growth_accel_weight  rho -0.03 Δ-0.02   edge -34.6 Δ-1.3
+    sharpe_weight        rho -0.01 Δ+0.00   edge -34.5 Δ-1.2
+    calmar_weight        rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    overext_brake        rho -0.00 Δ+0.00   edge -26.5 Δ+6.8
+    growth_fund_weight   rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    growth_mom121_weight rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    growth_smoothness_weight rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    growth_underwater_weight rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    quality_weight       rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    growth_trust_ladder→on rho +0.00 Δ+0.01   edge -16.6 Δ+16.7
+    proximity            rho +0.00 Δ+0.01   edge -26.2 Δ+7.0
+    growth_dividend      rho +0.01 Δ+0.02   edge -24.5 Δ+8.8
+    growth_trust_young→0.7 (no extra dock) rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    fund_extra:roic      rho -0.01 Δ+0.00   edge -29.2 Δ+4.1
+    fund_extra:margin_trend rho -0.01 Δ+0.00   edge -33.2 Δ+0.0
+    fund_extra:ey_pct    rho -0.01 Δ+0.00   edge -34.5 Δ-1.3
+    fund_extra:mom61_pct rho -0.01 Δ-0.00   edge -34.4 Δ-1.2
+    fund_extra:capx_pct  rho -0.01 Δ+0.00   edge -34.5 Δ-1.3
+    fund_extra:fcf_pct   rho -0.01 Δ+0.00   edge -34.5 Δ-1.3
+    null: base −4.3 (calibration) rho -0.01 Δ+0.00   edge -29.2 Δ+4.1
 
 ── growth_trend_weight CURVE (growth lane, n=1417) ──
   SLOPE: points of growth score per %/yr of capped long-leg CAGR.
-  0.00   rho -0.01  edge -43.3  winsor -26.1  OOS -0.18 | +0.09  [off]
-  0.15   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10  [SHIPPED]
-  0.25   rho -0.00  edge -30.1  winsor -13.5  OOS -0.16 | +0.10
-  0.35   rho -0.00  edge -24.8  winsor -8.1  OOS -0.16 | +0.10
-  0.45   rho +0.00  edge -23.0  winsor -6.4  OOS -0.16 | +0.11
-  0.55   rho +0.00  edge -22.4  winsor -5.8  OOS -0.16 | +0.11
-  0.70   rho +0.00  edge -11.1  winsor +1.7  OOS -0.15 | +0.11
-  1.00   rho +0.00  edge -9.4  winsor +3.4  OOS -0.15 | +0.12
+  0.00   rho -0.01  edge -38.1  winsor -21.0  OOS -0.18 | +0.09  [off]
+  0.15   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09  [SHIPPED]
+  0.25   rho -0.01  edge -29.4  winsor -12.7  OOS -0.17 | +0.10
+  0.35   rho -0.00  edge -24.9  winsor -8.3  OOS -0.16 | +0.10
+  0.45   rho -0.00  edge -23.8  winsor -7.2  OOS -0.16 | +0.11
+  0.55   rho +0.00  edge -19.8  winsor -3.2  OOS -0.16 | +0.11
+  0.70   rho +0.00  edge -15.1  winsor -0.3  OOS -0.16 | +0.11
+  1.00   rho +0.00  edge -8.3  winsor +4.5  OOS -0.15 | +0.12
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -131,14 +129,14 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   so these rows price only its GROWTH-lane effect. That lane is the one `screen` ranks on; the on-sale
   side feeds `buy_score`, a backtest foil that is never printed — so a growth-lane read is the one
   that decides, and the foil only needs to not break.
-  0.00   rho -0.00  edge -33.7  winsor -16.8  OOS -0.15 | +0.10  [off]
-  15.00  rho -0.01  edge -45.0  winsor -27.9  OOS -0.18 | +0.09
-  20.00  rho -0.01  edge -38.7  winsor -21.6  OOS -0.17 | +0.09
-  25.00  rho -0.01  edge -35.9  winsor -18.8  OOS -0.17 | +0.10
-  30.00  rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10  [SHIPPED]
-  40.00  rho -0.01  edge -32.3  winsor -15.4  OOS -0.16 | +0.10
-  50.00  rho -0.00  edge -32.7  winsor -15.9  OOS -0.16 | +0.10
-  60.00  rho -0.00  edge -33.7  winsor -16.8  OOS -0.16 | +0.10
+  0.00   rho -0.00  edge -33.9  winsor -17.0  OOS -0.15 | +0.10  [off]
+  15.00  rho -0.01  edge -46.5  winsor -29.4  OOS -0.18 | +0.09
+  20.00  rho -0.01  edge -40.2  winsor -23.1  OOS -0.18 | +0.09
+  25.00  rho -0.01  edge -36.2  winsor -19.1  OOS -0.17 | +0.09
+  30.00  rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09  [SHIPPED]
+  40.00  rho -0.01  edge -34.2  winsor -17.3  OOS -0.16 | +0.10
+  50.00  rho -0.01  edge -33.9  winsor -17.0  OOS -0.16 | +0.10
+  60.00  rho -0.01  edge -33.9  winsor -17.0  OOS -0.16 | +0.10
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -148,14 +146,14 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   1.0 = SHIPPED (raw multiply: a name at 80% of range keeps 0.80 of its score, one at the high keeps 1.00).
   0.0 = term OFF (everyone ×1.00). NEGATIVE = INVERTED — the name furthest below its high scores HIGHEST
   (at −1.0 the 80%-of-range name is multiplied by 1.20). Clamped at 0, so no rung can produce a negative factor.
-  -1.00  rho +0.02  edge -17.9  winsor -3.7  OOS -0.11 | +0.09
-  -0.50  rho +0.01  edge -25.4  winsor -11.2  OOS -0.12 | +0.09
-  0.00   rho +0.00  edge -25.0  winsor -11.8  OOS -0.14 | +0.09  [off]
-  0.50   rho -0.00  edge -29.2  winsor -12.5  OOS -0.16 | +0.10
-  1.00   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10  [SHIPPED]
-  1.50   rho -0.01  edge -36.5  winsor -19.4  OOS -0.17 | +0.10
-  2.00   rho -0.01  edge -31.1  winsor -14.0  OOS -0.17 | +0.10
-  3.00   rho -0.01  edge -30.8  winsor -13.7  OOS -0.17 | +0.10
+  -1.00  rho +0.01  edge -16.4  winsor -2.3  OOS -0.11 | +0.09
+  -0.50  rho +0.01  edge -17.4  winsor -4.2  OOS -0.13 | +0.09
+  0.00   rho +0.00  edge -26.2  winsor -13.0  OOS -0.14 | +0.09  [off]
+  0.50   rho -0.00  edge -29.5  winsor -12.8  OOS -0.16 | +0.09
+  1.00   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09  [SHIPPED]
+  1.50   rho -0.01  edge -36.3  winsor -19.2  OOS -0.17 | +0.10
+  2.00   rho -0.01  edge -31.8  winsor -14.7  OOS -0.17 | +0.10
+  3.00   rho -0.01  edge -30.2  winsor -13.1  OOS -0.17 | +0.10
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -166,12 +164,12 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   0.5 = DEFAULT, and the flat half-score the floor-2 arm already ran with AND LOST (rank-1 +6.0 → +4.0,
   h2h 67% → 39%) — it sits in this ladder as the reproduction of the known-bad point.
   READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.
-  0.70   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10
-  0.50   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10  [SHIPPED]
-  0.40   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10
-  0.30   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10
-  0.20   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10
-  0.10   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10
+  0.70   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09
+  0.50   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09  [SHIPPED]
+  0.40   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09
+  0.30   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09
+  0.20   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09
+  0.10   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -181,12 +179,12 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   0.5 = SHIPPED (revived 2026-07-25 on argument, never measured until now). 0.0 = term OFF, the
   2026-07-15 state. 1.5 = the ORIGINAL weight, cut for being oversized on a blind term.
   READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.
-  0.00   rho +0.01  edge -24.0  winsor -7.4  OOS -0.15 | +0.11  [off]
-  0.25   rho +0.00  edge -26.6  winsor -10.0  OOS -0.16 | +0.10
-  0.50   rho -0.01  edge -32.4  winsor -15.5  OOS -0.17 | +0.10  [SHIPPED]
-  1.00   rho -0.02  edge -44.5  winsor -27.4  OOS -0.18 | +0.08
-  1.50   rho -0.04  edge -53.1  winsor -36.0  OOS -0.20 | +0.07
-  3.00   rho -0.08  edge -77.2  winsor -59.1  OOS -0.23 | +0.03
+  0.00   rho +0.01  edge -24.5  winsor -7.8  OOS -0.15 | +0.11  [off]
+  0.25   rho +0.00  edge -29.0  winsor -12.3  OOS -0.16 | +0.10
+  0.50   rho -0.01  edge -33.2  winsor -16.4  OOS -0.17 | +0.09  [SHIPPED]
+  1.00   rho -0.02  edge -45.9  winsor -28.8  OOS -0.18 | +0.08
+  1.50   rho -0.04  edge -57.9  winsor -40.8  OOS -0.20 | +0.06
+  3.00   rho -0.08  edge -77.8  winsor -59.7  OOS -0.23 | +0.02
   (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the
    ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.
    SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)
@@ -224,22 +222,22 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
 ── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-10 ENTRANTS minus the names they DISPLACED, realized fwd %) ──
   a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).
   RE-PROBE needs mean AND median positive and means a full A/B round, never a weight move. k/N = buckets that swapped.
-  growth_trend_weight x0       swapped 25/92 buckets  mean -111.2 | med -130.7 pts  -> holds
-  growth_trend_weight x2       swapped 22/92 buckets  mean +110.5 | med +48.3 pts  -> RE-PROBE (entrants beat the displaced)
-  growth_accel_weight x0       swapped 43/92 buckets  mean -60.6 | med +6.3 pts  -> SPLIT — mean (-60.6) and median (+6.3) disagree: the gap is driven by the tail, not the typical name. Read the median.
-  growth_accel_weight x2       swapped 35/92 buckets  mean -53.2 | med -39.9 pts  -> holds
-  sharpe_weight x0             swapped 3/92 buckets  mean +48.0 | med -61.3 pts  -> SPLIT — mean (+48.0) and median (-61.3) disagree: the gap is driven by the tail, not the typical name. Read the median.
-  sharpe_weight x2             swapped 3/92 buckets  mean -74.2 | med -67.3 pts  -> holds
+  growth_trend_weight x0       swapped 28/92 buckets  mean -157.9 | med -107.6 pts  -> holds
+  growth_trend_weight x2       swapped 24/92 buckets  mean -91.6 | med -10.5 pts  -> holds
+  growth_accel_weight x0       swapped 45/92 buckets  mean -105.6 | med -31.2 pts  -> holds
+  growth_accel_weight x2       swapped 38/92 buckets  mean -109.9 | med -51.3 pts  -> holds
+  sharpe_weight x0             swapped 4/92 buckets  mean -35.1 | med -186.4 pts  -> holds
+  sharpe_weight x2             swapped 5/92 buckets  mean -158.6 | med -67.3 pts  -> holds
   quality_weight x0            no swaps (0/92 buckets)
   quality_weight x2            no swaps (0/92 buckets)
-  dividend_weight x0           swapped 17/92 buckets  mean +231.4 | med +79.4 pts  -> RE-PROBE (entrants beat the displaced)
-  dividend_weight x2           swapped 9/92 buckets  mean -389.3 | med -105.0 pts  -> holds
+  dividend_weight x0           swapped 15/92 buckets  mean +96.5 | med +40.3 pts  -> RE-PROBE (entrants beat the displaced)
+  dividend_weight x2           swapped 12/92 buckets  mean -345.2 | med -246.5 pts  -> holds
   growth_fund_weight x0        no swaps (0/92 buckets)
   growth_fund_weight x2        no swaps (0/92 buckets)
   growth_underwater_weight x0  no swaps (0/92 buckets)
   growth_underwater_weight x2  no swaps (0/92 buckets)
-  growth_proximity_weight x0   swapped 25/92 buckets  mean +133.0 | med +32.2 pts  -> RE-PROBE (entrants beat the displaced)
-  growth_proximity_weight x2   swapped 27/92 buckets  mean -21.6 | med +6.5 pts  -> SPLIT — mean (-21.6) and median (+6.5) disagree: the gap is driven by the tail, not the typical name. Read the median.
+  growth_proximity_weight x0   swapped 29/92 buckets  mean +56.0 | med +32.2 pts  -> RE-PROBE (entrants beat the displaced)
+  growth_proximity_weight x2   swapped 29/92 buckets  mean -12.9 | med +18.2 pts  -> SPLIT — mean (-12.9) and median (+18.2) disagree: the gap is driven by the tail, not the typical name. Read the median.
 
 ── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──
   kept passing   n=1316   fwd peer-relative  mean +18.9 | med -52.9 pts
@@ -252,9 +250,9 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   gap  mean +12.6 | med +31.1 pts  ->  entry confirmation would NOT pay — fresh passers did as well or better; buy on the first pass
 
 ── BOOK ENTRY PROBE (#821) (blend book: held now -> was it in the book ~6mo ago too?) ──
-  held both times  n=369    fwd peer-relative  mean -5.3 | med -52.2 pts
-  new to the book  n=311    fwd peer-relative  mean +14.1 | med -66.2 pts
-  gap  mean +19.3 | med -14.0 pts  ->  SPLIT — mean (+19.3) and median (-14.0) disagree: the gap is driven by the tail, not the typical name. Read the median.
+  held both times  n=367    fwd peer-relative  mean -17.9 | med -53.1 pts
+  new to the book  n=313    fwd peer-relative  mean +25.6 | med -66.2 pts
+  gap  mean +43.5 | med -13.0 pts  ->  SPLIT — mean (+43.5) and median (-13.0) disagree: the gap is driven by the tail, not the typical name. Read the median.
 
 ── PRICE-RISK (closes-derived, standalone probes) ──
   consistency_5y n=1987  rho +0.00  edge -17.1  OOS -0.25 | +0.23
@@ -267,15 +265,15 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
 
 ── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 8y no-sell, vs ^GSPC) [best of 13, unhaircut] ──
   POOL CENSUS (#149): 82 bucket(s), median gated pool 20, graded basket 10 -> 20 saturated (pool <= basket), 758 substitutable name(s); the rank-1 h2h GUARD below reads off the other 62
-  top-1  book +10.0%/yr  vs S&P500 +9.0%/yr  ->  excess +0.9 (med +0.8) pts/yr   win 52% of 82   worst -26.7   OOS -0.2/+2.0   rode 1 zeros/82 holds
-  top-2  book +11.7%/yr  vs S&P500 +9.0%/yr  ->  excess +2.7 (med +2.8) pts/yr   win 71% of 82   worst -14.8   OOS +1.5/+3.8   rode 3 zeros/161 holds
-  top-3  book +11.8%/yr  vs S&P500 +9.0%/yr  ->  excess +2.8 (med +3.2) pts/yr   win 76% of 82   worst -14.8   OOS +1.7/+3.9   rode 4 zeros/225 holds
-  top-5  book +12.4%/yr  vs S&P500 +9.0%/yr  ->  excess +3.4 (med +3.3) pts/yr   win 77% of 82   worst -14.8   OOS +2.1/+4.6   rode 6 zeros/349 holds
+  top-1  book +10.5%/yr  vs S&P500 +9.0%/yr  ->  excess +1.4 (med +1.7) pts/yr   win 55% of 82   worst -26.7   OOS -0.2/+3.0   rode 1 zeros/82 holds
+  top-2  book +11.6%/yr  vs S&P500 +9.0%/yr  ->  excess +2.6 (med +2.6) pts/yr   win 71% of 82   worst -14.8   OOS +1.6/+3.5   rode 3 zeros/161 holds
+  top-3  book +11.9%/yr  vs S&P500 +9.0%/yr  ->  excess +2.9 (med +3.6) pts/yr   win 77% of 82   worst -14.8   OOS +1.5/+4.3   rode 4 zeros/225 holds
+  top-5  book +12.3%/yr  vs S&P500 +9.0%/yr  ->  excess +3.2 (med +3.1) pts/yr   win 76% of 82   worst -14.8   OOS +1.9/+4.6   rode 6 zeros/349 holds
   zero names in top-10 (8y): AIG@b4002(-98%), C@b4002(-94%), C@b4003(-94%), AIG@b4003(-99%), C@b4004(-93%), AIG@b4004(-98%), C@b4007(-91%), C@b4008(-94%), FRCB@b4032(-100%), FRCB@b4033(-100%), FRCB@b4034(-100%)
   SECTOR CENSUS (#557): 0 of 659 top-10 stock slots carry a GICS sector, the only ones growth_sector_cap 0 can judge
-  top-10 book +12.3%/yr  vs S&P500 +9.0%/yr  ->  excess +3.3 (med +3.0) pts/yr   win 87% of 82   worst -14.8   OOS +2.6/+3.9   rode 11 zeros/659 holds
-  vs Série E best case (top-10): beat 87% of 82 windows (71) at 4.5%/yr   median book 2.56× vs 1.42×
-  RANKED top-10 (#558, weights 10..1)  excess +3.3 (med +3.9) pts/yr   worst -15.4
+  top-10 book +12.5%/yr  vs S&P500 +9.0%/yr  ->  excess +3.4 (med +4.0) pts/yr   win 85% of 82   worst -14.8   OOS +2.7/+4.1   rode 11 zeros/659 holds
+  vs Série E best case (top-10): beat 87% of 82 windows (71) at 4.5%/yr   median book 2.62× vs 1.42×
+  RANKED top-10 (#558, weights 10..1)  excess +3.3 (med +3.8) pts/yr   worst -15.4
   BOOK b3946 -14.8 pts/yr | MMM -31% GE -13%
   BOOK b3947 -14.5 pts/yr | MMM -37% GE -3%
   BOOK b3948 -13.2 pts/yr | GE +4% MMM -26%
@@ -306,68 +304,68 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   BOOK b3973 +2.6 pts/yr | MMM +91% GE +176%
   BOOK b3974 +1.8 pts/yr | MMM +62% GE +105% T +119%
   BOOK b3975 +1.9 pts/yr | GE +99% MMM +54% T +154%
-  BOOK b3976 +6.3 pts/yr | MMM +113% F +39% GE +240% INTC +766% T +194% AIG +332% NWL +552% ^GSPC +147% VFC +78% C +372%
+  BOOK b3976 +6.3 pts/yr | MMM +113% GE +240% F +39% INTC +766% T +194% AIG +332% NWL +552% ^GSPC +147% VFC +78% C +372%
   BOOK b3977 +6.2 pts/yr | F +22% NWL +495% INTC +765% MMM +104% GE +285% BA +229% T +157% ^GSPC +135% VFC +96% AIG +334%
   BOOK b3978 +10.3 pts/yr | NWL +340% BA +280% F +18% AIG +360% T +152% GE +328% MMM +149% ^GSPC +164% VFC +119% INTC +2396%
   BOOK b3979 +9.5 pts/yr | T +108% AIG +377% GE +379% MMM +149% BA +236% ^GSPC +176% VFC +143% NWL +287% INTC +2308% F +64%
   BOOK b3980 +6.2 pts/yr | AIG +400% GE +398% T +194% INTC +1540% MMM +114% BA +141% NWL +253% ^GSPC +198% F +137% VFC +170%
-  BOOK b3981 +9.7 pts/yr | INTC +1418% GE +399% MMM +66% BA +34% CCL +609% AIG +574% T +201% ^GSPC +215% F +314% C +1156%
-  BOOK b3982 +9.6 pts/yr | NWL +178% MMM +83% BA +41% INTC +2364% T +313% GE +555% AIG +530% ^GSPC +272% F +561% CCL +1072%
+  BOOK b3981 +9.7 pts/yr | INTC +1418% GE +399% MMM +66% BA +34% CCL +609% T +201% AIG +574% ^GSPC +215% F +314% C +1156%
+  BOOK b3982 +9.6 pts/yr | NWL +178% MMM +83% BA +41% T +313% INTC +2364% GE +555% AIG +530% ^GSPC +272% F +561% CCL +1072%
   BOOK b3983 +8.8 pts/yr | GE +495% AIG +604% INTC +2249% MMM +100% NWL +131% CCL +712% ^GSPC +243% BA +96% T +323% VFC +174%
-  BOOK b3984 +11.2 pts/yr | VFC +31% CCL +574% GE +612% MMM +106% C +1141% INTC +2544% T +184% BA +75% ^GSPC +241% AIG +620%
-  BOOK b3985 +15.0 pts/yr | VFC -6% NWL +35% CCL +167% TECH +1716% MMM +80% GE +711% INTC +3475% C +1348% T +158% F +219%
-  BOOK b3986 +7.5 pts/yr | AIG +581% CCL +262% VFC +29% NWL +41% MMM +126% GE +541% T +181% C +1169% INTC +1009% ^GSPC +211%
+  BOOK b3984 +11.2 pts/yr | VFC +31% CCL +574% GE +612% MMM +106% C +1141% T +184% BA +75% ^GSPC +241% AIG +620% INTC +2544%
+  BOOK b3985 +15.0 pts/yr | VFC -6% NWL +35% CCL +167% MMM +80% GE +711% TECH +1716% INTC +3475% C +1348% T +158% F +219%
+  BOOK b3986 +7.5 pts/yr | AIG +581% CCL +262% NWL +41% VFC +29% MMM +126% T +181% GE +541% C +1169% INTC +1009% ^GSPC +211%
   BOOK b3987 +6.7 pts/yr | INTC +813% AIG +473% CCL +230% GE +430% T +122% MMM +113% F +165% TECH +722% ^GSPC +170% NWL +33%
   BOOK b3988 +9.4 pts/yr | CCL +119% GE +314% NWL +32% T +79% C +578% F +25% AIG +407% INTC +759% MMM +107% TECH +1070%
-  BOOK b3989 +3.2 pts/yr | NWL +35% INTC +407% CCL +124% GE +284% T +32% F +16% AIG +329% VFC +51% MMM +137% BA +86%
-  BOOK b3990 +4.7 pts/yr | NWL +24% INTC +261% AIG +229% T +15% MMM +138% ^GSPC +82% C +461% GE +170% VFC +47% CCL +130%
-  BOOK b3991 +7.0 pts/yr | NWL -7% C +470% TECH +642% BA -1% AIG +261% GE +189% INTC +206% ^GSPC +76% VFC +38% M +41%
-  BOOK b3992 +7.4 pts/yr | INTC +342% TECH +757% AIG +202% C +352% GE +163% T -10% BA +8% NWL -7% ^GSPC +78% MMM +145%
-  BOOK b3993 +14.6 pts/yr | TECH +469% C +317% GE +143% BA +15% AIG +217% NWL -32% F +25% INTC +160% CCL +247% BIIB +2223%
-  BOOK b3994 +6.6 pts/yr | JBL +299% AIG +131% GE +109% MMM +98% CCL +213% NWL -35% VFC +60% KIM +143% BA -6% TECH +431%
+  BOOK b3989 +7.9 pts/yr | NWL +35% INTC +407% CCL +124% T +32% GE +284% AIG +329% F +16% VFC +51% TECH +1064% MMM +137%
+  BOOK b3990 +4.7 pts/yr | NWL +24% INTC +261% AIG +229% T +15% MMM +138% ^GSPC +82% VFC +47% GE +170% C +461% CCL +130%
+  BOOK b3991 +7.0 pts/yr | NWL -7% C +470% BA -1% TECH +642% AIG +261% GE +189% INTC +206% ^GSPC +76% VFC +38% M +41%
+  BOOK b3992 +7.4 pts/yr | INTC +342% TECH +757% AIG +202% C +352% GE +163% BA +8% T -10% NWL -7% ^GSPC +78% MMM +145%
+  BOOK b3993 +14.6 pts/yr | TECH +469% C +317% GE +143% BA +15% AIG +217% NWL -32% INTC +160% F +25% BIIB +2223% CCL +247%
+  BOOK b3994 +6.6 pts/yr | JBL +299% GE +109% AIG +131% MMM +98% VFC +60% CCL +213% KIM +143% NWL -35% BA -6% TECH +431%
   BOOK b3995 +2.1 pts/yr | CCL +149% MMM +58% NOK +198% AIG +59% NWL -41% ^GSPC +29% VFC +32% F -28% C +81% T -17%
   BOOK b3996 +3.5 pts/yr | F -54% CCL +85% AIG +67% T -33% VFC +29% NWL -42% M +57% ^GSPC +31% TECH +532% GE +27%
-  BOOK b3997 +4.0 pts/yr | COF +100% T -27% NWL -49% M +33% GE +10% ^GSPC +14% INTC -15% VFC +44% TECH +519% F -79%
-  BOOK b3998 +5.6 pts/yr | T -30% AIG +25% C +97% TECH +360% ^GSPC +12% NWL -29% GE +3% F -76% VFC +78% KIM +282%
+  BOOK b3997 +4.0 pts/yr | COF +100% T -27% NWL -49% M +33% GE +10% ^GSPC +14% VFC +44% TECH +519% INTC -15% F -79%
+  BOOK b3998 +5.6 pts/yr | T -30% AIG +25% TECH +360% C +97% ^GSPC +12% NWL -29% GE +3% F -76% VFC +78% KIM +282%
   BOOK b3999 +0.7 pts/yr | TECH +275% AIG +4% T -31% C +39% GE +7% INTC -32% CCL -5% ^GSPC +10% F -68% NWL -39%
   BOOK b4000 +5.7 pts/yr | GE -21% AIG -21% CCL -1% C -34% DGX +479% MMM +70% COF +33% ^GSPC -1% F -76% TECH +108%
-  BOOK b4001 +1.7 pts/yr | DGX +111% GE -45% C -65% AIG -70% ^GSPC -11% INTC -67% TECH +59% COF -29% T -28% KIM +157%
-  BOOK b4002 +0.5 pts/yr | BA -28% AIG -98% C -94% TECH +116% COF -75% GE -74% INTC -65% SJM +83% T -49% JBL -85%
-  BOOK b4003 +1.2 pts/yr | C -94% MMM +26% TECH +118% AIG -99% COF -52% VFC +77% SJM +84% CCL -16% GE -69% JBL -72%
-  BOOK b4004 +1.8 pts/yr | TECH +114% C -93% BIIB -10% AIG -98% ACGL +180% SJM +88% KIM -17% FE +17% INTC -45% NOK -42%
-  BOOK b4005 +5.3 pts/yr | DGX +56% ACGL +191% BIIB +25% SJM +83% TECH +111% MMM +36% KIM -6% NWL -48% COF +34% CHRW +335%
+  BOOK b4001 -1.2 pts/yr | DGX +111% GE -45% AIG -70% C -65% ^GSPC -11% INTC -67% TECH +59% COF -29% T -28% ASML -49%
+  BOOK b4002 +5.1 pts/yr | BA -28% AIG -98% C -94% TECH +116% COF -75% INTC -65% GE -74% SJM +83% T -49% CHRW +207%
+  BOOK b4003 +1.2 pts/yr | C -94% MMM +26% TECH +118% AIG -99% COF -52% VFC +77% SJM +84% GE -69% CCL -16% JBL -72%
+  BOOK b4004 +1.8 pts/yr | TECH +114% C -93% BIIB -10% AIG -98% ACGL +180% KIM -17% SJM +88% FE +17% INTC -45% NOK -42%
+  BOOK b4005 +5.3 pts/yr | DGX +56% ACGL +191% BIIB +25% SJM +83% TECH +111% COF +34% KIM -6% MMM +36% NWL -48% CHRW +335%
   BOOK b4006 +4.2 pts/yr | TECH +202% MMM +41% SJM +55% ACGL +189% BIIB +104% KIM +15% CHRW +450% DGX +112% C -86% NOK -26%
-  BOOK b4007 +7.1 pts/yr | CHRW +292% KIM -7% EW +405% ACGL +196% MMM +24% CSGP +94% C -91% JBL -21% BIIB +202% TECH +134%
-  BOOK b4008 -2.6 pts/yr | TECH +76% COF -36% M +42% INTC -13% CSGP +37% CCL -32% C -94% JBL -23% MMM +10% KIM -21%
+  BOOK b4007 +6.5 pts/yr | CHRW +292% KIM -7% EW +405% ACGL +196% CSGP +94% MMM +24% C -91% JBL -21% FE +29% BIIB +202%
+  BOOK b4008 -2.6 pts/yr | TECH +76% COF -36% M +42% INTC -13% CSGP +37% CCL -32% C -94% MMM +10% JBL -23% KIM -21%
   BOOK b4009 +4.1 pts/yr | BIIB +143% TECH +74% MMM +11% CSGP +94% CCL -29% VFC +199% CHRW +142% COF -19% DGX +42% M +50%
   BOOK b4010 +2.5 pts/yr | CHRW +157% BIIB +140% COF -28% KIM -22% DGX +22% CCL -33% VFC +178% MAA +73% ELV +7% GRMN +38%
-  BOOK b4011 +0.1 pts/yr | ELV +21% M +27% TECH +50% KIM -31% CHRW +91% DGX +14% EW +211% MAA +40% COF -16% JBL -26%
-  BOOK b4012 +0.3 pts/yr | TECH +60% ACGL +197% MAA +26% JBL -56% CHRW +45% GRMN +45% KIM -40% BA +83% DGX +6% M +60%
+  BOOK b4011 +0.1 pts/yr | ELV +21% M +27% TECH +50% CHRW +91% KIM -31% DGX +14% MAA +40% EW +211% JBL -26% COF -16%
+  BOOK b4012 +0.3 pts/yr | TECH +60% ACGL +197% MAA +26% JBL -56% CHRW +45% GRMN +45% BA +83% DGX +6% KIM -40% M +60%
   BOOK b4013 +2.9 pts/yr | ODFL +338% CHRW +47% COR.LS +50% GRMN +16% ACGL +163% WYNN +233% MAA +22% KIM -43% IBS.LS -1% BA +56%
-  BOOK b4014 +2.1 pts/yr | VFC +266% KIM -44% GRMN +4% DGX +35% M +54% IBS.LS -23% ASML +179% BA +62% TECH +60% MAA +32%
+  BOOK b4014 +2.1 pts/yr | VFC +266% KIM -44% GRMN +4% DGX +35% M +54% IBS.LS -23% ASML +179% BA +62% MAA +32% TECH +60%
   BOOK b4015 +6.2 pts/yr | VFC +259% BA +39% ACGL +207% SJM +100% CHRW +44% TECH +94% ODFL +470% ELV +105% WYNN +7% KIM -34%
-  BOOK b4016 +2.5 pts/yr | GRMN -51% BIIB +348% CHRW +17% TECH +27% WYNN -41% ACGL +188% GOOG +164% ELV +67% DGX +33% FE -54%
-  BOOK b4017 +6.0 pts/yr | TECH +41% CHRW +44% ODFL +327% FE -53% EW +631% ACGL +212% MAA +84% WYNN +0% BIIB +316% RSG +58%
+  BOOK b4016 +2.5 pts/yr | GRMN -51% BIIB +348% CHRW +17% TECH +27% WYNN -41% GOOG +164% ACGL +188% ELV +67% DGX +33% FE -54%
+  BOOK b4017 +6.0 pts/yr | TECH +41% CHRW +44% ODFL +327% FE -53% EW +631% ACGL +212% MAA +84% WYNN +0% RSG +58% BIIB +316%
   BOOK b4018 +2.9 pts/yr | TECH +70% CHRW +65% ACGL +341% EW +570% ODFL +692% DGX +86% FE -39% RSG +122% VFC +268% SJM +201%
-  BOOK b4019 +4.8 pts/yr | CHRW +20% ODFL +506% EW +604% TECH +82% DGX +98% GOOG +322% IBS.LS +66% VFC +285% ACGL +369% RSG +141%
+  BOOK b4019 +4.8 pts/yr | ODFL +506% CHRW +20% EW +604% TECH +82% DGX +98% GOOG +322% IBS.LS +66% VFC +285% ACGL +369% RSG +141%
   BOOK b4020 +2.7 pts/yr | GOOG +343% ASML +400% IBS.LS +68% EW +465% SJM +111% CHRW +62% TECH +114% DGX +90% VFC +351% WYNN +168%
   BOOK b4021 +5.7 pts/yr | EW +393% ALTR.LS +344% MAA +78% WYNN +90% CHRW +41% SJM +81% ODFL +738% ASML +412% VFC +364% ACGL +251%
   BOOK b4022 +10.1 pts/yr | CHRW +13% ODFL +534% WYNN +6% CSGP +594% MAA +59% BIIB +410% ASML +221% ACGL +199% EW +304% DXCM +900%
   BOOK b4023 +7.8 pts/yr | BIIB +133% EW +497% ODFL +576% WYNN -15% TECH +177% CSGP +947% VFC +218% ASML +381% CHRW +16% SJM +43%
-  BOOK b4024 +4.3 pts/yr | BIIB +128% VFC +168% EW +432% ODFL +591% SJM +32% ACGL +267% DGX +91% TECH +208% ASML +403% CHRW +5%
+  BOOK b4024 +8.3 pts/yr | BIIB +128% VFC +168% EW +432% ODFL +591% SJM +32% ACGL +267% DGX +91% TECH +208% ASML +403% CSGP +1052%
   BOOK b4025 +8.4 pts/yr | ASML +374% VFC +72% EW +365% ODFL +870% CSGP +930% BIIB +88% ACGL +138% MAA +72% TECH +298% SJM +42%
   BOOK b4026 +14.2 pts/yr | CSGP +859% EW +451% ASML +611% BIIB +81% DXCM +2361% ACGL +103% PWR +143% ODFL +681% VFC +121% SJM +31%
-  BOOK b4027 +5.2 pts/yr | SJM +17% COR.LS +420% ACGL +116% M -65% ODFL +824% BA +115% WYNN -26% VFC +73% GOOG +512% ASML +752%
-  BOOK b4028 +8.0 pts/yr | BA +60% WYNN -61% ASML +700% VFC +18% MMM +30% TECH +314% AVGO +972% GOOG +361% ODFL +735% FRCB +258%
-  BOOK b4029 +7.3 pts/yr | WYNN -70% AVGO +672% COR.LS +259% GOOG +309% ODFL +617% VFC -23% M -69% MMM +2% TECH +313% EW +568%
-  BOOK b4030 +5.6 pts/yr | EW +267% INTC -14% ELV +270% ODFL +613% ASML +536% COR.LS +172% CHRW +41% MMM -29% VFC -53% TECH +243%
-  BOOK b4031 +4.8 pts/yr | EW +224% CSGP +317% ELV +206% BIIB -15% ALTR.LS +75% ODFL +760% ACGL +227% FERG +136% TECH +205% M -76%
-  BOOK b4032 +2.7 pts/yr | GOOG +282% ALTR.LS +91% EW +201% DXCM +581% CSGP +376% ACGL +266% MAA +35% FRCB -100% SJM +3% RSG +292%
-  BOOK b4033 +1.4 pts/yr | GOOG +350% MAA +32% SJM -23% CSGP +275% MMM -14% RSG +279% TECH +190% ASML +754% DGX +65% FRCB -100%
-  BOOK b4034 +2.7 pts/yr | IBS.LS +0% ODFL +531% PFG +44% EW +126% DXCM +339% UAL +50% FRCB -100% RSG +278% ASML +509% GOOG +416%
-  BOOK b4035 +0.7 pts/yr | UAL +30% BA -9% ELV +52% CCL -55% ASML +362% ODFL +367% JBL +632% PFG +17% DGX +55% CSGP +245%
-  BOOK b4036 +0.2 pts/yr | CSGP +78% ASML +601% ELV +39% GOOG +479% WYNN -35% TECH +83% ODFL +255% MMM -27% EW +93% VFC -74%
-  BOOK b4037 +0.7 pts/yr | ODFL +334% ASML +661% CSGP -31% TECH +80% DXCM +251% EW +81% GOOG +486% VFC -83% ELV +49% WYNN -40%
+  BOOK b4027 +5.2 pts/yr | COR.LS +420% SJM +17% ACGL +116% M -65% ODFL +824% BA +115% WYNN -26% VFC +73% GOOG +512% ASML +752%
+  BOOK b4028 +8.0 pts/yr | BA +60% WYNN -61% ASML +700% VFC +18% MMM +30% TECH +314% AVGO +972% GOOG +361% FRCB +258% ODFL +735%
+  BOOK b4029 +7.3 pts/yr | WYNN -70% AVGO +672% COR.LS +259% GOOG +309% ODFL +617% VFC -23% M -69% MMM +2% EW +568% TECH +313%
+  BOOK b4030 +5.6 pts/yr | EW +267% INTC -14% ODFL +613% ELV +270% ASML +536% CHRW +41% COR.LS +172% MMM -29% VFC -53% TECH +243%
+  BOOK b4031 +6.6 pts/yr | EW +224% CSGP +317% ELV +206% BIIB -15% ALTR.LS +75% ODFL +760% ACGL +227% FERG +136% ASML +622% M -76%
+  BOOK b4032 +4.9 pts/yr | GOOG +282% ALTR.LS +91% EW +201% DXCM +581% CSGP +376% ACGL +266% MAA +35% FRCB -100% SJM +3% AVGO +783%
+  BOOK b4033 +1.4 pts/yr | GOOG +350% MAA +32% CSGP +275% SJM -23% MMM -14% RSG +279% TECH +190% DGX +65% ASML +754% FRCB -100%
+  BOOK b4034 +0.7 pts/yr | IBS.LS +0% ODFL +531% PFG +44% EW +126% DXCM +339% UAL +50% RSG +278% FRCB -100% ASML +509% BA +8%
+  BOOK b4035 +0.7 pts/yr | UAL +30% BA -9% ELV +52% CCL -55% ODFL +367% JBL +632% ASML +362% PFG +17% DGX +55% CSGP +245%
+  BOOK b4036 +0.2 pts/yr | CSGP +78% ASML +601% ELV +39% WYNN -35% GOOG +479% ODFL +255% TECH +83% MMM -27% VFC -74% EW +93%
+  BOOK b4037 +0.7 pts/yr | ODFL +334% CSGP -31% ASML +661% TECH +80% DXCM +251% EW +81% VFC -83% GOOG +486% ELV +49% WYNN -40%
   BOOK stock b3946 -14.8 pts/yr | MMM -31% GE -13%
   BOOK stock b3947 -14.5 pts/yr | MMM -37% GE -3%
   BOOK stock b3948 -13.2 pts/yr | GE +4% MMM -26%
@@ -398,100 +396,100 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   BOOK stock b3973 +2.6 pts/yr | MMM +91% GE +176%
   BOOK stock b3974 +1.8 pts/yr | MMM +62% GE +105% T +119%
   BOOK stock b3975 +1.9 pts/yr | GE +99% MMM +54% T +154%
-  BOOK stock b3976 +6.3 pts/yr | MMM +113% F +39% GE +240% INTC +766% T +194% AIG +332% NWL +552% ^GSPC +147% VFC +78% C +372%
+  BOOK stock b3976 +6.3 pts/yr | MMM +113% GE +240% F +39% INTC +766% T +194% AIG +332% NWL +552% ^GSPC +147% VFC +78% C +372%
   BOOK stock b3977 +6.2 pts/yr | F +22% NWL +495% INTC +765% MMM +104% GE +285% BA +229% T +157% ^GSPC +135% VFC +96% AIG +334%
   BOOK stock b3978 +10.3 pts/yr | NWL +340% BA +280% F +18% AIG +360% T +152% GE +328% MMM +149% ^GSPC +164% VFC +119% INTC +2396%
   BOOK stock b3979 +9.5 pts/yr | T +108% AIG +377% GE +379% MMM +149% BA +236% ^GSPC +176% VFC +143% NWL +287% INTC +2308% F +64%
   BOOK stock b3980 +6.2 pts/yr | AIG +400% GE +398% T +194% INTC +1540% MMM +114% BA +141% NWL +253% ^GSPC +198% F +137% VFC +170%
-  BOOK stock b3981 +9.7 pts/yr | INTC +1418% GE +399% MMM +66% BA +34% CCL +609% AIG +574% T +201% ^GSPC +215% F +314% C +1156%
-  BOOK stock b3982 +9.6 pts/yr | NWL +178% MMM +83% BA +41% INTC +2364% T +313% GE +555% AIG +530% ^GSPC +272% F +561% CCL +1072%
+  BOOK stock b3981 +9.7 pts/yr | INTC +1418% GE +399% MMM +66% BA +34% CCL +609% T +201% AIG +574% ^GSPC +215% F +314% C +1156%
+  BOOK stock b3982 +9.6 pts/yr | NWL +178% MMM +83% BA +41% T +313% INTC +2364% GE +555% AIG +530% ^GSPC +272% F +561% CCL +1072%
   BOOK stock b3983 +8.8 pts/yr | GE +495% AIG +604% INTC +2249% MMM +100% NWL +131% CCL +712% ^GSPC +243% BA +96% T +323% VFC +174%
-  BOOK stock b3984 +11.2 pts/yr | VFC +31% CCL +574% GE +612% MMM +106% C +1141% INTC +2544% T +184% BA +75% ^GSPC +241% AIG +620%
-  BOOK stock b3985 +15.0 pts/yr | VFC -6% NWL +35% CCL +167% TECH +1716% MMM +80% GE +711% INTC +3475% C +1348% T +158% F +219%
-  BOOK stock b3986 +7.5 pts/yr | AIG +581% CCL +262% VFC +29% NWL +41% MMM +126% GE +541% T +181% C +1169% INTC +1009% ^GSPC +211%
+  BOOK stock b3984 +11.2 pts/yr | VFC +31% CCL +574% GE +612% MMM +106% C +1141% T +184% BA +75% ^GSPC +241% AIG +620% INTC +2544%
+  BOOK stock b3985 +15.0 pts/yr | VFC -6% NWL +35% CCL +167% MMM +80% GE +711% TECH +1716% INTC +3475% C +1348% T +158% F +219%
+  BOOK stock b3986 +7.5 pts/yr | AIG +581% CCL +262% NWL +41% VFC +29% MMM +126% T +181% GE +541% C +1169% INTC +1009% ^GSPC +211%
   BOOK stock b3987 +6.7 pts/yr | INTC +813% AIG +473% CCL +230% GE +430% T +122% MMM +113% F +165% TECH +722% ^GSPC +170% NWL +33%
   BOOK stock b3988 +9.4 pts/yr | CCL +119% GE +314% NWL +32% T +79% C +578% F +25% AIG +407% INTC +759% MMM +107% TECH +1070%
-  BOOK stock b3989 +3.2 pts/yr | NWL +35% INTC +407% CCL +124% GE +284% T +32% F +16% AIG +329% VFC +51% MMM +137% BA +86%
-  BOOK stock b3990 +4.7 pts/yr | NWL +24% INTC +261% AIG +229% T +15% MMM +138% ^GSPC +82% C +461% GE +170% VFC +47% CCL +130%
-  BOOK stock b3991 +7.0 pts/yr | NWL -7% C +470% TECH +642% BA -1% AIG +261% GE +189% INTC +206% ^GSPC +76% VFC +38% M +41%
-  BOOK stock b3992 +7.4 pts/yr | INTC +342% TECH +757% AIG +202% C +352% GE +163% T -10% BA +8% NWL -7% ^GSPC +78% MMM +145%
-  BOOK stock b3993 +14.6 pts/yr | TECH +469% C +317% GE +143% BA +15% AIG +217% NWL -32% F +25% INTC +160% CCL +247% BIIB +2223%
-  BOOK stock b3994 +6.6 pts/yr | JBL +299% AIG +131% GE +109% MMM +98% CCL +213% NWL -35% VFC +60% KIM +143% BA -6% TECH +431%
+  BOOK stock b3989 +7.9 pts/yr | NWL +35% INTC +407% CCL +124% T +32% GE +284% AIG +329% F +16% VFC +51% TECH +1064% MMM +137%
+  BOOK stock b3990 +4.7 pts/yr | NWL +24% INTC +261% AIG +229% T +15% MMM +138% ^GSPC +82% VFC +47% GE +170% C +461% CCL +130%
+  BOOK stock b3991 +7.0 pts/yr | NWL -7% C +470% BA -1% TECH +642% AIG +261% GE +189% INTC +206% ^GSPC +76% VFC +38% M +41%
+  BOOK stock b3992 +7.4 pts/yr | INTC +342% TECH +757% AIG +202% C +352% GE +163% BA +8% T -10% NWL -7% ^GSPC +78% MMM +145%
+  BOOK stock b3993 +14.6 pts/yr | TECH +469% C +317% GE +143% BA +15% AIG +217% NWL -32% INTC +160% F +25% BIIB +2223% CCL +247%
+  BOOK stock b3994 +6.6 pts/yr | JBL +299% GE +109% AIG +131% MMM +98% VFC +60% CCL +213% KIM +143% NWL -35% BA -6% TECH +431%
   BOOK stock b3995 +2.1 pts/yr | CCL +149% MMM +58% NOK +198% AIG +59% NWL -41% ^GSPC +29% VFC +32% F -28% C +81% T -17%
   BOOK stock b3996 +3.5 pts/yr | F -54% CCL +85% AIG +67% T -33% VFC +29% NWL -42% M +57% ^GSPC +31% TECH +532% GE +27%
-  BOOK stock b3997 +4.0 pts/yr | COF +100% T -27% NWL -49% M +33% GE +10% ^GSPC +14% INTC -15% VFC +44% TECH +519% F -79%
-  BOOK stock b3998 +5.6 pts/yr | T -30% AIG +25% C +97% TECH +360% ^GSPC +12% NWL -29% GE +3% F -76% VFC +78% KIM +282%
+  BOOK stock b3997 +4.0 pts/yr | COF +100% T -27% NWL -49% M +33% GE +10% ^GSPC +14% VFC +44% TECH +519% INTC -15% F -79%
+  BOOK stock b3998 +5.6 pts/yr | T -30% AIG +25% TECH +360% C +97% ^GSPC +12% NWL -29% GE +3% F -76% VFC +78% KIM +282%
   BOOK stock b3999 +0.7 pts/yr | TECH +275% AIG +4% T -31% C +39% GE +7% INTC -32% CCL -5% ^GSPC +10% F -68% NWL -39%
   BOOK stock b4000 +5.7 pts/yr | GE -21% AIG -21% CCL -1% C -34% DGX +479% MMM +70% COF +33% ^GSPC -1% F -76% TECH +108%
-  BOOK stock b4001 +1.7 pts/yr | DGX +111% GE -45% C -65% AIG -70% ^GSPC -11% INTC -67% TECH +59% COF -29% T -28% KIM +157%
-  BOOK stock b4002 +0.5 pts/yr | BA -28% AIG -98% C -94% TECH +116% COF -75% GE -74% INTC -65% SJM +83% T -49% JBL -85%
-  BOOK stock b4003 +1.2 pts/yr | C -94% MMM +26% TECH +118% AIG -99% COF -52% VFC +77% SJM +84% CCL -16% GE -69% JBL -72%
-  BOOK stock b4004 +1.8 pts/yr | TECH +114% C -93% BIIB -10% AIG -98% ACGL +180% SJM +88% KIM -17% FE +17% INTC -45% NOK -42%
-  BOOK stock b4005 +5.3 pts/yr | DGX +56% ACGL +191% BIIB +25% SJM +83% TECH +111% MMM +36% KIM -6% NWL -48% COF +34% CHRW +335%
+  BOOK stock b4001 -1.2 pts/yr | DGX +111% GE -45% AIG -70% C -65% ^GSPC -11% INTC -67% TECH +59% COF -29% T -28% ASML -49%
+  BOOK stock b4002 +5.1 pts/yr | BA -28% AIG -98% C -94% TECH +116% COF -75% INTC -65% GE -74% SJM +83% T -49% CHRW +207%
+  BOOK stock b4003 +1.2 pts/yr | C -94% MMM +26% TECH +118% AIG -99% COF -52% VFC +77% SJM +84% GE -69% CCL -16% JBL -72%
+  BOOK stock b4004 +1.8 pts/yr | TECH +114% C -93% BIIB -10% AIG -98% ACGL +180% KIM -17% SJM +88% FE +17% INTC -45% NOK -42%
+  BOOK stock b4005 +5.3 pts/yr | DGX +56% ACGL +191% BIIB +25% SJM +83% TECH +111% COF +34% KIM -6% MMM +36% NWL -48% CHRW +335%
   BOOK stock b4006 +4.2 pts/yr | TECH +202% MMM +41% SJM +55% ACGL +189% BIIB +104% KIM +15% CHRW +450% DGX +112% C -86% NOK -26%
-  BOOK stock b4007 +7.1 pts/yr | CHRW +292% KIM -7% EW +405% ACGL +196% MMM +24% CSGP +94% C -91% JBL -21% BIIB +202% TECH +134%
-  BOOK stock b4008 -2.6 pts/yr | TECH +76% COF -36% M +42% INTC -13% CSGP +37% CCL -32% C -94% JBL -23% MMM +10% KIM -21%
+  BOOK stock b4007 +6.5 pts/yr | CHRW +292% KIM -7% EW +405% ACGL +196% CSGP +94% MMM +24% C -91% JBL -21% FE +29% BIIB +202%
+  BOOK stock b4008 -2.6 pts/yr | TECH +76% COF -36% M +42% INTC -13% CSGP +37% CCL -32% C -94% MMM +10% JBL -23% KIM -21%
   BOOK stock b4009 +4.1 pts/yr | BIIB +143% TECH +74% MMM +11% CSGP +94% CCL -29% VFC +199% CHRW +142% COF -19% DGX +42% M +50%
   BOOK stock b4010 +2.5 pts/yr | CHRW +157% BIIB +140% COF -28% KIM -22% DGX +22% CCL -33% VFC +178% MAA +73% ELV +7% GRMN +38%
-  BOOK stock b4011 +0.1 pts/yr | ELV +21% M +27% TECH +50% KIM -31% CHRW +91% DGX +14% EW +211% MAA +40% COF -16% JBL -26%
-  BOOK stock b4012 +0.3 pts/yr | TECH +60% ACGL +197% MAA +26% JBL -56% CHRW +45% GRMN +45% KIM -40% BA +83% DGX +6% M +60%
+  BOOK stock b4011 +0.1 pts/yr | ELV +21% M +27% TECH +50% CHRW +91% KIM -31% DGX +14% MAA +40% EW +211% JBL -26% COF -16%
+  BOOK stock b4012 +0.3 pts/yr | TECH +60% ACGL +197% MAA +26% JBL -56% CHRW +45% GRMN +45% BA +83% DGX +6% KIM -40% M +60%
   BOOK stock b4013 +2.9 pts/yr | ODFL +338% CHRW +47% COR.LS +50% GRMN +16% ACGL +163% WYNN +233% MAA +22% KIM -43% IBS.LS -1% BA +56%
-  BOOK stock b4014 +2.1 pts/yr | VFC +266% KIM -44% GRMN +4% DGX +35% M +54% IBS.LS -23% ASML +179% BA +62% TECH +60% MAA +32%
+  BOOK stock b4014 +2.1 pts/yr | VFC +266% KIM -44% GRMN +4% DGX +35% M +54% IBS.LS -23% ASML +179% BA +62% MAA +32% TECH +60%
   BOOK stock b4015 +6.2 pts/yr | VFC +259% BA +39% ACGL +207% SJM +100% CHRW +44% TECH +94% ODFL +470% ELV +105% WYNN +7% KIM -34%
-  BOOK stock b4016 +2.5 pts/yr | GRMN -51% BIIB +348% CHRW +17% TECH +27% WYNN -41% ACGL +188% GOOG +164% ELV +67% DGX +33% FE -54%
-  BOOK stock b4017 +6.0 pts/yr | TECH +41% CHRW +44% ODFL +327% FE -53% EW +631% ACGL +212% MAA +84% WYNN +0% BIIB +316% RSG +58%
+  BOOK stock b4016 +2.5 pts/yr | GRMN -51% BIIB +348% CHRW +17% TECH +27% WYNN -41% GOOG +164% ACGL +188% ELV +67% DGX +33% FE -54%
+  BOOK stock b4017 +6.0 pts/yr | TECH +41% CHRW +44% ODFL +327% FE -53% EW +631% ACGL +212% MAA +84% WYNN +0% RSG +58% BIIB +316%
   BOOK stock b4018 +2.9 pts/yr | TECH +70% CHRW +65% ACGL +341% EW +570% ODFL +692% DGX +86% FE -39% RSG +122% VFC +268% SJM +201%
-  BOOK stock b4019 +4.8 pts/yr | CHRW +20% ODFL +506% EW +604% TECH +82% DGX +98% GOOG +322% IBS.LS +66% VFC +285% ACGL +369% RSG +141%
+  BOOK stock b4019 +4.8 pts/yr | ODFL +506% CHRW +20% EW +604% TECH +82% DGX +98% GOOG +322% IBS.LS +66% VFC +285% ACGL +369% RSG +141%
   BOOK stock b4020 +2.7 pts/yr | GOOG +343% ASML +400% IBS.LS +68% EW +465% SJM +111% CHRW +62% TECH +114% DGX +90% VFC +351% WYNN +168%
   BOOK stock b4021 +5.7 pts/yr | EW +393% ALTR.LS +344% MAA +78% WYNN +90% CHRW +41% SJM +81% ODFL +738% ASML +412% VFC +364% ACGL +251%
   BOOK stock b4022 +10.1 pts/yr | CHRW +13% ODFL +534% WYNN +6% CSGP +594% MAA +59% BIIB +410% ASML +221% ACGL +199% EW +304% DXCM +900%
   BOOK stock b4023 +7.8 pts/yr | BIIB +133% EW +497% ODFL +576% WYNN -15% TECH +177% CSGP +947% VFC +218% ASML +381% CHRW +16% SJM +43%
-  BOOK stock b4024 +4.3 pts/yr | BIIB +128% VFC +168% EW +432% ODFL +591% SJM +32% ACGL +267% DGX +91% TECH +208% ASML +403% CHRW +5%
+  BOOK stock b4024 +8.3 pts/yr | BIIB +128% VFC +168% EW +432% ODFL +591% SJM +32% ACGL +267% DGX +91% TECH +208% ASML +403% CSGP +1052%
   BOOK stock b4025 +8.4 pts/yr | ASML +374% VFC +72% EW +365% ODFL +870% CSGP +930% BIIB +88% ACGL +138% MAA +72% TECH +298% SJM +42%
   BOOK stock b4026 +14.2 pts/yr | CSGP +859% EW +451% ASML +611% BIIB +81% DXCM +2361% ACGL +103% PWR +143% ODFL +681% VFC +121% SJM +31%
-  BOOK stock b4027 +5.2 pts/yr | SJM +17% COR.LS +420% ACGL +116% M -65% ODFL +824% BA +115% WYNN -26% VFC +73% GOOG +512% ASML +752%
-  BOOK stock b4028 +8.0 pts/yr | BA +60% WYNN -61% ASML +700% VFC +18% MMM +30% TECH +314% AVGO +972% GOOG +361% ODFL +735% FRCB +258%
-  BOOK stock b4029 +7.3 pts/yr | WYNN -70% AVGO +672% COR.LS +259% GOOG +309% ODFL +617% VFC -23% M -69% MMM +2% TECH +313% EW +568%
-  BOOK stock b4030 +5.6 pts/yr | EW +267% INTC -14% ELV +270% ODFL +613% ASML +536% COR.LS +172% CHRW +41% MMM -29% VFC -53% TECH +243%
-  BOOK stock b4031 +4.8 pts/yr | EW +224% CSGP +317% ELV +206% BIIB -15% ALTR.LS +75% ODFL +760% ACGL +227% FERG +136% TECH +205% M -76%
-  BOOK stock b4032 +2.7 pts/yr | GOOG +282% ALTR.LS +91% EW +201% DXCM +581% CSGP +376% ACGL +266% MAA +35% FRCB -100% SJM +3% RSG +292%
-  BOOK stock b4033 +1.4 pts/yr | GOOG +350% MAA +32% SJM -23% CSGP +275% MMM -14% RSG +279% TECH +190% ASML +754% DGX +65% FRCB -100%
-  BOOK stock b4034 +2.7 pts/yr | IBS.LS +0% ODFL +531% PFG +44% EW +126% DXCM +339% UAL +50% FRCB -100% RSG +278% ASML +509% GOOG +416%
-  BOOK stock b4035 +0.7 pts/yr | UAL +30% BA -9% ELV +52% CCL -55% ASML +362% ODFL +367% JBL +632% PFG +17% DGX +55% CSGP +245%
-  BOOK stock b4036 +0.2 pts/yr | CSGP +78% ASML +601% ELV +39% GOOG +479% WYNN -35% TECH +83% ODFL +255% MMM -27% EW +93% VFC -74%
-  BOOK stock b4037 +0.7 pts/yr | ODFL +334% ASML +661% CSGP -31% TECH +80% DXCM +251% EW +81% GOOG +486% VFC -83% ELV +49% WYNN -40%
-  top-15 book +12.5%/yr  vs S&P500 +9.0%/yr  ->  excess +3.5 (med +4.0) pts/yr   win 87% of 82   worst -14.8   OOS +2.9/+4.1   rode 14 zeros/927 holds
-  top-20 book +13.1%/yr  vs S&P500 +9.0%/yr  ->  excess +4.1 (med +4.0) pts/yr   win 88% of 82   worst -14.8   OOS +3.6/+4.5   rode 17 zeros/1148 holds
+  BOOK stock b4027 +5.2 pts/yr | COR.LS +420% SJM +17% ACGL +116% M -65% ODFL +824% BA +115% WYNN -26% VFC +73% GOOG +512% ASML +752%
+  BOOK stock b4028 +8.0 pts/yr | BA +60% WYNN -61% ASML +700% VFC +18% MMM +30% TECH +314% AVGO +972% GOOG +361% FRCB +258% ODFL +735%
+  BOOK stock b4029 +7.3 pts/yr | WYNN -70% AVGO +672% COR.LS +259% GOOG +309% ODFL +617% VFC -23% M -69% MMM +2% EW +568% TECH +313%
+  BOOK stock b4030 +5.6 pts/yr | EW +267% INTC -14% ODFL +613% ELV +270% ASML +536% CHRW +41% COR.LS +172% MMM -29% VFC -53% TECH +243%
+  BOOK stock b4031 +6.6 pts/yr | EW +224% CSGP +317% ELV +206% BIIB -15% ALTR.LS +75% ODFL +760% ACGL +227% FERG +136% ASML +622% M -76%
+  BOOK stock b4032 +4.9 pts/yr | GOOG +282% ALTR.LS +91% EW +201% DXCM +581% CSGP +376% ACGL +266% MAA +35% FRCB -100% SJM +3% AVGO +783%
+  BOOK stock b4033 +1.4 pts/yr | GOOG +350% MAA +32% CSGP +275% SJM -23% MMM -14% RSG +279% TECH +190% DGX +65% ASML +754% FRCB -100%
+  BOOK stock b4034 +0.7 pts/yr | IBS.LS +0% ODFL +531% PFG +44% EW +126% DXCM +339% UAL +50% RSG +278% FRCB -100% ASML +509% BA +8%
+  BOOK stock b4035 +0.7 pts/yr | UAL +30% BA -9% ELV +52% CCL -55% ODFL +367% JBL +632% ASML +362% PFG +17% DGX +55% CSGP +245%
+  BOOK stock b4036 +0.2 pts/yr | CSGP +78% ASML +601% ELV +39% WYNN -35% GOOG +479% ODFL +255% TECH +83% MMM -27% VFC -74% EW +93%
+  BOOK stock b4037 +0.7 pts/yr | ODFL +334% CSGP -31% ASML +661% TECH +80% DXCM +251% EW +81% VFC -83% GOOG +486% ELV +49% WYNN -40%
+  top-15 book +12.5%/yr  vs S&P500 +9.0%/yr  ->  excess +3.5 (med +4.1) pts/yr   win 87% of 82   worst -14.8   OOS +2.9/+4.1   rode 14 zeros/927 holds
+  top-20 book +13.1%/yr  vs S&P500 +9.0%/yr  ->  excess +4.1 (med +4.1) pts/yr   win 88% of 82   worst -14.8   OOS +3.6/+4.6   rode 16 zeros/1148 holds
   top-25 book +13.4%/yr  vs S&P500 +9.0%/yr  ->  excess +4.3 (med +4.8) pts/yr   win 88% of 82   worst -14.8   OOS +3.6/+5.0   rode 22 zeros/1303 holds
-  top-30 book +13.4%/yr  vs S&P500 +9.0%/yr  ->  excess +4.4 (med +4.9) pts/yr   win 87% of 82   worst -14.8   OOS +3.6/+5.1   rode 24 zeros/1387 holds
+  top-30 book +13.4%/yr  vs S&P500 +9.0%/yr  ->  excess +4.4 (med +4.9) pts/yr   win 87% of 82   worst -14.8   OOS +3.6/+5.1   rode 25 zeros/1387 holds
   top-35 book +13.3%/yr  vs S&P500 +9.0%/yr  ->  excess +4.3 (med +4.9) pts/yr   win 87% of 82   worst -14.8   OOS +3.6/+5.0   rode 27 zeros/1416 holds
   top-40 book +13.4%/yr  vs S&P500 +9.0%/yr  ->  excess +4.3 (med +4.9) pts/yr   win 87% of 82   worst -14.8   OOS +3.6/+5.0   rode 27 zeros/1417 holds
   top-45 book +13.4%/yr  vs S&P500 +9.0%/yr  ->  excess +4.3 (med +4.9) pts/yr   win 87% of 82   worst -14.8   OOS +3.6/+5.0   rode 27 zeros/1417 holds
   top-50 book +13.4%/yr  vs S&P500 +9.0%/yr  ->  excess +4.3 (med +4.9) pts/yr   win 87% of 82   worst -14.8   OOS +3.6/+5.0   rode 27 zeros/1417 holds
-  WINNER IN BOOK (#1155): share of the 82 booked windows whose book holds a top-1% winner | top-1 18% · top-2 24% · top-3 30% · top-5 35% · top-10 48% · top-15 59% · top-20 70% · top-25 83% · top-30 88% · top-35 88% · top-40 88% · top-45 88% · top-50 88%
+  WINNER IN BOOK (#1155): share of the 82 booked windows whose book holds a top-1% winner | top-1 18% · top-2 24% · top-3 30% · top-5 35% · top-10 49% · top-15 59% · top-20 71% · top-25 84% · top-30 88% · top-35 88% · top-40 88% · top-45 88% · top-50 88%
   terminal-multiple distribution across windows (the MEAN above is one number out of these):
-    top-1  d10 0.79×  median 2.14×  d90 4.74×   P(book < index) 48%   P(book < 1.0×) 15%   of 82
-    top-2  d10 1.10×  median 2.48×  d90 4.93×   P(book < index) 29%   P(book < 1.0×) 10%   of 82
-    top-3  d10 1.17×  median 2.55×  d90 4.77×   P(book < index) 24%   P(book < 1.0×) 6%   of 82
-    top-5  d10 1.19×  median 2.61×  d90 4.98×   P(book < index) 23%   P(book < 1.0×) 7%   of 82
-    top-10 d10 1.16×  median 2.57×  d90 5.15×   P(book < index) 13%   P(book < 1.0×) 7%   of 82
-    top-15 d10 1.22×  median 2.62×  d90 5.17×   P(book < index) 13%   P(book < 1.0×) 6%   of 82
-    top-20 d10 1.35×  median 2.71×  d90 5.41×   P(book < index) 12%   P(book < 1.0×) 5%   of 82
+    top-1  d10 0.79×  median 2.28×  d90 5.00×   P(book < index) 45%   P(book < 1.0×) 15%   of 82
+    top-2  d10 1.10×  median 2.48×  d90 4.72×   P(book < index) 29%   P(book < 1.0×) 10%   of 82
+    top-3  d10 1.17×  median 2.55×  d90 4.77×   P(book < index) 23%   P(book < 1.0×) 7%   of 82
+    top-5  d10 1.19×  median 2.57×  d90 4.63×   P(book < index) 24%   P(book < 1.0×) 7%   of 82
+    top-10 d10 1.16×  median 2.66×  d90 5.15×   P(book < index) 15%   P(book < 1.0×) 9%   of 82
+    top-15 d10 1.22×  median 2.67×  d90 5.17×   P(book < index) 13%   P(book < 1.0×) 6%   of 82
+    top-20 d10 1.35×  median 2.70×  d90 5.41×   P(book < index) 12%   P(book < 1.0×) 5%   of 82
     top-25 d10 1.41×  median 2.77×  d90 5.41×   P(book < index) 12%   P(book < 1.0×) 6%   of 82
-    top-30 d10 1.52×  median 2.77×  d90 5.41×   P(book < index) 13%   P(book < 1.0×) 5%   of 82
+    top-30 d10 1.50×  median 2.77×  d90 5.41×   P(book < index) 13%   P(book < 1.0×) 5%   of 82
     top-35 d10 1.46×  median 2.75×  d90 5.41×   P(book < index) 13%   P(book < 1.0×) 5%   of 82
     top-40 d10 1.46×  median 2.75×  d90 5.41×   P(book < index) 13%   P(book < 1.0×) 5%   of 82
     top-45 d10 1.46×  median 2.75×  d90 5.41×   P(book < index) 13%   P(book < 1.0×) 5%   of 82
     top-50 d10 1.46×  median 2.75×  d90 5.41×   P(book < index) 13%   P(book < 1.0×) 5%   of 82
   rank-slice (DISJOINT books, excess vs ^GSPC; mean|median across windows — median is lottery-ticket-immune):
-    rank 1      excess +0.9|+0.8 pts/yr   win 52% of 82  n_eff 5.1
-    rank 2-5    excess +3.2|+3.5 pts/yr   win 72% of 79  n_eff 4.9
-    rank 6-10   excess +4.3|+3.3 pts/yr   win 79% of 62  n_eff 3.9
-    rank 11-20  excess +7.2|+5.6 pts/yr   win 89% of 62  n_eff 3.9
-    rank 21-50  excess +7.1|+5.3 pts/yr   win 86% of 37  n_eff 2.3
-    head-to-head same-window (no averaging artifact): #1 beat the 11-20 book in 23/62 (37%), the 2-5 book did in 27/62 (44%) — >50% = the top of the list is genuinely better than its middle
-    head-to-head vs the 6-10 book (#135): #1 beat it in 30/62 (48%), the 2-5 book did in 36/62 (58%) — denominator 62 here vs 62 for the 11-20 line above
-  after-tax (28% PT, top-10 book): never-sell +11.3%/yr vs yearly-rotation +10.2%/yr -> deferral edge +1.1 pts/yr
+    rank 1      excess +1.4|+1.7 pts/yr   win 55% of 82  n_eff 5.1
+    rank 2-5    excess +2.9|+2.9 pts/yr   win 72% of 79  n_eff 4.9
+    rank 6-10   excess +4.7|+3.7 pts/yr   win 76% of 62  n_eff 3.9
+    rank 11-20  excess +7.0|+5.7 pts/yr   win 89% of 62  n_eff 3.9
+    rank 21-50  excess +7.0|+5.3 pts/yr   win 84% of 37  n_eff 2.3
+    head-to-head same-window (no averaging artifact): #1 beat the 11-20 book in 25/62 (40%), the 2-5 book did in 26/62 (42%) — >50% = the top of the list is genuinely better than its middle
+    head-to-head vs the 6-10 book (#135): #1 beat it in 31/62 (50%), the 2-5 book did in 30/62 (48%) — denominator 62 here vs 62 for the 11-20 line above
+  after-tax (28% PT, top-10 book): never-sell +11.4%/yr vs yearly-rotation +10.3%/yr -> deferral edge +1.1 pts/yr
   (BOOK = equal-weight terminal wealth annualized (winners carry it, a zero costs its 1/N weight); >0 beats S&P500.
    NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)
 
@@ -502,17 +500,17 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   purged split, 96 months a side: early 509 of 1117 rows kept, late 255 of 1118 — both sides kept
 
 ── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-10 growth book held 8y) ──
-  near-high (dd > -5%)         book +15.4%/yr  excess +5.6  win 100%  worst +0.2  OOS +7.0/+4.3   (windows 38  n_eff 2.4, mean entry dd -1.3%)
-  pullback  (-15 < dd <= -5%)  book +11.4%/yr  excess +4.5  win 100%  worst +0.5  OOS +6.2/+3.2   (windows 9  n_eff 0.6, mean entry dd -8.1%)
-  drawdown  (dd <= -15%)       book +10.8%/yr  excess +4.0  win 95%  worst -2.6  OOS +3.6/+4.3   (windows 21  n_eff 1.3, mean entry dd -25.6%)
-  all entries                  book +12.3%/yr  excess +3.3  win 87%  worst -14.8  OOS +2.6/+3.9   (windows 82  n_eff 5.1) [unconditional]
-  all entries (top-10)         book +12.3%/yr  excess +3.3  win 87%  worst -14.8  OOS +2.6/+3.9   (windows 82  n_eff 5.1) [unconditional, JOURNALED]
+  near-high (dd > -5%)         book +15.5%/yr  excess +5.7  win 97%  worst -1.2  OOS +7.3/+4.1   (windows 38  n_eff 2.4, mean entry dd -1.3%)
+  pullback  (-15 < dd <= -5%)  book +12.2%/yr  excess +5.3  win 100%  worst +2.1  OOS +6.2/+4.6   (windows 9  n_eff 0.6, mean entry dd -8.1%)
+  drawdown  (dd <= -15%)       book +11.0%/yr  excess +4.1  win 95%  worst -2.6  OOS +3.5/+4.7   (windows 21  n_eff 1.3, mean entry dd -25.6%)
+  all entries                  book +12.5%/yr  excess +3.4  win 85%  worst -14.8  OOS +2.7/+4.1   (windows 82  n_eff 5.1) [unconditional]
+  all entries (top-10)         book +12.5%/yr  excess +3.4  win 85%  worst -14.8  OOS +2.7/+4.1   (windows 82  n_eff 5.1) [unconditional, JOURNALED]
   (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
 
 ── NOTCH BOOK (#324): the book each one-notch reopen would buy (cleared + that notch's cohort), every name equal-weight, held 8y ──
-  cleared    n=1417   book +13.4%/yr  excess +4.3  win 87%  worst -14.8  OOS +3.6/+5.0  top10 +3.3/-14.8
-  cagr       n=1      book +13.4%/yr  excess +4.3  win 87%  worst -14.8  OOS +3.6/+5.0  bar +4.3  top10 +3.3/-14.8  bar +3.3  ship FAIL
+  cleared    n=1417   book +13.4%/yr  excess +4.3  win 87%  worst -14.8  OOS +3.6/+5.0  top10 +3.4/-14.8
+  cagr       n=1      book +13.4%/yr  excess +4.3  win 87%  worst -14.8  OOS +3.6/+5.0  bar +4.3  top10 +3.4/-14.8  bar +3.4  ship FAIL
   (n = samples: the cleared book's own, or what the notch adds. `excess`/`bar` are the UNCAPPED book — every admit bought at full weight — kept for continuity with (#324)..(#329). (#330): THE `ship` VERDICT DECIDES AND IT IS READ AT top10 (excess/worst, and the cleared row is the baseline it is measured against), the basket the journaled verdict publishes, where a cohort name must OUTRANK an incumbent to be bought: excess >= that column's `bar`, the p95 of 200 same-n cohorts drawn at random from the refused pool, cutoff-matched and entered at the cohort's own ranks, AND worst >= cleared -1.0, at 20y, 12y and 8y. `inert` = the cohort never reaches the published basket, so the notch changes nothing the tool prints — not a pass, and not a cost it was charged for through (#329). `bar n/a` = the null could not match the cohort's shape, so the row falls back to (#324)'s flat -0.1. `track` grades the same cohorts forward)
 
 ── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held 8y ──
@@ -520,15 +518,15 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y. Keeps (#324)'s flat bar: this row SPLITS the cleared book rather than admitting out of the refused pool, so (#329)'s matched-n null does not describe it)
 
 ── SECTOR BOOK (#328): what a top-1-per-GICS-sector door would add to the cleared book, every name equal-weight, held 8y ──
-  cleared      n=1417   book +13.4%/yr  excess +4.3  win 87%  worst -14.8  OOS +3.6/+5.0  top10 +3.3/-14.8
+  cleared      n=1417   book +13.4%/yr  excess +4.3  win 87%  worst -14.8  OOS +3.6/+5.0  top10 +3.4/-14.8
   (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. `excess`/`bar` are the UNCAPPED book; (#330) the `ship` verdict decides and is read at top10 (excess/worst), the published basket — excess >= that column's `bar`, the p95 of 200 same-n refused cohorts entered at the cohort's own ranks, AND worst >= cleared -1.0, at 20y, 12y and 8y. `inert` = the door's names never reach the published basket)
-  all entries (SIZED)          book +12.4%/yr  excess +3.4  win 80%  worst -14.8  OOS +2.3/+4.5   (windows 82, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
+  all entries (SIZED)          book +12.4%/yr  excess +3.4  win 80%  worst -14.8  OOS +2.2/+4.5   (windows 82, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 8y ──
-  cap  off  book +12.3%/yr  excess +3.3  win 87%  worst -14.8  OOS +2.6/+3.9  [cap off = plain top-10 book]
-  cap  0.8  book +12.5%/yr  excess +3.4  win 87%  worst -14.8  OOS +2.9/+3.9
+  cap  off  book +12.5%/yr  excess +3.4  win 85%  worst -14.8  OOS +2.7/+4.1  [cap off = plain top-10 book]
+  cap  0.8  book +12.6%/yr  excess +3.6  win 85%  worst -14.8  OOS +3.0/+4.1
   cap  0.6  book +12.7%/yr  excess +3.7  win 84%  worst -14.8  OOS +2.9/+4.4
-  cap  0.4  book +13.2%/yr  excess +4.2  win 77%  worst -14.8  OOS +2.4/+5.9
+  cap  0.4  book +13.3%/yr  excess +4.2  win 78%  worst -14.8  OOS +2.5/+6.0
   (a cap lifting book or worst with OOS both + -> ship as a book-construction rule; expectation low — every structure tweak since round 14 diluted.)
 
 Caveats:

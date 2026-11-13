@@ -1344,9 +1344,11 @@ monthly_deploy_eur: 0
 # Per-horizon ±days averaged around each horizon's anchor date when computing 1D/1W/.../20Y %
 # changes (smooths a single outlier day; 0 = exact day). All optional — omit the block or any
 # label to use the built-in defaults (core::default_anchor_half): 1D 0, 1W 7, 1M 30, 6M/1Y 90,
-# 5Y/10Y/20Y 365. Override only the labels you want to change. (#1482) answer (a), 2026-11-13 on the owner's
-# word: the page reads the walk's map, the one every receipt was graded on (it was 1W 3, 1M 15, 6M 91, 1Y 182).
+# 5Y/10Y/20Y 365. Override only the labels you want to change.
 anchor_windows:
+  # (#1482) answer (a), 2026-11-13 on the owner's word: the page reads the walk's map, the one every receipt was
+  # graded on (it was 1W 3, 1M 15, 6M 91, 1Y 182). Kept inside the block: (#1117)'s receipt test credits the
+  # comments after `monthly_deploy_eur` to that knob.
   1D: 0
   1W: 7
   1M: 30
