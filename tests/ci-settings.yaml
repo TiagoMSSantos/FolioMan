@@ -1344,13 +1344,14 @@ monthly_deploy_eur: 0
 # Per-horizon ±days averaged around each horizon's anchor date when computing 1D/1W/.../20Y %
 # changes (smooths a single outlier day; 0 = exact day). All optional — omit the block or any
 # label to use the built-in defaults (core::default_anchor_half): 1D 0, 1W 7, 1M 30, 6M/1Y 90,
-# 5Y/10Y/20Y 365. Override only the labels you want to change.
+# 5Y/10Y/20Y 365. Override only the labels you want to change. (#1482) answer (a), 2026-11-13 on the owner's
+# word: the page reads the walk's map, the one every receipt was graded on (it was 1W 3, 1M 15, 6M 91, 1Y 182).
 anchor_windows:
   1D: 0
-  1W: 3
-  1M: 15
-  6M: 91
-  1Y: 182
+  1W: 7
+  1M: 30
+  6M: 90
+  1Y: 90
   5Y: 365
   10Y: 365
   20Y: 365
@@ -20294,7 +20295,7 @@ buy_heuristic:
   #   [D-H, D) — and when H >= D (1W, 1M at their defaults) for a series of any length at all.
   #   Bands at the LIVE windows (config/settings.yaml sets no `anchor_windows`; the field is
   #   serde(default) -> empty -> core::default_anchor_half. NOTE the block below in THIS file overrides
-  #   1Y to 182, so CI's 1Y band is 0.50-1.00y, wider than live's):
+  #   1Y to 182, so CI's 1Y band is 0.50-1.00y, wider than live's; since (#1482) (a), 2026-11-13, it reads 90):
   #     6M  +/-90d  -> 0.25-0.50y | 1Y +/-90d -> 0.75-1.00y | 2Y +/-90d -> 1.75-2.00y
   #     5Y  +/-365d -> 4.00-5.00y (JEDG) | 8Y -> 7-8y | 10Y -> 9-10y | 20Y -> 19-20y
   #   NOT display-only, and identical in TRAIN and SERVE — the only two call sites are fetch.rs (live)
@@ -23944,7 +23945,8 @@ buy_heuristic:
 
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
   payout_guard: false            # (#1477) drop flagged Yahoo payouts before the dividend term; false = as served
-  anchor_cadence_aware: false    # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure
+  anchor_cadence_aware: true     # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure;
+  #  arm 1 SHIPPED 2026-11-13 on the owner's word. REVERT: false.
   print_parity: false            # (#1484) the PARITY CENSUS after the page's tables: the walk's view, display only
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
@@ -29732,6 +29734,8 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   of the rest. 4 HALF: no ETF enters or leaves the top 10, but two pairs swap seats.
 # VERDICT: the rule's owner question ((a) the page reads the walk's map; (b) the page keeps its map). (#1488)'s arm 2
 #   is RECORD, so (b) leaves the skew open. Nothing ships before the owner's word.
+#   SHIPPED 2026-11-13 on the owner's word, (a): the `anchor_windows` block reads 1W 7, 1M 30, 6M 90, 1Y 90, with
+#   (#1488)'s arm 1 in the same Screen A/B; the A/B is on file in (#1496). REVERT: 1W 3, 1M 15, 6M 91, 1Y 182.
 
 # (#1486) THE RULER'S EYESIGHT AT 3y AND 1y, PRE-REGISTERED 2026-11-13 before any run. Row: (#1487). No knob, no Rust;
 #   `tools/verdict.py plant` reads it.
@@ -29823,6 +29827,8 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   one route left to close the skew. Arm 1 passes every RU cell and RU-E, so by the rule it MAY ship alone as
 #   (#188)'s measurement fix; the old ruler's rank-1 cell reads it a FAIL, and it ships nothing without the owner's
 #   word. The knob stays false until that word.
+#   Arm 1 SHIPPED 2026-11-13 on the owner's word ("Ship it"): `anchor_cadence_aware: true`, with (#1482)'s (a) in
+#   the same Screen A/B; the A/B and the rebless are on file in (#1496). REVERT: false.
 
 # (#1484) THE PARITY CENSUS, PRE-REGISTERED 2026-11-13 before any run. Knob: `print_parity` (false ships). Row: (#1485).
 #   Display only: nothing here reaches rank, BUY NOW, size, trade or the broker.
