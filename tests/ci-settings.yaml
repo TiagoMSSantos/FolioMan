@@ -29786,6 +29786,16 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   month's last session as `bar_check` assumes (a census reading most months off says the assumption is wrong).
 # REVERT RULE: none; the knob ships false and moves nothing.
 
+# (#1490) THE QUEUE, 2026-11-13: `tools/queue.py` lists every pre-registered receipt no verdict has read. A tool, no
+#   knob, no run. WHY: a plan written on 2026-11-13 called (#1423), (#1427), (#1428), (#1430), (#1432) and (#1437) open;
+#   each had been read in place on 2026-11-10 (a `RESULT` and a `VERDICT:` line inside its own block), so a grep for
+#   `VERDICT ... on (#N)` missed all six and the plan re-asked menu 4, closed that day at 0 of 13. The tool reads a
+#   receipt as read when its own block carries a VERDICT or RESULT line or `graded <date>`, when a later block reuses
+#   its id, when a VERDICT, RESULT(S), graded or SHIPPED first line cites it (ranges such as `(#1242)-(#1245)`
+#   included), or when a row it names has such a first line. From (#1291) on (the (#1294) lint's floor) it lists, on
+#   this commit, (#1312) (applied in place by a later commit, not graded: the one false positive) and the open
+#   pre-registrations of rounds 21 and 22. `--since N` widens it; `--selftest` runs in the CI tool step.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
