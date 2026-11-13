@@ -29652,6 +29652,18 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   4. the arm moves the top-10 book by less than 0.1 at every horizon and the A/B moves no top-10 page row.
 #   The honest prior is RECORD: the term is capped and small. The value is a DIV column that reads true.
 # REVERT RULE: none; the knob ships false.
+# RESULT, 2026-11-13, on 0756fff (probes 43477546507 control, 43477574340 arm; Screen A/B 43479599503). (a) Of 103129
+#   payouts read, D1 flags 263 (Switzerland 133 of 2553, UK 76 of 13908, Germany 19, USA 16 of 73135, Italy 9,
+#   France 4, LU 2, Sweden 2, Netherlands 1, Portugal 1) and D2 211 (USA 103, UK 71, Germany 25, Switzerland 5,
+#   Sweden 3, Italy 2, Portugal 2). The guard changes the trailing-1Y payout sum at 22 of 6328 cutoffs at 20y, 70 of
+#   15796 at 12y and 102 of 25072 at 8y. (b) The top-10 book's mean, median and worst are unchanged at every
+#   horizon. (c) The A/B moves no BUY NOW name or share on any table, and no RANK or SCORE cell on Stocks. The
+#   knob's own cells: young IVG.MI DIV 40.43 % -> 0.00 %; VRT enters the braked table (rank 1, score 16.0, not a
+#   buy row); four REIT DIV cells move by 0.01.
+#   SAID BEFORE THE RUN, read back. 1 WRONG: D1 is 263, not a handful, and it sits on Switzerland (5.2 % of its
+#   payouts) and the UK, not on USA. 2 HALF: D2 sits on USA (103) and the UK (71); Switzerland reads 5. 3 HELD:
+#   0.35 %, 0.44 % and 0.41 % of cutoffs move. 4 HELD: no top-10 move at any horizon, no top-10 page row.
+# VERDICT: RECORD. The knob stays false and goes to RETIRED in the next refactor.
 
 # (#1478) THE JKP RELEASE NET, 2026-11-13: `jkp_release_is_the_pinned_one` in tests/network.rs. A tool, no knob.
 #   (#1420) closed the paper route "until a newer JKP release", and nothing watched for one. The net HEADs the S3
@@ -29705,6 +29717,21 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # SAID BEFORE THE RUN: 1 to 3 of the growth table's top 10 move, through the 1Y leg of `accel` and of the 12-7 key;
 #   BUY% follows them; the 1W and 1M % columns move on most rows (display only); no ETF top-10 row moves.
 # REVERT RULE: none; the A/B moves nothing.
+# RESULT, 2026-11-13, Screen A/B 43484747583 on 0756fff, knobs="1W=7 1M=30 6M=90 1Y=90". Stocks top 10, c1 | arm | c2:
+#   seats 1-5 FTNT SNDK APC.DE WDC ASML at 16.59 % each in all three. Seats 6-10 at 2.07 % each: c1 INL.DE LAR0.DE STX
+#   AP2.DE MTE.DE; c2 the same with NVD.DE at seat 9 (the controls' own noise); arm LU2.DE (enters the 30-row table at
+#   seat 6, a momentum seat) LAR0.DE STX DVA (12 -> 9) INL.DE (6 -> 10). MTE.DE (seat 10, a momentum seat) leaves the
+#   table, and so does ACGL (30, VRT takes it). Stocks: 15 RANK and 21 SCORE cells move where both controls agree
+#   (SCORE -3.2 to +5.4, mean +0.32), and the 1Y column on 26 rows. ETFs: no row enters or leaves; seats 2-3 (TNOW.PA,
+#   SMH.L) and 8-9 (LYBK.DE, ESIF.L) swap; SCORE moves on 8 of 9 rows (mean -0.59). REITs: no row enters or leaves;
+#   42 ranks move (EQIX 10 -> 6, IRM 4 -> 3), SCORE up on 45 of 49 moved cells (mean +0.32). Crypto: nothing moves.
+#   SAID BEFORE THE RUN, read back. 1 HELD: two names enter the stock top 10 and two leave it, through the 12-7 key
+#   (LU2.DE in, MTE.DE out, both momentum seats) and the 1Y leg of `accel` (DVA). 2 HELD: BUY% follows them; the
+#   top-five shares do not move. 3 HELD where the controls can say: 1W and 1M move on 9 of 9 ETF rows and 52 and 62 of
+#   84 REIT rows; on Stocks 20 and 21 of 30 rows already differ between the two controls, and the knob moves 8 and 7
+#   of the rest. 4 HALF: no ETF enters or leaves the top 10, but two pairs swap seats.
+# VERDICT: the rule's owner question ((a) the page reads the walk's map; (b) the page keeps its map). (#1488)'s arm 2
+#   is RECORD, so (b) leaves the skew open. Nothing ships before the owner's word.
 
 # (#1486) THE RULER'S EYESIGHT AT 3y AND 1y, PRE-REGISTERED 2026-11-13 before any run. Row: (#1487). No knob, no Rust;
 #   `tools/verdict.py plant` reads it.
@@ -29730,6 +29757,22 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   near +0.6, a tilt that swaps one name in ten with a 4 to 6 %/yr edge over its first three years gains 0.4 to 0.6
 #   at 3y, at the floor rather than under it as at 12y.
 # REVERT RULE: record only; `plant` prints one block per horizon and changes no book, no knob and no page.
+# RESULT, 2026-11-13. The run as registered (probe 43477679704 on 0756fff, rescore "plant holdout") read nothing: every
+#   cutoff at 3y and 1y falls on or after 2016-01-01, so the holdout sealed all 16245 and all 27514 samples. DEVIATION:
+#   re-run as probe 43480334110 on cdbf058 with rescore "plant" alone. The plant fits nothing to the sealed years: it
+#   measures the band and grades no lead. Cutoffs 16245 at 3y (stocks growth-scored 3816 of 3816) and 27514 at 1y
+#   (5502 of 5851). `tools/verdict.py plant`: no X passes a single draw at either horizon, at any book size (top 10,
+#   20, 30 and 50). Top 10 at X = 4, each row's gain over row 0 / its band top, mean|median, (draws OUTSIDE):
+#     3y  10 % -0.30|+0.13 / +1.61|+2.74 (0)   20 % +0.21|+0.24 / +2.56|+3.46 (1)   40 % +1.93|+1.98 / +3.81|+4.81 (3)
+#     1y  10 % -0.15|-1.21 / +2.30|+4.33 (0)   20 % +0.04|-1.85 / +3.36|+5.56 (0)   40 % +0.04|-3.36 / +5.41|+7.29 (0)
+#   (#1333) at 12y: 20 % +0.49|+0.45 / +0.48|+0.76 (6); 40 % +0.73|+0.92 / +0.68|+0.98 (9). The rows swap 0.8, 1.8 and
+#   3.8 names into each top-10 bucket at 3y (0.8, 1.7 and 3.7 at 1y), against 0.5, 0.9 and 1.8 at 12y.
+#   SAID BEFORE THE RUN, read back. 1 WRONG: the band tops are about 5 times (#1333)'s at 3y and 7 to 8 times at 1y,
+#   not within 30 %. 2 HELD: X = 4 passes 0 of 20 draws at both horizons. 3 WRONG: the 3y floor is not near +0.6; the
+#   20 % row's band top is +2.6 in mean, so a one-name-in-ten tilt with a 4 to 6 %/yr edge sits far under it.
+# VERDICT: BLIND at 3y and at 1y, record only. A short horizon does not sharpen the bar: its band widens faster than a
+#   planted gain grows (the 40 % row reads half its band top at 3y and none of it at 1y, against all of it at 12y).
+#   "Detect early, guard late" has no ruler, and the freeze stands on firmer ground.
 
 # (#1488) THE ANCHOR THAT RESPECTS BAR CADENCE, (#188)'s NAMED FIX, PRE-REGISTERED 2026-11-13 before any run. Knob:
 #   `anchor_cadence_aware` (false ships). Row: (#1489).
@@ -29759,6 +29802,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the crypto lane's 1M knife moves (a month's move in place of an endpoint-blended one). Arm 2 keeps 90 % or more
 #   of the control's growth-scored cutoffs, reads `artifact` 0, and moves the top-10 mean by under 0.5 at 12y and 8y.
 # REVERT RULE: the knob ships false.
+# RESULT, 2026-11-13, on 0756fff (probes 43477600858 control, 43477626201 arm 1, 43477652509 arm 2; each plain
+#   multi-horizon log rebuilt as one rescore log per horizon, the control as row 0, then `tools/regrade_ruler.py`):
+#   growth-scored cutoffs IDENTICAL in all three logs at every horizon (3775/4990 at 20y, 6578/10449 at 12y,
+#   8729/13726 at 8y), median gated pool 183 / 183 / 184, `artifact` 0 everywhere, so arm 2 is GRADEABLE.
+#   Top-10 book, mean / median / 10 %-trimmed mean in pts/yr over the index, control -> arm 1 -> arm 2:
+#     20y  +1.3/+1.5/+1.5 -> +1.5/+2.1/+1.6 -> +1.6/+1.8/+1.8
+#     12y  +2.4/+2.9/+2.5 -> +2.5/+2.9/+2.6 -> +2.6/+2.9/+2.6
+#     8y   +2.7/+2.9/+2.8 -> +2.8/+3.3/+2.9 -> +2.7/+3.2/+2.8
+#   RU1 (top 5 beat 6-10): 12y 20/37 -> 20/37 -> 17/37 (45.9 %, FAIL); 8y 25/45 -> 25/45 -> 29/45. RU2 and RU3 pass
+#   on both arms. RU-E: arm 1 pass; arm 2 FAIL (20y <=2001 -0.5, 8y >=2014 -1.1). The old (#1291) rank-1 cell reads
+#   arm 1 13/37 against 15/37 at 12y and 20/45 against 22/45 at 8y, FAIL, so arm 1 FLIPS between the two rulers.
+#   Page A/B 43482291274 on cdbf058, arm 1's knob alone: no BUY NOW name or share moves on any table, no row enters or
+#   leaves one, and two Stocks SCORE cells move by 0.1 (APC.DE 41.6 -> 41.7, STX 9.4 -> 9.3).
+#   SAID BEFORE THE RUN, read back. 1 WRONG: arm 1 moves the top-10 mean by +0.2 at 20y and +0.1 at 12y and 8y, and
+#   its median by +0.6 at 20y and +0.4 at 8y, not under 0.1. 2 UNREAD: the crypto lane's 1M knife (these probes run
+#   no crypto lane). 3 HELD: arm 2 keeps 100 % of the cutoffs and reads `artifact` 0. 4 HELD: arm 2 moves the top-10
+#   mean by +0.2 at 12y and 0.0 at 8y.
+# VERDICT: arm 2 RECORD: RU1 fails at 12y, so the walk does not adopt the page's map, and (#1482)'s answer (a) is the
+#   one route left to close the skew. Arm 1 passes every RU cell and RU-E, so by the rule it MAY ship alone as
+#   (#188)'s measurement fix; the old ruler's rank-1 cell reads it a FAIL, and it ships nothing without the owner's
+#   word. The knob stays false until that word.
 
 # (#1484) THE PARITY CENSUS, PRE-REGISTERED 2026-11-13 before any run. Knob: `print_parity` (false ships). Row: (#1485).
 #   Display only: nothing here reaches rank, BUY NOW, size, trade or the broker.
