@@ -29967,6 +29967,15 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # PRE-REGISTERED: the goldens do not move (no fixture holds these tickers, and no record line names one); on the
 #   tag's screen A/B only cells of the 31 lines move (CP60.DE and 3SIL.L are the two with recent bars), and no BUY
 #   NOW name or share.
+# RESULT, 2026-11-13: the bar HELD. Two cold Screen A/Bs, both `print_parity=true`: probe-stk (d863435) as run
+#   43512714543 and main 4afd36c as run 43515048821, 21:56 to 22:11 UTC; each run's two controls are read against
+#   the other run's. BUY%: no name enters, leaves or changes share, in the two effect pairings or in either run's
+#   own noise pairing. FIX CELLS: 11 of the 31 lines are in the live universe (CP60.DE is not), and all 11 quotes
+#   move (3SIL.L CHV.DE DAP.DE EWL.DE GRM.DE IDP.DE ILU.DE NKE.DE OPC.DE SRB.DE UNP.DE); on the page only the
+#   three social rows ILU.DE, NKE.DE and SRB.DE, in FAIR, FAIR-OE, P/S, DIV, FAIR-CAP and PEG. NOISE, not the fix:
+#   main's own c1 against c2 differs on 2404 quote rows and 292 page rows, the intraday table's cells, the .DE
+#   `earnings_yield` cells (176 off one shared ratio, 0.99967, at identical EUR prices, so the EURUSD rate moved), and rows
+#   in one screen only (GIBO.L, IQJA.L, SPEH.MI, WLFI-USD, social FOX).
 
 # (#1495) THE PAPER ROUTE'S MENU 5: THE LAST THREE OPEN-CLUSTER NAMES, PRE-REGISTERED 2026-11-13 before any menu-5
 #   return was read. Row: the owner's word first ("Menu 5: 3 untested names", 2026-11-13), then (#1339)'s own steps.
@@ -30006,6 +30015,71 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the market in both regions (US full-sample means -0.8 and -0.2 %/yr), so neither low leverage nor low distress
 #   earns on the long side alone; pi_nix passes the US (t 3.15, post +0.7 %/yr) and misses developed ex-US on t
 #   (0.93), the shape of menus 2 and 4. EXPECTED, quoted against what happened: "0 of the 3 pass" HELD.
+
+# (#1496) THE TWO PICKS' SCREEN A/B, THE REBLESS AND ROW 14'S A/B, 2026-11-13. The owner's words: (#1482)'s answer (a),
+#   (#1488)'s arm 1 "Ship it", Q15 "A/B row 14 first", and "Make sure to test them before apply to web server".
+# AB1, THE TWO PICKS TOGETHER: Screen A/B 43517177666 on main 309ef25, knobs="1W=7 1M=30 6M=90 1Y=90
+#   anchor_cadence_aware=true", 22:16 to 22:25 UTC. BUY NOW, c1 = c2: seats 1-5 FTNT SNDK APC.DE WDC ASML at 16.59 %
+#   each, seats 6-10 INL.DE LAR0.DE STX NVD.DE LU2.DE at 2.07 % each. Arm: the same top five, then LU2.DE LAR0.DE STX
+#   DVA INL.DE, the seats 6-10 of (#1482)'s own A/B: DVA (12 -> 9) enters, NVD.DE (9 -> 11) leaves. Stocks: 15 RANK
+#   and 25 SCORE cells move where both controls agree (SCORE -3.6 to +5.4, mean +0.26; the skew alone moved 15 and 21,
+#   -3.2 to +5.4, mean +0.32), and STX's SCORE reads 9.3 against 9.4, as under arm 1 alone. Seat 30: CAT1.DE takes
+#   ACGL's place (under the skew alone it was VRT; here VRT is listed in the braked table). ETFs: the same two seat
+#   swaps (TNOW.PA with SMH.L, LYBK.DE with ESIF.L). REITs: 42 ranks move, as under the skew alone. Sector exposure:
+#   Health Care 2.1 % (DVA) comes in, Information Technology 93.3 % -> 91.3 %. Crypto: BTC-EUR's 1Y reads -20.9 %
+#   against -17.7 % (the 1Y anchor's new window); its BUY% stays 6.67 %. The controls' own noise: 4 Stocks cells.
+# BAR, set before the run: the BUY NOW moves stay inside the two single A/Bs, and nothing else moves past the
+#   controls' noise. HELD: the arm's seats 6-10 are the skew's A/B seats, and arm 1 alone moved no BUY NOW name.
+# A2, THE REBLESS (e431ac4): the twelve goldens come from bless probe 43515097582 on 2838adc, and the 12y book line
+#   reads +11.9 %/yr, excess +2.9 (med +3.4), win 78 % of 74, OOS +1.8/+3.9 (it was +11.8, +2.8 (med +3.3), 77 %,
+#   +1.7/+3.8); the ruler selftest (rank 1 at 19 of 37, 54 buckets) and the NaN/inf map (82/4, 70/0) hold, and
+#   probe-r23b's CI on the rebless, run 43516643667, is green.
+# AB2, ROW 14 ON TOP OF THE PICKS: Screen A/B 43519223760 on probe-r23 (2838adc), knobs = row 14's fifteen dials,
+#   22:30 to 22:41 UTC. CROSS-CHECK: its controls hold AB1's arm on BUY NOW, the same ten names at the same shares;
+#   read three-way (AB1's arm, AB2's c1, AB1's arm), the two differ in 6 Stocks cells (ARM's SCORE 19.4 -> 20.4
+#   moves it 26 -> 23, so DAL, ABEA.DE and FFIV slide one), BTC-EUR's live price and the social table, so the
+#   commit is the knobs. BUY NOW, arm: the top five stay at 16.59 % each, ASML 5 -> 3 and APC.DE 3 -> 5. Seats 6-10
+#   at 2.07 % each: KEYS enters at 7 (under the controls the PEG gate fails it, PEG 3.89 against the 2.00 ceiling)
+#   and AP2.DE (12 -> 9) enters; LAR0.DE (7 -> 15) and DVA (9 -> 14) leave. Stocks: 14 RANK and 24 SCORE cells move
+#   where both controls agree (SCORE -7.8 to +11.1, mean +0.25: SNDK +11.1, ASML +5.2, LAR0.DE -7.8, DVA -6.6, FIX
+#   -6.3). Four insurers leave the 30 (ALL, TRV, CB, GL); KEYS, VRT, VIK and GWW enter, VRT from the braked table.
+#   Braked: 2 rows -> 7, as 5AP.DE, 1YD.DE, MPWR, XPH.DE, ANET and CRWD enter. The cap's misses go: ASML reads 0
+#   misses (it read 1: peg) and LITE 1 (stretch; it read stretch and peg). Sector exposure: Health Care 2.1 % (DVA)
+#   goes, Information Technology 91.3 % -> 93.3 %. CORE 191 and REITs 216 cells move; ETFs 21, no seat swap. The
+#   controls' own noise: 6 Stocks cells.
+# ROW 14 is (#1459)'s look-3 WINNER, which read the noise floor (+1.00 is under the null max +1.49). The round-22
+#   fresh test, three folds: 12 of 12 guard tests pass and the 24 gains average +0.075 pts/yr; F1 10y +1.24 and F2
+#   15y +1.21 sit outside the null band; the three 6y tests read -2.69, -2.69 and +0.65 (their 6 gains average
+#   -1.58, the other 18 +0.63). growth_max_peg 2.0 -> 0 turns (#552)'s PEG cap off.
+# VERDICT, 2026-11-13: the two picks SHIPPED on the owner's word. A1 and A2, tested on the tags as 2838adc and
+#   e431ac4, reach main together as 5f078b5 and 1c53285, rebased over the bot's journal line b007a1f, which touches
+#   only .screen_snapshots.jsonl. Row 14 is NOT shipped. It goes to the owner with AB2's moves and ships only on a yes, through its own tag,
+#   bless and A/B. Nothing of row 14 reaches rank, BUY NOW, size, trade or the broker.
+
+# (#1497) TWIN-INPUT AUDIT, 2026-11-13, record only, no knob. The owner's pick ("Audit twin inputs"): every input
+#   behind the four paper-route columns on the live BUY NOW stock rows, read against its source.
+# SCOPE: the 10 BUY NOW stock rows of the 20:05 UTC page (FTNT SNDK APC.DE ASML INL.DE LAR0.DE STX NVD.DE LU2.DE
+#   WDC) times ey_pct, mom61_pct, capx_pct and fcf_pct, 40 cells, read against SEC companyfacts, Yahoo, Nasdaq and
+#   the ECB.
+# RESULT: 32 ok, 7 read what the code is written to read, 1 is off. Every `*_pct` sits within 0.31 pt of its raw
+#   input's rank in the page's universe (the stamp ranks about 3 more names than the file keeps: ey 559 against
+#   556), and every FX leg holds (implied EURUSD 1.10278 against the ECB's 1.1052; ASML's ADR is 1:1).
+# OFF: WDC's capx_gr3 reads -49.1 % (capx_pct 94.46). FY2026 capex, 418M, is the disk business alone, after SanDisk
+#   left in February 2025; FY2023's 821M is the whole company in all three 10-Ks that carry it (filed 2023-08-22,
+#   2024-08-20 and 2025-08-14). The 2025 10-K recasts FY2023 revenue to the disk business (12,318M to 6,255M) and
+#   keeps capex and operating cash flow whole, so `capex(k)` (capex share times revenue) reads 821M off any of the
+#   three. SanDisk's own 10-K (2025-08-21) puts its FY2023 capex at 219M, so a like-for-like base is about 602M:
+#   -30.6 %, capx_pct about 86.7, 7.8 pt under the cell, 0.23 score at weight 0.03.
+# VERDICT: no code. No WDC filing carries a disk-only FY2023 capex, so the like-for-like number needs a second
+#   company's filing; a guard that reads any ratio across a recast year as no data puts WDC at 50, 36.7 pt off the
+#   like-for-like number where the as-filed cell is 7.8 off; and the backtest grades capx_pct on the same as-filed
+#   rows, so the live cell is the rule that was tested ((#1482)'s reason). REOPEN: the owner's word.
+# BY DESIGN, the 7: WDC's ey strips the SanDisk-stake gains ((#426); plain GAAP EPS would read ey_pct about 94.6
+#   against 57.53); LU2.DE's ey keeps a one-off 7,756.6M debt loss, because (#426) strips gains only (-15.88 %,
+#   about +1.1 % without it); and five .DE lines (APC.DE INL.DE LAR0.DE NVD.DE LU2.DE) read mom61 off their US line
+#   ((#608) `eu_listing_us_series`), 3.1 to 8.6 pt under their own line's rank.
+# NOT DONE: a second price source for the .DE lines (Stooq served a JS challenge), ASML's TTM EPS (20-F), and
+#   FTNT's TTM capex tag (138.6M against 364.8M for the year).
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
