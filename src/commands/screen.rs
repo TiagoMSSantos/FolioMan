@@ -4576,6 +4576,27 @@ mod tests {
         assert!(text.contains("    1Y        P-M 0 / NaN / NaN"), "a stub has no legs to compare: {text}");
         assert!(text.contains("    range     P-M 1 / 2.00 / 2.00    M-W 1 / 0.75 / 0.75"), "|3 - 1| and |1 - 0.25|: {text}");
     }
+
+    /// (#1484) `walk_priced` takes every price field from the view: against a view that differs from the row in each
+    /// one, the result is the view with `perf_nominal` emptied and `parity` dropped. The row carries both, so a line
+    /// left out of the struct expression reads the row's value and the two prints differ.
+    #[test]
+    fn walk_priced_takes_every_price_field_from_the_view() {
+        let mut q = core::Quote::stub("S", "1", "", "S");
+        q.perf_nominal = vec![Some(("1".to_string(), 1.0))];
+        q.parity = Some(Box::new(core::Parity { walk: q.clone(), merged: q.clone(), bars: core::BarCheck::default() }));
+        let mut v = q.clone();
+        (v.perf, v.div_eur, v.price_eur) = (vec![Some(("2".to_string(), 2.0))], vec![Some(0.25)], Some(3.0));
+        (v.drawdown_pct, v.range_pct, v.below_ma_pct, v.above_ma_pct, v.trend_r2, v.max_drawdown_pct) = (1.0, 2.0, 3.0, 4.0, 0.5, 6.0);
+        (v.endpoint_ratio, v.volatility_pct, v.max_daily_1m, v.vol_change, v.trend_cagr) = (Some(1.5), Some(2.5), Some(3.5), Some(4.5), Some(5.5));
+        (v.life_cagr, v.age_years, v.capped_cagr, v.tr_cagr) = (Some(6.5), Some(7.5), Some(8.5), Some(9.5));
+        (v.roll5y_pos_pct, v.worst_5y_pct, v.roll10y_pos_pct, v.worst_10y_pct) = (Some(10.5), Some(11.5), Some(12.5), Some(13.5));
+        (v.underwater_yrs, v.trend_r2_10y, v.underwater_yrs_10y) = (Some(14.5), Some(0.75), Some(15.5));
+        v.stats_8y = Some(core::Stats8 { range_pct: 1.0, trend_r2: 0.5, max_drawdown_pct: 2.0, underwater_yrs: None });
+        let mut want = v.clone();
+        (want.perf_nominal, want.parity) = (Vec::new(), None);
+        assert_eq!(format!("{:?}", walk_priced(&q, &v)), format!("{want:?}"));
+    }
     use std::collections::{HashMap, HashSet};
 
     /// (tests round 4) Stale-nets nag: never-ran/corrupt and stale stamps must nag with the exact

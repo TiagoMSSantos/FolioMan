@@ -12580,7 +12580,7 @@ fn bar_check_reads_each_month_against_its_last_session() {
     mcloses.push(dcloses[dcloses.len() - 1]);
     assert_eq!(mdates[0], day(2020, 12, 1), "the first month sits before the daily chart");
     let clean = bar_check(&mdates, &mcloses, &ddates, &dcloses);
-    assert_eq!((clean.checked, clean.off, clean.worst), (6, 0, 0.0), "Jan-Jun checked, Dec 2020 and the current month not");
+    assert_eq!((clean.checked, clean.off, clean.worst, clean.worst_at), (6, 0, 0.0, None), "Jan-Jun checked, Dec 2020 and the current month not; no gap names no worst month");
     mcloses[3] *= 1.05;
     let slip = bar_check(&mdates, &mcloses, &ddates, &dcloses);
     assert_eq!((slip.checked, slip.off, slip.worst_at), (6, 1, Some(mdates[3])));
