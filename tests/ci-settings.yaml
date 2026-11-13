@@ -29683,6 +29683,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   (1925-2023), 51.6 % had a negative lifetime return, and the best 100 of each decade still fell 32.5 % on
 #   average at their worst inside it.
 
+# (#1482) THE ANCHOR SKEW FROM THE PAGE SIDE, PRE-REGISTERED 2026-11-13 before any run. Row: (#1483). No knob, no
+#   Rust: the Screen A/B ((#1450)) reads what the walk's anchor map does to the published page.
+# WHY: (#88) found the page and the walk read the short legs and the 1Y leg with different anchor half-windows. The
+#   page reads this file's `anchor_windows` (1W 3, 1M 15, 6M 91, 1Y 182); the walk reads `core::default_anchor_half`
+#   while `backtest_anchor_windows` is false (7, 30, 90, 90). `return_1y` feeds `accel` (weight 0.5, cap 50), the 1Y
+#   gate and, through `picks::net_return`, the 12-7 key of the book's momentum seats. (#88) chose "the walk adopts
+#   the page's map"; (#188) found that arm collapses the sample and closed it NOT GRADEABLE. The other direction,
+#   the page adopting the map every receipt was graded on, was never measured. It moves no walk, no golden and no
+#   receipt, and it is the direction (#315) took for the inflation half of the same skew.
+# CHANGE IN THIS COMMIT: `.github/workflows/screen-ab.yml` accepts upper-case knob names (`^[A-Za-z0-9_]+$`), so
+#   the four labels can be set; each is one `  key: ` line of this file, which the job checks before the first run.
+# RUN: the Screen A/B job with knobs="1W=7 1M=30 6M=90 1Y=90" (1D, 5Y, 10Y and 20Y already agree).
+# READ: `tools/screen_ab.py`'s list of the rows and cells the knobs move where both controls agree.
+# RULE: a growth or stocks top-10 row moves -> ONE owner question with two answers: (a) ship the walk's map on the
+#   page (the `anchor_windows` block reads 1W 7, 1M 30, 6M 90, 1Y 90; the walk, the goldens and every receipt stay
+#   as they are, and the page runs the estimator every receipt graded); or (b) keep the page's map and close the
+#   skew from the walk's side, through (#1488)'s cadence fix and its arm. No top-10 row moves -> RECORD.
+# SAID BEFORE THE RUN: 1 to 3 of the growth table's top 10 move, through the 1Y leg of `accel` and of the 12-7 key;
+#   BUY% follows them; the 1W and 1M % columns move on most rows (display only); no ETF top-10 row moves.
+# REVERT RULE: none; the A/B moves nothing.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

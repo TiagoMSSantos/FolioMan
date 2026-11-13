@@ -185,7 +185,8 @@ jobs:
           cp tests/ci-settings.yaml "$RUNNER_TEMP/arm.yaml"
           for kv in "${kvs[@]}"; do
             k=${kv%%=*}; v=${kv#*=}
-            [[ $kv == *=* && $k =~ ^[a-z0-9_]+$ && $v =~ ^(-?[0-9]+(\.[0-9]+)?|true|false)$ ]] || { echo "::error::bad knob '$kv'"; exit 1; }
+            # (#1482) upper case too: the anchor labels (1W, 1M, 6M, 1Y) are keys of `anchor_windows`
+            [[ $kv == *=* && $k =~ ^[A-Za-z0-9_]+$ && $v =~ ^(-?[0-9]+(\.[0-9]+)?|true|false)$ ]] || { echo "::error::bad knob '$kv'"; exit 1; }
             [[ $(grep -c "^  $k: " "$RUNNER_TEMP/arm.yaml") == 1 ]] || { echo "::error::'$k' is not one ci-settings line"; exit 1; }
             sed -i -E "s/^(  $k: )[^ ]+/\1$v/" "$RUNNER_TEMP/arm.yaml"
           done
