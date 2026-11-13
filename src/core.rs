@@ -3784,6 +3784,25 @@ pub fn asof_avg(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i6
     Some(vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
+/// (#1488) The cadence-honest anchor of a leg that ends on the last bar: the mean close within ±`half` days of
+/// `target` over every bar but the last, else the last bar on or before `target` (never the last bar itself) when it
+/// lies within `max(half, 5)` days of it, else None. (#188) named the defect this closes: on monthly history the
+/// shipped anchor reads a 1D leg off a bar a month before its target (a month's move under a day's label) and a 1W
+/// leg off the endpoint bar itself (0 %), so 1D, 1W and 1M can fall onto one bar. Here those legs read None. On
+/// daily history a leg reads as `asof_avg` / `asof` did, unless its window reached the endpoint (the default 1W and
+/// 1M halves do; the endpoint is then left out of its own anchor) or a 1D leg spans a closure of more than five days.
+pub fn anchor_strict(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i64) -> Option<f64> {
+    let n = dates.len().min(closes.len()).checked_sub(1)?;
+    let (d, c) = (&dates[..n], &closes[..n]);
+    if half > 0 {
+        if let Some(v) = asof_avg(d, c, target, half) {
+            return Some(v);
+        }
+    }
+    let i = d.partition_point(|x| *x <= target).checked_sub(1)?;
+    ((target - d[i]).num_days() <= half.max(5)).then_some(c[i])
+}
+
 /// (#327) Overlap a proxy pair must show before one series may donate its history to another.
 /// 24 months so the verdict rests on two full years, not a lucky quarter.
 pub const PROXY_MIN_MONTHS: usize = 24;
@@ -3899,6 +3918,20 @@ pub fn real_pct(nominal_pct: f64, cum_infl_pct: f64) -> f64 {
 /// `infl` = Some(year->YoY% series, e.g. EU HICP) to show inflation-adjusted returns on horizons
 /// >=1Y (deflated by the real cumulative inflation over each horizon), or None for raw nominal %.
 pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Option<(String, f64)>> {
+    horizon_changes_with(dates, closes, rate, windows, infl, crate::config::anchor_cadence_aware())
+}
+
+/// [`horizon_changes`] with (#1488)'s switch passed in, so a unit test can set what the process-once accessor
+/// cannot. `cadence` on: every leg's anchor is [`anchor_strict`]'s, which reads only bars before the last one and
+/// reads None where the bar spacing cannot measure the leg. Off: every leg reads exactly as before.
+pub fn horizon_changes_with(
+    dates: &[NaiveDate],
+    closes: &[f64],
+    rate: Option<f64>,
+    windows: &BTreeMap<String, i64>,
+    infl: Option<&BTreeMap<i32, f64>>,
+    cadence: bool,
+) -> Vec<Option<(String, f64)>> {
     // (#18) two endpoints: the LONG legs (>=1Y — the CAGR/rank inputs) use the smoothed measurement
     // endpoint; the SHORT legs (1D/1W/1M, incl. the 1M-knife gate) keep the true last close — a
     // months-wide average would make "this month's move" meaningless as both a gate and a display.
@@ -3923,7 +3956,9 @@ pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, w
                 return None;
             }
             let half = windows.get(*label).copied().unwrap_or_else(|| default_anchor_half(*days));
-            let past = if half > 0 {
+            let past = if cadence {
+                anchor_strict(dates, closes, target, half) // (#1488)
+            } else if half > 0 {
                 asof_avg(dates, closes, target, half).or_else(|| asof(dates, closes, target))
             } else {
                 asof(dates, closes, target)
@@ -12443,4 +12478,39 @@ fn guard_payouts_reads_only_the_cutoffs_own_history() {
     let edge = |d: i64| vec![(day(d - 5), 0.5), (day(d), 0.5)];
     assert!(!payout_guard_moves_1y(at, &closes[..=20], &edge(235)), "exactly 365 days back is outside the year");
     assert!(payout_guard_moves_1y(at, &closes[..=20], &edge(236)), "364 days back is inside it");
+}
+
+/// (#1488) The cadence-honest anchor. On monthly bars the shipped legs read 1D as the last month's move, 1W as 0 %
+/// (its window holds only the endpoint) and 1M with the endpoint averaged into its own anchor; with the switch on,
+/// 1D and 1W read None and 1M reads off the bar before the endpoint, while 1Y does not move. On daily bars under the
+/// page's map every leg reads the same either way; under the default map the endpoint leaves its own 1W anchor; and a
+/// 1D leg across a seven-day gap reads None only with the switch on.
+#[test]
+fn anchor_strict_respects_bar_cadence() {
+    let leg = |v: &[Option<(String, f64)>], label: &str| HORIZONS.iter().position(|(l, _)| *l == label).and_then(|i| v[i].as_ref().map(|(_, p)| *p));
+    let none = BTreeMap::new();
+    let months: Vec<NaiveDate> = (0..36).map(|k| NaiveDate::from_ymd_opt(2020 + k / 12, (k % 12) as u32 + 1, 1).unwrap()).collect();
+    let mc: Vec<f64> = (0..36).map(|k| 100.0 * 1.01f64.powi(k)).collect();
+    let off = horizon_changes_with(&months, &mc, None, &none, None, false);
+    let on = horizon_changes_with(&months, &mc, None, &none, None, true);
+    assert!((leg(&off, "1D").unwrap() - 1.0).abs() < 1e-9, "shipped: a month's move under the 1D label");
+    assert_eq!(leg(&off, "1W"), Some(0.0), "shipped: the 1W anchor is the endpoint itself");
+    let blended = (mc[35] / ((mc[34] + mc[35]) / 2.0) - 1.0) * 100.0;
+    assert!((leg(&off, "1M").unwrap() - blended).abs() < 1e-9, "shipped: the endpoint averaged into its own 1M anchor");
+    assert_eq!((leg(&on, "1D"), leg(&on, "1W")), (None, None), "monthly bars cannot measure a day or a week");
+    assert!((leg(&on, "1M").unwrap() - 1.0).abs() < 1e-9, "1M off the bar before the endpoint: {:?}", leg(&on, "1M"));
+    assert_eq!(leg(&on, "1Y"), leg(&off, "1Y"), "a window far from the endpoint reads the same");
+    let days: Vec<NaiveDate> = (0..400).map(|k| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + Duration::days(k)).collect();
+    let dc: Vec<f64> = (0..400i32).map(|k| 100.0 * 1.001f64.powi(k) * (1.0 + 0.01 * (f64::from(k % 7) - 3.0))).collect();
+    let page: BTreeMap<String, i64> = [("1W", 3), ("1M", 15), ("6M", 91), ("1Y", 182)].into_iter().map(|(l, h)| (l.to_string(), h)).collect();
+    assert_eq!(horizon_changes_with(&days, &dc, None, &page, None, true), horizon_changes_with(&days, &dc, None, &page, None, false), "daily, page map");
+    let (w_off, w_on) = (horizon_changes_with(&days, &dc, None, &none, None, false), horizon_changes_with(&days, &dc, None, &none, None, true));
+    assert_ne!(leg(&w_on, "1W"), leg(&w_off, "1W"), "the default 1W window reaches the endpoint; on, it leaves it out");
+    assert_eq!(leg(&w_on, "1Y"), leg(&w_off, "1Y"));
+    let mut gap: Vec<NaiveDate> = days[..300].to_vec();
+    gap.push(days[299] + Duration::days(7));
+    let gc = &dc[..301];
+    assert!(leg(&horizon_changes_with(&gap, gc, None, &page, None, false), "1D").is_some());
+    assert_eq!(leg(&horizon_changes_with(&gap, gc, None, &page, None, true), "1D"), None, "six days from its target");
+    assert_eq!(anchor_strict(&days[..1], &dc[..1], days[0], 7), None, "one bar is all endpoint");
 }

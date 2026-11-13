@@ -23944,6 +23944,7 @@ buy_heuristic:
 
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
   payout_guard: false            # (#1477) drop flagged Yahoo payouts before the dividend term; false = as served
+  anchor_cadence_aware: false    # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
@@ -29728,6 +29729,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   near +0.6, a tilt that swaps one name in ten with a 4 to 6 %/yr edge over its first three years gains 0.4 to 0.6
 #   at 3y, at the floor rather than under it as at 12y.
 # REVERT RULE: record only; `plant` prints one block per horizon and changes no book, no knob and no page.
+
+# (#1488) THE ANCHOR THAT RESPECTS BAR CADENCE, (#188)'s NAMED FIX, PRE-REGISTERED 2026-11-13 before any run. Knob:
+#   `anchor_cadence_aware` (false ships). Row: (#1489).
+# WHY: (#188) closed the walk-adopts-page anchor arm NOT GRADEABLE and named the remedy, "worth doing on its own
+#   merits": make the anchor half respect bar cadence, so `asof_avg` is never silently reduced to `asof` and 1D, 1W
+#   and 1M cannot collapse onto one bar. It was never built. Since (#1452) the walk reads monthly bars only, and on
+#   them today its 1D leg is the last month's move (the bar a month before the target), its 1W leg is 0 % (the window
+#   holds only the endpoint bar) and its 1M leg averages the endpoint into its own anchor.
+# CHANGE: with the knob on, `core::horizon_changes` anchors every leg through `core::anchor_strict`: the mean close
+#   within +-half days of the target over every bar but the last, else the bar on or before the target within
+#   max(half, 5) days of it, else None. Monthly history then reads 1D and 1W as None and 1M off the bar before the
+#   endpoint, and 1Y as before; daily history under the page's map reads every leg as before (pinned), but for a 1D
+#   leg across a closure over five days. One accessor for page and walk; `RESCORE_FIXED` refuses it in a grid row.
+# RUN: three probes on the shipped config, years="20 12 8", args="universe fund pit": the control; knobs=
+#   "anchor_cadence_aware=true" (arm 1); knobs="anchor_cadence_aware=true backtest_anchor_windows=true" (arm 2,
+#   (#188)'s arm: the walk on the page's anchor map, now on bars that can hold it).
+# READ: each arm against the control with `python3 -I tools/regrade_ruler.py <control log> <arm log>` (RU1-RU3, the
+#   control as each horizon's first row), and the lines (#188) read, per horizon: the growth-scored cutoffs, the
+#   median gated pool, and `artifact` in the missed-winner breakdown.
+# RULE: arm 2 is GRADEABLE when its growth-scored cutoffs are within 10 % of the control's at every horizon and
+#   `artifact` reads 0. Gradeable and no RU cell failing at 12y and 8y -> ONE owner question: the walk adopts the
+#   page's map (the skew closed from the walk's side, a (#1452)-style move with a golden rebless), set beside
+#   (#1482)'s answer (a). Arm 1 with no RU failure may ship alone, as the measurement fix (#188) asked for. Else
+#   RECORD, and the knob goes to RETIRED in the next refactor.
+# SAID BEFORE THE RUN: arm 1 moves the growth book's top-10 mean and median by under 0.1 at every horizon (equities
+#   read 1D and 1W only in the artifact gate, which monthly bars never trip, and the 12-7 key's short leg is 6M);
+#   the crypto lane's 1M knife moves (a month's move in place of an endpoint-blended one). Arm 2 keeps 90 % or more
+#   of the control's growth-scored cutoffs, reads `artifact` 0, and moves the top-10 mean by under 0.5 at 12y and 8y.
+# REVERT RULE: the knob ships false.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

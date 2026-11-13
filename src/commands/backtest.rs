@@ -1004,9 +1004,10 @@ fn bench_path(dump: &std::path::Path) -> std::path::PathBuf {
 /// row that changed it would print the old run under a new name. Grade these with a probe run per arm.
 /// (#1284) The walk also builds `event_flags` from `growth_event_months` and picks `quote.fund_factor` by
 /// `growth_fund_factor`; `rescore` rebuilds neither.
-const RESCORE_FIXED: [&str; 18] = [
+const RESCORE_FIXED: [&str; 19] = [
     "backtest_live_window_years", // (#1391) range/drawdown/R² are computed in the walk's `backtest_quote`
     "payout_guard",               // (#1477) the as-of payouts are guarded in the walk's `backtest_quote` too
+    "anchor_cadence_aware",       // (#1488) every perf leg is anchored in the walk's `backtest_quote`
     "backtest_anchor_windows",
     "backtest_tr_ruler",
     "drop_dead_ticker_series",
@@ -11298,6 +11299,8 @@ mod tests {
         assert!(grid_tuning(&base, r#"{"momentum_one_endpoint": true}"#).is_ok(), "the endpoint knob is a score-time read and may ride a grid row");
         let err = grid_tuning(&base, r#"{"payout_guard": true}"#).expect_err("refused");
         assert!(err.contains("payout_guard") && err.contains("probe arm"), "(#1477) a dump already carries its payouts: {err}");
+        let err = grid_tuning(&base, r#"{"anchor_cadence_aware": true}"#).expect_err("refused");
+        assert!(err.contains("anchor_cadence_aware"), "(#1488) a dump already carries its legs: {err}");
     }
 
     /// (#790) Each cutoff lands on the first bar of its half-year bucket. The monthly record runs
