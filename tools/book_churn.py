@@ -14,6 +14,7 @@ table's where that market has under five priced rows. A market's rows share one 
 line; the whole table's do not ((#1470): before 2026-11-14 a night line could hold one market a session late).
 
     python3 -I tools/book_churn.py .screen_snapshots.jsonl [--since 2026-11-15] [--skip 2026-11-08 ...]
+    python3 -I tools/book_churn.py .screen_snapshots.jsonl --changed    # the dates the head changed, for ship_days.py
     python3 -I tools/book_churn.py .screen_snapshots.jsonl --sessions   # the lines on which a market's rows repeat
     python3 -I tools/book_churn.py .screen_snapshots.jsonl --late       # (#1527) the Sunday lines a market moved on
     python3 -I tools/book_churn.py .screen_snapshots.jsonl --eyesight [--since ...]   # what the read can tell apart
@@ -24,7 +25,13 @@ line; the whole table's do not ((#1470): before 2026-11-14 a night line could ho
 
 --since splits the steps into the ones wholly before that date and the ones wholly from it; the step that straddles
 it is named and counted in neither (2026-11-15 is the first line written on the walk's legs, (#1509) and (#1512)).
---skip leaves out the steps that end on the given dates (a day a rule shipped moves seats for its own reason).
+--skip leaves out the steps that end on the given dates, to look at a window without them. (#1522)'s read uses none:
+the page ships most days (`tools/ship_days.py` lists the settings that moved between two lines, and
+`--mark $(... --changed)` counts them against the head's changes), a ship dilutes the entrants' pattern and
+cannot fake it, and a skip chosen after the lines are in is a second look.
+--changed prints the later dates of the steps on which the head changed (from --since when it is given), one line;
+--frozen the later dates of the steps on which no price moved (every market's rows repeat the line before): a head
+change on one of those is a rule's or the data's, not a market's.
 --mean is the book a buyer on a random day of that window holds on average: the same expected shares as the page's,
 without the draw of the day.
 --sessions: a market's rows REPEAT the line before when four in five of their day moves sit within 0.05 points of the
@@ -58,7 +65,7 @@ SCORE_SEATS = 3  # the head's seats the score table fills; the momentum half fil
 PRICE_LISTS = ("rows", "shipped", "carry", "exit")  # journal lists whose rows are [ticker, price, ...]
 MIN_MARKET_ROWS = 5  # under this many priced rows a market has no median of its own: the table's stands in
 REPEAT_WITHIN, REPEAT_SHARE = 0.0005, 0.8  # --sessions: 0.05 points around the market's median move, four rows in five
-SAID_CHANGED, SAID_SHARE, SAID_GAP, SAID_ENTRANTS = 8, 2.0 / 3.0, 0.02, 8  # (#1522) SAID BEFORE 1 to 3 and the read's floor
+SAID_CHANGED, SAID_SHARE, SAID_GAP, SAID_ENTRANTS = (3, 8), 2.0 / 3.0, 0.02, 8  # (#1522) SAID BEFORE 1 (as amended) to 3, the read's floor
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 LATE_SINCE = "2026-11-15"  # (#1527) the first Sunday line written after (#1470) (a4d6a42, on main 2026-11-13)
 
@@ -70,6 +77,12 @@ def is_coin(ticker):
 def market(ticker):
     """The exchange a line trades on, by its suffix: DE for APC.DE, US for a line with none."""
     return ticker.rsplit(".", 1)[1] if "." in ticker else "US"
+
+
+def repeats(moves):
+    """Whether a market's day moves are one move: REPEAT_SHARE of them within REPEAT_WITHIN of their median."""
+    mid = statistics.median(moves)
+    return sum(abs(m - mid) < REPEAT_WITHIN for m in moves) >= REPEAT_SHARE * len(moves)
 
 
 def market_moves(a, b):
@@ -115,7 +128,7 @@ def prices(line):
 def steps(lines):
     """One dict per STEP: the later line's date, the names that entered and left the head with their side, and each
     such name's day move (None where a price is missing); `rel` holds those names' relative moves and `pool` every
-    stock row's, by market."""
+    stock row's, by market; `frozen` says no price moved: every market with MIN_MARKET_ROWS rows repeats."""
     out = []
     for a, b in zip(lines, lines[1:]):
         ha, hb = head(a), head(b)
@@ -133,7 +146,8 @@ def steps(lines):
         base = {k: statistics.median(v) if len(v) >= MIN_MARKET_ROWS else mid for k, v in by_market.items()}
         rel = {t: m - base.get(market(t), mid) for t, _, m in ins + outs if m is not None and mid is not None}
         pool = {k: [m - base[k] for m in v] for k, v in by_market.items()}
-        out.append({"date": b["date"], "from": a["date"], "in": ins, "out": outs, "head": hb, "table": mid, "rel": rel, "pool": pool})
+        flags = [repeats(v) for v in by_market.values() if len(v) >= MIN_MARKET_ROWS]
+        out.append({"date": b["date"], "from": a["date"], "in": ins, "out": outs, "head": hb, "table": mid, "rel": rel, "pool": pool, "frozen": bool(flags) and all(flags)})
     return out
 
 
@@ -151,6 +165,7 @@ def tally(window):
     rin, rout = relative("in"), relative("out")
     return {
         "rel_entrants": len(rin), "rel_below": sum(r < 0 for r in rin), "rel_leavers": len(rout), "rel_above": sum(r > 0 for r in rout),
+        "frozen": sum(s["frozen"] for s in window), "frozen_changed": sum(s["frozen"] for s in changed),
         "entrant_rel": statistics.median(rin) if rin else None, "leaver_rel": statistics.median(rout) if rout else None,
         "steps": len(window), "changed": len(changed), "score": sum(has(s, "score") for s in changed), "momentum": sum(has(s, "momentum") for s in changed),
         "pairs": len(pairs), "pairs_below": sum(i < o for i, o in pairs),
@@ -169,11 +184,12 @@ def points(x):
 
 def said(t):
     """(#1522)'s three things said before on a tally: None while the read has too few entrants, else three bools.
-    1. the head changed on SAID_CHANGED steps or more; 2. SAID_SHARE or more of the entrants moved below their own
-    market's median; 3. the entrants' median relative move is SAID_GAP or more below the leavers'."""
+    1. the head changed on SAID_CHANGED[0] steps or more and on fewer than SAID_CHANGED[1] (the amended reading: the
+    baseline's 10 sat on ship days); 2. SAID_SHARE or more of the entrants moved below their own market's median;
+    3. the entrants' median relative move is SAID_GAP or more below the leavers'."""
     if t["rel_entrants"] < SAID_ENTRANTS or t["leaver_rel"] is None:
         return None
-    return (t["changed"] >= SAID_CHANGED, t["rel_below"] >= SAID_SHARE * t["rel_entrants"] - 1e-9, t["entrant_rel"] - t["leaver_rel"] <= -SAID_GAP + 1e-12)
+    return (SAID_CHANGED[0] <= t["changed"] < SAID_CHANGED[1], t["rel_below"] >= SAID_SHARE * t["rel_entrants"] - 1e-9, t["entrant_rel"] - t["leaver_rel"] <= -SAID_GAP + 1e-12)
 
 
 def describe(label, window):
@@ -194,6 +210,7 @@ def describe(label, window):
     out.append(f"  (#1522) said before: the read waits: {t['rel_entrants']} entrants, and it wants {SAID_ENTRANTS}" if verdict is None else
                f"  (#1522) said before: 1 {word(verdict[0])}, 2 {word(verdict[1])}, 3 {word(verdict[2])} (the gap is {points(t['entrant_rel'] - t['leaver_rel'])})")
     out.append(f"  score swaps with both prices: {t['pairs']}; the entrant's day move was below the leaver's on {t['pairs_below']}")
+    out.append(f"  steps on which no price moved (every market's rows repeat): {t['frozen']}; the head changed on {t['frozen_changed']} of them")
     held = {}
     for s in window:
         for t in s["head"]:
@@ -216,6 +233,16 @@ def report(lines, since=None, skip=()):
             cells = [f"+{t}" for t, _, _ in s["in"]] + [f"-{t}" for t, _, _ in s["out"]]
             out.append(f"the step across {since} ({s['from']} to {s['date']}) is in neither: {' '.join(cells) or 'no change'}")
     return "\n".join(out)
+
+
+def changed_dates(lines, since=None, skip=()):
+    """The later line's date of each step on which the head changed; with `since`, of the steps wholly from it."""
+    return [s["date"] for s in steps(lines) if (s["in"] or s["out"]) and s["date"] not in skip and (since is None or s["from"] >= since)]
+
+
+def frozen_dates(lines, since=None, skip=()):
+    """The later line's date of each step on which no price moved; with `since`, of the steps wholly from it."""
+    return [s["date"] for s in steps(lines) if s["frozen"] and s["date"] not in skip and (since is None or s["from"] >= since)]
 
 
 def mean_book(lines, n):
@@ -245,8 +272,7 @@ def sessions(lines):
         flags = {}
         for k, moves in market_moves(a, b).items():
             if len(moves) >= MIN_MARKET_ROWS:
-                mid = statistics.median(moves)
-                flags[k] = sum(abs(m - mid) < REPEAT_WITHIN for m in moves) >= REPEAT_SHARE * len(moves)
+                flags[k] = repeats(moves)
         out.append((b["date"], flags))
     return out
 
@@ -430,6 +456,11 @@ def selftest():
     assert "(#1522) said before: the read waits: 1 entrants, and it wants 8" in rep, rep
     assert "from 2026-01-06: no step yet" in report(lines, since="2026-01-06")
     assert "steps: 2" in report(lines, skip=("2026-01-03",)) and "all steps: 2 steps" in report(lines, skip=("2026-01-03",))
+    assert changed_dates(lines) == ["2026-01-02", "2026-01-03"] and changed_dates(lines, skip=("2026-01-02",)) == ["2026-01-03"]
+    assert [s["frozen"] for s in st] == [False, True, True], "D and C moved on the 2nd; on the 3rd and 4th every priced row stands still"
+    assert (t["frozen"], t["frozen_changed"]) == (2, 1) and frozen_dates(lines) == ["2026-01-03", "2026-01-04"] and frozen_dates(lines, since="2026-01-03") == ["2026-01-04"]
+    assert "steps on which no price moved (every market's rows repeat): 2; the head changed on 1 of them" in report(lines), "M3 took M2's seat with no price moving"
+    assert changed_dates(lines, since="2026-01-02") == ["2026-01-03"] and changed_dates(lines, since="2026-01-03") == [] and changed_dates([]) == [], "a step that starts before `since` is not from it"
     mean = mean_book(lines[:4], 2)
     assert "mean share over the last 2 lines (2026-01-03 to 2026-01-04)" in mean and "D           16.59 %    16.59 %" in mean, mean
     half = mean_book(lines[:2], 2)  # C: a head seat, then a tail seat
@@ -453,6 +484,12 @@ def selftest():
     assert abs(ms[0]["table"] + 0.02) < 1e-12, "twelve rows: the median sits between U3's -4 % and Frankfurt's 0"
     assert abs(ms[0]["rel"]["U6"] + 0.05) < 1e-12 and abs(ms[0]["rel"]["U3"] - 0.06) < 1e-12, "against the US rows' -10 %, not the table's -2 %"
     assert ms[1]["rel"] == {} and sorted(ms[0]["pool"]) == ["DE", "PA", "US"] and ms[0]["pool"]["DE"] == [0.0] * 5
+    assert [s["frozen"] for s in ms] == [False, False, True], "one market moving is a price moving; a thin market's row does not count"
+    assert repeats([0.01] * 4 + [0.3]) and not repeats([0.01] * 3 + [0.3, 0.4]) and repeats([0.0]), "four in five"
+    paris = lambda date, p1: dict(wide(date, ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], flat), rows=[[t, flat[t]] for t in us + de] + [["P1.PA", p1], ["P2.PA", 100.0]])
+    assert steps([paris("2026-02-12", 100.0), paris("2026-02-13", 92.0)])[0]["frozen"], "two Paris rows that part are no market: the two markets stand still"
+    few = lambda date: {"date": date, "sized": sized(us[:5], []), "shipped": [["U1", 100.0]], "rows": [[t, 100.0] for t in us[:4]]}
+    assert not steps([few("2026-02-12"), few("2026-02-13")])[0]["frozen"], "no market of five rows: nothing says the prices stood still"
     assert abs(ms[2]["rel"]["P1.PA"] + 0.08) < 1e-12 and ms[2]["rel"]["D2.DE"] == 0.0, "one Paris row is no market: the table's median (0) stands in"
     mt = tally(ms)
     assert (mt["entrants_below"], mt["leavers_above"]) == (2, 0) and (mt["rel_entrants"], mt["rel_below"], mt["rel_leavers"], mt["rel_above"]) == (2, 2, 2, 1), mt
@@ -461,9 +498,9 @@ def selftest():
     fri = wide("2026-02-06", ["U1", "U2", "U6", "D3.DE", "P1.PA"], ["U1", "U2", "U6", "U3"], thu)  # D3.DE for D1.DE on a day Frankfurt is flat
     level = tally(steps(markets + [fri]))
     assert (level["rel_entrants"], level["rel_below"], level["rel_leavers"], level["rel_above"]) == (3, 2, 3, 1), "a move level with its market is neither below nor above"
-    # the three things said before: a floor of entrants, then 8 changes, two thirds below, a gap of 2 points
-    base = {"rel_entrants": 12, "rel_below": 8, "entrant_rel": -0.014, "leaver_rel": 0.006, "changed": 8}
-    assert said(base) == (True, True, True) and said(dict(base, changed=7)) == (False, True, True)
+    # the three things said before: a floor of entrants, then 3 to 7 changes, two thirds below, a gap of 2 points
+    base = {"rel_entrants": 12, "rel_below": 8, "entrant_rel": -0.014, "leaver_rel": 0.006, "changed": 7}
+    assert said(base) == (True, True, True) and said(dict(base, changed=8)) == (False, True, True) and said(dict(base, changed=3))[0] and not said(dict(base, changed=2))[0]
     assert said(dict(base, rel_below=7)) == (True, False, True) and said(dict(base, entrant_rel=-0.0139)) == (True, True, False)
     assert said(dict(base, rel_entrants=7)) is None and said(dict(base, leaver_rel=None)) is None and said(mt) is None
     # sessions: Frankfurt repeats on the Tuesday line, the US on the Wednesday and Thursday lines (the dollar alone, then nothing)
@@ -503,7 +540,7 @@ def selftest():
     # one seat, a US pool of -4 and -1 points: the entrant is always below, so the gap of 2 points decides. With no
     # effect it holds on one draw pair in four (-4 in, -1 out); with the window's own -1 in and +2 out, on three.
     one = [{"date": "2026-03-03", "from": "2026-03-02", "in": [("X", "score", -0.05)], "out": [("Y", "score", 0.0)], "head": [], "table": 0.0,
-            "rel": {"X": -0.01, "Y": 0.02}, "pool": {"US": [-0.04, -0.01]}}]
+            "rel": {"X": -0.01, "Y": 0.02}, "pool": {"US": [-0.04, -0.01]}, "frozen": False}]
     gap = eyesight(one, draws=8000)
     assert abs(gap[0][1] - 0.25) < 0.02 and abs(gap[1][1] - 0.25) < 0.02 and abs(gap[2][1] - 0.75) < 0.02, gap
     assert "2 entrants and 2 leavers on 2 of 3 steps; this window's shift is -6.5 points in, +3.0 points out" in eyesight_report(markets, draws=200)
@@ -541,6 +578,8 @@ def main():
     ap.add_argument("--since", help="split the steps at this journal date, YYYY-MM-DD")
     ap.add_argument("--skip", nargs="*", default=[], help="leave out the steps that end on these dates")
     ap.add_argument("--mean", type=int, help="print each name's mean share over the last N lines instead")
+    ap.add_argument("--changed", action="store_true", help="print the dates of the steps on which the head changed instead")
+    ap.add_argument("--frozen", action="store_true", help="print the dates of the steps on which no price moved instead")
     ap.add_argument("--sessions", action="store_true", help="print the lines on which a market's rows repeat the line before instead")
     ap.add_argument("--eyesight", action="store_true", help="print how often things said before 2 and 3 hold on random names instead")
     ap.add_argument("--late", nargs="?", const=LATE_SINCE, metavar="SINCE", help="(#1527) warn for each Sunday line from SINCE on which a market's rows moved, instead")
@@ -564,7 +603,11 @@ def main():
     if a.journal:
         with open(a.journal, encoding="utf-8") as fh:
             lines = load(fh.read())
-        if a.late:
+        if a.changed:
+            print(" ".join(changed_dates(lines, a.since, tuple(a.skip))))
+        elif a.frozen:
+            print(" ".join(frozen_dates(lines, a.since, tuple(a.skip))))
+        elif a.late:
             print(late_report(lines, a.late))
         elif a.sessions:
             print(sessions_report(lines))

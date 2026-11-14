@@ -30706,6 +30706,28 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   session on every line; the whole table's do not, so the table's median is printed and not judged on.
 #   shortcut: read from the journal's own prices, not checked against a close by day. From the Sunday line of
 #   2026-11-15 on, both markets repeating on a Sunday line is (#1470)'s fix seen in the journal.
+# AMENDED 2026-11-14, before the lines it reads, on a second look at the baseline (`tools/ship_days.py`, then
+#   `--mark` with `book_churn.py --changed` and `--frozen`). The count of 10 is not the market's alone. Between the
+#   two lines of 20 of the 30 steps a settings key moved, arrived or left, and 9 of the 10 head changes sit on those
+#   20 (the tenth is 2026-10-24). By each key's own note here, four of the nine touch no book row: rank_perturb_k
+#   is display only (10-28), demean_by_market feeds the ruler alone (10-31), crash slots 10 is no cap (11-01), and
+#   three probe knobs arrive off (11-10). Five can move a seat: the momentum slots (10-16), the EU lines on the US
+#   series (10-17), the filed-date gate (10-21), ey_pct (11-07), and mom61_pct, capx_pct, the free zone and the
+#   taper band (11-08). So 5 of the 10 head changes sit on a step where a rule that can move a seat shipped; which
+#   seats it moved is not traced, and code changed between every pair of lines. Against that: on the 7 steps where
+#   no price moved (both markets repeat) the head never changed, though settings moved on 6 of them; the entrants
+#   read alike on both halves, 6 of 7 below their market on the five ship steps and 4 of 5 on the other five; and
+#   FTNT's and INL.DE's lines are among the other five. A seat a rule alone moved would sit below its market as a
+#   random row does, 44 % of the time, so a ship thins the pattern and cannot fake it. So: (a) the read takes every
+#   step and names no `--skip`; a skip chosen after the lines are in would be a second look. (b) SAID BEFORE 1 now
+#   reads "on 3 or more, and on fewer than 8": where a price moved and no settings key did, the head changed on 1
+#   step of 9. (c) With changes that rare, 2 and 3 will most likely wait past the first 30 steps for their 8
+#   entrants, as READ provides. (d) The tool prints the steps on which no price moved and the head changes among
+#   them: from 2026-11-15 those are the Sunday and Monday lines, and a head change on one is a rule's or the data's.
+#   (e) THE MECHANISM's band, 20 % wide in price, dates from the free zone's first line, 2026-11-08. On the 23
+#   baseline steps before it the brake sloped over its whole range (`--brake --free 0`: +1 % in price took 3.6 %
+#   off the score at 80 % above, 9.5 % at 95; since, 4.1 and 13.7 %), so the brake read the day's close nearly as
+#   steeply then, and the two named cases (10-31, 11-01) fall under that older shape.
 # RULE, fixed now: 2 and 3 hold -> the head follows the day's move on the walk's legs as it did on the page's own, and
 #   ONE owner question carries both counts: (a) keep, it is the graded formula read daily; (b) the page prints beside
 #   BUY% each name's mean share over the last 21 journal lines (`--mean 21`: what a buyer on a random day of the month
