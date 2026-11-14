@@ -30154,6 +30154,31 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # PROOF RULE, amending (#1493)'s: a re-run of that census with the same inputs on this commit misses the 4 EQUIVALENT
 #   and none of the 5 GAPS.
 
+# (#1503) WHAT THE 2026-11-14 RESEARCH ADDED, RECORD. No knob, no run. Read before proposing in these lanes.
+# JKP: still no newer release, so the paper route stays closed. bkelly-lab/jkp-data carries no GitHub release; its
+#   PRs #327 (characteristics-managed portfolios with 1, 2 and 5 size groups for every country), #321, #318 and #331
+#   closed 2026-11-09 and #354 on 2026-11-12. bkelly-lab/ReplicationCrisis has had no commit since 2026-09-01.
+#   (#1478)'s manifest pin is the watch: when it reds, the size groups are the first thing to read (menus 2, 4 and 5
+#   failed on developed ex-US, every time with the US passing).
+# SPIN-OFFS: no census. Yahoo books the large US spin-offs as split factors, so the parent's closes before the spin are
+#   already scaled: the fixture's frozen chart cache (tests/fixture/.long_history_cache.span.json, fetched 2026-11-11)
+#   lists GE 2023-01-04 1281:1000 (GE HealthCare) and 2024-04-02 1253:1000 (GE Vernova), and MMM 2024-04-01 1196:1000
+#   (Solventum), as split rows. (#424)'s `restate_for_splits` already divides SEC per-share rows by those factors.
+#   (#1477)'s D2 hits are the cash-booked minority, and its RESULT moved no book seat.
+# YAHOO PRICE ERRORS, yfinance's repair catalogue against what this tool already does: 100x currency-unit mixups
+#   (the pence handling in `fetch`, and the splice trim for a permanent switch); missing split adjustments ((#1492)'s
+#   hand rows, (#1476)'s fund split guess); unexplained split-like steps (the splice trim); dividend errors ((#1477),
+#   RECORD); the flawed dividend adjustment of weekly and monthly bars (this tool reads `close`, not `adjclose`, while
+#   `use_adjusted_close` stays false, and (#1484)'s BARS read 0.10 % of months off). Nothing new to build.
+# NOT PROPOSED: a rank-correlation (IC) ruler. (#1337) closed the ruler lane on its own terms: "no ruler variant
+#   (another share of the pond, another statistic, more draws) is tried".
+# TAX: the OE 2027 proposal (final vote set for 2026-11-24) changes nothing for listed shares and funds as reported on
+#   2026-11-03: the 28 % rate, the art. 43.o n.o 5 exclusion (10/20/30 % past 2/5/8 years) and englobamento stand, and
+#   no new wrapper. IRS brackets rise 3.88 %, the first rate is 12.20 % and the minimum existence 13,580 EUR, so
+#   `tools/exit_tax.py`'s bracket table, a 2026 reading, is re-read after the final vote.
+# VOLATILITY: a monthly-bar stdev is not the daily one times sqrt(21) (Burns' "volatility mystery" posts; GARCH on daily
+#   against monthly data), so (#1498)'s vol group may move a seat on its own, through the sharpe term (#97), (#100).
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
