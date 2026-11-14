@@ -3897,6 +3897,21 @@ pub fn anchor_strict_with(dates: &[NaiveDate], closes: &[f64], target: NaiveDate
     ((target - d[i]).num_days() <= half.max(5)).then_some(c[i])
 }
 
+/// (#1502) The (#1484) census's walk view of a name: [`backtest_quote`] at the long monthly chart's last bar, at monthly
+/// cadence on the walk's anchor map, and that chart's bars against the daily one ([`bar_check`]). None when the monthly
+/// chart has no bar. A plain function so the suite reaches what `fetch::quote_one` builds only under `print_parity`.
+pub fn parity_walk_view(ticker: &str, mdates: &[NaiveDate], mcloses: &[f64], mdivs: &[(NaiveDate, f64)], ddates: &[NaiveDate], dcloses: &[f64]) -> Option<(Quote, BarCheck)> {
+    let last = mcloses.len().checked_sub(1)?;
+    Some((backtest_quote(ticker, mdates, mcloses, mdivs, last, 12, &BTreeMap::new()), bar_check(mdates, mcloses, ddates, dcloses)))
+}
+
+/// (#1502) The census's merged view: the page's own series at its last bar, at daily cadence on the walk's anchor map.
+/// None when the series has no bar.
+pub fn parity_merged_view(ticker: &str, dates: &[NaiveDate], closes: &[f64], divs: &[(NaiveDate, f64)]) -> Option<Quote> {
+    let last = closes.len().checked_sub(1)?;
+    Some(backtest_quote(ticker, dates, closes, divs, last, 252, &BTreeMap::new()))
+}
+
 /// (#1484) The long monthly chart against the daily one: each monthly bar inside the daily window, the last (current)
 /// month excepted, against the daily close of its month's last session, the last daily bar before the next monthly
 /// bar. `off` counts gaps over 2 %; `worst` is the largest gap, monthly over daily in %, at `worst_at`. Yahoo stamps a
@@ -12754,6 +12769,26 @@ fn seam_anchor_weighs_months_not_bars() {
     assert_eq!(asof_avg_seam(&months, &mc, day(1990, 1, 1), 365), None, "an empty window");
 }
 
+
+/// (#1502) The census's two views as plain functions: the walk's reads the monthly chart's last bar and checks its bars
+/// against the daily chart, the merged one reads the series' last bar, and a chart with no bar has no view. These are
+/// the lines (#1493) found out of the suite's reach under `print_parity`.
+#[test]
+fn parity_views_read_the_last_bar() {
+    let day = |y: i32, m: u32, d: u32| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    let md: Vec<NaiveDate> = (1..=12).map(|m| day(2025, m, 1)).collect();
+    let mc: Vec<f64> = (1..=12).map(|m| 100.0 + f64::from(m)).collect();
+    let dd: Vec<NaiveDate> = (0..300).map(|k| day(2025, 1, 1) + Duration::days(k)).collect();
+    let dcl: Vec<f64> = (0..300).map(|k| 100.0 + f64::from(k)).collect();
+    let (walk, bars) = parity_walk_view("W", &md, &mc, &[], &dd, &dcl).expect("a chart with bars has a view");
+    assert_eq!(walk.price_eur, Some(112.0), "the last monthly close");
+    assert_eq!(bars, bar_check(&md, &mc, &dd, &dcl));
+    assert!(bars.checked > 0, "the daily chart covers its months: {bars:?}");
+    assert!(parity_walk_view("W", &[], &[], &[], &dd, &dcl).is_none(), "no monthly bar, no view");
+    let merged = parity_merged_view("W", &dd, &dcl, &[]).expect("a series with bars has a view");
+    assert_eq!(merged.price_eur, Some(399.0), "the last daily close");
+    assert!(parity_merged_view("W", &[], &[], &[]).is_none());
+}
 
 /// (#1484) Monthly bars against daily ones: a month whose bar closes on its last session reads 0; a bar 5 % off reads
 /// one off, and is the worst; a month before the daily chart starts and the current (last) month are not checked.

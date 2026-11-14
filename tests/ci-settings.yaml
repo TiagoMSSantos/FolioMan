@@ -30145,6 +30145,15 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the mechanism above is wrong somewhere: RECORD, and the knob goes to RETIRED.
 # REVERT RULE: none; the knob ships false.
 
+# (#1502) THE CENSUS'S VIEWS AS PLAIN FUNCTIONS, 2026-11-14. Tests, no knob. (#1493) left 5 GAPS under the process-wide
+#   `print_parity` switch, out of the --lib suite's reach: `quote_one`'s `!m.closes.is_empty()` filter and its two
+#   `len() - 1` last-bar indices (fetch.rs 971:32, 972:98 and 1356:112 at 60affdd). They now live in
+#   `core::parity_walk_view` and `core::parity_merged_view`, which `parity_views_read_the_last_bar` reads (a chart
+#   with no bar has no view; each view reads its chart's last bar); `quote_one` keeps only the switch. Nothing a run
+#   prints moves.
+# PROOF RULE, amending (#1493)'s: a re-run of that census with the same inputs on this commit misses the 4 EQUIVALENT
+#   and none of the 5 GAPS.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

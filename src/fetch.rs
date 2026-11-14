@@ -968,11 +968,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
 
     // (#1484) under `print_parity` only: the walk's own view of this name (its long monthly chart, the walk's anchor
     // map) and that chart's bars against this daily one, both taken before a proxy splice can glue donor bars under it
+    // (#1502) built by `core::parity_walk_view`, which the suite reaches; this switch is the only line here it cannot
     let parity_walk = if crate::config::print_parity() {
-        lc.as_ref().filter(|m| !m.closes.is_empty()).map(|m| {
-            let walk = core::backtest_quote(ticker, &m.dates, &m.closes, &m.divs, m.closes.len() - 1, 12, &BTreeMap::new());
-            (walk, core::bar_check(&m.dates, &m.closes, &chart.dates, &chart.closes))
-        })
+        lc.as_ref().and_then(|m| core::parity_walk_view(ticker, &m.dates, &m.closes, &m.divs, &chart.dates, &chart.closes))
     } else {
         None
     };
@@ -1353,9 +1351,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (#1393) the smoothed/raw endpoint ratio of this daily chart, for the momentum keys' one-endpoint knob
         endpoint_ratio: core::endpoint_ratio(&chart.closes),
         // (#1484) the merged view: the page's own series on the walk's anchor map, beside the walk's
-        parity: parity_walk.map(|(walk, bars)| {
-            let merged = core::backtest_quote(ticker, &long_dates, &long_closes, &long_divs, long_closes.len() - 1, 252, &BTreeMap::new());
-            Box::new(core::Parity { walk, merged, bars })
+        parity: parity_walk.and_then(|(walk, bars)| {
+            core::parity_merged_view(ticker, &long_dates, &long_closes, &long_divs).map(|merged| Box::new(core::Parity { walk, merged, bars }))
         }),
     }
 }
