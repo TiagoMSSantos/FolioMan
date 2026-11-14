@@ -738,6 +738,52 @@ fn exposure_rows(
     serde_json::Value::Array(rows)
 }
 
+/// (#1526) The 50 States and DC, in EDGAR's `stateOfIncorporation` spelling (USPS letters): where a
+/// corporation must be organized for its shares to be US-situated under the US estate tax. A territory
+/// (PR, GU, VI, AS, MP) is foreign to that tax, and a foreign filer carries EDGAR's own country code
+/// (L2 Ireland, X0 UK, P7 Netherlands), so a code off this list reads "not US".
+const US_STATES: [&str; 51] = [
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
+    "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC",
+    "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+];
+
+/// (#1526) A single stock with a quote: the split [`exposure_rows`] makes (no coin, no fund), so the
+/// estate row counts what the Exposure table's own `sector` and `currency` rows read as a direct share.
+fn book_stock(t: &str, quotes: &[Quote]) -> bool {
+    quotes.iter().any(|q| q.ticker == t && picks::asset_class(q) == 2)
+}
+
+/// (#1526) The Exposure table's `US estate` row: the share of the BUY% book in stocks of a corporation
+/// organized in a US State or DC, wherever it is listed (a Xetra twin counts). A holder who is neither a US
+/// citizen nor a US resident (the owner lives in Portugal, which has no estate treaty with the US) owes US
+/// estate tax at death on such shares, 26-40 % of the part above $60,000 ((#1521): the $13,000 credit is
+/// Table A's tax on the first $60,000, so the rates left are 26 % up); an Irish plc listed in New York is not
+/// US-situated, and neither is a fund domiciled in Ireland or Luxembourg that holds the same companies,
+/// so funds and coins are neither counted nor named. `inc` maps a book stock to its EDGAR code
+/// ([`fetch::sec_incorporation`]). DETAIL names the US tickers, then `not US:` each other code, then
+/// `no SEC answer:` the stocks `inc` lacks. None while no stock has an answer (an offline run, a fixture),
+/// so the table stays as it was. Display only: nothing reads it back.
+fn estate_row(book: &[(String, f64)], quotes: &[Quote], inc: &std::collections::HashMap<String, String>) -> Option<serde_json::Value> {
+    let (mut us, mut abroad, mut blind, mut w_us) = (Vec::new(), Vec::new(), Vec::new(), 0.0);
+    for (t, w) in book.iter().filter(|(t, _)| book_stock(t, quotes)) {
+        match inc.get(t) {
+            Some(c) if US_STATES.contains(&c.as_str()) => {
+                us.push(t.clone());
+                w_us += *w;
+            }
+            Some(c) => abroad.push(format!("{t} ({c})")),
+            None => blind.push(t.clone()),
+        }
+    }
+    if us.is_empty() && abroad.is_empty() {
+        return None;
+    }
+    let parts = [("", &us), ("not US: ", &abroad), ("no SEC answer: ", &blind)];
+    let detail = parts.iter().filter(|(_, ts)| !ts.is_empty()).map(|(why, ts)| format!("{why}{}", ts.join(" "))).collect::<Vec<_>>().join("; ");
+    Some(serde_json::json!([["RANK", ""], ["KIND", "US estate"], ["NAME", "US companies"], ["SCORE", ""], ["MISSES", ""], ["BUY%", format!("{w_us:.1}%")], ["DETAIL", detail]]))
+}
+
 /// (funnel) Where the growth lane's candidates died: per gate, how many names failed it and how many
 /// it blocked ALONE, split stocks | ETFs | crypto, naming a few of the sole-blocked tickers.
 ///
@@ -2661,7 +2707,18 @@ pub async fn run(args: Vec<String>) {
         // (#580) the Braked table reads the shipped rows, before (#584) momentum rows join them
         let braked = crate::picks::braked_rows(&top["stocks"], &quotes, &settings.tickers, &settings.buy_heuristic);
         crate::picks::stamp_momentum(&mut top, &sized_now, &shipped_now, &quotes, &settings.widths, &settings.buy_heuristic, &fund_pe);
+        // (#1526) display only: the US estate row reads each book stock's place of incorporation off its SEC
+        // filing, one GET per name, cached 30 days; no score, rank, knob or BUY% reads it
+        let mut inc = std::collections::HashMap::new();
+        for (t, _) in sized_now.iter().filter(|(t, _)| book_stock(t, &quotes)) {
+            if let Some(c) = fetch::sec_incorporation(&client, &settings.urls, t).await {
+                inc.insert(t.clone(), c);
+            }
+        }
         top["exposure"] = exposure_rows(&sized_now, &quotes, &holdings, &mix, &fetch::us_symbol, &settings.buy_heuristic);
+        if let (Some(row), Some(rows)) = (estate_row(&sized_now, &quotes, &inc), top["exposure"].as_array_mut()) {
+            rows.push(row);
+        }
         top["attention"] = attention;
         top["berkshire"] = berkshire;
         top["social"] = social;
@@ -5476,6 +5533,43 @@ mod tests {
             .collect();
         let why = "no holdings served: BLIND.L; unrecognised venue: 2330.TW X.ZZ";
         assert_eq!(unknown, [["70.0%", why]]);
+    }
+
+    /// (#1526) The `US estate` row sums the book's STOCKS whose EDGAR code is a State or DC (a Xetra twin
+    /// counts) and names them, then each other code, then the stocks with no SEC answer. A fund and a coin
+    /// are neither counted nor named, even with a code on file, and a book ticker with no quote is skipped,
+    /// as `exposure_rows` skips it. With no stock answered there is no row, so an offline run reads as before.
+    #[test]
+    fn estate_row_sums_the_stocks_organized_in_a_us_state() {
+        let stock = |t: &str| Quote::stub(t, "1", "", t);
+        let mut fund = stock("FUND.L");
+        fund.instrument_type = "ETF".into();
+        let quotes = [stock("AAA"), stock("BBB.DE"), stock("CCC"), stock("DDD"), fund, Quote::stub("BTC-EUR", "1", "", "Bitcoin")];
+        let book: Vec<(String, f64)> = [("AAA", 10.0), ("BBB.DE", 20.0), ("CCC", 15.0), ("DDD", 5.0), ("FUND.L", 30.0), ("BTC-EUR", 10.0), ("GONE", 10.0)]
+            .iter()
+            .map(|(t, w)| (t.to_string(), *w))
+            .collect();
+        let codes = |v: &[(&str, &str)]| -> HashMap<String, String> { v.iter().map(|(t, c)| (t.to_string(), c.to_string())).collect() };
+        let inc = codes(&[("AAA", "DE"), ("BBB.DE", "TX"), ("CCC", "L2"), ("FUND.L", "DE"), ("GONE", "DE")]);
+        let row = |book: &[(String, f64)], inc: &HashMap<String, String>| estate_row(book, &quotes, inc);
+        let cells = |w: &str, detail: &str| {
+            serde_json::json!([["RANK", ""], ["KIND", "US estate"], ["NAME", "US companies"], ["SCORE", ""], ["MISSES", ""], ["BUY%", w], ["DETAIL", detail]])
+        };
+        assert_eq!(row(&book, &inc), Some(cells("30.0%", "AAA BBB.DE; not US: CCC (L2); no SEC answer: DDD")));
+        assert_eq!(row(&book[..2], &inc), Some(cells("30.0%", "AAA BBB.DE")), "only US names: no other part");
+        assert_eq!(row(&book[2..3], &inc), Some(cells("0.0%", "not US: CCC (L2)")), "only a foreign code: a 0.0% row");
+        assert_eq!(row(&book, &codes(&[("FUND.L", "DE"), ("BTC-EUR", "DE"), ("GONE", "DE")])), None);
+        assert_eq!(row(&book, &HashMap::new()), None);
+    }
+
+    /// (#1526) The 50 States and DC as EDGAR spells them: no territory (PR, GU, VI), no foreign code (L2
+    /// Ireland, X0 UK, P7 Netherlands), nothing blank or lower case, no code twice.
+    #[test]
+    fn us_states_are_the_fifty_and_dc() {
+        assert!(["DE", "CA", "DC", "NY", "WY", "AL"].iter().all(|s| US_STATES.contains(s)));
+        assert!(["PR", "GU", "VI", "L2", "X0", "P7", "", "de"].iter().all(|s| !US_STATES.contains(s)));
+        assert_eq!(US_STATES.iter().collect::<std::collections::HashSet<_>>().len(), 51);
+        assert!(US_STATES.iter().all(|s| s.len() == 2 && s.bytes().all(|b| b.is_ascii_uppercase())));
     }
 
     /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the

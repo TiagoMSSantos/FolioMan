@@ -5624,13 +5624,13 @@ pub(crate) fn web_help(real: bool, inflation: &[Vec<(String, String)>]) -> BTree
         ("EQUITY", "Owners' share: what the company owns minus what it owes (negative = it owes more), at the newest balance date, before the offer; — = no public listing document yet (a confidential filer); n/a = the document's table does not give it, or could not be read"),
     ]);
     let exposure = fixed(&[
-        ("RANK", "A company's position: those passing every buy rule first, by buy score, then the rest by fewest rules missed (the CORE table's order); blank on sector, currency and one-bet rows, which are not things you can buy"),
-        ("KIND", "What the row adds up; sector = an industry group; currency = the currency the underlying shares trade in; one bet = funds that share most of their top-10 holdings; name = one company, added up across the whole buy list"),
-        ("NAME", "The industry group, currency, group size or company ticker; ? = no data, or a listing on an exchange with no known currency, for the names in DETAIL"),
+        ("RANK", "A company's position: those passing every buy rule first, by buy score, then the rest by fewest rules missed (the CORE table's order); blank on sector, currency, one-bet and US estate rows, which are not things you can buy"),
+        ("KIND", "What the row adds up; sector = an industry group; currency = the currency the underlying shares trade in; one bet = funds that share most of their top-10 holdings; name = one company, added up across the whole buy list; US estate = the stocks of companies incorporated in a US state, wherever they trade, which the US taxes at the death of a holder who is not a US citizen or resident"),
+        ("NAME", "The industry group, currency, group size, company ticker, or US companies; ? = no data, or a listing on an exchange with no known currency, for the names in DETAIL"),
         ("SCORE", RANK_SCORE_HELP),
         ("MISSES", RANK_MISSES_HELP),
         ("BUY%", "Share of the buy list, for example 12% = €120 of €1,000. A company's share is a lower bound: a fund counts only its top-10 holdings"),
-        ("DETAIL", "For a company: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share"),
+        ("DETAIL", "For a company: the % bought directly and how many funds also hold it; for one bet: the member funds and the holdings they share; for US estate: the US companies, then the others with the country code of their SEC filing (L2 = Ireland, P7 = Netherlands), then those the SEC did not answer"),
     ]);
     // (#811) `heuristics::intraday::web_rows`; (#1223) the BUY NOW Trading table shares it.
     // shortcut: the key column's help is keyed on K7, the shipped intraday_key; another key's column shows none

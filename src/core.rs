@@ -192,7 +192,8 @@ pub fn listing_currency(sym: &str) -> Option<&'static str> {
 /// company (APC.DE, NVD.DE, LAR0.DE, MTE.DE, AP2.DE…) reads "Germany", so a US payer is OVER-credited:
 /// keep 0.76 where 0.72 applies. (#1525) sizes both: `dividend_weight` 0.5 x yield (in %) x 0.04 =
 /// 0.02 x yield points before the damps, at most 0.12 at the 6 % cap, and on the 2026-11-14 book no
-/// seat moved. Closing it needs a domicile source for stocks, which no current feed provides.
+/// seat moved. (#1526)'s `fetch::sec_incorporation` now reads a stock's state of incorporation, but
+/// only for the page's display-only US estate row; nothing here reads it.
 const EU_MARKETS: [&str; 12] = [
     "Germany", "France", "Netherlands", "Italy", "Spain", "Austria",
     "Portugal", "Belgium", "Finland", "Sweden", "Denmark", "Ireland",

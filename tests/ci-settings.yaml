@@ -30789,6 +30789,25 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   scored stock against the run's cap of 600 (fetch.rs SEC_FETCH_BUDGET), for at most 0.12 points.
 # REVERT RULE: none; comments only.
 
+# (#1526) THE BOOK'S US ESTATE SHARE ON THE PAGE, 2026-11-14, on the owner's pick on (#1521) ("Page shows US
+#   share"). Display only, no knob.
+# WHY: (#1521) put on record that a holder who is not a US citizen or resident owes US estate tax on shares of a
+#   corporation organized in a State or DC, wherever the share trades: 26 to 40 % of the part above $60,000
+#   (`tools/exit_tax.py --estate`). A fund domiciled in Ireland or Luxembourg that holds the same companies is
+#   outside it. Neither the ticker nor the venue answers it: a Xetra twin of a US company counts, an Irish plc
+#   listed in New York does not.
+# WHAT IS ADDED: `fetch::sec_incorporation` reads the top-level `stateOfIncorporation` of a stock's EDGAR
+#   submissions document: one GET against the run's SEC budget, a twin through its US line (`us_symbol`), cached
+#   30 days, an answer only (#377). Each screen asks it for the stocks in the sized book, and `estate_row` adds
+#   one exposure row: KIND "US estate", BUY% = the summed weight of the stocks organized in one of the 50 States
+#   or DC (`US_STATES`), DETAIL = those tickers, then "not US: <ticker> (<EDGAR code>)", then "no SEC answer:".
+#   Funds and coins are not counted. When no stock answers (offline), there is no row, so the goldens and the
+#   offline tests do not move. The page's warnings add one line when the row shows 0.1 % or more.
+# BUY SHARES: none move; the row reads the book after it is sized.
+# CHECK before Pages: a Screen A/B on the probe tag with the no-op knob book_names=10: CONTROL holds, 0 knob
+#   cells, the arm's book is the live book, and the payload carries the row with EDGAR's codes.
+# REVERT RULE: delete the call site, `estate_row`, `US_STATES`, `sec_incorporation` and the page line.
+
 # (#1527) THE LATE READ TRIPWIRE, PRE-REGISTERED 2026-11-14 before the line it first reads. Row: (#1528). No knob
 #   and no code in src: `tools/book_churn.py --late`, run by a step of ci.yml's actionlint job.
 # WHY: (#1522)'s READ found the record's night lines one session late on Frankfurt for seven weeks, 38 lines, and
