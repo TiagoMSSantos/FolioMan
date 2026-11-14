@@ -30585,6 +30585,29 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT: RECORD, on the owner's (#1516) word that spin-off hits are recorded without a question.
 # REVERT RULE: none.
 
+# (#1520) THE PARITY CENSUS ON THE MONEY THE PAGE FUNDS, ON THE LIVE MIX, PRE-REGISTERED 2026-11-14 before any run.
+#   Display only, under `print_parity`; no knob.
+# WHY: every census so far ((#1498), (#1513)) ran with the walk switches off, and none since the page serves 6M with
+#   1Y, 5Y and MA from W (`core::serve_walk`): 4 of the SPLIT's 21 field groups. And BOOK and SPLIT grade top-10
+#   SETS of each half, while the page funds score 1-5 and momentum 1-5, spliced s1 m1 s2 m2 s3 | m3 s4 m4 s5 m5
+#   (`picks::splice_order`, 5 slots); the head 5 take 16.59 % each and the tail 2.07 %. Every swap seen so far sat
+#   at score ranks 8-14 (ROST, FIX, EME, M4I.DE, KLA.DE) and moved no money; a swap across a money line would show
+#   as a plain 10/10 in a set grade.
+# WHAT IS ADDED: BOOK prints `page book` (the cut the page funds from the page's two top 10s, ` | ` after the
+#   head), `funded` (that cut read on M and W) and `head` (its first 5). Each SPLIT line ends with the same two
+#   reads, alone | all-but. The cut splices the stock books alone, with no fund row, issuer twin or commodity park,
+#   and the momentum book is not held to the gates-off pond, so the run checks `page book` against the page.
+# QUESTION: on main with the 3 switches on, does W fund the page's 10 stocks, and the same head 5?
+# RULE, fixed now: W funded 10/10 and head 5/5 -> RECORD, and the parity lane is closed on the live mix. A moved
+#   funded or head seat -> the SPLIT's funded and head tails name the field group, then ONE owner question: a 4th
+#   switch for that group (probe tag, CI and Screen A/B before Pages) or leave the mix.
+# SAID BEFORE THE RUN: head 5/5; its money lines are score s3|s4 (LAR0.DE 35.6 | DVA 33.8) and momentum m2|m3
+#   (WDC 299.1 | LU2.DE 284.8, 12-7). Funded leans 10/10, but score s5|s6 is a 32.6 tie (NVD.DE | AP2.DE) and
+#   momentum m5|m6 is 1.7 apart (MTE.DE 246.3 | INL.DE 244.6): the two seats a small W shift can flip.
+# CONTROL: the Screen A/B's c1, c2 and arm give the same BUY NOW (`print_parity` is inert), and `page book` equals
+#   the page's funded stock rows; if it does not, the census cut is fixed first and nothing is graded.
+# REVERT RULE: none; display only.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

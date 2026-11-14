@@ -4572,6 +4572,15 @@ fn parity_books(qs: &[&Quote], tuning: &config::BuyHeuristic) -> (Vec<String>, V
     (top(picks::growth_scores_ranked(qs, tuning)), top(picks::momentum_keys(qs, &trails, tuning)))
 }
 
+/// (#1520) The 10 names the page funds from a score and a momentum top 10, in the page's order: `splice_order`
+/// with `growth_momentum_slots` of every 10 under `growth_momentum_interleave`, else score first. The first
+/// `picks::HEAD` are the head.
+fn parity_cut(score: &[String], momentum: &[String], tuning: &config::BuyHeuristic) -> Vec<String> {
+    let slots = if tuning.growth_momentum_interleave { tuning.growth_momentum_slots } else { 0 };
+    let (s, m): (Vec<&String>, Vec<&String>) = (score.iter().collect(), momentum.iter().collect());
+    picks::splice_order(&s, &m, false, slots, 10).into_iter().cloned().collect()
+}
+
 /// (#1484) The PARITY CENSUS, three blocks over every scored name that carries the walk's view (`print_parity`).
 /// BARS: each long monthly bar inside the daily window against the daily close of its month's last session
 /// (`core::bar_check`), by market, and the worst ten. FIELDS: each price field the score reads, as n, median and
@@ -4580,10 +4589,13 @@ fn parity_books(qs: &[&Quote], tuning: &config::BuyHeuristic) -> (Vec<String>, V
 /// momentum key, read on the page and with every price field taken from M, then from W. (#1498) SPLIT: the same two
 /// books with one field group from W at a time (`split_groups`), and with every group from W but that one.
 /// (#1514) POOL: the names of the page's two books under [`WALK_FIRST_CUTOFF_MONTHS`] months on the walk's chart.
-/// Display only.
+/// (#1520) BOOK and SPLIT also grade the 10 names the page funds ([`parity_cut`]) and its head 5, since a swap
+/// inside a top 10 past the cut moves no money. Display only.
 /// shortcut: a re-priced quote keeps the page's cross-sectional stamps (fund percentiles, sector floors), so a seat
 /// that moves only through a stamp is not seen; and W ends on its month's first session, so its 1M and 3M legs carry
 /// that date shift. The block says both.
+/// shortcut: the cut splices the stock books alone, with no fund row, issuer twin or commodity park, and the
+/// momentum book is not held to the gates-off pond; BOOK prints the page book so a run checks it against the page.
 fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
     let with: Vec<(&Quote, &core::Parity)> = quotes.iter().filter_map(|q| q.parity.as_deref().map(|p| (q, p))).collect();
     let mut out = vec![format!("── PARITY CENSUS (#1484): the walk's view of {} of {} scored names ──", with.len(), quotes.len())];
@@ -4644,6 +4656,13 @@ fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
         };
         out.push(format!("    {label:<9} M {}    W {}", cell(m.as_slice()), cell(w.as_slice())));
     }
+    // (#1520) the cut the page funds from those books, the head at 16.59 % and the tail at 2.07 % a seat
+    let head = |v: &[String]| v.iter().take(picks::HEAD).cloned().collect::<Vec<String>>();
+    let (pb, mb, wb) = (parity_cut(&ps, &pm, tuning), parity_cut(&ms, &mm, tuning), parity_cut(&ws, &wm, tuning));
+    let (h, t) = pb.split_at(picks::HEAD.min(pb.len()));
+    out.push(format!("    page book {} | {}", h.join(" "), t.join(" ")));
+    out.push(format!("    funded    M {}    W {}", seats(&pb, &mb), seats(&pb, &wb)));
+    out.push(format!("    head      M {}    W {}", seats(&head(&pb), &head(&mb)), seats(&head(&pb), &head(&wb))));
     // (#1514) POOL: a cutoff needs 36 monthly bars before it (`backtest::run`'s `min_history`), so the walk holds no
     // sample of a name younger than that; a name of the two page books that young sits in a seat nothing graded
     let unsampled: Vec<String> = stocks
@@ -4681,15 +4700,20 @@ fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
             .collect();
         let (a_s, a_m) = parity_books(&alone.iter().collect::<Vec<_>>(), tuning);
         let (b_s, b_m) = parity_books(&but.iter().collect::<Vec<_>>(), tuning);
+        let (a_c, b_c) = (parity_cut(&a_s, &a_m, tuning), parity_cut(&b_s, &b_m, tuning));
         out.push(format!(
-            "    {label:<10} alone {} | {}    all-but {} | {}",
+            "    {label:<10} alone {} | {}    all-but {} | {}    funded {} | {}    head {} | {}",
             seats(&ps, &a_s),
             seats(&pm, &a_m),
             seats(&ps, &b_s),
-            seats(&pm, &b_m)
+            seats(&pm, &b_m),
+            seats(&pb, &a_c),
+            seats(&pb, &b_c),
+            seats(&head(&pb), &head(&a_c)),
+            seats(&head(&pb), &head(&b_c))
         ));
     }
-    out.push("  shortcut: re-priced quotes keep the page's cross-sectional stamps; W ends on its month's first session, so its 1M and 3M legs carry that shift".to_string());
+    out.push("  shortcut: re-priced quotes keep the page's cross-sectional stamps; W ends on its month's first session, so its 1M and 3M legs carry that shift; the cut splices stocks alone, so check the page book against the page".to_string());
     out.join("\n")
 }
 
@@ -4777,8 +4801,14 @@ mod tests {
             .collect();
         let text = parity_census(&quotes, &config::BuyHeuristic::default());
         let line = |label: &str| text.lines().find(|l| l.starts_with(&format!("    {label:<10} alone"))).unwrap_or_default().to_string();
-        assert!(line("1Y").contains("| 9/10 -S09 +S10    all-but") && line("1Y").ends_with("| 10/10"), "{text}");
-        assert!(line("range").contains("| 10/10    all-but") && line("range").ends_with("| 9/10 -S09 +S10"), "{text}");
+        assert!(line("1Y").contains("| 9/10 -S09 +S10    all-but") && line("1Y").contains("| 10/10    funded"), "{text}");
+        assert!(line("range").contains("| 10/10    all-but") && line("range").contains("| 9/10 -S09 +S10    funded"), "{text}");
+        // (#1520) a stub has no turnover, so the score book is dry and the cut is the momentum top 10: W's S10 takes
+        // S09's funded seat and S04's head seat
+        assert!(line("1Y").ends_with("funded 9/10 -S09 +S10 | 10/10    head 4/5 -S04 +S10 | 5/5"), "{text}");
+        assert!(line("range").ends_with("funded 10/10 | 9/10 -S09 +S10    head 5/5 | 4/5 -S04 +S10"), "{text}");
+        assert!(text.contains("    page book S00 S01 S02 S03 S04 | S05 S06 S07 S08 S09\n"), "{text}");
+        assert!(text.contains("\n    funded    M 10/10    W 9/10 -S09 +S10\n    head      M 5/5    W 4/5 -S04 +S10\n"), "{text}");
         assert_eq!(text.lines().filter(|l| l.contains(" all-but ")).count(), 21, "one line per group: {text}");
         // (#1514) POOL names the page-book names under 36 months on the walk's chart, and none when there is none
         let pool = |text: &str| text.lines().find(|l| l.starts_with("  POOL, ")).unwrap_or_default().to_string();
@@ -4826,6 +4856,20 @@ mod tests {
         set_legs(&mut short, &v, &["10Y"]);
         assert_eq!(picks::perf_pct(&short, "10Y"), Some(3.0), "a row with no legs is padded, then takes the one leg");
         assert_eq!(picks::perf_pct(&short, "5Y"), None);
+    }
+
+    /// (#1520) `parity_cut` funds the page's order: under the shipped interleave score and momentum take turns, score
+    /// first, and a name both books hold is placed once; with the interleave off the score book goes first and
+    /// momentum fills what it leaves.
+    #[test]
+    fn parity_cut_splices_the_page_book() {
+        let t = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        let (s, m) = (t(&["A", "B", "C", "D", "E", "F"]), t(&["X", "B", "Y", "Z", "W", "V"]));
+        let on = config::BuyHeuristic::default();
+        assert!(on.growth_momentum_interleave && on.growth_momentum_slots == 5, "the shipped default");
+        assert_eq!(parity_cut(&s, &m, &on), t(&["A", "X", "B", "Y", "C", "Z", "D", "W", "E", "V"]));
+        let off = config::BuyHeuristic { growth_momentum_interleave: false, ..on };
+        assert_eq!(parity_cut(&s, &m, &off), t(&["A", "B", "C", "D", "E", "F", "X", "Y", "Z", "W"]));
     }
 
     /// (#1493) `parity_books`' momentum book holds the stocks with a key, the highest first, and none without one.
