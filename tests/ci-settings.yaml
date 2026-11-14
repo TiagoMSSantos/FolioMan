@@ -23950,7 +23950,6 @@ buy_heuristic:
   anchor_cadence_aware: true     # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure;
   #  arm 1 SHIPPED 2026-11-13 on the owner's word. REVERT: false.
   print_parity: false            # (#1484) the PARITY CENSUS after the page's tables: the walk's view, display only
-  anchor_seam_months: false      # (#1500) an anchor window across the page's monthly/daily seam counts one close a month
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped

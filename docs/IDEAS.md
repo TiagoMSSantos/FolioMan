@@ -207,71 +207,71 @@ by hand.
 | 190 | (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw cl… | knob | `use_adjusted_close` | OFF (false) | #53 #266 #304 #804 #807 #808 | A re-open needs a PRE-REGISTERED total-return refit of `growth_min_cagr`, graded X vs A o… |
 | 191 | (#1484) print, after the page's tables, the PARITY CENSUS: for every scored name the walk's own view (`core::… | knob | `print_parity` | OFF (false) | #1484 | new reason, see receipt |
 | 192 | (#1488) (#188)'s named fix, the anchor that respects bar cadence: `core::horizon_changes` anchors each leg on… | knob | `anchor_cadence_aware` | SHIPPED true | #188 #1488 | — |
-| 193 | (#1500) the 10Y anchor at the page's seam: `fetch::quote_one` glues the long monthly chart's bars dated befor… | knob | `anchor_seam_months` | OFF (false) | #1500 | new reason, see receipt |
-| 194 | (#1477) drop the Yahoo payouts `core::payout_flags` flags (D1 a duplicate row within 7 days of the one before… | knob | `payout_guard` | OFF (false) | #1472 #1477 | new reason, see receipt |
-| 195 | (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return comp… | knob | `backtest_tr_ruler` | OFF (false) | #120 #149 #188 #303 #304 #804 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
-| 196 | (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone) | knob | `nupl_euphoria` | SHIPPED 0.5 |  | — |
-| 197 | (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off | knob | `nupl_damp_floor` | SHIPPED 0.5 |  | — |
-| 198 | (4) NUPL below this starts BOOSTING crypto scores (~0.25 = fear/accumulation zone); 0 = boost off | knob | `nupl_capitulation` | SHIPPED 0.25 |  | — |
-| 199 | (4) crypto-score multiplier at NUPL=0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — k… | knob | `nupl_boost_ceiling` | SHIPPED 1.3 |  | — |
-| 200 | (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap) exceeds this. The cla… | knob | `crypto_max_mvrv` | SHIPPED 1.6 | #37 #45 #64 #395 #835 | — |
-| 201 | (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off | knob | `sharpe_weight` | SHIPPED 0.05 | #60 #62 #63 #70 #178 #599 | — |
-| 202 | (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation… | knob | `onsale_sharpe_weight` | SHIPPED 0.0 | #60 #62 #63 #70 #178 #599 | — |
-| 203 | (B) cap on that CAGR/volatility ratio fed into the reward | knob | `sharpe_cap` | SHIPPED 15.0 | #97 #100 | — |
-| 204 | (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily s… | knob | `sharpe_cap_etf` | SHIPPED 9.0 | #37 #97 #100 | — |
-| 205 | (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off | knob | `calmar_weight` | SHIPPED 0.0 |  | — |
-| 206 | (C) cap on that CAGR/max-drawdown ratio fed into the reward | knob | `calmar_cap` | SHIPPED 2.0 |  | — |
-| 207 | dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD | knob | `prefer_eur` | SHIPPED true |  | — |
-| 208 | (#1154) growth GATE (stocks only): lowers `growth_min_cagr` by this many %/yr per tenfold of market cap above… | knob | `growth_min_cagr_size_slope` | SHIPPED 0.0 | #192 #266 #316 #317 #318 #1154 | — |
-| 209 | (#1154) the market cap at which `growth_min_cagr_size_slope` starts to lower the floor; at or below it the fl… | knob | `growth_min_cagr_size_pivot` | SHIPPED 10000000000 | #192 #266 #1154 #1156 | — |
-| 210 | deleted after a measurement refused it | deleted knob | `growth_min_net_margin` | RETIRED | #38 #817 | new reason, see receipt |
-| 211 | deleted after a measurement refused it | deleted knob | `growth_max_margin_swing` | RETIRED | #39 #817 | new reason, see receipt |
-| 212 | deleted after a measurement refused it | deleted knob | `growth_max_dilution_pct` | RETIRED | #817 | new reason, see receipt |
-| 213 | deleted after a measurement refused it | deleted knob | `growth_min_interest_cover` | RETIRED | #817 | new reason, see receipt |
-| 214 | deleted after a measurement refused it | deleted knob | `growth_min_fcf_margin` | RETIRED | #817 | new reason, see receipt |
-| 215 | deleted after a measurement refused it | deleted knob | `growth_min_net_cash_rev` | RETIRED | #817 | new reason, see receipt |
-| 216 | deleted after a measurement refused it | deleted knob | `growth_soft_life_hard` | RETIRED | #568 #817 | new reason, see receipt |
-| 217 | deleted after a measurement refused it | deleted knob | `growth_hard_life_floor` | RETIRED | #576 #817 | new reason, see receipt |
-| 218 | deleted after a measurement refused it | deleted knob | `growth_hard_loss` | RETIRED | #576 #817 | new reason, see receipt |
-| 219 | deleted after a measurement refused it | deleted knob | `growth_soft_drop_misses` | RETIRED | #582 #817 | new reason, see receipt |
-| 220 | deleted after a measurement refused it | deleted knob | `growth_soft_hard_gates` | RETIRED | #566 #797 #802 #803 #817 | new reason, see receipt |
-| 221 | deleted after a measurement refused it | deleted knob | `growth_overext_peg_waive` | RETIRED | #581 #817 | new reason, see receipt |
-| 222 | deleted after a measurement refused it | deleted knob | `growth_overext_backed_floor` | RETIRED | #577 #817 | new reason, see receipt |
-| 223 | deleted after a measurement refused it | deleted knob | `growth_overext_trend_adjust` | RETIRED | #579 #817 | new reason, see receipt |
-| 224 | deleted after a measurement refused it | deleted knob | `growth_peg_taper_k` | RETIRED | #550 #817 | new reason, see receipt |
-| 225 | deleted after a measurement refused it | deleted knob | `growth_red_flag_dock` | RETIRED | #729 #730 #817 | new reason, see receipt |
-| 226 | deleted after a measurement refused it | deleted knob | `growth_momentum_miss_cap` | RETIRED | #585 #817 | new reason, see receipt |
-| 227 | deleted after a measurement refused it | deleted knob | `growth_momentum_keep_age` | RETIRED | #586 #817 | new reason, see receipt |
-| 228 | deleted after a measurement refused it | deleted knob | `growth_gate_on_tr_cagr` | RETIRED | #99 #303 #806 #817 | new reason, see receipt |
-| 229 | deleted after a measurement refused it | deleted knob | `underwater_monthly` | RETIRED | #3 #223 #817 | new reason, see receipt |
-| 230 | deleted after a measurement refused it | deleted knob | `hold_domicile_penalty` | RETIRED | #213 #226 #235 #267 #268 #817 | WHY THIS CLEARS (#235)'s BAR for re-opening a refused floor -- "a tier-set chosen for a r… |
-| 231 | deleted after a measurement refused it | deleted knob | `backtest_calendar_cadence` | RETIRED | #117 #817 | new reason, see receipt |
-| 232 | deleted after a measurement refused it | deleted knob | `growth_tr_life_weight` | RETIRED | #572 #818 | new reason, see receipt |
-| 233 | deleted after a measurement refused it | deleted knob | `growth_tr_life_penalty` | RETIRED | #572 #818 | new reason, see receipt |
-| 234 | deleted after a measurement refused it | deleted knob | `growth_tr_life_pivot` | RETIRED | #572 #818 | new reason, see receipt |
-| 235 | deleted after a measurement refused it | deleted knob | `growth_er_weight` | RETIRED | #145 #818 | (#145) then found the same blindness had hollowed `growth_er_weight`'s composite and four… |
-| 236 | deleted after a measurement refused it | deleted knob | `growth_er_cap` | RETIRED | #818 | new reason, see receipt |
-| 237 | deleted after a measurement refused it | deleted knob | `growth_record_weight` | RETIRED | #133 #818 | new reason, see receipt |
-| 238 | deleted after a measurement refused it | deleted knob | `growth_rank_normalise` | RETIRED | #144 #818 | new reason, see receipt |
-| 239 | deleted after a measurement refused it | deleted knob | `growth_leg_dock` | RETIRED | #566 #818 | new reason, see receipt |
-| 240 | deleted after a measurement refused it | deleted knob | `growth_base_offset` | RETIRED | #144 #150 #818 | new reason, see receipt |
-| 241 | deleted after a measurement refused it | deleted knob | `growth_record_full_years` | RETIRED | #818 | new reason, see receipt |
-| 242 | deleted after a measurement refused it | deleted knob | `growth_geomean_fold` | RETIRED | #8 #48 #819 | new reason, see receipt |
-| 243 | deleted after a measurement refused it | deleted knob | `growth_max_trend_r2` | RETIRED | #1277 #1280 | new reason, see receipt |
-| 244 | deleted after a measurement refused it | deleted knob | `growth_min_underwater_yrs` | RETIRED | #1277 #1280 #1286 | new reason, see receipt |
-| 245 | deleted after a measurement refused it | deleted knob | `growth_untested_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
-| 246 | deleted after a measurement refused it | deleted knob | `growth_stretch_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
-| 247 | deleted after a measurement refused it | deleted knob | `growth_financial_max_asset_growth` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
-| 248 | deleted after a measurement refused it | deleted knob | `growth_consensus_min` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
-| 249 | deleted after a measurement refused it | deleted knob | `growth_consensus_dock` | RETIRED | #1297 | new reason, see receipt |
-| 250 | deleted after a measurement refused it | deleted knob | `growth_hard_tags` | RETIRED | #1297 | new reason, see receipt |
-| 251 | deleted after a measurement refused it | deleted knob | `growth_max_sharpe` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
-| 252 | deleted after a measurement refused it | deleted knob | `growth_max_rel_win` | RETIRED | #1303 | new reason, see receipt |
-| 253 | deleted after a measurement refused it | deleted knob | `growth_min_cagr_rel` | RETIRED | #1298 #1306 #1308 | new reason, see receipt |
-| 254 | deleted after a measurement refused it | deleted knob | `growth_min_cagr_pct` | RETIRED | #1298 | new reason, see receipt |
-| 255 | deleted after a measurement refused it | deleted knob | `growth_momentum_max_marks` | RETIRED | #1234 #1311 #1315 | new reason, see receipt |
-| 256 | deleted after a measurement refused it | deleted knob | `growth_max_fail_pct` | RETIRED | #1234 #1311 #1315 | new reason, see receipt |
-| 257 | deleted after a measurement refused it | deleted knob | `growth_max_1a_change` | RETIRED | #1306 #1316 | new reason, see receipt |
+| 193 | (#1477) drop the Yahoo payouts `core::payout_flags` flags (D1 a duplicate row within 7 days of the one before… | knob | `payout_guard` | OFF (false) | #1472 #1477 | new reason, see receipt |
+| 194 | (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return comp… | knob | `backtest_tr_ruler` | OFF (false) | #120 #149 #188 #303 #304 #804 | TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB |
+| 195 | (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone) | knob | `nupl_euphoria` | SHIPPED 0.5 |  | — |
+| 196 | (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off | knob | `nupl_damp_floor` | SHIPPED 0.5 |  | — |
+| 197 | (4) NUPL below this starts BOOSTING crypto scores (~0.25 = fear/accumulation zone); 0 = boost off | knob | `nupl_capitulation` | SHIPPED 0.25 |  | — |
+| 198 | (4) crypto-score multiplier at NUPL=0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — k… | knob | `nupl_boost_ceiling` | SHIPPED 1.3 |  | — |
+| 199 | (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap) exceeds this. The cla… | knob | `crypto_max_mvrv` | SHIPPED 1.6 | #37 #45 #64 #395 #835 | — |
+| 200 | (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off | knob | `sharpe_weight` | SHIPPED 0.05 | #60 #62 #63 #70 #178 #599 | — |
+| 201 | (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation… | knob | `onsale_sharpe_weight` | SHIPPED 0.0 | #60 #62 #63 #70 #178 #599 | — |
+| 202 | (B) cap on that CAGR/volatility ratio fed into the reward | knob | `sharpe_cap` | SHIPPED 15.0 | #97 #100 | — |
+| 203 | (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily s… | knob | `sharpe_cap_etf` | SHIPPED 9.0 | #37 #97 #100 | — |
+| 204 | (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off | knob | `calmar_weight` | SHIPPED 0.0 |  | — |
+| 205 | (C) cap on that CAGR/max-drawdown ratio fed into the reward | knob | `calmar_cap` | SHIPPED 2.0 |  | — |
+| 206 | dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD | knob | `prefer_eur` | SHIPPED true |  | — |
+| 207 | (#1154) growth GATE (stocks only): lowers `growth_min_cagr` by this many %/yr per tenfold of market cap above… | knob | `growth_min_cagr_size_slope` | SHIPPED 0.0 | #192 #266 #316 #317 #318 #1154 | — |
+| 208 | (#1154) the market cap at which `growth_min_cagr_size_slope` starts to lower the floor; at or below it the fl… | knob | `growth_min_cagr_size_pivot` | SHIPPED 10000000000 | #192 #266 #1154 #1156 | — |
+| 209 | deleted after a measurement refused it | deleted knob | `growth_min_net_margin` | RETIRED | #38 #817 | new reason, see receipt |
+| 210 | deleted after a measurement refused it | deleted knob | `growth_max_margin_swing` | RETIRED | #39 #817 | new reason, see receipt |
+| 211 | deleted after a measurement refused it | deleted knob | `growth_max_dilution_pct` | RETIRED | #817 | new reason, see receipt |
+| 212 | deleted after a measurement refused it | deleted knob | `growth_min_interest_cover` | RETIRED | #817 | new reason, see receipt |
+| 213 | deleted after a measurement refused it | deleted knob | `growth_min_fcf_margin` | RETIRED | #817 | new reason, see receipt |
+| 214 | deleted after a measurement refused it | deleted knob | `growth_min_net_cash_rev` | RETIRED | #817 | new reason, see receipt |
+| 215 | deleted after a measurement refused it | deleted knob | `growth_soft_life_hard` | RETIRED | #568 #817 | new reason, see receipt |
+| 216 | deleted after a measurement refused it | deleted knob | `growth_hard_life_floor` | RETIRED | #576 #817 | new reason, see receipt |
+| 217 | deleted after a measurement refused it | deleted knob | `growth_hard_loss` | RETIRED | #576 #817 | new reason, see receipt |
+| 218 | deleted after a measurement refused it | deleted knob | `growth_soft_drop_misses` | RETIRED | #582 #817 | new reason, see receipt |
+| 219 | deleted after a measurement refused it | deleted knob | `growth_soft_hard_gates` | RETIRED | #566 #797 #802 #803 #817 | new reason, see receipt |
+| 220 | deleted after a measurement refused it | deleted knob | `growth_overext_peg_waive` | RETIRED | #581 #817 | new reason, see receipt |
+| 221 | deleted after a measurement refused it | deleted knob | `growth_overext_backed_floor` | RETIRED | #577 #817 | new reason, see receipt |
+| 222 | deleted after a measurement refused it | deleted knob | `growth_overext_trend_adjust` | RETIRED | #579 #817 | new reason, see receipt |
+| 223 | deleted after a measurement refused it | deleted knob | `growth_peg_taper_k` | RETIRED | #550 #817 | new reason, see receipt |
+| 224 | deleted after a measurement refused it | deleted knob | `growth_red_flag_dock` | RETIRED | #729 #730 #817 | new reason, see receipt |
+| 225 | deleted after a measurement refused it | deleted knob | `growth_momentum_miss_cap` | RETIRED | #585 #817 | new reason, see receipt |
+| 226 | deleted after a measurement refused it | deleted knob | `growth_momentum_keep_age` | RETIRED | #586 #817 | new reason, see receipt |
+| 227 | deleted after a measurement refused it | deleted knob | `growth_gate_on_tr_cagr` | RETIRED | #99 #303 #806 #817 | new reason, see receipt |
+| 228 | deleted after a measurement refused it | deleted knob | `underwater_monthly` | RETIRED | #3 #223 #817 | new reason, see receipt |
+| 229 | deleted after a measurement refused it | deleted knob | `hold_domicile_penalty` | RETIRED | #213 #226 #235 #267 #268 #817 | WHY THIS CLEARS (#235)'s BAR for re-opening a refused floor -- "a tier-set chosen for a r… |
+| 230 | deleted after a measurement refused it | deleted knob | `backtest_calendar_cadence` | RETIRED | #117 #817 | new reason, see receipt |
+| 231 | deleted after a measurement refused it | deleted knob | `growth_tr_life_weight` | RETIRED | #572 #818 | new reason, see receipt |
+| 232 | deleted after a measurement refused it | deleted knob | `growth_tr_life_penalty` | RETIRED | #572 #818 | new reason, see receipt |
+| 233 | deleted after a measurement refused it | deleted knob | `growth_tr_life_pivot` | RETIRED | #572 #818 | new reason, see receipt |
+| 234 | deleted after a measurement refused it | deleted knob | `growth_er_weight` | RETIRED | #145 #818 | (#145) then found the same blindness had hollowed `growth_er_weight`'s composite and four… |
+| 235 | deleted after a measurement refused it | deleted knob | `growth_er_cap` | RETIRED | #818 | new reason, see receipt |
+| 236 | deleted after a measurement refused it | deleted knob | `growth_record_weight` | RETIRED | #133 #818 | new reason, see receipt |
+| 237 | deleted after a measurement refused it | deleted knob | `growth_rank_normalise` | RETIRED | #144 #818 | new reason, see receipt |
+| 238 | deleted after a measurement refused it | deleted knob | `growth_leg_dock` | RETIRED | #566 #818 | new reason, see receipt |
+| 239 | deleted after a measurement refused it | deleted knob | `growth_base_offset` | RETIRED | #144 #150 #818 | new reason, see receipt |
+| 240 | deleted after a measurement refused it | deleted knob | `growth_record_full_years` | RETIRED | #818 | new reason, see receipt |
+| 241 | deleted after a measurement refused it | deleted knob | `growth_geomean_fold` | RETIRED | #8 #48 #819 | new reason, see receipt |
+| 242 | deleted after a measurement refused it | deleted knob | `growth_max_trend_r2` | RETIRED | #1277 #1280 | new reason, see receipt |
+| 243 | deleted after a measurement refused it | deleted knob | `growth_min_underwater_yrs` | RETIRED | #1277 #1280 #1286 | new reason, see receipt |
+| 244 | deleted after a measurement refused it | deleted knob | `growth_untested_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
+| 245 | deleted after a measurement refused it | deleted knob | `growth_stretch_hard` | RETIRED | #1285 #1286 | new reason, see receipt |
+| 246 | deleted after a measurement refused it | deleted knob | `growth_financial_max_asset_growth` | RETIRED | #1277 #1280 #1299 | new reason, see receipt |
+| 247 | deleted after a measurement refused it | deleted knob | `growth_consensus_min` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
+| 248 | deleted after a measurement refused it | deleted knob | `growth_consensus_dock` | RETIRED | #1297 | new reason, see receipt |
+| 249 | deleted after a measurement refused it | deleted knob | `growth_hard_tags` | RETIRED | #1297 | new reason, see receipt |
+| 250 | deleted after a measurement refused it | deleted knob | `growth_max_sharpe` | RETIRED | #1297 #1298 #1303 | new reason, see receipt |
+| 251 | deleted after a measurement refused it | deleted knob | `growth_max_rel_win` | RETIRED | #1303 | new reason, see receipt |
+| 252 | deleted after a measurement refused it | deleted knob | `growth_min_cagr_rel` | RETIRED | #1298 #1306 #1308 | new reason, see receipt |
+| 253 | deleted after a measurement refused it | deleted knob | `growth_min_cagr_pct` | RETIRED | #1298 | new reason, see receipt |
+| 254 | deleted after a measurement refused it | deleted knob | `growth_momentum_max_marks` | RETIRED | #1234 #1311 #1315 | new reason, see receipt |
+| 255 | deleted after a measurement refused it | deleted knob | `growth_max_fail_pct` | RETIRED | #1234 #1311 #1315 | new reason, see receipt |
+| 256 | deleted after a measurement refused it | deleted knob | `growth_max_1a_change` | RETIRED | #1306 #1316 | new reason, see receipt |
+| 257 | deleted after a measurement refused it | deleted knob | `anchor_seam_months` | RETIRED | #1484 #1500 | new reason, see receipt |
 | 258 | revenue CAGR over the lookback (proven top-line compounding) | fund factor | `rev_cagr` | MEASURED | #165 #676 #741 #742 | do not re-ask rev_cagr as a fund term at these lookback, so `fund 12` demanded 12y of sta… |
 | 259 | last-1y revenue growth minus that long CAGR (top-line accelerating) | fund factor | `rev_accel` | MEASURED | #676 #1290 #1313 #1315 #1316 #1318 | new reason, see receipt |
 | 260 | current gross margin level (pricing power / moat) | fund factor | `gross_margin` | MEASURED | #159 #165 #405 #407 | new reason, see receipt |
