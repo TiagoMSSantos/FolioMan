@@ -4461,6 +4461,70 @@ fn walk_priced(q: &Quote, v: &Quote) -> Quote {
     }
 }
 
+/// (#1498) `q` on the footing `walk_priced` puts a view on: the legs the score reads (`perf_nominal` when the page
+/// filled it) as its `perf`, `perf_nominal` emptied, and no view.
+fn nominal_legs(q: &Quote) -> Quote {
+    let mut b = q.clone();
+    if !b.perf_nominal.is_empty() {
+        b.perf = std::mem::take(&mut b.perf_nominal);
+    }
+    b.parity = None;
+    b
+}
+
+/// (#1498) Copy the legs named in `labels` from `v` into `q`, padding `q`'s legs to `core::HORIZONS` first.
+fn set_legs(q: &mut Quote, v: &Quote, labels: &[&str]) {
+    for label in labels {
+        if let Some(i) = core::HORIZONS.iter().position(|(l, _)| *l == *label) {
+            if q.perf.len() < core::HORIZONS.len() {
+                q.perf.resize(core::HORIZONS.len(), None);
+            }
+            q.perf[i] = v.perf.get(i).cloned().flatten();
+        }
+    }
+}
+
+/// (#1498) One field group of the SPLIT: its label, and a setter that copies its fields from the second quote into the first.
+type SplitGroup = (&'static str, fn(&mut Quote, &Quote));
+
+/// (#1498) The SPLIT's field groups, the legs one horizon at a time (1D with 1W and 1M with 3M) and the other fields by
+/// the term that reads them. Together they are every field `walk_priced` takes from a view, and no other
+/// (`split_groups_cover_walk_priced` pins it).
+fn split_groups() -> [SplitGroup; 21] {
+    [
+        ("1D 1W", |q, v| set_legs(q, v, &["1D", "1W"])),
+        ("1M 3M", |q, v| set_legs(q, v, &["1M", "3M"])),
+        ("6M", |q, v| set_legs(q, v, &["6M"])),
+        ("1Y", |q, v| set_legs(q, v, &["1Y"])),
+        ("2Y", |q, v| set_legs(q, v, &["2Y"])),
+        ("5Y", |q, v| set_legs(q, v, &["5Y"])),
+        ("8Y", |q, v| set_legs(q, v, &["8Y"])),
+        ("10Y", |q, v| set_legs(q, v, &["10Y"])),
+        ("20Y", |q, v| set_legs(q, v, &["20Y"])),
+        ("endpoint", |q, v| q.endpoint_ratio = v.endpoint_ratio),
+        ("range", |q, v| q.range_pct = v.range_pct),
+        ("drawdown", |q, v| q.drawdown_pct = v.drawdown_pct),
+        ("max DD", |q, v| q.max_drawdown_pct = v.max_drawdown_pct),
+        ("R2 trend", |q, v| (q.trend_r2, q.trend_cagr) = (v.trend_r2, v.trend_cagr)),
+        ("vol", |q, v| (q.volatility_pct, q.max_daily_1m, q.vol_change) = (v.volatility_pct, v.max_daily_1m, v.vol_change)),
+        ("MA", |q, v| (q.below_ma_pct, q.above_ma_pct) = (v.below_ma_pct, v.above_ma_pct)),
+        ("life", |q, v| (q.life_cagr, q.age_years, q.capped_cagr, q.tr_cagr) = (v.life_cagr, v.age_years, v.capped_cagr, v.tr_cagr)),
+        ("8y stats", |q, v| q.stats_8y = v.stats_8y.clone()),
+        ("rolls", |q, v| {
+            (q.roll5y_pos_pct, q.worst_5y_pct, q.roll10y_pos_pct, q.worst_10y_pct) = (v.roll5y_pos_pct, v.worst_5y_pct, v.roll10y_pos_pct, v.worst_10y_pct)
+        }),
+        ("underwater", |q, v| (q.underwater_yrs, q.trend_r2_10y, q.underwater_yrs_10y) = (v.underwater_yrs, v.trend_r2_10y, v.underwater_yrs_10y)),
+        ("dividend", |q, v| (q.div_eur, q.price_eur) = (v.div_eur.clone(), v.price_eur)),
+    ]
+}
+
+/// (#1498) How many of `own`'s names `other` keeps, over `own`'s size, then each name it drops (-) and adds (+).
+fn seats(own: &[String], other: &[String]) -> String {
+    let (k, gone, new) = overlap(own, other);
+    let moves: String = gone.iter().map(|t| format!(" -{t}")).chain(new.iter().map(|t| format!(" +{t}"))).collect();
+    format!("{k}/{}{moves}", own.len())
+}
+
 /// (#1484) The top 10 of `qs` by growth score and by momentum key, tickers in order (a tie goes to the ticker).
 fn parity_books(qs: &[&Quote], tuning: &config::BuyHeuristic) -> (Vec<String>, Vec<String>) {
     let top = |keys: Vec<Option<f64>>| {
@@ -4477,7 +4541,8 @@ fn parity_books(qs: &[&Quote], tuning: &config::BuyHeuristic) -> (Vec<String>, V
 /// (`core::bar_check`), by market, and the worst ten. FIELDS: each price field the score reads, as n, median and
 /// p90 of the gap between the page (P) and M, the page's own bars on the walk's anchor map (the anchor skew alone),
 /// and between M and W, the walk's monthly bars (the bar skew). BOOK: the stock top 10 by growth score and by
-/// momentum key, read on the page and with every price field taken from M, then from W. Display only.
+/// momentum key, read on the page and with every price field taken from M, then from W. (#1498) SPLIT: the same two
+/// books with one field group from W at a time (`split_groups`), and with every group from W but that one. Display only.
 /// shortcut: a re-priced quote keeps the page's cross-sectional stamps (fund percentiles, sector floors), so a seat
 /// that moves only through a stamp is not seen; and W ends on its month's first session, so its 1M and 3M legs carry
 /// that date shift. The block says both.
@@ -4541,6 +4606,40 @@ fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
         };
         out.push(format!("    {label:<9} M {}    W {}", cell(m.as_slice()), cell(w.as_slice())));
     }
+    // (#1498) THE SPLIT: BOOK takes every field from W at once and cannot say which one moves a seat. Each group alone
+    // from W on the page's own fields, then every group from W but that one, so a seat two groups move only together
+    // shows in the all-but lines and in no alone line.
+    let base: Vec<Quote> = stocks.iter().map(|(q, _)| nominal_legs(q)).collect();
+    out.push("  SPLIT, the stock top 10 with one field group from W (alone) and with every group from W but that one (all-but), score | momentum:".to_string());
+    for (label, set) in split_groups() {
+        let alone: Vec<Quote> = base
+            .iter()
+            .zip(&stocks)
+            .map(|(b, (_, p))| {
+                let mut q = b.clone();
+                set(&mut q, &p.walk);
+                q
+            })
+            .collect();
+        let but: Vec<Quote> = walk
+            .iter()
+            .zip(&base)
+            .map(|(w, b)| {
+                let mut q = w.clone();
+                set(&mut q, b);
+                q
+            })
+            .collect();
+        let (a_s, a_m) = parity_books(&alone.iter().collect::<Vec<_>>(), tuning);
+        let (b_s, b_m) = parity_books(&but.iter().collect::<Vec<_>>(), tuning);
+        out.push(format!(
+            "    {label:<10} alone {} | {}    all-but {} | {}",
+            seats(&ps, &a_s),
+            seats(&pm, &a_m),
+            seats(&ps, &b_s),
+            seats(&pm, &b_m)
+        ));
+    }
     out.push("  shortcut: re-priced quotes keep the page's cross-sectional stamps; W ends on its month's first session, so its 1M and 3M legs carry that shift".to_string());
     out.join("\n")
 }
@@ -4582,6 +4681,67 @@ mod tests {
         clean.parity = Some(Box::new(core::Parity { walk: view.clone(), merged: view, bars: core::BarCheck { checked: 3, ..core::BarCheck::default() } }));
         let text = parity_census(&[clean], &config::BuyHeuristic::default());
         assert!(text.contains("USA 3 checked, 0 off") && !text.contains("worst:"), "{text}");
+    }
+
+    /// (#1498) The SPLIT names the group that moves a seat: eleven stocks keyed on their 1Y leg, the walk's view lifting
+    /// the last one to the top. 1Y alone swaps it into the momentum book and every group but 1Y keeps that book; range
+    /// alone moves nothing and every group but range carries the walk's 1Y, so it swaps.
+    #[test]
+    fn parity_split_names_the_group_that_moves_a_seat() {
+        let leg = |q: &mut core::Quote, one_year: f64| {
+            q.perf = core::HORIZONS.iter().map(|(l, _)| (*l == "1Y").then(|| ("x".to_string(), one_year))).collect();
+        };
+        let quotes: Vec<core::Quote> = (0..11)
+            .map(|i| {
+                let t = format!("S{i:02}");
+                let mut q = core::Quote::stub(&t, "€1", "", &t);
+                q.market = "USA".into();
+                leg(&mut q, 100.0 - f64::from(i));
+                let mut walk = q.clone();
+                if i == 10 {
+                    leg(&mut walk, 200.0);
+                }
+                q.parity = Some(Box::new(core::Parity { walk, merged: q.clone(), bars: core::BarCheck::default() }));
+                q
+            })
+            .collect();
+        let text = parity_census(&quotes, &config::BuyHeuristic::default());
+        let line = |label: &str| text.lines().find(|l| l.starts_with(&format!("    {label:<10} alone"))).unwrap_or_default().to_string();
+        assert!(line("1Y").contains("| 9/10 -S09 +S10    all-but") && line("1Y").ends_with("| 10/10"), "{text}");
+        assert!(line("range").contains("| 10/10    all-but") && line("range").ends_with("| 9/10 -S09 +S10"), "{text}");
+        assert_eq!(text.lines().filter(|l| l.contains(" all-but ")).count(), 21, "one line per group: {text}");
+    }
+
+    /// (#1498) The SPLIT's groups together take every field `walk_priced` takes, and no other: applied one after another
+    /// from a view that differs from the row in each, they give `walk_priced`'s quote, and the row's nominal legs are the
+    /// ones it starts from. `seats` prints the kept count over the page book's size, then each move.
+    #[test]
+    fn split_groups_cover_walk_priced() {
+        let legs = |x: f64| core::HORIZONS.iter().map(|(l, _)| Some((l.to_string(), x))).collect::<Vec<_>>();
+        let mut q = core::Quote::stub("S", "1", "", "S");
+        (q.perf, q.perf_nominal) = (legs(1.0), legs(2.0));
+        let mut v = q.clone();
+        (v.perf, v.perf_nominal) = (legs(3.0), Vec::new());
+        (v.div_eur, v.price_eur) = (vec![Some(0.25)], Some(3.0));
+        (v.drawdown_pct, v.range_pct, v.below_ma_pct, v.above_ma_pct, v.trend_r2, v.max_drawdown_pct) = (1.0, 2.0, 3.0, 4.0, 0.5, 6.0);
+        (v.endpoint_ratio, v.volatility_pct, v.max_daily_1m, v.vol_change, v.trend_cagr) = (Some(1.5), Some(2.5), Some(3.5), Some(4.5), Some(5.5));
+        (v.life_cagr, v.age_years, v.capped_cagr, v.tr_cagr) = (Some(6.5), Some(7.5), Some(8.5), Some(9.5));
+        (v.roll5y_pos_pct, v.worst_5y_pct, v.roll10y_pos_pct, v.worst_10y_pct) = (Some(10.5), Some(11.5), Some(12.5), Some(13.5));
+        (v.underwater_yrs, v.trend_r2_10y, v.underwater_yrs_10y) = (Some(14.5), Some(0.75), Some(15.5));
+        v.stats_8y = Some(core::Stats8 { range_pct: 1.0, trend_r2: 0.5, max_drawdown_pct: 2.0, underwater_yrs: None });
+        let mut all = nominal_legs(&q);
+        assert_eq!(picks::perf_pct(&all, "1Y"), Some(2.0), "the base reads the legs the score reads");
+        for (_, set) in split_groups() {
+            set(&mut all, &v);
+        }
+        assert_eq!(format!("{all:?}"), format!("{:?}", walk_priced(&q, &v)));
+        let t = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        assert_eq!(seats(&t(&["A", "B", "C"]), &t(&["B", "C", "D"])), "2/3 -A +D");
+        assert_eq!(seats(&t(&["A"]), &t(&["A"])), "1/1");
+        let mut short = core::Quote::stub("S", "1", "", "S");
+        set_legs(&mut short, &v, &["10Y"]);
+        assert_eq!(picks::perf_pct(&short, "10Y"), Some(3.0), "a row with no legs is padded, then takes the one leg");
+        assert_eq!(picks::perf_pct(&short, "5Y"), None);
     }
 
     /// (#1493) `parity_books`' momentum book holds the stocks with a key, the highest first, and none without one.

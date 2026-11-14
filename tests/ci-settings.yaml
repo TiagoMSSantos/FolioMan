@@ -30086,6 +30086,29 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NOT DONE: a second price source for the .DE lines (Stooq served a JS challenge), ASML's TTM EPS (20-F), and
 #   FTNT's TTM capex tag (138.6M against 364.8M for the year).
 
+# (#1498) THE PARITY SPLIT, PRE-REGISTERED 2026-11-14 before any run. Row: (#1499). No knob: `print_parity` prints it.
+# WHY: (#1484)'s RESULT left its first trigger unread: "BOOK takes every field from W at once, so it cannot say which
+#   field moves a seat. A 10Y fix needs that split first; none is pre-registered here." The census now prints a SPLIT
+#   block after BOOK. For each of 21 field groups (`screen::split_groups`: the legs one horizon at a time, 1D with 1W
+#   and 1M with 3M; then endpoint, range, drawdown, max DD, R2 with the trend CAGR, vol with the 1M spike and the vol
+#   change, the two MA stretches, the four life fields, the 8y stats, the rolls, underwater, the dividend) it reads the
+#   stock top 10 by score and by momentum key twice: with that group ALONE from W on the page's own nominal fields,
+#   and with every group from W BUT that one. A seat two groups move only together shows in the all-but lines and in
+#   no alone line. Together the groups are every field BOOK's W takes (`split_groups_cover_walk_priced`).
+# RUN: one Screen A/B on main, `knobs="print_parity=true"`; the arm prints the census. Since (#1482)'s (a) and (#1488)'s
+#   arm 1 shipped, P reads the walk's anchor map, so P-M should sit near 0 and W against P is the bar skew alone.
+# SAID BEFORE THE RUN: 1. BOOK under W keeps 8 or more of the page's 10 on the score key (7 with the anchor skew in).
+#   2. 10Y alone moves no seat: the growth lane ranks on the 20/8/5Y rung and reads 10Y only for the trust leg's
+#   presence, and (#1500) puts the 10Y gap at the page's own monthly/daily seam. 3. Every score seat W moves shows in
+#   the alone line of 1Y (`accel`, weight 0.5), range (proximity 1.0 and the range gate) or vol (the sharpe term,
+#   which (#97) and (#100) found near constant on daily bars and not on the walk's monthly ones). 4. The momentum book
+#   moves only through 1Y, 6M or endpoint, the three inputs of the 12-7 key.
+# RULE, fixed now: a group whose alone line moves a seat in either book is a serve-the-walk candidate: ONE owner
+#   question per group, the largest mover first, in (#1482)'s (a) shape (the page reads that group on the walk's bars),
+#   built only on the owner's word and A/B'd on a probe tag before Pages. A group that moves nothing alone and nothing
+#   in its all-but line is RECORD: a display gap with no seat. Nothing ships from this block.
+# REVERT RULE: none; display only, under `print_parity`.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
