@@ -30427,6 +30427,19 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   month on the 1st is the walk's own shape either way. The page moves, control against control, earn ONE owner
 #   question with each BUY NOW name and share that moves; no push to main before the answer.
 # REVERT RULE: `parity_walk_view` reads `mdates` and `mcloses` directly again; no knob and no golden to restore.
+# RESULT, 2026-11-14, a Saturday: Screen A/B 43596690745 on probe-r26 (edefc2e, the fix) and 43597971365 on
+#   5be1de8, run at one time with the RUN's knobs; prices are frozen and c1 = c2 in each, so the noise is 0. The
+#   census, fix (5be1de8): M-W 1Y 4674 / 1.14 / 5.48 (1.75 / 9.16), 10Y 1658 / 9.75 / 32.82 (10.42 / 36.97). BOOK,
+#   622 stocks: W 10/10 score and 10/10 momentum (7/10, out DVA KEYS FIX, in M4I.DE NTAP 5AP.DE; 9/10, out TER, in
+#   ARM). SPLIT, alone: 1Y moves one score seat (-FIX +EME), against score 8/10 (-KEYS -FIX +EME +M4I.DE) and
+#   momentum 9/10 (-TER +FLEX) on 5be1de8; MA moves one (-ROST +KLA.DE) on both; 5Y (-DVA +M4I.DE) and 20Y (-ROST
+#   +KLA.DE) moved one on 5be1de8 and move none on the fix. The other 18 groups move nothing on the fix.
+#   The page, control against control: WDC goes from 2.07 to 16.59 % and DVA enters at 16.59 %; STX and NVD.DE go
+#   from 16.59 to 2.07 %; LU2.DE and AP2.DE enter at 2.07 %; M4I.DE, ASML and INL.DE leave. FTNT, SNDK, APC.DE
+#   (16.59 %), MTE.DE (2.07 %) and BTC-EUR (6.67 %) hold.
+# SAID BEFORE THE RE-RUN, read back. 1 HOLDS: 1.14 and 5.48. 2 HOLDS: 10 and 10. 3 HOLDS: one seat. 4 HOLDS: 9.75.
+# VERDICT, 2026-11-14: SHIPPED on the owner's word ("Push all 5"), with (#1312)'s close, (#1514), the 20Y switch's
+#   retirement and (#1516): main 5be1de8 to 1a71b63.
 
 # (#1514) THE SEATS THE WALK CANNOT SAMPLE, PRE-REGISTERED 2026-11-14 before any run. Row: (#1515). No knob:
 #   `print_parity` prints it.
@@ -30459,6 +30472,11 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #       band cannot see a one-seat change, so (c) can inform and cannot decide.
 #   Nothing ships from this block.
 # REVERT RULE: none; display only, under `print_parity`.
+# RESULT, 2026-11-14, the arm of Screen A/B 43596690745 on probe-r26 (edefc2e): POOL names SNDK alone, 1.7y, from
+#   the momentum book; its control seats it at 2, 16.59 %.
+# SAID BEFORE THE RUN, read back: HOLDS, SNDK alone and none from the score book.
+# VERDICT, 2026-11-14: the owner picked (c), "Probe young names": a probe arm with a lower `min_history`, a row of
+#   its own, pre-registered before its run. It informs and cannot decide; the page does not change.
 
 # (#1516) THE EU SPLIT GAP TRIPWIRE, 2026-11-14, on the owner's pick ("Measure first"). Display only, no knob.
 # THE GAP: the page restates a European line's 10-K EPS and shares by that line's own split list ((#424),
