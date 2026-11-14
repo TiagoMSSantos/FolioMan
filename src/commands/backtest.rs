@@ -457,7 +457,26 @@ impl Hist {
 /// scored in the same half-year are compared against EACH OTHER, so the score is judged on selection
 /// skill, not the bull/bear regime every pooled cutoff otherwise shares.
 fn bucket(d: chrono::NaiveDate) -> i32 {
-    d.year() * 2 + d.month0() as i32 / 6
+    bucket_at(d, BUCKET_PHASE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// (#1530) The calendar phase of the half-year grid, in months: 0 opens the buckets in January and July, the
+/// grid every receipt before (#1530) was read on; 1 opens them in February and August, and so on to 5, June and
+/// December. `run` stores `backtest_bucket_phase` here once, before any walk.
+/// shortcut: a process-wide atomic like `core::set_measure_cadence`'s, fine because one backtest run is one
+/// grid. No test stores it, so every test reads phase 0.
+static BUCKET_PHASE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// (#1530) [`bucket`] on the grid shifted by `phase` months. At phase 0 it is `year * 2 + month0 / 6`.
+fn bucket_at(d: chrono::NaiveDate, phase: i32) -> i32 {
+    (d.year() * 12 + d.month0() as i32 - phase).div_euclid(6)
+}
+
+/// (#1530) The first day of the month that opens bucket `b` on the grid shifted by `phase`: the inverse of
+/// [`bucket_at`], and at phase 0 the 1 January or 1 July the DCA ruler's programs have always started on.
+fn bucket_opens(b: i32, phase: i32) -> Option<chrono::NaiveDate> {
+    let months = b * 6 + phase;
+    chrono::NaiveDate::from_ymd_opt(months.div_euclid(12), months.rem_euclid(12) as u32 + 1, 1)
 }
 
 /// (#790) The walk's cutoffs: every bar from `from` on that opens its ~6-month [`bucket`]. Both walks
@@ -1004,7 +1023,7 @@ fn bench_path(dump: &std::path::Path) -> std::path::PathBuf {
 /// row that changed it would print the old run under a new name. Grade these with a probe run per arm.
 /// (#1284) The walk also builds `event_flags` from `growth_event_months` and picks `quote.fund_factor` by
 /// `growth_fund_factor`; `rescore` rebuilds neither.
-const RESCORE_FIXED: [&str; 20] = [
+const RESCORE_FIXED: [&str; 21] = [
     "backtest_live_window_years", // (#1391) range/drawdown/R² are computed in the walk's `backtest_quote`
     "payout_guard",               // (#1477) the as-of payouts are guarded in the walk's `backtest_quote` too
     "anchor_cadence_aware",       // (#1488) every perf leg is anchored in the walk's `backtest_quote`
@@ -1025,6 +1044,7 @@ const RESCORE_FIXED: [&str; 20] = [
     "growth_event_months",
     "growth_fund_factor",
     "walk_min_history", // (#1517) sets each name's first cutoff, so it decides which samples exist
+    "backtest_bucket_phase", // (#1530) sets the months the walk cuts in, so it decides which samples exist
 ];
 
 /// (#1227) One line of a [`write_samples`] dump, read back.
@@ -2434,6 +2454,8 @@ pub async fn run(args: Vec<String>) {
     // (#18) so measure_endpoint's trading-days smoothing span covers the same calendar time on
     // monthly bars as it does on the live daily closes (train == serve).
     core::set_measure_cadence(cadence);
+    // (#1530) the grid's calendar phase, once, before any walk reads a bucket; 0 is every receipt before it
+    BUCKET_PHASE.store((tuning.backtest_bucket_phase % 6) as i32, std::sync::atomic::Ordering::Relaxed);
     let min_history = if monthly { tuning.walk_min_history } else { MIN_HISTORY }; // ~3y of bars before a cutoff to form the long trend; (#1517) a knob on monthly bars
     // (#46) the universe's own ETF ticker set and ticker->GICS sector map. Both were fetched and thrown
     // away (`.0`) — they are the belt to the chart-meta braces below: a venue whose meta omits
@@ -8260,7 +8282,7 @@ fn report_roll(
     // screen was empty grades the legs' roll, not the screen's
     let starts: Vec<chrono::NaiveDate> = sized_buckets(samples, bench, years, tuning, sz, top, spill)
         .into_keys()
-        .filter_map(|b| chrono::NaiveDate::from_ymd_opt(b / 2, (b % 2 * 6 + 1) as u32, 1))
+        .filter_map(|b| bucket_opens(b, BUCKET_PHASE.load(std::sync::atomic::Ordering::Relaxed))) // (#1530) the bucket's own opening month
         .collect();
     let months: std::collections::BTreeSet<chrono::NaiveDate> = starts
         .iter()
@@ -8465,7 +8487,7 @@ fn report_roll_ladder(
     let legs = if spill.is_empty() { vec![(1.0, bench)] } else { spill.to_vec() };
     let starts: Vec<NaiveDate> = sized_buckets(samples, bench, years, tuning, sz, top, spill)
         .into_keys()
-        .filter_map(|b| NaiveDate::from_ymd_opt(b / 2, (b % 2 * 6 + 1) as u32, 1))
+        .filter_map(|b| bucket_opens(b, BUCKET_PHASE.load(std::sync::atomic::Ordering::Relaxed))) // (#1530) the bucket's own opening month
         .collect();
     let at = |s: NaiveDate, m: u32| s.checked_add_months(Months::new(m));
     // every month a lot can be bought or re-bought in, with its program's end
@@ -11344,6 +11366,36 @@ mod tests {
         assert_eq!(at(&gap, 1), [2]);
     }
 
+    /// (#1530) The grid's phase. At 0 the key is the one every earlier receipt was read on. At 1 the buckets open
+    /// in February and August, so January sits in the bucket August opened. A bucket holds the six months from
+    /// its opening one, and `bucket_opens` is the inverse at every phase. No test stores a phase, so `bucket`
+    /// itself reads phase 0.
+    #[test]
+    fn bucket_phase_shifts_the_grid_and_zero_is_the_old_key() {
+        let months = |d: NaiveDate| d.year() * 12 + d.month0() as i32;
+        for y in [1970, 1999, 2000, 2026] {
+            for m in 1..=12u32 {
+                let d = ymd(y, m, 17);
+                assert_eq!(bucket_at(d, 0), d.year() * 2 + d.month0() as i32 / 6, "{d}");
+                assert_eq!(bucket(d), bucket_at(d, 0), "{d}");
+                for p in 0..6 {
+                    let b = bucket_at(d, p);
+                    let open = bucket_opens(b, p).expect("a date");
+                    assert_eq!((bucket_at(open, p), open.day()), (b, 1), "{d} phase {p}: the opening day is in its own bucket");
+                    assert!((0..6).contains(&(months(d) - months(open))), "{d} phase {p}: within six months of {open}");
+                    assert_eq!(months(open).rem_euclid(6), p, "{d} phase {p}: the opening month is the phase's");
+                }
+            }
+        }
+        assert_eq!(bucket_opens(bucket_at(ymd(2010, 1, 15), 0), 0), Some(ymd(2010, 1, 1)));
+        assert_eq!(bucket_opens(bucket_at(ymd(2010, 1, 15), 1), 1), Some(ymd(2009, 8, 1)), "January sits in the bucket August opened");
+        assert_eq!(bucket_opens(bucket_at(ymd(2010, 2, 1), 1), 1), Some(ymd(2010, 2, 1)));
+        assert_eq!(bucket_opens(bucket_at(ymd(2010, 12, 31), 5), 5), Some(ymd(2010, 12, 1)));
+        assert_eq!(bucket_at(ymd(2010, 7, 31), 1), bucket_at(ymd(2010, 2, 1), 1), "February to July are one bucket");
+        assert_eq!(bucket_at(ymd(2010, 8, 1), 1), bucket_at(ymd(2010, 2, 1), 1) + 1, "and August opens the next");
+        assert_eq!(bucket_at(ymd(2010, 1, 31), 1) + 1, bucket_at(ymd(2010, 2, 1), 1));
+    }
+
     /// `n` bars, one per month, on the 1st — the shape a real `interval=1mo` payload carries.
     fn month_ends(year: i32, month: u32, n: usize) -> Vec<NaiveDate> {
         (0..n)
@@ -11669,6 +11721,7 @@ mod tests {
         let err = |row: &str| grid_tuning(&base, row).expect_err(row);
         assert!(err(r#"{"growth_fund_extra":[{"factor":"roic_typo","weight":1,"cap":10}]}"#).contains("\"roic_typo\" is not one of"));
         assert!(err(r#"{"backtest_tr_ruler":true}"#).contains("`backtest_tr_ruler` is fixed"));
+        assert!(err(r#"{"backtest_bucket_phase":1}"#).contains("`backtest_bucket_phase` is fixed"), "(#1530) the grid's phase is the walk's");
         assert!(err(r#"{"growth_min_net_margin":1}"#).contains("`growth_min_net_margin` is retired"));
         assert!(err("[1]").contains("a grid row is one JSON object"));
     }

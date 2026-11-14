@@ -158,6 +158,12 @@ fn is_shipped_min_history(n: &usize) -> bool {
     *n == BuyHeuristic::default().walk_min_history
 }
 
+/// (#1530) The shipped grid, buckets opening in January and July, serialises nothing, so every `tuning_fp`
+/// journaled before the knob existed still matches.
+fn is_january_grid(phase: &u32) -> bool {
+    *phase == 0
+}
+
 impl Sizing {
     /// (#285) How many CORE rows actually RECEIVE money — the knob read once, with its "0 is read as
     /// 1" rule applied here and nowhere else (non-negotiable #4). Two surfaces depend on this number
@@ -664,6 +670,8 @@ pub struct BuyHeuristic {
     pub backtest_tr_ruler: bool, // (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return compounds the dividends paid inside its window (each reinvested at the close before its ex-date) and the book is graded against ^SP500TR instead of ^GSPC. Selection still reads price-only closes, so an arm graded on it changes only what it chooses. Cutoffs the ^SP500TR series does not reach (it starts 1988) are dropped, from every arm alike. false = the price-only ruler every receipt before (#804) was graded on, byte-identical, and the DEFAULT
     #[serde(skip_serializing_if = "is_shipped_min_history")] // 36 serialises nothing, so every `tuning_fp` journaled before (#1517) still matches
     pub walk_min_history: usize, // (#1517) monthly bars a name needs before its first walk cutoff: `backtest::run`'s `min_history` on the monthly series (8y and up), which under `long_chart_explicit_span` is also `thin_volume`'s floor. The daily series keeps `MIN_HISTORY`. The page's POOL line (#1514) reads a name under `screen::WALK_FIRST_CUTOFF_MONTHS` (36) months on the walk's chart as one no cutoff has sampled; a lower value lets the walk sample such names, and `backtest … winners` then splits the momentum half's seats young against the rest. Walk-only (RESCORE_FIXED). 36 = every receipt before (#1517), byte-identical, and the DEFAULT
+    #[serde(skip_serializing_if = "is_january_grid")] // 0 serialises nothing, so every `tuning_fp` journaled before (#1530) still matches
+    pub backtest_bucket_phase: u32, // (#1530) months the walk's half-year grid is shifted by, read modulo 6: 0 opens the buckets in January and July (every receipt before (#1530)), 1 in February and August, up to 5 in June and December. `backtest::bucket` reads it, so the cutoffs, every per-bucket cohort and the DCA ruler's program starts all move together. A measuring knob: it changes which months the walk samples, never a page. Walk-only (`RESCORE_FIXED`).
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
@@ -904,6 +912,7 @@ impl Default for BuyHeuristic {
             payout_guard: false,           // (#1477) OFF = every payout as Yahoo serves it, every golden byte-identical
             backtest_tr_ruler: false,      // (#804) OFF = the price-only ruler, every golden byte-identical
             walk_min_history: 36,          // (#1517) the walk's ~3y warmup on monthly bars; 12 is the young-names probe arm
+            backtest_bucket_phase: 0,      // (#1530) the January and July grid, every golden byte-identical
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             nupl_capitulation: 0.25,       // (4) NUPL < 0.25 = fear/accumulation -> start boosting crypto (buy-the-fear)
@@ -2982,6 +2991,12 @@ mod tests {
     #[test]
     fn only_36_min_history_is_shipped() {
         assert!(is_shipped_min_history(&36) && !is_shipped_min_history(&12));
+    }
+
+    /// (#1530) Only the January and July grid serialises nothing.
+    #[test]
+    fn only_phase_0_is_the_shipped_grid() {
+        assert!(is_january_grid(&0) && !is_january_grid(&1) && !is_january_grid(&6));
     }
 
     /// (#1359) On the shipped settings, an upload that lists one new term keeps the shipped six and adds it,
