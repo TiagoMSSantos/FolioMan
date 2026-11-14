@@ -30607,6 +30607,20 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # CONTROL: the Screen A/B's c1, c2 and arm give the same BUY NOW (`print_parity` is inert), and `page book` equals
 #   the page's funded stock rows; if it does not, the census cut is fixed first and nothing is graded.
 # REVERT RULE: none; display only.
+# RESULT (#1520), 2026-11-14, probe tag probe-r27 (85d5ad1): CI 43623313810 green, Screen A/B 43623316853.
+#   CONTROL HOLDS: c1, arm and c2 give the same BUY NOW, and `page book` reads FTNT SNDK APC.DE WDC LAR0.DE |
+#   LU2.DE DVA STX NVD.DE MTE.DE, the page's 10 funded stock rows in the page's order. The switches are applied:
+#   FIELDS reads P-M = M-W on the served groups only, 6M 0.88 / 3.16, 1Y 1.13 / 5.48, 5Y 0.97 / 5.53 and stretch
+#   0.00 / 2.22 (median / p90 of |gap|).
+#   BOOK, 622 stocks: the set grades read 10/10 on M and on W in both halves. funded: W 10/10, M 8/10 (-NVD.DE
+#   -MTE.DE +ASML +INL.DE). head: W 5/5, M 4/5 (-LAR0.DE +ASML). With the switches off, 2 funded seats and 1 head
+#   seat would move under a set grade of 10/10.
+#   SPLIT, 21 field groups: alone and all-but 10/10 on every line, head 5/5 on every line, funded 10/10 on every
+#   line but vol alone and life alone, 9/10 (-NVD.DE +AP2.DE): the s5|s6 tie. All-but keeps 10/10 on both.
+# SAID BEFORE THE RUN, read back. Head 5/5 HOLDS. Funded 10/10 HOLDS. The s5|s6 tie as a seat a small W shift can
+#   flip HOLDS: 2 single-group mixes flip it. The m5|m6 seat FAILS as one: no W mix moves it, only M does.
+# VERDICT, 2026-11-14: RECORD. W funds the page's 10 stocks and its head 5, so the parity lane is CLOSED on the
+#   live mix: no 4th switch, no owner question.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
