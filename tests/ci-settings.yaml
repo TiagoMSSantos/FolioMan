@@ -29949,6 +29949,9 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   `config::print_parity()`, a process-wide OnceLock (config.rs:2513) the --lib suite always reads false.
 # PROOF RULE: a re-run with the same inputs on the fixing commit misses exactly the 4 EQUIVALENT and the 5 GAPS, plus
 #   whatever (#1494)'s `MeasureScope` code adds (triaged then).
+# RESULT, 2026-11-14: census 43560859032 on probe-c1493 (6e53b5a), same inputs, 252 mutants: 234 caught, 9
+#   unviable, 0 timeouts, 9 missed: exactly the 4 EQUIVALENT (on the fixing commit at core.rs 3876:42 and 6593:39,
+#   :45, :52) and the 5 GAPS. `MeasureScope` adds no survivor: its 3 mutants are caught. The proof holds.
 
 # (#1492) STOCK PRICE CHECK, 2026-11-13. Hand rows, no knob; the fund-only gate stays. A read of the cached long
 #   history (6900 lines, fetched 2026-10-04 to 2026-10-11) asked two things of the stock lines.
@@ -30053,8 +30056,10 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   -1.58, the other 18 +0.63). growth_max_peg 2.0 -> 0 turns (#552)'s PEG cap off.
 # VERDICT, 2026-11-13: the two picks SHIPPED on the owner's word. A1 and A2, tested on the tags as 2838adc and
 #   e431ac4, reach main together as 5f078b5 and 1c53285, rebased over the bot's journal line b007a1f, which touches
-#   only .screen_snapshots.jsonl. Row 14 is NOT shipped. It goes to the owner with AB2's moves and ships only on a yes, through its own tag,
-#   bless and A/B. Nothing of row 14 reaches rank, BUY NOW, size, trade or the broker.
+#   only .screen_snapshots.jsonl. Row 14 is NOT shipped. It goes to the owner with AB2's moves and ships only on a
+#   yes, through its own tag, bless and A/B. Nothing of row 14 reaches rank, BUY NOW, size, trade or the broker.
+# OWNER, 2026-11-14: no ("Test that dial alone"). Row 14 does not ship as one block; its dials are tested one at a
+#   time, each on a fresh test of its own, in a later round.
 
 # (#1497) TWIN-INPUT AUDIT, 2026-11-13, record only, no knob. The owner's pick ("Audit twin inputs"): every input
 #   behind the four paper-route columns on the live BUY NOW stock rows, read against its source.
