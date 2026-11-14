@@ -30442,7 +30442,7 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   622 stocks: W 10/10 score and 10/10 momentum (7/10, out DVA KEYS FIX, in M4I.DE NTAP 5AP.DE; 9/10, out TER, in
 #   ARM). SPLIT, alone: 1Y moves one score seat (-FIX +EME), against score 8/10 (-KEYS -FIX +EME +M4I.DE) and
 #   momentum 9/10 (-TER +FLEX) on 5be1de8; MA moves one (-ROST +KLA.DE) on both; 5Y (-DVA +M4I.DE) and 20Y (-ROST
-#   +KLA.DE) moved one on 5be1de8 and move none on the fix. The other 18 groups move nothing on the fix.
+#   +KLA.DE) moved one on 5be1de8 and move none on the fix. The other 17 groups move nothing on the fix.
 #   The page, control against control: WDC goes from 2.07 to 16.59 % and DVA enters at 16.59 %; STX and NVD.DE go
 #   from 16.59 to 2.07 %; LU2.DE and AP2.DE enter at 2.07 %; M4I.DE, ASML and INL.DE leave. FTNT, SNDK, APC.DE
 #   (16.59 %), MTE.DE (2.07 %) and BTC-EUR (6.67 %) hold.
