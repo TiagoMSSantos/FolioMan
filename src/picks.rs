@@ -6077,7 +6077,8 @@ pub fn stamp_core_cols(payload: &mut serde_json::Value, quotes: &[Quote], w: &Wi
 }
 
 /// (#500) Listing age under which a stock is "young": the shortest leg the `history` gate ranks on
-/// (`growth_min_leg_years`, 5), so these can only show here, never in the book.
+/// (`growth_min_leg_years`, 5), so that gate refuses these. (#1514) The momentum half's pond waives it ((#586)):
+/// it keys any stock with a 1Y leg and can seat one.
 pub const YOUNG_YEARS: f64 = 5.0;
 
 /// (#517) The Wikidata pond's size bar: average € traded a day. EU names carry no share count at the point

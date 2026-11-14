@@ -4408,6 +4408,10 @@ fn switch_lines(
     })
 }
 
+/// (#1514) The walk's first cutoff on a name comes after this many monthly bars (`backtest::run`'s `min_history`), so
+/// no cutoff has sampled a name younger than that.
+const WALK_FIRST_CUTOFF_MONTHS: f64 = 36.0;
+
 /// (#1484) n, median and 90th percentile of `xs` (sorted in place); (0, NaN, NaN) when empty.
 fn spread(xs: &mut [f64]) -> (usize, f64, f64) {
     if xs.is_empty() {
@@ -4542,7 +4546,9 @@ fn parity_books(qs: &[&Quote], tuning: &config::BuyHeuristic) -> (Vec<String>, V
 /// p90 of the gap between the page (P) and M, the page's own bars on the walk's anchor map (the anchor skew alone),
 /// and between M and W, the walk's monthly bars (the bar skew). BOOK: the stock top 10 by growth score and by
 /// momentum key, read on the page and with every price field taken from M, then from W. (#1498) SPLIT: the same two
-/// books with one field group from W at a time (`split_groups`), and with every group from W but that one. Display only.
+/// books with one field group from W at a time (`split_groups`), and with every group from W but that one.
+/// (#1514) POOL: the names of the page's two books under [`WALK_FIRST_CUTOFF_MONTHS`] months on the walk's chart.
+/// Display only.
 /// shortcut: a re-priced quote keeps the page's cross-sectional stamps (fund percentiles, sector floors), so a seat
 /// that moves only through a stamp is not seen; and W ends on its month's first session, so its 1M and 3M legs carry
 /// that date shift. The block says both.
@@ -4606,6 +4612,17 @@ fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
         };
         out.push(format!("    {label:<9} M {}    W {}", cell(m.as_slice()), cell(w.as_slice())));
     }
+    // (#1514) POOL: a cutoff needs 36 monthly bars before it (`backtest::run`'s `min_history`), so the walk holds no
+    // sample of a name younger than that; a name of the two page books that young sits in a seat nothing graded
+    let unsampled: Vec<String> = stocks
+        .iter()
+        .filter(|(q, _)| ps.contains(&q.ticker) || pm.contains(&q.ticker))
+        .filter_map(|(q, p)| p.walk.age_years.filter(|a| (a * 12.0).round() < WALK_FIRST_CUTOFF_MONTHS).map(|a| format!("{} {a:.1}y", q.ticker)))
+        .collect();
+    out.push(format!(
+        "  POOL, names of the two page books under {WALK_FIRST_CUTOFF_MONTHS} months on the walk's chart, which no cutoff has sampled: {}",
+        if unsampled.is_empty() { "none".to_string() } else { unsampled.join(" ") }
+    ));
     // (#1498) THE SPLIT: BOOK takes every field from W at once and cannot say which one moves a seat. Each group alone
     // from W on the page's own fields, then every group from W but that one, so a seat two groups move only together
     // shows in the all-but lines and in no alone line.
@@ -4701,6 +4718,14 @@ mod tests {
                 if i == 10 {
                     leg(&mut walk, 200.0);
                 }
+                // (#1514) the walk's chart: S01 holds 20 months, S02 35, S03 the 36 a first cutoff needs (1095 days),
+                // and S10, as young as S01, is in neither page book
+                walk.age_years = match i {
+                    1 | 10 => Some(1.7),
+                    2 => Some(2.9),
+                    3 => Some(1095.0 / 365.25),
+                    _ => Some(10.0),
+                };
                 q.parity = Some(Box::new(core::Parity { walk, merged: q.clone(), bars: core::BarCheck::default() }));
                 q
             })
@@ -4710,6 +4735,20 @@ mod tests {
         assert!(line("1Y").contains("| 9/10 -S09 +S10    all-but") && line("1Y").ends_with("| 10/10"), "{text}");
         assert!(line("range").contains("| 10/10    all-but") && line("range").ends_with("| 9/10 -S09 +S10"), "{text}");
         assert_eq!(text.lines().filter(|l| l.contains(" all-but ")).count(), 21, "one line per group: {text}");
+        // (#1514) POOL names the page-book names under 36 months on the walk's chart, and none when there is none
+        let pool = |text: &str| text.lines().find(|l| l.starts_with("  POOL, ")).unwrap_or_default().to_string();
+        assert!(pool(&text).ends_with("under 36 months on the walk's chart, which no cutoff has sampled: S01 1.7y S02 2.9y"), "{text}");
+        let old: Vec<core::Quote> = quotes
+            .iter()
+            .cloned()
+            .map(|mut q| {
+                if let Some(p) = q.parity.as_mut() {
+                    p.walk.age_years = Some(3.0);
+                }
+                q
+            })
+            .collect();
+        assert!(pool(&parity_census(&old, &config::BuyHeuristic::default())).ends_with("sampled: none"));
     }
 
     /// (#1498) The SPLIT's groups together take every field `walk_priced` takes, and no other: applied one after another

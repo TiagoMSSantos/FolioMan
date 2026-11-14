@@ -30425,6 +30425,38 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   question with each BUY NOW name and share that moves; no push to main before the answer.
 # REVERT RULE: `parity_walk_view` reads `mdates` and `mcloses` directly again; no knob and no golden to restore.
 
+# (#1514) THE SEATS THE WALK CANNOT SAMPLE, PRE-REGISTERED 2026-11-14 before any run. Row: (#1515). No knob:
+#   `print_parity` prints it.
+# THE FACT: `backtest::run` starts a name's cutoffs after its 36th monthly bar (`min_history`; (#1389): "three
+#   calendar years for every name once every name is monthly"), and since (#1452) every long chart is monthly. So
+#   the shipped walk holds no sample of a stock under three years listed, at any horizon. It barely held one
+#   before: on `range=max` only a 2017+ listing came as weekly bars and "enters 8 months after its IPO" ((#1389)),
+#   and such a listing has a full forward window only at 8y, from a 2017 or 2018 cutoff; every older listing was
+#   monthly or quarterly and waited its 36 bars then too. So (#586)'s note on the retired age rungs, "The
+#   short-history momentum names (SNDK, 1.7 years) are part of what the half earns", was read off names with no 5Y
+#   leg that were, but for that sliver, three to five years old.
+# THE PAGE: `picks::momentum_keys` keys any stock with a 1Y leg, so the momentum half seats names from about 11
+#   months old. The journal (.screen_snapshots.jsonl): SNDK holds a seat on 32 of the 33 lines from 2026-10-13 to
+#   2026-11-14, seat 2 on 31 of them, at 12.45 % of gross on average and 16.59 % today, and is on the (#500) Young
+#   table on each of the 32. (#499) wrote on 2026-10-06 that "the gates still keep them out of the book until they
+#   have a record", and `picks::YOUNG_YEARS` said so until this commit; the journal's first line with a Young-table
+#   name in the book is 2026-10-13 (SNDK, ARM, VIK).
+# WHAT IS ADDED: the census prints POOL after BOOK: the names of the page's two books (score top 10, momentum top
+#   10) under 36 months on the walk's own chart, each with its age. The count is in months, rounded, so a name 36
+#   months on from its first bar (1095 or 1096 days) is not listed.
+# RUN: none of its own; the arm of (#1513)'s Screen A/B on the fix commit prints it, on books read with the
+#   switches off; the BUY NOW shares in the question come from that run's control, as the page would ship.
+# SAID BEFORE THE RUN: POOL names SNDK and at most two more, all from the momentum book; the score book's history
+#   gate asks for a 5Y leg, so it holds none.
+# RULE, fixed now: POOL empty -> RECORD. Else ONE owner question, with the names and their BUY NOW shares:
+#   (a) keep, on the owner's judgement: no walk, old or new, graded a name this young but for that sliver;
+#   (b) the momentum half asks for 36 monthly bars, as the walk's pool does: a knob built only on the owner's word,
+#       inert in the walk by construction, so no probe can grade it and its Screen A/B is its whole test;
+#   (c) the walk samples them again: a lower `min_history` on a probe arm. (#117) lost on the thin end, and (#1333)'s
+#       band cannot see a one-seat change, so (c) can inform and cannot decide.
+#   Nothing ships from this block.
+# REVERT RULE: none; display only, under `print_parity`.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
