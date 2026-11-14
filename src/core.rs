@@ -186,10 +186,13 @@ pub fn listing_currency(sym: &str) -> Option<&'static str> {
 /// 50% on a Portuguese IRS return. UK (post-Brexit), Switzerland and Norway are European but NOT EU
 /// members — no exclusion, so they are deliberately absent.
 ///
-/// CAVEAT this set cannot fix: `market` is the LISTING VENUE, not the payer's tax residence. An
-/// Irish-domiciled S&P 500 name (ACN, ETN, MDT…) carries no suffix and reads "USA" here, so it is
-/// under-credited. That direction is conservative — it never awards the exclusion to a payer that
-/// lacks it. Closing it needs a domicile source for stocks, which no current feed provides.
+/// CAVEAT this set cannot fix: `market` is the LISTING VENUE, not the payer's tax residence, and it
+/// errs BOTH ways. An Irish-domiciled S&P 500 name (ACN, ETN, MDT…) or a Dutch NV's New York line
+/// (ASML) carries no suffix and reads "USA" here, so it is under-credited. A Xetra twin of a US
+/// company (APC.DE, NVD.DE, LAR0.DE, MTE.DE, AP2.DE…) reads "Germany", so a US payer is OVER-credited:
+/// keep 0.76 where 0.72 applies. (#1525) sizes both: `dividend_weight` 0.5 x yield (in %) x 0.04 =
+/// 0.02 x yield points before the damps, at most 0.12 at the 6 % cap, and on the 2026-11-14 book no
+/// seat moved. Closing it needs a domicile source for stocks, which no current feed provides.
 const EU_MARKETS: [&str; 12] = [
     "Germany", "France", "Netherlands", "Italy", "Spain", "Austria",
     "Portugal", "Belgium", "Finland", "Sweden", "Denmark", "Ireland",

@@ -603,8 +603,9 @@ fn dividend_reward(quote: &Quote, weight: f64, tuning: &BuyHeuristic) -> f64 {
 /// screen scores on, which is the whole bar for gradeability — see the `tax_split ->off` ablation row.
 ///
 /// The real approximation is elsewhere and is documented at `core::EU_MARKETS`: `market` is the
-/// LISTING VENUE, not the payer's tax residence, so an Irish-domiciled S&P 500 name reads "USA" and is
-/// under-credited. That direction is conservative and it is a data limit, not a blind term.
+/// LISTING VENUE, not the payer's tax residence, and it errs both ways. An Irish-domiciled S&P 500 name
+/// reads "USA" and is under-credited; a Xetra twin of a US company reads "Germany" and is over-credited,
+/// by at most 0.02 x yield (in %) points before the damps (#1525). A data limit, not a blind term.
 fn is_eu_payer(quote: &Quote) -> bool {
     !quote_is_etf(quote) && core::is_eu_market(&quote.market)
 }

@@ -30749,6 +30749,24 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   ECB series EXR D.USD.EUR.SP00.A; Nasdaq's chart API; stockanalysis' Xetra history and annual tables.
 # REVERT RULE: none; nothing changed.
 
+# (#1525) THE PAYER'S RESIDENCE IS THE LISTING VENUE, RECORD, 2026-11-14. No knob, no run; two comments corrected.
+# WHY: a side read of (#1524). The growth dividend term keeps tax_keep_eu 0.76 of an EU payer's yield and
+#   tax_keep_other 0.72 of anyone else's, and `is_eu_payer` reads `market`, which comes from the ticker's suffix
+#   alone (`core::market_of`). core::EU_MARKETS and picks::is_eu_payer said a US payer never reads EU. It does.
+# BOTH WAYS: a Xetra twin of a US company reads "Germany" and is OVER-credited, 0.76 where 0.72 applies: APC.DE,
+#   NVD.DE, LAR0.DE, MTE.DE, AP2.DE, M4I.DE, KLA.DE, 6MK.DE, ABEC.DE. A company resident in the EU whose line has no
+#   suffix reads "USA" and is UNDER-credited: an Irish S&P 500 name (ACN, ETN, MDT) or a Dutch NV's New York line
+#   (ASML, at most 0.0124 points).
+# SIZE: dividend_weight 0.5 x yield in % (capped at dividend_cap 6) x the 0.04 keep gap = 0.02 x yield points before
+#   the damps, at most 0.12 at the cap. The twins above yield under 1 %, so under 0.02 points each.
+# ON THE 2026-11-14 BOOK: the only seat edge under 0.12 points is the s5|s6 tie at 32.6, NVD.DE (funded) over AP2.DE.
+#   Both are twins. A fix takes more from AP2.DE (yield 0.55 %) than from NVD.DE (0.32 %, and its score is damped by
+#   the brake), so the order holds and no seat moves. NVD.DE's 0.32 % is a real payout, not a feed error: NVIDIA paid
+#   $0.01 a quarter up to Q1 FY27, then $0.25 in Q2 FY27 (10-Q filed 2026-08-26).
+# LEFT ALONE: a fix needs each stock's tax residence, which no feed here gives; an SEC read costs one request per
+#   scored stock against the run's cap of 600 (fetch.rs SEC_FETCH_BUDGET), for at most 0.12 points.
+# REVERT RULE: none; comments only.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
