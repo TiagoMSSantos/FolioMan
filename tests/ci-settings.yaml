@@ -30715,6 +30715,40 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   kept the key, and (#1333) cannot see one seat.
 # REVERT RULE: none; the tool reads and prints.
 
+# (#1524) THE GATE INPUTS OF FIVE MONEY-LINE ROWS, AGAINST THEIR SOURCES, RECORD, 2026-11-14. No knob, no run.
+# WHY: (#1520) shows the page and the walk read the SAME inputs, not that the inputs are right. Five rows sit on a
+#   money line of the 2026-11-14 book: LAR0.DE (s3, the last head seat, 16.59 %), DVA (s4, 2.07 %), NVD.DE (s5,
+#   2.07 %), AP2.DE (s6, unfunded: the s5|s6 32.6 tie) and ASML (s7, the next seat). Each gate input was read again
+#   from a primary source: the 10-K or 20-F on EDGAR, Nasdaq's and stockanalysis' closes, the ECB's USD per EUR,
+#   Berkshire's 13F and Form 4s.
+# RESULT: 0 WRONG. Every input equals its source under the code's own definition, and the recomputed MISSES and
+#   seats equal the page's: FTNT s1 49.4, APC.DE s2 38.6, LAR0.DE s3 35.6, DVA s4 33.8, NVD.DE s5 32.6, AP2.DE s6
+#   32.6, ASML s7 31.4.
+#   AP2.DE (AMAT): EPS 8.66 (FY to 2025-10-26), core 0.8650631, 20Y g 17.85, life 18.80: misses cagr, cagr-life and
+#   peg (PEG 2.70). NVD.DE: EPS 4.90, g 34.55, life 34.80, PEG 1.03, no miss. DVA: EPS 9.84 diluted (9.51 on
+#   continuing operations, where the PEG yield reads 55.8, still above 50); g 10.24 and life 12.83 miss cagr and
+#   cagr-life, PEG 1.73 passes. ASML: EPS 24.71 EUR (20-F), interest 118.3, core 0.9804491, PEG 2.62 misses.
+#   LAR0.DE (LRCX): EPS 5.76 (FY to 2026-06-28), PEG yield 58.0 (a 14 % margin over 50), life 18.09.
+#   FX: the ECB's 1.1052 against the page's 1.10502. The twins' Xetra closes are 0.975 (AP2.DE), 0.987 (NVD.DE) and
+#   0.988 (LAR0.DE) of the US close; on US closes their PEG yields read 36.1, 95.6 and 57.3, and no verdict moves.
+# UNSOURCED, no second source reachable (Yahoo 429, Stooq's proof-of-work wall, Quandl 403, Nasdaq from 1990 only):
+#   AMAT's first bar, Jan 1985, 0.27344 (17.50 USD over the split factor 64, inside 1985's 8.75-18.00 range).
+#   6.85 % lower, AP2.DE clears the life dock at about 33.1 and takes s5 from NVD.DE; the score moves 0.0756 per
+#   1 %, and the s5|s6 gap is known only to under 0.1, so a smaller error can reorder the pair.
+#   LRCX's first bar, May 1984, 0.191667: 23.6 % higher puts life at 17.50 or under and DVA takes the head seat;
+#   27.9 % lower clears the life dock at 38.4, still under APC.DE's 38.6.
+#   ASML's 1995-2007 months: a life miss needs a first close 76 % higher, a cagr miss a past close 47 % higher, a
+#   PEG pass a past close 65 % lower.
+# DVA'S BERKSHIRE BOOST (W x1.20) STILL HOLDS: 28,880,209 shares in the Q2 2026 13F (filed 2026-08-14), then
+#   28,697,229 after the 2026-07-31 sale and 28,314,666 after the 2026-10-27 sale (Form 4s). Without the boost DVA
+#   scores about 28.2 and leaves the book. The Q3 13F is due 2026-11-16.
+# INFORM ONLY: PEG on GAAP TTM EPS would pass AP2.DE (1.75) and ASML (1.82). That is the annual-vs-TTM design, not
+#   a wrong input, and the buy rules stay frozen: no lane.
+# SOURCES: EDGAR accessions AMAT 0001628280-25-056742 (R3), NVDA 0001045810-26-000021, DVA 0000927066-26-000012
+#   (R3, R20), ASML 0001628280-26-011378 (R3, R27), LRCX 0000707549-26-000037 (R3, R23); Berkshire, CIK 1067983;
+#   ECB series EXR D.USD.EUR.SP00.A; Nasdaq's chart API; stockanalysis' Xetra history and annual tables.
+# REVERT RULE: none; nothing changed.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
