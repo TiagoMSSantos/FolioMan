@@ -23952,7 +23952,8 @@ buy_heuristic:
   print_parity: false            # (#1484) the PARITY CENSUS after the page's tables: the walk's view, display only
   serve_walk_1y: true            # (#1509) 1Y AND 6M from the walk's view (`core::serve_walk`); false = the page's own legs
   #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
-  serve_walk_5y: false           # (#1509) 5Y from the walk's view; false = the page's own leg
+  serve_walk_5y: true            # (#1509) 5Y from the walk's view; false = the page's own leg
+  #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
   serve_walk_20y: false          # (#1509) 20Y from the walk's view; false = the page's own leg
   serve_walk_ma: false           # (#1509) the ~200-week average's two reads from the walk's view; false = the page's own
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
@@ -30317,6 +30318,13 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT: 1Y SHIPPED 2026-11-14 on the owner's word ("Ship it"), `serve_walk_1y: true`; no golden moves, as the
 #   backtest never calls `quote_one`. 5Y, 20Y and MA, the owner's word 2026-11-14: "Test each alone first". Three
 #   Screen A/Bs on the ship tag, one switch each over the shipped 1Y, then one owner question per switch.
+# RESULT, A/B 3 (run 43591220714, 5Y alone over the shipped 1Y; c1 = c2, so the noise is 0): DVA (seat 9) leaves
+#   and M4I.DE enters at seat 7; ASML moves from seat 7 to 9; all three at 2.07 %. The head five do not change.
+#   DVA's 5Y leg reads 70.4 on the walk (82.6 on the page), under the 75 floor, and its score falls 26.8 to 21.5;
+#   M4I.DE's reads 77.9 (64.6), and its score rises 23.4 to 29.3. INL.DE keeps seat 10 (score 8.7 to 7.0; 5Y 105.6
+#   on the page, 66.9 on the walk). Off the ten, 48 names cross the 75 line, about 31 up and 17 down; 6MK.DE
+#   (rank 18) and 3V64.DE (rank 21) join the 30-row table.
+# VERDICT, 5Y: SHIPPED 2026-11-14 on the owner's word ("Ship it"), `serve_walk_5y: true`; no golden moves.
 
 # (#1511) THE DCA RULER'S BOOKS TAKE THE COHORT RANKS, PRE-REGISTERED 2026-11-14 before any run. No knob: one code
 #   line in `backtest::walk`.
