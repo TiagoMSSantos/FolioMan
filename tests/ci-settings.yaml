@@ -30537,6 +30537,26 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   on 12y and 8y; there the young seats trail the rest on the median (the long-run drift after a listing, Ritter
 #   1991) but not on the mean (a fat right tail): INCONCLUSIVE.
 # REVERT RULE: none; the knob is a probe instrument, 36 by default.
+# RESULT (#1518), 2026-11-14, probe tag probe-r26y (8551871), years 20 12 8: arms 43611836446 (pit) and
+#   43611858634 (dead), controls 43611847728 and 43611868862. Young seats against the rest, as n / mean excess /
+#   median excess / hit %:
+#     pit  20y   5 / +738.3 / +738.3 / 100.0   against  100 / +939.4 / -241.9 / 30.0
+#     pit  12y  11 /  +42.0 /  +16.9 /  54.5   against  174 / +222.3 /  -64.9 / 40.8
+#     pit   8y  12 /   -1.2 /  -25.9 /  41.7   against  213 /  +73.8 /  -29.6 / 40.4
+#     dead 20y   9 / +295.7 / +220.0 /  55.6   against   96 / +367.9 / -235.2 / 31.2
+#     dead 12y  13 /  +60.9 /   -9.4 /  46.2   against  172 / +151.4 /  -74.7 / 34.9
+#     dead  8y  13 /  +14.2 /  -12.4 /  46.2   against  212 /  +64.3 /  -34.1 / 38.2
+#   16 names, one seat each per horizon: ALTR.LS CFG CPWR DRI FCN GALP.LS HFS LU MD MIL MPC RENE.LS TMUS TRIP USW
+#   YUM (HFS LU MIL USW in dead only). All are listings or spin-offs inside the walk's span except, maybe, MIL and
+#   USW, older companies whose charts may start late: at most 2 of 9 at dead 20y, under the third. Beside it, 20y
+#   only, S+inter never-sell against index DCA, arm against control: pit +4.8 against +4.7, dead +3.9 against +3.8
+#   pts/yr.
+# SAID BEFORE THE RUN, read back. Under 20 young seats at 20y in each lane HOLDS (5 and 9). The reading rests on
+#   12y and 8y FAILS: they hold 11 to 13. Young behind on the median, not on the mean FAILS, the other way round:
+#   behind the rest on the mean in all 6 cells, level with or ahead of it on the median and the hit rate in all 6.
+# VERDICT, 2026-11-14: UNREADABLE, no horizon holds 20 young seats in both lanes. Nothing moves: the page keeps
+#   seating young names and the knob stays 36. The 4 cutoff years from 12y to 8y added 1 young seat in pit and
+#   none in dead, so a re-read waits years, not a re-run.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
