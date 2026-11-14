@@ -647,6 +647,8 @@ pub struct BuyHeuristic {
     pub print_parity: bool, // (#1484) print, after the page's tables, the PARITY CENSUS: for every scored name the walk's own view (`core::backtest_quote` on the long monthly chart the walk reads, the walk's anchor map) and the merged one (the page's bars on that map), set beside the page's fields (n, median and p90 of each gap), the monthly bars checked against the daily chart (`core::bar_check`), and the stock top 10 by score and by momentum key read on each view. Display only, read through `print_parity()` by `fetch::quote_one`, which has no `tuning` handle. Ships OFF in config.rs
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1488) still matches
     pub anchor_cadence_aware: bool, // (#1488) (#188)'s named fix, the anchor that respects bar cadence: `core::horizon_changes` anchors each leg on bars before the last one only, and a leg whose window holds none falls back to the bar on or before its target only within max(half, 5) days, else reads None. Monthly history then reads 1D and 1W as None (today: a month's move and 0 %) and 1M off the bar before the endpoint; daily history reads as before but for a 1D leg across a closure over five days. One accessor (`anchor_cadence_aware()`) for the page and the walk. false = every leg as before, byte-identical, and the DEFAULT
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1500) still matches
+    pub anchor_seam_months: bool, // (#1500) the 10Y anchor at the page's seam: `fetch::quote_one` glues the long monthly chart's bars dated before its first daily bar under the ten-year daily chart, and the 10Y leg's target falls on that joint, so its +-365-day window holds about 12 monthly bars and about 250 daily ones and `core::asof_avg` weighs the daily year 95 %: the column says "9 to 11 years ago" and reads 9 to 10, low on a rising name. On: a window that opens on bars 20+ days apart and closes on bars 5 or fewer apart counts each calendar month once, at its last close in the window (`core::asof_avg_seam`); a window of one cadence reads as before, so the walk (one cadence per run) and every golden do not move. One accessor (`anchor_seam_months()`) for the page and the walk. false = every leg as before, byte-identical, and the DEFAULT
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1477) still matches
     pub payout_guard: bool, // (#1477) drop the Yahoo payouts `core::payout_flags` flags (D1 a duplicate row within 7 days of the one before it, D2 a payout above a quarter of the close before it or 50-150x off the name's median ratio) before `dividend_sums` reads them, at both sites through `payout_guard()`: the page at its last bar, the walk on each cutoff's own slice. Main read every payout raw: `parse_chart` keeps each `events.dividends` row and (#1472) moved London prices onto one unit but no payout. Reaches the score only through the capped dividend term (at most 0.5 x 6 x keep, about 2.2 points) and the DIV, PAYOUT% and FCF-PAY% columns. false = every payout as Yahoo serves it, byte-identical, and the DEFAULT; `backtest ... payouts` prints the census
     pub backtest_tr_ruler: bool, // (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return compounds the dividends paid inside its window (each reinvested at the close before its ex-date) and the book is graded against ^SP500TR instead of ^GSPC. Selection still reads price-only closes, so an arm graded on it changes only what it chooses. Cutoffs the ^SP500TR series does not reach (it starts 1988) are dropped, from every arm alike. false = the price-only ruler every receipt before (#804) was graded on, byte-identical, and the DEFAULT
@@ -884,6 +886,7 @@ impl Default for BuyHeuristic {
             use_adjusted_close: false,     // (Item 21) raw price-only close by default (= current behavior, validated edge intact). Flip to true ONLY for a full backtest re-validation + gate re-sweep — adjusted close shifts every price-calibrated threshold
             print_parity: false,           // (#1484) off, no census and no extra view built
             anchor_cadence_aware: false,   // (#1488) OFF = every leg's anchor as before, every golden byte-identical
+            anchor_seam_months: false,     // (#1500) OFF = every leg's anchor as before, every golden byte-identical
             payout_guard: false,           // (#1477) OFF = every payout as Yahoo serves it, every golden byte-identical
             backtest_tr_ruler: false,      // (#804) OFF = the price-only ruler, every golden byte-identical
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
@@ -2523,6 +2526,15 @@ pub fn anchor_cadence_aware() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| ambient().map(|s| s.buy_heuristic.anchor_cadence_aware).unwrap_or(false))
+}
+
+/// (#1500) free accessor read by `core::horizon_changes_with`, which every page and walk leg goes through and which
+/// has no `tuning` handle; one value for both.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+pub fn anchor_seam_months() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| ambient().map(|s| s.buy_heuristic.anchor_seam_months).unwrap_or(false))
 }
 
 /// (#1477) free accessor read at the two `dividend_sums` sites, `fetch`'s quote build (the page) and

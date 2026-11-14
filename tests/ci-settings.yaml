@@ -23950,6 +23950,7 @@ buy_heuristic:
   anchor_cadence_aware: true     # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure;
   #  arm 1 SHIPPED 2026-11-13 on the owner's word. REVERT: false.
   print_parity: false            # (#1484) the PARITY CENSUS after the page's tables: the walk's view, display only
+  anchor_seam_months: false      # (#1500) an anchor window across the page's monthly/daily seam counts one close a month
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
@@ -30108,6 +30109,41 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   built only on the owner's word and A/B'd on a probe tag before Pages. A group that moves nothing alone and nothing
 #   in its all-but line is RECORD: a display gap with no seat. Nothing ships from this block.
 # REVERT RULE: none; display only, under `print_parity`.
+
+# (#1500) THE 10Y ANCHOR AT THE PAGE'S SEAM, PRE-REGISTERED 2026-11-14 before any run. Knob: `anchor_seam_months`
+#   (false ships). Row: (#1501). A measurement fix, page side.
+# THE DEFECT: `fetch::quote_one` glues the long monthly chart's bars dated before the first daily bar under the
+#   ten-year daily chart, and the 10Y leg's target, 3650 days back, falls on that seam. Its +-365-day window holds
+#   about 12 monthly bars before the seam and about 250 daily bars after it, and `core::asof_avg` weighs each bar
+#   once, so the anchor is about 95 % the year after the target. The 10Y column's help says "the average from 9 to 11
+#   years ago"; the page reads 9 to 10, so a rising name's anchor reads high and its leg low. The walk reads one
+#   cadence per run (`monthly = long || years >= 8`: the long monthly chart, else the ten-year daily one) and has no
+#   seam. On the page 5Y's and 8Y's windows are all daily and 20Y's all monthly, so 10Y is the one leg the seam
+#   reaches. (#1484)'s census read 10Y as "the one field still far off": M-W 10.49 / 38.21 (median / p90).
+# REPLAY, before any run (`tests/fixture/.long_history_cache.span.json`, 46 names with 11.5y+ of monthly bars; each page
+#   series rebuilt as the monthly bars dated before T-10y plus a daily tail interpolated log-linearly between month
+#   ends, so only the weighting differs from the walk's bars): 10Y P-W median -11.81 points (|P-W| median 14.66, p90
+#   102.76); with one close per month -1.54 (3.41, 15.55). 8Y (|P-W| 1.45 / 12.32) and 20Y (4.33 / 33.81) read the
+#   same both ways: no seam, only the endpoint's 105 daily bars against the walk's 5 monthly ones.
+# THE FIX: `core::asof_avg_seam`. A window that opens on bars 20 or more days apart and closes on bars 5 or fewer
+#   apart (a monthly head running into a daily tail) counts each calendar month once, at its last close inside the
+#   window, the rule (#41)'s `monthly_returns_tail` uses, so a month weighs the same on both sides of the seam. A
+#   window of one cadence reads exactly as `asof_avg` (`seam_anchor_weighs_months_not_bars` pins monthly-only and
+#   daily-only series byte-identical, both anchor paths), so the walk and every golden do not move. One accessor for
+#   the page and the walk; walk-time, so `RESCORE_FIXED` refuses it in a grid row. shortcut: a daily window that opens
+#   on a halt of 20 days or more also reads as a seam and averages month ends; on the page that is a halted name only.
+# WHAT READS 10Y: the column; `picks::trust_factor`'s 10Y leg, by presence only (the fix moves no leg in or out); the
+#   on-sale lane's every-leg floor (`min_long_pct` 30, the [FOIL] lane). The growth lane's floors and its rung read
+#   5Y, 8Y and 20Y. So no growth score, no BUY NOW name and no share can move.
+# RUN: one Screen A/B on main, `knobs="anchor_seam_months=true print_parity=true"`.
+# SAID BEFORE THE RUN: 1. Stocks: the 10Y cell moves on most rows with 11+ years of history, up on most of them; no
+#   RANK, SCORE or BUY% cell moves on the growth tables. ETFs and REITs: 10Y cells move, no score. 2. The arm's
+#   census reads M-W 10Y under 3 at the median (10.49 before). 3. The on-sale table may gain or lose a row through
+#   its 30 % floor.
+# RULE, fixed now: no RANK, SCORE or BUY% cell moves on a growth table -> ONE owner question: ship `anchor_seam_months:
+#   true` as a measurement fix (the column then reads what its help says; no golden to bless). A growth score moves ->
+#   the mechanism above is wrong somewhere: RECORD, and the knob goes to RETIRED.
+# REVERT RULE: none; the knob ships false.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

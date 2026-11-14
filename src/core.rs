@@ -3835,6 +3835,44 @@ pub fn asof_avg(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i6
     Some(vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
+/// (#1500) [`asof_avg`] where the window straddles a cadence seam: the page glues the long monthly chart's bars dated
+/// before its first daily bar under the ten-year daily chart, and a window holding about 12 monthly bars on one side
+/// and about 250 daily ones on the other weighs the daily side 95 %. There each calendar month counts once, at its
+/// last close inside the window (`monthly_returns_tail`'s rule), so both sides weigh by the months they cover. A
+/// window of one cadence reads exactly as [`asof_avg`].
+pub fn asof_avg_seam(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i64) -> Option<f64> {
+    let (lo, hi) = (target - Duration::days(half), target + Duration::days(half));
+    let inside: Vec<(NaiveDate, f64)> = dates.iter().zip(closes).filter(|(d, _)| **d >= lo && **d <= hi).map(|(d, c)| (*d, *c)).collect();
+    let days: Vec<NaiveDate> = inside.iter().map(|(d, _)| *d).collect();
+    if !cadence_seam(&days) {
+        return asof_avg(dates, closes, target, half);
+    }
+    let month = |d: NaiveDate| (d.year(), d.month());
+    let ends: Vec<f64> = inside
+        .iter()
+        .enumerate()
+        .filter(|(i, (d, _))| inside.get(i + 1).is_none_or(|(next, _)| month(*next) != month(*d)))
+        .map(|(_, (_, c))| *c)
+        .collect();
+    Some(ends.iter().sum::<f64>() / ends.len() as f64)
+}
+
+/// (#1500) The window mean a leg's anchor reads: [`asof_avg_seam`]'s with `seam` on, [`asof_avg`]'s off.
+fn window_avg(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i64, seam: bool) -> Option<f64> {
+    if seam {
+        asof_avg_seam(dates, closes, target, half)
+    } else {
+        asof_avg(dates, closes, target, half)
+    }
+}
+
+/// (#1500) A window's bars hold a cadence seam when they open on a gap of 20 days or more and close on one of 5 days or
+/// less: a monthly head running into a daily tail. One cadence, or under three bars, is no seam.
+fn cadence_seam(days: &[NaiveDate]) -> bool {
+    let n = days.len();
+    n >= 3 && (days[1] - days[0]).num_days() >= 20 && (days[n - 1] - days[n - 2]).num_days() <= 5
+}
+
 /// (#1488) The cadence-honest anchor of a leg that ends on the last bar: the mean close within ±`half` days of
 /// `target` over every bar but the last, else the last bar on or before `target` (never the last bar itself) when it
 /// lies within `max(half, 5)` days of it, else None. (#188) named the defect this closes: on monthly history the
@@ -3843,10 +3881,15 @@ pub fn asof_avg(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i6
 /// daily history a leg reads as `asof_avg` / `asof` did, unless its window reached the endpoint (the default 1W and
 /// 1M halves do; the endpoint is then left out of its own anchor) or a 1D leg spans a closure of more than five days.
 pub fn anchor_strict(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i64) -> Option<f64> {
+    anchor_strict_with(dates, closes, target, half, false)
+}
+
+/// (#1500) [`anchor_strict`] whose window mean is [`asof_avg_seam`]'s when `seam` is on.
+pub fn anchor_strict_with(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i64, seam: bool) -> Option<f64> {
     let n = dates.len().min(closes.len()).checked_sub(1)?;
     let (d, c) = (&dates[..n], &closes[..n]);
     if half > 0 {
-        if let Some(v) = asof_avg(d, c, target, half) {
+        if let Some(v) = window_avg(d, c, target, half, seam) {
             return Some(v);
         }
     }
@@ -4010,6 +4053,20 @@ pub fn horizon_changes_with(
     infl: Option<&BTreeMap<i32, f64>>,
     cadence: bool,
 ) -> Vec<Option<(String, f64)>> {
+    horizon_changes_full(dates, closes, rate, windows, infl, cadence, crate::config::anchor_seam_months())
+}
+
+/// [`horizon_changes_with`] with (#1500)'s switch passed in too. `seam` on: a leg whose anchor window straddles a
+/// monthly/daily seam averages one close per calendar month ([`asof_avg_seam`]); off, every leg reads as before.
+pub fn horizon_changes_full(
+    dates: &[NaiveDate],
+    closes: &[f64],
+    rate: Option<f64>,
+    windows: &BTreeMap<String, i64>,
+    infl: Option<&BTreeMap<i32, f64>>,
+    cadence: bool,
+    seam: bool,
+) -> Vec<Option<(String, f64)>> {
     // (#18) two endpoints: the LONG legs (>=1Y — the CAGR/rank inputs) use the smoothed measurement
     // endpoint; the SHORT legs (1D/1W/1M, incl. the 1M-knife gate) keep the true last close — a
     // months-wide average would make "this month's move" meaningless as both a gate and a display.
@@ -4035,9 +4092,9 @@ pub fn horizon_changes_with(
             }
             let half = windows.get(*label).copied().unwrap_or_else(|| default_anchor_half(*days));
             let past = if cadence {
-                anchor_strict(dates, closes, target, half) // (#1488)
+                anchor_strict_with(dates, closes, target, half, seam) // (#1488), (#1500)
             } else if half > 0 {
-                asof_avg(dates, closes, target, half).or_else(|| asof(dates, closes, target))
+                window_avg(dates, closes, target, half, seam).or_else(|| asof(dates, closes, target))
             } else {
                 asof(dates, closes, target)
             };
@@ -12636,6 +12693,65 @@ fn anchor_strict_respects_bar_cadence() {
     assert_eq!(anchor_strict(&twice, &tc, days[1], 0), Some(4.0), "a zero half reads the day's last bar, not its mean");
     let zero: BTreeMap<String, i64> = [("1D".to_string(), 0)].into_iter().collect();
     assert_eq!(leg(&horizon_changes_with(&twice, &tc, None, &zero, None, false), "1D"), Some(100.0), "and so does the shipped anchor");
+}
+
+/// (#1500) The seam anchor, on a name rising 20 % a year (log). The page's series: the monthly bars stamped on the 1st
+/// before the seam, each closing at its month's end, then every business day from the seam ten years back. Its 10Y
+/// window straddles the seam, and the plain mean reads the anchor over 5 % above the all-monthly series' (the walk's
+/// bars); counted one close per month it reads within 0.5 %. Monthly-only and daily-only series, and every leg but 10Y
+/// here (5Y and 8Y windows are all daily, 20Y's all monthly), read byte-identical with the switch on and off.
+#[test]
+fn seam_anchor_weighs_months_not_bars() {
+    let _scope = MeasureScope::new(252);
+    let leg = |v: &[Option<(String, f64)>], label: &str| HORIZONS.iter().position(|(l, _)| *l == label).and_then(|i| v[i].as_ref().map(|(_, p)| *p));
+    let none = BTreeMap::new();
+    let day = |y: i32, m: u32, d: u32| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    let (start, end, cut) = (day(2001, 1, 1), day(2026, 11, 13), day(2016, 11, 13));
+    let price = |d: NaiveDate| 10.0 * (0.2 * (d - start).num_days() as f64 / 365.25).exp();
+    let month_end = |d: NaiveDate| {
+        let next = if d.month() == 12 { day(d.year() + 1, 1, 1) } else { day(d.year(), d.month() + 1, 1) };
+        (next - Duration::days(1)).min(end)
+    };
+    let months: Vec<NaiveDate> = (0..311).map(|k| day(2001 + k / 12, (k % 12) as u32 + 1, 1)).filter(|d| *d <= end).collect();
+    let mc: Vec<f64> = months.iter().map(|d| price(month_end(*d))).collect();
+    let days: Vec<NaiveDate> = (0..=(end - cut).num_days()).map(|k| cut + Duration::days(k)).filter(|d| d.weekday().number_from_monday() <= 5).collect();
+    let dc: Vec<f64> = days.iter().map(|d| price(*d)).collect();
+    let head = months.iter().take_while(|d| **d < days[0]).count();
+    let mut merged = months[..head].to_vec();
+    merged.extend_from_slice(&days);
+    let mut merged_c = mc[..head].to_vec();
+    merged_c.extend_from_slice(&dc);
+    let target = end - Duration::days(3650);
+    let walk = anchor_strict_with(&months, &mc, target, 365, false).unwrap();
+    let plain = anchor_strict_with(&merged, &merged_c, target, 365, false).unwrap();
+    let months_once = anchor_strict_with(&merged, &merged_c, target, 365, true).unwrap();
+    assert!(plain / walk > 1.05, "the daily year weighs 95 %: {plain} against {walk}");
+    assert!((months_once / walk - 1.0).abs() < 0.005, "one close per month: {months_once} against {walk}");
+    assert_eq!(window_avg(&merged, &merged_c, target, 365, true), Some(months_once), "the old path takes the same mean");
+    for cadence in [false, true] {
+        let full = |d: &[NaiveDate], c: &[f64], seam: bool| horizon_changes_full(d, c, None, &none, None, cadence, seam);
+        assert_eq!(full(&months, &mc, true), full(&months, &mc, false), "monthly only: no seam");
+        assert_eq!(full(&days, &dc, true), full(&days, &dc, false), "daily only: no seam");
+        let (on, off) = (full(&merged, &merged_c, true), full(&merged, &merged_c, false));
+        assert!(leg(&on, "10Y").unwrap() > leg(&off, "10Y").unwrap() + 20.0, "a lower anchor, a higher leg: {:?} {:?}", leg(&on, "10Y"), leg(&off, "10Y"));
+        for label in ["1Y", "5Y", "8Y", "20Y"] {
+            assert_eq!(leg(&on, label), leg(&off, label), "{label}: its window has one cadence");
+        }
+    }
+    let gap = |steps: &[i64]| {
+        steps
+            .iter()
+            .scan(0i64, |t, s| {
+                *t += s;
+                Some(day(2016, 9, 1) + Duration::days(*t))
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(cadence_seam(&gap(&[0, 30, 31, 3, 1, 1])), "monthly into daily");
+    assert!(!cadence_seam(&gap(&[0, 1, 1, 30, 31])), "daily into monthly");
+    assert!(!cadence_seam(&gap(&[0, 30, 31, 30])) && !cadence_seam(&gap(&[0, 1, 3, 1])), "one cadence");
+    assert!(!cadence_seam(&gap(&[0, 30])), "two bars");
+    assert_eq!(asof_avg_seam(&months, &mc, day(1990, 1, 1), 365), None, "an empty window");
 }
 
 
