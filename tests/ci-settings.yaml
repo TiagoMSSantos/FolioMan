@@ -30659,6 +30659,62 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # OWNER, 2026-11-14: (b). The page line is (#1526): display only, by probe tag, CI and Screen A/B before Pages.
 # REVERT RULE: none.
 
+# (#1522) THE HEAD FOLLOWS ONE DAY'S MOVE, PRE-REGISTERED 2026-11-14 before the journal lines it reads. Row: (#1523).
+#   No knob and no code in src: `tools/book_churn.py` reads the journal.
+# THE FACT, from the journal (.screen_snapshots.jsonl), over the 30 steps from 2026-10-16 to 2026-11-14 (two lines in a
+#   row that both size five head seats): the head changed on 10, a score seat on 8 and a momentum seat on 3, and 11
+#   names held the 5 seats. A name that leaves the head keeps one part in eight of its share (16.59 to 2.07 %). Each
+#   name's day move is read against the median over the stock rows of its own market on that line (the US rows or
+#   the Frankfurt rows; READ says why). Of the 12 names that entered, 10 moved below it, by 2.7 points on the median;
+#   of the 12 that left, 7 moved above it, by 0.6. Raw: -7.6 % in, -1.6 % out, 9 of the 12 entrants below the whole
+#   table's median. Cases: FTNT, off the Stocks table on the three lines before, is score rank 1 at 12.44 % on
+#   2026-10-31, the line its price reads -19.8 %. INL.DE goes from row 10 to a momentum head seat on 2026-11-01, the
+#   line it reads -29.8 %. On 2026-11-07 the three that fell more than their market (LAR0.DE, WDC, KLA.DE) take head
+#   seats and the three that fell less (ASML, INL.DE, APC.DE) leave them. The rules that shipped in those weeks sit
+#   inside the count.
+# THE MECHANISM, two terms that read the day's close raw and can do this, each graded in the walk at month-end closes
+#   (shortcut: the journal carries no stretch read, so no case above is traced to its term; `--page` reads the page's):
+#   1. THE BRAKE, on the score side. `score_parts_hard` cuts nothing up to `growth_overext_free` 60 % above the
+#      200-week average, then runs a straight line to `growth_overext_floor` 0.05 at `growth_overext_cap` 100, square-
+#      rooted ((#100): a full brake keeps 0.224). In price that whole band is 20 % wide (160 / 200), since (#1378).
+#      Inside it +1 % in price takes 2.2 % off the score at 65 % above, 4.1 % at 80, 7.8 % at 90 and 13.7 % at 95.
+#      (#1509)'s own A/B 5 shows the size: LAR0.DE's read 80 -> 73 moved its score 30.6 -> 35.6 and its rank 12 -> 5
+#      (the brake alone gives x1.147, 35.1).
+#   2. THE KEY, on the momentum side. (#1393): the 12-7 key is (smooth_now / raw_now) x (p_-6m / p_-12m) - 1, so "sixty
+#      flat bars and a last print of 125 read -16 %"; by the same arithmetic a last print of 70 reads +34 %. (#1394)
+#      kept the tilt, OUTSIDE NEGATIVE on one window. Since (#1509) the smoothed end is 5 monthly bars with the day's
+#      close as one of them, so the key moves -0.8 % for +1 % in price where it moved -1 %.
+#   Neither receipt read a day: the walk samples one close a month and two cutoffs a year. At that scale (#821) found
+#   the names new to the book no worse than the names it held twice, so no wait rule is asked for here.
+# RUN: none. After 30 more steps, `python3 -I tools/book_churn.py .screen_snapshots.jsonl --since 2026-11-15`, the
+#   first line written on the walk's legs; `--skip` takes the dates a rule shipped.
+# SAID BEFORE, over the 30 steps from 2026-11-15, each name against its own market's median as above: 1. the head
+#   changes on 8 or more (10 before). 2. Two thirds or more of the names that enter moved below it (10 of 12). 3. The
+#   entrants' median move against it is 2 points or more below the leavers' (-2.7 against +0.6: 3.3 points). The
+#   tool prints the three as `(#1522) said before: 1 holds, 2 ...`.
+# READ: under 8 entrants the read waits 30 more steps. Its eyesight on the baseline's 12 (`--eyesight`: the names
+#   that enter and leave drawn at random from their own market's rows on the same steps): 2 and 3 hold together on
+#   3.7 % of the draws with no effect, on 33 % with half the baseline's shift and on 80 % with all of it.
+#   WHY ITS OWN MARKET. Every line from 2026-09-23 on was committed between 00:15 and 04:49 UTC, the hours in which,
+#   before (#1470) (a4d6a42, on main 2026-11-13 06:46 UTC), a run read a market one session late. (#1470) names four
+#   such lines. The journal's own prices say more (`--sessions`): the Frankfurt rows repeat the line before on all 7
+#   Monday lines and on all 7 Tuesday lines of those hours (the eighth, 2026-09-22, was committed at 08:52 UTC and
+#   does not), and on none of the 7 Sunday lines. Friday's close first shows on Sunday and is read again on Tuesday:
+#   each Tuesday-to-Saturday line from 2026-09-23 to 2026-11-13, 38 lines of the 55, holds Frankfurt's session
+#   before. The US rows do on most nights (they repeat on 3 Tuesday lines of 5), and on three baseline lines
+#   (2026-10-23, 11-10, 11-12) one of the two markets repeats and the other does not. One market's rows share a
+#   session on every line; the whole table's do not, so the table's median is printed and not judged on.
+#   shortcut: read from the journal's own prices, not checked against a close by day. From the Sunday line of
+#   2026-11-15 on, both markets repeating on a Sunday line is (#1470)'s fix seen in the journal.
+# RULE, fixed now: 2 and 3 hold -> the head follows the day's move on the walk's legs as it did on the page's own, and
+#   ONE owner question carries both counts: (a) keep, it is the graded formula read daily; (b) the page prints beside
+#   BUY% each name's mean share over the last 21 journal lines (`--mean 21`: what a buyer on a random day of the month
+#   holds on average; on 2026-11-14 the five largest hold 56.6 % on that mean and 83.0 % on the line), display only,
+#   built only on the owner's word. 2 or 3 fails -> RECORD: the pattern was the October tape's. 1 alone decides
+#   nothing. No knob is proposed either way: (#19) refused a smoothed brake, (#1377) to (#1388) set its zone, (#1394)
+#   kept the key, and (#1333) cannot see one seat.
+# REVERT RULE: none; the tool reads and prints.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
